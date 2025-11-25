@@ -129,7 +129,8 @@ def sign(sk: bytes, msg: bytes) -> bytes:
             return signer.sign(msg)
 
     if _DEV_FAKE_OK:
-        return _sha3_512(b"animica-dev-fake-sig|" + sk + b"|" + msg)
+        pk = _sha3_256(b"animica-dev-fake-pk|" + sk)
+        return _sha3_512(b"animica-dev-fake-sig|" + pk + b"|" + msg)
 
     raise NotImplementedError(
         "Dilithium3 unavailable. Install python-oqs/liboqs or enable ANIMICA_UNSAFE_PQ_FAKE=1 for local dev."
