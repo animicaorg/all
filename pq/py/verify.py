@@ -70,7 +70,7 @@ def _backend_verify(alg_name: str, pk: bytes, msg: bytes, sig: bytes) -> bool:
 
     if not hasattr(backend, "verify"):
         raise NotImplementedError(f"Backend {backend.__name__} lacks .verify(public_key, message, signature)")
-    return bool(backend.verify(public_key=pk, message=msg, signature=sig))  # type: ignore[arg-type]
+    return bool(backend.verify(pk, msg, sig))  # type: ignore[arg-type]
 
 # --------------------------------------------------------------------------------------
 # Verify API
