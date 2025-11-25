@@ -38,7 +38,7 @@ class AlgInfoBase:
     kind: str                   # "sig" or "kem"
     provider_hint: str          # "liboqs", "pure", "wasm", "system"
     security_bits: int          # claimed classical security bits (approx)
-    notes: str = ""             # short notes (variant, hash family, etc.)
+    notes: str                  # short notes (variant, hash family, etc.)
 
 @dataclass(frozen=True)
 class SigAlgInfo(AlgInfoBase):
@@ -101,20 +101,39 @@ def _load_alg_ids_yaml() -> Dict[str, int]:
     data = yaml.safe_load(alg_ids_path.read_text(encoding="utf-8"))
     out: Dict[str, int] = {}
     if isinstance(data, dict):
-        for k, v in data.items():
-            if isinstance(v, str):
-                # accept "0xABCD" or "1234"
-                v = v.strip().lower()
-                if v.startswith("0x"):
-                    num = int(v, 16)
+        registry_entries = data.get("registry")
+        if isinstance(registry_entries, list):
+            for entry in registry_entries:
+                if not isinstance(entry, dict):
+                    continue
+                name = entry.get("name")
+                raw_id = entry.get("id")
+                if not isinstance(name, str) or raw_id is None:
+                    continue
+                if isinstance(raw_id, str):
+                    raw_id = raw_id.strip().lower()
+                    num = int(raw_id, 16) if raw_id.startswith("0x") else int(re.sub(r"_", "", raw_id), 10)
+                elif isinstance(raw_id, int):
+                    num = raw_id
                 else:
-                    # allow underscores
-                    num = int(re.sub(r"_", "", v), 10)
-            elif isinstance(v, int):
-                num = v
-            else:
-                raise ValueError(f"Invalid alg id for {k!r}: {v!r}")
-            out[str(k)] = num
+                    continue
+                out[name] = num
+        else:
+            for k, v in data.items():
+                if isinstance(v, str):
+                    # accept "0xABCD" or "1234"
+                    v = v.strip().lower()
+                    if v.startswith("0x"):
+                        num = int(v, 16)
+                    else:
+                        # allow underscores
+                        num = int(re.sub(r"_", "", v), 10)
+                elif isinstance(v, int):
+                    num = v
+                else:
+                    # Ignore non-numeric metadata keys (e.g., updated timestamps)
+                    continue
+                out[str(k)] = num
     return out
 
 
@@ -122,6 +141,9 @@ ALG_IDS: Dict[str, int] = _load_alg_ids_yaml()
 
 # Reverse map for fast lookup
 ALG_NAMES_BY_ID: Dict[int, str] = {v: k for k, v in ALG_IDS.items()}
+# Backwards-compatibility aliases used by downstream modules
+ALG_ID = ALG_IDS
+ALG_NAME = ALG_NAMES_BY_ID
 
 
 # ---------------------------
@@ -218,6 +240,18 @@ def is_kem_alg(name_or_id: AlgNameOrId) -> bool:
     if isinstance(name_or_id, str):
         return name_or_id in _KEMS
     return name_or_id in _KEMS_BY_ID
+
+
+def is_known_alg_id(alg_id: int) -> bool:
+    return alg_id in ALG_NAMES_BY_ID
+
+
+def is_sig_alg_id(alg_id: int) -> bool:
+    return alg_id in _SIGS_BY_ID
+
+
+def is_kem_alg_id(alg_id: int) -> bool:
+    return alg_id in _KEMS_BY_ID
 
 def get(name_or_id: AlgNameOrId) -> Optional[AlgInfo]:
     if isinstance(name_or_id, str):
