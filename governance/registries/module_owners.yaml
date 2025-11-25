@@ -214,12 +214,19 @@ modules:
     reviewers: ["@kirk","@nate"]
     backups: ["@animica/ops-oncall"]
 
+  - id: contracts
+    name: "Contracts (manifests, ABIs, registry)"
+    paths: ["contracts/**", "governance/registries/contracts.json"]
+    maintainers: ["@animica/contracts","@owen"]
+    reviewers: ["@emi","@lina","@pri"]
+    backups: ["@animica/release-engineering"]
+
   - id: governance
     name: "Governance docs & registries"
     paths: ["governance/**"]
-    maintainers: ["@animica/governance-editors"]
-    reviewers: ["@animica/maintainers","@animica/security-council"]
-    backups: ["@animica/foundation"]
+    maintainers: ["@animica/governance-editors","@alice"]
+    reviewers: ["@animica/maintainers","@animica/security-council","@ben","@carmen","@diego"]
+    backups: ["@animica/foundation","@animica/editors"]
 
   - id: research
     name: "Research notes & math"
