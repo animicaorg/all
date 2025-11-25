@@ -3,12 +3,11 @@
  * ============
  * Helpers around the Pyodide-backed Python VM compiler bridges.
  *
- * - compileSource: Python source (+ manifest) → compiled artifact + hash
- * - compileIR:     pre-built IR bytes/JSON → compiled artifact + hash (best-effort)
+ * - compileSource: Python source (+ manifest) → compiled IR + hash
+ * - compileIR:     pre-built IR bytes/JSON → compiled IR + hash
  * - linkManifest:  attach code hash (and optional metadata) into a manifest object
  */
 
-import { PyVmWorkerClient } from "../worker/protocol";
 import { ensurePyReady } from "./simulator";
 
 /* ---------------------------------- Types ---------------------------------- */
@@ -27,16 +26,26 @@ export interface CompileSourceParams {
 }
 
 export interface CompileResult {
-  /** 0x-prefixed hex digest of the compiled artifact. */
-  codeHash: string;
+  /** Compiled IR bytes suitable for the simulator runtime. */
+  ir: Uint8Array;
+  /** 0x-prefixed hex digest of the compiled artifact (best-effort). */
+  codeHash?: string;
   /** Size of the compiled artifact, in bytes (if available). */
   codeSize?: number;
-  /** Compiled artifact bytes (when requested and available). */
+  /** Compiled artifact bytes (alias for `ir`). */
   artifact?: Uint8Array;
   /** Optional diagnostics emitted by the compiler. */
   diagnostics?: string[];
   /** Optional upper-bound gas estimate derived from static analysis. */
   gasUpperBound?: number;
+  /** ABI emitted by the compiler, if available. */
+  abi?: Json;
+  /** Manifest echoed back by the compiler (or the provided manifest). */
+  manifest?: Json;
+  /** Entry function name if provided by the bridge. */
+  entry?: string;
+  /** Convenience flag mirroring bridge.ok when present. */
+  ok?: boolean;
 }
 
 export interface CompileIRParams {
@@ -59,11 +68,29 @@ function isUint8Array(v: unknown): v is Uint8Array {
   return v instanceof Uint8Array;
 }
 
+function decodeBase64(b64: string): Uint8Array {
+  if (typeof atob === "function") {
+    const s = atob(b64);
+    const out = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+    return out;
+  }
+  const maybeBuf = (globalThis as any).Buffer?.from?.(b64, "base64");
+  if (maybeBuf) {
+    const buf: any = maybeBuf;
+    const offset = buf.byteOffset ?? 0;
+    const length = buf.byteLength ?? buf.length ?? 0;
+    return new Uint8Array(buf.buffer ?? buf, offset, length);
+  }
+  throw new Error("No base64 decoder available");
+}
+
 /** Normalize various byte encodings from the bridge to a Uint8Array. */
 function normalizeArtifactBytes(maybe:
   | { __bytes_b64?: string }
   | { code_b64?: string }
   | { code_hex?: string }
+  | { code?: string | Uint8Array }
   | string
   | Uint8Array
   | null
@@ -81,10 +108,7 @@ function normalizeArtifactBytes(maybe:
     (typeof maybe === "string" && /^[A-Za-z0-9+/]+={0,2}$/.test(maybe) ? (maybe as string) : null);
 
   if (b64) {
-    const s = atob(b64);
-    const out = new Uint8Array(s.length);
-    for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
-    return out;
+    return decodeBase64(b64);
   }
 
   // Hex (with or without 0x)
@@ -102,6 +126,10 @@ function normalizeArtifactBytes(maybe:
     return out;
   }
 
+  if (typeof asObj === "object" && isUint8Array(asObj.code)) {
+    return asObj.code as Uint8Array;
+  }
+
   return undefined;
 }
 
@@ -110,18 +138,42 @@ function to0x(hexLike: string | undefined): string | undefined {
   return hexLike.startsWith("0x") ? hexLike : `0x${hexLike}`;
 }
 
-function okHashOrThrow(v: any): string {
-  const h = typeof v === "string" ? v : v?.code_hash ?? v?.hash ?? v?.digest;
-  const hx = to0x(h);
-  if (!hx || !/^0x[0-9a-fA-F]+$/.test(hx)) throw new Error("Compiler did not return a valid code hash");
-  return hx.toLowerCase();
-}
-
 function mapDiagnostics(v: any): string[] | undefined {
   const msgs = v?.diagnostics;
   if (!msgs) return undefined;
   if (Array.isArray(msgs)) return msgs.map(String);
   return [String(msgs)];
+}
+
+function asBytes(input: string): Uint8Array {
+  const enc = new TextEncoder();
+  return enc.encode(input);
+}
+
+function mapCompileResult(res: any, fallbackManifest?: Json): CompileResult {
+  const artifact = normalizeArtifactBytes(res?.artifact ?? res?.code ?? res);
+  if (!artifact) throw new Error("Compiler did not return artifact bytes");
+
+  const hash = to0x(res?.code_hash ?? res?.hash ?? res?.codeHash);
+  const gasUpperBound =
+    typeof res?.gas_upper_bound === "number"
+      ? res.gas_upper_bound
+      : typeof res?.gasUpperBound === "number"
+      ? res.gasUpperBound
+      : undefined;
+
+  return {
+    ok: res?.ok !== false,
+    ir: artifact,
+    artifact,
+    codeHash: hash,
+    codeSize: typeof res?.code_size === "number" ? res.code_size : artifact?.byteLength,
+    diagnostics: mapDiagnostics(res),
+    gasUpperBound,
+    abi: res?.abi,
+    manifest: res?.manifest ?? fallbackManifest,
+    entry: typeof res?.entry === "string" ? res.entry : undefined,
+  };
 }
 
 /* --------------------------------- API impl -------------------------------- */
@@ -134,31 +186,16 @@ export async function compileSource(params: CompileSourceParams): Promise<Compil
   const { source, manifest } = params;
   const withBytes = params.withBytes !== false;
 
-  let client: PyVmWorkerClient | null = null;
   try {
-    client = await ensurePyReady(params.init);
-
+    const client = await ensurePyReady(params.init);
     const result = await client.call(
       "bridge.entry.compile_bytes",
-      [],
-      { source, manifest, return_bytes: withBytes },
+      [manifest],
+      { source_bytes: asBytes(source), return_bytes: withBytes },
       120_000
     );
 
-    const codeHash = okHashOrThrow(result);
-    const artifact = withBytes ? normalizeArtifactBytes(result?.artifact ?? result) : undefined;
-    const codeSize =
-      typeof result?.code_size === "number"
-        ? result.code_size
-        : artifact?.byteLength;
-
-    return {
-      codeHash,
-      codeSize,
-      artifact,
-      diagnostics: mapDiagnostics(result),
-      gasUpperBound: typeof result?.gas_upper_bound === "number" ? result.gas_upper_bound : undefined,
-    };
+    return mapCompileResult(result, manifest);
   } catch (e) {
     throw new Error(`compileSource failed: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -166,56 +203,24 @@ export async function compileSource(params: CompileSourceParams): Promise<Compil
 
 /**
  * Compile/encode an IR payload to an artifact + hash.
- * Tries, in order:
- *  1) bridge.entry.compile_ir (preferred)
- *  2) bridge.entry.compile_ir_bytes
- *  3) bridge.entry.compile_bytes when given a textual IR (fallback)
  */
 export async function compileIR(params: CompileIRParams): Promise<CompileResult> {
   const { ir, manifest } = params;
   const withBytes = params.withBytes !== false;
 
-  const client = await ensurePyReady(params.init);
-
-  // Helper to dispatch a call and map response.
-  const run = async (fqfn: string, payload: any) => {
-    const res = await client.call(fqfn, [], { ...payload, return_bytes: withBytes }, 120_000);
-    const codeHash = okHashOrThrow(res);
-    const artifact = withBytes ? normalizeArtifactBytes(res?.artifact ?? res) : undefined;
-    const codeSize =
-      typeof res?.code_size === "number" ? res.code_size : artifact?.byteLength;
-
-    return {
-      codeHash,
-      codeSize,
-      artifact,
-      diagnostics: mapDiagnostics(res),
-      gasUpperBound: typeof res?.gas_upper_bound === "number" ? res.gas_upper_bound : undefined,
-    } as CompileResult;
-  };
-
   try {
-    // Prefer a dedicated IR endpoint if present.
-    try {
-      return await run("bridge.entry.compile_ir", { ir, manifest });
-    } catch {
-      // continue
-    }
-    try {
-      return await run("bridge.entry.compile_ir_bytes", {
-        ir_bytes: isUint8Array(ir) ? Array.from(ir) : ir,
-        manifest,
-      });
-    } catch {
-      // continue
+    const client = await ensurePyReady(params.init);
+    const payload: Record<string, any> = { return_bytes: withBytes };
+    if (isUint8Array(ir)) {
+      payload.ir_bytes = Array.from(ir);
+    } else if (typeof ir === "string") {
+      payload.ir_obj_json = ir;
+    } else {
+      payload.ir_obj_json = JSON.stringify(ir);
     }
 
-    // Fallback: if IR is textual JSON the bridge might accept it via compile_bytes too.
-    if (typeof ir === "string") {
-      return await run("bridge.entry.compile_bytes", { source: ir, manifest });
-    }
-
-    throw new Error("No compatible IR compile endpoint found in bridge");
+    const result = await client.call("bridge.entry.compile_bytes", [manifest ?? {}], payload, 120_000);
+    return mapCompileResult(result, manifest);
   } catch (e) {
     throw new Error(`compileIR failed: ${e instanceof Error ? e.message : String(e)}`);
   }

@@ -171,28 +171,21 @@ export default function Contracts() {
       // Prefer provider path if available; fallback to raw RPC via client
       const provider = getAnimicaProvider();
       // Method name is intentionally descriptive; adjust to your wallet/provider
+      const payload = { to: contractAddress, abi: manifest.abi, fn: selectedRead, args };
+
+      // Prefer the explicit contract call helper
       const result = await provider
-        .request<any>({
-          method: "animica_contractCall",
-          params: {
-            to: contractAddress,
-            abi: manifest.abi,
-            fn: selectedRead,
-            args,
-          },
-        })
+        .request<any>({ method: "animica_callContract", params: payload })
+        .catch(async () => provider.request<any>({ method: "animica_call", params: payload }))
+        .catch(async () =>
+          provider.request<any>({ method: "eth_call", params: [{ to: contractAddress, data: payload }] })
+        )
         .catch(async () => {
-          // Fallback: try client.rpc
-          // The SDK typically exposes a generic rpc; if not, replace with your client's call helper.
+          // Fallback: try client.rpc if exposed
           // @ts-expect-error generic rpc passthrough (template-friendly)
           if (typeof (client as any).rpc === "function") {
             // eslint-disable-next-line @typescript-eslint/no-unsafe-call
-            return (client as any).rpc("animica_contractCall", {
-              to: contractAddress,
-              abi: manifest.abi,
-              fn: selectedRead,
-              args,
-            });
+            return (client as any).rpc("animica_callContract", payload);
           }
           throw new Error("No provider/rpc route for contractCall available.");
         });
