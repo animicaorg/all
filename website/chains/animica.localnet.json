@@ -6,6 +6,7 @@
     "http://127.0.0.1:8645/rpc",
     "ws://127.0.0.1:8645/ws"
   ],
+  "rpcUrls": ["http://127.0.0.1:8645/rpc"],
   "explorer": "http://localhost:3000",
   "testnet": true,
   "docs": "https://docs.animica.org/network/localnet",
