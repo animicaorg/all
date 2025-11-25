@@ -61,6 +61,47 @@ def hex_to_bytes(s: str) -> bytes:
 
 
 # -----------------------------------------------------------------------------
+# Unsigned varints (LEB128-style)
+# -----------------------------------------------------------------------------
+
+def write_uvarint(value: int) -> bytes:
+    """Encode a non-negative integer using unsigned LEB128."""
+    if value < 0:
+        raise ValueError("uvarint cannot encode negative values")
+    out = bytearray()
+    v = int(value)
+    while True:
+        to_write = v & 0x7F
+        v >>= 7
+        if v:
+            out.append(to_write | 0x80)
+        else:
+            out.append(to_write)
+            break
+    return bytes(out)
+
+
+def read_uvarint(buf: BytesLike, offset: int = 0) -> tuple[int, int]:
+    """Decode a uvarint from buf starting at offset → (value, new_offset)."""
+    mv = memoryview(_b(buf))
+    if offset < 0 or offset >= len(mv):
+        raise ValueError("offset out of range")
+    shift = 0
+    result = 0
+    i = offset
+    while i < len(mv):
+        b = mv[i]
+        result |= (int(b) & 0x7F) << shift
+        i += 1
+        if not (b & 0x80):
+            return result, i
+        shift += 7
+        if shift > 70:
+            raise ValueError("uvarint too large")
+    raise ValueError("buffer ended before uvarint completed")
+
+
+# -----------------------------------------------------------------------------
 # Chunking helpers
 # -----------------------------------------------------------------------------
 

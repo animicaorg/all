@@ -261,4 +261,44 @@ def load() -> RpcConfig:
 # Singleton-style accessor for frameworks that prefer module-level config.
 CONFIG: RpcConfig = load()
 
-__all__ = ["CorsConfig", "RateLimitConfig", "RpcConfig", "CONFIG", "load"]
+@dataclass
+class Config:
+    """
+    Backwards-compatible shim used by tests and simple scripts. Newer code
+    should prefer `RpcConfig` above, but the lightweight `Config` mirrors the
+    fields expected by rpc.tests helpers.
+    """
+
+    host: str
+    port: int
+    db_uri: str
+    chain_id: int
+    logging: str = "INFO"
+    cors_allow_origins: list[str] = field(default_factory=list)
+    rate_limit_per_ip: float = 0.0
+    rate_limit_per_method: float = 0.0
+
+
+def load_config() -> Config:
+    cfg = load()
+    return Config(
+        host=cfg.host,
+        port=cfg.port,
+        db_uri=cfg.db_uri,
+        chain_id=cfg.chain_id,
+        logging=cfg.log_level,
+        cors_allow_origins=list(cfg.cors.allow_origins),
+        rate_limit_per_ip=cfg.rate.default_rps,
+        rate_limit_per_method=cfg.rate.default_rps,
+    )
+
+
+__all__ = [
+    "CorsConfig",
+    "RateLimitConfig",
+    "RpcConfig",
+    "CONFIG",
+    "load",
+    "Config",
+    "load_config",
+]
