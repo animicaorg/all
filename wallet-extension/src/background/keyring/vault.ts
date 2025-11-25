@@ -57,6 +57,8 @@ export interface VaultEnvelope {
   updatedAt: number;
 }
 
+export type EncryptedVault = VaultEnvelope;
+
 /** Session PIN wrap (stored in chrome.storage.session only) */
 export interface PinWrapRecord {
   version: number;
@@ -212,6 +214,22 @@ export async function createVault(
     createdAt: now,
     updatedAt: now,
   };
+}
+
+// Compatibility shims for legacy keyring callers
+export async function encryptVault(payload: Uint8Array, password: string): Promise<VaultEnvelope> {
+  const text = td.decode(payload);
+  const obj = JSON.parse(text) as { seed: number[]; mnemonic?: string | null };
+  const vp: VaultPayload = { seedB64: Buffer.from(obj.seed).toString('base64'), meta: {} };
+  if (obj.mnemonic) (vp.meta as any).mnemonic = obj.mnemonic;
+  return createVault(vp, password);
+}
+
+export async function decryptVault(envelope: VaultEnvelope, password: string): Promise<Uint8Array> {
+  const payload = await openVault(envelope, password);
+  const seed = Buffer.from(payload.seedB64, 'base64');
+  const obj = { v: 1, seed: Array.from(seed.values()), mnemonic: (payload as any).meta?.mnemonic ?? null };
+  return te.encode(JSON.stringify(obj));
 }
 
 /**

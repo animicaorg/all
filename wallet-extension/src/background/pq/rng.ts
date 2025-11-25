@@ -7,8 +7,8 @@
  * IMPORTANT: The deterministic path is **only** for tests. Do not enable it in production.
  */
 
-import { hmac } from '@noble/hashes/hmac';
-import { sha3_256 } from '@noble/hashes/sha3';
+import { hmac } from '../../polyfills/noble/hmac.ts';
+import { sha3_256 } from '../../polyfills/noble/sha3.ts';
 
 /** Ensure we have WebCrypto in MV3/worker contexts. */
 function getCrypto(): Crypto {

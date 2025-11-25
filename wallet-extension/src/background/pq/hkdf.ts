@@ -8,8 +8,8 @@
  *   const okm = await hkdf({ ikm, salt, info, length: 32 });
  */
 
-import { hmac } from '@noble/hashes/hmac';
-import { sha3_256 } from '@noble/hashes/sha3';
+import { hmac } from '../../polyfills/noble/hmac.ts';
+import { sha3_256, sha3_512 } from '../../polyfills/noble/sha3.ts';
 
 export interface HKDFOpts {
   /** Input keying material (secret). */
@@ -28,6 +28,7 @@ const HASH_LEN = 32;
 /** Coerce various byte-like inputs to Uint8Array. */
 function toU8(x?: Uint8Array | ArrayBuffer | number[] | null): Uint8Array {
   if (!x) return new Uint8Array();
+  if (typeof x === 'string') return new TextEncoder().encode(x);
   if (x instanceof Uint8Array) return x;
   if (x instanceof ArrayBuffer) return new Uint8Array(x);
   if (Array.isArray(x)) return new Uint8Array(x);
@@ -36,6 +37,8 @@ function toU8(x?: Uint8Array | ArrayBuffer | number[] | null): Uint8Array {
     // @ts-ignore
     return new Uint8Array(x.buffer, x.byteOffset, x.byteLength);
   }
+  // Last-resort: try to coerce array-like objects
+  if (typeof (x as any).length === 'number') return Uint8Array.from(x as any);
   throw new Error('Unsupported bytes-like input');
 }
 
@@ -97,6 +100,19 @@ export async function hkdf(opts: HKDFOpts): Promise<Uint8Array> {
   prk.fill(0);
   return okm;
 }
+
+/** Convenience alias matching the keyring/vault helpers. */
+export async function hkdfSha3_256(opts: HKDFOpts): Promise<Uint8Array> {
+  return hkdf(opts);
+}
+
+/** Minimal HMAC-SHA3-512 helper used by PBKDF2 and vault derivation. */
+export async function hmacSha3_512(key: Uint8Array, data: Uint8Array): Promise<Uint8Array> {
+  return hmac(sha3_512, key, data);
+}
+
+// Re-export sha3_256 for convenience (used by mnemonic/vault helpers)
+export { sha3_256 };
 
 /** Convenience helper to derive hex string output (lowercase). */
 export async function hkdfHex(opts: HKDFOpts): Promise<string> {
