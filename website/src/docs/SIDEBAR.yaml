@@ -1,0 +1,103 @@
+# Sidebar navigation tree consumed by the website docs UI.
+# Keep paths stable; you can add new sections at the bottom to avoid breaking links.
+version: 1
+title: Animica Documentation
+sections:
+  - id: start-here
+    title: Start here
+    items:
+      - title: Overview
+        slug: OVERVIEW
+        href: /docs/OVERVIEW
+      - title: Quickstart
+        slug: QUICKSTART
+        href: /docs/QUICKSTART
+      - title: Wallets
+        slug: WALLET
+        href: /docs/WALLET
+      - title: FAQ
+        slug: FAQ
+        href: /docs/FAQ
+      - title: Glossary
+        slug: GLOSSARY
+        href: /docs/GLOSSARY
+
+  - id: guides
+    title: Guides
+    items:
+      - title: Writing & Style
+        children:
+          - title: Style Guide
+            slug: STYLE_GUIDE
+            href: /docs/STYLE_GUIDE
+          - title: Terminology & Symbols
+            slug: GLOSSARY
+            href: /docs/GLOSSARY
+      - title: Contributing to Docs
+        slug: CONTRIBUTING
+        href: /docs/CONTRIBUTING
+
+  - id: reference
+    title: Reference
+    items:
+      - title: Table of Contents
+        slug: TOC
+        href: /docs/TOC
+      - title: Docs README
+        slug: README
+        href: /docs/README
+      - title: Changelog
+        slug: CHANGELOG
+        href: /docs/CHANGELOG
+
+  # Placeholder buckets for future deep docs (specs & modules).
+  # These typically redirect to the canonical repo or dedicated docs site.
+  - id: architecture
+    title: Architecture (overview)
+    items:
+      - title: Consensus & PoIES
+        note: See spec/ and consensus/ docs (redirected by the site router)
+        href: /docs/OVERVIEW#consensus
+      - title: Data Availability (DA)
+        href: /docs/OVERVIEW#data-availability
+      - title: VM(Py) & Contracts
+        href: /docs/OVERVIEW#contracts
+      - title: Proofs (AI/Quantum/Hash/Storage/VDF)
+        href: /docs/OVERVIEW#proofs
+      - title: Randomness Beacon
+        href: /docs/OVERVIEW#randomness
+      - title: ZK Verification
+        href: /docs/OVERVIEW#zk
+
+  - id: products
+    title: Products & Tools
+    items:
+      - title: Studio (Web IDE)
+        href: /studio
+      - title: Explorer
+        href: /explorer
+      - title: Downloads
+        href: /downloads
+      - title: Network & Status
+        children:
+          - title: Networks
+            href: /network
+          - title: Status
+            href: /status
+
+  - id: company
+    title: Project
+    items:
+      - title: Roadmap
+        href: /roadmap
+      - title: Blog
+        href: /blog
+
+# Notes:
+# - Each item can define:
+#    - title (required)
+#    - href (route under website/, or absolute URL if external)
+#    - slug (optional, used for MDX under /docs/)
+#    - children (optional nested items)
+#    - note (optional short hint)
+# - The docs router serves MDX from /docs when present; otherwise it redirects.

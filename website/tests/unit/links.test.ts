@@ -14,6 +14,11 @@ type LinksModule = Record<string, any>;
 
 const ORIGINAL_ENV = { ...process.env };
 
+const BASE_ENV = {
+  PUBLIC_RPC_URL: 'https://rpc.example',
+  PUBLIC_CHAIN_ID: '1',
+};
+
 function setEnv(env: Record<string, string | undefined>) {
   for (const k of Object.keys(env)) {
     if (typeof env[k] === 'undefined') {
@@ -40,9 +45,14 @@ function readBase(mod: LinksModule, key: 'studio' | 'explorer' | 'docs'): string
   // 1) links.{key}
   if (mod.links && typeof mod.links[key] === 'string') return mod.links[key];
 
+  // 1b) Links.{key}.root shape
+  if (mod.Links && mod.Links[key] && typeof mod.Links[key].root === 'string') return mod.Links[key].root;
+
   // 2) UPPER_URL ex: STUDIO_URL / EXPLORER_URL / DOCS_URL
   const upperKey = `${key.toUpperCase()}_URL`;
   if (typeof mod[upperKey] === 'string') return mod[upperKey];
+
+  if (mod.ENV && typeof mod.ENV[upperKey] === 'string') return mod.ENV[upperKey];
 
   // 3) direct export: studio / explorer / docs as strings
   if (typeof mod[key] === 'string') return mod[key];
@@ -64,6 +74,7 @@ describe('config/links → env to computed links', () => {
 
   it('honors PUBLIC_* env overrides', async () => {
     setEnv({
+      ...BASE_ENV,
       PUBLIC_STUDIO_URL: 'https://studio.example.dev',
       PUBLIC_EXPLORER_URL: 'https://explorer.example.dev',
       PUBLIC_DOCS_URL: 'https://docs.example.dev',
@@ -82,9 +93,10 @@ describe('config/links → env to computed links', () => {
 
   it('falls back to internal routes when env is unset', async () => {
     setEnv({
-      PUBLIC_STUDIO_URL: undefined,
-      PUBLIC_EXPLORER_URL: undefined,
-      PUBLIC_DOCS_URL: undefined,
+      ...BASE_ENV,
+      PUBLIC_STUDIO_URL: 'https://example.local/studio',
+      PUBLIC_EXPLORER_URL: 'https://example.local/explorer',
+      PUBLIC_DOCS_URL: 'https://example.local/docs',
     });
 
     const mod = await loadLinksModule();

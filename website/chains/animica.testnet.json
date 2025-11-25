@@ -6,6 +6,7 @@
     "https://rpc.testnet.animica.org",
     "wss://ws.testnet.animica.org"
   ],
+  "rpcUrls": ["https://rpc.testnet.animica.org"],
   "explorer": "https://explorer.testnet.animica.org",
   "testnet": true,
   "docs": "https://docs.animica.org/network/testnet",
