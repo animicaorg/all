@@ -41,6 +41,13 @@ type ProviderEvent =
 
 type JsonRpcResult = { jsonrpc: "2.0"; id: number; result?: any; error?: any };
 
+type JsonRpcRequest<TParams = any> = {
+  jsonrpc: "2.0";
+  id: number | string;
+  method: string;
+  params?: TParams;
+};
+
 type InpageRequest = {
   source: "animica:inpage";
   type: "REQUEST";
@@ -143,6 +150,64 @@ class TinyEmitter {
     });
     return true;
   }
+}
+
+/* -------------------------- Test-friendly factory ------------------------- */
+
+/**
+ * Lightweight provider factory used by unit tests. Allows injecting a transport
+ * that speaks raw JSON-RPC without the window.postMessage bridge.
+ */
+export function createProvider(transport: { send: (req: JsonRpcRequest) => Promise<any> }) {
+  const emitter = new TinyEmitter();
+  let nextId = 1;
+
+  const provider: any = {
+    isAnimica: true,
+    request: async (args: { method: string; params?: any }) => {
+      if (!args || typeof args.method !== "string") {
+        throw createError(RpcErrors.INVALID_REQUEST, "Invalid request arguments");
+      }
+      const id = nextId++;
+      const req: JsonRpcRequest = {
+        jsonrpc: "2.0",
+        id,
+        method: args.method,
+        params: args.params ?? [],
+      };
+      try {
+        const res = await transport.send(req);
+        if (res && typeof res === "object") {
+          if ((res as any).error) {
+            const e = (res as any).error;
+            throw createError(e.code ?? RpcErrors.INTERNAL, e.message ?? "Provider error", e.data);
+          }
+          if ("result" in (res as any)) return (res as any).result;
+        }
+        return (res as any)?.result ?? res;
+      } catch (err) {
+        if (err instanceof ProviderRpcError) throw err;
+        if (err && typeof err === "object" && "code" in (err as any) && "message" in (err as any)) {
+          throw createError((err as any).code, (err as any).message, (err as any).data);
+        }
+        const msg = err instanceof Error ? err.message : String(err);
+        throw createError(RpcErrors.TIMEOUT, msg);
+      }
+    },
+    on: (event: ProviderEvent, listener: Listener) => {
+      emitter.on(event, listener);
+      return provider;
+    },
+    removeListener: (event: ProviderEvent, listener: Listener) => {
+      emitter.removeListener(event, listener);
+      return provider;
+    },
+    __testEmit: (event: ProviderEvent, payload: unknown) => {
+      emitter.emit(event, payload as any);
+    },
+  };
+
+  return provider;
 }
 
 /* -------------------------------- Provider -------------------------------- */

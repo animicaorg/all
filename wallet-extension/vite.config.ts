@@ -16,7 +16,10 @@ export default defineConfig(({ mode }) => ({
   plugins: [react()],
   publicDir: "public",
   resolve: {
-    alias: { "@": path.resolve(__dirname, "src") }
+    alias: {
+      "@": path.resolve(__dirname, "src"),
+      "@noble/hashes": path.resolve(__dirname, "src/polyfills/noble"),
+    }
   },
   define: {
     __DEV__: mode !== "production"

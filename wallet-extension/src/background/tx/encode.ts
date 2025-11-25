@@ -24,12 +24,14 @@ import type {
   TxSignature,
   Bytes,
 } from "./types";
-import { sha3_256 } from "@noble/hashes/sha3";
+import { sha3_256 } from "../../polyfills/noble/sha3.ts";
 
 /* --------------------------------- domains -------------------------------- */
 
 export const SIGN_DOMAIN = "animica:tx:sign/v1";
 export const TX_ENVELOPE_TAG = "animica:tx:v1";
+
+type TxLike = Record<string, any>;
 
 /* --------------------------- signable body shapes -------------------------- */
 
@@ -73,6 +75,54 @@ type SignableBody =
       init?: Bytes;
       memo?: string;
     };
+
+function normalizeGas(gas: any): { limit?: number; price?: string } | undefined {
+  if (gas == null) return undefined;
+  const limit = typeof gas === "number" ? gas : gas.limit ?? gas.gasLimit;
+  const price = typeof gas === "object" ? gas.price ?? gas.gasPrice : undefined;
+  const out: Record<string, any> = {};
+  if (typeof limit === "number") out.limit = limit;
+  if (price !== undefined) out.price = typeof price === "string" ? price : String(price);
+  return Object.keys(out).length ? (out as { limit?: number; price?: string }) : undefined;
+}
+
+function normalizeTxLike(tx: TxLike, chainId: string): Record<string, unknown> {
+  const gas = normalizeGas(tx.gas ?? tx.gasLimit);
+  const body: Record<string, unknown> = {
+    kind: tx.kind ?? tx.type ?? "transfer",
+    chainId,
+    from: tx.from,
+    nonce: tx.nonce ?? 0,
+    memo: tx.memo,
+  };
+
+  if (gas?.limit !== undefined) body.gasLimit = gas.limit;
+  if (tx.maxFee !== undefined) body.maxFee = typeof tx.maxFee === "string" ? tx.maxFee : String(tx.maxFee);
+  if (gas?.price !== undefined) body.gasPrice = gas.price;
+
+  switch (body.kind) {
+    case "call":
+      body.to = tx.to;
+      body.data = tx.data;
+      if (tx.value != null) body.value = tx.value;
+      if (tx.amount != null && body.value === undefined) body.value = tx.amount;
+      break;
+    case "deploy":
+      body.code = tx.code;
+      if (tx.init != null) body.init = tx.init;
+      break;
+    case "transfer":
+    default:
+      body.kind = "transfer";
+      body.to = tx.to;
+      body.value = tx.value ?? tx.amount;
+  }
+
+  for (const k of Object.keys(body)) {
+    if (body[k] === undefined) delete body[k];
+  }
+  return body;
+}
 
 /** Internal: convert TxBody to a SignableBody, dropping undefineds. */
 function toSignable(body: TxBody): SignableBody {
@@ -129,6 +179,15 @@ function toSignable(body: TxBody): SignableBody {
 export function encodeTxBody(body: TxBody): Uint8Array {
   const signable = toSignable(body);
   return encodeCanonical(signable);
+}
+
+/**
+ * Encode a tx-like object (loose shape) with domain + chainId separation.
+ * This is a more permissive variant used by unit tests and legacy callers.
+ */
+export function encodeSignBytes(tx: TxLike, chainId: string): Uint8Array {
+  const normalized = normalizeTxLike(tx, chainId);
+  return encodeCanonical({ domain: SIGN_DOMAIN, chainId, tx: normalized });
 }
 
 /** Build domain-separated SignBytes = CBOR([SIGN_DOMAIN, <SignableBody>]). */

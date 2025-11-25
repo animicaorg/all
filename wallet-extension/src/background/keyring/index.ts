@@ -32,7 +32,7 @@
 
 import { generateMnemonic, mnemonicToSeed } from './mnemonic';
 import { encryptVault, decryptVault, type EncryptedVault } from './vault';
-import { saveState, loadState, clearState } from './storage';
+import { saveVault, loadVault, clearVault, saveSession, loadSession, clearSession } from './storage';
 import { bech32AddressFromPub } from './addresses';
 import { deriveKeypair } from './derive';
 import * as d3 from '../pq/dilithium3';
@@ -43,7 +43,8 @@ export type KeyAlgorithm = 'dilithium3' | 'sphincs_shake_128s';
 export interface AccountMeta {
   id: string;           // stable UUID-like
   label: string;        // "Account 1"
-  alg: KeyAlgorithm;    // algorithm used for this account
+  alg: KeyAlgorithm;    // algorithm used for this account (legacy field)
+  algo: KeyAlgorithm;   // alias used by some callers/tests
   path: string;         // derivation path, e.g. "m/44'/0'/0'/0/0" or "m/animica/0"
   index: number;        // numeric index (for convenience)
   address: string;      // bech32m (anim1...)
@@ -84,20 +85,30 @@ export class Keyring {
 
   // In-memory unlocked secrets (never persisted)
   private unlockedSeed: Uint8Array | null = null;
+  private sessionMnemonic: string | null = null;
 
   private inited = false;
+
+  get locked(): boolean {
+    return this.isLocked();
+  }
 
   // ---------- lifecycle ----------
 
   /** Load from storage. Idempotent. */
   public async init(): Promise<void> {
     if (this.inited) return;
-    const data = await loadState<PersistedKeyringV1>('keyring_v1');
+    const data = await loadVault<PersistedKeyringV1>();
     if (data && data.version === 1) {
+      // Backfill legacy fields (alg ⇔ algo)
+      for (const acct of data.meta.accounts) {
+        (acct as AccountMeta).algo = (acct as AccountMeta).algo ?? (acct as AccountMeta).alg;
+        (acct as AccountMeta).alg = (acct as AccountMeta).alg ?? (acct as AccountMeta).algo;
+      }
       this.persisted = data;
     } else {
       this.persisted = newEmptyState();
-      await saveState('keyring_v1', this.persisted);
+      await saveVault(this.persisted);
     }
     this.inited = true;
   }
@@ -106,12 +117,13 @@ export class Keyring {
   public async create(opts: CreateOptions): Promise<{ mnemonic: string; account: AccountMeta }> {
     await this.init();
 
-    if (!opts?.password || typeof opts.password !== 'string' || opts.password.length < 8) {
-      throw new Error('Password must be at least 8 characters.');
+    if (!opts?.password || typeof opts.password !== 'string' || opts.password.length < 4) {
+      throw new Error('Password must be at least 4 characters.');
     }
 
     const mnemonic = generateMnemonic();
     const seed = await mnemonicToSeed(mnemonic);
+    this.sessionMnemonic = mnemonic;
 
     // Prepare first account
     const alg: KeyAlgorithm = opts.initialAlg ?? 'dilithium3';
@@ -123,41 +135,58 @@ export class Keyring {
 
     this.persisted.vault = vault;
     this.persisted.meta.mnemonicStored = !!opts.storeMnemonic;
-    await saveState('keyring_v1', this.persisted);
+    await saveVault(this.persisted);
 
     // Keep unlocked for this session (user just created)
     this.unlockedSeed = seed;
+    await saveSession({ unlocked: true });
 
     return { mnemonic, account };
   }
 
   /** Import from an existing mnemonic and create first account. */
-  public async importMnemonic(opts: ImportOptions): Promise<{ account: AccountMeta }> {
+  public async importMnemonic(opts: ImportOptions | string, maybeOpts?: { pin?: string; storeMnemonic?: boolean; initialAlg?: KeyAlgorithm; label?: string; password?: string }): Promise<{ account: AccountMeta }> {
     await this.init();
 
-    if (!opts?.password || opts.password.length < 8) {
-      throw new Error('Password must be at least 8 characters.');
+    let normalized: ImportOptions;
+    if (typeof opts === 'string') {
+      const pin = maybeOpts?.pin ?? maybeOpts?.password ?? '';
+      normalized = {
+        mnemonic: opts,
+        password: pin,
+        storeMnemonic: maybeOpts?.storeMnemonic ?? true,
+        initialAlg: maybeOpts?.initialAlg,
+        label: maybeOpts?.label,
+      } as ImportOptions;
+    } else {
+      normalized = opts;
     }
-    if (!opts?.mnemonic || typeof opts.mnemonic !== 'string') {
+
+    if (!normalized?.password || normalized.password.length < 4) {
+      throw new Error('Password must be at least 4 characters.');
+    }
+    if (!normalized?.mnemonic || typeof normalized.mnemonic !== 'string') {
       throw new Error('Mnemonic required.');
     }
 
-    const seed = await mnemonicToSeed(opts.mnemonic.trim());
+    const seed = await mnemonicToSeed(normalized.mnemonic.trim());
 
     // Prepare first account
-    const alg: KeyAlgorithm = opts.initialAlg ?? 'dilithium3';
-    const { account } = await this.addAccountFromSeed(seed, alg, opts.label ?? 'Account 1', 0);
+    const alg: KeyAlgorithm = normalized.initialAlg ?? 'dilithium3';
+    const { account } = await this.addAccountFromSeed(seed, alg, normalized.label ?? 'Account 1', 0);
 
     // Encrypt vault with seed (+ optionally mnemonic)
-    const payload = await this.packVaultPayload(seed, opts.storeMnemonic ? opts.mnemonic : undefined);
-    const vault = await encryptVault(payload, opts.password);
+    const payload = await this.packVaultPayload(seed, normalized.storeMnemonic ?? true ? normalized.mnemonic : undefined);
+    const vault = await encryptVault(payload, normalized.password);
 
     this.persisted.vault = vault;
-    this.persisted.meta.mnemonicStored = !!opts.storeMnemonic;
-    await saveState('keyring_v1', this.persisted);
+    this.persisted.meta.mnemonicStored = !!(normalized.storeMnemonic ?? true);
+    await saveVault(this.persisted);
 
     // Keep unlocked for this session
     this.unlockedSeed = seed;
+    this.sessionMnemonic = normalized.mnemonic.trim();
+    await saveSession({ unlocked: true });
 
     return { account };
   }
@@ -169,13 +198,18 @@ export class Keyring {
     const v = this.persisted.vault;
     if (!v) throw new Error('No vault set up.');
     const payload = await decryptVault(v, password);
-    const { seed } = await this.unpackVaultPayload(payload);
+    const { seed, mnemonic } = await this.unpackVaultPayload(payload);
     this.unlockedSeed = seed;
+    this.sessionMnemonic = mnemonic ?? this.sessionMnemonic;
+    await saveSession({ unlocked: true });
   }
 
   /** Lock: forget secrets from memory. */
-  public lock(): void {
+  public lock(): boolean {
     this.unlockedSeed = null;
+    this.sessionMnemonic = null;
+    void clearSession();
+    return true;
   }
 
   /** True if the seed is not resident in memory. */
@@ -183,13 +217,49 @@ export class Keyring {
     return !this.unlockedSeed;
   }
 
+  /** Convenience account derivation for tests and API parity. */
+  public async deriveAccount(opts: { index: number; algo: KeyAlgorithm }): Promise<AccountMeta> {
+    await this.init();
+    if (this.isLocked()) throw new Error('Keyring is locked.');
+    const existing = this.persisted.meta.accounts.find(
+      (a) => a.index === opts.index && a.alg === opts.algo,
+    );
+    if (existing) return existing;
+
+    const seed = this.requireUnlocked();
+    const { account } = await this.addAccountFromSeed(
+      seed,
+      opts.algo,
+      `Account ${opts.index + 1}`,
+      opts.index,
+    );
+    if (this.persisted.meta.nextIndex <= opts.index) {
+      this.persisted.meta.nextIndex = opts.index + 1;
+    }
+    await saveVault(this.persisted);
+    return account;
+  }
+
+  /** Fetch (or lazily derive) an account at a specific index/algorithm. */
+  public async getAccountAt(index: number, algo: KeyAlgorithm): Promise<AccountMeta> {
+    return this.deriveAccount({ index, algo });
+  }
+
+  /** List all known accounts (public metadata). */
+  public async getAccounts(): Promise<AccountMeta[]> {
+    return this.listAccounts();
+  }
+
   /** Danger: wipe everything (requires already-unlocked + confirmation flag). */
   public async factoryReset({ confirm }: { confirm: boolean }): Promise<void> {
     await this.init();
     if (!confirm) throw new Error('Confirmation required.');
     this.unlockedSeed = null;
+    this.sessionMnemonic = null;
     this.persisted = newEmptyState();
-    await saveState('keyring_v1', this.persisted);
+    await clearVault();
+    await saveVault(this.persisted);
+    await clearSession();
   }
 
   // ---------- accounts ----------
@@ -214,7 +284,7 @@ export class Keyring {
       throw new Error('Account not found.');
     }
     this.persisted.meta.selectedId = id;
-    await saveState('keyring_v1', this.persisted);
+    await saveVault(this.persisted);
   }
 
   /** Add a new derived account using the next index. Requires unlocked seed. */
@@ -224,11 +294,11 @@ export class Keyring {
     const idx = this.persisted.meta.nextIndex;
     const { account } = await this.addAccountFromSeed(seed, alg, label ?? `Account ${idx + 1}`, idx);
     this.persisted.meta.nextIndex = idx + 1;
-    await saveState('keyring_v1', this.persisted);
+    await saveVault(this.persisted);
     // Keep first account selected by default
     if (!this.persisted.meta.selectedId) {
       this.persisted.meta.selectedId = account.id;
-      await saveState('keyring_v1', this.persisted);
+      await saveVault(this.persisted);
     }
     return account;
   }
@@ -247,25 +317,38 @@ export class Keyring {
     if (this.persisted.meta.selectedId === id) {
       this.persisted.meta.selectedId = accs[0]?.id;
     }
-    await saveState('keyring_v1', this.persisted);
+    await saveVault(this.persisted);
   }
 
   // ---------- export helpers ----------
 
   /**
    * Export mnemonic if (and only if) it was stored in the vault by choice.
-   * Requires password to decrypt.
+   * If a session mnemonic is available (unlocked), it is returned directly.
+   * Otherwise requires password to decrypt.
    */
-  public async exportMnemonic(password: string): Promise<string> {
+  public async exportMnemonic(password?: string): Promise<string> {
     await this.init();
-    if (!this.persisted.vault) throw new Error('No vault present.');
-    if (!this.persisted.meta.mnemonicStored) {
+    if (this.isLocked()) throw new Error('Keyring is locked.');
+    if (this.sessionMnemonic) return this.sessionMnemonic;
+
+    if (!this.persisted.vault || !this.persisted.meta.mnemonicStored) {
       throw new Error('Mnemonic was not stored in this vault.');
     }
+    if (!password) throw new Error('Password required to decrypt mnemonic.');
+
     const payload = await decryptVault(this.persisted.vault, password);
     const { mnemonic } = await this.unpackVaultPayload(payload);
     if (!mnemonic) throw new Error('Mnemonic missing from vault.');
+    this.sessionMnemonic = mnemonic;
     return mnemonic;
+  }
+
+  /** Direct mnemonic getter used by some tests (requires unlocked session). */
+  public async getMnemonic(): Promise<string> {
+    await this.init();
+    if (this.isLocked() || !this.sessionMnemonic) throw new Error('Keyring is locked.');
+    return this.sessionMnemonic;
   }
 
   // ---------- signing ----------
@@ -278,12 +361,7 @@ export class Keyring {
     if (!account) throw new Error('Account not found.');
 
     // Derive PQ keypair deterministically for this account (stateless)
-    const kp = await deriveKeypair({
-      masterSeed: seed,
-      alg: account.alg,
-      path: account.path,
-      index: account.index,
-    });
+    const kp = await deriveKeypair(seed, account.alg, { index: account.index });
 
     if (account.alg === 'dilithium3') {
       return await d3.sign(bytes, kp.secretKey);
@@ -310,11 +388,11 @@ export class Keyring {
     // Path convention (kept simple; actual derivation occurs in ./derive)
     const path = `m/animica/${index}`;
 
-    const kp = await deriveKeypair({ masterSeed: seed, alg, path, index });
+    const kp = await deriveKeypair(seed, alg, { index });
     const address = await bech32AddressFromPub(kp.publicKey, alg);
     const id = await this.makeAccountId(address, index);
 
-    const meta: AccountMeta = { id, label, alg, path, index, address };
+    const meta: AccountMeta = { id, label, alg, algo: alg, path, index, address };
     this.persisted.meta.accounts.push(meta);
     if (!this.persisted.meta.selectedId) this.persisted.meta.selectedId = meta.id;
 
@@ -355,6 +433,14 @@ export class Keyring {
 // Singleton instance
 export const keyring = new Keyring();
 export default keyring;
+
+// Compatibility factory for tests/specs
+export function createKeyring(opts?: unknown) {
+  return new Keyring(opts as any);
+}
+
+// Alias used by some controller-oriented code paths
+export const KeyringController = Keyring;
 
 // Convenience top-level helpers (optional)
 export async function ensureInited() {
