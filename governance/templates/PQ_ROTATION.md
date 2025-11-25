@@ -1,20 +1,46 @@
----
-proposal_id: "GOV-YYYY.MM-PQROT-<ShortSlug>"
-proposal_kind: "PQRotation"
+schema_version: 1
+proposal_id: "GOV-YYYY.MM-PQROT-<short-slug>"
+kind: "PQRotation"
 network: "<mainnet | testnet | devnet>"
-authors:
-  - name: "<Your Name>"
-    contact: "<@handle or email>"
-sponsors: []
-created: "YYYY-MM-DD"
-discussion: "https://forum.example.org/t/…"
-related_proposals: []
-snapshot:
-  height: 0
-  time: "YYYY-MM-DDTHH:MM:SSZ"
+title: "Post-Quantum Rotation: <concise title>"
+summary: "<1–2 sentence changelog summary>"
+description: "<Markdown body; keep concise>"
+proposer:
+  address: "anim1<bech32m proposer address>"
+  display_name: "<Your Name>"
+  organization: "<Org or Working Group>"
+  contact: "https://forum.example.org/u/<handle>"
+created_at: "YYYY-MM-DDTHH:MM:SSZ"
 voting_window:
-  start: "YYYY-MM-DDTHH:MM:SSZ"
-  end: "YYYY-MM-DDTHH:MM:SSZ"
+  start_time: "YYYY-MM-DDTHH:MM:SSZ"
+  end_time: "YYYY-MM-DDTHH:MM:SSZ"
+references: []
+labels: ["pq", "security"]
+payload:
+  policy_version: "1.4.0"
+  target_sets:
+    signatures: ["dilithium3", "sphincs_shake_128s"]
+    handshake_kem: ["mlkem768"]
+    hash: "sha3-256"
+    address_scheme: "bech32m-pq"
+  compatibility:
+    min_node_version: "1.2.0"
+    min_wallet_version: "1.1.0"
+    min_sdk_versions:
+      typescript: "1.1.0"
+      python: "1.0.0"
+      rust: "1.0.0"
+  phases:
+    - phase_id: "announce"
+      name: "Publish policy + optional stage"
+      activation:
+        method: "time"
+        time: "YYYY-MM-DDTHH:MM:SSZ"
+      actions:
+        enable_signatures: ["dilithium3"]
+        enable_kem: ["mlkem768"]
+        new_key_default: "dilithium3"
+  deprecations: []
 ---
 
 # Post-Quantum Algorithm Rotation: Normal Cadence & Emergency Variant
