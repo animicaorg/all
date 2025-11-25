@@ -5,6 +5,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),
+      '@noble/hashes': path.resolve(__dirname, 'src/polyfills/noble'),
     },
   },
   test: {

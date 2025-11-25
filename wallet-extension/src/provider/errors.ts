@@ -30,6 +30,9 @@ export class ProviderError extends Error {
   }
 }
 
+// Backwards-compat convenience for specs expecting an EIP-1193-style class name
+export class ProviderRpcError extends ProviderError {}
+
 /* --------------------------- Specific error types -------------------------- */
 
 export class UserRejectedRequestError extends ProviderError {

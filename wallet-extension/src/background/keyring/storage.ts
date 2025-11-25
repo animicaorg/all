@@ -16,8 +16,10 @@ import type { VaultEnvelope } from './vault';
 
 const VAULT_KEY = 'animica:keyring:vault';
 const PUBSTATE_KEY = 'animica:keyring:public';
+const STATE_KEY = 'animica:keyring:state';
+const SESSION_KEY = 'animica:keyring:session';
 
-export type KeyAlgo = 'dilithium3' | 'sphincs-shake-128s';
+export type KeyAlgo = 'dilithium3' | 'sphincs_shake_128s';
 
 export interface PublicAccount {
   /** bech32m address (e.g., anim1...) */
@@ -90,6 +92,33 @@ export async function clearVaultEnvelope(): Promise<void> {
 /** Quick existence check (without fetching). */
 export async function hasVaultEnvelope(): Promise<boolean> {
   return (await loadVaultEnvelope()) !== null;
+}
+
+// Back-compat helpers used by the keyring facade and tests
+export async function saveVault<T>(state: T): Promise<void> {
+  await storageLocalSet(STATE_KEY, state as any);
+}
+
+export async function loadVault<T = any>(): Promise<T | null> {
+  const v = await storageLocalGet<T>(STATE_KEY);
+  return (v as any) ?? null;
+}
+
+export async function clearVault(): Promise<void> {
+  await storageLocalRemove(STATE_KEY);
+}
+
+export async function saveSession<T>(session: T): Promise<void> {
+  await storageLocalSet(SESSION_KEY, session as any);
+}
+
+export async function loadSession<T = any>(): Promise<T | null> {
+  const s = await storageLocalGet<T>(SESSION_KEY);
+  return (s as any) ?? null;
+}
+
+export async function clearSession(): Promise<void> {
+  await storageLocalRemove(SESSION_KEY);
 }
 
 // ------------------------------ Public (non-secret) state ------------------------------

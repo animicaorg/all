@@ -17,7 +17,7 @@ export type Bytes = Uint8Array;
 
 export type TxKind = "transfer" | "call" | "deploy";
 
-export type SigScheme = "dilithium3" | "sphincs-shake-128s";
+export type SigScheme = "dilithium3" | "sphincs_shake_128s";
 
 /** Execution outcome classification (subset shown to UIs). */
 export type ReceiptStatus =

@@ -45,7 +45,7 @@ const HKDF_SALT = new TextEncoder().encode('Animica wallet seed v1');
 /** Required seed lengths for supported algos (in bytes). */
 const SEED_LEN: Record<KeyAlgo, number> = {
   'dilithium3': 32,            // 32-byte seed feeds Dilithium keygen
-  'sphincs-shake-128s': 48,     // 3×N with N=16 → 48 bytes for SPHINCS+ seeds
+  'sphincs_shake_128s': 48,     // 3×N with N=16 → 48 bytes for SPHINCS+ seeds
 } as const;
 
 /** Build a canonical info string for HKDF expand phase. */
@@ -91,29 +91,50 @@ export async function deriveKeypair(
 
   switch (algo) {
     case 'dilithium3': {
-      // Expect wrapper to support deterministic keygen from seed
-      if (typeof (DIL as any).keypairFromSeed !== 'function') {
-        throw new Error('Dilithium3 wrapper missing keypairFromSeed(seed) export');
+      const derivePk = (DIL as any).derivePublicKey;
+      if (typeof derivePk === 'function') {
+        const pk = await derivePk(subseed, index);
+        return {
+          algo,
+          publicKey: toU8(pk),
+          secretKey: toU8(subseed),
+          path: displayPath(algo, role, account, index),
+        };
       }
-      const { publicKey, secretKey } = await (DIL as any).keypairFromSeed(subseed);
-      return {
-        algo,
-        publicKey: toU8(publicKey),
-        secretKey: toU8(secretKey),
-        path: displayPath(algo, role, account, index),
-      };
+      const keypairFromSeed = (DIL as any).keypairFromSeed;
+      if (typeof keypairFromSeed === 'function') {
+        const { publicKey, secretKey } = await keypairFromSeed(subseed);
+        return {
+          algo,
+          publicKey: toU8(publicKey),
+          secretKey: toU8(secretKey),
+          path: displayPath(algo, role, account, index),
+        };
+      }
+      throw new Error('Dilithium3 wrapper missing keypairFromSeed(seed) export');
     }
-    case 'sphincs-shake-128s': {
-      if (typeof (SPX as any).keypairFromSeed !== 'function') {
-        throw new Error('SPHINCS+ wrapper missing keypairFromSeed(seed) export');
+    case 'sphincs_shake_128s': {
+      const derivePk = (SPX as any).derivePublicKey;
+      if (typeof derivePk === 'function') {
+        const pk = await derivePk(subseed, index);
+        return {
+          algo,
+          publicKey: toU8(pk),
+          secretKey: toU8(subseed),
+          path: displayPath(algo, role, account, index),
+        };
       }
-      const { publicKey, secretKey } = await (SPX as any).keypairFromSeed(subseed);
-      return {
-        algo,
-        publicKey: toU8(publicKey),
-        secretKey: toU8(secretKey),
-        path: displayPath(algo, role, account, index),
-      };
+      const keypairFromSeed = (SPX as any).keypairFromSeed;
+      if (typeof keypairFromSeed === 'function') {
+        const { publicKey, secretKey } = await keypairFromSeed(subseed);
+        return {
+          algo,
+          publicKey: toU8(publicKey),
+          secretKey: toU8(secretKey),
+          path: displayPath(algo, role, account, index),
+        };
+      }
+      throw new Error('SPHINCS+ wrapper missing keypairFromSeed(seed) export');
     }
     default:
       throw new Error(`Unsupported algo: ${algo as string}`);
