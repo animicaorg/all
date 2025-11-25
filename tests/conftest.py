@@ -25,6 +25,21 @@ import pytest
 # ---------- CLI OPTIONS ----------
 
 def pytest_addoption(parser: pytest.Parser) -> None:
+    # Ensure pytest accepts the asyncio configuration even when pytest-asyncio
+    # is not installed in the current environment (common in minimal CI/dev
+    # images). When the plugin is available it will use this setting; otherwise
+    # the option is simply registered so pytest does not error on startup.
+    try:
+        parser.addini(
+            "asyncio_mode",
+            "Default asyncio mode for asyncio-capable tests",
+            default="auto",
+        )
+    except ValueError:
+        # If another plugin (e.g., pytest-asyncio) already registered the ini
+        # option, reuse the existing definition.
+        pass
+
     parser.addoption(
         "--rpc-url",
         action="store",
