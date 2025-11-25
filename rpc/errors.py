@@ -28,6 +28,13 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any, Dict, Mapping, Optional, Union
 
+# Optional mempool error mapping (keep import cheap and optional)
+try:  # pragma: no cover - optional dependency during import
+    from mempool.errors import MempoolError, MempoolErrorCode  # type: ignore
+except Exception:  # pragma: no cover
+    MempoolError = None  # type: ignore[assignment]
+    MempoolErrorCode = None  # type: ignore[assignment]
+
 
 # ───────────────────────────────────────────────────────────────────────────────
 # JSON-RPC 2.0 codes (spec)
@@ -82,7 +89,8 @@ class AnimicaCode(IntEnum):
     VDF_INVALID = -32051
 
 # Back-compat: fix typo for DUPLICATE_TX (ensure distinct code)
-AnimicaCode.DUPLICATE_TX = IntEnum("AnimicaCode", {"DUPLICATE_TX": -32020})(-32020)  # type: ignore
+if not hasattr(AnimicaCode, "DUPLICATE_TX"):
+    AnimicaCode.DUPLICATE_TX = IntEnum("AnimicaCode", {"DUPLICATE_TX": -32020})(-32020)  # type: ignore[attr-defined]
 
 
 # ───────────────────────────────────────────────────────────────────────────────
@@ -306,6 +314,34 @@ _CANON_MAP = {
 }
 
 
+def _mempool_to_rpc(exc: Exception) -> RpcError:
+    """
+    Map mempool errors to structured RpcError payloads.
+
+    The mempool layer exposes rich error objects with stable integer codes.
+    Surface them under JSON-RPC using Animica codes while preserving the
+    original context under `data.mempoolError` so clients can branch on
+    exact failure reasons (fee too low, nonce gap, oversize, etc.).
+    """
+
+    if MempoolError is None or MempoolErrorCode is None:  # pragma: no cover - import guard
+        return InvalidTx(str(exc))
+
+    assert isinstance(exc, MempoolError)
+    code_map = {
+        MempoolErrorCode.FEE_TOO_LOW: AnimicaCode.FEE_TOO_LOW,
+        MempoolErrorCode.NONCE_GAP: AnimicaCode.NONCE_TOO_LOW,
+        MempoolErrorCode.OVERSIZE: AnimicaCode.TX_TOO_LARGE,
+        MempoolErrorCode.ADMISSION: AnimicaCode.INVALID_TX,
+        MempoolErrorCode.REPLACEMENT: AnimicaCode.DUPLICATE_TX,
+        MempoolErrorCode.DOS: AnimicaCode.MEMPOOL_FULL,
+    }
+    rpc_code = code_map.get(getattr(exc, "code", None), AnimicaCode.INVALID_TX)
+    data = {"mempoolError": exc.to_dict() if hasattr(exc, "to_dict") else {"code": getattr(exc, "code", None)}}
+    message = exc.message if hasattr(exc, "message") else str(exc)
+    return RpcError(code=int(rpc_code), message=message, data=data)
+
+
 def to_error(exc: Exception) -> RpcError:
     """
     Convert any Exception into a RpcError.
@@ -316,6 +352,8 @@ def to_error(exc: Exception) -> RpcError:
     """
     if isinstance(exc, RpcError):
         return exc
+    if MempoolError is not None and isinstance(exc, MempoolError):
+        return _mempool_to_rpc(exc)
     for typ, fn in _CANON_MAP.items():
         if isinstance(exc, typ):
             try:
