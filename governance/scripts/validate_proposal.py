@@ -40,6 +40,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import re
 import sys
@@ -53,11 +54,18 @@ except Exception as e:  # pragma: no cover
     print("ERROR: PyYAML is required. pip install pyyaml", file=sys.stderr)
     sys.exit(4)
 
-try:
+_jsonschema_spec = importlib.util.find_spec("jsonschema")
+if _jsonschema_spec is not None:
     from jsonschema import Draft202012Validator, RefResolver, exceptions as js_exceptions
-except Exception as e:  # pragma: no cover
-    print("ERROR: jsonschema is required. pip install jsonschema", file=sys.stderr)
-    sys.exit(4)
+else:  # pragma: no cover - exercised when dependency missing locally
+    Draft202012Validator = None  # type: ignore[assignment]
+    RefResolver = None  # type: ignore[assignment]
+    js_exceptions = None  # type: ignore[assignment]
+
+
+def _ensure_jsonschema_available() -> None:
+    if Draft202012Validator is None:
+        raise SystemExit("jsonschema is required. pip install jsonschema")
 
 
 # ----------------------------
@@ -141,6 +149,7 @@ def load_schema(schemas_dir: Path, fname: str) -> Dict[str, Any]:
 
 
 def make_validator(schema: Dict[str, Any], base_uri: str) -> Draft202012Validator:
+    _ensure_jsonschema_available()
     resolver = RefResolver(base_uri=base_uri, referrer=schema)  # support $ref within the schemas dir
     return Draft202012Validator(schema, resolver=resolver)
 
