@@ -20,6 +20,8 @@ from typing import List
 import json
 import re
 
+import importlib.util
+
 import pytest
 
 # Repo layout
@@ -36,6 +38,10 @@ sys.path.insert(0, str(SCRIPTS))
 # Import the CLI entrypoints as callables
 import validate_proposal   # type: ignore
 import tally_votes         # type: ignore
+
+
+if importlib.util.find_spec("jsonschema") is None or validate_proposal.Draft202012Validator is None:
+    pytest.skip("jsonschema not installed (pip install jsonschema)", allow_module_level=True)
 
 
 def discover_markdown_examples() -> List[Path]:
