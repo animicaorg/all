@@ -147,8 +147,8 @@ class AnimicaHttpShim implements AnimicaProvider {
 
     switch (method) {
       case "animica_requestAccounts":
-        // Shim: return empty until you wire private key / local signer.
-        return [] as unknown as T;
+        // Shim: return a deterministic demo account to make UI happy in dev/test.
+        return ["animica1-demo-account"] as unknown as T;
 
       case "animica_chainId":
         return this.chainId as unknown as T;
