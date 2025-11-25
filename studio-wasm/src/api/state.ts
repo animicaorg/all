@@ -1,34 +1,27 @@
 /**
  * Ephemeral state API (in-worker)
  * ===============================
- * A lightweight wrapper for keeping per-session contract state inside the
- * Pyodide worker. When the underlying Python bridge supports stateful calls,
- * this module uses:
- *   - bridge.entry.state_new
- *   - bridge.entry.state_drop
- *   - bridge.entry.state_snapshot
- *   - bridge.entry.state_restore
- *   - bridge.entry.simulate_tx  (with { state_id })
- *   - bridge.entry.run_call     (with { state_id })
- *
- * If those symbols are unavailable, operations gracefully degrade to stateless
- * simulation (state is not persisted across calls).
+ * Lightweight wrapper for keeping per-session contract state inside the Pyodide
+ * worker. Falls back to stateless simulation when the Python bridge does not
+ * expose stateful helpers.
  */
 
+import type { CompiledContract, Json, SimulateCallResult, SimulateDeployResult } from "./simulator";
 import { ensurePyReady, simulateCall, simulateDeploy } from "./simulator";
-import type { Json } from "./compiler";
 
 /* ---------------------------------- Types ---------------------------------- */
 
 export interface StateInit {
   /** Optionally deploy a contract into this state immediately. */
   deploy?: {
-    source: string;
+    compiled: CompiledContract;
     manifest: Json;
     /** Optional initializer name; defaults to "init". */
     initMethod?: string;
     /** Initializer args. */
-    initArgs?: any[];
+    initArgs?: any[] | Record<string, any>;
+    context?: Json;
+    gasLimit?: number;
   };
   /** Optional seed snapshot to restore into this new state. */
   fromSnapshotBase64?: string;
@@ -42,30 +35,21 @@ export interface StateInit {
 }
 
 export interface CallParams {
-  source: string;
+  compiled: CompiledContract;
   manifest: Json;
   method: string;
-  args?: any[];
+  args?: any[] | Record<string, any>;
+  context?: Json;
+  gasLimit?: number;
 }
 
 export interface DeployParams {
-  source: string;
+  compiled: CompiledContract;
   manifest: Json;
   initMethod?: string;
-  initArgs?: any[];
-}
-
-export interface CallResult {
-  returnValue: any;
-  gasUsed: number;
-  events: { name: string; args: Record<string, any> }[];
-  logs?: string[];
-}
-
-export interface DeployResult {
-  gasUsed: number;
-  codeHash?: string;
-  codeSize?: number;
+  initArgs?: any[] | Record<string, any>;
+  context?: Json;
+  gasLimit?: number;
 }
 
 export interface StateSnapshot {
@@ -77,9 +61,9 @@ export interface StateHandle {
   /** Opaque state identifier scoped to the worker lifetime. */
   id: string;
   /** Run a read/write call against this state's storage. */
-  call(params: CallParams): Promise<CallResult>;
+  call(params: CallParams): Promise<SimulateCallResult>;
   /** Deploy a contract into this state (initialization call). */
-  deploy(params: DeployParams): Promise<DeployResult>;
+  deploy(params: DeployParams): Promise<SimulateDeployResult>;
   /** Capture an opaque snapshot that can be restored later. */
   snapshot(): Promise<StateSnapshot>;
   /** Restore a previously captured snapshot into this state. */
@@ -93,7 +77,7 @@ export interface StateHandle {
 function genId(): string {
   const a = new Uint8Array(16);
   (globalThis.crypto || require("crypto").webcrypto).getRandomValues(a);
-  return [...a].map(b => b.toString(16).padStart(2, "0")).join("");
+  return [...a].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 function initToWorker(init?: StateInit) {
@@ -118,6 +102,18 @@ function toStatelessInit(init?: StateInit) {
         verbose: init.verbose,
       }
     : undefined;
+}
+
+function normalizeArgs(args: any[] | Record<string, any> | undefined, manifest: Json, method: string): any[] {
+  if (Array.isArray(args)) return args;
+  if (!args || typeof args !== "object") return [];
+
+  const fn = manifest?.abi?.functions?.find((f: any) => f?.name === method);
+  if (fn?.inputs && Array.isArray(fn.inputs)) {
+    return fn.inputs.map((inp: any) => (args as any)[inp.name]);
+  }
+
+  return Object.values(args);
 }
 
 /**
@@ -180,72 +176,84 @@ export async function createState(init?: StateInit): Promise<StateHandle> {
   const handle: StateHandle = {
     id,
 
-    call: async (params: CallParams): Promise<CallResult> => {
+    call: async (params: CallParams): Promise<SimulateCallResult> => {
+      const args = normalizeArgs(params.args, params.manifest, params.method);
       if (stateful) {
-        const res = await client.call(
-          "bridge.entry.simulate_tx",
-          [],
-          {
-            kind: "call",
-            state_id: id,
-            source: params.source,
-            manifest: params.manifest,
-            method: params.method,
-            args: params.args ?? [],
-          },
-          120_000
-        );
-        return {
-          returnValue: res?.return_value ?? null,
-          gasUsed: res?.gas_used ?? 0,
-          events: (res?.events ?? []) as CallResult["events"],
-          logs: res?.logs ?? undefined,
-        };
-      } else {
-        // Stateless fallback
-        const sim = await simulateCall({
-          source: params.source,
-          manifest: params.manifest,
-          method: params.method,
-          args: params.args,
-          init: toStatelessInit(init),
-        });
-        return sim;
+        try {
+          const res = await client.call(
+            "bridge.entry.simulate_tx",
+            [params.manifest, params.compiled.ir, params.method, args],
+            {
+              kind: "call",
+              state_id: id,
+              gas_limit: params.gasLimit ?? 500_000,
+              ctx: params.context,
+            },
+            120_000
+          );
+          return {
+            ok: res?.ok !== false,
+            returnValue: res?.return_value ?? res?.return ?? null,
+            gasUsed: res?.gas_used ?? 0,
+            events: (res?.events ?? []) as SimulateCallResult["events"],
+            logs: res?.logs ?? undefined,
+          };
+        } catch (e) {
+          return { ok: false, error: e, gasUsed: 0, events: [] } as SimulateCallResult;
+        }
       }
+
+      // Stateless fallback
+      return simulateCall({
+        compiled: params.compiled,
+        manifest: params.manifest,
+        method: params.method,
+        args,
+        context: params.context,
+        gasLimit: params.gasLimit,
+        init: toStatelessInit(init),
+      });
     },
 
-    deploy: async (params: DeployParams): Promise<DeployResult> => {
+    deploy: async (params: DeployParams): Promise<SimulateDeployResult> => {
+      const method = params.initMethod ?? "init";
+      const args = normalizeArgs(params.initArgs, params.manifest, method);
       if (stateful) {
-        const res = await client.call(
-          "bridge.entry.simulate_tx",
-          [],
-          {
-            kind: "deploy",
-            state_id: id,
-            source: params.source,
-            manifest: params.manifest,
-            method: params.initMethod ?? "init",
-            args: params.initArgs ?? [],
-          },
-          120_000
-        );
-        // If compile step in bridge exposes hash/size, it may be echoed here.
-        return {
-          gasUsed: res?.gas_used ?? 0,
-          codeHash: typeof res?.code_hash === "string" ? res.code_hash : undefined,
-          codeSize: typeof res?.code_size === "number" ? res.code_size : undefined,
-        };
-      } else {
-        // Stateless fallback (no persistence)
-        const sim = await simulateDeploy({
-          source: params.source,
-          manifest: params.manifest,
-          initMethod: params.initMethod,
-          initArgs: params.initArgs,
-          init: toStatelessInit(init),
-        });
-        return sim;
+        try {
+          const res = await client.call(
+            "bridge.entry.simulate_tx",
+            [params.manifest, params.compiled.ir, method, args],
+            {
+              kind: "deploy",
+              state_id: id,
+              gas_limit: params.gasLimit ?? 500_000,
+              ctx: params.context,
+            },
+            120_000
+          );
+          return {
+            ok: res?.ok !== false,
+            gasUsed: res?.gas_used ?? 0,
+            codeHash: res?.code_hash ?? params.compiled.codeHash,
+            codeSize: typeof res?.code_size === "number" ? res.code_size : undefined,
+            logs: res?.logs ?? undefined,
+            error: res?.ok === false ? res?.error : undefined,
+          };
+        } catch (e) {
+          return { ok: false, gasUsed: 0, error: e };
+        }
       }
+
+      // Stateless fallback
+      return simulateDeploy({
+        compiled: params.compiled,
+        manifest: params.manifest,
+        initMethod: method,
+        initArgs: args,
+        context: params.context,
+        gasLimit: params.gasLimit,
+        init: toStatelessInit(init),
+      });
     },
 
     snapshot: async (): Promise<StateSnapshot> => {
@@ -286,10 +294,12 @@ export async function createState(init?: StateInit): Promise<StateHandle> {
   // Optional immediate deploy
   if (init?.deploy) {
     await handle.deploy({
-      source: init.deploy.source,
+      compiled: init.deploy.compiled,
       manifest: init.deploy.manifest,
       initMethod: init.deploy.initMethod,
       initArgs: init.deploy.initArgs,
+      context: init.deploy.context,
+      gasLimit: init.deploy.gasLimit,
     });
   }
 
