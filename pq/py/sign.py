@@ -211,7 +211,7 @@ def _backend_sign(alg_name: str, sk: bytes, msg: bytes) -> bytes:
 
     if not hasattr(backend, "sign"):
         raise NotImplementedError(f"Backend {backend.__name__} lacks .sign(secret_key, message)")
-    return backend.sign(secret_key=sk, message=msg)  # type: ignore[arg-type]
+    return backend.sign(sk, msg)  # type: ignore[arg-type]
 
 # --------------------------------------------------------------------------------------
 # Public API
