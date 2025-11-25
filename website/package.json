@@ -5,7 +5,7 @@
   "description": "Animica marketing & docs site built with Astro + TypeScript (+ optional Tailwind).",
   "type": "module",
   "license": "MIT",
-  "packageManager": "pnpm@9",
+  "packageManager": "pnpm@9.0.0",
   "engines": {
     "node": ">=20.0.0"
   },

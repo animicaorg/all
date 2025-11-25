@@ -9,9 +9,9 @@
  * Examples:
  *   node website/scripts/sync_docs_from_repo.mjs --src ../monorepo/docs \
  *     --dest website/src/docs \
- *     --include "**/*.mdx" --include "**/*.md" \
- *     --include "**/*.{png,jpg,jpeg,svg,webp,gif}" \
- *     --exclude "**/node_modules/**" --clean
+ *     --include "**\\/*.mdx" --include "**\\/*.md" \
+ *     --include "**\\/*.{png,jpg,jpeg,svg,webp,gif}" \
+ *     --exclude "**\\/node_modules/**" --clean
  *
  *   node website/scripts/sync_docs_from_repo.mjs --git https://github.com/animica-labs/animica \
  *     --ref main --prefix docs \
@@ -23,8 +23,8 @@
  *   --ref NAME        Git ref/branch/tag to checkout (default: default branch)
  *   --prefix PATH     Subdirectory within --src/clone to use as root (e.g., "docs")
  *   --dest PATH       Destination directory (default: website/src/docs)
- *   --include GLOB    Include patterns (may repeat). Default: "**/*.{md,mdx,png,jpg,jpeg,svg,gif,webp}"
- *   --exclude GLOB    Exclude patterns (may repeat). Default: "**/node_modules/**","**/.git/**",".DS_Store"
+ *   --include GLOB    Include patterns (may repeat). Default: "**\\/*.{md,mdx,png,jpg,jpeg,svg,gif,webp}"
+ *   --exclude GLOB    Exclude patterns (may repeat). Default: "**\\/node_modules/**","**\\/.git/**",".DS_Store"
  *   --clean           Remove destination before copying
  *   --dry-run         Print actions but don't write
  *   --rewrite-md      Rewrite ".md" links to ".mdx" when target exists (default on)
@@ -78,7 +78,30 @@ function parseArgs(argv) {
   }
   // Defaults
   if (opts.include.length === 0) {
-    opts.include = ["**/*.{md,mdx,png,jpg,jpeg,svg,gif,webp}"];
+    opts.include = [
+      "*.md",
+      "*.mdx",
+      "*.png",
+      "*.jpg",
+      "*.jpeg",
+      "*.svg",
+      "*.gif",
+      "*.webp",
+      "*.yaml",
+      "*.yml",
+      "SIDEBAR.yaml",
+      "**/*.md",
+      "**/*.mdx",
+      "**/*.png",
+      "**/*.jpg",
+      "**/*.jpeg",
+      "**/*.svg",
+      "**/*.gif",
+      "**/*.webp",
+      "**/*.yaml",
+      "**/*.yml",
+      "**/SIDEBAR.yaml",
+    ];
   }
   if (opts.exclude.length === 0) {
     opts.exclude = ["**/node_modules/**", "**/.git/**", ".DS_Store"];
@@ -100,7 +123,7 @@ function usage(code = 0) {
   node ${path.basename(process.argv[1])} --git https://github.com/org/repo.git --ref main --prefix docs --dest website/src/docs --clean
 
   Flags:
-    --include GLOB   (repeatable)   default: "**/*.{md,mdx,png,jpg,jpeg,svg,gif,webp}"
+    --include GLOB   (repeatable)   default: ["**\\/*.md", "**\\/*.mdx", assets, "**\\/*.ya?ml", "**/SIDEBAR.yaml"]
     --exclude GLOB   (repeatable)   default: "**/node_modules/**", "**/.git/**", ".DS_Store"
     --dry-run, --verbose, --rewrite-md/--no-rewrite-md
 `);
@@ -134,6 +157,9 @@ function toRegex(glob) {
   re = re.replace(/\{([^}]+)\}/g, (_, body) => {
     return "(" + body.split(",").map(s => s.trim().replace(/[.+^${}()|[\]\\]/g, "\\$&")).join("|") + ")";
   });
+  if (glob.startsWith("**/")) {
+    re = re.replace(/^\.\*\\\//, "(?:.*\\/)?");
+  }
   return new RegExp("^" + re + "$", isWindows ? "i" : "");
 }
 
