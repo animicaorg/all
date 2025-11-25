@@ -1,0 +1,146 @@
+<!-- Animica — Deterministic Python VM Diagram
+     Shows: call → ABI decode → VM Core (interpreter/syscalls/gas) → Storage/Events → Receipt.
+     ViewBox: 960×540, scalable. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" role="img" aria-labelledby="title desc">
+  <title id="title">Deterministic Python VM Diagram</title>
+  <desc id="desc">Contracts call into a deterministic Python VM. ABI decodes inputs, the interpreter executes with a fixed gas model and restricted syscalls, reading/writing storage and emitting events. Results are committed on-chain as receipts.</desc>
+
+  <defs>
+    <style>
+      .bg     { fill:#0B0F1C; }
+      .grid   { stroke:#11182e; }
+      .panel  { fill:#0F1426; stroke:#2A3353; }
+      .panel2 { fill:#101733; stroke:#2A3353; }
+      .node   { fill:#0E1222; stroke:#2E63FF; }
+      .node2  { fill:#0E1222; stroke:#16D2FF; }
+      .ok     { fill:#0E1222; stroke:#38E38E; }
+      .warn   { fill:#0E1222; stroke:#FF4DC1; }
+      .txt    { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; fill:#E8ECF8; font-size:14px; }
+      .muted  { fill:#A7B3CA; font-size:12px; }
+      .title  { font-weight:700; font-size:16px; }
+      .mono   { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+      .arrow  { stroke:#7B88A3; stroke-width:2; fill:none; marker-end:url(#arr); }
+      .arrowb { stroke:#2E63FF;  stroke-width:2; fill:none; marker-end:url(#arrB); }
+      .dashed { stroke-dasharray:6 6; }
+      .chip   { fill:none; stroke:#2E63FF; }
+      .cap    { rx:12; }
+    </style>
+
+    <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
+      <path d="M20 0H0V20" class="grid" stroke-width="1" fill="none"/>
+    </pattern>
+
+    <!-- Arrowheads -->
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7B88A3"/>
+    </marker>
+    <marker id="arrB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2E63FF"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="960" height="540" class="bg"/>
+  <rect x="0" y="0" width="960" height="540" fill="url(#grid)" opacity="0.25"/>
+
+  <!-- Left column: Caller & ABI -->
+  <g transform="translate(36,48)">
+    <rect x="0" y="0" width="248" height="90" class="node cap"/>
+    <text x="16" y="28" class="txt title">External Caller</text>
+    <text x="16" y="52" class="txt">Wallet / Contract / System</text>
+    <text x="16" y="74" class="txt mono">call(addr, fn, args)</text>
+  </g>
+
+  <g transform="translate(36,158)">
+    <rect x="0" y="0" width="248" height="120" class="panel cap"/>
+    <text x="16" y="28" class="txt title">ABI Decoder</text>
+    <text x="16" y="54" class="txt mono">types: u256, bool, bytes</text>
+    <text x="16" y="76" class="txt mono">fn/event/error sigs</text>
+    <text x="16" y="98" class="muted">validates inputs, bounds</text>
+  </g>
+
+  <!-- Center: VM Core -->
+  <g transform="translate(318,48)">
+    <rect x="0" y="0" width="324" height="350" class="node cap"/>
+    <text x="16" y="30" class="txt title">VM Core (Deterministic Python)</text>
+
+    <!-- Interpreter block -->
+    <g transform="translate(16,48)">
+      <rect x="0" y="0" width="292" height="88" class="panel2 cap"/>
+      <text x="12" y="26" class="txt">Interpreter</text>
+      <text x="12" y="48" class="muted">bytecode eval • pure math • fixed intrinsics</text>
+      <text x="12" y="70" class="muted mono">vm.version = 1.0.0 • lang="python"</text>
+    </g>
+
+    <!-- Syscalls -->
+    <g transform="translate(16,152)">
+      <rect x="0" y="0" width="292" height="96" class="panel2 cap"/>
+      <text x="12" y="26" class="txt">Deterministic Syscalls</text>
+      <text x="12" y="48" class="muted mono">storage.get/put • events.emit • hash.keccak</text>
+      <text x="12" y="70" class="muted mono">no wallclock • no net • no fs</text>
+    </g>
+
+    <!-- Gas model -->
+    <g transform="translate(16,264)">
+      <rect x="0" y="0" width="292" height="72" class="panel2 cap"/>
+      <text x="12" y="26" class="txt">Gas Model</text>
+      <text x="12" y="50" class="muted mono">step, load/store, event, hash — fixed schedule</text>
+    </g>
+  </g>
+
+  <!-- Right: State & Outputs -->
+  <g transform="translate(668,48)">
+    <rect x="0" y="0" width="256" height="124" class="node2 cap"/>
+    <text x="16" y="30" class="txt title">State Storage</text>
+    <text x="16" y="54" class="txt">Key–Value (patricia-like)</text>
+    <text x="16" y="78" class="muted mono">contract:slot → bytes</text>
+  </g>
+
+  <g transform="translate(668,190)">
+    <rect x="0" y="0" width="256" height="96" class="node cap"/>
+    <text x="16" y="30" class="txt title">Event Log</text>
+    <text x="16" y="54" class="muted mono">emit(topic, data)</text>
+  </g>
+
+  <g transform="translate(668,304)">
+    <rect x="0" y="0" width="256" height="94" class="ok cap"/>
+    <text x="16" y="30" class="txt title">Receipt</text>
+    <text x="16" y="54" class="muted mono">status, gasUsed, returnData, events[]</text>
+  </g>
+
+  <!-- Bottom: Determinism rules -->
+  <g transform="translate(36,420)">
+    <rect x="0" y="0" width="888" height="84" class="panel cap"/>
+    <text x="16" y="28" class="txt title">Determinism &amp; Safety</text>
+    <text x="16" y="52" class="muted">• No wallclock/entropy/network/filesystem • Bounded loops &amp; memory • Stable hashing and float-free math • Versioned ABI &amp; gas schedule • Reproducible across nodes</text>
+  </g>
+
+  <!-- Arrows -->
+  <path class="arrowb" d="M284,93 C300,93 306,76 318,76"/>      <!-- Caller → VM -->
+  <path class="arrowb" d="M284,218 C300,218 306,196 318,196"/>  <!-- ABI → VM -->
+  <path class="arrow"  d="M642,124 C654,124 660,124 668,124"/>  <!-- VM → Storage -->
+  <path class="arrow"  d="M642,238 C654,238 660,238 668,238"/>  <!-- VM → Events -->
+  <path class="arrowb" d="M642,322 C654,322 660,322 668,322"/>  <!-- VM → Receipt -->
+
+  <!-- Mini insets inside Storage: buckets -->
+  <g transform="translate(684,96)">
+    <rect x="0" y="0" width="68" height="18" class="panel2 cap"/>
+    <text x="8" y="13" class="muted mono">code/abi</text>
+  </g>
+  <g transform="translate(756,96)">
+    <rect x="0" y="0" width="68" height="18" class="panel2 cap"/>
+    <text x="8" y="13" class="muted mono">state</text>
+  </g>
+  <g transform="translate(828,96)">
+    <rect x="0" y="0" width="68" height="18" class="panel2 cap"/>
+    <text x="8" y="13" class="muted mono">meta</text>
+  </g>
+
+  <!-- Legend -->
+  <g transform="translate(36,18)">
+    <rect x="0" y="0" width="420" height="28" class="panel2 cap"/>
+    <circle cx="16" cy="14" r="5" fill="#2E63FF"/><text x="28" y="18" class="muted">call path</text>
+    <circle cx="110" cy="14" r="5" fill="#7B88A3"/><text x="122" y="18" class="muted">data flow</text>
+    <rect   x="210" y="7" width="20" height="14" class="ok"/><text x="236" y="18" class="muted">result</text>
+  </g>
+</svg>

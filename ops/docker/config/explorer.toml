@@ -1,0 +1,104 @@
+# Animica Explorer API — container default config (TOML)
+# Read-only service that talks to a local node RPC/WS, computes aggregates
+# (PoIES Γ / fairness / mix), and exposes lightweight endpoints for explorer-web.
+
+# ───────────────────────────── identity / chain ─────────────────────────────
+[core]
+chain_id = 1                          # Guard against cross-network misconfig
+
+# ───────────────────────────────── logging ──────────────────────────────────
+[logging]
+level  = "info"                       # "debug" | "info" | "warning" | "error"
+format = "json"                       # "json" | "text"
+
+# ───────────────────────────────── metrics ──────────────────────────────────
+[metrics]
+enabled = true
+port    = 9104                        # Prometheus exporter (internal)
+
+# ───────────────────────────────── server ───────────────────────────────────
+[server]
+host = "0.0.0.0"
+port = 8701
+# Tight CORS; fronted by nginx or a CDN in prod. Extend via env if needed.
+cors_allow_origins = [
+  "https://explorer.example.com",
+  "https://studio.example.com",
+]
+
+# ─────────────────────────────── data sources ───────────────────────────────
+[rpc]
+# Explorer queries the node for canonical data and subscribes for heads.
+http_url = "http://node:8545"
+ws_url   = "ws://node:8546/ws"
+
+[db]
+# Optional read-mostly cache for computed aggregates / charts / paging cursors.
+# If you prefer pure in-memory caching, set db_url = "".
+db_url = "sqlite:////data/explorer_cache.db"
+
+# ───────────────────────────────── caching ──────────────────────────────────
+[cache]
+# Small TTLs keep the UI snappy without hammering the node.
+head_ttl_seconds        = 2
+block_ttl_seconds       = 5
+tx_ttl_seconds          = 10
+account_ttl_seconds     = 10
+chart_points_ttl_secs   = 5
+page_size_default       = 25
+page_size_max           = 200
+
+# ─────────────────────────────── features / charts ──────────────────────────
+[features]
+enable_consensus_charts = true        # Θ, Γ, mix breakdowns over recent N blocks
+enable_aicf_dashboards  = true        # provider lists, SLA, payouts
+enable_da_views         = true        # DA commitments / namespaces / availability
+enable_beacon_views     = true        # randomness beacon rounds & VDF stats
+
+[charts]
+# Rolling windows for time-series. Buckets use block height by default.
+blocks_window    = 512                # how many recent blocks to keep in charts
+bucket_size      = 8                  # aggregate every N blocks for smoother lines
+ema_alpha        = 0.2                # smoothing for rates (e.g., Θ interval)
+max_series_points = 1024
+
+# PoIES mix / fairness visuals: per-type Γ share & escort q where applicable.
+[mix]
+show_gamma_share   = true
+show_escort_q      = true
+
+# AICF explorer settings
+[aicf]
+providers_page_size = 50
+sla_window_blocks   = 256
+payout_epoch_seconds = 3600
+
+# DA explorer settings
+[da]
+show_namespace_ranges = true
+sample_verify_enabled = true      # allow light sampling preview (read-only)
+max_blob_preview_bytes = 4096     # cap preview length when rendering hex snippets
+
+# Beacon (randomness) explorer settings
+[beacon]
+rounds_page_size   = 50
+history_max_rounds = 2000
+vdf_verify_timings = true         # record verifier runtime histograms
+
+# ───────────────────────────────── rate limits ──────────────────────────────
+[rate_limits]
+# Soft app-level throttles. Real protection should live in the edge proxy.
+per_ip_http   = "600/min"
+per_ip_ws     = "200/min"
+heavy_queries = "60/min"          # e.g., wide-range scans
+
+# ─────────────────────────────── tracing / debug ────────────────────────────
+[trace]
+log_sql_params = false
+log_rpc_bodies = false
+
+# ─────────────────────────────── compatibility knobs ────────────────────────
+[compat]
+# If the node exposes explorer aggregates directly (node.explorer.enable_aggregates=true),
+# enable this to prefer those endpoints when available.
+prefer_node_aggregates = true

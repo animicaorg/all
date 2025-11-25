@@ -1,0 +1,168 @@
+; Animica — Transaction CDDL (docs mirror)
+; Mirrors: spec/tx_format.cddl (keep in sync)
+; Purpose: Canonical CBOR schema for transactions, including:
+;   • signature domain tagging
+;   • gas & fees
+;   • access lists
+;   • transaction kinds (transfer | deploy | call)
+;   • PQ signature envelope (algorithm id + signature bytes [+ optional pk])
+;
+; Notes:
+; - Maps use small INTEGER labels for compactness & deterministic ordering.
+; - Absent/optional fields MUST be omitted (not null) in canonical encodings.
+; - Addresses are raw bytes (bstr), bech32m is used only at the RPC/SDK layer.
+; - "SignBytes" are produced by the canonical map below with the `11: sig`
+;   field omitted (the verifier reconstructs SignBytes over that omission).
+
+;---------------------------
+; Common scalars & aliases
+;---------------------------
+
+uint64 = uint .size 8 / uint .lt 18446744073709551616
+uvar   = uint                        ; generic non-negative
+i64    = int .size 8
+bytes  = bstr
+bytes32 = bstr .size 32
+bytes48 = bstr .size 48
+bytes64 = bstr .size 64
+
+; Address = sha3_256(pubkey) payload (32 bytes). Bech32m anim1… only for UI.
+address = bytes32
+
+; Hashes (allow either 256 or 512 depending on context)
+hash256 = bytes32
+hash512 = bytes64
+
+; Chain identifier (CAIP-2 compatible numeric id per spec/chains.json)
+chain-id = uvar
+
+;--------------------------------
+; Access list (execution hints)
+;--------------------------------
+
+; A single storage access-list entry
+;  1: address  — account being touched
+;  2: keys     — list of storage keys (raw 32-byte slots)
+access-entry = {
+  1: address
+  2: [* bytes32]
+}
+
+; Access list — MAY be empty or omitted
+access-list = [* access-entry]
+
+;---------------------------
+; Gas & fee fields
+;---------------------------
+
+; Gas sub-structure
+;  1: limit — maximum gas units the sender authorizes
+;  2: price — price per gas unit (base + tip if single-price regime)
+;  3: tip   — optional priority tip (if split regime enabled)
+gas = {
+  1: uvar,           ; limit
+  2: uvar,           ; price
+  ? 3: uvar,         ; tip (optional)
+}
+
+;---------------------------
+; Transaction kinds
+;---------------------------
+
+; Kind enum (compact)
+; 0 = transfer      — native balance transfer (to, value)
+; 1 = deploy        — deploy a Python-VM contract bundle
+; 2 = call          — call an existing contract at `to` with `data`
+tx-kind = 0 / 1 / 2
+
+; Kind payloads:
+; Transfer carries no extra payload beyond top-level fields.
+transfer-body = bstr .size 0 / nil  ; MUST be omitted at encoding time
+
+; Deploy carries code bundle and manifest (see spec/manifest.schema.json)
+;  1: code     — CBOR/zip bytes of the compiled package or code blob
+;  2: manifest — JSON manifest (utf8) that describes ABI/resources
+deploy-body = {
+  1: bytes,             ; code (opaque to this schema)
+  2: tstr               ; manifest (JSON text)
+}
+
+; Call carries argument data (ABI-encoded per vm_py/specs/ABI.md)
+;  1: data — call data bytes (function selector + encoded args)
+call-body = {
+  1: bytes
+}
+
+; Union of possible bodies (selected by `9: kind`)
+kind-body = transfer-body / deploy-body / call-body
+
+;---------------------------
+; PQ signature envelope
+;---------------------------
+
+; Algorithm identifier matches pq/alg_ids.yaml (e.g., Dilithium3 = 0x01,
+; SPHINCS+-SHAKE-128s = 0x11). Use integers for stability.
+alg-id = uvar
+
+; Signature envelope
+;  1: alg   — algorithm id
+;  2: sig   — raw signature bytes (algorithm-specific length)
+;  3: pk    — OPTIONAL raw public key bytes (present when required by policy)
+;  4: aux   — OPTIONAL auxiliary proof/metadata (future)
+sig-env = {
+  1: alg-id,
+  2: bytes,
+  ? 3: bytes,
+  ? 4: bytes
+}
+
+;---------------------------
+; Transaction root object
+;---------------------------
+
+; Transaction (canonical map with integer labels):
+;  1: v      — tx format version (starts at 1)
+;  2: sd     — signature domain tag (e.g., "animica/tx/v1")
+;  3: chain  — chain id
+;  4: nonce  — per-sender sequence number
+;  5: gas    — gas object (limit, price, tip?)
+;  6: to     — recipient address (omit for deploy)
+;  7: value  — native value to transfer (0 if call without value)
+;  8: alist  — access list (optional)
+;  9: kind   — transaction kind enum
+; 10: body   — kind-specific payload (omit for transfer)
+; 11: sig    — signature envelope (omitted when deriving SignBytes)
+;
+; Canonical SignBytes = the CBOR canonical encoding of the map above with
+; the 11: sig entry omitted.
+tx = {
+  1: uvar,                ; v
+  2: tstr,                ; sd
+  3: chain-id,            ; chain
+  4: uvar,                ; nonce
+  5: gas,                 ; gas
+  ? 6: address,           ; to (omit for deploy)
+  ? 7: uvar,              ; value (default 0 if omitted)
+  ? 8: access-list,       ; alist
+  9: tx-kind,             ; kind
+  ? 10: kind-body,        ; body (required for deploy/call, omitted for transfer)
+  11: sig-env             ; sig
+}
+
+;---------------------------
+; Validation constraints (informative)
+;---------------------------
+; - Deploy: field 6 (to) MUST be omitted; field 10 MUST be deploy-body.
+; - Call:   field 6 (to) MUST be present; field 10 MUST be call-body.
+; - Transfer: field 6 (to) MUST be present; field 10 MUST be omitted; field 7 MAY be > 0.
+; - Access list keys MUST be unique per entry; addresses MUST be unique across entries.
+; - The sender is derived from `sig-env` (pk) under the active PQ address policy;
+;   if a `from` field is ever introduced, it MUST match pk→address derivation.
+; - The verifier MUST compute SignBytes by removing 11: sig and re-encoding canonically.
+
+;---------------------------
+; Top-level vectors wrapper
+;---------------------------
+
+; Multiple transactions (e.g., for test vectors)
+txs = [* tx]

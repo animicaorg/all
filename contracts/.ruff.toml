@@ -1,0 +1,135 @@
+# ---------------------------------------------
+# Ruff configuration for Animica contracts repo
+# ---------------------------------------------
+# Goals:
+# - Enforce a deterministic Python subset for on-chain contracts.
+# - Keep tooling/dev scripts ergonomic without weakening contract rules.
+# - Make linting fast, reproducible, and CI-friendly.
+
+target-version = "py311"
+line-length = 100
+# When running `ruff --fix`, apply safe fixes by default.
+fix = true
+show-fixes = true
+respect-gitignore = true
+force-exclude = true
+
+# Files/dirs to exclude from lint runs (in addition to .gitignore).
+exclude = [
+  ".venv",
+  "venv",
+  ".mypy_cache",
+  ".pytest_cache",
+  ".ruff_cache",
+  "build",
+  "dist",
+  "contracts/build",         # compiled IR & package bundles
+  "contracts/artifacts",     # any local artifacts
+  "contracts/tests/__pycache__",
+]
+
+[format]
+# Keep formatting predictable. (We use Black-compatible formatting via Ruff.)
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+skip-magic-trailing-comma = false
+docstring-code-format = true
+docstring-code-line-length = 100
+
+[lint]
+# Rule packs:
+#  E/F: pycodestyle/pyflakes
+#  I:   isort
+#  B:   flake8-bugbear
+#  A:   flake8-builtins (avoid shadowing builtins)
+#  Q:   flake8-quotes (harmonize with formatter)
+#  UP:  pyupgrade
+#  N:   pep8-naming
+#  BLE: flake8-blind-except
+#  DTZ: flake8-datetimez
+#  PIE: flake8-pie (small correctness wins)
+#  RET: flake8-return
+#  SIM: flake8-simplify
+#  TID: flake8-tidy-imports (ban relative/bad imports)
+#  TCH: flake8-type-checking (optimize typing imports)
+#  PGH: pygrep-hooks (common gotchas)
+#  RUF: Ruff-specific rules
+#  PTH: flake8-use-pathlib
+#  PL:  Pylint-inspired checks (subset)
+#  T20: flake8-print (disallow prints outside tests)
+#  S:   bandit (security patterns; we relax in tools/tests as needed)
+#  PT:  flake8-pytest-style (encourage tidy tests)
+#  C90: mccabe complexity
+select = [
+  "E","F","I",
+  "B","A","Q","UP","N",
+  "BLE","DTZ","PIE","RET","SIM",
+  "TID","TCH","PGH","RUF","PTH","PL","T20","S","PT",
+  "C90",
+]
+
+# Keep the global ignore list minimal; prefer per-file-ignores below.
+ignore = [
+  # (Intentionally empty)
+]
+
+# Cyclomatic complexity ceiling (nudge toward simpler contract functions).
+[lint.mccabe]
+max-complexity = 10
+
+# Import sorting (isort via Ruff)
+[lint.isort]
+combine-as-imports = true
+force-wrap-aliases = true
+known-first-party = ["contracts", "vm_py", "sdk", "core", "pq", "execution", "capabilities"]
+required-imports = ["from __future__ import annotations"]
+
+# Import hygiene
+[lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+# Determinism-preserving: ban ambient I/O / time / randomness in CONTRACT CODE.
+# (Relaxed for tools and tests via per-file-ignores below.)
+[lint.flake8-tidy-imports.banned-api]
+"asyncio" = "Determinism: asyncio is not allowed in contracts."
+"random" = "Determinism: RNG is not allowed in contracts. Use stdlib/random_api instead."
+"time" = "Determinism: wall-clock time is not allowed in contracts."
+"datetime" = "Determinism: wall-clock time is not allowed in contracts."
+"os" = "Determinism: OS access is not allowed in contracts."
+"sys" = "Determinism: process/system access is not allowed in contracts."
+"subprocess" = "Determinism: subprocess is not allowed in contracts."
+"socket" = "Determinism: networking is not allowed in contracts."
+"http" = "Determinism: networking is not allowed in contracts."
+"urllib" = "Determinism: networking is not allowed in contracts."
+"requests" = "Determinism: networking is not allowed in contracts."
+"multiprocessing" = "Determinism: concurrency is not allowed in contracts."
+"pathlib" = "Contract code should not touch the filesystem."
+
+# PyTest style nudges (non-blocking but helpful)
+[lint.pytest-style]
+fixture-parentheses = false
+mark-parentheses = false
+
+# Pylint-inspired tweaks — keep the noisy “magic-value” rule off by default.
+[lint.pylint]
+max-args = 8
+allow-magic-value-types = ["int","str","bytes"]
+
+# Per-path relaxations ---------------------------------------------------------
+[lint.per-file-ignores]
+# Tools: allow banned APIs (TID251) & prints; dev ergonomics OK here.
+"contracts/tools/**/*.py" = ["TID251", "T201"]
+
+# Tests: allow asserts & prints; loosen pylint magic-value for readable cases.
+"contracts/tests/**/*.py" = ["S101", "T201", "PLR2004"]
+
+# Example templates: allow prints in quickstarts, keep determinism otherwise.
+"contracts/examples/**/*.py" = ["T201"]
+
+# Templates users will copy from: allow prints in demos.
+"contracts/templates/**/*.py" = ["T201"]
+
+# Generated stubs or vendored artifacts (if any) can be ignored by path here.
+# "contracts/vendor/**/*.py" = ["ALL"]
+

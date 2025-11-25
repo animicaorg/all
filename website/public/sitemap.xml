@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Placeholder sitemap.xml for local/dev.
+  Production builds should use @astrojs/sitemap which emits:
+    - /sitemap-index.xml
+    - /sitemap-0.xml (and more shards if needed)
+  If this static file is present at deploy time, ensure your CI either removes it
+  or that your host serves the generated sitemap from /out/.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://animica.org/</loc>
+    <lastmod>2025-10-09</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>https://animica.org/wallet</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://animica.org/explorer</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+</urlset>

@@ -1,0 +1,10 @@
+animica-wallet (0.0.0+local-1) stable; urgency=medium
+
+  * Initial Debian packaging for Animica Wallet.
+  * Ships Flutter-built desktop bundle under /opt/AnimicaWallet.
+  * Installs desktop entry and themed icons (hicolor).
+  * Adds post-quantum crypto runtime dependencies to control file.
+  * Verified basic run on Ubuntu 22.04+ and Debian 12.
+
+ -- Animica Labs CI <release@animica.dev>  Wed, 08 Oct 2025 12:00:00 +0000
+

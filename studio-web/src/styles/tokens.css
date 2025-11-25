@@ -1,0 +1,123 @@
+/* Design Tokens — spacing & typography (and a few essentials)
+   These are low-level primitives consumed by theme.css and component styles.
+   Do NOT reference colors or layout here beyond what’s necessary for type/spacing.
+*/
+
+:root {
+  /* Font families */
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+
+  /* Base scales */
+  --rem-base: 16px;
+  --line-height-tight: 1.1;
+  --line-height-snug: 1.25;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.7;
+
+  /* Font weights */
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* Fluid typography (clamp for responsiveness) */
+  --text-2xs: clamp(0.68rem, 0.66rem + 0.1vw, 0.72rem);
+  --text-xs:  clamp(0.75rem, 0.72rem + 0.15vw, 0.82rem);
+  --text-sm:  clamp(0.875rem, 0.84rem + 0.2vw, 0.95rem);
+  --text-md:  clamp(1rem, 0.96rem + 0.25vw, 1.1rem);
+  --text-lg:  clamp(1.125rem, 1.06rem + 0.35vw, 1.25rem);
+  --text-xl:  clamp(1.25rem, 1.15rem + 0.45vw, 1.5rem);
+  --text-2xl: clamp(1.5rem, 1.35rem + 0.7vw, 1.875rem);
+  --text-3xl: clamp(1.875rem, 1.65rem + 1vw, 2.25rem);
+  --text-4xl: clamp(2.25rem, 2rem + 1.2vw, 3rem);
+
+  /* Display / headings defaults */
+  --h1-size: var(--text-4xl);
+  --h2-size: var(--text-3xl);
+  --h3-size: var(--text-2xl);
+  --h4-size: var(--text-xl);
+  --h5-size: var(--text-lg);
+  --h6-size: var(--text-md);
+
+  --h1-line: var(--line-height-tight);
+  --h2-line: var(--line-height-tight);
+  --h3-line: var(--line-height-snug);
+  --h4-line: var(--line-height-snug);
+  --h5-line: var(--line-height-normal);
+  --h6-line: var(--line-height-normal);
+
+  --h-weight: var(--weight-semibold);
+  --body-weight: var(--weight-regular);
+
+  /* Letter spacing (em) */
+  --track-tight: -0.01em;
+  --track-normal: 0em;
+  --track-wide: 0.02em;
+
+  /* Spacing scale (4px base) */
+  --space-0: 0;
+  --space-1: 0.25rem;   /* 4px  */
+  --space-2: 0.5rem;    /* 8px  */
+  --space-3: 0.75rem;   /* 12px */
+  --space-4: 1rem;      /* 16px */
+  --space-5: 1.25rem;   /* 20px */
+  --space-6: 1.5rem;    /* 24px */
+  --space-8: 2rem;      /* 32px */
+  --space-10: 2.5rem;   /* 40px */
+  --space-12: 3rem;     /* 48px */
+  --space-16: 4rem;     /* 64px */
+  --space-20: 5rem;     /* 80px */
+  --space-24: 6rem;     /* 96px */
+
+  /* Radius (kept minimal; visual language lives in theme.css) */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  /* Focus ring (color wired in theme.css) */
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+
+  /* Motion preferences */
+  --transition-fast: 120ms;
+  --transition-medium: 200ms;
+  --transition-slow: 320ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --transition-fast: 1ms;
+    --transition-medium: 1ms;
+    --transition-slow: 1ms;
+  }
+}
+
+/* Suggested base usage (can be overridden by theme.css) */
+html { font-size: 100%; }
+body {
+  font-family: var(--font-sans);
+  font-weight: var(--body-weight);
+  font-size: var(--text-md);
+  line-height: var(--line-height-normal);
+  letter-spacing: var(--track-normal);
+}
+
+/* Headings (semantic defaults; components may refine) */
+h1, .h1 { font-size: var(--h1-size); line-height: var(--h1-line); font-weight: var(--h-weight); letter-spacing: var(--track-tight); }
+h2, .h2 { font-size: var(--h2-size); line-height: var(--h2-line); font-weight: var(--h-weight); letter-spacing: var(--track-tight); }
+h3, .h3 { font-size: var(--h3-size); line-height: var(--h3-line); font-weight: var(--h-weight); letter-spacing: var(--track-tight); }
+h4, .h4 { font-size: var(--h4-size); line-height: var(--h4-line); font-weight: var(--h-weight); }
+h5, .h5 { font-size: var(--h5-size); line-height: var(--h5-line); font-weight: var(--h-weight); }
+h6, .h6 { font-size: var(--h6-size); line-height: var(--h6-line); font-weight: var(--h-weight); }
+
+.small   { font-size: var(--text-sm); }
+.code    { font-family: var(--font-mono); font-size: var(--text-sm); }
+.mono    { font-family: var(--font-mono); }
+
+.stack-xs > * + * { margin-top: var(--space-2); }
+.stack-sm > * + * { margin-top: var(--space-3); }
+.stack-md > * + * { margin-top: var(--space-4); }
+.stack-lg > * + * { margin-top: var(--space-6); }
+.stack-xl > * + * { margin-top: var(--space-8); }

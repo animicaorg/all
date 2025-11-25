@@ -1,0 +1,46 @@
+{
+  "compilerOptions": {
+    /* Language & Environment */
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+
+    /* Modules */
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": false,
+    "noEmit": true,
+
+    /* Paths */
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    },
+
+    /* Type Checking */
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "useUnknownInCatchVariables": true,
+    "skipLibCheck": true,
+
+    /* Interop & Misc */
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+
+    /* Tooling Types */
+    "types": ["vite/client", "vitest/globals", "jest-dom"]
+  },
+  "include": [
+    "src",
+    "vite.config.ts",
+    "vitest.config.ts",
+    "playwright.config.ts",
+    "env.d.ts"
+  ],
+  "exclude": ["dist", "node_modules"]
+}

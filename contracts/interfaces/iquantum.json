@@ -1,0 +1,230 @@
+{
+  "functions": [
+    {
+      "type": "function",
+      "name": "version",
+      "inputs": [],
+      "outputs": [{ "type": "bytes" }],
+      "notice": "Semantic version of the Quantum-compute interface (e.g. b'1.0.0')."
+    },
+    {
+      "type": "function",
+      "name": "enqueue",
+      "inputs": [
+        { "name": "backend", "type": "bytes" },
+        { "name": "circuit", "type": "bytes" },
+        { "name": "shots", "type": "uint" },
+        { "name": "trapsConfig", "type": "bytes" },
+        { "name": "maxUnits", "type": "uint" },
+        { "name": "feeLimit", "type": "uint" }
+      ],
+      "outputs": [{ "name": "taskId", "type": "bytes" }],
+      "notice": "Request quantum execution on a backend (e.g., b'ionq/simulator', b'qpu/vendorX-v1'). The circuit and trapsConfig are deterministic, size-capped encodings. Returns a deterministic taskId. Result is readable NEXT block."
+    },
+    {
+      "type": "function",
+      "name": "readResult",
+      "inputs": [
+        { "name": "taskId", "type": "bytes" }
+      ],
+      "outputs": [
+        { "name": "ready", "type": "bool" },
+        { "name": "success", "type": "bool" },
+        { "name": "output", "type": "bytes" },
+        { "name": "unitsUsed", "type": "uint" },
+        { "name": "trapsRatioBps", "type": "uint" },
+        { "name": "evidence", "type": "bytes" }
+      ],
+      "notice": "Read the result for a previously enqueued quantum task. If ready=false, output/evidence are empty. trapsRatioBps is traps pass-ratio in basis points. evidence may carry compact attestation/proof digests."
+    },
+    {
+      "type": "function",
+      "name": "getJob",
+      "inputs": [
+        { "name": "taskId", "type": "bytes" }
+      ],
+      "outputs": [
+        { "name": "caller", "type": "address" },
+        { "name": "backend", "type": "bytes" },
+        { "name": "shots", "type": "uint" },
+        { "name": "heightEnqueued", "type": "uint" },
+        { "name": "unitsRequested", "type": "uint" },
+        { "name": "unitsUsed", "type": "uint" },
+        { "name": "status", "type": "uint" }
+      ],
+      "notice": "Return immutable job metadata. status enum: 0=ENQUEUED,1=ASSIGNED,2=COMPLETED,3=FAILED,4=CONSUMED,5=EXPIRED."
+    },
+    {
+      "type": "function",
+      "name": "estimateUnits",
+      "inputs": [
+        { "name": "backend", "type": "bytes" },
+        { "name": "depth", "type": "uint" },
+        { "name": "width", "type": "uint" },
+        { "name": "shots", "type": "uint" }
+      ],
+      "outputs": [
+        { "name": "units", "type": "uint" }
+      ],
+      "notice": "Deterministic upper-bound estimate of compute units from circuit depth/width and shots for a backend."
+    },
+    {
+      "type": "function",
+      "name": "backendInfo",
+      "inputs": [
+        { "name": "backend", "type": "bytes" }
+      ],
+      "outputs": [
+        { "name": "enabled", "type": "bool" },
+        { "name": "maxCircuitBytes", "type": "uint" },
+        { "name": "maxShots", "type": "uint" },
+        { "name": "minTrapsRatioBps", "type": "uint" },
+        { "name": "pricePerUnit", "type": "uint" }
+      ],
+      "notice": "Current policy for a backend identifier. pricePerUnit is quoted in the chain's native unit; minTrapsRatioBps is minimum acceptable traps pass-ratio."
+    },
+    {
+      "type": "function",
+      "name": "cancel",
+      "inputs": [
+        { "name": "taskId", "type": "bytes" }
+      ],
+      "outputs": [{ "type": "bool" }],
+      "notice": "Cancel a pending job that has not been completed. Only the original caller may cancel; refunds follow deterministic rules."
+    }
+  ],
+  "events": [
+    {
+      "type": "event",
+      "name": "Enqueued",
+      "inputs": [
+        { "name": "taskId", "type": "bytes", "indexed": true },
+        { "name": "caller", "type": "address", "indexed": true },
+        { "name": "backend", "type": "bytes", "indexed": true },
+        { "name": "shots", "type": "uint" },
+        { "name": "unitsRequested", "type": "uint" },
+        { "name": "feeLimit", "type": "uint" }
+      ],
+      "notice": "Emitted when a quantum job is enqueued."
+    },
+    {
+      "type": "event",
+      "name": "Completed",
+      "inputs": [
+        { "name": "taskId", "type": "bytes", "indexed": true },
+        { "name": "success", "type": "bool" },
+        { "name": "unitsUsed", "type": "uint" },
+        { "name": "trapsRatioBps", "type": "uint" },
+        { "name": "outputDigest", "type": "bytes" }
+      ],
+      "notice": "Job completed. trapsRatioBps is traps pass-ratio in basis points. outputDigest is a short hash of output."
+    },
+    {
+      "type": "event",
+      "name": "Consumed",
+      "inputs": [
+        { "name": "taskId", "type": "bytes", "indexed": true },
+        { "name": "consumer", "type": "address", "indexed": true }
+      ],
+      "notice": "Result was read/consumed by the original caller."
+    },
+    {
+      "type": "event",
+      "name": "Canceled",
+      "inputs": [
+        { "name": "taskId", "type": "bytes", "indexed": true },
+        { "name": "by", "type": "address", "indexed": true }
+      ],
+      "notice": "Job canceled before completion."
+    },
+    {
+      "type": "event",
+      "name": "BackendPolicyUpdated",
+      "inputs": [
+        { "name": "backend", "type": "bytes", "indexed": true },
+        { "name": "enabled", "type": "bool" },
+        { "name": "maxCircuitBytes", "type": "uint" },
+        { "name": "maxShots", "type": "uint" },
+        { "name": "minTrapsRatioBps", "type": "uint" },
+        { "name": "pricePerUnit", "type": "uint" }
+      ],
+      "notice": "Backend policy updated (admin-only in implementing contract)."
+    }
+  ],
+  "errors": [
+    {
+      "type": "error",
+      "name": "Unauthorized",
+      "inputs": [
+        { "name": "who", "type": "address" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "UnsupportedBackend",
+      "inputs": [
+        { "name": "backend", "type": "bytes" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "NotDeterministic",
+      "inputs": [
+        { "name": "reason", "type": "bytes" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "LimitExceeded",
+      "inputs": [
+        { "name": "kind", "type": "bytes" },
+        { "name": "limit", "type": "uint" },
+        { "name": "got", "type": "uint" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "NoResultYet",
+      "inputs": [
+        { "name": "taskId", "type": "bytes" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "AlreadyConsumed",
+      "inputs": [
+        { "name": "taskId", "type": "bytes" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "InsufficientFee",
+      "inputs": [
+        { "name": "feeLimit", "type": "uint" },
+        { "name": "required", "type": "uint" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JobNotFound",
+      "inputs": [
+        { "name": "taskId", "type": "bytes" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "TrapRatioTooLow",
+      "inputs": [
+        { "name": "expectedBps", "type": "uint" },
+        { "name": "gotBps", "type": "uint" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "EvidenceInvalid",
+      "inputs": [
+        { "name": "taskId", "type": "bytes" }
+      ]
+    }
+  ]
+}

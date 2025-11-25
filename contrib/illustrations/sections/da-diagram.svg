@@ -1,0 +1,185 @@
+<!-- Animica — Data Availability (DA) Diagram
+     Shows: publish → erasure code → distribute → sample → reconstruct.
+     ViewBox: 960×540, scalable. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" role="img" aria-labelledby="title desc">
+  <title id="title">Data Availability Flow</title>
+  <desc id="desc">Client publishes a blob with namespace. DA service erasure-codes into shards, distributes them across storage nodes. Light clients sample shards using NMT namespaces, validators attest, and reconstruction is possible from any k shards.</desc>
+
+  <defs>
+    <style>
+      .bg     { fill:#0B0F1C; }
+      .grid   { stroke:#11182e; }
+      .panel  { fill:#0F1426; stroke:#2A3353; }
+      .node   { fill:#0E1222; stroke:#2E63FF; }
+      .node2  { fill:#0E1222; stroke:#16D2FF; }
+      .ok     { fill:#0E1222; stroke:#38E38E; }
+      .warn   { fill:#0E1222; stroke:#FF4DC1; }
+      .txt    { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; fill:#E8ECF8; font-size:14px; }
+      .muted  { fill:#A7B3CA; font-size:12px; }
+      .title  { font-weight:700; font-size:16px; }
+      .mono   { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+      .arrow  { stroke:#7B88A3; stroke-width:2; fill:none; marker-end:url(#arr); }
+      .arrowb { stroke:#2E63FF; stroke-width:2; fill:none; marker-end:url(#arrB); }
+      .dashed { stroke-dasharray:6 6; }
+      .chip   { fill:none; stroke:#2E63FF; }
+      .hl     { fill:#2E63FF; }
+    </style>
+
+    <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
+      <path d="M20 0H0V20" class="grid" stroke-width="1" fill="none"/>
+    </pattern>
+
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7B88A3"/>
+    </marker>
+    <marker id="arrB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2E63FF"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="960" height="540" class="bg"/>
+  <rect x="0" y="0" width="960" height="540" fill="url(#grid)" opacity="0.25"/>
+
+  <!-- Left: Publisher -->
+  <g transform="translate(36,48)">
+    <rect x="0" y="0" width="240" height="110" rx="12" class="node"/>
+    <text x="16" y="28" class="txt title">Publisher</text>
+    <text x="16" y="52" class="txt">Rollup / Sequencer / Client</text>
+    <text x="16" y="78" class="txt mono">publish(blob, namespace)</text>
+  </g>
+
+  <!-- Center top: DA Service -->
+  <g transform="translate(330,36)">
+    <rect x="0" y="0" width="300" height="134" rx="12" class="panel"/>
+    <text x="16" y="28" class="txt title">DA Service</text>
+    <text x="16" y="54" class="txt">Erasure code (k/n), namespace index</text>
+    <text x="16" y="78" class="txt">Produce NMT root & commitments</text>
+    <text x="16" y="106" class="txt mono">rsRate=1.5 • maxBlobSize=2MB</text>
+  </g>
+
+  <!-- Blob preview -->
+  <g transform="translate(64,186)">
+    <rect x="0" y="0" width="208" height="120" rx="10" class="panel"/>
+    <text x="12" y="26" class="txt title">Blob</text>
+    <rect x="12" y="40" width="184" height="68" rx="6" class="chip"/>
+    <text x="20" y="64" class="txt mono">namespace: 0xA1B2</text>
+    <text x="20" y="84" class="txt mono">size: 1.2MB</text>
+  </g>
+
+  <!-- Arrow: Publisher → DA -->
+  <path class="arrowb" d="M276,102 C300,102 316,84 330,84"/>
+
+  <!-- Erasure-coded shards grid -->
+  <g transform="translate(360,196)">
+    <rect x="0" y="0" width="260" height="160" rx="12" class="node2"/>
+    <text x="14" y="28" class="txt title">Erasure-coded Shards</text>
+    <text x="14" y="48" class="muted">Any k of n reconstructs</text>
+
+    <!-- Grid 6×4 (highlight some) -->
+    <g transform="translate(14,62)">
+      <!-- rows -->
+      <g>
+        <!-- row 1 -->
+        <rect x="0"   y="0"  width="36" height="24" rx="4" class="chip"/>
+        <rect x="44"  y="0"  width="36" height="24" rx="4" class="chip"/>
+        <rect x="88"  y="0"  width="36" height="24" rx="4" class="chip"/>
+        <rect x="132" y="0"  width="36" height="24" rx="4" class="ok"/>
+        <rect x="176" y="0"  width="36" height="24" rx="4" class="chip"/>
+        <rect x="220" y="0"  width="36" height="24" rx="4" class="ok"/>
+      </g>
+      <g transform="translate(0,34)">
+        <!-- row 2 -->
+        <rect x="0"   y="0" width="36" height="24" rx="4" class="ok"/>
+        <rect x="44"  y="0" width="36" height="24" rx="4" class="chip"/>
+        <rect x="88"  y="0" width="36" height="24" rx="4" class="ok"/>
+        <rect x="132" y="0" width="36" height="24" rx="4" class="chip"/>
+        <rect x="176" y="0" width="36" height="24" rx="4" class="chip"/>
+        <rect x="220" y="0" width="36" height="24" rx="4" class="chip"/>
+      </g>
+      <g transform="translate(0,68)">
+        <!-- row 3 -->
+        <rect x="0"   y="0" width="36" height="24" rx="4" class="chip"/>
+        <rect x="44"  y="0" width="36" height="24" rx="4" class="ok"/>
+        <rect x="88"  y="0" width="36" height="24" rx="4" class="chip"/>
+        <rect x="132" y="0" width="36" height="24" rx="4" class="ok"/>
+        <rect x="176" y="0" width="36" height="24" rx="4" class="chip"/>
+        <rect x="220" y="0" width="36" height="24" rx="4" class="chip"/>
+      </g>
+      <g transform="translate(0,102)">
+        <!-- row 4 -->
+        <rect x="0"   y="0" width="36" height="24" rx="4" class="chip"/>
+        <rect x="44"  y="0" width="36" height="24" rx="4" class="chip"/>
+        <rect x="88"  y="0" width="36" height="24" rx="4" class="ok"/>
+        <rect x="132" y="0" width="36" height="24" rx="4" class="chip"/>
+        <rect x="176" y="0" width="36" height="24" rx="4" class="ok"/>
+        <rect x="220" y="0" width="36" height="24" rx="4" class="chip"/>
+      </g>
+    </g>
+  </g>
+
+  <!-- NMT panel (namespace Merkle tree) -->
+  <g transform="translate(660,48)">
+    <rect x="0" y="0" width="264" height="156" rx="12" class="node"/>
+    <text x="16" y="28" class="txt title">Namespace Merkle Tree</text>
+    <text x="16" y="50" class="muted mono">namespace: 0xA1B2</text>
+    <g transform="translate(24,64)" class="chip">
+      <!-- simple tree -->
+      <line x1="80" y1="24" x2="40" y2="64"/>
+      <line x1="80" y1="24" x2="120" y2="64"/>
+      <rect x="68" y="0"  width="24" height="20" rx="3"/>
+      <rect x="28" y="64" width="24" height="20" rx="3"/>
+      <rect x="116" y="64" width="24" height="20" rx="3"/>
+      <text x="70"  y="15" class="muted mono">root</text>
+      <text x="24"  y="100" class="muted mono">leaves: shard commitments</text>
+    </g>
+  </g>
+
+  <!-- Center bottom: Storage nodes -->
+  <g transform="translate(320,380)">
+    <rect x="0" y="0" width="324" height="120" rx="12" class="panel"/>
+    <text x="16" y="28" class="txt title">Storage Nodes</text>
+    <text x="16" y="50" class="txt">Replicate shards across peers</text>
+
+    <!-- nodes -->
+    <g transform="translate(14,66)">
+      <rect x="0"   y="0"  width="88" height="40" rx="8" class="node"/><text x="14" y="26" class="muted">node-a</text>
+      <rect x="108" y="0"  width="88" height="40" rx="8" class="node2"/><text x="122" y="26" class="muted">node-b</text>
+      <rect x="216" y="0"  width="88" height="40" rx="8" class="node"/><text x="230" y="26" class="muted">node-c</text>
+    </g>
+  </g>
+
+  <!-- Right: Light clients / Validators -->
+  <g transform="translate(700,246)">
+    <rect x="0" y="0" width="224" height="108" rx="12" class="node2"/>
+    <text x="16" y="28" class="txt title">Light Clients</text>
+    <text x="16" y="52" class="txt">Random sampling of shards</text>
+    <text x="16" y="76" class="txt mono">sample(namespace, q)</text>
+  </g>
+
+  <g transform="translate(700,372)">
+    <rect x="0" y="0" width="224" height="108" rx="12" class="node"/>
+    <text x="16" y="28" class="txt title">Validators</text>
+    <text x="16" y="52" class="txt">Attest NMT roots, availability</text>
+    <text x="16" y="76" class="txt mono">attest(root, window)</text>
+  </g>
+
+  <!-- Arrows between components -->
+  <!-- DA → Shards -->
+  <path class="arrowb" d="M480,170 C480,184 490,192 490,196"/>
+  <!-- Shards → Storage -->
+  <path class="arrow" d="M490,356 C490,368 482,376 482,380"/>
+  <!-- NMT → Light clients -->
+  <path class="arrowb" d="M756,204 C756,220 760,232 760,246"/>
+  <!-- Light clients → Validators -->
+  <path class="arrowb" d="M812,354 C812,360 812,366 812,372"/>
+  <!-- Storage → Light clients (sampling) -->
+  <path class="arrow dashed" d="M644,430 C700,430 700,300 700,300"/>
+
+  <!-- Footer strip -->
+  <g transform="translate(36,508)">
+    <rect x="0" y="0" width="888" height="24" rx="6" class="panel"/>
+    <text x="12" y="17" class="muted mono">params: n=24, k=16 • rsRate=1.5 • nmtNamespaceBytes=8 • maxBlobSizeBytes=2_097_152</text>
+  </g>
+
+</svg>

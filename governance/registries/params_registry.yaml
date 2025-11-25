@@ -1,0 +1,434 @@
+# Animica — Canonical Tunable Parameters Registry
+# -----------------------------------------------------------------------------
+# This file enumerates **governance-tunable** parameters along with type info,
+# safe ranges, defaults, and how/when they apply. It is consumed by:
+#  - docs/spec/CHAIN_PARAMS.md (rendered tables)
+#  - governance validation tooling (lint/range checks for proposals)
+#  - node config loaders (optional runtime assertions)
+#
+# Conventions
+#  - key:       unique parameter key (bytes on-chain; shown here as UTF-8)
+#  - type:      {bool,u32,u64,i64,bytes,bytes32}
+#  - unit:      human-readable unit (gas, ms, bytes, wei, %, bps, shards)
+#  - category:  {fees,block,consensus,mempool,da,vm,zk,p2p,security,randomness}
+#  - default:   genesis default (within [min,max])
+#  - min/max:   inclusive bounds enforced on-chain
+#  - step:      optional step size for integer tuning
+#  - governed_by: {ParamChange,Upgrade} → proposal type required
+#  - apply:     {immediate,next_block,next_epoch,retarget_window,at_height}
+#  - requires_feature: optional UpgradeGate feature flag that must be active
+#  - safety_notes: short rationale and cautions
+#  - deprecated: optional note if superseded
+#
+# Versioning
+version: 1
+updated: "2025-10-12"
+maintainers:
+  - core-protocol
+  - governance-editors
+
+# Global invariants checked by governance tooling prior to queueing a change.
+invariants:
+  # Max difference allowed (in %) between the current and proposed value for
+  # *sensitive* parameters unless the proposal is marked "emergency".
+  sensitive_change_cap_percent: 25
+  # Minimum blocks between successive changes to the same key.
+  min_block_spacing_per_key: 120
+
+# Parameter entries
+params:
+
+  # ---------------------------- FEES -----------------------------------------
+  - key: min_gas_price
+    type: u64
+    unit: wei
+    category: fees
+    default: 1000
+    min: 1
+    max: 1000000
+    step: 1
+    governed_by: ParamChange
+    apply: immediate
+    safety_notes: |
+      Raising too high can stall low-value txs; lowering too far invites DoS.
+      Node-side mempool enforces this as an admission threshold.
+
+  - key: base_fee_target_util_bps
+    type: u32
+    unit: bps
+    category: fees
+    default: 5000   # 50%
+    min: 1000       # 10%
+    max: 9000       # 90%
+    step: 50
+    governed_by: ParamChange
+    apply: next_block
+    safety_notes: |
+      Target utilization for EIP-1559-like base fee adjustment (if enabled).
+
+  - key: fee_burn_percent
+    type: u32
+    unit: '%'
+    category: fees
+    default: 30
+    min: 0
+    max: 100
+    step: 1
+    governed_by: ParamChange
+    apply: next_block
+    requires_feature: treasury_fees_v1
+    safety_notes: |
+      Portion of base fee burned; remainder flows to treasury if configured.
+
+  # ---------------------------- BLOCK / CONSENSUS ----------------------------
+  - key: block_gas_limit
+    type: u64
+    unit: gas
+    category: block
+    default: 20000000
+    min: 1000000
+    max: 200000000
+    step: 100000
+    governed_by: ParamChange
+    apply: next_block
+    safety_notes: |
+      Increasing impacts state growth and block propagation; coordinate with P2P.
+
+  - key: target_block_time_ms
+    type: u64
+    unit: ms
+    category: consensus
+    default: 2000
+    min: 500
+    max: 10000
+    step: 50
+    governed_by: ParamChange
+    apply: retarget_window
+    safety_notes: |
+      Controls Θ retarget goal; applied at next retarget window boundary.
+
+  - key: retarget_window_blocks
+    type: u32
+    unit: blocks
+    category: consensus
+    default: 120
+    min: 20
+    max: 5000
+    step: 1
+    governed_by: ParamChange
+    apply: next_epoch
+    safety_notes: |
+      Window over which observed λ is measured for PoIES difficulty adjustment.
+
+  - key: theta_floor
+    type: u64
+    unit: work-units
+    category: consensus
+    default: 100000
+    min: 1000
+    max: 10000000
+    step: 1000
+    governed_by: ParamChange
+    apply: retarget_window
+    safety_notes: |
+      Lower bound on acceptance threshold Θ to reduce grinding at low traffic.
+
+  # ---------------------------- MEMPOOL --------------------------------------
+  - key: mempool_max_txs
+    type: u64
+    unit: txs
+    category: mempool
+    default: 200000
+    min: 1000
+    max: 2000000
+    step: 1000
+    governed_by: ParamChange
+    apply: immediate
+    safety_notes: |
+      Soft cap; eviction (price-time) applies when exceeded.
+
+  - key: mempool_max_tx_bytes
+    type: u64
+    unit: bytes
+    category: mempool
+    default: 131072
+    min: 1024
+    max: 1048576
+    step: 1024
+    governed_by: ParamChange
+    apply: immediate
+    safety_notes: |
+      Upper bound for a single transaction's byte size; protects against bloats.
+
+  - key: mempool_rbf_min_delta_bps
+    type: u32
+    unit: bps
+    category: mempool
+    default: 100     # +1% fee bump to replace
+    min: 0
+    max: 2000
+    step: 10
+    governed_by: ParamChange
+    apply: immediate
+    safety_notes: |
+      Minimum fee delta required to allow replacement-by-fee.
+
+  - key: mempool_tx_max_age_blocks
+    type: u32
+    unit: blocks
+    category: mempool
+    default: 120
+    min: 10
+    max: 10000
+    step: 1
+    governed_by: ParamChange
+    apply: immediate
+    safety_notes: |
+      Evict stale transactions beyond this horizon if unconfirmed.
+
+  # ---------------------------- DATA AVAILABILITY ----------------------------
+  - key: da_blob_max_size_bytes
+    type: u64
+    unit: bytes
+    category: da
+    default: 1048576        # 1 MiB
+    min: 65536
+    max: 8388608
+    step: 4096
+    governed_by: ParamChange
+    apply: next_block
+    safety_notes: |
+      Larger blobs raise propagation times; align with erasure/sampling settings.
+
+  - key: da_max_blobs_per_block
+    type: u32
+    unit: blobs
+    category: da
+    default: 8
+    min: 1
+    max: 128
+    step: 1
+    governed_by: ParamChange
+    apply: next_block
+
+  - key: da_erasure_rate_percent
+    type: u32
+    unit: '%'
+    category: da
+    default: 50
+    min: 10
+    max: 90
+    step: 1
+    governed_by: ParamChange
+    apply: next_block
+    safety_notes: |
+      Coding rate for erasure; higher redundancy increases DAS safety at cost.
+
+  - key: da_sampling_min_shards
+    type: u32
+    unit: shards
+    category: da
+    default: 60
+    min: 10
+    max: 200
+    step: 1
+    governed_by: ParamChange
+    apply: next_block
+    safety_notes: |
+      Light client DAS sampling floor; relates to desired detection probability.
+
+  # ---------------------------- VM (Python) ----------------------------------
+  - key: vm_max_contract_code_bytes
+    type: u64
+    unit: bytes
+    category: vm
+    default: 131072
+    min: 16384
+    max: 1048576
+    step: 1024
+    governed_by: ParamChange
+    apply: next_block
+
+  - key: vm_max_call_depth
+    type: u32
+    unit: frames
+    category: vm
+    default: 64
+    min: 16
+    max: 256
+    step: 1
+    governed_by: ParamChange
+    apply: immediate
+
+  - key: vm_log_bloom_bytes
+    type: u32
+    unit: bytes
+    category: vm
+    default: 256
+    min: 64
+    max: 2048
+    step: 32
+    governed_by: ParamChange
+    apply: next_block
+    safety_notes: |
+      Affects receipts size and indexing accuracy; changing impacts explorers.
+
+  - key: vm_event_topics_limit
+    type: u32
+    unit: topics
+    category: vm
+    default: 4
+    min: 1
+    max: 8
+    step: 1
+    governed_by: ParamChange
+    apply: next_block
+
+  # ---------------------------- ZK -------------------------------------------
+  - key: zk_max_verifier_gas
+    type: u64
+    unit: gas
+    category: zk
+    default: 5000000
+    min: 500000
+    max: 50000000
+    step: 10000
+    governed_by: ParamChange
+    apply: next_block
+    safety_notes: |
+      Upper bound for a single proof verification to prevent pathological costs.
+
+  - key: zk_enable_native_accel
+    type: bool
+    unit: flag
+    category: zk
+    default: true
+    governed_by: Upgrade
+    apply: at_height
+    safety_notes: |
+      Toggling hardware/native fast paths is an Upgrade-gated feature flip.
+
+  - key: zk_max_proof_bytes
+    type: u64
+    unit: bytes
+    category: zk
+    default: 131072
+    min: 4096
+    max: 1048576
+    step: 1024
+    governed_by: ParamChange
+    apply: next_block
+
+  # ---------------------------- P2P ------------------------------------------
+  - key: p2p_min_peers
+    type: u32
+    unit: peers
+    category: p2p
+    default: 20
+    min: 5
+    max: 200
+    step: 1
+    governed_by: ParamChange
+    apply: immediate
+
+  - key: p2p_max_peers
+    type: u32
+    unit: peers
+    category: p2p
+    default: 80
+    min: 20
+    max: 500
+    step: 1
+    governed_by: ParamChange
+    apply: immediate
+    safety_notes: |
+      Ensure OS ulimit and networking stack are tuned for higher ceilings.
+
+  - key: p2p_ban_score_threshold
+    type: i64
+    unit: score
+    category: p2p
+    default: -100
+    min: -1000
+    max: -10
+    step: 1
+    governed_by: ParamChange
+    apply: immediate
+
+  - key: p2p_inv_rate_limit_per_min
+    type: u32
+    unit: msgs/min
+    category: p2p
+    default: 6000
+    min: 1000
+    max: 20000
+    step: 100
+    governed_by: ParamChange
+    apply: immediate
+
+  # ---------------------------- SECURITY / DOS -------------------------------
+  - key: tx_sig_verify_batch_size
+    type: u32
+    unit: sigs
+    category: security
+    default: 1024
+    min: 64
+    max: 8192
+    step: 64
+    governed_by: ParamChange
+    apply: immediate
+    safety_notes: |
+      Adjust for CPU/SIMD batches; too large may increase latency variance.
+
+  - key: wasm_syscall_budget_per_tx
+    type: u64
+    unit: calls
+    category: security
+    default: 5000
+    min: 100
+    max: 50000
+    step: 100
+    governed_by: ParamChange
+    apply: next_block
+    requires_feature: vm_py_wasm_syscalls
+    safety_notes: |
+      Applies if/when WASM-capable syscalls are exposed to contracts.
+
+  # ---------------------------- RANDOMNESS / VDF ------------------------------
+  - key: vdf_difficulty_log2
+    type: u32
+    unit: bits
+    category: randomness
+    default: 28
+    min: 20
+    max: 40
+    step: 1
+    governed_by: ParamChange
+    apply: next_epoch
+    safety_notes: |
+      Controls VDF iteration count target; higher increases verification cost.
+
+# Grouping metadata used by docs renderers (ordering of sections)
+groups:
+  - fees
+  - block
+  - consensus
+  - mempool
+  - da
+  - vm
+  - zk
+  - p2p
+  - security
+  - randomness
+
+# Compatibility notes: keys here MUST match those enforced by ParamsRegistry.
+compatibility:
+  onchain_key_encoding: utf8_bytes
+  abi_setters:
+    u32: setU64
+    u64: setU64
+    i64: setI64
+    bool: setU64       # 0/1
+    bytes: setBytes
+    bytes32: setBytes  # validated length=32 in contract
+

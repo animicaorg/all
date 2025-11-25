@@ -1,0 +1,80 @@
+; Animica — Storage Heartbeat v0 (CBOR CDDL)
+; This defines the body for the StorageHeartbeat proof kind.
+; Envelope is defined in proofs/schemas/proof_envelope.cddl and wraps this body.
+
+;------------------------------------------------------------
+; Conventions
+; - All maps use small integer keys (deterministic ordering).
+; - All bstr digests are SHA3-256 (32 bytes) unless noted.
+; - Addresses are payloads: alg_id (1 byte) || sha3_256(pubkey) (32 bytes) = 33 bytes.
+; - Epoch is a chain height-based period for heartbeats.
+;------------------------------------------------------------
+
+storage_heartbeat = {
+  1: ver,                      ; schema version (= 1)
+  2: provider: address,        ; storage provider identity (node/account)
+  3: epoch: uint,              ; heartbeat epoch (block-height bucket)
+  4: seed: bstr .size 32,      ; challenge/mix seed (e.g., beacon/round seed)
+  5: blobs: [ + blob_ref ],    ; non-empty list of commitments covered by this heartbeat
+  6: ? qos: qos_metrics,       ; optional QoS snapshot (used for ψ inputs)
+  7: sig: pq_signature         ; PQ signature authenticating this heartbeat body
+}
+
+;------------------------------------------------------------
+; Sub-structures
+;------------------------------------------------------------
+
+; A referenced blob or sector group committed via DA (NMT root)
+blob_ref = {
+  1: ns: uint,                 ; namespace id (matches DA/NMT namespace rules)
+  2: commit: bstr .size 32,    ; NMT root commitment for this blob/segment set
+  3: size: uint,               ; logical unencoded byte size
+  4: ? expiry: uint,           ; optional last-valid epoch/TTL hint
+  5: ? hints: {
+       1: ? shard_cnt: uint,   ; number of erasure-coded shards stored (if reported)
+       2: ? loc: tstr          ; coarse location/region hint (non-consensus)
+     }
+}
+
+; Provider-reported quality-of-service metrics for the window
+qos_metrics = {
+  1: uptime_ppm: uint,         ; availability in parts-per-million (0..1_000_000)
+  2: lat_ms: uint,             ; median GET latency (ms) over recent probes
+  3: ? success_ppm: uint,      ; successful retrievals ppm (if probed)
+  4: ? tickets: [ * retrieval_ticket ]  ; optional retrieval tickets (bonus hooks)
+}
+
+; Optional retrieval ticket (bonus hook)
+retrieval_ticket = {
+  1: url: tstr,                ; retrieval endpoint (HTTP(S)/libp2p multiaddr, etc.)
+  2: commit: bstr .size 32,    ; commitment this ticket serves
+  3: expiry: uint,             ; not-after epoch
+  4: sig: pq_signature         ; provider signature over (url | commit | expiry)
+}
+
+; Post-quantum signature object (authenticates transcripts)
+; alg_id values align with pq/alg_ids.yaml (e.g., Dilithium3=0x1103, SPHINCS+=0x1201)
+pq_signature = {
+  1: alg_id: uint,             ; PQ signature algorithm id
+  2: signer: address,          ; address payload of signer (alg_id||sha3(pubkey))
+  3: sig: bstr,                ; signature bytes over canonical SignBytes
+  4: ? pk: bstr                ; optional raw public key (when address not yet resolvable)
+}
+
+;------------------------------------------------------------
+; Scalars & shared types
+;------------------------------------------------------------
+
+ver = 1
+address = bstr .size 33        ; alg_id (1) || sha3_256(pubkey) (32)
+
+;------------------------------------------------------------
+; Canonical SignBytes (informative, not enforced by CDDL)
+; The signature in pq_signature.sig is computed over:
+;   domain_tag("proof:storage_heartbeat:v0") ||
+;   cbor_deterministic_encode(storage_heartbeat { with sig.sig=empty bstr })
+; For retrieval_ticket.sig, replace the structure accordingly with
+;   domain_tag("ticket:retrieval:v0") || cbor_deterministic_encode(retrieval_ticket { sig.sig=empty })
+;------------------------------------------------------------
+
+; End of storage.cddl

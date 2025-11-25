@@ -1,0 +1,5 @@
+PLACEHOLDER-SPHINCS-SHAKE-128s-WASM
+This is a placeholder file so the repository structure builds.
+The MV3 loader will try to instantiate this and gracefully fall back
+when it detects the module is not valid WASM with the expected C ABI.
+Replace with a real SPHINCS+ (SHAKE-128s) WASM to enable fast verify/sign.

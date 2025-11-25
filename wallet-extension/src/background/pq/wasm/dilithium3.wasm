@@ -1,0 +1,5 @@
+PLACEHOLDER-DILITHIUM3-WASM
+This is a placeholder file so the repository structure builds.
+The MV3 loader will attempt to instantiate this and gracefully fall back
+when it detects the module is not a valid WASM with the expected C ABI.
+Replace with a real Dilithium3 WASM to enable fast signing/verification.

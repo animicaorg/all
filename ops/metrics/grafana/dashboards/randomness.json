@@ -1,0 +1,271 @@
+{
+  "title": "Animica — Randomness Beacon",
+  "uid": "animica-rand",
+  "timezone": "browser",
+  "schemaVersion": 36,
+  "version": 1,
+  "refresh": "10s",
+  "style": "dark",
+  "editable": true,
+  "tags": ["randomness", "beacon", "animica"],
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["5s", "10s", "30s", "1m", "5m"],
+    "hidden": false
+  },
+  "annotations": {
+    "list": [
+      { "type": "dashboard", "name": "Annotations & Alerts", "enable": true }
+    ]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "ds",
+        "type": "datasource",
+        "query": "prometheus",
+        "label": "Datasource",
+        "current": {}
+      },
+      {
+        "name": "job",
+        "type": "query",
+        "datasource": "$ds",
+        "label": "job",
+        "refresh": 1,
+        "query": "label_values(animica_rand_beacon_finalized_total, job)"
+      },
+      {
+        "name": "instance",
+        "type": "query",
+        "datasource": "$ds",
+        "label": "instance",
+        "refresh": 1,
+        "query": "label_values(animica_rand_beacon_finalized_total{job=\"$job\"}, instance)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".+"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Beacon finalizations — /s",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(instance) (rate(animica_rand_beacon_finalized_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "justifyMode": "center" }
+    },
+    {
+      "type": "stat",
+      "title": "Commits accepted — /s",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(instance) (rate(animica_rand_commit_total{job=\"$job\",instance=~\"$instance\",result=\"ok\"}[$__rate_interval]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "Reveals accepted — /s",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(instance) (rate(animica_rand_reveal_total{job=\"$job\",instance=~\"$instance\",result=\"ok\"}[$__rate_interval]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "VDF verifies — /s",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(instance) (rate(animica_rand_vdf_verify_total{job=\"$job\",instance=~\"$instance\",result=\"ok\"}[$__rate_interval]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "type": "stat",
+      "title": "Reveal rejects — /s",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 5 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(instance) (rate(animica_rand_reveal_total{job=\"$job\",instance=~\"$instance\",result!=\"ok\"}[$__rate_interval]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "VDF verify failures — /s",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 5 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(instance) (rate(animica_rand_vdf_verify_total{job=\"$job\",instance=~\"$instance\",result=\"fail\"}[$__rate_interval]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "QRNG mixes — /s",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 5 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(instance) (rate(animica_rand_qrng_mix_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "Beacon entropy (bits)",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 5 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by(instance) (animica_rand_beacon_entropy_bits{job=\"$job\",instance=~\"$instance\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": 0 },
+              { "color": "orange", "value": 128 },
+              { "color": "green", "value": 256 }
+            ]
+          }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Pipeline rates — commits / reveals / VDF verify / beacon finalize",
+      "datasource": "$ds",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "targets": [
+        { "refId": "A", "legendFormat": "commit ok",    "expr": "sum by(instance) (rate(animica_rand_commit_total{job=\"$job\",instance=~\"$instance\",result=\"ok\"}[$__rate_interval]))" },
+        { "refId": "B", "legendFormat": "reveal ok",    "expr": "sum by(instance) (rate(animica_rand_reveal_total{job=\"$job\",instance=~\"$instance\",result=\"ok\"}[$__rate_interval]))" },
+        { "refId": "C", "legendFormat": "vdf verify",   "expr": "sum by(instance) (rate(animica_rand_vdf_verify_total{job=\"$job\",instance=~\"$instance\",result=\"ok\"}[$__rate_interval]))" },
+        { "refId": "D", "legendFormat": "beacon",       "expr": "sum by(instance) (rate(animica_rand_beacon_finalized_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Commit / Reveal rejections — late / bad / duplicate",
+      "datasource": "$ds",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "targets": [
+        { "refId": "A", "legendFormat": "commit late",  "expr": "sum by(instance) (rate(animica_rand_commit_total{job=\"$job\",instance=~\"$instance\",result=\"late\"}[$__rate_interval]))" },
+        { "refId": "B", "legendFormat": "commit dup",   "expr": "sum by(instance) (rate(animica_rand_commit_total{job=\"$job\",instance=~\"$instance\",result=\"duplicate\"}[$__rate_interval]))" },
+        { "refId": "C", "legendFormat": "reveal early", "expr": "sum by(instance) (rate(animica_rand_reveal_total{job=\"$job\",instance=~\"$instance\",result=\"early\"}[$__rate_interval]))" },
+        { "refId": "D", "legendFormat": "reveal bad",   "expr": "sum by(instance) (rate(animica_rand_reveal_total{job=\"$job\",instance=~\"$instance\",result=\"mismatch\"}[$__rate_interval]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "VDF verify latency (ms) — p95 / p50",
+      "datasource": "$ds",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 18 },
+      "targets": [
+        { "refId": "A", "legendFormat": "verify p95", "expr": "1000 * histogram_quantile(0.95, sum by(le,instance) (rate(animica_rand_vdf_verify_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))" },
+        { "refId": "B", "legendFormat": "verify p50", "expr": "1000 * histogram_quantile(0.50, sum by(le,instance) (rate(animica_rand_vdf_verify_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms", "min": 0 } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Round duration / phase seconds (gauge)",
+      "datasource": "$ds",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 26 },
+      "targets": [
+        { "refId": "A", "legendFormat": "round",  "expr": "max by(instance) (animica_rand_round_seconds{job=\"$job\",instance=~\"$instance\"})" },
+        { "refId": "B", "legendFormat": "commit","expr": "max by(instance) (animica_rand_phase_commit_seconds{job=\"$job\",instance=~\"$instance\"})" },
+        { "refId": "C", "legendFormat": "reveal","expr": "max by(instance) (animica_rand_phase_reveal_seconds{job=\"$job\",instance=~\"$instance\"})" },
+        { "refId": "D", "legendFormat": "settle","expr": "max by(instance) (animica_rand_phase_settle_seconds{job=\"$job\",instance=~\"$instance\"})" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s", "min": 0 } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Current round id (gauge)",
+      "datasource": "$ds",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 26 },
+      "targets": [
+        { "refId": "A", "legendFormat": "round", "expr": "max by(instance) (animica_rand_round_current{job=\"$job\",instance=~\"$instance\"})" },
+        { "refId": "B", "legendFormat": "last finalized", "expr": "max by(instance) (animica_rand_round_finalized{job=\"$job\",instance=~\"$instance\"})" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+
+    {
+      "type": "bargauge",
+      "title": "Commits by origin (top 5)",
+      "datasource": "$ds",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 34 },
+      "targets": [
+        { "refId": "A", "expr": "topk(5, sum by(origin) (rate(animica_rand_commit_total{job=\"$job\",instance=~\"$instance\",result=\"ok\"}[$__rate_interval])))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "displayMode": "gradient", "orientation": "horizontal" }
+    },
+    {
+      "type": "bargauge",
+      "title": "Reveals by origin (top 5)",
+      "datasource": "$ds",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 34 },
+      "targets": [
+        { "refId": "A", "expr": "topk(5, sum by(origin) (rate(animica_rand_reveal_total{job=\"$job\",instance=~\"$instance\",result=\"ok\"}[$__rate_interval])))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "displayMode": "lcd", "orientation": "horizontal" }
+    }
+  ]
+}

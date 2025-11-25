@@ -1,0 +1,88 @@
+{
+  "$schema": "../schemas/template.schema.json",
+  "name": "TypeScript SDK Starter",
+  "slug": "sdk-ts-starter",
+  "version": "0.1.0",
+  "description": "Minimal Node/TypeScript starter wired to the Animica SDK with sane tooling (ts-node, vite-node or tsx), env templates, and example RPC usage.",
+  "tags": ["sdk", "typescript", "node", "starter", "cli"],
+  "engine": {
+    "min_version": "0.1.0"
+  },
+
+  "variables": {
+    "file": "variables.json",
+    "$schema": "../schemas/variables.schema.json"
+  },
+
+  "source": "{{project_slug}}",
+  "target": ".",
+
+  "include": [
+    "{{project_slug}}/**"
+  ],
+  "exclude": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/.DS_Store"
+  ],
+
+  "render": {
+    "delimiters": ["{{", "}}"],
+    "filters": []
+  },
+
+  "validation": {
+    "binaries": [
+      { "name": "node", "min_version": "18.0.0" },
+      { "name": "npm", "min_version": "8.0.0", "optional": true },
+      { "name": "pnpm", "min_version": "8.0.0", "optional": true },
+      { "name": "yarn", "min_version": "1.22.0", "optional": true }
+    ],
+    "env": [
+      { "key": "RPC_URL", "required": true, "example": "http://localhost:8545" },
+      { "key": "CHAIN_ID", "required": true, "example": "31337" }
+    ]
+  },
+
+  "hooks": {
+    "pre": [
+      {
+        "name": "ensure-node",
+        "type": "check",
+        "message": "Checking Node.js >= 18 is available…"
+      }
+    ],
+    "post": [
+      {
+        "name": "install",
+        "type": "choice",
+        "prompt": "Install dependencies now?",
+        "options": [
+          { "label": "pnpm", "command": "cd {{project_slug}} && pnpm install" },
+          { "label": "npm",  "command": "cd {{project_slug}} && npm install" },
+          { "label": "yarn", "command": "cd {{project_slug}} && yarn install" },
+          { "label": "skip", "command": "" }
+        ],
+        "default": "pnpm"
+      },
+      {
+        "name": "git-init",
+        "type": "command",
+        "command": "cd {{project_slug}} && git init && git add . && git commit -m \"init: {{project_name}} (sdk-ts-starter)\"",
+        "optional": true
+      }
+    ]
+  },
+
+  "next_steps": [
+    "cd {{project_slug}}",
+    "Copy .env.example to .env and fill RPC_URL / CHAIN_ID",
+    "Run the example: pnpm tsx src/examples/getBlock.ts",
+    "Start dev watcher: pnpm dev"
+  ],
+
+  "notes": [
+    "The starter ships with minimal examples for submitting a transaction, reading latest block, and subscribing to newHeads via WebSocket.",
+    "Switch the package manager by re-running the install hook with your preferred tool if needed."
+  ]
+}

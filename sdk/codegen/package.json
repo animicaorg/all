@@ -1,0 +1,50 @@
+{
+  "name": "animica-codegen",
+  "version": "0.1.0",
+  "description": "Animica SDK multi-language code generator (TS CLI for npx).",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/animica-labs/animica",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/animica-labs/animica.git"
+  },
+  "bugs": {
+    "url": "https://github.com/animica-labs/animica/issues"
+  },
+  "keywords": [
+    "animica",
+    "sdk",
+    "codegen",
+    "abi",
+    "contracts",
+    "typescript",
+    "rust",
+    "python"
+  ],
+  "bin": {
+    "animica-codegen": "dist/cli.mjs"
+  },
+  "files": [
+    "dist",
+    "typescript/templates",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup typescript/gen.ts --format esm --target node18 --sourcemap --dts false --minify --treeshake --out-dir dist --clean --env.NODE_ENV=production --shims",
+    "dev": "tsx typescript/gen.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "handlebars": "^4.7.8"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

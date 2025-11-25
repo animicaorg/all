@@ -1,0 +1,72 @@
+# Promtail pipeline for Animica node logs.
+# - Parses container (Docker/CRI) headers when present
+# - Extracts JSON fields from structured logs
+# - Normalizes timestamp and level
+# - Promotes useful fields to labels
+# - Sets output line to the structured "msg" value
+#
+# Include this file from your promtail config scrape job:
+# scrape_configs:
+#   - job_name: animica-node
+#     pipeline_stages:
+#       - include: /etc/promtail/pipelines/node.yaml
+#     static_configs: ...
+#
+# NOTE: This assumes node logs are structured JSON like:
+# {"time":"2025-01-01T00:00:00.000000Z","level":"info","component":"core","msg":"booted","request_id":"abc123", ...}
+
+pipeline_stages:
+  # Handle Kubernetes CRI or Docker prefixed lines if present. Safe to keep even on plain stdout.
+  - cri: {}
+  - docker: {}
+
+  # Parse JSON log body; keep common fields as extracted values.
+  - json:
+      expressions:
+        time: time
+        ts: ts
+        level: level
+        msg: msg
+        component: component
+        module: module
+        request_id: request_id
+        trace_id: trace_id
+        span_id: span_id
+        peer: peer
+        method: method
+
+  # Timestamp: try RFC3339Nano in "time" first, then "ts" as a fallback.
+  - timestamp:
+      source: time
+      format: RFC3339Nano
+      action_on_failure: skip
+  - timestamp:
+      source: ts
+      format: RFC3339Nano
+      action_on_failure: skip
+
+  # Normalize "level" (warning → warn). If not present, this stage is a no-op.
+  - replace:
+      source: level
+      expression: '(?i)^warning$'
+      replace: warn
+
+  # Promote selected fields to labels for querying in Loki.
+  - labels:
+      level:
+      component:
+      module:
+      request_id:
+      trace_id:
+      span_id:
+      peer:
+      method:
+
+  # Set the displayed log line to the structured message field if present.
+  - output:
+      source: msg
+
+  # Optional: drop ultra-noisy debug lines in production (toggle by env in promtail config via two scrape jobs).
+  # - match:
+  #     selector: '{level="debug"}'
+  #     action: drop

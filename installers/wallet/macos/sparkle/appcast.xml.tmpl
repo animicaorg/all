@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Sparkle 2.x Appcast Template (Animica Wallet)
+  Render this template in CI to produce a channel-specific feed.
+  Suggested templating: Mustache/Handlebars-style {{placeholders}}.
+
+  Placeholders:
+    {{FEED_TITLE}}            e.g., "Animica Wallet (Stable Channel)"
+    {{FEED_LINK}}             e.g., "https://updates.animica.dev/wallet/macos/stable/appcast.xml"
+    {{FEED_DESCRIPTION}}      short description of the channel
+    {{BUILD_DATE_RFC822}}     e.g., "Wed, 08 Oct 2025 16:32:00 GMT"
+    {{LANG}}                  e.g., "en"
+
+  Items (repeat for each release; use {{#items}} ... {{/items}}):
+    {{item.title}}            e.g., "Animica Wallet 1.2.3"
+    {{item.releaseNotesLink}} e.g., "https://animica.dev/wallet/releases/1.2.3"
+    {{item.pubDate}}          RFC 822 date string
+    {{item.url}}              HTTPS URL to notarized & stapled DMG/PKG
+    {{item.length}}           Content length in bytes
+    {{item.edSignature}}      Base64 Sparkle Ed25519 signature (Sparkle 2)
+    {{item.version}}          "1.2.3"
+    {{item.shortVersion}}     "1.2.3" (often same as version)
+    {{item.minOS}}            e.g., "12.0"
+    {{item.os}}               typically "macos"
+    {{item.critical}}         optional: "true"|"false"
+-->
+<rss version="2.0"
+     xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"
+     xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>{{FEED_TITLE}}</title>
+    <link>{{FEED_LINK}}</link>
+    <description>{{FEED_DESCRIPTION}}</description>
+    <language>{{LANG}}</language>
+    <lastBuildDate>{{BUILD_DATE_RFC822}}</lastBuildDate>
+    <generator>Animica CI (Sparkle appcast template)</generator>
+
+    {{#items}}
+    <item>
+      <title>{{item.title}}</title>
+      <sparkle:releaseNotesLink>{{item.releaseNotesLink}}</sparkle:releaseNotesLink>
+      <pubDate>{{item.pubDate}}</pubDate>
+
+      <enclosure
+        url="{{item.url}}"
+        length="{{item.length}}"
+        type="application/octet-stream"
+        sparkle:edSignature="{{item.edSignature}}"
+        sparkle:os="{{item.os}}" />
+
+      <sparkle:minimumSystemVersion>{{item.minOS}}</sparkle:minimumSystemVersion>
+      <sparkle:version>{{item.version}}</sparkle:version>
+      <sparkle:shortVersionString>{{item.shortVersion}}</sparkle:shortVersionString>
+
+      {{#item.critical}}
+      <sparkle:criticalUpdate>true</sparkle:criticalUpdate>
+      {{/item.critical}}
+    </item>
+    {{/items}}
+
+  </channel>
+</rss>

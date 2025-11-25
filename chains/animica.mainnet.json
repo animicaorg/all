@@ -1,0 +1,74 @@
+{
+  "schemaVersion": "1.2.0",
+  "name": "Animica Mainnet",
+  "chainId": 1,
+  "network": "mainnet",
+  "status": "planned",
+  "testnet": false,
+
+  "nativeCurrency": { "name": "Animica", "symbol": "ANM", "decimals": 18 },
+
+  "rpc": {
+    "http": [],
+    "ws": []
+  },
+
+  "explorers": [],
+  "faucets": [],
+
+  "p2p": {
+    "protocols": ["animica/1"],
+    "port": 30303,
+    "seeds": [],
+    "bootnodes": []
+  },
+
+  "addresses": {
+    "format": "bech32m",
+    "hrp": "am",
+    "pubkeyTypes": ["ed25519", "secp256k1", "dilithium3", "sphincs+"]
+  },
+
+  "pq": {
+    "sigDefault": "dilithium3",
+    "kex": "kyber-768",
+    "policyVersion": "2025-10"
+  },
+
+  "vm": {
+    "lang": "python",
+    "version": "0.5.0",
+    "gasModel": "v1"
+  },
+
+  "da": {
+    "maxBlobSizeBytes": 2097152,
+    "nmtNamespaceBytes": 8,
+    "rsRate": "10/16"
+  },
+
+  "randomness": {
+    "method": "vdf+qrng",
+    "params": { "tau": 2048 }
+  },
+
+  "genesis": {
+    "hash": "0x00000000000000000000000000000000",
+    "timestamp": "2026-01-01T00:00:00Z",
+    "initialHeight": 0
+  },
+
+  "governance": {
+    "site": "https://gov.animica.dev",
+    "votingPeriodDays": 7
+  },
+
+  "links": {
+    "website": "https://animica.dev",
+    "docs": "https://docs.animica.dev"
+  },
+
+  "features": ["poies", "pq", "da", "vm_py", "ai", "quantum"],
+
+  "checksum": "0000000000000000000000000000000000000000000000000000000000000000"
+}

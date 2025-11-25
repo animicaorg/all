@@ -1,0 +1,264 @@
+{
+  "schemaVersion": "1",
+  "description": "Deterministic vectors for generalized escrow flows (open → fund → release/refund, disputes, partial splits, top-ups). Fees are charged ONLY on amounts released to the payee; refunds to the payer are fee-free.",
+  "unit": "atto-ANM",
+  "feeBps": 50,
+  "defaults": {
+    "disputeWindowBlocks": 20,
+    "nowBlock": 0
+  },
+  "actors": {
+    "payer":   "anim1alice0000000000000000000000000000000000",
+    "payee":   "anim1bob00000000000000000000000000000000000",
+    "arbiter": "anim1carol000000000000000000000000000000000",
+    "treasury":"anim1treasury0000000000000000000000000000000",
+    "zero":    "anim1zero0000000000000000000000000000000000"
+  },
+  "initialState": {
+    "balances": {
+      "anim1alice0000000000000000000000000000000000": "1000000000000000000000",
+      "anim1bob00000000000000000000000000000000000": "10000000000000000000",
+      "anim1carol000000000000000000000000000000000": "0",
+      "anim1treasury0000000000000000000000000000000": "0"
+    },
+    "escrows": {},
+    "nextEscrowId": 1
+  },
+  "cases": [
+    {
+      "name": "Happy path: open → fund 100 ANM → payer releases to payee",
+      "resetState": true,
+      "txs": [
+        {
+          "op": "open",
+          "id": "e1",
+          "payer": "anim1alice0000000000000000000000000000000000",
+          "payee": "anim1bob00000000000000000000000000000000000",
+          "arbiter": "anim1carol000000000000000000000000000000000",
+          "deadlineBlock": 100,
+          "meta": { "note": "No funds moved on open." },
+          "expect": {
+            "ok": true,
+            "events": [
+              { "name": "EscrowOpened",
+                "args": { "escrowId": "e1", "payer": "$payer", "payee": "$payee", "arbiter": "$arbiter", "amountHint": "100000000000000000000", "deadlineBlock": 100 } }
+            ],
+            "escrows": {
+              "e1": { "status": "OPEN", "locked": "0", "released": "0", "refunded": "0" }
+            }
+          }
+        },
+        {
+          "op": "fund",
+          "id": "e1",
+          "from": "anim1alice0000000000000000000000000000000000",
+          "amount": "100000000000000000000",
+          "expect": {
+            "ok": true,
+            "events": [
+              { "name": "EscrowFunded",
+                "args": { "escrowId": "e1", "from": "$payer", "amount": "100000000000000000000" } }
+            ],
+            "balances": {
+              "anim1alice0000000000000000000000000000000000": "900000000000000000000"
+            },
+            "escrows": {
+              "e1": { "status": "FUNDED", "locked": "100000000000000000000" }
+            }
+          }
+        },
+        {
+          "op": "release",
+          "id": "e1",
+          "by": "anim1alice0000000000000000000000000000000000",
+          "amount": "100000000000000000000",
+          "expect": {
+            "ok": true,
+            "events": [
+              { "name": "EscrowReleased",
+                "args": {
+                  "escrowId": "e1",
+                  "to": "$payee",
+                  "gross": "100000000000000000000",
+                  "fee": "500000000000000000",
+                  "net": "99500000000000000000"
+                } }
+            ],
+            "balances": {
+              "anim1bob00000000000000000000000000000000000": "99500000000000000000",
+              "anim1treasury0000000000000000000000000000000": "500000000000000000"
+            },
+            "escrows": {
+              "e1": { "status": "CLOSED_RELEASED", "locked": "0", "released": "100000000000000000000", "refunded": "0" }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Refund on expiry: open → fund 80 → advance to deadline → refund",
+      "resetState": true,
+      "txs": [
+        {
+          "op": "open",
+          "id": "e2",
+          "payer": "$payer", "payee": "$payee", "arbiter": "$arbiter",
+          "deadlineBlock": 10,
+          "expect": { "ok": true }
+        },
+        {
+          "op": "fund",
+          "id": "e2",
+          "from": "$payer",
+          "amount": "80000000000000000000",
+          "expect": {
+            "ok": true,
+            "balances": { "$payer": "920000000000000000000" },
+            "escrows": { "e2": { "status": "FUNDED", "locked": "80000000000000000000" } }
+          }
+        },
+        {
+          "op": "advanceBlocks",
+          "toHeight": 11,
+          "expect": { "ok": true }
+        },
+        {
+          "op": "refundIfExpired",
+          "id": "e2",
+          "by": "$payee",
+          "expect": {
+            "ok": true,
+            "events": [
+              { "name": "EscrowRefunded",
+                "args": { "escrowId": "e2", "to": "$payer", "amount": "80000000000000000000" } }
+            ],
+            "balances": { "$payer": "1000000000000000000000" },
+            "escrows": { "e2": { "status": "CLOSED_REFUNDED", "locked": "0", "released": "0", "refunded": "80000000000000000000" } }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dispute resolves to payee (full): open → fund 42 → dispute → arbiter awards 42",
+      "resetState": true,
+      "txs": [
+        { "op": "open", "id": "e3", "payer": "$payer", "payee": "$payee", "arbiter": "$arbiter", "deadlineBlock": 200,
+          "expect": { "ok": true } },
+        { "op": "fund", "id": "e3", "from": "$payer", "amount": "42000000000000000000",
+          "expect": { "ok": true, "balances": { "$payer": "958000000000000000000" } } },
+        { "op": "raiseDispute", "id": "e3", "by": "$payer", "reason": "NotDelivered",
+          "expect": { "ok": true, "escrows": { "e3": { "status": "DISPUTED", "locked": "42000000000000000000" } },
+            "events": [ { "name": "EscrowDisputeOpened", "args": { "escrowId": "e3", "by": "$payer" } } ] } },
+        { "op": "resolve",
+          "id": "e3",
+          "by": "$arbiter",
+          "toPayee": "42000000000000000000",
+          "toPayer": "0",
+          "expect": {
+            "ok": true,
+            "events": [
+              { "name": "EscrowResolved",
+                "args": {
+                  "escrowId": "e3",
+                  "toPayeeGross": "42000000000000000000",
+                  "toPayer": "0",
+                  "fee": "210000000000000000",
+                  "payeeNet": "41790000000000000000"
+                } }
+            ],
+            "balances": {
+              "$payee": "51790000000000000000",
+              "$treasury": "210000000000000000"
+            },
+            "escrows": { "e3": { "status": "CLOSED_RELEASED", "locked": "0", "released": "42000000000000000000", "refunded": "0" } }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Partial split by arbiter: open → fund 90 → dispute → split 60 to payee / 30 refund to payer",
+      "resetState": true,
+      "txs": [
+        { "op": "open", "id": "e4", "payer": "$payer", "payee": "$payee", "arbiter": "$arbiter", "deadlineBlock": 300,
+          "expect": { "ok": true } },
+        { "op": "fund", "id": "e4", "from": "$payer", "amount": "90000000000000000000",
+          "expect": { "ok": true, "balances": { "$payer": "910000000000000000000" } } },
+        { "op": "raiseDispute", "id": "e4", "by": "$payee", "reason": "Quality",
+          "expect": { "ok": true } },
+        { "op": "resolve",
+          "id": "e4",
+          "by": "$arbiter",
+          "toPayee": "60000000000000000000",
+          "toPayer": "30000000000000000000",
+          "expect": {
+            "ok": true,
+            "events": [
+              { "name": "EscrowResolved",
+                "args": {
+                  "escrowId": "e4",
+                  "toPayeeGross": "60000000000000000000",
+                  "toPayer": "30000000000000000000",
+                  "fee": "300000000000000000",
+                  "payeeNet": "59700000000000000000"
+                } }
+            ],
+            "balances": {
+              "$payer": "940000000000000000000",
+              "$payee": "69700000000000000000",
+              "$treasury": "300000000000000000"
+            },
+            "escrows": { "e4": { "status": "CLOSED_SPLIT", "locked": "0", "released": "60000000000000000000", "refunded": "30000000000000000000" } }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Top-ups allowed: open with target 50 → fund 20 → fund +30 → release all",
+      "resetState": true,
+      "txs": [
+        { "op": "open", "id": "e5", "payer": "$payer", "payee": "$payee", "arbiter": "$arbiter", "deadlineBlock": 400,
+          "expect": { "ok": true } },
+        { "op": "fund", "id": "e5", "from": "$payer", "amount": "20000000000000000000",
+          "expect": { "ok": true, "balances": { "$payer": "980000000000000000000" }, "escrows": { "e5": { "locked": "20000000000000000000" } } } },
+        { "op": "fund", "id": "e5", "from": "$payer", "amount": "30000000000000000000",
+          "expect": { "ok": true, "balances": { "$payer": "950000000000000000000" }, "escrows": { "e5": { "locked": "50000000000000000000" } } } },
+        { "op": "release", "id": "e5", "by": "$payer", "amount": "50000000000000000000",
+          "expect": {
+            "ok": true,
+            "events": [
+              { "name": "EscrowReleased",
+                "args": { "escrowId": "e5", "to": "$payee", "gross": "50000000000000000000", "fee": "250000000000000000", "net": "49750000000000000000" } }
+            ],
+            "balances": {
+              "$payee": "59750000000000000000",
+              "$treasury": "250000000000000000"
+            },
+            "escrows": { "e5": { "status": "CLOSED_RELEASED", "locked": "0" } }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cancel before funding: open → cancel (no balance changes)",
+      "resetState": true,
+      "txs": [
+        { "op": "open", "id": "e6", "payer": "$payer", "payee": "$payee", "arbiter": "$arbiter", "deadlineBlock": 250,
+          "expect": { "ok": true } },
+        { "op": "cancel",
+          "id": "e6",
+          "by": "$payer",
+          "expect": {
+            "ok": true,
+            "events": [ { "name": "EscrowCanceled", "args": { "escrowId": "e6", "by": "$payer" } } ],
+            "balances": {
+              "$payer": "1000000000000000000000",
+              "$payee": "10000000000000000000",
+              "$treasury": "0"
+            },
+            "escrows": { "e6": { "status": "CANCELED", "locked": "0", "released": "0", "refunded": "0" } }
+          }
+        }
+      ]
+    }
+  ]
+}

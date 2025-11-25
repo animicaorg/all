@@ -1,0 +1,299 @@
+---
+/**
+ * EmbedVideo.astro
+ * Lazy, privacy-friendly YouTube/Vimeo embed with a clickable poster overlay.
+ *
+ * Props:
+ * - url: string                       // Required: YouTube or Vimeo URL
+ * - title?: string                    // Accessible title (recommended)
+ * - poster?: string                   // Optional custom poster image
+ * - aspect?: "16:9" | "4:3" | "1:1" | "21:9" | number  // aspect ratio; number = width/height
+ * - privacyEnhanced?: boolean         // YouTube: use youtube-nocookie; Vimeo: dnt=1 (default true)
+ * - controls?: boolean                // Show player controls (default true)
+ * - autoplayOnClick?: boolean         // Add autoplay=1 when clicked (default true)
+ * - muted?: boolean                   // Start muted when autoplaying (default true)
+ * - start?: number                    // Start time in seconds
+ * - class?: string                    // Extra classes for outer wrapper
+ * - params?: Record<string, string | number | boolean> // extra query params
+ *
+ * Notes:
+ * - The iframe src is only set after user interaction (click/keyboard). This avoids
+ *   loading the player and third-party trackers until needed.
+ * - A <noscript> fallback renders a regular iframe with controls and no autoplay.
+ */
+
+interface Props {
+  url: string;
+  title?: string;
+  poster?: string;
+  aspect?: "16:9" | "4:3" | "1:1" | "21:9" | number;
+  privacyEnhanced?: boolean;
+  controls?: boolean;
+  autoplayOnClick?: boolean;
+  muted?: boolean;
+  start?: number;
+  class?: string;
+  params?: Record<string, string | number | boolean>;
+}
+
+const {
+  url,
+  title = "Embedded video",
+  poster,
+  aspect = "16:9",
+  privacyEnhanced = true,
+  controls = true,
+  autoplayOnClick = true,
+  muted = true,
+  start,
+  class: className = "",
+  params = {},
+} = Astro.props as Props;
+
+type Provider = "youtube" | "vimeo" | "other";
+
+function parseProvider(u: string): { provider: Provider; id?: string } {
+  try {
+    const x = new URL(u);
+    const host = x.hostname.replace(/^www\./, "");
+    // YouTube variants
+    if (
+      host === "youtube.com" ||
+      host === "m.youtube.com" ||
+      host === "music.youtube.com" ||
+      host === "youtube-nocookie.com" ||
+      host === "youtu.be" ||
+      host === "www.youtube.com"
+    ) {
+      let id = x.searchParams.get("v") ?? "";
+      if (!id) {
+        const parts = x.pathname.split("/").filter(Boolean);
+        // /embed/ID, /shorts/ID, youtu.be/ID
+        if (host === "youtu.be" && parts[0]) id = parts[0];
+        else if (parts[0] === "embed" && parts[1]) id = parts[1];
+        else if (parts[0] === "shorts" && parts[1]) id = parts[1];
+      }
+      if (id) return { provider: "youtube", id };
+      return { provider: "youtube" };
+    }
+    // Vimeo variants
+    if (host === "vimeo.com" || host === "player.vimeo.com") {
+      const parts = x.pathname.split("/").filter(Boolean);
+      // /<id> or /video/<id>
+      const idx = parts[0] === "video" ? 1 : 0;
+      const id = parts[idx];
+      if (id && /^\d+$/.test(id)) return { provider: "vimeo", id };
+      return { provider: "vimeo" };
+    }
+    return { provider: "other" };
+  } catch {
+    return { provider: "other" };
+  }
+}
+
+const det = parseProvider(url);
+const isYouTube = det.provider === "youtube" && !!det.id;
+const isVimeo = det.provider === "vimeo" && !!det.id;
+
+// Compute embed base (no autoplay here; added on click client-side)
+const embedBase = (() => {
+  if (isYouTube) {
+    const base = privacyEnhanced
+      ? `https://www.youtube-nocookie.com/embed/${det.id}`
+      : `https://www.youtube.com/embed/${det.id}`;
+    return base;
+  }
+  if (isVimeo) {
+    return `https://player.vimeo.com/video/${det.id}`;
+  }
+  // Fallback: use given URL in iframe (not ideal, but functional)
+  return url;
+})();
+
+// Build static params (controls, start, branding)
+const staticParams = (() => {
+  const q: Record<string, string> = {};
+  if (isYouTube) {
+    q.rel = "0";
+    q.modestbranding = "1";
+    q.controls = controls ? "1" : "0";
+    q.playsinline = "1";
+    if (typeof start === "number" && start > 0) q.start = String(Math.floor(start));
+  } else if (isVimeo) {
+    q.title = "0";
+    q.byline = "0";
+    q.portrait = "0";
+    if (privacyEnhanced) q.dnt = "1";
+    if (!controls) q.controls = "0";
+    if (typeof start === "number" && start > 0) q.t = String(Math.floor(start)) + "s";
+  }
+  // Merge extra params
+  for (const [k, v] of Object.entries(params)) {
+    q[k] = String(v);
+  }
+  return q;
+})();
+
+// Poster logic: prefer provided poster; otherwise derive YouTube thumbnail; otherwise gradient.
+const derivedPoster =
+  poster ||
+  (isYouTube ? `https://i.ytimg.com/vi/${det.id}/hqdefault.jpg` : "");
+
+// Aspect ratio style
+function aspectToStyle(a: Props["aspect"]): string {
+  if (typeof a === "number" && a > 0) return `${a} / 1`;
+  switch (a) {
+    case "4:3": return "4 / 3";
+    case "1:1": return "1 / 1";
+    case "21:9": return "21 / 9";
+    case "16:9":
+    default: return "16 / 9";
+  }
+}
+
+const aspectStyle = aspectToStyle(aspect);
+
+// Precomputed param strings for noscript (no autoplay)
+const noscriptSrc = (() => {
+  const sp = new URLSearchParams(staticParams).toString();
+  return sp ? `${embedBase}?${sp}` : embedBase;
+})();
+---
+
+<div
+  class={`relative overflow-hidden rounded-xl border
+          border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]
+          bg-[color-mix(in_srgb,var(--bg-elevated)_/_96%,transparent)]
+          ${className}`}
+  style={`aspect-ratio:${aspectStyle}`}
+>
+  <!-- Click-to-load overlay -->
+  <button
+    type="button"
+    class="group absolute inset-0 w-full h-full grid place-items-center
+           focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2
+           focus-visible:ring-[color-mix(in_srgb,var(--text-primary)_/_35%,transparent)]
+           transition"
+    data-embed-base={embedBase}
+    data-embed-query={JSON.stringify(staticParams)}
+    data-provider={det.provider}
+    data-autoplay={autoplayOnClick ? "1" : "0"}
+    data-muted={muted ? "1" : "0"}
+    aria-label={`Play video: ${title}`}
+    title={title}
+  >
+    <!-- Poster background -->
+    <div class="absolute inset-0">
+      {derivedPoster ? (
+        <img
+          src={derivedPoster}
+          alt=""
+          class="w-full h-full object-cover"
+          loading="lazy"
+          decoding="async"
+        />
+      ) : (
+        <div class="w-full h-full bg-[radial-gradient(circle_at_30%_20%,_#4f46e5_0%,_transparent_35%),radial-gradient(circle_at_75%_40%,_#06b6d4_0%,_transparent_30%),radial-gradient(circle_at_60%_80%,_#22c55e_0%,_transparent_25%)] opacity-30" />
+      )}
+      <div class="absolute inset-0 bg-black/25 group-hover:bg-black/30 transition-colors"></div>
+    </div>
+
+    <!-- Play button -->
+    <span
+      class="relative z-10 inline-flex items-center justify-center rounded-full border backdrop-blur
+             border-white/60 bg-white/20 text-white shadow-lg
+             size-16 sm:size-18 transition-transform group-active:scale-95"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" class="size-8" fill="currentColor" aria-hidden="true">
+        <path d="M17 12v24l20-12-20-12z"/>
+      </svg>
+    </span>
+  </button>
+
+  <!-- Iframe is created on demand via script for privacy; noscript fallback below -->
+  <noscript>
+    <iframe
+      src={noscriptSrc}
+      title={title}
+      loading="lazy"
+      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+      allowfullscreen
+      class="absolute inset-0 w-full h-full border-0"
+    ></iframe>
+  </noscript>
+</div>
+
+<script is:inline>
+  (function () {
+    const root = document.currentScript?.previousElementSibling as HTMLElement | null;
+    if (!root) return;
+    const btn = root.querySelector("button[data-embed-base]") as HTMLButtonElement | null;
+    if (!btn) return;
+
+    function buildSrc(): string {
+      const base = btn.dataset.embedBase || "";
+      const qBase = (() => {
+        try { return JSON.parse(btn.dataset.embedQuery || "{}"); }
+        catch { return {}; }
+      })();
+      const provider = btn.dataset.provider || "other";
+      const params = new URLSearchParams(qBase);
+
+      // Add autoplay & mute on interaction if configured
+      if (btn.dataset.autoplay === "1") {
+        params.set("autoplay", "1");
+        if (btn.dataset.muted === "1") {
+          if (provider === "youtube" || provider === "vimeo") params.set("mute", "1");
+        }
+        // iOS inline playback
+        if (provider === "youtube") params.set("playsinline", "1");
+      }
+
+      const query = params.toString();
+      return query ? `${base}?${query}` : base;
+    }
+
+    function load() {
+      // Prevent duplicate loads
+      if (root.querySelector("iframe")) return;
+
+      const iframe = document.createElement("iframe");
+      iframe.src = buildSrc();
+      iframe.title = btn.getAttribute("title") || "Embedded video";
+      iframe.loading = "lazy";
+      iframe.setAttribute("allow", "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share");
+      iframe.setAttribute("allowfullscreen", "");
+      iframe.style.position = "absolute";
+      iframe.style.inset = "0";
+      iframe.style.width = "100%";
+      iframe.style.height = "100%";
+      iframe.style.border = "0";
+
+      // Replace the overlay button
+      btn.replaceWith(iframe);
+      iframe.focus?.();
+    }
+
+    // Click / keyboard
+    btn.addEventListener("click", load);
+    btn.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        load();
+      }
+    });
+
+    // Optional: load when fully visible if user already interacted with page (reduced data)
+    // Commented out by default to maximize privacy; uncomment if desired.
+    // const io = new IntersectionObserver((entries) => {
+    //   entries.forEach((entry) => {
+    //     if (entry.isIntersecting && btn.dataset.autoplay === "0") {
+    //       // Just swap to iframe without autoplay to reduce CLS before user clicks
+    //       load();
+    //       io.disconnect();
+    //     }
+    //   });
+    // }, { threshold: 0.75 });
+    // io.observe(btn);
+  })();
+</script>

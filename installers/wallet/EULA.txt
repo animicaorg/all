@@ -1,0 +1,130 @@
+Animica Wallet — End User License Agreement (EULA)
+Version: 1.0 • Effective: 2025-10-08
+
+IMPORTANT: PLEASE READ THIS AGREEMENT CAREFULLY. BY INSTALLING OR USING THE
+ANIMICA WALLET SOFTWARE (“SOFTWARE”), YOU AGREE TO BE BOUND BY THIS EULA. IF
+YOU DO NOT AGREE, DO NOT INSTALL OR USE THE SOFTWARE.
+
+1. Parties; Scope
+   This EULA is between you (an individual or entity) and Animica Labs, Inc.
+   (“Animica”, “we”, “us”). It governs your use of the Software, related
+   documentation, and any updates provided under this EULA.
+
+2. License Grant
+   Subject to this EULA, Animica grants you a limited, revocable, non-exclusive,
+   non-transferable license to install and use the Software on devices you own
+   or control, solely for your personal or internal business purposes.
+
+3. Restrictions
+   You shall not: (a) reverse engineer, decompile, disassemble, or otherwise
+   attempt to derive source code except to the extent permitted by law;
+   (b) modify, adapt, translate, or create derivative works; (c) remove or
+   obscure proprietary notices; (d) rent, lease, sell, sublicense, or otherwise
+   transfer the Software to any third party; (e) use the Software for any
+   unlawful purpose or in a manner that infringes the rights of others.
+
+4. Digital Assets; Keys; No Custody
+   The Software is a non-custodial wallet. YOU ALONE CONTROL AND ARE
+   RESPONSIBLE FOR SAFEGUARDING YOUR PRIVATE KEYS, MNEMONICS, AND RECOVERY
+   MATERIALS. LOSS OF KEYS OR MNEMONICS WILL RESULT IN THE IRRECOVERABLE LOSS
+   OF ASSETS. Animica does not store, recover, or replace your keys, and is not
+   responsible for any lost or inaccessible assets.
+
+5. No Financial, Legal, or Tax Advice
+   The Software may display balances, prices, network fees, or other market
+   information provided by third parties. Such information is for convenience
+   only and does not constitute advice or a recommendation. You are solely
+   responsible for your decisions and compliance with applicable laws.
+
+6. Third-Party Services & Networks
+   The Software may interact with third-party services (e.g., RPC endpoints,
+   data availability services) and public blockchain networks that Animica does
+   not control. YOUR USE OF SUCH SERVICES OR NETWORKS IS AT YOUR OWN RISK AND
+   MAY BE SUBJECT TO SEPARATE TERMS. Animica is not liable for their acts or
+   omissions, or for network forks, reorganizations, or protocol changes.
+
+7. Open Source Components
+   The Software may include or interact with third-party open source
+   components, which are provided under their respective licenses. To the
+   extent those licenses grant you rights that this EULA would otherwise
+   restrict, such rights shall prevail solely for those components. Notices:
+   see THIRD-PARTY or LICENSE files included with the distribution.
+
+8. Privacy
+   The Software is designed to minimize collection of personal data. Certain
+   diagnostics or crash reports may be processed to improve quality, subject to
+   your consent where required. See our Privacy Policy for details:
+   https://animica.dev/legal/privacy
+
+9. Updates; Auto-Update
+   We may provide updates, patches, or new versions (“Updates”). Some platforms
+   may auto-update by default. By installing or using the Software, you consent
+   to receive Updates, which are part of the Software and subject to this EULA.
+
+10. Beta & Experimental Features
+   If you opt into beta channels or experimental features, you acknowledge they
+   may be incomplete and may materially change before release. THEY ARE
+   PROVIDED “AS IS” AND AT YOUR OWN RISK.
+
+11. Ownership
+   The Software is licensed, not sold. Animica and its licensors retain all
+   rights, title, and interest in and to the Software and related IP, subject
+   only to the limited license granted herein.
+
+12. Export & Sanctions
+   You represent that you are not located in, under the control of, or a
+   national or resident of any country or entity subject to U.S. or other
+   applicable embargoes or sanctions. You agree to comply with all applicable
+   export and trade laws.
+
+13. Disclaimer of Warranties
+   TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE SOFTWARE IS PROVIDED “AS IS”
+   AND “AS AVAILABLE,” WITH ALL FAULTS, WITHOUT WARRANTIES OF ANY KIND,
+   WHETHER EXPRESS, IMPLIED, STATUTORY, OR OTHERWISE—INCLUDING, WITHOUT
+   LIMITATION, WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE,
+   TITLE, NON-INFRINGEMENT, AND ANY WARRANTIES ARISING OUT OF COURSE OF DEALING
+   OR USAGE OF TRADE. YOUR USE IS AT YOUR SOLE RISK.
+
+14. Limitation of Liability
+   TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT WILL ANIMICA OR ITS
+   AFFILIATES, SUPPLIERS, OR LICENSORS BE LIABLE FOR ANY INDIRECT, INCIDENTAL,
+   SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE DAMAGES; LOSS OF PROFITS,
+   REVENUE, GOODWILL, OR DATA; OR COST OF SUBSTITUTE GOODS OR SERVICES—EVEN IF
+   ADVISED OF THE POSSIBILITY OF SUCH DAMAGES. IN NO EVENT WILL THE AGGREGATE
+   LIABILITY OF ANIMICA AND ITS AFFILIATES EXCEED THE GREATER OF (A) THE
+   AMOUNT YOU PAID (IF ANY) FOR THE SOFTWARE IN THE 12 MONTHS PRECEDING THE
+   CLAIM OR (B) USD $50. THESE LIMITATIONS APPLY TO THE FULLEST EXTENT
+   PERMITTED BY LAW.
+
+15. Indemnification
+   You will defend, indemnify, and hold harmless Animica and its affiliates
+   from and against all claims, liabilities, damages, losses, and expenses
+   (including reasonable attorneys’ fees) arising from or related to your use
+   of the Software or violation of this EULA.
+
+16. Termination
+   This EULA is effective until terminated. You may terminate by uninstalling
+   the Software. We may terminate immediately if you breach this EULA. Upon
+   termination, the license granted herein will end and you must cease all use.
+
+17. Governing Law; Venue
+   This EULA is governed by the laws of the State of Texas, USA, excluding its
+   conflict-of-laws rules. The parties consent to the exclusive jurisdiction
+   and venue of the state and federal courts located in Travis County, Texas.
+
+18. Consumer Rights
+   You may have rights that cannot be waived under applicable consumer laws.
+   This EULA is intended to be interpreted consistent with those rights.
+
+19. Entire Agreement; Changes
+   This EULA constitutes the entire agreement regarding the Software and
+   supersedes prior or contemporaneous agreements on the subject. We may update
+   this EULA for future releases; your continued use after notice constitutes
+   acceptance.
+
+20. Contact
+   Animica Labs, Inc.
+   https://animica.dev/support
+
+BY INSTALLING OR USING THE SOFTWARE, YOU ACKNOWLEDGE THAT YOU HAVE READ,
+UNDERSTOOD, AND AGREE TO BE BOUND BY THIS EULA.

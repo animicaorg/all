@@ -1,0 +1,159 @@
+# Loki ruler alerting rules for log-rate spikes.
+# Detects sudden volume increases (all levels except debug) and sustained error surges.
+#
+# How to use:
+# - Mount this file into Loki ruler (or Grafana managed alerts) and point rules_config to it.
+# - Assumes logs carry a low-cardinality label {service="<component name>"}.
+# - If your label is different, change `service` below (e.g., `app`, `job`, `container`).
+#
+# Notes:
+# - We use a subquery to compute a rolling 1h baseline of the 5m rate, then compare current to baseline.
+# - clamp_min() prevents divide-by-zero (treat near-zero baseline as 0.1 lines/s).
+# - We also require an absolute rate floor so tiny streams don't spam alerts.
+
+groups:
+  - name: services-log-spike
+    interval: 1m
+    rules:
+      # --- Per-service total log rate spike ----------------------------------
+      - alert: ServiceLogVolumeSpike
+        expr: |
+          (
+            sum by (service) ( rate({service!="" , level!~"(?i)debug"}[5m]) )
+          )
+          /
+          clamp_min(
+            avg_over_time(
+              (
+                sum by (service) ( rate({service!="" , level!~"(?i)debug"}[5m]) )
+              )[1h:]
+            ),
+            0.1
+          ) > 3
+          and
+          sum by (service) ( rate({service!="" , level!~"(?i)debug"}[5m]) ) > 5
+        for: 10m
+        labels:
+          severity: warning
+          team: observability
+          category: logging
+        annotations:
+          summary: "Log rate spike for {{ $labels.service }}"
+          description: |
+            The current 5m log rate for service={{ $labels.service }} is {{ printf "%.2f" $value }}x its 1h baseline.
+            Investigate noisy endpoints, retry loops, or misconfigured logging.
+            Tip: filter by `service={{ $labels.service }}` and compare last 15m vs 2h.
+
+      # Escalate if the spike is very large or sustained.
+      - alert: ServiceLogVolumeSpikeHigh
+        expr: |
+          (
+            sum by (service) ( rate({service!="" , level!~"(?i)debug"}[5m]) )
+          )
+          /
+          clamp_min(
+            avg_over_time(
+              (
+                sum by (service) ( rate({service!="" , level!~"(?i)debug"}[5m]) )
+              )[2h:]
+            ),
+            0.1
+          ) > 6
+          and
+          sum by (service) ( rate({service!="" , level!~"(?i)debug"}[5m]) ) > 20
+        for: 15m
+        labels:
+          severity: critical
+          team: observability
+          category: logging
+        annotations:
+          summary: "SEV: Large log spike for {{ $labels.service }}"
+          description: |
+            The 5m log rate is >6x the 2h baseline and >20 lines/s for service={{ $labels.service }}.
+            This often indicates hot loops, storms, or widespread failures.
+
+      # --- Per-service error-rate surge --------------------------------------
+      - alert: ServiceErrorRateSurge
+        expr: |
+          sum by (service) ( rate({service!="", level=~"(?i)(error|err)"}[5m]) ) > 1
+          and
+          (
+            sum by (service) ( rate({service!="", level=~"(?i)(error|err)"}[5m]) )
+          )
+          /
+          clamp_min(
+            avg_over_time(
+              (
+                sum by (service) ( rate({service!="", level=~"(?i)(error|err)"}[5m]) )
+              )[1h:]
+            ),
+            0.05
+          ) > 3
+        for: 5m
+        labels:
+          severity: warning
+          team: observability
+          category: logging
+        annotations:
+          summary: "Error log surge for {{ $labels.service }}"
+          description: |
+            Error lines increased >3x baseline (5m vs 1h) and exceed 1 line/sec.
+            Check recent deploys, upstream dependencies, or DB availability.
+
+      - alert: ServiceErrorRateSurgeHigh
+        expr: |
+          sum by (service) ( rate({service!="", level=~"(?i)(error|err|critical|fatal)"}[5m]) ) > 5
+          or
+          (
+            (
+              sum by (service) ( rate({service!="", level=~"(?i)(error|err|critical|fatal)"}[5m]) )
+            )
+            /
+            clamp_min(
+              avg_over_time(
+                (
+                  sum by (service) ( rate({service!="", level=~"(?i)(error|err|critical|fatal)"}[5m]) )
+                )[2h:]
+              ),
+              0.05
+            )
+          ) > 8
+        for: 10m
+        labels:
+          severity: critical
+          team: observability
+          category: logging
+        annotations:
+          summary: "SEV: Error log storm for {{ $labels.service }}"
+          description: |
+            Critical surge in error logs for service={{ $labels.service }}.
+            Immediate triage recommended. Review latest releases and dependency health.
+
+  # Optional: global signal to catch systemic issues across all services.
+  - name: global-log-spike
+    interval: 1m
+    rules:
+      - alert: GlobalLogVolumeSpike
+        expr: |
+          (
+            sum ( rate({level!~"(?i)debug"}[5m]) )
+          )
+          /
+          clamp_min(
+            avg_over_time(
+              ( sum ( rate({level!~"(?i)debug"}[5m]) ) )[2h:]
+            ),
+            1
+          ) > 2.5
+          and
+          sum ( rate({level!~"(?i)debug"}[5m]) ) > 100
+        for: 10m
+        labels:
+          severity: warning
+          team: observability
+          category: logging
+        annotations:
+          summary: "Global log volume spike"
+          description: |
+            Total platform log rate is >2.5x the 2h baseline and above 100 lines/sec.
+            May indicate cascading failures, traffic bursts, or chatty logging after deploy.

@@ -1,0 +1,40 @@
+{
+  "protocol": "groth16",
+  "curve": "bn128",
+  "proof": {
+    "pi_a": [
+      "1",
+      "2",
+      "1"
+    ],
+    "pi_b": [
+      [
+        "3",
+        "4"
+      ],
+      [
+        "5",
+        "6"
+      ],
+      [
+        "1",
+        "0"
+      ]
+    ],
+    "pi_c": [
+      "7",
+      "8",
+      "1"
+    ]
+  },
+  "publicSignals": ["0", "0", "800", "1"],
+  "meta": {
+    "circuit": "embedding.circom",
+    "statement": "Prove dot(x, w) ≥ τ with commitments to x and w",
+    "example_dot": "816",
+    "threshold_tau": "800",
+    "result_ok": "1",
+    "placeholders": true,
+    "notes": "Coordinates are dummy, suitable for parsing/tests only."
+  }
+}

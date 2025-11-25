@@ -1,0 +1,290 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["animica", "randomness", "beacon", "vdf", "qrng"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": true },
+        "hide": 0,
+        "label": "Prometheus",
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource"
+      },
+      {
+        "datasource": "${DS_PROMETHEUS}",
+        "definition": "label_values(up{job=~\".*\"}, job)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "job",
+        "multi": false,
+        "name": "job",
+        "options": [],
+        "query": { "query": "label_values(up{job=~\".*\"}, job)", "refId": "PromVarJob" },
+        "refresh": 1,
+        "regex": "/(node|randomness|services).*/",
+        "skipUrlSync": false,
+        "type": "query"
+      },
+      {
+        "datasource": "${DS_PROMETHEUS}",
+        "definition": "label_values(animica_rand_beacon_finalized_total{job=~\"$job\"}, instance)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "instance",
+        "multi": false,
+        "name": "instance",
+        "options": [],
+        "query": {
+          "query": "label_values(animica_rand_beacon_finalized_total{job=~\"$job\"}, instance)",
+          "refId": "PromVarInstance"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "query"
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m"],
+    "time_options": ["1h", "3h", "6h", "12h", "24h", "2d", "7d", "30d"]
+  },
+  "timezone": "",
+  "title": "Animica — Randomness Beacon",
+  "uid": "animica-rand-01",
+  "version": 1,
+  "panels": [
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Current beacon round id reported by the node.",
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "id": 10,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "max(animica_rand_round_current{instance=\"$instance\"})", "legendFormat": "round", "refId": "A" }
+      ],
+      "title": "Current Round",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Beacons finalized per second (5m rate).",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "id": 11,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "sum(rate(animica_rand_beacon_finalized_total{instance=\"$instance\"}[5m]))", "legendFormat": "finalized/s", "refId": "A" }
+      ],
+      "title": "Finalized Rate (5m)",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Shannon entropy of the mixed beacon output (bits).",
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "id": 12,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "animica_rand_beacon_entropy_bits{instance=\"$instance\"}", "legendFormat": "entropy (bits)", "refId": "A" }
+      ],
+      "title": "Beacon Entropy (bits)",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "VDF verification failures per second (5m rate).",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "id": 13,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "sum(rate(animica_rand_vdf_invalid_total{instance=\"$instance\"}[5m]))", "legendFormat": "invalid/s", "refId": "A" }
+      ],
+      "title": "VDF Invalid (5m)",
+      "type": "stat"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Commit & reveal activity (5m rates). Rejections include early/late/duplicate.",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "id": 20,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "sum(rate(animica_rand_commits_total{instance=\"$instance\"}[5m]))", "legendFormat": "commits/s", "refId": "A" },
+        { "expr": "sum(rate(animica_rand_reveals_total{instance=\"$instance\"}[5m]))", "legendFormat": "reveals/s", "refId": "B" },
+        { "expr": "sum by (reason) (rate(animica_rand_commit_rejects_total{instance=\"$instance\"}[5m]))", "legendFormat": "reject {{reason}}/s", "refId": "C" }
+      ],
+      "title": "Commit/Reveal Flow (5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "VDF verification latency (reference verifier).",
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 3 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "id": 21,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(animica_rand_vdf_verify_seconds_bucket{instance=\"$instance\"}[5m])))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(animica_rand_vdf_verify_seconds_bucket{instance=\"$instance\"}[5m])))",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(animica_rand_vdf_verify_seconds_bucket{instance=\"$instance\"}[5m])))",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ],
+      "title": "VDF Verify Latency (p50/p95/p99, 5m)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Finalized beacons (5m rate) as a timeseries.",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 13 },
+      "id": 30,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "sum(rate(animica_rand_beacon_finalized_total{instance=\"$instance\"}[5m]))", "legendFormat": "finalized/s", "refId": "A" }
+      ],
+      "title": "Beacon Finalized (5m rate)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Entropy of the output and QRNG bytes mixed (if enabled).",
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 13 },
+      "id": 31,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "avg_over_time(animica_rand_beacon_entropy_bits{instance=\"$instance\"}[5m])", "legendFormat": "entropy bits (avg 5m)", "refId": "A" },
+        { "expr": "sum(rate(animica_rand_qrng_bytes_mixed_total{instance=\"$instance\"}[5m]))", "legendFormat": "qrng bytes/s", "refId": "B" }
+      ],
+      "title": "Entropy & QRNG Mix",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Bad reveals (mismatch with commitment, too early/late).",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 20 },
+      "id": 40,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "sum(rate(animica_rand_bad_reveals_total{instance=\"$instance\"}[5m]))", "legendFormat": "bad reveal/s", "refId": "A" },
+        { "expr": "sum by (reason) (rate(animica_rand_reveal_rejects_total{instance=\"$instance\"}[5m]))", "legendFormat": "reject {{reason}}/s", "refId": "B" }
+      ],
+      "title": "Reveal Failures (5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "End-to-end finalize path time (aggregate: aggregate→VDF verify→mix).",
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 3 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 20 },
+      "id": 41,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(animica_rand_finalize_seconds_bucket{instance=\"$instance\"}[5m])))",
+          "legendFormat": "finalize p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(animica_rand_finalize_seconds_bucket{instance=\"$instance\"}[5m])))",
+          "legendFormat": "finalize p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(animica_rand_finalize_seconds_bucket{instance=\"$instance\"}[5m])))",
+          "legendFormat": "finalize p99",
+          "refId": "C"
+        }
+      ],
+      "title": "Finalize Path Latency (5m)",
+      "type": "timeseries"
+    }
+  ]
+}

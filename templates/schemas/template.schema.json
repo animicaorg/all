@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://animica.org/schemas/template.schema.json",
+  "title": "Animica Contract Templates Index",
+  "description": "Schema for the templates/index.json file that catalogs ready-to-use contract templates and their build/manifest paths.",
+  "type": "object",
+  "additionalProperties": false,
+
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonic integer for schema-breaking changes."
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 timestamp when this index was generated."
+    },
+    "set_version": {
+      "$ref": "#/$defs/SemVer",
+      "description": "Human-facing version of this template set."
+    },
+    "default_template": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{1,48}$",
+      "description": "ID of the template considered the default starter. SHOULD match one of templates[].id."
+    },
+    "templates": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/Template" },
+      "description": "Catalog of available templates. Each 'id' MUST be unique."
+    }
+  },
+
+  "required": ["schema_version", "set_version", "templates"],
+
+  "$defs": {
+    "SemVer": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.-]+)?$",
+      "examples": ["0.3.0", "1.0.0-rc.1"]
+    },
+    "SemVerRange": {
+      "type": "string",
+      "description": "Conservative semver range matcher (npm-like).",
+      "pattern": "^(?:[~^]|>=|<=|>|<|=)?\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.-]+)?$",
+      "examples": [">=0.1.0", "^1.2.0", "~0.3.0"]
+    },
+    "EventName": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$",
+      "examples": ["CounterIncremented", "EscrowFunded", "AIConsumed"]
+    },
+    "Tag": {
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,30})$",
+      "examples": ["starter", "stateful", "deterministic-deadlines"]
+    },
+    "CapabilityId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]{1,63}$",
+      "examples": ["capabilities.ai", "randomness.beacon", "capabilities.quantum"]
+    },
+    "RelPath": {
+      "type": "string",
+      "description": "Repository-relative POSIX path.",
+      "pattern": "^(?:contracts|templates|studio-wasm|sdk|spec)/[A-Za-z0-9._/\\-]+$"
+    },
+    "ContractPath": {
+      "allOf": [
+        { "$ref": "#/$defs/RelPath" },
+        { "type": "string", "pattern": "^contracts/(templates|examples|stdlib|fixtures)/[A-Za-z0-9._/\\-]+\\.py$" }
+      ]
+    },
+    "ManifestPath": {
+      "allOf": [
+        { "$ref": "#/$defs/RelPath" },
+        { "type": "string", "pattern": "^contracts/(templates|examples|fixtures)/[A-Za-z0-9._/\\-]+\\.json$" }
+      ]
+    },
+    "PackageOutPath": {
+      "type": "string",
+      "pattern": "^contracts/build/[A-Za-z0-9._\\-]+\\.pkg\\.json$",
+      "examples": ["contracts/build/counter.pkg.json"]
+    },
+
+    "Build": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "package_out": { "$ref": "#/$defs/PackageOutPath" },
+        "code_hash": {
+          "description": "Expected code hash. Use '<computed at build>' when not yet resolved.",
+          "oneOf": [
+            { "type": "string", "const": "<computed at build>" },
+            { "type": "string", "pattern": "^0x[0-9a-fA-F]{64}$", "description": "SHA3-256 digest (32 bytes) of compiled code." }
+          ]
+        }
+      },
+      "required": ["package_out", "code_hash"]
+    },
+
+    "Paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "contract": { "$ref": "#/$defs/ContractPath" },
+        "manifest": { "$ref": "#/$defs/ManifestPath" }
+      },
+      "required": ["contract", "manifest"]
+    },
+
+    "MinNodeModules": {
+      "type": "object",
+      "description": "Minimum versions of node-side modules that this template expects.",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_.-]{0,63}$",
+        "description": "Module name (e.g., 'capabilities', 'randomness')."
+      },
+      "additionalProperties": { "$ref": "#/$defs/SemVerRange" }
+    },
+
+    "Template": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{1,48}$",
+          "description": "Stable identifier, lowercase, kebab/underscore allowed."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 64
+        },
+        "introduced": { "$ref": "#/$defs/SemVer" },
+        "last_changed": { "$ref": "#/$defs/SemVer" },
+        "description": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 400
+        },
+        "tags": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Tag" },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "capabilities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/CapabilityId" },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "min_node_modules": { "$ref": "#/$defs/MinNodeModules" },
+        "abi_stability": {
+          "type": "string",
+          "enum": ["stable", "experimental", "deprecated"],
+          "description": "Signals ABI churn expectations for template consumers."
+        },
+        "paths": { "$ref": "#/$defs/Paths" },
+        "build": { "$ref": "#/$defs/Build" },
+        "invariants": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 200
+          },
+          "minItems": 0,
+          "uniqueItems": true,
+          "description": "Key safety or correctness statements the contract intends to maintain."
+        },
+        "events": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/EventName" },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "links": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "docs": {
+              "type": "string",
+              "pattern": "^(https?://|docs/|contracts/docs/)[A-Za-z0-9._/\\-]+$"
+            }
+          }
+        },
+        "deprecated": {
+          "type": "boolean",
+          "default": false,
+          "description": "If true, template is kept for back-compat and should not be used for new projects."
+        }
+      },
+      "required": ["id", "name", "introduced", "description", "abi_stability", "paths", "build"]
+    }
+  },
+
+  "examples": [
+    {
+      "schema_version": 1,
+      "generated_at": "2025-10-04T00:00:00Z",
+      "set_version": "0.3.0",
+      "default_template": "counter",
+      "templates": [
+        {
+          "id": "counter",
+          "name": "Counter",
+          "introduced": "0.1.0",
+          "last_changed": "0.2.0",
+          "description": "Minimal stateful example: increment and read a single counter.",
+          "tags": ["starter", "stateful", "events"],
+          "capabilities": [],
+          "abi_stability": "stable",
+          "paths": {
+            "contract": "contracts/templates/counter/contract.py",
+            "manifest": "contracts/templates/counter/manifest.json"
+          },
+          "build": {
+            "package_out": "contracts/build/counter.pkg.json",
+            "code_hash": "<computed at build>"
+          },
+          "invariants": ["count is an integer ≥ 0"],
+          "events": ["CounterIncremented"]
+        }
+      ]
+    }
+  ],
+
+  "$comment": "NOTE: Referential integrity between 'default_template' and templates[].id cannot be enforced with pure JSON Schema. Validation tools SHOULD confirm it in a second pass."
+}

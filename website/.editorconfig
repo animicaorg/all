@@ -1,0 +1,44 @@
+# EditorConfig helps maintain consistent coding styles between editors & IDEs
+# See https://editorconfig.org
+
+root = true
+
+# Default settings
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# Markdown: keep intentional trailing spaces (line-breaks)
+[*.{md,mdx}]
+trim_trailing_whitespace = false
+
+# Astro / TS / JS
+[*.{astro,ts,tsx,js,jsx,cjs,mjs}]
+indent_style = space
+indent_size = 2
+
+# JSON, YAML
+[*.{json,yml,yaml}]
+indent_style = space
+indent_size = 2
+
+# Shell scripts
+[*.{sh,bash}]
+end_of_line = lf
+
+# Windows scripts
+[*.{bat,cmd,ps1}]
+end_of_line = crlf
+
+# Makefiles
+[{Makefile,*.mk}]
+indent_style = tab
+
+# Optional: Python (used by some tooling scripts)
+[*.py]
+indent_style = space
+indent_size = 4

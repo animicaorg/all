@@ -1,0 +1,82 @@
+# PersistentVolumeClaims for observability state in namespace animica-devnet.
+# If your cluster uses a specific StorageClass, set `storageClassName` below.
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-tsdb
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: prometheus
+spec:
+  accessModes: ["ReadWriteOnce"]
+  # storageClassName: standard
+  resources:
+    requests:
+      storage: 20Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: alertmanager-data
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: alertmanager
+spec:
+  accessModes: ["ReadWriteOnce"]
+  # storageClassName: standard
+  resources:
+    requests:
+      storage: 2Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-storage
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: grafana
+spec:
+  accessModes: ["ReadWriteOnce"]
+  # storageClassName: standard
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: loki-data
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: loki
+spec:
+  accessModes: ["ReadWriteOnce"]
+  # storageClassName: standard
+  resources:
+    requests:
+      storage: 50Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tempo-data
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: tempo
+spec:
+  accessModes: ["ReadWriteOnce"]
+  # storageClassName: standard
+  resources:
+    requests:
+      storage: 20Gi

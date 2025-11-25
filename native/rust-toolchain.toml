@@ -1,0 +1,27 @@
+# Animica: pinned Rust toolchain for reproducible native builds.
+# This file is honored by rustup and Cargo; entering the repo will auto-select
+# the declared toolchain and ensure listed components are installed.
+
+[toolchain]
+# Use the latest stable toolchain. CI and local dev will converge on the same
+# rustc/rustfmt versions, reducing "it works on my machine" drift.
+channel = "stable"
+
+# Keep the profile small to speed up CI bootstrap and reduce network I/O.
+# (Available profiles: minimal, default, complete)
+profile = "minimal"
+
+# Ensure rustfmt is available everywhere (pre-commit hooks, CI, and editors).
+# Add "clippy" here if you want linting enforced at the toolchain layer:
+# components = ["rustfmt", "clippy"]
+components = ["rustfmt"]
+
+# --- Notes --------------------------------------------------------------------
+# - rustup respects this file automatically. To override locally (e.g. bisect):
+#     RUSTUP_TOOLCHAIN=1.78.0 cargo build
+# - To update the stable channel (e.g. new Rust release day):
+#     rustup update stable
+# - If you later vendor platform targets (e.g., WASM):
+#     targets = ["wasm32-unknown-unknown"]
+# - For deterministic fmt in CI:
+#     cargo fmt --all -- --check

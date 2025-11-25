@@ -1,0 +1,195 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import InlineLink from "../../components/InlineLink.astro";
+
+// Eagerly load all MD/MDX files next to this route at build time.
+// We keep slugs to a single path segment (e.g. my-post.mdx → /blog/my-post).
+const modMap = import.meta.glob("./**/*.{md,mdx}", { eager: true });
+
+// Normalize into an index: slug → { frontmatter, Content }
+type Entry = { slug: string; frontmatter: Record<string, any>; Content: any };
+const entries = Object.entries(modMap)
+  .map(([path, mod]: [string, any]) => {
+    const slug = path.replace("./", "").replace(/\.(md|mdx)$/, "");
+    if (slug.includes("/")) return null; // restrict to top-level posts for this [slug] route
+    const Content = mod.default ?? mod.Content;
+    const frontmatter = mod.frontmatter ?? {};
+    return { slug, frontmatter, Content } as Entry;
+  })
+  .filter(Boolean) as Entry[];
+
+// Generate static paths at build time
+export function getStaticPaths() {
+  return entries.map(({ slug, frontmatter }) => ({
+    params: { slug },
+    props: { slug, frontmatter },
+  }));
+}
+
+// Props for the selected post
+const { slug, frontmatter } = Astro.props as {
+  slug: string;
+  frontmatter: {
+    title?: string;
+    description?: string;
+    date?: string;
+    author?: string;
+    tags?: string[];
+    hero?: string;
+  };
+};
+
+// Lookup Content component for this slug
+const record = entries.find((e) => e.slug === slug);
+if (!record) {
+  throw new Error(`Blog post not found for slug: ${slug}`);
+}
+const { Content } = record;
+
+// Derived meta
+const title = frontmatter.title ?? "Untitled post";
+const description =
+  frontmatter.description ??
+  "Engineering updates and deep dives from the Animica team.";
+const isoDate = frontmatter.date ?? "";
+const datePretty = isoDate
+  ? new Date(isoDate).toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+    })
+  : undefined;
+const author = frontmatter.author ?? "Animica Team";
+const tags: string[] = Array.isArray(frontmatter.tags) ? frontmatter.tags : [];
+
+// JSON-LD
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  headline: title,
+  description,
+  author: { "@type": "Organization", name: author },
+  datePublished: isoDate || undefined,
+  mainEntityOfPage: new URL(Astro.url.pathname, Astro.site ?? "http://localhost").toString(),
+};
+---
+
+<BaseLayout title={title} description={description}>
+  <script type="application/ld+json" set:html={JSON.stringify(jsonLd)} />
+
+  <article class="wrap" itemscope itemtype="https://schema.org/BlogPosting">
+    <header class="postHeader">
+      <a href="/blog" class="back" aria-label="Back to blog">← Back</a>
+      <h1 class="title" itemprop="headline">{title}</h1>
+      <p class="meta">
+        {datePretty && (
+          <time datetime={isoDate} itemprop="datePublished">{datePretty}</time>
+        )}
+        <span class="sep">•</span>
+        <span class="author" itemprop="author">{author}</span>
+      </p>
+      {tags.length > 0 && (
+        <ul class="tags" role="list">
+          {tags.map((t) => <li class="tag">#{t}</li>)}
+        </ul>
+      )}
+      {frontmatter.hero && (
+        <img
+          src={frontmatter.hero}
+          alt=""
+          class="hero"
+          loading="lazy"
+          decoding="async"
+          width="1280"
+          height="720"
+        />
+      )}
+    </header>
+
+    <div class="prose" itemprop="articleBody">
+      <Content />
+    </div>
+
+    <footer class="postFooter">
+      <InlineLink href="/blog">← All posts</InlineLink>
+      <span class="spacer" />
+      <InlineLink href="/status">Network status</InlineLink>
+    </footer>
+  </article>
+
+  <style>
+    .wrap {
+      max-width: 72rem;
+      padding: 2rem 1rem 4rem;
+      margin: 0 auto;
+    }
+    .back {
+      display: inline-block;
+      font-size: 0.95rem;
+      color: var(--text-muted, #6b7280);
+      text-decoration: none;
+      margin-bottom: 0.5rem;
+    }
+    .back:hover { text-decoration: underline; }
+    .postHeader { margin-bottom: 1.25rem; }
+    .title {
+      font-size: clamp(2rem, 3.6vw, 2.75rem);
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+      margin: 0.15rem 0 0.25rem;
+    }
+    .meta {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: var(--text-muted, #6b7280);
+      margin: 0.25rem 0 0.5rem;
+      font-size: 0.95rem;
+    }
+    .sep { opacity: 0.45; }
+    .tags {
+      display: flex; flex-wrap: wrap; gap: 0.35rem 0.5rem;
+      margin: 0.35rem 0 0; padding: 0;
+    }
+    .tag {
+      list-style: none;
+      font-size: 0.75rem;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      border: 1px solid color-mix(in oklch, canvastext, transparent 86%);
+      color: var(--text-muted, #6b7280);
+      background: color-mix(in oklch, canvas, canvastext 2.5%);
+    }
+    .hero {
+      width: 100%;
+      height: auto;
+      margin-top: 0.75rem;
+      border-radius: 0.75rem;
+      border: 1px solid color-mix(in oklch, canvastext, transparent 90%);
+    }
+    .prose :global(p) { margin: 0.75rem 0; }
+    .prose :global(h2) { margin: 1.5rem 0 0.5rem; }
+    .prose :global(h3) { margin: 1.25rem 0 0.35rem; }
+    .prose :global(code) {
+      background: color-mix(in oklch, canvas, canvastext 4%);
+      padding: 0.15rem 0.35rem;
+      border-radius: 0.35rem;
+    }
+    .prose :global(pre) {
+      padding: 1rem;
+      border-radius: 0.75rem;
+      border: 1px solid color-mix(in oklch, canvastext, transparent 90%);
+      background: color-mix(in oklch, canvas, canvastext 3%);
+      overflow: auto;
+    }
+    .postFooter {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-top: 2rem;
+      padding-top: 1rem;
+      border-top: 1px solid color-mix(in oklch, canvastext, transparent 92%);
+    }
+    .spacer { flex: 1 1 auto; }
+  </style>
+</BaseLayout>

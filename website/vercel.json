@@ -1,0 +1,51 @@
+{
+  "version": 2,
+  "trailingSlash": false,
+
+  "buildCommand": "pnpm build",
+  "outputDirectory": "out",
+
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "www.animica.org" }],
+      "destination": "https://animica.org/:path*",
+      "permanent": true
+    }
+  ],
+
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" },
+        { "key": "Strict-Transport-Security", "value": "max-age=31536000; includeSubDomains; preload" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "Permissions-Policy", "value": "browsing-topics=()" },
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; font-src 'self' data:; img-src 'self' data: blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://rpc.animica.org https://studio.animica.org https://explorer.animica.org; upgrade-insecure-requests;"
+        }
+      ]
+    },
+    {
+      "source": "/_astro/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    },
+    {
+      "source": "/images/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    }
+  ],
+
+  "functions": {
+    "api/**/*.ts": { "runtime": "nodejs20.x", "memory": 128, "maxDuration": 10 },
+    "edge/**/*.ts": { "runtime": "edge", "maxDuration": 5 }
+  }
+}

@@ -1,0 +1,146 @@
+# Alertmanager configuration for Animica
+# - Routes by severity (info → notify, warning → slack, critical/page → pager + slack + email)
+# - Receivers are parameterized via env vars so you can keep secrets out of git
+# - Inhibit rules suppress noisy lower-severity alerts when a higher-severity one for the
+#   same alert/component/instance is active.
+
+global:
+  resolve_timeout: 5m
+  # Email (optional; set via env or override here)
+  smtp_smarthost: ${SMTP_SMARTHOST:-smtp.example.com:587}
+  smtp_from: ${SMTP_FROM:-alertmanager@animica.dev}
+  smtp_require_tls: true
+
+route:
+  receiver: ops-slack-alerts
+  group_by: ['alertname', 'component', 'instance']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 2h
+
+  routes:
+    # Pages (wake-me-up): send to PagerDuty (or any webhook) AND Slack; also email as backup
+    - matchers:
+        - severity="page"
+      receiver: ops-pager
+      continue: true
+    - matchers:
+        - severity="page"
+      receiver: ops-slack-alerts
+      continue: true
+    - matchers:
+        - severity="page"
+      receiver: ops-email
+
+    # Critical (non-paging in some environments): Slack + optional email
+    - matchers:
+        - severity="critical"
+      receiver: ops-slack-alerts
+      continue: true
+    - matchers:
+        - severity="critical"
+      receiver: ops-email
+
+    # Warnings: Slack only, slower repeat to reduce noise
+    - matchers:
+        - severity="warning"
+      receiver: ops-slack-alerts
+      group_wait: 2m
+      repeat_interval: 6h
+
+    # Infos / rollups: go to a lower-noise channel or generic webhook
+    - matchers:
+        - severity="info"
+      receiver: ops-slack-notify
+      group_wait: 5m
+      repeat_interval: 24h
+
+receivers:
+  - name: ops-slack-alerts
+    slack_configs:
+      - send_resolved: true
+        # Prefer env-provided Incoming Webhook URL. Channel is optional (webhook may fix it).
+        api_url: ${ALERT_SLACK_ALERTS_URL:-https://hooks.slack.com/services/T000/B000/XXXXX}
+        channel: ${ALERT_SLACK_ALERTS_CHANNEL:-#animica-alerts}
+        title: >-
+          [{{ .CommonLabels.environment | default "devnet" }}] {{ .CommonLabels.alertname }}
+          ({{ .CommonLabels.severity | upper }}) — {{ .Status | upper }}
+        text: >-
+          *Alert:* {{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }})
+          \n*Component:* {{ .CommonLabels.component | default "n/a" }}
+          \n*Instance:* `{{ .CommonLabels.instance | default "n/a" }}`
+          {{- if .CommonLabels.job }} \n*Job:* {{ .CommonLabels.job }} {{- end }}
+          {{- if .CommonAnnotations.summary }} \n*Summary:* {{ .CommonAnnotations.summary }} {{- end }}
+          {{- if .CommonAnnotations.description }} \n*Description:* {{ .CommonAnnotations.description }} {{- end }}
+          \n*Labels:* {{ .CommonLabels }}
+          \n*Silence:* <{{ .ExternalURL }}/#/silences|create>
+          \n*Source:* <{{ .ExternalURL }}|Alertmanager>
+
+  - name: ops-slack-notify
+    slack_configs:
+      - send_resolved: true
+        api_url: ${ALERT_SLACK_NOTIFY_URL:-https://hooks.slack.com/services/T000/B000/YYYYY}
+        channel: ${ALERT_SLACK_NOTIFY_CHANNEL:-#animica-notify}
+        title: >-
+          [{{ .CommonLabels.environment | default "devnet" }}] {{ .CommonLabels.alertname }}
+          ({{ .CommonLabels.severity | upper }}) — {{ .Status | upper }}
+        text: >-
+          {{ .CommonAnnotations.summary | default .CommonAnnotations.description | default "See labels and source." }}
+          \n*Labels:* {{ .CommonLabels }}
+
+  - name: ops-email
+    email_configs:
+      - to: ${ALERT_EMAIL_TO:-oncall@animica.dev}
+        require_tls: true
+        send_resolved: true
+        headers:
+          subject: >-
+            [{{ .CommonLabels.environment | default "devnet" }}]
+            {{ .CommonLabels.alertname }} ({{ .CommonLabels.severity | upper }}) — {{ .Status | upper }}
+        html: |
+          <h3>{{ .CommonLabels.alertname }} ({{ .CommonLabels.severity | upper }}) — {{ .Status | upper }}</h3>
+          <p><b>Component:</b> {{ .CommonLabels.component }} &nbsp; <b>Instance:</b> {{ .CommonLabels.instance }}</p>
+          {{- if .CommonAnnotations.summary }}<p><b>Summary:</b> {{ .CommonAnnotations.summary }}</p>{{- end }}
+          {{- if .CommonAnnotations.description }}<p><b>Description:</b> {{ .CommonAnnotations.description }}</p>{{- end }}
+          <p><b>Labels:</b> {{ .CommonLabels }}</p>
+          <p><a href="{{ .ExternalURL }}">Open in Alertmanager</a></p>
+
+  - name: ops-pager
+    # PagerDuty Events v2; for others, replace with webhook_configs
+    pagerduty_configs:
+      - routing_key: ${PAGERDUTY_ROUTING_KEY:-REPLACE_ME}
+        severity: '{{ .CommonLabels.severity | default "critical" }}'
+        class: '{{ .CommonLabels.alertname }}'
+        component: '{{ .CommonLabels.component | default "unknown" }}'
+        group: '{{ .CommonLabels.instance | default "unknown" }}'
+        description: >-
+          {{ .CommonLabels.alertname }} ({{ .CommonLabels.severity }}) on
+          {{ .CommonLabels.component }}/{{ .CommonLabels.instance }} — {{ .Status }}
+        send_resolved: true
+
+  - name: devnull
+    # Intentionally empty; can be used for black-holing routes if needed.
+    webhook_configs: []
+
+# Suppress lower-severity noise when a higher-severity sibling is active for the same scope.
+inhibit_rules:
+  # Critical suppresses warnings of the same alert/component/instance
+  - source_matchers: [ 'severity="critical"' ]
+    target_matchers: [ 'severity="warning"' ]
+    equal: ['alertname', 'component', 'instance']
+
+  # Critical or warning suppress info of the same alert/component/instance
+  - source_matchers: [ 'severity=~"critical|warning"' ]
+    target_matchers: [ 'severity="info"' ]
+    equal: ['alertname', 'component', 'instance']
+
+  # "ServiceDown" suppresses derivative SLO/SLA alerts for the same component
+  - source_matchers: [ 'alertname="ServiceDown"' ]
+    target_matchers:
+      - 'alertname=~"HighErrorRate|HighLatency|LowThroughput|ManyDrops"'
+    equal: ['component', 'instance']
+
+# Tips:
+# - Use Alertmanager "Silences" for maintenance windows; add a label like maintenance="true".
+# - You can route anything with { environment="prod" } to different receivers by adding another
+#   child route with a matcher on environment.

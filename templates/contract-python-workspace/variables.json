@@ -1,0 +1,123 @@
+{
+  "$schema": "../schemas/variables.schema.json",
+  "template": "contract-python-workspace@0.1.0",
+  "title": "Contract Python Workspace — Variables",
+  "description": "Input variables to render a multi-contract Python workspace for Animica's VM. These values populate README badges, tool configs, and default network settings.",
+  "order": [
+    "workspace_slug",
+    "org_name",
+    "author_name",
+    "author_email",
+    "license",
+    "rpc_url",
+    "chain_id",
+    "include_examples",
+    "init_git"
+  ],
+  "groups": {
+    "Project": ["workspace_slug", "org_name", "license"],
+    "Author": ["author_name", "author_email"],
+    "Network": ["rpc_url", "chain_id"],
+    "Scaffold": ["include_examples", "init_git"]
+  },
+  "variables": {
+    "workspace_slug": {
+      "type": "string",
+      "title": "Workspace directory name",
+      "description": "Folder to create for the generated workspace. Keep it filesystem- and package-friendly.",
+      "default": "animica-contracts",
+      "pattern": "^[a-zA-Z0-9._-]+$",
+      "minLength": 1,
+      "maxLength": 64,
+      "examples": ["animica-contracts", "mygame-economy", "research-demos"]
+    },
+    "org_name": {
+      "type": "string",
+      "title": "Organization / Author (display)",
+      "description": "Shown in READMEs and package metadata.",
+      "default": "Animica Labs"
+    },
+    "author_name": {
+      "type": "string",
+      "title": "Primary author",
+      "description": "Used for code owners and package authorship.",
+      "default": "Your Name"
+    },
+    "author_email": {
+      "type": "string",
+      "title": "Author email",
+      "description": "Contact for package metadata and support.",
+      "format": "email",
+      "default": "you@example.com"
+    },
+    "license": {
+      "type": "string",
+      "title": "License",
+      "description": "License identifier used in README headers and pyproject classifiers.",
+      "enum": ["MIT", "Apache-2.0", "BSD-3-Clause", "UNLICENSED"],
+      "default": "MIT"
+    },
+    "rpc_url": {
+      "type": "string",
+      "title": "Default RPC URL",
+      "description": "Node JSON-RPC endpoint used by helper scripts (can be overridden in .env).",
+      "format": "uri",
+      "pattern": "^(http|https)://",
+      "default": "http://127.0.0.1:8545",
+      "examples": [
+        "http://127.0.0.1:8545",
+        "https://rpc.devnet.animica.org",
+        "https://rpc.testnet.animica.org"
+      ]
+    },
+    "chain_id": {
+      "type": "integer",
+      "title": "Default Chain ID",
+      "description": "CAIP-2 chain id (animica:1 mainnet, :2 testnet, :1337 devnet).",
+      "minimum": 1,
+      "maximum": 2147483647,
+      "default": 1337,
+      "choices": [
+        { "label": "Devnet (1337)", "value": 1337 },
+        { "label": "Testnet (2)", "value": 2 },
+        { "label": "Mainnet (1)", "value": 1 }
+      ]
+    },
+    "include_examples": {
+      "type": "boolean",
+      "title": "Include example contracts",
+      "description": "Counter, fungible token, and escrow samples with tests.",
+      "default": true
+    },
+    "init_git": {
+      "type": "boolean",
+      "title": "Initialize Git repository",
+      "description": "Run `git init && git add . && git commit -m \"init contract-python-workspace\"` after rendering.",
+      "default": true
+    }
+  },
+  "prompts": {
+    "workspace_slug": "Name of the directory to create for your workspace.",
+    "org_name": "Displayed in README badges and docs.",
+    "author_email": "Used in pyproject metadata and issue templates.",
+    "rpc_url": "Your node's JSON-RPC endpoint (http/https).",
+    "chain_id": "Network chain id (devnet=1337, testnet=2, mainnet=1)."
+  },
+  "computed": {
+    "package_name": {
+      "expr": "workspace_slug.replace(/[^a-zA-Z0-9]+/g, '_').toLowerCase()",
+      "description": "Derived Python package-safe identifier used by some helper scripts."
+    }
+  },
+  "validators": [
+    { "field": "chain_id", "rule": "value !== 0", "message": "Chain ID cannot be zero." },
+    { "field": "rpc_url", "rule": "/^https?:\\/\\//.test(value)", "message": "RPC URL must start with http:// or https://." }
+  ],
+  "on_change": {
+    "rpc_url": "value && value.endsWith('/') ? value.slice(0, -1) : value"
+  },
+  "hints": [
+    "You can override RPC_URL and CHAIN_ID later via the generated .env file.",
+    "Examples can be disabled for a minimal scaffold if you prefer a clean slate."
+  ]
+}

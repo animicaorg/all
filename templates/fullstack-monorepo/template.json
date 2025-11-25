@@ -1,0 +1,221 @@
+{
+  "id": "fullstack-monorepo",
+  "name": "Fullstack Monorepo (Animica)",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "description": "A batteries-included monorepo that stitches together contracts (Python VM), a React+TypeScript dapp, provider/service backends, an oracle DA poster, a lightweight indexer, and SDK starters (TS/Python/Rust) with Docker & K8s ops scaffolding and CI.",
+  "keywords": [
+    "animica",
+    "vm_py",
+    "contracts",
+    "dapp",
+    "fastapi",
+    "indexer",
+    "sdk",
+    "monorepo",
+    "kubernetes",
+    "docker",
+    "pnpm",
+    "poies",
+    "da",
+    "aicf"
+  ],
+  "engine_min_version": "0.1.0",
+  "variables_schema": "variables.json",
+
+  "render": {
+    "destination": "{{ project_slug }}",
+    "structure": {
+      "apps": [
+        "apps/dapp-react-ts", 
+        "apps/explorer-web"
+      ],
+      "services": [
+        "services/provider-aicf-fastapi",
+        "services/oracle-da-poster",
+        "services/studio-services-proxy"
+      ],
+      "contracts": [
+        "contracts" 
+      ],
+      "indexer": [
+        "indexers/indexer-lite"
+      ],
+      "sdks": [
+        "packages/sdk-ts-starter",
+        "packages/sdk-py-starter",
+        "packages/sdk-rs-starter"
+      ],
+      "infra": [
+        "infra/devnet",
+        "infra/docker",
+        "infra/k8s"
+      ]
+    },
+
+    "include": [
+      "_common/**",
+
+      "contracts/**",
+
+      "apps/dapp-react-ts/**",
+
+      "services/provider-aicf-fastapi/**",
+      "services/oracle-da-poster/**",
+
+      "indexers/indexer-lite/**",
+
+      "packages/sdk-ts-starter/**",
+      "packages/sdk-py-starter/**",
+      "packages/sdk-rs-starter/**",
+
+      "infra/devnet/**",
+      "infra/docker/**",
+      "infra/k8s/**",
+
+      "README.md",
+      "Makefile",
+      ".editorconfig",
+      ".gitignore"
+    ],
+
+    "conditional_includes": [
+      {
+        "when": "{{ include_dapp }} == false",
+        "exclude": [ "apps/dapp-react-ts/**" ]
+      },
+      {
+        "when": "{{ include_provider }} == false",
+        "exclude": [ "services/provider-aicf-fastapi/**" ]
+      },
+      {
+        "when": "{{ include_oracle_poster }} == false",
+        "exclude": [ "services/oracle-da-poster/**" ]
+      },
+      {
+        "when": "{{ include_indexer }} == false",
+        "exclude": [ "indexers/indexer-lite/**" ]
+      },
+      {
+        "when": "{{ include_sdks }} == false",
+        "exclude": [
+          "packages/sdk-ts-starter/**",
+          "packages/sdk-py-starter/**",
+          "packages/sdk-rs-starter/**"
+        ]
+      },
+      {
+        "when": "{{ include_infra }} == false",
+        "exclude": [ "infra/**" ]
+      }
+    ]
+  },
+
+  "scaffold": {
+    "root_files": [
+      {
+        "path": "README.md",
+        "template": "templates/fullstack-monorepo/ROOT_README.md"
+      },
+      {
+        "path": ".gitignore",
+        "template": "templates/fullstack-monorepo/ROOT_gitignore"
+      },
+      {
+        "path": "Makefile",
+        "template": "templates/fullstack-monorepo/ROOT_Makefile"
+      }
+    ],
+    "workspace_manifests": [
+      {
+        "path": "package.json",
+        "apply_when": "{{ enable_js_workspace }}",
+        "template": "templates/fullstack-monorepo/ROOT_package.json"
+      },
+      {
+        "path": "pnpm-workspace.yaml",
+        "apply_when": "{{ enable_js_workspace }}",
+        "template": "templates/fullstack-monorepo/ROOT_pnpm_workspace.yaml"
+      },
+      {
+        "path": "pyproject.toml",
+        "apply_when": "{{ enable_py_workspace }}",
+        "template": "templates/fullstack-monorepo/ROOT_pyproject.toml"
+      }
+    ]
+  },
+
+  "hooks": {
+    "pre_gen": [
+      {
+        "name": "validate-variables",
+        "run": "animica-templates validate --schema variables.json --values .vars.json",
+        "shell": "sh",
+        "apply_when": "{{ run_validation }}"
+      }
+    ],
+    "post_gen": [
+      {
+        "name": "init-git",
+        "run": "git init && git add . && git commit -m \"feat: bootstrap {{ project_slug }} monorepo\"",
+        "cwd": "{{ project_slug }}",
+        "apply_when": "{{ init_git }}"
+      },
+      {
+        "name": "bootstrap-node-workspace",
+        "run": "corepack enable && pnpm -v && pnpm install",
+        "cwd": "{{ project_slug }}",
+        "apply_when": "{{ enable_js_workspace }}"
+      },
+      {
+        "name": "bootstrap-python",
+        "run": "python -m venv .venv && . .venv/bin/activate && pip install -U pip && pip install -r services/oracle-da-poster/{{project_slug}}/requirements.txt || true",
+        "shell": "bash",
+        "cwd": "{{ project_slug }}",
+        "apply_when": "{{ enable_py_workspace }}"
+      },
+      {
+        "name": "make-devnet",
+        "run": "make -C infra/devnet up",
+        "cwd": "{{ project_slug }}",
+        "timeout_sec": 1800,
+        "apply_when": "{{ bring_up_devnet }}"
+      }
+    ]
+  },
+
+  "defaults": {
+    "project_slug": "animica-fullstack",
+    "org_name": "animica-labs",
+    "repo_name": "{{ project_slug }}",
+    "author_name": "",
+    "author_email": "",
+    "license": "Apache-2.0",
+    "chain_id": 1337,
+    "rpc_url": "http://localhost:8545",
+    "services_url": "http://localhost:8787",
+    "include_dapp": true,
+    "include_provider": true,
+    "include_oracle_poster": true,
+    "include_indexer": true,
+    "include_sdks": true,
+    "include_infra": true,
+    "enable_js_workspace": true,
+    "enable_py_workspace": true,
+    "run_validation": true,
+    "init_git": true,
+    "bring_up_devnet": false
+  },
+
+  "notes": [
+    "This template assumes docker is available if you enable infra/devnet bootstrapping.",
+    "SDK starters are included as leaf packages to demonstrate cross-language usage against the same devnet.",
+    "You can safely disable individual components via variables to tailor the monorepo footprint."
+  ],
+
+  "links": {
+    "docs": "https://docs.animica.example/monorepo",
+    "issues": "https://github.com/animica/animica/issues",
+    "discussions": "https://github.com/animica/animica/discussions"
+  }
+}

@@ -1,0 +1,263 @@
+version: "3.9"
+
+# Animica — production example (internet-facing) using Traefik for TLS + routing.
+#
+# Prereqs:
+#   1) Copy ops/.env.example to ops/.env and fill:
+#        DOMAIN=example.com
+#        ACME_EMAIL=you@example.com
+#        RPC_HOST=rpc.${DOMAIN}
+#        SERVICES_HOST=services.${DOMAIN}
+#        STUDIO_HOST=studio.${DOMAIN}
+#        EXPLORER_HOST=explorer.${DOMAIN}
+#        EXPLORER_API_HOST=api.${DOMAIN}
+#        CHAIN_ID=1
+#        # Optional image overrides:
+#        # NODE_IMAGE=ghcr.io/yourorg/animica-node:TAG
+#        # MINER_IMAGE=ghcr.io/yourorg/animica-miner:TAG
+#        # SERVICES_IMAGE=ghcr.io/yourorg/studio-services:TAG
+#        # EXPLORER_IMAGE=ghcr.io/yourorg/explorer-api:TAG
+#        # EXPLORER_WEB_IMAGE=ghcr.io/yourorg/explorer-web:TAG
+#        # STUDIO_WEB_IMAGE=ghcr.io/yourorg/studio-web:TAG
+#   2) Place your genesis/params in a host dir and mount to node:/config (see service below).
+#
+# Bring-up:
+#   docker compose --env-file ops/.env -f ops/docker/docker-compose.prod-example.yml up -d
+#
+# Notes:
+#   - Traefik terminates TLS (Let's Encrypt) and routes by Host() to internal services.
+#   - Metrics endpoints are NOT exposed publicly; scrape them from a private network or
+#     pair with ops/docker/docker-compose.observability.yml.
+#   - Miner is optional (enable with: docker compose --profile miner up -d).
+#   - This file is an example; tune resources, security, and persistence for your infra.
+
+name: animica-prod
+
+networks:
+  public:
+    driver: bridge
+  backend:
+    driver: bridge
+
+volumes:
+  traefik-letsencrypt:
+  node-data:
+  node-config:        # optional: bind your genesis/params here (or convert to a bind mount)
+  services-data:
+  explorer-api-data:
+
+services:
+  # ───────────────────────── reverse proxy / TLS ─────────────────────────
+  traefik:
+    image: traefik:v2.10
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.le.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.le.acme.tlschallenge=true
+      - --api.dashboard=true
+      # Redirect HTTP → HTTPS
+      - --entrypoints.web.http.redirections.entryPoint.to=websecure
+      - --entrypoints.web.http.redirections.entryPoint.scheme=https
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - traefik-letsencrypt:/letsencrypt
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./healthchecks:/healthchecks:ro
+    healthcheck:
+      test: ["CMD-SHELL", "/healthchecks/http_health.sh --url http://localhost:80/ping --timeout 10 --retries 12 --backoff 500"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks: [public]
+
+  # ───────────────────────── Animica Node (RPC/WS) ──────────────────────
+  node:
+    image: ${NODE_IMAGE:-animica/node:latest}
+    container_name: animica-node
+    restart: unless-stopped
+    depends_on:
+      traefik:
+        condition: service_started
+    environment:
+      # Core/node config (aligns with ops/docker/entrypoints/node.sh expectations)
+      CHAIN_ID: "${CHAIN_ID}"
+      DB_URL: "sqlite:////data/animica.db"
+      LOG_LEVEL: "info"
+      RPC_HOST: "0.0.0.0"
+      RPC_PORT: "8545"      # HTTP JSON-RPC served at /rpc; OpenRPC at /openrpc.json
+      WS_PORT: "8546"       # WebSocket served at /ws
+      METRICS_PORT: "9102"  # Prometheus (internal only)
+      GENESIS_JSON: "/config/genesis.json"   # mount your file to node:/config/genesis.json
+      # Optional: tune mempool/consensus; see module docs for full set.
+      # MIN_GAS_PRICE: "0"
+      # RANDOMNESS_VDF_ITERS: "500000"
+    volumes:
+      - node-data:/data
+      - node-config:/config
+      - ./healthchecks:/healthchecks:ro
+    expose:
+      - "8545"
+      - "8546"
+      - "9102"
+    labels:
+      # HTTP JSON-RPC (TLS)
+      - "traefik.enable=true"
+      - "traefik.http.routers.rpc.rule=Host(`${RPC_HOST}`)"
+      - "traefik.http.routers.rpc.entrypoints=websecure"
+      - "traefik.http.routers.rpc.tls.certresolver=le"
+      - "traefik.http.services.rpc.loadbalancer.server.port=8545"
+
+      # WebSocket endpoint (TLS) — same host, /ws path on 8546
+      - "traefik.http.routers.rpc-ws.rule=Host(`${RPC_HOST}`) && PathPrefix(`/ws`)"
+      - "traefik.http.routers.rpc-ws.entrypoints=websecure"
+      - "traefik.http.routers.rpc-ws.tls.certresolver=le"
+      - "traefik.http.services.rpc-ws.loadbalancer.server.port=8546"
+    healthcheck:
+      test: ["CMD-SHELL", "/healthchecks/http_health.sh --url http://localhost:8545/healthz --timeout 10 --retries 30 --backoff 1000"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    networks: [public, backend]
+
+  # ───────────────────────── Studio Services (API) ──────────────────────
+  studio-services:
+    image: ${SERVICES_IMAGE:-animica/studio-services:latest}
+    container_name: studio-services
+    restart: unless-stopped
+    depends_on:
+      node:
+        condition: service_healthy
+    environment:
+      RPC_URL: "http://node:8545"
+      CHAIN_ID: "${CHAIN_ID}"
+      LOG_LEVEL: "info"
+      STORAGE_DIR: "/var/lib/studio-services"
+      # Security knobs (see studio-services/.env.example)
+      CORS_ALLOW_ORIGINS: "https://${STUDIO_HOST},https://${EXPLORER_HOST}"
+      RATE_LIMITS: "deploy:30/min,verify:60/min,faucet:10/hour"
+      # FAUCET_KEY: ""   # optional, if enabling faucet
+    volumes:
+      - services-data:/var/lib/studio-services
+      - ./healthchecks:/healthchecks:ro
+    expose:
+      - "8081"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.services.rule=Host(`${SERVICES_HOST}`)"
+      - "traefik.http.routers.services.entrypoints=websecure"
+      - "traefik.http.routers.services.tls.certresolver=le"
+      - "traefik.http.services.services.loadbalancer.server.port=8081"
+    healthcheck:
+      test: ["CMD-SHELL", "/healthchecks/http_health.sh --url http://localhost:8081/healthz --timeout 10 --retries 24 --backoff 1000"]
+      interval: 10s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
+    networks: [public, backend]
+
+  # ───────────────────────── Explorer API (optional) ─────────────────────
+  explorer-api:
+    image: ${EXPLORER_IMAGE:-animica/explorer-api:latest}
+    container_name: explorer-api
+    restart: unless-stopped
+    depends_on:
+      node:
+        condition: service_healthy
+    environment:
+      RPC_URL: "http://node:8545"
+      CHAIN_ID: "${CHAIN_ID}"
+      LOG_LEVEL: "info"
+      STORAGE_DIR: "/var/lib/explorer"
+    volumes:
+      - explorer-api-data:/var/lib/explorer
+      - ./healthchecks:/healthchecks:ro
+    expose:
+      - "8082"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.explorer-api.rule=Host(`${EXPLORER_API_HOST}`)"
+      - "traefik.http.routers.explorer-api.entrypoints=websecure"
+      - "traefik.http.routers.explorer-api.tls.certresolver=le"
+      - "traefik.http.services.explorer-api.loadbalancer.server.port=8082"
+    healthcheck:
+      test: ["CMD-SHELL", "/healthchecks/http_health.sh --url http://localhost:8082/healthz --timeout 10 --retries 24 --backoff 1000"]
+      interval: 10s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
+    networks: [public, backend]
+
+  # ───────────────────────── Static sites (Nginx) ───────────────────────
+  explorer-web:
+    image: ${EXPLORER_WEB_IMAGE:-animica/explorer-web:latest}
+    container_name: explorer-web
+    restart: unless-stopped
+    depends_on:
+      explorer-api:
+        condition: service_healthy
+    environment:
+      # Many images read these at runtime to render a /config.js; adjust for your build.
+      VITE_RPC_URL: "https://${RPC_HOST}"
+      VITE_CHAIN_ID: "${CHAIN_ID}"
+      VITE_EXPLORER_API: "https://${EXPLORER_API_HOST}"
+      VITE_SERVICES_URL: "https://${SERVICES_HOST}"
+    expose:
+      - "80"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.explorer.rule=Host(`${EXPLORER_HOST}`)"
+      - "traefik.http.routers.explorer.entrypoints=websecure"
+      - "traefik.http.routers.explorer.tls.certresolver=le"
+      - "traefik.http.services.explorer.loadbalancer.server.port=80"
+    networks: [public]
+
+  studio-web:
+    image: ${STUDIO_WEB_IMAGE:-animica/studio-web:latest}
+    container_name: studio-web
+    restart: unless-stopped
+    depends_on:
+      studio-services:
+        condition: service_healthy
+    environment:
+      VITE_RPC_URL: "https://${RPC_HOST}"
+      VITE_CHAIN_ID: "${CHAIN_ID}"
+      VITE_SERVICES_URL: "https://${SERVICES_HOST}"
+    expose:
+      - "80"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.studio.rule=Host(`${STUDIO_HOST}`)"
+      - "traefik.http.routers.studio.entrypoints=websecure"
+      - "traefik.http.routers.studio.tls.certresolver=le"
+      - "traefik.http.services.studio.loadbalancer.server.port=80"
+    networks: [public]
+
+  # ───────────────────────── Optional built-in miner ─────────────────────
+  miner:
+    image: ${MINER_IMAGE:-animica/miner:latest}
+    container_name: animica-miner
+    profiles: ["miner"]
+    restart: unless-stopped
+    depends_on:
+      node:
+        condition: service_healthy
+    environment:
+      RPC_URL: "http://node:8545"
+      WS_URL: "ws://node:8546/ws"
+      DEVICE: "cpu"
+      THREADS: "4"
+      LOG_LEVEL: "info"
+      METRICS_PORT: "9103"
+    expose:
+      - "9103"
+    networks: [backend]

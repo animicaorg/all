@@ -1,0 +1,278 @@
+{{-/*
+StatefulSet: Animica Node
+
+Features:
+- PVC-backed DB (volumeClaimTemplates) with configurable size/class
+- Mounts genesis, chain params, and seeds from ConfigMaps
+- Sensible probes hitting the HTTP RPC (healthz/readyz)
+- Optional overrides for command/args/env/resources/affinity/etc.
+- Roll on ConfigMap/Secret change via checksum annotations
+
+Expected sibling templates:
+- templates/configmap-genesis.yaml    -> {{ include "animica-devnet.fullname" . }}-genesis
+- templates/configmap-chain.yaml      -> {{ include "animica-devnet.fullname" . }}-chain
+- templates/configmap-seeds.yaml      -> {{ include "animica-devnet.fullname" . }}-seeds
+- templates/svc-node-rpc.yaml         -> RPC service (for probes)
+- templates/svc-node-p2p.yaml         -> P2P service
+
+Values (excerpt):
+image:
+  node:
+    repository: ghcr.io/animica/node
+    tag: "latest"
+    pullPolicy: IfNotPresent
+    env: {}
+    command: []         # optional override, list style
+    args: []            # optional override, list style
+node:
+  replicas: 1
+  podLabels: {}
+  podAnnotations: {}
+  priorityClassName: ""
+  serviceAccountName: ""
+  securityContext: {}
+  containerSecurityContext: {}
+  resources: {}
+  env: {}               # extra env
+  ports:
+    p2pTcp: 46000
+    p2pQuic: 46000
+    p2pWs: 46002
+    http: 8545
+    ws: 8546
+  persistence:
+    enabled: true
+    existingClaim: ""   # if set, skips volumeClaimTemplates and uses this PVC
+    storageClass: ""
+    accessModes: ["ReadWriteOnce"]
+    size: 20Gi
+    annotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+*/ -}}
+
+{{- $img := .Values.image.node | default dict -}}
+{{- $node := .Values.node | default dict -}}
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "animica-devnet.fullname" . }}-node
+  labels:
+    {{- include "animica-devnet.labels" (dict "ctx" . "component" "node") | nindent 4 }}
+spec:
+  serviceName: {{ include "animica-devnet.fullname" . }}-rpc
+  replicas: {{ default 1 $node.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/name: {{ include "animica-devnet.name" . }}
+      app.kubernetes.io/component: node
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/name: {{ include "animica-devnet.name" . }}
+        app.kubernetes.io/component: node
+        {{- with $node.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        # Trigger rolling updates on config changes
+        checksum/genesis: {{ include (print $.Template.BasePath "/configmap-genesis.yaml") . | sha256sum }}
+        checksum/chain:   {{ include (print $.Template.BasePath "/configmap-chain.yaml") . | sha256sum }}
+        checksum/seeds:   {{ include (print $.Template.BasePath "/configmap-seeds.yaml") . | sha256sum }}
+        {{- with $node.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $node.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with $node.serviceAccountName }}
+      serviceAccountName: {{ . }}
+      {{- end }}
+      {{- with $node.securityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: node
+          image: "{{ default "ghcr.io/animica/node" $img.repository }}:{{ default "latest" $img.tag }}"
+          imagePullPolicy: {{ default "IfNotPresent" $img.pullPolicy }}
+          {{- if or $img.command $img.args }}
+          {{- with $img.command }}
+          command: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $img.args }}
+          args: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          {{- else }}
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              set -e
+              # Prefer image entrypoint if present
+              if [ -x "/entrypoints/node.sh" ]; then
+                exec /entrypoints/node.sh
+              fi
+              # Fallback: minimal boot (SQLite DB)
+              DB_PATH="${ANIMICA_DB_PATH:-/var/lib/animica/animica.db}"
+              GENESIS="${ANIMICA_GENESIS_JSON:-/etc/animica/genesis/genesis.json}"
+              echo "[node] launching core.boot with DB=${DB_PATH} genesis=${GENESIS}"
+              exec python -m core.boot --genesis "${GENESIS}" --db "sqlite:///${DB_PATH}"
+          {{- end }}
+          env:
+            # Well-known paths for config/data
+            - name: ANIMICA_DATA_DIR
+              value: /var/lib/animica
+            - name: ANIMICA_DB_PATH
+              value: /var/lib/animica/animica.db
+            - name: ANIMICA_GENESIS_JSON
+              value: /etc/animica/genesis/genesis.json
+            - name: ANIMICA_CHAIN_PARAMS
+              value: /etc/animica/chain/params.yaml
+            - name: ANIMICA_SEEDS_FILE
+              value: /etc/animica/seeds/seed_list.txt
+            {{- with $img.env }}
+            {{- range $k, $v := . }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with $node.env }}
+            {{- range $k, $v := . }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ default 8545 $node.ports.http }}
+              protocol: TCP
+            - name: ws
+              containerPort: {{ default 8546 $node.ports.ws }}
+              protocol: TCP
+            - name: p2p-tcp
+              containerPort: {{ default 46000 $node.ports.p2pTcp }}
+              protocol: TCP
+            - name: p2p-quic
+              containerPort: {{ default 46000 $node.ports.p2pQuic }}
+              protocol: UDP
+            - name: p2p-ws
+              containerPort: {{ default 46002 $node.ports.p2pWs }}
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/animica
+            - name: genesis
+              mountPath: /etc/animica/genesis/genesis.json
+              subPath: genesis.json
+              readOnly: true
+            - name: chain
+              mountPath: /etc/animica/chain/params.yaml
+              subPath: params.yaml
+              readOnly: true
+            - name: seeds
+              mountPath: /etc/animica/seeds/seed_list.txt
+              subPath: seed_list.txt
+              readOnly: true
+          {{- with $node.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $node.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        # Configs
+        - name: genesis
+          configMap:
+            name: {{ include "animica-devnet.fullname" . }}-genesis
+            items:
+              - key: genesis.json
+                path: genesis.json
+        - name: chain
+          configMap:
+            name: {{ include "animica-devnet.fullname" . }}-chain
+            items:
+              - key: params.yaml
+                path: params.yaml
+        - name: seeds
+          configMap:
+            name: {{ include "animica-devnet.fullname" . }}-seeds
+            items:
+              - key: seed_list.txt
+                path: seed_list.txt
+      {{- with $node.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $node.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $node.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $node.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+  {{- /* Storage: either use existingClaim on volumeMount, or claim templates */ -}}
+  {{- if and $node.persistence $node.persistence.enabled $node.persistence.existingClaim }}
+  volumeClaimTemplates: []
+  template:
+    spec:
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ $node.persistence.existingClaim }}
+  {{- else if and $node.persistence $node.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        {{- with $node.persistence.annotations }}
+        annotations:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      spec:
+        accessModes: {{ default (list "ReadWriteOnce") $node.persistence.accessModes | toJson }}
+        resources:
+          requests:
+            storage: {{ default "20Gi" $node.persistence.size }}
+        {{- with $node.persistence.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+  {{- else }}
+  template:
+    spec:
+      volumes:
+        - name: data
+          emptyDir: {}
+  {{- end }}

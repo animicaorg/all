@@ -1,0 +1,66 @@
+# coverage.py configuration for Animica monorepo (Python parts)
+# Run with:
+#   coverage run -m pytest -c tests/coverage.rc
+#   coverage combine
+#   coverage html -c tests/coverage.rc
+#   coverage xml  -c tests/coverage.rc
+
+[run]
+branch = True
+parallel = True
+relative_files = True
+# Tag data by test function for better diffs in CI
+dynamic_context = test_function
+# If your tests spawn processes/threads:
+concurrency = multiprocessing, thread
+# Limit measured code to Python packages in this repo
+source =
+    sdk/python/omni_sdk
+    studio-services/studio_services
+    studio-wasm/py/vm_pkg
+    studio-wasm/py/bridge
+omit =
+    */__pycache__/*
+    */__init__.py
+    */tests/*
+    tests/*
+    */examples/*
+    */bench/*
+    */scripts/*
+    */build/*
+    */dist/*
+    */.venv/*
+    .venv/*
+    */site-packages/*
+    studio-wasm/vendor/*
+
+[paths]
+# Unify paths if some tests import from an installed wheel while others import from source
+omni_sdk =
+    sdk/python
+    */site-packages
+studio_services =
+    studio-services
+    */site-packages
+vm_pkg =
+    studio-wasm/py
+    */site-packages
+
+[report]
+show_missing = True
+skip_covered = True
+precision = 2
+exclude_lines =
+    pragma: no cover
+    if TYPE_CHECKING:
+    if __name__ == "__main__":
+    raise NotImplementedError
+    except NotImplementedError:
+    assert False, "unreachable"
+
+[html]
+directory = tests/.coverage_html
+title = Animica Python Coverage
+
+[xml]
+output = tests/coverage.xml

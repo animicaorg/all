@@ -1,0 +1,249 @@
+{
+  "$schema": "../schemas/variables.schema.json",
+  "title": "Fullstack Monorepo (Animica) — Variables",
+  "description": "Input variables used to render the fullstack monorepo scaffold. Organized into logical groups with sensible defaults. All values can be overridden at generation time.",
+  "type": "object",
+  "additionalProperties": false,
+
+  "properties": {
+    "project_slug": {
+      "type": "string",
+      "title": "Project Slug",
+      "description": "Folder/repo-safe name for the monorepo root (lowercase letters, numbers, and hyphens).",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "examples": ["animica-fullstack", "demo-stack", "acme-chain-suite"]
+    },
+
+    "org_name": {
+      "type": "string",
+      "title": "Organization",
+      "description": "Owner organization or namespace (used in docs and package scopes).",
+      "minLength": 1,
+      "examples": ["animica-labs", "acme", "my-team"]
+    },
+
+    "repo_name": {
+      "type": "string",
+      "title": "Repository Name",
+      "description": "VCS repository name. Defaults to project_slug.",
+      "pattern": "^[a-zA-Z0-9._-]+$",
+      "examples": ["animica-fullstack", "acme-web3-suite"]
+    },
+
+    "author_name": {
+      "type": "string",
+      "title": "Author Name",
+      "description": "Primary maintainer's human-friendly name.",
+      "default": ""
+    },
+
+    "author_email": {
+      "type": "string",
+      "title": "Author Email",
+      "description": "Primary maintainer's contact email.",
+      "format": "email",
+      "default": ""
+    },
+
+    "license": {
+      "type": "string",
+      "title": "License",
+      "description": "Top-level repository license identifier (SPDX).",
+      "enum": ["Apache-2.0", "MIT", "BSD-3-Clause", "UNLICENSED"],
+      "default": "Apache-2.0"
+    },
+
+    "chain_id": {
+      "type": "integer",
+      "title": "Chain ID",
+      "description": "Numeric chain identifier used by the Animica devnet/testnet.",
+      "minimum": 1,
+      "default": 1337,
+      "examples": [1337, 1776, 202401]
+    },
+
+    "rpc_url": {
+      "type": "string",
+      "title": "RPC URL",
+      "description": "HTTP RPC endpoint used by apps and scripts by default.",
+      "format": "uri",
+      "default": "http://localhost:8545",
+      "examples": ["http://localhost:8545", "https://rpc.dev.animica.example"]
+    },
+
+    "services_url": {
+      "type": "string",
+      "title": "Studio Services URL",
+      "description": "Base URL for studio-services proxy (AICF/DA helpers) used by examples and ops.",
+      "format": "uri",
+      "default": "http://localhost:8787",
+      "examples": ["http://localhost:8787", "https://services.dev.animica.example"]
+    },
+
+    "include_dapp": {
+      "type": "boolean",
+      "title": "Include Dapp (React+TS)",
+      "description": "Generate the React+TypeScript dapp scaffold (wallet connect, send txs, call contracts).",
+      "default": true
+    },
+
+    "include_provider": {
+      "type": "boolean",
+      "title": "Include AICF Provider (FastAPI)",
+      "description": "Generate a reference provider backend for AI/quantum jobs with worker & HTTP server.",
+      "default": true
+    },
+
+    "include_oracle_poster": {
+      "type": "boolean",
+      "title": "Include Oracle DA Poster",
+      "description": "Generate a data-availability oracle poster (periodic feed fetch + DA commit).",
+      "default": true
+    },
+
+    "include_indexer": {
+      "type": "boolean",
+      "title": "Include Indexer (Lite)",
+      "description": "Generate a lightweight indexer (RPC ingest → SQLite/ClickHouse + Grafana dashboard).",
+      "default": true
+    },
+
+    "include_sdks": {
+      "type": "boolean",
+      "title": "Include SDK Starters",
+      "description": "Include TS, Python, and Rust SDK starter packages with simple deploy examples.",
+      "default": true
+    },
+
+    "include_infra": {
+      "type": "boolean",
+      "title": "Include Infra (Docker/K8s)",
+      "description": "Include devnet docker-compose and Kubernetes manifests/Helm chart stubs.",
+      "default": true
+    },
+
+    "enable_js_workspace": {
+      "type": "boolean",
+      "title": "Enable JS Workspace",
+      "description": "Create root package.json and pnpm-workspace.yaml to manage JS apps/packages.",
+      "default": true
+    },
+
+    "enable_py_workspace": {
+      "type": "boolean",
+      "title": "Enable Python Workspace",
+      "description": "Create root pyproject.toml and minimal tooling for Python services/packages.",
+      "default": true
+    },
+
+    "run_validation": {
+      "type": "boolean",
+      "title": "Run Pre-Gen Validation",
+      "description": "Validate provided variables against this schema before generation.",
+      "default": true
+    },
+
+    "init_git": {
+      "type": "boolean",
+      "title": "Initialize Git Repository",
+      "description": "Run 'git init' and make the initial commit after rendering.",
+      "default": true
+    },
+
+    "bring_up_devnet": {
+      "type": "boolean",
+      "title": "Bring Up Devnet After Generation",
+      "description": "Run 'make -C infra/devnet up' post-generation to start a local devnet (requires Docker).",
+      "default": false
+    }
+  },
+
+  "required": ["project_slug", "org_name", "repo_name", "license", "chain_id", "rpc_url", "services_url"],
+
+  "allOf": [
+    {
+      "if": {
+        "properties": { "include_infra": { "const": false } },
+        "required": ["include_infra"]
+      },
+      "then": {
+        "properties": { "bring_up_devnet": { "const": false } },
+        "description": "Devnet boot cannot run without infra files."
+      }
+    },
+    {
+      "if": {
+        "properties": { "enable_js_workspace": { "const": false } },
+        "required": ["enable_js_workspace"]
+      },
+      "then": {
+        "description": "If JS workspace is disabled, JS package manager bootstrap is skipped."
+      }
+    }
+  ],
+
+  "ui": {
+    "order": [
+      "project_slug",
+      "org_name",
+      "repo_name",
+      "author_name",
+      "author_email",
+      "license",
+      "chain_id",
+      "rpc_url",
+      "services_url",
+      "include_dapp",
+      "include_provider",
+      "include_oracle_poster",
+      "include_indexer",
+      "include_sdks",
+      "include_infra",
+      "enable_js_workspace",
+      "enable_py_workspace",
+      "run_validation",
+      "init_git",
+      "bring_up_devnet"
+    ],
+    "groups": [
+      {
+        "title": "Project",
+        "description": "Global metadata and repository identity.",
+        "fields": ["project_slug", "org_name", "repo_name", "author_name", "author_email", "license"]
+      },
+      {
+        "title": "Chain Connectivity",
+        "description": "Default network endpoints used across apps and services.",
+        "fields": ["chain_id", "rpc_url", "services_url"]
+      },
+      {
+        "title": "Components",
+        "description": "Choose which subprojects to include in the monorepo.",
+        "fields": ["include_dapp", "include_provider", "include_oracle_poster", "include_indexer", "include_sdks", "include_infra"]
+      },
+      {
+        "title": "Workspaces",
+        "description": "Language workspaces and bootstrapping.",
+        "fields": ["enable_js_workspace", "enable_py_workspace"]
+      },
+      {
+        "title": "Automation",
+        "description": "Post-generation actions and safety checks.",
+        "fields": ["run_validation", "init_git", "bring_up_devnet"]
+      }
+    ],
+    "placeholders": {
+      "project_slug": "animica-fullstack",
+      "org_name": "animica-labs",
+      "repo_name": "{{ project_slug }}",
+      "author_name": "Alice Example",
+      "author_email": "alice@example.com"
+    },
+    "help": {
+      "rpc_url": "If you plan to proxy RPC behind an ingress, set the public URL here so the dapp/SDK examples work out of the box.",
+      "services_url": "Used by service clients (AICF, DA) and example scripts; points to studio-services proxy."
+    }
+  },
+
+  "defaults_hint": "Most fields are pre-populated from template defaults; override as needed."
+}

@@ -1,0 +1,22 @@
+{
+  "project_slug": "example_contract",
+  "project_name": "Example Contract Project",
+  "description": "Rendered in tests to validate contract template.",
+  "author_name": "Animica CI",
+  "author_email": "ci@example.com",
+  "license": "MIT",
+  "version": "0.1.0",
+
+  "chain_id": "devnet",
+  "rpc_url": "http://127.0.0.1:8545",
+  "faucet_url": "http://127.0.0.1:8080/faucet",
+  "deployer_mnemonic": "test test test test test test test test test test test junk",
+
+  "token_name": "TestToken",
+  "token_symbol": "TT",
+  "token_decimals": 18,
+  "token_initial_supply": "1000000000000000000000",
+
+  "registry_name": "example.registry",
+  "use_stdlib": true
+}

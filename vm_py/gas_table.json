@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "unit": "gas",
+  "updated_at": "2025-09-23",
+  "description": "Resolved costs for Python-VM IR ops and stdlib calls. Tuned for devnet; subject to policy in spec/opcodes_vm_py.yaml.",
+  "ir": {
+    "NOP": 1,
+    "PUSH_CONST": 2,
+    "POP": 1,
+    "DUP": 1,
+    "SWAP": 1,
+    "LOAD_LOCAL": 2,
+    "STORE_LOCAL": 3,
+    "JUMP": 5,
+    "JUMP_IF_TRUE": 6,
+    "JUMP_IF_FALSE": 6,
+    "CALL_INTERNAL": 8,
+    "RETURN": 3,
+
+    "ADD": 3,
+    "SUB": 3,
+    "MUL": 5,
+    "DIV": 8,
+    "MOD": 8,
+    "NEG": 2,
+
+    "AND": 2,
+    "OR": 2,
+    "XOR": 2,
+    "NOT": 2,
+    "SHL": 4,
+    "SHR": 4,
+
+    "EQ": 3,
+    "NE": 3,
+    "LT": 3,
+    "LE": 3,
+    "GT": 3,
+    "GE": 3,
+
+    "PACK": 5,
+    "UNPACK": 5
+  },
+  "stdlib": {
+    "storage.get": { "base": 40, "per_key_byte": 1 },
+    "storage.set": { "base": 200, "per_key_byte": 1, "per_val_byte": 4 },
+
+    "events.emit": { "base": 100, "per_topic": 20, "per_data_byte": 2 },
+
+    "hash.keccak256": { "base": 25, "per_byte": 1 },
+    "hash.sha3_256":  { "base": 25, "per_byte": 1 },
+    "hash.sha3_512":  { "base": 35, "per_byte": 1 },
+
+    "abi.require": { "base": 5 },
+    "abi.revert":  { "base": 0 },
+
+    "treasury.balance":  { "base": 10 },
+    "treasury.transfer": { "base": 50 },
+
+    "syscalls.blob_pin":        { "base": 5000, "per_byte": 2 },
+    "syscalls.ai_enqueue":      { "base": 10000, "per_prompt_byte": 1 },
+    "syscalls.quantum_enqueue": { "base": 12000, "per_circuit_byte": 1 },
+    "syscalls.read_result":     { "base": 300 },
+    "syscalls.zk_verify":       { "base": 5000, "per_input_byte": 10 },
+
+    "random.bytes": { "base": 30, "per_byte": 1 }
+  },
+  "limits": {
+    "max_stack": 1024,
+    "max_call_depth": 64,
+    "max_event_topics": 4,
+    "max_bytes_per_call": 1048576
+  },
+  "notes": "These defaults are conservative for dev/test. Networks should derive final costs from spec/opcodes_vm_py.yaml and include them in spec/params.yaml."
+}

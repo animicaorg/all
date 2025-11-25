@@ -1,0 +1,128 @@
+# Studio Services (FastAPI) Deployment.
+# Notes:
+# - Default to a single replica because the app uses a local SQLite DB by default.
+#   Scale-out typically requires switching to a shared DB (e.g., Postgres).
+# - A PVC is mounted at /data to store the SQLite DB and artifact blobs.
+# - Health endpoints: /healthz and /readyz
+# - Metrics at /metrics (Prometheus annotations included)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: animica-services
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: services
+    app.kubernetes.io/name: animica-services
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: animica
+      app.kubernetes.io/component: services
+      app.kubernetes.io/name: animica-services
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: animica
+        app.kubernetes.io/component: services
+        app.kubernetes.io/name: animica-services
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      terminationGracePeriodSeconds: 20
+      containers:
+        - name: studio-services
+          # Replace with your published image tag
+          image: ghcr.io/animica/studio-services:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            # Chain RPC endpoints (match ops/k8s/services/node-rpc.yaml)
+            - name: RPC_URL
+              value: "http://node-rpc.animica-devnet.svc.cluster.local:8545"
+            - name: CHAIN_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: chain-params
+                  key: chain_id
+                  optional: true
+            # Storage directory for SQLite DB + artifact blobs
+            - name: STORAGE_DIR
+              value: "/data"
+            # Optional: throttle endpoints; format like "deploy:10/m,verify:20/m"
+            - name: RATE_LIMITS
+              value: "deploy:30/m,verify:60/m,faucet:10/h"
+            # Optional faucet key (devnet only). Secret must exist (ops/k8s/secrets/faucet.yaml)
+            - name: FAUCET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: faucet
+                  key: key
+                  optional: true
+            # CORS allowlist for studio-web / explorer-web (adjust to your domains)
+            - name: CORS_ALLOW_ORIGINS
+              value: "https://studio.animica.dev,https://explorer.animica.dev,http://localhost:5173"
+            # Log level (info|debug|warning)
+            - name: LOG_LEVEL
+              value: "info"
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 8
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: services-data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+      volumes:
+        - name: services-data
+          persistentVolumeClaim:
+            claimName: services-data
+---
+# PersistentVolumeClaim backing /data for DB + artifacts.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: services-data
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: services
+    app.kubernetes.io/name: animica-services
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
+  # Optionally set a StorageClass:
+  # storageClassName: fast-ssd

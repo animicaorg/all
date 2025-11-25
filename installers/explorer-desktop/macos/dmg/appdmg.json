@@ -1,0 +1,26 @@
+{
+  "title": "Animica Explorer",
+  "icon": "../../tauri/icons/icon.icns",
+  "background": "background.png",
+  "background-color": "#0F1115",
+  "format": "ULFO",
+  "window": {
+    "size": { "width": 600, "height": 400 },
+    "position": { "x": 200, "y": 120 }
+  },
+  "icon-size": 128,
+  "contents": [
+    {
+      "x": 160,
+      "y": 200,
+      "type": "file",
+      "path": "../../tauri/target/release/bundle/macos/Animica Explorer.app"
+    },
+    {
+      "x": 440,
+      "y": 200,
+      "type": "link",
+      "path": "/Applications"
+    }
+  ]
+}

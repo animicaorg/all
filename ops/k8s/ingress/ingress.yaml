@@ -1,0 +1,102 @@
+# Ingress for Animica devnet:
+# - studio.animica.dev      → Studio Web SPA (+ routes /api/* → studio-services)
+# - explorer.animica.dev    → Explorer Web SPA (+ routes /api/* → explorer API)
+# - rpc.animica.dev         → Node JSON-RPC (/rpc) and WS (/ws) if you want them behind HTTP(S)
+#
+# Assumes:
+#   * IngressClass "nginx" is installed (or change annotations/ingressClassName).
+#   * TLS secrets exist (or use cert-manager issuer annotations below).
+#   * Backend Services exist:
+#       - animica-studio-web (port name: http)
+#       - animica-services   (port name: http)
+#       - animica-explorer-web (port name: http)
+#       - animica-explorer     (port name: http)
+#       - animica-node-rpc     (port names: http for :8545, ws for :8546)
+#
+# Notes for WebSocket:
+#   NGINX Ingress supports WS automatically. We extend timeouts for long-lived streams.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: animica-ingress
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: animica-ingress
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    # Enable external-dns to manage DNS (optional)
+    external-dns.alpha.kubernetes.io/enable: "true"
+    # cert-manager (optional): uncomment and set your ClusterIssuer
+    # cert-manager.io/cluster-issuer: "letsencrypt"
+    # NGINX settings
+    nginx.ingress.kubernetes.io/proxy-body-size: "64m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  # If you have a wildcard or per-host certs, configure here.
+  tls:
+    - hosts: ["studio.animica.dev"]
+      secretName: studio-animica-tls
+    - hosts: ["explorer.animica.dev"]
+      secretName: explorer-animica-tls
+    - hosts: ["rpc.animica.dev"]
+      secretName: rpc-animica-tls
+
+  rules:
+    # --- Studio (SPA) + Services API on /api ---
+    - host: studio.animica.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: animica-studio-web
+                port:
+                  name: http
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: animica-services
+                port:
+                  name: http
+
+    # --- Explorer (SPA) + Explorer API on /api ---
+    - host: explorer.animica.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: animica-explorer-web
+                port:
+                  name: http
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: animica-explorer
+                port:
+                  name: http
+
+    # --- RPC host: JSON-RPC (/rpc) + WebSocket (/ws) ---
+    - host: rpc.animica.dev
+      http:
+        paths:
+          - path: /rpc
+            pathType: Prefix
+            backend:
+              service:
+                name: animica-node-rpc
+                port:
+                  name: http     # expects Service to expose :8545 as "http"
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: animica-node-rpc
+                port:
+                  name: ws       # expects Service to expose :8546 as "ws"

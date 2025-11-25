@@ -1,0 +1,136 @@
+name: animica_wallet
+description: Official Animica Wallet (Flutter) — deterministic Python-VM tx builder, PQ key stubs, Riverpod state, RPC/WS.
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # UI & routing
+  cupertino_icons: ^1.0.6
+  go_router: ^14.2.0
+
+  # State, utils, i18n
+  flutter_riverpod: ^2.5.1
+  intl: ^0.19.0
+  collection: ^1.18.0
+  logging: ^1.2.0
+
+  # Networking
+  http: ^1.2.1
+  web_socket_channel: ^2.4.0
+
+  # Storage & device
+  flutter_secure_storage: ^9.2.2
+  shared_preferences: ^2.2.3
+  package_info_plus: ^8.0.0
+  device_info_plus: ^10.1.0
+  url_launcher: ^6.3.0
+  universal_io: ^2.2.2
+
+  # Crypto & codecs
+  crypto: ^3.0.3
+
+  # QR
+  qr_flutter: ^4.1.0
+  qr_code_scanner: ^1.0.1
+
+  # Env (optional for local dev)
+  flutter_dotenv: ^5.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  build_runner: ^2.4.8
+
+  # Optional helpers (icons/splash/flavors) — run their CLIs when needed
+  flutter_launcher_icons: ^0.13.1
+  flutter_native_splash: ^2.4.0
+  flutter_flavorizr: ^2.9.3
+
+flutter:
+  uses-material-design: true
+
+  # Bundle a few core assets
+  assets:
+    - assets/icons/app_icon.png
+    - assets/images/hero.png
+    - assets/json/sample_tx.json
+
+  # Inter font family (regular + semibold)
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Regular.ttf
+        - asset: assets/fonts/Inter-SemiBold.ttf
+          weight: 600
+
+  # Enable built-in localization codegen (flutter gen-l10n)
+  generate: true
+
+# ---- Optional: configure platform assets & flavors ----
+
+# Generate platform icons from app_icon.png (run: flutter pub run flutter_launcher_icons)
+flutter_launcher_icons:
+  android: "ic_launcher"
+  ios: true
+  image_path: "assets/icons/app_icon.png"
+  remove_alpha_ios: true
+  web:
+    generate: true
+    image_path: "assets/icons/app_icon.png"
+    background_color: "#0B0D12"
+    theme_color: "#5EEAD4"
+  macos:
+    generate: true
+    image_path: "assets/icons/app_icon.png"
+  windows:
+    generate: true
+    image_path: "assets/icons/app_icon.png"
+
+# Generate a simple splash (run: flutter pub run flutter_native_splash:create)
+flutter_native_splash:
+  color: "#0B0D12"
+  image: assets/images/hero.png
+  android_12:
+    color: "#0B0D12"
+    image: assets/images/hero.png
+
+# Define Android/iOS flavors (run: flutter pub run flutter_flavorizr)
+flavorizr:
+  app:
+    android:
+      flavorDimensions: "env"
+  flavors:
+    dev:
+      app:
+        name: "Animica Wallet Dev"
+      android:
+        applicationId: "io.animica.wallet.dev"
+      ios:
+        bundleId: "io.animica.wallet.dev"
+    test:
+      app:
+        name: "Animica Wallet Test"
+      android:
+        applicationId: "io.animica.wallet.test"
+      ios:
+        bundleId: "io.animica.wallet.test"
+    prod:
+      app:
+        name: "Animica Wallet"
+      android:
+        applicationId: "io.animica.wallet"
+      ios:
+        bundleId: "io.animica.wallet"
+
+# Pin analyzer rules
+# (You can customize further in analysis_options.yaml)

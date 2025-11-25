@@ -1,0 +1,336 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.animica.org/governance/tally.schema.json",
+  "title": "Animica Governance — Tally",
+  "description": "Schema for finalized vote tallies of a governance proposal. Captures windows, quorum/thresholds, per-choice totals, role breakdowns, outcome, and reproducibility metadata.",
+  "type": "object",
+  "additionalProperties": false,
+
+  "properties": {
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "kind": { "const": "Tally" },
+    "network": { "type": "string", "enum": ["mainnet","testnet","devnet"] },
+
+    "proposal_id": {
+      "type": "string",
+      "pattern": "^[A-Z0-9._:-]{3,128}$",
+      "description": "Stable identifier of the proposal (e.g., GOV-2026.02-Params-A)."
+    },
+
+    "tally_id": {
+      "type": "string",
+      "pattern": "^[A-Z0-9._:-]{3,160}$",
+      "description": "Optional stable identifier for this tally result (useful when multiple re-tallies occur)."
+    },
+
+    "proposal_kind": {
+      "type": "string",
+      "enum": ["ParamChange","Upgrade","PQRotation","Policy","Treasury"],
+      "description": "The proposal type to which thresholds usually apply."
+    },
+
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "height": { "type": "integer", "minimum": 0, "description": "Reference height for power snapshots." },
+        "time": { "type": "string", "format": "date-time" },
+        "state_root": { "$ref": "#/$defs/sha3_256" }
+      }
+    },
+
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "start_height": { "type": "integer", "minimum": 0 },
+        "end_height": { "type": "integer", "minimum": 0 },
+        "start_time": { "type": "string", "format": "date-time" },
+        "end_time": { "type": "string", "format": "date-time" }
+      }
+    },
+
+    "policy": {
+      "type": "object",
+      "description": "Thresholds and caps applied during tally evaluation.",
+      "additionalProperties": false,
+      "properties": {
+        "tally_method": {
+          "type": "string",
+          "enum": ["one-token-one-vote","quadratic","role-weighted","hybrid"]
+        },
+        "eligible_power": { "$ref": "#/$defs/decimal_uint", "description": "Total eligible voting power at snapshot (denominator for turnout)." },
+        "quorum_min_turnout_ratio": { "$ref": "#/$defs/decimal_ratio", "description": "Minimum turnout ratio required (e.g., 0.20 for 20%)." },
+        "pass_min_support_ratio": { "$ref": "#/$defs/decimal_ratio", "description": "Minimum FOR/(FOR+AGAINST) to pass (e.g., 0.50)." },
+        "supermajority_ratio": { "$ref": "#/$defs/decimal_ratio", "description": "If proposal requires supermajority, specify ratio (e.g., 0.66)." },
+        "role_caps": {
+          "type": "array",
+          "description": "Optional per-role caps as fraction of total counted power.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "role": { "type": "string", "enum": ["token_holder","delegate","council","maintainer","foundation","observer"] },
+              "cap_ratio": { "$ref": "#/$defs/decimal_ratio" }
+            },
+            "required": ["role","cap_ratio"]
+          }
+        }
+      }
+    },
+
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ballot_count": { "type": "integer", "minimum": 0 },
+        "unique_voters": { "type": "integer", "minimum": 0 },
+        "invalid_ballots": { "type": "integer", "minimum": 0, "description": "Rejected due to signature/domain/nonce/etc." },
+        "duplicate_replaced": { "type": "integer", "minimum": 0, "description": "Later ballots superseded earlier ones for same voter." }
+      }
+    },
+
+    "totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "counted_power": { "$ref": "#/$defs/decimal_uint", "description": "Sum of voting power counted (after caps/filters)." },
+        "turnout_ratio": { "$ref": "#/$defs/decimal_ratio", "description": "counted_power / policy.eligible_power (if provided)." },
+
+        "for": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "power": { "$ref": "#/$defs/decimal_uint" },
+            "count": { "type": "integer", "minimum": 0 }
+          },
+          "required": ["power","count"]
+        },
+        "against": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "power": { "$ref": "#/$defs/decimal_uint" },
+            "count": { "type": "integer", "minimum": 0 }
+          },
+          "required": ["power","count"]
+        },
+        "abstain": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "power": { "$ref": "#/$defs/decimal_uint" },
+            "count": { "type": "integer", "minimum": 0 }
+          },
+          "required": ["power","count"]
+        },
+
+        "support_ratio": {
+          "$ref": "#/$defs/decimal_ratio",
+          "description": "FOR / (FOR + AGAINST)."
+        },
+        "against_ratio": {
+          "$ref": "#/$defs/decimal_ratio",
+          "description": "AGAINST / (FOR + AGAINST)."
+        }
+      },
+      "required": ["for","against","abstain"]
+    },
+
+    "per_role": {
+      "type": "array",
+      "description": "Breakdown by voter role at snapshot time (post-caps).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "role": { "type": "string", "enum": ["token_holder","delegate","council","maintainer","foundation","observer"] },
+          "counted_power": { "$ref": "#/$defs/decimal_uint" },
+          "ballot_count": { "type": "integer", "minimum": 0 },
+          "for": {
+            "type": "object",
+            "properties": {
+              "power": { "$ref": "#/$defs/decimal_uint" },
+              "count": { "type": "integer", "minimum": 0 }
+            },
+            "required": ["power","count"],
+            "additionalProperties": false
+          },
+          "against": {
+            "type": "object",
+            "properties": {
+              "power": { "$ref": "#/$defs/decimal_uint" },
+              "count": { "type": "integer", "minimum": 0 }
+            },
+            "required": ["power","count"],
+            "additionalProperties": false
+          },
+          "abstain": {
+            "type": "object",
+            "properties": {
+              "power": { "$ref": "#/$defs/decimal_uint" },
+              "count": { "type": "integer", "minimum": 0 }
+            },
+            "required": ["power","count"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["role","counted_power","ballot_count","for","against","abstain"]
+      }
+    },
+
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "passed": { "type": "boolean" },
+        "reasons": {
+          "type": "array",
+          "items": { "type": "string", "maxLength": 200 },
+          "description": "Human-readable conditions met/not met (e.g., 'Quorum met', 'Support < 66%')."
+        },
+        "effective_height": { "type": "integer", "minimum": 0, "description": "If passed, block height when enactment may begin." },
+        "next_steps": { "type": "string", "maxLength": 2000 }
+      },
+      "required": ["passed"]
+    },
+
+    "reproducibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ballots_merkle_root": { "$ref": "#/$defs/sha3_256", "description": "Merkle root over canonical ballot payload hashes included in tally." },
+        "ballots_count": { "type": "integer", "minimum": 0 },
+        "payload_hash": { "$ref": "#/$defs/sha3_256", "description": "Hash of the canonical JSON tally object excluding signatures." },
+        "software": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "tally_tool": { "type": "string", "maxLength": 64 },
+            "version": { "type": "string", "maxLength": 32 },
+            "build_hash": { "$ref": "#/$defs/hex" }
+          }
+        },
+        "built_at": { "type": "string", "format": "date-time" }
+      }
+    },
+
+    "signatures": {
+      "type": "array",
+      "description": "Optional attestations by authorized tally officers/multisig.",
+      "items": { "$ref": "#/$defs/signature" }
+    },
+
+    "extensions": {
+      "type": "object",
+      "description": "Deployment-specific extensions.",
+      "additionalProperties": true
+    }
+  },
+
+  "required": ["schema_version","kind","network","proposal_id","totals","outcome"],
+
+  "$defs": {
+    "hex": { "type": "string", "pattern": "^0x[0-9a-fA-F]*$" },
+    "sha3_256": { "type": "string", "pattern": "^0x[0-9a-fA-F]{64}$" },
+    "decimal_uint": {
+      "type": "string",
+      "pattern": "^[0-9]{1,78}$",
+      "description": "Unsigned integer as base-10 string (up to ~256-bit)."
+    },
+    "decimal_ratio": {
+      "type": "string",
+      "pattern": "^(0(\\.[0-9]{1,18})?|1(\\.0{1,18})?)$",
+      "description": "Decimal in [0,1] with up to 18 fractional digits."
+    },
+    "address": {
+      "type": "string",
+      "pattern": "^(anim1)[0-9a-z]{10,}$"
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "address": { "$ref": "#/$defs/address" },
+        "alg": { "type": "string", "enum": ["dilithium3","sphincs_shake_128s","ed25519","secp256k1"] },
+        "signature": { "$ref": "#/$defs/hex" },
+        "signed_at": { "type": "string", "format": "date-time" },
+        "payload_hash": { "$ref": "#/$defs/sha3_256" }
+      },
+      "required": ["address","alg","signature","payload_hash"]
+    }
+  },
+
+  "examples": [
+    {
+      "schema_version": 1,
+      "kind": "Tally",
+      "network": "testnet",
+      "proposal_id": "GOV-2026.02-Params-A",
+      "proposal_kind": "ParamChange",
+      "snapshot": { "height": 2222000 },
+      "window": {
+        "start_height": 2221000,
+        "end_height": 2222000,
+        "start_time": "2026-02-10T19:00:00Z",
+        "end_time": "2026-02-11T19:00:00Z"
+      },
+      "policy": {
+        "tally_method": "one-token-one-vote",
+        "eligible_power": "10000000",
+        "quorum_min_turnout_ratio": "0.20",
+        "pass_min_support_ratio": "0.50"
+      },
+      "inputs": {
+        "ballot_count": 1425,
+        "unique_voters": 1402,
+        "invalid_ballots": 3,
+        "duplicate_replaced": 20
+      },
+      "totals": {
+        "counted_power": "3350000",
+        "turnout_ratio": "0.335",
+        "for": { "power": "2600000", "count": 980 },
+        "against": { "power": "650000", "count": 310 },
+        "abstain": { "power": "100000", "count": 112 },
+        "support_ratio": "0.80",
+        "against_ratio": "0.20"
+      },
+      "per_role": [
+        {
+          "role": "delegate",
+          "counted_power": "2500000",
+          "ballot_count": 320,
+          "for": { "power": "2100000", "count": 250 },
+          "against": { "power": "350000", "count": 60 },
+          "abstain": { "power": "50000", "count": 10 }
+        },
+        {
+          "role": "token_holder",
+          "counted_power": "800000",
+          "ballot_count": 1082,
+          "for": { "power": "500000", "count": 720 },
+          "against": { "power": "300000", "count": 248 },
+          "abstain": { "power": "0", "count": 114 }
+        }
+      ],
+      "outcome": {
+        "passed": true,
+        "reasons": ["Quorum met (33.5% ≥ 20%)", "Support 80% ≥ 50%"],
+        "effective_height": 2222008,
+        "next_steps": "Params queued for activation; node versions unaffected."
+      },
+      "reproducibility": {
+        "ballots_merkle_root": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "ballots_count": 1402,
+        "payload_hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "software": {
+          "tally_tool": "animica-gov-tally",
+          "version": "1.1.0",
+          "build_hash": "0xdeadbeef"
+        },
+        "built_at": "2026-02-11T19:05:30Z"
+      }
+    }
+  ]
+}

@@ -1,0 +1,167 @@
+.........................................................sss.....F.....  [100%]
+=================================== FAILURES ===================================
+____________________ test_recovery_after_cooldown_and_topup ____________________
+
+provider = _Provider(provider_id='prov-1', stake=12000, jailed=False, jail_until_height=16, violations=1)
+thresholds = _Thresholds(traps_min=0.98, qos_min=0.9)
+penalties = _PenaltyRules(penalty_per_violation=1000, jail_after_violations=2, cooldown_blocks=5)
+local_engine = <aicf.tests.test_slashing._LocalSlashEngine object at 0x7de4f1373cb0>
+maybe_proj_engine = None
+
+    def test_recovery_after_cooldown_and_topup(provider: _Provider,
+                                               thresholds: _Thresholds,
+                                               penalties: _PenaltyRules,
+                                               local_engine: _LocalSlashEngine,
+                                               maybe_proj_engine: Optional[Any]) -> None:
+        """
+        After being jailed, a provider should recover when:
+          - cooldown elapses, and
+          - it delivers a good window (or the engine unjails automatically post-cooldown).
+        Stake top-ups are allowed any time (simulated here).
+        """
+        # Force jail with two failures
+        height = 10
+        bad_stats = {"total": 200, "traps_ok": 180, "qos_ok": 150}
+        _ = _process_with_engine(maybe_proj_engine, provider, height, bad_stats) or local_engine.process_window(provider, height, bad_stats)
+        height += 1
+        _ = _process_with_engine(maybe_proj_engine, provider, height, bad_stats) or local_engine.process_window(provider, height, bad_stats)
+    
+        assert provider.jailed, "Provider should be jailed after consecutive failures"
+        cooldown_end = provider.jail_until_height
+    
+        # While jailed and before cooldown ends, processing should do nothing (no slash/no unjail).
+        height = cooldown_end - 1
+        ok_stats = {"total": 200, "traps_ok": 199, "qos_ok": 190}
+        ev_mid = _process_with_engine(maybe_proj_engine, provider, height, ok_stats)
+        if ev_mid is None:
+            ev_mid = local_engine.process_window(provider, height, ok_stats)
+        assert ev_mid is None, "No action expected before cooldown end"
+        assert provider.jailed, "Still jailed before cooldown end"
+    
+        # Top-up stake while jailed (simulated external action)
+        provider.stake += 5_000
+    
+        # After cooldown, next good window should clear jail (or engine should auto-clear).
+        height = cooldown_end
+        ev_post = _process_with_engine(maybe_proj_engine, provider, height, ok_stats)
+        if ev_post is None:
+            ev_post = local_engine.process_window(provider, height, ok_stats)
+    
+        # Either auto-unjailed or unjailed due to good window
+        assert provider.jailed is False, "Provider should be unjailed after cooldown with good performance"
+        assert provider.stake >= 5_000, "Stake top-up must persist (no penalty on good window)"
+        assert provider.violations in (0, 1, 2), "Engine may reset or keep history; only check bounds"
+    
+        # Subsequent good window must not re-jail or slash
+        height += 1
+        stake_before = provider.stake
+        ev_ok2 = _process_with_engine(maybe_proj_engine, provider, height, ok_stats)
+        if ev_ok2 is None:
+            ev_ok2 = local_engine.process_window(provider, height, ok_stats)
+        assert provider.jailed is False, "Must remain unjailed on continued good performance"
+>       assert provider.stake == stake_before, "No slashing on good windows"
+E       AssertionError: No slashing on good windows
+E       assert 12000 == 13000
+E        +  where 12000 = _Provider(provider_id='prov-1', stake=12000, jailed=False, jail_until_height=16, violations=1).stake
+
+aicf/tests/test_slashing.py:316: AssertionError
+------------ generated xml file: /root/animica/artifacts/junit.xml -------------
+================================ tests coverage ================================
+_______________ coverage: platform linux, python 3.12.3-final-0 ________________
+
+Name                                             Stmts   Miss  Cover   Missing
+------------------------------------------------------------------------------
+aicf/__init__.py                                    17      3    82%   52, 57, 62
+aicf/adapters/__init__.py                            6      6     0%   1-22
+aicf/adapters/block_db.py                          120    120     0%   1-474
+aicf/adapters/p2p.py                               143    143     0%   1-311
+aicf/adapters/params.py                            144    144     0%   1-288
+aicf/adapters/proofs.py                            152    152     0%   1-309
+aicf/adapters/rpc.py                               104    104     0%   1-275
+aicf/adapters/state_db.py                          233    233     0%   1-639
+aicf/adapters/wallet_treasury.py                    81     81     0%   1-244
+aicf/aitypes/__init__.py                            26      6    77%   75-80
+aicf/aitypes/events.py                             155    145     6%   35-336
+aicf/aitypes/payout.py                             102     97     5%   27-212
+aicf/aitypes/proof_claim.py                         50     45    10%   56-131
+aicf/aitypes/provider.py                            44     10    77%   37-42, 45, 48-49, 52
+aicf/aitypes/sla.py                                101     60    41%   42-48, 51-52, 61-68, 89-95, 98-99, 115-120, 123-128, 150, 175-207, 215, 222-228, 235-240
+aicf/bench/__init__.py                               4      4     0%   1-29
+aicf/bench/matcher_throughput.py                    88     88     0%   1-181
+aicf/bench/settlement_batch.py                     140    140     0%   1-282
+aicf/cli/_state.py                                   4      4     0%   1-4
+aicf/cli/payouts_inspect.py                        341    341     0%   1-548
+aicf/cli/provider_complete.py                        5      5     0%   1-5
+aicf/cli/queue_claim.py                              5      5     0%   1-5
+aicf/cli/queue_list.py                             272    272     0%   1-444
+aicf/cli/slash.py                                  332    332     0%   1-672
+aicf/config.py                                     159    159     0%   1-351
+aicf/db/__init__.py                                 24     24     0%   1-85
+aicf/economics/epochs.py                           102     66    35%   51-58, 89-90, 93-99, 109-118, 122-125, 132-136, 144-152, 162-173, 180-185, 195-205, 214, 228-233
+aicf/economics/escrow.py                            96     96     0%   1-299
+aicf/economics/payouts.py                           62     56    10%   36-166
+aicf/economics/pricing.py                           78     51    35%   91, 116-120, 124-133, 137-142, 148-159, 188-196, 225-233, 249-253
+aicf/economics/settlement.py                       107    101     6%   57-326
+aicf/economics/slashing_rules.py                    92     92     0%   1-312
+aicf/economics/split.py                             74     66    11%   47-238
+aicf/errors.py                                      67     18    73%   36, 65, 85, 102-108, 127-133, 168
+aicf/integration/capabilities_bridge.py            110    110     0%   1-381
+aicf/integration/execution_hooks.py                 64     64     0%   1-243
+aicf/integration/proofs_bridge.py                  105     97     8%   37-256
+aicf/integration/randomness_bridge.py               82     82     0%   1-226
+aicf/integration/registry_bridge.py                182    182     0%   1-350
+aicf/metrics.py                                     99     93     6%   32-331
+aicf/queue/__init__.py                              24      7    71%   15, 21-22, 28-30, 35-37
+aicf/queue/assignment.py                           125     15    88%   107, 114, 163, 167-180
+aicf/queue/dispatcher.py                            84     84     0%   1-214
+aicf/queue/ids.py                                   43     43     0%   1-128
+aicf/queue/quotas.py                                15     15     0%   1-18
+aicf/queue/quotas/__init__.py                       92     49    47%   44-45, 48, 51-56, 59-60, 63-65, 72-89, 92-97, 100-109, 112-116
+aicf/queue/receiver.py                             165    165     0%   1-399
+aicf/queue/retry.py                                 93     59    37%   147-154, 162-164, 167-169, 181-182, 193, 208-218, 230-265, 268-270, 273-276, 285-289, 293-297
+aicf/queue/storage.py                              411    411     0%   1-879
+aicf/queue/ttl.py                                  120     94    22%   64-74, 171-172, 179-238, 246-289, 296-300, 304-315
+aicf/registry/__init__.py                           51      3    94%   38-40
+aicf/registry/filters.py                           136    136     0%   1-318
+aicf/registry/heartbeat.py                         143    143     0%   1-384
+aicf/registry/penalties.py                         149    149     0%   1-363
+aicf/registry/registry.py                           83     17    80%   12-13, 16, 28-29, 35-38, 43-44, 70, 105-106, 115-116, 125-126
+aicf/registry/staking.py                            64      2    97%   37, 51
+aicf/registry/verify_attest.py                       2      1    50%   3
+aicf/rpc/__init__.py                                 6      6     0%   1-26
+aicf/rpc/methods.py                                163    163     0%   1-335
+aicf/rpc/mount.py                                   17     17     0%   1-84
+aicf/rpc/ws.py                                      89     89     0%   1-186
+aicf/sla/eval.py                                    14     14     0%   1-17
+aicf/sla/metrics.py                                173    173     0%   1-351
+aicf/sla/slash_engine.py                            73     45    38%   53-57, 61-65, 125-137, 163-204, 212-214, 219
+aicf/slash/engine.py                                16     16     0%   1-24
+aicf/slashing.py                                    29     29     0%   1-37
+aicf/slashing/__init__.py                            6      6     0%   1-10
+aicf/slashing/engine.py                             44     44     0%   1-68
+aicf/tests/__init__.py                               7      2    71%   22-23
+aicf/tests/test_assignment_and_lease.py             98      3    97%   59, 162-163
+aicf/tests/test_cli_provider_flow.py               206     71    66%   29-30, 36, 40-50, 56, 60-72, 78, 88-89, 91-93, 105, 110, 123-125, 128-130, 133, 136, 139-143, 188, 213, 217-218, 233, 236-237, 251, 254-255, 289-290, 306-311, 314, 331, 345, 354, 358, 362, 366-368
+aicf/tests/test_epoch_rollover.py                  179     66    63%   92-186, 195
+aicf/tests/test_integration_proof_to_payout.py     174     60    66%   149-154, 185-200, 207-227, 234-256, 288-289
+aicf/tests/test_payouts_settlement.py              216    117    46%   71-76, 113-258, 298, 304, 324, 327
+aicf/tests/test_pricing_split.py                   150     71    53%   41, 47, 70, 76-82, 90-98, 104-116, 133-178
+aicf/tests/test_queue_matcher.py                    85      1    99%   68
+aicf/tests/test_retry_ttl.py                       108     71    34%   48, 61, 63, 66, 73-78, 81-87, 91-97, 101-109, 115-118, 120-128, 137-142, 151-164, 177-195
+aicf/tests/test_rpc_mount.py                       195    190     3%   14-278
+aicf/tests/test_sla_eval.py                        170     96    44%   38-40, 47-54, 59-62, 73-87, 94-96, 102-120, 128, 138-180, 189-205
+aicf/tests/test_slashing.py                        208     47    77%   57, 87-90, 118, 127-129, 134, 155, 164-191, 194-203, 302
+aicf/treasury/__init__.py                            4      4     0%   1-26
+aicf/treasury/mint.py                               99     99     0%   1-228
+aicf/treasury/rewards.py                           119    119     0%   1-301
+aicf/treasury/state.py                             220    220     0%   1-519
+aicf/treasury/withdraw.py                          159    159     0%   1-346
+aicf/version.py                                     39     13    67%   28, 56-65, 73, 79-80, 88
+------------------------------------------------------------------------------
+TOTAL                                             9278   7301    21%
+
+19 files skipped due to complete coverage.
+Coverage XML written to file artifacts/coverage.xml
+=========================== short test summary info ============================
+FAILED aicf/tests/test_slashing.py::test_recovery_after_cooldown_and_topup - ...
+1 failed, 67 passed, 4 skipped in 3.14s

@@ -1,0 +1,75 @@
+{
+  "meta": {
+    "scheme": "commit-reveal → Wesolowski VDF → (optional) QRNG mix",
+    "encoding": "hex-lower, 0x-prefixed",
+    "notes": [
+      "Toy, non-secure parameters for deterministic testing only.",
+      "These proofs are intentionally 'compact': they omit chain-known params (N, T, l).",
+      "Light-verifiers are expected to retrieve params from chain config / headers."
+    ],
+    "fields": {
+      "round": "round identifier",
+      "prev_beacon": "previous round's beacon (0x00..00 for genesis)",
+      "proof": {
+        "hash_chain": "aux links for light verification (illustrative)",
+        "vdf": { "y": "output", "pi": "Wesolowski proof" }
+      },
+      "beacon": "final beacon output to verify against (present for positive cases)",
+      "expected": "true if the proof should verify under toy rules"
+    }
+  },
+  "proofs": [
+    {
+      "round": 7000,
+      "prev_beacon": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "proof": {
+        "hash_chain": [
+          "0x1111222233334444111122223333444411112222333344441111222233334444",
+          "0xaaaa5555aaaa5555aaaa5555aaaa5555aaaa5555aaaa5555aaaa5555aaaa5555"
+        ],
+        "vdf": { "y": "0x0844", "pi": "0x0aab" }
+      },
+      "beacon": "0x4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c",
+      "expected": true
+    },
+    {
+      "round": 7001,
+      "prev_beacon": "0x4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c",
+      "proof": {
+        "hash_chain": [
+          "0x2222333344445555222233334444555522223333444455552222333344445555",
+          "0xbbbb6666bbbb6666bbbb6666bbbb6666bbbb6666bbbb6666bbbb6666bbbb6666"
+        ],
+        "vdf": { "y": "0x034c2ec5", "pi": "0x000f8264" }
+      },
+      "beacon": "0x99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff",
+      "expected": true
+    },
+    {
+      "round": 7002,
+      "prev_beacon": "0x99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff",
+      "proof": {
+        "hash_chain": [
+          "0x3333444455556666333344445555666633334444555566663333444455556666",
+          "0xcccc7777cccc7777cccc7777cccc7777cccc7777cccc7777cccc7777cccc7777"
+        ],
+        "vdf": { "y": "0x0844", "pi": "0x0aab" }
+      },
+      "beacon": "0x0f1e2d3c0f1e2d3c0f1e2d3c0f1e2d3c0f1e2d3c0f1e2d3c0f1e2d3c0f1e2d3c",
+      "expected": true
+    },
+    {
+      "round": 7003,
+      "prev_beacon": "0x0f1e2d3c0f1e2d3c0f1e2d3c0f1e2d3c0f1e2d3c0f1e2d3c0f1e2d3c0f1e2d3c",
+      "proof": {
+        "hash_chain": [
+          "0x9999888877776666999988887777666699998888777766669999888877776666",
+          "0xffff0000ffff0000ffff0000ffff0000ffff0000ffff0000ffff0000ffff0000"
+        ],
+        "vdf": { "y": "0x0844", "pi": "0x0aaa" }
+      },
+      "beacon": "0x1234567812345678123456781234567812345678123456781234567812345678",
+      "expected": false
+    }
+  ]
+}

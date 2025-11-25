@@ -1,0 +1,54 @@
+{
+  "protocol": "stark",
+  "version": "0.1",
+  "encoding": "base64",
+  "hash_fn": "blake3",
+  "field_modulus": "36185027886661311069865932815214971204146870208012676262330495027512497617",
+  "air": {
+    "name": "merkle_membership",
+    "po2": "3",
+    "trace_width": "3"
+  },
+  "public_inputs": {
+    "leaf": "123456789",
+    "root": "987654321",
+    "path_len": "7"
+  },
+  "commitments": {
+    "trace": [
+      "AAAAAAAAAAAAAAAAAAAAAA==",
+      "BBBBBBBBBBBBBBBBBBBBBB=="
+    ],
+    "composition": "CCCCCCCCCCCCCCCCCCCCCC=="
+  },
+  "oods": {
+    "z": "1234567",
+    "evals": ["42", "1337", "9001"]
+  },
+  "fri": {
+    "domain_size": "256",
+    "folding_factor": 2,
+    "layers": [
+      { "commitment": "DDDDDDDDDDDDDDDDDDDDDD==" },
+      { "commitment": "EEEEEEEEEEEEEEEEEEEEEE==" }
+    ],
+    "queries": [
+      {
+        "position": "5",
+        "merkle_paths": [
+          { "layer": 0, "leaf": "AAAAAAAAAAAAAAAAAAAAAA==", "siblings": ["BBBBBBBBBBBBBBBBBBBBBB==", "CCCCCCCCCCCCCCCCCCCCCC=="] },
+          { "layer": 1, "leaf": "BBBBBBBBBBBBBBBBBBBBBB==", "siblings": ["DDDDDDDDDDDDDDDDDDDDDD=="] }
+        ]
+      },
+      {
+        "position": "42",
+        "merkle_paths": [
+          { "layer": 0, "leaf": "CCCCCCCCCCCCCCCCCCCCCC==", "siblings": ["BBBBBBBBBBBBBBBBBBBBBB==", "AAAAAAAAAAAAAAAAAAAAAA=="] },
+          { "layer": 1, "leaf": "BBBBBBBBBBBBBBBBBBBBBB==", "siblings": ["EEEEEEEEEEEEEEEEEEEEEE=="] }
+        ]
+      }
+    ]
+  },
+  "pow": { "nonce": "0", "difficulty": "0" },
+  "note": "Toy, non-valid proof used for parser/schema tests only."
+}

@@ -1,0 +1,347 @@
+# Production-leaning overrides for the Animica Devnet Helm chart.
+# Apply with:
+#   helm upgrade --install animica ./ops/helm/animica-devnet \
+#     -n animica-prod --create-namespace -f ops/helm/animica-devnet/values-prod.yaml
+
+# ------------------------------------------------------------------------------
+# Global settings (prod)
+# ------------------------------------------------------------------------------
+global:
+  namespace: animica-prod
+  image:
+    registry: ghcr.io/animica-org
+    pullPolicy: IfNotPresent
+    pullSecrets: []   # e.g. ['ghcr']
+  chain:
+    # Use the publicly registered testnet id by default (avoid mainnet by mistake).
+    id: 2
+    # In prod we typically mount params/genesis via ConfigMaps/Secrets or fetch from RPC.
+    # Leave these minimal (non-authoritative) or empty and wire via templates if desired.
+    paramsYaml: |
+      chainId: 2
+      consensus:
+        block_target_seconds: 12
+        max_tx_per_block: 4000
+        randomness:
+          commit_phase_seconds: 12
+          reveal_phase_seconds: 12
+          settle_phase_seconds: 0
+          round_length_seconds: 24
+          vdf:
+            security_bits: 128
+            discriminant_size_bits: 2048
+            target_seconds: 10.0
+      economics:
+        treasury_split: 0.10
+        miner_split: 0.90
+      gas:
+        min_price: 1
+        block_gas_limit: 40000000
+      poies_policy:
+        gamma_cap: 1.0
+        escort_q: 0.25
+        per_type_caps:
+          hash: 1.0
+          ai: 0.5
+          quantum: 0.25
+          storage: 0.25
+          vdf: 0.25
+    genesisJson: ""   # Provided externally in prod (do not embed large state here)
+
+  # External seed endpoints (DNS names recommended)
+  seeds:
+    - "seed1.animica.network:37000"
+    - "seed2.animica.network:37000"
+    - "seed3.animica.network:37000"
+
+# ------------------------------------------------------------------------------
+# Common k8s/security knobs
+# ------------------------------------------------------------------------------
+common:
+  podLabels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/tier: prod
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  topologySpreadConstraints: []
+  priorityClassName: ""
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop: ["ALL"]
+
+# ------------------------------------------------------------------------------
+# Node (stateful)
+# ------------------------------------------------------------------------------
+node:
+  enabled: true
+  image:
+    repository: node
+    tag: v0.1.0
+  replicas: 1
+  service:
+    type: ClusterIP
+    rpc: { enabled: true, port: 8545 }
+    ws:  { enabled: true, port: 8546 }
+    p2pTcp: { enabled: true, port: 37000 }
+    p2pQuic: { enabled: true, port: 37001 }
+  persistence:
+    enabled: true
+    size: 200Gi
+    storageClassName: ""   # e.g. "fast-ssd"
+  resources:
+    requests:
+      cpu: "2"
+      memory: "4Gi"
+    limits:
+      cpu: "8"
+      memory: "16Gi"
+  env:
+    - name: ANIMICA_LOG_LEVEL
+      value: "info"
+  config:
+    db:
+      path: "/var/lib/animica/db"
+      backend: "rocksdb"
+    rpc:
+      host: "0.0.0.0"
+      port: 8545
+      wsPort: 8546
+      corsOrigins: ["https://studio.animica.dev", "https://explorer.animica.dev"]
+      rateLimits:
+        maxRps: 500
+        burst: 1000
+    p2p:
+      listenAddrs:
+        - "0.0.0.0:37000/tcp"
+        - "0.0.0.0:37001/quic"
+      maxPeers: 256
+      seedsFromValues: true
+    explorer:
+      enableMetrics: true
+    randomness:
+      enableVdfVerify: true
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+    scrapeTimeout: 10s
+    labels:
+      release: prometheus
+
+# ------------------------------------------------------------------------------
+# Miner (HPA-ready)
+# ------------------------------------------------------------------------------
+miner:
+  enabled: true
+  image:
+    repository: miner
+    tag: v0.1.0
+  replicas: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 50
+    targetCPUUtilizationPercentage: 80
+  resources:
+    requests:
+      cpu: "1"
+      memory: "1Gi"
+    limits:
+      cpu: "8"
+      memory: "8Gi"
+  env:
+    - name: ANIMICA_MINER_DEVICE
+      value: "cpu"
+  config:
+    rpcUrl: "http://animica-node:8545"
+    wsUrl:  "ws://animica-node:8546"
+    threads: 0            # auto (cores)
+    shareTarget: "auto"
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    scrapeTimeout: 10s
+    labels:
+      release: prometheus
+
+# ------------------------------------------------------------------------------
+# Explorer API
+# ------------------------------------------------------------------------------
+explorer:
+  enabled: true
+  image:
+    repository: explorer
+    tag: v0.1.0
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+  config:
+    rpcUrl: "http://animica-node:8545"
+    wsUrl:  "ws://animica-node:8546"
+    cacheSeconds: 1
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    scrapeTimeout: 10s
+    labels:
+      release: prometheus
+
+# ------------------------------------------------------------------------------
+# Studio Services (deploy/verify/artifacts). Faucet is OFF in prod.
+# ------------------------------------------------------------------------------
+services:
+  enabled: true
+  image:
+    repository: studio-services
+    tag: v0.1.0
+  service:
+    type: ClusterIP
+    port: 9000
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+  env:
+    RPC_URL: "http://animica-node:8545"
+    CHAIN_ID: "2"
+    STORAGE_DIR: "/var/lib/animica/services"
+    RATE_LIMITS: "deploy=3r/s,verify=2r/s,artifacts=5r/s"
+    CORS_ALLOWLIST: "https://studio.animica.dev,https://explorer.animica.dev"
+  persistence:
+    enabled: true
+    size: 50Gi
+    storageClassName: ""
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    scrapeTimeout: 10s
+    labels:
+      release: prometheus
+
+# ------------------------------------------------------------------------------
+# Web UIs
+# ------------------------------------------------------------------------------
+studioWeb:
+  enabled: true
+  image:
+    repository: studio-web
+    tag: v0.1.0
+  service:
+    type: ClusterIP
+    port: 80
+  env:
+    VITE_RPC_URL: "https://rpc.animica.dev"
+    VITE_CHAIN_ID: "2"
+    VITE_SERVICES_URL: "https://services.animica.dev"
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+explorerWeb:
+  enabled: true
+  image:
+    repository: explorer-web
+    tag: v0.1.0
+  service:
+    type: ClusterIP
+    port: 80
+  env:
+    VITE_RPC_URL: "https://rpc.animica.dev"
+    VITE_CHAIN_ID: "2"
+    VITE_EXPLORER_API: "https://api.animica.dev/api"
+    VITE_SERVICES_URL: "https://services.animica.dev"
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+# ------------------------------------------------------------------------------
+# Ingress (TLS)
+# ------------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "20m"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  tls:
+    enabled: true
+    secretName: animica-tls
+  hosts:
+    rpc:
+      host: rpc.animica.dev
+      path: /rpc
+      wsPath: /ws
+    explorer:
+      host: api.animica.dev
+      basePath: /
+    services:
+      host: services.animica.dev
+      basePath: /
+    studioWeb:
+      host: studio.animica.dev
+      basePath: /
+    explorerWeb:
+      host: explorer.animica.dev
+      basePath: /
+
+# ------------------------------------------------------------------------------
+# Observability
+# ------------------------------------------------------------------------------
+observability:
+  prometheus:
+    serviceMonitorEnabled: true
+  grafana:
+    enabled: false
+  loki:
+    enabled: false
+  tempo:
+    enabled: false
+
+# ------------------------------------------------------------------------------
+# RBAC/SA
+# ------------------------------------------------------------------------------
+rbac:
+  create: true
+serviceAccount:
+  create: true
+  name: ""     # autogenerated if empty
+  annotations: {}
+
+# ------------------------------------------------------------------------------
+# Extras hooks (optional)
+# ------------------------------------------------------------------------------
+extras:
+  node:        { extraEnv: [], extraVolumeMounts: [], extraVolumes: [] }
+  miner:       { extraEnv: [], extraVolumeMounts: [], extraVolumes: [] }
+  explorer:    { extraEnv: [], extraVolumeMounts: [], extraVolumes: [] }
+  services:    { extraEnv: [], extraVolumeMounts: [], extraVolumes: [] }
+  studioWeb:   { extraEnv: [], extraVolumeMounts: [], extraVolumes: [] }
+  explorerWeb: { extraEnv: [], extraVolumeMounts: [], extraVolumes: [] }

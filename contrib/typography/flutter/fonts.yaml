@@ -1,0 +1,55 @@
+# Animica — Flutter font snippet (Inter)
+# Usage:
+#   1) Copy the `fonts:` block into your app's pubspec.yaml under `flutter:`.
+#   2) Ensure the paths to the font assets are correct relative to pubspec.yaml.
+#   3) Run `flutter pub get`.
+
+# Example pubspec.yaml excerpt:
+# flutter:
+#   uses-material-design: true
+#   assets:
+#     # (optional) Add any token-driven JSON/CSS you want to bundle
+#     - contrib/tokens/build/json/tokens.merged.json
+#   fonts:
+#     - family: Inter
+#       fonts:
+#         - asset: contrib/typography/web/inter/Inter-Variable.woff2
+#           # Flutter supports woff2 as an asset; it will repackage for platforms that need TTF/OTF.
+#           # If you prefer TTFs, replace with Inter TTF files and add weight ranges.
+#           weight: 100
+#           style: normal
+#         - asset: contrib/typography/web/inter/Inter-Italic.woff2
+#           weight: 100
+#           style: italic
+
+# Recommended TextTheme wiring (in code):
+# final theme = ThemeData(
+#   fontFamily: 'Inter',
+#   textTheme: const TextTheme(
+#     bodyLarge: TextStyle(fontWeight: FontWeight.w400, height: 1.5),
+#     bodyMedium: TextStyle(fontWeight: FontWeight.w400, height: 1.5),
+#     labelLarge: TextStyle(fontWeight: FontWeight.w500, height: 1.5),
+#   ),
+# );
+
+# If you maintain per-weight TTFs, here is a TTF-based template:
+# flutter:
+#   fonts:
+#     - family: Inter
+#       fonts:
+#         - asset: assets/fonts/Inter-Thin.ttf
+#           weight: 100
+#         - asset: assets/fonts/Inter-ExtraLight.ttf
+#           weight: 200
+#         - asset: assets/fonts/Inter-Light.ttf
+#           weight: 300
+#         - asset: assets/fonts/Inter-Regular.ttf
+#           weight: 400
+#         - asset: assets/fonts/Inter-Medium.ttf
+#           weight: 500
+#         - asset: assets/fonts/Inter-SemiBold.ttf
+#           weight: 600
+#         - asset: assets/fonts/Inter-Bold.ttf
+#           weight: 700
+#         - asset: assets/fonts/Inter-Black.ttf
+#           weight: 900

@@ -1,0 +1,26 @@
+# Animica bootstrap seeds (examples)
+# Format: one seed per line. Supported forms:
+#   - Multiaddr-like: /dns4/<host>/tcp/<port>[/ws]|/udp/<port>/quic[/alpn/animica/1][/p2p/<peer-id>]
+#   - Raw IPs allowed via /ip4 or /ip6
+# Comments start with '#'. Blank lines ignored.
+
+# ===== Devnet (animica:1337) =====
+/dns4/seed-1.dev.animica.local/tcp/7010/p2p/8f2c0d6e2a3b4c5d6e7f8091a2b3c4d5
+/dns4/seed-2.dev.animica.local/tcp/7011/ws/alpn/animica/1
+/dns4/seed-3.dev.animica.local/udp/7010/quic/alpn/animica/1
+/ip4/203.0.113.10/tcp/7010
+/ip6/2001:db8::1337/udp/7010/quic
+
+# ===== Testnet (animica:2) =====
+/dns4/seed-1.test.animica.net/tcp/7010/p2p/aa11bb22cc33dd44ee55ff6677889900
+/dns4/seed-2.test.animica.net/udp/7010/quic/alpn/animica/1
+/dns6/seed-3.test.animica.net/tcp/7010
+
+# ===== Mainnet (animica:1) =====
+/dns4/seed-1.animica.org/tcp/7010
+/dns4/seed-2.animica.org/udp/7010/quic/alpn/animica/1
+
+# Notes:
+# - Replace *.animica.local/.net/.org with your actual domains/IPs.
+# - Include /p2p/<peer-id> when you want to pin a known identity for TOFU hardening.
+# - Default ports here are illustrative: TCP/QUIC 7010, WS 7011.

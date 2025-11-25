@@ -1,0 +1,140 @@
+---
+import site from "../config/site";
+import links from "../config/links";
+import env from "../env";
+
+interface Props {
+  title?: string;
+  subtitle?: string;
+  kicker?: string;
+  showSecondary?: boolean;
+  showDocs?: boolean;
+  heroImage?: { src: string; alt?: string } | null;
+}
+
+const {
+  title = "Build on Animica.",
+  subtitle = "Post-quantum accounts, Python smart contracts, and useful-work consensus — all in a modern, developer-friendly stack.",
+  kicker = "Next-gen L1",
+  showSecondary = true,
+  showDocs = true,
+  heroImage = null,
+} = Astro.props as Props;
+
+const studioHref = links?.studio?.home ?? env.PUBLIC_STUDIO_URL ?? "/studio";
+const explorerHref = links?.explorer?.home ?? "/explorer";
+const docsHref = links?.docs?.home ?? env.PUBLIC_DOCS_URL ?? "/docs";
+---
+
+<section
+  class="relative overflow-hidden border-b border-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)]"
+  aria-labelledby="hero-title"
+>
+  <!-- soft background glow -->
+  <div class="pointer-events-none absolute inset-0 -z-10">
+    <div class="absolute -top-32 -right-24 h-80 w-80 rounded-full blur-3xl opacity-20"
+         style="background: radial-gradient(60% 60% at 50% 50%, var(--text-primary) 0%, transparent 70%);"></div>
+    <div class="absolute -bottom-40 -left-24 h-96 w-96 rounded-full blur-3xl opacity-15"
+         style="background: radial-gradient(60% 60% at 50% 50%, var(--accent, #6cf)) 0%, transparent 70%);"></div>
+  </div>
+
+  <div class="container mx-auto px-4 py-16 sm:py-20 lg:py-24 grid gap-10 lg:grid-cols-2 lg:items-center">
+    <div class="max-w-xl">
+      {kicker && (
+        <div class="mb-3 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs leading-none
+                    border-[color-mix(in_srgb,var(--text-primary)_/_16%,transparent)]">
+          <span class="inline-block size-2 rounded-full bg-emerald-500"></span>
+          <span class="tracking-wide uppercase">{kicker}</span>
+        </div>
+      )}
+
+      <h1 id="hero-title" class="text-4xl sm:text-5xl font-semibold leading-tight">
+        {title}
+      </h1>
+
+      {subtitle && (
+        <p class="mt-4 text-[1.05rem] opacity-90">
+          {subtitle}
+        </p>
+      )}
+
+      <div class="mt-8 flex flex-col sm:flex-row gap-3 sm:gap-4">
+        <a
+          href={studioHref}
+          class="inline-flex items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium
+                 bg-white text-black hover:opacity-95 active:opacity-90
+                 dark:bg-[var(--text-primary)] dark:text-[var(--bg-regular)]"
+        >
+          Launch Studio
+          <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M14 3h7v7h-2V6.41L9.41 16 8 14.59 16.59 6H14V3zM5 5h5V3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-5h-2v5H5V5z"/></svg>
+        </a>
+
+        {showSecondary && (
+          <a
+            href={explorerHref}
+            class="inline-flex items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium
+                   border hover:bg-[var(--bg-elevated)]
+                   border-[color-mix(in_srgb,var(--text-primary)_/_18%,transparent)]"
+          >
+            Open Explorer
+            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 1 0 .001 20.001A10 10 0 0 0 12 2m6.92 6h-5.01l-2 3.5l2.75 4.77l4.26-7.27zM11 7l-2 3.5H5.08A8 8 0 0 1 11 7m-5.84 10A7.96 7.96 0 0 1 4 12c0-.34.03-.67.08-1h4.91l2 3.5L8.24 17H5.16zM12 20a8 8 0 0 1-1-.07l2.76-4.73L18.84 17A8 8 0 0 1 12 20"/></svg>
+          </a>
+        )}
+
+        {showDocs && (
+          <a
+            href={docsHref}
+            class="inline-flex items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium
+                   opacity-90 hover:opacity-100"
+          >
+            Read Docs
+          </a>
+        )}
+      </div>
+
+      <!-- quick blurb / snippet -->
+      <div class="mt-8 rounded-lg border text-xs overflow-hidden
+                  border-[color-mix(in_srgb,var(--text-primary)_/_14%,transparent)]">
+        <div class="px-3 py-2 border-b border-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)] flex items-center gap-2">
+          <span class="size-2 rounded-full bg-rose-500"></span>
+          <span class="size-2 rounded-full bg-amber-500"></span>
+          <span class="size-2 rounded-full bg-emerald-500"></span>
+          <span class="ml-2 opacity-70">Quickstart</span>
+        </div>
+        <pre class="m-0 p-3 overflow-x-auto"><code>pip install omni-sdk  # Python
+npx @animica/sdk@latest init
+# Then: deploy the Counter example from Studio</code></pre>
+      </div>
+    </div>
+
+    <div class="relative">
+      {heroImage ? (
+        <figure class="rounded-xl overflow-hidden border
+                       border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)] shadow-sm">
+          <img src={heroImage.src} alt={heroImage.alt ?? site.brand} class="w-full h-auto object-cover" loading="eager" decoding="async" />
+        </figure>
+      ) : (
+        <div class="relative rounded-xl border p-6 sm:p-8
+                    border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)] bg-[var(--bg-elevated)]">
+          <div class="text-sm opacity-85">Why Animica</div>
+          <ul class="mt-3 space-y-2 text-sm opacity-90">
+            <li>• Post-quantum keys & addresses (Dilithium / SPHINCS+)</li>
+            <li>• Deterministic Python smart contracts (VM)</li>
+            <li>• Useful-work mining (AI/Quantum/Storage/VDF)</li>
+            <li>• Light clients with DA sampling</li>
+          </ul>
+          <div class="mt-6 grid grid-cols-2 gap-3 text-center text-sm">
+            <div class="rounded-md border py-3 border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+              <div class="text-2xl font-semibold">~1–2s</div>
+              <div class="opacity-70">Block time (devnet)</div>
+            </div>
+            <div class="rounded-md border py-3 border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+              <div class="text-2xl font-semibold">PQ</div>
+              <div class="opacity-70">Signatures</div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  </div>
+</section>

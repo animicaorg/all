@@ -1,0 +1,240 @@
+{
+  "generatedAt": "2025-01-01T00:00:00Z",
+  "providers": [
+    {
+      "id": "prov-ai-nyc-01",
+      "kind": "ai",
+      "name": "AxiomAI NYC-1",
+      "region": "us-east",
+      "stake": "500000000000000000000",
+      "stakeShare": 0.28,
+      "status": "online",
+      "endpoint": "rpc://ai.axiom.example/nyc-1",
+      "pricing": { "unit": "token", "perUnit": 0.000004 },
+      "capacity": { "unitsPerMin": 600, "maxQueue": 200 },
+      "sla": { "availability": 0.9992, "successRate": 0.992, "latencyP50Ms": 180, "latencyP95Ms": 540 }
+    },
+    {
+      "id": "prov-ai-sfo-02",
+      "kind": "ai",
+      "name": "AxiomAI SFO-2",
+      "region": "us-west",
+      "stake": "430000000000000000000",
+      "stakeShare": 0.24,
+      "status": "online",
+      "endpoint": "rpc://ai.axiom.example/sfo-2",
+      "pricing": { "unit": "token", "perUnit": 0.0000035 },
+      "capacity": { "unitsPerMin": 520, "maxQueue": 160 },
+      "sla": { "availability": 0.9987, "successRate": 0.988, "latencyP50Ms": 210, "latencyP95Ms": 610 }
+    },
+    {
+      "id": "prov-qtm-cern-01",
+      "kind": "quantum",
+      "name": "QubitWorks CERN-1",
+      "region": "eu-central",
+      "stake": "220000000000000000000",
+      "stakeShare": 0.12,
+      "status": "online",
+      "endpoint": "rpc://quantum.qubitworks.example/cern-1",
+      "pricing": { "unit": "shot", "perUnit": 0.00012 },
+      "capacity": { "unitsPerMin": 120, "maxQueue": 80 },
+      "sla": { "availability": 0.9975, "successRate": 0.971, "latencyP50Ms": 1200, "latencyP95Ms": 2600 }
+    },
+    {
+      "id": "prov-ai-tok-01",
+      "kind": "ai",
+      "name": "Nekomata Tokyo-1",
+      "region": "ap-northeast",
+      "stake": "180000000000000000000",
+      "stakeShare": 0.12,
+      "status": "degraded",
+      "endpoint": "rpc://ai.nekomata.example/tok-1",
+      "pricing": { "unit": "token", "perUnit": 0.0000038 },
+      "capacity": { "unitsPerMin": 450, "maxQueue": 140 },
+      "sla": { "availability": 0.9922, "successRate": 0.962, "latencyP50Ms": 260, "latencyP95Ms": 820 }
+    },
+    {
+      "id": "prov-stor-osl-01",
+      "kind": "storage",
+      "name": "NordStore Oslo-1",
+      "region": "eu-north",
+      "stake": "200000000000000000000",
+      "stakeShare": 0.10,
+      "status": "online",
+      "endpoint": "rpc://storage.nord.example/osl-1",
+      "pricing": { "unit": "mb", "perUnit": 0.0000011 },
+      "capacity": { "unitsPerMin": 800, "maxQueue": 400 },
+      "sla": { "availability": 0.9990, "successRate": 0.995, "latencyP50Ms": 95, "latencyP95Ms": 240 }
+    },
+    {
+      "id": "prov-vdf-phi-01",
+      "kind": "vdf",
+      "name": "Chronos Philly-1",
+      "region": "us-east",
+      "stake": "160000000000000000000",
+      "stakeShare": 0.08,
+      "status": "online",
+      "endpoint": "rpc://vdf.chronos.example/phi-1",
+      "pricing": { "unit": "iteration", "perUnit": 0.0000005 },
+      "capacity": { "unitsPerMin": 900, "maxQueue": 500 },
+      "sla": { "availability": 0.9994, "successRate": 0.997, "latencyP50Ms": 75, "latencyP95Ms": 200 }
+    }
+  ],
+  "jobs": [
+    {
+      "id": "job_ai_0001",
+      "kind": "ai",
+      "providerId": "prov-ai-nyc-01",
+      "model": "animica/llm-16k",
+      "units": 1024,
+      "fee": "5120000000000000",
+      "status": "completed",
+      "submittedAt": "2025-01-01T00:00:02Z",
+      "startedAt": "2025-01-01T00:00:03Z",
+      "completedAt": "2025-01-01T00:00:05Z",
+      "requestHash": "0x84c7b6a9e9d2f0f6d2e7a4b9f0c1ab77e3f8912aa6d0e1a2b3c4d5e6f7a8b9c0",
+      "resultHash": "0x0a1b2c3d4e5f60718293a4b5c6d7e8f9011234567890abcdefabcdefabcdefab",
+      "proof": {
+        "type": "AIProof",
+        "commit": "0x9f3b2c1d0e4a6b7c8d9e0f1a2b3c4d5e6f7081928374655647382910abcdef12",
+        "resultCID": "bafybeiabcfexampleloremipsumdolor"
+      }
+    },
+    {
+      "id": "job_ai_0002",
+      "kind": "ai",
+      "providerId": "prov-ai-sfo-02",
+      "model": "animica/embedding-2",
+      "units": 4096,
+      "fee": "12288000000000000",
+      "status": "running",
+      "submittedAt": "2025-01-01T00:00:08Z",
+      "startedAt": "2025-01-01T00:00:09Z",
+      "requestHash": "0x72d4b9301f6a2b5e7c8d9e0f1a2b3c4d5e6f7081928374655647382910abcdef",
+      "resultHash": null,
+      "proof": null
+    },
+    {
+      "id": "job_qm_1001",
+      "kind": "quantum",
+      "providerId": "prov-qtm-cern-01",
+      "model": "qpu/sycamore-32",
+      "units": 2000,
+      "fee": "240000000000000000",
+      "status": "completed",
+      "submittedAt": "2025-01-01T00:00:12Z",
+      "startedAt": "2025-01-01T00:00:15Z",
+      "completedAt": "2025-01-01T00:00:18Z",
+      "requestHash": "0x0f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778899aabbccddeeff0",
+      "resultHash": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+      "proof": {
+        "type": "QuantumProof",
+        "circuitCID": "bafybeicircuitexampledolorsitamet",
+        "resultCID": "bafybeiqresultexampleconsectetur",
+        "commit": "0x11aa22bb33cc44dd55ee66ff77889900112233445566778899aabbccddeeff1"
+      }
+    },
+    {
+      "id": "job_ai_0003",
+      "kind": "ai",
+      "providerId": "prov-ai-tok-01",
+      "model": "animica/llm-4k",
+      "units": 1536,
+      "fee": "6144000000000000",
+      "status": "failed",
+      "submittedAt": "2025-01-01T00:00:20Z",
+      "startedAt": "2025-01-01T00:00:21Z",
+      "completedAt": "2025-01-01T00:00:26Z",
+      "error": { "code": "DeadlineExceeded", "message": "SLA exceeded p95 latency" },
+      "requestHash": "0x9a8b7c6d5e4f3a2b1c0dffeeddccbbaa99887766554433221100ffeeddccbbaa",
+      "resultHash": null,
+      "proof": null
+    },
+    {
+      "id": "job_ai_0004",
+      "kind": "ai",
+      "providerId": "prov-ai-nyc-01",
+      "model": "animica/llm-16k",
+      "units": 2048,
+      "fee": "8192000000000000",
+      "status": "queued",
+      "submittedAt": "2025-01-01T00:00:28Z",
+      "startedAt": null,
+      "requestHash": "0x0badf00dfeedbeef0badf00dfeedbeef0badf00dfeedbeef0badf00dfeedbeef",
+      "resultHash": null,
+      "proof": null
+    }
+  ],
+  "settlements": [
+    {
+      "epoch": 42001,
+      "window": { "start": "2025-01-01T00:00:00Z", "end": "2025-01-01T01:00:00Z" },
+      "totals": { "jobs": 1820, "units": 1280040, "grossAmount": "412000000000000000", "penalties": "1200000000000000", "netAmount": "410800000000000000" },
+      "payouts": [
+        {
+          "providerId": "prov-ai-nyc-01",
+          "jobs": 640,
+          "units": 462000,
+          "gross": "152000000000000000",
+          "penalties": "420000000000000",
+          "net": "151580000000000000",
+          "sla": { "successRate": 0.993, "latencyP95Ms": 530, "availability": 0.9991 }
+        },
+        {
+          "providerId": "prov-ai-sfo-02",
+          "jobs": 520,
+          "units": 356040,
+          "gross": "118400000000000000",
+          "penalties": "380000000000000",
+          "net": "118020000000000000",
+          "sla": { "successRate": 0.989, "latencyP95Ms": 620, "availability": 0.9985 }
+        },
+        {
+          "providerId": "prov-qtm-cern-01",
+          "jobs": 180,
+          "units": 132000,
+          "gross": "79200000000000000",
+          "penalties": "160000000000000",
+          "net": "79040000000000000",
+          "sla": { "successRate": 0.972, "latencyP95Ms": 2550, "availability": 0.9973 }
+        },
+        {
+          "providerId": "prov-ai-tok-01",
+          "jobs": 300,
+          "units": 210000,
+          "gross": "67200000000000000",
+          "penalties": "200000000000000",
+          "net": "67000000000000000",
+          "sla": { "successRate": 0.964, "latencyP95Ms": 840, "availability": 0.9920 }
+        },
+        {
+          "providerId": "prov-stor-osl-01",
+          "jobs": 120,
+          "units": 84000,
+          "gross": "12600000000000000",
+          "penalties": "60000000000000",
+          "net": "12540000000000000",
+          "sla": { "successRate": 0.996, "latencyP95Ms": 235, "availability": 0.9990 }
+        },
+        {
+          "providerId": "prov-vdf-phi-01",
+          "jobs": 60,
+          "units": 36000,
+          "gross": "8800000000000000",
+          "penalties": "40000000000000",
+          "net": "8760000000000000",
+          "sla": { "successRate": 0.998, "latencyP95Ms": 195, "availability": 0.9995 }
+        }
+      ]
+    }
+  ],
+  "metrics": {
+    "jobsPerMinute": 30.5,
+    "unitsPerMinute": 21334,
+    "completionRate": 0.982,
+    "avgFeePerUnit": 0.0000063
+  },
+  "meta": {
+    "notes": "Sample AICF dataset for explorer-web development and tests. Values are illustrative and designed to exercise tables, charts, and SLA logic."
+  }
+}

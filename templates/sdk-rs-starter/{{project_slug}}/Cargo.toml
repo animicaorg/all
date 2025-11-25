@@ -1,0 +1,57 @@
+[package]
+name = "{{crate_name}}"
+version = "0.1.0"
+edition = "2021"
+authors = ["{{author_name}} <{{author_email}}>"]
+description = "{{description}}"
+license = "Apache-2.0 OR MIT"
+readme = "README.md"
+repository = "https://github.com/{{org}}/{{project_slug}}"
+keywords = ["animica", "blockchain", "sdk", "cli"]
+categories = ["command-line-utilities", "network-programming"]
+
+[features]
+# Default features keep the binary small and focused on HTTP/WS usage.
+default = []
+# Forward the optional PQ feature to the SDK when you want post-quantum signing.
+pq = ["animica-sdk/pq"]
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+dotenvy = "0.15"
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
+
+# Core Animica Rust SDK. The SDK provides HTTP JSON-RPC and WS subscribe clients,
+# typed objects for heads/blocks/txs, and helpers for signing & sending txs.
+# Enable the optional "pq" feature at build time with: `--features pq`
+animica-sdk = { version = "0.1", default-features = false, features = ["http", "ws"] }
+
+# (Optional) nice-to-have utilities; comment in as your app grows.
+# hex = "0.4"
+# thiserror = "1"
+
+[dev-dependencies]
+# Add test-time utilities here if needed (e.g., insta, assert_cmd, tokio-test)
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+# Explicitly name the example so `cargo run --example deploy_counter` works,
+# though Cargo will auto-detect it from examples/ by default.
+[[example]]
+name = "deploy_counter"
+path = "examples/deploy_counter.rs"
+
+[profile.dev]
+# Faster incremental builds with a little bit of optimization for snappier runs.
+opt-level = 1
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = "debuginfo"
+panic = "abort"

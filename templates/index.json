@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "generated_at": "2025-10-04T00:00:00Z",
+  "set_version": "0.3.0",
+  "default_template": "counter",
+  "templates": [
+    {
+      "id": "counter",
+      "name": "Counter",
+      "introduced": "0.1.0",
+      "last_changed": "0.2.0",
+      "description": "Minimal stateful example: increment and read a single counter; good first contract.",
+      "tags": ["starter", "stateful", "events"],
+      "capabilities": [],
+      "abi_stability": "stable",
+      "paths": {
+        "contract": "contracts/templates/counter/contract.py",
+        "manifest": "contracts/templates/counter/manifest.json"
+      },
+      "build": {
+        "package_out": "contracts/build/counter.pkg.json",
+        "code_hash": "<computed at build>"
+      },
+      "invariants": [
+        "count is an integer ≥ 0",
+        "inc() increases count by exactly 1",
+        "get() is pure and returns the current count"
+      ],
+      "events": ["CounterIncremented"]
+    },
+    {
+      "id": "escrow",
+      "name": "Escrow",
+      "introduced": "0.2.0",
+      "last_changed": "0.2.0",
+      "description": "Deterministic escrow with payer/payee, dispute and deadline semantics using block context.",
+      "tags": ["workflow", "escrow", "deterministic-deadlines"],
+      "capabilities": [],
+      "abi_stability": "stable",
+      "paths": {
+        "contract": "contracts/templates/escrow/contract.py",
+        "manifest": "contracts/templates/escrow/manifest.json"
+      },
+      "build": {
+        "package_out": "contracts/build/escrow.pkg.json",
+        "code_hash": "<computed at build>"
+      },
+      "invariants": [
+        "state ∈ {INIT, FUNDED, DISPUTED, RELEASED, REFUNDED}",
+        "fund() allowed only in INIT; sets amount > 0 and payer/payee",
+        "release() only from FUNDED by payer; refund() from FUNDED after deadline or when DISPUTED",
+        "dispute() only from FUNDED"
+      },
+      "events": ["EscrowFunded", "EscrowReleased", "EscrowRefunded", "EscrowDisputed"]
+    },
+    {
+      "id": "ai_agent",
+      "name": "AI Agent",
+      "introduced": "0.3.0",
+      "last_changed": "0.3.0",
+      "description": "Capability-aware template that enqueues an AI job this block and consumes the result next block.",
+      "tags": ["capabilities", "ai", "deferred-result"],
+      "capabilities": ["capabilities.ai"],
+      "min_node_modules": {
+        "capabilities": ">=0.1.0"
+      },
+      "abi_stability": "stable",
+      "paths": {
+        "contract": "contracts/templates/ai_agent/contract.py",
+        "manifest": "contracts/templates/ai_agent/manifest.json"
+      },
+      "build": {
+        "package_out": "contracts/build/ai_agent.pkg.json",
+        "code_hash": "<computed at build>"
+      },
+      "invariants": [
+        "task_id is derived deterministically from (chainId|height|txHash|caller|payload)",
+        "consume(task) reads at most once and emits AIConsumed(task, ok)",
+        "no network or nondeterministic IO in contract code"
+      },
+      "events": ["AIEnqueued", "AIConsumed"]
+    },
+    {
+      "id": "quantum_rng",
+      "name": "Quantum RNG Mixer",
+      "introduced": "0.3.0",
+      "last_changed": "0.3.0",
+      "description": "Mixes the randomness beacon with quantum bytes (receipt-bound) using extract-then-xor.",
+      "tags": ["capabilities", "quantum", "randomness", "entropy"],
+      "capabilities": ["capabilities.quantum", "randomness.beacon"],
+      "min_node_modules": {
+        "capabilities": ">=0.1.0",
+        "randomness": ">=0.1.0"
+      },
+      "abi_stability": "stable",
+      "paths": {
+        "contract": "contracts/templates/quantum_rng/contract.py",
+        "manifest": "contracts/templates/quantum_rng/manifest.json"
+      },
+      "build": {
+        "package_out": "contracts/build/quantum_rng.pkg.json",
+        "code_hash": "<computed at build>"
+      },
+      "invariants": [
+        "mix output is bytes32 and updates only on successful mix(commitment, receipt)",
+        "receipt must be bound to commitment and verified via host capability",
+        "get() is pure and returns the last mix"
+      },
+      "events": ["QuantumMixed"]
+    }
+  ]
+}

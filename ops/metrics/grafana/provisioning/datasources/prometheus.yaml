@@ -1,0 +1,28 @@
+# Grafana provisioning: Prometheus datasource
+# Tip: You can override the URL at runtime by setting PROMETHEUS_URL in the Grafana env.
+# Example (Docker): -e PROMETHEUS_URL=http://prometheus:9090
+apiVersion: 1
+
+deleteDatasources:
+  - name: Prometheus
+    uid: prometheus-main
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus-main
+    access: proxy
+    isDefault: true
+    editable: false
+    # Default to the local Prometheus service; override with PROMETHEUS_URL env if needed.
+    url: ${PROMETHEUS_URL}
+    jsonData:
+      httpMethod: POST        # use POST for large queries
+      timeInterval: 15s       # min step; keep in sync with scrape_interval
+      manageAlerts: true      # allow Grafana to manage alert rules against this datasource
+      exemplarTraceIdDestinations: []  # fill if you later add Tempo
+    # Uncomment if your Prometheus requires basic auth
+    # basicAuth: true
+    # basicAuthUser: ${PROMETHEUS_USERNAME}
+    # secureJsonData:
+    #   basicAuthPassword: ${PROMETHEUS_PASSWORD}

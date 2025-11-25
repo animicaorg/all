@@ -1,0 +1,57 @@
+{
+  "schema": "animica.abi.v1",
+  "name": "Counter",
+  "version": "1.0.0",
+  "language": "python-vm",
+  "description": "Minimal deterministic counter used across tests and examples.",
+  "functions": [
+    {
+      "name": "get",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        { "name": "value", "type": "int" }
+      ]
+    },
+    {
+      "name": "inc",
+      "stateMutability": "write",
+      "inputs": [
+        { "name": "delta", "type": "int" }
+      ],
+      "outputs": [
+        { "name": "value", "type": "int" }
+      ]
+    },
+    {
+      "name": "reset",
+      "stateMutability": "write",
+      "inputs": [
+        { "name": "value", "type": "int" }
+      ],
+      "outputs": []
+    }
+  ],
+  "events": [
+    {
+      "name": "Incremented",
+      "inputs": [
+        { "name": "by", "type": "int", "indexed": false },
+        { "name": "value", "type": "int", "indexed": false }
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "name": "Overflow",
+      "inputs": [
+        { "name": "value", "type": "int" }
+      ]
+    }
+  ],
+  "metadata": {
+    "author": "animica-tests",
+    "license": "Apache-2.0",
+    "deterministic": true
+  }
+}

@@ -1,0 +1,101 @@
+{{-/*
+Service: Node P2P (QUIC/TCP/WS)
+
+Exposes the node's peer-to-peer endpoints. Configurable to be ClusterIP, NodePort,
+or LoadBalancer (default). QUIC runs over UDP; TCP and WS are TCP.
+
+Values schema (examples):
+p2p:
+  service:
+    type: LoadBalancer            # ClusterIP | NodePort | LoadBalancer
+    annotations: {}               # extra svc annotations
+    externalTrafficPolicy: Local  # (optional) preserve client source IP
+    loadBalancerIP: ""            # (optional) static LB IP
+    loadBalancerClass: ""         # (optional) LB class
+    loadBalancerSourceRanges: []  # (optional) CIDRs for LB whitelist
+    sessionAffinity: None         # (optional)
+    ports:
+      quic:
+        enabled: true
+        port: 46000
+        targetPort: 46000
+        nodePort: null            # set only when type NodePort/LoadBalancer and you want to pin
+      tcp:
+        enabled: true
+        port: 46000
+        targetPort: 46000
+        nodePort: null
+      ws:
+        enabled: true
+        port: 46002
+        targetPort: 46002
+        nodePort: null
+*/ -}}
+{{- $svc := default dict .Values.p2p.service -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "animica-devnet.fullname" . }}-p2p
+  labels:
+    {{- include "animica-devnet.labels" (dict "ctx" . "component" "node") | nindent 4 }}
+  {{- with $svc.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ default "LoadBalancer" $svc.type }}
+  {{- with $svc.externalTrafficPolicy }}
+  externalTrafficPolicy: {{ . }}
+  {{- end }}
+  {{- with $svc.loadBalancerIP }}
+  loadBalancerIP: {{ . | quote }}
+  {{- end }}
+  {{- with $svc.loadBalancerClass }}
+  loadBalancerClass: {{ . | quote }}
+  {{- end }}
+  {{- with $svc.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $svc.sessionAffinity }}
+  sessionAffinity: {{ . }}
+  {{- end }}
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/name: {{ include "animica-devnet.name" . }}
+    app.kubernetes.io/component: node
+  ports:
+    {{- $ports := default dict $svc.ports -}}
+
+    {{- $quic := default dict $ports.quic -}}
+    {{- if (hasKey $quic "enabled") | ternary $quic.enabled true }}
+    - name: quic
+      protocol: UDP
+      port: {{ default 46000 $quic.port }}
+      targetPort: {{ default (default 46000 $quic.port) $quic.targetPort }}
+      {{- if and (or (eq (default "LoadBalancer" $svc.type) "NodePort") (eq $svc.type "LoadBalancer")) ($quic.nodePort) }}
+      nodePort: {{ $quic.nodePort }}
+      {{- end }}
+    {{- end }}
+
+    {{- $tcp := default dict $ports.tcp -}}
+    {{- if (hasKey $tcp "enabled") | ternary $tcp.enabled true }}
+    - name: tcp
+      protocol: TCP
+      port: {{ default 46000 $tcp.port }}
+      targetPort: {{ default (default 46000 $tcp.port) $tcp.targetPort }}
+      {{- if and (or (eq (default "LoadBalancer" $svc.type) "NodePort") (eq $svc.type "LoadBalancer")) ($tcp.nodePort) }}
+      nodePort: {{ $tcp.nodePort }}
+      {{- end }}
+    {{- end }}
+
+    {{- $ws := default dict $ports.ws -}}
+    {{- if (hasKey $ws "enabled") | ternary $ws.enabled true }}
+    - name: ws
+      protocol: TCP
+      port: {{ default 46002 $ws.port }}
+      targetPort: {{ default (default 46002 $ws.port) $ws.targetPort }}
+      {{- if and (or (eq (default "LoadBalancer" $svc.type) "NodePort") (eq $svc.type "LoadBalancer")) ($ws.nodePort) }}
+      nodePort: {{ $ws.nodePort }}
+      {{- end }}
+    {{- end }}

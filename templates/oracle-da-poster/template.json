@@ -1,0 +1,86 @@
+{
+  "$schema": "../schemas/template.schema.json",
+  "id": "oracle-da-poster",
+  "name": "Oracle DA Poster (FastAPI + Animica SDK)",
+  "version": "0.1.0",
+  "description": "Scaffold for a Python FastAPI microservice that ingests external feed data, writes canonical blobs to Animica Data Availability (DA) with Namespaced Merkle commitments, and optionally calls an on-chain oracle contract to publish the new commitment.",
+  "keywords": [
+    "oracle",
+    "data-availability",
+    "fastapi",
+    "python",
+    "animica",
+    "sdk",
+    "da",
+    "nmt",
+    "service"
+  ],
+
+  "engine": {
+    "delimiters": ["{{", "}}"],
+    "strict": true
+  },
+
+  "variables": {
+    "$ref": "./variables.json"
+  },
+
+  "includes": [
+    {
+      "from": "../_common",
+      "to": "{{project_slug}}",
+      "mode": "merge"
+    },
+    {
+      "from": "{{project_root}}/{{template_dir}}/{{project_slug}}",
+      "to": "{{project_slug}}",
+      "mode": "copy"
+    }
+  ],
+
+  "executable": [
+    "{{project_slug}}/Makefile",
+    "{{project_slug}}/scripts/run_worker.py"
+  ],
+
+  "prompts": [
+    { "var": "project_slug",   "message": "Project directory (slug)",                  "default": "oracle-da-poster" },
+    { "var": "service_name",   "message": "Service name (human-friendly)",            "default": "Oracle DA Poster" },
+    { "var": "author_name",    "message": "Author/Org",                               "default": "you" },
+    { "var": "license",        "message": "License (e.g., MIT, Apache-2.0)",         "default": "MIT" },
+    { "var": "rpc_url",        "message": "Animica JSON-RPC URL",                     "default": "http://localhost:8545" },
+    { "var": "chain_id",       "message": "Animica Chain ID",                         "default": "1337" },
+    { "var": "da_namespace",   "message": "DA Namespace (0-255)",                     "default": "24" },
+    { "var": "oracle_address", "message": "Oracle contract address (optional)",       "default": "" },
+    { "var": "deploy_env",     "message": "Deploy environment tag (dev/test/prod)",   "default": "dev" }
+  ],
+
+  "post_hooks": [
+    {
+      "kind": "shell",
+      "cwd": "{{project_slug}}",
+      "run": "python3 -m venv .venv && . .venv/bin/activate && pip install -U pip && pip install -r requirements.txt"
+    }
+  ],
+
+  "next_steps": [
+    "cd {{project_slug}}",
+    "cp .env.example .env",
+    "Edit .env to set RPC_URL, CHAIN_ID, DA_NAMESPACE, and (optionally) ORACLE_ADDRESS.",
+    "make dev   # or: uvicorn aicf_provider.server:app --reload",
+    "POST a sample payload to /v1/oracle/value to publish a blob and (optionally) update the contract."
+  ],
+
+  "files_checksum": "auto",
+
+  "metadata": {
+    "category": "service",
+    "language": "python",
+    "stack": ["fastapi", "uvicorn", "animica-sdk", "msgspec"],
+    "links": {
+      "docs_da": "specs/DA",
+      "docs_sdk": "sdk/python/README.md",
+      "docs_oracle_example": "contracts/examples/oracle/README.md"
+    }
+  }
+}

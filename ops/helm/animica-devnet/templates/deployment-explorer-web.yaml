@@ -1,0 +1,174 @@
+{{-/*
+Deployment: Animica Explorer Web (static SPA via nginx)
+
+Purpose:
+- Live chain explorer UI with PoIES Γ/fairness/mix charts and AICF dashboards.
+- Purely static site served by nginx.
+- Consumes:
+    * Node RPC (JSON-RPC + WS)
+    * Explorer API (aggregates, charts)
+    * Studio Services API (optional links/actions)
+
+Values (snippet):
+image:
+  explorerWeb:
+    repository: ghcr.io/animica/explorer-web
+    tag: "latest"
+    pullPolicy: IfNotPresent
+
+explorerWeb:
+  replicas: 1
+  http:
+    # Must match nginx listen inside the image.
+    port: 8080
+  rpcUrl: ""             # default: http://<fullname>-rpc:<node.ports.http>
+  chainId: ~             # default: .Values.node.chainId or .Values.chainId or 1
+  explorerApiUrl: ""     # default: http://<fullname>-explorer:8080
+  servicesUrl: ""        # default: http://<fullname>-services:8080
+  env: {}                # extra env
+  extraEnvFrom: []       # configMapRef/secretRef blocks
+  podLabels: {}
+  podAnnotations: {}
+  priorityClassName: ""
+  serviceAccountName: ""
+  securityContext: {}
+  containerSecurityContext: {}
+  resources: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+*/ -}}
+
+{{- $img := .Values.image.explorerWeb | default dict -}}
+{{- $web := .Values.explorerWeb | default dict -}}
+{{- $node := .Values.node | default dict -}}
+
+{{- $httpPort := (default 8080 (dig "http" "port" $web)) -}}
+{{- $nodeRpcPort := (default 8545 $node.ports.http) -}}
+{{- $defaultRpc := printf "http://%s-rpc:%v" (include "animica-devnet.fullname" .) $nodeRpcPort -}}
+{{- $rpcUrl := (default $defaultRpc $web.rpcUrl) -}}
+{{- $chainId := (coalesce $web.chainId $node.chainId .Values.chainId 1) -}}
+
+{{- $defaultExplorerApi := printf "http://%s-explorer:%v" (include "animica-devnet.fullname" .) 8080 -}}
+{{- $explorerApiUrl := (default $defaultExplorerApi $web.explorerApiUrl) -}}
+
+{{- $defaultServices := printf "http://%s-services:%v" (include "animica-devnet.fullname" .) 8080 -}}
+{{- $servicesUrl := (default $defaultServices $web.servicesUrl) -}}
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "animica-devnet.fullname" . }}-explorer-web
+  labels:
+    {{- include "animica-devnet.labels" (dict "ctx" . "component" "explorer-web") | nindent 4 }}
+spec:
+  replicas: {{ default 1 $web.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/name: {{ include "animica-devnet.name" . }}
+      app.kubernetes.io/component: explorer-web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/name: {{ include "animica-devnet.name" . }}
+        app.kubernetes.io/component: explorer-web
+        {{- with $web.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        {{- with $web.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $web.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with $web.serviceAccountName }}
+      serviceAccountName: {{ . }}
+      {{- end }}
+      {{- with $web.securityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: explorer-web
+          image: "{{ default "ghcr.io/animica/explorer-web" $img.repository }}:{{ default "latest" $img.tag }}"
+          imagePullPolicy: {{ default "IfNotPresent" $img.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $httpPort }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            failureThreshold: 3
+          env:
+            # Public build/runtime config read by the SPA
+            - name: VITE_RPC_URL
+              value: {{ $rpcUrl | quote }}
+            - name: VITE_CHAIN_ID
+              value: "{{ $chainId }}"
+            - name: VITE_EXPLORER_API
+              value: {{ $explorerApiUrl | quote }}
+            - name: VITE_SERVICES_URL
+              value: {{ $servicesUrl | quote }}
+            # Also provide generic fallbacks some builds look for
+            - name: EXPLORER_WEB_RPC_URL
+              value: {{ $rpcUrl | quote }}
+            - name: EXPLORER_WEB_CHAIN_ID
+              value: "{{ $chainId }}"
+            - name: EXPLORER_WEB_API_URL
+              value: {{ $explorerApiUrl | quote }}
+            - name: EXPLORER_WEB_SERVICES_URL
+              value: {{ $servicesUrl | quote }}
+            {{- with $web.env }}
+            {{- range $k, $v := . }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            {{- end }}
+          {{- with $web.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $web.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $web.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with $web.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $web.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $web.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $web.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

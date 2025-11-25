@@ -1,0 +1,81 @@
+{
+  "schemaVersion": "1.2.0",
+  "name": "Animica Localnet",
+  "chainId": 1337,
+  "network": "localnet",
+  "status": "dev",
+  "testnet": true,
+
+  "nativeCurrency": { "name": "Animica", "symbol": "ANM", "decimals": 18 },
+
+  "rpc": {
+    "http": ["http://127.0.0.1:8545"],
+    "ws":   ["ws://127.0.0.1:8546"]
+  },
+
+  "explorers": [
+    { "name": "Local Explorer", "url": "http://127.0.0.1:3000" }
+  ],
+
+  "faucets": [
+    { "name": "Local Faucet", "url": "http://127.0.0.1:8080" }
+  ],
+
+  "p2p": {
+    "protocols": ["animica/1"],
+    "port": 30303,
+    "seeds": ["127.0.0.1"],
+    "bootnodes": []
+  },
+
+  "addresses": {
+    "format": "bech32m",
+    "hrp": "am",
+    "pubkeyTypes": ["ed25519", "secp256k1", "dilithium3"]
+  },
+
+  "pq": {
+    "sigDefault": "dilithium3",
+    "kex": "kyber-768",
+    "policyVersion": "2025-10"
+  },
+
+  "vm": {
+    "lang": "python",
+    "version": "0.5.0",
+    "gasModel": "v1"
+  },
+
+  "da": {
+    "maxBlobSizeBytes": 2097152,
+    "nmtNamespaceBytes": 8,
+    "rsRate": "10/16"
+  },
+
+  "randomness": {
+    "method": "commit-reveal",
+    "params": { "windowBlocks": 20 }
+  },
+
+  "genesis": {
+    "hash": "0x00localnet0000000000000000000000000000000000000000000000000000",
+    "timestamp": "2025-10-01T00:00:00Z",
+    "initialHeight": 0
+  },
+
+  "governance": {
+    "site": "http://127.0.0.1:4000",
+    "votingPeriodDays": 3
+  },
+
+  "links": {
+    "website": "http://127.0.0.1:5173",
+    "studio":  "http://127.0.0.1:5174",
+    "explorer":"http://127.0.0.1:3000",
+    "docs":    "http://127.0.0.1:8081"
+  },
+
+  "features": ["poies", "pq", "da", "vm_py"],
+
+  "checksum": "0000000000000000000000000000000000000000000000000000000000000000"
+}

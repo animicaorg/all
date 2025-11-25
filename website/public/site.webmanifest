@@ -1,0 +1,56 @@
+{
+  "name": "Animica",
+  "short_name": "Animica",
+  "description": "Animica — wallet, explorer, SDKs, and docs hub for the Animica ecosystem.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0b0f1a",
+  "theme_color": "#0ea5e9",
+  "dir": "ltr",
+  "lang": "en",
+  "categories": ["finance", "productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-192-maskable.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/icon-512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "protocol_handlers": [
+    {
+      "protocol": "web+animica",
+      "url": "/?request=%s"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/images/og/landing-light.png",
+      "type": "image/png",
+      "sizes": "1200x630",
+      "label": "Landing"
+    }
+  ],
+  "prefer_related_applications": false
+}

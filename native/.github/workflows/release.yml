@@ -1,0 +1,194 @@
+name: Release (native crate & Python wheels)
+
+on:
+  push:
+    tags:
+      - "v*"         # e.g. v0.1.0
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# ---- Notes -------------------------------------------------------------------
+# - Expects a PyPI API token stored in repository secrets as PYPI_API_TOKEN.
+# - Builds platform wheels via maturin for Linux (manylinux), macOS (universal2),
+#   and Windows, across a Python matrix. Also builds an sdist once on Linux.
+# - Publishes all built artifacts to PyPI and attaches them to a GitHub Release.
+# - Verifies that the tag version matches versions in native/Cargo.toml and
+#   native/pyproject.toml before publishing.
+# -----------------------------------------------------------------------------
+
+jobs:
+  # Build wheels for all platforms & Python versions
+  build-wheels:
+    name: build wheels (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-13, windows-latest]
+        python: ["3.9", "3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native -> native/target
+
+      - name: Show toolchain
+        run: |
+          rustc -Vv || true
+          cargo -V || true
+          python -V
+
+      # macOS universal2 build
+      - name: Build macOS universal2 wheel with maturin
+        if: runner.os == 'macOS'
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          # universal2 produces a single wheel that supports arm64 + x86_64
+          args: >-
+            --release
+            --universal2
+            -m native/pyproject.toml
+            --out dist
+            --interpreter ${{ matrix.python }}
+
+      # Linux (manylinux) and Windows platform wheels
+      - name: Build wheel with maturin
+        if: runner.os != 'macOS'
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: >-
+            --release
+            -m native/pyproject.toml
+            --out dist
+            --interpreter ${{ matrix.python }}
+
+      - name: Verify wheel(s)
+        shell: bash
+        run: |
+          ls -la dist
+          python -m pip install --upgrade pip
+          python -m pip install dist/*.whl
+          python - <<'PY'
+          import animica_native, sys
+          print("animica_native imported OK on", sys.platform, "Python", sys.version)
+          print("CPU flags:", getattr(animica_native, "cpu_flags", lambda: {})())
+          PY
+
+      - name: Upload wheels artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ runner.os }}-py${{ matrix.python }}
+          path: dist/*.whl
+          retention-days: 7
+
+  # Build a single sdist (source distribution) on Linux
+  sdist:
+    name: build sdist (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build sdist with maturin
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: -m native/pyproject.toml --out dist
+
+      - name: Upload sdist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          retention-days: 7
+
+  # Gather artifacts, verify versions vs tag, then publish to PyPI & GH Release
+  publish:
+    name: publish to PyPI & GitHub Releases
+    runs-on: ubuntu-latest
+    needs: [build-wheels, sdist]
+    permissions:
+      contents: write   # required for creating GitHub Releases
+      id-token: write   # reserved (not used here), but useful for future OIDC flows
+    steps:
+      - name: Download all artifacts (wheels & sdist)
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la dist
+
+      - name: Extract version from tag and files
+        id: ver
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"              # e.g. v0.3.1
+          TAG_VER="${TAG#v}"                    # -> 0.3.1
+          CARGO_VER=$(grep -m1 -Po '^version\s*=\s*"\K[^"]+' native/Cargo.toml)
+          PY_VER=$(grep -m1 -Po '^\s*version\s*=\s*"\K[^"]+' native/pyproject.toml)
+          echo "tag_version=$TAG_VER"       | tee -a $GITHUB_OUTPUT
+          echo "cargo_version=$CARGO_VER"   | tee -a $GITHUB_OUTPUT
+          echo "python_version=$PY_VER"     | tee -a $GITHUB_OUTPUT
+
+          if [ "$TAG_VER" != "$CARGO_VER" ]; then
+            echo "::error::Tag ($TAG_VER) != native/Cargo.toml version ($CARGO_VER)"
+            exit 1
+          fi
+          if [ "$TAG_VER" != "$PY_VER" ]; then
+            echo "::error::Tag ($TAG_VER) != native/pyproject.toml version ($PY_VER)"
+            exit 1
+          fi
+
+          echo "Versions OK: $TAG_VER"
+
+      - name: Validate wheels/SDist include tag version
+        shell: bash
+        run: |
+          set -euo pipefail
+          V="${{ steps.ver.outputs.tag_version }}"
+          BAD=0
+          for f in dist/*; do
+            bn=$(basename "$f")
+            if [[ "$bn" != *"$V"* ]]; then
+              echo "::warning file=$bn::Does not contain version $V"
+              BAD=1
+            fi
+          done
+          if [ $BAD -ne 0 ]; then
+            echo "::notice::Some artifact names don't include the version. Proceeding anyway."
+          fi
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          skip-existing: true
+
+      - name: Create GitHub Release and upload artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'rc') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') }}
+
+      - name: Summary
+        run: |
+          echo "Published version ${{ steps.ver.outputs.tag_version }} to PyPI and GitHub Releases."
+          echo "Artifacts:" && ls -1 dist

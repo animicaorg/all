@@ -1,0 +1,186 @@
+name: Build native wheels & sdist
+
+on:
+  push:
+    branches: [ main, trunk, develop ]
+    tags: [ "v*", "release-*" ]
+  pull_request:
+  workflow_dispatch:
+
+# Avoid duplicate runs per ref
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # maturin caches and rust-cache cooperate to speed up builds
+  CARGO_TERM_COLOR: always
+  MATURIN_PYPROJECT_PATH: native/pyproject.toml
+  WHEEL_OUT: dist
+  PY_VERS: "3.9 3.10 3.11 3.12"
+
+jobs:
+  wheels-linux:
+    name: Linux wheels (manylinux2014)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native -> native/target
+
+      - name: Build wheels via maturin
+        uses: PyO3/maturin-action@v1
+        with:
+          # Build inside manylinux container for portable wheels
+          manylinux: manylinux2014
+          command: build
+          sccache: true
+          working-directory: .
+          args: >-
+            --release
+            --out ${{ env.WHEEL_OUT }}
+            -m ${{ env.MATURIN_PYPROJECT_PATH }}
+            --interpreter ${{ env.PY_VERS }}
+
+      - name: Upload wheels (linux)
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux
+          path: dist/*.whl
+          if-no-files-found: error
+          retention-days: 7
+
+  wheels-macos:
+    # macos-13 runners are x86_64; we produce universal2 wheels (x86_64+arm64)
+    name: macOS wheels (universal2)
+    runs-on: macos-13
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native -> native/target
+
+      - name: Build wheels via maturin (universal2)
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          sccache: true
+          working-directory: .
+          args: >-
+            --release
+            --out ${{ env.WHEEL_OUT }}
+            -m ${{ env.MATURIN_PYPROJECT_PATH }}
+            --universal2
+            --interpreter ${{ env.PY_VERS }}
+
+      - name: Upload wheels (macos)
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos
+          path: dist/*.whl
+          if-no-files-found: error
+          retention-days: 7
+
+  wheels-windows:
+    name: Windows wheels (x64)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native -> native/target
+
+      - name: Ensure Python (for audit / metadata)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build wheels via maturin
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          sccache: true
+          working-directory: .
+          args: >-
+            --release
+            --out ${{ env.WHEEL_OUT }}
+            -m ${{ env.MATURIN_PYPROJECT_PATH }}
+            --interpreter ${{ env.PY_VERS }}
+
+      - name: Upload wheels (windows)
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-windows
+          path: dist/*.whl
+          if-no-files-found: error
+          retention-days: 7
+
+  sdist:
+    name: Source distribution
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native -> native/target
+
+      - name: Build sdist via maturin
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          working-directory: .
+          args: >-
+            -m ${{ env.MATURIN_PYPROJECT_PATH }}
+            --out ${{ env.WHEEL_OUT }}
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  # Optional: publish to PyPI on tags.
+  # Requires repository secret: PYPI_API_TOKEN
+  publish:
+    name: Publish to PyPI (on tag)
+    needs: [ wheels-linux, wheels-macos, wheels-windows, sdist ]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Flatten artifact directories
+        run: |
+          shopt -s globstar nullglob
+          mkdir -p flat
+          mv dist/**/**/*.whl flat/ || true
+          mv dist/**/**/*.tar.gz flat/ || true
+          echo "Found files:"
+          ls -l flat
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@v1.10.3
+        with:
+          user: __token__
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          packages_dir: flat
+          skip_existing: true
+          verbose: true

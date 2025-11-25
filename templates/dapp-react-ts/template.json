@@ -1,0 +1,158 @@
+{
+  "id": "dapp-react-ts",
+  "name": "React + TypeScript Dapp",
+  "version": "0.1.0",
+  "description": "Scaffold a React + TypeScript dapp wired to Animica RPC/WS, studio-services, and the browser wallet extension. Includes basic connect/send/call flows, env-driven config, and optional Playwright tests.",
+  "destination": "{{ project_slug }}",
+  "inherit": ["_common"],
+  "variables": {
+    "project_name": {
+      "type": "string",
+      "prompt": "Project name",
+      "default": "Animica Dapp"
+    },
+    "project_slug": {
+      "type": "slug",
+      "prompt": "Directory/package slug",
+      "default": "{{ project_name }}"
+    },
+    "package_name": {
+      "type": "string",
+      "prompt": "npm package name",
+      "default": "{{ project_slug }}",
+      "pattern": "^[a-z0-9-~][a-z0-9-._~]*$"
+    },
+    "rpc_url": {
+      "type": "string",
+      "prompt": "Node RPC URL",
+      "default": "http://localhost:8545"
+    },
+    "ws_url": {
+      "type": "string",
+      "prompt": "Node WebSocket URL",
+      "default": "ws://localhost:8546"
+    },
+    "chain_id": {
+      "type": "integer",
+      "prompt": "Chain ID",
+      "default": 1337,
+      "minimum": 1
+    },
+    "services_url": {
+      "type": "string",
+      "prompt": "studio-services URL (deploy/verify/faucet)",
+      "default": "http://localhost:8080"
+    },
+    "wallet_provider": {
+      "type": "enum",
+      "prompt": "Wallet provider",
+      "choices": ["extension", "sdk"],
+      "default": "extension",
+      "description": "Use the Animica browser wallet extension (window.animica) or a local SDK signer stub."
+    },
+    "use_tailwind": {
+      "type": "boolean",
+      "prompt": "Include Tailwind CSS?",
+      "default": true
+    },
+    "use_playwright": {
+      "type": "boolean",
+      "prompt": "Include Playwright E2E tests?",
+      "default": true
+    },
+    "include_examples": {
+      "type": "boolean",
+      "prompt": "Include example components (Head/Balance/SendTx)?",
+      "default": true
+    }
+  },
+  "sources": [
+    {
+      "base": "_common",
+      "include": [
+        ".editorconfig",
+        ".vscode/**",
+        "ci/github/**",
+        "linters/**",
+        "scripts/**",
+        "LICENSE",
+        "README.inherit.md"
+      ]
+    },
+    {
+      "base": "dapp-react-ts/{{project_slug}}",
+      "include": ["**/*"]
+    }
+  ],
+  "placeholders": {
+    "PACKAGE_NAME": "{{ package_name }}",
+    "PROJECT_NAME": "{{ project_name }}",
+    "RPC_URL": "{{ rpc_url }}",
+    "WS_URL": "{{ ws_url }}",
+    "CHAIN_ID": "{{ chain_id }}",
+    "SERVICES_URL": "{{ services_url }}",
+    "WALLET_PROVIDER": "{{ wallet_provider }}"
+  },
+  "filters": {
+    "use_tailwind": {
+      "include": [
+        "postcss.config.cjs",
+        "tailwind.config.cjs",
+        "src/styles/tokens.css",
+        "src/styles/theme.css",
+        "src/styles/app.css"
+      ]
+    },
+    "use_playwright": {
+      "include": [
+        "playwright.config.ts",
+        "tests/e2e/**"
+      ]
+    },
+    "include_examples": {
+      "include": [
+        "src/components/HeadCard.tsx",
+        "src/components/BalanceCard.tsx",
+        "src/components/SendTxForm.tsx",
+        "src/pages/Home.tsx"
+      ]
+    }
+  },
+  "env": {
+    "VITE_RPC_URL": "{{ rpc_url }}",
+    "VITE_WS_URL": "{{ ws_url }}",
+    "VITE_CHAIN_ID": "{{ chain_id }}",
+    "VITE_SERVICES_URL": "{{ services_url }}",
+    "VITE_WALLET_PROVIDER": "{{ wallet_provider }}"
+  },
+  "hooks": {
+    "post_render": [
+      {
+        "run": "bash",
+        "args": [
+          "-lc",
+          "cd {{ project_slug }} && corepack enable && (pnpm i || npm i)"
+        ]
+      },
+      {
+        "run": "bash",
+        "optional": true,
+        "args": [
+          "-lc",
+          "cd {{ project_slug }} && git init -q && git add . && git commit -m \"init: {{ project_name }} (dapp-react-ts)\" -q"
+        ]
+      },
+      {
+        "run": "bash",
+        "args": [
+          "-lc",
+          "echo '\nNext steps:\n  cd {{ project_slug }}\n  pnpm dev   # or: npm run dev\n  # then open http://localhost:5173\n'"
+        ]
+      }
+    ]
+  },
+  "notes": [
+    "This scaffold expects the Animica wallet extension when WALLET_PROVIDER=extension; otherwise it will fall back to SDK-only flows.",
+    "Update .env.local to point at your devnet RPC/WS and studio-services."
+  ]
+}

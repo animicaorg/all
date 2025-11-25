@@ -1,0 +1,106 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "omni-sdk"
+# Version comes from omni_sdk/version.py
+dynamic = ["version"]
+description = "Animica Omni SDK (Python): JSON-RPC client, wallet utilities, contract helpers, and codegen."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Animica Contributors" }]
+keywords = ["animica", "blockchain", "sdk", "rpc", "wallet", "contracts", "aicf", "randomness", "light-client"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Typing :: Typed",
+  "Topic :: Software Development :: Libraries"
+]
+
+# Core deps are deliberately light; heavier bits live behind extras.
+dependencies = [
+  "httpx>=0.27.0",          # HTTP JSON-RPC
+  "websockets>=11.0",       # WS subscriptions (optional but small)
+  "typing-extensions>=4.8", # backports for older 3.9/3.10
+  "msgspec>=0.18.6",        # fast (de)serialization for fixtures/helpers
+]
+
+[project.optional-dependencies]
+cli = [
+  "typer>=0.9.0",
+  "rich>=13.7.0"
+]
+dev = [
+  "pytest>=7.4",
+  "pytest-asyncio>=0.23",
+  "anyio>=4.0",
+  "ruff>=0.5.0",
+  "mypy>=1.8.0",
+  "types-requests>=2.31.0.10",
+  "coverage>=7.4"
+]
+native = [
+  # Optional Rust accelerators (see native/). Import name is `animica_native`.
+  "animica-native>=0.1.0"
+]
+zk = [
+  # Optional zk fast paths (see zk/native/). Import name is `animica_zk_native`.
+  "animica-zk-native>=0.1.0"
+]
+
+[project.urls]
+Homepage = "https://animica.example"
+Repository = "https://github.com/animica/omni"
+Issues = "https://github.com/animica/omni/issues"
+Documentation = "https://docs.animica.example"
+
+[project.scripts]
+omni-sdk = "omni_sdk.cli.main:app"
+
+[tool.hatch.version]
+path = "omni_sdk/version.py"
+
+[tool.hatch.build]
+include = [
+  "/omni_sdk/**",
+]
+exclude = [
+  "/**/__pycache__/**",
+  "/**/*.pyc",
+  "/**/.DS_Store",
+  "/tests/**",
+  "/examples/**"
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["omni_sdk"]
+
+[tool.mypy]
+python_version = "3.9"
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_return_any = true
+no_implicit_optional = true
+show_error_codes = true
+plugins = []
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+select = ["E", "F", "I", "UP", "B"]
+ignore = []
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+

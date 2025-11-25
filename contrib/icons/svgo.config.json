@@ -1,0 +1,28 @@
+{
+  "$schema": "https://raw.githubusercontent.com/svg/svgo/master/doc/svgo-config.schema.json",
+  "multipass": true,
+  "js2svg": {
+    "indent": 0,
+    "pretty": false
+  },
+  "plugins": [
+    {
+      "name": "preset-default",
+      "params": {
+        "overrides": {
+          /* Keep viewBox for responsive scaling */
+          "removeViewBox": false,
+          /* Preserve IDs so sprite <use href="#id"> keeps working */
+          "cleanupIds": false,
+          /* Keep strokes/fills unless explicitly useless */
+          "removeUselessStrokeAndFill": true
+        }
+      }
+    },
+    /* Useful extras */
+    { "name": "removeDimensions" },        /* prefer viewBox + CSS sizing */
+    { "name": "sortAttrs" },               /* stable attribute order */
+    { "name": "convertStyleToAttrs" },     /* inline simple style rules */
+    { "name": "convertColor", "params": { "currentColor": true } }
+  ]
+}

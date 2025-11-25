@@ -1,0 +1,82 @@
+---
+import links from "../config/links";
+import env from "../env";
+
+interface Props {
+  align?: "start" | "center" | "end";
+  showExplorer?: boolean;
+  showDocs?: boolean;
+  size?: "sm" | "md" | "lg";
+  class?: string;
+}
+
+const {
+  align = "start",
+  showExplorer = true,
+  showDocs = true,
+  size = "md",
+  class: className = "",
+} = Astro.props as Props;
+
+const studioHref = links?.studio?.home ?? env.PUBLIC_STUDIO_URL ?? "/studio";
+const explorerHref = links?.explorer?.home ?? "/explorer";
+const docsHref = links?.docs?.home ?? env.PUBLIC_DOCS_URL ?? "/docs";
+
+const sizeCls =
+  size === "sm"
+    ? "px-3 py-2 text-sm"
+    : size === "lg"
+    ? "px-5 py-3 text-base"
+    : "px-4 py-2.5 text-sm";
+
+const justify =
+  align === "center" ? "justify-center" : align === "end" ? "justify-end" : "justify-start";
+---
+
+<div class={`flex flex-col sm:flex-row gap-3 sm:gap-4 ${justify} ${className}`}>
+  <!-- Open Studio (primary) -->
+  <a
+    href={studioHref}
+    class={`inline-flex items-center justify-center gap-2 rounded-md font-medium
+            ${sizeCls}
+            bg-white text-black hover:opacity-95 active:opacity-90
+            dark:bg-[var(--text-primary)] dark:text-[var(--bg-regular)]`}
+    aria-label="Open Studio"
+  >
+    Open Studio
+    <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="currentColor" d="M14 3h7v7h-2V6.41L9.41 16 8 14.59 16.59 6H14V3zM5 5h5V3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-5h-2v5H5V5z"/>
+    </svg>
+  </a>
+
+  {showExplorer && (
+    <a
+      href={explorerHref}
+      class={`inline-flex items-center justify-center gap-2 rounded-md font-medium
+              ${sizeCls}
+              border hover:bg-[var(--bg-elevated)]
+              border-[color-mix(in_srgb,var(--text-primary)_/_18%,transparent)]`}
+      aria-label="Open Explorer"
+    >
+      Open Explorer
+      <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+        <path fill="currentColor" d="M12 2a10 10 0 1 0 .001 20.001A10 10 0 0 0 12 2m6.92 6h-5.01l-2 3.5l2.75 4.77l4.26-7.27zM11 7l-2 3.5H5.08A8 8 0 0 1 11 7m-5.84 10A7.96 7.96 0 0 1 4 12c0-.34.03-.67.08-1h4.91l2 3.5L8.24 17H5.16zM12 20a8 8 0 0 1-1-.07l2.76-4.73L18.84 17A8 8 0 0 1 12 20"/>
+      </svg>
+    </a>
+  )}
+
+  {showDocs && (
+    <a
+      href={docsHref}
+      class={`inline-flex items-center justify-center gap-2 rounded-md font-medium
+              ${sizeCls}
+              opacity-90 hover:opacity-100`}
+      aria-label="Read Docs"
+    >
+      Read Docs
+      <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+        <path fill="currentColor" d="M6 2h9a3 3 0 0 1 3 3v14.5a.5.5 0 0 1-.8.4L15 18H6a3 3 0 0 1-3-3V5a3 3 0 0 1 3-3m0 2a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h9.5l.5.4V5a1 1 0 0 0-1-1z"/>
+      </svg>
+    </a>
+  )}
+</div>

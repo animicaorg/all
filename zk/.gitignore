@@ -1,0 +1,30 @@
+# ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+# ┃ zk/.gitignore — ignore heavyweight ZK build artifacts ┃
+# ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+# Large prover/verifier artifacts (never commit)
+*.zkey
+*.r1cs
+*.wasm
+*.wtns
+*.sym
+
+# Optional: Powers of Tau parameters (can be >100MB each).
+# Uncomment if you don't plan to vendor them in-repo.
+# *.ptau
+
+# Local build + caches (see zk/.env.example)
+build/
+.cache/
+.logs/
+.tmp/
+
+# Proof outputs (often large). Comment out if you want them tracked.
+proofs/
+
+# Vendored toolchains or third-party drops
+vendor/
+
+# Keep placeholder files if used
+!.gitkeep
+**/.gitkeep

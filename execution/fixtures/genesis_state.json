@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "chain_id": 1,
+  "accounts": [
+    {
+      "label": "alice",
+      "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "nonce": 0,
+      "balance": 1000000000000000000,
+      "code_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "storage": {}
+    },
+    {
+      "label": "bob",
+      "address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "nonce": 0,
+      "balance": 0,
+      "code_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "storage": {}
+    },
+    {
+      "label": "coinbase",
+      "address": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "nonce": 0,
+      "balance": 0,
+      "code_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "storage": {}
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+[package]
+name = "animica-codegen-rs"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Animica SDK — optional Rust helper for ABI→client code generation."
+readme = "README.md"
+repository = "https://github.com/animica-labs/animica"
+homepage = "https://github.com/animica-labs/animica"
+keywords = ["animica", "sdk", "codegen", "abi", "templates"]
+categories = ["development-tools", "command-line-utilities", "template-engine"]
+
+# This crate is optional and only used if you prefer a Rust-native codegen
+# helper in CI or local workflows. The Python/TS generators work independently.
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+handlebars = "4"
+regex = "1"
+heck = "0.5"
+clap = { version = "4", features = ["derive"] }
+toml = "0.8"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+
+[features]
+default = []
+# If you want to embed templates into the binary, enable this feature and add build.rs that inlines them.
+embed-templates = []
+
+# When implemented, the CLI binary would live at src/main.rs
+[[bin]]
+name = "animica-codegen-rs"
+path = "src/main.rs"

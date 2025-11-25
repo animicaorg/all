@@ -1,0 +1,254 @@
+{
+  "cases": [
+    {
+      "access_list": [],
+      "amount": "100000",
+      "chain_id": 1,
+      "cbor_hex": "0xa1deadbeef01", 
+      "data": "0x",
+      "desc": "VALID — simple transfer with adequate gas and correct PQ signature",
+      "gas_limit": "21000",
+      "gas_price": "1000",
+      "kind": "transfer",
+      "nonce": "0",
+      "pq": {
+        "sig_alg": "dilithium3",
+        "sig_hex": "0x8f2e0c…(truncated-demo-sig)…1a",
+        "pubkey_hex": "0x03ab…(truncated-pub)…42"
+      },
+      "sender": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq6d8u0h",
+      "sign_bytes_hex": "0x74785f7369676e5f646f6d61696e…(tx signbytes demo)…",
+      "to": "anim1p9kzw0s8y6d3x9j3y9m0v4fqq0a2a3p6r8v8cps",
+      "tx_hash": "0x51f1f1a0d4e3…(sha3-256 demo)…77",
+      "valid": true
+    },
+    {
+      "access_list": [],
+      "amount": "100000000000000000000000",
+      "chain_id": 1,
+      "cbor_hex": "0xa1deadbeef02",
+      "data": "0x",
+      "desc": "INVALID — insufficient balance at apply-time",
+      "gas_limit": "21000",
+      "gas_price": "1000",
+      "kind": "transfer",
+      "nonce": "1",
+      "pq": {
+        "sig_alg": "dilithium3",
+        "sig_hex": "0xb9aa…(demo)…ee",
+        "pubkey_hex": "0x04cd…(demo)…11"
+      },
+      "sender": "anim1t0k3n0wner0000000000000000000000000us4vvg",
+      "sign_bytes_hex": "0x7369676e6279746573…(demo)…",
+      "to": "anim1rece1ver0000000000000000000000000006x3p0",
+      "tx_hash": "0x9a3b…(demo)…41",
+      "valid": false
+    },
+    {
+      "access_list": [],
+      "amount": "1",
+      "chain_id": 2,
+      "cbor_hex": "0xa1deadbeef03",
+      "data": "0x",
+      "desc": "INVALID — chainId mismatch (tx says testnet :2, vector intended for animica:1)",
+      "gas_limit": "21000",
+      "gas_price": "1",
+      "kind": "transfer",
+      "nonce": "0",
+      "pq": {
+        "sig_alg": "sphincs_shake_128s",
+        "sig_hex": "0xaaaa…(demo)…bbbb",
+        "pubkey_hex": "0x0102…(demo)…0304"
+      },
+      "sender": "anim1c1dmm1s0000000000000000000000000000nygv",
+      "sign_bytes_hex": "0x1111…(demo)…2222",
+      "to": "anim1zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz3k2wa0",
+      "tx_hash": "0x0c0ffee…(demo)…c0de",
+      "valid": false
+    },
+    {
+      "access_list": [],
+      "amount": "5000",
+      "chain_id": 1,
+      "cbor_hex": "0xa1deadbeef04",
+      "data": "0x",
+      "desc": "INVALID — bad signature bytes (does not verify under declared pubkey/alg)",
+      "gas_limit": "22000",
+      "gas_price": "100",
+      "kind": "transfer",
+      "nonce": "2",
+      "pq": {
+        "sig_alg": "dilithium3",
+        "sig_hex": "0x0000…(intentionally-bad)…0000",
+        "pubkey_hex": "0x99ff…(demo)…77aa"
+      },
+      "sender": "anim1sigbad0000000000000000000000000000cw7n7",
+      "sign_bytes_hex": "0x547269636b5369676e4279746573…(demo)…",
+      "to": "anim1goodaddr0000000000000000000000000000a7w7a",
+      "tx_hash": "0xdead…(demo)…beef",
+      "valid": false
+    },
+    {
+      "access_list": [],
+      "amount": "0",
+      "chain_id": 1,
+      "cbor_hex": "0xa1deadbeef05",
+      "data": "0x6465706c6f795f636f756e7465725f67656e65736973",
+      "desc": "VALID — contract deploy (Counter); address derived from sender+nonce",
+      "gas_limit": "800000",
+      "gas_price": "1000",
+      "kind": "deploy",
+      "nonce": "3",
+      "pq": {
+        "sig_alg": "dilithium3",
+        "sig_hex": "0xabcd…(demo)…1234",
+        "pubkey_hex": "0x55aa…(demo)…aa55"
+      },
+      "sender": "anim1builder0000000000000000000000000000x6ydc",
+      "sign_bytes_hex": "0x6465706c6f795f7369676e6279746573…(demo)…",
+      "to": "",
+      "tx_hash": "0x1dea…(demo)…5eed",
+      "valid": true
+    },
+    {
+      "access_list": [],
+      "amount": "0",
+      "chain_id": 1,
+      "cbor_hex": "0xa1deadbeef06",
+      "data": "0x636f756e7465722e696e63",
+      "desc": "VALID — call Counter.inc(); expect event and new value",
+      "gas_limit": "120000",
+      "gas_price": "1000",
+      "kind": "call",
+      "nonce": "4",
+      "pq": {
+        "sig_alg": "dilithium3",
+        "sig_hex": "0x77ee…(demo)…33aa",
+        "pubkey_hex": "0x0f0f…(demo)…f0f0"
+      },
+      "sender": "anim1userinc0000000000000000000000000000xj3ap",
+      "sign_bytes_hex": "0x63616c6c5f7369676e6279746573…(demo)…",
+      "to": "anim1ctr4ddr0000000000000000000000000000p6qhd",
+      "tx_hash": "0xc001…(demo)…d00d",
+      "valid": true
+    },
+    {
+      "access_list": [],
+      "amount": "0",
+      "chain_id": 1,
+      "cbor_hex": "0xa1deadbeef07",
+      "data": "0x636f756e7465722e696e63",
+      "desc": "INVALID — OOG: gasLimit too low for Counter.inc()",
+      "gas_limit": "1000",
+      "gas_price": "1000",
+      "kind": "call",
+      "nonce": "5",
+      "pq": {
+        "sig_alg": "sphincs_shake_128s",
+        "sig_hex": "0x4455…(demo)…6677",
+        "pubkey_hex": "0x8899…(demo)…aabb"
+      },
+      "sender": "anim1o0g0000000000000000000000000000000a9e8",
+      "sign_bytes_hex": "0x6f6f675f7369676e6279746573…(demo)…",
+      "to": "anim1ctr4ddr0000000000000000000000000000p6qhd",
+      "tx_hash": "0xface…(demo)…b00c",
+      "valid": false
+    },
+    {
+      "access_list": [
+        {
+          "address": "anim1ctr4ddr0000000000000000000000000000p6qhd",
+          "keys": [
+            "0x0000000000000000000000000000000000000000000000000000000000000001"
+          ]
+        }
+      ],
+      "amount": "0",
+      "chain_id": 1,
+      "cbor_hex": "0xa1deadbeef08",
+      "data": "0x6765745f616e645f656d6974",
+      "desc": "VALID — call Counter.get_and_emit() with access list covering storage key 0x01",
+      "gas_limit": "140000",
+      "gas_price": "1000",
+      "kind": "call",
+      "nonce": "6",
+      "pq": {
+        "sig_alg": "dilithium3",
+        "sig_hex": "0x2222…(demo)…3333",
+        "pubkey_hex": "0x4444…(demo)…5555"
+      },
+      "sender": "anim1acce5515ed0000000000000000000000000m6kqs",
+      "sign_bytes_hex": "0x6163636573736c6973745f7369676e6279746573…(demo)…",
+      "to": "anim1ctr4ddr0000000000000000000000000000p6qhd",
+      "tx_hash": "0xbead…(demo)…feed",
+      "valid": true
+    },
+    {
+      "access_list": [],
+      "amount": "0",
+      "chain_id": 1,
+      "cbor_hex": "0xa1deadbeef09",
+      "data": "0x626c6f625f70696e3a7b226e73223a32342c2264617461223a22307841424243…\"}", 
+      "desc": "VALID — call system Blob.pin(ns=24, data=0xABBC…) via capability surface (no state write here)",
+      "gas_limit": "300000",
+      "gas_price": "1000",
+      "kind": "call",
+      "nonce": "7",
+      "pq": {
+        "sig_alg": "dilithium3",
+        "sig_hex": "0x9e9e…(demo)…1b1b",
+        "pubkey_hex": "0x1212…(demo)…3434"
+      },
+      "sender": "anim1blobp1n0000000000000000000000000000q8l0r",
+      "sign_bytes_hex": "0x626c6f625f7369676e6279746573…(demo)…",
+      "to": "anim1sysc4p0000000000000000000000000000u5v96",
+      "tx_hash": "0xabad…(demo)…1dea",
+      "valid": true
+    },
+    {
+      "access_list": [],
+      "amount": "0",
+      "chain_id": 1,
+      "cbor_hex": "0xa1deadbeef0a",
+      "data": "0x",
+      "desc": "REPLACEMENT PAIR — two txs from same sender+nonce; the second has >=10% higher effective fee",
+      "gas_limit": "50000",
+      "gas_price": "500",
+      "kind": "transfer",
+      "nonce": "10",
+      "pq": {
+        "sig_alg": "dilithium3",
+        "sig_hex": "0xaaaa…(demo)…aaaa",
+        "pubkey_hex": "0xbbbb…(demo)…bbbb"
+      },
+      "sender": "anim1r3pl4cer0000000000000000000000000000n5qkl",
+      "sign_bytes_hex": "0x7265706c616365315f7369676e6279746573…(demo)…",
+      "to": "anim1target000000000000000000000000000000v3r7x",
+      "tx_hash": "0x1111…(demo)…1111",
+      "valid": true
+    },
+    {
+      "access_list": [],
+      "amount": "0",
+      "chain_id": 1,
+      "cbor_hex": "0xa1deadbeef0b",
+      "data": "0x",
+      "desc": "REPLACEMENT PAIR — replacement of previous; mempool should accept and evict earlier one",
+      "gas_limit": "50000",
+      "gas_price": "560",
+      "kind": "transfer",
+      "nonce": "10",
+      "pq": {
+        "sig_alg": "dilithium3",
+        "sig_hex": "0xcccc…(demo)…cccc",
+        "pubkey_hex": "0xbbbb…(demo)…bbbb"
+      },
+      "sender": "anim1r3pl4cer0000000000000000000000000000n5qkl",
+      "sign_bytes_hex": "0x7265706c616365325f7369676e6279746573…(demo)…",
+      "to": "anim1target000000000000000000000000000000v3r7x",
+      "tx_hash": "0x2222…(demo)…2222",
+      "valid": true
+    }
+  ],
+  "version": 1
+}

@@ -1,0 +1,397 @@
+{
+  "openrpc": "1.2.6",
+  "info": {
+    "title": "Animica JSON-RPC",
+    "version": "1.0.0",
+    "description": "Minimal JSON-RPC surface for Animica nodes: chain params & head, tx submit/query, built-in miner getwork/submit, and Data Availability (DA) post/get/proof.\nBinary payloads are CBOR encoded and transported as 0x-prefixed hex unless otherwise stated."
+  },
+  "servers": [
+    { "name": "HTTP RPC", "url": "http://localhost:8547/rpc" },
+    { "name": "WebSocket", "url": "ws://localhost:8547/ws" }
+  ],
+  "methods": [
+    {
+      "name": "chain_getParams",
+      "summary": "Return canonical chain parameters.",
+      "result": {
+        "name": "params",
+        "schema": { "$ref": "#/components/schemas/ChainParams" }
+      }
+    },
+    {
+      "name": "chain_getChainId",
+      "summary": "Return numeric chain id.",
+      "result": {
+        "name": "chainId",
+        "schema": { "type": "integer", "minimum": 1 }
+      }
+    },
+    {
+      "name": "chain_getHead",
+      "summary": "Return current canonical head (header + number).",
+      "result": {
+        "name": "head",
+        "schema": { "$ref": "#/components/schemas/Head" }
+      }
+    },
+    {
+      "name": "block_getBlockByNumber",
+      "summary": "Return a block by height.",
+      "params": [
+        {
+          "name": "number",
+          "required": true,
+          "schema": { "type": "integer", "minimum": 0 }
+        },
+        {
+          "name": "includeTxs",
+          "required": false,
+          "schema": { "type": "boolean", "default": true }
+        }
+      ],
+      "result": {
+        "name": "block",
+        "schema": { "anyOf": [ { "$ref": "#/components/schemas/Block" }, { "type": "null" } ] }
+      }
+    },
+    {
+      "name": "block_getBlockByHash",
+      "summary": "Return a block by hash.",
+      "params": [
+        { "name": "hash", "required": true, "schema": { "$ref": "#/components/schemas/Hash" } },
+        { "name": "includeTxs", "required": false, "schema": { "type": "boolean", "default": true } }
+      ],
+      "result": {
+        "name": "block",
+        "schema": { "anyOf": [ { "$ref": "#/components/schemas/Block" }, { "type": "null" } ] }
+      }
+    },
+    {
+      "name": "tx_sendRawTransaction",
+      "summary": "Submit a signed CBOR transaction (hex).",
+      "params": [
+        { "name": "rawTx", "required": true, "schema": { "$ref": "#/components/schemas/Hex" } }
+      ],
+      "result": {
+        "name": "txHash",
+        "schema": { "$ref": "#/components/schemas/Hash" }
+      },
+      "errors": [
+        { "code": -32010, "message": "InvalidTransaction" },
+        { "code": -32011, "message": "ChainIdMismatch" },
+        { "code": -32012, "message": "FeeTooLow" }
+      ]
+    },
+    {
+      "name": "tx_getTransactionByHash",
+      "summary": "Lookup a transaction by hash.",
+      "params": [
+        { "name": "hash", "required": true, "schema": { "$ref": "#/components/schemas/Hash" } }
+      ],
+      "result": {
+        "name": "tx",
+        "schema": { "anyOf": [ { "$ref": "#/components/schemas/TxView" }, { "type": "null" } ] }
+      }
+    },
+    {
+      "name": "tx_getTransactionReceipt",
+      "summary": "Lookup a receipt by tx hash.",
+      "params": [
+        { "name": "hash", "required": true, "schema": { "$ref": "#/components/schemas/Hash" } }
+      ],
+      "result": {
+        "name": "receipt",
+        "schema": { "anyOf": [ { "$ref": "#/components/schemas/ReceiptView" }, { "type": "null" } ] }
+      }
+    },
+    {
+      "name": "miner_getWork",
+      "summary": "Return a work template for PoIES HashShare mining.",
+      "params": [
+        { "name": "capabilities", "required": false, "schema": { "type": "array", "items": { "type": "string" }, "description": "Optional: desired proof kinds to attach (e.g., 'ai','quantum','storage','vdf')." } }
+      ],
+      "result": {
+        "name": "work",
+        "schema": { "$ref": "#/components/schemas/WorkTemplate" }
+      }
+    },
+    {
+      "name": "miner_submitShare",
+      "summary": "Submit a share or full block candidate.",
+      "params": [
+        { "name": "submission", "required": true, "schema": { "$ref": "#/components/schemas/ShareSubmission" } }
+      ],
+      "result": {
+        "name": "result",
+        "schema": { "$ref": "#/components/schemas/ShareAccept" }
+      },
+      "errors": [
+        { "code": -32020, "message": "WorkExpired" },
+        { "code": -32021, "message": "TargetNotMet" },
+        { "code": -32022, "message": "PolicyRejected" }
+      ]
+    },
+    {
+      "name": "da_putBlob",
+      "summary": "Post a blob into DA; returns commitment and receipt.",
+      "params": [
+        { "name": "namespace", "required": true, "schema": { "type": "integer", "minimum": 0 } },
+        { "name": "data", "required": true, "schema": { "$ref": "#/components/schemas/Hex", "description": "Blob bytes (hex). Large uploads SHOULD use chunked REST in /da; this RPC is for small dev/test." } }
+      ],
+      "result": {
+        "name": "receipt",
+        "schema": { "$ref": "#/components/schemas/DaReceipt" }
+      },
+      "errors": [
+        { "code": -32030, "message": "BlobTooLarge" }
+      ]
+    },
+    {
+      "name": "da_getBlob",
+      "summary": "Fetch a blob by commitment.",
+      "params": [
+        { "name": "commitment", "required": true, "schema": { "$ref": "#/components/schemas/Hash" } }
+      ],
+      "result": {
+        "name": "blob",
+        "schema": { "$ref": "#/components/schemas/BlobObject" }
+      }
+    },
+    {
+      "name": "da_getProof",
+      "summary": "Get an availability/inclusion proof for a blob (or range).",
+      "params": [
+        { "name": "commitment", "required": true, "schema": { "$ref": "#/components/schemas/Hash" } },
+        { "name": "indices", "required": false, "schema": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "description": "Optional share indices to prove; omitted ⇒ namespace range proof." } }
+      ],
+      "result": {
+        "name": "proof",
+        "schema": { "$ref": "#/components/schemas/DaProof" }
+      }
+    }
+  ],
+  "components": {
+    "schemas": {
+      "Hex": {
+        "type": "string",
+        "pattern": "^0x[0-9a-fA-F]*$",
+        "description": "Byte strings encoded as 0x-prefixed hex."
+      },
+      "Hash": {
+        "type": "string",
+        "pattern": "^0x[0-9a-fA-F]{64}$",
+        "description": "sha3-256 hash."
+      },
+      "Address": {
+        "type": "string",
+        "pattern": "^anim1[ac-hj-np-z02-9]{10,}$",
+        "description": "Bech32m Animica address."
+      },
+      "Quantity": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "ChainParams": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "chainId": { "type": "integer", "minimum": 1 },
+          "name": { "type": "string" },
+          "genesisHash": { "$ref": "#/components/schemas/Hash" },
+          "block": {
+            "type": "object",
+            "properties": {
+              "targetIntervalSeconds": { "type": "integer", "minimum": 1 },
+              "gasLimit": { "type": "integer", "minimum": 0 },
+              "maxBytes": { "type": "integer", "minimum": 0 }
+            },
+            "required": ["targetIntervalSeconds", "gasLimit", "maxBytes"]
+          },
+          "economics": {
+            "type": "object",
+            "properties": {
+              "baseReward": { "type": "integer", "minimum": 0 },
+              "treasurySliceBp": { "type": "integer", "minimum": 0, "maximum": 10000 }
+            },
+            "required": ["baseReward", "treasurySliceBp"]
+          },
+          "consensus": {
+            "type": "object",
+            "properties": {
+              "thetaStart": { "type": "number" },
+              "gammaCap": { "type": "number" },
+              "policyRoots": {
+                "type": "object",
+                "properties": {
+                  "poiesPolicy": { "$ref": "#/components/schemas/Hash" },
+                  "pqAlgPolicy": { "$ref": "#/components/schemas/Hash" }
+                },
+                "required": ["poiesPolicy", "pqAlgPolicy"]
+              }
+            },
+            "required": ["thetaStart", "gammaCap", "policyRoots"]
+          }
+        },
+        "required": ["chainId", "name", "genesisHash", "block", "economics", "consensus"]
+      },
+      "Head": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "number": { "type": "integer", "minimum": 0 },
+          "hash": { "$ref": "#/components/schemas/Hash" },
+          "header": { "$ref": "#/components/schemas/Header" }
+        },
+        "required": ["number", "hash", "header"]
+      },
+      "Header": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "parentHash": { "$ref": "#/components/schemas/Hash" },
+          "stateRoot": { "$ref": "#/components/schemas/Hash" },
+          "txRoot": { "$ref": "#/components/schemas/Hash" },
+          "receiptsRoot": { "$ref": "#/components/schemas/Hash" },
+          "proofsRoot": { "$ref": "#/components/schemas/Hash" },
+          "daRoot": { "$ref": "#/components/schemas/Hash" },
+          "timestamp": { "type": "integer", "minimum": 0 },
+          "theta": { "type": "number", "description": "Acceptance threshold Θ for this block." },
+          "gammaUsed": { "type": "number", "description": "Σψ used vs Γ cap." },
+          "mixSeed": { "$ref": "#/components/schemas/Hash" },
+          "nonce": { "$ref": "#/components/schemas/Hex" }
+        },
+        "required": ["parentHash", "stateRoot", "txRoot", "receiptsRoot", "proofsRoot", "daRoot", "timestamp", "theta", "gammaUsed", "mixSeed", "nonce"]
+      },
+      "TxView": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "hash": { "$ref": "#/components/schemas/Hash" },
+          "from": { "$ref": "#/components/schemas/Address" },
+          "to": { "anyOf": [ { "$ref": "#/components/schemas/Address" }, { "type": "null" } ] },
+          "nonce": { "type": "integer", "minimum": 0 },
+          "gasLimit": { "type": "integer", "minimum": 0 },
+          "gasPrice": { "type": "integer", "minimum": 0 },
+          "value": { "type": "integer", "minimum": 0 },
+          "kind": { "type": "string", "enum": ["transfer", "deploy", "call"] },
+          "data": { "$ref": "#/components/schemas/Hex" },
+          "blockHash": { "anyOf": [ { "$ref": "#/components/schemas/Hash" }, { "type": "null" } ] },
+          "blockNumber": { "anyOf": [ { "type": "integer", "minimum": 0 }, { "type": "null" } ] },
+          "index": { "anyOf": [ { "type": "integer", "minimum": 0 }, { "type": "null" } ] }
+        },
+        "required": ["hash", "from", "nonce", "gasLimit", "gasPrice", "kind", "data"]
+      },
+      "Log": {
+        "type": "object",
+        "properties": {
+          "address": { "$ref": "#/components/schemas/Address" },
+          "topics": { "type": "array", "items": { "$ref": "#/components/schemas/Hash" } },
+          "data": { "$ref": "#/components/schemas/Hex" }
+        },
+        "required": ["address", "topics", "data"]
+      },
+      "ReceiptView": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "txHash": { "$ref": "#/components/schemas/Hash" },
+          "status": { "type": "string", "enum": ["SUCCESS", "REVERT", "OOG"] },
+          "gasUsed": { "type": "integer", "minimum": 0 },
+          "logs": { "type": "array", "items": { "$ref": "#/components/schemas/Log" } },
+          "contractAddress": { "anyOf": [ { "$ref": "#/components/schemas/Address" }, { "type": "null" } ] }
+        },
+        "required": ["txHash", "status", "gasUsed", "logs"]
+      },
+      "Block": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "number": { "type": "integer", "minimum": 0 },
+          "hash": { "$ref": "#/components/schemas/Hash" },
+          "header": { "$ref": "#/components/schemas/Header" },
+          "txs": { "type": "array", "items": { "$ref": "#/components/schemas/TxView" } }
+        },
+        "required": ["number", "hash", "header", "txs"]
+      },
+      "WorkTemplate": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "jobId": { "$ref": "#/components/schemas/Hash" },
+          "height": { "type": "integer", "minimum": 0 },
+          "parentHash": { "$ref": "#/components/schemas/Hash" },
+          "headerTemplate": { "$ref": "#/components/schemas/Hex", "description": "CBOR header sans nonce; miner fills nonce & mixSeed domain." },
+          "theta": { "type": "number" },
+          "shareTarget": { "type": "number", "description": "Micro-target for HashShare acceptance." },
+          "expiresAt": { "type": "integer", "minimum": 0 }
+        },
+        "required": ["jobId", "height", "parentHash", "headerTemplate", "theta", "shareTarget", "expiresAt"]
+      },
+      "ShareSubmission": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "jobId": { "$ref": "#/components/schemas/Hash" },
+          "nonce": { "$ref": "#/components/schemas/Hex" },
+          "mixSeed": { "$ref": "#/components/schemas/Hash" },
+          "hashShare": { "$ref": "#/components/schemas/Hex", "description": "Proof body for HashShare (CBOR, hex)." },
+          "attachedProofs": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Hex" },
+            "description": "Optional useful-work proofs (AI/Quantum/Storage/VDF) as CBOR envelopes."
+          }
+        },
+        "required": ["jobId", "nonce", "mixSeed", "hashShare"]
+      },
+      "ShareAccept": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "accepted": { "type": "boolean" },
+          "isBlock": { "type": "boolean" },
+          "blockHash": { "anyOf": [ { "$ref": "#/components/schemas/Hash" }, { "type": "null" } ] },
+          "reason": { "anyOf": [ { "type": "string" }, { "type": "null" } ] }
+        },
+        "required": ["accepted", "isBlock"]
+      },
+      "DaReceipt": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "namespace": { "type": "integer", "minimum": 0 },
+          "commitment": { "$ref": "#/components/schemas/Hash" },
+          "nmtRoot": { "$ref": "#/components/schemas/Hash" },
+          "size": { "type": "integer", "minimum": 0 }
+        },
+        "required": ["namespace", "commitment", "nmtRoot", "size"]
+      },
+      "BlobObject": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "commitment": { "$ref": "#/components/schemas/Hash" },
+          "namespace": { "type": "integer", "minimum": 0 },
+          "data": { "$ref": "#/components/schemas/Hex" },
+          "size": { "type": "integer", "minimum": 0 }
+        },
+        "required": ["commitment", "namespace", "data", "size"]
+      },
+      "DaProof": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "commitment": { "$ref": "#/components/schemas/Hash" },
+          "proofType": { "type": "string", "enum": ["namespaceRange", "indices"] },
+          "nmtRoot": { "$ref": "#/components/schemas/Hash" },
+          "branches": { "type": "array", "items": { "$ref": "#/components/schemas/Hex" } },
+          "indices": { "type": "array", "items": { "type": "integer", "minimum": 0 } }
+        },
+        "required": ["commitment", "proofType", "nmtRoot", "branches"]
+      }
+    }
+  },
+  "externalDocs": {
+    "url": "https://animica.org/spec/openrpc",
+    "description": "Specification and examples."
+  }
+}

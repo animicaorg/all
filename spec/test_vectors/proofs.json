@@ -1,0 +1,392 @@
+{
+  "version": 1,
+  "notes": "PoIES proof test vectors for Animica: HashShare, AIProof (TEE+redundancy+traps), QuantumProof (attest+traps), StorageHeartbeat (PoSt v0), and VDFProof (Wesolowski). Each case includes verifier inputs, expected metrics, ψ before/after caps, and validity. Bundle cases exercise per-type caps, total Γ cap, and diversity/escort rules.",
+  "type_ids": {
+    "HashShare": 1,
+    "AIProof": 2,
+    "QuantumProof": 3,
+    "StorageHeartbeat": 4,
+    "VDFProof": 5
+  },
+  "policy_snapshot": {
+    "poies_policy_root": "0x111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000",
+    "theta_uNats_for_examples": 1386294,
+    "caps": {
+      "per_proof_uNats": {
+        "hash": 300000,
+        "ai": 800000,
+        "quantum": 900000,
+        "storage": 150000,
+        "vdf": 50000
+      },
+      "per_type_uNats": {
+        "hash": 600000,
+        "ai": 1200000,
+        "quantum": 1200000,
+        "storage": 200000,
+        "vdf": 100000
+      },
+      "total_gamma_uNats": 1800000
+    },
+    "diversity_escort": {
+      "require_distinct_types": 2,
+      "escort_bonus_fraction": 0.15,
+      "notes": "If ≥2 distinct non-hash proof types present in a bundle, apply +15% to their combined ψ (pre-Γ clip). HashShare does not count toward unlocking escort."
+    },
+    "nullifier_ttl_blocks": 2048
+  },
+  "domains_reference": {
+    "nullifier_domain": "PrfNull/Animica/1",
+    "hashshare_bind_domain": "HashShare/Bind/1",
+    "ai_attest_domain": "AI/TEE/Attest/1",
+    "quantum_attest_domain": "QPU/Provider/Attest/1",
+    "storage_domain": "Storage/Heartbeat/1",
+    "vdf_domain": "VDF/Wesolowski/1"
+  },
+  "single_proofs": [
+    {
+      "id": "HASH-ACCEPT-1",
+      "type": "HashShare",
+      "context": {
+        "height": 101,
+        "headerHash": "0x7a95e7b8a0e2f1c3d4b5a6978877665544332211ffeeddccbbaa998877665544",
+        "mixSeed": "0x1234...0000",
+        "theta_uNats": 1200000
+      },
+      "body": {
+        "nonce": "0x0000000000000000000000000000000000000000000000000000000000beef",
+        "u_hash": "0x00ff...ab",
+        "u_float": 0.01000000,
+        "H_u_nats": 4.605170,
+        "share_difficulty_ratio": 3.837641
+      },
+      "expected_metrics": {
+        "d_ratio": 3.837641
+      },
+      "expected_nullifier": "0x5d9a9b392d7f1f68f0cb9c1d1ce1b2e52ed27f5a1f01cbe42aa2d2b4a39e9d10",
+      "psi_uNats_before_cap": 350000,
+      "psi_uNats_after_cap": 300000,
+      "cap_reason": "Per-proof cap for hash = 300k uNats.",
+      "valid": true
+    },
+    {
+      "id": "HASH-REJECT-BINDING",
+      "type": "HashShare",
+      "context": {
+        "height": 102,
+        "headerHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "mixSeed": "0x1234...0000",
+        "theta_uNats": 1386294
+      },
+      "body": {
+        "nonce": "0x01",
+        "u_hash": "0xdeadbeef",
+        "bind_headerHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "share_difficulty_ratio": 0.50
+      },
+      "expected_error": "HeaderBindingMismatch",
+      "valid": false,
+      "psi_uNats_after_cap": 0
+    },
+    {
+      "id": "HASH-REJECT-REUSE",
+      "type": "HashShare",
+      "context": {
+        "height": 150,
+        "headerHash": "0x7a95e7b8a0e2f1c3d4b5a6978877665544332211ffeeddccbbaa998877665544",
+        "mixSeed": "0x1234...0000",
+        "theta_uNats": 1386294
+      },
+      "body": {
+        "nonce": "0x0000000000000000000000000000000000000000000000000000000000beef",
+        "u_hash": "0x00ff...ab",
+        "H_u_nats": 2.302585,
+        "share_difficulty_ratio": 1.5
+      },
+      "reuses_nullifier_of": "HASH-ACCEPT-1",
+      "expected_error": "NullifierReuse",
+      "valid": false,
+      "psi_uNats_after_cap": 0
+    },
+    {
+      "id": "AI-ACCEPT-TEE-OK",
+      "type": "AIProof",
+      "context": {
+        "height": 205,
+        "theta_uNats": 1386294
+      },
+      "body": {
+        "tee_quote_digest": "0x8f6b9d3c...0011",
+        "tee_vendor": "SGX",
+        "measurement": "0x9a7c...cafe",
+        "redundancy_k_t": [2, 3],
+        "traps": { "sampled": 200, "passed": 198 },
+        "qos_ms": 420,
+        "output_digest": "0x55aa55aa...7777"
+      },
+      "expected_metrics": {
+        "redundancy_ratio": 0.6667,
+        "traps_ratio": 0.99,
+        "qos_score": 0.92,
+        "ai_units": 1.00
+      },
+      "expected_nullifier": "0x9b77c2e1cc0b3d0e2a7d6e1b6a5b7940c36d3f5b2c2a1a70f1a8b9c8d7e6f5a0",
+      "psi_uNats_before_cap": 950000,
+      "psi_uNats_after_cap": 800000,
+      "cap_reason": "Per-proof cap for AI = 800k uNats.",
+      "valid": true
+    },
+    {
+      "id": "AI-REJECT-ATTEST",
+      "type": "AIProof",
+      "context": {
+        "height": 206,
+        "theta_uNats": 1386294
+      },
+      "body": {
+        "tee_quote_digest": "0x0000badquote",
+        "tee_vendor": "SGX",
+        "measurement": "0x0",
+        "redundancy_k_t": [1, 2],
+        "traps": { "sampled": 64, "passed": 64 },
+        "qos_ms": 600,
+        "output_digest": "0x11"
+      },
+      "expected_error": "AttestationInvalid",
+      "valid": false,
+      "psi_uNats_after_cap": 0
+    },
+    {
+      "id": "AI-REJECT-TRAPS",
+      "type": "AIProof",
+      "context": { "height": 207, "theta_uNats": 1386294 },
+      "body": {
+        "tee_quote_digest": "0x8f6b9d3c...0011",
+        "tee_vendor": "SGX",
+        "measurement": "0x9a7c...cafe",
+        "redundancy_k_t": [2, 3],
+        "traps": { "sampled": 200, "passed": 120 },
+        "qos_ms": 380,
+        "output_digest": "0x55aa55aa...7777"
+      },
+      "expected_error": "TrapsRatioTooLow",
+      "thresholds": { "min_traps_ratio": 0.9 },
+      "valid": false,
+      "psi_uNats_after_cap": 0
+    },
+    {
+      "id": "QPU-ACCEPT-TRAPS-OK",
+      "type": "QuantumProof",
+      "context": {
+        "height": 260,
+        "theta_uNats": 1200000
+      },
+      "body": {
+        "provider_cert_digest": "0x44cc...88dd",
+        "circuit": { "depth": 24, "width": 16, "shots": 2048 },
+        "traps": { "sampled": 128, "passed": 126 },
+        "qos_ms": 270
+      },
+      "expected_metrics": {
+        "traps_ratio": 0.9844,
+        "qpu_units": 1.20,
+        "qos_score": 0.95
+      },
+      "expected_nullifier": "0x0a9f0f3e2d1c4b5a69788776655443322110ffeeddccbbaa9988776655443322",
+      "psi_uNats_before_cap": 1000000,
+      "psi_uNats_after_cap": 900000,
+      "cap_reason": "Per-proof cap for Quantum = 900k uNats.",
+      "valid": true
+    },
+    {
+      "id": "QPU-REJECT-ATTEST",
+      "type": "QuantumProof",
+      "context": { "height": 261, "theta_uNats": 1312991 },
+      "body": {
+        "provider_cert_digest": "0x000000",
+        "circuit": { "depth": 16, "width": 8, "shots": 512 },
+        "traps": { "sampled": 64, "passed": 64 },
+        "qos_ms": 300
+      },
+      "expected_error": "ProviderAttestationInvalid",
+      "valid": false,
+      "psi_uNats_after_cap": 0
+    },
+    {
+      "id": "STOR-ACCEPT-HEARTBEAT",
+      "type": "StorageHeartbeat",
+      "context": {
+        "height": 300,
+        "theta_uNats": 1312991,
+        "epoch": 120
+      },
+      "body": {
+        "provider_id": "prov-01",
+        "sector_id": "sec-000abc",
+        "epoch": 120,
+        "challenge_digest": "0xabc123...55"
+      },
+      "expected_metrics": {
+        "qos": 0.98
+      },
+      "expected_nullifier": "0x5f5e1000ab112233445566778899aabbccddeeff00112233445566778899aabb",
+      "psi_uNats_before_cap": 160000,
+      "psi_uNats_after_cap": 150000,
+      "cap_reason": "Per-proof cap for Storage = 150k uNats.",
+      "valid": true
+    },
+    {
+      "id": "STOR-REJECT-WINDOW",
+      "type": "StorageHeartbeat",
+      "context": {
+        "height": 301,
+        "theta_uNats": 1312991,
+        "epoch": 120
+      },
+      "body": {
+        "provider_id": "prov-01",
+        "sector_id": "sec-000abc",
+        "epoch": 118,
+        "challenge_digest": "0xabc123...55"
+      },
+      "expected_error": "HeartbeatOutOfWindow",
+      "valid": false,
+      "psi_uNats_after_cap": 0
+    },
+    {
+      "id": "VDF-ACCEPT",
+      "type": "VDFProof",
+      "context": {
+        "height": 340,
+        "theta_uNats": 1312991
+      },
+      "body": {
+        "challenge": "0xfeedface...01",
+        "y": "0x6a09e667...",
+        "proof": "0xdead...bead",
+        "iterations": 1000000
+      },
+      "expected_metrics": {
+        "vdf_seconds_eq": 0.50
+      },
+      "expected_nullifier": "0x7c7c7c7c00112233445566778899aabbccddeeffffeeddccbbaa998877665544",
+      "psi_uNats_before_cap": 52000,
+      "psi_uNats_after_cap": 50000,
+      "cap_reason": "Per-proof cap for VDF = 50k uNats.",
+      "valid": true
+    },
+    {
+      "id": "VDF-REJECT",
+      "type": "VDFProof",
+      "context": { "height": 341, "theta_uNats": 1312991 },
+      "body": {
+        "challenge": "0xfeedface...01",
+        "y": "0x0000",
+        "proof": "0xbad",
+        "iterations": 1000000
+      },
+      "expected_error": "VDFInvalid",
+      "valid": false,
+      "psi_uNats_after_cap": 0
+    }
+  ],
+  "bundles": [
+    {
+      "id": "BUNDLE-ACCEPT-DIVERSE-ESCORT",
+      "desc": "AI + Quantum + Storage + HashShare; diversity unlocked (≥2 non-hash types) → +15% bonus on (AI+Quantum+Storage) before Γ cap. HashShare excluded from escort bonus.",
+      "height": 400,
+      "proof_refs": ["AI-ACCEPT-TEE-OK", "QPU-ACCEPT-TRAPS-OK", "STOR-ACCEPT-HEARTBEAT", "HASH-ACCEPT-1"],
+      "aggregation": {
+        "per_proof_after_cap_uNats": {
+          "AI-ACCEPT-TEE-OK": 800000,
+          "QPU-ACCEPT-TRAPS-OK": 900000,
+          "STOR-ACCEPT-HEARTBEAT": 150000,
+          "HASH-ACCEPT-1": 300000
+        },
+        "per_type_totals_before_type_caps": {
+          "ai": 800000,
+          "quantum": 900000,
+          "storage": 150000,
+          "hash": 300000
+        },
+        "escort_bonus_applied": {
+          "eligible_types": ["ai", "quantum", "storage"],
+          "bonus_fraction": 0.15,
+          "pre_bonus_sum": 1850000,
+          "bonus_amount": 277500,
+          "post_bonus_sum": 2127500
+        },
+        "per_type_caps_applied": {
+          "ai": { "cap": 1200000, "after": 920000, "reason": "Bonus distributed proportionally across eligible types; none exceed per-type cap here." },
+          "quantum": { "cap": 1200000, "after": 1035000 },
+          "storage": { "cap": 200000, "after": 172500 },
+          "hash": { "cap": 600000, "after": 300000 }
+        },
+        "sum_after_type_caps": 2427500,
+        "total_gamma_cap": 1800000,
+        "sum_after_gamma_cap": 1800000,
+        "gamma_clip_reason": "Total Σψ clipped to Γ cap."
+      },
+      "expected": {
+        "diversity_unlocked": true,
+        "sigma_psi_uNats": 1800000
+      }
+    },
+    {
+      "id": "BUNDLE-NO-ESCORT",
+      "desc": "HashShare + Storage only (single non-hash type) ⇒ no escort bonus.",
+      "height": 401,
+      "proof_refs": ["HASH-ACCEPT-1", "STOR-ACCEPT-HEARTBEAT"],
+      "aggregation": {
+        "per_proof_after_cap_uNats": {
+          "HASH-ACCEPT-1": 300000,
+          "STOR-ACCEPT-HEARTBEAT": 150000
+        },
+        "escort_bonus_applied": false,
+        "sum_before_gamma": 450000,
+        "sum_after_gamma_cap": 450000
+      },
+      "expected": {
+        "diversity_unlocked": false,
+        "sigma_psi_uNats": 450000
+      }
+    },
+    {
+      "id": "BUNDLE-REJECT-NULLIFIER-REUSE",
+      "desc": "Contains a reused HashShare nullifier ⇒ that proof contributes 0 and is rejected.",
+      "height": 402,
+      "proof_refs": ["HASH-REJECT-REUSE", "AI-ACCEPT-TEE-OK"],
+      "aggregation": {
+        "per_proof_after_cap_uNats": {
+          "HASH-REJECT-REUSE": 0,
+          "AI-ACCEPT-TEE-OK": 800000
+        },
+        "escort_bonus_applied": false,
+        "sum_after_gamma_cap": 800000
+      },
+      "expected": {
+        "rejected_refs": ["HASH-REJECT-REUSE"],
+        "sigma_psi_uNats": 800000
+      }
+    },
+    {
+      "id": "BUNDLE-REJECT-BAD-PROOFS",
+      "desc": "AI attestation invalid and VDF wrong; only Quantum survives.",
+      "height": 403,
+      "proof_refs": ["AI-REJECT-ATTEST", "VDF-REJECT", "QPU-ACCEPT-TRAPS-OK"],
+      "aggregation": {
+        "per_proof_after_cap_uNats": {
+          "AI-REJECT-ATTEST": 0,
+          "VDF-REJECT": 0,
+          "QPU-ACCEPT-TRAPS-OK": 900000
+        },
+        "escort_bonus_applied": false,
+        "sum_after_gamma_cap": 900000
+      },
+      "expected": {
+        "rejected_refs": ["AI-REJECT-ATTEST", "VDF-REJECT"],
+        "sigma_psi_uNats": 900000
+      }
+    }
+  ]
+}

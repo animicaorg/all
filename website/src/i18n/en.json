@@ -1,0 +1,209 @@
+{
+  "app": {
+    "name": "Animica",
+    "tagline": "Useful work. Useful chain."
+  },
+
+  "nav": {
+    "home": "Home",
+    "studio": "Studio",
+    "explorer": "Explorer",
+    "docs": "Docs",
+    "downloads": "Downloads",
+    "network": "Network",
+    "status": "Status",
+    "roadmap": "Roadmap",
+    "blog": "Blog",
+    "privacy": "Privacy",
+    "terms": "Terms"
+  },
+
+  "buttons": {
+    "openStudio": "Open Studio",
+    "openExplorer": "Open Explorer",
+    "readDocs": "Read Docs",
+    "viewGithub": "View on GitHub",
+    "getStarted": "Get Started",
+    "learnMore": "Learn More",
+    "copy": "Copy",
+    "copied": "Copied!",
+    "submit": "Submit",
+    "subscribe": "Subscribe",
+    "retry": "Retry",
+    "backHome": "Back to Home",
+    "download": "Download"
+  },
+
+  "hero": {
+    "title": "Build on Animica",
+    "subtitle": "A programmable L1 with Proof of Interdisciplinary and Efficient Synergy (PoIES), first-class Data Availability, a deterministic Python VM, and native AI/Quantum capabilities."
+  },
+
+  "features": {
+    "gridTitle": "Why Animica",
+    "poies": {
+      "title": "PoIES Consensus",
+      "desc": "Aggregate diverse proofs (hash, AI, quantum, storage, VDF) into a single fair acceptance predicate."
+    },
+    "da": {
+      "title": "Data Availability",
+      "desc": "Namespaced Merkle Trees with erasure coding and light-client sampling."
+    },
+    "vm_py": {
+      "title": "Deterministic Python VM",
+      "desc": "Validate → compile → run Python contracts with tight gas and sandboxed stdlib."
+    },
+    "aicf": {
+      "title": "AI Compute Fund",
+      "desc": "On-chain attested AI/Quantum jobs, SLA enforcement, and payouts."
+    },
+    "pq": {
+      "title": "Post-Quantum",
+      "desc": "Dilithium/SPHINCS+ signatures, Kyber handshake, bech32m addresses."
+    },
+    "quantum": {
+      "title": "Quantum-Ready",
+      "desc": "Trap-circuit attestations and verifiable provider identities."
+    }
+  },
+
+  "status": {
+    "title": "Network Status",
+    "healthy": "Healthy",
+    "degraded": "Degraded",
+    "offline": "Offline",
+    "connecting": "Connecting…",
+    "rpcLatency": "RPC Latency",
+    "peers": "Peers",
+    "tps": "TPS",
+    "headHeight": "Head Height",
+    "lastBlock": "Last Block",
+    "updated": "Updated {ago}"
+  },
+
+  "metrics": {
+    "ticker": {
+      "connecting": "Connecting…",
+      "loading": "Loading…",
+      "errored": "Error loading metrics"
+    }
+  },
+
+  "chains": {
+    "title": "Networks",
+    "mainnet": "Animica Mainnet",
+    "testnet": "Animica Testnet",
+    "localnet": "Localnet",
+    "chainId": "Chain ID",
+    "rpc": "RPC",
+    "ws": "WebSocket",
+    "explorer": "Explorer",
+    "copyRpc": "Copy RPC URL",
+    "copiedRpc": "RPC URL copied"
+  },
+
+  "footer": {
+    "tagline": "Built in the open.",
+    "links": {
+      "studio": "Studio",
+      "explorer": "Explorer",
+      "docs": "Docs",
+      "github": "GitHub",
+      "privacy": "Privacy",
+      "terms": "Terms"
+    },
+    "copyright": "© {year} Animica Labs. All rights reserved."
+  },
+
+  "newsletter": {
+    "title": "Stay in the loop",
+    "subtitle": "Releases, testnets, and developer updates—no spam.",
+    "emailPlaceholder": "you@example.com",
+    "cta": "Subscribe",
+    "success": "Thanks! Check your inbox to confirm.",
+    "error": "Something went wrong. Please try again."
+  },
+
+  "faq": {
+    "title": "Frequently Asked Questions",
+    "items": [
+      {
+        "q": "Is Animica EVM-compatible?",
+        "a": "Animica prioritizes a deterministic Python VM. EVM compatibility can be added via adapters and precompiles over time."
+      },
+      {
+        "q": "How is useful work verified?",
+        "a": "Proofs (AI/Quantum/Storage/VDF/Hash) produce measurable metrics that feed the PoIES scorer under policy caps."
+      },
+      {
+        "q": "Is there a token?",
+        "a": "The project plan includes fee tokens and staking mechanics. Check the roadmap and blog for specifics."
+      }
+    ]
+  },
+
+  "docs": {
+    "splashTitle": "Documentation",
+    "splashSubtitle": "Specifications, SDKs, and guides.",
+    "redirecting": "Redirecting you to the canonical docs…",
+    "notFound": "Document not found."
+  },
+
+  "downloads": {
+    "title": "Downloads",
+    "subtitle": "Desktop wallet and explorer builds per platform.",
+    "note": "Signatures and notarization details are available in release notes.",
+    "wallet": "Wallet",
+    "explorer": "Explorer App"
+  },
+
+  "roadmap": {
+    "title": "Roadmap",
+    "subtitle": "Major milestones and delivery gates.",
+    "comingSoon": "More milestones coming soon."
+  },
+
+  "page": {
+    "studio": {
+      "title": "Studio Web",
+      "intro": "Edit, simulate, and deploy contracts in your browser with a WASM-compiled Python VM."
+    },
+    "explorer": {
+      "title": "Explorer",
+      "intro": "Search blocks, transactions, and events with live metrics."
+    },
+    "status": {
+      "cta": "Refresh Status"
+    }
+  },
+
+  "code": {
+    "copy": "Copy",
+    "copied": "Copied to clipboard"
+  },
+
+  "errors": {
+    "required": "This field is required.",
+    "invalidEmail": "Please enter a valid email address.",
+    "network": "Network error. Check your connection and try again.",
+    "timeout": "Request timed out. Please retry."
+  },
+
+  "blog": {
+    "title": "Blog",
+    "readMore": "Read more",
+    "byline": "By {author} — {date}"
+  },
+
+  "legal": {
+    "privacy": "Privacy Policy",
+    "terms": "Terms of Service",
+    "cookies": "Cookie & Storage Policy"
+  },
+
+  "notFound": {
+    "title": "Page not found",
+    "subtitle": "The page you’re looking for doesn’t exist or was moved.",
+    "cta": "Go Home"
+  }
+}

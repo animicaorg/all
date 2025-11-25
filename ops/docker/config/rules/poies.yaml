@@ -1,0 +1,93 @@
+# Prometheus alerting rules — PoIES health (Γ emission & mix diversity)
+# These rules assume the explorer API exports the following metrics:
+#   - animica_explorer_blocks_produced_total         (counter)
+#   - animica_explorer_poies_gamma_emitted_total     (counter; Γ units emitted)
+#   - animica_explorer_poies_mix_share_ratio{type}   (gauge 0..1 per proof type)
+#
+# If your deployment exposes different names, adjust the metric names below.
+# The alerts only fire when blocks are advancing in the same window.
+
+groups:
+  - name: poies.rules
+    rules:
+      # ─────────────────────────────────────────────────────────────────────
+      # Γ emission should not be flat while blocks are advancing.
+      # Fire a WARN if flat for 15m; escalate to CRITICAL if flat for 60m.
+      # ─────────────────────────────────────────────────────────────────────
+      - alert: PoIESGammaStaleWarning
+        expr: |
+          (rate(animica_explorer_poies_gamma_emitted_total[15m]) == 0)
+          and (increase(animica_explorer_blocks_produced_total[15m]) > 0)
+        for: 10m
+        labels:
+          severity: warning
+          service: animica
+          component: consensus
+        annotations:
+          summary: "PoIES Γ emission is stale (warning)"
+          description: >
+            No Γ emission observed over the past 15 minutes while blocks advanced.
+            This may indicate a stuck epoch rollover, disabled Γ mint, or an
+            aggregator issue. Inspect node/consensus logs and recent blocks.
+
+      - alert: PoIESGammaStaleCritical
+        expr: |
+          (rate(animica_explorer_poies_gamma_emitted_total[60m]) == 0)
+          and (increase(animica_explorer_blocks_produced_total[60m]) > 0)
+        for: 10m
+        labels:
+          severity: critical
+          service: animica
+          component: consensus
+        annotations:
+          summary: "PoIES Γ emission is stale (critical)"
+          description: >
+            No Γ emission for ≥60 minutes despite block production. This is
+            likely a consensus configuration or accounting fault. Investigate
+            Θ/Γ schedules, recent upgrades, and explorer aggregator parity.
+
+      # ─────────────────────────────────────────────────────────────────────
+      # Mix diversity: if any non-hash proof type has ~zero share for 30m+
+      # while blocks are advancing, alert. Threshold is 1% average share.
+      # ─────────────────────────────────────────────────────────────────────
+      - alert: PoIESMixZeroShare
+        expr: |
+          avg_over_time(
+            animica_explorer_poies_mix_share_ratio{
+              type=~"ai|quantum|storage|vdf"
+            }[30m]
+          ) < 0.01
+          and (increase(animica_explorer_blocks_produced_total[30m]) >= 10)
+        for: 15m
+        labels:
+          severity: warning
+          service: animica
+          component: consensus
+        annotations:
+          summary: "PoIES mix has a near-zero share"
+          description: >
+            Proof type '{{ $labels.type }}' averaged <1% share over 30 minutes
+            while blocks advanced. This may be expected on tiny devnets, but on
+            public nets indicates lack of diversity (supply, policy, or DoS).
+            Check caps/Γ settings and provider availability.
+
+      # ─────────────────────────────────────────────────────────────────────
+      # Dominance guard: if one type dominates >95% over 30m, flag it.
+      # (Helps catch silent failures where others went to ~0%.)
+      # ─────────────────────────────────────────────────────────────────────
+      - alert: PoIESMixDominated
+        expr: |
+          max_over_time(animica_explorer_poies_mix_share_ratio[30m]) > 0.95
+          and (increase(animica_explorer_blocks_produced_total[30m]) >= 10)
+        for: 15m
+        labels:
+          severity: info
+          service: animica
+          component: consensus
+        annotations:
+          summary: "PoIES mix dominated by a single proof type"
+          description: >
+            A single proof type holds >95% share over 30 minutes. Verify that
+            caps/escort policies are configured and that alternative providers
+            are healthy.
+

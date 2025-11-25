@@ -1,0 +1,243 @@
+{
+  "app": {
+    "name": "Animica Wallet",
+    "tagline": "Post-quantum wallet for Animica networks"
+  },
+
+  "common": {
+    "ok": "OK",
+    "close": "Close",
+    "cancel": "Cancel",
+    "back": "Back",
+    "next": "Next",
+    "done": "Done",
+    "save": "Save",
+    "copy": "Copy",
+    "copied": "Copied!",
+    "edit": "Edit",
+    "refresh": "Refresh",
+    "show": "Show",
+    "hide": "Hide",
+    "loading": "Loading…",
+    "error": "Error",
+    "retry": "Retry",
+    "advanced": "Advanced",
+    "details": "Details"
+  },
+
+  "nav": {
+    "home": "Home",
+    "send": "Send",
+    "receive": "Receive",
+    "contracts": "Contracts",
+    "settings": "Settings"
+  },
+
+  "units": {
+    "symbol": "ANM",
+    "wei": "atto-ANM",
+    "gas": "gas"
+  },
+
+  "network": {
+    "network": "Network",
+    "selectNetwork": "Select network",
+    "current": "Current network",
+    "switch": "Switch Network",
+    "connected": "Connected to {{network}}",
+    "notConnected": "Not connected",
+    "chainId": "Chain ID",
+    "rpcUrl": "RPC URL",
+    "latency": "Latency",
+    "blockHeight": "Block Height",
+    "head": "Head"
+  },
+
+  "account": {
+    "account": "Account",
+    "selectAccount": "Select account",
+    "address": "Address",
+    "copyAddress": "Copy address",
+    "export": "Export",
+    "lock": "Lock Wallet",
+    "unlock": "Unlock",
+    "balance": "Balance",
+    "balances": "Balances",
+    "rename": "Rename account"
+  },
+
+  "home": {
+    "assets": "Assets",
+    "activity": "Activity",
+    "noTxs": "No transactions yet",
+    "recentTxs": "Recent Transactions"
+  },
+
+  "send": {
+    "title": "Send",
+    "from": "From",
+    "to": "To",
+    "amount": "Amount",
+    "maxFee": "Max Fee",
+    "gasLimit": "Gas Limit",
+    "nonce": "Nonce (auto)",
+    "data": "Data (hex, optional)",
+    "simulate": "Simulate",
+    "estGas": "Estimated Gas",
+    "insufficientBalance": "Insufficient balance",
+    "invalidAddress": "Invalid address",
+    "send": "Send",
+    "sending": "Sending…",
+    "submitted": "Transaction submitted",
+    "txHash": "Transaction Hash",
+    "viewInExplorer": "View in Explorer",
+    "estimateFailed": "Simulation or estimate failed"
+  },
+
+  "receive": {
+    "title": "Receive",
+    "scan": "Scan this QR to receive funds",
+    "yourAddress": "Your address",
+    "copyAddress": "Copy address"
+  },
+
+  "contracts": {
+    "title": "Contracts",
+    "contractAddress": "Contract Address",
+    "abi": "ABI",
+    "method": "Method",
+    "args": "Arguments",
+    "call": "Call (read)",
+    "sendTx": "Send Transaction (write)",
+    "result": "Result",
+    "logs": "Logs",
+    "invalidAbi": "Invalid ABI JSON",
+    "enterAddress": "Enter a contract address"
+  },
+
+  "settings": {
+    "title": "Settings",
+    "language": "Language",
+    "theme": "Theme",
+    "security": "Security",
+    "exportMnemonic": "Export Mnemonic",
+    "confirmExport": "Reveal your recovery phrase?",
+    "dangerZone": "Danger Zone",
+    "factoryReset": "Factory Reset",
+    "about": "About",
+    "version": "Version",
+    "developer": "Developer Options",
+    "subscriptions": "Background Subscriptions",
+    "enableTelemetry": "Share anonymous usage telemetry",
+    "lockNow": "Lock Now"
+  },
+
+  "onboarding": {
+    "welcome": {
+      "title": "Welcome to Animica Wallet",
+      "subtitle": "A post-quantum wallet for Animica networks",
+      "create": "Create a new wallet",
+      "import": "I already have a recovery phrase"
+    },
+    "createMnemonic": {
+      "title": "Recovery Phrase",
+      "intro": "Write these words down in order and keep them in a safe place. Anyone with this phrase can access your funds.",
+      "reveal": "Reveal Phrase",
+      "hide": "Hide Phrase",
+      "copy": "Copy Phrase",
+      "continue": "I've written it down"
+    },
+    "verifyMnemonic": {
+      "title": "Verify Phrase",
+      "instructions": "Enter your recovery phrase to confirm you saved it.",
+      "placeholder": "Type the words in order…",
+      "mismatch": "Phrase does not match",
+      "verify": "Verify"
+    },
+    "import": {
+      "title": "Import Wallet",
+      "instructions": "Paste your recovery phrase (words separated by spaces).",
+      "placeholder": "recovery phrase…",
+      "invalid": "That doesn't look like a valid phrase",
+      "import": "Import"
+    },
+    "finish": {
+      "title": "All set!",
+      "subtitle": "Your wallet is ready.",
+      "openWallet": "Open Wallet"
+    }
+  },
+
+  "approve": {
+    "windowTitle": "Approval Required",
+    "connect": {
+      "title": "Connect Request",
+      "requestingSite": "Requesting site",
+      "permissions": "Requested permissions",
+      "accounts": "Accounts",
+      "remember": "Remember this site",
+      "connect": "Connect",
+      "reject": "Reject"
+    },
+    "sign": {
+      "title": "Signature Request",
+      "domain": "Domain",
+      "chainId": "Chain ID",
+      "payload": "Payload",
+      "warning": "Only sign if you trust the site and understand the content.",
+      "sign": "Sign",
+      "reject": "Reject"
+    },
+    "tx": {
+      "title": "Transaction Request",
+      "from": "From",
+      "to": "To",
+      "value": "Value",
+      "data": "Data",
+      "fee": "Max Fee",
+      "gas": "Gas Limit",
+      "simulate": "Simulated Outcome",
+      "send": "Approve & Send",
+      "reject": "Reject"
+    }
+  },
+
+  "notifications": {
+    "newHead": "New block {{height}} on {{network}}",
+    "txConfirmed": "Transaction confirmed",
+    "txFailed": "Transaction failed",
+    "txSent": "Transaction submitted"
+  },
+
+  "provider": {
+    "connect": "Connect with Animica Wallet",
+    "connected": "Connected",
+    "disconnected": "Disconnected",
+    "accountsChanged": "Accounts changed",
+    "chainChanged": "Network changed"
+  },
+
+  "errors": {
+    "generic": "Something went wrong",
+    "network": "Network error",
+    "timeout": "Request timed out",
+    "rejected": "User rejected the request",
+    "unauthorized": "Unauthorized",
+    "invalidParams": "Invalid parameters",
+    "invalidAddress": "Invalid address",
+    "insufficientFunds": "Insufficient funds for fee",
+    "simulationFailed": "Simulation failed",
+    "notSupported": "Not supported on this network",
+    "providerMissing": "Animica provider not found",
+    "vaultLocked": "Wallet is locked",
+    "mnemonicRequired": "Recovery phrase required"
+  },
+
+  "txStatus": {
+    "pending": "Pending",
+    "included": "Included",
+    "confirmed": "Confirmed",
+    "failed": "Failed",
+    "replaced": "Replaced"
+  }
+}

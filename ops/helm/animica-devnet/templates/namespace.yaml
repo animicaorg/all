@@ -1,0 +1,31 @@
+{{-/*
+Namespace (optional)
+
+Creates a Namespace only when .Values.namespace.create is true.
+Name resolution:
+- If .Values.namespace.name is set, use it.
+- Otherwise default to .Release.Namespace.
+
+Custom labels/annotations can be provided via:
+  namespace:
+    labels: { team: core, env: dev }
+    annotations: { owner: "platform@animica.dev" }
+*/ -}}
+{{- if .Values.namespace.create }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ default .Release.Namespace .Values.namespace.name | quote }}
+  labels:
+    {{- /* base chart/app labels */ -}}
+    {{- include "animica-devnet.labels" (dict "ctx" . "component" "namespace") | nindent 4 }}
+    {{- /* kubernetes standard name label for discoverability */}}
+    kubernetes.io/metadata.name: {{ default .Release.Namespace .Values.namespace.name | quote }}
+    {{- with .Values.namespace.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.namespace.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

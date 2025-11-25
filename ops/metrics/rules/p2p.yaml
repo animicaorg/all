@@ -1,0 +1,195 @@
+# Prometheus alert rules — P2P health (gossip backpressure, RTT, dropped frames)
+# Assumed metrics exported by Animica P2P (rename if your build uses different names):
+#   - animica_p2p_ping_rtt_seconds_bucket{instance,le}                # histogram
+#   - animica_p2p_streams_total{instance}                             # gauge
+#   - animica_p2p_streams_backpressured{instance}                     # gauge (# streams with 0 credit)
+#   - animica_p2p_gossip_queue_fill_ratio{instance,topic}             # gauge in [0,1]
+#   - animica_p2p_frames_sent_total{instance}                         # counter
+#   - animica_p2p_frames_recv_total{instance}                         # counter
+#   - animica_p2p_frames_dropped_total{instance,reason}               # counter (with reason)
+#
+# Thresholds here target devnet/small testnets; tune for production SLOs.
+
+groups:
+  - name: p2p.rules
+    interval: 30s
+    rules:
+      # ──────────────────────────────────────────────────────────────────────────
+      # RTT latency (ping/pong)
+      - alert: P2PHighRTTP95Warning
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, instance) (rate(animica_p2p_ping_rtt_seconds_bucket[5m]))
+          ) > 0.4
+        for: 10m
+        labels:
+          severity: warning
+          component: p2p
+        annotations:
+          summary: "P2P p95 RTT > 400ms (5m)"
+          description: |
+            {{ $labels.instance }} p95 RTT = {{ $value | printf "%.3f" }}s over 10m.
+            Check network path, QUIC congestion, and peer distribution.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#p2p
+
+      - alert: P2PHighRTTP95Critical
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, instance) (rate(animica_p2p_ping_rtt_seconds_bucket[5m]))
+          ) > 1.0
+        for: 5m
+        labels:
+          severity: critical
+          component: p2p
+        annotations:
+          summary: "P2P p95 RTT > 1s (5m)"
+          description: |
+            {{ $labels.instance }} is seeing very high p95 RTT; gossip may fall behind and
+            header/blocks sync will slow. Investigate network saturation or bad peers.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#p2p
+
+      # ──────────────────────────────────────────────────────────────────────────
+      # Backpressure on streams (credit-exhausted / blocked sends)
+      - alert: P2PBackpressuredStreamsWarning
+        expr: |
+          (
+            sum by(instance) (animica_p2p_streams_backpressured)
+            /
+            clamp_min(sum by(instance) (animica_p2p_streams_total), 1)
+          ) > 0.20
+        for: 10m
+        labels:
+          severity: warning
+          component: p2p
+        annotations:
+          summary: "≥20% of P2P streams backpressured"
+          description: |
+            {{ $labels.instance }}: sustained stream backpressure indicates slow or overloaded peers.
+            Expect increased gossip latency and retry load.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#p2p
+
+      - alert: P2PBackpressuredStreamsCritical
+        expr: |
+          (
+            sum by(instance) (animica_p2p_streams_backpressured)
+            /
+            clamp_min(sum by(instance) (animica_p2p_streams_total), 1)
+          ) > 0.50
+        for: 5m
+        labels:
+          severity: critical
+          component: p2p
+        annotations:
+          summary: "≥50% of P2P streams backpressured"
+          description: |
+            {{ $labels.instance }}: severe backpressure; gossip may stall and block propagation will degrade.
+            Consider lowering publish rate, pruning poor peers, or scaling bandwidth.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#p2p
+
+      # Topic queues approaching capacity (per-topic queue fill ratio)
+      - alert: P2PGossipQueueNearCapacityWarning
+        expr: max by(instance, topic) (animica_p2p_gossip_queue_fill_ratio) > 0.80
+        for: 10m
+        labels:
+          severity: warning
+          component: p2p
+        annotations:
+          summary: "Gossip queue near capacity (>80%)"
+          description: |
+            {{ $labels.instance }} topic={{ $labels.topic }} queue fill ratio high.
+            Validate rate limits and pub/sub mesh health; consider widening buffers if safe.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#p2p
+
+      - alert: P2PGossipQueueNearCapacityCritical
+        expr: max by(instance, topic) (animica_p2p_gossip_queue_fill_ratio) > 0.95
+        for: 5m
+        labels:
+          severity: critical
+          component: p2p
+        annotations:
+          summary: "Gossip queue at capacity (>95%)"
+          description: |
+            {{ $labels.instance }} topic={{ $labels.topic }} queue saturated; messages may drop or be delayed.
+            Reduce publish volume or shed low-priority traffic.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#p2p
+
+      # ──────────────────────────────────────────────────────────────────────────
+      # Dropped frames — absolute rate and ratio vs total traffic
+      - alert: P2PFrameDropRateWarning
+        expr: rate(animica_p2p_frames_dropped_total[5m]) > 1
+        for: 10m
+        labels:
+          severity: warning
+          component: p2p
+        annotations:
+          summary: "Dropped frames > 1/s (5m)"
+          description: |
+            {{ $labels.instance }} is dropping frames at {{ $value | printf "%.2f" }}/s.
+            Inspect reasons and backpressure; check CPU/memory saturation.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#p2p
+
+      - alert: P2PFrameDropRateCritical
+        expr: rate(animica_p2p_frames_dropped_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: critical
+          component: p2p
+        annotations:
+          summary: "Dropped frames > 10/s (5m)"
+          description: |
+            {{ $labels.instance }} dropping frames aggressively; connectivity or overload issues likely.
+            Consider reducing gossip fanout or increasing resources.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#p2p
+
+      - alert: P2PFrameDropRatioWarning
+        expr: |
+          rate(animica_p2p_frames_dropped_total[5m])
+          /
+          clamp_min(
+            rate(animica_p2p_frames_sent_total[5m]) + rate(animica_p2p_frames_recv_total[5m]),
+            1e-3
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          component: p2p
+        annotations:
+          summary: "Frame drop ratio > 5% (5m)"
+          description: |
+            {{ $labels.instance }} is losing >5% of frames. Investigate transport errors and MTU/mss issues.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#p2p
+
+      - alert: P2PFrameDropRatioCritical
+        expr: |
+          rate(animica_p2p_frames_dropped_total[5m])
+          /
+          clamp_min(
+            rate(animica_p2p_frames_sent_total[5m]) + rate(animica_p2p_frames_recv_total[5m]),
+            1e-3
+          ) > 0.15
+        for: 5m
+        labels:
+          severity: critical
+          component: p2p
+        annotations:
+          summary: "Frame drop ratio > 15% (5m)"
+          description: |
+            {{ $labels.instance }} dropping a large fraction of frames; peer connectivity severely impaired.
+            Check packet loss, QoS policies, or overload.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#p2p
+
+      # Surface the dominant drop reason (informational triage)
+      - alert: P2PTopDropReasonInfo
+        expr: topk(1, sum by(reason) (rate(animica_p2p_frames_dropped_total[5m]))) > 2
+        for: 10m
+        labels:
+          severity: info
+          component: p2p
+        annotations:
+          summary: "Dominant P2P drop reason: {{ $labels.reason }}"
+          description: |
+            '{{ $labels.reason }}' averaging {{ $value | printf "%.2f" }} drops/sec (5m window).
+            Helps pinpoint whether drops stem from backpressure, decode_error, overflow, etc.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#p2p

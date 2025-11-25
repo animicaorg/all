@@ -1,0 +1,59 @@
+# ---------------------------
+# Animica Python Workspace
+# ---------------------------
+
+# Environments
+.venv/
+venv/
+.env
+.env.*
+.python-version
+
+# Python cache & bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+wheelhouse/
+
+# Test & coverage artifacts
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+
+# Linters / type checkers
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.pytype/
+.cache/
+
+# Editors / IDEs
+.idea/
+# Keep VS Code settings if you want to share workspace config.
+# Uncomment to ignore your local VS Code folder:
+#.vscode/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Logs & temp
+*.log
+*.tmp
+*.swp
+*.swo
+
+# Contracts-specific outputs
+contracts/build/
+contracts/.env
+contracts/.env.*

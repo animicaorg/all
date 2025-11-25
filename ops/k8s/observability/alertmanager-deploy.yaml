@@ -1,0 +1,143 @@
+# Alertmanager (vanilla, no Operator) for Animica devnet
+# - Uses ConfigMap "alertmanager-config" created in ops/k8s/configmaps/alertmanager.yml
+# - Exposes :9093 via a ClusterIP Service (Ingress/Gateway optional)
+# - Persists silences/inhibitions to a small PVC (optional but recommended)
+#
+# If your ConfigMap name or data key differs, update the volume "config" reference below.
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alertmanager
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: animica-alertmanager
+
+---
+# Persistent storage so silences survive pod restarts (safe to remove if undesired)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: alertmanager-data
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: animica-alertmanager
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
+  # storageClassName: standard   # uncomment/override if needed
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: animica-alertmanager
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: animica-alertmanager
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: animica
+      app.kubernetes.io/name: animica-alertmanager
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: animica
+        app.kubernetes.io/name: animica-alertmanager
+    spec:
+      serviceAccountName: alertmanager
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 65534
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.27.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--config.file=/etc/alertmanager/alertmanager.yml"
+            - "--storage.path=/alertmanager"
+            - "--web.listen-address=:9093"
+            - "--web.route-prefix=/"
+          ports:
+            - name: http
+              containerPort: 9093
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          volumeMounts:
+            - name: data
+              mountPath: /alertmanager
+            - name: config
+              mountPath: /etc/alertmanager/alertmanager.yml
+              subPath: alertmanager.yml
+              readOnly: true
+            # Optional: mount a templates directory if your config references it.
+            - name: templates-empty
+              mountPath: /etc/alertmanager/templates
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: alertmanager-data
+        - name: config
+          configMap:
+            name: alertmanager-config   # <-- must match ops/k8s/configmaps/alertmanager.yml
+            items:
+              - key: alertmanager.yml
+                path: alertmanager.yml
+        - name: templates-empty
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: animica-alertmanager
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: animica-alertmanager
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: animica-alertmanager
+  ports:
+    - name: http
+      port: 9093
+      targetPort: http
+      protocol: TCP

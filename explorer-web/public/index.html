@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="X-UA-Compatible"
+      content="IE=edge"
+    />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="description" content="Animica Explorer — live chain view with PoIES and AICF dashboards" />
+    <meta name="theme-color" content="#0b0f1a" />
+
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icons/favicon.ico" sizes="any" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <title>Animica Explorer</title>
+
+    <!-- Optional: preload app fonts if you host them. Keep commented by default. -->
+    <!-- <link rel="preload" href="/fonts/Inter/Inter-Variable.woff2" as="font" type="font/woff2" crossorigin> -->
+
+    <style>
+      /* Minimal safe defaults before the app CSS loads */
+      :root {
+        color-scheme: light dark;
+      }
+      html, body, #root {
+        height: 100%;
+      }
+      body {
+        margin: 0;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto,
+          Helvetica Neue, Arial, Noto Sans, "Apple Color Emoji", "Segoe UI Emoji",
+          "Segoe UI Symbol", sans-serif;
+        background: #0b0f1a;
+        color: #e8edf7;
+      }
+      .no-js {
+        padding: 1rem;
+        font-size: 0.95rem;
+        line-height: 1.5;
+        background: #111827;
+        color: #e5e7eb;
+      }
+      .no-js a { color: #93c5fd; }
+    </style>
+
+    <script>
+      // Apply dark mode early to avoid flash; prefers-color-scheme fallback
+      try {
+        const key = "animica.theme";
+        const saved = localStorage.getItem(key);
+        const shouldDark =
+          (saved ? saved === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.classList.toggle("dark", shouldDark);
+      } catch {}
+    </script>
+  </head>
+  <body>
+    <noscript>
+      <div class="no-js">
+        Animica Explorer requires JavaScript to run.
+        Please enable JavaScript, then reload this page.
+        View the project on <a href="https://github.com/" target="_blank" rel="noreferrer">GitHub</a>.
+      </div>
+    </noscript>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

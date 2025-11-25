@@ -1,0 +1,36 @@
+#!/bin/sh
+# Animica Wallet — Debian prerm (pre-removal) script
+# Keep this script minimal and non-interactive. We do not kill running GUI apps.
+# dpkg will remove packaged files; we only perform best-effort housekeeping if needed.
+
+set -e
+
+log() { printf '%s\n' "[animica-wallet prerm] $*"; }
+
+case "$1" in
+  remove)
+    # About to remove the package. Nothing special to do.
+    # Do NOT attempt to kill running processes; leave that to the user/DE.
+    :
+    ;;
+  upgrade)
+    # Package is being upgraded; no action required here.
+    :
+    ;;
+  deconfigure)
+    # Package is being deconfigured; nothing to do.
+    :
+    ;;
+  failed-upgrade)
+    # Previous upgrade failed; keep quiet and let dpkg proceed.
+    :
+    ;;
+  *)
+    # Unknown action — do nothing to remain robust.
+    :
+    ;;
+esac
+
+#DEBHELPER#
+
+exit 0

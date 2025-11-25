@@ -1,0 +1,146 @@
+; spec/blob_format.cddl
+; Canonical CBOR schema for Animica data blobs, commitments, and
+; Namespaced Merkle Tree (NMT) leaf/root rules that define the DA root.
+;
+; Deterministic CBOR REQUIRED:
+;  - Text keys, sorted bytewise
+;  - Definite-length items only
+;  - Minimal integer encoding
+;  - No floating point
+;
+; Hashing/signing domains in spec/domains.yaml (see DA_* entries).
+
+; ---------- Aliases ----------
+Hash32        = bstr .size 32
+NamespaceId   = bstr .size 8                  ; 64-bit namespace identifiers
+Codec         = &"raw" / &"zstd" / &"lz4"     ; on-wire blob compression codec
+Mime          = tstr                          ; optional descriptive type
+UIntTs        = uint
+
+; ---------- Blob envelope (client/server) ----------
+; This is the canonical envelope used by DA POST/GET services and local tools.
+; Chain consensus does NOT carry blob bytes; it commits to the per-block DA root
+; computed over namespaced, erasure-coded SHARES (see NMT & DA root rules below).
+BlobEnvelope = {
+  "v":           uint .default 1,
+  "ns":          NamespaceId,                 ; logical owner/application namespace
+  "size":        uint,                        ; original bytes length (pre-codec)
+  "codec":       Codec .default "raw",
+  ? "mime":      Mime,
+  "createdAt":   UIntTs,                      ; client timestamp (non-consensus)
+  ; Content is carried out-of-band (streamed). For integrity, we include an
+  ; optional preimage hash; it is NOT used in the DA root (shares are).
+  ? "preHash":   Hash32                       ; sha3-256(original-bytes)
+}
+
+; ---------- Blob commitment record (what txs/headers refer to) ----------
+; A BlobCommitment binds the namespace, erasure profile, and NMT commitment that
+; results from splitting the blob into SHARES → namespacing → NMT leaves.
+; This object (or a subset) is what transactions include as references.
+BlobCommitment = {
+  "ns":          NamespaceId,
+  "commit":      Hash32,                      ; NMT root over namespaced shares (the "blob commitment")
+  "size":        uint,                        ; original payload size
+  "shares":      uint,                        ; total extended shares (n)
+  "erasure":     ErasureParams,
+  "nmt":         NmtParams,
+  ? "mime":      Mime,
+  ? "codec":     Codec
+}
+
+; Minimal reference used inside transactions (see spec/tx_format.cddl).
+; This is the smallest consensus-carrying reference needed to later retrieve/verify.
+BlobRef = {
+  "ns":          NamespaceId,
+  "commit":      Hash32,
+  "size":        uint
+}
+
+; ---------- Erasure coding parameters ----------
+; Reed–Solomon over GF(2^8) unless overridden by params. Shares are fixed-size chunks.
+ErasureParams = {
+  "k":           uint,                        ; data shares
+  "n":           uint,                        ; total (data+parity) shares
+  "shareSize":   uint,                        ; bytes per share (pre-namespace prefix)
+  "code":       &"RS-255-2^8" .default "RS-255-2^8"
+}
+
+; ---------- NMT parameters ----------
+; Namespaced Merkle Tree with namespace-aware hashing and range proofs.
+NmtParams = {
+  "nsBytes":     uint .default 8,             ; MUST equal sizeof(NamespaceId)
+  "hash":       &"sha3-256" .default "sha3-256",
+  "leafPrefix":  bstr .size (1..16) .default h'4e4d54'   ; "NMT"
+}
+
+; ---------- Share & Leaf encoding (consensus critical) ----------
+; A BLOB is split into k data shares, then extended to n shares by erasure coding.
+; Each SHARE is embedded into an NMT LEAF with the following BYTES layout:
+;
+;   LEAF_BYTES = ns || len || data
+;
+; where:
+;   ns   = NamespaceId (exactly nsBytes bytes)
+;   len  = uvarint (LE) length of 'data' field in bytes (0..shareSize)
+;   data = raw share bytes (length exactly 'len')
+;
+; In CDDL we capture the semantic shape; the precise byte layout is normative
+; in this comment and spec/specs/NMT.md. The CBOR below wraps the same structure
+; for tooling and test vectors; the consensus hash is over the BYTES layout.
+ShareLeaf = {
+  "ns":   NamespaceId,
+  "len":  uint,                               ; MUST be ≤ shareSize
+  "data": bstr                                ; MUST be length=len
+}
+
+; ---------- DA root (per-block) ----------
+; The block’s DA root (Header.roots.da) is computed as:
+;   1) Concatenate all BLOBs posted in the block (in transaction order) into a
+;      flat sequence of SHARE LEAVES after erasure-extension (n shares per blob).
+;   2) For each share i, build LeafBytes_i = ns || uvarint(len) || data.
+;   3) Build an NMT over LeafBytes_i using NmtParams.hash and leafPrefix.
+;   4) The resulting NMT root is Header.roots.da.
+;
+; NOTE: A BlobCommitment.commit is the NMT root over JUST that blob’s share leaves.
+; When building the block DA root, we append all leaves from all blobs into one
+; larger NMT and take its root. Verification uses namespace-range proofs.
+
+; For schemas that need a structured DA root bundle (e.g., debugging/receipts):
+DARootBundle = {
+  "daRoot":      Hash32,                      ; must equal Header.roots.da
+  "nmt":         NmtParams,
+  "blobs":       [+ BlobCommitment]           ; in block order
+}
+
+; ---------- Proof objects (format pointers) ----------
+; Availability and namespace-range proofs are specified under da/schemas/*.
+; They are referenced here for completeness:
+;   - da/schemas/availability_proof.cddl
+;   - da/schemas/nmt.cddl
+;   - da/schemas/blob.cddl
+; Implementations MUST verify:
+;   - BlobRef.commit equals BlobCommitment.commit
+;   - BlobCommitment.commit is consistent with per-blob NMT over its shares
+;   - Header.roots.da equals NMT root over the concatenated share leaves
+
+; ---------- Invariants (not fully expressible in CDDL) ----------
+; I1) nmt.nsBytes == sizeof(NamespaceId) == 8.
+; I2) ErasureParams.n >= ErasureParams.k >= 1.
+; I3) For every ShareLeaf, 0 <= len <= shareSize.
+; I4) Share order is stable: within a blob, shares are indexed 0..n-1; across blobs,
+;     block order is by transaction position (ties resolved deterministically).
+; I5) The BYTES layout (ns || uvarint(len) || data) is the hashing preimage.
+;     The CBOR shapes here are for inspection and tests only.
+; I6) Namespace separation: when building the NMT, internal node namespace
+;     ranges are derived per NMT construction rules (see da/specs/NMT.md).
+
+; ---------- Convenience (non-consensus) receipts ----------
+; DA services MAY return this receipt to callers; it is not part of the block body.
+BlobPostReceipt = {
+  "commit":      Hash32,
+  "ns":          NamespaceId,
+  "size":        uint,
+  "erasure":     ErasureParams,
+  "nmt":         NmtParams,
+  "time":        UIntTs
+}

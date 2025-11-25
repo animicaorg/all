@@ -1,0 +1,38 @@
+{
+  "name": "{{project_slug}}",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lightweight, framework-free Animica Explorer Embeds (builds dist/embed.js for drop-in use).",
+  "license": "MIT",
+  "author": "",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "dist/embed.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 5173",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.0",
+    "vite": "^5.2.0"
+  },
+  "keywords": [
+    "animica",
+    "embeds",
+    "widgets",
+    "blockchain",
+    "explorer",
+    "rpc",
+    "websocket"
+  ],
+  "packageManager": "npm@10"
+}

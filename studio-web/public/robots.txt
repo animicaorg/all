@@ -1,0 +1,13 @@
+# Animica Studio robots policy
+# This is a client-only web app (no server-side signing). There are no sensitive routes to crawl.
+
+User-agent: *
+Allow: /
+
+# Prevent indexing of dev-only Vite endpoints and source maps.
+Disallow: /__vite_ping
+Disallow: /@vite
+Disallow: /*.map$
+
+# Optional: add a sitemap URL if you host one alongside the app.
+# Sitemap: https://your-domain.example/sitemap.xml

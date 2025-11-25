@@ -1,0 +1,328 @@
+{
+  "title": "Animica — Explorer API",
+  "uid": "animica-explorer",
+  "timezone": "browser",
+  "schemaVersion": 36,
+  "version": 1,
+  "refresh": "10s",
+  "style": "dark",
+  "editable": true,
+  "tags": ["explorer", "api", "animica"],
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["5s", "10s", "30s", "1m", "5m"],
+    "hidden": false
+  },
+  "annotations": {
+    "list": [
+      { "type": "dashboard", "name": "Annotations & Alerts", "enable": true }
+    ]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "ds",
+        "type": "datasource",
+        "query": "prometheus",
+        "label": "Datasource",
+        "current": {}
+      },
+      {
+        "name": "job",
+        "type": "query",
+        "datasource": "$ds",
+        "label": "explorer job",
+        "refresh": 1,
+        "query": "label_values(animica_explorer_http_requests_total, job)"
+      },
+      {
+        "name": "instance",
+        "type": "query",
+        "datasource": "$ds",
+        "label": "instance",
+        "refresh": 1,
+        "query": "label_values(animica_explorer_http_requests_total{job=\"$job\"}, instance)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".+"
+      },
+      {
+        "name": "node_job",
+        "type": "query",
+        "datasource": "$ds",
+        "label": "node job",
+        "refresh": 2,
+        "query": "label_values(animica_node_head_height, job)"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "HTTP requests — /s",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 5, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(instance) (rate(animica_explorer_http_requests_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "justifyMode": "center" }
+    },
+    {
+      "type": "stat",
+      "title": "HTTP error rate",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 5, "x": 5, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * (sum by(instance) (rate(animica_explorer_http_requests_total{job=\"$job\",instance=~\"$instance\",result!=\"ok\"}[$__rate_interval])) / sum by(instance) (rate(animica_explorer_http_requests_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "orange", "value": 0.02 },
+              { "color": "red", "value": 0.05 }
+            ]
+          }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "Cache hit rate",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 5, "x": 10, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(instance) (rate(animica_explorer_cache_requests_total{job=\"$job\",instance=~\"$instance\",result=\"hit\"}[$__rate_interval])) / sum by(instance) (rate(animica_explorer_cache_requests_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": 0 },
+              { "color": "orange", "value": 0.6 },
+              { "color": "green", "value": 0.85 }
+            ]
+          }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "WS clients connected",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 4, "x": 15, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "sum by(instance) (animica_explorer_ws_connections{job=\"$job\",instance=~\"$instance\"})" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "WS disconnects — /s",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 5, "x": 19, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "sum by(instance) (rate(animica_explorer_ws_disconnects_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "HTTP request rate by route",
+      "datasource": "$ds",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{route}}", "expr": "sum by(route) (rate(animica_explorer_http_requests_total{job=\"$job\",instance=~\"$instance\",result=\"ok\"}[$__rate_interval]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "HTTP latency (overall) — p95 / p50",
+      "datasource": "$ds",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "p95",
+          "expr": "1000 * histogram_quantile(0.95, sum by(le) (rate(animica_explorer_http_request_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "p50",
+          "expr": "1000 * histogram_quantile(0.50, sum by(le) (rate(animica_explorer_http_request_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms", "min": 0 } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+
+    {
+      "type": "bargauge",
+      "title": "Top routes by p95 latency (ms)",
+      "datasource": "$ds",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 13 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(6, 1000 * histogram_quantile(0.95, sum by(le,route) (rate(animica_explorer_http_request_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms", "min": 0 } },
+      "options": { "displayMode": "lcd", "orientation": "horizontal" }
+    },
+    {
+      "type": "bargauge",
+      "title": "Top routes by throughput (req/s)",
+      "datasource": "$ds",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 13 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(6, sum by(route) (rate(animica_explorer_http_requests_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "displayMode": "gradient", "orientation": "horizontal" }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "WS broadcast rate & clients",
+      "datasource": "$ds",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "targets": [
+        { "refId": "A", "legendFormat": "broadcast /s", "expr": "sum by(instance) (rate(animica_explorer_ws_broadcast_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" },
+        { "refId": "B", "legendFormat": "clients", "expr": "sum by(instance) (animica_explorer_ws_connections{job=\"$job\",instance=~\"$instance\"})" }
+      ],
+      "fieldConfig": { "defaults": { "min": 0 } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Response size (overall) — p95 / p50",
+      "datasource": "$ds",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "p95",
+          "expr": "histogram_quantile(0.95, sum by(le) (rate(animica_explorer_http_response_bytes_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "p50",
+          "expr": "histogram_quantile(0.50, sum by(le) (rate(animica_explorer_http_response_bytes_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes", "min": 0 } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+
+    {
+      "type": "stat",
+      "title": "Explorer head height",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 28 },
+      "targets": [
+        { "refId": "A", "expr": "max by(instance) (animica_explorer_head_height{job=\"$job\",instance=~\"$instance\"})" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "min": 0 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "Head lag vs node (blocks)",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 28 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max(animica_node_head_height{job=\"$node_job\"}) - max(animica_explorer_head_height{job=\"$job\",instance=~\"$instance\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": 0 },
+              { "color": "orange", "value": 1 },
+              { "color": "red", "value": 3 }
+            ]
+          }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "RPC upstream health",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 28 },
+      "targets": [
+        { "refId": "A", "expr": "max by(instance) (animica_explorer_rpc_up{job=\"$job\",instance=~\"$instance\"})" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bool",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": 0 },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "timeseries",
+      "title": "RPC call latency to node (ms) — p95 / p50",
+      "datasource": "$ds",
+      "gridPos": { "h": 8, "w": 12, "x": 18, "y": 28 },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "p95",
+          "expr": "1000 * histogram_quantile(0.95, sum by(le) (rate(animica_explorer_rpc_call_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "p50",
+          "expr": "1000 * histogram_quantile(0.50, sum by(le) (rate(animica_explorer_rpc_call_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms", "min": 0 } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    }
+  ]
+}

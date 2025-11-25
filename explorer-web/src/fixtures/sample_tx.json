@@ -1,0 +1,55 @@
+{
+  "hash": "0x3f3b1d2c9a8e7f6d5c4b3a291807060504030201ffeeddccbbaa998877665544",
+  "type": "call",
+  "chainId": "omni-devnet",
+  "from": "omni1p4k3h9p8h5qz66u7n2f0t9c3j6a8r4y5x2v9t0",
+  "to": "omni1cntcounterxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxe7u0",
+  "nonce": 102,
+  "value": "0",
+  "gasLimit": 120000,
+  "maxFeePerGas": 1,
+  "maxPriorityFeePerGas": 0,
+  "data": "0x", 
+  "call": {
+    "method": "inc",
+    "args": []
+  },
+  "signature": {
+    "algo": "dilithium3",
+    "pubKey": "0x04b1f2c3d4e5f60718293a4b5c6d7e8f9012233445566778899aabbccddeeff00",
+    "sig": "0x9f9e8d7c6b5a4938271605f4e3d2c1b0ffeeddccbbaa99887766554433221100"
+  },
+  "blockHash": "0x6f5c2a3a4b9d9b1f0d8e7c6b5a49281726354433221100ffeeddccbbaa998877",
+  "blockHeight": 123456,
+  "index": 1,
+  "timestamp": "2025-01-01T00:00:01Z",
+  "receipt": {
+    "status": "success",
+    "gasUsed": 85000,
+    "cumulativeGasUsed": 397000,
+    "effectiveGasPrice": 1,
+    "logs": [
+      {
+        "index": 0,
+        "address": "omni1cntcounterxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxe7u0",
+        "event": "Increased",
+        "topics": [
+          "0x9999999999999999999999999999999999999999999999999999999999999999"
+        ],
+        "data": {
+          "by": 1,
+          "newValue": 1
+        }
+      }
+    ]
+  },
+  "decoded": {
+    "method": "inc",
+    "args": [],
+    "returns": null
+  },
+  "meta": {
+    "explorerUrl": null,
+    "notes": "Sample counter.increment() transaction on devnet"
+  }
+}

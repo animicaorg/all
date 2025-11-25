@@ -1,0 +1,373 @@
+{
+  "__inputs": [],
+  "__elements": [],
+  "__requires": [],
+  "id": null,
+  "uid": "indexer-lite-overview",
+  "title": "{{ project_slug }} — Indexer Lite Overview",
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "liveNow": false,
+  "refresh": "5s",
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {
+    "hidden": false,
+    "nowDelay": "",
+    "refresh_intervals": ["5s","10s","15s","30s","1m","5m","15m","30m","1h"],
+    "time_options": ["5m","15m","1h","6h","12h","24h","2d","7d","30d"]
+  },
+  "tags": ["indexer", "clickhouse", "animica"],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "ch",
+        "label": "ClickHouse",
+        "type": "datasource",
+        "query": "clickhouse",
+        "refresh": 2,
+        "current": {},
+        "hide": 0
+      },
+      {
+        "name": "miner",
+        "label": "Miner",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "$ch"
+        },
+        "definition": "SELECT DISTINCT miner FROM blocks ORDER BY miner LIMIT 1000",
+        "query": "SELECT DISTINCT miner FROM blocks ORDER BY miner LIMIT 1000",
+        "refresh": 2,
+        "hide": 0,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Head Block",
+      "description": "Latest observed canonical block number in ClickHouse (by max(blocks.number)).",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "$ch" },
+      "targets": [
+        {
+          "format": "table",
+          "query": "SELECT max(number) AS head FROM blocks WHERE timestamp >= now() - INTERVAL 30 DAY",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "horizontal",
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Head Lag (s)",
+      "description": "Staleness = now() - max(blocks.timestamp). Lower is better.",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "$ch" },
+      "targets": [
+        {
+          "format": "table",
+          "query": "SELECT toUInt32(dateDiff('second', max(timestamp), now())) AS head_lag_s FROM blocks WHERE timestamp >= now() - INTERVAL 7 DAY",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "horizontal",
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 60 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Avg Ingest Lag (s, 15m)",
+      "description": "Average over last 15 minutes of dateDiff(second, timestamp, ingested_at).",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "$ch" },
+      "targets": [
+        {
+          "format": "table",
+          "query": "SELECT avg(dateDiff('second', timestamp, ingested_at)) AS ingest_lag_s FROM blocks WHERE ingested_at >= now() - INTERVAL 15 MINUTE",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "horizontal",
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 20 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Blocks / minute",
+      "description": "Count of blocks per minute from blocks.timestamp.",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 6 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "$ch" },
+      "fieldConfig": {
+        "defaults": { "unit": "opsm", "decimals": 0, "mappings": [], "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "query": "SELECT toStartOfMinute(timestamp) AS t, count() AS blocks FROM blocks WHERE $__timeFilter(timestamp) GROUP BY t ORDER BY t",
+          "refId": "A",
+          "interval": ""
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Transactions / minute",
+      "description": "Sum(blocks.tx_count) per minute. Good proxy for throughput.",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 6 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "$ch" },
+      "fieldConfig": {
+        "defaults": { "unit": "opsm", "mappings": [], "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "query": "SELECT toStartOfMinute(timestamp) AS t, sum(tx_count) AS txs FROM blocks WHERE $__timeFilter(timestamp) GROUP BY t ORDER BY t",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Avg Gas Used per Block",
+      "description": "Average gas_used across blocks per minute (gas stored as text; parsed to Int64).",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 6 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "$ch" },
+      "fieldConfig": {
+        "defaults": { "unit": "none", "mappings": [], "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] } },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "query": "SELECT toStartOfMinute(timestamp) AS t, avg(toInt64OrNull(gas_used)) AS avg_gas_used FROM blocks WHERE $__timeFilter(timestamp) GROUP BY t ORDER BY t",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Top Producers (blocks)",
+      "description": "Top miners by block production in time range.",
+      "gridPos": { "h": 9, "w": 8, "x": 0, "y": 14 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "$ch" },
+      "fieldConfig": { "defaults": { "custom": { "displayMode": "auto" } }, "overrides": [] },
+      "options": { "showHeader": true, "footer": { "show": false } },
+      "targets": [
+        {
+          "format": "table",
+          "refId": "A",
+          "query": "SELECT miner, count() AS blocks FROM blocks WHERE $__timeFilter(timestamp) GROUP BY miner ORDER BY blocks DESC LIMIT 10"
+        }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "": true } } }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Top Contracts / Methods (calls)",
+      "description": "Most-invoked methods (from txs.method_sig) over the selected interval.",
+      "gridPos": { "h": 9, "w": 8, "x": 8, "y": 14 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "$ch" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true, "footer": { "show": false } },
+      "targets": [
+        {
+          "format": "table",
+          "refId": "A",
+          "query": "SELECT method_sig, count() AS calls FROM txs WHERE $__timeFilter(ingested_at) GROUP BY method_sig ORDER BY calls DESC LIMIT 15"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Active Addresses / minute (from + to)",
+      "description": "Uniq(from_addr) + uniq(to_addr) each minute based on txs.ingested_at.",
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 14 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "$ch" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "refId": "A",
+          "query": "SELECT toStartOfMinute(ingested_at) AS t, (uniqExact(from_addr) + uniqExact(to_addr)) AS active_addrs FROM txs WHERE $__timeFilter(ingested_at) GROUP BY t ORDER BY t"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Tx Success vs Failure / minute",
+      "description": "Derived from txs.status (1=success, 0=failure).",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 23 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "$ch" },
+      "fieldConfig": { "defaults": { "unit": "opsm" }, "overrides": [] },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "refId": "A",
+          "query": "SELECT toStartOfMinute(ingested_at) AS t, sumIf(1, status = 1) AS success, sumIf(1, status = 0) AS failed FROM txs WHERE $__timeFilter(ingested_at) GROUP BY t ORDER BY t"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Indexer → ClickHouse Ingest Lag (s)",
+      "description": "Average per minute of dateDiff(second, timestamp, ingested_at) from blocks.",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 23 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "$ch" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "refId": "A",
+          "query": "SELECT toStartOfMinute(ingested_at) AS t, avg(dateDiff('second', timestamp, ingested_at)) AS lag_s FROM blocks WHERE $__timeFilter(ingested_at) GROUP BY t ORDER BY t"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Recent Blocks (last 50)",
+      "description": "Handy tail: number, timestamp, tx_count, miner.",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 32 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "$ch" },
+      "options": { "showHeader": true, "footer": { "show": false } },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [
+        {
+          "format": "table",
+          "refId": "A",
+          "query": "SELECT number, timestamp, tx_count, miner, left(hash, 18) || '…' AS hash_short, left(parent_hash, 18) || '…' AS parent_short FROM blocks WHERE $__timeFilter(timestamp) ORDER BY number DESC LIMIT 50"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "": true },
+            "indexByName": {},
+            "renameByName": {
+              "number": "Block",
+              "timestamp": "Time",
+              "tx_count": "Txs",
+              "miner": "Producer",
+              "hash_short": "Hash",
+              "parent_short": "Parent"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "links": [
+    {
+      "type": "link",
+      "title": "Docs: Indexer Lite schema",
+      "url": "https://example.com/docs/indexer-lite-schema",
+      "targetBlank": true
+    }
+  ]
+}

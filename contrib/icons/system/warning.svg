@@ -1,0 +1,11 @@
+<!-- Animica System Icon: warning -->
+<svg width="24" height="24" viewBox="0 0 24 24" role="img" aria-labelledby="title" xmlns="http://www.w3.org/2000/svg">
+  <title id="title">Warning</title>
+  <g fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">
+    <!-- Triangle -->
+    <path d="M12 3l9 16H3L12 3z"/>
+    <!-- Exclamation -->
+    <path d="M12 9v5"/>
+  </g>
+  <circle cx="12" cy="17" r="1" fill="currentColor"/>
+</svg>

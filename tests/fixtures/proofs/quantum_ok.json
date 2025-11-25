@@ -1,0 +1,50 @@
+{
+  "schema": "animica.proofs.quantum.fixture.v1",
+  "description": "Valid QuantumProof fixture: provider attested, trap-circuit pass ratio high, QoS solid → positive ψ inputs.",
+  "envelope": {
+    "type": "QuantumProof",
+    "nullifier": "0x0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+    "signature_alg": "dilithium3",
+    "signature": "0x"
+  },
+  "body": {
+    "headerHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "provider": {
+      "id": "qpu-dev-01",
+      "address": "anim1provider0000000000000000000000000000000",
+      "certDigest": "0x7777777777777777777777777777777777777777777777777777777777777777"
+    },
+    "job": {
+      "taskId": "0x8888888888888888888888888888888888888888888888888888888888888888",
+      "circuitDigest": "0x9999999999999999999999999999999999999999999999999999999999999999",
+      "shots": 2048,
+      "width": 16,
+      "depth": 64
+    },
+    "attestation": {
+      "qpu": "example-qpu-v1",
+      "hardware": "superconducting",
+      "calibrationDigest": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "traps": {
+      "passed": 92,
+      "total": 100
+    },
+    "qos": {
+      "latencyMs": 2200,
+      "availability": 0.998,
+      "redundancy": 2
+    },
+    "metrics": {
+      "quantumUnits": 128,
+      "trapsRatio": 0.92,
+      "qosScore": 0.98
+    },
+    "createdAt": "2025-10-02T00:00:06Z",
+    "accepted": true
+  },
+  "notes": [
+    "Deterministic devnet sample with strong traps pass ratio and high QoS.",
+    "Structure mirrors AI fixture for symmetry; signatures are empty by design for structure-focused tests."
+  ]
+}

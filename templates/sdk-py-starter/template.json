@@ -1,0 +1,62 @@
+{
+  "$schema": "../schemas/template.schema.json",
+  "id": "sdk-py-starter",
+  "name": "Python SDK Starter",
+  "version": "1.0.0",
+  "description": "Bootstrap a Python project that uses the Animica Python SDK to connect to a node, send transactions, subscribe to new heads, interact with contracts, and run simple end-to-end examples.",
+  "license": "Apache-2.0",
+  "tags": ["python", "sdk", "cli", "examples", "templates"],
+  "engine": {
+    "min_version": "1.0.0"
+  },
+  "variables": { "$ref": "variables.json" },
+
+  "render": {
+    "copy": [
+      ["_common/LICENSE", "{{project_slug}}/LICENSE"],
+      ["_common/.editorconfig", "{{project_slug}}/.editorconfig"],
+      ["_common/ci/github/build.yml", "{{project_slug}}/.github/workflows/build.yml"],
+      ["_common/ci/github/release.yml", "{{project_slug}}/.github/workflows/release.yml"],
+      ["_common/linters/ruff.toml", "{{project_slug}}/ruff.toml"],
+      ["_common/linters/mypy.ini", "{{project_slug}}/mypy.ini"],
+      ["_common/scripts/format.sh", "{{project_slug}}/scripts/format.sh"],
+      ["_common/scripts/test.sh", "{{project_slug}}/scripts/test.sh"],
+      ["_common/.vscode/extensions.json", "{{project_slug}}/.vscode/extensions.json"],
+      ["_common/.vscode/settings.json", "{{project_slug}}/.vscode/settings.json"]
+    ],
+
+    "template": [
+      "README.md",
+      "{{project_slug}}/.gitignore",
+      "{{project_slug}}/.env.example",
+      "{{project_slug}}/pyproject.toml",
+      "{{project_slug}}/requirements.txt",
+
+      "{{project_slug}}/src/{{package_name}}/__init__.py",
+      "{{project_slug}}/src/{{package_name}}/client.py",
+
+      "{{project_slug}}/src/{{package_name}}/examples/__init__.py",
+      "{{project_slug}}/src/{{package_name}}/examples/deploy_counter.py",
+      "{{project_slug}}/src/{{package_name}}/examples/subscribe_new_heads.py",
+      "{{project_slug}}/src/{{package_name}}/examples/send_transfer.py",
+
+      "{{project_slug}}/scripts/venv.sh",
+      "{{project_slug}}/scripts/run_examples.py",
+
+      "{{project_slug}}/tests/__init__.py",
+      "{{project_slug}}/tests/test_rpc_roundtrip.py"
+    ]
+  },
+
+  "hooks": {
+    "post": [
+      "chmod +x {{dest}}/{{project_slug}}/scripts/*.sh || true"
+    ]
+  },
+
+  "notes": [
+    "After rendering, run 'cd {{project_slug}} && ./scripts/venv.sh' to create a virtualenv and install dependencies.",
+    "Set RPC_URL and CHAIN_ID in .env (copied from .env.example) to point at your devnet or testnet.",
+    "Try: 'python -m {{package_name}}.examples.deploy_counter' to deploy the sample Counter contract using the SDK."
+  ]
+}

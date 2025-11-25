@@ -1,0 +1,64 @@
+{{-/*
+ConfigMap: P2P bootstrap seeds
+
+Emits two data keys for convenience:
+- data.seeds.txt   -> one seed per line (host:port or multiaddr)
+- data.seeds.json  -> JSON array of seed strings
+
+Sources (priority per format):
+TXT:
+  1) .Values.seeds.fileTxt  (bundled file via .Files.Get)
+  2) .Values.seeds.list     (array in values)
+  3) fallback sample seeds
+JSON:
+  1) .Values.seeds.fileJson (bundled file via .Files.Get)
+  2) .Values.seeds.list     (array in values)
+  3) fallback sample seeds
+
+Other options:
+- .Values.seeds.annotations   -> add annotations to the ConfigMap
+- .Values.seeds.immutable     -> set immutable: true (K8s ≥1.19)
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "animica-devnet.fullname" . }}-seeds
+  labels:
+    {{- include "animica-devnet.labels" (dict "ctx" . "component" "seeds") | nindent 4 }}
+  {{- with .Values.seeds.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- if hasKey .Values.seeds "immutable" }}
+immutable: {{ .Values.seeds.immutable | default false }}
+{{- end }}
+data:
+  seeds.txt: |-
+    {{- if .Values.seeds.fileTxt }}
+    {{- /* Load a plaintext file with one seed per line */ -}}
+    {{- .Files.Get .Values.seeds.fileTxt | nindent 4 }}
+    {{- else if .Values.seeds.list }}
+    {{- /* Render the list as lines */ -}}
+    {{- range $i, $s := .Values.seeds.list }}
+    {{ $s }}
+    {{- end }}
+    {{- else }}
+    # Fallback sample seeds (devnet)
+    seed-1.animica.dev:46000
+    seed-2.animica.dev:46000
+    seed-3.animica.dev:46000
+    {{- end }}
+
+  seeds.json: |-
+    {{- if .Values.seeds.fileJson }}
+    {{- /* Load a JSON array from a bundled file */ -}}
+    {{- .Files.Get .Values.seeds.fileJson | nindent 4 }}
+    {{- else if .Values.seeds.list }}
+    [
+    {{- range $i, $s := .Values.seeds.list }}
+      {{- if $i }},{{ end }}"{{ $s }}"
+    {{- end }}
+    ]
+    {{- else }}
+    ["seed-1.animica.dev:46000","seed-2.animica.dev:46000","seed-3.animica.dev:46000"]
+    {{- end }}

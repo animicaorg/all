@@ -1,0 +1,29 @@
+<!-- Animica Badge: App Store (placeholder)
+     NOTE: For production, use Apple's official badge and follow their HIG/licensing.
+     This is a neutral placeholder with generic glyph + text. -->
+<svg width="180" height="54" viewBox="0 0 180 54" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Download on the App Store (Placeholder)</title>
+  <desc id="desc">Generic App Store-style badge; replace with official Apple asset before release.</desc>
+
+  <!-- Badge background -->
+  <rect x="0.5" y="0.5" width="179" height="53" rx="12" fill="#111" stroke="#222"/>
+
+  <!-- Generic "app" glyph (NOT Apple logo) -->
+  <g transform="translate(12,10)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="0" y="0" width="34" height="34" rx="8"/>
+    <!-- Stylized 'A' -->
+    <path d="M8 26 L17 8 L26 26"/>
+    <line x1="11" y1="20" x2="23" y2="20"/>
+  </g>
+
+  <!-- Text -->
+  <g fill="#fff">
+    <text x="54" y="20" font-family="Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif"
+          font-size="12" letter-spacing=".2">Download on the</text>
+    <text x="54" y="38" font-family="Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif"
+          font-weight="700" font-size="20" letter-spacing="-.2">App Store</text>
+  </g>
+
+  <!-- Focus ring (hidden by default; show via CSS if needed) -->
+  <rect x="3" y="3" width="174" height="48" rx="10" fill="none" stroke="#5B8CFF" stroke-width="2" opacity="0"/>
+</svg>

@@ -1,0 +1,200 @@
+# Promtail pipeline for Animica miner logs.
+# - Handles container (CRI/Docker) prefixes
+# - Parses structured JSON miner logs first (preferred)
+# - Falls back to regex for common plaintext miner/stratum lines
+# - Normalizes timestamp and log level
+# - Promotes low-cardinality attributes (backend/device/worker/result) to labels
+# - Leaves high-cardinality values (nonce, job/template ids) out of labels
+# - Uses "msg" (or fallback) as the rendered line
+#
+# Example JSON line:
+# {"time":"2025-01-01T00:00:00Z","level":"info","component":"miner","backend":"cpu","device":"cpu0",
+#  "worker":"w0","threads":8,"hashrate_hs":12500000,"msg":"scanning","session_id":"abc123"}
+#
+# Example plaintext lines:
+#  - "miner: hashrate=12.5 MH/s backend=cpu device=cpu0 threads=8"
+#  - "share found: ratio=1.23 diff=24.1 result=accepted latency=42ms job=0xabc template=0xdef"
+#  - "stratum submit: result=rejected reason=stale job=0xabc latency=85ms"
+#
+# Include from your promtail scrape job:
+# scrape_configs:
+#   - job_name: animica-miner
+#     pipeline_stages:
+#       - include: /etc/promtail/pipelines/miner.yaml
+#     static_configs: ...
+
+pipeline_stages:
+  # Handle Kubernetes CRI or Docker-prefixed logs (no-op if not applicable).
+  - cri: {}
+  - docker: {}
+
+  # Parse structured JSON logs (preferred).
+  - json:
+      expressions:
+        time: time
+        ts: ts
+        level: level
+        msg: msg
+        message: message
+        component: component
+        module: module
+
+        # Miner-specific fields (optional, extracted if present)
+        backend: backend            # cpu|cuda|rocm|opencl|metal|mock
+        device: device              # "cpu0", "cuda0", "rx-6800", etc.
+        worker: worker              # logical worker name
+        thread_id: thread_id
+        threads: threads
+        session_id: session_id
+        pool: pool                  # stratum addr/url if present
+        job_id: job_id
+        template_id: template_id
+        hashrate_hs: hashrate_hs    # numeric hashes/sec
+        hashrate: hashrate          # string "12.5 MH/s"
+        ratio: ratio                # share difficulty ratio vs Θ
+        diff: diff                  # share difficulty (if reported)
+        result: result              # accepted|rejected
+        reason: reason              # reject reason
+        latency_ms: latency_ms
+        latency: latency
+        target: target
+        theta: theta
+        vdf_seconds: vdf_seconds
+
+  # Timestamp: prefer "time", then "ts"; skip if missing.
+  - timestamp:
+      source: time
+      format: RFC3339Nano
+      action_on_failure: skip
+  - timestamp:
+      source: ts
+      format: RFC3339Nano
+      action_on_failure: skip
+
+  # Normalize log level (warning → warn), case-insensitive.
+  - replace:
+      source: level
+      expression: '(?i)^warning$'
+      replace: warn
+
+  # ==== PLAINTEXT FALLBACK PARSERS ===========================================
+  # Parse typical "hashrate=.. unit" lines (only if msg/message empty).
+  - regex:
+      expression: '.*(?:^| )hashrate=(?P<ph_hashrate_val>[0-9]+(?:\.[0-9]+)?)\s*(?P<ph_hashrate_unit>(?:[kMGT]?H|[kMGT]?h)\/s)\b.*'
+      source: log
+  - regex:
+      expression: '.*(?:^| )backend=(?P<ph_backend>[a-zA-Z0-9_-]+).*'
+      source: log
+  - regex:
+      expression: '.*(?:^| )device=(?P<ph_device>[a-zA-Z0-9_.:-]+).*'
+      source: log
+  - regex:
+      expression: '.*(?:^| )threads?=(?P<ph_threads>[0-9]+).*'
+      source: log
+
+  # Parse "share found" or "stratum submit" plaintext lines.
+  - regex:
+      expression: '.*share (?:found|submit):.*(?:^| )ratio=(?P<ph_ratio>[0-9]+(?:\.[0-9]+)?)'
+      source: log
+  - regex:
+      expression: '.*(?:^| )diff(?:iculty)?=(?P<ph_diff>[0-9]+(?:\.[0-9]+)?)'
+      source: log
+  - regex:
+      expression: '.*(?:^| )result=(?P<ph_result>accepted|rejected)'
+      source: log
+  - regex:
+      expression: '.*(?:^| )reason=(?P<ph_reason>[a-zA-Z0-9_-]+)'
+      source: log
+  - regex:
+      expression: '.*(?:^| )latency=(?P<ph_latency_ms>[0-9]+)ms'
+      source: log
+  - regex:
+      expression: '.*(?:^| )pool=(?P<ph_pool>\S+)'
+      source: log
+
+  # ==== SYNTHESIZED/DEFAULTED FIELDS =========================================
+  - template:
+      source: component_norm
+      template: '{{ if .component }}{{ .component }}{{ else if .module }}{{ .module }}{{ else }}miner{{ end }}'
+  - template:
+      source: backend_norm
+      template: '{{ if .backend }}{{ .backend }}{{ else if .ph_backend }}{{ .ph_backend }}{{ else }}unknown{{ end }}'
+  - template:
+      source: device_norm
+      template: '{{ if .device }}{{ .device }}{{ else if .ph_device }}{{ .ph_device }}{{ else }}unknown{{ end }}'
+  - template:
+      source: worker_norm
+      template: '{{ if .worker }}{{ .worker }}{{ else if .thread_id }}t{{ .thread_id }}{{ else }}default{{ end }}'
+  - template:
+      source: result_norm
+      template: '{{ if .result }}{{ .result }}{{ else if .ph_result }}{{ .ph_result }}{{ else }}-{{ end }}'
+  - template:
+      source: pool_norm
+      template: '{{ if .pool }}{{ .pool }}{{ else if .ph_pool }}{{ .ph_pool }}{{ else }}-{{ end }}'
+
+  # Prefer structured numeric hashrate if present, else parsed plaintext value+unit (as string).
+  - template:
+      source: hashrate_render
+      template: >-
+        {{- if .hashrate -}}
+          {{ .hashrate }}
+        {{- else if .hashrate_hs -}}
+          {{ .hashrate_hs }} H/s
+        {{- else if .ph_hashrate_val -}}
+          {{ .ph_hashrate_val }} {{ .ph_hashrate_unit }}
+        {{- else -}}
+          -
+        {{- end -}}
+
+  # Latency (ms) normalization (string ms → number).
+  - template:
+      source: latency_render
+      template: >-
+        {{- if .latency_ms -}}
+          {{ .latency_ms }}ms
+        {{- else if .ph_latency_ms -}}
+          {{ .ph_latency_ms }}ms
+        {{- else if .latency -}}
+          {{ .latency }}
+        {{- else -}}
+          -
+        {{- end -}}
+
+  # Promote low-cardinality attributes to labels for efficient Loki queries.
+  - labels:
+      level:
+      component_norm:
+      backend_norm:
+      device_norm:
+      worker_norm:
+      result_norm:
+      session_id:
+      pool_norm:
+
+  # ==== OUTPUT LINE SELECTION =================================================
+  # Build a readable fallback line when msg/message are absent.
+  - template:
+      source: line_fallback
+      template: >-
+        [{{ .component_norm }} {{ .backend_norm }} {{ .device_norm }} {{ .worker_norm }}]
+        hashrate={{ .hashrate_render }} ratio={{ or .ratio .ph_ratio "-" }}
+        diff={{ or .diff .ph_diff "-" }} result={{ .result_norm }}
+        latency={{ .latency_render }}
+
+  # Prefer the structured message if present; otherwise use fallback.
+  - output:
+      source: msg
+  - output:
+      source: message
+      when:
+        expression: '"{{ .msg }}" == ""'
+  - output:
+      source: line_fallback
+      when:
+        expression: '"{{ .msg }}" == "" && "{{ .message }}" == ""'
+
+  # ==== OPTIONAL NOISE FILTERS ===============================================
+  # Drop extremely noisy inner-loop debug lines in production (uncomment to enable).
+  # - match:
+  #     selector: '{level="debug",component_norm="miner"} |= "scanned"'
+  #     action: drop

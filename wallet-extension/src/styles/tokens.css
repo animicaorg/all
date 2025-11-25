@@ -1,0 +1,187 @@
+/* Animica Wallet — Design Tokens
+   These variables define colors, spacing, typography, radii, shadows,
+   motion, z-index, and component scales. They are referenced by UI styles.
+   Theme switching is done via [data-theme="dark"] on <html> or <body>.
+*/
+
+/* Typography & base scales */
+:root {
+  /* Font stacks */
+  --font-sans: "Inter", system-ui, -apple-system, Segoe UI, Roboto, Ubuntu,
+               Cantarell, "Noto Sans", "Helvetica Neue", Arial, "Apple Color Emoji",
+               "Segoe UI Emoji", "Segoe UI Symbol";
+
+  /* Type scale */
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 18px;
+  --text-2xl: 22px;
+  --text-3xl: 26px;
+
+  /* Line heights */
+  --leading-tight: 1.2;
+  --leading-normal: 1.45;
+  --leading-relaxed: 1.6;
+
+  /* Spacing scale (px) */
+  --space-0: 0;
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 12px;
+  --space-6: 16px;
+  --space-7: 20px;
+  --space-8: 24px;
+  --space-9: 32px;
+  --space-10: 40px;
+  --space-11: 48px;
+
+  /* Radius */
+  --radius-0: 2px;
+  --radius-1: 6px;
+  --radius-2: 10px;
+  --radius-3: 14px;
+  --radius-round: 999px;
+
+  /* Shadows (use sparingly in popup) */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.08), 0 1px 1px rgba(0, 0, 0, 0.06);
+  --shadow-2: 0 4px 10px rgba(0, 0, 0, 0.12), 0 2px 4px rgba(0, 0, 0, 0.08);
+
+  /* Motion */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emph: cubic-bezier(0.3, 0, 0, 1);
+  --dur-1: 100ms;
+  --dur-2: 160ms;
+  --dur-3: 240ms;
+
+  /* Z-index */
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-modal: 1000;
+  --z-toast: 1100;
+
+  /* Component scales */
+  --control-h-sm: 32px;
+  --control-h: 36px;
+  --control-h-lg: 44px;
+  --container-w: 360px;  /* popup width */
+  --container-max-h: 600px;
+
+  /* Light theme colors */
+  --bg-0: #ffffff;
+  --bg-1: #f6f8fc;
+  --surface: #ffffff;
+  --surface-2: #f1f5f9;
+
+  --text-1: #0f172a;   /* slate-900 */
+  --text-2: #475569;   /* slate-600 */
+  --text-3: #64748b;   /* slate-500 */
+
+  --border: #e5e7eb;   /* gray-200 */
+  --muted: #eef2f7;
+
+  /* Brand / accent (indigo) */
+  --accent-50:  #eef2ff;
+  --accent-100: #e0e7ff;
+  --accent-200: #c7d2fe;
+  --accent-300: #a5b4fc;
+  --accent-400: #818cf8;
+  --accent-500: #6366f1;
+  --accent-600: #4f46e5;
+  --accent-700: #4338ca;
+
+  /* Status */
+  --success-500: #059669; /* green-600 */
+  --warning-500: #d97706; /* amber-600 */
+  --error-500:   #dc2626; /* red-600 */
+  --info-500:    #0284c7; /* sky-600 */
+
+  /* Focus ring */
+  --focus-ring: 0 0 0 2px var(--accent-200);
+  --focus-ring-strong: 0 0 0 3px var(--accent-300);
+
+  /* Selection */
+  --selection-bg: var(--accent-200);
+  --selection-fg: var(--text-1);
+}
+
+/* Dark theme overrides */
+:root[data-theme="dark"], [data-theme="dark"] {
+  --bg-0: #0b1220;     /* deep navy */
+  --bg-1: #0f172a;     /* slate-900 */
+  --surface: #121a2c;  /* panel */
+  --surface-2: #0f1627;
+
+  --text-1: #e6edf6;
+  --text-2: #b3c0d6;
+  --text-3: #93a3be;
+
+  --border: #223047;
+  --muted: #162036;
+
+  --accent-50:  #20254a;
+  --accent-100: #2a3170;
+  --accent-200: #3840a3;
+  --accent-300: #4751d1;
+  --accent-400: #5660ee;
+  --accent-500: #6a74ff;
+  --accent-600: #8891ff;
+  --accent-700: #a6adff;
+
+  --success-500: #22c55e;
+  --warning-500: #f59e0b;
+  --error-500:   #f43f5e;
+  --info-500:    #38bdf8;
+
+  --focus-ring: 0 0 0 2px rgba(102, 120, 255, 0.55);
+  --focus-ring-strong: 0 0 0 3px rgba(102, 120, 255, 0.7);
+
+  --selection-bg: rgba(102, 120, 255, 0.35);
+  --selection-fg: var(--text-1);
+}
+
+/* Base element defaults (opt-in; safe for extension pages) */
+:root, .theme-root {
+  color-scheme: light dark;
+}
+
+html, body {
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--bg-0);
+  color: var(--text-1);
+}
+
+::selection {
+  background: var(--selection-bg);
+  color: var(--selection-fg);
+}
+
+/* Utility custom properties for controls */
+:root {
+  --input-bg: var(--surface);
+  --input-fg: var(--text-1);
+  --input-placeholder: var(--text-3);
+  --input-border: var(--border);
+  --input-border-focus: var(--accent-400);
+  --btn-bg: var(--accent-600);
+  --btn-bg-hover: var(--accent-500);
+  --btn-fg: #ffffff;
+  --card-bg: var(--surface);
+  --card-border: var(--border);
+}
+
+/* Reduced motion respect */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-1: 0ms;
+    --dur-2: 0ms;
+    --dur-3: 0ms;
+  }
+}

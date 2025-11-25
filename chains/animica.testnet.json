@@ -1,0 +1,82 @@
+{
+  "schemaVersion": "1.2.0",
+  "name": "Animica Testnet",
+  "chainId": 2,
+  "network": "testnet",
+  "status": "active",
+  "testnet": true,
+
+  "nativeCurrency": { "name": "Animica", "symbol": "ANM", "decimals": 18 },
+
+  "rpc": {
+    "http": ["https://rpc.testnet.animica.dev"],
+    "ws":   ["wss://ws.testnet.animica.dev"]
+  },
+
+  "explorers": [
+    { "name": "Animica Explorer", "url": "https://explorer.testnet.animica.dev" }
+  ],
+
+  "faucets": [
+    { "name": "Faucet", "url": "https://faucet.testnet.animica.dev" }
+  ],
+
+  "p2p": {
+    "protocols": ["animica/1"],
+    "port": 30303,
+    "seeds": [
+      "seed1.testnet.animica.dev",
+      "seed2.testnet.animica.dev"
+    ],
+    "bootnodes": []
+  },
+
+  "addresses": {
+    "format": "bech32m",
+    "hrp": "am",
+    "pubkeyTypes": ["ed25519", "secp256k1", "dilithium3"]
+  },
+
+  "pq": {
+    "sigDefault": "dilithium3",
+    "kex": "kyber-768",
+    "policyVersion": "2025-10"
+  },
+
+  "vm": {
+    "lang": "python",
+    "version": "0.5.0",
+    "gasModel": "v1"
+  },
+
+  "da": {
+    "maxBlobSizeBytes": 2097152,
+    "nmtNamespaceBytes": 8,
+    "rsRate": "10/16"
+  },
+
+  "randomness": {
+    "method": "vdf+qrng",
+    "params": { "tau": 1024 }
+  },
+
+  "genesis": {
+    "hash": "0x0123abcd0123abcd0123abcd0123abcd",
+    "timestamp": "2025-10-01T00:00:00Z",
+    "initialHeight": 0
+  },
+
+  "governance": {
+    "site": "https://gov.animica.dev",
+    "votingPeriodDays": 7
+  },
+
+  "links": {
+    "website": "https://animica.dev",
+    "docs": "https://docs.animica.dev"
+  },
+
+  "features": ["poies", "pq", "da", "vm_py"],
+
+  "checksum": "0000000000000000000000000000000000000000000000000000000000000000"
+}

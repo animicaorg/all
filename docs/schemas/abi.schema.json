@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://animica.dev/schemas/abi.schema.json",
+  "title": "Animica Contract ABI (VM-Py)",
+  "description": "Canonical ABI schema for Animica Python-VM contracts. Mirrors spec/abi.schema.json and is used by SDKs, Studio, and the VM runtime for dispatch and (de)encoding.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "contract", "functions", "events", "errors"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Semantic version of this ABI document format.",
+      "enum": ["1.0", "1.1"]
+    },
+    "encoding": {
+      "type": "string",
+      "description": "ABI encoding identifier used by toolchains.",
+      "const": "animica.abi.v1"
+    },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "$ref": "#/$defs/identifier" },
+        "version": { "type": "string", "description": "Optional contract semantic version (author-defined)." },
+        "author": { "type": "string" },
+        "description": { "type": "string" },
+        "license": { "type": "string" },
+        "source": { "type": "string", "description": "Optional relative path or artifact id of source." }
+      }
+    },
+    "functions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/function" },
+      "description": "Callable entrypoints exposed by the contract."
+    },
+    "events": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/event" },
+      "description": "Events that may be emitted during execution."
+    },
+    "errors": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/error" },
+      "description": "Named error types which may be reverted with."
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Arbitrary additional metadata for tooling (non-consensus).",
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+      "description": "Simple identifier (ASCII letters, digits, underscores; not starting with a digit)."
+    },
+    "typeString": {
+      "type": "string",
+      "description": "Scalar, tuple, or array type. Supported scalars: bool, address, bytes, bytesN (1..256), signed/unsigned integers (iN/uN where N ∈ {8,16,32,64,128,256}), tuple (requires components). Arrays use T[] (dynamic) or T[N] (fixed) and can be nested.",
+      "pattern": "^(?:bool|address|bytes|bytes(?:[1-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5]|256)|i(?:8|16|32|64|128|256)|u(?:8|16|32|64|128|256)|tuple)(?:\\[[0-9]*\\])*$"
+    },
+    "param": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "name": { "$ref": "#/$defs/identifier" },
+        "type": { "$ref": "#/$defs/typeString" },
+        "components": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/param" },
+          "description": "Required when type is 'tuple' or an array of tuples. Order is canonical."
+        },
+        "indexed": {
+          "type": "boolean",
+          "description": "Events only: if true, this parameter is included in the topics bloom."
+        },
+        "doc": { "type": "string" }
+      }
+    },
+    "function": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "inputs", "outputs", "stateMutability"],
+      "properties": {
+        "name": { "$ref": "#/$defs/identifier" },
+        "selector": {
+          "type": "string",
+          "pattern": "^0x[0-9a-fA-F]{8,}$",
+          "description": "Optional dispatch selector override (hex). If absent, toolchains compute the canonical selector."
+        },
+        "inputs": { "type": "array", "items": { "$ref": "#/$defs/param" } },
+        "outputs": { "type": "array", "items": { "$ref": "#/$defs/param" } },
+        "stateMutability": {
+          "type": "string",
+          "enum": ["view", "pure", "nonpayable"],
+          "description": "'view' has read-only semantics; 'pure' reads nothing; 'nonpayable' may mutate state and spend/receive funds depending on runtime policy."
+        },
+        "payable": {
+          "type": "boolean",
+          "default": false,
+          "description": "Alias/hint for value-bearing calls. The VM may ignore this if unsupported."
+        },
+        "gas": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "static": { "type": "integer", "minimum": 0, "description": "Optional static cost hint." },
+            "max": { "type": "integer", "minimum": 0, "description": "Optional upper-bound estimate." }
+          }
+        },
+        "doc": { "type": "string" }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "inputs"],
+      "properties": {
+        "name": { "$ref": "#/$defs/identifier" },
+        "anonymous": { "type": "boolean", "default": false },
+        "inputs": { "type": "array", "items": { "$ref": "#/$defs/param" } },
+        "doc": { "type": "string" }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "$ref": "#/$defs/identifier" },
+        "inputs": { "type": "array", "items": { "$ref": "#/$defs/param" }, "default": [] },
+        "code": { "type": "integer", "minimum": 0, "description": "Optional numeric mapping for SDK/runtime." },
+        "doc": { "type": "string" }
+      }
+    }
+  },
+  "examples": [
+    {
+      "schema_version": "1.1",
+      "encoding": "animica.abi.v1",
+      "contract": {
+        "name": "Counter",
+        "version": "1.0.0",
+        "description": "Deterministic counter example (inc/get)."
+      },
+      "functions": [
+        {
+          "name": "get",
+          "inputs": [],
+          "outputs": [{ "name": "value", "type": "u64" }],
+          "stateMutability": "view",
+          "doc": "Returns current counter value."
+        },
+        {
+          "name": "inc",
+          "inputs": [{ "name": "by", "type": "u64" }],
+          "outputs": [],
+          "stateMutability": "nonpayable",
+          "doc": "Increments by 'by'."
+        }
+      ],
+      "events": [
+        {
+          "name": "Increased",
+          "inputs": [
+            { "name": "by", "type": "u64", "indexed": false },
+            { "name": "sender", "type": "address", "indexed": true }
+          ]
+        }
+      ],
+      "errors": [
+        { "name": "Overflow", "inputs": [] }
+      ]
+    },
+    {
+      "schema_version": "1.1",
+      "encoding": "animica.abi.v1",
+      "contract": { "name": "Escrow", "version": "0.2.0" },
+      "functions": [
+        {
+          "name": "deposit",
+          "inputs": [{ "name": "beneficiary", "type": "address" }, { "name": "amount", "type": "u128" }],
+          "outputs": [],
+          "stateMutability": "nonpayable"
+        },
+        {
+          "name": "release",
+          "inputs": [{ "name": "beneficiary", "type": "address" }],
+          "outputs": [{ "name": "paid", "type": "u128" }],
+          "stateMutability": "nonpayable"
+        },
+        {
+          "name": "terms",
+          "inputs": [],
+          "outputs": [
+            {
+              "name": "t",
+              "type": "tuple",
+              "components": [
+                { "name": "arbiter", "type": "address" },
+                { "name": "deadline", "type": "u64" }
+              ]
+            }
+          ],
+          "stateMutability": "view"
+        }
+      ],
+      "events": [],
+      "errors": [
+        { "name": "Unauthorized" },
+        { "name": "TooEarly" }
+      ]
+    }
+  ]
+}

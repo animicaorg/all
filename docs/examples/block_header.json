@@ -1,0 +1,68 @@
+{
+  "$meta": {
+    "title": "Sample Block Header (Annotated)",
+    "description": "Human-readable JSON view of a block header. Canonical wire format is CBOR per docs/spec/BLOCK_FORMAT.md; this JSON is for docs and tooling examples.",
+    "notes": [
+      "All 0x-hex fields are byte strings; lengths are enforced by the CDDL schema.",
+      "The header hash is sha3-256 over the canonical CBOR-encoded header map.",
+      "Θ (Theta) is represented as thetaMicro (µ-nats) for fixed-point stability.",
+      "mixSeed binds entropy across rounds (e.g., beacon/prev header) for PoIES."
+    ]
+  },
+
+  "header": {
+    "encoding": "animica.header.v1",
+
+    "chainId": 1337,
+    "height": 1024,
+    "parentHash": "0x8a8f6f1e7c2bb1c3d4e5f60718293a4b5c6d7e8f9012233445566778899aabbc",
+
+    "roots": {
+      "stateRoot":    "0x111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000",
+      "txRoot":       "0x22223333444455556666777788889999aaaabbbbccccddddeeeeffff00001111",
+      "receiptsRoot": "0x3333444455556666777788889999aaaabbbbccccddddeeeeffff000011112222",
+      "proofsRoot":   "0x444455556666777788889999aaaabbbbccccddddeeeeffff0000111122223333",
+      "daRoot":       "0x55556666777788889999aaaabbbbccccddddeeeeffff00001111222233334444"
+    },
+
+    "thetaMicro": 1200000,
+    "mixSeed": "0x777788889999aaaabbbbccccddddeeeeffff0000111122223333444455556666",
+
+    "nonce": "0x00000000000000000000000000000042",
+    "timestamp": 1710000000,
+
+    "policy": {
+      "poiesPolicyRoot": "0xaaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666777788889999aaaa",
+      "algPolicyRoot":   "0xbbbb2222cccc3333dddd4444eeee5555ffff6666777788889999aaaabbbbcccc"
+    },
+
+    "coinbase": "anmd1q0u6s6m8fqqqqqqz7g4y6e2d7p9m8kcl0u5r3n5",
+    "extraData": "0x416e696d69636120646576206e6f6465"
+  },
+
+  "hashes": {
+    "header_cbor_hex": "0xa969636861696e4964...6a657874726144617461", 
+    "headerHash": "0x6abc1e0b3f9d3a6c4f2b98e7a61c5b2d9f0e1c2b3a4d5e6f718192a3b4c5d6e7"
+  },
+
+  "annotations": {
+    "/header/chainId": "Network identifier. Must match node/DB chain params.",
+    "/header/height": "Block number starting at 0 for genesis.",
+    "/header/parentHash": "sha3-256 of the parent header CBOR bytes.",
+    "/header/roots/stateRoot": "Canonical state Merkle root after applying this block.",
+    "/header/roots/txRoot": "Merkle root of transactions included in this block.",
+    "/header/roots/receiptsRoot": "Merkle (or equivalent) root over receipts/logs.",
+    "/header/roots/proofsRoot": "Aggregated root over PoIES proof receipts.",
+    "/header/roots/daRoot": "Namespaced Merkle Tree (NMT) root for data availability.",
+    "/header/thetaMicro": "Current difficulty threshold Θ in µ-nats (fixed-point).",
+    "/header/mixSeed": "Entropy seed mixed from prior beacon/header domains.",
+    "/header/nonce": "Miner nonce used for HashShare u-draw; length per spec domain.",
+    "/header/timestamp": "Producer-set UNIX seconds; bounded/skew-checked by consensus.",
+    "/header/policy/poiesPolicyRoot": "Hash (Merkle) of current PoIES policy document.",
+    "/header/policy/algPolicyRoot": "Hash (Merkle) of allowed PQ algorithms/policy.",
+    "/header/coinbase": "Payee address for fees/rewards.",
+    "/header/extraData": "Free-form small bytes; not consensus-critical.",
+    "/hashes/header_cbor_hex": "Deterministic CBOR encoding of the header map.",
+    "/hashes/headerHash": "Canonical header hash used for indexing/fork-choice."
+  }
+}

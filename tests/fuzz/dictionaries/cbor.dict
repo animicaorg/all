@@ -1,0 +1,134 @@
+# libFuzzer-style dictionary for CBOR tokens.
+# One token per line, quoted; binary bytes may be written as \xHH.
+# Comments start with '#'.
+
+# --- Self-describe tag (magic) ---
+"\xd9\xd9\xf7"
+
+# --- Unsigned integers (major type 0) ---
+"\x00"          # 0
+"\x17"          # 23
+"\x18"          # uint8 (next byte = length/value)
+"\x18\x00"
+"\x18\xff"
+"\x19"          # uint16
+"\x19\x00\x01"
+"\x19\xff\xff"
+"\x1a"          # uint32
+"\x1a\x00\x00\x00\x01"
+"\x1a\xff\xff\xff\xff"
+"\x1b"          # uint64
+"\x1b\x00\x00\x00\x00\x00\x00\x00\x01"
+"\x1b\xff\xff\xff\xff\xff\xff\xff\xff"
+
+# --- Negative integers (major type 1) ---
+"\x20"          # -1
+"\x37"          # -24
+"\x38"          # nint8
+"\x39"          # nint16
+"\x3a"          # nint32
+"\x3b"          # nint64
+
+# --- Byte strings (major type 2) ---
+"\x40"          # bstr("")
+"\x41"          # bstr(1 byte follows)
+"\x58"          # bstr(uint8 length)
+"\x58\x20"      # bstr(32)
+"\x58\x40"      # bstr(64)
+"\x59"          # bstr(uint16 length)
+"\x5a"          # bstr(uint32 length)
+"\x5b"          # bstr(uint64 length)
+"\x5f"          # bstr(indef)
+"\x5f\xff"      # bstr(indef) + break
+
+# --- Text strings (major type 3) ---
+"\x60"          # tstr("")
+"\x61"          # tstr(1)
+"\x78"          # tstr(uint8 length)
+"\x79"          # tstr(uint16 length)
+"\x7a"          # tstr(uint32 length)
+"\x7b"          # tstr(uint64 length)
+"\x7f"          # tstr(indef)
+"\x7f\xff"      # tstr(indef) + break
+
+# Common key strings (deterministic maps often use tstr keys)
+"\x62""tx"              # "tx"
+"\x66""header"          # "header"
+"\x66""proofs"          # "proofs"
+"\x64""hash"            # "hash"
+"\x65""nonce"           # "nonce"
+"\x68""type_id"         # "type_id"
+"\x64""body"            # "body"
+"\x69""nullifier"       # "nullifier"
+"\x62""ai"              # "ai"
+"\x67""quantum"         # "quantum"
+"\x67""storage"         # "storage"
+"\x63""vdf"             # "vdf"
+
+# --- Arrays (major type 4) ---
+"\x80"          # []
+"\x81"          # [ _ ]
+"\x82"          # [ _, _ ]
+"\x98"          # array(uint8 length)
+"\x99"          # array(uint16 length)
+"\x9a"          # array(uint32 length)
+"\x9b"          # array(uint64 length)
+"\x9f"          # array(indef)
+"\x9f\xff"      # array(indef) + break
+
+# --- Maps (major type 5) ---
+"\xa0"          # {}
+"\xa1"          # { _ : _ }
+"\xa2"          # { _ : _, _ : _ }
+"\xb8"          # map(uint8 length)
+"\xb9"          # map(uint16 length)
+"\xba"          # map(uint32 length)
+"\xbb"          # map(uint64 length)
+"\xbf"          # map(indef)
+"\xbf\xff"      # map(indef) + break
+
+# --- Tags (major type 6) ---
+"\xc0"          # tag(0)
+"\xc1"          # tag(1)
+"\xc6"          # tag(6)
+"\xd8\x18"      # tag(24) — embedded CBOR
+"\xd8\x1e"      # tag(30)
+"\xd8\x20"      # tag(32)
+"\xd9\x01\x00"  # tag(256)
+"\xd9\x03\xe8"  # tag(1000)
+
+# --- Simple values & floats (major type 7) ---
+"\xf4"          # false
+"\xf5"          # true
+"\xf6"          # null
+"\xf7"          # undefined
+"\xf8\x1f"      # simple(31)
+"\xf9"          # half-float (2 bytes follow)
+"\xfa"          # float32 (4 bytes follow)
+"\xfb"          # float64 (8 bytes follow)
+"\xff"          # break (end of indef)
+
+# --- Useful fragments / common headers ---
+# 32-byte bstr header often used for hashes/addresses:
+"\x58\x20"
+# 64-byte bstr header (signatures, etc.):
+"\x58\x40"
+# One-pair map (common envelope pattern):
+"\xa1"
+# Two-pair map:
+"\xa2"
+
+# --- Nested starters to encourage structure growth ---
+"\x9f\xa1"      # array(indef) then a single-pair map
+"\xbf\x81"      # map(indef) then single-element array
+"\x9f\x5f"      # array(indef) then bstr(indef)
+"\x9f\x7f"      # array(indef) then tstr(indef)
+
+# --- Project-flavored cues (common deterministic keys) ---
+"\x64""root"            # "root"
+"\x64""seal"            # "seal"
+"\x66""parent"          # "parent"
+"\x65""theta"           # "theta"
+"\x64""mix"             # "mix"
+"\x66""gamma"           # "gamma"
+"\x68""fairness"        # "fairness"

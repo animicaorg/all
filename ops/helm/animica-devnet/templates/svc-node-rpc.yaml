@@ -1,0 +1,109 @@
+{{-/*
+Service: Node RPC (+ WebSocket on same or separate port)
+
+By default exposes the FastAPI app that serves:
+- HTTP JSON-RPC at /rpc
+- WebSocket subscriptions at /ws
+- /metrics (Prometheus) on the same HTTP port unless split explicitly
+
+Values schema (examples):
+rpc:
+  service:
+    type: LoadBalancer            # ClusterIP | NodePort | LoadBalancer
+    annotations: {}               # extra svc annotations
+    externalTrafficPolicy: Local  # (optional, for LB/NodePort)
+    loadBalancerIP: ""            # (optional) static LB IP
+    loadBalancerClass: ""         # (optional)
+    loadBalancerSourceRanges: []  # (optional) CIDR allowlist
+    sessionAffinity: None         # (optional)
+    ports:
+      http:
+        enabled: true
+        port: 8545
+        targetPort: 8545
+        nodePort: null
+      ws:
+        # If enabled AND port differs from http.port, a separate ServicePort is emitted.
+        enabled: true
+        port: 8546
+        targetPort: 8546
+        nodePort: null
+      metrics:
+        # Rarely used: only if you run metrics on a different port than HTTP.
+        enabled: false
+        port: 9100
+        targetPort: 9100
+        nodePort: null
+*/ -}}
+{{- $svc := default dict .Values.rpc.service -}}
+{{- $ports := default dict $svc.ports -}}
+{{- $http := default dict $ports.http -}}
+{{- $ws := default dict $ports.ws -}}
+{{- $metrics := default dict $ports.metrics -}}
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "animica-devnet.fullname" . }}-rpc
+  labels:
+    {{- include "animica-devnet.labels" (dict "ctx" . "component" "node") | nindent 4 }}
+  {{- with $svc.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ default "LoadBalancer" $svc.type }}
+  {{- with $svc.externalTrafficPolicy }}
+  externalTrafficPolicy: {{ . }}
+  {{- end }}
+  {{- with $svc.loadBalancerIP }}
+  loadBalancerIP: {{ . | quote }}
+  {{- end }}
+  {{- with $svc.loadBalancerClass }}
+  loadBalancerClass: {{ . | quote }}
+  {{- end }}
+  {{- with $svc.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $svc.sessionAffinity }}
+  sessionAffinity: {{ . }}
+  {{- end }}
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/name: {{ include "animica-devnet.name" . }}
+    app.kubernetes.io/component: node
+  ports:
+    {{- /* HTTP port (also serves WS by default on /ws) */ -}}
+    {{- if (hasKey $http "enabled") | ternary $http.enabled true }}
+    - name: http
+      protocol: TCP
+      port: {{ default 8545 $http.port }}
+      targetPort: {{ default (default 8545 $http.port) $http.targetPort }}
+      {{- if and (or (eq (default "LoadBalancer" $svc.type) "NodePort") (eq $svc.type "LoadBalancer")) ($http.nodePort) }}
+      nodePort: {{ $http.nodePort }}
+      {{- end }}
+    {{- end }}
+
+    {{- /* Optional separate WS port, only if enabled AND different from HTTP port */ -}}
+    {{- $httpPort := default 8545 $http.port -}}
+    {{- if and ((hasKey $ws "enabled") | ternary $ws.enabled true) (ne (default 8546 $ws.port) $httpPort) }}
+    - name: ws
+      protocol: TCP
+      port: {{ default 8546 $ws.port }}
+      targetPort: {{ default (default 8546 $ws.port) $ws.targetPort }}
+      {{- if and (or (eq (default "LoadBalancer" $svc.type) "NodePort") (eq $svc.type "LoadBalancer")) ($ws.nodePort) }}
+      nodePort: {{ $ws.nodePort }}
+      {{- end }}
+    {{- end }}
+
+    {{- /* Optional separate metrics port */ -}}
+    {{- if (hasKey $metrics "enabled") | ternary $metrics.enabled false }}
+    - name: metrics
+      protocol: TCP
+      port: {{ default 9100 $metrics.port }}
+      targetPort: {{ default (default 9100 $metrics.port) $metrics.targetPort }}
+      {{- if and (or (eq (default "LoadBalancer" $svc.type) "NodePort") (eq $svc.type "LoadBalancer")) ($metrics.nodePort) }}
+      nodePort: {{ $metrics.nodePort }}
+      {{- end }}
+    {{- end }}

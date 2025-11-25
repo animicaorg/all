@@ -1,0 +1,8 @@
+# Intentionally empty for Pyodide.
+# The studio-wasm build ships with zero external Python deps to keep the
+# browser payload minimal and portable.
+#
+# If you later need pure-Python packages that work in Pyodide, you can pin
+# them here (avoid C extensions). Examples (uncomment to use if validated):
+# cbor2==5.6.4     # Only if a pure-Python wheel is available for Pyodide
+# typing-extensions==4.12.2

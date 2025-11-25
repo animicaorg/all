@@ -1,0 +1,375 @@
+{
+  "app": {
+    "title": "Animica Explorer",
+    "subtitle": "Blocks · Transactions · Contracts · AICF · DA · Beacon",
+    "network": "Network",
+    "theme": "Theme",
+    "light": "Light",
+    "dark": "Dark",
+    "system": "System"
+  },
+  "nav": {
+    "home": "Home",
+    "blocks": "Blocks",
+    "tx": "Transaction",
+    "address": "Address",
+    "contracts": "Contracts",
+    "aicf": "AI & Quantum",
+    "da": "Data Availability",
+    "beacon": "Randomness",
+    "network": "Network"
+  },
+  "common": {
+    "loading": "Loading…",
+    "error": "Error",
+    "success": "Success",
+    "warning": "Warning",
+    "info": "Info",
+    "retry": "Retry",
+    "refresh": "Refresh",
+    "copy": "Copy",
+    "copied": "Copied!",
+    "close": "Close",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "search": "Search",
+    "filter": "Filter",
+    "clear": "Clear",
+    "details": "Details",
+    "view": "View",
+    "download": "Download",
+    "upload": "Upload",
+    "showMore": "Show more",
+    "showLess": "Show less",
+    "yes": "Yes",
+    "no": "No",
+    "unknown": "Unknown",
+    "notAvailable": "N/A",
+    "optional": "Optional",
+    "required": "Required"
+  },
+  "units": {
+    "ms": "ms",
+    "s": "s",
+    "sec": "sec",
+    "min": "min",
+    "h": "h",
+    "gas": "gas",
+    "bytes": "bytes",
+    "kb": "KB",
+    "mb": "MB",
+    "gb": "GB",
+    "tz": "UTC",
+    "block": "block",
+    "blocks": "blocks"
+  },
+  "format": {
+    "ago": "{value} ago",
+    "in": "in {value}",
+    "at": "at {time}",
+    "on": "on {date}",
+    "hashShort": "{prefix}…{suffix}",
+    "numShort": "{value}"
+  },
+  "labels": {
+    "height": "Height",
+    "hash": "Hash",
+    "parentHash": "Parent Hash",
+    "blockHash": "Block Hash",
+    "txHash": "Tx Hash",
+    "timestamp": "Timestamp",
+    "time": "Time",
+    "age": "Age",
+    "txs": "Txs",
+    "gasUsed": "Gas Used",
+    "gasLimit": "Gas Limit",
+    "fee": "Fee",
+    "from": "From",
+    "to": "To",
+    "value": "Value",
+    "nonce": "Nonce",
+    "index": "Index",
+    "status": "Status",
+    "success": "Success",
+    "failed": "Failed",
+    "pending": "Pending",
+    "logs": "Logs",
+    "method": "Method",
+    "data": "Data",
+    "address": "Address",
+    "balance": "Balance",
+    "codeHash": "Code Hash",
+    "contract": "Contract",
+    "contracts": "Contracts",
+    "validator": "Validator",
+    "mix": "Mix",
+    "gamma": "Γ (Mix Evenness)",
+    "gini": "Gini",
+    "hhi": "HHI",
+    "effectiveN": "Effective Sources",
+    "entropy": "Entropy",
+    "size": "Size",
+    "commitment": "Commitment",
+    "proof": "Proof",
+    "round": "Round",
+    "beacon": "Beacon",
+    "providers": "Providers",
+    "jobs": "Jobs",
+    "settlements": "Settlements",
+    "sla": "SLA",
+    "latency": "Latency",
+    "queue": "Queue",
+    "successRate": "Success Rate",
+    "model": "Model",
+    "circuit": "Circuit",
+    "cost": "Cost",
+    "submittedAt": "Submitted",
+    "completedAt": "Completed",
+    "includedAt": "Included",
+    "head": "Head",
+    "finalized": "Finalized",
+    "peers": "Peers",
+    "health": "Health",
+    "latencyRpc": "RPC Latency",
+    "latencyWs": "WS Latency",
+    "wsStatus": "WS Status",
+    "online": "Online",
+    "offline": "Offline"
+  },
+  "tooltips": {
+    "gamma": "Γ is an evenness score in [0,1]. Higher means a more balanced entropy mix across sources.",
+    "gini": "Gini coefficient in [0,1]. Lower is more even.",
+    "hhi": "Herfindahl–Hirschman Index. Lower indicates less concentration.",
+    "effectiveN": "1 / HHI — effective number of independent sources.",
+    "commitment": "Content-addressed commitment to a DA blob.",
+    "beacon": "Randomness beacon derived from commit/reveal and mixed sources."
+  },
+  "home": {
+    "welcome": "Welcome to Animica Explorer",
+    "intro": "Inspect blocks, transactions, contracts, randomness, data availability and AI/Quantum jobs in real time.",
+    "networkSummary": "Network Summary",
+    "latestBlocks": "Latest Blocks",
+    "latestTxs": "Latest Transactions",
+    "seeAllBlocks": "See all blocks",
+    "seeAllTxs": "See all transactions"
+  },
+  "blocks": {
+    "title": "Blocks",
+    "subtitle": "Latest finalized & canonical blocks",
+    "columns": {
+      "height": "Height",
+      "hash": "Hash",
+      "age": "Age",
+      "txs": "Txs",
+      "gasUsed": "Gas Used",
+      "gamma": "Γ",
+      "validator": "Validator"
+    },
+    "empty": "No blocks to display.",
+    "loadMore": "Load more blocks",
+    "viewBlock": "View block"
+  },
+  "block": {
+    "title": "Block {height}",
+    "overview": "Overview",
+    "mix": "PoIES Mix",
+    "transactions": "Transactions",
+    "fields": {
+      "height": "Height",
+      "hash": "Block Hash",
+      "parent": "Parent",
+      "timestamp": "Timestamp",
+      "txCount": "Transactions",
+      "gasUsed": "Gas Used",
+      "gasLimit": "Gas Limit",
+      "validator": "Validator",
+      "gamma": "Γ",
+      "gini": "Gini",
+      "hhi": "HHI",
+      "effectiveN": "Effective Sources"
+    }
+  },
+  "tx": {
+    "title": "Transaction",
+    "searchPlaceholder": "Search by hash, sender, or block…",
+    "notFound": "Transaction not found.",
+    "overview": "Overview",
+    "logs": "Logs",
+    "raw": "Raw Data",
+    "fields": {
+      "hash": "Hash",
+      "status": "Status",
+      "block": "Block",
+      "index": "Index",
+      "timestamp": "Timestamp",
+      "from": "From",
+      "to": "To",
+      "method": "Method",
+      "value": "Value",
+      "fee": "Fee",
+      "gasUsed": "Gas Used",
+      "gasLimit": "Gas Limit",
+      "nonce": "Nonce",
+      "data": "Data"
+    },
+    "status": {
+      "pending": "Pending",
+      "success": "Success",
+      "failed": "Failed"
+    }
+  },
+  "addressPage": {
+    "title": "Address",
+    "overview": "Overview",
+    "holdings": "Holdings",
+    "activity": "Activity",
+    "contracts": "Contracts",
+    "fields": {
+      "address": "Address",
+      "balance": "Balance",
+      "nonce": "Nonce",
+      "codeHash": "Code Hash",
+      "contract": "Is Contract"
+    },
+    "txs": {
+      "title": "Recent Transactions",
+      "empty": "No recent transactions."
+    },
+    "contractsList": {
+      "title": "Deployed Contracts",
+      "empty": "No contracts found."
+    }
+  },
+  "contractsPage": {
+    "title": "Verified Contracts",
+    "subtitle": "Source-verified contracts with metadata and code hash",
+    "searchPlaceholder": "Search by name or address…",
+    "columns": {
+      "address": "Address",
+      "name": "Name",
+      "codeHash": "Code Hash",
+      "compiler": "Compiler",
+      "verifiedAt": "Verified"
+    },
+    "empty": "No verified contracts yet."
+  },
+  "aicf": {
+    "title": "AI & Quantum",
+    "providers": {
+      "title": "Providers",
+      "columns": {
+        "id": "ID",
+        "name": "Name",
+        "successRate": "Success Rate",
+        "latency": "Avg Latency",
+        "queue": "Queue"
+      },
+      "empty": "No providers available."
+    },
+    "jobs": {
+      "title": "Jobs",
+      "columns": {
+        "id": "Job ID",
+        "type": "Type",
+        "model": "Model / Circuit",
+        "status": "Status",
+        "cost": "Cost",
+        "submittedAt": "Submitted",
+        "completedAt": "Completed"
+      },
+      "status": {
+        "queued": "Queued",
+        "running": "Running",
+        "settled": "Settled",
+        "failed": "Failed",
+        "expired": "Expired"
+      },
+      "empty": "No jobs found."
+    },
+    "settlements": {
+      "title": "Settlements",
+      "columns": {
+        "id": "Settlement ID",
+        "jobId": "Job",
+        "provider": "Provider",
+        "status": "Status",
+        "latency": "Latency",
+        "cost": "Cost"
+      },
+      "empty": "No settlements found."
+    }
+  },
+  "da": {
+    "title": "Data Availability",
+    "blobs": {
+      "title": "Blobs",
+      "columns": {
+        "commitment": "Commitment",
+        "size": "Size",
+        "postedAt": "Posted",
+        "includedAt": "Included",
+        "proof": "Proof"
+      },
+      "actions": {
+        "copyCommitment": "Copy commitment",
+        "view": "View blob",
+        "fetch": "Fetch"
+      },
+      "empty": "No blobs yet."
+    }
+  },
+  "beacon": {
+    "title": "Randomness Beacon",
+    "rounds": {
+      "title": "Rounds",
+      "columns": {
+        "round": "Round",
+        "beacon": "Beacon",
+        "timestamp": "Timestamp",
+        "revealers": "Revealers",
+        "entropy": "Entropy"
+      },
+      "empty": "No rounds found."
+    },
+    "proof": {
+      "title": "Light Proof",
+      "verify": "Verify proof"
+    }
+  },
+  "network": {
+    "title": "Network",
+    "health": {
+      "title": "Health",
+      "rpcLatency": "RPC Latency",
+      "wsLatency": "WS Latency",
+      "wsStatus": "WebSocket",
+      "peers": "Peers",
+      "head": "Head Height",
+      "finalized": "Finalized Height",
+      "ping": "Ping"
+    }
+  },
+  "toasts": {
+    "copied": "Copied to clipboard.",
+    "copyFailed": "Failed to copy.",
+    "loadFailed": "Failed to load data.",
+    "networkChanged": "Network changed to {name}.",
+    "wsReconnected": "WebSocket reconnected.",
+    "wsDisconnected": "WebSocket disconnected."
+  },
+  "emptyStates": {
+    "search": "No results match your search.",
+    "filters": "No items match current filters."
+  },
+  "validation": {
+    "invalidHash": "Invalid hash.",
+    "invalidAddress": "Invalid address.",
+    "required": "This field is required.",
+    "tooShort": "Too short.",
+    "tooLong": "Too long."
+  },
+  "placeholders": {
+    "enterHash": "Enter transaction hash…",
+    "enterAddress": "Enter address…"
+  }
+}

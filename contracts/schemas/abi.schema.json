@@ -1,0 +1,317 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.animica.dev/contract/abi.schema.json",
+  "title": "Animica Python-VM Contract ABI",
+  "description": "Canonical ABI for Animica Python-VM contracts. This schema is consumed by vm_py, SDKs, explorer, and studio tooling. It models callable functions, events, and custom errors with strong typing and deterministic encoding requirements.",
+  "$comment": "Schema version 1.0.0 — keep in lockstep with spec/abi.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+
+  "required": ["abiVersion", "name", "functions"],
+
+  "properties": {
+    "abiVersion": {
+      "description": "Monotonically increasing ABI schema version. Current: 1.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1
+    },
+
+    "name": {
+      "description": "Package/contract name used for codegen namespaces and human display.",
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_]{2,64}$",
+      "examples": ["Counter", "Escrow_v1"]
+    },
+
+    "uuid": {
+      "description": "Optional stable identifier for this ABI (e.g., content hash or UUID).",
+      "type": "string",
+      "maxLength": 128
+    },
+
+    "docs": {
+      "description": "Optional human-readable documentation block for the ABI.",
+      "type": "string",
+      "maxLength": 4096
+    },
+
+    "functions": {
+      "description": "Callable entrypoints of the contract.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/Function" }
+    },
+
+    "events": {
+      "description": "Event declarations emitted during execution.",
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/Event" }
+    },
+
+    "errors": {
+      "description": "Custom error declarations used for rich revert reasons.",
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 128,
+      "items": { "$ref": "#/$defs/Error" }
+    },
+
+    "metadata": {
+      "description": "Optional non-consensus metadata aiding tools.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "description": "Pointer to source files or repository.",
+          "type": "string",
+          "format": "uri"
+        },
+        "commit": { "type": "string", "maxLength": 64 },
+        "generatedAt": { "type": "string", "format": "date-time" },
+        "tooling": {
+          "description": "Toolchain versions used to produce this ABI.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "vm_py": { "type": "string" },
+            "sdk": { "type": "string" },
+            "python": { "type": "string" }
+          }
+        }
+      }
+    }
+  },
+
+  "$defs": {
+    "Identifier": {
+      "description": "Identifier for functions/params/events.",
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+    },
+
+    "Hex": {
+      "description": "0x-prefixed hex string.",
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]+$"
+    },
+
+    "Selector": {
+      "description": "Optional selector override (tooling may compute from name/inputs). 4–32 bytes.",
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{8,64}$"
+    },
+
+    "Function": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "inputs", "outputs", "stateMutability"],
+      "properties": {
+        "name": { "$ref": "#/$defs/Identifier" },
+        "docs": { "type": "string", "maxLength": 4096 },
+        "selector": { "$ref": "#/$defs/Selector" },
+        "stateMutability": {
+          "description": "Execution constraints: view/pure do not mutate state; nonpayable/payable may mutate.",
+          "type": "string",
+          "enum": ["view", "pure", "nonpayable", "payable"],
+          "default": "nonpayable"
+        },
+        "payable": {
+          "description": "Deprecated in favor of stateMutability=payable.",
+          "type": "boolean"
+        },
+        "inputs": {
+          "type": "array",
+          "maxItems": 32,
+            "items": { "$ref": "#/$defs/Param" }
+        },
+        "outputs": {
+          "type": "array",
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/Param" }
+        }
+      }
+    },
+
+    "Event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "inputs"],
+      "properties": {
+        "name": { "$ref": "#/$defs/Identifier" },
+        "docs": { "type": "string", "maxLength": 4096 },
+        "anonymous": {
+          "description": "If true, event name is not included in the topics bloom (rare).",
+          "type": "boolean",
+          "default": false
+        },
+        "inputs": {
+          "type": "array",
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/EventParam" }
+        }
+      }
+    },
+
+    "Error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "inputs"],
+      "properties": {
+        "name": { "$ref": "#/$defs/Identifier" },
+        "docs": { "type": "string", "maxLength": 2048 },
+        "inputs": {
+          "type": "array",
+          "maxItems": 8,
+          "items": { "$ref": "#/$defs/Param" }
+        }
+      }
+    },
+
+    "Param": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "name": { "$ref": "#/$defs/Identifier" },
+        "docs": { "type": "string", "maxLength": 1024 },
+        "type": { "$ref": "#/$defs/TypeRef" }
+      }
+    },
+
+    "EventParam": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "indexed"],
+      "properties": {
+        "name": { "$ref": "#/$defs/Identifier" },
+        "docs": { "type": "string", "maxLength": 1024 },
+        "indexed": {
+          "description": "If true, value contributes to the event topics bloom.",
+          "type": "boolean",
+          "default": false
+        },
+        "type": { "$ref": "#/$defs/TypeRef" }
+      }
+    },
+
+    "TypeRef": {
+      "description": "Union of primitive, array, and tuple types supported by the Python-VM ABI.",
+      "oneOf": [
+        { "$ref": "#/$defs/TypePrimitive" },
+        { "$ref": "#/$defs/TypeBytesFixed" },
+        { "$ref": "#/$defs/TypeArray" },
+        { "$ref": "#/$defs/TypeTuple" }
+      ]
+    },
+
+    "TypePrimitive": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["abiType"],
+      "properties": {
+        "abiType": {
+          "type": "string",
+          "enum": [
+            "u8","u16","u32","u64","u128","u256",
+            "i32","i64",
+            "bool",
+            "bytes",         /* dynamic bytes */
+            "bytes32",       /* fixed 32 bytes shortcut */
+            "string",        /* UTF-8, length-prefixed */
+            "address"        /* bech32m-encoded on wire via SDK; ABI treats as 32-byte payload */
+          ]
+        }
+      }
+    },
+
+    "TypeBytesFixed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["abiType", "size"],
+      "properties": {
+        "abiType": { "const": "bytesN" },
+        "size": {
+          "description": "Exact byte length (1..256).",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 256
+        }
+      }
+    },
+
+    "TypeArray": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["abiType", "items"],
+      "properties": {
+        "abiType": { "const": "array" },
+        "items": { "$ref": "#/$defs/TypeRef" },
+        "length": {
+          "description": "If present, array is fixed-length; if absent, it is dynamic.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+
+    "TypeTuple": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["abiType", "components"],
+      "properties": {
+        "abiType": { "const": "tuple" },
+        "components": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type"],
+            "properties": {
+              "name": { "$ref": "#/$defs/Identifier" },
+              "type": { "$ref": "#/$defs/TypeRef" }
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "examples": [
+    {
+      "abiVersion": 1,
+      "name": "Counter",
+      "functions": [
+        {
+          "name": "get",
+          "stateMutability": "view",
+          "inputs": [],
+          "outputs": [{ "name": "value", "type": { "abiType": "u64" } }]
+        },
+        {
+          "name": "inc",
+          "stateMutability": "nonpayable",
+          "inputs": [{ "name": "delta", "type": { "abiType": "u64" } }],
+          "outputs": []
+        }
+      ],
+      "events": [
+        {
+          "name": "Incremented",
+          "inputs": [
+            { "name": "by", "indexed": false, "type": { "abiType": "u64" } },
+            { "name": "newValue", "indexed": true, "type": { "abiType": "u64" } }
+          ]
+        }
+      ],
+      "errors": [
+        { "name": "Overflow", "inputs": [] }
+      ]
+    }
+  ]
+}

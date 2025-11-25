@@ -1,0 +1,27 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=Animica Wallet
+GenericName=Cryptocurrency Wallet
+Comment=Post-quantum wallet for the Animica network
+Exec=animica-wallet %U
+Icon=animica-wallet
+Terminal=false
+Categories=Finance;Network;Office;
+Keywords=animica;wallet;crypto;blockchain;pq;post-quantum;
+StartupNotify=true
+# StartupWMClass=AnimicaWallet
+MimeType=x-scheme-handler/animica;
+Actions=Send;Receive;Settings;
+
+[Desktop Action Send]
+Name=Send
+Exec=animica-wallet --action send
+
+[Desktop Action Receive]
+Name=Receive
+Exec=animica-wallet --action receive
+
+[Desktop Action Settings]
+Name=Settings
+Exec=animica-wallet --action settings

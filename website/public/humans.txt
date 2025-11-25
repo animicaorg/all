@@ -1,0 +1,25 @@
+/* TEAM */
+Project: Animica — Website
+Role: Marketing & docs hub for the Animica ecosystem
+Contact: contact@animica.org
+Location: Planet Earth (remote-first)
+
+/* THANKS */
+Open Source: Astro, TypeScript, Tailwind CSS, Vitest, Playwright, Sharp
+Communities: OSS maintainers & contributors everywhere — thank you!
+
+/* SITE */
+Standards: HTML5, CSS3, ES2020, ARIA
+Accessibility: Target WCAG 2.1 AA
+Performance: Lighthouse ≥ 95 desktop, ≥ 90 mobile
+Generator: Astro (static export)
+Source: (private or TBD)
+Deploy: Static hosting (Vercel/Netlify/GitHub Pages)
+
+/* POLICIES */
+Privacy: See /privacy
+Terms: See /terms
+
+/* META */
+Last-Updated: 2025-10-09
+Humans.txt: https://humanstxt.org/

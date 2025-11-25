@@ -1,0 +1,48 @@
+apiVersion: v2
+name: animica-devnet
+description: >
+  Animica Devnet: single-chart deploy of node, miner, explorer API, studio-services,
+  and optional web UIs & observability. Intended for test/dev clusters.
+type: application
+
+# Chart version (SemVer). Bump on any chart change.
+version: 0.1.0
+
+# App version (SemVer or VCS tag/sha). Bump when the Animica stack version changes.
+appVersion: "0.1.0"
+
+kubeVersion: ">=1.26.0-0"
+
+keywords:
+  - animica
+  - blockchain
+  - devnet
+  - p2p
+  - rpc
+  - explorer
+  - studio
+  - miner
+
+home: https://animica.example.com
+sources:
+  - https://github.com/animica-org/animica
+
+maintainers:
+  - name: Animica Team
+    email: ops@animica.example.com
+
+annotations:
+  # Friendly category for dashboards/catalogs
+  charts.animica.io/category: "infrastructure"
+  charts.animica.io/tier: "dev"
+  # Helm linting hint: keep templates backward compatible where possible
+  charts.animica.io/compat: "k8s>=1.26"
+
+# No hard dependencies declared here; optional components (ingress, monitoring)
+# should be toggled via values and implemented within this chart's templates.
+# If you later decide to vendor dependencies, add them here with `condition` keys:
+# dependencies:
+#   - name: ingress-nginx
+#     version: "4.x.x"
+#     repository: "https://kubernetes.github.io/ingress-nginx"
+#     condition: ingress.enabled

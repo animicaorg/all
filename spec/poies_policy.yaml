@@ -1,0 +1,268 @@
+# Animica PoIES policy
+# Maps verified ProofMetrics → ψ(p) (µ-nats), per-type caps, diversity escort rules,
+# and the total Γ (gamma) cap used by the scorer/validator.
+#
+# This file is loaded by consensus/policy.py and hashed (Merkle) into the policy root.
+# Any change here must bump policy.version and re-compute spec/alg_policy.schema.json root if referenced.
+
+policy:
+  version: "0.1.0"
+  last_updated: "2025-09-19"
+  description: >
+    PoIES = Proof-of-Integrative & Efficient Security. Acceptance if S = H(u) + Σ ψ(p) ≥ Θ
+    with Γ caps and fairness/escort shaping. ψ(p) depends on proof type metrics
+    (see proofs/metrics.py). All ψ units are µ-nats (micro-nats) and combine additively.
+
+  hashing:
+    # How the policy is canonically hashed into a root for headers.
+    # The loader will build leaves as SHA3-512( canonical_json(path,value) ) sorted by path.
+    hash_alg: "sha3_512"
+    leaf_format: "canonical_json_pointer"
+    merkle_tree: "binary-sort-by-leaf-hash"
+    include_sections:
+      - "/gamma"
+      - "/types"
+      - "/diversity"
+      - "/fairness_alpha_hints"
+
+  gamma:
+    # Total Σψ cap per block before comparing to Θ (consensus/params also set a ceiling;
+    # this value should be ≤ params.networks[*].consensus.poies.gamma.total_cap_munats)
+    total_cap_munats: 12000000
+
+  types:
+    # --------------------------- HASHSHARE ------------------------------------
+    hashshare:
+      enabled: true
+      # Cap of ψ contributed by HashShare proofs in a single block
+      per_block_cap_munats: 7000000
+      # Per-entity cap as a fraction of Γ (prevents a single miner dominating)
+      per_entity_cap_ratio: 0.35
+      # Acceptable difficulty ratio bounds for credit (proofs/hashshare.py exposes d_ratio ∈ (0, ∞))
+      d_ratio_bounds:
+        min: 0.125      # shares far below target still useful but discounted by model
+        max: 8.0        # extremely rare shares don’t over-credit (clamped)
+      psi_model:
+        # ψ_hashshare = k * log1p(d_ratio) with clamping; then scaled by quality
+        model: "log1p"  # one of: log1p | linear | sqrt
+        coef_munats: 850000
+        clamp_munats:
+          min: 100000     # floor credit for a valid share
+          max: 3500000    # avoid outliers dominating
+        quality_bonus:
+          # Optional micro-bonus for header-quality features (e.g., version bits, aux flags)
+          enabled: true
+          per_flag_munats: 20000
+          max_flags: 8
+
+    # ------------------------------ AI ----------------------------------------
+    ai:
+      enabled: true
+      per_block_cap_munats: 3000000
+      per_entity_cap_ratio: 0.20
+      # ψ is driven by AI "units" (normalized compute) plus redundancy/traps/QoS modifiers.
+      units:
+        field: "ai_units"               # proofs/metrics: integer units derived from benchmarks
+        coef_munats_per_unit: 12000
+        max_units_per_proof: 100000     # guard abuse; policy can raise over time
+      redundancy:
+        # Redundant execution reduces error/cheat probability; reward small bonus per extra copy.
+        copies_field: "redundancy"
+        bonus_munats_per_copy: 25000
+        max_copies_counted: 3
+      traps:
+        # Trap receipts (canaries) — require minimum pass ratio; add bonus if high.
+        ratio_field: "traps_ratio"
+        min_ok: 0.02
+        target: 0.10
+        ok_bonus_munats: 60000
+        excellent_bonus_munats: 120000
+        excellent_threshold: 0.20
+      qos:
+        # Quality-of-Service multiplier around target QoS (latency/availability)
+        # ψ_qos = ψ * clamp( 1 + gain*(qos - target), 1+min_delta, 1+max_delta )
+        field: "qos"
+        target: 0.95
+        gain_per_point: 0.50
+        min_delta: -0.30
+        max_delta: 0.20
+      attest:
+        # Require trusted TEE attestation (SGX/SEV/CCA) unless allow_software is set for devnets
+        require_tee: true
+        allow_software_on_devnet: true
+
+    # ---------------------------- QUANTUM -------------------------------------
+    quantum:
+      enabled: true
+      per_block_cap_munats: 2000000
+      per_entity_cap_ratio: 0.20
+      units:
+        field: "quantum_units"          # from depth×width×shots normalized (see proofs/quantum_attest/benchmarks.py)
+        coef_munats_per_unit: 32000
+        max_units_per_proof: 50000
+      traps:
+        ratio_field: "traps_ratio"
+        min_ok: 0.01
+        target: 0.05
+        ok_bonus_munats: 90000
+        excellent_bonus_munats: 180000
+        excellent_threshold: 0.10
+      qos:
+        field: "qos"
+        target: 0.90
+        gain_per_point: 0.40
+        min_delta: -0.35
+        max_delta: 0.25
+      attest:
+        require_provider_cert: true     # proofs/quantum_attest/provider_cert.py
+        require_trap_verification: true
+
+    # ---------------------------- STORAGE -------------------------------------
+    storage:
+      enabled: true
+      per_block_cap_munats: 1000000
+      per_entity_cap_ratio: 0.25
+      heartbeat:
+        # Heartbeat PoSt credits steady ψ to incentivize liveness & repair.
+        window_blocks: 7200
+        base_munats: 12000
+        decay_munats_per_miss: 2000
+        min_munats: 2000
+      retrieval_bonus:
+        enabled: true
+        bonus_munats: 35000
+        max_rate_per_block: 64
+      capacity_hint:
+        # Optional linear credit by committed capacity proof (future)
+        enabled: false
+        coef_munats_per_gib: 0
+
+    # ------------------------------ VDF ---------------------------------------
+    vdf:
+      enabled: true
+      per_block_cap_munats: 500000
+      per_entity_cap_ratio: 0.50      # VDF is a singleton in practice; cap high but Γ will clamp
+      seconds_field: "vdf_seconds"
+      coef_munats_per_second: 15000
+      max_seconds_credit: 10.0
+
+  diversity:
+    # Escort rules gently encourage a mix of proof types.
+    # Mechanism: if mix of accepted ψ in last window skews below targets,
+    # reduce the effective Θ by up to reduction_munats when block includes
+    # an underrepresented type (bounded by Γ and per-type caps).
+    window_blocks: 43200           # ~1 day on mainnet (2s blocks)
+    targets_pct:                   # targets are soft — only shape escort behavior
+      hashshare: 50
+      ai: 25
+      quantum: 15
+      storage: 8
+      vdf: 2
+    escort:
+      quantile_q: 0.20             # escort quantile (matches params.consensus.poies.gamma.escort_quantile)
+      reduction_munats_max: 1500000
+      per_underrep_type_reduction_munats: 300000
+      min_types_for_bonus: 3
+      cooldown_blocks: 300         # avoid oscillations
+
+  fairness_alpha_hints:
+    # Hints used by consensus/alpha_tuner.py to drift α per type so long-term shares
+    # converge to targets without destabilizing issuance.
+    step_bounds_per_epoch:
+      min: 0.001
+      max: 0.01
+    type_weights:
+      hashshare: 1.0
+      ai: 1.2
+      quantum: 1.5
+      storage: 0.8
+      vdf: 0.5
+
+# ------------------------------------------------------------------------------
+# NETWORK OVERRIDES
+# ------------------------------------------------------------------------------
+
+networks:
+  "animica:1":   # Mainnet policy id
+    inherit: "default"
+    overrides:
+      gamma:
+        total_cap_munats: 12000000
+      types:
+        ai:
+          units:
+            coef_munats_per_unit: 12000
+        quantum:
+          units:
+            coef_munats_per_unit: 32000
+        storage:
+          heartbeat:
+            base_munats: 14000
+  "animica:2":   # Testnet — more generous & faster iteration
+    inherit: "default"
+    overrides:
+      gamma:
+        total_cap_munats: 10000000
+      types:
+        hashshare:
+          per_block_cap_munats: 6000000
+        ai:
+          per_block_cap_munats: 3500000
+          attest:
+            allow_software_on_devnet: true
+          units:
+            coef_munats_per_unit: 15000
+        quantum:
+          per_block_cap_munats: 2500000
+          units:
+            coef_munats_per_unit: 36000
+        storage:
+          retrieval_bonus:
+            bonus_munats: 50000
+      diversity:
+        escort:
+          reduction_munats_max: 2000000
+  "animica:1337": # Devnet — permissive, for local demos
+    inherit: "default"
+    overrides:
+      gamma:
+        total_cap_munats: 8000000
+      types:
+        hashshare:
+          per_block_cap_munats: 5000000
+        ai:
+          per_block_cap_munats: 4000000
+          attest:
+            require_tee: false
+            allow_software_on_devnet: true
+          units:
+            coef_munats_per_unit: 20000
+        quantum:
+          per_block_cap_munats: 3000000
+          attest:
+            require_provider_cert: false
+            require_trap_verification: false
+          units:
+            coef_munats_per_unit: 40000
+        storage:
+          heartbeat:
+            base_munats: 20000
+            decay_munats_per_miss: 1000
+        vdf:
+          coef_munats_per_second: 25000
+      diversity:
+        escort:
+          reduction_munats_max: 2500000
+
+# ------------------------------------------------------------------------------
+# VALIDATION CONSTRAINTS (loader sanity checks)
+# ------------------------------------------------------------------------------
+constraints:
+  # Sum of per-type caps may exceed Γ; scorer clamps to Γ. But enforce “not egregious”.
+  max_total_caps_over_gamma_ratio: 2.5
+  per_entity_cap_ratio_bounds:
+    min: 0.05
+    max: 0.80
+  psi_nonneg: true
+  enabled_types_min: 2
+

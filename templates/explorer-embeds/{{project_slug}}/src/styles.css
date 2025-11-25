@@ -1,0 +1,289 @@
+/* ──────────────────────────────────────────────────────────────────────────
+   Animica Explorer Embeds — Shared Styles
+   Scope: kept tiny and class-scoped so it can be dropped into any page/app.
+   No global resets. Uses CSS vars + prefers-color-scheme.
+   ────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --ae-font: 13px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Helvetica, Arial, sans-serif;
+  --ae-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace;
+
+  /* Light palette */
+  --ae-bg: #ffffff;
+  --ae-fg: #0f172a;          /* slate-900 */
+  --ae-muted: #64748b;       /* slate-500 */
+  --ae-border: #e5e7eb;      /* gray-200 */
+  --ae-border-strong: #cbd5e1; /* slate-300 */
+  --ae-accent: #0ea5e9;      /* sky-500 */
+  --ae-success: #10b981;     /* emerald-500 */
+  --ae-warn: #f59e0b;        /* amber-500 */
+  --ae-danger: #ef4444;      /* red-500 */
+  --ae-elev-1: 0 1px 1px rgba(0,0,0,0.04);
+  --ae-elev-2: 0 4px 10px rgba(0,0,0,0.06);
+
+  --ae-radius: 8px;
+  --ae-gap: .5rem;
+  --ae-pad: .75rem;
+  --ae-badge-pad-y: .1rem;
+  --ae-badge-pad-x: .4rem;
+
+  --ae-ok: var(--ae-success);
+  --ae-mid: #3b82f6;         /* blue-500 */
+  --ae-low: var(--ae-warn);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ae-bg: #0b1220;
+    --ae-fg: #e5e7eb;           /* gray-200 */
+    --ae-muted: #94a3b8;        /* slate-400 */
+    --ae-border: #1f2937;       /* gray-800 */
+    --ae-border-strong: #344053;/* blue gray-ish */
+    --ae-elev-1: 0 1px 1px rgba(0,0,0,0.5);
+    --ae-elev-2: 0 6px 18px rgba(0,0,0,0.5);
+  }
+}
+
+/* Base container for all embeds */
+.animica-embed {
+  color: var(--ae-fg);
+  font: var(--ae-font);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.animica-embed.card {
+  background: var(--ae-bg);
+  border: 1px solid var(--ae-border);
+  border-radius: var(--ae-radius);
+  padding: var(--ae-pad);
+  box-shadow: var(--ae-elev-1);
+}
+
+.animica-embed .muted { color: var(--ae-muted); }
+.animica-embed .mono { font-family: var(--ae-mono); }
+
+/* Generic layout helpers */
+.animica-row { display: flex; align-items: center; gap: var(--ae-gap); }
+.animica-col { display: flex; flex-direction: column; gap: var(--ae-gap); }
+.animica-embed .space { flex: 1 1 auto; }
+
+/* Badges & Pills */
+.badge {
+  display: inline-block;
+  padding: var(--ae-badge-pad-y) var(--ae-badge-pad-x);
+  border: 1px solid var(--ae-border);
+  border-radius: 999px;
+  font-family: var(--ae-mono);
+  font-size: 12px;
+  line-height: 1.2;
+  background: transparent;
+}
+.badge.ok     { border-color: var(--ae-success); color: var(--ae-success); }
+.badge.warn   { border-color: var(--ae-warn);    color: var(--ae-warn); }
+.badge.danger { border-color: var(--ae-danger);  color: var(--ae-danger); }
+.badge.info   { border-color: var(--ae-mid);     color: var(--ae-mid); }
+
+.pill {
+  padding: .2rem .55rem;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.1;
+  color: var(--ae-bg);
+  background: var(--ae-muted);
+}
+.pill.ok     { background: var(--ae-success); }
+.pill.warn   { background: var(--ae-warn); }
+.pill.danger { background: var(--ae-danger); }
+.pill.info   { background: var(--ae-mid); }
+
+/* Buttons (minimal) */
+.ae-btn {
+  appearance: none;
+  border: 1px solid var(--ae-border);
+  background: var(--ae-bg);
+  color: var(--ae-fg);
+  padding: .35rem .6rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+}
+.ae-btn:hover { border-color: var(--ae-border-strong); box-shadow: var(--ae-elev-1); }
+.ae-btn:active { transform: translateY(1px); }
+
+/* Dot and legend */
+.dot { width: .5rem; height: .5rem; border-radius: 999px; background: var(--ae-success); display: inline-block; }
+
+/* Head Ticker (for newHeads streams) */
+.head-ticker {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-gap: var(--ae-gap);
+  align-items: center;
+}
+.head-ticker .title { font-weight: 600; }
+.head-ticker .grid {
+  display: grid;
+  grid-auto-flow: column;
+  grid-gap: .75rem;
+  overflow-x: auto;
+  padding-bottom: .1rem;
+}
+.head-ticker .slot {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-column-gap: .5rem;
+  align-items: center;
+  border: 1px solid var(--ae-border);
+  border-radius: 6px;
+  padding: .35rem .5rem;
+  background: rgba(2, 132, 199, 0.04); /* sky-600 w/ low alpha */
+}
+.head-ticker .slot .h {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.head-ticker .slot .ts,
+.head-ticker .slot .hash {
+  font-family: var(--ae-mono);
+  font-size: 12px;
+  color: var(--ae-muted);
+  white-space: nowrap;
+}
+.head-ticker .slot .sep {
+  opacity: .35;
+  margin: 0 .25rem;
+}
+
+.delta {
+  font-family: var(--ae-mono);
+  font-size: 12px;
+  border: 1px solid var(--ae-border);
+  border-radius: 6px;
+  padding: .15rem .4rem;
+}
+.delta.up   { color: var(--ae-success); border-color: var(--ae-success); }
+.delta.down { color: var(--ae-danger);  border-color: var(--ae-danger);  }
+.delta.flat { color: var(--ae-muted);   border-color: var(--ae-border);  }
+
+/* Sparkline (Γ fairness & other tiny charts)
+   The GammaSpark component also injects minimal styles at runtime to avoid
+   hard dependency on this stylesheet. These rules add nicer defaults. */
+.spark-wrap { display: flex; flex-direction: column; gap: .4rem; }
+.legend { display:flex; align-items:center; justify-content:space-between; gap: var(--ae-gap); }
+.legend .title { font-weight: 600; }
+.legend .value { font-weight: 600; }
+.spark-wrap canvas {
+  display: block;
+  width: 100%;
+  height: 60px;
+  border-radius: 6px;
+  background:
+    linear-gradient(to bottom, rgba(0,0,0,0) 0, rgba(0,0,0,0) 100%),
+    transparent;
+  border: 1px solid var(--ae-border);
+}
+
+/* Tx Status (generic UI for pendingTxs) */
+.tx-status {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  grid-gap: var(--ae-gap);
+  border: 1px dashed var(--ae-border);
+  border-radius: var(--ae-radius);
+  padding: .5rem .6rem;
+}
+.tx-status .state { font-weight: 600; }
+.tx-status .desc  { color: var(--ae-muted); font-size: 12px; }
+.tx-status .state.sending { color: var(--ae-mid); }
+.tx-status .state.pending { color: var(--ae-warn); }
+.tx-status .state.mined   { color: var(--ae-success); }
+.tx-status .state.failed  { color: var(--ae-danger); }
+
+/* Key/Value (compact) */
+.kv { display: grid; grid-template-columns: auto 1fr; grid-column-gap: .6rem; row-gap: .25rem; }
+.kv dt { color: var(--ae-muted); }
+.kv dd { font-family: var(--ae-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Tables (minimal, unopinionated) */
+.ae-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.ae-table th,
+.ae-table td {
+  text-align: left;
+  padding: .4rem .5rem;
+  border-bottom: 1px solid var(--ae-border);
+}
+.ae-table th {
+  font-weight: 600;
+  color: var(--ae-muted);
+}
+.ae-table tr:hover td {
+  background: rgba(2, 132, 199, 0.06);
+}
+
+/* Cards grid helper */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: .75rem;
+}
+.card-lite {
+  border: 1px solid var(--ae-border);
+  border-radius: var(--ae-radius);
+  padding: .6rem .7rem;
+  background: var(--ae-bg);
+  box-shadow: var(--ae-elev-1);
+}
+
+/* Animations */
+@keyframes ae-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .25; }
+}
+@keyframes ae-pulse {
+  0% { transform: scale(1); opacity: .7; }
+  50% { transform: scale(1.02); opacity: 1; }
+  100% { transform: scale(1); opacity: .7; }
+}
+.blink { animation: ae-blink 1s linear infinite; }
+.pulse { animation: ae-pulse 2.4s ease-in-out infinite; }
+
+/* Responsive niceties */
+@media (max-width: 420px) {
+  .legend .title { font-size: 12px; }
+  .badge { font-size: 11px; }
+  .head-ticker .slot { grid-template-columns: 1fr; }
+  .kv { grid-template-columns: 1fr; }
+}
+
+/* Utility spacers (opt-in) */
+.ae-mt-0   { margin-top: 0; }
+.ae-mt-1   { margin-top: .25rem; }
+.ae-mt-2   { margin-top: .5rem; }
+.ae-mt-3   { margin-top: .75rem; }
+.ae-mb-0   { margin-bottom: 0; }
+.ae-mb-1   { margin-bottom: .25rem; }
+.ae-mb-2   { margin-bottom: .5rem; }
+.ae-mb-3   { margin-bottom: .75rem; }
+.ae-p-0    { padding: 0; }
+.ae-p-1    { padding: .25rem; }
+.ae-p-2    { padding: .5rem; }
+.ae-p-3    { padding: .75rem; }
+.ae-text-right { text-align: right; }
+.ae-text-center { text-align: center; }
+
+/* Links (subtle) */
+.animica-embed a {
+  color: var(--ae-accent);
+  text-decoration: none;
+}
+.animica-embed a:hover { text-decoration: underline; }
+
+/* Shadows */
+.ae-shadow-1 { box-shadow: var(--ae-elev-1); }
+.ae-shadow-2 { box-shadow: var(--ae-elev-2); }

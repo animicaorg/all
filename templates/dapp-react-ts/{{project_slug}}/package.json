@@ -1,0 +1,68 @@
+{
+  "name": "{{ project_slug }}",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "React + TypeScript starter dapp for Animica (RPC/WS, wallet, SDK, tests).",
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --strictPort --port 5173",
+    "lint": "eslint . --ext .ts,.tsx --report-unused-disable-directives",
+    "format": "prettier --write .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "e2e": "playwright test",
+    "e2e:ui": "playwright test --ui"
+  },
+  "dependencies": {
+    "@animica/sdk": "^0.1.0",
+    "classnames": "^2.5.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^4.5.2"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.4.6",
+    "@testing-library/react": "^16.0.0",
+    "@types/node": "^20.14.2",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "@vitest/coverage-v8": "^2.0.5",
+    "autoprefixer": "^10.4.19",
+    "eslint": "^9.9.1",
+    "eslint-plugin-import": "^2.29.1",
+    "eslint-plugin-react": "^7.35.0",
+    "eslint-plugin-react-hooks": "^4.6.2",
+    "jsdom": "^24.1.0",
+    "playwright": "^1.47.2",
+    "postcss": "^8.4.41",
+    "prettier": "^3.3.3",
+    "tailwindcss": "^3.4.10",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.1",
+    "vitest": "^2.0.5"
+  },
+  "browserslist": [
+    "defaults",
+    "not IE 11",
+    "maintained node versions"
+  ],
+  "keywords": [
+    "animica",
+    "dapp",
+    "react",
+    "typescript",
+    "vite",
+    "sdk",
+    "wallet"
+  ],
+  "license": "MIT",
+  "sideEffects": false,
+  "packageManager": "pnpm@9.7.0"
+}

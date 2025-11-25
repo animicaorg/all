@@ -1,0 +1,30 @@
+<!-- Animica Product Icon: Data Availability (DA)
+     Motif: replicated blob with shard grid and network nodes.
+     Style: Monochrome, currentColor, 48×48 canvas -->
+<svg width="48" height="48" viewBox="0 0 48 48" role="img" aria-labelledby="title" xmlns="http://www.w3.org/2000/svg">
+  <title id="title">Data Availability</title>
+  <!-- Back layer (replica) -->
+  <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="12" y="7" width="24" height="22" rx="4"/>
+    <!-- Front layer (primary blob) -->
+    <rect x="9" y="10" width="30" height="22" rx="4"/>
+    <!-- Shard grid -->
+    <line x1="15" y1="16" x2="15" y2="26"/>
+    <line x1="21" y1="16" x2="21" y2="26"/>
+    <line x1="27" y1="16" x2="27" y2="26"/>
+    <line x1="33" y1="16" x2="33" y2="26"/>
+    <line x1="12" y1="16" x2="36" y2="16"/>
+    <line x1="12" y1="22" x2="36" y2="22"/>
+    <line x1="12" y1="26" x2="36" y2="26"/>
+    <!-- Network connections to corners -->
+    <line x1="8"  y1="8"  x2="9"  y2="10"/>
+    <line x1="40" y1="8"  x2="39" y2="10"/>
+    <line x1="8"  y1="40" x2="9"  y2="32"/>
+    <line x1="40" y1="40" x2="39" y2="32"/>
+  </g>
+  <!-- Availability nodes -->
+  <circle cx="8"  cy="8"  r="1.6" fill="currentColor"/>
+  <circle cx="40" cy="8"  r="1.6" fill="currentColor"/>
+  <circle cx="8"  cy="40" r="1.6" fill="currentColor"/>
+  <circle cx="40" cy="40" r="1.6" fill="currentColor"/>
+</svg>

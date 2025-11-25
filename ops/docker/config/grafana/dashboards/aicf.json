@@ -1,0 +1,416 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["animica", "aicf", "ai", "quantum", "sla", "treasury"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": true },
+        "hide": 0,
+        "label": "Prometheus",
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource"
+      },
+      {
+        "datasource": "${DS_PROMETHEUS}",
+        "definition": "label_values(up{job=~\".*\"}, job)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "job",
+        "multi": false,
+        "name": "job",
+        "options": [],
+        "query": { "query": "label_values(up{job=~\".*\"}, job)", "refId": "PromVarJob" },
+        "refresh": 1,
+        "regex": "/aicf|services|node.*/",
+        "skipUrlSync": false,
+        "type": "query"
+      },
+      {
+        "datasource": "${DS_PROMETHEUS}",
+        "definition": "label_values(animica_aicf_providers_total{job=~\"$job\"}, instance)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "instance",
+        "multi": false,
+        "name": "instance",
+        "options": [],
+        "query": {
+          "query": "label_values(animica_aicf_providers_total{job=~\"$job\"}, instance)",
+          "refId": "PromVarInstance"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "query"
+      },
+      {
+        "datasource": "${DS_PROMETHEUS}",
+        "definition": "label_values(animica_aicf_jobs_enqueued_total{instance=\"$instance\"}, kind)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "job kind",
+        "multi": true,
+        "name": "kind",
+        "options": [],
+        "query": {
+          "query": "label_values(animica_aicf_jobs_enqueued_total{instance=\"$instance\"}, kind)",
+          "refId": "PromVarKind"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "query"
+      },
+      {
+        "datasource": "${DS_PROMETHEUS}",
+        "definition": "label_values(animica_aicf_slash_events_total{instance=\"$instance\"}, reason)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "slash reason",
+        "multi": true,
+        "name": "reason",
+        "options": [],
+        "query": {
+          "query": "label_values(animica_aicf_slash_events_total{instance=\"$instance\"}, reason)",
+          "refId": "PromVarReason"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "query"
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m"],
+    "time_options": ["1h", "3h", "6h", "12h", "24h", "2d", "7d", "30d"]
+  },
+  "timezone": "",
+  "title": "Animica — AICF (AI Compute Fund)",
+  "uid": "animica-aicf-01",
+  "version": 1,
+  "panels": [
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Providers currently active (eligible for assignments).",
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "id": 10,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "animica_aicf_providers_active{instance=\"$instance\"}", "legendFormat": "active", "refId": "A" }
+      ],
+      "title": "Providers — Active",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Providers currently jailed.",
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "id": 11,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "animica_aicf_providers_jailed{instance=\"$instance\"}", "legendFormat": "jailed", "refId": "A" }
+      ],
+      "title": "Providers — Jailed",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Total stake across providers (native units).",
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "id": 12,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "animica_aicf_stake_total{instance=\"$instance\"}", "legendFormat": "stake", "refId": "A" }
+      ],
+      "title": "Total Stake (Σ)",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Currently active leases across providers.",
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "id": 13,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "animica_aicf_leases_active{instance=\"$instance\"}", "legendFormat": "leases", "refId": "A" }
+      ],
+      "title": "Leases — Active",
+      "type": "stat"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Queue depth by job kind.",
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "id": 20,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } },
+      "targets": [
+        { "expr": "animica_aicf_queue_depth{instance=\"$instance\",kind=~\"$kind\"}", "legendFormat": "depth {{kind}}", "refId": "A" }
+      ],
+      "title": "Queue Depth (by kind)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Flow through the matcher: enqueued → assigned → completed → failed (5m rates).",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "id": 21,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } },
+      "targets": [
+        { "expr": "sum by (kind) (rate(animica_aicf_jobs_enqueued_total{instance=\"$instance\",kind=~\"$kind\"}[5m]))", "legendFormat": "enqueued {{kind}}/s", "refId": "A" },
+        { "expr": "sum by (kind) (rate(animica_aicf_jobs_assigned_total{instance=\"$instance\",kind=~\"$kind\"}[5m]))", "legendFormat": "assigned {{kind}}/s", "refId": "B" },
+        { "expr": "sum by (kind) (rate(animica_aicf_jobs_completed_total{instance=\"$instance\",kind=~\"$kind\"}[5m]))", "legendFormat": "completed {{kind}}/s", "refId": "C" },
+        { "expr": "sum by (kind) (rate(animica_aicf_jobs_failed_total{instance=\"$instance\",kind=~\"$kind\"}[5m]))", "legendFormat": "failed {{kind}}/s", "refId": "D" }
+      ],
+      "title": "Job Flow Rates (5m)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Assignment latency (time from queue to lease issued).",
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 3 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 13 },
+      "id": 30,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(animica_aicf_assignment_seconds_bucket{instance=\"$instance\"}[5m])))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(animica_aicf_assignment_seconds_bucket{instance=\"$instance\"}[5m])))",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(animica_aicf_assignment_seconds_bucket{instance=\"$instance\"}[5m])))",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ],
+      "title": "Assignment Latency (p50/p95/p99, 5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "End-to-end job runtime (provider execution + proof/settlement path).",
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 3 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 13 },
+      "id": 31,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le,kind) (rate(animica_aicf_job_runtime_seconds_bucket{instance=\"$instance\",kind=~\"$kind\"}[5m])))",
+          "legendFormat": "p50 {{kind}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le,kind) (rate(animica_aicf_job_runtime_seconds_bucket{instance=\"$instance\",kind=~\"$kind\"}[5m])))",
+          "legendFormat": "p95 {{kind}}",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le,kind) (rate(animica_aicf_job_runtime_seconds_bucket{instance=\"$instance\",kind=~\"$kind\"}[5m])))",
+          "legendFormat": "p99 {{kind}}",
+          "refId": "C"
+        }
+      ],
+      "title": "Job Runtime (by kind, 5m)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Observed traps ratio (higher is safer) vs QoS score.",
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 3 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 20 },
+      "id": 40,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } },
+      "targets": [
+        { "expr": "avg_over_time(animica_aicf_sla_traps_ratio{instance=\"$instance\"}[5m])", "legendFormat": "traps_ratio", "refId": "A" },
+        { "expr": "avg_over_time(animica_aicf_sla_qos_score{instance=\"$instance\"}[5m])", "legendFormat": "qos_score", "refId": "B" }
+      ],
+      "title": "SLA — Traps & QoS (5m avg)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Job success rate (completed / attempts).",
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 20 },
+      "id": 41,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+      "targets": [
+        {
+          "expr": "clamp_min(sum(rate(animica_aicf_jobs_completed_total{instance=\"$instance\"}[5m])) / sum(rate(animica_aicf_jobs_attempt_total{instance=\"$instance\"}[5m])), 0)",
+          "legendFormat": "success",
+          "refId": "A"
+        }
+      ],
+      "title": "SLA — Success Ratio (5m)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Slash events by reason (5m rates).",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 27 },
+      "id": 50,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } },
+      "targets": [
+        { "expr": "sum by (reason) (rate(animica_aicf_slash_events_total{instance=\"$instance\",reason=~\"$reason\"}[5m]))", "legendFormat": "slash {{reason}}/s", "refId": "A" }
+      ],
+      "title": "Slashing — Events (by reason, 5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Errors across AICF subsystems.",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 27 },
+      "id": 51,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } },
+      "targets": [
+        { "expr": "sum by (kind) (rate(animica_aicf_errors_total{instance=\"$instance\"}[5m]))", "legendFormat": "errors/s", "refId": "A" }
+      ],
+      "title": "Errors (5m rate)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Payouts currently pending settlement (count).",
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 34 },
+      "id": 60,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "animica_aicf_payouts_pending{instance=\"$instance\"}", "legendFormat": "pending", "refId": "A" }
+      ],
+      "title": "Payouts — Pending (count)",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Payout amount settled (native units per second, 5m rate).",
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 34 },
+      "id": 61,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "sum(rate(animica_aicf_payout_amount_total{instance=\"$instance\"}[5m]))", "legendFormat": "amount/s", "refId": "A" }
+      ],
+      "title": "Payouts — Amount (5m rate)",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Treasury balance used for AICF splits (native units).",
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 34 },
+      "id": 62,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "animica_aicf_treasury_balance{instance=\"$instance\"}", "legendFormat": "balance", "refId": "A" }
+      ],
+      "title": "Treasury — Balance",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Settlements per second (count and entries).",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 34 },
+      "id": 63,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "sum(rate(animica_aicf_settlements_total{instance=\"$instance\"}[5m]))", "legendFormat": "settlements/s", "refId": "A" }
+      ],
+      "title": "Settlements (5m rate)",
+      "type": "stat"
+    }
+  ]
+}

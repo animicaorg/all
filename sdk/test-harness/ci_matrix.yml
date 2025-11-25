@@ -1,0 +1,196 @@
+name: SDK Matrix CI
+
+on:
+  push:
+    branches: [ main, trunk, develop, dev, "**" ]
+  pull_request:
+
+concurrency:
+  group: sdk-matrix-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "20"
+  RUST_TOOLCHAIN: "stable"
+  RPC_URL: "http://127.0.0.1:8545"
+  WS_URL: "ws://127.0.0.1:8545/ws"
+  CHAIN_ID: "1337"
+  ALG_ID: "dilithium3"
+
+jobs:
+  python-tests:
+    name: Python SDK • unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install deps
+        run: |
+          python -m pip install -U pip wheel
+          # Install SDK (editable) and test deps; keep lean to avoid system libs.
+          python -m pip install -e ./sdk/python
+          python -m pip install pytest anyio httpx websockets msgspec cbor2
+
+      - name: Run unit tests
+        working-directory: sdk/python
+        run: |
+          pytest -q --maxfail=1
+
+  ts-tests:
+    name: TypeScript SDK • unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: |
+            sdk/typescript/package-lock.json
+            sdk/codegen/package-lock.json
+
+      - name: Install & build
+        working-directory: sdk/typescript
+        run: |
+          npm ci
+          npm run build
+
+      - name: Run unit tests
+        working-directory: sdk/typescript
+        run: npm test --silent
+
+  rs-tests:
+    name: Rust SDK • unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            sdk/rust -> target
+
+      - name: Run tests
+        working-directory: sdk/rust
+        run: cargo test --workspace --all-features --quiet
+
+  e2e:
+    name: End-to-end • deploy+call Counter (py • ts • rs)
+    runs-on: ubuntu-latest
+    needs: [python-tests, ts-tests, rs-tests]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup toolchains
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: sdk/typescript/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            sdk/rust -> target
+
+      - name: Install Python deps
+        run: |
+          python -m pip install -U pip wheel
+          python -m pip install -e ./sdk/python anyio httpx websockets msgspec cbor2
+
+      - name: Build TS SDK
+        working-directory: sdk/typescript
+        run: |
+          npm ci
+          npm run build
+          npm pack --silent
+
+      - name: Build Rust SDK
+        working-directory: sdk/rust
+        run: cargo build --release --examples
+
+      - name: Start devnet (best-effort)
+        env:
+          RPC_URL: ${{ env.RPC_URL }}
+          CHAIN_ID: ${{ env.CHAIN_ID }}
+        run: |
+          set -e
+          if [[ -f "sdk/test-harness/devnet_env.py" ]]; then
+            echo "[devnet] starting…"
+            python sdk/test-harness/devnet_env.py --start --rpc "${RPC_URL}" --chain "${CHAIN_ID}" &
+            echo $! > devnet.pid
+          else
+            echo "[devnet] helper not found, assuming an external node is available at ${RPC_URL}"
+          fi
+
+      - name: Wait for RPC ready
+        env:
+          RPC_URL: ${{ env.RPC_URL }}
+        run: |
+          set +e
+          deadline=$((SECONDS+90))
+          ok=0
+          while (( SECONDS < deadline )); do
+            out=$(curl -s -m 2 -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"chain.getChainId","params":[]}' "${RPC_URL}/rpc")
+            if echo "$out" | grep -q '"result"'; then ok=1; break; fi
+            sleep 2
+          done
+          if [[ $ok -ne 1 ]]; then
+            echo "RPC not ready at ${RPC_URL}"; exit 1
+          fi
+
+      - name: Python E2E
+        env:
+          RPC_URL: ${{ env.RPC_URL }}
+          WS_URL: ${{ env.WS_URL }}
+          CHAIN_ID: ${{ env.CHAIN_ID }}
+          ALG_ID: ${{ env.ALG_ID }}
+        run: |
+          python sdk/test-harness/run_e2e_py.py --rpc "${RPC_URL}" --chain "${CHAIN_ID}" --alg "${ALG_ID}"
+
+      - name: TypeScript E2E
+        env:
+          RPC_URL: ${{ env.RPC_URL }}
+          WS_URL: ${{ env.WS_URL }}
+          CHAIN_ID: ${{ env.CHAIN_ID }}
+          ALG_ID: ${{ env.ALG_ID }}
+        run: |
+          node sdk/test-harness/run_e2e_ts.mjs --rpc "${RPC_URL}" --chain "${CHAIN_ID}" --alg "${ALG_ID}"
+
+      - name: Rust E2E
+        env:
+          RPC_URL: ${{ env.RPC_URL }}
+          CHAIN_ID: ${{ env.CHAIN_ID }}
+          ALG_ID: ${{ env.ALG_ID }}
+        run: |
+          bash sdk/test-harness/run_e2e_rs.sh --rpc "${RPC_URL}" --chain "${CHAIN_ID}" --alg "${ALG_ID}"
+
+      - name: Stop devnet
+        if: always()
+        run: |
+          if [[ -f devnet.pid ]]; then
+            echo "[devnet] stopping…"
+            python sdk/test-harness/devnet_env.py --stop || true
+            kill "$(cat devnet.pid)" 2>/dev/null || true
+          fi

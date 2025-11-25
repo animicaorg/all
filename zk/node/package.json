@@ -1,0 +1,22 @@
+{
+  "name": "@animica/zk-node-tools",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dev-only SNARK tooling for test fixtures using snarkjs.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "packageManager": "npm@10.8.1",
+  "scripts": {
+    "snarkjs": "snarkjs --help",
+    "version": "node -v && npm -v"
+  },
+  "devDependencies": {
+    "snarkjs": "0.7.3"
+  },
+  "overrides": {
+    "snarkjs": "0.7.3"
+  }
+}

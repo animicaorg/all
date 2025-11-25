@@ -1,0 +1,224 @@
+{
+  "schema_version": 1,
+  "updated": "2025-10-12",
+  "owner": "governance/maintainers#protocol",
+  "description": "Allowed version transition graph for node software & protocol feature-gates. Tools must only permit upgrades that are explicitly present as edges below and satisfy the listed conditions.",
+  "semver": {
+    "format": "MAJOR.MINOR.PATCH",
+    "meaning": {
+      "major": "Backward-incompatible protocol or state changes. Requires on-chain Upgrade proposal and Timelock.",
+      "minor": "Backward-compatible feature flags. May require Params/Feature proposal; no state re-encode.",
+      "patch": "Bug/security fixes only. No feature flags or migrations."
+    }
+  },
+  "tracks": [
+    "nightly",
+    "beta",
+    "stable"
+  ],
+  "constraints": {
+    "downgrade": {
+      "patch_back_allowed": true,
+      "patch_back_window_blocks": 2016,
+      "minor_back_allowed": false,
+      "major_back_allowed": false
+    },
+    "max_forward_jump": {
+      "major": 1,
+      "minor": 2,
+      "patch": 99
+    },
+    "require_exact_edge": true,
+    "default_timelock_blocks": 720
+  },
+  "defaults": {
+    "checks": [
+      "consensus_hash_match",
+      "state_root_invariant",
+      "mempool_drain_safe",
+      "p2p_version_compat"
+    ],
+    "post_upgrade_health": {
+      "min_epochs_observed": 2,
+      "min_blocks_observed": 200
+    }
+  },
+  "lifecycles": {
+    "1.x": {
+      "track": "stable",
+      "eol": "2027-01-01",
+      "security_fixes_only_after": "2026-01-01"
+    },
+    "2.x": {
+      "track": "beta",
+      "eol": "2028-06-30"
+    }
+  },
+  "graph": {
+    "stable": [
+      {
+        "from": "1.0.0",
+        "to": "1.0.1",
+        "type": "patch",
+        "conditions": {
+          "proposal": "NONE",
+          "timelock_blocks": 0
+        },
+        "checks": [
+          "consensus_hash_match",
+          "state_root_invariant"
+        ],
+        "notes": "Security hotfix roll-up."
+      },
+      {
+        "from": "1.0.1",
+        "to": "1.0.2",
+        "type": "patch",
+        "conditions": {
+          "proposal": "NONE",
+          "timelock_blocks": 0
+        }
+      },
+      {
+        "from": "1.0.2",
+        "to": "1.1.0",
+        "type": "minor",
+        "conditions": {
+          "proposal": "GOV-PARAMS-Enable-AICF-v1",
+          "timelock_blocks": 720,
+          "feature_flags_enable": [
+            "aicf.v1"
+          ]
+        },
+        "migrations": [],
+        "checks": [
+          "consensus_hash_match",
+          "p2p_version_compat"
+        ]
+      },
+      {
+        "from": "1.1.0",
+        "to": "1.1.1",
+        "type": "patch",
+        "conditions": {
+          "proposal": "NONE",
+          "timelock_blocks": 0
+        }
+      },
+      {
+        "from": "1.1.1",
+        "to": "1.2.0",
+        "type": "minor",
+        "conditions": {
+          "proposal": "GOV-PARAMS-DA-Tuning",
+          "timelock_blocks": 720,
+          "feature_flags_enable": [
+            "da.erasure.v1"
+          ]
+        }
+      },
+      {
+        "from": "1.2.0",
+        "to": "2.0.0",
+        "type": "major",
+        "conditions": {
+          "proposal": "UPG-Protocol-2.0",
+          "timelock_blocks": 2016,
+          "requires_snapshot_height": true,
+          "requires_genesis_patch": true
+        },
+        "migrations": [
+          "state_schema:v1->v2",
+          "vm_abi:v1_0->v2_0"
+        ],
+        "checks": [
+          "consensus_hash_match",
+          "state_root_invariant",
+          "receipts_backward_decoder_present"
+        ],
+        "notes": "Next-major upgrade. Snapshot + migration bundle must be published and verified."
+      }
+    ],
+    "beta": [
+      {
+        "from": "1.1.0",
+        "to": "1.2.0",
+        "type": "minor",
+        "conditions": {
+          "proposal": "LABS-Rolling-Feature-Gate",
+          "timelock_blocks": 360,
+          "feature_flags_enable": [
+            "da.erasure.v1",
+            "zk.native.v1"
+          ]
+        }
+      },
+      {
+        "from": "1.2.0",
+        "to": "1.2.1",
+        "type": "patch",
+        "conditions": {
+          "proposal": "NONE",
+          "timelock_blocks": 0
+        }
+      },
+      {
+        "from": "1.2.1",
+        "to": "2.0.0",
+        "type": "major",
+        "conditions": {
+          "proposal": "UPG-Protocol-2.0-beta",
+          "timelock_blocks": 720,
+          "requires_snapshot_height": true,
+          "requires_genesis_patch": true
+        }
+      }
+    ],
+    "nightly": [
+      {
+        "from": "2.0.0",
+        "to": "2.1.0",
+        "type": "minor",
+        "conditions": {
+          "proposal": "NONE",
+          "timelock_blocks": 0
+        },
+        "notes": "Nightly track is off-chain only; not for mainnet/testnet governance."
+      }
+    ]
+  },
+  "network_overrides": {
+    "devnet": {
+      "track": "nightly",
+      "allow_any_forward": true,
+      "allow_downgrade": true,
+      "max_forward_jump": {
+        "major": 9,
+        "minor": 99,
+        "patch": 999
+      }
+    },
+    "testnet": {
+      "track": "beta",
+      "allow_any_forward": false,
+      "extra_checks": [
+        "archive_node_snapshot_available",
+        "light_client_vectors_regenerated"
+      ]
+    },
+    "mainnet": {
+      "track": "stable",
+      "allow_any_forward": false,
+      "extra_checks": [
+        "multi_client_consensus_ok",
+        "seed_rotation_scheduled",
+        "monitoring_rules_updated"
+      ]
+    }
+  },
+  "integrity": {
+    "algo": "sha3-256",
+    "value": "",
+    "signatures": []
+  }
+}

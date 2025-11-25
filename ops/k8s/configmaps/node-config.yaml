@@ -1,0 +1,130 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: node-config
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    animica.dev/environment: devnet
+data:
+  # Render this template with envsubst in an initContainer or entrypoint:
+  #   envsubst < /config/node/node.toml.tpl > /config/node/node.toml
+  # Recommended mounts (from other ConfigMaps):
+  #   - /config/genesis.json            (from ConfigMap: genesis)
+  #   - /config/spec/params.yaml        (from ConfigMap: chain-params)
+  #   - /config/seeds/seed_list.txt     (from ConfigMap: seeds)
+  node.toml.tpl: |
+    # -----------------------------
+    # Animica Node — node.toml
+    # -----------------------------
+
+    [node]
+    # Chain identity & spec pointers
+    chain_id       = ${CHAIN_ID:-1337}
+    network_name   = "${NETWORK_NAME:-animica-devnet}"
+    genesis_path   = "${GENESIS_PATH:-/config/genesis.json}"
+    params_path    = "${PARAMS_PATH:-/config/spec/params.yaml}"
+
+    # State/data directories (mounted as a PersistentVolumeClaim)
+    data_dir       = "${DATA_DIR:-/data}"
+    # RocksDB is optional; set DB_URL to "rocksdb:/data/rocks" to enable that backend.
+    # Default uses SQLite for simplicity:
+    db_url         = "${DB_URL:-sqlite:////data/animica.db}"
+
+    # Feature flags
+    enable_builtin_miner = ${MINER_ENABLED:-false}
+    enable_da            = ${DA_ENABLED:-true}
+    enable_aicf          = ${AICF_ENABLED:-true}
+    enable_randomness    = ${RANDOMNESS_ENABLED:-true}
+
+    [logging]
+    level   = "${LOG_LEVEL:-info}"   # debug|info|warn|error
+    format  = "${LOG_FORMAT:-json}"  # json|text
+    # Request/trace ids propagate via RPC/P2P if enabled
+    request_ids = ${REQUEST_IDS:-true}
+
+    [metrics]
+    # Prometheus scrape port (HTTP /metrics)
+    enabled = ${METRICS_ENABLED:-true}
+    bind    = "${METRICS_BIND:-0.0.0.0}"
+    port    = ${METRICS_PORT:-9100}
+
+    [rpc]
+    # Public JSON-RPC/WS (served by FastAPI app)
+    bind_host     = "${RPC_HOST:-0.0.0.0}"
+    http_port     = ${RPC_HTTP_PORT:-8545}
+    ws_port       = ${RPC_WS_PORT:-8546}
+    cors_allowed  = "${RPC_CORS:-*}"
+    # Per-method rate limits (token bucket)
+    rpm_default   = ${RPC_RPM:-600}
+    rps_burst     = ${RPC_RPS_BURST:-60}
+
+    [p2p]
+    # Listener; QUIC preferred (falls back to TCP if QUIC unavailable)
+    listen_multiaddr = "${P2P_LISTEN_MULTIADDR:-/ip4/0.0.0.0/tcp/${P2P_PORT:-7150}/quic}"
+    # Bootstrap seeds: precedence env var → file; both can be set.
+    seeds_env        = "${P2P_SEEDS:-}"
+    seeds_file       = "${P2P_SEEDS_FILE:-/config/seeds/seed_list.txt}"
+    max_peers        = ${P2P_MAX_PEERS:-64}
+    # NAT traversal (UPnP/NAT-PMP) — safe to disable on k8s
+    nat_enabled      = ${P2P_NAT:-false}
+    # PQ-first handshake (Kyber KEM + Dilithium or SPHINCS+ for identity)
+    handshake_kem    = "${P2P_KEM:-kyber768}"
+    identity_sig_alg = "${P2P_SIG_ALG:-dilithium3}"
+    # Identity key path (created on first boot if missing)
+    identity_key     = "${P2P_IDENTITY_KEY:-/data/p2p_identity.key}"
+
+    [mempool]
+    min_gas_price      = ${MIN_GAS_PRICE:-1}
+    max_txs            = ${MEMPOOL_MAX_TXS:-50000}
+    ttl_seconds        = ${MEMPOOL_TTL:-600}
+    ingress_tx_per_sec = ${MEMPOOL_INGRESS_TPS:-200}
+    ingress_bytes_per_sec = ${MEMPOOL_INGRESS_BPS:-1048576}
+
+    [consensus]
+    # Θ/Γ policy roots optionally pinned; if left empty, use those from genesis.
+    poies_policy_path   = "${POIES_POLICY_PATH:-}"
+    pq_alg_policy_path  = "${PQ_ALG_POLICY_PATH:-}"
+    # Retarget tuning overrides (optional; else read from params.yaml)
+    ema_halflife_blocks = ${RETARGET_HALFLIFE:-20}
+    clamp_fraction      = ${RETARGET_CLAMP:-0.25}
+
+    [randomness]
+    # Round windows; normally sourced from params.yaml or genesis; can be overridden here.
+    commit_phase_seconds = ${RAND_COMMIT_SECS:-15}
+    reveal_phase_seconds = ${RAND_REVEAL_SECS:-15}
+    settle_phase_seconds = ${RAND_SETTLE_SECS:-10}
+    round_seconds        = ${RAND_ROUND_SECS:-40}
+    [randomness.vdf]
+    security_bits           = ${VDF_SECURITY_BITS:-128}
+    discriminant_size_bits  = ${VDF_DISC_BITS:-2048}
+    target_seconds          = ${VDF_TARGET_SECS:-20}
+    iterations              = ${VDF_ITERATIONS:-100000}
+    seconds_per_iter        = ${VDF_SEC_PER_ITER:-0.0002}
+
+    [da]
+    # Data Availability service embed (local REST inside node’s FastAPI or sidecar)
+    enabled         = ${DA_ENABLED:-true}
+    max_blob_bytes  = ${DA_MAX_BLOB_BYTES:-1048576}
+    shard_bytes     = ${DA_SHARD_BYTES:-1024}
+    # Store location (FS or SQLite-backed)
+    store_dir       = "${DA_STORE_DIR:-/data/da}"
+
+    [aicf]
+    # AI Compute Fund integration (pricing/SLA/payouts). Safe to keep on in devnet.
+    enabled         = ${AICF_ENABLED:-true}
+    treasury_ratio  = ${AICF_TREASURY_RATIO:-0.10}
+
+    [mining]
+    # Built-in CPU miner; use in single-node devnet or small testnets
+    enabled       = ${MINER_ENABLED:-false}
+    device        = "${MINER_DEVICE:-cpu}"        # cpu|cuda|rocm|opencl|metal
+    threads       = ${MINER_THREADS:-0}           # 0 → auto
+    share_target  = "${MINER_SHARE_TARGET:-auto}" # auto or explicit micro-target
+    submit_url    = "${MINER_SUBMIT_URL:-http://127.0.0.1:${RPC_HTTP_PORT:-8545}/rpc}"
+
+    [paths]
+    # Canonical mount points to keep manifests simple across k8s and docker
+    params_yaml   = "${PARAMS_PATH:-/config/spec/params.yaml}"
+    genesis_json  = "${GENESIS_PATH:-/config/genesis.json}"
+    seeds_txt     = "${P2P_SEEDS_FILE:-/config/seeds/seed_list.txt}"

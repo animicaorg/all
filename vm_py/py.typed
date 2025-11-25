@@ -1,0 +1,2 @@
+# PEP 561 marker: this package ships type hints.
+# Keep this file included in both sdist and wheel.

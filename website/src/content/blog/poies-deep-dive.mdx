@@ -1,0 +1,184 @@
+---
+title: "PoIES Deep Dive: Scoring Useful Work Alongside Hashing"
+description: "How Animica aggregates heterogeneous proof signals (hash, AI, quantum, storage, VDF) into one secure acceptance predicate with fairness and caps."
+date: 2025-10-09
+author: "Animica Research"
+tags:
+  - consensus
+  - poies
+  - math
+  - fairness
+hero: "/icons/logo.svg"
+---
+
+> **TL;DR** — Proof of Integrated Evidence Scoring (PoIES) blends classical hash-based chance with verifiable **useful work** signals. Blocks are accepted when a miner's random draw plus the sum of capped, policy-weighted proof scores crosses a moving threshold:  
+> \[
+> \boxed{S \;=\; H(u) + \sum\_i \psi(p\_i) \;\ge\; \Theta}
+> \]  
+> where `H(u) = −ln(u)` from a domain-separated nonce draw, and each proof's contribution `ψ(·)` is clipped by per-type caps and a total-Γ budget to preserve security and fairness.
+
+---
+
+## 1) Motivation
+
+Hash-only PoW gives a clean, memoryless lottery. But many workloads **produce public good** and expose verifiable signals (TEE attestations, STARK/zk attest, VDF progress, storage PoSt). PoIES lets these signals _nudge_ block acceptance while preserving the Poisson process and resisting bribery or centralization.
+
+The design goals:
+
+- **Composable**: accept multiple proof kinds without rewriting the consensus.
+- **Secure**: no single proof class can dominate (per-type caps, total Γ).
+- **Fair**: small providers can compete; an α-tuner balances populations.
+- **Predictable**: a fractional EMA retarget keeps inter-block time near target.
+
+---
+
+## 2) The acceptance predicate
+
+Let:
+
+- `u ← U(0,1)` from a nonce draw bound to the header template.
+- `H(u) = −ln(u)` is the exponential variate used by classical Poisson processes.
+- For each attached proof `p`, compute metrics (hash difficulty ratio, traps ratio, QoS, redundancy, vdf_seconds, etc.) and map them via a **policy** to a nonnegative score `ψ(p)`.
+- The block is accepted iff:
+
+```text
+S = H(u) + Σ ψ(p) >= Θ
+
+	•	Θ is the current network difficulty threshold (μ-nats), updated every block by a smoothed retarget (EMA + clamps) so that E[Δt] ≈ target_interval.
+
+A note on distributions
+
+Keeping H(u) preserves the exponential waiting-time distribution. Useful proofs shift the tail probability mass just enough to reward contribution, but caps ensure bounded advantage.
+
+⸻
+
+3) From metrics → ψ(p)
+
+Each proof type defines measurable metrics. Examples:
+	•	HashShare: d_ratio = target_share / observed_share (normalized)
+	•	AIProof (TEE + traps): ai_units, traps_ratio, qos, redundancy
+	•	Quantum: provider attest + traps, quantum_units, qos
+	•	Storage: PoSt heartbeat freshness, redundancy, availability
+	•	VDF: verified seconds-equivalent vdf_seconds
+
+A policy (see spec/poies_policy.yaml) sets weights and caps:
+
+# excerpt
+weights:
+  hash:     1.00
+  ai:       0.35
+  quantum:  0.50
+  storage:  0.15
+  vdf:      0.10
+
+per_type_caps:
+  ai:       0.8      # maximum ψ from AI per block
+  quantum:  0.8
+  storage:  0.4
+  vdf:      0.2
+
+total_gamma_cap: 1.2 # Γ: sum of all ψ minus hash capped here
+escort_q: 0.25       # diversity escort: broaden tails for minority types
+
+Mapping is monotone, piecewise-smooth, and concave in high ranges to discourage over-provisioning a single dimension. The scorer enforces:
+	•	ψ(p) ≥ 0
+	•	Per-proof hard caps (e.g., outlier vdf_seconds clipped)
+	•	Per-type caps (AI/Quantum/Storage/VDF)
+	•	Total Γ cap over the Σψ for the block
+
+⸻
+
+4) Fairness: α tuner & escort
+
+To avoid lock-in by whichever proof is temporarily cheaper, we maintain a slow-moving α tuner per type that nudges effective weights toward parity of success over longer windows. Additionally, an escort parameter q softly lifts the score of underrepresented proof types—analogous to diversity-promoting escort distributions in information geometry.
+
+Result: over weeks, block share by type tracks feasible supply, not short-run spikes.
+
+⸻
+
+5) Difficulty retarget (Θ)
+
+We use an EMA on observed inter-block times:
+
+Θ_{t+1} = clamp(
+  Θ_t + k * (observed_interval - target_interval),
+  Θ_t - Δmin,
+  Θ_t + Δmax
+)
+
+The clamps bound volatility; micro-target share thresholds for HashShare keep the lottery “grain” stable for miners.
+
+⸻
+
+6) Security considerations
+	•	Malleability: All proofs are header-bound and chainId-bound. Nullifiers prevent replays across windows.
+	•	Economic bounds: Per-type caps + Γ ensure that even perfect useful proofs cannot skip the lottery entirely.
+	•	Adversarial selection: Proof verifiers check attest chains (TEE/QPU), trap sampling thresholds, redundancy signatures, and QoS ranges. Fail-fast before scoring.
+
+See the spec: consensus/caps.py, consensus/scorer.py, proofs/*, and the vectors under spec/test_vectors/.
+
+⸻
+
+7) Worked example
+
+Suppose a block candidate attaches:
+	•	HashShare with H(u)=1.05
+	•	AIProof: ψ_ai_raw=0.62 → clipped to 0.60 by per_type_caps.ai=0.60
+	•	VDF: ψ_vdf_raw=0.18 → remains 0.18
+	•	Quantum: ψ_q_raw=0.75 → clipped to 0.70
+
+Total before Γ: Σψ = 0.60 + 0.18 + 0.70 = 1.48
+Apply Γ cap at 1.20 → Σψ = 1.20
+So S = 1.05 + 1.20 = 2.25. If current Θ = 2.10, the block is accepted.
+
+⸻
+
+8) Pseudocode (scorer)
+
+def score_and_accept(u, proofs, policy, theta):
+    from math import log
+    S = -log(u)  # H(u)
+    totals = defaultdict(float)
+
+    # per-proof map → ψ
+    psis = []
+    for p in proofs:
+        psi = map_metrics_to_psi(p.metrics, policy.weights[p.type])
+        psi = min(psi, policy.per_proof_cap(p.type))
+        psis.append((p.type, psi))
+        totals[p.type] += psi
+
+    # apply per-type caps
+    for t, total in totals.items():
+        if total > policy.per_type_caps[t]:
+            scale = policy.per_type_caps[t] / total
+            for i, (tt, psi) in enumerate(psis):
+                if tt == t:
+                    psis[i] = (tt, psi * scale)
+
+    # Γ cap
+    sigma = sum(psi for _, psi in psis)
+    if sigma > policy.total_gamma_cap:
+        k = policy.total_gamma_cap / sigma
+        sigma *= k
+
+    S += sigma
+    return S >= theta, S
+
+
+⸻
+
+9) Developer quicklinks
+	•	Policy file: spec/poies_policy.yaml
+	•	Math notes: spec/poies_math.md
+	•	Unit tests: consensus/tests/test_scorer_accept_reject.py, consensus/tests/test_difficulty_retarget.py
+	•	Vectors: spec/test_vectors/proofs.json, spec/test_vectors/headers.json
+
+⸻
+
+10) Roadmap
+	•	Adaptive escort q based on short-horizon dispersion.
+	•	Per-type epoch budgets (soft caps) for smoother scheduling.
+	•	ZK-proven metrics pipelines for AI/Quantum (ZKML / lightweight circuits).
+
+Have ideas or critiques? Open a discussion with a reproducible scenario and the policy+proofs you tested. We love rigorous counterexamples.

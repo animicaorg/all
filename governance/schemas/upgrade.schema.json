@@ -1,0 +1,340 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.animica.org/governance/upgrade.schema.json",
+  "title": "Animica Governance — Upgrade Proposal",
+  "description": "JSON-Schema for proposals that upgrade the network protocol or enable gated features.",
+  "type": "object",
+  "additionalProperties": false,
+
+  "properties": {
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "proposal_id": {
+      "type": "string",
+      "pattern": "^[A-Z0-9._:-]{3,128}$",
+      "description": "Human-stable identifier (e.g., UPG-2025.10-Hydra)."
+    },
+    "kind": { "const": "Upgrade" },
+    "network": { "type": "string", "enum": ["mainnet", "testnet", "devnet"] },
+
+    "title": { "type": "string", "minLength": 3, "maxLength": 180 },
+    "summary": { "type": "string", "maxLength": 400 },
+    "description": { "type": "string", "minLength": 10 },
+
+    "proposer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "address": { "$ref": "#/$defs/address" },
+        "display_name": { "type": "string", "maxLength": 140 },
+        "organization": { "type": "string", "maxLength": 140 },
+        "contact": { "type": "string", "format": "uri" }
+      },
+      "required": ["address"]
+    },
+
+    "created_at": { "type": "string", "format": "date-time" },
+
+    "voting_window": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "start_time":   { "type": "string", "format": "date-time" },
+        "end_time":     { "type": "string", "format": "date-time" },
+        "start_height": { "type": "integer", "minimum": 0 },
+        "end_height":   { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "references": { "type": "array", "items": { "type": "string", "format": "uri" } },
+
+    "attachments": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/artifact" },
+      "description": "Whitepapers, design docs, audit reports, etc."
+    },
+
+    "integrity": { "$ref": "#/$defs/integrity_block" },
+
+    "signatures": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/signature" },
+      "description": "Off-chain attestations from proposers/maintainers/auditors."
+    },
+
+    "labels": { "type": "array", "items": { "type": "string", "maxLength": 48 }, "maxItems": 32 },
+
+    "risk_assessment": { "type": "string" },
+    "backwards_compatibility": { "type": "string" },
+    "implementation_notes": { "type": "string" },
+
+    "extensions": {
+      "type": "object",
+      "description": "Free-form extension data, namespaced keys recommended.",
+      "additionalProperties": true
+    },
+
+    "payload": {
+      "type": "object",
+      "title": "UpgradePayload",
+      "additionalProperties": false,
+      "properties": {
+        "target_version": { "$ref": "#/$defs/semver" },
+
+        "components": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "enum": [
+                  "core","consensus","p2p","rpc","execution","proofs","da",
+                  "vm_py","capabilities","aicf","randomness",
+                  "wallet-extension","wallet-flutter","sdk","explorer","studio-services","studio-web"
+                ]
+              },
+              "from": { "$ref": "#/$defs/semver" },
+              "to":   { "$ref": "#/$defs/semver" },
+              "mandatory": { "type": "boolean", "default": true },
+              "notes": { "type": "string" }
+            },
+            "required": ["name","to"]
+          }
+        },
+
+        "activation": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "method": { "type": "string", "enum": ["height","time","manual"] },
+            "height": { "type": "integer", "minimum": 0 },
+            "time":   { "type": "string", "format": "date-time" },
+            "canary_length_blocks": { "type": "integer", "minimum": 0, "default": 0 },
+            "rollback_window_blocks": { "type": "integer", "minimum": 0, "default": 0 },
+            "emergency_halt_allowed": { "type": "boolean", "default": true }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "method": { "const": "height" } } },
+              "then": { "required": ["height"] }
+            },
+            {
+              "if": { "properties": { "method": { "const": "time" } } },
+              "then": { "required": ["time"] }
+            }
+          ],
+          "required": ["method"]
+        },
+
+        "feature_flags": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "flag": { "type": "string", "pattern": "^[a-z0-9_.-]{1,64}$" },
+              "enable": { "type": "boolean" },
+              "scope": { "type": "string", "enum": ["protocol","vm","rpc","wallet","sdk"], "default": "protocol" },
+              "notes": { "type": "string" }
+            },
+            "required": ["flag","enable"]
+          }
+        },
+
+        "state_migrations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,64}$" },
+              "summary": { "type": "string" },
+              "tool": { "type": "string", "maxLength": 120 },
+              "artifact": { "$ref": "#/$defs/artifact" },
+              "expected_old_state_root": { "$ref": "#/$defs/hex_32" },
+              "expected_new_state_root": { "$ref": "#/$defs/hex_32" }
+            },
+            "required": ["id","summary"]
+          }
+        },
+
+        "compatibility": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "min_node_version": { "$ref": "#/$defs/semver" },
+            "min_wallet_version": { "$ref": "#/$defs/semver" },
+            "min_sdk_versions": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "typescript": { "$ref": "#/$defs/semver" },
+                "python":     { "$ref": "#/$defs/semver" },
+                "rust":       { "$ref": "#/$defs/semver" }
+              }
+            },
+            "p2p_protocol": { "type": "integer", "minimum": 1 },
+            "wire_version": { "type": "integer", "minimum": 1 }
+          }
+        },
+
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "component": { "type": "string" },
+              "platform": {
+                "type": "string",
+                "enum": ["linux-amd64","linux-arm64","macos-universal","windows-amd64","source","container"]
+              },
+              "uri": { "type": "string", "format": "uri" },
+              "sha3_256": { "$ref": "#/$defs/sha3_256" },
+              "size_bytes": { "type": "integer", "minimum": 0 },
+              "signature": { "$ref": "#/$defs/signature" },
+              "notes": { "type": "string" }
+            },
+            "required": ["component","platform","uri","sha3_256"]
+          }
+        },
+
+        "deprecations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "item": { "type": "string" },
+              "replacement": { "type": "string" },
+              "effective_after_blocks": { "type": "integer", "minimum": 0 }
+            },
+            "required": ["item"]
+          }
+        }
+      },
+      "required": ["target_version","components","activation"]
+    }
+  },
+
+  "required": [
+    "schema_version",
+    "proposal_id",
+    "kind",
+    "network",
+    "title",
+    "description",
+    "proposer",
+    "created_at",
+    "payload"
+  ],
+
+  "$defs": {
+    "address": {
+      "type": "string",
+      "pattern": "^(anim1)[0-9a-z]{10,}$",
+      "description": "Animica bech32m address (anim1…); minimal pattern."
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$",
+      "description": "Semantic version (SemVer 2.0.0)."
+    },
+    "hex_32": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{64}$",
+      "description": "Hex-encoded 32-byte value."
+    },
+    "hex": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]*$"
+    },
+    "sha3_256": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{64}$",
+      "description": "Hex-encoded SHA3-256 digest."
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "uri": { "type": "string", "format": "uri" },
+        "content_type": { "type": "string", "maxLength": 120 },
+        "sha3_256": { "$ref": "#/$defs/sha3_256" },
+        "size_bytes": { "type": "integer", "minimum": 0 },
+        "notes": { "type": "string" }
+      },
+      "required": ["uri"]
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "address": { "$ref": "#/$defs/address" },
+        "alg": {
+          "type": "string",
+          "enum": ["dilithium3","sphincs_shake_128s","ed25519","secp256k1"]
+        },
+        "signature": { "$ref": "#/$defs/hex" },
+        "signed_at": { "type": "string", "format": "date-time" },
+        "payload_hash": { "$ref": "#/$defs/sha3_256" }
+      },
+      "required": ["address","alg","signature","payload_hash"]
+    },
+    "integrity_block": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "algo": { "type": "string", "enum": ["sha3-256","blake3"] },
+        "value": { "$ref": "#/$defs/sha3_256" },
+        "signatures": { "type": "array", "items": { "$ref": "#/$defs/signature" } }
+      },
+      "required": ["algo","value"]
+    }
+  },
+
+  "examples": [
+    {
+      "schema_version": 1,
+      "proposal_id": "UPG-2025.10-Hydra",
+      "kind": "Upgrade",
+      "network": "testnet",
+      "title": "Hydra hard fork — enable VM(Py) v0.7 & DA sampling v2",
+      "summary": "Protocol bump; feature flags on; activation at height 1,234,567.",
+      "description": "This upgrade introduces …",
+      "proposer": { "address": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqz9v3r" },
+      "created_at": "2025-10-12T12:34:56Z",
+      "payload": {
+        "target_version": "1.7.0",
+        "components": [
+          { "name": "core", "from": "1.6.3", "to": "1.7.0", "mandatory": true },
+          { "name": "consensus", "to": "1.7.0" },
+          { "name": "vm_py", "from": "0.6.2", "to": "0.7.0" }
+        ],
+        "activation": { "method": "height", "height": 1234567, "canary_length_blocks": 50 },
+        "feature_flags": [
+          { "flag": "vm.strict_mode", "enable": true, "scope": "vm" },
+          { "flag": "da.sampling.v2", "enable": true, "scope": "protocol" }
+        ],
+        "compatibility": {
+          "min_node_version": "1.7.0",
+          "min_wallet_version": "0.5.0",
+          "min_sdk_versions": { "typescript": "0.4.0", "python": "0.4.0", "rust": "0.4.0" },
+          "p2p_protocol": 3,
+          "wire_version": 6
+        },
+        "artifacts": [
+          {
+            "component": "core",
+            "platform": "linux-amd64",
+            "uri": "https://releases.animica.org/core/v1.7.0/animica-core-x86_64-linux.tar.gz",
+            "sha3_256": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 12345678
+          }
+        ]
+      }
+    }
+  ]
+}

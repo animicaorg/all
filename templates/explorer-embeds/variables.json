@@ -1,0 +1,70 @@
+{
+  "$schema": "../schemas/variables.schema.json",
+
+  "project_slug": {
+    "type": "string",
+    "title": "Project folder name",
+    "description": "Filesystem-safe slug used for the output directory.",
+    "default": "explorer-embeds-demo",
+    "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+    "examples": ["explorer-embeds-demo", "my-explorer-widgets"]
+  },
+
+  "rpc_url": {
+    "type": "string",
+    "title": "RPC HTTP URL",
+    "description": "Animica JSON-RPC endpoint used by the widgets for reads (and optional writes).",
+    "default": "https://rpc.devnet.animica.xyz/rpc",
+    "format": "uri"
+  },
+
+  "ws_url": {
+    "type": "string",
+    "title": "WebSocket URL",
+    "description": "Animica WebSocket endpoint for live streams like newHeads and pendingTxs.",
+    "default": "wss://rpc.devnet.animica.xyz/ws",
+    "format": "uri"
+  },
+
+  "explorer_api_url": {
+    "type": "string",
+    "title": "Explorer API base URL",
+    "description": "Optional: REST API base for explorer-specific aggregates. Leave as-is or blank to use RPC/WS only.",
+    "default": "https://explorer.devnet.animica.xyz/api",
+    "format": "uri"
+  },
+
+  "chain_id": {
+    "type": "string",
+    "title": "Chain ID",
+    "description": "Numeric chain identifier to display and validate against.",
+    "default": "1",
+    "pattern": "^[0-9]+$",
+    "examples": ["1", "1337"]
+  },
+
+  "site_title": {
+    "type": "string",
+    "title": "Site title",
+    "description": "Title used in the preview page and widget metadata.",
+    "default": "Animica Explorer Embeds",
+    "minLength": 1,
+    "maxLength": 60
+  },
+
+  "theme": {
+    "type": "string",
+    "title": "Theme",
+    "description": "Color theme for widgets. 'auto' follows the user's prefers-color-scheme.",
+    "enum": ["light", "dark", "auto"],
+    "default": "auto"
+  },
+
+  "_meta": {
+    "required": ["project_slug", "rpc_url", "ws_url", "chain_id"],
+    "notes": [
+      "If explorer_api_url is unreachable, widgets gracefully fall back to RPC/WS-only mode.",
+      "You can override per-widget via data-* attributes in the embed script tag."
+    ]
+  }
+}

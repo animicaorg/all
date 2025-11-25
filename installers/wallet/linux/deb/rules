@@ -1,0 +1,86 @@
+#!/usr/bin/make -f
+# Animica Wallet — Debian packaging rules
+# This package installs a prebuilt Flutter bundle under /opt/AnimicaWallet
+# and provides a launcher at /usr/bin/animica-wallet, plus desktop entry & icons.
+
+export DH_VERBOSE = 1
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+PACKAGE := animica-wallet
+APPDIR  := $(CURDIR)/debian/$(PACKAGE)
+
+# Prebuilt bundle locations (produced by `flutter build linux --release`)
+BUNDLE_X86_64 := build/linux/x86_64/release/bundle
+BUNDLE_AARCH64 := build/linux/aarch64/release/bundle
+BUNDLE_ARM64 := build/linux/arm64/release/bundle
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	@echo "No configure step required for prebuilt bundle."
+
+override_dh_auto_build:
+	@echo "No build step required — using prebuilt Flutter bundle."
+
+override_dh_auto_install:
+	# Create target directories
+	mkdir -p "$(APPDIR)/opt/AnimicaWallet" "$(APPDIR)/usr/bin" "$(APPDIR)/usr/share/applications" "$(APPDIR)/usr/share/icons/hicolor"
+
+	# Copy architecture-appropriate bundle to /opt/AnimicaWallet
+	@if [ "$(DEB_HOST_ARCH)" = "amd64" ]; then \
+		BND="$(BUNDLE_X86_64)"; \
+	elif [ "$(DEB_HOST_ARCH)" = "arm64" ]; then \
+		if [ -d "$(BUNDLE_ARM64)" ]; then BND="$(BUNDLE_ARM64)"; else BND="$(BUNDLE_AARCH64)"; fi; \
+	else \
+		echo "Unsupported architecture: $(DEB_HOST_ARCH)"; exit 2; \
+	fi; \
+	test -d "$$BND" || { echo "Flutter bundle not found at $$BND"; exit 3; }; \
+	cp -a "$$BND/." "$(APPDIR)/opt/AnimicaWallet/"
+
+	# Launcher wrapper
+	{ \
+		echo '#!/bin/sh'; \
+		echo 'APP="/opt/AnimicaWallet/AnimicaWallet"'; \
+		echo 'if [ ! -x "$$APP" ]; then APP="$$(find /opt/AnimicaWallet -maxdepth 1 -type f -executable | head -n1)"; fi'; \
+		echo 'export GTK_USE_PORTAL="$${GTK_USE_PORTAL:-1}"'; \
+		echo 'exec "$$APP" "$$@"'; \
+	} > "$(APPDIR)/usr/bin/animica-wallet"
+	chmod 0755 "$(APPDIR)/usr/bin/animica-wallet"
+	ln -sf animica-wallet "$(APPDIR)/usr/bin/animica" || true
+
+	# Desktop entry
+	if [ -f installers/wallet/linux/appimage/animica-wallet.desktop ]; then \
+		sed 's|^Exec=.*|Exec=animica-wallet %U|' installers/wallet/linux/appimage/animica-wallet.desktop > "$(APPDIR)/usr/share/applications/io.animica.Wallet.desktop"; \
+	else \
+		printf '%s\n' \
+			'[Desktop Entry]' \
+			'Type=Application' \
+			'Name=Animica Wallet' \
+			'Comment=Post-quantum wallet for the Animica network' \
+			'Exec=animica-wallet %U' \
+			'Icon=animica-wallet' \
+			'Terminal=false' \
+			'Categories=Finance;Network;' \
+			'MimeType=x-scheme-handler/animica;' \
+			> "$(APPDIR)/usr/share/applications/io.animica.Wallet.desktop"; \
+	fi
+
+	# Icons (expects hicolor/*/apps/animica-wallet.png)
+	if [ -d installers/wallet/linux/icons ]; then \
+		cp -a installers/wallet/linux/icons/. "$(APPDIR)/usr/share/icons/hicolor/"; \
+	fi
+
+	# Optional AppStream metadata if present
+	if [ -f installers/wallet/linux/appimage/animica-wallet.appdata.xml ]; then \
+		mkdir -p "$(APPDIR)/usr/share/metainfo"; \
+		cp installers/wallet/linux/appimage/animica-wallet.appdata.xml "$(APPDIR)/usr/share/metainfo/io.animica.Wallet.appdata.xml"; \
+	fi
+
+override_dh_usrlocal:
+	# We intentionally install under /opt — do not move files to /usr/local
+	true
+
+# Avoid trying to compute shlib deps for a Flutter bundle (no system libs installed here)
+override_dh_shlibdeps:
+	true

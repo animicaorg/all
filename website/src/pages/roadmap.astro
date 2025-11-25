@@ -1,0 +1,309 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import InlineLink from "../components/InlineLink.astro";
+
+const pageTitle = "Roadmap — milestones & status";
+const pageDesc =
+  "High-level milestones pulled from the project board (NOW/NEXT/LATER/Done). Set PUBLIC_ROADMAP_URL to override at runtime.";
+
+// Minimal milestone typing for build-time defaults
+type Milestone = {
+  id: string;
+  title: string;
+  status: "NOW" | "NEXT" | "LATER" | "DONE";
+  quarter?: string;      // e.g., "2025Q4"
+  summary?: string;
+  progress?: number;     // 0..100
+  tags?: string[];
+  links?: { label: string; href: string }[];
+};
+
+// Build-time fallback list (edit freely). At runtime we can override via PUBLIC_ROADMAP_URL JSON.
+const defaults: Milestone[] = [
+  {
+    id: "gate-genesis",
+    title: "Gate: node boots from genesis (core/consensus/proofs)",
+    status: "DONE",
+    quarter: "2025Q2",
+    progress: 100,
+    tags: ["core", "consensus", "proofs"],
+  },
+  {
+    id: "rpc-curlable",
+    title: "RPC: curlable JSON-RPC & WS (head/tx/receipt)",
+    status: "DONE",
+    quarter: "2025Q2",
+    progress: 100,
+    tags: ["rpc"],
+  },
+  {
+    id: "pq-stack",
+    title: "Post-quantum keys: Dilithium3/SPHINCS+, Kyber handshakes",
+    status: "NOW",
+    quarter: "2025Q4",
+    progress: 80,
+    tags: ["PQ", "wallet", "p2p"],
+  },
+  {
+    id: "vm-py",
+    title: "Python VM: validate → compile → run Counter deterministically",
+    status: "NOW",
+    quarter: "2025Q4",
+    progress: 75,
+    tags: ["VM(Py)", "ABI", "gas"],
+  },
+  {
+    id: "da-nmt",
+    title: "Data Availability: NMT roots, DAS light verification",
+    status: "NEXT",
+    quarter: "2026Q1",
+    progress: 30,
+    tags: ["DA", "light-client"],
+  },
+  {
+    id: "aicf",
+    title: "AICF: provider registry, SLA, payouts, slashing",
+    status: "NEXT",
+    quarter: "2026Q1",
+    progress: 25,
+    tags: ["AICF", "economics"],
+  },
+  {
+    id: "studio-web",
+    title: "Studio Web: edit → simulate (WASM) → deploy → verify",
+    status: "NEXT",
+    quarter: "2026Q1",
+    progress: 40,
+    tags: ["studio", "wasm"],
+  },
+  {
+    id: "dex",
+    title: "DEX alpha: AMM pools for ANM pairs",
+    status: "LATER",
+    quarter: "2026Q2",
+    progress: 5,
+    tags: ["DEX", "AMM"],
+  },
+  {
+    id: "zk-verify",
+    title: "ZK verifiers: Groth16/PLONK/STARK adapters + policy",
+    status: "LATER",
+    quarter: "2026Q2",
+    progress: 10,
+    tags: ["ZK", "security"],
+  },
+];
+
+// Group by status for server-rendered fallback
+const groups = {
+  NOW: defaults.filter((m) => m.status === "NOW"),
+  NEXT: defaults.filter((m) => m.status === "NEXT"),
+  LATER: defaults.filter((m) => m.status === "LATER"),
+  DONE: defaults.filter((m) => m.status === "DONE"),
+};
+
+const ROADMAP_URL = import.meta.env.PUBLIC_ROADMAP_URL as string | undefined;
+---
+
+<BaseLayout title={pageTitle} description={pageDesc}>
+  <section class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 py-10 sm:py-14">
+    <h1 class="text-3xl sm:text-4xl font-semibold tracking-tight">Roadmap</h1>
+    <p class="mt-3 text-base opacity-80">
+      This roadmap mirrors the project board. If you provide a JSON feed via
+      <code class="font-mono text-[0.95em]">PUBLIC_ROADMAP_URL</code>, it will override the
+      built-in milestones at runtime. Expected shape:
+      <code class="font-mono text-[0.95em]">[{`{ id, title, status, quarter?, summary?, progress?, tags?, links? }`}]</code>
+      where <code>status ∈ {"{NOW,NEXT,LATER,DONE}"}</code>.
+    </p>
+
+    <!-- Status columns -->
+    <div id="roadmap-root" class="mt-6 grid gap-5 lg:grid-cols-4">
+      <!-- NOW -->
+      <div class="rounded-2xl border bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)] flex flex-col">
+        <div class="px-5 pt-4 pb-3 border-b border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+          <h2 class="text-sm font-semibold tracking-wide">NOW</h2>
+          <p class="text-xs opacity-70">Actively in progress</p>
+        </div>
+        <div class="p-4 space-y-4" data-col="NOW">
+          {groups.NOW.map((m) => <MilestoneCard {...m} />)}
+        </div>
+      </div>
+
+      <!-- NEXT -->
+      <div class="rounded-2xl border bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)] flex flex-col">
+        <div class="px-5 pt-4 pb-3 border-b border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+          <h2 class="text-sm font-semibold tracking-wide">NEXT</h2>
+          <p class="text-xs opacity-70">Up next on deck</p>
+        </div>
+        <div class="p-4 space-y-4" data-col="NEXT">
+          {groups.NEXT.map((m) => <MilestoneCard {...m} />)}
+        </div>
+      </div>
+
+      <!-- LATER -->
+      <div class="rounded-2xl border bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)] flex flex-col">
+        <div class="px-5 pt-4 pb-3 border-b border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+          <h2 class="text-sm font-semibold tracking-wide">LATER</h2>
+          <p class="text-xs opacity-70">Planned / exploration</p>
+        </div>
+        <div class="p-4 space-y-4" data-col="LATER">
+          {groups.LATER.map((m) => <MilestoneCard {...m} />)}
+        </div>
+      </div>
+
+      <!-- DONE -->
+      <div class="rounded-2xl border bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)] flex flex-col">
+        <div class="px-5 pt-4 pb-3 border-b border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+          <h2 class="text-sm font-semibold tracking-wide">DONE</h2>
+          <p class="text-xs opacity-70">Shipped</p>
+        </div>
+        <div class="p-4 space-y-4" data-col="DONE">
+          {groups.DONE.map((m) => <MilestoneCard {...m} />)}
+        </div>
+      </div>
+    </div>
+
+    <div class="mt-8 text-xs opacity-70">
+      {ROADMAP_URL
+        ? (
+          <p>
+            Runtime feed: <code class="font-mono break-all">{ROADMAP_URL}</code> (will replace the lists below if reachable).
+          </p>
+        ) : (
+          <p>No <code>PUBLIC_ROADMAP_URL</code> provided; using built-in milestones.</p>
+        )}
+    </div>
+  </section>
+
+  <!-- Client override loader: fetch PUBLIC_ROADMAP_URL JSON and replace lists -->
+  <script is:inline>
+    (function () {
+      const FEED = ${JSON.stringify(ROADMAP_URL ?? "")};
+      if (!FEED) return;
+
+      const col = (name) => document.querySelector(`[data-col="${name}"]`);
+      const cols = { NOW: col("NOW"), NEXT: col("NEXT"), LATER: col("LATER"), DONE: col("DONE") };
+
+      function esc(s) {
+        return String(s)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;");
+      }
+
+      function tagPill(t) {
+        return `<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] border
+          border-[color-mix(in_srgb,var(--text-primary)_/_16%,transparent)] opacity-80">${esc(t)}</span>`;
+      }
+
+      function card(m) {
+        const prog = Number.isFinite(m.progress) ? Math.min(100, Math.max(0, m.progress)) : null;
+        const tags = Array.isArray(m.tags) ? m.tags.map(tagPill).join(" ") : "";
+        const links = Array.isArray(m.links)
+          ? m.links.map((l) =>
+              `<a href="${esc(l.href)}" target="_blank" rel="noopener noreferrer"
+                 class="text-xs underline underline-offset-4">${esc(l.label)}</a>`
+            ).join(" · ")
+          : "";
+
+        return `
+<div class="rounded-xl border p-4 bg-[var(--bg-raised)]
+            border-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)]">
+  <div class="flex items-start justify-between gap-3">
+    <div>
+      <h3 class="text-sm font-semibold tracking-tight">${esc(m.title)}</h3>
+      <p class="text-xs opacity-70 mt-0.5">${esc(m.quarter || "")}</p>
+    </div>
+    ${tags ? `<div class="flex flex-wrap gap-1 justify-end">${tags}</div>` : ``}
+  </div>
+  ${m.summary ? `<p class="mt-2 text-sm opacity-90">${esc(m.summary)}</p>` : ``}
+  ${prog !== null ? `
+    <div class="mt-3">
+      <div class="h-1.5 rounded-full bg-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)] overflow-hidden">
+        <div class="h-1.5 rounded-full" style="width:${prog}% ; background:color-mix(in srgb, var(--text-primary) 65%, transparent);"></div>
+      </div>
+      <p class="text-[11px] opacity-70 mt-1">${prog}%</p>
+    </div>` : ``}
+  ${links ? `<div class="mt-3 flex flex-wrap gap-2">${links}</div>` : ``}
+</div>`;
+      }
+
+      async function load() {
+        try {
+          const res = await fetch(FEED, { cache: "no-store" });
+          const data = await res.json();
+          if (!Array.isArray(data)) return;
+
+          // Partition
+          /** @type {Record<string, any[]>} */
+          const buckets = { NOW: [], NEXT: [], LATER: [], DONE: [] };
+          for (const m of data) {
+            const s = (m.status || "").toUpperCase();
+            if (buckets[s]) buckets[s].push(m);
+          }
+          // Render
+          for (const s of ["NOW", "NEXT", "LATER", "DONE"]) {
+            const el = cols[s];
+            if (!el) continue;
+            const html = buckets[s].map(card).join("\n");
+            if (html) el.innerHTML = html;
+          }
+        } catch {
+          // keep defaults
+        }
+      }
+
+      load();
+    })();
+  </script>
+</BaseLayout>
+
+<!-- Milestone card partial (server-rendered for defaults) -->
+---
+function MilestoneCard(m: Milestone) {
+  const prog = Number.isFinite(m.progress) ? Math.min(100, Math.max(0, m.progress!)) : null;
+  return (
+    <div class="rounded-xl border p-4 bg-[var(--bg-raised)]
+                border-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)]">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <h3 class="text-sm font-semibold tracking-tight">{m.title}</h3>
+          <p class="text-xs opacity-70 mt-0.5">{m.quarter}</p>
+        </div>
+        {m?.tags?.length ? (
+          <div class="flex flex-wrap gap-1 justify-end">
+            {m.tags!.map((t) => (
+              <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] border
+                           border-[color-mix(in_srgb,var(--text-primary)_/_16%,transparent)] opacity-80">{t}</span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      {m.summary ? <p class="mt-2 text-sm opacity-90">{m.summary}</p> : null}
+
+      {prog !== null ? (
+        <div class="mt-3">
+          <div class="h-1.5 rounded-full bg-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)] overflow-hidden">
+            <div class="h-1.5 rounded-full" style={{ width: prog + "%", background: "color-mix(in srgb, var(--text-primary) 65%, transparent)" }} />
+          </div>
+          <p class="text-[11px] opacity-70 mt-1">{prog}%</p>
+        </div>
+      ) : null}
+
+      {m?.links?.length ? (
+        <div class="mt-3 flex flex-wrap gap-2">
+          {m.links!.map((l) => (
+            <InlineLink href={l.href} underline>{l.label}</InlineLink>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+---

@@ -1,0 +1,30 @@
+{
+  "schema": "animica.manifest.v1",
+  "name": "Counter",
+  "version": "1.0.0",
+  "language": "python-vm",
+
+  "entry": "contract.py",
+
+  "abiPath": "../../../tests/fixtures/abi/counter.json",
+
+  "metadata": {
+    "author": "animica-tests",
+    "license": "Apache-2.0",
+    "description": "Deterministic Counter used across tests and examples.",
+    "deterministic": true
+  },
+
+  "caps": {
+    "syscalls": [],
+    "aicf": false,
+    "da": false,
+    "random": false
+  },
+
+  "resources": {
+    "files": [
+      { "path": "contract.py", "mime": "text/x-python" }
+    ]
+  }
+}

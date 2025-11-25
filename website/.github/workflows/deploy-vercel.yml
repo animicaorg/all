@@ -1,0 +1,121 @@
+name: Website Deploy (Vercel)
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "website/**"
+  pull_request:
+    paths:
+      - "website/**"
+
+concurrency:
+  group: website-vercel-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Vercel project identity (store these in GitHub Environments for protection)
+  VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+  VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+  VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+
+jobs:
+  preview:
+    if: github.event_name == 'pull_request'
+    name: Preview Deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: website
+    environment:
+      name: preview
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: website/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Vercel CLI
+        run: pnpm add -g vercel@latest
+
+      - name: Pull Vercel env (preview)
+        run: vercel pull --yes --environment=preview --token "$VERCEL_TOKEN"
+
+      - name: Build (Vercel)
+        run: vercel build --token "$VERCEL_TOKEN"
+
+      - name: Deploy (preview)
+        id: deploy
+        run: |
+          url="$(vercel deploy --prebuilt --token "$VERCEL_TOKEN")"
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+          echo "Preview URL: ${url}"
+
+      - name: Share URL
+        run: |
+          echo "🔗 Preview: ${{ steps.deploy.outputs.url }}" >> $GITHUB_STEP_SUMMARY
+
+  production:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    name: Production Deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: website
+    # Use a protected environment so only approved runs can access prod secrets
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: website/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Vercel CLI
+        run: pnpm add -g vercel@latest
+
+      - name: Pull Vercel env (production)
+        run: vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
+
+      - name: Build (Vercel prod)
+        run: vercel build --prod --token "$VERCEL_TOKEN"
+
+      - name: Deploy (production)
+        id: deploy
+        run: |
+          url="$(vercel deploy --prebuilt --prod --token "$VERCEL_TOKEN")"
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+          echo "Production URL: ${url}"
+
+      - name: Share URL
+        run: |
+          echo "🚀 Production: ${{ steps.deploy.outputs.url }}" >> $GITHUB_STEP_SUMMARY

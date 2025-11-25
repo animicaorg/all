@@ -1,0 +1,307 @@
+{
+  "title": "Animica — P2P",
+  "uid": "animica-p2p",
+  "timezone": "browser",
+  "schemaVersion": 36,
+  "version": 1,
+  "refresh": "10s",
+  "style": "dark",
+  "editable": true,
+  "time": { "from": "now-6h", "to": "now" },
+  "tags": ["p2p", "animica"],
+  "timepicker": {
+    "refresh_intervals": ["5s","10s","30s","1m","5m"],
+    "hidden": false
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "ds",
+        "type": "datasource",
+        "query": "prometheus",
+        "label": "Datasource",
+        "current": {}
+      },
+      {
+        "name": "job",
+        "type": "query",
+        "datasource": "$ds",
+        "label": "job",
+        "refresh": 1,
+        "query": "label_values(animica_p2p_peers, job)",
+        "includeAll": false,
+        "multi": false
+      },
+      {
+        "name": "instance",
+        "type": "query",
+        "datasource": "$ds",
+        "label": "instance",
+        "refresh": 1,
+        "query": "label_values(animica_p2p_peers{job=\"$job\"}, instance)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".+"
+      },
+      {
+        "name": "transport",
+        "type": "query",
+        "datasource": "$ds",
+        "label": "transport",
+        "refresh": 1,
+        "query": "label_values(animica_p2p_connections{job=\"$job\"}, transport)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".+"
+      },
+      {
+        "name": "topic",
+        "type": "query",
+        "datasource": "$ds",
+        "label": "gossip topic",
+        "refresh": 1,
+        "query": "label_values(animica_p2p_gossip_messages_total{job=\"$job\"}, topic)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".+"
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      { "type": "dashboard", "name": "Annotations & Alerts", "enable": true }
+    ]
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Connected Peers",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "sum by(instance) (animica_p2p_peers{job=\"$job\",instance=~\"$instance\"})" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red" },
+              { "color": "orange", "value": 4 },
+              { "color": "green", "value": 8 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Open Connections",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "sum by(instance) (animica_p2p_connections{job=\"$job\",instance=~\"$instance\",state=\"open\",transport=~\"$transport\"})" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Subscribed Topics",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "sum by(instance) (animica_p2p_subscriptions{job=\"$job\",instance=~\"$instance\"})" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "RTT (p95, ms)",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "1000 * histogram_quantile(0.95, sum by(le,instance) (rate(animica_p2p_rtt_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green" },
+              { "color": "orange", "value": 150 },
+              { "color": "red", "value": 300 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center"
+      }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Message Rate (in/out, msg/s)",
+      "datasource": "$ds",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "targets": [
+        { "refId": "A", "legendFormat": "in",  "expr": "sum by(instance) (rate(animica_p2p_messages_total{job=\"$job\",instance=~\"$instance\",dir=\"in\"}[$__rate_interval]))" },
+        { "refId": "B", "legendFormat": "out", "expr": "sum by(instance) (rate(animica_p2p_messages_total{job=\"$job\",instance=~\"$instance\",dir=\"out\"}[$__rate_interval]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Bandwidth (bytes/s)",
+      "datasource": "$ds",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "targets": [
+        { "refId": "A", "legendFormat": "in",  "expr": "sum by(instance) (rate(animica_p2p_bytes_total{job=\"$job\",instance=~\"$instance\",dir=\"in\"}[$__rate_interval]))" },
+        { "refId": "B", "legendFormat": "out", "expr": "sum by(instance) (rate(animica_p2p_bytes_total{job=\"$job\",instance=~\"$instance\",dir=\"out\"}[$__rate_interval]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps", "min": 0 } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Gossip Messages by Topic (msg/s)",
+      "datasource": "$ds",
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 13 },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{topic}} in",  "expr": "sum by(topic) (rate(animica_p2p_gossip_messages_total{job=\"$job\",instance=~\"$instance\",dir=\"in\",topic=~\"$topic\"}[$__rate_interval]))" },
+        { "refId": "B", "legendFormat": "{{topic}} out", "expr": "sum by(topic) (rate(animica_p2p_gossip_messages_total{job=\"$job\",instance=~\"$instance\",dir=\"out\",topic=~\"$topic\"}[$__rate_interval]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Dropped / Rejected / Resets (rate)",
+      "datasource": "$ds",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 20 },
+      "targets": [
+        { "refId": "A", "legendFormat": "gossip dropped/s", "expr": "sum by(instance) (rate(animica_p2p_gossip_dropped_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" },
+        { "refId": "B", "legendFormat": "stream resets/s",  "expr": "sum by(instance) (rate(animica_p2p_stream_resets_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" },
+        { "refId": "C", "legendFormat": "errors/s",         "expr": "sum by(instance) (rate(animica_p2p_errors_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Backpressure / Outbox Queue",
+      "datasource": "$ds",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 20 },
+      "targets": [
+        { "refId": "A", "legendFormat": "outbox depth", "expr": "avg by(instance) (animica_p2p_outbox_queue{job=\"$job\",instance=~\"$instance\"})" },
+        { "refId": "B", "legendFormat": "backpressure ratio", "expr": "avg by(instance) (animica_p2p_backpressure_ratio{job=\"$job\",instance=~\"$instance\"})" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green" },
+              { "color": "orange", "value": 50 },
+              { "color": "red", "value": 200 }
+            ]
+          }
+        }
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Handshake Success / Fail (rate)",
+      "datasource": "$ds",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 27 },
+      "targets": [
+        { "refId": "A", "legendFormat": "handshakes/s", "expr": "sum by(instance) (rate(animica_p2p_handshakes_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" },
+        { "refId": "B", "legendFormat": "failures/s",   "expr": "sum by(instance) (rate(animica_p2p_handshake_fail_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Connections by Transport",
+      "datasource": "$ds",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 27 },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{transport}}", "expr": "sum by(transport) (animica_p2p_connections{job=\"$job\",instance=~\"$instance\",state=\"open\",transport=~\"$transport\"})" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "RTT Quantiles (ms)",
+      "datasource": "$ds",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 34 },
+      "targets": [
+        { "refId": "A", "legendFormat": "p50", "expr": "1000 * histogram_quantile(0.5,  sum by(le,instance) (rate(animica_p2p_rtt_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))" },
+        { "refId": "B", "legendFormat": "p95", "expr": "1000 * histogram_quantile(0.95, sum by(le,instance) (rate(animica_p2p_rtt_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))" },
+        { "refId": "C", "legendFormat": "p99", "expr": "1000 * histogram_quantile(0.99, sum by(le,instance) (rate(animica_p2p_rtt_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms", "min": 0 } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Gossip Mesh Size (by topic)",
+      "datasource": "$ds",
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 42 },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{topic}}", "expr": "avg by(topic) (animica_p2p_gossip_mesh_size{job=\"$job\",instance=~\"$instance\",topic=~\"$topic\"})" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+
+    {
+      "type": "bargauge",
+      "title": "Errors by Kind (rate)",
+      "datasource": "$ds",
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 49 },
+      "targets": [
+        { "refId": "A", "expr": "sum by(kind) (rate(animica_p2p_errors_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "displayMode": "gradient", "orientation": "horizontal" }
+    }
+  ]
+}

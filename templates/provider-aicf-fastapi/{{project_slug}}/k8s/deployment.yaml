@@ -1,0 +1,243 @@
+# Kubernetes manifests for the AICF Provider (FastAPI server + worker sidecar).
+# Apply with:
+#   kubectl apply -n {{k8s_namespace}} -f deployment.yaml
+#
+# This single file defines:
+#  - ConfigMap: non-secret config and tuning knobs
+#  - Secret (optional): API key / signing key placeholders
+#  - ServiceAccount: locked-down identity
+#  - Deployment: FastAPI server + background worker sidecar
+#  - Service: ClusterIP service exposing HTTP
+#
+# Customize the {{…}} template variables in your template engine or replace manually.
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{project_slug}}-config
+  namespace: {{k8s_namespace}}
+  labels:
+    app.kubernetes.io/name: aicf-provider
+    app.kubernetes.io/instance: {{project_slug}}
+    app.kubernetes.io/component: config
+data:
+  # Server binding
+  SERVER_HOST: "0.0.0.0"
+  SERVER_PORT: "{{http_port}}"            # e.g. 8080
+
+  # Logging
+  LOG_LEVEL: "{{log_level}}"              # DEBUG|INFO|WARN|ERROR
+
+  # Provider identity / metadata (non-secret facets)
+  AICF_PROVIDER_ID: "{{provider_id}}"     # human-friendly or UUID (non-secret)
+  AICF_CAPABILITIES: "{{capabilities}}"   # e.g. "ai,quantum"
+  AICF_REGION: "{{provider_region}}"      # e.g. "us-east-1" (free-form)
+
+  # Worker concurrency & rate limits
+  AICF_WORKER_CONCURRENCY: "{{worker_concurrency}}"        # e.g. "2"
+  AICF_MAX_AI_UNITS_PER_SEC: "{{max_ai_units_per_sec}}"    # e.g. "10"
+  AICF_MAX_QUANTUM_UNITS_PER_SEC: "{{max_quantum_units_per_sec}}"  # e.g. "2"
+
+  # Queue sizing / backpressure (optional)
+  AICF_QUEUE_MAXSIZE: "{{queue_maxsize}}" # e.g. "256"
+
+  # Health probe tuning (seconds)
+  READINESS_STARTUP_DELAY: "2"
+  READINESS_PERIOD_SECONDS: "5"
+  LIVENESS_PERIOD_SECONDS: "10"
+
+---
+# Store secrets separately (optional). If you don't need an API key or signing key,
+# you can skip this Secret and remove the envFrom.secretRef in the Deployment.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{project_slug}}-secrets
+  namespace: {{k8s_namespace}}
+  labels:
+    app.kubernetes.io/name: aicf-provider
+    app.kubernetes.io/instance: {{project_slug}}
+type: Opaque
+stringData:
+  # Example secret knobs (fill in via CI or 'kubectl create secret …'):
+  PROVIDER_API_KEY: "{{provider_api_key}}"       # optional bearer for admin endpoints
+  PROVIDER_SIGNING_KEY: "{{provider_signing_key}}" # optional private key if used
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{project_slug}}-sa
+  namespace: {{k8s_namespace}}
+  labels:
+    app.kubernetes.io/name: aicf-provider
+    app.kubernetes.io/instance: {{project_slug}}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{project_slug}}
+  namespace: {{k8s_namespace}}
+  labels:
+    app.kubernetes.io/name: aicf-provider
+    app.kubernetes.io/instance: {{project_slug}}
+    app.kubernetes.io/component: backend
+spec:
+  replicas: {{replicas}}        # e.g. 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aicf-provider
+      app.kubernetes.io/instance: {{project_slug}}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aicf-provider
+        app.kubernetes.io/instance: {{project_slug}}
+      annotations:
+        # Ensure pods get a fresh rollout when config changes
+        checksum/config: "{{config_checksum}}"   # inject via templating or CI
+    spec:
+      serviceAccountName: {{project_slug}}-sa
+      # Set to your pull secret if using a private registry
+      imagePullSecrets:
+        - name: {{image_pull_secret}}   # or remove if public
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        # 1) FastAPI server
+        - name: server
+          image: "{{image_repository}}:{{image_tag}}"
+          imagePullPolicy: IfNotPresent
+          # Entry-point runs the FastAPI app
+          command: ["python", "-m", "aicf_provider.server"]
+          envFrom:
+            - configMapRef:
+                name: {{project_slug}}-config
+            - secretRef:
+                name: {{project_slug}}-secrets
+          ports:
+            - name: http
+              containerPort: {{http_port}}
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "{{server_requests_cpu}}"     # e.g. "200m"
+              memory: "{{server_requests_mem}}"  # e.g. "256Mi"
+            limits:
+              cpu: "{{server_limits_cpu}}"       # e.g. "500m"
+              memory: "{{server_limits_mem}}"    # e.g. "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 30
+            periodSeconds: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsUser: 1000
+            runAsGroup: 1000
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
+        # 2) Background worker: processes AI/Quantum jobs (sidecar)
+        - name: worker
+          image: "{{image_repository}}:{{image_tag}}"
+          imagePullPolicy: IfNotPresent
+          command:
+            - "python"
+            - "-m"
+            - "scripts.run_worker"
+            - "--stats-every"
+            - "10"
+          envFrom:
+            - configMapRef:
+                name: {{project_slug}}-config
+            - secretRef:
+                name: {{project_slug}}-secrets
+          resources:
+            requests:
+              cpu: "{{worker_requests_cpu}}"     # e.g. "300m"
+              memory: "{{worker_requests_mem}}"  # e.g. "384Mi"
+            limits:
+              cpu: "{{worker_limits_cpu}}"       # e.g. "1"
+              memory: "{{worker_limits_mem}}"    # e.g. "1Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsUser: 1000
+            runAsGroup: 1000
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{project_slug}}
+  namespace: {{k8s_namespace}}
+  labels:
+    app.kubernetes.io/name: aicf-provider
+    app.kubernetes.io/instance: {{project_slug}}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: aicf-provider
+    app.kubernetes.io/instance: {{project_slug}}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+
+# Optional HorizontalPodAutoscaler (uncomment to enable):
+# ---
+# apiVersion: autoscaling/v2
+# kind: HorizontalPodAutoscaler
+# metadata:
+#   name: {{project_slug}}
+#   namespace: {{k8s_namespace}}
+#   labels:
+#     app.kubernetes.io/name: aicf-provider
+#     app.kubernetes.io/instance: {{project_slug}}
+# spec:
+#   scaleTargetRef:
+#     apiVersion: apps/v1
+#     kind: Deployment
+#     name: {{project_slug}}
+#   minReplicas: {{min_replicas}}   # e.g. 1
+#   maxReplicas: {{max_replicas}}   # e.g. 5
+#   metrics:
+#     - type: Resource
+#       resource:
+#         name: cpu
+#         target:
+#           type: Utilization
+#           averageUtilization: 70
+

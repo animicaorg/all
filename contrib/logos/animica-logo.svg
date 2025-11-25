@@ -1,0 +1,29 @@
+<!-- Animica Primary Logo (symbol + wordmark)
+     Usage: default on light backgrounds.
+     Color may be overridden via CSS (currentColor on wordmark).
+     SPDX-License-Identifier: CC-BY-ND-4.0 (brand assets) -->
+<svg width="640" height="160" viewBox="0 0 640 160" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Animica Logo</title>
+  <desc id="desc">Circular mark with stylized A and Animica wordmark</desc>
+
+  <!-- MARK -->
+  <g transform="translate(16,16)">
+    <!-- Outer orb -->
+    <circle cx="64" cy="64" r="56" fill="#2E63FF"/>
+    <!-- Inner cut (surface) -->
+    <circle cx="64" cy="64" r="44" fill="#FFFFFF"/>
+    <!-- Stylized A (triangle) -->
+    <path d="M64 34 L36 112 H92 L64 34 Z" fill="#2E63FF"/>
+    <!-- Crossbar -->
+    <rect x="46" y="86" width="36" height="10" rx="5" fill="#2E63FF"/>
+  </g>
+
+  <!-- WORDMARK -->
+  <g transform="translate(160,0)">
+    <style>
+      .word { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+              font-weight: 700; font-size: 64px; letter-spacing: -0.5px; }
+    </style>
+    <text class="word" x="0" y="106" fill="currentColor">Animica</text>
+  </g>
+</svg>

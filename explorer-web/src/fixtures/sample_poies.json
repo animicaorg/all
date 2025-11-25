@@ -1,0 +1,126 @@
+{
+  "thetaTarget": 0.70,
+  "gammaEma": 0.68,
+  "window": 32,
+  "psiTotals": {
+    "hashshare": 0.52,
+    "ai": 0.18,
+    "quantum": 0.12,
+    "storage": 0.10,
+    "vdf": 0.08
+  },
+  "fairness": {
+    "gini": 0.19,
+    "hhi": 0.17,
+    "providers": [
+      { "id": "hash-A", "type": "hashshare", "stakeShare": 0.28 },
+      { "id": "hash-B", "type": "hashshare", "stakeShare": 0.24 },
+      { "id": "ai-X1", "type": "ai", "stakeShare": 0.12 },
+      { "id": "ai-X2", "type": "ai", "stakeShare": 0.06 },
+      { "id": "qtm-Q", "type": "quantum", "stakeShare": 0.12 },
+      { "id": "stor-S", "type": "storage", "stakeShare": 0.10 },
+      { "id": "vdf-V", "type": "vdf", "stakeShare": 0.08 }
+    ]
+  },
+  "blocks": [
+    {
+      "height": 123456,
+      "timestamp": "2025-01-01T00:00:00Z",
+      "psi": { "hashshare": 0.55, "ai": 0.20, "quantum": 0.10, "storage": 0.10, "vdf": 0.05 },
+      "gamma": 0.72,
+      "accepted": true,
+      "capped": ["hashshare"]
+    },
+    {
+      "height": 123457,
+      "timestamp": "2025-01-01T00:00:06Z",
+      "psi": { "hashshare": 0.50, "ai": 0.19, "quantum": 0.12, "storage": 0.11, "vdf": 0.08 },
+      "gamma": 0.69,
+      "accepted": false,
+      "capped": []
+    },
+    {
+      "height": 123458,
+      "timestamp": "2025-01-01T00:00:12Z",
+      "psi": { "hashshare": 0.51, "ai": 0.18, "quantum": 0.13, "storage": 0.10, "vdf": 0.08 },
+      "gamma": 0.67,
+      "accepted": false,
+      "capped": []
+    },
+    {
+      "height": 123459,
+      "timestamp": "2025-01-01T00:00:18Z",
+      "psi": { "hashshare": 0.49, "ai": 0.19, "quantum": 0.12, "storage": 0.10, "vdf": 0.10 },
+      "gamma": 0.71,
+      "accepted": true,
+      "capped": []
+    },
+    {
+      "height": 123460,
+      "timestamp": "2025-01-01T00:00:24Z",
+      "psi": { "hashshare": 0.52, "ai": 0.17, "quantum": 0.12, "storage": 0.11, "vdf": 0.08 },
+      "gamma": 0.66,
+      "accepted": false,
+      "capped": ["hashshare"]
+    },
+    {
+      "height": 123461,
+      "timestamp": "2025-01-01T00:00:30Z",
+      "psi": { "hashshare": 0.53, "ai": 0.18, "quantum": 0.11, "storage": 0.10, "vdf": 0.08 },
+      "gamma": 0.68,
+      "accepted": false,
+      "capped": ["hashshare"]
+    },
+    {
+      "height": 123462,
+      "timestamp": "2025-01-01T00:00:36Z",
+      "psi": { "hashshare": 0.50, "ai": 0.18, "quantum": 0.14, "storage": 0.09, "vdf": 0.09 },
+      "gamma": 0.70,
+      "accepted": true,
+      "capped": []
+    },
+    {
+      "height": 123463,
+      "timestamp": "2025-01-01T00:00:42Z",
+      "psi": { "hashshare": 0.48, "ai": 0.20, "quantum": 0.13, "storage": 0.10, "vdf": 0.09 },
+      "gamma": 0.73,
+      "accepted": true,
+      "capped": []
+    },
+    {
+      "height": 123464,
+      "timestamp": "2025-01-01T00:00:48Z",
+      "psi": { "hashshare": 0.51, "ai": 0.18, "quantum": 0.12, "storage": 0.10, "vdf": 0.09 },
+      "gamma": 0.69,
+      "accepted": false,
+      "capped": []
+    },
+    {
+      "height": 123465,
+      "timestamp": "2025-01-01T00:00:54Z",
+      "psi": { "hashshare": 0.50, "ai": 0.19, "quantum": 0.11, "storage": 0.11, "vdf": 0.09 },
+      "gamma": 0.70,
+      "accepted": true,
+      "capped": []
+    },
+    {
+      "height": 123466,
+      "timestamp": "2025-01-01T00:01:00Z",
+      "psi": { "hashshare": 0.49, "ai": 0.19, "quantum": 0.12, "storage": 0.11, "vdf": 0.09 },
+      "gamma": 0.71,
+      "accepted": true,
+      "capped": []
+    },
+    {
+      "height": 123467,
+      "timestamp": "2025-01-01T00:01:06Z",
+      "psi": { "hashshare": 0.50, "ai": 0.18, "quantum": 0.13, "storage": 0.10, "vdf": 0.09 },
+      "gamma": 0.70,
+      "accepted": true,
+      "capped": []
+    }
+  ],
+  "meta": {
+    "notes": "Sample PoIES window with Γ per block, Σψ breakdown, and rolling fairness metrics for dev previews/tests."
+  }
+}

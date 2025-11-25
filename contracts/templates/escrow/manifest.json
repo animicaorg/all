@@ -1,0 +1,168 @@
+{
+  "$schema": "../../schemas/manifest.schema.json",
+  "name": "EscrowTemplate",
+  "version": "0.1.0",
+  "language": "python",
+  "entry": "contract.py",
+
+  "abi": {
+    "functions": [
+      {
+        "name": "setup",
+        "inputs": [
+          { "name": "payer",   "type": "address" },
+          { "name": "payee",   "type": "address" },
+          { "name": "amount",  "type": "uint128" },
+          { "name": "arbiter", "type": "address", "optional": true }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "notice": "Initialize payer, payee, fixed amount (u128), and optional arbiter. Callable exactly once."
+      },
+      {
+        "name": "status",
+        "inputs": [],
+        "outputs": [
+          { "name": "status", "type": "bytes" }
+        ],
+        "stateMutability": "view",
+        "notice": "Return compact escrow status for UIs (addresses, amount, approvals, settled/outcome, balance)."
+      },
+      {
+        "name": "approve_release",
+        "inputs": [],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "notice": "Caller (payer or payee) approves releasing funds to payee."
+      },
+      {
+        "name": "revoke_release",
+        "inputs": [],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "notice": "Caller revokes their release approval."
+      },
+      {
+        "name": "approve_refund",
+        "inputs": [],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "notice": "Caller (payer or payee) approves refunding funds to payer."
+      },
+      {
+        "name": "revoke_refund",
+        "inputs": [],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "notice": "Caller revokes their refund approval."
+      },
+      {
+        "name": "release",
+        "inputs": [],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "notice": "Release funds to payee. Requires both party approvals unless arbiter override is used."
+      },
+      {
+        "name": "refund",
+        "inputs": [],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "notice": "Refund funds to payer. Requires both party approvals unless arbiter override is used."
+      },
+      {
+        "name": "arbiter_release",
+        "inputs": [],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "notice": "Arbiter override to release funds to payee."
+      },
+      {
+        "name": "arbiter_refund",
+        "inputs": [],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "notice": "Arbiter override to refund funds to payer."
+      }
+    ],
+    "events": [
+      {
+        "name": "EscrowSetup",
+        "inputs": [
+          { "name": "payer",  "type": "address", "indexed": false },
+          { "name": "payee",  "type": "address", "indexed": false },
+          { "name": "amount", "type": "uint128", "indexed": false },
+          { "name": "arbiter","type": "address", "indexed": false }
+        ]
+      },
+      {
+        "name": "ApprovalRelease",
+        "inputs": [
+          { "name": "who", "type": "address", "indexed": false }
+        ]
+      },
+      {
+        "name": "RevokeRelease",
+        "inputs": [
+          { "name": "who", "type": "address", "indexed": false }
+        ]
+      },
+      {
+        "name": "ApprovalRefund",
+        "inputs": [
+          { "name": "who", "type": "address", "indexed": false }
+        ]
+      },
+      {
+        "name": "RevokeRefund",
+        "inputs": [
+          { "name": "who", "type": "address", "indexed": false }
+        ]
+      },
+      {
+        "name": "Released",
+        "inputs": [
+          { "name": "payer",    "type": "address", "indexed": false },
+          { "name": "payee",    "type": "address", "indexed": false },
+          { "name": "amount",   "type": "uint128", "indexed": false },
+          { "name": "byArbiter","type": "bool",    "indexed": false }
+        ]
+      },
+      {
+        "name": "Refunded",
+        "inputs": [
+          { "name": "payer",    "type": "address", "indexed": false },
+          { "name": "payee",    "type": "address", "indexed": false },
+          { "name": "amount",   "type": "uint128", "indexed": false },
+          { "name": "byArbiter","type": "bool",    "indexed": false }
+        ]
+      }
+    ],
+    "errors": [
+      { "name": "U128_BOUNDS" },
+      { "name": "BAD_U128_ENC" },
+      { "name": "ADDR_LEN" },
+      { "name": "NOT_INIT" },
+      { "name": "ONLY_PARTY" },
+      { "name": "ONLY_ARBITER" },
+      { "name": "ALREADY_INIT" },
+      { "name": "ALREADY_SETTLED" },
+      { "name": "INSUFFICIENT_ESCROW_BAL" },
+      { "name": "ZERO_AMOUNT" },
+      { "name": "MISSING_APPROVALS" }
+    ]
+  },
+
+  "metadata": {
+    "description": "Deterministic N-of-M escrow with optional arbiter override (template).",
+    "tags": ["escrow", "payments", "template", "deterministic"],
+    "authors": ["Animica Contributors"],
+    "license": "Apache-2.0"
+  },
+
+  "artifacts": {
+    "codeHash": "",
+    "format": "ir+cbor",
+    "buildTool": "contracts/tools/build_package.py"
+  }
+}

@@ -1,0 +1,132 @@
+# Animica Node — container default config (TOML)
+# This file provides sane production-ish defaults. The Docker entrypoint may
+# override values from environment variables; see ops/docker/entrypoints/node.sh.
+#
+# Paths in this file assume the container's standard layout:
+#   - /config : mounted configuration (genesis, policies, bootstrap list)
+#   - /data   : persistent node data (DBs, caches, queues)
+
+# ───────────────────────────────── core ─────────────────────────────────
+[core]
+chain_id     = 1
+db_url       = "sqlite:////data/animica.db"        # rocksdb optional via core/db/rocksdb.py
+genesis_path = "/config/genesis.json"              # must exist in the container
+
+[logging]
+level  = "info"      # "debug" | "info" | "warning" | "error"
+format = "json"      # "json" | "text"
+
+[metrics]
+enabled = true
+port    = 9102       # Prometheus scrape (not exposed publicly in compose)
+
+# ───────────────────────────────── rpc ──────────────────────────────────
+[rpc]
+http_host = "0.0.0.0"
+http_port = 8545
+ws_port   = 8546
+openrpc_path = "/openrpc.json"
+
+# Allowlist for browser apps (filled by compose/router in front); keep strict.
+cors_allow_origins = [
+  "https://studio.example.com",
+  "https://explorer.example.com",
+]
+
+# Per-method and per-ip token buckets (best-effort; actual middleware uses these hints)
+[rpc.rate_limits]
+per_ip          = "300/min"
+tx_send         = "60/min"         # tx.sendRawTransaction
+state_queries   = "600/min"
+subscription_ws = "120/min"
+
+# ───────────────────────────────── p2p ──────────────────────────────────
+[p2p]
+listen_multiaddrs = [
+  "/ip4/0.0.0.0/tcp/30303",
+  "/ip4/0.0.0.0/udp/30303/quic",
+]
+max_peers      = 64
+handshake_alg  = "kyber768"        # KEM for transport keys
+identity_alg   = "dilithium3"      # node signing identity
+bootstrap_seeds_path = "/config/bootstrap_nodes.json"   # optional, JSON list of multiaddrs
+gossip = { mesh_degree = 6, outbound_min = 3 }
+
+# ─────────────────────────────── mempool ────────────────────────────────
+[mempool]
+min_gas_price          = 0
+max_txs                = 50000
+max_bytes              = 134217728         # 128 MiB
+tx_ttl_seconds         = 3600
+replace_by_fee_ratio   = 1.10              # ≥10% higher effective fee to replace
+per_sender_pending_cap = 512
+
+[mempool.limiter]
+ingress_txs_per_sec   = 200
+ingress_bytes_per_sec = 1048576            # 1 MiB/s
+per_peer_tps          = 20
+
+# ─────────────────────────────── consensus ──────────────────────────────
+[consensus]
+theta_target_seconds = 12
+retarget_ema_alpha   = 0.15
+max_reorg_depth      = 12
+
+[consensus.fork_choice]
+tie_break = "hash"    # deterministic tie-break when heights equal
+
+# ─────────────────────────────── randomness ─────────────────────────────
+[randomness]
+# Round schedule (commit → reveal → settle) must partition round_seconds.
+round_seconds         = 30
+commit_phase_seconds  = 10
+reveal_phase_seconds  = 10
+settle_phase_seconds  = 10
+reveal_grace_seconds  = 0
+
+[randomness.vdf]
+# Wesolowski verifier parameters (sanity-checked by tests/property & unit tests).
+security_bits          = 128
+discriminant_size_bits = 2048
+iterations             = 200000
+target_seconds         = 8
+
+# ─────────────────────────────── data availability ──────────────────────
+[da]
+max_blob_bytes = 1048576   # 1 MiB per blob in this profile
+
+[da.nmt]
+namespace_min = 24
+namespace_max = 16777215
+
+# ─────────────────────────────── capabilities ───────────────────────────
+[capabilities]
+enable_blob    = true
+enable_ai      = true
+enable_quantum = true
+enable_zk      = true
+queue_path     = "/data/capabilities"
+
+# ─────────────────────────────── aicf (AI Compute Fund) ─────────────────
+[aicf]
+enabled          = true
+pricing_policy   = "/config/aicf_policy.yaml"   # optional; if absent, built-ins are used
+treasury_splits  = { provider = 0.80, miner = 0.15, treasury = 0.05 }
+epoch_seconds    = 3600
+gamma_fund_cap   = 100000.0
+
+# ─────────────────────────────── mining (local, optional) ───────────────
+[mining]
+enabled            = false            # container runs node; miner runs in a separate image
+getwork_ws_mount   = true             # expose /ws getwork bridge via rpc server if enabled
+share_target_ratio = 0.001
+
+# ─────────────────────────────── explorer glue (read-only) ──────────────
+[explorer]
+enable_aggregates = true
+cache_ttl_seconds = 15
+
+# ─────────────────────────────── studio-services glue ───────────────────
+[services]
+allow_preflight_simulate = true
+store_artifacts_path     = "/data/artifacts"

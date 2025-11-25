@@ -1,0 +1,188 @@
+---
+import BaseLayout from "../../layouts/BaseLayout.astro";
+import InlineLink from "../../components/InlineLink.astro";
+
+// Discover all MD/MDX blog posts located under this directory (excluding this index page)
+const all = await Astro.glob("./**/*.{md,mdx}");
+
+// Filter out any accidental matches that point to the index route itself
+const posts = all
+  .filter((p) => p.url && !/\/blog\/?$/.test(p.url))
+  .map((p) => ({
+    url: p.url,
+    frontmatter: p.frontmatter ?? {},
+  }))
+  // Sort newest first by frontmatter.date (ISO or yyyy-mm-dd). Fallback to epoch 0.
+  .sort((a, b) => {
+    const da = new Date(a.frontmatter.date ?? 0).getTime();
+    const db = new Date(b.frontmatter.date ?? 0).getTime();
+    return db - da;
+  });
+
+const PAGE_TITLE = "Blog";
+const PAGE_DESC =
+  "Releases, engineering deep dives, and devnet updates from the Animica team.";
+---
+
+<BaseLayout title={PAGE_TITLE} description={PAGE_DESC}>
+  <section class="wrap">
+    <header class="hero">
+      <h1 class="title">{PAGE_TITLE}</h1>
+      <p class="lead">
+        {PAGE_DESC} Want real-time updates? Follow the
+        {" "}
+        <InlineLink href="/status">Status page</InlineLink>
+        {" "}or the{" "}
+        <InlineLink href="https://github.com/animica-dev">GitHub org</InlineLink>.
+      </p>
+    </header>
+
+    {posts.length === 0 ? (
+      <div class="empty">
+        <p>No posts yet. Check back soon, or read the{" "}
+          <InlineLink href="/docs/OVERVIEW">Overview</InlineLink>.
+        </p>
+      </div>
+    ) : (
+      <ul class="grid" role="list">
+        {posts.map(({ url, frontmatter }) => {
+          const title = frontmatter.title ?? "Untitled post";
+          const desc =
+            frontmatter.description ??
+            "No description provided. Click through to read the full post.";
+          const dateStr = frontmatter.date
+            ? new Date(frontmatter.date).toLocaleDateString(undefined, {
+                year: "numeric",
+                month: "short",
+                day: "2-digit",
+              })
+            : "";
+          const author = frontmatter.author ?? "Animica Team";
+          const tags: string[] = Array.isArray(frontmatter.tags)
+            ? frontmatter.tags
+            : [];
+          return (
+            <li class="card" itemscope itemtype="https://schema.org/BlogPosting">
+              <a href={url} class="cardLink" aria-label={`Read: ${title}`} itemprop="url">
+                <article>
+                  <header class="cardHeader">
+                    <h2 class="cardTitle" itemprop="headline">{title}</h2>
+                    <div class="meta">
+                      {dateStr && <time datetime={frontmatter.date} itemprop="datePublished">{dateStr}</time>}
+                      <span class="sep">•</span>
+                      <span class="author" itemprop="author">{author}</span>
+                    </div>
+                  </header>
+                  <p class="desc" itemprop="description">{desc}</p>
+                  {tags.length > 0 && (
+                    <ul class="tags" role="list">
+                      {tags.map((t) => <li class="tag">#{t}</li>)}
+                    </ul>
+                  )}
+                </article>
+              </a>
+            </li>
+          );
+        })}
+      </ul>
+    )}
+  </section>
+
+  <style>
+    .wrap {
+      max-width: 72rem;
+      padding: 2rem 1rem 4rem;
+      margin: 0 auto;
+    }
+    .hero {
+      margin-bottom: 1.5rem;
+    }
+    .title {
+      font-size: clamp(2rem, 3.5vw, 2.75rem);
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+      margin: 0 0 0.5rem;
+    }
+    .lead {
+      color: var(--text-muted, #6b7280);
+      margin: 0;
+    }
+    .empty {
+      padding: 2rem;
+      background: color-mix(in oklch, canvas, canvastext 3%);
+      border: 1px solid color-mix(in oklch, canvastext, transparent 90%);
+      border-radius: 0.75rem;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(1, minmax(0, 1fr));
+      gap: 1rem;
+      margin: 1.25rem 0 0;
+    }
+    @media (min-width: 720px) {
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (min-width: 1100px) {
+      .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+
+    .card {
+      list-style: none;
+      background: color-mix(in oklch, canvas, canvastext 2%);
+      border: 1px solid color-mix(in oklch, canvastext, transparent 92%);
+      border-radius: 0.75rem;
+      transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+      overflow: clip;
+      height: 100%;
+    }
+    .cardLink {
+      text-decoration: none;
+      color: inherit;
+      display: block;
+      padding: 1rem 1rem 1.25rem;
+      height: 100%;
+    }
+    .card:hover {
+      transform: translateY(-2px);
+      border-color: color-mix(in oklch, canvastext, transparent 80%);
+      background: color-mix(in oklch, canvas, canvastext 4%);
+    }
+    .cardHeader {
+      margin-bottom: 0.5rem;
+    }
+    .cardTitle {
+      font-size: 1.05rem;
+      margin: 0 0 0.25rem;
+      letter-spacing: -0.01em;
+    }
+    .meta {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.85rem;
+      color: var(--text-muted, #6b7280);
+    }
+    .sep { opacity: 0.4; }
+    .desc {
+      margin: 0.25rem 0 0.75rem;
+      color: var(--text-secondary, #374151);
+    }
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.25rem 0.5rem;
+      margin: 0;
+      padding: 0;
+    }
+    .tag {
+      list-style: none;
+      font-size: 0.75rem;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      border: 1px solid color-mix(in oklch, canvastext, transparent 86%);
+      color: var(--text-muted, #6b7280);
+      background: color-mix(in oklch, canvas, canvastext 2.5%);
+    }
+  </style>
+</BaseLayout>

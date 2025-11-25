@@ -1,0 +1,94 @@
+# Prometheus alert rules — PoIES (Γ, fairness, mix)
+# Assumes node (or explorer) exports:
+# - animica_poies_gamma_total{chain,network}      — current Γ (cap) as a gauge
+# - animica_poies_fairness_index{chain,network}   — Jain/HHI-like fairness in [0,1]
+# - animica_poies_mix_ratio{type,chain,network}   — per-proof-type share in [0,1], sum ≈ 1
+#
+# If your metric names differ, adjust the expressions below to match.
+
+groups:
+  - name: poies.rules
+    interval: 1m
+    rules:
+      # ──────────────────────────────────────────────────────────────────────────
+      # Γ stuck (retarget not moving)
+      # Warning after 6h without any change; Critical after 24h.
+      # We fold across instances to avoid N-way duplicates.
+      - alert: PoIESGammaStuckWarning
+        expr: |
+          changes(
+            max without(instance) (animica_poies_gamma_total)
+          [6h]) == 0
+        for: 15m
+        labels:
+          severity: warning
+          component: poies
+        annotations:
+          summary: "PoIES Γ appears stuck (no change ≥ 6h)"
+          description: |
+            The total Γ cap has not changed in the last 6h on {{ $labels.chain }} ({{ $labels.network }}).
+            This may indicate retarget loop stalls, lack of finalized blocks, or metrics exporter issues.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#poies
+
+      - alert: PoIESGammaStuckCritical
+        expr: |
+          changes(
+            max without(instance) (animica_poies_gamma_total)
+          [24h]) == 0
+        for: 30m
+        labels:
+          severity: critical
+          component: poies
+        annotations:
+          summary: "PoIES Γ stuck ≥ 24h (critical)"
+          description: |
+            Γ has not moved in ≥ 24h on {{ $labels.chain }} ({{ $labels.network }}).
+            Blocks may not be finalizing or the retarget job has failed. Investigate consensus/validator logs.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#poies
+
+      # ──────────────────────────────────────────────────────────────────────────
+      # Fairness collapse
+      # Fire when fairness index falls below thresholds for a sustained window.
+      - alert: PoIESFairnessCollapseWarning
+        expr: |
+          max without(instance) (animica_poies_fairness_index) < 0.60
+        for: 30m
+        labels:
+          severity: warning
+          component: poies
+        annotations:
+          summary: "PoIES fairness degrading (< 0.60)"
+          description: |
+            Fairness index dropped below 0.60 on {{ $labels.chain }} ({{ $labels.network }}).
+            This suggests one or more proof types dominate over the target mix.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#poies
+
+      - alert: PoIESFairnessCollapseCritical
+        expr: |
+          max without(instance) (animica_poies_fairness_index) < 0.40
+        for: 30m
+        labels:
+          severity: critical
+          component: poies
+        annotations:
+          summary: "PoIES fairness collapse (< 0.40)"
+          description: |
+            Severe fairness collapse detected on {{ $labels.chain }} ({{ $labels.network }}).
+            Check α-tuner, caps (per-type and total Γ), and miner/provider availability.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#poies
+
+      # ──────────────────────────────────────────────────────────────────────────
+      # Zero-mix (one proof type > 98% of total for a sustained window)
+      - alert: PoIESZeroMixCritical
+        expr: |
+          max without(type,instance) (animica_poies_mix_ratio) > 0.98
+        for: 30m
+        labels:
+          severity: page
+          component: poies
+        annotations:
+          summary: "PoIES zero-mix: one proof type dominates (>98%)"
+          description: |
+            A single proof type holds >98% share for ≥30m on {{ $labels.chain }} ({{ $labels.network }}).
+            This indicates starvation of other types; verify policy caps/escort rules and provider health.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#poies

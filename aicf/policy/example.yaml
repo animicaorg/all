@@ -1,0 +1,131 @@
+# Example AICF policy (sane defaults)
+# This file can be copied and tweaked per network (devnet/testnet/mainnet).
+
+version: 1
+name: example-policy
+activation:
+  # Prefer epoch-based activation to avoid mid-epoch rule changes.
+  activation_epoch: 100
+
+epochs:
+  length_blocks: 1000          # number of blocks per accounting epoch
+  fund_cap_atomic: 50000000    # Γ_fund: max total payouts per epoch (atomic units)
+  settle_batch_size: 500       # payouts per settlement batch
+  rollover_unspent: true       # carry unused cap forward (bounded in code)
+
+economics:
+  pricing:
+    ai:
+      unit: "ai_unit"          # abstract compute unit (policy-defined)
+      base_per_unit: 25000
+      piecewise:               # optional tiered pricing (low→high units)
+        - upto: 10000
+          per_unit: 30000
+        - upto: 100000
+          per_unit: 22500
+        - upto: null           # null = no upper bound
+          per_unit: 17500
+      surge_multiplier_max: 2.0
+      surge_threshold_queue_len: 500
+    quantum:
+      unit: "q_unit"           # normalized depth×width×shots
+      base_per_unit: 120000
+      piecewise:
+        - upto: 2000
+          per_unit: 140000
+        - upto: null
+          per_unit: 100000
+  splits:
+    # Must sum to 1.0 (engine enforces within epsilon)
+    provider: 0.85
+    treasury: 0.10
+    miner: 0.05
+  fee_floor_atomic: 2000        # minimum requester co-pay (if applicable)
+  indexation:
+    # Optional CPI/FX indexation with clamped EMA; keep disabled unless audited.
+    enabled: false
+    clamp_min: 0.9
+    clamp_max: 1.1
+
+sla:
+  windows:
+    samples_min: 50             # min observations before strong decisions
+    lookback_jobs: 500          # rolling window for provider scoring
+  thresholds:
+    traps_ratio_min: 0.02       # fraction of traps embedded in workloads
+    traps_pass_min: 0.98        # required pass rate on traps
+    qos_score_min: 0.85         # normalized quality score [0,1]
+    latency_ms_p95_max: 2500
+    availability_min: 0.995     # heartbeat-based availability
+  confidence:
+    method: "wilson"            # Wilson/CP lower bound must meet threshold
+    z_value: 2.0                # ~95% confidence
+  decay:
+    health_half_life_blocks: 5000
+
+slashing:
+  grace:
+    startup_blocks: 200
+    missed_heartbeat_soft: 3
+  penalties:
+    TRAPS_CHEAT:
+      penalty_atomic: 2000000
+      jail_blocks: 20000
+      cooldown_blocks: 0
+      notes: "Trap mismatch or tampering"
+    QOS_FAIL:
+      penalty_atomic: 500000
+      jail_blocks: 0
+      cooldown_blocks: 10000
+      notes: "Quality below floor with confidence"
+    LATENCY_SLA:
+      penalty_atomic: 250000
+      jail_blocks: 0
+      cooldown_blocks: 5000
+      notes: "p95 latency > cap"
+    LEASE_LOSS:
+      penalty_atomic: 150000
+      jail_blocks: 0
+      cooldown_blocks: 2000
+      notes: "Lease expired without proof/return"
+    HEARTBEAT_MISS:
+      penalty_atomic: 50000
+      jail_blocks: 0
+      cooldown_blocks: 1000
+      notes: "Repeated heartbeat gaps"
+  clawback:
+    enabled: true
+    schedule_blocks: [0, 10000, 30000]
+    fractions: [0.25, 0.50, 0.25]
+  bounds:
+    max_penalty_per_epoch: 5000000
+    never_exceed_stake: true
+
+registry:
+  stake_min:
+    ai: 5000000
+    quantum: 12000000
+  allowlist:
+    enabled: false
+    providers: []
+  denylist:
+    enabled: false
+    providers: []
+  regions:
+    require_any_of: []          # e.g., ["us-east", "eu-west"]
+
+quotas:
+  leases_max_concurrent:
+    ai: 4
+    quantum: 2
+  units_per_epoch_max:
+    ai: 200000
+    quantum: 20000
+
+assignment:
+  randomness: "beacon"          # "beacon" or "local"
+  fairness_shuffle_rounds: 2
+  weights:
+    priority: 3.0
+    fee: 2.0
+    age: 1.0

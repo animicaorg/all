@@ -1,0 +1,235 @@
+# Prometheus alert rules — Data Availability (DA)
+# Assumed Animica DA metrics (rename if your build exports different names):
+#   - animica_da_sampling_requests_total{instance}                 # counter
+#   - animica_da_sampling_fail_total{instance}                     # counter
+#   - animica_da_sampling_p_fail{instance}                         # optional gauge (instant p_fail)
+#   - animica_da_proof_verify_total{instance}                      # counter (attempts)
+#   - animica_da_proof_verify_fail_total{instance,reason}          # counter (failures)
+#   - animica_da_nmt_verify_fail_total{instance,reason}            # counter
+#   - animica_da_erasure_decode_fail_total{instance,reason}        # counter
+#   - animica_da_retrieval_latency_seconds_bucket{instance,le}     # histogram
+#   - animica_da_post_total{instance}                              # counter
+#   - animica_da_post_fail_total{instance,reason}                  # counter
+#
+# Thresholds tuned for devnet/small testnets — tighten for production.
+
+groups:
+  - name: da.rules
+    interval: 30s
+    rules:
+      # ───────────────────────────────────────────────────────────
+      # Availability sampling: p_fail (observed failure probability)
+      - alert: DAPFailHighWarning
+        expr: |
+          max by (instance) (
+            # Prefer the explicit gauge if present; else compute from counters.
+            max_over_time(animica_da_sampling_p_fail[10m])
+          )
+          OR
+          (
+            sum by(instance) (rate(animica_da_sampling_fail_total[15m]))
+            /
+            clamp_min(sum by(instance) (rate(animica_da_sampling_requests_total[15m])), 1e-6)
+          ) > 0.02
+        for: 15m
+        labels:
+          severity: warning
+          component: da
+        annotations:
+          summary: "DA sampling p_fail > 2% (15m)"
+          description: |
+            {{ $labels.instance }} observed sampling failure probability {{ $value | printf "%.3f" }}.
+            Investigate NMT proofs, retrieval latency, and blob erasure health.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#da
+
+      - alert: DAPFailHighCritical
+        expr: |
+          max by (instance) (
+            max_over_time(animica_da_sampling_p_fail[10m])
+          )
+          OR
+          (
+            sum by(instance) (rate(animica_da_sampling_fail_total[10m]))
+            /
+            clamp_min(sum by(instance) (rate(animica_da_sampling_requests_total[10m])), 1e-6)
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: critical
+          component: da
+        annotations:
+          summary: "DA sampling p_fail > 5% (10m)"
+          description: |
+            {{ $labels.instance }} sampling failures exceed 5%; availability at risk.
+            Check retriever saturation, proof verification errors, and network partitions.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#da
+
+      # Lack of sampling activity (could hide issues)
+      - alert: DANoSamplingActivity
+        expr: sum by(instance) (rate(animica_da_sampling_requests_total[30m])) < 0.01
+        for: 30m
+        labels:
+          severity: warning
+          component: da
+        annotations:
+          summary: "No DA sampling activity"
+          description: |
+            {{ $labels.instance }} is not issuing availability samples.
+            Ensure samplers/light-clients are running and scheduler is enabled.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#da
+
+      # ───────────────────────────────────────────────────────────
+      # Proof verification failure rates
+      - alert: DAProofVerifyFailWarning
+        expr: |
+          (
+            sum by(instance) (rate(animica_da_proof_verify_fail_total[10m]))
+            /
+            clamp_min(sum by(instance) (rate(animica_da_proof_verify_total[10m])), 1e-3)
+          ) > 0.01
+        for: 15m
+        labels:
+          severity: warning
+          component: da
+        annotations:
+          summary: "DA proof verify failures > 1% (10m)"
+          description: |
+            {{ $labels.instance }} proof verification failures trending above 1%.
+            Inspect fail reasons (NMT mismatch, range-proof invalid, malformed).
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#da
+
+      - alert: DAProofVerifyFailCritical
+        expr: |
+          (
+            sum by(instance) (rate(animica_da_proof_verify_fail_total[5m]))
+            /
+            clamp_min(sum by(instance) (rate(animica_da_proof_verify_total[5m])), 1e-3)
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: critical
+          component: da
+        annotations:
+          summary: "DA proof verify failures > 5% (5m)"
+          description: |
+            {{ $labels.instance }} proof verification failures are severe; light verification and DAS may be unreliable.
+            Roll back recent changes to NMT/erasure params or inspect provider quality.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#da
+
+      # Surface top failure reason for triage
+      - alert: DATopProofFailReasonInfo
+        expr: topk(1, sum by(reason) (rate(animica_da_proof_verify_fail_total[10m]))) > 0.5
+        for: 15m
+        labels:
+          severity: info
+          component: da
+        annotations:
+          summary: "Top DA proof failure reason: {{ $labels.reason }}"
+          description: |
+            '{{ $labels.reason }}' ≈ {{ $value | printf "%.2f" }} failures/sec over 10m.
+            Helps identify whether issues stem from nmt_mismatch, range_invalid, malformed, etc.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#da
+
+      # ───────────────────────────────────────────────────────────
+      # NMT verification and erasure decode issues
+      - alert: DANMTVerifyFailRate
+        expr: |
+          sum by(instance) (rate(animica_da_nmt_verify_fail_total[10m])) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          component: da
+        annotations:
+          summary: "NMT verification failures > 0.5/s (10m)"
+          description: |
+            {{ $labels.instance }} Namespaced Merkle verification failing frequently.
+            Check namespace rules, leaf encoding, and recent parameter changes.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#da
+
+      - alert: DAErsDecodeFailRate
+        expr: |
+          sum by(instance) (rate(animica_da_erasure_decode_fail_total[10m])) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+          component: da
+        annotations:
+          summary: "Erasure decode failures > 0.2/s (10m)"
+          description: |
+            {{ $labels.instance }} Reed–Solomon decodes are failing often.
+            Validate (k,n) profile, shard sizes, and corruption thresholds.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#da
+
+      # ───────────────────────────────────────────────────────────
+      # Retrieval latency (affects sampling and light verification)
+      - alert: DARetrievalLatencyP95Warning
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by(le, instance) (rate(animica_da_retrieval_latency_seconds_bucket[10m]))
+          ) > 2.0
+        for: 15m
+        labels:
+          severity: warning
+          component: da
+        annotations:
+          summary: "DA retrieval p95 > 2s (10m)"
+          description: |
+            {{ $labels.instance }} DA retrieval latency high. Sampling throughput may suffer.
+            Check storage I/O, cache size, and network egress limits.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#da
+
+      - alert: DARetrievalLatencyP95Critical
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by(le, instance) (rate(animica_da_retrieval_latency_seconds_bucket[5m]))
+          ) > 5.0
+        for: 10m
+        labels:
+          severity: critical
+          component: da
+        annotations:
+          summary: "DA retrieval p95 > 5s (5m)"
+          description: |
+            {{ $labels.instance }} retrieval extremely slow; availability sampling may time out.
+            Consider scaling disks, enabling cache, or reducing concurrent load.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#da
+
+      # ───────────────────────────────────────────────────────────
+      # POST failure rates (ingress)
+      - alert: DAPostFailRateWarning
+        expr: |
+          (
+            sum by(instance) (rate(animica_da_post_fail_total[10m]))
+            /
+            clamp_min(sum by(instance) (rate(animica_da_post_total[10m])), 1e-3)
+          ) > 0.02
+        for: 15m
+        labels:
+          severity: warning
+          component: da
+        annotations:
+          summary: "DA POST failures > 2% (10m)"
+          description: |
+            {{ $labels.instance }} blob POST failures are elevated. Check auth/rate limits,
+            NMT/erasure pre-checks, and storage space.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#da
+
+      - alert: DAPostFailRateCritical
+        expr: |
+          (
+            sum by(instance) (rate(animica_da_post_fail_total[5m]))
+            /
+            clamp_min(sum by(instance) (rate(animica_da_post_total[5m])), 1e-3)
+          ) > 0.10
+        for: 10m
+        labels:
+          severity: critical
+          component: da
+        annotations:
+          summary: "DA POST failures > 10% (5m)"
+          description: |
+            {{ $labels.instance }} is rejecting many blob submissions; service quality degraded.
+            Verify namespace limits, size caps, and backend store availability.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#da

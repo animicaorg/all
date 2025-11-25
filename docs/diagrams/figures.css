@@ -1,0 +1,248 @@
+/* Animica Docs — Shared diagram/figure styles
+   Scope these classes to avoid leaking into site-wide CSS. */
+
+/* =========================
+   Color Tokens (Light Mode)
+   ========================= */
+:root {
+  --fig-bg:            #ffffff;
+  --fig-border:        #e5e7eb; /* gray-200 */
+  --fig-shadow:        0 1px 2px rgba(0,0,0,0.04), 0 4px 14px rgba(0,0,0,0.06);
+  --fig-caption:       #4b5563; /* gray-600 */
+  --fig-muted:         #6b7280; /* gray-500 */
+  --fig-text:          #111827; /* gray-900 */
+  --fig-accent:        #0ea5e9; /* sky-500 */
+  --fig-accent-2:      #6366f1; /* indigo-500 */
+  --fig-chip-bg:       #f1f5f9; /* slate-100 */
+  --fig-chip-fg:       #475569; /* slate-600 */
+  --fig-code-bg:       #f8fafc; /* slate-50 */
+  --fig-scroll-hint:   linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,1) 70%);
+}
+
+/* =========================
+   Dark Mode Tokens
+   ========================= */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fig-bg:          #0b1020;
+    --fig-border:      #1f2937; /* gray-800 */
+    --fig-shadow:      0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+    --fig-caption:     #9ca3af; /* gray-400 */
+    --fig-muted:       #94a3b8; /* slate-400 */
+    --fig-text:        #e5e7eb; /* gray-200 */
+    --fig-accent:      #38bdf8; /* sky-400 */
+    --fig-accent-2:    #818cf8; /* indigo-400 */
+    --fig-chip-bg:     #0f172a; /* slate-900 */
+    --fig-chip-fg:     #cbd5e1; /* slate-300 */
+    --fig-code-bg:     #0b1220;
+    --fig-scroll-hint: linear-gradient(90deg, rgba(11,16,32,0) 0%, rgba(11,16,32,1) 70%);
+  }
+}
+
+/* Optional explicit theme flip with [data-theme="dark"] */
+[data-theme="dark"] {
+  --fig-bg:          #0b1020;
+  --fig-border:      #1f2937;
+  --fig-shadow:      0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+  --fig-caption:     #9ca3af;
+  --fig-muted:       #94a3b8;
+  --fig-text:        #e5e7eb;
+  --fig-accent:      #38bdf8;
+  --fig-accent-2:    #818cf8;
+  --fig-chip-bg:     #0f172a;
+  --fig-chip-fg:     #cbd5e1;
+  --fig-code-bg:     #0b1220;
+  --fig-scroll-hint: linear-gradient(90deg, rgba(11,16,32,0) 0%, rgba(11,16,32,1) 70%);
+}
+
+/* =========================
+   Figure Container
+   ========================= */
+.figure,
+.figure-card,
+.diagram-card {
+  color: var(--fig-text);
+  background: var(--fig-bg);
+  border: 1px solid var(--fig-border);
+  border-radius: 12px;
+  box-shadow: var(--fig-shadow);
+  padding: 1rem 1rem 0.75rem;
+  margin: 1.25rem 0;
+  overflow: hidden; /* allow inner scroll areas to clip nicely */
+}
+
+.figure.compact { padding: 0.75rem 0.75rem 0.5rem; }
+.figure.edge-to-edge { border-radius: 0; margin-left: -1rem; margin-right: -1rem; }
+
+/* Title row with optional chips */
+.figure .figure-title {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  margin: 0 0 .5rem;
+  font-weight: 600;
+  letter-spacing: .2px;
+}
+
+.figure .figure-title .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  font-size: .75rem;
+  padding: .15rem .5rem;
+  border-radius: 999px;
+  background: var(--fig-chip-bg);
+  color: var(--fig-chip-fg);
+  border: 1px solid var(--fig-border);
+  line-height: 1.1;
+}
+
+.figure .figure-title .chip .dot {
+  width: .45rem; height: .45rem; border-radius: 50%;
+  background: var(--fig-accent);
+}
+
+/* =========================
+   Diagram Area
+   ========================= */
+.diagram,
+.figure .diagram {
+  position: relative;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 8px;
+  border: 1px dashed var(--fig-border);
+  background:
+    linear-gradient(0deg, rgba(0,0,0,0.03), rgba(0,0,0,0.03)) padding-box;
+}
+
+.diagram.no-border { border: 0; background: transparent; }
+
+.diagram::-webkit-scrollbar { height: 10px; width: 10px; }
+.diagram::-webkit-scrollbar-thumb {
+  background: rgba(100,116,139,.35);
+  border-radius: 8px;
+}
+.diagram::-webkit-scrollbar-track { background: transparent; }
+
+/* Subtle scroll hint for overflow-x */
+.diagram::after {
+  content: "";
+  position: sticky;
+  right: 0; top: 0; bottom: 0;
+  width: 24px;
+  pointer-events: none;
+  background: var(--fig-scroll-hint);
+}
+
+/* Mermaid diagrams: ensure responsive sizing and readable fonts */
+.mermaid {
+  display: block;
+  width: 100%;
+  min-width: 320px;
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+  color: var(--fig-text);
+}
+
+.mermaid svg {
+  width: 100% !important;
+  height: auto !important;
+}
+
+.mermaid .label,
+.mermaid .edgeLabel,
+.mermaid text {
+  fill: currentColor !important;
+}
+
+/* Node & border accents for better contrast in dark mode */
+.mermaid .node rect,
+.mermaid .node polygon,
+.mermaid .node circle,
+.mermaid .cluster rect,
+.mermaid .cluster polygon {
+  stroke: var(--fig-accent-2) !important;
+  stroke-width: 1.2px !important;
+}
+
+/* =========================
+   Captions & Notes
+   ========================= */
+.figure figcaption,
+.figure .caption {
+  margin-top: .65rem;
+  color: var(--fig-caption);
+  font-size: .875rem;
+  line-height: 1.4;
+}
+
+.figure .caption code {
+  background: var(--fig-code-bg);
+  border: 1px solid var(--fig-border);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: .82em;
+  border-radius: 6px;
+  padding: .05rem .35rem;
+}
+
+/* Inline legend list */
+.figure .legend {
+  margin: .5rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex; flex-wrap: wrap; gap: .5rem .75rem;
+  color: var(--fig-muted);
+  font-size: .82rem;
+}
+.figure .legend li { display: inline-flex; align-items: center; gap: .35rem; }
+.figure .legend .swatch {
+  width: .75rem; height: .75rem; border-radius: 3px;
+  border: 1px solid var(--fig-border);
+  background: var(--fig-chip-bg);
+}
+
+/* =========================
+   Layout Utilities
+   ========================= */
+.fig-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: 1fr;
+}
+@media (min-width: 900px) {
+  .fig-grid.cols-2 { grid-template-columns: 1fr 1fr; }
+  .fig-grid.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+}
+
+.center { display: flex; justify-content: center; }
+.max-w-wide { max-width: 1400px; margin-inline: auto; }
+
+/* Optional zoom affordance on hover for large canvases */
+.diagram.zoom-on-hover:hover { cursor: zoom-in; }
+
+/* =========================
+   Print Styles
+   ========================= */
+@media print {
+  .figure,
+  .figure-card,
+  .diagram-card {
+    box-shadow: none !important;
+    background: #fff !important;
+  }
+  .diagram { border-color: #bbb; }
+}
+
+/* =========================
+   Accessibility
+   ========================= */
+.figure :focus-visible {
+  outline: 2px solid var(--fig-accent);
+  outline-offset: 2px;
+}
+
+/* Reduce motion for animated renderers */
+@media (prefers-reduced-motion: reduce) {
+  .diagram, .mermaid, .figure * { transition: none !important; animation: none !important; }
+}

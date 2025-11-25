@@ -1,0 +1,98 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Animica Explorer",
+  "version": "0.1.0",
+  "identifier": "io.animica.explorer",
+
+  "build": {
+    "beforeDevCommand": "",
+    "beforeBuildCommand": "",
+    "devPath": "http://localhost:5173",
+    "distDir": "../dist"
+  },
+
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Animica Explorer",
+        "width": 1200,
+        "height": 780,
+        "minWidth": 960,
+        "minHeight": 600,
+        "resizable": true
+      }
+    ]
+  },
+
+  "security": {
+    "csp": "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https://* wss://*; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+  },
+
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.icns",
+      "icons/icon.ico",
+      "icons/128x128.png",
+      "icons/256x256.png"
+    ],
+    "identifier": "io.animica.explorer",
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "entitlements": null,
+      "exceptionDomain": [
+        "explorer.animica.dev",
+        "rpc.animica.dev"
+      ]
+    },
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper" }
+    },
+    "linux": {
+      "category": "Network",
+      "shortDescription": "Animica Explorer — desktop shell (small footprint, offline-capable)",
+      "deb": {
+        "depends": [
+          "libgtk-3-0",
+          "libayatana-appindicator3-1",
+          "libx11-6",
+          "libxcb1",
+          "libxrandr2",
+          "libxi6",
+          "libxtst6",
+          "libxext6",
+          "libxfixes3",
+          "libxkbcommon0",
+          "libnss3",
+          "libasound2",
+          "libglib2.0-0"
+        ]
+      },
+      "rpm": {
+        "depends": [
+          "gtk3",
+          "libX11",
+          "libxcb",
+          "libXrandr",
+          "libXi",
+          "libXtst",
+          "libXext",
+          "libXfixes",
+          "libxkbcommon",
+          "nss",
+          "alsa-lib",
+          "glib2"
+        ]
+      }
+    }
+  },
+
+  "updater": {
+    "active": false,
+    "endpoints": [],
+    "dialog": true,
+    "pubkey": ""
+  }
+}

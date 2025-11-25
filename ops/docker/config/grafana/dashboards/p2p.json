@@ -1,0 +1,361 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["animica", "p2p", "gossip", "quic", "ws", "sync"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": true },
+        "hide": 0,
+        "label": "Prometheus",
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource"
+      },
+      {
+        "datasource": "${DS_PROMETHEUS}",
+        "definition": "label_values(up{job=~\".*\"}, job)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "job",
+        "multi": false,
+        "name": "job",
+        "options": [],
+        "query": { "query": "label_values(up{job=~\".*\"}, job)", "refId": "PromVarJob" },
+        "refresh": 1,
+        "regex": "/p2p|node|animica.*/",
+        "skipUrlSync": false,
+        "type": "query"
+      },
+      {
+        "datasource": "${DS_PROMETHEUS}",
+        "definition": "label_values(animica_p2p_connected_peers{job=~\"$job\"}, instance)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "instance",
+        "multi": false,
+        "name": "instance",
+        "options": [],
+        "query": {
+          "query": "label_values(animica_p2p_connected_peers{job=~\"$job\"}, instance)",
+          "refId": "PromVarInstance"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "query"
+      },
+      {
+        "datasource": "${DS_PROMETHEUS}",
+        "definition": "label_values(animica_p2p_gossip_publish_total{instance=\"$instance\"}, topic)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "topic",
+        "multi": true,
+        "name": "topic",
+        "options": [],
+        "query": {
+          "query": "label_values(animica_p2p_gossip_publish_total{instance=\"$instance\"}, topic)",
+          "refId": "PromVarTopic"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "query"
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m"],
+    "time_options": ["1h", "3h", "6h", "12h", "24h", "2d", "7d", "30d"]
+  },
+  "timezone": "",
+  "title": "Animica — P2P / Gossip / Sync",
+  "uid": "animica-p2p-01",
+  "version": 1,
+  "panels": [
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Current number of connected peers.",
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "animica_p2p_connected_peers{instance=\"$instance\"}", "legendFormat": "peers", "refId": "A" }
+      ],
+      "title": "Connected Peers",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Active subscriptions across gossip topics.",
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "sum(animica_p2p_mesh_peers{instance=\"$instance\"})", "legendFormat": "mesh peers", "refId": "A" }
+      ],
+      "title": "Gossip Mesh Size (sum)",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "QUIC/TCP/WS connections opened and closed (rate).",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "sum(rate(animica_p2p_connect_total{instance=\"$instance\"}[5m]))", "legendFormat": "connect/s", "refId": "A" },
+        { "expr": "sum(rate(animica_p2p_disconnect_total{instance=\"$instance\"}[5m]))", "legendFormat": "disconnect/s", "refId": "B" }
+      ],
+      "title": "Connection Churn (5m)",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Handshake success/failure rate; spikes indicate network incompatibilities.",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "sum(rate(animica_p2p_handshake_ok_total{instance=\"$instance\"}[5m]))", "legendFormat": "ok/s", "refId": "A" },
+        { "expr": "sum(rate(animica_p2p_handshake_fail_total{instance=\"$instance\"}[5m]))", "legendFormat": "fail/s", "refId": "B" }
+      ],
+      "title": "Handshake OK / Fail (5m)",
+      "type": "stat"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Inbound and outbound network throughput at the P2P layer.",
+      "fieldConfig": { "defaults": { "unit": "Bps", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "id": 5,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "sum by (instance) (rate(animica_p2p_in_bytes_total{instance=\"$instance\"}[5m]))", "legendFormat": "in bytes/s", "refId": "A" },
+        { "expr": "sum by (instance) (rate(animica_p2p_out_bytes_total{instance=\"$instance\"}[5m]))", "legendFormat": "out bytes/s", "refId": "B" }
+      ],
+      "title": "P2P Throughput (bytes/s, 5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Inbound/outbound message rates (after encryption/decode).",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "id": 6,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "sum by (instance) (rate(animica_p2p_msg_in_total{instance=\"$instance\"}[5m]))", "legendFormat": "msg in/s", "refId": "A" },
+        { "expr": "sum by (instance) (rate(animica_p2p_msg_out_total{instance=\"$instance\"}[5m]))", "legendFormat": "msg out/s", "refId": "B" }
+      ],
+      "title": "P2P Messages (5m)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Ping RTT based on periodic heartbeats.",
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 3 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 13 },
+      "id": 7,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(animica_p2p_ping_rtt_seconds_bucket{instance=\"$instance\"}[5m])))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(animica_p2p_ping_rtt_seconds_bucket{instance=\"$instance\"}[5m])))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ],
+      "title": "Ping RTT (p50/p95, 5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Average peer score; low values indicate misbehaving peers or poor connectivity.",
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 13 },
+      "id": 8,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "avg(animica_p2p_peer_score{instance=\"$instance\"})", "legendFormat": "avg score", "refId": "A" }
+      ],
+      "title": "Peer Score (avg)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Gossip publish/receive/duplicate rates, filterable by topic.",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 20 },
+      "id": 9,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "sum by (topic) (rate(animica_p2p_gossip_publish_total{instance=\"$instance\",topic=~\"$topic\"}[5m]))", "legendFormat": "publish {{topic}}", "refId": "A" },
+        { "expr": "sum by (topic) (rate(animica_p2p_gossip_receive_total{instance=\"$instance\",topic=~\"$topic\"}[5m]))", "legendFormat": "receive {{topic}}", "refId": "B" },
+        { "expr": "sum by (topic) (rate(animica_p2p_gossip_duplicate_total{instance=\"$instance\",topic=~\"$topic\"}[5m]))", "legendFormat": "duplicate {{topic}}", "refId": "C" }
+      ],
+      "title": "Gossip Flow by Topic (5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Per-topic mesh size; abrupt drops may indicate partitions.",
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 20 },
+      "id": 10,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "avg by (topic) (animica_p2p_mesh_peers{instance=\"$instance\",topic=~\"$topic\"})", "legendFormat": "{{topic}}", "refId": "A" }
+      ],
+      "title": "Gossip Mesh — Peers per Topic",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Rate-limited drops at transport/ingress boundaries.",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 27 },
+      "id": 11,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "sum by (reason) (rate(animica_p2p_ratelimit_drop_total{instance=\"$instance\"}[5m]))", "legendFormat": "{{reason}}", "refId": "A" }
+      ],
+      "title": "Rate-limit Drops by Reason (5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Protocol errors grouped by code; investigate spikes.",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 27 },
+      "id": 12,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "sum by (code) (rate(animica_p2p_protocol_error_total{instance=\"$instance\"}[5m]))", "legendFormat": "code {{code}}", "refId": "A" }
+      ],
+      "title": "Protocol Errors (5m)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Header and block sync progress vs peers.",
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 34 },
+      "id": 13,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "sum by (instance) (rate(animica_p2p_headers_received_total{instance=\"$instance\"}[5m]))", "legendFormat": "headers/s", "refId": "A" },
+        { "expr": "sum by (instance) (rate(animica_p2p_blocks_received_total{instance=\"$instance\"}[5m]))", "legendFormat": "blocks/s", "refId": "B" }
+      ],
+      "title": "Sync Throughput (5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Inventory & request flow for txs/blocks/shares.",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 34 },
+      "id": 14,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "sum(rate(animica_p2p_inv_sent_total{instance=\"$instance\"}[5m]))", "legendFormat": "inv sent/s", "refId": "A" },
+        { "expr": "sum(rate(animica_p2p_getdata_sent_total{instance=\"$instance\"}[5m]))", "legendFormat": "getdata sent/s", "refId": "B" },
+        { "expr": "sum(rate(animica_p2p_tx_relay_total{instance=\"$instance\"}[5m]))", "legendFormat": "tx relay/s", "refId": "C" },
+        { "expr": "sum(rate(animica_p2p_share_relay_total{instance=\"$instance\"}[5m]))", "legendFormat": "share relay/s", "refId": "D" }
+      ],
+      "title": "Inventory / Requests / Relay (5m)",
+      "type": "timeseries"
+    }
+  ]
+}

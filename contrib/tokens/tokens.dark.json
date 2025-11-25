@@ -1,0 +1,59 @@
+{
+  "$schema": "./schemas/tokens.schema.json",
+  "version": "1.0.0",
+
+  /* Dark theme overrides only — merge on top of tokens.json */
+  "color": {
+    "surface": {
+      "0":   "#0D0F18",
+      "50":  "#0F1220",
+      "100": "#121623",
+      "800": "#0B0E17",
+      "900": "#070A11"
+    },
+    "neutral": {
+      "50":  "#E8ECF8",
+      "100": "#D5DBEF",
+      "200": "#C2CBE3",
+      "300": "#A7B2CF",
+      "400": "#8E9BBD",
+      "500": "#7C8AAE",
+      "600": "#AEB8CF",
+      "700": "#C7CFE0",
+      "800": "#E1E6F5",
+      "900": "#F6F8FF"
+    },
+    "primary": {
+      /* Slightly lighter steps for better contrast on dark */
+      "400": "#8AA9FF",
+      "500": "#5E86FF",
+      "600": "#4B7DFF",
+      "700": "#2E63FF",
+      "800": "#254FCC"
+    },
+    "success": {
+      "400": "#50C79B",
+      "500": "#3AB889",
+      "600": "#2CAF7E"
+    },
+    "warning": {
+      "400": "#F4BE45",
+      "500": "#EFB435",
+      "600": "#E3A822"
+    },
+    "error": {
+      "400": "#F07474",
+      "500": "#EA6060",
+      "600": "#E45757"
+    }
+  },
+
+  "shadow": {
+    /* Dark-mode shadows are subtler to avoid glow/halos */
+    "light": {
+      "sm": "0 1px 1px rgba(0,0,0,0.35)",
+      "md": "0 2px 6px rgba(0,0,0,0.40)",
+      "lg": "0 8px 18px rgba(0,0,0,0.44)"
+    }
+  }
+}

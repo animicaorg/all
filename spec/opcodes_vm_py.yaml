@@ -1,0 +1,461 @@
+# Animica Python-VM Opcode & Gas Table
+# Versioned, deterministic cost model that the VM runtime and compiler consume.
+# The vm_py/gas_table.json is generated from this file during builds.
+
+meta:
+  version: "1.0.0"
+  updated: "2025-09-19"
+  description: >
+    Deterministic Python-VM instruction set and gas costs for Animica.
+    The VM executes a small, stack-based IR (not CPython bytecode). Costs are
+    “base + dynamic(formula)” using only local operands, immediate sizes, and
+    byte-lengths known at interpretation time. There is no I/O inside the VM;
+    any external interaction goes through stdlib/capability syscalls which are
+    priced here as well.
+
+units:
+  gas_unit: "G"
+  definition: >
+    Gas (G) is a dimensionless metering unit. Block gas limit and tx gas limits
+    appear in spec/params.yaml. This table only defines relative prices and
+    constants used by the interpreter.
+
+conventions:
+  - "All costs are integers; dynamic parts use ceil() on divisions."
+  - "len(x) is byte length; words32(x) = ceil(len(x)/32); words64(x) = ceil(len(x)/64)."
+  - "imm_bits is the bit-length of an integer immediate encoded in the IR."
+  - "Memory is linear bytes; alloc/copy are bounded by tx/VM limits below."
+  - "Hashing costs scale per-32B (Keccak/SHA3) or per-64B (BLAKE3) chunk."
+  - "Events/logs charge base + topics*topic_cost + data_words*data_word_cost."
+  - "Refunds are applied at end-of-tx with caps."
+
+math_helpers:
+  ceil_div: "ceil(a/b)"
+  words32: "ceil_div(n_bytes, 32)"
+  words64: "ceil_div(n_bytes, 64)"
+  ceil_bits64: "ceil_div(imm_bits, 64)"
+
+constants:
+  # Core stepping & arithmetic
+  STEP: 3
+  ARITH_BASE: 5
+  BITWISE_BASE: 5
+  COMPARE_BASE: 5
+  BRANCH_BASE: 8
+  CALL_BASE: 20
+  RETURN_BASE: 8
+  REVERT_BASE: 12
+
+  # Stack & memory
+  STACK_BASE: 2
+  DUP_BASE: 2
+  SWAP_BASE: 2
+  MEM_ALLOC_BASE: 16
+  MEM_COPY_BASE: 12
+  MEM_WORD_COST: 3          # per 32 bytes moved/zeroed
+
+  # Bytes and slicing
+  BYTES_BASE: 4
+  SLICE_BASE: 6
+  SLICE_PER_WORD: 2
+
+  # Hashing (per chunk)
+  KECCAK_BASE: 15
+  KECCAK_PER_32: 8
+  SHA3_BASE: 15
+  SHA3_PER_32: 8
+  BLAKE3_BASE: 18
+  BLAKE3_PER_64: 6
+
+  # ABI encode/decode
+  ABI_BASE: 12
+  ABI_PER_WORD: 3
+
+  # Events/logs
+  LOG_BASE: 375
+  LOG_TOPIC: 375
+  LOG_DATA_PER_WORD: 8
+
+  # Storage API (stdlib.storage)
+  SLOAD_BASE: 210
+  SLOAD_KEY_WORDS_COST: 5
+  SLOAD_VAL_WORDS_COST: 8
+  SSTORE_BASE: 480
+  SSTORE_KEY_WORDS_COST: 5
+  SSTORE_VAL_WORDS_COST: 20
+  SSTORE_NEW_SLOT_PREMIUM: 1200     # charged when writing previously empty slot
+
+  # Treasury & transfers (local accounting only; chain fees separate)
+  TREASURY_BAL_BASE: 40
+  TREASURY_XFER_BASE: 120
+
+  # Hash/crypto stdlib
+  HASH_BASE: 12
+
+  # Capability syscalls (charged inside VM, independent of off-chain economics)
+  BLOB_PIN_BASE: 1500
+  BLOB_PIN_PER_WORD: 12
+  AI_ENQ_BASE: 1800
+  AI_ENQ_PER_WORD: 10
+  Q_ENQ_BASE: 2000
+  Q_ENQ_PER_WORD: 12
+  READ_RESULT_BASE: 90
+  READ_RESULT_PER_WORD: 2
+  ZK_VERIFY_BASE: 2200
+  ZK_VERIFY_PER_WORD: 10
+  RANDOM_BASE: 60
+  RANDOM_PER_WORD: 2
+
+  # Refunds
+  REFUND_SSTORE_CLEAR: 1500
+  REFUND_CAP_BP: 2000    # 20% of gas used
+
+limits:
+  max_program_bytes: 65536
+  max_steps_per_tx: 1000000
+  max_stack_depth: 1024
+  max_memory_bytes: 8388608
+  max_event_topics: 4
+  max_event_data_bytes: 65536
+  max_syscall_in_bytes: 131072
+  max_syscall_out_bytes: 262144
+
+feature_flags:
+  blake3_enabled: true
+  sha3_256_enabled: true
+  keccak_256_enabled: true
+
+opcode_set:
+  # ─── Stack & Constants ──────────────────────────────────────────────────────
+  - name: NOP
+    code: 0x00
+    category: control
+    gas:
+      base: ${STEP}
+    notes: "No-op; useful for patching."
+
+  - name: CONST_I
+    code: 0x01
+    category: stack
+    operands: ["imm"]    # integer immediate
+    gas:
+      base: ${STACK_BASE}
+      dynamic: "ceil_bits64"
+    notes: "Push integer immediate; cost scales with encoding size."
+
+  - name: CONST_B
+    code: 0x02
+    category: stack
+    operands: ["bytes"]  # literal bytes
+    gas:
+      base: ${STACK_BASE}
+      dynamic: "words32(len(bytes)) * ${MEM_WORD_COST}"
+    notes: "Pushes a bytes literal; charged for in-IR literal size."
+
+  - name: POP
+    code: 0x03
+    category: stack
+    gas: { base: ${STACK_BASE} }
+
+  - name: DUP
+    code: 0x04
+    category: stack
+    operands: ["n"]    # 1..16
+    gas: { base: ${DUP_BASE} }
+
+  - name: SWAP
+    code: 0x05
+    category: stack
+    operands: ["n"]    # 1..16
+    gas: { base: ${SWAP_BASE} }
+
+  # ─── Arithmetic & Bitwise ───────────────────────────────────────────────────
+  - name: ADD
+    code: 0x10
+    category: arith
+    gas: { base: ${ARITH_BASE} }
+
+  - name: SUB
+    code: 0x11
+    category: arith
+    gas: { base: ${ARITH_BASE} }
+
+  - name: MUL
+    code: 0x12
+    category: arith
+    gas: { base: ${ARITH_BASE} }
+
+  - name: DIV
+    code: 0x13
+    category: arith
+    gas: { base: ${ARITH_BASE} }
+
+  - name: MOD
+    code: 0x14
+    category: arith
+    gas: { base: ${ARITH_BASE} }
+
+  - name: AND
+    code: 0x18
+    category: bitwise
+    gas: { base: ${BITWISE_BASE} }
+
+  - name: OR
+    code: 0x19
+    category: bitwise
+    gas: { base: ${BITWISE_BASE} }
+
+  - name: XOR
+    code: 0x1A
+    category: bitwise
+    gas: { base: ${BITWISE_BASE} }
+
+  - name: NOT
+    code: 0x1B
+    category: bitwise
+    gas: { base: ${BITWISE_BASE} }
+
+  # ─── Compare ────────────────────────────────────────────────────────────────
+  - name: EQ
+    code: 0x20
+    category: compare
+    gas: { base: ${COMPARE_BASE} }
+
+  - name: LT
+    code: 0x21
+    category: compare
+    gas: { base: ${COMPARE_BASE} }
+
+  - name: GT
+    code: 0x22
+    category: compare
+    gas: { base: ${COMPARE_BASE} }
+
+  - name: LE
+    code: 0x23
+    category: compare
+    gas: { base: ${COMPARE_BASE} }
+
+  - name: GE
+    code: 0x24
+    category: compare
+    gas: { base: ${COMPARE_BASE} }
+
+  # ─── Control Flow ───────────────────────────────────────────────────────────
+  - name: JUMP
+    code: 0x30
+    category: control
+    operands: ["label"]
+    gas: { base: ${BRANCH_BASE} }
+
+  - name: JUMPI
+    code: 0x31
+    category: control
+    operands: ["label"]
+    gas: { base: ${BRANCH_BASE} }
+
+  - name: CALL_INTERNAL
+    code: 0x32
+    category: control
+    operands: ["fn_id", "argc"]
+    gas: { base: ${CALL_BASE} }
+
+  - name: RETURN
+    code: 0x33
+    category: control
+    gas: { base: ${RETURN_BASE} }
+
+  - name: REVERT
+    code: 0x34
+    category: control
+    gas: { base: ${REVERT_BASE} }
+    notes: "Sets status=REVERT and halts; no state write; logs cleared."
+
+  # ─── Memory & Bytes ────────────────────────────────────────────────────────
+  - name: MEM_ALLOC
+    code: 0x40
+    category: memory
+    operands: ["n_bytes"]
+    gas:
+      base: ${MEM_ALLOC_BASE}
+      dynamic: "words32(n_bytes) * ${MEM_WORD_COST}"
+
+  - name: MEM_COPY
+    code: 0x41
+    category: memory
+    operands: ["n_bytes"]
+    gas:
+      base: ${MEM_COPY_BASE}
+      dynamic: "words32(n_bytes) * ${MEM_WORD_COST}"
+
+  - name: BYTES_LEN
+    code: 0x42
+    category: bytes
+    gas: { base: ${BYTES_BASE} }
+
+  - name: BYTES_SLICE
+    code: 0x43
+    category: bytes
+    operands: ["n_bytes"]
+    gas:
+      base: ${SLICE_BASE}
+      dynamic: "words32(n_bytes) * ${SLICE_PER_WORD}"
+
+  # ─── Hashing ───────────────────────────────────────────────────────────────
+  - name: KECCAK_256
+    code: 0x50
+    category: hash
+    gas:
+      base: ${KECCAK_BASE}
+      dynamic: "words32(len(input)) * ${KECCAK_PER_32}"
+
+  - name: SHA3_256
+    code: 0x51
+    category: hash
+    gas:
+      base: ${SHA3_BASE}
+      dynamic: "words32(len(input)) * ${SHA3_PER_32}"
+
+  - name: BLAKE3
+    code: 0x52
+    category: hash
+    requires_feature: "blake3_enabled"
+    gas:
+      base: ${BLAKE3_BASE}
+      dynamic: "words64(len(input)) * ${BLAKE3_PER_64}"
+
+# ───────────────────────────────────────────────────────────────────────────────
+# Stdlib Surfaces (what contracts import from stdlib.*)
+# Each entry defines the cost for a call-site. The VM exposes these via CALL_STD.
+# ───────────────────────────────────────────────────────────────────────────────
+stdlib:
+  storage.get:
+    gas:
+      base: ${SLOAD_BASE}
+      dynamic: "words32(len(key))*${SLOAD_KEY_WORDS_COST} + words32(len(value))*${SLOAD_VAL_WORDS_COST}"
+    notes: "value is the stored bytes; dynamic part charged on returned size."
+
+  storage.set:
+    gas:
+      base: ${SSTORE_BASE}
+      dynamic: "words32(len(key))*${SSTORE_KEY_WORDS_COST} + words32(len(value))*${SSTORE_VAL_WORDS_COST}"
+      conditional_premium:
+        when: "slot_was_empty"
+        add: ${SSTORE_NEW_SLOT_PREMIUM}
+    refunds:
+      - kind: "clear_slot"
+        amount: ${REFUND_SSTORE_CLEAR}
+
+  events.emit:
+    gas:
+      base: ${LOG_BASE}
+      dynamic: "topics*${LOG_TOPIC} + words32(data_len)*${LOG_DATA_PER_WORD}"
+    limits:
+      topics_max: ${max_event_topics}
+      data_bytes_max: ${max_event_data_bytes}
+
+  abi.encode:
+    gas:
+      base: ${ABI_BASE}
+      dynamic: "words32(total_bytes)*${ABI_PER_WORD}"
+
+  abi.decode:
+    gas:
+      base: ${ABI_BASE}
+      dynamic: "words32(total_bytes)*${ABI_PER_WORD}"
+
+  treasury.balance:
+    gas: { base: ${TREASURY_BAL_BASE} }
+
+  treasury.transfer:
+    gas:
+      base: ${TREASURY_XFER_BASE}
+    notes: "Local contract balance accounting; chain fee settlement handled outside VM."
+
+  hash.keccak256:
+    gas:
+      base: ${HASH_BASE}
+      dynamic: "words32(len(input))*${KECCAK_PER_32}"
+
+  hash.sha3_256:
+    gas:
+      base: ${HASH_BASE}
+      dynamic: "words32(len(input))*${SHA3_PER_32}"
+
+  hash.blake3:
+    requires_feature: "blake3_enabled"
+    gas:
+      base: ${HASH_BASE}
+      dynamic: "words64(len(input))*${BLAKE3_PER_64}"
+
+# ───────────────────────────────────────────────────────────────────────────────
+# Capabilities (syscalls bridged to host; priced deterministically here)
+# Off-chain economics (AICF payouts, DA fees) are separate from VM metering.
+# ───────────────────────────────────────────────────────────────────────────────
+capabilities:
+  blob.pin:
+    gas:
+      base: ${BLOB_PIN_BASE}
+      dynamic: "words32(len(data))*${BLOB_PIN_PER_WORD}"
+    limits:
+      in_bytes_max: ${max_syscall_in_bytes}
+      out_bytes_max: 96
+    notes: "Returns (namespace, commitment, nmtRoot). DA module may charge chain fees separately."
+
+  compute.ai.enqueue:
+    gas:
+      base: ${AI_ENQ_BASE}
+      dynamic: "words32(len(prompt_bytes))*${AI_ENQ_PER_WORD}"
+    limits:
+      in_bytes_max: ${max_syscall_in_bytes}
+      out_bytes_max: 64
+    notes: "Produces a deterministic task_id; result is read next block."
+
+  compute.quantum.enqueue:
+    gas:
+      base: ${Q_ENQ_BASE}
+      dynamic: "words32(len(circuit_bytes))*${Q_ENQ_PER_WORD}"
+    limits:
+      in_bytes_max: ${max_syscall_in_bytes}
+      out_bytes_max: 64
+
+  compute.read_result:
+    gas:
+      base: ${READ_RESULT_BASE}
+      dynamic: "words32(len(result_bytes))*${READ_RESULT_PER_WORD}"
+    limits:
+      out_bytes_max: ${max_syscall_out_bytes}
+
+  zk.verify:
+    gas:
+      base: ${ZK_VERIFY_BASE}
+      dynamic: "words32(len(proof)+len(public_input))*${ZK_VERIFY_PER_WORD}"
+    notes: "Charges by bytes; proof system-agnostic."
+
+  random.bytes:
+    gas:
+      base: ${RANDOM_BASE}
+      dynamic: "words32(n)*${RANDOM_PER_WORD}"
+    limits:
+      out_bytes_max: 4096
+
+refunds:
+  rules:
+    - name: "SSTORE clear refund"
+      description: "Refund for writing empty value into non-empty slot."
+      amount: ${REFUND_SSTORE_CLEAR}
+  caps:
+    tx_refund_max_basis_points: ${REFUND_CAP_BP}
+
+determinism_notes:
+  - "All dynamic gas depends only on immediate sizes, stack operands, or byte lengths available in the interpreter."
+  - "No wall-clock, syscalls, randomness, or I/O inside the VM; random.bytes is seeded deterministically from tx context unless the global beacon is mixed in by the host with a fixed transcript."
+  - "Hash functions are deterministic and process in fixed-size chunks to avoid platform variance."
+  - "Feature-gated ops (e.g., BLAKE3) are disabled if the flag is false in this table; the compiler will reject IR that targets disabled ops."
+
+validation:
+  schema: "This YAML is validated by vm_py build tooling; unknown keys or missing prices fail the build."
+  cross_checks:
+    - "vm_py/tests/test_gas_estimator.py runs static estimates against this table."
+    - "execution/tests/test_intrinsic_gas.py asserts intrinsic tx gas ≥ minimal VM entry path."
+

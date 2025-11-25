@@ -1,0 +1,298 @@
+# Animica canonical chain/economic/consensus parameters
+# Units: unless otherwise noted, currency units are in nANM (nano-ANM = 10^-9 ANM).
+
+spec_version: "0.1.0"
+last_updated: "2025-09-19"
+
+# Pointers to other normative spec files (used by tooling to cross-check hashes/paths)
+references:
+  poies_policy: "spec/poies_policy.yaml"
+  pq_policy: "spec/pq_policy.yaml"
+  chains: "spec/chains.json"
+  domains: "spec/domains.yaml"
+  tx_cddl: "spec/tx_format.cddl"
+  header_cddl: "spec/header_format.cddl"
+  blob_cddl: "spec/blob_format.cddl"
+  abi_schema: "spec/abi.schema.json"
+  manifest_schema: "spec/manifest.schema.json"
+  vm_opcodes_gas: "spec/opcodes_vm_py.yaml"
+  openrpc: "spec/openrpc.json"
+
+################################################################################
+# NETWORKS
+################################################################################
+networks:
+  # ----------------------------- MAINNET --------------------------------------
+  "animica:1":
+    name: "Animica Mainnet"
+    symbol: "ANM"
+    decimals: 9                # 1 ANM = 1_000_000_000 nANM
+    genesis_time_utc: "TBD"
+    # Addresses below are placeholders; final values are set at genesis build
+    system_addresses:
+      treasury: "anim1treasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      aicf_treasury: "anim1aicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      foundation_lockup: "anim1foundationxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      coinbase_default: "anim1coinbasexxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    monetary:
+      premine:
+        total_anm: 1250000.0   # ANM (human units)
+        allocations:
+          - address: "anim1foundationxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            amount_anm: 950000.0
+            vesting:
+              cliff_days: 365
+              linear_months: 36
+          - address: "anim1treasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            amount_anm: 250000.0
+            vesting: { cliff_days: 0, linear_months: 0 }
+          - address: "anim1aicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            amount_anm: 50000.0
+            vesting: { cliff_days: 0, linear_months: 0 }
+      issuance:
+        # Target block time (consensus retarget aims to meet this)
+        target_block_interval_ms: 2000
+        # Block subsidy schedule: exponential decay toward a tail emission
+        subsidy:
+          start_nANM_per_block: 1000000       # 0.001 ANM per block initially
+          epoch_length_blocks: 4320000         # ~100 days at 2s blocks
+          decay_pct_per_epoch: 12.5            # multiplicative decay each epoch
+          tail_nANM_per_block: 100000          # 0.0001 ANM tail (never below this)
+          max_halvings: 64
+        # Split of block subsidy (fees configured below)
+        subsidy_split_pct:
+          miner: 80
+          aicf: 15
+          treasury: 5
+      fees:
+        base_fee:
+          burn_pct: 50                         # % of base fee burned
+          treasury_pct: 25                     # of base fee (post-burn) to treasury
+          aicf_pct: 25                         # of base fee (post-burn) to AICF
+        tips_split_pct:
+          miner: 90
+          aicf: 10
+    consensus:
+      poies:
+        theta_initial_munats: 16000000         # Θ₀ in µ-nats
+        theta_min_munats: 8000000
+        theta_max_munats: 32000000
+        retarget:
+          window_blocks: 1800                  # ~1 hour at 2s
+          ema_beta: 0.15                       # fractional step toward target
+          clamp_ratio_per_window:
+            min: 0.5
+            max: 2.0
+        share_target_munats: 4000000           # micro-target for useful shares
+        nullifier_ttl_blocks: 65536            # proof reuse prevention horizon
+        gamma:
+          total_cap_munats: 12000000           # Σψ cap per block before Θ comparison
+          escort_quantile: 0.2                 # diversity escort parameter (policy uses this)
+      fairness_alpha:
+        epoch_blocks: 432000                   # ~10 days
+        step_per_epoch: 0.002
+        bounds:
+          min: 0.5
+          max: 1.5
+    blocks:
+      version: 1
+      max_bytes: 2000000                       # 2 MiB envelope (excl. blobs)
+      max_gas: 40000000                        # gas for VM execution
+      max_txs: 20000
+      max_proofs:
+        hashshare: 16384
+        ai: 512
+        quantum: 256
+        storage: 4096
+        vdf: 1
+      receipts_inclusion: true
+    data_availability:
+      blob_max_bytes_per_block: 33554432       # 32 MiB
+      erasure:
+        k: 16
+        n: 32
+        shard_bytes: 1024
+      nmt:
+        namespace_bits: 32
+      das:
+        target_failure_prob: "1e-9"
+        min_samples: 30
+        max_samples: 200
+    vm:
+      gas_table_file: "spec/opcodes_vm_py.yaml"
+      base_tx_gas: 5000
+      max_code_bytes: 131072
+      max_stack_depth: 1024
+    randomness:
+      round_seconds: 120
+      reveal_grace_seconds: 30
+      vdf:
+        iterations: 1000000
+        modulus_bits: 2048
+    p2p:
+      default_ports:
+        tcp: 36200
+        quic: 36201
+        ws: 36202
+      max_peers: 64
+      gossip_target_degree: 8
+
+  # ----------------------------- TESTNET --------------------------------------
+  "animica:2":
+    name: "Animica Testnet"
+    symbol: "tANM"
+    decimals: 9
+    genesis_time_utc: "TBD"
+    system_addresses:
+      treasury: "anim1ttreasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      aicf_treasury: "anim1taicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      foundation_lockup: "anim1tfoundationxxxxxxxxxxxxxxxxxxxxxxxx"
+      coinbase_default: "anim1tcoinbasexxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    monetary:
+      premine:
+        total_anm: 1250000.0
+        allocations:
+          - address: "anim1ttreasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            amount_anm: 1000000.0
+            vesting: { cliff_days: 0, linear_months: 0 }
+          - address: "anim1taicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            amount_anm: 250000.0
+            vesting: { cliff_days: 0, linear_months: 0 }
+      issuance:
+        target_block_interval_ms: 2000
+        subsidy:
+          start_nANM_per_block: 4000000       # more generous for testing
+          epoch_length_blocks: 864000          # ~20 days
+          decay_pct_per_epoch: 20.0
+          tail_nANM_per_block: 200000
+          max_halvings: 64
+        subsidy_split_pct: { miner: 70, aicf: 20, treasury: 10 }
+      fees:
+        base_fee: { burn_pct: 10, treasury_pct: 45, aicf_pct: 45 }
+        tips_split_pct: { miner: 80, aicf: 20 }
+    consensus:
+      poies:
+        theta_initial_munats: 12000000
+        theta_min_munats: 6000000
+        theta_max_munats: 24000000
+        retarget: { window_blocks: 900, ema_beta: 0.25, clamp_ratio_per_window: { min: 0.5, max: 2.0 } }
+        share_target_munats: 3000000
+        nullifier_ttl_blocks: 32768
+        gamma: { total_cap_munats: 10000000, escort_quantile: 0.2 }
+      fairness_alpha:
+        epoch_blocks: 216000
+        step_per_epoch: 0.005
+        bounds: { min: 0.33, max: 2.0 }
+    blocks:
+      version: 1
+      max_bytes: 3000000
+      max_gas: 60000000
+      max_txs: 40000
+      max_proofs: { hashshare: 32768, ai: 1024, quantum: 512, storage: 8192, vdf: 1 }
+      receipts_inclusion: true
+    data_availability:
+      blob_max_bytes_per_block: 67108864       # 64 MiB
+      erasure: { k: 12, n: 24, shard_bytes: 1024 }
+      nmt: { namespace_bits: 32 }
+      das: { target_failure_prob: "1e-8", min_samples: 20, max_samples: 120 }
+    vm:
+      gas_table_file: "spec/opcodes_vm_py.yaml"
+      base_tx_gas: 3000
+      max_code_bytes: 262144
+      max_stack_depth: 2048
+    randomness:
+      round_seconds: 60
+      reveal_grace_seconds: 20
+      vdf: { iterations: 500000, modulus_bits: 2048 }
+    p2p:
+      default_ports: { tcp: 37200, quic: 37201, ws: 37202 }
+      max_peers: 96
+      gossip_target_degree: 10
+
+  # ----------------------------- DEVNET ---------------------------------------
+  "animica:1337":
+    name: "Animica Devnet"
+    symbol: "dANM"
+    decimals: 9
+    genesis_time_utc: "TBD"
+    system_addresses:
+      treasury: "anim1dtreasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      aicf_treasury: "anim1daicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      foundation_lockup: "anim1dfoundationxxxxxxxxxxxxxxxxxxxxxxxx"
+      coinbase_default: "anim1dcoinbasexxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    monetary:
+      premine:
+        total_anm: 1250000.0
+        allocations:
+          - address: "anim1dtreasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            amount_anm: 1200000.0
+            vesting: { cliff_days: 0, linear_months: 0 }
+          - address: "anim1daicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            amount_anm: 50000.0
+            vesting: { cliff_days: 0, linear_months: 0 }
+      issuance:
+        target_block_interval_ms: 2000
+        subsidy:
+          start_nANM_per_block: 10000000      # 0.01 ANM for fast local boot
+          epoch_length_blocks: 216000         # ~5 days
+          decay_pct_per_epoch: 25.0
+          tail_nANM_per_block: 500000
+          max_halvings: 64
+        subsidy_split_pct: { miner: 60, aicf: 30, treasury: 10 }
+      fees:
+        base_fee: { burn_pct: 0, treasury_pct: 50, aicf_pct: 50 }
+        tips_split_pct: { miner: 70, aicf: 30 }
+    consensus:
+      poies:
+        theta_initial_munats: 9000000
+        theta_min_munats: 3000000
+        theta_max_munats: 24000000
+        retarget: { window_blocks: 300, ema_beta: 0.35, clamp_ratio_per_window: { min: 0.5, max: 3.0 } }
+        share_target_munats: 2000000
+        nullifier_ttl_blocks: 8192
+        gamma: { total_cap_munats: 8000000, escort_quantile: 0.2 }
+      fairness_alpha:
+        epoch_blocks: 86400
+        step_per_epoch: 0.01
+        bounds: { min: 0.25, max: 2.5 }
+    blocks:
+      version: 1
+      max_bytes: 4000000
+      max_gas: 100000000
+      max_txs: 60000
+      max_proofs: { hashshare: 65536, ai: 2048, quantum: 1024, storage: 16384, vdf: 2 }
+      receipts_inclusion: true
+    data_availability:
+      blob_max_bytes_per_block: 134217728      # 128 MiB
+      erasure: { k: 8, n: 16, shard_bytes: 1024 }
+      nmt: { namespace_bits: 32 }
+      das: { target_failure_prob: "1e-6", min_samples: 10, max_samples: 60 }
+    vm:
+      gas_table_file: "spec/opcodes_vm_py.yaml"
+      base_tx_gas: 2000
+      max_code_bytes: 524288
+      max_stack_depth: 4096
+    randomness:
+      round_seconds: 30
+      reveal_grace_seconds: 10
+      vdf: { iterations: 250000, modulus_bits: 2048 }
+    p2p:
+      default_ports: { tcp: 38200, quic: 38201, ws: 38202 }
+      max_peers: 32
+      gossip_target_degree: 6
+
+################################################################################
+# GLOBAL DEFAULTS (used where a network omits a field)
+################################################################################
+defaults:
+  currency:
+    symbol: "ANM"
+    decimals: 9
+  issuance:
+    target_block_interval_ms: 2000
+  consensus:
+    poies:
+      nullifier_ttl_blocks: 65536
+  vm:
+    gas_table_file: "spec/opcodes_vm_py.yaml"
+

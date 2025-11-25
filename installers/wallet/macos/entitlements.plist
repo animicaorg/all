@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for Animica Wallet (macOS)
+  - Hardened runtime: enabled via codesign --options runtime (these toggles keep risky exceptions OFF)
+  - App Sandbox: ON (grants outbound network while limiting filesystem access)
+  - Network client: ON (RPC/WS calls)
+  - JIT: OFF (no JIT or executable memory)
+-->
+<plist version="1.0">
+<dict>
+
+  <!-- App Sandbox (non–Mac App Store is fine with sandbox) -->
+  <key>com.apple.security.app-sandbox</key>
+  <true/>
+
+  <!-- Outbound connections (HTTP(S)/WebSocket RPC, status APIs, etc.) -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+
+  <!-- User-chosen files (import/export backups, logs). Uses NSOpenPanel/NSSavePanel. -->
+  <key>com.apple.security.files.user-selected.read-write</key>
+  <true/>
+
+  <!-- Allow read/write in Downloads (optional convenience for exports) -->
+  <key>com.apple.security.files.downloads.read-write</key>
+  <true/>
+
+  <!-- Disallow debugger in release builds -->
+  <key>com.apple.security.get-task-allow</key>
+  <false/>
+
+  <!-- Hardened runtime exception toggles (explicitly OFF) -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <false/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <false/>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <false/>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <false/>
+
+</dict>
+</plist>

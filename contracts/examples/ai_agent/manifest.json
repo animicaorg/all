@@ -1,0 +1,97 @@
+{
+  "name": "ai_agent",
+  "version": "1.0.0",
+  "code_hash": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+  "abi": {
+    "functions": [
+      {
+        "name": "request",
+        "inputs": [
+          { "name": "model", "type": "bytes" },
+          { "name": "prompt", "type": "bytes" }
+        ],
+        "outputs": [
+          { "name": "task_id", "type": "bytes" }
+        ],
+        "payable": false,
+        "view": false
+      },
+      {
+        "name": "read",
+        "inputs": [
+          { "name": "task_id", "type": "bytes" }
+        ],
+        "outputs": [
+          { "name": "ok", "type": "bool" },
+          { "name": "output", "type": "bytes" }
+        ],
+        "payable": false,
+        "view": false
+      },
+      {
+        "name": "get_prompt",
+        "inputs": [
+          { "name": "task_id", "type": "bytes" }
+        ],
+        "outputs": [
+          { "name": "prompt", "type": "bytes" }
+        ],
+        "payable": false,
+        "view": true
+      },
+      {
+        "name": "get_model",
+        "inputs": [
+          { "name": "task_id", "type": "bytes" }
+        ],
+        "outputs": [
+          { "name": "model", "type": "bytes" }
+        ],
+        "payable": false,
+        "view": true
+      },
+      {
+        "name": "get_output",
+        "inputs": [
+          { "name": "task_id", "type": "bytes" }
+        ],
+        "outputs": [
+          { "name": "output", "type": "bytes" }
+        ],
+        "payable": false,
+        "view": true
+      },
+      {
+        "name": "has_result",
+        "inputs": [
+          { "name": "task_id", "type": "bytes" }
+        ],
+        "outputs": [
+          { "name": "has", "type": "bool" }
+        ],
+        "payable": false,
+        "view": true
+      }
+    ],
+    "events": [
+      {
+        "name": "JobRequested",
+        "inputs": [
+          { "name": "task_id", "type": "bytes", "indexed": false },
+          { "name": "model_tag", "type": "bytes", "indexed": false },
+          { "name": "prompt_hash", "type": "bytes32", "indexed": false }
+        ]
+      },
+      {
+        "name": "JobResult",
+        "inputs": [
+          { "name": "task_id", "type": "bytes", "indexed": false },
+          { "name": "ok", "type": "bool", "indexed": false },
+          { "name": "output_hash", "type": "bytes32", "indexed": false },
+          { "name": "units_used", "type": "uint64", "indexed": false }
+        ]
+      }
+    ],
+    "errors": []
+  }
+}

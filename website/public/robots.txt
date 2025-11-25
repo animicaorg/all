@@ -1,0 +1,17 @@
+# robots.txt for Animica Website
+# Generated for static hosting. If you also use @astrojs/robots, that plugin will output
+# a robots.txt as well — keep only one source of truth in production.
+
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /api/private
+
+# Crawl-delay is non-standard and ignored by most modern crawlers; omit unless required.
+# Crawl-delay: 2
+
+# Sitemaps
+Sitemap: https://animica.org/sitemap-index.xml
+
+# Preferred host
+Host: animica.org

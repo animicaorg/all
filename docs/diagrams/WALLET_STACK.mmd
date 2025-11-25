@@ -1,0 +1,138 @@
+%% Mermaid: Wallet Stack — Extension (MV3) & Flutter → RPC/WS
+%% View online: https://mermaid.live
+
+flowchart LR
+  %% ===================== ACTORS / SURFACES =====================
+  subgraph DAPP[Dapp / Website]
+    direction TB
+    Page[Web page\n(app.example.com)]:::dapp
+    ProviderAPI[window.animica\n(AIP-1193-like)]:::dapp
+    Page --> ProviderAPI
+  end
+
+  subgraph EXT[Browser Extension (MV3)]
+    direction TB
+    Inject[Content Script:\nInject provider]:::ext
+    BG[Background Service Worker:\nrouter + alarms]:::ext
+    Perms[Permissions & sessions\n(per-origin allowlist)]:::ext
+    Keyring[Keyring Vault\nAES-GCM + PBKDF/HKDF-SHA3]:::ext
+    PQ[Post-Quantum Signers\nDilithium3 / SPHINCS+]:::ext
+    TxBuild[Tx Builder + CBOR\nSignBytes encoder]:::ext
+    RPCc[RPC Client (HTTP)]:::ext
+    WSc[WS Subscriptions]:::ext
+    LogsE[Telemetry (opt-in)]:::ext
+
+    Inject --> BG
+    BG --> Perms
+    BG --> Keyring --> PQ
+    BG --> TxBuild
+    BG --> RPCc
+    BG --> WSc
+  end
+
+  subgraph FLUTTER[Flutter Wallet (Mobile/Desktop)]
+    direction TB
+    UI[Flutter UI\n(send/receive/contract)]:::fl
+    Vault[Vault (platform keystore)\nAES-GCM, pin/biometric]:::fl
+    PQf[PQ Signers\nvia ffi/wasm/native]:::fl
+    TxBuildF[Tx Builder + CBOR]:::fl
+    RPCf[RPC Client (HTTP)]:::fl
+    WSf[WS Subscriptions]:::fl
+    LogsF[Telemetry (opt-in)]:::fl
+
+    UI --> Vault --> PQf
+    UI --> TxBuildF
+    UI --> RPCf
+    UI --> WSf
+  end
+
+  subgraph SERVICES[Studio Services (Optional)]
+    direction TB
+    Deploy[Deploy/Preflight\n(simulate, relay)]:::svc
+    VerifySrc[Verify Source\n(code-hash match)]:::svc
+    Faucet[Faucet (guarded)]:::svc
+  end
+
+  subgraph NODE[Animica Node RPC]
+    direction TB
+    JSONRPC[HTTP JSON-RPC\n/rpc]:::node
+    WS[WebSocket /ws\n(newHeads, pendingTxs)]:::node
+    Methods[Methods:\nchain.getHead, state.getBalance,\ntx.sendRawTransaction, receipts…]:::node
+    JSONRPC --> Methods
+  end
+
+  subgraph CORE[Node Internals (read-only view)]
+    direction TB
+    Mempool[Mempool\n(admission/fees)]:::core
+    Exec[Execution\n(apply tx, receipts]:::core
+    Consensus[Consensus/PoIES]:::core
+    DA[DA (NMT/erasure)]:::core
+    Head[Chain Head / DB]:::core
+    Methods -->|serve| Mempool & Exec & Consensus & DA & Head
+  end
+
+  subgraph EXPLORER[Explorer (Read-only)]
+    direction TB
+    UIX[Explorer UI]:::expl
+    ClientX[HTTP/WS client]:::expl
+    UIX --> ClientX
+  end
+
+  %% ===================== FLOWS =====================
+
+  %% Dapp ↔ Extension
+  ProviderAPI -- "request(args)" --> Inject
+  Inject --> BG
+  BG -- "check perms / session" --> Perms
+  BG -- "build SignBytes\n(CBOR + domain)" --> TxBuild
+  BG -- "sign(SignBytes)\nPQ signature" --> PQ
+  BG -- "tx.sendRawTransaction" --> RPCc --> JSONRPC
+  WS --> WSc --> Inject --> ProviderAPI
+  JSONRPC -- "response / errors" --> RPCc --> BG --> ProviderAPI
+
+  %% Flutter ↔ RPC
+  UI -- "build SignBytes" --> TxBuildF --> PQf
+  PQf -- "signature" --> TxBuildF
+  TxBuildF -- "submit" --> RPCf --> JSONRPC
+  WS --> WSf --> UI
+
+  %% Services (optional) ↔ Wallets/Node
+  Deploy -. "simulate (no signing server-side)" .-> JSONRPC
+  Deploy -. "relay signed CBOR tx" .-> JSONRPC
+  VerifySrc --> JSONRPC
+  Faucet --> JSONRPC
+
+  %% Explorer ↔ Node
+  ClientX --> JSONRPC
+  ClientX --> WS
+
+  %% ===================== EVENTS =====================
+  subgraph EVENTS[Events / Notifications]
+    direction TB
+    E1E[accountsChanged]:::evt
+    E2E[chainChanged]:::evt
+    E3E[newHeads]:::evt
+    E4E[pendingTxs]:::evt
+  end
+  BG --> E1E
+  BG --> E2E
+  WS --> E3E
+  WS --> E4E
+
+  %% ===================== NOTES =====================
+  %% - All signing happens locally in Extension/Flutter; no server-side keys.
+  %% - PQ schemes (Dilithium3/SPHINCS+) produce addresses via: bech32m(HRP="anim", alg_id||sha3(pub)).
+  %% - Transactions are encoded canonically (CBOR) with domain-separated SignBytes.
+  %% - WebSocket streams provide live head/pending events to UIs.
+  %% - Studio Services are optional helpers for deploy/verify/faucet with strict CORS/rate limits.
+
+  %% ===================== STYLES =====================
+  classDef dapp fill:#e0f2fe,stroke:#0369a1,stroke-width:1.2,color:#0c4a6e;
+  classDef ext fill:#fef9c3,stroke:#a16207,stroke-width:1.2,color:#713f12;
+  classDef fl fill:#dcfce7,stroke:#166534,stroke-width:1.2,color:#14532d;
+  classDef svc fill:#f3e8ff,stroke:#7e22ce,stroke-width:1.2,color:#581c87;
+  classDef node fill:#fde2e2,stroke:#b91c1c,stroke-width:1.2,color:#7f1d1d;
+  classDef core fill:#f3f4f6,stroke:#6b7280,stroke-width:1.2,color:#111827;
+  classDef expl fill:#cffafe,stroke:#0e7490,stroke-width:1.2,color:#164e63;
+  classDef evt fill:#e5e7eb,stroke:#4b5563,stroke-width:1,color:#111827;
+

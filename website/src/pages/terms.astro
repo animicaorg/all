@@ -1,0 +1,162 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import InlineLink from "../components/InlineLink.astro";
+
+const title = "Terms of Service";
+const description =
+  "The rules and conditions for using the Animica website, SDKs, wallets, and related services.";
+const lastUpdated = "October 9, 2025";
+
+// Optional: override jurisdiction/company via environment at build time
+const ORG_NAME = (import.meta.env.PUBLIC_ORG_NAME as string) || "Animica";
+const JURISDICTION =
+  (import.meta.env.PUBLIC_TOS_JURISDICTION as string) || "Delaware, USA";
+---
+
+<BaseLayout title={title} description={description}>
+  <section class="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-10 sm:py-14 prose prose-invert prose-a:no-underline">
+    <h1 class="mb-2">{title}</h1>
+    <p class="text-sm opacity-70">Last updated: {lastUpdated}</p>
+
+    <p>
+      These Terms of Service (“Terms”) govern your access to and use of {ORG_NAME}
+      websites, documentation, SDKs, software, wallets, and related services (collectively, the “Services”).
+      By accessing or using the Services, you agree to be bound by these Terms.
+      If you do not agree, do not use the Services.
+    </p>
+
+    <h2>1) Eligibility</h2>
+    <p>
+      You represent that you are legally capable of entering into these Terms and that your use complies
+      with applicable laws in your jurisdiction. You may not use the Services if you are subject to any
+      sanctions or on any restricted list applicable to {ORG_NAME}.
+    </p>
+
+    <h2>2) Non-custodial nature</h2>
+    <p>
+      The Services are non-custodial. {ORG_NAME} does not control your private keys, wallets, or funds,
+      and cannot reverse on-chain transactions. You are solely responsible for safeguarding
+      your keys, backing up seed phrases, and verifying transaction details before signing.
+    </p>
+
+    <h2>3) On-chain transactions & risk</h2>
+    <ul>
+      <li>Blockchain activity is public and generally irreversible.</li>
+      <li>Smart contracts may contain bugs or be exploited; use at your own risk.</li>
+      <li>Asset prices are volatile; you may lose value.</li>
+      <li>{ORG_NAME} does not provide investment, legal, or tax advice.</li>
+    </ul>
+
+    <h2>4) Software licenses</h2>
+    <p>
+      Source code may be provided under open-source licenses indicated in the relevant repositories.
+      To the extent any component is not open-sourced, {ORG_NAME} grants you a limited, revocable,
+      non-exclusive, non-transferable license to use the Services in accordance with these Terms.
+    </p>
+
+    <h2>5) Acceptable use</h2>
+    <p>When using the Services, you will not:</p>
+    <ul>
+      <li>Violate any law, regulation, or third-party right;</li>
+      <li>Attempt to circumvent security, rate limits, or access controls;</li>
+      <li>Deploy malware, spam, or engage in denial-of-service activity;</li>
+      <li>Submit unlawful content or infringing materials;</li>
+      <li>Impersonate others or misrepresent affiliation with {ORG_NAME}.</li>
+    </ul>
+
+    <h2>6) APIs, rate limits, and third-party services</h2>
+    <p>
+      We may impose or adjust rate limits. The Services may link to or rely on third-party services
+      (e.g., RPC providers, analytics, package registries). {ORG_NAME} does not control third-party services
+      and is not responsible for their availability or behavior.
+    </p>
+
+    <h2>7) Privacy</h2>
+    <p>
+      Our <InlineLink href="/privacy">Privacy Policy</InlineLink> describes how we handle information.
+      By using the Services, you consent to the practices described therein.
+    </p>
+
+    <h2>8) Disclaimers</h2>
+    <p>
+      THE SERVICES ARE PROVIDED “AS IS” AND “AS AVAILABLE.” TO THE MAXIMUM EXTENT PERMITTED BY LAW,
+      {ORG_NAME} AND ITS CONTRIBUTORS DISCLAIM ALL WARRANTIES, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+      LIMITED TO MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+      WE DO NOT WARRANT THAT THE SERVICES WILL BE ERROR-FREE, SECURE, OR UNINTERRUPTED.
+    </p>
+
+    <h2>9) Limitation of liability</h2>
+    <p>
+      TO THE MAXIMUM EXTENT PERMITTED BY LAW, {ORG_NAME}, ITS CONTRIBUTORS, AND AFFILIATES WILL NOT BE
+      LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE DAMAGES, OR ANY
+      LOSS OF PROFITS, REVENUE, DATA, OR GOODWILL, ARISING OUT OF OR RELATED TO YOUR USE OF THE SERVICES,
+      EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES. IN NO EVENT WILL THE AGGREGATE LIABILITY OF
+      {ORG_NAME} EXCEED THE GREATER OF (A) USD $100 OR (B) THE AMOUNTS PAID BY YOU TO {ORG_NAME} (IF ANY)
+      FOR THE SERVICES IN THE TWELVE MONTHS PRECEDING THE CLAIM.
+    </p>
+
+    <h2>10) Indemnification</h2>
+    <p>
+      You will defend, indemnify, and hold harmless {ORG_NAME} and its contributors from and against any
+      claims, liabilities, damages, losses, and expenses (including reasonable attorneys’ fees) arising from
+      or related to your use of the Services or violation of these Terms.
+    </p>
+
+    <h2>11) Changes to the Services and Terms</h2>
+    <p>
+      We may modify or discontinue parts of the Services at any time. We may update these Terms from time
+      to time; material changes will be reflected by updating the “Last updated” date. Your continued use
+      of the Services constitutes acceptance of the revised Terms.
+    </p>
+
+    <h2>12) Termination</h2>
+    <p>
+      We may suspend or terminate your access to the Services immediately if we believe you have violated
+      these Terms or applicable law. Upon termination, your right to use the Services ceases immediately,
+      but sections intended to survive (e.g., Disclaimers, Limitation of liability, Indemnification,
+      Governing law) will continue to apply.
+    </p>
+
+    <h2>13) Governing law & disputes</h2>
+    <p>
+      These Terms are governed by the laws of {JURISDICTION}, without regard to conflicts of law principles.
+      The exclusive venue for disputes arising out of or relating to these Terms or the Services will be the
+      courts located in {JURISDICTION}, unless otherwise required by applicable law.
+    </p>
+
+    <h2>14) Export & sanctions compliance</h2>
+    <p>
+      You represent that you are not located in, under the control of, or a national or resident of any
+      country or person on any U.S., U.K., EU, or UN sanctions list, and you will not use the Services in
+      violation of export control or sanctions laws.
+    </p>
+
+    <h2>15) Contact</h2>
+    <p>
+      Questions about these Terms? Contact
+      <InlineLink href="mailto:legal@animica.dev">legal@animica.dev</InlineLink> or
+      <InlineLink href="mailto:support@animica.dev">support@animica.dev</InlineLink>.
+    </p>
+
+    <hr />
+
+    <p class="text-xs opacity-70">
+      <strong>Notice:</strong> Nothing in these Terms is intended to, or shall, limit rights that cannot
+      be limited under applicable law. If any provision is held unenforceable, the remaining provisions
+      will remain in full force and effect.
+    </p>
+
+    <script type="application/ld+json" is:inline>
+      {JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "TermsOfService",
+        name: "Animica Terms of Service",
+        dateModified: lastUpdated,
+        url: "/terms",
+        publisher: { "@type": "Organization", name: ORG_NAME },
+        inLanguage: "en",
+        isAccessibleForFree: true
+      })}
+    </script>
+  </section>
+</BaseLayout>

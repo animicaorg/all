@@ -1,0 +1,245 @@
+{
+  "meta": {
+    "version": 1,
+    "module": "aicf.sla.slash_engine",
+    "description": "SLA failure → penalty expectations across traps, QoS, latency, availability, including sample-size gating and repeat-offense escalation.",
+    "currency": "atom",
+    "decision_rules": {
+      "overview": [
+        "Evaluate each SLA dimension (traps, qos, latency_p95_ms, availability) against thresholds.",
+        "If a dimension is below confidence (min_samples), emit WARNING only (no slash).",
+        "Pick the highest severity among violated dimensions for the penalty decision (no stacking within one evaluation window).",
+        "Base penalty = severity_base × escalation_multiplier(offense_index).",
+        "Apply cooldown_epochs and jail_epochs from severity, scaled by the same escalation multiplier (ceil to int).",
+        "Slash reduces provider stake immediately; cannot drop below 0."
+      ]
+    }
+  },
+  "defaults": {
+    "thresholds": {
+      "traps_ratio_max": 0.02,
+      "qos_min": 0.95,
+      "latency_p95_ms_max": 2000,
+      "availability_min": 0.995
+    },
+    "min_samples": {
+      "traps": 500,
+      "qos": 200,
+      "latency": 200,
+      "availability": 288
+    },
+    "severity_base": {
+      "minor":   { "slash_tokens": 10000,  "cooldown_epochs": 1, "jail_epochs": 0 },
+      "major":   { "slash_tokens": 50000,  "cooldown_epochs": 2, "jail_epochs": 0 },
+      "critical":{ "slash_tokens": 200000, "cooldown_epochs": 4, "jail_epochs": 2 }
+    },
+    "dimension_to_severity": {
+      "traps": {
+        "bands": [
+          { "gt_ratio": 0.02, "severity": "major"   },
+          { "gt_ratio": 0.10, "severity": "critical" }
+        ]
+      },
+      "qos": {
+        "bands": [
+          { "lt_score": 0.95, "severity": "minor"   },
+          { "lt_score": 0.85, "severity": "major"   },
+          { "lt_score": 0.70, "severity": "critical"}
+        ]
+      },
+      "latency": {
+        "bands": [
+          { "gt_ms": 2000, "severity": "minor"   },
+          { "gt_ms": 5000, "severity": "major"   }
+        ]
+      },
+      "availability": {
+        "bands": [
+          { "lt_ratio": 0.995, "severity": "critical" }
+        ]
+      }
+    },
+    "escalation": {
+      "window_epochs": 8,
+      "multipliers": [1.0, 1.5, 2.0]
+    }
+  },
+  "vectors": [
+    {
+      "name": "qos-borderline-low-sample-warning-only",
+      "provider_id": "provWarn",
+      "stake_before": 250000,
+      "history": { "recent_offenses": 0, "window_epochs": 8 },
+      "metrics": {
+        "qos": { "score": 0.93, "samples": 50 },
+        "traps": { "fail_ratio": 0.0, "samples": 0 },
+        "latency_p95_ms": { "value": 1200, "samples": 50 },
+        "availability": { "ratio": 0.999, "samples": 144 }
+      },
+      "expect": {
+        "decision": "WARNING",
+        "reason": "qos below threshold but insufficient samples",
+        "severity": null,
+        "slash_tokens": 0,
+        "cooldown_epochs": 0,
+        "jail_epochs": 0,
+        "stake_after": 250000,
+        "offense_index_used": 0
+      }
+    },
+    {
+      "name": "traps-breach-major",
+      "provider_id": "provTrap",
+      "stake_before": 1000000,
+      "history": { "recent_offenses": 0, "window_epochs": 8 },
+      "metrics": {
+        "traps": { "fail_ratio": 0.06, "samples": 1200 },
+        "qos": { "score": 0.97, "samples": 600 },
+        "latency_p95_ms": { "value": 900, "samples": 600 },
+        "availability": { "ratio": 0.999, "samples": 288 }
+      },
+      "expect": {
+        "decision": "SLASH",
+        "reason": "traps fail ratio 0.06 > 0.02 ⇒ major",
+        "severity": "major",
+        "slash_tokens": 50000,
+        "cooldown_epochs": 2,
+        "jail_epochs": 0,
+        "stake_after": 950000,
+        "offense_index_used": 0
+      }
+    },
+    {
+      "name": "availability-critical-outage",
+      "provider_id": "provAvail",
+      "stake_before": 750000,
+      "history": { "recent_offenses": 0, "window_epochs": 8 },
+      "metrics": {
+        "traps": { "fail_ratio": 0.0, "samples": 800 },
+        "qos": { "score": 0.99, "samples": 800 },
+        "latency_p95_ms": { "value": 1100, "samples": 800 },
+        "availability": { "ratio": 0.970, "samples": 2880 }
+      },
+      "expect": {
+        "decision": "SLASH",
+        "reason": "availability 0.970 < 0.995 ⇒ critical",
+        "severity": "critical",
+        "slash_tokens": 200000,
+        "cooldown_epochs": 4,
+        "jail_epochs": 2,
+        "stake_after": 550000,
+        "offense_index_used": 0
+      }
+    },
+    {
+      "name": "repeat-offense-escalation-second-major",
+      "provider_id": "provRepeat",
+      "stake_before": 900000,
+      "history": { "recent_offenses": 1, "window_epochs": 8 },
+      "metrics": {
+        "qos": { "score": 0.80, "samples": 1200 },
+        "traps": { "fail_ratio": 0.0, "samples": 0 },
+        "latency_p95_ms": { "value": 1800, "samples": 1200 },
+        "availability": { "ratio": 0.998, "samples": 576 }
+      },
+      "expect": {
+        "decision": "SLASH",
+        "reason": "qos 0.80 < 0.85 ⇒ major; second offense multiplier 1.5",
+        "severity": "major",
+        "slash_tokens": 75000,
+        "cooldown_epochs": 3,
+        "jail_epochs": 0,
+        "stake_after": 825000,
+        "offense_index_used": 1
+      }
+    },
+    {
+      "name": "repeat-offense-escalation-third-critical",
+      "provider_id": "provRepeat",
+      "stake_before": 825000,
+      "history": { "recent_offenses": 2, "window_epochs": 8 },
+      "metrics": {
+        "traps": { "fail_ratio": 0.20, "samples": 2000 },
+        "qos": { "score": 0.99, "samples": 800 },
+        "latency_p95_ms": { "value": 1400, "samples": 800 },
+        "availability": { "ratio": 0.999, "samples": 288 }
+      },
+      "expect": {
+        "decision": "SLASH",
+        "reason": "traps fail ratio 0.20 > 0.10 ⇒ critical; third offense multiplier 2.0",
+        "severity": "critical",
+        "slash_tokens": 400000,
+        "cooldown_epochs": 8,
+        "jail_epochs": 4,
+        "stake_after": 425000,
+        "offense_index_used": 2
+      }
+    },
+    {
+      "name": "latency-minor",
+      "provider_id": "provLat",
+      "stake_before": 60000,
+      "history": { "recent_offenses": 0, "window_epochs": 8 },
+      "metrics": {
+        "qos": { "score": 0.98, "samples": 500 },
+        "traps": { "fail_ratio": 0.0, "samples": 0 },
+        "latency_p95_ms": { "value": 3500, "samples": 800 },
+        "availability": { "ratio": 0.999, "samples": 288 }
+      },
+      "expect": {
+        "decision": "SLASH",
+        "reason": "latency p95 3500ms > 2000ms ⇒ minor",
+        "severity": "minor",
+        "slash_tokens": 10000,
+        "cooldown_epochs": 1,
+        "jail_epochs": 0,
+        "stake_after": 50000,
+        "offense_index_used": 0
+      }
+    },
+    {
+      "name": "multi-violation-pick-highest-severity",
+      "provider_id": "provMulti",
+      "stake_before": 500000,
+      "history": { "recent_offenses": 0, "window_epochs": 8 },
+      "metrics": {
+        "qos": { "score": 0.90, "samples": 900 },
+        "traps": { "fail_ratio": 0.05, "samples": 900 },
+        "latency_p95_ms": { "value": 5200, "samples": 900 },
+        "availability": { "ratio": 0.998, "samples": 288 }
+      },
+      "expect": {
+        "decision": "SLASH",
+        "reason": "violations in qos (minor), latency (major), traps (major) ⇒ choose highest: major",
+        "severity": "major",
+        "slash_tokens": 50000,
+        "cooldown_epochs": 2,
+        "jail_epochs": 0,
+        "stake_after": 450000,
+        "offense_index_used": 0
+      }
+    },
+    {
+      "name": "availability-critical-but-low-samples-warning",
+      "provider_id": "provSampleGate",
+      "stake_before": 420000,
+      "history": { "recent_offenses": 0, "window_epochs": 8 },
+      "metrics": {
+        "availability": { "ratio": 0.990, "samples": 120 },
+        "qos": { "score": 0.99, "samples": 120 },
+        "latency_p95_ms": { "value": 1000, "samples": 120 },
+        "traps": { "fail_ratio": 0.0, "samples": 0 }
+      },
+      "expect": {
+        "decision": "WARNING",
+        "reason": "availability below threshold but insufficient samples (<288)",
+        "severity": null,
+        "slash_tokens": 0,
+        "cooldown_epochs": 0,
+        "jail_epochs": 0,
+        "stake_after": 420000,
+        "offense_index_used": 0
+      }
+    }
+  ]
+}

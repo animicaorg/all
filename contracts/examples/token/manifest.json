@@ -1,0 +1,201 @@
+{
+  "$schema": "../schemas/manifest.schema.json",
+  "name": "AnimicaToken",
+  "version": "1.0.0",
+  "language": "python-vm",
+  "description": "Deterministic fungible token (A20) implemented in the Animica Python VM stdlib.",
+  "tags": ["token", "fungible", "a20", "example"],
+  "license": "MIT",
+  "authors": ["Animica Contributors"],
+  "source": {
+    "path": "contract.py"
+  },
+  "build": {
+    "abiSchemaVersion": "1.0",
+    "codeHashAlgo": "sha3_256",
+    "codeHash": null
+  },
+  "abi": {
+    "errors": [],
+    "events": [
+      {
+        "name": "Transfer",
+        "fields": [
+          {"name": "from", "type": "bytes"},
+          {"name": "to", "type": "bytes"},
+          {"name": "value", "type": "int"}
+        ]
+      },
+      {
+        "name": "Approval",
+        "fields": [
+          {"name": "owner", "type": "bytes"},
+          {"name": "spender", "type": "bytes"},
+          {"name": "value", "type": "int"}
+        ]
+      },
+      {
+        "name": "OwnershipTransferred",
+        "fields": [
+          {"name": "previousOwner", "type": "bytes"},
+          {"name": "newOwner", "type": "bytes"}
+        ]
+      },
+      {
+        "name": "Mint",
+        "fields": [
+          {"name": "to", "type": "bytes"},
+          {"name": "value", "type": "int"}
+        ]
+      },
+      {
+        "name": "Burn",
+        "fields": [
+          {"name": "from", "type": "bytes"},
+          {"name": "value", "type": "int"}
+        ]
+      }
+    ],
+    "functions": [
+      {
+        "name": "init",
+        "stateMutability": "nonpayable",
+        "kind": "initializer",
+        "inputs": [
+          {"name": "name", "type": "bytes"},
+          {"name": "symbol", "type": "bytes"},
+          {"name": "decimals", "type": "int"},
+          {"name": "initial_owner", "type": "bytes"},
+          {"name": "initial_supply", "type": "int"}
+        ],
+        "outputs": []
+      },
+      {
+        "name": "name",
+        "stateMutability": "view",
+        "inputs": [],
+        "outputs": [{"name": "name", "type": "bytes"}]
+      },
+      {
+        "name": "symbol",
+        "stateMutability": "view",
+        "inputs": [],
+        "outputs": [{"name": "symbol", "type": "bytes"}]
+      },
+      {
+        "name": "decimals",
+        "stateMutability": "view",
+        "inputs": [],
+        "outputs": [{"name": "decimals", "type": "int"}]
+      },
+      {
+        "name": "totalSupply",
+        "stateMutability": "view",
+        "inputs": [],
+        "outputs": [{"name": "total", "type": "int"}]
+      },
+      {
+        "name": "owner",
+        "stateMutability": "view",
+        "inputs": [],
+        "outputs": [{"name": "owner", "type": "bytes"}]
+      },
+      {
+        "name": "balanceOf",
+        "stateMutability": "view",
+        "inputs": [{"name": "owner", "type": "bytes"}],
+        "outputs": [{"name": "balance", "type": "int"}]
+      },
+      {
+        "name": "allowance",
+        "stateMutability": "view",
+        "inputs": [
+          {"name": "owner", "type": "bytes"},
+          {"name": "spender", "type": "bytes"}
+        ],
+        "outputs": [{"name": "remaining", "type": "int"}]
+      },
+      {
+        "name": "transfer",
+        "stateMutability": "nonpayable",
+        "inputs": [
+          {"name": "to", "type": "bytes"},
+          {"name": "amount", "type": "int"}
+        ],
+        "outputs": [{"name": "ok", "type": "bool"}]
+      },
+      {
+        "name": "approve",
+        "stateMutability": "nonpayable",
+        "inputs": [
+          {"name": "spender", "type": "bytes"},
+          {"name": "amount", "type": "int"}
+        ],
+        "outputs": [{"name": "ok", "type": "bool"}]
+      },
+      {
+        "name": "transferFrom",
+        "stateMutability": "nonpayable",
+        "inputs": [
+          {"name": "src", "type": "bytes"},
+          {"name": "dst", "type": "bytes"},
+          {"name": "amount", "type": "int"}
+        ],
+        "outputs": [{"name": "ok", "type": "bool"}]
+      },
+      {
+        "name": "mint",
+        "stateMutability": "nonpayable",
+        "inputs": [
+          {"name": "to", "type": "bytes"},
+          {"name": "amount", "type": "int"}
+        ],
+        "outputs": [{"name": "ok", "type": "bool"}],
+        "notes": "Owner-only"
+      },
+      {
+        "name": "burn",
+        "stateMutability": "nonpayable",
+        "inputs": [{"name": "amount", "type": "int"}],
+        "outputs": [{"name": "ok", "type": "bool"}]
+      },
+      {
+        "name": "transferOwnership",
+        "stateMutability": "nonpayable",
+        "inputs": [{"name": "new_owner", "type": "bytes"}],
+        "outputs": []
+      },
+      {
+        "name": "renounceOwnership",
+        "stateMutability": "nonpayable",
+        "inputs": [],
+        "outputs": []
+      },
+      {
+        "name": "codeHashDomain",
+        "stateMutability": "view",
+        "inputs": [],
+        "outputs": [{"name": "domainHash", "type": "bytes"}]
+      }
+    ]
+  },
+  "deployment": {
+    "initializer": {
+      "function": "init",
+      "args": [
+        {"name": "name", "type": "bytes"},
+        {"name": "symbol", "type": "bytes"},
+        {"name": "decimals", "type": "int"},
+        {"name": "initial_owner", "type": "bytes"},
+        {"name": "initial_supply", "type": "int"}
+        ]
+    }
+  },
+  "capabilities": {
+    "usesSyscalls": [],
+    "da": false,
+    "aicf": false,
+    "randomness": false,
+    "zk": false
+  }
+}

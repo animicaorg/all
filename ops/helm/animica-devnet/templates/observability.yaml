@@ -1,0 +1,592 @@
+{{-/*
+Observability stack (toggleable):
+- Prometheus (scrapes node RPC and any extraTargets)
+- Alertmanager
+- Grafana (provisioned with Prometheus datasource)
+- Loki + Promtail (optional)
+- Tempo (optional)
+
+Values (examples):
+observability:
+  enabled: true
+  prometheus:
+    enabled: true
+    image: "prom/prometheus:v2.53.0"
+    persistence:
+      enabled: false
+      size: 10Gi
+      storageClass: ""
+    service:
+      port: 9090
+    resources: {}
+    extraTargets: []  # e.g. ["svc-a:8080", "svc-b:9100"]
+  alertmanager:
+    enabled: true
+    image: "prom/alertmanager:v0.27.0"
+    service:
+      port: 9093
+    resources: {}
+    config: {} # override alertmanager.yml (YAML map) or leave for sane default
+  grafana:
+    enabled: true
+    image: "grafana/grafana:11.1.0"
+    adminUser: "admin"
+    adminPassword: "admin"
+    service:
+      port: 3000
+    resources: {}
+  loki:
+    enabled: false
+    image: "grafana/loki:2.9.6"
+    service:
+      port: 3100
+    resources: {}
+    persistence:
+      enabled: false
+      size: 10Gi
+      storageClass: ""
+  promtail:
+    enabled: false
+    image: "grafana/promtail:2.9.6"
+    resources: {}
+  tempo:
+    enabled: false
+    image: "grafana/tempo:2.5.0"
+    service:
+      port: 3200
+    resources: {}
+*/ -}}
+
+{{- if and .Values.observability .Values.observability.enabled }}
+
+{{- $fullname := include "animica-devnet.fullname" . -}}
+{{- $labels := include "animica-devnet.labels" (dict "ctx" . "component" "observability") -}}
+{{- $obs := .Values.observability -}}
+{{- $node := .Values.node | default dict -}}
+{{- $rpcHttpPort := (default 8545 $node.ports.http) -}}
+
+{{/* ============================= PROMETHEUS ============================= */}}
+{{- if and $obs.prometheus $obs.prometheus.enabled }}
+{{- $prom := $obs.prometheus -}}
+{{- $promPort := (default 9090 $prom.service.port) -}}
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullname }}-prometheus-config
+  labels:
+{{ $labels | nindent 4 }}
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 30s
+    scrape_configs:
+      - job_name: 'animica-rpc'
+        metrics_path: /metrics
+        static_configs:
+          - targets:
+              - "{{ printf "%s-rpc:%d" $fullname $rpcHttpPort }}"
+      {{- if $prom.extraTargets }}
+      - job_name: 'extra-static'
+        static_configs:
+          - targets:
+      {{- range $t := $prom.extraTargets }}
+              - "{{ $t }}"
+      {{- end }}
+      {{- end }}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-prometheus
+  labels:
+{{ $labels | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ $fullname }}-prometheus
+  ports:
+    - name: http
+      port: {{ $promPort }}
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: {{ ternary "StatefulSet" "Deployment" ($prom.persistence.enabled) }}
+metadata:
+  name: {{ $fullname }}-prometheus
+  labels:
+{{ $labels | nindent 4 }}
+spec:
+  {{- if $prom.persistence.enabled }}
+  serviceName: {{ $fullname }}-prometheus
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $fullname }}-prometheus
+  template:
+  {{- else }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $fullname }}-prometheus
+  template:
+  {{- end }}
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $fullname }}-prometheus
+{{ $labels | nindent 8 }}
+    spec:
+      containers:
+        - name: prometheus
+          image: {{ default "prom/prometheus:v2.53.0" $prom.image | quote }}
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--config.file=/etc/prometheus/prometheus.yml"
+            - "--storage.tsdb.path=/prometheus"
+            - "--web.enable-lifecycle"
+          ports:
+            - name: http
+              containerPort: {{ $promPort }}
+          resources:
+{{ toYaml ($prom.resources | default dict) | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: data
+              mountPath: /prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $fullname }}-prometheus-config
+        - name: data
+          {{- if $prom.persistence.enabled }} # placeholder, real PVC below
+          emptyDir: {}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+  {{- if $prom.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ default "10Gi" $prom.persistence.size }}
+        {{- if $prom.persistence.storageClass }}
+        storageClassName: {{ $prom.persistence.storageClass | quote }}
+        {{- end }}
+  {{- end }}
+{{- end }}
+
+{{/* ============================= ALERTMANAGER ============================= */}}
+{{- if and $obs.alertmanager $obs.alertmanager.enabled }}
+{{- $am := $obs.alertmanager -}}
+{{- $amPort := (default 9093 $am.service.port) -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullname }}-alertmanager-config
+  labels:
+{{ $labels | nindent 4 }}
+data:
+  alertmanager.yml: |
+{{- if $am.config }}
+{{ toYaml $am.config | indent 4 }}
+{{- else }}
+    route:
+      receiver: 'null'
+    receivers:
+      - name: 'null'
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-alertmanager
+  labels:
+{{ $labels | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ $fullname }}-alertmanager
+  ports:
+    - name: http
+      port: {{ $amPort }}
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-alertmanager
+  labels:
+{{ $labels | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $fullname }}-alertmanager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $fullname }}-alertmanager
+{{ $labels | nindent 8 }}
+    spec:
+      containers:
+        - name: alertmanager
+          image: {{ default "prom/alertmanager:v0.27.0" $am.image | quote }}
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--config.file=/etc/alertmanager/alertmanager.yml"
+          ports:
+            - name: http
+              containerPort: {{ $amPort }}
+          resources:
+{{ toYaml ($am.resources | default dict) | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alertmanager
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $fullname }}-alertmanager-config
+{{- end }}
+
+{{/* ============================= GRAFANA ============================= */}}
+{{- if and $obs.grafana $obs.grafana.enabled }}
+{{- $gf := $obs.grafana -}}
+{{- $gfPort := (default 3000 $gf.service.port) -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullname }}-grafana-provisioning
+  labels:
+{{ $labels | nindent 4 }}
+data:
+  datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        isDefault: true
+        url: http://{{ $fullname }}-prometheus:{{ default 9090 $obs.prometheus.service.port }}
+        jsonData:
+          timeInterval: 15s
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-grafana
+  labels:
+{{ $labels | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ $fullname }}-grafana
+  ports:
+    - name: http
+      port: {{ $gfPort }}
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-grafana
+  labels:
+{{ $labels | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $fullname }}-grafana
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $fullname }}-grafana
+{{ $labels | nindent 8 }}
+    spec:
+      containers:
+        - name: grafana
+          image: {{ default "grafana/grafana:11.1.0" $gf.image | quote }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: {{ default "admin" $gf.adminUser | quote }}
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              value: {{ default "admin" $gf.adminPassword | quote }}
+            - name: GF_INSTALL_PLUGINS
+              value: ""
+          ports:
+            - name: http
+              containerPort: {{ $gfPort }}
+          resources:
+{{ toYaml ($gf.resources | default dict) | nindent 12 }}
+          volumeMounts:
+            - name: provisioning
+              mountPath: /etc/grafana/provisioning/datasources
+      volumes:
+        - name: provisioning
+          configMap:
+            name: {{ $fullname }}-grafana-provisioning
+{{- end }}
+
+{{/* ============================= LOKI (optional) ============================= */}}
+{{- if and $obs.loki $obs.loki.enabled }}
+{{- $loki := $obs.loki -}}
+{{- $lokiPort := (default 3100 $loki.service.port) -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullname }}-loki-config
+  labels:
+{{ $labels | nindent 4 }}
+data:
+  loki.yaml: |
+    auth_enabled: false
+    server:
+      http_listen_port: {{ $lokiPort }}
+    common:
+      path_prefix: /var/loki
+      storage:
+        filesystem:
+          chunks_directory: /var/loki/chunks
+          rules_directory: /var/loki/rules
+      replication_factor: 1
+      ring:
+        instance_addr: 127.0.0.1
+        kvstore:
+          store: inmemory
+    schema_config:
+      configs:
+        - from: 2023-01-01
+          store: boltdb-shipper
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+    ruler:
+      alertmanager_url: http://{{ $fullname }}-alertmanager:{{ default 9093 $obs.alertmanager.service.port }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-loki
+  labels:
+{{ $labels | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ $fullname }}-loki
+  ports:
+    - name: http
+      port: {{ $lokiPort }}
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: {{ ternary "StatefulSet" "Deployment" ($loki.persistence.enabled) }}
+metadata:
+  name: {{ $fullname }}-loki
+  labels:
+{{ $labels | nindent 4 }}
+spec:
+  {{- if $loki.persistence.enabled }}
+  serviceName: {{ $fullname }}-loki
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $fullname }}-loki
+  template:
+  {{- else }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $fullname }}-loki
+  template:
+  {{- end }}
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $fullname }}-loki
+{{ $labels | nindent 8 }}
+    spec:
+      containers:
+        - name: loki
+          image: {{ default "grafana/loki:2.9.6" $loki.image | quote }}
+          imagePullPolicy: IfNotPresent
+          args: ["-config.file=/etc/loki/loki.yaml"]
+          ports:
+            - name: http
+              containerPort: {{ $lokiPort }}
+          resources:
+{{ toYaml ($loki.resources | default dict) | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/loki
+            - name: data
+              mountPath: /var/loki
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $fullname }}-loki-config
+        - name: data
+          {{- if $loki.persistence.enabled }} # PVC created below
+          emptyDir: {}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+  {{- if $loki.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ default "10Gi" $loki.persistence.size }}
+        {{- if $loki.persistence.storageClass }}
+        storageClassName: {{ $loki.persistence.storageClass | quote }}
+        {{- end }}
+  {{- end }}
+{{- end }}
+
+{{/* ============================= PROMTAIL (optional) ============================= */}}
+{{- if and $obs.promtail $obs.promtail.enabled }}
+{{- $pt := $obs.promtail -}}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ $fullname }}-promtail
+  labels:
+{{ $labels | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $fullname }}-promtail
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $fullname }}-promtail
+{{ $labels | nindent 8 }}
+    spec:
+      serviceAccountName: default
+      containers:
+        - name: promtail
+          image: {{ default "grafana/promtail:2.9.6" $pt.image | quote }}
+          imagePullPolicy: IfNotPresent
+          args:
+            - "-client.url=http://{{ $fullname }}-loki:{{ default 3100 $obs.loki.service.port }}/loki/api/v1/push"
+            - "-config.expand-env=true"
+          volumeMounts:
+            - name: varlog
+              mountPath: /var/log
+            - name: docker
+              mountPath: /var/lib/docker/containers
+              readOnly: true
+          resources:
+{{ toYaml ($pt.resources | default dict) | nindent 12 }}
+      volumes:
+        - name: varlog
+          hostPath:
+            path: /var/log
+        - name: docker
+          hostPath:
+            path: /var/lib/docker/containers
+{{- end }}
+
+{{/* ============================= TEMPO (optional) ============================= */}}
+{{- if and $obs.tempo $obs.tempo.enabled }}
+{{- $tp := $obs.tempo -}}
+{{- $tpPort := (default 3200 $tp.service.port) -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullname }}-tempo-config
+  labels:
+{{ $labels | nindent 4 }}
+data:
+  tempo.yaml: |
+    server:
+      http_listen_port: {{ $tpPort }}
+    distributor:
+      receivers:
+        otlp:
+          protocols:
+            http:
+            grpc:
+    storage:
+      trace:
+        backend: local
+        local:
+          path: /var/tempo
+    compactor:
+      working_directory: /var/tempo/wal
+    metrics_generator:
+      registry:
+        external_labels:
+          cluster: animica
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-tempo
+  labels:
+{{ $labels | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ $fullname }}-tempo
+  ports:
+    - name: http
+      port: {{ $tpPort }}
+      targetPort: http
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}-tempo
+  labels:
+{{ $labels | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $fullname }}-tempo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $fullname }}-tempo
+{{ $labels | nindent 8 }}
+    spec:
+      containers:
+        - name: tempo
+          image: {{ default "grafana/tempo:2.5.0" $tp.image | quote }}
+          imagePullPolicy: IfNotPresent
+          args: ["-config.file=/etc/tempo/tempo.yaml"]
+          ports:
+            - name: http
+              containerPort: {{ $tpPort }}
+            - name: 4317-tcp
+              containerPort: 4317
+            - name: 4318-tcp
+              containerPort: 4318
+          resources:
+{{ toYaml ($tp.resources | default dict) | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/tempo
+            - name: data
+              mountPath: /var/tempo
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $fullname }}-tempo-config
+        - name: data
+          emptyDir: {}
+{{- end }}
+
+{{- end }}

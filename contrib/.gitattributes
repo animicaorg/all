@@ -1,0 +1,63 @@
+# Animica Contrib — Git LFS policy
+# SVGs stay as normal text (OK to diff/review); large/binary assets use LFS.
+# Place this file at contrib/.gitattributes
+
+# --- Texty vectors (keep out of LFS) -----------------------------------------
+*.svg text eol=lf
+
+# --- Raster images (LFS) -----------------------------------------------------
+**/*.png  filter=lfs diff=lfs merge=lfs -text
+**/*.jpg  filter=lfs diff=lfs merge=lfs -text
+**/*.jpeg filter=lfs diff=lfs merge=lfs -text
+**/*.gif  filter=lfs diff=lfs merge=lfs -text
+**/*.webp filter=lfs diff=lfs merge=lfs -text
+**/*.avif filter=lfs diff=lfs merge=lfs -text
+**/*.tif  filter=lfs diff=lfs merge=lfs -text
+**/*.tiff filter=lfs diff=lfs merge=lfs -text
+**/*.bmp  filter=lfs diff=lfs merge=lfs -text
+**/*.ico  filter=lfs diff=lfs merge=lfs -text
+**/*.icns filter=lfs diff=lfs merge=lfs -text
+
+# --- Design-source binaries (LFS) --------------------------------------------
+**/*.fig  filter=lfs diff=lfs merge=lfs -text   # Figma
+**/*.psd  filter=lfs diff=lfs merge=lfs -text
+**/*.ai   filter=lfs diff=lfs merge=lfs -text
+**/*.sketch filter=lfs diff=lfs merge=lfs -text
+**/*.key  filter=lfs diff=lfs merge=lfs -text
+**/*.pptx filter=lfs diff=lfs merge=lfs -text
+**/*.docx filter=lfs diff=lfs merge=lfs -text
+**/*.xlsx filter=lfs diff=lfs merge=lfs -text
+**/*.indd filter=lfs diff=lfs merge=lfs -text
+
+# --- Fonts (LFS) -------------------------------------------------------------
+**/*.woff  filter=lfs diff=lfs merge=lfs -text
+**/*.woff2 filter=lfs diff=lfs merge=lfs -text
+**/*.otf   filter=lfs diff=lfs merge=lfs -text
+**/*.ttf   filter=lfs diff=lfs merge=lfs -text
+
+# --- Motion / 3D / Media (LFS) ----------------------------------------------
+**/*.glb  filter=lfs diff=lfs merge=lfs -text
+**/*.usdz filter=lfs diff=lfs merge=lfs -text
+**/*.mp4  filter=lfs diff=lfs merge=lfs -text
+**/*.mov  filter=lfs diff=lfs merge=lfs -text
+**/*.wav  filter=lfs diff=lfs merge=lfs -text
+**/*.mp3  filter=lfs diff=lfs merge=lfs -text
+**/*.avi  filter=lfs diff=lfs merge=lfs -text
+
+# --- Archives & big binaries (LFS) ------------------------------------------
+**/*.zip  filter=lfs diff=lfs merge=lfs -text
+**/*.tar  filter=lfs diff=lfs merge=lfs -text
+**/*.gz   filter=lfs diff=lfs merge=lfs -text
+**/*.7z   filter=lfs diff=lfs merge=lfs -text
+**/*.rar  filter=lfs diff=lfs merge=lfs -text
+**/*.pdf  filter=lfs diff=lfs merge=lfs -text
+
+# --- Email exports (usually big images inline, use LFS) ----------------------
+email/**/*.png  filter=lfs diff=lfs merge=lfs -text
+email/**/*.jpg  filter=lfs diff=lfs merge=lfs -text
+email/**/*.gif  filter=lfs diff=lfs merge=lfs -text
+
+# Notes:
+# • Run `git lfs install` once per machine.
+# • Existing files already committed won’t be retroactively moved to LFS; re-add them:
+#     git rm --cached <file> && git add <file>

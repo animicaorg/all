@@ -1,0 +1,224 @@
+{{-/*
+Deployment: Animica Miner
+
+Purpose:
+- Runs the built-in CPU/GPU miner against the in-cluster node RPC.
+- Scales horizontally (replicas); HPA can target it separately.
+- Mounts genesis & chain params for consistent templates/targets.
+- Exposes optional Stratum and/or WS getwork ports (no Service by default).
+- Optional Prometheus scrape annotations when metrics.enabled=true.
+
+Expected sibling templates:
+- templates/configmap-genesis.yaml   -> {{ include "animica-devnet.fullname" . }}-genesis
+- templates/configmap-chain.yaml     -> {{ include "animica-devnet.fullname" . }}-chain
+- templates/svc-node-rpc.yaml        -> in-cluster RPC endpoint for miner to use
+
+Values (snippet):
+image:
+  miner:
+    repository: ghcr.io/animica/miner
+    tag: "latest"
+    pullPolicy: IfNotPresent
+    env: {}
+    command: []   # optional override
+    args: []      # optional override
+miner:
+  replicas: 1
+  podLabels: {}
+  podAnnotations: {}
+  priorityClassName: ""
+  serviceAccountName: ""
+  securityContext: {}
+  containerSecurityContext: {}
+  resources: {}
+  env: {}                 # extra env
+  rpcUrl: ""              # if empty, defaults to http://<fullname>-rpc:<node.ports.http>
+  threads: 1
+  device: "cpu"           # cpu|cuda|rocm|opencl|metal
+  shareTarget: ""         # optional micro-target override
+  stratum:
+    enabled: false
+    port: 3333
+  wsGetwork:
+    enabled: true
+    port: 46010
+  metrics:
+    enabled: true
+    port: 9102
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+*/ -}}
+
+{{- $img := .Values.image.miner | default dict -}}
+{{- $miner := .Values.miner | default dict -}}
+{{- $node := .Values.node | default dict -}}
+{{- $rpcPort := (default 8545 $node.ports.http) -}}
+{{- $defaultRpc := printf "http://%s-rpc:%v" (include "animica-devnet.fullname" .) $rpcPort -}}
+{{- $rpcUrl := (default $defaultRpc $miner.rpcUrl) -}}
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "animica-devnet.fullname" . }}-miner
+  labels:
+    {{- include "animica-devnet.labels" (dict "ctx" . "component" "miner") | nindent 4 }}
+spec:
+  replicas: {{ default 1 $miner.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/name: {{ include "animica-devnet.name" . }}
+      app.kubernetes.io/component: miner
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/name: {{ include "animica-devnet.name" . }}
+        app.kubernetes.io/component: miner
+        {{- with $miner.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        # Ensure rollout on config changes
+        checksum/genesis: {{ include (print $.Template.BasePath "/configmap-genesis.yaml") . | sha256sum }}
+        checksum/chain:   {{ include (print $.Template.BasePath "/configmap-chain.yaml") . | sha256sum }}
+        {{- if and $miner.metrics $miner.metrics.enabled }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ default 9102 $miner.metrics.port }}"
+        prometheus.io/path: "/metrics"
+        {{- end }}
+        {{- with $miner.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $miner.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with $miner.serviceAccountName }}
+      serviceAccountName: {{ . }}
+      {{- end }}
+      {{- with $miner.securityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: miner
+          image: "{{ default "ghcr.io/animica/miner" $img.repository }}:{{ default "latest" $img.tag }}"
+          imagePullPolicy: {{ default "IfNotPresent" $img.pullPolicy }}
+          {{- if or $img.command $img.args }}
+          {{- with $img.command }}
+          command: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $img.args }}
+          args: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          {{- else }}
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              set -e
+              if [ -x "/entrypoints/miner.sh" ]; then
+                exec /entrypoints/miner.sh
+              fi
+              # Fallback: run Python miner CLI
+              THREADS="${MINER_THREADS:-{{ default 1 $miner.threads }}}"
+              DEVICE="${MINER_DEVICE:-{{ default "cpu" $miner.device }}}"
+              RPC="${MINER_RPC_URL:-{{ $rpcUrl }}}"
+              echo "[miner] starting miner with threads=${THREADS} device=${DEVICE} rpc=${RPC}"
+              exec python -m mining.cli.miner --threads "${THREADS}" --device "${DEVICE}" --rpc "${RPC}"
+          {{- end }}
+          env:
+            - name: MINER_RPC_URL
+              value: {{ $rpcUrl | quote }}
+            - name: MINER_THREADS
+              value: "{{ default 1 $miner.threads }}"
+            - name: MINER_DEVICE
+              value: {{ default "cpu" $miner.device | quote }}
+            {{- with $miner.shareTarget }}
+            - name: MINER_SHARE_TARGET
+              value: {{ . | quote }}
+            {{- end }}
+            - name: ANIMICA_GENESIS_JSON
+              value: /etc/animica/genesis/genesis.json
+            - name: ANIMICA_CHAIN_PARAMS
+              value: /etc/animica/chain/params.yaml
+            {{- with $img.env }}
+            {{- range $k, $v := . }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with $miner.env }}
+            {{- range $k, $v := . }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            {{- end }}
+          ports:
+            {{- if and $miner.wsGetwork $miner.wsGetwork.enabled }}
+            - name: getwork
+              containerPort: {{ default 46010 $miner.wsGetwork.port }}
+              protocol: TCP
+            {{- end }}
+            {{- if and $miner.stratum $miner.stratum.enabled }}
+            - name: stratum
+              containerPort: {{ default 3333 $miner.stratum.port }}
+              protocol: TCP
+            {{- end }}
+            {{- if and $miner.metrics $miner.metrics.enabled }}
+            - name: metrics
+              containerPort: {{ default 9102 $miner.metrics.port }}
+              protocol: TCP
+            {{- end }}
+          volumeMounts:
+            - name: genesis
+              mountPath: /etc/animica/genesis/genesis.json
+              subPath: genesis.json
+              readOnly: true
+            - name: chain
+              mountPath: /etc/animica/chain/params.yaml
+              subPath: params.yaml
+              readOnly: true
+          {{- with $miner.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $miner.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: genesis
+          configMap:
+            name: {{ include "animica-devnet.fullname" . }}-genesis
+            items:
+              - key: genesis.json
+                path: genesis.json
+        - name: chain
+          configMap:
+            name: {{ include "animica-devnet.fullname" . }}-chain
+            items:
+              - key: params.yaml
+                path: params.yaml
+      {{- with $miner.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $miner.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $miner.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $miner.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

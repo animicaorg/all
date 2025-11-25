@@ -1,0 +1,84 @@
+# Ansible template: Prometheus configuration
+# Vars (override in inventory/group_vars/host_vars):
+#   prometheus_global_scrape_interval: "15s"
+#   prometheus_global_eval_interval: "15s"
+#   prometheus_global_scrape_timeout: "10s"
+#   prometheus_external_labels: { env: "devnet", cluster: "local" }
+#   prometheus_rule_files:
+#     - "/etc/prometheus/rules/*.yml"
+#     - "/etc/prometheus/rules/*.yaml"
+#   prometheus_alertmanagers: ["localhost:9093"]
+#   prometheus_self_target: "localhost:9090"
+#   node_exporter_targets: ["localhost:9100", "node2:9100"]
+#   promtail_targets: ["localhost:9080"]
+#   extra_scrape_jobs:        # list of full job dicts; appended verbatim
+#     - job_name: "custom"
+#       static_configs:
+#         - targets: ["svc:1234"]
+
+global:
+  scrape_interval: {{ prometheus_global_scrape_interval | default('15s') }}
+  evaluation_interval: {{ prometheus_global_eval_interval | default('15s') }}
+  scrape_timeout: {{ prometheus_global_scrape_timeout | default('10s') }}
+
+{% if prometheus_external_labels is defined and prometheus_external_labels %}
+external_labels:
+{% for k, v in prometheus_external_labels.items() %}
+  {{ k }}: "{{ v }}"
+{% endfor %}
+{% endif %}
+
+{% if prometheus_alertmanagers is defined and prometheus_alertmanagers %}
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: [{% for am in prometheus_alertmanagers %}"{{ am }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+{% endif %}
+
+rule_files:
+{% for rf in prometheus_rule_files | default(['/etc/prometheus/rules/*.yml','/etc/prometheus/rules/*.yaml']) %}
+  - "{{ rf }}"
+{% endfor %}
+
+scrape_configs:
+  # Self-scrape for Prometheus
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ["{{ prometheus_self_target | default('localhost:9090') }}"]
+        labels:
+          role: 'prometheus'
+
+  # Node Exporter (system metrics)
+  - job_name: 'node'
+    honor_timestamps: true
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+{% if node_exporter_targets is defined and node_exporter_targets %}
+      - targets: [{% for t in node_exporter_targets %}"{{ t }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+        labels:
+          role: 'node'
+{% else %}
+      - targets: ["localhost:9100"]
+        labels:
+          role: 'node'
+{% endif %}
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        regex: '([^:]+)(?::\d+)?'
+        replacement: '$1'
+
+{% if promtail_targets is defined and promtail_targets %}
+  # Promtail (log shipper) metrics
+  - job_name: 'promtail'
+    static_configs:
+      - targets: [{% for t in promtail_targets %}"{{ t }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+        labels:
+          role: 'logshipper'
+{% endif %}
+
+{% if extra_scrape_jobs is defined and extra_scrape_jobs %}
+# Extra jobs appended verbatim
+{{ extra_scrape_jobs | to_nice_yaml(indent=2) | indent(2, true) }}
+{% endif %}

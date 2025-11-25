@@ -1,0 +1,74 @@
+{
+  "schema": "animica.devnet.seed-wallets.v1",
+  "created": "2025-10-02T00:00:00Z",
+  "chain": {
+    "chainId": 1337,
+    "hrp": "anim",
+    "unit": "ANIM",
+    "decimals": 18
+  },
+  "defaults": {
+    "prefund_amount_wei": "1000000000000000000000",
+    "labels": ["test", "e2e", "integration"]
+  },
+  "notes": [
+    "Test-only material. NEVER reuse on mainnet.",
+    "Addresses are derived at runtime as: alg_id || sha3_256(pubkey) → bech32m(hrp='anim').",
+    "Seeds below are fixed hex bytes for determinism in tests; components may map them to PQ keys directly or via HKDF-SHA3-256."
+  ],
+  "accounts": [
+    {
+      "name": "alice",
+      "role": "user",
+      "algorithm": "dilithium3",
+      "derivation_path": "m/44'/1337'/0'/0/0",
+      "seed_hex": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "prefund_amount_wei": "1000000000000000000000",
+      "labels": ["owner", "happy-path"]
+    },
+    {
+      "name": "bob",
+      "role": "user",
+      "algorithm": "sphincs_shake_128s",
+      "derivation_path": "m/44'/1337'/0'/0/1",
+      "seed_hex": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "prefund_amount_wei": "1000000000000000000000",
+      "labels": ["counterparty"]
+    },
+    {
+      "name": "carol",
+      "role": "user",
+      "algorithm": "dilithium3",
+      "derivation_path": "m/44'/1337'/0'/0/2",
+      "seed_hex": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "prefund_amount_wei": "1000000000000000000000",
+      "labels": ["events", "contracts"]
+    },
+    {
+      "name": "dave",
+      "role": "user",
+      "algorithm": "sphincs_shake_128s",
+      "derivation_path": "m/44'/1337'/0'/0/3",
+      "seed_hex": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "prefund_amount_wei": "1000000000000000000000",
+      "labels": ["low-fee", "replacement"]
+    },
+    {
+      "name": "erin",
+      "role": "user",
+      "algorithm": "dilithium3",
+      "derivation_path": "m/44'/1337'/0'/0/4",
+      "seed_hex": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "prefund_amount_wei": "1000000000000000000000",
+      "labels": ["reorg", "multi-tx"]
+    }
+  ],
+  "faucet": {
+    "enabled": true,
+    "algorithm": "dilithium3",
+    "purpose": "tests/devnet faucet funding only",
+    "seed_hex": "0xf1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1",
+    "daily_limit_animbn": "100000000000000000000000",
+    "per_tx_limit_animbn": "1000000000000000000000"
+  }
+}

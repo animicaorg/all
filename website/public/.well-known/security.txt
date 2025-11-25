@@ -1,0 +1,11 @@
+# security.txt (RFC 9116) for animica.org
+# See: https://www.rfc-editor.org/rfc/rfc9116
+
+Contact: mailto:security@animica.org
+Contact: https://animica.org/security/report
+Encryption: https://animica.org/pgp/animica-security.asc
+Acknowledgments: https://animica.org/security/hall-of-fame
+Policy: https://animica.org/security
+Preferred-Languages: en, es
+Canonical: https://animica.org/.well-known/security.txt
+Expires: 2026-10-09T00:00:00Z

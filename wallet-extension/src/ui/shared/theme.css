@@ -1,0 +1,227 @@
+/* -----------------------------------------------------------------------------
+   Animica Wallet — Theme
+   - Defines CSS Custom Properties (tokens) for color/spacing/typography
+   - Dark is default; opt-in light via [data-theme="light"] on <html> or root
+   - Public fonts are served from /fonts in MV3 (see public/fonts/Inter/*)
+----------------------------------------------------------------------------- */
+
+/* Font faces (subset: Regular + SemiBold) */
+@font-face {
+  font-family: "Inter";
+  src: url("/fonts/Inter/Inter-Regular.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("/fonts/Inter/Inter-SemiBold.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+}
+
+/* Base reset */
+*,
+*::before,
+*::after { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font-family: "Inter", ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--bg);
+  color: var(--text-1);
+}
+
+/* Default (dark) tokens */
+:root {
+  /* Palette */
+  --bg: #0b1020;
+  --surface-1: #0f172a;
+  --surface-2: #0b1220;
+  --surface-3: #0a0f1a;
+
+  --border-1: #1e293b;
+  --border-2: #334155;
+
+  --text-1: #e2e8f0;   /* primary text */
+  --text-2: #cbd5e1;   /* secondary text */
+  --text-muted: #94a3b8;
+
+  --accent: #22d3ee;           /* cyan */
+  --accent-hover: #13c4e3;
+  --accent-contrast: #05151a;
+
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger:  #ef4444;
+
+  /* Elevation */
+  --shadow-1: 0 1px 2px rgba(0,0,0,.25);
+  --shadow-2: 0 6px 24px rgba(0,0,0,.28);
+
+  /* Radius */
+  --radius-1: 8px;
+  --radius-2: 12px;
+  --radius-3: 16px;
+
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  /* Typography */
+  --fs-12: 12px;
+  --fs-13: 13px;
+  --fs-14: 14px;
+  --fs-16: 16px;
+  --fs-20: 20px;
+
+  /* Controls */
+  --input-bg: var(--surface-2);
+  --input-border: var(--border-2);
+  --input-text: var(--text-1);
+  --input-placeholder: var(--text-muted);
+
+  --btn-bg: var(--surface-2);
+  --btn-border: var(--border-2);
+  --btn-text: var(--text-1);
+  --btn-bg-hover: #111a2e;
+}
+
+/* Light theme overrides */
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --surface-1: #f8fafc;
+  --surface-2: #f1f5f9;
+  --surface-3: #e2e8f0;
+
+  --border-1: #e2e8f0;
+  --border-2: #cbd5e1;
+
+  --text-1: #0f172a;
+  --text-2: #1f2937;
+  --text-muted: #475569;
+
+  --accent: #0891b2;
+  --accent-hover: #0ea5b7;
+  --accent-contrast: #e6fbff;
+
+  --input-bg: #ffffff;
+  --input-border: #cbd5e1;
+  --input-text: #0f172a;
+  --input-placeholder: #64748b;
+
+  --btn-bg: #ffffff;
+  --btn-border: #cbd5e1;
+  --btn-text: #0f172a;
+  --btn-bg-hover: #f3f6fb;
+}
+
+/* Respect system preference if no explicit data-theme is set */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    color-scheme: light;
+  }
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+  }
+}
+
+/* Selection */
+::selection {
+  background: color-mix(in oklab, var(--accent) 35%, transparent);
+}
+
+/* Utilities */
+.muted { color: var(--text-muted); }
+.small { font-size: var(--fs-12); }
+.code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: var(--fs-13);
+}
+
+/* Card */
+.card {
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-2);
+  box-shadow: var(--shadow-1);
+  padding: var(--space-4);
+}
+.card + .card { margin-top: var(--space-4); }
+
+/* Inputs */
+.input,
+.select,
+.textarea {
+  width: 100%;
+  background: var(--input-bg);
+  color: var(--input-text);
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-1);
+  padding: 10px 12px;
+  font-size: var(--fs-14);
+  outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.input::placeholder { color: var(--input-placeholder); }
+.input:focus,
+.select:focus,
+.textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 30%, transparent);
+}
+
+/* Buttons (base; Button.tsx may override via inline styles) */
+.btn {
+  appearance: none;
+  border: 1px solid var(--btn-border);
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  border-radius: var(--radius-1);
+  padding: 8px 12px;
+  font-weight: 600;
+  font-size: var(--fs-14);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease;
+}
+.btn:hover { background: var(--btn-bg-hover); }
+.btn:active { transform: translateY(0.5px); }
+.btn.primary {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: color-mix(in oklab, var(--accent) 70%, black);
+}
+.btn.primary:hover { background: var(--accent-hover); }
+
+/* Layout helpers */
+.row { display: flex; gap: var(--space-3); align-items: center; }
+.col { display: flex; flex-direction: column; gap: var(--space-3); }
+.spacer { flex: 1 1 auto; }
+
+/* Accessibility */
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0,0,0,0);
+  white-space: nowrap; border: 0;
+}
+
+/* Reduce motion */
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}

@@ -1,0 +1,130 @@
+{
+  "abiVersion": "1",
+  "contract": {
+    "name": "AiAgent",
+    "version": "1.0.0",
+    "description": "Minimal AI agent that enqueues prompts to AICF, tracks last task id, and (next block) reads/consumes results deterministically."
+  },
+  "functions": [
+    { "name": "owner", "stateMutability": "view", "inputs": [], "outputs": [ { "name": "addr", "type": "address" } ] },
+
+    {
+      "name": "model",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [ { "name": "name", "type": "bytes", "description": "UTF-8 model identifier (e.g., b\"animica/text-ada-001\")." } ]
+    },
+    {
+      "name": "setModel",
+      "stateMutability": "nonpayable",
+      "inputs": [ { "name": "name", "type": "bytes" } ],
+      "outputs": [ { "name": "ok", "type": "bool" } ],
+      "description": "Owner-only: update default model used by enqueue()."
+    },
+
+    {
+      "name": "lastPrompt",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [ { "name": "prompt", "type": "bytes" } ]
+    },
+    {
+      "name": "lastTaskId",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [ { "name": "task_id", "type": "bytes32" } ]
+    },
+    {
+      "name": "lastResult",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [ { "name": "result", "type": "bytes" } ],
+      "description": "Cached last consumed result (set by consume())."
+    },
+
+    {
+      "name": "enqueue",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "prompt", "type": "bytes", "description": "UTF-8 prompt bytes. Size capped by contract code." },
+        { "name": "modelOverride", "type": "bytes", "description": "Optional; pass b'' to use current model()." }
+      ],
+      "outputs": [
+        { "name": "task_id", "type": "bytes32" }
+      ],
+      "description": "Enqueue prompt to AICF. Returns deterministic task_id (H(chainId|height|txHash|caller|payload))."
+    },
+
+    {
+      "name": "hasResult",
+      "stateMutability": "view",
+      "inputs": [ { "name": "task_id", "type": "bytes32" } ],
+      "outputs": [ { "name": "available", "type": "bool" } ],
+      "description": "True if a result is available (typically next block or later)."
+    },
+    {
+      "name": "readResult",
+      "stateMutability": "view",
+      "inputs": [ { "name": "task_id", "type": "bytes32" } ],
+      "outputs": [
+        { "name": "available", "type": "bool" },
+        { "name": "result", "type": "bytes" }
+      ],
+      "description": "Read result without mutating state; returns (available, result)."
+    },
+    {
+      "name": "consume",
+      "stateMutability": "nonpayable",
+      "inputs": [ { "name": "task_id", "type": "bytes32" } ],
+      "outputs": [
+        { "name": "ok", "type": "bool" },
+        { "name": "result", "type": "bytes" }
+      ],
+      "description": "Consume available result: caches into lastResult and emits Consumed(task_id,...). Reverts if not available."
+    },
+
+    {
+      "name": "transferOwnership",
+      "stateMutability": "nonpayable",
+      "inputs": [ { "name": "newOwner", "type": "address" } ],
+      "outputs": [ { "name": "ok", "type": "bool" } ]
+    }
+  ],
+  "events": [
+    {
+      "name": "Enqueued",
+      "inputs": [
+        { "name": "task_id", "type": "bytes32", "indexed": true },
+        { "name": "model",   "type": "bytes",   "indexed": false },
+        { "name": "promptLen", "type": "uint32", "indexed": false }
+      ]
+    },
+    {
+      "name": "Consumed",
+      "inputs": [
+        { "name": "task_id",   "type": "bytes32", "indexed": true },
+        { "name": "resultLen", "type": "uint32",  "indexed": false }
+      ]
+    },
+    {
+      "name": "ModelUpdated",
+      "inputs": [
+        { "name": "oldModel", "type": "bytes", "indexed": false },
+        { "name": "newModel", "type": "bytes", "indexed": false }
+      ]
+    },
+    {
+      "name": "OwnershipTransferred",
+      "inputs": [
+        { "name": "previousOwner", "type": "address", "indexed": true },
+        { "name": "newOwner",      "type": "address", "indexed": true }
+      ]
+    }
+  ],
+  "errors": [
+    { "name": "NotOwner" },
+    { "name": "EmptyPrompt" },
+    { "name": "PromptTooLarge" },
+    { "name": "NoResultYet" }
+  ]
+}

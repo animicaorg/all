@@ -1,0 +1,50 @@
+{
+  "schema": "animica.proofs.storage.fixture.v1",
+  "description": "Valid Storage heartbeat (PoSt v0) fixture used for positive-path tests.",
+  "envelope": {
+    "type": "StorageHeartbeat",
+    "nullifier": "0x0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c",
+    "signature_alg": "dilithium3",
+    "signature": "0x"
+  },
+  "body": {
+    "headerHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "provider": {
+      "id": "stor-dev-01",
+      "address": "anim1provider0000000000000000000000000000000",
+      "region": "devnet",
+      "capacityGiB": 512,
+      "usedGiB": 128
+    },
+    "window": {
+      "start": "2025-10-02T00:00:00Z",
+      "end": "2025-10-02T00:10:00Z"
+    },
+    "commitment": {
+      "sectorsRoot": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "ticketDigest": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "proof": {
+      "kind": "post_v0",
+      "challengeSeed": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "proofDigest": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "samples": 64
+    },
+    "retrieval": {
+      "tickets": 3,
+      "success": 3,
+      "bonusEligible": true
+    },
+    "metrics": {
+      "qosScore": 0.995,
+      "availability": 0.999,
+      "redundancy": 3
+    },
+    "createdAt": "2025-10-02T00:00:06Z",
+    "accepted": true
+  },
+  "notes": [
+    "Deterministic devnet sample for structure-focused tests of Storage heartbeat verification.",
+    "Window falls within a short 10-minute slot; retrieval tickets succeeded → eligible for bonus."
+  ]
+}

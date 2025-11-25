@@ -1,0 +1,156 @@
+---
+/**
+ * CodeBlock.astro
+ * Client-side Prism highlighter with optional line numbers + copy button.
+ * Requires: `npm i prismjs`
+ */
+import "prismjs/themes/prism-tomorrow.css";
+import "prismjs/plugins/line-numbers/prism-line-numbers.css";
+
+interface Props {
+  code: string;
+  lang?: string;              // e.g., 'bash', 'ts', 'tsx', 'json', 'yaml', 'python', 'rust'
+  title?: string;
+  showLineNumbers?: boolean;
+  wrap?: boolean;             // wrap long lines
+  showCopy?: boolean;
+  class?: string;
+}
+
+const {
+  code,
+  lang = "bash",
+  title = "",
+  showLineNumbers = true,
+  wrap = false,
+  showCopy = true,
+  class: className = "",
+} = Astro.props as Props;
+
+const id = `cb_${Math.random().toString(36).slice(2)}`;
+const langClass = `language-${lang}`;
+const preExtra =
+  (showLineNumbers ? " line-numbers" : "") +
+  (wrap ? " whitespace-pre-wrap break-words" : " overflow-x-auto");
+---
+
+<div class={`relative not-prose rounded-lg border bg-[var(--bg-elevated)] 
+             border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)] ${className}`}>
+  <!-- Header bar -->
+  <div class="flex items-center justify-between px-3 py-2 border-b
+              border-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)] text-xs">
+    <div class="flex items-center gap-2 min-w-0">
+      <span class="inline-flex gap-1">
+        <span class="inline-block size-2 rounded-full bg-rose-500"></span>
+        <span class="inline-block size-2 rounded-full bg-amber-500"></span>
+        <span class="inline-block size-2 rounded-full bg-emerald-500"></span>
+      </span>
+      <span class="truncate opacity-80">{title || lang.toUpperCase()}</span>
+    </div>
+    {showCopy && (
+      <button
+        class="px-2 py-1 rounded border text-[11px] leading-none
+               border-[color-mix(in_srgb,var(--text-primary)_/_18%,transparent)]
+               hover:bg-[var(--bg-regular)]"
+        data-copy-target={id}
+        aria-label="Copy code"
+      >
+        Copy
+      </button>
+    )}
+  </div>
+
+  <!-- Code -->
+  <pre class={`${langClass}${preExtra} m-0`} style="background: transparent;">
+    <code id={id} data-lang={lang} class={langClass}>{code}</code>
+  </pre>
+</div>
+
+<!-- Client script: dynamic Prism + language loader + copy -->
+<script type="module">
+  (async () => {
+    const codeEl = document.getElementById("{id}");
+    if (!codeEl) return;
+    const lang = codeEl.getAttribute("data-lang") || "";
+
+    // Load Prism core
+    const { default: Prism } = await import("prismjs");
+
+    // Best-effort dynamic language loader
+    const loaders = {
+      js: () => import("prismjs/components/prism-javascript"),
+      javascript: () => import("prismjs/components/prism-javascript"),
+      ts: () => import("prismjs/components/prism-typescript"),
+      typescript: () => import("prismjs/components/prism-typescript"),
+      tsx: () => import("prismjs/components/prism-tsx"),
+      json: () => import("prismjs/components/prism-json"),
+      bash: () => import("prismjs/components/prism-bash"),
+      shell: () => import("prismjs/components/prism-bash"),
+      sh: () => import("prismjs/components/prism-bash"),
+      yaml: () => import("prismjs/components/prism-yaml"),
+      yml: () => import("prismjs/components/prism-yaml"),
+      toml: () => import("prismjs/components/prism-toml"),
+      md: () => import("prismjs/components/prism-markdown"),
+      markdown: () => import("prismjs/components/prism-markdown"),
+      python: () => import("prismjs/components/prism-python"),
+      py: () => import("prismjs/components/prism-python"),
+      rust: () => import("prismjs/components/prism-rust"),
+      rs: () => import("prismjs/components/prism-rust"),
+      sql: () => import("prismjs/components/prism-sql"),
+      html: () => import("prismjs/components/prism-markup"),
+      xml: () => import("prismjs/components/prism-markup"),
+      css: () => import("prismjs/components/prism-css"),
+      c: () => import("prismjs/components/prism-c"),
+      cpp: () => import("prismjs/components/prism-cpp"),
+      // Fallbacks for uncommon:
+      cddl: () => import("prismjs/components/prism-clike"),
+    };
+
+    try { if (loaders[lang]) await loaders[lang](); } catch {}
+
+    // Optional line-numbers plugin (no-op if CSS only)
+    try { await import("prismjs/plugins/line-numbers/prism-line-numbers"); } catch {}
+
+    Prism.highlightElement(codeEl);
+
+    // Copy button wiring
+    const btn = document.querySelector(`[data-copy-target="{id}"]`);
+    if (btn) {
+      btn.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(codeEl.textContent || "");
+          btn.textContent = "Copied";
+          btn.classList.add("opacity-80");
+          setTimeout(() => {
+            btn.textContent = "Copy";
+            btn.classList.remove("opacity-80");
+          }, 1500);
+        } catch (err) {
+          console.error("Copy failed:", err);
+          btn.textContent = "Error";
+          setTimeout(() => (btn.textContent = "Copy"), 1500);
+        }
+      });
+    }
+  })();
+</script>
+
+<style>
+  /* Tweak Prism spacing to match container; keep transparent background */
+  :global(pre[class*="language-"]) {
+    margin: 0;
+    padding: 0.9rem 1rem;
+    background: transparent;
+  }
+  :global(pre[class*="language-"].line-numbers) {
+    padding-left: 3.25rem; /* space for numbers */
+  }
+  :global(pre code) {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size: 0.85rem;
+    line-height: 1.5;
+  }
+  :global(.line-numbers .line-numbers-rows > span:before) {
+    color: color-mix(in srgb, var(--text-primary) 50%, transparent);
+  }
+</style>

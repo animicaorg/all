@@ -1,0 +1,241 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.animica.org/governance/ballot.schema.json",
+  "title": "Animica Governance — Ballot",
+  "description": "Schema for on-chain/off-chain submitted ballots that vote on a specific proposal. Supports support/against/abstain with delegated/role-weighted voting power snapshots.",
+  "type": "object",
+  "additionalProperties": false,
+
+  "properties": {
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "kind": { "const": "Ballot" },
+    "network": { "type": "string", "enum": ["mainnet", "testnet", "devnet"] },
+
+    "proposal_id": {
+      "type": "string",
+      "pattern": "^[A-Z0-9._:-]{3,128}$",
+      "description": "Matches the proposal's stable identifier (e.g., GOV-2026.02-Params-A)."
+    },
+
+    "ballot_id": {
+      "type": "string",
+      "pattern": "^[A-Z0-9._:-]{3,160}$",
+      "description": "Optional stable ID for tracking this ballot (commonly derived from proposal_id + voter + snapshot)."
+    },
+
+    "voter": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "address": { "$ref": "#/$defs/address" },
+        "display_name": { "type": "string", "maxLength": 140 },
+        "organization": { "type": "string", "maxLength": 140 },
+        "role": {
+          "type": "string",
+          "enum": ["token_holder","delegate","council","maintainer","foundation","observer"],
+          "description": "Role classification at snapshot time (used for policy/caps)."
+        }
+      },
+      "required": ["address"]
+    },
+
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "height": { "type": "integer", "minimum": 0, "description": "Block height at which voting power is measured." },
+        "time": { "type": "string", "format": "date-time" },
+        "state_root": { "$ref": "#/$defs/sha3_256" },
+        "voting_power": {
+          "$ref": "#/$defs/decimal_uint",
+          "description": "Total voting power attributed to the voter at the snapshot."
+        },
+        "power_breakdown": {
+          "type": "array",
+          "description": "Optional breakdown of voting power sources.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "source": { "type": "string", "maxLength": 64, "description": "e.g., 'self', 'delegations', 'council-seat-1'." },
+              "amount": { "$ref": "#/$defs/decimal_uint" }
+            },
+            "required": ["source","amount"]
+          }
+        },
+        "delegation_chain": {
+          "type": "array",
+          "description": "If delegated, ordered list from delegator → … → voter.",
+          "items": { "$ref": "#/$defs/address" }
+        }
+      },
+      "required": ["height"]
+    },
+
+    "vote": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "choice": { "type": "string", "enum": ["for","against","abstain"] },
+        "weight_override": {
+          "$ref": "#/$defs/decimal_uint",
+          "description": "Optional explicit weight to count (defaults to snapshot.voting_power if omitted)."
+        },
+        "quadratic_credits": {
+          "$ref": "#/$defs/decimal_uint",
+          "description": "Optional credits spent if quadratic voting is enabled for the proposal."
+        },
+        "rationale": { "type": "string", "maxLength": 2000 }
+      },
+      "required": ["choice"]
+    },
+
+    "cast_at": { "type": "string", "format": "date-time" },
+    "nonce": { "type": "integer", "minimum": 0, "description": "Optional anti-replay nonce if required by the signing domain." },
+
+    "client_meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "wallet_name": { "type": "string", "maxLength": 64 },
+        "wallet_version": { "type": "string", "maxLength": 32 },
+        "sdk_name": { "type": "string", "maxLength": 32 },
+        "sdk_version": { "type": "string", "maxLength": 32 },
+        "platform": { "type": "string", "maxLength": 64 },
+        "locale": { "type": "string", "maxLength": 16 }
+      }
+    },
+
+    "ballot_domain": {
+      "type": "object",
+      "description": "Domain separation for signatures.",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "const": "Animica Governance" },
+        "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "chain_id": { "type": "integer", "minimum": 0 },
+        "message_type": { "type": "string", "const": "gov-ballot-v1" }
+      }
+    },
+
+    "signatures": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/signature" },
+      "description": "One or more signatures (e.g., multisig) over the canonicalized ballot payload."
+    },
+
+    "payload_hash": {
+      "$ref": "#/$defs/sha3_256",
+      "description": "Hash of the canonical JSON payload the voter signed (pre-image excludes signatures)."
+    },
+
+    "extensions": {
+      "type": "object",
+      "description": "Vendor- or deployment-specific extensions.",
+      "additionalProperties": true
+    }
+  },
+
+  "required": [
+    "schema_version",
+    "kind",
+    "network",
+    "proposal_id",
+    "voter",
+    "snapshot",
+    "vote",
+    "signatures"
+  ],
+
+  "$defs": {
+    "address": {
+      "type": "string",
+      "pattern": "^(anim1)[0-9a-z]{10,}$",
+      "description": "Animica bech32m address (anim1…); minimal pattern."
+    },
+    "hex": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]*$"
+    },
+    "sha3_256": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{64}$",
+      "description": "Hex-encoded SHA3-256 digest."
+    },
+    "decimal_uint": {
+      "type": "string",
+      "pattern": "^[0-9]{1,78}$",
+      "description": "Unsigned integer as a base-10 string (up to ~256-bit)."
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "address": { "$ref": "#/$defs/address" },
+        "alg": { "type": "string", "enum": ["dilithium3","sphincs_shake_128s","ed25519","secp256k1"] },
+        "signature": { "$ref": "#/$defs/hex" },
+        "signed_at": { "type": "string", "format": "date-time" },
+        "payload_hash": { "$ref": "#/$defs/sha3_256" }
+      },
+      "required": ["address","alg","signature","payload_hash"]
+    }
+  },
+
+  "examples": [
+    {
+      "schema_version": 1,
+      "kind": "Ballot",
+      "network": "testnet",
+      "proposal_id": "GOV-2026.02-Params-A",
+      "ballot_id": "BAL-GOV-2026.02-Params-A-anim1qq...9v3r-h2222000",
+      "voter": {
+        "address": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqz9v3r",
+        "role": "delegate",
+        "display_name": "Alex Example"
+      },
+      "snapshot": {
+        "height": 2222000,
+        "state_root": "0x5a1c5f4bddf2a2e2b2f1b1f4dbe7a6a7f4c3b2a1d9c8e7f6a5b4c3d2e1f0a9b8",
+        "voting_power": "1250000",
+        "power_breakdown": [
+          { "source": "self", "amount": "250000" },
+          { "source": "delegations", "amount": "1000000" }
+        ],
+        "delegation_chain": [
+          "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq0abcd",
+          "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqz9v3r"
+        ]
+      },
+      "vote": {
+        "choice": "for",
+        "rationale": "Supports cost caps and improved throughput."
+      },
+      "cast_at": "2026-02-11T19:05:02Z",
+      "client_meta": {
+        "wallet_name": "Animica Wallet",
+        "wallet_version": "0.8.2",
+        "sdk_name": "animica-ts",
+        "sdk_version": "0.7.1",
+        "platform": "macOS-ARM64",
+        "locale": "en-US"
+      },
+      "ballot_domain": {
+        "name": "Animica Governance",
+        "version": "1.0.0",
+        "chain_id": 1,
+        "message_type": "gov-ballot-v1"
+      },
+      "payload_hash": "0x0f0e0d0c0b0a090807060504030201ff0f0e0d0c0b0a090807060504030201ff",
+      "signatures": [
+        {
+          "address": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqz9v3r",
+          "alg": "dilithium3",
+          "signature": "0xabc123",
+          "signed_at": "2026-02-11T19:05:03Z",
+          "payload_hash": "0x0f0e0d0c0b0a090807060504030201ff0f0e0d0c0b0a090807060504030201ff"
+        }
+      ]
+    }
+  ]
+}

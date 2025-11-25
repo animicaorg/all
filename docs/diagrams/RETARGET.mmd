@@ -1,0 +1,77 @@
+%% Mermaid: Difficulty Retarget — Θ (Theta) Update Loop
+%% View online: https://mermaid.live
+
+flowchart TB
+  %% ===================== INPUTS =====================
+  subgraph INPUTS[Inputs]
+    direction TB
+    ThetaPrev[Θₙ (previous threshold)\n(µ-nats)]:::cons
+    LambdaTarget[λ_target (target blocks/sec)\n= 1 / T_target]:::data
+    Window[Recent block timestamps\n(last W heights)]:::data
+    Params[(Retarget Params)\nβ (EMA), clamps (min/max),\nstep caps, guard bands]:::data
+  end
+
+  %% ===================== WINDOW STATS =====================
+  subgraph STATS[Observed Window Statistics]
+    direction TB
+    Deltas[Δtᵢ = tsᵢ − tsᵢ₋₁ for window]:::calc
+    ClampOutliers[Clamp/trim jitters & outliers]:::calc
+    MeanDelta[\n\bar{Δt}_win (mean/median)\n]:::calc
+  end
+
+  %% ===================== EMA =====================
+  subgraph EMA[Exponential Moving Average]
+    direction TB
+    EMADelta[EMA(Δt):\nΔ̂ₙ = (1−β)·Δ̂ₙ₋₁ + β·\bar{Δt}_win]:::calc
+    LambdaObs[λ_obs = 1 / Δ̂ₙ]:::calc
+  end
+
+  %% ===================== RATIO & LOG STEP =====================
+  subgraph RATIO[Ratio & Proposed Step]
+    direction TB
+    Ratio[r = λ_obs / λ_target]:::calc
+    LogStep[s* = k · ln(r)\n(k is gain; units: µ-nats)]:::calc
+    ClampStep[Clamp s* to [s_min, s_max]]:::guard
+  end
+
+  %% ===================== GUARDS =====================
+  subgraph GUARDS[Guards & Stability]
+    direction TB
+    Deadband[Deadband: if |ln(r)| < ε → s = 0]:::guard
+    Hysteresis[Hysteresis around recent Θ to avoid flip-flop]:::guard
+    RateLimit[Rate-Limit per retarget: |Θₙ − Θₙ₋₁| ≤ step_cap]:::guard
+  end
+
+  %% ===================== OUTPUT =====================
+  subgraph OUTPUT[Update & Persist]
+    direction TB
+    ThetaNew[Θₙ₊₁ = Θₙ + s\n(apply deadband, clamp, rate limit)]:::cons
+    Persist[Persist Θₙ₊₁ for next height\n(broadcast in header hints)]:::core
+  end
+
+  %% ===================== FLOWS =====================
+  ThetaPrev --> OUTPUT
+  Window --> Deltas --> ClampOutliers --> MeanDelta --> EMADelta --> LambdaObs --> Ratio --> LogStep --> ClampStep --> ThetaNew
+  LambdaTarget --> Ratio
+  Params --> EMADelta
+  Params --> ClampStep
+  Params --> Deadband
+  Params --> Hysteresis
+  Params --> RateLimit
+  ClampStep --> Deadband --> Hysteresis --> RateLimit --> ThetaNew
+  ThetaNew --> Persist
+
+  %% ===================== NOTES =====================
+  %% Equivalents:
+  %% - Using µ-nats (fixed-point) keeps log/exp stable and deterministic.
+  %% - k (gain) tunes responsiveness; too high → oscillations, too low → sluggishness.
+  %% - Deadband ε avoids tiny jitter; Hysteresis & step_cap smooth abrupt changes.
+  %% - Window W and β control noise vs. lag; suggest W≈(5–20) blocks, β≈0.2–0.4.
+  %% - All ops must be deterministic (fixed rounding, saturating clamps).
+
+  %% ===================== STYLES =====================
+  classDef data fill:#f3f4f6,stroke:#888,stroke-width:1,color:#222;
+  classDef calc fill:#93c5fd,stroke:#225,stroke-width:1,color:#001;
+  classDef guard fill:#fde68a,stroke:#a16207,stroke-width:1,color:#442;
+  classDef cons fill:#34d399,stroke:#0b4,stroke-width:1,color:#062;
+  classDef core fill:#10b981,stroke:#0b4,stroke-width:1,color:#062;

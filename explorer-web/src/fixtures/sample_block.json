@@ -1,0 +1,183 @@
+{
+  "height": 123456,
+  "hash": "0x6f5c2a3a4b9d9b1f0d8e7c6b5a49281726354433221100ffeeddccbbaa998877",
+  "parentHash": "0x1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809",
+  "chainId": "omni-devnet",
+  "proposer": "omni1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqp0h8k2",
+  "timestamp": 1735689600,
+  "time": "2025-01-01T00:00:00Z",
+  "sizeBytes": 42173,
+  "gasUsed": 982134,
+  "gasLimit": 2000000,
+  "txCount": 3,
+  "roots": {
+    "txsRoot": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "receiptsRoot": "0x2222222222222222222222222222222222222222222222222222222222222222",
+    "stateRoot": "0x3333333333333333333333333333333333333333333333333333333333333333",
+    "daRoot": "0x4444444444444444444444444444444444444444444444444444444444444444"
+  },
+  "fees": {
+    "baseFeePerGas": 1,
+    "priorityFeePerGas": 0,
+    "totalFeesPaid": 12500
+  },
+  "da": {
+    "root": "0x4444444444444444444444444444444444444444444444444444444444444444",
+    "bytes": 8192,
+    "blobs": [
+      {
+        "id": "0x9a9a9a9a0001",
+        "size": 4096,
+        "commitment": "0x9d7f5a0a2a31a1f1a55b0b9b9c77d1f2e3e4f5a6b7c8d9e0a1b2c3d4e5f60718"
+      },
+      {
+        "id": "0x9a9a9a9a0002",
+        "size": 4096,
+        "commitment": "0x18f607e5d4c3b2a1e0d9c8b7a6f5e4e3f2d1c7799b0b5aa1f1a1312a0a5a7d9e"
+      }
+    ]
+  },
+  "poies": {
+    "gamma": 0.72,
+    "thetaTarget": 0.70,
+    "mix": {
+      "hashshare": 0.50,
+      "ai": 0.20,
+      "quantum": 0.20,
+      "storage": 0.05,
+      "vdf": 0.05
+    },
+    "fairness": {
+      "gini": 0.14,
+      "hhi": 0.17
+    }
+  },
+  "proofs": [
+    {
+      "type": "HashShare",
+      "count": 256,
+      "weight": 0.5,
+      "details": {
+        "committee": 64,
+        "k": 8,
+        "round": 812,
+        "root": "0xabcd0001abcd0001abcd0001abcd0001abcd0001abcd0001abcd0001abcd0001"
+      }
+    },
+    {
+      "type": "AI",
+      "count": 12,
+      "weight": 0.2,
+      "details": {
+        "providers": 3,
+        "units": 480,
+        "sla": {
+          "p99LatencyMs": 850,
+          "successRate": 0.995
+        }
+      }
+    },
+    {
+      "type": "Quantum",
+      "count": 7,
+      "weight": 0.2,
+      "details": {
+        "providers": 2,
+        "shots": 16384,
+        "trapdoor": "0xdeadbeefcafe"
+      }
+    },
+    {
+      "type": "Storage",
+      "count": 2,
+      "weight": 0.05,
+      "details": {
+        "nmtLeaves": 128,
+        "nmtRoot": "0x5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+      }
+    },
+    {
+      "type": "VDF",
+      "count": 1,
+      "weight": 0.05,
+      "details": {
+        "rounds": 1048576,
+        "y": "0x0102030405",
+        "verifier": "classgroup"
+      }
+    }
+  ],
+  "txs": [
+    {
+      "hash": "0xaaaa1111bbbb2222cccc3333dddd4444eeee5555ffff66660000111122223333",
+      "from": "omni1p4k3h9p8h5qz66u7n2f0t9c3j6a8r4y5x2v9t0",
+      "to": "omni1z0z0z0z0z0z0z0z0z0z0z0z0z0z0z0z0z0z0z0z",
+      "nonce": 101,
+      "value": "0",
+      "gasUsed": 312000,
+      "maxFeePerGas": 1,
+      "status": "success",
+      "type": "deploy",
+      "contractAddress": "omni1cntcounterxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxe7u0",
+      "logs": [
+        {
+          "index": 0,
+          "event": "Deployed",
+          "address": "omni1cntcounterxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxe7u0",
+          "data": {
+            "codeHash": "0x7777777777777777777777777777777777777777777777777777777777777777"
+          },
+          "topics": [
+            "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          ]
+        }
+      ]
+    },
+    {
+      "hash": "0xbbbb1111bbbb2222cccc3333dddd4444eeee5555ffff66660000111122224444",
+      "from": "omni1p4k3h9p8h5qz66u7n2f0t9c3j6a8r4y5x2v9t0",
+      "to": "omni1cntcounterxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxe7u0",
+      "nonce": 102,
+      "value": "0",
+      "gasUsed": 85000,
+      "maxFeePerGas": 1,
+      "status": "success",
+      "type": "call",
+      "method": "inc",
+      "args": [],
+      "logs": [
+        {
+          "index": 0,
+          "event": "Increased",
+          "address": "omni1cntcounterxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxe7u0",
+          "data": {
+            "by": 1,
+            "newValue": 1
+          },
+          "topics": [
+            "0x9999999999999999999999999999999999999999999999999999999999999999"
+          ]
+        }
+      ]
+    },
+    {
+      "hash": "0xcccc1111bbbb2222cccc3333dddd4444eeee5555ffff66660000111122225555",
+      "from": "omni1p4k3h9p8h5qz66u7n2f0t9c3j6a8r4y5x2v9t0",
+      "to": "omni1q9w8e7r6t5y4u3i2o1p0a9s8d7f6g5h4j3k2l1m",
+      "nonce": 103,
+      "value": "420000000000000000",
+      "gasUsed": 21000,
+      "maxFeePerGas": 1,
+      "status": "success",
+      "type": "transfer",
+      "logs": []
+    }
+  ],
+  "stats": {
+    "tps": 3.2,
+    "blockTimeMs": 2100,
+    "mempoolIn": 12,
+    "mempoolOut": 9,
+    "peerCount": 18
+  }
+}

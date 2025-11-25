@@ -1,0 +1,171 @@
+# Miner workers as a Deployment. Designed to be HPA-friendly:
+# - Sets resource requests/limits so the autoscaler has signals.
+# - Exposes Prometheus metrics on :9102 with scrape annotations.
+# - Liveness/readiness probes for safe rolling updates.
+#
+# The miner reads its config from /etc/animica/miner.toml (mounted from the
+# ConfigMap 'miner-config') and typically talks to the node's RPC/WS.
+# Ensure you have created:
+#   - ops/k8s/configmaps/miner-config.yaml    (key: miner.toml)
+#   - Services for node RPC & WS (node-rpc.yaml) already applied.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: animica-miner
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: miner
+    app.kubernetes.io/name: animica-miner
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: animica
+      app.kubernetes.io/component: miner
+      app.kubernetes.io/name: animica-miner
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: animica
+        app.kubernetes.io/component: miner
+        app.kubernetes.io/name: animica-miner
+      annotations:
+        # Prometheus scrape hints (works with the provided scrape configs)
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9102"
+        prometheus.io/path: "/metrics"
+    spec:
+      terminationGracePeriodSeconds: 20
+      # Spread miners across nodes/hostnames when possible
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: animica
+              app.kubernetes.io/component: miner
+              app.kubernetes.io/name: animica-miner
+      containers:
+        - name: miner
+          # Replace with your published miner image
+          image: ghcr.io/animica/miner:latest
+          imagePullPolicy: IfNotPresent
+          # If your image has an entrypoint that reads MINER_CONFIG or the mounted
+          # /etc/animica/miner.toml, no args are required. Otherwise, uncomment:
+          # args: ["python", "-m", "mining.cli.miner", "--config", "/etc/animica/miner.toml"]
+          env:
+            # Common knobs; keep in sync with ops/docker/config/miner.toml as needed
+            - name: MINER_CONFIG
+              value: /etc/animica/miner.toml
+            - name: RPC_HTTP_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: node-config
+                  key: rpc_http_url
+                  optional: true
+            - name: RPC_WS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: node-config
+                  key: rpc_ws_url
+                  optional: true
+            - name: CHAIN_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: chain-params
+                  key: chain_id
+                  optional: true
+            # Sensible defaults for dev clusters; HPA can scale replicas
+            - name: MINER_DEVICE
+              value: "cpu"            # cpu|cuda|rocm|opencl|metal (if image supports GPU)
+            - name: MINER_THREADS
+              value: "2"              # per-pod CPU threads (tune with requests/limits)
+          ports:
+            - name: metrics
+              containerPort: 9102
+              protocol: TCP
+          volumeMounts:
+            - name: miner-config
+              mountPath: /etc/animica/miner.toml
+              subPath: miner.toml
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 8
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            # Requests should reflect MINER_THREADS so the HPA & scheduler behave.
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+      volumes:
+        - name: miner-config
+          configMap:
+            name: miner-config
+            items:
+              - key: miner.toml
+                path: miner.toml
+
+---
+# HorizontalPodAutoscaler (v2) to scale miner replicas by CPU utilization.
+# You can switch to custom/external metrics (e.g., hashrate or queue depth)
+# by wiring a metrics adapter and adjusting 'metrics:' below.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: animica-miner
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: miner
+    app.kubernetes.io/name: animica-miner
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: animica-miner
+  minReplicas: 2
+  maxReplicas: 10
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 120
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

@@ -1,0 +1,95 @@
+[package]
+name = "animica_zk_native"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Native accelerators for Animica zk verifiers (BN254 pairings, KZG), with optional Python bindings."
+repository = "https://example.com/animica"
+keywords = ["zk", "groth16", "plonk", "kzg", "bn254"]
+categories = ["cryptography", "algorithms"]
+readme = false
+authors = ["Animica Labs <dev@animica.invalid>"]
+
+[lib]
+name = "animica_zk_native"
+# `cdylib` is used when building the optional Python extension (feature = "python").
+# Code should guard all pyo3 items with `#[cfg(feature = "python")]`.
+crate-type = ["rlib", "cdylib"]
+
+[features]
+default = []
+# BN254 pairings (Groth16) enable core curve & pairing crates.
+pairing = [
+  "dep:ark-ff",
+  "dep:ark-ec",
+  "dep:ark-serialize",
+  "dep:ark-bn254"
+]
+# KZG10 over BN254 using ark-poly-commit. Implies `pairing`.
+kzg = [
+  "pairing",
+  "dep:ark-poly",
+  "dep:ark-poly-commit"
+]
+# Optional Python bindings via pyo3 (build a CPython extension). Keep off by default.
+python = [
+  "dep:pyo3",
+  "dep:serde",
+  "dep:serde_json"
+]
+# Optional parallelism (rayon + ark parallel features). Keep off by default for determinism in CI.
+parallel = [
+  "dep:rayon",
+  "ark-ff/parallel",
+  "ark-ec/parallel",
+  "ark-poly/parallel",
+  "ark-poly-commit/parallel"
+]
+
+[dependencies]
+thiserror = "1.0"
+
+# --- Arkworks core (enabled via features) ---
+ark-ff = { version = "0.4", optional = true, default-features = false, features = ["std"] }
+ark-ec = { version = "0.4", optional = true, default-features = false, features = ["std"] }
+ark-serialize = { version = "0.4", optional = true, default-features = false, features = ["std"] }
+ark-bn254 = { version = "0.4", optional = true, default-features = false, features = ["curve"] }
+
+# Polynomials & KZG10 (ark-poly-commit has a "kzg10" feature flag)
+ark-poly = { version = "0.4", optional = true, default-features = false, features = ["std"] }
+ark-poly-commit = { version = "0.4", optional = true, default-features = false, features = ["kzg10","std"] }
+
+# Optional parallelism
+rayon = { version = "1.10", optional = true }
+
+# Optional Python bindings (enabled with feature `python`)
+pyo3 = { version = "0.21", optional = true, default-features = false, features = ["extension-module"] }
+serde = { version = "1.0", optional = true, features = ["derive"] }
+serde_json = { version = "1.0", optional = true }
+
+# --- (Optional) logging for native benches / debug ---
+log = { version = "0.4", optional = true }
+env_logger = { version = "0.11", optional = true }
+
+[dev-dependencies]
+criterion = "0.5"
+rand = "0.8"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+opt-level = 3
+debug = false
+strip = true
+
+[package.metadata.docs.rs]
+features = ["pairing", "kzg"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+# When building wheels via maturin (only if you opt into Python):
+[package.metadata.maturin]
+# pick a minimum that matches your deployment targets
+requires-python = ">=3.8"
+bindings = "pyo3"
+# The Python module name will match the package/lib name by default.
+

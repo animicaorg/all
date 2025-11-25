@@ -1,0 +1,92 @@
+%% UPGRADE_FLOW.mmd — Gated rollout with canaries for protocol/VM upgrades
+%% Render at https://mermaid.live
+
+flowchart TB
+  %% Lanes as subgraphs
+  subgraph P[Preparation]
+    P1[Author Release Notes\n& Migration Guide]
+    P2[Build Artifacts\nbinaries/contracts]
+    P3[Verify Integrity\nchecksums, signatures]
+    P4[Risk Review\nUPGRADE_RISK_CHECKLIST.md]
+    P5[Approve Proposal\n(tally PASSED)]
+  end
+
+  subgraph S[Staging / Devnet]
+    S1[Spin Devnet]
+    S2[Run E2E & Load Tests]
+    S3{SLOs OK?}
+  end
+
+  subgraph G[Canaried Rollout (Main/Test)]
+    G0[Gate 0: Dark Deploy\ncode shipped, feature off]
+    G1[Gate 1: Canary 1%]
+    G2[Gate 2: Canary 5%]
+    G3[Gate 3: Canary 20%]
+    G4[Gate 4: Canary 50%]
+    G5[Gate 5: Canary 100%]
+  end
+
+  subgraph M[Metrics & Safety]
+    M1[Health: blocks/sec, orphan rate]
+    M2[Mempool: rejects, latency]
+    M3[PoIES: Γ drift, validator share]
+    M4[VM: gas/tx, opcode faults]
+    M5[DA: blob success %, prove time]
+    M6[Incidents? alerts?]
+    M7{Abort Switch?}
+  end
+
+  subgraph R[Rollback / Comms]
+    R1[Auto Rollback to N-1]
+    R2[Invalidate Release\n(flag off / version gate)]
+    R3[Postmortem\nTRANSPARENCY.md]
+    R4[Notify Community\nstatus + timelines]
+  end
+
+  subgraph C[Completion]
+    C1[Flip Feature Flag\n'activate' or param set]
+    C2[Finalize Docs\nCHANGELOG, registry]
+    C3[Tag Version & Sign\nupgrade_paths.json]
+    C4[Close Incident (if any)]
+  end
+
+  %% Flow
+  P1 --> P2 --> P3 --> P4 --> P5
+  P5 --> S1 --> S2 --> S3
+  S3 -- no --> R3
+  S3 -- yes --> G0
+
+  %% Gated canaries with checks between each step
+  G0 --> G1 --> M1 & M2 & M3 & M4 & M5 --> M6 --> M7
+  M7 -- abort --> R1 --> R2 --> R3 --> R4
+  M7 -- continue --> G2
+  G2 --> M1 & M2 & M3 & M4 & M5 --> M6 --> M7
+  M7 -- continue --> G3
+  G3 --> M1 & M2 & M3 & M4 & M5 --> M6 --> M7
+  M7 -- continue --> G4
+  G4 --> M1 & M2 & M3 & M4 & M5 --> M6 --> M7
+  M7 -- continue --> G5 --> C1 --> C2 --> C3 --> C4
+
+  %% Styling
+  classDef gate fill:#e6f4ff,stroke:#1677ff,color:#002766,stroke-width:1px;
+  classDef risk fill:#fff7e6,stroke:#d48806,color:#613400,stroke-width:1px;
+  classDef abort fill:#fff1f0,stroke:#cf1322,color:#820014,stroke-width:1px;
+  classDef ok fill:#e6fff2,stroke:#00a66f,color:#0b5137,stroke-width:1px;
+
+  class G0,G1,G2,G3,G4,G5 gate
+  class P4,M7 risk
+  class R1,R2,R3,R4 abort
+  class C1,C2,C3,C4 ok
+
+  %% Helpful deep-links (click in supported renderers)
+  click P4 "governance/risk/UPGRADE_RISK_CHECKLIST.md" "Open risk checklist"
+  click C2 "governance/ops/calendars/governance.md" "Governance cadence & agenda"
+  click C3 "governance/registries/upgrade_paths.json" "Upgrade paths registry"
+  click G1 "governance/policies/SLASHING_AND_RECOURSE.md" "Provider misbehavior policy"
+  click G0 "governance/registries/contracts.json" "Deployed contract table"
+
+  %% Notes:
+  %% - Each gate requires stable metrics over N epochs (configurable).
+  %% - Abort switch is hot: flip feature flag or param to revert safely.
+  %% - For VM opcode activations, G0 ships opcode behind a version gate; C1
+  %%   sets 'vm.opcode.allowlist += NEW_OP' effective at block height H.

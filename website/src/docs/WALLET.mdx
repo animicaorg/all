@@ -1,0 +1,188 @@
+---
+title: "Wallet — Browser Extension & Flutter App"
+description: "How to install, connect, and use the Animica wallet (MV3 browser extension) and the Flutter desktop/mobile app."
+layout: ../layouts/DocsLayout.astro
+---
+
+import InlineLink from "../components/InlineLink.astro";
+
+> This guide covers **both** the MV3 **browser extension** (Chromium/Firefox) and the **Flutter wallet** (desktop/mobile).  
+> It assumes you have an RPC endpoint handy (devnet or testnet). See <InlineLink href="/docs/QUICKSTART">Quickstart</InlineLink>.
+
+---
+
+## 1) Browser Extension (MV3)
+
+### Install
+
+- **Chrome / Edge**: Load the built CRX from the releases page or enable **Developer Mode → Load unpacked** and select the `wallet-extension/dist` folder.
+- **Firefox**: Load the signed XPI from releases or `about:debugging → This Firefox → Load Temporary Add-on…`.
+
+> Builds and signed installers are linked on <InlineLink href="/downloads">/downloads</InlineLink>.  
+> You can also build locally from the monorepo: `pnpm -C wallet-extension build:chrome`.
+
+### Create or import a wallet
+
+1. Open the popup, click **Create wallet** (stores an encrypted vault in extension storage).
+2. Save your **mnemonic** securely (BIP-39-like; PBKDF/HKDF-SHA3).
+3. Choose an algorithm suite (default **Dilithium3**, fallback **SPHINCS+**).  
+   Addresses are **bech32m** with prefix `anim1…` (payload: `alg_id || sha3_256(pubkey)`).
+
+### Connect a dapp (AIP-1193-like provider)
+
+On a web dapp:
+
+```ts
+// Detect provider injected by the extension
+const provider = (window as any).animica;
+if (!provider) throw new Error("Animica provider not found");
+
+// Request connection (origin-scoped permission)
+const [account] = await provider.request({ method: "animica_requestAccounts" });
+
+// Optional: ensure chain matches your app
+const chainId = await provider.request({ method: "animica_chainId" });
+
+// Listen to changes
+provider.on("accountsChanged", (accs: string[]) => console.log("accounts:", accs));
+provider.on("chainChanged", (id: string) => console.log("chain:", id));
+
+When the page calls animica_requestAccounts, the extension will open an approval window. Users can Allow per-origin permissions and select an account/network.
+
+Build & sign a transaction (example)
+
+// Minimal transfer example
+const tx = {
+  kind: "transfer",
+  to: "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqxyza",
+  amount: "12345",
+  nonce: 1,
+  gasPrice: "1",
+  gasLimit: "21000",
+  chainId: "1"
+};
+
+const signed = await provider.request({
+  method: "animica_signAndSubmitTx",
+  params: [tx] // CBOR-encoded under the hood; domain-separated SignBytes
+});
+
+console.log("txHash:", signed.txHash);
+const rcpt = await provider.request({
+  method: "animica_getTransactionReceipt",
+  params: [signed.txHash]
+});
+console.log("status:", rcpt.status, "gasUsed:", rcpt.gasUsed);
+
+Network selection
+	•	Switch networks from the popup’s Network menu (Animica mainnet/testnet/devnet or custom RPC).
+	•	Dapps can prompt a network with:
+
+await provider.request({ method: "animica_switchChain", params: [{ chainId: "1" }] });
+
+
+	•	If the chain is unknown, the extension will offer Add network with RPC URL and chain ID.
+
+Security model
+	•	Keys never leave the extension; requests are origin-bound and session-scoped.
+	•	Each sign request shows a human-readable summary and CBOR size to deter over-size payloads.
+	•	PQ signatures (Dilithium3/SPHINCS+) use domain separation for Tx/Header/Blob sign-bytes.
+
+Troubleshooting (extension)
+	•	Provider not found → Ensure the extension is installed and the page is not sandboxed with sandbox/iframe restrictions.
+	•	Chain mismatch → Use animica_switchChain or change network in the popup.
+	•	RPC errors → Check the configured RPC URL in Settings and verify the node is reachable.
+
+⸻
+
+2) Flutter Wallet (Desktop/Mobile)
+
+The Flutter wallet targets macOS, Windows, Linux, iOS, and Android. It speaks the same RPC as the extension and supports identical PQ key options.
+
+Install
+	•	Download the installer for your OS from /downloads.
+	•	Or build locally (example):
+
+flutter --version  # 3.22+ recommended
+flutter pub get
+# Desktop
+flutter build macos   # or: windows / linux
+# Mobile
+flutter build ios     # or: android
+
+
+
+First run
+	1.	Create or Import a wallet (same mnemonic format as the extension).
+	2.	Pick default algorithm (Dilithium3 or SPHINCS+).
+	3.	Set RPC URL and Chain ID in Settings → Network (devnet/testnet/mainnet).
+
+Connect to dapps (deep links & QR)
+	•	The Flutter app registers the scheme animica:// for deep links:
+	•	animica://connect?origin=https%3A%2F%2Fapp.example
+	•	animica://sign-tx?payload=<base64-cbor>
+	•	From desktop/mobile browsers, dapps can open a deep link to hand off a sign or connect request.
+	•	The app can scan a QR to import a request payload or recipient address.
+
+Example: send a transfer (Dart)
+
+import 'package:animica_wallet/sdk.dart' as sdk;
+
+final rpc = sdk.Rpc(url: 'http://localhost:8545');
+final wallet = await sdk.Wallet.fromMnemonic(mnemonic,
+  alg: sdk.Alg.dilithium3);
+final acct = await wallet.defaultAccount();
+
+final tx = sdk.TransferTx(
+  to: 'anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqxyza',
+  amount: BigInt.from(12345),
+  nonce: await rpc.getNonce(acct.address),
+  gasPrice: BigInt.one,
+  gasLimit: BigInt.from(21000),
+  chainId: 1337,
+);
+
+final signed = await wallet.sign(tx);
+final hash = await rpc.sendRawTransaction(signed.cbor);
+final rcpt = await rpc.getTransactionReceipt(hash);
+print('status=${rcpt.status} gasUsed=${rcpt.gasUsed}');
+
+Backup & recovery
+	•	Export an encrypted keystore (AES-GCM) or re-export the mnemonic.
+	•	On import, the wallet validates address derivation for Dilithium3/SPHINCS+ and checks bech32m checksum.
+
+Security model (Flutter)
+	•	Vault encrypted at rest (platform keychain if available).
+	•	Clipboard redaction (configurable) and screen protection on mobile (prevents screenshots on sensitive screens).
+	•	Optional biometric unlock on iOS/Android; session PIN on desktop.
+
+Dev tips
+	•	Toggle Developer Mode to unlock:
+	•	Custom RPC URLs and chainId overrides.
+	•	Raw CBOR TX viewer and SignBytes preview.
+	•	Logs export and RPC tracing.
+
+Troubleshooting (Flutter)
+	•	Can’t reach RPC → Verify host firewall and emulator networking (use 10.0.2.2 on Android emulator).
+	•	Invalid address → Ensure anim1… bech32m and correct alg_id prefix.
+	•	Nonce too low / gap → Fetch nonce from RPC prior to building the tx; avoid parallel sends without replacement rules.
+
+⸻
+
+3) Interop & migration
+	•	Extension and Flutter app share mnemonic format and address rules; you can import/export between them.
+	•	Both speak the standard JSON-RPC surface; see SDK overview and specs.
+
+⸻
+
+4) Privacy & telemetry
+	•	No background analytics by default. If enabled, only anonymized events (install, version, network) are sent.
+You can disable in Settings → Privacy.
+
+⸻
+
+5) Next steps
+	•	Try the Studio to simulate and deploy a contract: Open Studio
+	•	Inspect live status & head height: /status
+	•	Explore SDK recipes: Quickstart
+

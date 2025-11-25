@@ -1,0 +1,36 @@
+# This file is generated and used by the Flutter tool.
+# It is safe to commit to source control. Flutter may update it automatically.
+# Do not rely on exact values here; they're informational for migrations/upgrades.
+
+version:
+  revision: unknown        # Flutter git revision will be filled by the tool
+  channel: stable          # e.g., stable/beta/master
+project_type: app          # Flutter project type (app/module/package/plugin)
+
+# Migration tracking used by `flutter upgrade` and platform project migrations.
+# The tool updates these when platforms are added or regenerated.
+migration:
+  platforms:
+    - platform: root
+      create_revision: unknown
+      base_revision: unknown
+    - platform: android
+      create_revision: unknown
+      base_revision: unknown
+    - platform: ios
+      create_revision: unknown
+      base_revision: unknown
+    - platform: macos
+      create_revision: unknown
+      base_revision: unknown
+    - platform: linux
+      create_revision: unknown
+      base_revision: unknown
+    - platform: windows
+      create_revision: unknown
+      base_revision: unknown
+    - platform: web
+      create_revision: unknown
+      base_revision: unknown
+
+  unmanaged_files: []  # Paths the tool should not modify during migrations

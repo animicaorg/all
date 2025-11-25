@@ -1,0 +1,18 @@
+# Grafana provisioning: Dashboard providers
+# This file tells Grafana to auto-load dashboards from a directory.
+# Point the path via GRAFANA_DASHBOARDS_PATH if you mount dashboards elsewhere.
+
+apiVersion: 1
+
+providers:
+  - name: Animica Dashboards
+    type: file
+    orgId: 1
+    folder: Animica                 # Dashboards appear under this folder in Grafana
+    disableDeletion: false          # Allow deleting via UI
+    allowUiUpdates: true            # Persist edits back to JSON (when writable)
+    updateIntervalSeconds: 30       # Rescan fs for new/changed dashboards
+    options:
+      path: ${GRAFANA_DASHBOARDS_PATH:/etc/grafana/dashboards}
+      # If your dashboards are nested in subfolders on disk, mirror them in Grafana:
+      foldersFromFilesStructure: true

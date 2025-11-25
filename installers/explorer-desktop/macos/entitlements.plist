@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Animica Explorer — macOS Hardened Runtime Entitlements
+  Notes:
+    - We DO NOT enable App Sandbox here (non–Mac App Store distribution).
+    - Hardened Runtime is enabled via codesign (--options runtime). The keys below
+      are *exceptions* we explicitly allow/deny to keep the surface tight.
+    - WKWebView networking is permitted; no camera/mic/JIT/unsigned exec memory.
+    - If you later ship on the Mac App Store, you'll need a separate sandboxed
+      entitlements file with com.apple.security.app-sandbox=true and the proper
+      file/network capabilities.
+-->
+<plist version="1.0">
+<dict>
+  <!-- No JIT or executable memory in the app process -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <false/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <false/>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <false/>
+
+  <!-- Network client access for remote Explorer / RPC calls via WKWebView -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+  <key>com.apple.security.network.server</key>
+  <false/>
+
+  <!-- Optional: allow user-selected file reads (e.g., export/save dialogs) -->
+  <key>com.apple.security.files.user-selected.read-only</key>
+  <true/>
+
+  <!-- No device access -->
+  <key>com.apple.security.device.camera</key>
+  <false/>
+  <key>com.apple.security.device.microphone</key>
+  <false/>
+</dict>
+</plist>

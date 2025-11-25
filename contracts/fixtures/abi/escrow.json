@@ -1,0 +1,130 @@
+{
+  "abiVersion": "1",
+  "contract": {
+    "name": "Escrow",
+    "version": "1.0.0",
+    "description": "Deterministic escrow: payer deposits fixed amount, arbiter can resolve disputes, funds released/refunded per rules."
+  },
+  "functions": [
+    { "name": "payer",   "stateMutability": "view", "inputs": [], "outputs": [ { "name": "addr", "type": "address" } ] },
+    { "name": "payee",   "stateMutability": "view", "inputs": [], "outputs": [ { "name": "addr", "type": "address" } ] },
+    { "name": "arbiter", "stateMutability": "view", "inputs": [], "outputs": [ { "name": "addr", "type": "address" } ] },
+
+    { "name": "amount",    "stateMutability": "view", "inputs": [], "outputs": [ { "name": "wei", "type": "uint256" } ] },
+    { "name": "deposited", "stateMutability": "view", "inputs": [], "outputs": [ { "name": "wei", "type": "uint256" } ] },
+    { "name": "deadline",  "stateMutability": "view", "inputs": [], "outputs": [ { "name": "ts",  "type": "uint64"  } ] },
+
+    {
+      "name": "state",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        { "name": "status", "type": "uint8", "description": "0=AWAITING_DEPOSIT,1=DEPOSITED,2=RELEASED,3=REFUNDED,4=DISPUTED,5=RESOLVED" }
+      ]
+    },
+
+    {
+      "name": "deposit",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "amount", "type": "uint256", "description": "Must equal the configured escrow amount." }
+      ],
+      "outputs": [ { "name": "ok", "type": "bool" } ]
+    },
+    {
+      "name": "release",
+      "stateMutability": "nonpayable",
+      "inputs": [],
+      "outputs": [ { "name": "ok", "type": "bool" } ],
+      "description": "Release full deposited amount to payee (requires proper authority and state=DEPOSITED)."
+    },
+    {
+      "name": "refund",
+      "stateMutability": "nonpayable",
+      "inputs": [],
+      "outputs": [ { "name": "ok", "type": "bool" } ],
+      "description": "Refund full deposited amount to payer (e.g., if deadline passed and not released)."
+    },
+    {
+      "name": "dispute",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "reason", "type": "bytes" }
+      ],
+      "outputs": [ { "name": "ok", "type": "bool" } ],
+      "description": "Open a dispute; moves state to DISPUTED."
+    },
+    {
+      "name": "resolve",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "payee_amount", "type": "uint256", "description": "Amount to payee; remainder refunded to payer." }
+      ],
+      "outputs": [ { "name": "ok", "type": "bool" } ],
+      "description": "Arbiter resolves dispute by splitting deposited funds."
+    },
+    {
+      "name": "setArbiter",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "newArbiter", "type": "address" }
+      ],
+      "outputs": [ { "name": "ok", "type": "bool" } ]
+    }
+  ],
+  "events": [
+    {
+      "name": "Deposited",
+      "inputs": [
+        { "name": "payer",  "type": "address", "indexed": true },
+        { "name": "amount", "type": "uint256", "indexed": false }
+      ]
+    },
+    {
+      "name": "Released",
+      "inputs": [
+        { "name": "payee",  "type": "address", "indexed": true },
+        { "name": "amount", "type": "uint256", "indexed": false }
+      ]
+    },
+    {
+      "name": "Refunded",
+      "inputs": [
+        { "name": "payer",  "type": "address", "indexed": true },
+        { "name": "amount", "type": "uint256", "indexed": false }
+      ]
+    },
+    {
+      "name": "Disputed",
+      "inputs": [
+        { "name": "by",     "type": "address", "indexed": true },
+        { "name": "reason", "type": "bytes",   "indexed": false }
+      ]
+    },
+    {
+      "name": "Resolved",
+      "inputs": [
+        { "name": "payee_amount", "type": "uint256", "indexed": false },
+        { "name": "payer_amount", "type": "uint256", "indexed": false }
+      ]
+    },
+    {
+      "name": "ArbiterChanged",
+      "inputs": [
+        { "name": "oldArbiter", "type": "address", "indexed": true },
+        { "name": "newArbiter", "type": "address", "indexed": true }
+      ]
+    }
+  ],
+  "errors": [
+    { "name": "NotPayer" },
+    { "name": "NotPayee" },
+    { "name": "NotArbiter" },
+    { "name": "AlreadyDeposited" },
+    { "name": "NotDeposited" },
+    { "name": "AlreadyFinalized" },
+    { "name": "PastDeadline" },
+    { "name": "InvalidState" },
+    { "name": "ZeroAmount" }
+  ]
+}

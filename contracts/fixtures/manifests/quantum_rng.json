@@ -1,0 +1,39 @@
+{
+  "manifestVersion": "1",
+  "name": "AnimicaQuantumRNG",
+  "version": "1.0.0",
+  "language": "python-vm",
+
+  "entry": "../../examples/quantum_rng/contract.py",
+  "abi": { "$ref": "../abi/quantum_rng.json" },
+
+  "code": {
+    "format": "ir.cbor",
+    "hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "size": 0
+  },
+
+  "deploy": {
+    "method": "init",
+    "args": {}
+  },
+
+  "resources": {
+    "capabilities": ["randomness", "quantum"],
+    "storage": {
+      "estimatedKeys": 8,
+      "notes": "tracks last_beacon_mix, last_quantum_bytes, request counters and caller access flags"
+    }
+  },
+
+  "compat": {
+    "vm": { "min": "1.0.0", "max": "2.0.0" }
+  },
+
+  "metadata": {
+    "authors": ["Animica Labs"],
+    "license": "Apache-2.0",
+    "homepage": "https://animica.dev",
+    "description": "Example RNG contract that deterministically mixes the global beacon with provider-returned quantum bytes (via capabilities) to produce high-entropy outputs with a verifiable transcript."
+  }
+}

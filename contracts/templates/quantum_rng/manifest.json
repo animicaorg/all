@@ -1,0 +1,100 @@
+{
+  "name": "QuantumRNGMixer",
+  "version": "0.1.0",
+  "description": "Template contract that enqueues a quantum circuit and mixes its result with the beacon to produce a fresh bytes32 RNG value. Includes bounded storage and deterministic caps suitable for examples.",
+  "language": "python",
+  "entry": "contract.py",
+  "license": "Apache-2.0",
+  "authors": ["Animica Labs"],
+  "metadata": {
+    "tags": ["template", "quantum", "randomness", "rng", "aicf"],
+    "readme": "See contracts/templates/quantum_rng/contract.py for API details."
+  },
+  "abi": {
+    "functions": [
+      {
+        "name": "init",
+        "inputs": [
+          { "name": "circuit", "type": "bytes" },
+          { "name": "shots", "type": "int" }
+        ],
+        "outputs": []
+      },
+      {
+        "name": "set_config",
+        "inputs": [
+          { "name": "circuit", "type": "bytes" },
+          { "name": "shots", "type": "int" }
+        ],
+        "outputs": []
+      },
+      {
+        "name": "get_config",
+        "inputs": [],
+        "outputs": [{ "type": "bytes" }]
+      },
+      {
+        "name": "get_shots",
+        "inputs": [],
+        "outputs": [{ "type": "int" }]
+      },
+      {
+        "name": "enqueue",
+        "inputs": [],
+        "outputs": [{ "type": "bytes" }]
+      },
+      {
+        "name": "read_last_result",
+        "inputs": [],
+        "outputs": [{ "type": "bytes" }]
+      },
+      {
+        "name": "last_task",
+        "inputs": [],
+        "outputs": [{ "type": "bytes" }]
+      },
+      {
+        "name": "get_last_result",
+        "inputs": [],
+        "outputs": [{ "type": "bytes" }]
+      },
+      {
+        "name": "get_mix",
+        "inputs": [],
+        "outputs": [{ "type": "bytes" }]
+      }
+    ],
+    "events": [
+      {
+        "name": "Configured",
+        "args": [
+          { "name": "circuit_len", "type": "int" },
+          { "name": "shots", "type": "int" }
+        ]
+      },
+      {
+        "name": "Enqueued",
+        "args": [
+          { "name": "task_id", "type": "bytes" },
+          { "name": "shots", "type": "int" }
+        ]
+      },
+      {
+        "name": "Completed",
+        "args": [
+          { "name": "task_id", "type": "bytes" },
+          { "name": "mix", "type": "bytes" }
+        ]
+      }
+    ],
+    "errors": [
+      "ALREADY_INIT",
+      "NOT_CONFIGURED",
+      "CIRCUIT_LEN",
+      "SHOTS_RANGE",
+      "NO_TASK",
+      "NO_RESULT_YET",
+      "TASK_ID"
+    ]
+  }
+}

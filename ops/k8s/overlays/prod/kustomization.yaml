@@ -1,0 +1,100 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Production overlay applying on top of the base in ../../
+namespace: animica-prod
+namePrefix: prod-
+commonLabels:
+  app.kubernetes.io/part-of: animica
+  app.kubernetes.io/environment: prod
+  app.kubernetes.io/instance: prod
+
+resources:
+  - ../../
+
+# Pin image tags appropriate for production. (Unmatched names are ignored safely.)
+images:
+  - name: ghcr.io/animica/node
+    newTag: stable
+  - name: ghcr.io/animica/miner
+    newTag: stable
+  - name: ghcr.io/animica/explorer
+    newTag: stable
+  - name: ghcr.io/animica/studio-services
+    newTag: stable
+  - name: ghcr.io/animica/studio-web
+    newTag: stable
+  - name: ghcr.io/animica/explorer-web
+    newTag: stable
+
+# Inline JSON6902 patches for replica sizing, service exposure, and node resources.
+patches:
+  # Scale stateless services up for production.
+  - target:
+      kind: Deployment
+      name: miner
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3
+  - target:
+      kind: Deployment
+      name: explorer
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3
+  - target:
+      kind: Deployment
+      name: studio-web
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+  - target:
+      kind: Deployment
+      name: explorer-web
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+  - target:
+      kind: Deployment
+      name: services
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+
+  # Ensure external access to RPC and P2P via LoadBalancer (or your cloud LB).
+  - target:
+      kind: Service
+      name: node-rpc
+    patch: |-
+      - op: replace
+        path: /spec/type
+        value: LoadBalancer
+  - target:
+      kind: Service
+      name: node-p2p
+    patch: |-
+      - op: replace
+        path: /spec/type
+        value: LoadBalancer
+
+  # Beefier resources for the node in production.
+  - target:
+      kind: StatefulSet
+      name: node
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: "2000m"
+            memory: "8Gi"
+            ephemeral-storage: "4Gi"
+          limits:
+            cpu: "4"
+            memory: "16Gi"
+            ephemeral-storage: "16Gi"

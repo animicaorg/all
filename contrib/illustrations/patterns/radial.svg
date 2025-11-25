@@ -1,0 +1,28 @@
+<!-- Animica — Radial Vignette Overlay
+     Transparent center → darker edges. Place above content to add focus.
+     Edit stop opacities to taste. ViewBox 1600×900, scales responsively. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" role="img" aria-label="Radial vignette overlay with transparent center">
+  <defs>
+    <!-- Outer edge darkness (black by default). Change stop-color to tint. -->
+    <radialGradient id="vignette" cx="50%" cy="50%" r="70%">
+      <stop offset="0%"   stop-color="#000000" stop-opacity="0"/>
+      <stop offset="60%"  stop-color="#000000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0.52"/>
+    </radialGradient>
+
+    <!-- Optional feather ring for subtle focus (very light). -->
+    <radialGradient id="focusRing" cx="50%" cy="50%" r="36%">
+      <stop offset="70%" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.06"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Transparent canvas (no background fill). -->
+  <rect width="1600" height="900" fill="none"/>
+
+  <!-- Feather ring (optional layer; comment out if not desired). -->
+  <rect width="1600" height="900" fill="url(#focusRing)"/>
+
+  <!-- Main vignette -->
+  <rect width="1600" height="900" fill="url(#vignette)"/>
+</svg>

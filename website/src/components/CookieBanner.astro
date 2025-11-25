@@ -1,0 +1,273 @@
+---
+/**
+ * CookieBanner.astro
+ * Accessible, minimal cookie consent banner with category-level control.
+ *
+ * - Stores preferences in localStorage (versioned key).
+ * - Dispatches a "cookieprefs:changed" event on window with {detail: prefs}.
+ * - Exposes window.ANIMICA_COOKIE_PREFS and adds data-analytics="on|off" to <html>.
+ *
+ * Usage:
+ *   <CookieBanner />
+ *
+ * Optional props:
+ *   - storageKey?: string  (default "animica.cookiePrefs.v1")
+ *   - brand?: string       (default "Animica")
+ *   - privacyHref?: string (default "/privacy")
+ *   - position?: "bottom" | "top" (default "bottom")
+ */
+interface Props {
+  storageKey?: string;
+  brand?: string;
+  privacyHref?: string;
+  position?: "bottom" | "top";
+}
+const {
+  storageKey = "animica.cookiePrefs.v1",
+  brand = "Animica",
+  privacyHref = "/privacy",
+  position = "bottom",
+} = Astro.props as Props;
+---
+
+<style>
+  .ckbnr {
+    position: fixed;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    font: 14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
+    color: #e6eef8;
+    background: rgba(9, 14, 24, 0.92);
+    backdrop-filter: saturate(120%) blur(6px);
+    box-shadow: 0 -2px 16px rgba(0,0,0,0.25);
+  }
+  .ckbnr.top { top: 0; }
+  .ckbnr.bottom { bottom: 0; }
+  .ckbnr__inner {
+    margin: 0 auto;
+    max-width: 1024px;
+    padding: 16px;
+    display: grid;
+    gap: 12px;
+  }
+  .ckbnr__row {
+    display: grid;
+    gap: 10px;
+  }
+  @media (min-width: 820px) {
+    .ckbnr__row {
+      grid-template-columns: 1fr auto;
+      align-items: center;
+    }
+  }
+  .ckbnr__title {
+    margin: 0 0 6px 0;
+    font-weight: 600;
+    font-size: 15px;
+    color: #ffffff;
+  }
+  .ckbnr__text {
+    margin: 0;
+    color: #cfe0ff;
+  }
+  .ckbnr__text a {
+    color: #8ec8ff;
+    text-decoration: underline;
+  }
+  .ckbnr__btns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-start;
+  }
+  .ckbnr button {
+    cursor: pointer;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    background: #203450;
+    color: #eef6ff;
+  }
+  .ckbnr button.ckbnr--accent {
+    background: #2f6df6;
+    border-color: #2f6df6;
+    color: #fff;
+  }
+  .ckbnr button.ckbnr--ghost {
+    background: transparent;
+    border-color: #39567f;
+    color: #cfe0ff;
+  }
+  .ckbnr__custom {
+    margin-top: 8px;
+    padding: 12px;
+    border: 1px solid #2a3f63;
+    border-radius: 10px;
+    background: rgba(16, 28, 48, 0.6);
+  }
+  .ckbnr__group {
+    display: grid;
+    gap: 8px;
+    margin-top: 6px;
+  }
+  .ckbnr__switch {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .ckbnr__switch input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+  }
+  .ckbnr__save {
+    margin-top: 10px;
+    display: flex;
+    gap: 8px;
+  }
+  .ckbnr[hidden] { display: none !important; }
+</style>
+
+<div
+  id="cookie-banner"
+  class={`ckbnr ${position}`}
+  role="dialog"
+  aria-live="polite"
+  aria-label="Cookie consent"
+  hidden
+>
+  <div class="ckbnr__inner">
+    <div class="ckbnr__row">
+      <div>
+        <h2 class="ckbnr__title">Cookies & Privacy</h2>
+        <p class="ckbnr__text">
+          {brand} uses essential cookies to keep things working, and optional analytics to improve the site.
+          See our <a href={privacyHref} rel="nofollow">Privacy Policy</a> for details.
+        </p>
+      </div>
+      <div class="ckbnr__btns">
+        <button class="ckbnr--accent" id="ck-accept-all">Accept all</button>
+        <button class="ckbnr--ghost" id="ck-reject">Reject non-essential</button>
+        <button id="ck-customize">Customize</button>
+      </div>
+    </div>
+
+    <div id="ck-custom-panel" class="ckbnr__custom" hidden>
+      <strong>Preferences</strong>
+      <div class="ckbnr__group" role="group" aria-labelledby="ck-customize">
+        <label class="ckbnr__switch">
+          <input type="checkbox" checked disabled aria-disabled="true" />
+          <span><strong>Essential</strong> — required for core functionality</span>
+        </label>
+        <label class="ckbnr__switch">
+          <input type="checkbox" id="ck-analytics" />
+          <span><strong>Analytics</strong> — privacy-respecting usage metrics</span>
+        </label>
+      </div>
+      <div class="ckbnr__save">
+        <button class="ckbnr--accent" id="ck-save">Save preferences</button>
+        <button class="ckbnr--ghost" id="ck-cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script is:inline>
+  (function () {
+    const STORAGE_KEY = ${JSON.stringify(storageKey)};
+    const banner = document.getElementById('cookie-banner');
+    const btnAcceptAll = document.getElementById('ck-accept-all');
+    const btnReject = document.getElementById('ck-reject');
+    const btnCustomize = document.getElementById('ck-customize');
+    const panel = document.getElementById('ck-custom-panel');
+    const chkAnalytics = document.getElementById('ck-analytics');
+    const btnSave = document.getElementById('ck-save');
+    const btnCancel = document.getElementById('ck-cancel');
+
+    type Prefs = { essential: true; analytics: boolean; ts: number; v: number };
+    const VERSION = 1;
+
+    function readPrefs(): Prefs | null {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) return null;
+        const p = JSON.parse(raw);
+        if (!p || typeof p !== 'object') return null;
+        if (p.v !== VERSION) return null;
+        return { essential: true, analytics: !!p.analytics, ts: Number(p.ts||0), v: VERSION };
+      } catch { return null; }
+    }
+
+    function writePrefs(analytics: boolean) {
+      const prefs: Prefs = { essential: true, analytics, ts: Date.now(), v: VERSION };
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs)); } catch {}
+      expose(prefs);
+      dispatch(prefs);
+    }
+
+    function expose(prefs: Prefs) {
+      try {
+        // Global for app code / analytics loaders to read
+        // @ts-ignore
+        window.ANIMICA_COOKIE_PREFS = prefs;
+        document.documentElement.setAttribute('data-analytics', prefs.analytics ? 'on' : 'off');
+      } catch {}
+    }
+
+    function dispatch(prefs: Prefs) {
+      try {
+        window.dispatchEvent(new CustomEvent('cookieprefs:changed', { detail: prefs }));
+      } catch {}
+    }
+
+    function show() { banner?.removeAttribute('hidden'); }
+    function hide() { banner?.setAttribute('hidden', ''); }
+
+    // Initialize
+    const current = readPrefs();
+    if (current) {
+      expose(current);
+      // No banner needed; prefs already set
+      hide();
+    } else {
+      show();
+    }
+
+    // Wire buttons
+    btnAcceptAll?.addEventListener('click', () => {
+      writePrefs(true);
+      hide();
+    });
+
+    btnReject?.addEventListener('click', () => {
+      writePrefs(false);
+      hide();
+    });
+
+    btnCustomize?.addEventListener('click', () => {
+      const p = readPrefs();
+      if (p) chkAnalytics && (chkAnalytics.checked = !!p.analytics);
+      panel?.removeAttribute('hidden');
+    });
+
+    btnCancel?.addEventListener('click', () => {
+      panel?.setAttribute('hidden', '');
+    });
+
+    btnSave?.addEventListener('click', () => {
+      const allowAnalytics = !!(chkAnalytics && (chkAnalytics as HTMLInputElement).checked);
+      writePrefs(allowAnalytics);
+      hide();
+    });
+
+    // Expose helper for app code to read quickly.
+    // Example usage: const ok = window.animicaHasAnalyticsConsent();
+    // @ts-ignore
+    window.animicaHasAnalyticsConsent = function () {
+      const p = readPrefs();
+      return !!(p && p.analytics);
+    };
+  })();
+</script>

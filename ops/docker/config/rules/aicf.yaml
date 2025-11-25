@@ -1,0 +1,215 @@
+# Prometheus alerting rules — AICF (AI Compute Fund)
+# Expected metric names (tune if your deployment differs):
+#   Queue / flow:
+#     - animica_aicf_jobs_enqueued_total{job_kind}
+#     - animica_aicf_jobs_completed_total{job_kind}
+#     - animica_aicf_jobs_expired_total{job_kind}
+#     - animica_aicf_queue_depth (gauge)
+#     - animica_aicf_lease_lost_total
+#   Latency histograms:
+#     - animica_aicf_assignment_latency_seconds_bucket{job_kind}
+#     - animica_aicf_job_latency_seconds_bucket{job_kind}          # enqueue→complete
+#   SLA / quality:
+#     - animica_aicf_sla_eval_total{job_kind}
+#     - animica_aicf_sla_fail_total{job_kind}
+#     - animica_aicf_provider_sla_pass_rate{provider_id}           # optional gauge [0..1]
+#   Sanctions:
+#     - animica_aicf_slash_events_total{reason,provider_id}
+
+groups:
+  - name: aicf.rules
+    rules:
+      # ───────────────────────────── Backlog / Throughput ─────────────────────────────
+      - alert: AICFBacklogLarge
+        expr: animica_aicf_queue_depth > 500
+        for: 10m
+        labels:
+          severity: warning
+          service: animica
+          component: aicf
+        annotations:
+          summary: "AICF queue depth high (>500 jobs)"
+          description: >
+            The AICF queue is accumulating. Capacity may be constrained (providers offline,
+            quotas, or slow proofs). Consider adding providers or relaxing limits.
+
+      - alert: AICFBacklogGrowing
+        expr: |
+          (sum by (job_kind) (increase(animica_aicf_jobs_enqueued_total[15m]))
+           > sum by (job_kind) (increase(animica_aicf_jobs_completed_total[15m])) * 1.2)
+          and sum(increase(animica_aicf_jobs_enqueued_total[15m])) > 25
+        for: 15m
+        labels:
+          severity: warning
+          service: animica
+          component: aicf
+        annotations:
+          summary: "AICF backlog growing (enqueues outpace completes)"
+          description: >
+            Incoming jobs outpace completions by >20% over 15 minutes. Expect rising
+            latencies and potential expirations.
+
+      - alert: AICFQueueStuck
+        expr: |
+          increase(animica_aicf_jobs_enqueued_total[15m]) > 0
+          and increase(animica_aicf_jobs_completed_total[15m]) == 0
+        for: 10m
+        labels:
+          severity: critical
+          service: animica
+          component: aicf
+        annotations:
+          summary: "AICF queue stuck (no completions)"
+          description: >
+            Jobs are entering the queue but none complete. Providers may be unavailable
+            or verification paths failing.
+
+      # ───────────────────────────── Latency (p95) ─────────────────────────────
+      - alert: AICFAssignmentLatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, job_kind) (rate(animica_aicf_assignment_latency_seconds_bucket[5m]))
+          ) > 10
+        for: 10m
+        labels:
+          severity: warning
+          service: animica
+          component: aicf
+        annotations:
+          summary: "AICF assignment latency p95 > 10s"
+          description: >
+            Matching jobs to providers is slow. Check seeds/availability, quotas, or
+            scheduler pressure.
+
+      - alert: AICFJobLatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, job_kind) (rate(animica_aicf_job_latency_seconds_bucket[10m]))
+          ) > 300
+        for: 10m
+        labels:
+          severity: warning
+          service: animica
+          component: aicf
+        annotations:
+          summary: "AICF job end-to-end p95 > 5m"
+          description: >
+            End-to-end job time (enqueue→complete) is high. Investigate provider capacity,
+            proof generation, or verification bottlenecks.
+
+      - alert: AICFJobLatencyCritical
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, job_kind) (rate(animica_aicf_job_latency_seconds_bucket[10m]))
+          ) > 900
+        for: 10m
+        labels:
+          severity: critical
+          service: animica
+          component: aicf
+        annotations:
+          summary: "AICF job end-to-end p95 > 15m (critical)"
+          description: >
+            Severe job delays suggest widespread provider or network issues.
+
+      # ───────────────────────────── Expirations & Leases ─────────────────────────────
+      - alert: AICFJobExpirationsRising
+        expr: rate(animica_aicf_jobs_expired_total[10m]) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          service: animica
+          component: aicf
+        annotations:
+          summary: "AICF job expirations >0.1/s (avg over 10m)"
+          description: >
+            Jobs are expiring before completion. Raise TTLs or reduce queue pressure.
+
+      - alert: AICFLeaseLossSpike
+        expr: rate(animica_aicf_lease_lost_total[10m]) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: animica
+          component: aicf
+        annotations:
+          summary: "Lease losses >0.05/s (10m)"
+          description: >
+            Providers are losing leases (heartbeats failing or preemption). Check provider
+            health, network partitions, or overly strict timeouts.
+
+      # ───────────────────────────── SLA Quality ─────────────────────────────
+      - alert: AICFSLAFailuresHigh
+        expr: |
+          sum(rate(animica_aicf_sla_fail_total[15m]))
+          / clamp_min(sum(rate(animica_aicf_sla_eval_total[15m])), 1) > 0.10
+        for: 15m
+        labels:
+          severity: warning
+          service: animica
+          component: aicf
+        annotations:
+          summary: "SLA failures >10% (15m)"
+          description: >
+            SLA evaluation failures are elevated (traps/QoS/latency). Providers may be
+            underperforming or misconfigured.
+
+      - alert: AICFSLAFailuresCritical
+        expr: |
+          sum(rate(animica_aicf_sla_fail_total[15m]))
+          / clamp_min(sum(rate(animica_aicf_sla_eval_total[15m])), 1) > 0.25
+        for: 10m
+        labels:
+          severity: critical
+          service: animica
+          component: aicf
+        annotations:
+          summary: "SLA failures >25% (critical)"
+          description: >
+            Widespread SLA breaches; expect slashing and payout denials.
+
+      - alert: AICFProviderSLADegredation
+        expr: animica_aicf_provider_sla_pass_rate < 0.80
+        for: 20m
+        labels:
+          severity: warning
+          service: animica
+          component: aicf
+        annotations:
+          summary: "Provider SLA pass-rate <80%"
+          description: >
+            One or more providers have poor rolling SLA pass-rates. Consider jailing
+            or reducing quotas. (This rule fires only if the metric is exported.)
+
+      # ───────────────────────────── Slashing Spikes ─────────────────────────────
+      - alert: AICFSlashingSpikeRate
+        expr: |
+          sum(rate(animica_aicf_slash_events_total[10m]))
+          / clamp_min(sum(rate(animica_aicf_jobs_completed_total[10m])), 1) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: animica
+          component: aicf
+        annotations:
+          summary: "Slashing rate >5% of completed jobs"
+          description: >
+            Elevated slashing vs completions. Investigate common failure reasons.
+
+      - alert: AICFSlashingSpikeCritical
+        expr: |
+          sum(rate(animica_aicf_slash_events_total[10m]))
+          / clamp_min(sum(rate(animica_aicf_jobs_completed_total[10m])), 1) > 0.15
+        for: 10m
+        labels:
+          severity: critical
+          service: animica
+          component: aicf
+        annotations:
+          summary: "Slashing rate >15% (critical)"
+          description: >
+            Severe reliability or attestation issues leading to frequent slashes.
+

@@ -1,0 +1,125 @@
+---
+title: "Animica Devnet Launch"
+description: "Boot a local node, deploy a Python-VM contract, and watch blocks finalize."
+date: 2025-10-09
+author: "Animica Team"
+tags:
+  - launch
+  - devnet
+  - sdk
+  - vm-py
+  - poies
+hero: "/icons/wordmark.svg"
+---
+
+Welcome to the first public **Animica Devnet**. This post covers what's shipped, how to get started locally, and where to go next (Studio, Explorer, SDKs).
+
+> Heads up: Devnet is a living environment—expect frequent resets and rapid iteration.
+
+## What’s in this milestone
+
+- **PoIES consensus** (Σψ ≥ Θ) with fractional retarget and fairness bounds.
+- **Deterministic Python-VM** for smart contracts (compile → run with gas accounting).
+- **Post-quantum keys** (Dilithium3 / SPHINCS+) and **Kyber768** for P2P handshakes.
+- **Data Availability** (NMT commitments, light DAS verify).
+- **AICF** plumbing for off-chain AI/Quantum jobs (deterministic receipts).
+- Minimal **JSON-RPC** + **WebSocket** surface and an **MV3 browser wallet**.
+
+---
+
+## Quickstart (local)
+
+```bash
+# 1) Create & activate a fresh Python env
+python3 -m venv .venv && source .venv/bin/activate
+pip install -U pip
+
+# 2) Install node components (core + rpc + vm_py + sdk/python)
+pip install -e core -e rpc -e execution -e vm_py -e sdk/python
+
+# 3) Boot a node from the canonical devnet genesis
+python -m core.boot --genesis core/genesis/genesis.json --db sqlite:///animica.dev.db
+
+# 4) In another terminal, start the RPC server
+python -m rpc.server --host 127.0.0.1 --port 8545
+
+Verify the head:
+
+curl -s http://127.0.0.1:8545/rpc \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":[]}' | jq
+
+You should see a header with height, hash, theta, and roots.
+
+⸻
+
+Deploy the Counter contract
+
+Using the Python SDK
+
+from omni_sdk.config import Config
+from omni_sdk.wallet.mnemonic import new_mnemonic
+from omni_sdk.tx import build, send
+from omni_sdk.contracts.deployer import Deployer
+import json
+
+cfg = Config(rpc_url="http://127.0.0.1:8545", chain_id=1)
+mn = new_mnemonic()
+deployer = Deployer(cfg, mnemonic=mn, alg="dilithium3")
+
+manifest = json.load(open("vm_py/examples/counter/manifest.json"))
+addr = deployer.deploy(manifest, open("vm_py/examples/counter/contract.py","rb").read())
+
+tx = build.call(to=addr, func="inc", args=[])
+receipt = send.submit_and_wait(cfg, tx, signer=deployer.signer)
+print("Deployed at:", addr, "Gas used:", receipt["gasUsed"])
+
+Using the TypeScript SDK
+
+import { HttpClient, Wallet, Tx } from "@animica/sdk";
+
+const rpc = new HttpClient({ url: "http://127.0.0.1:8545", chainId: 1 });
+const wallet = await Wallet.fromMnemonic({ alg: "dilithium3" });
+
+const deploy = await Tx.deploy({
+  manifest: await (await fetch("/counter/manifest.json")).json(),
+  code: await (await fetch("/counter/contract.py")).text(),
+});
+
+const sent = await rpc.sendSigned(await wallet.sign(deploy));
+const receipt = await rpc.waitForReceipt(sent.hash);
+console.log("Address:", receipt.contractAddress);
+
+
+⸻
+
+Studio & Explorer (web)
+	•	Studio: Edit → Simulate → Deploy in the browser: /studio
+	•	Explorer: Live head, blocks, txs: /explorer
+	•	Docs: Specs, SDK guides, and design notes: /docs
+
+⸻
+
+Changelog highlights
+	•	RPC: chain.getParams, chain.getHead, chain.getBlockByNumber, tx.sendRawTransaction, tx.getTransactionReceipt, state lookups.
+	•	VM(Py): deterministic interpreter, ABI, events/logs, gas metering, stdlib shims.
+	•	DA: NMT commitments; light-client verify path.
+	•	PQ: wallet + node signing via Dilithium3 / SPHINCS+, Kyber768 handshake.
+	•	AICF: enqueue → prove → settle skeleton with receipts.
+
+⸻
+
+Troubleshooting
+	•	RPC connection refused: ensure the node is running and rpc.server is bound to the same DB.
+	•	OOG (out of gas): raise the tx gas limit or optimize contract logic.
+	•	ChainId mismatch: your signer domain must match the node’s chainId.
+
+⸻
+
+What’s next
+	•	VM(Py) contract library, on-chain events indexer.
+	•	Expanded DA sampling and light-client proofs in the SDKs.
+	•	ZK verifier adapters (Groth16/PLONK/STARK) behind zk.verify host capability.
+	•	Public devnet faucets and hosted explorers.
+
+If you hit issues, please file them in the repository with logs and minimal repros. Happy building!

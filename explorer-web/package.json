@@ -1,0 +1,40 @@
+{
+  "name": "explorer-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Animica Explorer — live blocks/tx/address views over JSON-RPC + WS.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --strictPort",
+    "test": "vitest run",
+    "test:ui": "vitest --ui",
+    "e2e": "playwright test"
+  },
+  "dependencies": {
+    "@animica/sdk": "file:../sdk",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.22.0",
+    "zod": "^3.23.0",
+    "zustand": "^4.5.0"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^14.2.0",
+    "@testing-library/user-event": "^14.5.0",
+    "@types/node": "^20.11.0",
+    "@types/react": "^18.2.48",
+    "@types/react-dom": "^18.2.18",
+    "@vitejs/plugin-react": "^4.2.0",
+    "@vitest/ui": "^1.5.0",
+    "jsdom": "^24.0.0",
+    "playwright": "^1.45.0",
+    "typescript": "^5.4.0",
+    "vite": "^5.4.21",
+    "vitest": "^1.5.0"
+  },
+  "engines": {
+    "node": ">=18.18.0"
+  }
+}

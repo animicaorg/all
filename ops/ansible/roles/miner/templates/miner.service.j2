@@ -1,0 +1,73 @@
+# This file is rendered by Ansible (roles/miner/templates/miner.service.j2)
+# Vars used:
+#   animica_user, animica_group, miner_venv_dir, miner_config_path,
+#   miner_service_name, miner_env (dict), gpu_backend (optional)
+
+[Unit]
+Description=Animica Miner — CPU/GPU scanning and proof attachment
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ animica_user | default('animica') }}
+Group={{ animica_group | default('animica') }}
+UMask=0027
+WorkingDirectory=/var/lib/animica/miner
+
+# Baseline env
+Environment="PYTHONUNBUFFERED=1"
+Environment="ANIMICA_CONFIG={{ miner_config_path | default('/etc/animica/miner.toml') }}"
+{% if gpu_backend | default('') %}
+Environment="ANIMICA_GPU_BACKEND={{ gpu_backend }}"
+{% endif %}
+{% for k, v in (miner_env | default({})).items() %}
+Environment="{{ k }}={{ v }}"
+{% endfor %}
+
+# Ensure state dir exists and is owned correctly
+ExecStartPre=/usr/bin/install -d -o {{ animica_user | default('animica') }} -g {{ animica_group | default('animica') }} /var/lib/animica/miner
+
+# Main process
+ExecStart={{ miner_venv_dir | default('/opt/animica/miner-venv') }}/bin/omni-miner --config {{ miner_config_path | default('/etc/animica/miner.toml') }}
+ExecReload=/bin/kill -HUP $MAINPID
+
+Restart=always
+RestartSec=3s
+TimeoutStartSec=30s
+TimeoutStopSec=20s
+KillSignal=SIGTERM
+
+# Resource limits
+LimitNOFILE=65535
+TasksMax=infinity
+Nice=5
+
+# Journald (default), can be overridden with Environment/LOG_* if desired
+StandardOutput=journal
+StandardError=inherit
+
+# Security hardening (may need tuning for specific GPU drivers)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadOnlyPaths=/etc/animica
+ReadWritePaths=/var/lib/animica /var/log/animica
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectClock=true
+ProtectHostname=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+SystemCallArchitectures=native
+# Comment this if your driver/runtime needs broader syscall access
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

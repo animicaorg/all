@@ -1,0 +1,171 @@
+{
+  "version": 1,
+  "notes": "Common proof-envelope vectors for all SDKs. These are small, schema-stable examples that exercise canonical encoding/decoding and light validation. Hex fields are 0x-prefixed; large integers that may exceed JS safe range are provided as decimal strings.",
+  "schema": {
+    "envelope.common": [
+      "type: enum['HashShare','AI','Quantum','StorageHeartbeat','VDF']",
+      "height: uint64",
+      "producer: string(bech32m address)",
+      "body: object (type-specific fields)",
+      "signature?: hex (optional; scheme-specific)"
+    ],
+    "expect": [
+      "valid: boolean",
+      "envelopeHash?: bytes32_hex (optional, placeholder for stability tests)"
+    ],
+    "body.HashShare": [
+      "workHash: bytes32_hex",
+      "nonce: uint64_hex",
+      "difficultyTarget: bytes32_hex",
+      "mix: bytes32_hex"
+    ],
+    "body.AI": [
+      "taskId: bytes32_hex",
+      "model: string",
+      "units: uint32",
+      "digest: bytes32_hex",
+      "attestation: object{tee:string,quote:hex}"
+    ],
+    "body.Quantum": [
+      "taskId: bytes32_hex",
+      "device: string",
+      "shots: uint32",
+      "trapsRatioBps: uint16",
+      "passed: boolean",
+      "digest: bytes32_hex",
+      "attestation: object{qpu:string,bundle:hex}"
+    ],
+    "body.StorageHeartbeat": [
+      "provider: string(bech32m)",
+      "sectorCount: uint32",
+      "timestamp: uint64_unix"
+    ],
+    "body.VDF": [
+      "round: uint64",
+      "input: bytes32_hex",
+      "output: bytes32_hex",
+      "proof: hex"
+    ]
+  },
+  "vectors": [
+    {
+      "name": "hashshare_ok",
+      "envelope": {
+        "type": "HashShare",
+        "height": 1001,
+        "producer": "anim1work03n0dq9z9r3c0m2l7kdnxyq5p2e9u8s4g3",
+        "body": {
+          "workHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "nonce": "0x0000000000000001",
+          "difficultyTarget": "0x0000000fffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "mix": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "signature": "0x010203"
+      },
+      "expect": {
+        "valid": true,
+        "envelopeHash": "0x1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    },
+    {
+      "name": "hashshare_bad_mix",
+      "envelope": {
+        "type": "HashShare",
+        "height": 1002,
+        "producer": "anim1workbadk9w7c3x2v1t0rqpnm5l4k3j2h1g9f8e7",
+        "body": {
+          "workHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "nonce": "0x0000000000000002",
+          "difficultyTarget": "0x0000000fffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "mix": "0x0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "signature": "0xdeadbeef"
+      },
+      "expect": {
+        "valid": false,
+        "envelopeHash": "0x2222222222222222222222222222222222222222222222222222222222222222"
+      }
+    },
+    {
+      "name": "ai_ok_attested",
+      "envelope": {
+        "type": "AI",
+        "height": 2042,
+        "producer": "anim1aicf0x7wq3n9v2y5t8u1m4k7p0q3r6s9t2u5v8",
+        "body": {
+          "taskId": "0x0101010101010101010101010101010101010101010101010101010101010101",
+          "model": "text:tiny-1.0",
+          "units": 42,
+          "digest": "0x9999999999999999999999999999999999999999999999999999999999999999",
+          "attestation": {
+            "tee": "SEV-SNP",
+            "quote": "0xabcdef"
+          }
+        }
+      },
+      "expect": {
+        "valid": true,
+        "envelopeHash": "0x3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    },
+    {
+      "name": "quantum_ok_traps_pass",
+      "envelope": {
+        "type": "Quantum",
+        "height": 2077,
+        "producer": "anim1qpu0aa3m9n6b3v8c2x7z5t1r4w0y6u3i9o8p7l",
+        "body": {
+          "taskId": "0x0202020202020202020202020202020202020202020202020202020202020202",
+          "device": "IonQ-QPU",
+          "shots": 1024,
+          "trapsRatioBps": 500,
+          "passed": true,
+          "digest": "0x8888888888888888888888888888888888888888888888888888888888888888",
+          "attestation": {
+            "qpu": "ionq-demo",
+            "bundle": "0xfeedface"
+          }
+        }
+      },
+      "expect": {
+        "valid": true,
+        "envelopeHash": "0x4444444444444444444444444444444444444444444444444444444444444444"
+      }
+    },
+    {
+      "name": "storage_heartbeat",
+      "envelope": {
+        "type": "StorageHeartbeat",
+        "height": 4096,
+        "producer": "anim1storag3h3artb3at0k9m2n5b8v1c4x7z0t3r6",
+        "body": {
+          "provider": "anim1storag3h3artb3at0k9m2n5b8v1c4x7z0t3r6",
+          "sectorCount": 65535,
+          "timestamp": 1700001234
+        }
+      },
+      "expect": {
+        "valid": true,
+        "envelopeHash": "0x5555555555555555555555555555555555555555555555555555555555555555"
+      }
+    },
+    {
+      "name": "vdf_ok",
+      "envelope": {
+        "type": "VDF",
+        "height": 5120,
+        "producer": "anim1beac0npr0ducer9x8y7z6w5v4u3t2s1r0q9p8",
+        "body": {
+          "round": 12,
+          "input": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "output": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "proof": "0x012345"
+        }
+      },
+      "expect": {
+        "valid": true,
+        "envelopeHash": "0x6666666666666666666666666666666666666666666666666666666666666666"
+      }
+    }
+  ]
+}

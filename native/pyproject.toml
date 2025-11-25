@@ -1,0 +1,103 @@
+[build-system]
+# maturin builds wheels directly from the Rust crate (see Cargo.toml).
+# No setuptools/poetry needed here.
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "animica-native"
+# Version is taken from Cargo.toml to keep Rust/Python in sync.
+dynamic = ["version"]
+description = "High-performance native primitives for Animica (Keccak, Reed–Solomon, NMT, VDF, PoIES helpers) with SIMD-accelerated Rust and optional C backends."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0 OR MIT" }
+authors = [{ name = "Animica Contributors" }]
+keywords = [
+  "animica", "blockchain", "cryptography", "keccak",
+  "reed-solomon", "vectorized", "simd", "merkle", "nmt", "vdf"
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Rust",
+  "License :: OSI Approved :: MIT License",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS :: MacOS X",
+  "Operating System :: Microsoft :: Windows",
+  "Topic :: Software Development :: Libraries",
+  "Topic :: Security :: Cryptography",
+]
+
+[project.urls]
+Homepage = "https://github.com/animica-labs/animica"
+Repository = "https://github.com/animica-labs/animica"
+Issues = "https://github.com/animica-labs/animica/issues"
+Changelog = "https://github.com/animica-labs/animica/blob/main/CHANGELOG.md"
+
+# If you later ship Python helper modules alongside the extension, put them in a
+# package directory and list it under [tool.maturin] -> python-source.
+# The compiled extension module name is taken from the Rust crate name (Cargo.toml).
+
+[tool.maturin]
+# Bindings via pyo3; the Rust crate should gate python-facing code behind the
+# "python" Cargo feature.
+bindings = "pyo3"
+features = ["python"]
+
+# Wheel targets & portability
+# For Linux, build manylinux2014 by default for wide compatibility.
+# (Override with MATURIN_COMPATIBILITY=musllinux_1_2, manylinux_2_28, etc.)
+compatibility = "manylinux2014"
+# Build a single universal2 wheel on macOS (x86_64 + arm64).
+universal2 = true
+# Strip symbols from release wheels (smaller artifacts).
+strip = true
+# You can restrict the Python interpreters maturin will target when building locally:
+interpreter = ["python3.9", "python3.10", "python3.11", "python3.12"]
+
+# Include sources in sdists for reproducibility.
+sdist-include = [
+  "README.md",
+  "LICENSE*",
+  "Cargo.toml",
+  "Cargo.lock",
+  "build.rs",
+  "src/**",
+  "csrc/**",
+]
+
+# If you later add pure-Python files (e.g., a top-level animica_native package),
+# set `python-source` to that directory and maturin will bundle them.
+# python-source = "python"
+
+# Extra cargo args can be provided via env at build time; we avoid
+# target-cpu=native here to keep manylinux wheels portable.
+# Example (local dev only): MATURIN_EXTRA_ARGS="--cargo-extra-args='-Zunstable-options'"
+
+# Notes on optional native paths:
+# - Enable C Keccak backend:  `maturin build --features c_keccak`
+# - Enable ISA-L acceleration: `maturin build --features isal` (requires pkg-config + isa-l)
+# - Enable SIMD-heavy code paths: `maturin build --features simd`
+# - Enable Rayon-based parallelism in supported routines: `maturin build --features rayon`
+
+[tool.maturin.env]
+# CI matrix can force advertised CPU capabilities (consumed by build.rs) to test
+# multiple codepaths without special runners:
+#   ANIMICA_NATIVE_FORCE_CPU="avx2,aes,x86_sha"
+# or for ARM:
+#   ANIMICA_NATIVE_FORCE_CPU="neon,sha2,sha3,arm_aes"
+ANIMICA_NATIVE_FORCE_CPU = { value = "", optional = true }
+
+# If your build environment needs custom pkg-config search paths for ISA-L:
+PKG_CONFIG_PATH = { value = "", optional = true }
+
+# Tuning: set RUSTFLAGS in CI if desired (left empty by default for portability).
+RUSTFLAGS = { value = "", optional = true }

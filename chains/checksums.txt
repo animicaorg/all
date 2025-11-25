@@ -1,0 +1,4 @@
+<sha256-of-chains/animica.localnet.json>  chains/animica.localnet.json
+<sha256-of-chains/animica.mainnet.json>   chains/animica.mainnet.json
+<sha256-of-chains/animica.testnet.json>   chains/animica.testnet.json
+<sha256-of-chains/registry.json>          chains/registry.json

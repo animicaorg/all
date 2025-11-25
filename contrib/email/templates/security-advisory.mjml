@@ -1,0 +1,253 @@
+<mjml>
+  <mj-head>
+    <mj-attributes>
+      <mj-all font-family="Inter, -apple-system, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif" />
+      <mj-text font-size="16px" color="#0F172A" line-height="1.6" />
+      <mj-section padding="0px" />
+      <mj-column padding="0px" />
+      <mj-button background-color="#EF4444" color="#0B0D12" font-weight="800" inner-padding="12px 20px" border-radius="10px" />
+    </mj-attributes>
+    <mj-preview>{{preheader}}</mj-preview>
+    <mj-style inline="inline">
+      .eyebrow { text-transform: uppercase; letter-spacing:.08em; font-size:12px; color:#64748B; }
+      .muted { color:#475569 !important; }
+      .card { border:1px solid #E5E7EB; border-radius:12px; }
+      .danger { border-color:#EF4444 !important; }
+      .warn { border-color:#F59E0B !important; }
+      .tag { background:#FEE2E2; color:#991B1B; border-radius:999px; padding:4px 10px; font-size:12px; display:inline-block; font-weight:700; }
+      .code { font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; background:#F8FAFC; border-radius:6px; padding:1px 6px; }
+      .list li { margin:6px 0; }
+      .kvt td { padding:6px 10px; border-bottom:1px solid #E5E7EB; }
+      .kvt th { text-align:left; color:#475569; padding:6px 10px; border-bottom:1px solid #E5E7EB; }
+      @media (prefers-color-scheme: dark) { .body { background:#0B0D12 !important; } }
+    </mj-style>
+  </mj-head>
+
+  <mj-body background-color="#FFFFFF" css-class="body">
+    <!-- Hidden preheader -->
+    <mj-section padding="0"><mj-column>
+      <mj-text font-size="1px" line-height="1px" color="#ffffff" padding="0">{{preheader}}</mj-text>
+    </mj-column></mj-section>
+
+    <!-- Top bar with logo -->
+    <mj-section background-color="#0B0D12" padding="20px 0">
+      <mj-column width="100%" vertical-align="middle">
+        <mj-image src="{{logo_url}}" alt="Animica" width="160" align="center" padding="0" href="{{home_url}}" />
+      </mj-column>
+    </mj-section>
+
+    <!-- Red advisory banner -->
+    <mj-section background-color="#FFFFFF" padding="24px 24px 0">
+      <mj-column>
+        <mj-wrapper padding="0" css-class="card danger">
+          <mj-section background-color="#FEE2E2" padding="16px">
+            <mj-column>
+              <mj-text align="center" font-size="14px" font-weight="800" color="#991B1B" padding-bottom="6px">
+                SECURITY ADVISORY
+              </mj-text>
+              <mj-text align="center" font-size="22px" font-weight="800" color="#0F172A" padding-bottom="4px">
+                {{advisory_id}} — {{title}}
+              </mj-text>
+              <mj-text align="center" padding-bottom="0">
+                <span class="tag">Severity: {{severity}}</span>
+                {{#cvss}}
+                  &nbsp;&nbsp;<span class="tag">CVSS: {{cvss}}</span>
+                {{/cvss}}
+              </mj-text>
+            </mj-column>
+          </mj-section>
+          <mj-section padding="16px">
+            <mj-column>
+              <mj-text>
+                {{summary_html}}
+              </mj-text>
+              <mj-text font-size="14px" color="#64748B">
+                Published: {{published_date}} · Updated: {{updated_date}}
+              </mj-text>
+            </mj-column>
+          </mj-section>
+        </mj-wrapper>
+      </mj-column>
+    </mj-section>
+
+    <!-- Affected products/versions -->
+    <mj-section background-color="#FFFFFF" padding="16px 24px 0">
+      <mj-column>
+        <mj-wrapper padding="0" css-class="card">
+          <mj-section padding="16px">
+            <mj-column>
+              <mj-text font-weight="700">Affected products & versions</mj-text>
+              <mj-table cellpadding="0" cellspacing="0" width="100%" css-class="kvt">
+                <tr style="background:#F8FAFC;">
+                  <th>Product</th>
+                  <th>Affected</th>
+                  <th>Fixed in</th>
+                </tr>
+                {{#affected}}
+                <tr>
+                  <td>{{product}}</td>
+                  <td><span class="code">{{versions}}</span></td>
+                  <td><span class="code">{{fixed}}</span></td>
+                </tr>
+                {{/affected}}
+              </mj-table>
+            </mj-column>
+          </mj-section>
+        </mj-wrapper>
+      </mj-column>
+    </mj-section>
+
+    <!-- Impact -->
+    {{#impact}}
+    <mj-section background-color="#FFFFFF" padding="16px 24px 0">
+      <mj-column>
+        <mj-wrapper padding="0" css-class="card warn">
+          <mj-section padding="16px">
+            <mj-column>
+              <mj-text font-weight="700" color="#92400E">Impact</mj-text>
+              <mj-text>
+                <ul class="list" style="padding-left:20px; margin:8px 0;">
+                  {{#items}}<li>{{.}}</li>{{/items}}
+                </ul>
+              </mj-text>
+            </mj-column>
+          </mj-section>
+        </mj-wrapper>
+      </mj-column>
+    </mj-section>
+    {{/impact}}
+
+    <!-- Mitigations -->
+    {{#mitigations}}
+    <mj-section background-color="#FFFFFF" padding="16px 24px 0">
+      <mj-column>
+        <mj-wrapper padding="0" css-class="card">
+          <mj-section padding="16px">
+            <mj-column>
+              <mj-text font-weight="700">Immediate mitigations</mj-text>
+              <mj-text>
+                <ol style="padding-left:20px; margin:8px 0;">
+                  {{#steps}}<li>{{.}}</li>{{/steps}}
+                </ol>
+              </mj-text>
+            </mj-column>
+          </mj-section>
+        </mj-wrapper>
+      </mj-column>
+    </mj-section>
+    {{/mitigations}}
+
+    <!-- Upgrade CTA -->
+    <mj-section background-color="#FFFFFF" padding="16px 24px 0">
+      <mj-column>
+        <mj-group>
+          {{#upgrade_guide_url}}
+          <mj-column>
+            <mj-button background-color="#EF4444" color="#0B0D12" href="{{upgrade_guide_url}}">Upgrade guide</mj-button>
+          </mj-column>
+          {{/upgrade_guide_url}}
+          {{#download_url}}
+          <mj-column>
+            <mj-button background-color="#5EEAD4" color="#0B0D12" href="{{download_url}}">Update now</mj-button>
+          </mj-column>
+          {{/download_url}}
+        </mj-group>
+      </mj-column>
+    </mj-section>
+
+    <!-- Verification -->
+    <mj-section background-color="#FFFFFF" padding="16px 24px 0">
+      <mj-column>
+        <mj-wrapper padding="0" css-class="card">
+          <mj-section padding="16px">
+            <mj-column>
+              <mj-text font-weight="700">Verify this advisory & artifacts</mj-text>
+              <mj-text>
+                Signed by: <span class="code">{{pgp_fingerprint}}</span><br/>
+                {{#signature_url}}Detached signature: <a href="{{signature_url}}">{{signature_url}}</a><br/>{{/signature_url}}
+                {{#checksums}}
+                <span class="code">{{file}}</span> — <span class="code">{{sha256}}</span><br/>
+                {{/checksums}}
+              </mj-text>
+            </mj-column>
+          </mj-section>
+        </mj-wrapper>
+      </mj-column>
+    </mj-section>
+
+    <!-- Indicators of Compromise (optional) -->
+    {{#ioc}}
+    <mj-section background-color="#FFFFFF" padding="16px 24px 0">
+      <mj-column>
+        <mj-wrapper padding="0" css-class="card">
+          <mj-section padding="16px">
+            <mj-column>
+              <mj-text font-weight="700">Indicators of Compromise</mj-text>
+              <mj-text>
+                <ul class="list" style="padding-left:20px; margin:8px 0;">
+                  {{#items}}<li><span class="code">{{.}}</span></li>{{/items}}
+                </ul>
+              </mj-text>
+            </mj-column>
+          </mj-section>
+        </mj-wrapper>
+      </mj-column>
+    </mj-section>
+    {{/ioc}}
+
+    <!-- Timeline -->
+    {{#timeline}}
+    <mj-section background-color="#FFFFFF" padding="16px 24px 0">
+      <mj-column>
+        <mj-wrapper padding="0" css-class="card">
+          <mj-section padding="16px">
+            <mj-column>
+              <mj-text font-weight="700">Timeline</mj-text>
+              <mj-text>
+                <ul class="list" style="padding-left:20px; margin:8px 0;">
+                  {{#events}}<li><strong>{{date}}:</strong> {{desc}}</li>{{/events}}
+                </ul>
+              </mj-text>
+            </mj-column>
+          </mj-section>
+        </mj-wrapper>
+      </mj-column>
+    </mj-section>
+    {{/timeline}}
+
+    <!-- Credits -->
+    {{#credits}}
+    <mj-section background-color="#FFFFFF" padding="16px 24px 0">
+      <mj-column>
+        <mj-text font-weight="700">Acknowledgements</mj-text>
+        <mj-text class="muted">
+          {{text}}
+        </mj-text>
+      </mj-column>
+    </mj-section>
+    {{/credits}}
+
+    <!-- Contact -->
+    <mj-section background-color="#FFFFFF" padding="16px 24px 0 24px">
+      <mj-column>
+        <mj-text class="muted">
+          Questions? Contact {{security_contact}}. For sensitive reports, use our PGP key: <span class="code">{{pgp_fingerprint}}</span>.
+        </mj-text>
+      </mj-column>
+    </mj-section>
+
+    <!-- Footer -->
+    <mj-section background-color="#0B0D12" padding="24px">
+      <mj-column>
+        <mj-text align="center" color="#E5E7EB" font-size="12px">
+          {{footer_address}} ·
+          <a href="{{security_page_url}}" style="color:#5EEAD4; text-decoration:none;">Security page</a> ·
+          <a href="{{unsubscribe_url}}" style="color:#5EEAD4; text-decoration:none;">Unsubscribe</a>
+        </mj-text>
+        <mj-text align="center" color="#94A3B8" font-size="11px">
+          Sent by Animica • {{send_date}}
+        </mj-text>
+      </mj-column>
+    </mj-section>
+  </mj-body>
+</mjml>

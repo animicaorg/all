@@ -1,0 +1,136 @@
+# ------------------------------------------------------------------------------
+# Animica Explorer — AppImageBuilder recipe
+# Repackages the Tauri desktop shell into a portable AppImage.
+#
+# Usage (from repo root, after building the Tauri app):
+#   export ANIMICA_BIN="installers/explorer-desktop/tauri/target/x86_64-unknown-linux-gnu/release/animica-explorer"
+#   appimage-builder --recipe installers/explorer-desktop/linux/appimage/AppImageBuilder.yml
+#
+# Notes:
+#   - If ANIMICA_BIN is not set, the script section will try to auto-detect a
+#     recent Tauri binary under installers/explorer-desktop/tauri/target/**/release/.
+#   - The `apt` section pulls GTK/WebKit runtime deps for wide compatibility.
+#     Tune or remove it if you prefer dependency analysis-only bundling.
+# ------------------------------------------------------------------------------
+
+version: 1
+
+AppDir:
+  path: AppDir
+
+  app_info:
+    id: io.animica.Explorer
+    name: Animica Explorer
+    icon: animica-explorer            # Will be created under usr/share/icons/… by the script
+    version: 0.1.0                    # Optionally overridden by TAURI_APP_VERSION env in script
+    exec: usr/bin/animica-explorer
+    exec_args: "$@"
+
+  # Environment variables set for the app runtime inside the AppImage
+  runtime:
+    env:
+      # Ensure app finds bundled resources and icons
+      XDG_DATA_DIRS: "$APPDIR/usr/share:$XDG_DATA_DIRS"
+      # Wayland/GTK safety knobs; allow X11 fallback
+      GDK_BACKEND: "x11,wayland"
+      # Prefer appdir libs
+      LD_LIBRARY_PATH: "$APPDIR/usr/lib:$APPDIR/lib:$LD_LIBRARY_PATH"
+
+  # Files handling
+  files:
+    include: []         # Populated by the script phase
+    exclude:
+      - usr/include/**
+      - usr/share/doc/**
+      - usr/share/man/**
+      - var/**
+
+  # (Optional) Pull system libraries via apt for better portability.
+  # Adjust distro codename to your build host (jammy = Ubuntu 22.04, noble = 24.04).
+  apt:
+    arch: amd64
+    sources:
+      - sourceline: "deb http://archive.ubuntu.com/ubuntu/ jammy main universe"
+      - sourceline: "deb http://archive.ubuntu.com/ubuntu/ jammy-updates main universe"
+      - sourceline: "deb http://security.ubuntu.com/ubuntu jammy-security main universe"
+    include:
+      - libgtk-3-0
+      - libwebkit2gtk-4.1-0
+      - libglib2.0-0
+      - libgdk-pixbuf-2.0-0
+      - libpango-1.0-0
+      - libatk1.0-0
+      - libxkbcommon0
+      - libx11-6
+      - libxext6
+      - libxrender1
+      - libxi6
+      - libxcb1
+      - libxcb-render0
+      - libxcb-shape0
+      - libxcb-xfixes0
+      - libayatana-appindicator3-1
+      - libsecret-1-0
+      - ca-certificates
+    exclude: []
+
+  # Script to stage the AppDir from the built Tauri binary & local assets.
+  script:
+    - |
+      set -e
+      echo "[i] Staging Animica Explorer into $APPDIR"
+      mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/512x512/apps"
+
+      # Discover binary if not provided
+      if [ -z "${ANIMICA_BIN:-}" ]; then
+        echo "[i] ANIMICA_BIN not set, attempting auto-detect…"
+        ANIMICA_BIN="$(ls -1t installers/explorer-desktop/tauri/target/*/release/animica-explorer 2>/dev/null | head -n1 || true)"
+      fi
+      [ -n "$ANIMICA_BIN" ] && [ -f "$ANIMICA_BIN" ] || { echo "[x] Could not find animica-explorer binary. Set ANIMICA_BIN."; exit 1; }
+
+      # Copy binary
+      install -m 0755 "$ANIMICA_BIN" "$APPDIR/usr/bin/animica-explorer"
+
+      # Copy nearby runtime DLLs/SOs if any (Tauri may drop extra .so next to the binary)
+      BIN_DIR="$(dirname "$ANIMICA_BIN")"
+      find "$BIN_DIR" -maxdepth 1 -type f -name '*.so*' -exec cp -v '{}' "$APPDIR/usr/bin/" \; || true
+
+      # Icon: prefer repo icon, else generate a placeholder
+      ICON_SRC="installers/explorer-desktop/tauri/icons/512x512.png"
+      if [ -f "$ICON_SRC" ]; then
+        cp "$ICON_SRC" "$APPDIR/usr/share/icons/hicolor/512x512/apps/animica-explorer.png"
+      else
+        echo "[!] Icon not found at $ICON_SRC — generating placeholder."
+        convert -size 512x512 xc:'#0F1115' -gravity center -pointsize 72 -fill '#FFFFFF' -annotate 0 'A' "$APPDIR/usr/share/icons/hicolor/512x512/apps/animica-explorer.png" || true
+      fi
+
+      # Desktop file
+      cat > "$APPDIR/usr/share/applications/io.animica.Explorer.desktop" <<'DESKTOP'
+      [Desktop Entry]
+      Type=Application
+      Name=Animica Explorer
+      Comment=Lightweight desktop shell for the Animica Explorer
+      Exec=animica-explorer
+      Icon=animica-explorer
+      Terminal=false
+      Categories=Network;Utility;Development;
+      StartupWMClass=animica-explorer
+      DESKTOP
+
+      # Optionally override version from TAURI config (best effort)
+      if [ -f installers/explorer-desktop/tauri/tauri.conf.json ] && command -v jq >/dev/null 2>&1; then
+        V="$(jq -r '.package.version // empty' installers/explorer-desktop/tauri/tauri.conf.json || true)"
+        if [ -n "$V" ]; then
+          echo "[i] Detected version from tauri.conf.json: $V"
+          sed -i "s/version: 0.1.0/version: ${V}/" "$(dirname "$0")/AppImageBuilder.yml" || true
+        fi
+      fi
+
+AppImage:
+  arch: x86_64            # Build host arch; generate a separate AppImage per arch
+  update-information: "gh-releases-zsync|AnimicaLabs|explorer-desktop|latest|*x86_64.AppImage.zsync"
+  sign-key: ""            # Optional: GPG key id or path; handled externally in build scripts
+  file_name: "Animica-Explorer-${APPDIR_APPINFO_VERSION}-x86_64.AppImage"
+
+# You can run analysis without building by:
+#   appimage-builder --recipe AppImageBuilder.yml --skip-appimage

@@ -1,0 +1,124 @@
+# Animica Wallet — AppImage Builder Recipe
+# Docs: https://appimage-builder.readthedocs.io/
+#
+# This recipe is consumed by `appimage-builder` to produce a portable AppImage.
+# The `version:` field is updated by installers/wallet/linux/scripts/bump_version.sh.
+
+version: "0.0.0+local"  # overwritten by bump_version.sh
+
+AppDir:
+  path: AppDir
+
+  app_info:
+    id: io.animica.Wallet
+    name: Animica Wallet
+    icon: animica-wallet              # provided under icons/hicolor/.../animica-wallet.png
+    version: "${version}"             # substituted by appimage-builder
+    exec: usr/bin/AnimicaWallet
+    exec_args: $@
+
+  # Pull minimal shared libs from Ubuntu repos (works well on most distros)
+  apt:
+    arch: <auto>
+    sources:
+      # amd64/x86_64
+      - sourceline: "deb [arch=amd64] http://archive.ubuntu.com/ubuntu/ jammy main universe"
+      - sourceline: "deb [arch=amd64] http://archive.ubuntu.com/ubuntu/ jammy-updates main universe"
+      # arm64/aarch64
+      - sourceline: "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main universe"
+      - sourceline: "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main universe"
+    include:
+      # Common Flutter/GTK runtime deps (keep tight; add if CI says missing)
+      - libstdc++6
+      - libgcc-s1
+      - libc6
+      - zlib1g
+      - libgtk-3-0
+      - libglib2.0-0
+      - libgdk-pixbuf-2.0-0
+      - libpango-1.0-0
+      - libatk1.0-0
+      - libatk-bridge2.0-0
+      - libx11-6
+      - libxcb1
+      - libxkbcommon0
+      - libxrandr2
+      - libxi6
+      - libxtst6
+      - libxext6
+      - libxfixes3
+      - libwayland-client0
+      - libwayland-cursor0
+      - libwayland-egl1
+      - libdrm2
+      - libgbm1
+      - libnss3
+      - libasound2
+      - libpulse0
+    exclude:
+      # Trim fat packages and themes we do not need inside the AppImage
+      - humanity-icon-theme
+      - adwaita-icon-theme
+      - ubuntu-mono
+      - fonts-*
+      - doc
+      - locales
+      - man-db
+      - manpages
+
+  files:
+    include:
+      # Desktop entry (must reference "Icon=animica-wallet")
+      - installers/wallet/linux/appimage/animica-wallet.desktop:/usr/share/applications/animica-wallet.desktop
+      # Icon theme directory (should contain hicolor/*/apps/animica-wallet.png)
+      - installers/wallet/linux/icons/:/usr/share/icons/hicolor
+    exclude:
+      - "*.pdb"
+      - "*.a"
+      - "*.la"
+
+  # Environment for runtime loader resolution (conservative)
+  runtime:
+    env:
+      APPDIR_LIBRARY_PATH: "$APPDIR/usr/lib:$APPDIR/lib"
+      LD_LIBRARY_PATH: "$APPDIR/usr/lib:$APPDIR/lib"
+      GTK_THEME: "Adwaita:light"
+
+  # Build-time script to stage the Flutter bundle into AppDir
+  # We place the whole bundle under usr/lib/AnimicaWallet and symlink an entrypoint.
+  script:
+    - set -euo pipefail
+    - mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib/AnimicaWallet"
+    # Detect arch-specific Flutter bundle path
+    - |
+      case "$(uname -m)" in
+        x86_64|amd64)   BUNDLE="build/linux/x86_64/release/bundle" ;;
+        aarch64|arm64)  BUNDLE="build/linux/arm64/release/bundle"; if [ ! -d "$BUNDLE" ]; then BUNDLE="build/linux/aarch64/release/bundle"; fi ;;
+        *) echo "Unsupported arch $(uname -m)"; exit 2 ;;
+      esac
+      [ -d "$BUNDLE" ] || { echo "Flutter bundle not found at $BUNDLE"; exit 3; }
+      cp -a "$BUNDLE/." "$APPDIR/usr/lib/AnimicaWallet/"
+    # Create stable launcher name (exec points here)
+    - if [ -x "$APPDIR/usr/lib/AnimicaWallet/AnimicaWallet" ]; then ln -sf "../lib/AnimicaWallet/AnimicaWallet" "$APPDIR/usr/bin/AnimicaWallet"; else
+        BIN="$(find "$APPDIR/usr/lib/AnimicaWallet" -maxdepth 1 -type f -executable -printf '%f\n' | head -n1)";
+        [ -n "$BIN" ] || { echo "No executable found in Flutter bundle"; exit 4; };
+        ln -sf "../lib/AnimicaWallet/$BIN" "$APPDIR/usr/bin/AnimicaWallet";
+      fi
+    - chmod +x "$APPDIR/usr/bin/AnimicaWallet"
+    # Refresh desktop database (best-effort)
+    - command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q "$APPDIR/usr/share/applications" || true
+
+  # Basic smoke test executed inside the AppDir context
+  test:
+    - command: ./AppRun --version
+      expect_exit: 0
+      stdout: ""
+      stderr: ""
+
+AppImage:
+  arch: <auto>
+  # Optional zsync-based update info; adjust to your hosting layout.
+  # appimageupdatetool uses this to fetch deltas.
+  update-information: "zsync|https://downloads.animica.dev/wallet/linux/${version}/${arch}/Animica-Wallet_${version}_${arch}.AppImage.zsync"
+  sign-key: auto   # if a default GPG key is available in the environment
+  file_name: "Animica-Wallet_${version}_${arch}.AppImage"

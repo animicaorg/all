@@ -1,0 +1,11 @@
+{
+  "id": "animica.mainnet",
+  "chainId": 1,
+  "name": "Animica Mainnet (Reserved)",
+  "rpc": [],
+  "explorer": "",
+  "testnet": false,
+  "status": "reserved",
+  "docs": "https://docs.animica.org/network",
+  "faucets": []
+}

@@ -1,0 +1,134 @@
+# Animica PoIES Policy (example, self-contained)
+# ------------------------------------------------
+# This compact policy is designed for unit tests, benches, and local devnets.
+# It mirrors the structure expected by consensus/policy.py and supplies
+# reasonable numbers so scorer/retarget tests have stable behavior.
+
+schema: poies_policy.v1
+name: example-dev
+description: |
+  Tiny, self-contained PoIES policy:
+  - Total Γ cap per block (micro-nats)
+  - Per-type caps
+  - ψ(p) mapping knobs per proof kind
+  - Escort/diversity & α fairness hints
+  - Nullifier TTLs
+  - Retarget parameters for Θ (block difficulty)
+
+# ---------- Global caps (Γ) & fairness ----------
+gamma:
+  # Maximum Σψ allowed to contribute toward acceptance in a single block.
+  # Units: micro-nats (µ-nats). This is the global Γ cap.
+  total_cap_micro: 6000000     # = 6.0 Mµ-nats
+
+fairness:
+  # Escort parameter q (0..1). Higher q increases the marginal utility of
+  # including underrepresented proof types in a block when near the Γ cap.
+  escort_q: 0.20
+
+  # Diversity requirement: blocks SHOULD include at least N distinct proof
+  # types when possible (soft target used by the packer/scorer).
+  diversity:
+    min_types: 2
+    grace_blocks: 64   # number of blocks to observe before applying pressure
+
+  # Slow α tuner bounds & half-life (used to balance long-run rewards).
+  alpha:
+    half_life_blocks: 720   # ~12h if 1 block/min
+    min: 0.5
+    max: 1.5
+
+# ---------- Nullifier TTLs (anti-reuse windows) ----------
+nullifiers:
+  ttl_blocks:
+    hashshare: 64
+    ai: 720
+    quantum: 720
+    storage: 1440
+    vdf: 64
+
+# ---------- Per-type ψ models & caps ----------
+# Each proof type contains:
+#  - enabled: bool
+#  - psi: mapping model with scaling constants (all µ-nats)
+#  - caps: per-type Γ cap (µ-nats) and optional per-proof caps
+types:
+  hashshare:
+    enabled: true
+    psi:
+      # ψ = k * ln(1 + d_ratio), where d_ratio = share_difficulty / micro_target
+      model: log1p_ratio
+      k_micro: 800000              # scale for contribution
+      per_proof_cap_micro: 1500000 # clip a single share's ψ
+    caps:
+      per_type_cap_micro: 4000000  # 4.0 Mµ-nats max from hash shares per block
+    notes: "HashShare ψ grows sublinearly with difficulty ratio via log1p."
+
+  ai:
+    enabled: true
+    psi:
+      # Linear in ai_units, gated by traps ratio, redundancy, and QoS.
+      model: linear_units_with_traps_qos
+      micro_per_unit: 300000       # ψ per AI unit (abstract normalized work)
+      min_traps_ratio: 0.03        # ≥3% trap samples must pass
+      min_redundancy: 2            # at least 2 independent runs must agree
+      min_qos: 0.90                # ≥90% availability/latency SLO
+      per_proof_cap_micro: 2500000
+    caps:
+      per_type_cap_micro: 3500000
+
+  quantum:
+    enabled: true
+    psi:
+      # Linear in quantum_units with stricter traps; redundancy required.
+      model: linear_units_with_traps_qos
+      micro_per_unit: 500000
+      min_traps_ratio: 0.05
+      min_redundancy: 2
+      min_qos: 0.85
+      per_proof_cap_micro: 3000000
+    caps:
+      per_type_cap_micro: 3500000
+
+  storage:
+    enabled: true
+    psi:
+      # Small recurring heartbeat, optional retrieval bonus.
+      model: heartbeat_bonus
+      micro_per_heartbeat: 50000
+      micro_per_retrieval_ticket: 150000
+      per_proof_cap_micro: 500000
+    caps:
+      per_type_cap_micro: 1000000
+
+  vdf:
+    enabled: true
+    psi:
+      # ψ proportional to verified seconds-equivalent, capped per proof.
+      model: seconds_equivalent
+      micro_per_second: 20000
+      per_proof_cap_micro: 300000
+    caps:
+      per_type_cap_micro: 500000
+
+# ---------- Θ retarget (fractional) ----------
+retarget:
+  # Target inter-block rate (EMA window in blocks). Tests expect these keys.
+  ema:
+    interval_blocks: 120     # smoothing window
+    clamp_up: 1.25           # per-interval max increase in Θ
+    clamp_down: 0.80         # per-interval max decrease in Θ
+
+  # Share micro-target used for HashShare d_ratio normalization in tests.
+  # Units: arbitrary micro-difficulty, interpreted by consensus/difficulty.py tests.
+  share_micro_target: 1000000
+
+# ---------- Policy roots / bindings (optional in tests) ----------
+policy_roots:
+  # Placeholder hex (tests may only check presence/shape).
+  alg_policy_merkle_root_hex: "0x0000000000000000000000000000000000000000000000000000000000000000"
+
+# ---------- Test hints ----------
+test_hints:
+  # Deterministic seed (optional) for scorer benches in tests/fixtures.
+  bench_seed_hex: "0xdeadbeef"

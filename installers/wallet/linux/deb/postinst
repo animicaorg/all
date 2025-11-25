@@ -1,0 +1,57 @@
+#!/bin/sh
+# Animica Wallet — Debian post-install script
+# Responsibilities:
+#   - Ensure bundled app binary is executable.
+#   - Refresh desktop, icon, and MIME caches so the launcher & scheme handler work.
+#   - Keep everything non-fatal if helper tools are missing (CI/minimal systems).
+set -e
+
+APP_DIR="/opt/AnimicaWallet"
+DESKTOP_DIR="/usr/share/applications"
+ICON_THEMES="/usr/share/icons/hicolor"
+MIME_DIR="/usr/share/mime"
+
+log()  { printf '%s\n' "[animica-wallet postinst] $*"; }
+
+case "$1" in
+  configure)
+    # 1) Make sure the main binary (and any launchers) are executable.
+    if [ -d "$APP_DIR" ]; then
+      chmod +x "$APP_DIR"/* 2>/dev/null || true
+    fi
+
+    # 2) Desktop database (registers our .desktop and x-scheme-handler).
+    if command -v update-desktop-database >/dev/null 2>&1; then
+      update-desktop-database -q "$DESKTOP_DIR" || true
+    fi
+
+    # 3) Icon cache (hicolor).
+    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+      if [ -d "$ICON_THEMES" ]; then
+        gtk-update-icon-cache -q "$ICON_THEMES" || true
+      fi
+    fi
+
+    # 4) MIME database (best-effort; scheme handler is covered by desktop db).
+    if command -v update-mime-database >/dev/null 2>&1; then
+      if [ -d "$MIME_DIR" ]; then
+        update-mime-database "$MIME_DIR" || true
+      fi
+    fi
+
+    # NOTE: We deliberately do NOT force default handler changes (xdg-mime),
+    # adhering to Debian policy—users/DEs control defaults.
+    ;;
+
+  abort-upgrade|abort-remove|abort-deconfigure)
+    # Nothing special
+    ;;
+
+  *)
+    # Unknown action — keep silent to be robust.
+    ;;
+esac
+
+#DEBHELPER#
+
+exit 0

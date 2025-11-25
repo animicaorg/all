@@ -1,0 +1,71 @@
+<!--
+  Animica Brand — Primary Logo Mark
+  Format: SVG (vector, responsive), no external deps.
+  Safe on light/dark backgrounds; tested at 24–512px.
+  License: This asset is part of the Animica docs set.
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 256 256"
+     role="img" aria-labelledby="animicaLogoTitle animicaLogoDesc">
+  <title id="animicaLogoTitle">Animica Logo</title>
+  <desc id="animicaLogoDesc">Circular gradient badge with a stylized letter A and an orbit accent.</desc>
+
+  <defs>
+    <!-- Brand gradient -->
+    <linearGradient id="grad-brand" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"  stop-color="#0ea5e9"/>   <!-- sky-500 -->
+      <stop offset="55%" stop-color="#6366f1"/>   <!-- indigo-500 -->
+      <stop offset="100%" stop-color="#22d3ee"/>  <!-- cyan-400 -->
+    </linearGradient>
+
+    <!-- Soft inner shadow for subtle depth -->
+    <filter id="soft-shadow" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="rgba(0,0,0,0.18)"/>
+    </filter>
+
+    <!-- Orbit glow -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <style>
+      /* Optional: allow tint override via CSS `color` when embedding as <img src> does not apply. */
+      .wordmark { fill: currentColor; }
+      /* Improve rendering at small sizes */
+      @media (prefers-color-scheme: dark) {
+        .a-stroke { stroke: #ffffff; }
+        .orbit-dot { fill: #ffffff; }
+      }
+    </style>
+  </defs>
+
+  <!-- Badge -->
+  <g filter="url(#soft-shadow)">
+    <circle cx="128" cy="128" r="110" fill="url(#grad-brand)"/>
+    <!-- subtle rim for contrast on light bg -->
+    <circle cx="128" cy="128" r="110" fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="2"/>
+  </g>
+
+  <!-- Stylized A (paths only; no fonts) -->
+  <g class="a-stroke" stroke="#ffffff" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <!-- Left / right legs -->
+    <path d="M128 44 L58 208"/>
+    <path d="M128 44 L198 208"/>
+    <!-- Crossbar -->
+    <path d="M92 150 H164"/>
+  </g>
+
+  <!-- Orbit accent -->
+  <g opacity="0.9" filter="url(#glow)">
+    <path d="M46 132c0-44 46-80 102-80 28 0 54 9 72 24"
+          fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="6" stroke-linecap="round"/>
+    <circle class="orbit-dot" cx="222" cy="76" r="6" fill="#ffffff"/>
+  </g>
+
+  <!-- Safe area (invisible) -->
+  <rect x="8" y="8" width="240" height="240" fill="none"/>
+</svg>

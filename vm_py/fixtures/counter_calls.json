@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "contract": "examples/counter/contract.py",
+  "manifest": "examples/counter/manifest.json",
+  "sequence": [
+    {
+      "call": "get",
+      "args": [],
+      "expectReturn": 0,
+      "expectEvents": []
+    },
+    {
+      "call": "inc",
+      "args": [],
+      "expectReturn": null,
+      "expectEvents": [
+        { "name": "Counter.Incremented", "args": { "by": 1 } }
+      ]
+    },
+    {
+      "call": "get",
+      "args": [],
+      "expectReturn": 1,
+      "expectEvents": []
+    },
+    {
+      "call": "inc_by",
+      "args": [3],
+      "expectReturn": null,
+      "expectEvents": [
+        { "name": "Counter.Incremented", "args": { "by": 3 } }
+      ]
+    },
+    {
+      "call": "get",
+      "args": [],
+      "expectReturn": 4,
+      "expectEvents": []
+    }
+  ]
+}

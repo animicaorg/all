@@ -1,0 +1,96 @@
+# Explorer API Deployment (stateless), fronted by Service ops/k8s/services/explorer.yaml.
+# Reads chain data via the node RPC/WS. Suitable for HPA (add an HPA if desired).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: animica-explorer
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: explorer
+    app.kubernetes.io/name: animica-explorer
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: animica
+      app.kubernetes.io/component: explorer
+      app.kubernetes.io/name: animica-explorer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: animica
+        app.kubernetes.io/component: explorer
+        app.kubernetes.io/name: animica-explorer
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8081"
+        prometheus.io/path: "/metrics"
+    spec:
+      terminationGracePeriodSeconds: 20
+      containers:
+        - name: explorer
+          # Replace with your published explorer API image
+          image: ghcr.io/animica/explorer:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            # Primary chain RPC endpoints (override via ConfigMap/Secret if desired)
+            - name: RPC_HTTP_URL
+              value: "http://node-rpc.animica-devnet.svc.cluster.local:8545"
+            - name: RPC_WS_URL
+              value: "ws://node-rpc.animica-devnet.svc.cluster.local:8546"
+            - name: CHAIN_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: chain-params
+                  key: chain_id
+                  optional: true
+            # Optional path if the image supports a TOML config (not required)
+            - name: EXPLORER_CONFIG
+              value: "/etc/animica/explorer.toml"
+          ports:
+            - name: http
+              containerPort: 8081
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 8
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          volumeMounts:
+            - name: explorer-config
+              mountPath: /etc/animica/explorer.toml
+              subPath: explorer.toml
+              readOnly: true
+      volumes:
+        - name: explorer-config
+          configMap:
+            name: explorer-config
+            optional: true
+            items:
+              - key: explorer.toml
+                path: explorer.toml

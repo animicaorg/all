@@ -1,0 +1,24 @@
+Package: animica-explorer
+Version: 0.1.0-1
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: Animica Labs <support@animica.dev>
+Homepage: https://animica.dev
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+# If you build with debhelper, keep these substvars; otherwise you can remove them.
+#Depends: ${shlibs:Depends}, ${misc:Depends}
+Depends: libc6 (>= 2.31), libglib2.0-0 (>= 2.66), libgtk-3-0 (>= 3.24), libgdk-pixbuf-2.0-0 (>= 2.42), libpango-1.0-0, libatk1.0-0, libx11-6, libxkbcommon0, libwebkit2gtk-4.1-0 (>= 2.40), libayatana-appindicator3-1, ca-certificates
+Recommends: xdg-utils, desktop-file-utils
+Provides: animica-explorer
+Description: Animica Explorer desktop shell (Tauri)
+ Lightweight desktop shell for the Animica blockchain explorer.
+ .
+ This package installs the native Tauri application, integrates it with the
+ desktop (icon and launcher), and enables secure, sandboxed browsing of the
+ Explorer with automatic OS keychain trust for TLS.
+ .
+ Notes:
+  - Built against GTK3 and WebKitGTK 4.1.
+  - Requires a recent glibc; see Depends for minimum versions.

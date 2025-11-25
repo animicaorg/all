@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Animica Wallet — Sparkle Appcast (stable channel)
+  Serve this file over HTTPS at:
+    https://updates.animica.dev/wallet/stable/appcast.xml
+
+  IMPORTANT: Replace the placeholder values for:
+    - enclosure@url
+    - enclosure@length (exact byte size)
+    - enclosure@sparkle:edSignature (Sparkle Ed25519 signature of the DMG/PKG)
+    - dates and release notes URLs as appropriate
+
+  Sparkle v2 uses Ed25519 signatures (no DSA). Ensure your Wallet app embeds the
+  matching ed25519 PUBLIC key and that the DMG/PKG is Apple codesigned + notarized.
+-->
+<rss version="2.0"
+     xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"
+     xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Animica Wallet Updates (stable)</title>
+    <link>https://updates.animica.dev/wallet/stable/appcast.xml</link>
+    <description>Stable channel updates for Animica Wallet</description>
+    <language>en</language>
+    <sparkle:publisher>Animica Labs</sparkle:publisher>
+    <sparkle:minimumAutoupdateVersion>1.0.0</sparkle:minimumAutoupdateVersion>
+
+    <!-- Latest release -->
+    <item>
+      <title>Animica Wallet 1.4.2</title>
+      <sparkle:releaseNotesLink>https://animica.dev/changelog/wallet/1.4.2</sparkle:releaseNotesLink>
+      <pubDate>Wed, 08 Oct 2025 12:00:00 +0000</pubDate>
+      <enclosure
+        url="https://updates.animica.dev/wallet/stable/Animica-Wallet-1.4.2.dmg"
+        sparkle:version="1.4.2"
+        sparkle:shortVersionString="1.4.2"
+        sparkle:os="macos"
+        sparkle:minimumSystemVersion="11.0"
+        length="REPLACE_WITH_DMG_SIZE_BYTES"
+        type="application/octet-stream"
+        sparkle:edSignature="REPLACE_WITH_ED25519_SIGNATURE_BASE64"/>
+    </item>
+
+    <!-- Previous release (kept for rollback/testing) -->
+    <item>
+      <title>Animica Wallet 1.4.1</title>
+      <sparkle:releaseNotesLink>https://animica.dev/changelog/wallet/1.4.1</sparkle:releaseNotesLink>
+      <pubDate>Mon, 22 Sep 2025 12:00:00 +0000</pubDate>
+      <enclosure
+        url="https://updates.animica.dev/wallet/stable/Animica-Wallet-1.4.1.dmg"
+        sparkle:version="1.4.1"
+        sparkle:shortVersionString="1.4.1"
+        sparkle:os="macos"
+        sparkle:minimumSystemVersion="11.0"
+        length="REPLACE_WITH_DMG_SIZE_BYTES"
+        type="application/octet-stream"
+        sparkle:edSignature="REPLACE_WITH_ED25519_SIGNATURE_BASE64"/>
+    </item>
+
+  </channel>
+</rss>

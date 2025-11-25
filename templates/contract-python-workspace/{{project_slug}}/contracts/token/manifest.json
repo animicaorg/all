@@ -1,0 +1,164 @@
+{
+  "name": "Token",
+  "version": "1.0.0",
+  "language": "python",
+  "entrypoint": "contract.py",
+  "codeHash": "{{CODE_HASH}}",
+  "abi": {
+    "functions": [
+      {
+        "name": "initialized",
+        "inputs": [],
+        "outputs": [{ "type": "uint256" }],
+        "stateMutability": "view"
+      },
+      {
+        "name": "init",
+        "inputs": [
+          { "name": "name_bytes", "type": "bytes" },
+          { "name": "symbol_bytes", "type": "bytes" },
+          { "name": "decimals_u256", "type": "uint256" },
+          { "name": "owner_addr", "type": "address" },
+          { "name": "initial_supply", "type": "uint256" },
+          { "name": "initial_recipient", "type": "address" }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "name": "name",
+        "inputs": [],
+        "outputs": [{ "type": "bytes" }],
+        "stateMutability": "view"
+      },
+      {
+        "name": "symbol",
+        "inputs": [],
+        "outputs": [{ "type": "bytes" }],
+        "stateMutability": "view"
+      },
+      {
+        "name": "decimals",
+        "inputs": [],
+        "outputs": [{ "type": "uint256" }],
+        "stateMutability": "view"
+      },
+      {
+        "name": "total_supply",
+        "inputs": [],
+        "outputs": [{ "type": "uint256" }],
+        "stateMutability": "view"
+      },
+      {
+        "name": "balance_of",
+        "inputs": [{ "name": "owner", "type": "address" }],
+        "outputs": [{ "type": "uint256" }],
+        "stateMutability": "view"
+      },
+      {
+        "name": "allowance",
+        "inputs": [
+          { "name": "owner", "type": "address" },
+          { "name": "spender", "type": "address" }
+        ],
+        "outputs": [{ "type": "uint256" }],
+        "stateMutability": "view"
+      },
+      {
+        "name": "transfer",
+        "inputs": [
+          { "name": "to", "type": "address" },
+          { "name": "amount", "type": "uint256" }
+        ],
+        "outputs": [{ "type": "bool" }],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "name": "approve",
+        "inputs": [
+          { "name": "spender", "type": "address" },
+          { "name": "amount", "type": "uint256" }
+        ],
+        "outputs": [{ "type": "bool" }],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "name": "transfer_from",
+        "inputs": [
+          { "name": "owner", "type": "address" },
+          { "name": "to", "type": "address" },
+          { "name": "amount", "type": "uint256" }
+        ],
+        "outputs": [{ "type": "bool" }],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "name": "mint",
+        "inputs": [
+          { "name": "to", "type": "address" },
+          { "name": "amount", "type": "uint256" }
+        ],
+        "outputs": [{ "type": "bool" }],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "name": "burn",
+        "inputs": [
+          { "name": "from_addr", "type": "address" },
+          { "name": "amount", "type": "uint256" }
+        ],
+        "outputs": [{ "type": "bool" }],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "name": "totalSupply",
+        "inputs": [],
+        "outputs": [{ "type": "uint256" }],
+        "stateMutability": "view",
+        "aliases": ["total_supply"]
+      },
+      {
+        "name": "balanceOf",
+        "inputs": [{ "name": "owner", "type": "address" }],
+        "outputs": [{ "type": "uint256" }],
+        "stateMutability": "view",
+        "aliases": ["balance_of"]
+      }
+    ],
+    "events": [
+      {
+        "name": "Transfer",
+        "inputs": [
+          { "name": "from", "type": "address", "indexed": true },
+          { "name": "to", "type": "address", "indexed": true },
+          { "name": "value", "type": "uint256", "indexed": false }
+        ]
+      },
+      {
+        "name": "Approval",
+        "inputs": [
+          { "name": "owner", "type": "address", "indexed": true },
+          { "name": "spender", "type": "address", "indexed": true },
+          { "name": "value", "type": "uint256", "indexed": false }
+        ]
+      }
+    ],
+    "errors": [
+      { "name": "Revert", "inputs": [{ "name": "reason", "type": "bytes" }] }
+    ]
+  },
+  "deployment": {
+    "initMethod": "init",
+    "argsTemplate": {
+      "name_bytes": "MyToken",
+      "symbol_bytes": "MTK",
+      "decimals_u256": 18,
+      "owner_addr": "{{DEPLOYER_ADDRESS}}",
+      "initial_supply": 0,
+      "initial_recipient": "{{DEPLOYER_ADDRESS}}"
+    }
+  },
+  "capabilities": {
+    "needsSyscalls": false
+  }
+}

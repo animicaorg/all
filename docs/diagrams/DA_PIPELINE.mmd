@@ -1,0 +1,93 @@
+%% Mermaid: Data Availability Pipeline — blob → NMT → erasure → sampling
+%% View online: https://mermaid.live
+
+flowchart TB
+  %% ===================== INPUTS =====================
+  subgraph IN[Inputs]
+    direction TB
+    BlobIn[Blob (bytes)\n+ mime/meta]:::data
+    NsSel[Namespace ID (ns)]:::data
+    Params[(DA Params)\nErasure: k,n, shard_size\nNMT: leaf codec, hash\nSampling: p_fail target]:::data
+  end
+
+  %% ===================== INGEST =====================
+  subgraph INGEST[Ingest & Chunking]
+    direction TB
+    Chunker[Chunker\nsplit → chunks of shard_size]:::calc
+  end
+
+  %% ===================== ERASURE =====================
+  subgraph EC[Erasure Coding]
+    direction TB
+    Partitioner[Partitioner\npack chunks → k data shards]:::calc
+    RS[Reed–Solomon Encoder\nproduce n shards (k data + n−k parity)]:::calc
+    Layout[Matrix Layout\nrows/cols; padding rules]:::calc
+  end
+
+  %% ===================== NAMESPACING & NMT =====================
+  subgraph NMT[NMT Leaves & Root]
+    direction TB
+    LeafCodec[Leaf Codec\nleaf = ns || len || data]:::calc
+    NmtBuild[Namespaced Merkle Tree\nbuild/append; maintain ns ranges]:::calc
+    DaCommit[DA Commitment = NMT Root]:::cons
+  end
+
+  %% ===================== STORE & RECEIPT =====================
+  subgraph STORE[Commit, Store & Receipt]
+    direction TB
+    BlobIndex[Index shards & meta\n(commitment ↔ ns, size)]:::core
+    Receipt[Post Receipt\n{commitment, ns, size, sig?}]:::cons
+  end
+
+  %% ===================== HEADER INTEGRATION =====================
+  subgraph HEADER[Header Integration]
+    direction TB
+    BlockAdapter[Block Adapter\ncollect blob commitments]:::core
+    DaRootBlock[Header.daRoot\n(canonical aggregation of blob commitments)]:::cons
+  end
+
+  %% ===================== RETRIEVAL =====================
+  subgraph RETRIEVE[Retrieval API]
+    direction TB
+    GetBlob[GET /da/blob/{commitment}\nstream shards → reassemble]:::core
+    GetProof[GET /da/proof/{commitment}?indices=…\nreturns inclusion/range proofs]:::core
+  end
+
+  %% ===================== SAMPLING & LIGHT VERIFY =====================
+  subgraph SAMPLING[DAS Sampling & Light Verification]
+    direction TB
+    Plan[Query Plan Builder\nuniform/stratified samples]:::calc
+    FetchSamples[Fetch sample shards + proofs\n(from DA nodes)]:::core
+    VerifyProofs[Verify proofs against header.daRoot\n(NMT inclusion & ns-range)]:::calc
+    Prob[Audit Probability\np_fail ≤ target]:::calc
+    Verdict[Availability Verdict\n"available" if success ratio ≥ threshold]:::cons
+  end
+
+  %% ===================== FLOWS =====================
+  BlobIn --> Chunker --> Partitioner --> RS --> Layout --> LeafCodec --> NmtBuild --> DaCommit
+  NsSel --> LeafCodec
+  Params --> Chunker
+  Params --> RS
+  Params --> LeafCodec
+  Params --> Plan
+  DaCommit --> BlobIndex --> Receipt
+  DaCommit --> BlockAdapter --> DaRootBlock
+  Receipt --> GetBlob
+  Receipt --> GetProof
+  DaRootBlock --> VerifyProofs
+  GetProof --> VerifyProofs --> Prob --> Verdict
+  Plan --> FetchSamples --> VerifyProofs
+
+  %% ===================== NOTES =====================
+  %% - Erasure: Any k of n shards suffice to reconstruct (assuming RS(k,n)).
+  %% - Namespacing: NMT ensures leaves are ordered by ns; range proofs attest to a namespace slice.
+  %% - Commitment: Per-blob NMT root is the commitment; block header.daRoot aggregates commitments deterministically.
+  %% - Sampling: Light clients verify a small random set of samples; with enough successes, the probability
+  %%   of undetected withholding drops below the configured p_fail target.
+  %% - Determinism: leaf codec, hashing, and ordering must be fixed and canonical across implementations.
+
+  %% ===================== STYLES =====================
+  classDef data fill:#f3f4f6,stroke:#888,stroke-width:1,color:#222;
+  classDef calc fill:#93c5fd,stroke:#225,stroke-width:1,color:#001;
+  classDef cons fill:#34d399,stroke:#0b4,stroke-width:1,color:#062;
+  classDef core fill:#10b981,stroke:#0b4,stroke-width:1,color:#062;

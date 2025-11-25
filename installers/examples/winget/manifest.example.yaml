@@ -1,0 +1,80 @@
+# Winget "singleton" manifest example for Animica Wallet.
+# You can publish this as-is to a private repo or split it into
+# DefaultLocale/Installer/Version manifests for a public WinGet PR.
+#
+# Fill the placeholders like <INSERT_SHA256_...> before use.
+# Calculate SHA256 on Windows with:
+#   Get-FileHash .\Animica-Wallet-1.2.3-x64.msix -Algorithm SHA256 | % Hash
+# Schema reference: https://aka.ms/winget-manifest.schema.1.6.0
+
+PackageIdentifier: Animica.Wallet
+PackageVersion: 1.2.3
+PackageLocale: en-US
+Publisher: Animica Inc.
+PublisherUrl: https://animica.dev
+PublisherSupportUrl: https://animica.dev/support
+Author: Animica Inc.
+PackageName: Animica Wallet
+Moniker: animica-wallet
+License: Proprietary
+LicenseUrl: https://animica.dev/legal/eula
+PrivacyUrl: https://animica.dev/legal/privacy
+ShortDescription: Post-quantum wallet for the Animica network (MSIX).
+Description: |-
+  Animica Wallet is a post-quantum (PQ) wallet with bech32m addresses and a
+  JSON-RPC client for sending transfers and calling contracts on the Animica network.
+  This package distributes a Microsoft-signed MSIX for secure installation and updates.
+Tags:
+  - animica
+  - wallet
+  - crypto
+  - blockchain
+  - post-quantum
+PackageUrl: https://animica.dev/wallet
+ReleaseNotesUrl: https://animica.dev/wallet/releases/1.2.3
+Agreements:
+  - AgreementLabel: End-User License Agreement
+    AgreementUrl: https://animica.dev/legal/eula
+
+# If you ship MSIX/MSIXBundle, include PackageFamilyName so WinGet can
+# match upgrades reliably. For EXE/MSI installers, see the commented template below.
+Installers:
+  - Architecture: x64
+    InstallerType: msix
+    InstallerUrl: https://downloads.animica.dev/wallet/windows/Animica-Wallet-1.2.3-x64.msix
+    InstallerSha256: <INSERT_SHA256_OF_MSIX_X64>
+    MinimumOSVersion: 10.0.17763.0
+    PackageFamilyName: io.animica.Wallet_1234567890abc
+    # SignatureSha256 is optional for MSIX; leave blank or provide the SHA256 of the signing cert:
+    SignatureSha256: <OPTIONAL_SHA256_OF_PUBLISHER_CERT_OR_REMOVE>
+
+  - Architecture: arm64
+    InstallerType: msix
+    InstallerUrl: https://downloads.animica.dev/wallet/windows/Animica-Wallet-1.2.3-arm64.msix
+    InstallerSha256: <INSERT_SHA256_OF_MSIX_ARM64>
+    MinimumOSVersion: 10.0.17763.0
+    PackageFamilyName: io.animica.Wallet_1234567890abc
+    SignatureSha256: <OPTIONAL_SHA256_OF_PUBLISHER_CERT_OR_REMOVE>
+
+# --- Example template for an EXE (NSIS/Inno) build (commented) ---
+#  - Architecture: x64
+#    InstallerType: exe
+#    InstallerUrl: https://downloads.animica.dev/wallet/windows/Animica-Wallet-1.2.3-x64.exe
+#    InstallerSha256: <INSERT_SHA256_OF_EXE_X64>
+#    Scope: user
+#    InstallerSwitches:
+#      Silent: /S
+#      SilentWithProgress: /S
+#    AppsAndFeaturesEntries:
+#      - Publisher: Animica Inc.
+#        DisplayName: Animica Wallet
+#        DisplayVersion: 1.2.3
+#        InstallerType: exe
+
+# For public submissions, ensure your path structure and file names follow:
+# manifests\a\Animica\Wallet\1.2.3\Animica.Wallet.yaml (Version)
+# manifests\a\Animica\Wallet\1.2.3\Animica.Wallet.installer.yaml (Installer)
+# manifests\a\Animica\Wallet\1.2.3\Animica.Wallet.locale.en-US.yaml (DefaultLocale)
+
+ManifestType: singleton
+ManifestVersion: 1.6.0

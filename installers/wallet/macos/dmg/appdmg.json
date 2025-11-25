@@ -1,0 +1,25 @@
+{
+  "title": "{{APP_NAME}} {{VERSION}}",
+  "icon": "installers/wallet/macos/dmg/icon.icns",
+  "background": "installers/wallet/macos/dmg/background.png",
+  "format": "UDZO",
+  "window": {
+    "position": { "x": 200, "y": 120 },
+    "size": { "width": 540, "height": 380 }
+  },
+  "icon-size": 120,
+  "contents": [
+    {
+      "x": 140,
+      "y": 190,
+      "type": "file",
+      "path": "build/macos/Build/Products/Release/{{APP_NAME}}.app"
+    },
+    {
+      "x": 400,
+      "y": 190,
+      "type": "link",
+      "path": "/Applications"
+    }
+  ]
+}

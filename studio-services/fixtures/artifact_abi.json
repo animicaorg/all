@@ -1,0 +1,38 @@
+{
+  "kind": "abi",
+  "schemaVersion": "1",
+  "name": "Counter",
+  "version": "1.0.0",
+  "language": "python",
+  "abi": {
+    "version": "1",
+    "functions": [
+      { "name": "init", "inputs": [], "outputs": [] },
+      { "name": "get", "inputs": [], "outputs": [{ "type": "int" }] },
+      {
+        "name": "inc",
+        "inputs": [{ "name": "amount", "type": "int", "default": 1 }],
+        "outputs": [{ "type": "int" }]
+      }
+    ],
+    "events": [
+      {
+        "name": "Inc",
+        "args": [
+          { "name": "by",  "type": "int" },
+          { "name": "new", "type": "int" }
+        ]
+      }
+    ],
+    "errors": [
+      { "name": "u64_out_of_range" },
+      { "name": "bad_storage_len" },
+      { "name": "amount_negative" },
+      { "name": "overflow" }
+    ]
+  },
+  "metadata": {
+    "description": "Example ABI artifact blob for the Counter contract. Used by tests that exercise the artifacts storage API.",
+    "license": "Apache-2.0"
+  }
+}

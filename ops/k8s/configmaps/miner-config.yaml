@@ -1,0 +1,99 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: miner-config
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    animica.dev/environment: devnet
+data:
+  # Render with envsubst in an initContainer/entrypoint:
+  #   envsubst < /config/miner/miner.toml.tpl > /config/miner/miner.toml
+  #
+  # Typical mounts:
+  #   - ConfigMap "miner-config" → /config/miner/miner.toml.tpl
+  #   - (optional) read CHAIN_ID/params from the "chain-params" ConfigMap env
+  miner.toml.tpl: |
+    # -----------------------------
+    # Animica Miner — miner.toml
+    # -----------------------------
+
+    [miner]
+    chain_id     = ${CHAIN_ID:-1337}
+    network_name = "${NETWORK_NAME:-animica-devnet}"
+
+    # Where to fetch templates / submit shares & blocks
+    rpc_http = "${RPC_HTTP_URL:-http://node.animica-devnet.svc.cluster.local:8545}"
+    rpc_ws   = "${RPC_WS_URL:-ws://node.animica-devnet.svc.cluster.local:8546/ws}"
+
+    # Template refresh & expiry
+    template_refresh_secs = ${TEMPLATE_REFRESH_SECS:-3}
+    work_expiry_secs      = ${WORK_EXPIRY_SECS:-20}
+    max_pending_shares    = ${MAX_PENDING_SHARES:-2048}
+
+    [device]
+    # Backend selection
+    type    = "${MINER_DEVICE:-cpu}"      # cpu|cuda|rocm|opencl|metal
+    threads = ${MINER_THREADS:-0}         # 0 → auto (CPU: logical cores)
+
+    [share_target]
+    # If mode="auto", miner follows Θ-derived micro-target from the node.
+    mode          = "${SHARE_TARGET_MODE:-auto}"   # auto|fixed
+    micro_target  = ${SHARE_MICRO_TARGET:-0}       # used only when mode=fixed
+
+    [submit]
+    # HTTP endpoint for tx/share/block submission (node RPC will route appropriately)
+    submit_url         = "${SUBMIT_URL:-http://node.animica-devnet.svc.cluster.local:8545/rpc}"
+    max_retries        = ${SUBMIT_MAX_RETRIES:-6}
+    retry_backoff_ms   = ${SUBMIT_BACKOFF_MS:-200}
+    jitter_ms          = ${SUBMIT_JITTER_MS:-50}
+    parallel_submits   = ${SUBMIT_PARALLELISM:-2}
+
+    [stratum]
+    # Built-in Stratum server for external miners
+    enabled           = ${STRATUM_ENABLED:-true}
+    listen_addr       = "${STRATUM_LISTEN_ADDR:-0.0.0.0}"
+    listen_port       = ${STRATUM_LISTEN_PORT:-7151}
+    extranonce_prefix = "${STRATUM_EXTRANONCE:-0001}"
+    # Difficulty can be adjusted by clients; server maps to micro-targets
+    min_difficulty    = ${STRATUM_MIN_DIFF:-1}
+
+    [getwork]
+    # WebSocket getwork bridge (miners can subscribe to new templates)
+    enabled               = ${GETWORK_WS_ENABLED:-true}
+    ws_url                = "${GETWORK_WS_URL:-ws://node.animica-devnet.svc.cluster.local:8545/ws}"
+    heartbeat_secs        = ${GETWORK_HEARTBEAT_SECS:-10}
+    reconnect_backoff_ms  = ${GETWORK_BACKOFF_MS:-500}
+
+    [workers]
+    # Off-chain useful-proof helpers for devnet demos (optional)
+    ai_enabled       = ${AI_WORKER_ENABLED:-false}
+    quantum_enabled  = ${QUANTUM_WORKER_ENABLED:-false}
+    storage_enabled  = ${STORAGE_WORKER_ENABLED:-false}
+    vdf_enabled      = ${VDF_WORKER_ENABLED:-true}
+
+    [workers.ai]
+    queue_url       = "${AICF_QUEUE_URL:-http://studio-services.animica-devnet.svc.cluster.local:9000}"
+    max_concurrent  = ${AI_WORKER_CONCURRENCY:-1}
+
+    [workers.quantum]
+    queue_url       = "${AICF_QUEUE_URL:-http://studio-services.animica-devnet.svc.cluster.local:9000}"
+    max_concurrent  = ${QUANTUM_WORKER_CONCURRENCY:-1}
+
+    [workers.storage]
+    heartbeat_secs  = ${STORAGE_HEARTBEAT_SECS:-30}
+
+    [workers.vdf]
+    # Reference Wesolowski prover — devnet only. In production, miners produce real proofs off-node.
+    prover        = "${VDF_PROVER:-reference}"
+    max_parallel  = ${VDF_MAX_PARALLEL:-1}
+
+    [metrics]
+    enabled = ${METRICS_ENABLED:-true}
+    bind    = "${METRICS_BIND:-0.0.0.0}"
+    port    = ${METRICS_PORT:-9102}
+
+    [logging]
+    level       = "${LOG_LEVEL:-info}"    # debug|info|warn|error
+    format      = "${LOG_FORMAT:-json}"   # json|text
+    request_ids = ${REQUEST_IDS:-true}

@@ -1,0 +1,44 @@
+{
+  "manifestVersion": "1",
+  "name": "AnimicaEscrow",
+  "version": "1.0.0",
+  "language": "python-vm",
+
+  "entry": "../../examples/escrow/contract.py",
+  "abi": { "$ref": "../abi/escrow.json" },
+
+  "code": {
+    "format": "ir.cbor",
+    "hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "size": 0
+  },
+
+  "deploy": {
+    "method": "init",
+    "args": {
+      "payer": "${DEPLOYER_ADDRESS}",
+      "payee": "${PAYEE_ADDRESS}",
+      "arbiter": "${ARBITER_ADDRESS}",
+      "timeout_blocks": 100
+    }
+  },
+
+  "resources": {
+    "capabilities": [],
+    "storage": {
+      "estimatedKeys": 8,
+      "notes": "payer, payee, arbiter, amount, deposited, released, disputed, deadline"
+    }
+  },
+
+  "compat": {
+    "vm": { "min": "1.0.0", "max": "2.0.0" }
+  },
+
+  "metadata": {
+    "authors": ["Animica Labs"],
+    "license": "Apache-2.0",
+    "homepage": "https://animica.dev",
+    "description": "Deterministic escrow example: payer deposits funds, arbiter can resolve disputes, supports timeout-based refund."
+  }
+}

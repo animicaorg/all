@@ -1,0 +1,136 @@
+%% Mermaid: PoIES — Proposer & Acceptance Paths
+%% View online: https://mermaid.live
+
+flowchart TB
+  %% ========= ROLES =========
+  subgraph PROPOSER[Proposer / Miner]
+    direction TB
+    Tmpl[Header Template\n(parent, roots, mixSeed, Θ_hint)]:::min
+    UDraw[u-draw: H(u) = -ln(u)\nnonce domain binding]:::min
+    Pack[Pack Candidate Block\n{txs, proofs, receipts?}]:::min
+  end
+
+  subgraph PROOFS[Proof Pipelines (per kind)]
+    direction LR
+    HS[HashShare\n(target check, ratio)]:::proof
+    AI[AI v1\nTEE attest + traps + QoS]:::proof
+    QP[Quantum v1\nprovider attest + traps]:::proof
+    ST[Storage v0\nheartbeat PoSt]:::proof
+    VDF[VDF bonus (optional)\nWesolowski verify]:::proof
+  end
+
+  subgraph MAP[Metrics → ψ Inputs]
+    PM[ProofMetrics]:::proof
+    MapPsi[policy_adapter:\nmetrics → ψ-inputs]:::cons
+  end
+
+  subgraph CAPS[PoIES Policy & Caps]
+    direction TB
+    Policy[poies_policy.yaml\n(Γ cap, per-type caps,\ndiversity/escort q, weights)]:::cons
+    AlgRoot[alg-policy root\n(PQ algs / versions)]:::cons
+    Clip[Apply caps:\nper-proof, per-type, total-Γ]:::cons
+  end
+
+  subgraph SCORE[Scoring & Acceptance]
+    SumPsi[Σ ψ(p)]:::cons
+    Score[S = H(u) + Σψ]:::cons
+    Theta[Θ (difficulty threshold)\nfrom EMA retarget]:::cons
+    Accept{S ≥ Θ ?}:::cons
+  end
+
+  subgraph NULLS[Nullifiers]
+    NulDerive[Derive nullifier\n(domain-separated)]:::cons
+    NulTTL[TTL window set\n(reject reuse)]:::cons
+  end
+
+  subgraph VALIDATE[Full-Node Validator]
+    direction TB
+    ValHdr[Recompute S from header+proofs]:::cons
+    CheckRoots[Check policy roots\n(poies/alg-policy)]:::cons
+    CheckCaps[Reapply caps & Σψ]:::cons
+    CheckΘ[Compare to Θ(height)]:::cons
+  end
+
+  subgraph CHAIN[Chain & Fork Choice]
+    direction TB
+    Store[Persist header/block/receipts]:::core
+    Fork[Fork Choice\n(longest/weight-aware\ndeterministic tie-break)]:::cons
+    Retarget[Difficulty Retarget\nEMA, clamps → Θ']:::cons
+  end
+
+  %% ========= DATA INPUTS =========
+  Params[(Chain Params\nΘ schedule, windows,\nretarget EMA)]:::data
+  PoiesYAML[(spec/poies_policy.yaml)]:::data
+  AlgPolicy[(alg_policy.root\n& schema)]:::data
+
+  %% ========= EDGES =========
+  %% Proposer path
+  Tmpl --> UDraw
+  UDraw --> HS
+  Pack --> PROOFS
+
+  %% Proof verifications emit metrics
+  HS --> PM
+  AI --> PM
+  QP --> PM
+  ST --> PM
+  VDF --> PM
+
+  %% Nullifiers derived per-proof & checked
+  PM --> NulDerive
+  NulDerive --> NulTTL
+
+  %% Map metrics to ψ-inputs and cap
+  PM --> MapPsi
+  MapPsi --> Clip
+  Policy --> Clip
+  Clip --> SumPsi
+
+  %% Combine with H(u) then acceptance
+  UDraw --> Score
+  SumPsi --> Score
+  Theta --> Accept
+  Score --> Accept
+
+  Accept -- yes --> Pack
+  Accept -- no --> Tmpl
+
+  %% Candidate broadcast → validators
+  Pack --> ValHdr
+  PoiesYAML --> CheckCaps
+  AlgPolicy --> CheckRoots
+
+  ValHdr --> CheckRoots
+  ValHdr --> CheckCaps
+  ValHdr --> CheckΘ
+  NulTTL --> ValHdr
+
+  CheckRoots --> CHAIN
+  CheckCaps --> CHAIN
+  CheckΘ --> CHAIN
+
+  CHAIN --> Store
+  Store --> Fork
+  Fork --> Retarget
+  Retarget --> Theta
+
+  %% Params feed Θ/retarget
+  Params --> Theta
+  Params --> Retarget
+  PoiesYAML --> Policy
+  AlgPolicy --> AlgRoot
+  AlgRoot --> CheckRoots
+
+  %% ========= STYLES =========
+  classDef min fill:#93c5fd,stroke:#225,stroke-width:1,color:#001;
+  classDef proof fill:#06b6d4,stroke:#066,stroke-width:1,color:#fff;
+  classDef cons fill:#34d399,stroke:#0b4,stroke-width:1,color:#062;
+  classDef core fill:#10b981,stroke:#0b4,stroke-width:1,color:#062;
+  classDef data fill:#f3f4f6,stroke:#888,stroke-width:1,color:#222;
+
+  %% ========= NOTES =========
+  %% - H(u) binds the proposer’s nonce draw to the header template (mixSeed/domain).
+  %% - Σψ sums clipped contributions from verified proofs (after per-proof/per-type/Γ caps).
+  %% - Acceptance requires S ≥ Θ at the target height; validators deterministically recompute.
+  %% - Nullifier set prevents proof reuse within TTL window.
+  %% - Retarget updates Θ via EMA on observed inter-block λ, feeding the next templates.

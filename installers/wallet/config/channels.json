@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "endpoints": {
+    "cdn": "https://updates.animica.dev/wallet",
+    "api": "https://api.animica.dev/updates/wallet",
+    "status": "https://status.animica.dev"
+  },
+  "checksumAlgorithm": "sha256",
+  "channels": [
+    {
+      "id": "stable",
+      "label": "Stable",
+      "visibility": "public",
+      "stagedRolloutPercent": 100,
+      "releaseNotesUrl": "https://updates.animica.dev/wallet/stable/notes/{version}.md",
+      "platforms": {
+        "macos": {
+          "feed": "https://updates.animica.dev/wallet/stable/macos/appcast.xml",
+          "artifacts": [
+            {
+              "type": "dmg",
+              "path": "stable/macos/Animica-Wallet-{version}-macOS.dmg",
+              "notarized": true,
+              "stapled": true,
+              "minOs": "12.0"
+            },
+            {
+              "type": "pkg",
+              "path": "stable/macos/Animica-Wallet-{version}.pkg",
+              "notarized": true,
+              "stapled": true
+            }
+          ]
+        },
+        "windows": {
+          "feed": "https://updates.animica.dev/wallet/stable/windows/appinstaller.xml",
+          "artifacts": [
+            {
+              "type": "msix",
+              "path": "stable/windows/Animica-Wallet-{version}-win.msix",
+              "timestampUrl": "http://timestamp.digicert.com",
+              "minOs": "10.0.19041.0",
+              "allowDowngrade": false
+            }
+          ]
+        },
+        "linux": {
+          "feed": "https://updates.animica.dev/wallet/stable/linux/manifest.json",
+          "artifacts": [
+            {
+              "type": "appimage",
+              "path": "stable/linux/Animica-Wallet-{version}-linux.AppImage"
+            },
+            {
+              "type": "deb",
+              "path": "stable/linux/animica-wallet_{version}_amd64.deb"
+            },
+            {
+              "type": "rpm",
+              "path": "stable/linux/animica-wallet-{version}.x86_64.rpm"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "beta",
+      "label": "Beta",
+      "visibility": "public",
+      "stagedRolloutPercent": 25,
+      "releaseNotesUrl": "https://updates.animica.dev/wallet/beta/notes/{version}.md",
+      "platforms": {
+        "macos": {
+          "feed": "https://updates.animica.dev/wallet/beta/macos/appcast.xml",
+          "artifacts": [
+            {
+              "type": "dmg",
+              "path": "beta/macos/Animica-Wallet-{version}-macOS.dmg",
+              "notarized": true,
+              "stapled": true
+            }
+          ]
+        },
+        "windows": {
+          "feed": "https://updates.animica.dev/wallet/beta/windows/appinstaller.xml",
+          "artifacts": [
+            {
+              "type": "msix",
+              "path": "beta/windows/Animica-Wallet-{version}-win.msix",
+              "allowDowngrade": true
+            }
+          ]
+        },
+        "linux": {
+          "feed": "https://updates.animica.dev/wallet/beta/linux/manifest.json",
+          "artifacts": [
+            {
+              "type": "appimage",
+              "path": "beta/linux/Animica-Wallet-{version}-linux.AppImage"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

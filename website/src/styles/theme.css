@@ -1,0 +1,297 @@
+/* ==========================================================================
+   Animica Theme Styles
+   - Relies on CSS variables defined in tokens.css
+   - Default theme is dark via :root tokens; use [data-theme="light"] to switch
+   - Provides helpers, transitions, toggles, and component skins
+   ========================================================================== */
+
+/* Smooth theme transitions (opt-in on a wrapper to avoid animating first paint) */
+.theme-transitions,
+.theme-transitions * {
+  transition:
+    background-color var(--duration-200) var(--easing-decelerate),
+    color var(--duration-200) var(--easing-decelerate),
+    border-color var(--duration-200) var(--easing-decelerate),
+    box-shadow var(--duration-200) var(--easing-decelerate);
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .theme-transitions,
+  .theme-transitions * {
+    transition: none !important;
+  }
+}
+
+/* Selection & scrollbars */
+::selection {
+  background: color-mix(in oklab, var(--brand-500), #fff 15%);
+  color: var(--color-accent-contrast);
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--brand-600), #000 10%) transparent;
+}
+*::-webkit-scrollbar { height: 10px; width: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--brand-600), #000 10%);
+  border-radius: var(--radius-pill);
+}
+
+/* Theming helpers to show/hide content per theme */
+.theme-dark-only { display: none !important; }
+[data-theme="dark"] .theme-dark-only { display: initial !important; }
+[data-theme="dark"] .theme-light-only { display: none !important; }
+[data-theme="light"] .theme-light-only { display: initial !important; }
+
+/* If no explicit data-theme is set, mirror user preference to light visuals.
+   (Default tokens are dark; this rule flips to light if the user prefers light.) */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    /* opt-in: map key vars to light palette */
+    --color-bg:        #ffffff;
+    --color-fg:        #0f172a;
+    --color-surface:   #ffffff;
+    --color-surface-2: #f8fafc;
+    --color-border:    rgba(15, 23, 42, 0.12);
+    --color-muted:     #475569;
+    --ring-color: color-mix(in oklab, var(--brand-500), #000 5%);
+  }
+}
+
+/* ----------------------------- Components --------------------------------- */
+
+/* App shell */
+.app {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+}
+
+/* Top navigation */
+.navbar {
+  position: sticky; top: 0; z-index: var(--z-sticky);
+  backdrop-filter: saturate(140%) blur(8px);
+  background: color-mix(in oklab, var(--color-surface), transparent 30%);
+  border-bottom: 1px solid var(--color-border);
+}
+.navbar__inner {
+  display: flex; align-items: center; gap: var(--space-6);
+  padding: var(--space-4) var(--space-6);
+  max-width: 1200px; margin: 0 auto;
+}
+.navbar__brand {
+  display: inline-flex; align-items: center; gap: var(--space-3);
+  font-weight: var(--weight-semibold);
+}
+.navbar__nav {
+  display: flex; gap: var(--space-5); margin-left: auto;
+}
+.navbar__link {
+  color: var(--color-muted);
+  text-decoration: none;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+}
+.navbar__link:hover,
+.navbar__link[aria-current="page"] {
+  color: var(--color-fg);
+  background: color-mix(in oklab, var(--color-surface), #fff 4%);
+}
+
+/* Footer */
+.footer {
+  border-top: 1px solid var(--color-border);
+  background: color-mix(in oklab, var(--color-surface), transparent 20%);
+}
+.footer__inner {
+  max-width: 1200px; margin: 0 auto;
+  padding: var(--space-8) var(--space-6);
+  display: grid; gap: var(--space-6);
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+/* Cards */
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+.card--hoverable { transition: transform var(--duration-150) var(--easing-standard), box-shadow var(--duration-200) var(--easing-standard); }
+.card--hoverable:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+.card__header { padding: var(--space-6); border-bottom: 1px solid var(--color-border); }
+.card__body { padding: var(--space-6); }
+.card__footer { padding: var(--space-5) var(--space-6); border-top: 1px solid var(--color-border); }
+
+/* Code blocks */
+pre, code {
+  background: color-mix(in oklab, var(--color-surface-2), #000 4%);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+pre {
+  padding: var(--space-6);
+  overflow: auto;
+  line-height: var(--leading-relaxed);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.02);
+}
+code {
+  padding: 0.15em 0.4em;
+  font-size: 0.925em;
+}
+
+/* Blockquote */
+blockquote {
+  margin: var(--space-6) 0;
+  padding: var(--space-5) var(--space-6);
+  border-left: 3px solid var(--brand-500);
+  background: color-mix(in oklab, var(--color-surface), #fff 3%);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  color: var(--color-muted);
+}
+
+/* Tables (compact theme skin) */
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+.table thead th {
+  font-size: var(--text-sm);
+  color: var(--color-muted);
+  background: color-mix(in oklab, var(--color-surface), #000 8%);
+}
+.table th, .table td {
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+}
+.table tbody tr:hover {
+  background: color-mix(in oklab, var(--color-surface), #fff 2%);
+}
+
+/* Buttons */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6);
+  font-weight: var(--weight-semibold);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-fg);
+}
+.btn:hover { box-shadow: var(--shadow-md); }
+.btn:focus-visible { outline: none; box-shadow:
+  0 0 0 var(--ring-offset) color-mix(in oklab, var(--ring-color), transparent 85%),
+  0 0 0 calc(var(--ring-offset) + var(--ring-width)) var(--ring-color); }
+
+.btn--primary {
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--brand-grad-from), var(--brand-grad-to));
+  color: var(--color-accent-contrast);
+}
+.btn--ghost { background: transparent; }
+
+/* Inputs */
+.input, .select, .textarea {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-fg);
+  border-radius: var(--radius-sm);
+  padding: var(--space-4) var(--space-5);
+}
+.input::placeholder, .textarea::placeholder { color: color-mix(in oklab, var(--color-muted), #fff 10%); }
+
+/* --------------------------- Theme Toggle (Switch) ------------------------- */
+
+.theme-toggle {
+  --size: 36px;
+  position: relative; display: inline-flex; align-items: center;
+  width: calc(var(--size) * 1.8); height: var(--size);
+  border-radius: var(--radius-pill);
+  background: color-mix(in oklab, var(--color-surface), #000 6%);
+  border: 1px solid var(--color-border);
+  cursor: pointer; user-select: none;
+  padding: 2px;
+}
+.theme-toggle input {
+  position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer;
+}
+.theme-toggle__thumb {
+  position: relative;
+  height: calc(var(--size) - 4px); width: calc(var(--size) - 4px);
+  border-radius: var(--radius-circle);
+  background: radial-gradient(60% 60% at 30% 30%, #fff6, transparent 60%) no-repeat,
+              var(--color-fg);
+  transform: translateX(0);
+  transition: transform var(--duration-150) var(--easing-standard),
+              background var(--duration-150) var(--easing-standard);
+}
+.theme-toggle[data-state="light"] .theme-toggle__thumb {
+  transform: translateX(calc(100%));
+  background: radial-gradient(60% 60% at 30% 30%, #0002, transparent 60%) no-repeat,
+              var(--color-accent);
+}
+
+/* ------------------------------ Utilities --------------------------------- */
+
+.text-muted { color: var(--color-muted); }
+.bordered { border: 1px solid var(--color-border); }
+.surface { background: var(--color-surface); }
+.surface-2 { background: var(--color-surface-2); }
+.ring-focus { box-shadow:
+  0 0 0 var(--ring-offset) color-mix(in oklab, var(--ring-color), transparent 85%),
+  0 0 0 calc(var(--ring-offset) + var(--ring-width)) var(--ring-color); }
+
+/* Gradient text utility */
+.text-gradient {
+  background: linear-gradient(135deg, var(--brand-grad-from), var(--brand-grad-to));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Hero section baseline */
+.hero {
+  padding: var(--space-16) 0;
+  background:
+    radial-gradient(1200px 600px at 0% -20%, color-mix(in oklab, var(--brand-500), transparent 88%), transparent 60%) no-repeat,
+    radial-gradient(900px 500px at 120% -20%, color-mix(in oklab, var(--brand-400), transparent 90%), transparent 60%) no-repeat;
+}
+.hero__title { font-size: var(--text-5xl); margin-bottom: var(--space-5); }
+.hero__subtitle { font-size: var(--text-lg); color: var(--color-muted); }
+
+/* Toast container positioning */
+.toast-host {
+  position: fixed; inset-inline-end: var(--space-6); inset-block-start: var(--space-6);
+  z-index: var(--z-toast); display: grid; gap: var(--space-4);
+}
+
+/* Modal base */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: var(--z-modal);
+  background: color-mix(in oklab, #000, transparent 40%);
+  display: grid; place-items: center;
+}
+.modal {
+  width: min(720px, 92vw);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xl);
+  padding: var(--space-8);
+}
+
+/* Markdown content defaults */
+.prose :where(h1,h2,h3,h4,h5,h6) { margin-top: var(--space-8); }
+.prose :where(p,ul,ol,pre,table,blockquote) { margin-top: var(--space-5); }
+.prose a { text-decoration: underline; text-underline-offset: 2px; }
+
+/* End of theme.css */

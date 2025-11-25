@@ -1,0 +1,51 @@
+<!--
+  snippet-dapp.svg
+  Scalable line icon for a decentralized app:
+    • Browser window chrome (top bar + rounded corners)
+    • On-chain "block/cube" rendered isometrically
+    • Two peer nodes connected to the cube to suggest decentralization
+  Notes:
+    - Pure strokes with currentColor make it theme-aware (dark/light).
+    - Geometry is optically tuned for 20–28px UI usage; viewBox is 64x64.
+    - Minimal paths to keep file tiny while crisp on HiDPI.
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 64 64"
+     role="img"
+     aria-label="Dapp snippet icon">
+  <title>Dapp Snippet</title>
+  <desc>Browser window with a blockchain cube and connected peer nodes.</desc>
+
+  <!-- Shared stroke styling -->
+  <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+
+    <!-- Browser window container -->
+    <rect x="8" y="10" width="48" height="36" rx="4" ry="4"/>
+    <!-- Top bar divider -->
+    <path d="M8 18h48"/>
+    <!-- 'Traffic light' window controls -->
+    <circle cx="14" cy="14" r="2"/>
+    <circle cx="20" cy="14" r="2"/>
+    <circle cx="26" cy="14" r="2"/>
+
+    <!-- Dapp content: isometric cube (block) -->
+    <!-- Top face -->
+    <path d="M28 26l8-4 8 4-8 4-8-4z"/>
+    <!-- Left face -->
+    <path d="M28 26v8l8 4v-8l-8-4z"/>
+    <!-- Right face -->
+    <path d="M44 26v8l-8 4v-8l8-4z"/>
+
+    <!-- Peer nodes (decentralization), connected to cube -->
+    <circle cx="18" cy="40" r="3"/>
+    <circle cx="50" cy="40" r="3"/>
+    <!-- Connectors from nodes to cube lower edges -->
+    <path d="M21 39.5l9-4.5"/>
+    <path d="M47 39.5l-9-4.5"/>
+
+    <!-- Subtle content lines to hint 'app UI' below the cube -->
+    <path d="M16 44h10"/>
+    <path d="M38 44h10"/>
+
+  </g>
+</svg>

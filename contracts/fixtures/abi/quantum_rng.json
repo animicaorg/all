@@ -1,0 +1,153 @@
+{
+  "abiVersion": "1",
+  "contract": {
+    "name": "QuantumRng",
+    "version": "1.0.0",
+    "description": "Requests quantum-originated random bytes via AICF, then mixes the receipt with the randomness beacon using extract-then-xor to derive unbiased entropy. Caches last entropy for consumers."
+  },
+  "functions": [
+    { "name": "owner", "stateMutability": "view", "inputs": [], "outputs": [ { "name": "addr", "type": "address" } ] },
+
+    {
+      "name": "params",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        { "name": "minBits", "type": "uint16" },
+        { "name": "maxBits", "type": "uint16" },
+        { "name": "defaultShots", "type": "uint16" }
+      ],
+      "description": "Current safety limits and default shot count for QRNG jobs."
+    },
+    {
+      "name": "setParams",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "minBits", "type": "uint16" },
+        { "name": "maxBits", "type": "uint16" },
+        { "name": "defaultShots", "type": "uint16" }
+      ],
+      "outputs": [ { "name": "ok", "type": "bool" } ],
+      "description": "Owner-only: set bounds and defaults for request()."
+    },
+
+    {
+      "name": "lastTaskId",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [ { "name": "task_id", "type": "bytes32" } ]
+    },
+    {
+      "name": "lastEntropy",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [ { "name": "entropy", "type": "bytes32" } ],
+      "description": "Entropy derived by the last successful mix(). Zero if none yet."
+    },
+    {
+      "name": "lastBeacon",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [ { "name": "beacon", "type": "bytes32" } ],
+      "description": "Beacon value that was used in the last successful mix()."
+    },
+
+    {
+      "name": "request",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "bits", "type": "uint16", "description": "Requested number of random bits (bytes will be ceil(bits/8)). Must satisfy minBits <= bits <= maxBits." },
+        { "name": "shots", "type": "uint16", "description": "Quantum shots/samples; pass 0 to use defaultShots." },
+        { "name": "providerHint", "type": "bytes", "description": "Optional provider/model hint (UTF-8). Pass b'' for default." }
+      ],
+      "outputs": [ { "name": "task_id", "type": "bytes32" } ],
+      "description": "Enqueue a QRNG job with the AICF. Returns deterministic task id."
+    },
+
+    {
+      "name": "hasResult",
+      "stateMutability": "view",
+      "inputs": [ { "name": "task_id", "type": "bytes32" } ],
+      "outputs": [ { "name": "available", "type": "bool" } ],
+      "description": "True if a QRNG result is available (typically next block)."
+    },
+    {
+      "name": "readResult",
+      "stateMutability": "view",
+      "inputs": [ { "name": "task_id", "type": "bytes32" } ],
+      "outputs": [
+        { "name": "available", "type": "bool" },
+        { "name": "raw", "type": "bytes", "description": "Raw quantum bytes as returned by the provider (length >= ceil(bits/8))." }
+      ],
+      "description": "Read the raw result without mutating contract state."
+    },
+
+    {
+      "name": "mix",
+      "stateMutability": "nonpayable",
+      "inputs": [ { "name": "task_id", "type": "bytes32" } ],
+      "outputs": [
+        { "name": "ok", "type": "bool" },
+        { "name": "entropy", "type": "bytes32" }
+      ],
+      "description": "Derive entropy by mixing the current beacon with the QRNG bytes using extract-then-xor. Caches lastEntropy and emits Mixed(task_id, entropy). Reverts if result not yet available."
+    },
+
+    {
+      "name": "expand",
+      "stateMutability": "view",
+      "inputs": [
+        { "name": "seed", "type": "bytes32", "description": "If zero, uses lastEntropy; otherwise explicit seed." },
+        { "name": "words", "type": "uint32" }
+      ],
+      "outputs": [ { "name": "out", "type": "bytes" } ],
+      "description": "Deterministic expansion via SHA3-256(seed||counter) to yield words*32 bytes."
+    },
+
+    {
+      "name": "transferOwnership",
+      "stateMutability": "nonpayable",
+      "inputs": [ { "name": "newOwner", "type": "address" } ],
+      "outputs": [ { "name": "ok", "type": "bool" } ]
+    }
+  ],
+  "events": [
+    {
+      "name": "Enqueued",
+      "inputs": [
+        { "name": "task_id", "type": "bytes32", "indexed": true },
+        { "name": "bits", "type": "uint16", "indexed": false },
+        { "name": "shots", "type": "uint16", "indexed": false }
+      ]
+    },
+    {
+      "name": "Mixed",
+      "inputs": [
+        { "name": "task_id", "type": "bytes32", "indexed": true },
+        { "name": "entropy", "type": "bytes32", "indexed": false }
+      ]
+    },
+    {
+      "name": "ParamsUpdated",
+      "inputs": [
+        { "name": "minBits", "type": "uint16", "indexed": false },
+        { "name": "maxBits", "type": "uint16", "indexed": false },
+        { "name": "defaultShots", "type": "uint16", "indexed": false }
+      ]
+    },
+    {
+      "name": "OwnershipTransferred",
+      "inputs": [
+        { "name": "previousOwner", "type": "address", "indexed": true },
+        { "name": "newOwner", "type": "address", "indexed": true }
+      ]
+    }
+  ],
+  "errors": [
+    { "name": "NotOwner" },
+    { "name": "BitsTooSmall" },
+    { "name": "BitsTooLarge" },
+    { "name": "InvalidShots" },
+    { "name": "NoResultYet" }
+  ]
+}

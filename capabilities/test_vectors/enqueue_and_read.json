@@ -1,0 +1,74 @@
+{
+  "domain": "animica/capabilities/test_vectors/v1",
+  "format_version": 1,
+  "description": "Deterministic task-id & next-block read vectors for AI and Quantum job enqueues. Payloads are raw bytes (hex) and task_id is sha3_256('animica/capabilities/task_id/v1' || u64be(chainId) || u64be(height) || txHash || caller_payload || payload).",
+  "vectors": [
+    {
+      "id": "ai_ok_basic",
+      "chainId": 1337,
+      "height": 1001,
+      "txHash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+      "caller_payload": "0x0122222222222222222222222222222222222222222222222222222222222222",
+      "kind": "AI",
+      "request": {
+        "model": "demo-tiny-1",
+        "payload": "0x68656c6c6f2c20616e696d69636121"
+      },
+      "expected_task_id": "0x1d9db60dd1e5e149ba94e72f52e30ece7ffc523fa85e5468fb64805d088e530f",
+      "receipt": {
+        "task_id": "0x1d9db60dd1e5e149ba94e72f52e30ece7ffc523fa85e5468fb64805d088e530f",
+        "caller_payload": "0x0122222222222222222222222222222222222222222222222222222222222222",
+        "height_enqueued": 1001,
+        "height_available": 1002
+      },
+      "result_record": {
+        "task_id": "0x1d9db60dd1e5e149ba94e72f52e30ece7ffc523fa85e5468fb64805d088e530f",
+        "height_available": 1002,
+        "ok": true,
+        "output_digest": "0xb694c5c9aada223f7e4ddc20fcec7d6cd627e74b34e92efb272a35b275b2b46c"
+      },
+      "notes": "AI prompt 'hello, animica!' → demo-tiny-1; result digest is sha3_256 of mock output bytes."
+    },
+    {
+      "id": "quantum_ok_basic",
+      "chainId": 1337,
+      "height": 1004,
+      "txHash": "0xabababababababababababababababababababababababababababababababab",
+      "caller_payload": "0x0122222222222222222222222222222222222222222222222222222222222222",
+      "kind": "Quantum",
+      "request": {
+        "circuit_label": "trap-mini",
+        "payload": "0x716e746d2d747261702d7465737421",
+        "shots": 32
+      },
+      "expected_task_id": "0xdbd5af58e4dd8c7c6a4dad0c12f26c4a37cfe9f3cc831455a6abe094576bdbe6",
+      "receipt": {
+        "task_id": "0xdbd5af58e4dd8c7c6a4dad0c12f26c4a37cfe9f3cc831455a6abe094576bdbe6",
+        "caller_payload": "0x0122222222222222222222222222222222222222222222222222222222222222",
+        "height_enqueued": 1004,
+        "height_available": 1005
+      },
+      "result_record": {
+        "task_id": "0xdbd5af58e4dd8c7c6a4dad0c12f26c4a37cfe9f3cc831455a6abe094576bdbe6",
+        "height_available": 1005,
+        "ok": true,
+        "output_digest": "0x5702a6c0e733dcdeef7f81c7fd722ea5799253419dafd5fa5e2538aee36abfe6"
+      },
+      "notes": "Quantum trap circuit placeholder; next-block availability."
+    },
+    {
+      "id": "ai_payload_too_large",
+      "chainId": 1337,
+      "height": 2000,
+      "txHash": "0xc0ffee0000000000000000000000000000000000000000000000000000000000",
+      "caller_payload": "0x0122222222222222222222222222222222222222222222222222222222222222",
+      "kind": "AI",
+      "request": {
+        "model": "demo-tiny-1",
+        "payload": "0x" 
+      },
+      "expect_error": "LimitExceeded",
+      "notes": "Intended to be filled with a payload exceeding configured byte cap; left empty here, tests should expand to the needed size."
+    }
+  ]
+}

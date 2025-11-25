@@ -1,0 +1,176 @@
+---
+import links from "../config/links";
+import env from "../env";
+
+interface Feature {
+  id: string;
+  title: string;
+  blurb: string;
+  href?: string;
+  icon?: "poies" | "da" | "vm" | "aicf" | "pq" | "quantum";
+}
+
+interface Props {
+  items?: Feature[];
+  columns?: 2 | 3;
+  showLinks?: boolean;
+  class?: string;
+}
+
+const docsHref = links?.docs?.home ?? env.PUBLIC_DOCS_URL ?? "/docs";
+
+const defaults: Feature[] = [
+  {
+    id: "poies",
+    title: "PoIES consensus",
+    blurb:
+      "Proof-of-Integrated-External-Services: combines hash shares with useful work (AI/Quantum/Storage/VDF) under caps & fairness.",
+    href: `${docsHref}#poies`,
+    icon: "poies",
+  },
+  {
+    id: "da",
+    title: "Data Availability (DA)",
+    blurb:
+      "Namespaced Merkle Trees + erasure coding. Light clients verify blob availability via DAS proofs.",
+    href: `${docsHref}#data-availability`,
+    icon: "da",
+  },
+  {
+    id: "vm",
+    title: "Python VM (deterministic)",
+    blurb:
+      "Validate → compile → run contracts in a sandboxed Python VM with a tiny, auditable stdlib.",
+    href: `${docsHref}#vm-py`,
+    icon: "vm",
+  },
+  {
+    id: "aicf",
+    title: "AI Compute Fund (AICF)",
+    blurb:
+      "Queue, assign, attest, and settle off-chain AI/Quantum jobs with verifiable proofs and SLAs.",
+    href: `${docsHref}#aicf`,
+    icon: "aicf",
+  },
+  {
+    id: "pq",
+    title: "Post-Quantum (PQ) accounts",
+    blurb:
+      "Addresses and signatures using Dilithium / SPHINCS+. Domain separation and bech32m addresses.",
+    href: `${docsHref}#post-quantum`,
+    icon: "pq",
+  },
+  {
+    id: "quantum",
+    title: "Quantum proofs",
+    blurb:
+      "Provider attestations + trap circuits and QoS metrics map into ψ inputs alongside hash work.",
+    href: `${docsHref}#quantum`,
+    icon: "quantum",
+  },
+];
+
+const {
+  items = defaults,
+  columns = 3,
+  showLinks = true,
+  class: className = "",
+} = Astro.props as Props;
+
+const gridCols =
+  columns === 2
+    ? "grid-cols-1 sm:grid-cols-2"
+    : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3";
+
+function Icon({ kind }: { kind: Feature["icon"] }) {
+  switch (kind) {
+    case "poies":
+      return (
+        <svg viewBox="0 0 24 24" class="size-5" aria-hidden="true">
+          <path fill="currentColor" d="M12 2 3 6v6c0 5 4 9 9 10c5-1 9-5 9-10V6zM7 9l5-2l5 2v3c0 3.5-2.6 6.6-6 7.5C7.6 18.6 5 15.5 5 12z" />
+          <circle cx="12" cy="12" r="2.25" fill="currentColor"/>
+        </svg>
+      );
+    case "da":
+      return (
+        <svg viewBox="0 0 24 24" class="size-5" aria-hidden="true">
+          <path fill="currentColor" d="M3 6l9-4l9 4v6c0 5-4 9-9 10C7 21 3 17 3 12zM12 5L7 7.2V12c0 3.09 2.2 5.9 5 6.7c2.8-.8 5-3.61 5-6.7V7.2z"/>
+          <path fill="currentColor" d="M8.5 10.5h7v3h-7z"/>
+        </svg>
+      );
+    case "vm":
+      return (
+        <svg viewBox="0 0 24 24" class="size-5" aria-hidden="true">
+          <path fill="currentColor" d="M4 5h16v10H4zM2 17h20v2H2z"/>
+          <path fill="currentColor" d="M7 7h2v6H7zm4 0h2v6h-2zm4 0h2v6h-2z"/>
+        </svg>
+      );
+    case "aicf":
+      return (
+        <svg viewBox="0 0 24 24" class="size-5" aria-hidden="true">
+          <path fill="currentColor" d="M12 2a5 5 0 0 1 5 5v1h2a3 3 0 0 1 0 6h-2v1a5 5 0 1 1-10 0v-1H5a3 3 0 0 1 0-6h2V7a5 5 0 0 1 5-5z"/>
+          <path fill="currentColor" d="M11 8h2v8h-2z"/>
+        </svg>
+      );
+    case "pq":
+      return (
+        <svg viewBox="0 0 24 24" class="size-5" aria-hidden="true">
+          <path fill="currentColor" d="M12 3L2 9l10 6l10-6zm0 18l-6-3.6l-2 1.2L12 23l8-4.4l-2-1.2z"/>
+        </svg>
+      );
+    case "quantum":
+      return (
+        <svg viewBox="0 0 24 24" class="size-5" aria-hidden="true">
+          <circle cx="12" cy="12" r="2.25" fill="currentColor"/>
+          <ellipse cx="12" cy="12" rx="9" ry="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <ellipse transform="rotate(60 12 12)" cx="12" cy="12" rx="9" ry="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <ellipse transform="rotate(-60 12 12)" cx="12" cy="12" rx="9" ry="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        </svg>
+      );
+    default:
+      return (
+        <svg viewBox="0 0 24 24" class="size-5" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" fill="currentColor"/>
+        </svg>
+      );
+  }
+}
+---
+
+<section class={`container mx-auto px-4 py-12 sm:py-16 ${className}`}>
+  <div class={`grid ${gridCols} gap-4 sm:gap-6`}>
+    {items.map((f) => (
+      <article
+        class="group relative rounded-xl border p-5 sm:p-6 bg-[var(--bg-elevated)]
+               border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)] hover:border-[color-mix(in_srgb,var(--text-primary)_/_22%,transparent)] transition-colors"
+      >
+        <div class="flex items-start gap-3">
+          <div class="shrink-0 rounded-md p-2 border
+                      border-[color-mix(in_srgb,var(--text-primary)_/_15%,transparent)]
+                      bg-[color-mix(in_srgb,var(--bg-regular)_/_70%,transparent)]">
+            {Icon({ kind: f.icon })}
+          </div>
+          <div class="min-w-0">
+            <h3 class="text-base sm:text-[1.05rem] font-semibold leading-tight">
+              {f.title}
+            </h3>
+            <p class="mt-1 text-sm opacity-85">{f.blurb}</p>
+          </div>
+        </div>
+
+        {showLinks && f.href && (
+          <a
+            href={f.href}
+            class="mt-4 inline-flex items-center gap-1.5 text-sm font-medium opacity-90 hover:opacity-100"
+            aria-label={`Learn more about ${f.title}`}
+          >
+            Learn more
+            <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" class="transition-transform group-hover:translate-x-0.5">
+              <path fill="currentColor" d="M14 3h7v7h-2V6.41L9.41 16 8 14.59 16.59 6H14V3z"/>
+            </svg>
+          </a>
+        )}
+      </article>
+    ))}
+  </div>
+</section>

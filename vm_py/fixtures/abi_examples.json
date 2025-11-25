@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "notes": "Encoding/decoding round-trip fixtures for Animica Python-VM ABI. All hex are 0x-prefixed, lowercase, even length.",
+  "roundtrip": [
+    { "name": "int.zero",   "type": "int",    "value": 0 },
+    { "name": "int.small",  "type": "int",    "value": 17 },
+    { "name": "int.large",  "type": "int",    "value": 9223372036854775807 },
+    { "name": "bool.false", "type": "bool",   "value": false },
+    { "name": "bool.true",  "type": "bool",   "value": true },
+
+    { "name": "bytes.empty", "type": "bytes",  "value": "0x" },
+    { "name": "bytes.one",   "type": "bytes",  "value": "0x00" },
+    { "name": "bytes.short", "type": "bytes",  "value": "0xdeadbeef" },
+    { "name": "bytes.long",  "type": "bytes",  "value": "0x0123456789abcdef0123456789abcdef" },
+
+    {
+      "name": "address.sample",
+      "type": "address",
+      "value": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+
+    { "name": "int.array.empty", "type": "int[]", "value": [] },
+    { "name": "int.array.tiny",  "type": "int[]", "value": [1, 2, 3] },
+    { "name": "int.array.mixed", "type": "int[]", "value": [0, 7, 1024, 65535] },
+
+    { "name": "bytes.array.empty", "type": "bytes[]", "value": [] },
+    {
+      "name": "bytes.array.mixed",
+      "type": "bytes[]",
+      "value": ["0x", "0x00", "0xdeadbeef", "0xc0ffee"]
+    },
+
+    {
+      "name": "address.array",
+      "type": "address[]",
+      "value": [
+        "0x0000000000000000000000000000000000000000000000000000000000000001",
+        "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      ]
+    }
+  ],
+
+  "invalid": [
+    {
+      "name": "int.negative",
+      "type": "int",
+      "value": -1,
+      "reason": "ABI ints must be non-negative"
+    },
+    {
+      "name": "bool.not_bool",
+      "type": "bool",
+      "value": "true",
+      "reason": "Must be JSON boolean, not string"
+    },
+    {
+      "name": "bytes.no_prefix",
+      "type": "bytes",
+      "value": "deadbeef",
+      "reason": "Hex must start with 0x"
+    },
+    {
+      "name": "bytes.odd_length",
+      "type": "bytes",
+      "value": "0xabc",
+      "reason": "Hex nybbles must be even-length"
+    },
+    {
+      "name": "address.wrong_len",
+      "type": "address",
+      "value": "0x1234",
+      "reason": "Address must be 32 bytes (64 hex chars)"
+    },
+    {
+      "name": "int.array.mixed_types",
+      "type": "int[]",
+      "value": [1, "2", 3],
+      "reason": "Arrays must be homogenous by declared element type"
+    },
+    {
+      "name": "bytes.array.bad_element",
+      "type": "bytes[]",
+      "value": ["0x00", "0xgg"],
+      "reason": "Invalid hex in element"
+    }
+  ]
+}

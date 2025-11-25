@@ -1,0 +1,87 @@
+# ─────────────────────────────
+# Python caches & build junk
+# ─────────────────────────────
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+.eggs/
+*.egg-info/
+pip-wheel-metadata/
+build/
+dist/
+site/
+.cache/
+.pytest_cache/
+.mypy_cache/
+.pytype/
+.nox/
+.tox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# ─────────────────────────────
+# Virtual environments
+# ─────────────────────────────
+.venv/
+venv/
+env/
+.uv/
+
+# ─────────────────────────────
+# IDE / Editor / OS files
+# ─────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.code-workspace
+*.swp
+*~
+.tmp/
+tmp/
+
+# ─────────────────────────────
+# Logs & scratch
+# ─────────────────────────────
+logs/
+*.log
+
+# ─────────────────────────────
+# Local env & secrets
+# (keep example committed)
+# ─────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ─────────────────────────────
+# Contract artifacts (local only)
+# ─────────────────────────────
+artifacts/
+# Deterministic build outputs
+build/
+# Common intermediary formats
+*.ir
+*.ir.json
+*.cbor
+*.cb
+*.bin
+*.pkg
+*.manifest.hash
+
+# NOTE: We intentionally DO NOT ignore:
+# - contract.py
+# - manifest.json
+# - tests_local.py
+# as they are source-of-truth files for this template.
+
+# ─────────────────────────────
+# Node / tooling (optional)
+# ─────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*

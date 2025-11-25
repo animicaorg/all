@@ -1,0 +1,134 @@
+---
+/**
+ * DocsLayout — lightweight wrapper for docs landing pages and external redirects.
+ * Usage:
+ *  - As a normal docs page layout: <DocsLayout title="Docs">...</DocsLayout>
+ *  - As a redirect shim: <DocsLayout redirectTo="https://docs.animica.xyz/some/page" />
+ *
+ * If `redirectTo` is provided, this page issues a fast client-side redirect (0s by default),
+ * includes a meta refresh as a crawler-friendly hint, and shows a graceful message.
+ */
+
+import BaseLayout from "./BaseLayout.astro";
+import site from "../config/site";
+
+interface Props {
+  title?: string;
+  description?: string;
+  /**
+   * If set, the page will immediately redirect to this absolute/relative URL.
+   * The canonical tag will also point at this target to avoid duplicate content.
+   */
+  redirectTo?: string;
+  /** Optional delay (seconds) before redirect; default 0 for immediate. */
+  delaySeconds?: number;
+  /** Optional JSON-LD payload */
+  jsonLd?: Record<string, any> | Array<Record<string, any>>;
+  /** Prevent indexing when acting as a redirect shim. Default true if redirecting. */
+  noIndex?: boolean;
+}
+
+const {
+  title = "Documentation",
+  description = "Developer documentation and guides for Animica.",
+  redirectTo,
+  delaySeconds = 0,
+  jsonLd,
+} = Astro.props as Props;
+
+const isRedirect = Boolean(redirectTo);
+const canonical = isRedirect
+  ? (() => {
+      try {
+        return new URL(redirectTo!, site.url || Astro.url.origin).toString();
+      } catch {
+        return redirectTo!;
+      }
+    })()
+  : (site.url ? new URL(Astro.url.pathname, site.url).toString() : Astro.url.href);
+
+const noIndex = (Astro.props as Props).noIndex ?? isRedirect;
+
+const jsonLdPayload = Array.isArray(jsonLd) ? jsonLd : (jsonLd ? [jsonLd] : []);
+---
+
+<BaseLayout
+  title={title}
+  description={description}
+  canonical={canonical}
+  noIndex={noIndex}
+  jsonLd={[
+    ...jsonLdPayload,
+    {
+      "@context": "https://schema.org",
+      "@type": "WebPage",
+      name: title,
+      description,
+      url: canonical,
+    },
+  ]}
+>
+  <fragment slot="header">
+    <nav class="container mx-auto px-4 py-4 flex items-center justify-between">
+      <a href="/" class="inline-flex items-center gap-2 font-semibold">
+        <img src="/icons/logo.svg" alt="Animica" width="24" height="24" />
+        <span>Animica</span>
+      </a>
+      <a href="/docs" class="text-sm opacity-80 hover:opacity-100">Docs Home</a>
+    </nav>
+  </fragment>
+
+  {isRedirect && (
+    <>
+      <!-- Crawler hint & ultra-fast fallback -->
+      <meta http-equiv="refresh" content={`${delaySeconds};url=${canonical}`} slot="head" />
+      <section class="container mx-auto px-4 py-16 prose prose-invert:max-w-none">
+        <h1 class="text-2xl font-semibold mb-3">Redirecting to docs…</h1>
+        <p class="opacity-80">
+          You’re being redirected to
+          <code class="break-all">{canonical}</code>.
+          If nothing happens, click the button below.
+        </p>
+        <div class="mt-6">
+          <a href={canonical} class="inline-flex items-center gap-2 rounded px-4 py-2 bg-[var(--bg-elevated)] hover:bg-[var(--bg-elevated-2)]">
+            Continue to documentation →
+          </a>
+        </div>
+      </section>
+
+      <script is:raw>
+        (function () {
+          try {
+            var target = {href: {}}; target.href = "{canonical}";
+            var delay = {d: 0}; delay.d = {delaySeconds};
+            setTimeout(function(){ location.replace("{canonical}"); }, Math.max(0, delay.d*1000));
+          } catch (_) {}
+        })();
+      </script>
+      <noscript>
+        <div class="container mx-auto px-4 py-6">
+          <a href={canonical}>Continue to documentation</a>
+        </div>
+      </noscript>
+    </>
+  )}
+
+  {!isRedirect && (
+    <section class="container mx-auto px-4 py-12">
+      <slot />
+    </section>
+  )}
+
+  <fragment slot="footer">
+    <footer class="container mx-auto px-4 py-12 text-sm opacity-80">
+      <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <span>© {new Date().getFullYear()} {site.brand}. All rights reserved.</span>
+        <div class="flex gap-4">
+          <a href="/privacy" class="hover:opacity-100 opacity-80">Privacy</a>
+          <a href="/terms" class="hover:opacity-100 opacity-80">Terms</a>
+          <a href="https://github.com/animica" rel="noopener noreferrer" class="hover:opacity-100 opacity-80">GitHub</a>
+        </div>
+      </div>
+    </footer>
+  </fragment>
+</BaseLayout>

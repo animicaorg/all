@@ -1,0 +1,183 @@
+# ---------------------------------------------------------------------------
+# Animica Contract Python Workspace — pyproject.toml
+# ---------------------------------------------------------------------------
+# This workspace template is optimized for building deterministic Python
+# smart contracts with the Animica VM (vm_py) and interacting with a node
+# via the Python SDK (omni_sdk). It also includes sane defaults for linting
+# (ruff), typing (mypy), and testing (pytest).
+#
+# Recommended Python version: 3.10+ (3.11/3.12 also supported).
+# ---------------------------------------------------------------------------
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "{{ project_slug }}"
+version = "0.1.0"
+description = "Animica contract workspace with deterministic Python smart contracts and tooling."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Animica Developers", email = "dev@animica.example" }]
+keywords = ["animica", "blockchain", "smart-contracts", "vm", "post-quantum", "pq"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: Apache Software License",
+  "Typing :: Typed",
+  "Topic :: Software Development :: Build Tools",
+  "Topic :: Software Development :: Testing",
+]
+
+# Runtime dependencies for local build/simulate/deploy flows.
+dependencies = [
+  # Core VM & SDK (replace with actual versions when publishing).
+  "vm_py>=0.1.0",
+  "omni_sdk>=0.1.0",
+  # Utilities
+  "python-dotenv>=1.0.0",
+  "msgspec>=0.18.6",
+  "cbor2>=5.6.0",
+  # CLI niceties (optional but helpful in scripts)
+  "typer>=0.12.0",
+  "rich>=13.7.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4",
+  "pytest-xdist>=3.5.0",
+  "pytest-cov>=4.1.0",
+  "ruff>=0.5.6",
+  "mypy>=1.10.0",
+  "types-requests",
+  "types-python-dateutil",
+]
+
+[project.urls]
+Homepage = "https://animica.example"
+Documentation = "https://docs.animica.example"
+Repository = "https://git.example/animica/contracts-workspace"
+Issues = "https://git.example/animica/contracts-workspace/issues"
+
+# Console entry points (optional). You can wire your workspace scripts here
+# once you add proper modules under a package (e.g., src/{{project_slug}}/cli.py).
+# [project.scripts]
+# animica-ws-build = "{{project_slug}}.cli:build"
+# animica-ws-deploy = "{{project_slug}}.cli:deploy"
+
+# ---------------------------------------------------------------------------
+# Tooling Configuration
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-q --disable-warnings"
+testpaths = [
+  "tests",
+]
+pythonpath = [
+  ".",                     # allow workspace-relative imports
+]
+# Treat any test that relies on environment config as using .env
+env_files = [".env"]
+
+[tool.coverage.run]
+branch = true
+source = [
+  ".",
+]
+omit = [
+  "venv/*",
+  "build/*",
+  "dist/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+precision = 2
+
+# Ruff (fast linter & formatter-like fixer).
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# PEP8/flake8, bugbear, perflint, pycodestyle warnings/errors, imports, etc.
+select = [
+  "E", "F", "W",       # pycodestyle/pyflakes
+  "B",                 # flake8-bugbear
+  "I",                 # isort
+  "UP",                # pyupgrade
+  "PERF",              # perflint
+  "C90",               # mccabe complexity
+]
+ignore = [
+  "E203",  # whitespace before ':', conflicts with some formatters
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["vm_py", "omni_sdk"]
+combine-as-imports = true
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+# Allow slightly looser rules inside pure contract sources, which may
+# intentionally avoid certain Python constructs for determinism.
+[tool.ruff.lint.per-file-ignores]
+"contracts/**/*.py" = ["B905"]   # zip() strict argument not relevant for simple loops
+
+# mypy: strong typing defaults tuned for deterministic, small codebases.
+[tool.mypy]
+python_version = "3.10"
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_return_any = true
+warn_unreachable = true
+strict_optional = true
+no_implicit_optional = true
+check_untyped_defs = true
+disallow_any_generics = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_untyped_decorated_calls = true
+no_implicit_reexport = true
+show_error_codes = true
+pretty = true
+
+# Treat third-party packages without types as typed (relax here if needed).
+ignore_missing_imports = true
+
+# Contract code tends to be small, explicit; allow local stubs if desired.
+[mypy-contracts.*]
+disallow_any_unimported = false
+
+# ---------------------------------------------------------------------------
+# Setuptools (lightweight) — we don't enforce a package layout here by default.
+# If you plan to package shared helpers as a library, switch to src-layout and
+# set packages accordingly. Contracts themselves are compiled/run via vm_py and
+# don't need packaging.
+# ---------------------------------------------------------------------------
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+exclude = [
+  "tests",
+  "contracts",   # contracts are not packaged as Python modules
+  "build",
+  "dist",
+]
+
+# End of file

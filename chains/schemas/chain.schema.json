@@ -1,0 +1,298 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.animica.dev/chains/chain.schema.json",
+  "title": "Animica Chain Metadata",
+  "description": "Schema for a single Animica chain metadata JSON.",
+  "type": "object",
+  "additionalProperties": false,
+
+  "required": [
+    "schemaVersion",
+    "name",
+    "chainId",
+    "network",
+    "status",
+    "testnet",
+    "nativeCurrency",
+    "rpc",
+    "explorers",
+    "p2p",
+    "addresses",
+    "pq",
+    "vm",
+    "da",
+    "genesis",
+    "governance",
+    "features",
+    "checksum"
+  ],
+
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "description": "Semver of this schema that the file conforms to.",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+
+    "name": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 64
+    },
+
+    "chainId": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "EVM-style or Animica numeric chain identifier."
+    },
+
+    "network": {
+      "type": "string",
+      "enum": ["mainnet", "testnet", "localnet"]
+    },
+
+    "status": {
+      "type": "string",
+      "enum": ["planned", "active", "dev", "deprecated"]
+    },
+
+    "testnet": {
+      "type": "boolean",
+      "description": "True for non-mainnet profiles (testnet/localnet)."
+    },
+
+    "nativeCurrency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "symbol", "decimals"],
+      "properties": {
+        "name": { "type": "string", "minLength": 2, "maxLength": 32 },
+        "symbol": { "type": "string", "pattern": "^[A-Z0-9]{2,10}$" },
+        "decimals": { "type": "integer", "minimum": 0, "maximum": 255 }
+      }
+    },
+
+    "rpc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["http", "ws"],
+      "properties": {
+        "http": {
+          "type": "array",
+          "items": { "type": "string", "format": "uri" },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "ws": {
+          "type": "array",
+          "items": { "type": "string", "format": "uri" },
+          "minItems": 0,
+          "uniqueItems": true
+        }
+      }
+    },
+
+    "explorers": {
+      "type": "array",
+      "minItems": 0,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "url"],
+        "properties": {
+          "name": { "type": "string", "minLength": 2, "maxLength": 64 },
+          "url": { "type": "string", "format": "uri" }
+        }
+      }
+    },
+
+    "faucets": {
+      "type": "array",
+      "description": "Optional faucets (usually for testnet/localnet).",
+      "minItems": 0,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "url"],
+        "properties": {
+          "name": { "type": "string" },
+          "url": { "type": "string", "format": "uri" }
+        }
+      }
+    },
+
+    "p2p": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocols", "port", "seeds", "bootnodes"],
+      "properties": {
+        "protocols": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "seeds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "bootnodes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 0,
+          "uniqueItems": true
+        }
+      }
+    },
+
+    "addresses": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "hrp", "pubkeyTypes"],
+      "properties": {
+        "format": { "type": "string", "enum": ["bech32m"] },
+        "hrp": { "type": "string", "const": "am" },
+        "pubkeyTypes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "enum": ["ed25519", "secp256k1", "dilithium3", "sphincs+"] }
+        }
+      }
+    },
+
+    "pq": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sigDefault", "kex", "policyVersion"],
+      "properties": {
+        "sigDefault": { "type": "string", "enum": ["ed25519", "secp256k1", "dilithium3", "sphincs+"] },
+        "kex": { "type": "string", "enum": ["kyber-768", "ntru-hps-509"] },
+        "policyVersion": {
+          "type": "string",
+          "description": "YYYY-MM label for PQ policy doc/version.",
+          "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])$"
+        }
+      }
+    },
+
+    "vm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lang", "version", "gasModel"],
+      "properties": {
+        "lang": { "type": "string", "enum": ["python"] },
+        "version": {
+          "type": "string",
+          "description": "Semver of VM/runtime.",
+          "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+        },
+        "gasModel": { "type": "string", "minLength": 1, "maxLength": 32 }
+      }
+    },
+
+    "da": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxBlobSizeBytes", "nmtNamespaceBytes", "rsRate"],
+      "properties": {
+        "maxBlobSizeBytes": { "type": "integer", "minimum": 1 },
+        "nmtNamespaceBytes": { "type": "integer", "minimum": 4, "maximum": 64 },
+        "rsRate": {
+          "type": "string",
+          "description": "Reed–Solomon redundancy as numerator/denominator string (e.g., '10/16').",
+          "pattern": "^[0-9]+/[0-9]+$"
+        }
+      }
+    },
+
+    "randomness": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Randomness/beacon configuration (optional).",
+      "properties": {
+        "method": { "type": "string", "enum": ["vdf+qrng", "commit-reveal", "drand", "contract"] },
+        "contract": { "type": "string" },
+        "params": { "type": "object" }
+      },
+      "required": ["method"]
+    },
+
+    "genesis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hash", "timestamp", "initialHeight"],
+      "properties": {
+        "hash": { "type": "string", "pattern": "^0x[0-9a-fA-F]{16,}$" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "initialHeight": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "governance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["votingPeriodDays"],
+      "properties": {
+        "site": { "type": "string", "format": "uri", "nullable": true },
+        "votingPeriodDays": { "type": "integer", "minimum": 1, "maximum": 30 }
+      }
+    },
+
+    "links": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "website": { "type": "string", "format": "uri" },
+        "studio":  { "type": "string", "format": "uri" },
+        "explorer":{ "type": "string", "format": "uri" },
+        "docs":    { "type": "string", "format": "uri" }
+      }
+    },
+
+    "features": {
+      "type": "array",
+      "minItems": 0,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": ["poies", "pq", "ai", "quantum", "da", "vm_py"]
+      }
+    },
+
+    "checksum": {
+      "type": "string",
+      "description": "Self-embedded SHA-256 hex; must match chains/checksums.txt.",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  },
+
+  "examples": [
+    {
+      "schemaVersion": "1.2.0",
+      "name": "Animica Testnet",
+      "chainId": 2,
+      "network": "testnet",
+      "status": "active",
+      "testnet": true,
+      "nativeCurrency": { "name": "Animica", "symbol": "ANM", "decimals": 18 },
+      "rpc": { "http": ["https://rpc.testnet.animica.dev"], "ws": ["wss://ws.testnet.animica.dev"] },
+      "explorers": [{ "name": "Animica Explorer", "url": "https://explorer.testnet.animica.dev" }],
+      "faucets": [{ "name": "Faucet", "url": "https://faucet.testnet.animica.dev" }],
+      "p2p": { "protocols": ["animica/1"], "port": 30303, "seeds": ["seed.testnet.animica.dev"], "bootnodes": [] },
+      "addresses": { "format": "bech32m", "hrp": "am", "pubkeyTypes": ["ed25519","secp256k1","dilithium3"] },
+      "pq": { "sigDefault": "dilithium3", "kex": "kyber-768", "policyVersion": "2025-10" },
+      "vm": { "lang": "python", "version": "0.5.0", "gasModel": "v1" },
+      "da": { "maxBlobSizeBytes": 2097152, "nmtNamespaceBytes": 8, "rsRate": "10/16" },
+      "randomness": { "method": "vdf+qrng", "params": { "tau": 1024 } },
+      "genesis": { "hash": "0x0123abcd0123abcd0123abcd0123abcd", "timestamp": "2025-10-01T00:00:00Z", "initialHeight": 0 },
+      "governance": { "site": "https://gov.animica.dev", "votingPeriodDays": 7 },
+      "links": { "website": "https://animica.dev", "docs": "https://docs.animica.dev" },
+      "features": ["poies","pq","da","vm_py"],
+      "checksum": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ]
+}

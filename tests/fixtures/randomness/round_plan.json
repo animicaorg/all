@@ -1,0 +1,141 @@
+{
+  "schema": "animica.randomness.round_plan.v1",
+  "description": "Deterministic, human-readable round plan used by integration/property tests to simulate commit→reveal→VDF→beacon. Values are illustrative; cryptographic correctness is exercised by module-local vectors.",
+  "t0": "2025-10-02T00:00:00Z",
+
+  "schedule": {
+    "commit_seconds": 60,
+    "reveal_seconds": 60,
+    "settle_seconds": 30,
+    "round_seconds": 150,
+    "reveal_grace_seconds": 5
+  },
+
+  "vdf_defaults": {
+    "profile": "wesolowski",
+    "security_bits": 128,
+    "discriminant_size_bits": 2048,
+    "iterations": 500000,
+    "target_seconds": 2.5
+  },
+
+  "rounds": [
+    {
+      "roundId": 1,
+      "participants": [
+        {
+          "address": "anim1randa0000000000000000000000000000000",
+          "salt": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "payload": "0x01020304"
+        },
+        {
+          "address": "anim1randb0000000000000000000000000000000",
+          "salt": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "payload": "0xdeadbeef"
+        },
+        {
+          "address": "anim1randc0000000000000000000000000000000",
+          "salt": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "payload": "0x00"
+        }
+      ],
+      "timeline": {
+        "commits": [
+          { "address": "anim1randa0000000000000000000000000000000", "offset_s": 5 },
+          { "address": "anim1randb0000000000000000000000000000000", "offset_s": 7 },
+          { "address": "anim1randc0000000000000000000000000000000", "offset_s": 12 }
+        ],
+        "reveals": [
+          { "address": "anim1randa0000000000000000000000000000000", "offset_s": 65 },
+          { "address": "anim1randb0000000000000000000000000000000", "offset_s": 72 },
+          { "address": "anim1randc0000000000000000000000000000000", "offset_s": 90 }
+        ],
+        "vdf_start_offset_s": 120
+      },
+      "vdf_overrides": {
+        "iterations": 500000
+      },
+      "expected": {
+        "aggregate_hint": "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "vdf_input_hint": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "beacon_hint": "0x3333333333333333333333333333333333333333333333333333333333333333",
+        "light_proof": {
+          "hash_chain_tip": "0x4444444444444444444444444444444444444444444444444444444444444444",
+          "iterations": 500000
+        }
+      }
+    },
+
+    {
+      "roundId": 2,
+      "participants": [
+        {
+          "address": "anim1randa0000000000000000000000000000000",
+          "salt": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "payload": "0x05060708"
+        },
+        {
+          "address": "anim1randb0000000000000000000000000000000",
+          "salt": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "payload": "0xfeedface"
+        }
+      ],
+      "timeline": {
+        "commits": [
+          { "address": "anim1randb0000000000000000000000000000000", "offset_s": 8 },
+          { "address": "anim1randa0000000000000000000000000000000", "offset_s": 15 }
+        ],
+        "reveals": [
+          { "address": "anim1randb0000000000000000000000000000000", "offset_s": 70 },
+          { "address": "anim1randa0000000000000000000000000000000", "offset_s": 100 }
+        ],
+        "vdf_start_offset_s": 120
+      },
+      "expected": {
+        "aggregate_hint": "0x5555555555555555555555555555555555555555555555555555555555555555",
+        "vdf_input_hint": "0x6666666666666666666666666666666666666666666666666666666666666666",
+        "beacon_hint": "0x7777777777777777777777777777777777777777777777777777777777777777",
+        "light_proof": {
+          "hash_chain_tip": "0x8888888888888888888888888888888888888888888888888888888888888888",
+          "iterations": 500000
+        }
+      }
+    },
+
+    {
+      "roundId": 3,
+      "participants": [
+        {
+          "address": "anim1rande0000000000000000000000000000000",
+          "salt": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "payload": "0x112233445566"
+        }
+      ],
+      "timeline": {
+        "commits": [
+          { "address": "anim1rande0000000000000000000000000000000", "offset_s": 10 }
+        ],
+        "reveals": [
+          { "address": "anim1rande0000000000000000000000000000000", "offset_s": 80 }
+        ],
+        "vdf_start_offset_s": 120
+      },
+      "expected": {
+        "aggregate_hint": "0x9999999999999999999999999999999999999999999999999999999999999999",
+        "vdf_input_hint": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "beacon_hint": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "light_proof": {
+          "hash_chain_tip": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "iterations": 500000
+        }
+      }
+    }
+  ],
+
+  "notes": [
+    "schedule.* seconds are relative to each round's local t0 = t0 + (roundId-1)*round_seconds.",
+    "timeline.offset_s values are measured from the round-local t0.",
+    "expected.* fields are hints used by tests for stable comparisons; they need not match real crypto outputs.",
+    "vdf_defaults can be overridden per-round via vdf_overrides."
+  ]
+}

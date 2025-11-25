@@ -1,0 +1,96 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "{{ project_slug }}"
+version = "{{ version | default('0.1.0') }}"
+description = "{{ description | default('Animica Python SDK starter client') }}"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "{{ author_name | default('Your Name') }}", email = "{{ author_email | default('you@example.com') }}" },
+]
+license = { text = "{{ license | default('Apache-2.0') }}" }
+keywords = ["animica", "blockchain", "json-rpc", "sdk", "contracts", "da", "aicf", "randomness"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://example.com/{{ project_slug }}"
+Repository = "https://github.com/your-org/{{ project_slug }}"
+Issues = "https://github.com/your-org/{{ project_slug }}/issues"
+
+# Keep runtime pins in requirements.txt; dev-only tools live here.
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4",
+  "pytest-asyncio>=0.23",
+  "ruff>=0.5",
+  "mypy>=1.10",
+  "types-requests",
+  "websockets>=12.0",
+]
+
+[tool.setuptools]
+package-dir = { "" = "." }
+
+[tool.setuptools.packages.find]
+include = ["{{ package_name }}*"]
+namespaces = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# E,F: pyflakes/pycodestyle; I: isort; B: bugbear; UP: pyupgrade; TCH: typing; RUF: ruff extras
+select = ["E", "F", "I", "B", "UP", "TCH", "RUF"]
+ignore = [
+  "E203",  # whitespace before ':', conflicts with some formatters
+  "E501",  # handled by formatter/line-length
+]
+fixable = ["ALL"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["{{ package_name }}"]
+combine-as-imports = true
+force-sort-within-sections = true
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+warn_unreachable = true
+strict_equality = true
+show_error_codes = true
+pretty = true
+plugins = []
+
+# Third-party stubs may be missing in fresh environments; relax until installed.
+[[tool.mypy.overrides]]
+module = ["omni_sdk.*", "websockets.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+addopts = "-q -ra"
+testpaths = ["tests", "examples"]
+filterwarnings = [
+  "ignore::DeprecationWarning",
+]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+branch = true
+source = ["{{ package_name }}"]

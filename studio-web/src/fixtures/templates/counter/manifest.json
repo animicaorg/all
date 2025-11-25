@@ -1,0 +1,55 @@
+{
+  "name": "Counter",
+  "version": "1.0.0",
+  "language": "python",
+  "entry": "contract.py",
+  "description": "Deterministic counter with get/inc/reset; emits Inc and Reset events.",
+  "license": "MIT",
+  "abi": {
+    "functions": [
+      {
+        "name": "get",
+        "inputs": [],
+        "outputs": [{ "type": "int" }],
+        "stateMutability": "view"
+      },
+      {
+        "name": "inc",
+        "inputs": [{ "name": "by", "type": "int" }],
+        "outputs": [{ "type": "int" }],
+        "defaults": { "by": 1 },
+        "stateMutability": "write"
+      },
+      {
+        "name": "reset",
+        "inputs": [{ "name": "to", "type": "int" }],
+        "outputs": [{ "type": "int" }],
+        "defaults": { "to": 0 },
+        "stateMutability": "write"
+      }
+    ],
+    "events": [
+      {
+        "name": "Inc",
+        "fields": [
+          { "name": "by", "type": "int" },
+          { "name": "value", "type": "int" }
+        ]
+      },
+      {
+        "name": "Reset",
+        "fields": [
+          { "name": "value", "type": "int" }
+        ]
+      }
+    ],
+    "errors": [
+      { "name": "INC_NEGATIVE_OR_ZERO" },
+      { "name": "RESET_NEGATIVE" }
+    ]
+  },
+  "resources": {
+    "storage": ["count"],
+    "caps": []
+  }
+}

@@ -1,0 +1,203 @@
+---
+/**
+ * Newsletter.astro
+ * Accessible email capture with progressive enhancement.
+ *
+ * Server contract (default: POST /api/newsletter):
+ * - Accepts either application/json: { email, hp, t } or form-encoded.
+ * - Should return 200 with JSON { ok: true } (optionally { message })
+ *   or a non-2xx with { ok: false, message }.
+ *
+ * Props:
+ * - title?: string
+ * - description?: string (supports minimal inline HTML)
+ * - endpoint?: string (default "/api/newsletter")
+ * - placeholder?: string (default "you@domain.com")
+ * - cta?: string (default "Subscribe")
+ * - successMessage?: string
+ * - errorMessage?: string
+ * - compact?: boolean (default false)
+ * - class?: string
+ */
+
+interface Props {
+  title?: string;
+  description?: string;
+  endpoint?: string;
+  placeholder?: string;
+  cta?: string;
+  successMessage?: string;
+  errorMessage?: string;
+  compact?: boolean;
+  class?: string;
+}
+
+const {
+  title = "Subscribe to updates",
+  description = "Occasional product updates, no spam.",
+  endpoint = "/api/newsletter",
+  placeholder = "you@domain.com",
+  cta = "Subscribe",
+  successMessage = "Thanks! Please check your inbox to confirm.",
+  errorMessage = "Something went wrong. Please try again.",
+  compact = false,
+  class: className = "",
+} = Astro.props as Props;
+
+const descId = `nl-desc-${Math.random().toString(36).slice(2, 8)}`;
+const msgId = `nl-msg-${Math.random().toString(36).slice(2, 8)}`;
+---
+
+<section
+  class={`rounded-xl border bg-[var(--bg-elevated)]
+          border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]
+          p-4 sm:p-6 ${className}`}
+>
+  <header class={`${compact ? "mb-3" : "mb-4 sm:mb-5"}`}>
+    <h2 class="text-xl sm:text-2xl font-semibold tracking-tight">{title}</h2>
+    {description && (
+      <p id={descId} class="mt-1 text-sm opacity-80" set:html={description} />
+    )}
+  </header>
+
+  <!-- Progressive enhancement: works with or without JS -->
+  <form
+    method="post"
+    action={endpoint}
+    data-endpoint={endpoint}
+    aria-describedby={descId}
+    aria-errormessage={msgId}
+    class={`flex w-full gap-2 ${compact ? "flex-col sm:flex-row" : "flex-col sm:flex-row"}`}
+  >
+    <!-- Honeypot (bots only) -->
+    <div class="hidden" aria-hidden="true">
+      <label>
+        Do not fill this field
+        <input type="text" name="hp" tabindex="-1" autocomplete="off" />
+      </label>
+    </div>
+    <!-- Timestamp / simple anti-replay signal -->
+    <input type="hidden" name="t" value="" />
+
+    <div class="flex-1">
+      <label for="newsletter-email" class="sr-only">Email address</label>
+      <input
+        id="newsletter-email"
+        name="email"
+        type="email"
+        inputmode="email"
+        autocomplete="email"
+        required
+        placeholder={placeholder}
+        class="w-full rounded-lg border bg-transparent px-3 py-2 sm:py-2.5 text-base
+               border-[color-mix(in_srgb,var(--text-primary)_/_18%,transparent)]
+               focus:outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--text-primary)_/_25%,transparent)]"
+      />
+    </div>
+
+    <button
+      type="submit"
+      class="shrink-0 inline-flex items-center justify-center rounded-lg px-3 sm:px-4 py-2 sm:py-2.5
+             font-medium border
+             border-[color-mix(in_srgb,var(--text-primary)_/_18%,transparent)]
+             bg-[color-mix(in_srgb,var(--text-primary)_/_6%,transparent)]
+             hover:bg-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)]
+             active:translate-y-px transition"
+      data-loading="false"
+    >
+      <span class="inline-flex items-center gap-2">
+        <svg class="size-4 opacity-80" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2Zm-.4 2L12 12.25 4.4 6h15.2ZM4 18V7.1l7.4 5.92a1 1 0 0 0 1.2 0L20 7.1V18H4Z"/>
+        </svg>
+        <span>{cta}</span>
+      </span>
+    </button>
+
+    <p id={msgId} class="sr-only" role="status" aria-live="polite"></p>
+  </form>
+
+  <p class="mt-2 text-xs opacity-70">
+    We’ll only use your email for product updates. You can unsubscribe anytime.
+  </p>
+</section>
+
+<script is:inline>
+  // Enhance if JS is available
+  (function () {
+    const form = document.currentScript?.previousElementSibling?.querySelector("form") ||
+                 document.currentScript?.parentElement?.querySelector("form");
+    if (!form) return;
+
+    // Stamp a client-side timestamp as a weak anti-replay hint
+    const t = form.querySelector('input[name="t"]');
+    if (t) t.value = String(Math.floor(Date.now() / 1000));
+
+    const msg = document.getElementById(form.getAttribute("aria-errormessage") || "") || null;
+    const submitBtn = form.querySelector('button[type="submit"]');
+
+    function setLoading(on) {
+      if (!submitBtn) return;
+      submitBtn.dataset.loading = on ? "true" : "false";
+      submitBtn.disabled = !!on;
+      submitBtn.style.opacity = on ? "0.7" : "1";
+    }
+
+    function announce(text, ok) {
+      if (!msg) return;
+      msg.classList.remove("sr-only");
+      msg.textContent = text;
+      msg.setAttribute("aria-live", "polite");
+      msg.style.marginTop = "0.5rem";
+      msg.style.fontSize = "0.875rem";
+      msg.style.opacity = "0.9";
+      msg.style.color = ok ? "var(--success, #22c55e)" : "var(--danger, #ef4444)";
+    }
+
+    form.addEventListener("submit", async (ev) => {
+      // If fetch is unavailable, let the browser submit normally.
+      if (!window.fetch) return;
+
+      ev.preventDefault();
+      setLoading(true);
+
+      try {
+        const fd = new FormData(form);
+        const payload = Object.fromEntries(fd.entries());
+        const endpoint = form.dataset.endpoint || form.action || "/api/newsletter";
+
+        // Basic client-side validation
+        const email = String(payload.email || "").trim();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          announce("Please enter a valid email address.", false);
+          setLoading(false);
+          return;
+        }
+
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Accept": "application/json" },
+          body: JSON.stringify({
+            email,
+            hp: payload.hp || "",
+            t: payload.t || "",
+          }),
+        });
+
+        const ct = res.headers.get("content-type") || "";
+        const data = ct.includes("application/json") ? await res.json().catch(() => ({})) : {};
+        if (res.ok && (data.ok !== false)) {
+          announce(data.message || ${JSON.stringify(successMessage)}, true);
+          form.reset();
+          // re-stamp timestamp
+          if (t) t.value = String(Math.floor(Date.now() / 1000));
+        } else {
+          announce(data.message || ${JSON.stringify(errorMessage)}, false);
+        }
+      } catch (err) {
+        announce(${JSON.stringify(errorMessage)}, false);
+      } finally {
+        setLoading(false);
+      }
+    });
+  })();
+</script>

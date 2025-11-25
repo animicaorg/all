@@ -1,0 +1,315 @@
+version: "3.9"
+
+# Observability stack: Prometheus + Grafana + Loki + Tempo (+ Promtail for logs)
+# Works alongside the devnet compose by scraping the host-exposed ports using
+# host.docker.internal (mapped to the Docker host via host-gateway).
+#
+# Usage:
+#   docker compose -f ops/docker/docker-compose.observability.yml up -d
+#   open http://localhost:3000  (Grafana; user: admin / pass: admin)
+#   open http://localhost:9090  (Prometheus)
+#   open http://localhost:3100  (Loki API)
+#   open http://localhost:3200  (Tempo API)
+#
+# If you also run ops/docker/docker-compose.devnet.yml, this stack will scrape:
+#   node:         http://host.docker.internal:8545/metrics
+#   miner:        http://host.docker.internal:9103/metrics
+#   services:     http://host.docker.internal:8081/metrics
+#   explorer:     http://host.docker.internal:8082/metrics
+#
+# NOTE (Linux): we map host.docker.internal -> host gateway with extra_hosts.
+
+name: animica-observability
+
+x-healthchecks_mount: &health_mount
+  - ./healthchecks:/healthchecks:ro
+
+networks:
+  observability:
+    driver: bridge
+
+volumes:
+  prom-data:
+  grafana-data:
+  loki-data:
+  tempo-data:
+  promtail-run:
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: animica-prometheus
+    restart: unless-stopped
+    user: "0:0"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        mkdir -p /etc/prometheus
+        cat > /etc/prometheus/prometheus.yml <<'CFG'
+        global:
+          scrape_interval: 5s
+          evaluation_interval: 5s
+
+        scrape_configs:
+          # Animica devnet targets via host-exposed ports
+          - job_name: 'animica-node'
+            static_configs: [{ targets: ['host.docker.internal:8545'] }]
+            metrics_path: /metrics
+          - job_name: 'animica-miner'
+            static_configs: [{ targets: ['host.docker.internal:9103'] }]
+            metrics_path: /metrics
+          - job_name: 'animica-services'
+            static_configs: [{ targets: ['host.docker.internal:8081'] }]
+            metrics_path: /metrics
+          - job_name: 'animica-explorer'
+            static_configs: [{ targets: ['host.docker.internal:8082'] }]
+            metrics_path: /metrics
+
+          # Observability stack self-scrapes
+          - job_name: 'prometheus'
+            static_configs: [{ targets: ['localhost:9090'] }]
+          - job_name: 'loki'
+            static_configs: [{ targets: ['loki:3100'] }]
+          - job_name: 'tempo'
+            static_configs: [{ targets: ['tempo:3200'] }]
+          - job_name: 'promtail'
+            static_configs: [{ targets: ['promtail:9080'] }]
+        CFG
+        exec /bin/prometheus \
+          --config.file=/etc/prometheus/prometheus.yml \
+          --storage.tsdb.path=/prometheus \
+          --web.enable-lifecycle
+    ports:
+      - "9090:9090"
+    volumes:
+      - prom-data:/prometheus
+      - *health_mount
+    healthcheck:
+      test: ["CMD-SHELL", "/healthchecks/http_health.sh --url http://localhost:9090/-/ready --timeout 10 --retries 12 --backoff 500"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    networks: [observability]
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: animica-grafana
+    restart: unless-stopped
+    user: "0:0"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: http://localhost:3000
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        mkdir -p /etc/grafana/provisioning/datasources
+        cat > /etc/grafana/provisioning/datasources/ds.yml <<'CFG'
+        apiVersion: 1
+        datasources:
+          - name: Prometheus
+            type: prometheus
+            access: proxy
+            isDefault: true
+            url: http://prometheus:9090
+          - name: Loki
+            type: loki
+            access: proxy
+            url: http://loki:3100
+          - name: Tempo
+            type: tempo
+            access: proxy
+            url: http://tempo:3200
+            jsonData:
+              httpMethod: GET
+              serviceMap:
+                datasourceUid: Prometheus
+        CFG
+        /run.sh
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - *health_mount
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+      tempo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "/healthchecks/http_health.sh --url http://localhost:3000/api/health --timeout 10 --retries 12 --backoff 500"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks: [observability]
+
+  loki:
+    image: grafana/loki:2.9.6
+    container_name: animica-loki
+    restart: unless-stopped
+    user: "0:0"
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        cat > /etc/loki/config.yml <<'CFG'
+        auth_enabled: false
+        server:
+          http_listen_port: 3100
+        common:
+          path_prefix: /loki
+          storage:
+            filesystem:
+              chunks_directory: /loki/chunks
+              rules_directory: /loki/rules
+          replication_factor: 1
+          ring:
+            instance_addr: 127.0.0.1
+            kvstore:
+              store: inmemory
+        schema_config:
+          configs:
+            - from: 2020-10-15
+              store: boltdb-shipper
+              object_store: filesystem
+              schema: v13
+              index:
+                prefix: index_
+                period: 24h
+        ruler:
+          storage:
+            type: local
+            local:
+              directory: /loki/rules
+        CFG
+        exec /usr/bin/loki -config.file=/etc/loki/config.yml
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki-data:/loki
+      - *health_mount
+    healthcheck:
+      test: ["CMD-SHELL", "/healthchecks/http_health.sh --url http://localhost:3100/ready --timeout 10 --retries 12 --backoff 500"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    networks: [observability]
+
+  promtail:
+    image: grafana/promtail:2.9.6
+    container_name: animica-promtail
+    restart: unless-stopped
+    user: "0:0"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        cat > /etc/promtail/config.yml <<'CFG'
+        server:
+          http_listen_port: 9080
+          grpc_listen_port: 0
+
+        clients:
+          - url: http://loki:3100/loki/api/v1/push
+
+        positions:
+          filename: /run/promtail/positions.yaml
+
+        scrape_configs:
+          # Tail Docker container logs on Linux (JSON lines)
+          - job_name: docker-logs
+            static_configs:
+              - targets: [localhost]
+                labels:
+                  job: docker
+                  host: host.docker.internal
+                  __path__: /var/lib/docker/containers/*/*-json.log
+
+          # Optionally tail system logs (if mounted)
+          - job_name: syslog
+            static_configs:
+              - targets: [localhost]
+                labels:
+                  job: syslog
+                  __path__: /var/log/*.log
+        CFG
+        exec /usr/bin/promtail -config.file=/etc/promtail/config.yml
+    volumes:
+      - promtail-run:/run/promtail
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/log:/var/log:ro
+      - *health_mount
+    depends_on:
+      loki:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "/healthchecks/http_health.sh --url http://localhost:9080/ready --timeout 10 --retries 12 --backoff 500"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks: [observability]
+
+  tempo:
+    image: grafana/tempo:2.5.0
+    container_name: animica-tempo
+    restart: unless-stopped
+    user: "0:0"
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        cat > /etc/tempo.yaml <<'CFG'
+        server:
+          http_listen_port: 3200
+          grpc_listen_port: 0
+
+        distributor:
+          receivers:
+            otlp:
+              protocols:
+                http:
+                  endpoint: 0.0.0.0:4318
+                grpc:
+                  endpoint: 0.0.0.0:4317
+
+        storage:
+          trace:
+            backend: local
+            local:
+              path: /var/tempo/traces
+        compactor:
+          compaction:
+            block_retention: 48h
+        metrics_generator:
+          registry:
+            external_labels:
+              source: tempo
+        CFG
+        exec /tempo -config.file=/etc/tempo.yaml
+    ports:
+      - "3200:3200"  # Tempo API / metrics
+      - "4317:4317"  # OTLP gRPC
+      - "4318:4318"  # OTLP HTTP
+    volumes:
+      - tempo-data:/var/tempo
+      - *health_mount
+    healthcheck:
+      test: ["CMD-SHELL", "/healthchecks/http_health.sh --url http://localhost:3200/ready --timeout 10 --retries 12 --backoff 500"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    networks: [observability]

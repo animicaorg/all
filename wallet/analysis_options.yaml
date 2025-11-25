@@ -1,0 +1,65 @@
+# Animica Wallet — Dart/Flutter analyzer config
+# Starts from flutter_lints, then tightens a few things for reliability.
+
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
+  errors:
+    dead_code: error
+    missing_required_param: error
+    missing_return: error
+    unused_import: error
+    unused_local_variable: warning
+  exclude:
+    - '**/*.g.dart'
+    - '**/*.freezed.dart'
+    - '**/*.gen.dart'
+    - 'lib/**.mocks.dart'
+    - 'build/**'
+    - '.dart_tool/**'
+    - 'ios/Flutter/**'
+    - 'ios/Pods/**'
+    - 'android/**/generated/**'
+    - 'web/**/generated_plugin_registrant.dart'
+
+linter:
+  rules:
+    # General code style
+    - always_declare_return_types
+    - avoid_bool_literals_in_conditional_expressions
+    - avoid_dynamic_calls
+    - avoid_redundant_argument_values
+    - avoid_returning_null_for_future
+    - avoid_returning_null_for_void
+    - cascade_invocations
+    - comment_references
+    - depend_on_referenced_packages
+    - directives_ordering
+    - eol_at_end_of_file
+    - exhaustive_cases
+    - join_return_with_assignment
+    - leading_newlines_in_multiline_strings
+    - prefer_const_constructors
+    - prefer_const_constructors_in_immutables
+    - prefer_const_declarations
+    - prefer_const_literals_to_create_immutables
+    - prefer_expression_function_bodies
+    - prefer_final_fields
+    - prefer_final_locals
+    - prefer_relative_imports
+    - prefer_single_quotes
+    - require_trailing_commas
+    - sized_box_for_whitespace
+    - sort_constructors_first
+    - sort_pub_dependencies
+    - type_annotate_public_apis
+    - unawaited_futures
+    - unnecessary_late
+    - use_full_hex_values_for_flutter_colors
+    - use_named_constants
+    - use_super_parameters
+    - avoid_print

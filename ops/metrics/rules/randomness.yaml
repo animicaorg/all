@@ -1,0 +1,125 @@
+# Prometheus alert rules — Randomness/Beacon
+#
+# Assumed Animica randomness metrics (rename if your build exports different names):
+#   - animica_randomness_beacon_finalized_total{instance}
+#   - animica_randomness_beacon_last_finalized_timestamp_seconds{instance}   # gauge (unix ts)
+#   - animica_randomness_vdf_verify_ok_total{instance}
+#   - animica_randomness_vdf_verify_fail_total{instance}
+#   - animica_randomness_vdf_verify_seconds_bucket{instance,le}              # histogram (optional)
+#
+# NOTE: Thresholds are tuned for devnet/small testnets. Tighten for production.
+
+groups:
+  - name: randomness.rules
+    interval: 30s
+    rules:
+      # ───────────────────────────────────────────────────────────
+      # BEACON STALL — no finalized beacons recently
+      # Uses the last-finalized timestamp gauge if present; fall back to a zero-rate check.
+      - alert: RandomnessBeaconStalledWarning
+        expr: |
+          (
+            time() - max by(instance) (animica_randomness_beacon_last_finalized_timestamp_seconds)
+          ) > 300
+            OR
+          (sum by(instance) (rate(animica_randomness_beacon_finalized_total[10m])) == 0)
+        for: 2m
+        labels:
+          severity: warning
+          component: randomness
+        annotations:
+          summary: "Beacon stalled (>5m without finalize)"
+          description: |
+            {{ $labels.instance }} has not finalized a randomness beacon for >5 minutes.
+            Investigate commit/reveal flow, VDF workers, and round scheduling.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#randomness
+
+      - alert: RandomnessBeaconStalledCritical
+        expr: |
+          (
+            time() - max by(instance) (animica_randomness_beacon_last_finalized_timestamp_seconds)
+          ) > 900
+            OR
+          (sum by(instance) (rate(animica_randomness_beacon_finalized_total[20m])) == 0)
+        for: 5m
+        labels:
+          severity: critical
+          component: randomness
+        annotations:
+          summary: "Beacon severely stalled (>15m without finalize)"
+          description: |
+            {{ $labels.instance }} beacon not advancing. VDF verification may be failing,
+            or commit/reveal windows are not producing valid aggregates. Check logs and VDF proof inputs.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#randomness
+
+      # ───────────────────────────────────────────────────────────
+      # VDF VERIFY FAILURES — ratio and absolute-rate guards
+      - alert: RandomnessVDFVerifyFailuresWarning
+        expr: |
+          (
+            sum by(instance) (rate(animica_randomness_vdf_verify_fail_total[15m]))
+            /
+            clamp_min(
+              sum by(instance) (
+                rate(animica_randomness_vdf_verify_ok_total[15m])
+                + rate(animica_randomness_vdf_verify_fail_total[15m])
+              ),
+              1e-6
+            )
+          ) > 0.05
+            OR
+          sum by(instance) (rate(animica_randomness_vdf_verify_fail_total[15m])) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          component: randomness
+        annotations:
+          summary: "VDF verification failures >5% (or >0.05/s) over 15m"
+          description: |
+            {{ $labels.instance }} VDF verify failure rate elevated.
+            Inspect prover/worker params, security bits, and input derivation.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#randomness
+
+      - alert: RandomnessVDFVerifyFailuresCritical
+        expr: |
+          (
+            sum by(instance) (rate(animica_randomness_vdf_verify_fail_total[10m]))
+            /
+            clamp_min(
+              sum by(instance) (
+                rate(animica_randomness_vdf_verify_ok_total[10m])
+                + rate(animica_randomness_vdf_verify_fail_total[10m])
+              ),
+              1e-6
+            )
+          ) > 0.20
+            OR
+          sum by(instance) (rate(animica_randomness_vdf_verify_fail_total[5m])) > 0.2
+        for: 5m
+        labels:
+          severity: critical
+          component: randomness
+        annotations:
+          summary: "VDF verification failures >20% (or >0.2/s) — beacon at risk"
+          description: |
+            {{ $labels.instance }} frequent VDF verify failures likely blocking beacon finalization.
+            Consider lowering VDF difficulty on devnets or investigate prover hardware/timeouts.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#randomness
+
+      # ───────────────────────────────────────────────────────────
+      # OPTIONAL: VDF verify latency p95 high (comment out if histogram not exported)
+      - alert: RandomnessVDFVerifyLatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by(le, instance) (rate(animica_randomness_vdf_verify_seconds_bucket[10m]))
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+          component: randomness
+        annotations:
+          summary: "VDF verify latency p95 > 2s (10m)"
+          description: |
+            {{ $labels.instance }} VDF verification p95 is high; may cause beacon stalls as round deadlines approach.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#randomness

@@ -1,0 +1,79 @@
+{
+  "$schema": "../schemas/variables.schema.json",
+  "variables": {
+    "project_slug": {
+      "title": "Project slug",
+      "description": "Directory/repo name to create. Lowercase, numbers, dashes or underscores.",
+      "type": "string",
+      "default": "sdk-py-starter",
+      "pattern": "^[a-z0-9][a-z0-9_-]{1,62}$",
+      "examples": ["sdk-py-hello", "my_animica_client"]
+    },
+    "package_name": {
+      "title": "Python package name",
+      "description": "Top-level package import name (PEP-8 style).",
+      "type": "string",
+      "default": "sdk_py_starter",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+      "examples": ["omni_client", "animica_sdk_demo"]
+    },
+    "author_name": {
+      "title": "Author name",
+      "description": "Displayed in package metadata.",
+      "type": "string",
+      "default": ""
+    },
+    "author_email": {
+      "title": "Author email",
+      "description": "Displayed in package metadata (optional).",
+      "type": "string",
+      "default": "",
+      "format": "email"
+    },
+    "description": {
+      "title": "Project description",
+      "description": "One-line summary for README and pyproject.",
+      "type": "string",
+      "default": "Examples and helpers for using the Animica Python SDK against a devnet/testnet."
+    },
+    "license": {
+      "title": "License",
+      "description": "Project license identifier.",
+      "type": "string",
+      "enum": ["Apache-2.0", "MIT", "BSD-3-Clause", "Unlicense"],
+      "default": "Apache-2.0"
+    },
+    "version": {
+      "title": "Initial version",
+      "description": "Semantic version for the project.",
+      "type": "string",
+      "default": "0.1.0",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[A-Za-z0-9.]+)?$"
+    },
+    "rpc_http_url": {
+      "title": "RPC HTTP URL",
+      "description": "Node JSON-RPC endpoint (HTTP). By default, local devnet: FastAPI mounts JSON-RPC at /rpc.",
+      "type": "string",
+      "default": "http://127.0.0.1:8545/rpc"
+    },
+    "rpc_ws_url": {
+      "title": "RPC WebSocket URL",
+      "description": "Node WebSocket endpoint for subscriptions. Default FastAPI mount is /ws on the same port.",
+      "type": "string",
+      "default": "ws://127.0.0.1:8545/ws"
+    },
+    "chain_id": {
+      "title": "Chain ID",
+      "description": "Numeric chain identifier (animica:1 mainnet, :2 testnet, :1337 devnet).",
+      "type": "integer",
+      "default": 1337,
+      "minimum": 1
+    },
+    "include_examples": {
+      "title": "Include example scripts",
+      "description": "Generate example scripts (deploy counter, subscribe, send transfer).",
+      "type": "boolean",
+      "default": true
+    }
+  }
+}

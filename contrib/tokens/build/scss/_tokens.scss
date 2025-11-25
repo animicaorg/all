@@ -1,0 +1,182 @@
+/*!
+ * Animica Tokens (SCSS) — light theme defaults
+ * Source: contrib/tokens/tokens.json
+ * SPDX-License-Identifier: MIT
+ */
+
+/* -------------------- Color -------------------- */
+$anm-color-primary: (
+  50:  #EEF3FF,
+  100: #DCE7FF,
+  200: #C3D6FF,
+  300: #A7C1FF,
+  400: #7FA2FF,
+  500: #4B7DFF,
+  600: #2E63FF,
+  700: #254FCC,
+  800: #1C3D99,
+  900: #132966
+) !default;
+
+$anm-color-neutral: (
+  50:  #F6F8FF,
+  100: #ECEFFC,
+  200: #E1E6F5,
+  300: #CDD4E6,
+  400: #B4BED3,
+  500: #98A4BD,
+  600: #7B88A3,
+  700: #5E6B88,
+  800: #39425A,
+  900: #0E1222
+) !default;
+
+$anm-color-surface: (
+  0:   #FFFFFF,
+  50:  #F8FAFF,
+  100: #F2F5FF,
+  800: #121623,
+  900: #0A0C14
+) !default;
+
+$anm-color-success: (
+  50:  #EAF6F1,
+  100: #CDEBDD,
+  200: #A0DCC4,
+  300: #72CCA9,
+  400: #45BD90,
+  500: #2CAF7E,
+  600: #22A06B,
+  700: #1B7C54,
+  800: #145D40,
+  900: #0E402C
+) !default;
+
+$anm-color-warning: (
+  50:  #FFF7E6,
+  100: #FFE8B3,
+  200: #FFD780,
+  300: #FEC54D,
+  400: #F2B32A,
+  500: #E8A41F,
+  600: #DFA71B,
+  700: #B77E12,
+  800: #8E5F0C,
+  900: #693F07
+) !default;
+
+$anm-color-error: (
+  50:  #FDEBEB,
+  100: #F9CFCF,
+  200: #F2A8A8,
+  300: #EB8282,
+  400: #E86767,
+  500: #E65B5B,
+  600: #E45757,
+  700: #B74141,
+  800: #8D3131,
+  900: #622121
+) !default;
+
+/* -------------------- Typography -------------------- */
+$anm-typography-font-base: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif !default;
+$anm-typography-font-code: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace !default;
+
+$anm-typography-size: (
+  xs: 12px,
+  sm: 14px,
+  base: 16px,
+  md: 18px,
+  lg: 20px,
+  xl: 24px,
+  2xl: 32px,
+  3xl: 40px,
+  4xl: 48px
+) !default;
+
+$anm-typography-line: (
+  tight: 1.15,
+  normal: 1.5,
+  loose: 1.7
+) !default;
+
+$anm-typography-weight: (
+  regular: 400,
+  medium: 500,
+  semibold: 600,
+  bold: 700
+) !default;
+
+/* -------------------- Spacing -------------------- */
+$anm-space: (
+  1: 4px,
+  2: 8px,
+  3: 12px,
+  4: 16px,
+  5: 20px,
+  6: 24px,
+  8: 32px,
+  10: 40px,
+  12: 48px,
+  16: 64px,
+  20: 80px,
+  24: 96px
+) !default;
+
+/* -------------------- Radius -------------------- */
+$anm-radius: (
+  sm: 6px,
+  md: 10px,
+  lg: 14px,
+  xl: 18px,
+  2xl: 24px,
+  pill: 9999px
+) !default;
+
+/* -------------------- Shadows -------------------- */
+$anm-shadow: (
+  sm: 0 1px 2px rgba(0,0,0,0.06),
+  md: 0 2px 8px rgba(0,0,0,0.08),
+  lg: 0 8px 24px rgba(0,0,0,0.10)
+) !default;
+
+/* -------------------- Helpers -------------------- */
+@function anm-color($group, $step) {
+  $map: null;
+  @if $group == primary   { $map: $anm-color-primary; }
+  @else if $group == neutral { $map: $anm-color-neutral; }
+  @else if $group == surface { $map: $anm-color-surface; }
+  @else if $group == success { $map: $anm-color-success; }
+  @else if $group == warning { $map: $anm-color-warning; }
+  @else if $group == error   { $map: $anm-color-error; }
+  @else {
+    @error "Unknown color group `#{$group}`.";
+  }
+  @return map-get($map, $step);
+}
+
+@function anm-space($key)   { @return map-get($anm-space, $key); }
+@function anm-radius($key)  { @return map-get($anm-radius, $key); }
+@function anm-shadow($key)  { @return map-get($anm-shadow, $key); }
+@function anm-font-size($k) { @return map-get($anm-typography-size, $k); }
+@function anm-line($k)      { @return map-get($anm-typography-line, $k); }
+@function anm-weight($k)    { @return map-get($anm-typography-weight, $k); }
+
+/* Mixin: apply a themed card surface */
+@mixin anm-card {
+  background: map-get($anm-color-surface, 0);
+  border-radius: anm-radius(lg);
+  box-shadow: anm-shadow(md);
+  color: map-get($anm-color-neutral, 900);
+}
+
+/* Example usage:
+.my-button {
+  background: anm-color(primary, 600);
+  color: map-get($anm-color-surface, 0);
+  border-radius: anm-radius(md);
+  padding: anm-space(4) anm-space(6);
+  font-weight: anm-weight(semibold);
+}
+*/
+

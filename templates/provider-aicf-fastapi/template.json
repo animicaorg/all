@@ -1,0 +1,83 @@
+{
+  "$schema": "../schemas/template.schema.json",
+
+  "id": "provider-aicf-fastapi",
+  "name": "AICF Provider — FastAPI (Python)",
+  "version": "0.1.0",
+  "description": "Scaffold for an Animica AI Compute Fund (AICF) provider implemented in Python with FastAPI. Includes a production-ready service layout (app/, tests/, scripts/), provider queue/adapters, a simple assignment loop, health endpoints, and Docker packaging. Ships with ruff/mypy configs and GitHub Actions CI via _common.",
+
+  "keywords": [
+    "aicf",
+    "provider",
+    "fastapi",
+    "python",
+    "animica",
+    "queue",
+    "attestation",
+    "docker"
+  ],
+
+  "engine_version": ">=0.1.0",
+  "license": "Apache-2.0",
+  "variables": "variables.json",
+
+  "notes": [
+    "The scaffold exposes minimal read/write routes to receive job leases and return job outputs/digests suitable for proof assembly.",
+    "Local development uses uvicorn with autoreload and a .env for config.",
+    "Prod image is multi-stage with non-root user and healthcheck."
+  ],
+
+  "hooks": {
+    "pre": [
+      "# (optional) create a local venv (POSIX)",
+      "python3 -m venv .venv || true"
+    ],
+    "post": [
+      "# install deps into the venv if it exists",
+      "[ -f .venv/bin/pip ] && . .venv/bin/activate && pip install -U pip || true",
+      "[ -f requirements.txt ] && pip install -r requirements.txt || true"
+    ]
+  },
+
+  "targets": [
+    /* ------------------------------- Common bits ------------------------------ */
+    { "source": "_common/.editorconfig", "target": "{{project_slug}}/.editorconfig" },
+    { "source": "_common/.gitignore", "target": "{{project_slug}}/.gitignore" },
+    { "source": "_common/LICENSE", "target": "{{project_slug}}/LICENSE" },
+    { "source": "_common/ci/github/build.yml", "target": "{{project_slug}}/.github/workflows/build.yml" },
+    { "source": "_common/ci/github/release.yml", "target": "{{project_slug}}/.github/workflows/release.yml" },
+    { "source": "_common/linters/ruff.toml", "target": "{{project_slug}}/ruff.toml" },
+    { "source": "_common/linters/mypy.ini", "target": "{{project_slug}}/mypy.ini" },
+    { "source": "_common/linters/prettier.json", "target": "{{project_slug}}/.prettierrc" },
+    { "source": "_common/scripts/format.sh", "target": "{{project_slug}}/scripts/format.sh", "mode": "755" },
+    { "source": "_common/scripts/test.sh", "target": "{{project_slug}}/scripts/test.sh", "mode": "755" },
+
+    /* --------------------------- Provider-specific files --------------------------- */
+    { "source": "{{project_slug}}/README.md", "target": "{{project_slug}}/README.md" },
+    { "source": "{{project_slug}}/.env.example", "target": "{{project_slug}}/.env.example" },
+    { "source": "{{project_slug}}/pyproject.toml", "target": "{{project_slug}}/pyproject.toml" },
+    { "source": "{{project_slug}}/requirements.txt", "target": "{{project_slug}}/requirements.txt" },
+    { "source": "{{project_slug}}/Makefile", "target": "{{project_slug}}/Makefile" },
+
+    { "source": "{{project_slug}}/Dockerfile", "target": "{{project_slug}}/Dockerfile" },
+    { "source": "{{project_slug}}/docker-compose.yml", "target": "{{project_slug}}/docker-compose.yml" },
+
+    { "source": "{{project_slug}}/app/__init__.py", "target": "{{project_slug}}/app/__init__.py" },
+    { "source": "{{project_slug}}/app/main.py", "target": "{{project_slug}}/app/main.py" },
+    { "source": "{{project_slug}}/app/config.py", "target": "{{project_slug}}/app/config.py" },
+    { "source": "{{project_slug}}/app/models.py", "target": "{{project_slug}}/app/models.py" },
+    { "source": "{{project_slug}}/app/health.py", "target": "{{project_slug}}/app/health.py" },
+    { "source": "{{project_slug}}/app/handlers.py", "target": "{{project_slug}}/app/handlers.py" },
+    { "source": "{{project_slug}}/app/aicf_adapter.py", "target": "{{project_slug}}/app/aicf_adapter.py" },
+    { "source": "{{project_slug}}/app/queue.py", "target": "{{project_slug}}/app/queue.py" },
+    { "source": "{{project_slug}}/app/worker.py", "target": "{{project_slug}}/app/worker.py" },
+    { "source": "{{project_slug}}/app/attestation.py", "target": "{{project_slug}}/app/attestation.py" },
+
+    { "source": "{{project_slug}}/scripts/dev.sh", "target": "{{project_slug}}/scripts/dev.sh", "mode": "755" },
+    { "source": "{{project_slug}}/scripts/run_worker.sh", "target": "{{project_slug}}/scripts/run_worker.sh", "mode": "755" },
+
+    { "source": "{{project_slug}}/tests/__init__.py", "target": "{{project_slug}}/tests/__init__.py" },
+    { "source": "{{project_slug}}/tests/test_health.py", "target": "{{project_slug}}/tests/test_health.py" },
+    { "source": "{{project_slug}}/tests/test_assignment_roundtrip.py", "target": "{{project_slug}}/tests/test_assignment_roundtrip.py" }
+  ]
+}

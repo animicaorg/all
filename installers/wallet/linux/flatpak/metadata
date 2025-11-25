@@ -1,0 +1,30 @@
+# Flatpak "metadata" file (INI-style). Useful for debugging single-file bundles
+# or when inspecting an exported build. flatpak-builder will normally generate
+# this automatically; we keep a canonical copy here for reference/tools.
+#
+# NOTE: The arch below is set to x86_64; exported artifacts will carry the
+# correct arch automatically. This file is not consumed by the manifest build.
+
+[Application]
+name=io.animica.Wallet
+runtime=org.freedesktop.Platform/x86_64/23.08
+sdk=org.freedesktop.Sdk/x86_64/23.08
+command=AnimicaWallet
+branch=stable
+tags=proprietary;flutter;
+
+[Context]
+shared=network;
+sockets=wayland;x11;pulseaudio;
+devices=dri;
+filesystems=xdg-download:rw;
+
+[Environment]
+GTK_USE_PORTAL=1
+GDK_BACKEND=wayland,x11
+GTK_THEME=Adwaita:light
+LANG=C.UTF-8
+LC_ALL=C.UTF-8
+
+[Session Bus Policy]
+org.freedesktop.portal.Desktop=talk

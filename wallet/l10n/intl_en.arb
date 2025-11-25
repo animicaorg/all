@@ -1,0 +1,169 @@
+{
+  "appTitle": "Animica Wallet",
+  "@appTitle": {
+    "description": "Application title shown in app bars and OS switcher."
+  },
+
+  "navHome": "Home",
+  "@navHome": { "description": "Bottom/tab navigation: home screen." },
+
+  "navSend": "Send",
+  "@navSend": { "description": "Bottom/tab navigation: send funds." },
+
+  "navReceive": "Receive",
+  "@navReceive": { "description": "Bottom/tab navigation: receive funds." },
+
+  "navContracts": "Contracts",
+  "@navContracts": { "description": "Bottom/tab navigation: call/deploy contracts." },
+
+  "navSettings": "Settings",
+  "@navSettings": { "description": "Bottom/tab navigation: app settings." },
+
+  "ok": "OK",
+  "cancel": "Cancel",
+  "close": "Close",
+  "back": "Back",
+  "next": "Next",
+  "done": "Done",
+  "confirm": "Confirm",
+  "retry": "Retry",
+  "save": "Save",
+  "delete": "Delete",
+  "copy": "Copy",
+  "copied": "Copied",
+  "@ok": { "description": "Affirmative button label." },
+  "@cancel": { "description": "Cancel button label." },
+  "@copied": { "description": "Toast after copy-to-clipboard." },
+
+  "loading": "Loading…",
+  "@loading": { "description": "Generic loading label." },
+
+  "errorGeneric": "Something went wrong. Please try again.",
+  "@errorGeneric": { "description": "Catch-all error message." },
+
+  "errorInvalidAddress": "Invalid address.",
+  "@errorInvalidAddress": { "description": "Shown when an address fails validation." },
+
+  "errorInsufficientFunds": "Insufficient funds.",
+  "@errorInsufficientFunds": { "description": "Shown when balance < required amount + fees." },
+
+  "balanceLabel": "Balance",
+  "@balanceLabel": { "description": "Section header label for balances." },
+
+  "balanceValue": "{amount} {symbol}",
+  "@balanceValue": {
+    "description": "Formatted balance with symbol (e.g., 12.34 ANM).",
+    "placeholders": {
+      "amount": { "type": "String", "example": "12.34" },
+      "symbol": { "type": "String", "example": "ANM" }
+    }
+  },
+
+  "address": "Address",
+  "@address": { "description": "Field label for wallet address." },
+
+  "memo": "Memo (optional)",
+  "@memo": { "description": "Optional transaction memo/note label." },
+
+  "amount": "Amount",
+  "@amount": { "description": "Field label for amount input." },
+
+  "fee": "Fee",
+  "@fee": { "description": "Transaction fee label." },
+
+  "total": "Total",
+  "@total": { "description": "Total (amount + fee) label." },
+
+  "network": "Network",
+  "@network": { "description": "Network settings label." },
+
+  "language": "Language",
+  "@language": { "description": "Language settings label." },
+
+  "theme": "Theme",
+  "@theme": { "description": "Theme settings label." },
+
+  "themeLight": "Light",
+  "themeDark": "Dark",
+  "@themeLight": { "description": "Light theme option." },
+  "@themeDark": { "description": "Dark theme option." },
+
+  "settingsTitle": "Settings",
+  "@settingsTitle": { "description": "Settings page title." },
+
+  "settingsSecurity": "Security",
+  "@settingsSecurity": { "description": "Security section title." },
+
+  "lockWallet": "Lock wallet",
+  "@lockWallet": { "description": "Action to lock wallet and require PIN/biometrics." },
+
+  "exportKeys": "Export keys",
+  "@exportKeys": { "description": "Action to export keys/seed (guarded)." },
+
+  "networkPickerTitle": "Choose network",
+  "@networkPickerTitle": { "description": "Dialog title for picking network." },
+
+  "networkMainnet": "Mainnet",
+  "networkTestnet": "Testnet",
+  "networkLocalnet": "Localnet",
+  "@networkMainnet": { "description": "Main production network." },
+  "@networkTestnet": { "description": "Public test network." },
+  "@networkLocalnet": { "description": "Local development network." },
+
+  "receiveTitle": "Receive",
+  "@receiveTitle": { "description": "Receive page title." },
+
+  "yourAddress": "Your address",
+  "@yourAddress": { "description": "Label above user's receiving address." },
+
+  "copyAddress": "Copy address",
+  "@copyAddress": { "description": "Button to copy wallet address." },
+
+  "sendTitle": "Send",
+  "@sendTitle": { "description": "Send page title." },
+
+  "sendTo": "Send to",
+  "@sendTo": { "description": "Label for destination address input." },
+
+  "sendAmount": "Amount to send",
+  "@sendAmount": { "description": "Label for amount field on send page." },
+
+  "insufficientForFees": "Not enough to cover fees.",
+  "@insufficientForFees": { "description": "Shown when amount leaves no fee headroom." },
+
+  "confirmTxTitle": "Confirm transaction",
+  "@confirmTxTitle": { "description": "Confirmation modal title before sending." },
+
+  "confirmTxSubtitle": "Send {amount} {symbol} to {address}",
+  "@confirmTxSubtitle": {
+    "description": "Summary line in confirmation modal.",
+    "placeholders": {
+      "amount": { "type": "String", "example": "1.25" },
+      "symbol": { "type": "String", "example": "ANM" },
+      "address": { "type": "String", "example": "am1q…xyz" }
+    }
+  },
+
+  "txSubmitted": "Transaction submitted",
+  "@txSubmitted": { "description": "Toast or banner after broadcasting a tx." },
+
+  "txHash": "Hash: {hash}",
+  "@txHash": {
+    "description": "Show the transaction hash.",
+    "placeholders": {
+      "hash": { "type": "String", "example": "0xabc123…def" }
+    }
+  },
+
+  "viewOnExplorer": "View on explorer",
+  "@viewOnExplorer": { "description": "Button to open explorer with tx/account." },
+
+  "contractsTitle": "Contracts",
+  "@contractsTitle": { "description": "Contracts page title." },
+
+  "devToolsTitle": "Developer Tools",
+  "@devToolsTitle": { "description": "Title for developer tools page (feature-flagged)." },
+
+  "rpcConsoleTitle": "RPC Console",
+  "@rpcConsoleTitle": { "description": "Title for raw RPC console in dev tools." }
+}

@@ -1,0 +1,74 @@
+{{-/*
+ConfigMap: chain params
+
+Provides:
+- data.chainId: numeric chain id as a string (easy to env-inject)
+- data.params.yaml: the full spec/params.yaml content (canonical chain/economic/consensus params)
+
+Sources (priority):
+1) .Values.chain.paramsFile  -> path inside the chart (use .Files.Get)
+2) .Values.chain.params      -> inline YAML string in values
+3) Fallback minimal, sane devnet defaults
+
+You can enable "immutable" via .Values.chain.immutable (Kubernetes v1.19+).
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "animica-devnet.fullname" . }}-chain-params
+  labels:
+    {{- include "animica-devnet.labels" (dict "ctx" . "component" "chain") | nindent 4 }}
+  {{- with .Values.chain.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- if hasKey .Values.chain "immutable" }}
+immutable: {{ .Values.chain.immutable | default false }}
+{{- end }}
+data:
+  chainId: {{ quote (default 1337 .Values.chain.id) }}
+  params.yaml: |-
+    {{- if .Values.chain.paramsFile }}
+    {{- /*
+      Load params from a file bundled with the chart (e.g., "spec/params.yaml").
+      Example in values:
+        chain:
+          paramsFile: spec/params.yaml
+    */ -}}
+    {{- .Files.Get .Values.chain.paramsFile | nindent 4 }}
+    {{- else if .Values.chain.params }}
+    {{- /*
+      Render inline params (tpl-enabled so you can interpolate values).
+      Example in values:
+        chain:
+          params: |
+            chain:
+              chainId: {{ .Values.chain.id }}
+            ...
+    */ -}}
+    {{- include "animica-devnet.tplvalues.render" (dict "root" . "value" .Values.chain.params) | nindent 4 }}
+    {{- else }}
+    # Fallback minimal devnet parameters (safe defaults for tests)
+    chain:
+      chainId: {{ default 1337 .Values.chain.id }}
+    consensus:
+      randomness:
+        commit_phase_seconds: 10
+        reveal_phase_seconds: 10
+        settle_phase_seconds: 0
+        round_seconds: 20
+        vdf:
+          security_bits: 128
+          discriminant_size_bits: 2048
+          target_seconds: 5
+    gas:
+      base_price: 1
+      refund_cap_ratio: 0.2
+    block:
+      max_gas: 10000000
+      max_txs: 1000
+    pq:
+      enabled: true
+      default_sig_alg: dilithium3
+      default_addr_alg: dilithium3
+    {{- end }}

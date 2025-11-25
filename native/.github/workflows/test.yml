@@ -1,0 +1,83 @@
+name: Test native crate & Python wheel
+
+on:
+  push:
+    branches: [ main, trunk, develop ]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: cargo test + pytest on wheel (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-13, windows-latest]
+        python: ["3.9", "3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native -> native/target
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      # --- Native tests (Rust) ---
+      - name: cargo test (native crate)
+        working-directory: native
+        shell: bash
+        run: |
+          rustc -Vv
+          cargo -V
+          # Use --locked to respect Cargo.lock and ensure reproducibility
+          cargo test --locked --all-targets --verbose
+
+      # --- Build wheel from native/ via maturin (wheel, not develop) ---
+      - name: Build wheel with maturin
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: >-
+            --release
+            -m native/pyproject.toml
+            --out dist
+            --interpreter ${{ matrix.python }}
+
+      # --- Install the built wheel and run Python tests against it ---
+      - name: Install wheel & test (pytest)
+        shell: bash
+        env:
+          # Ensure the repository Python sources (e.g., pure-Python refs) are importable
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+          python -m pip install dist/*.whl
+          python -c "import animica_native, sys; print('animica_native version OK, Python', sys.version)"
+          pytest -q native/tests_py
+
+      - name: Upload test artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.os }}-py${{ matrix.python }}
+          path: |
+            ./*.log
+            native/**/*.log
+          if-no-files-found: ignore
+          retention-days: 7

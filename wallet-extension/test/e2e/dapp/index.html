@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Animica Demo Dapp</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root { --bg:#0b0f14; --panel:#131a22; --fg:#e6edf3; --muted:#99a3ad; --accent:#4ea1ff; }
+      html, body { height:100%; }
+      body {
+        margin:0; font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, sans-serif;
+        background:var(--bg); color:var(--fg); display:flex; justify-content:center; align-items:flex-start;
+      }
+      .wrap { width:min(720px, 94vw); margin:40px auto; }
+      h1 { font-size:20px; margin:0 0 12px; }
+      p.desc { color:var(--muted); margin:0 0 16px; }
+      .card { background:var(--panel); border:1px solid #1f2937; border-radius:12px; padding:16px; margin:14px 0; }
+      .row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+      label { color:var(--muted); font-size:12px; display:block; margin-bottom:6px; }
+      input[type="text"], input[type="number"] {
+        background:#0f141b; color:var(--fg); border:1px solid #263241; border-radius:8px; padding:10px 12px; outline:none; width:100%;
+      }
+      button {
+        background:var(--accent); color:#08111d; border:0; border-radius:10px; padding:10px 14px; font-weight:600; cursor:pointer;
+      }
+      code, pre { background:#0f141b; border:1px solid #263241; border-radius:8px; padding:10px; display:block; overflow:auto; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+      .kv { display:grid; grid-template-columns:130px 1fr; gap:6px 10px; }
+      .kv div.k { color:var(--muted); }
+      .muted { color:var(--muted); }
+      .spacer { height:6px; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Animica Demo Dapp</h1>
+      <p class="desc">Connect to the <code class="mono">window.animica</code> provider, then send a tiny transfer.</p>
+
+      <div class="card">
+        <div class="row" style="justify-content: space-between;">
+          <div>
+            <div class="muted">Provider</div>
+            <div id="prov-status" class="mono">detecting…</div>
+          </div>
+          <div class="row">
+            <button id="btn-connect">Connect</button>
+          </div>
+        </div>
+        <div class="spacer"></div>
+        <div class="kv mono">
+          <div class="k">Account</div><div id="account" class="mono muted">—</div>
+          <div class="k">Chain</div><div id="chain" class="mono muted">—</div>
+          <div class="k">Balance</div><div id="balance" class="mono muted">—</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 style="margin:0 0 10px;font-size:16px;">Send Transfer</h2>
+        <div class="row">
+          <div style="flex:2; min-width:260px;">
+            <label for="to">To (address)</label>
+            <input id="to" type="text" placeholder="anim1… (defaults to self)" />
+          </div>
+          <div style="flex:1; min-width:140px;">
+            <label for="amount">Amount</label>
+            <input id="amount" type="number" min="0" step="1" value="1" />
+          </div>
+          <div style="align-self:flex-end;">
+            <button id="btn-send">Send</button>
+          </div>
+        </div>
+        <div class="spacer"></div>
+        <label>Status</label>
+        <pre id="status" class="mono muted">idle</pre>
+        <div class="row">
+          <div style="flex:1;">
+            <label>Tx Hash</label>
+            <code id="tx-hash" class="mono">—</code>
+          </div>
+          <div style="flex:1;">
+            <label>Receipt</label>
+            <code id="receipt" class="mono">—</code>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 style="margin:0 0 10px;font-size:16px;">Debug</h2>
+        <pre id="log" class="mono" style="max-height:220px;"></pre>
+      </div>
+    </div>
+
+    <script defer src="./app.js"></script>
+  </body>
+</html>

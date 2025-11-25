@@ -1,0 +1,123 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    animica.dev/environment: devnet
+data:
+  # Mount this as /etc/prometheus/prometheus.yml in the Prometheus Deployment.
+  # You can envsubst this file at startup to resolve ${...} placeholders.
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: ${CLUSTER_NAME:-animica-devnet}
+        environment: ${ENVIRONMENT:-devnet}
+
+    rule_files:
+      # Mount your rules (as files) into /etc/prometheus/rules/
+      - /etc/prometheus/rules/*.yml
+
+    alerting:
+      alertmanagers:
+        - scheme: http
+          static_configs:
+            - targets:
+                - ${ALERTMANAGER_ADDR:-alertmanager.animica-devnet.svc.cluster.local:9093}
+
+    scrape_configs:
+      # Prometheus self-metrics
+      - job_name: prometheus
+        static_configs:
+          - targets: ['localhost:9090']
+
+      # Discover Services/Endpoints with prometheus.io/scrape="true"
+      - job_name: kubernetes-endpoints-animica
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names: ['${NAMESPACE:-animica-devnet}']
+        scrape_interval: 15s
+        scrape_timeout: 10s
+        relabel_configs:
+          # Keep only endpoints explicitly annotated for scrape
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          # Use custom path/scheme/port if provided by annotations
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scheme]
+            action: replace
+            target_label: __scheme__
+            regex: (https?)
+          - source_labels: [__address__, __meta_kubernetes_service_annotation_prometheus_io_port]
+            action: replace
+            regex: (.+?)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          # Useful labels
+          - action: labelmap
+            regex: __meta_kubernetes_service_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            target_label: service
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            target_label: endpoint_port
+
+      # Discover Pods with prometheus.io/scrape="true"
+      - job_name: kubernetes-pods-animica
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: ['${NAMESPACE:-animica-devnet}']
+        scrape_interval: 15s
+        scrape_timeout: 10s
+        relabel_configs:
+          # Only annotated pods
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scheme]
+            action: replace
+            target_label: __scheme__
+            regex: (https?)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: (.+?)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_container_name]
+            target_label: container
+
+      # Optional static fallbacks for core services (if you prefer not to annotate)
+      - job_name: animica-static
+        scrape_interval: 15s
+        static_configs:
+          - targets:
+              # Node (FastAPI app) metrics (default 9100 in our configs)
+              - ${NODE_SVC:-node.animica-devnet.svc.cluster.local}:${NODE_METRICS_PORT:-9100}
+              # Miner metrics (default 9102)
+              - ${MINER_SVC:-miner.animica-devnet.svc.cluster.local}:${MINER_METRICS_PORT:-9102}
+              # Studio services metrics (set to 9104 unless overridden)
+              - ${SERVICES_SVC:-studio-services.animica-devnet.svc.cluster.local}:${SERVICES_METRICS_PORT:-9104}
+              # Explorer API metrics (set to 9105 unless overridden)
+              - ${EXPLORER_SVC:-explorer.animica-devnet.svc.cluster.local}:${EXPLORER_METRICS_PORT:-9105}
+            labels:
+              namespace: ${NAMESPACE:-animica-devnet}

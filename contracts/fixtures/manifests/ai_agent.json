@@ -1,0 +1,39 @@
+{
+  "manifestVersion": "1",
+  "name": "AnimicaAIAgent",
+  "version": "1.0.0",
+  "language": "python-vm",
+
+  "entry": "../../examples/ai_agent/contract.py",
+  "abi": { "$ref": "../abi/ai_agent.json" },
+
+  "code": {
+    "format": "ir.cbor",
+    "hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "size": 0
+  },
+
+  "deploy": {
+    "method": "init",
+    "args": { }
+  },
+
+  "resources": {
+    "capabilities": ["ai_compute"],
+    "storage": {
+      "estimatedKeys": 12,
+      "notes": "stores last_task_id, prompt/result mappings, counters and status flags"
+    }
+  },
+
+  "compat": {
+    "vm": { "min": "1.0.0", "max": "2.0.0" }
+  },
+
+  "metadata": {
+    "authors": ["Animica Labs"],
+    "license": "Apache-2.0",
+    "homepage": "https://animica.dev",
+    "description": "Sample AI agent contract that enqueues AI jobs via the capabilities layer and consumes results deterministically on the next block."
+  }
+}

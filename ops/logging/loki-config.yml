@@ -1,0 +1,162 @@
+# Loki config (single-binary, works for Docker Compose or k8s)
+# Targets Loki >= 2.9 (boltdb-shipper + filesystem by default)
+# Flip to S3 by setting LOKI_OBJECT_STORE=s3 and the AWS_* envs.
+# This file mirrors our repo logging policy (see ops/logging/README.md).
+
+server:
+  http_listen_port: ${LOKI_HTTP_PORT:-3100}
+  grpc_listen_port: ${LOKI_GRPC_PORT:-9095}
+  log_level: ${LOKI_LOG_LEVEL:-info}
+  graceful_shutdown_timeout: 10s
+
+auth_enabled: false  # we front Loki with network policy / reverse proxy auth
+
+common:
+  path_prefix: /var/loki
+  ring:
+    kvstore:
+      store: memberlist
+  replication_factor: ${LOKI_REPLICATION_FACTOR:-1}  # 1 for single node
+
+memberlist:
+  advertise_port: ${LOKI_MEMBERLIST_PORT:-7946}
+  join_members: ${LOKI_MEMBERLIST_JOIN:-[]}
+  abort_if_cluster_join_fails: false
+
+# --- Storage ------------------------------------------------------------------
+
+schema_config:
+  configs:
+    - from: 2023-01-01
+      store: boltdb-shipper
+      object_store: ${LOKI_OBJECT_STORE:-filesystem}
+      schema: v12
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  boltdb_shipper:
+    shared_store: ${LOKI_OBJECT_STORE:-filesystem}
+    active_index_directory: /var/loki/index
+    cache_location: /var/loki/boltdb-cache
+    cache_ttl: 24h
+
+  # Default: filesystem chunks (good for devnet/small prod)
+  filesystem:
+    chunks_directory: /var/loki/chunks
+    rules_directory: /etc/loki/rules
+
+  # To use S3, set LOKI_OBJECT_STORE=s3 and export AWS creds (env or IAM)
+  aws:
+    s3: ${LOKI_S3_URL:-""}           # e.g. s3://bucket-name
+    s3forcepathstyle: ${LOKI_S3_FORCE_PATH_STYLE:-true}
+    bucketnames: ${LOKI_S3_BUCKET:-""}
+    endpoint: ${LOKI_S3_ENDPOINT:-""}
+    region: ${AWS_REGION:-""}
+
+# --- Ingestion & write path ---------------------------------------------------
+
+ingester:
+  wal:
+    enabled: ${LOKI_WAL_ENABLED:-true}
+    dir: /var/loki/wal
+  chunk_idle_period: 5m
+  chunk_block_size: 262144         # 256 KiB target
+  max_transfer_retries: 0
+
+limits_config:
+  # Keep label cardinality sane (matches our logging/README)
+  max_label_names_per_series: 30
+  max_label_value_length: 2048
+  max_streams_per_user: 0          # unlimited
+  ingestion_rate_mb: ${LOKI_INGESTION_RATE_MB:-8}
+  ingestion_burst_size_mb: ${LOKI_INGESTION_BURST_MB:-16}
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h # 7 days
+  creation_grace_period: 10m
+  allow_structured_metadata: true
+  # Retention: compactor enforces per-tenant or global period.
+  # You can override per-tenant via runtime config.
+  retention_period: ${LOKI_RETENTION_PERIOD:-720h}   # 30 days
+
+runtime_config:
+  file: /etc/loki/runtime-config.yaml
+  reload_period: 10s
+
+distributor:
+  ring:
+    kvstore:
+      store: memberlist
+
+# --- Read path / queries ------------------------------------------------------
+
+querier:
+  max_concurrent: 16
+  query_ingesters_within: 3h
+
+query_range:
+  align_queries_with_step: true
+  max_retries: 5
+  split_queries_by_interval: 24h
+  parallelise_shardable_queries: true
+  cache_results: true
+  cache_results_ttl: 5m
+  results_cache:
+    cache:
+      enable_fifocache: true
+      fifocache:
+        size: 1024
+        validity: 5m
+
+query_scheduler:
+  max_outstanding_requests_per_tenant: 1024
+
+frontend_worker:
+  frontend_address: ${LOKI_QUERY_FRONTEND_ADDR:-127.0.0.1:9095}
+  grpc_client_config:
+    max_send_msg_size: 104857600
+    max_recv_msg_size: 104857600
+
+frontend:
+  compress_responses: true
+  log_queries_longer_than: 5s
+
+# --- Compactor / retention ----------------------------------------------------
+
+compactor:
+  working_directory: /var/loki/compactor
+  shared_store: ${LOKI_OBJECT_STORE:-filesystem}
+  compactor_ring:
+    kvstore:
+      store: memberlist
+  retention_enabled: true
+  delete_request_cancel_period: 24h
+  compaction_interval: 10m
+
+# --- Ruler (optional: alerts via Grafana/Prometheus Alertmanager) -------------
+
+ruler:
+  storage:
+    type: local
+    local:
+      directory: /etc/loki/rules
+  rule_path: /tmp/loki-rules-tmp
+  alertmanager_url: ${ALERTMANAGER_URL:-http://alertmanager:9093}
+  enable_api: true
+  ring:
+    kvstore:
+      store: memberlist
+  evaluation_interval: 30s
+  poll_interval: 30s
+
+# --- Chunk & cache tunables ---------------------------------------------------
+
+chunk_store_config:
+  max_look_back_period: 168h
+
+table_manager:
+  retention_deletes_enabled: false   # not used with boltdb-shipper
+  retention_period: 0s
+
+# Health / metrics endpoints live on :3100 (/metrics, /ready, /ring)

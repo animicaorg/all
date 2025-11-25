@@ -1,0 +1,79 @@
+<!-- Animica Safe Area Mask
+     Purpose: Visualize required clear space around the logo/mark.
+     Usage: Place this SVG over your layout while positioning the logo.
+     The inner "LIVE" box is where the logo should fit; keep other UI
+     elements OUTSIDE the outer "SAFE" boundary.
+     SPDX-License-Identifier: CC-BY-ND-4.0 (brand assets) -->
+<svg width="800" height="400" viewBox="0 0 800 400" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Animica Logo Safe Area Mask</title>
+  <desc id="desc">Live area for logo with required clear space boundary</desc>
+
+  <defs>
+    <!-- Grid pattern to help alignment (non-printing style possible) -->
+    <pattern id="grid" width="16" height="16" patternUnits="userSpaceOnUse">
+      <path d="M16 0H0V16" fill="none" stroke="#E5EAF5" stroke-width="1"/>
+    </pattern>
+
+    <!-- Label style -->
+    <style>
+      .label { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+               font-size: 12px; fill: #0E1222; }
+    </style>
+  </defs>
+
+  <!-- Background grid -->
+  <rect x="0" y="0" width="800" height="400" fill="url(#grid)"/>
+
+  <!-- Live area (white box): put the logo inside this rectangle -->
+  <!-- Example dimensions for a horizontal logo; adjust as needed per asset -->
+  <g id="live-area" transform="translate(140,90)">
+    <rect x="0" y="0" width="520" height="220" fill="#FFFFFF" stroke="#2E63FF" stroke-width="2"/>
+    <text x="12" y="-8" class="label">LIVE AREA (Logo fits fully inside)</text>
+
+    <!-- Safe margin computed as 0.25 × mark diameter; here approximated as 28px -->
+    <!-- Outer safe area: no other UI should enter this region -->
+    <rect x="-28" y="-28" width="576" height="276" fill="none" stroke="#7B88A3" stroke-dasharray="8 8" stroke-width="2" opacity="0.9"/>
+    <text x="-28" y="-40" class="label">SAFE AREA (keep clear)</text>
+
+    <!-- Margin ticks on each side to visualize spacing -->
+    <g fill="none" stroke="#7B88A3" stroke-width="2">
+      <!-- Top -->
+      <line x1="0" y1="-20" x2="0" y2="-28"/>
+      <line x1="520" y1="-20" x2="520" y2="-28"/>
+      <line x1="0" y1="-24" x2="520" y2="-24"/>
+      <!-- Bottom -->
+      <line x1="0" y1="248" x2="0" y2="256"/>
+      <line x1="520" y1="248" x2="520" y2="256"/>
+      <line x1="0" y1="252" x2="520" y2="252"/>
+      <!-- Left -->
+      <line x1="-20" y1="0" x2="-28" y2="0"/>
+      <line x1="-20" y1="220" x2="-28" y2="220"/>
+      <line x1="-24" y1="0" x2="-24" y2="220"/>
+      <!-- Right -->
+      <line x1="548" y1="0" x2="556" y2="0"/>
+      <line x1="548" y1="220" x2="556" y2="220"/>
+      <line x1="552" y1="0" x2="552" y2="220"/>
+    </g>
+
+    <!-- Example placement hint: mark-only suggested size -->
+    <rect x="16" y="60" width="140" height="140" rx="20" fill="#F2F5FF" stroke="#BFD0FF" stroke-width="1"/>
+    <text x="20" y="56" class="label">Mark-only suggested box</text>
+
+    <!-- Example wordmark baseline guide -->
+    <line x1="180" y1="180" x2="500" y2="180" stroke="#BFD0FF" stroke-width="2" stroke-dasharray="6 6"/>
+    <text x="182" y="172" class="label">Wordmark baseline</text>
+
+    <!-- Center crosshair -->
+    <g opacity="0.35" stroke="#2E63FF">
+      <line x1="260" y1="-28" x2="260" y2="248" stroke-dasharray="4 8"/>
+      <line x1="-28" y1="110" x2="548" y2="110" stroke-dasharray="4 8"/>
+    </g>
+  </g>
+
+  <!-- Notes -->
+  <g transform="translate(24, 352)">
+    <text class="label">
+      • Keep all other UI elements outside the dashed SAFE AREA. • The SAFE margin is ≥ the height of the mark’s crossbar or 0.25× the mark diameter, whichever is larger.
+    </text>
+  </g>
+</svg>

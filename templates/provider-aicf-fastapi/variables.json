@@ -1,0 +1,198 @@
+{
+  "$schema": "../schemas/variables.schema.json",
+
+  "variables": [
+    {
+      "key": "project_name",
+      "label": "Project name",
+      "type": "string",
+      "default": "animica-aicf-provider",
+      "pattern": "^[a-zA-Z0-9 _-]{3,64}$",
+      "description": "Human-friendly name for the provider project."
+    },
+    {
+      "key": "project_slug",
+      "label": "Project slug",
+      "type": "string",
+      "default": "animica-aicf-provider",
+      "derive": "slug(project_name)",
+      "pattern": "^[a-z0-9][a-z0-9-_]{1,63}$",
+      "description": "Directory/package-safe slug. Defaults to a slugified project_name."
+    },
+    {
+      "key": "description",
+      "label": "Short description",
+      "type": "string",
+      "default": "A FastAPI-based Animica AICF provider implementing lease→compute→complete.",
+      "maxLength": 240
+    },
+    {
+      "key": "org_name",
+      "label": "Organization",
+      "type": "string",
+      "default": "Animica Labs"
+    },
+    {
+      "key": "author_name",
+      "label": "Author",
+      "type": "string",
+      "default": ""
+    },
+    {
+      "key": "author_email",
+      "label": "Author email",
+      "type": "string",
+      "default": "",
+      "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+    },
+
+    /* ------------------------ Runtime / networking ------------------------ */
+    {
+      "key": "python_version",
+      "label": "Python version",
+      "type": "string",
+      "enum": ["3.10", "3.11", "3.12"],
+      "default": "3.11"
+    },
+    {
+      "key": "service_port",
+      "label": "HTTP service port",
+      "type": "number",
+      "default": 8080,
+      "min": 1024,
+      "max": 65535
+    },
+    {
+      "key": "log_level",
+      "label": "Log level",
+      "type": "string",
+      "enum": ["DEBUG", "INFO", "WARNING", "ERROR"],
+      "default": "INFO"
+    },
+
+    /* -------------------------- Chain connectivity ------------------------ */
+    {
+      "key": "rpc_url",
+      "label": "Node RPC URL",
+      "type": "string",
+      "default": "http://localhost:8545",
+      "description": "Animica node RPC base URL used for height/headers lookups."
+    },
+    {
+      "key": "chain_id",
+      "label": "Chain ID",
+      "type": "number",
+      "default": 1337
+    },
+    {
+      "key": "aicf_queue_url",
+      "label": "AICF queue endpoint",
+      "type": "string",
+      "default": "http://localhost:8787",
+      "description": "Queue/dispatcher endpoint the provider polls for assignments."
+    },
+
+    /* --------------------------- Provider settings ------------------------ */
+    {
+      "key": "provider_region",
+      "label": "Provider region",
+      "type": "string",
+      "enum": ["local", "us-east-1", "us-west-2", "eu-central-1", "ap-southeast-1"],
+      "default": "local"
+    },
+    {
+      "key": "enable_attestation",
+      "label": "Require TEE/QPU attestation",
+      "type": "boolean",
+      "default": true
+    },
+    {
+      "key": "attestation_kind",
+      "label": "Attestation kind",
+      "type": "string",
+      "enum": ["sgx", "sev_snp", "cca", "none"],
+      "default": "sgx"
+    },
+    {
+      "key": "concurrency",
+      "label": "Worker concurrency",
+      "type": "number",
+      "default": 4,
+      "min": 1,
+      "max": 256
+    },
+    {
+      "key": "max_parallel_jobs",
+      "label": "Max parallel jobs",
+      "type": "number",
+      "default": 16,
+      "min": 1,
+      "max": 10000
+    },
+
+    /* ------------------------------- GPU opts ----------------------------- */
+    {
+      "key": "use_gpu",
+      "label": "Enable GPU backend",
+      "type": "boolean",
+      "default": false
+    },
+    {
+      "key": "gpu_backend",
+      "label": "GPU backend",
+      "type": "string",
+      "enum": ["none", "cuda", "rocm", "opencl"],
+      "default": "none"
+    },
+
+    /* ------------------------------- Docker -------------------------------- */
+    {
+      "key": "image_repo",
+      "label": "Docker image repository",
+      "type": "string",
+      "default": "ghcr.io/animica-labs/aicf-provider"
+    },
+    {
+      "key": "image_tag",
+      "label": "Docker image tag",
+      "type": "string",
+      "default": "latest"
+    },
+
+    /* --------------------------------- CI ---------------------------------- */
+    {
+      "key": "ci_github",
+      "label": "Generate GitHub CI",
+      "type": "boolean",
+      "default": true
+    },
+    {
+      "key": "license",
+      "label": "Project license",
+      "type": "string",
+      "enum": ["Apache-2.0", "MIT", "BSD-3-Clause"],
+      "default": "Apache-2.0"
+    }
+  ],
+
+  "conditions": [
+    { "when": "use_gpu == true", "require": ["gpu_backend"] },
+    { "when": "enable_attestation == false", "set": { "attestation_kind": "none" } }
+  ],
+
+  "env": {
+    "APP_NAME": "{{ project_slug }}",
+    "PORT": "{{ service_port }}",
+    "LOG_LEVEL": "{{ log_level }}",
+    "RPC_URL": "{{ rpc_url }}",
+    "CHAIN_ID": "{{ chain_id }}",
+    "AICF_QUEUE_URL": "{{ aicf_queue_url }}",
+    "REGION": "{{ provider_region }}",
+    "ENABLE_ATTESTATION": "{{ enable_attestation }}",
+    "ATTESTATION_KIND": "{{ attestation_kind }}",
+    "CONCURRENCY": "{{ concurrency }}",
+    "MAX_PARALLEL_JOBS": "{{ max_parallel_jobs }}",
+    "USE_GPU": "{{ use_gpu }}",
+    "GPU_BACKEND": "{{ gpu_backend }}"
+  }
+}

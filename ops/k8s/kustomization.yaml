@@ -1,0 +1,77 @@
+# Kustomize base — installs shared infrastructure (Ingress, cert-manager, ExternalDNS).
+# Prereqs:
+#   - Namespaces created (see README): animica-system, animica, observability
+#   - kubectl kustomize/Helm integration available (kustomize >= v4.5)
+# Notes:
+#   - ClusterIssuer and app Ingresses live in separate files; uncomment under 'resources'
+#     after you’ve rendered them (see ops/k8s/README.md).
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+commonLabels:
+  app.kubernetes.io/part-of: animica
+  app.kubernetes.io/managed-by: kustomize
+
+# Optional extra manifests you create by hand (uncomment when present):
+# resources:
+#   - issuers-letsencrypt.yaml       # ClusterIssuer "letsencrypt"
+#   - ingress-animica.yaml           # Public ingress for rpc/explorer/studio/services (envsubst first)
+
+# Helm charts rendered by kustomize (no Tiller).
+helmCharts:
+  # --- Ingress Controller (nginx) ---
+  - name: ingress-nginx
+    repo: https://kubernetes.github.io/ingress-nginx
+    version: 4.10.0
+    releaseName: ingress-nginx
+    namespace: animica-system
+    valuesInline:
+      controller:
+        replicaCount: 2
+        ingressClassResource:
+          name: nginx
+        ingressClass: nginx
+        metrics:
+          enabled: true
+
+  # --- cert-manager (Let’s Encrypt) ---
+  - name: cert-manager
+    repo: https://charts.jetstack.io
+    version: v1.15.3
+    releaseName: cert-manager
+    namespace: animica-system
+    includeCRDs: true
+    valuesInline:
+      extraArgs:
+        - --controllers=*  # default
+      prometheus:
+        enabled: true
+
+  # --- ExternalDNS (set provider + creds out-of-band) ---
+  - name: external-dns
+    repo: https://charts.bitnami.com/bitnami
+    version: 8.6.0
+    releaseName: external-dns
+    namespace: animica-system
+    valuesInline:
+      # Set your DNS provider here: aws | google | cloudflare | azure | rfc2136 | infoblox | ...
+      provider: aws
+      policy: upsert-only
+      registry: txt
+      txtOwnerId: animica-devnet
+      # If you render with envsubst, DOMAIN_BASE will be replaced at apply time:
+      domainFilters:
+        - ${DOMAIN_BASE}
+      # Provider-specific values (examples — configure via a separate Secret/SA/IRSA):
+      aws:
+        zoneType: public
+      sources:
+        - ingress
+      interval: 1m
+      logLevel: info
+
+# Hints:
+# - Apply with envsubst to pass DOMAIN_BASE, e.g.:
+#     envsubst < ops/k8s/kustomization.yaml | kubectl apply -k -
+#   (or set a concrete string instead of ${DOMAIN_BASE} above)

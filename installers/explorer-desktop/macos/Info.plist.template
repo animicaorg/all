@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Animica Explorer — macOS Info.plist (template)
+  This file provides sensible production defaults for the Tauri-based Explorer shell.
+  CI may patch CFBundleShortVersionString / CFBundleVersion as part of a release.
+-->
+<plist version="1.0">
+<dict>
+  <!-- Bundle identity -->
+  <key>CFBundleName</key>
+  <string>Animica Explorer</string>
+  <key>CFBundleDisplayName</key>
+  <string>Animica Explorer</string>
+  <key>CFBundleIdentifier</key>
+  <string>io.animica.explorer</string>
+
+  <!-- Versions (CI can bump these) -->
+  <key>CFBundleShortVersionString</key>
+  <string>0.1.0</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+
+  <!-- Executable & packaging -->
+  <key>CFBundleExecutable</key>
+  <string>animica-explorer</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleSignature</key>
+  <string>????</string>
+
+  <!-- Icons (Tauri bundles icons; CFBundleIconFile optional on modern macOS) -->
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
+
+  <!-- Platform & appearance -->
+  <key>LSMinimumSystemVersion</key>
+  <string>11.0</string>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.developer-tools</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSRequiresAquaSystemAppearance</key>
+  <false/>
+
+  <!-- URL scheme for deep links like animica://... -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>io.animica.explorer</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>animica</string>
+      </array>
+    </dict>
+  </array>
+
+  <!-- Allow the app to check for and open external links to known hosts -->
+  <key>LSApplicationQueriesSchemes</key>
+  <array>
+    <string>animica</string>
+    <string>https</string>
+    <string>http</string>
+  </array>
+
+  <!-- Networking policy: strict ATS with specific exceptions for our domains -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsArbitraryLoads</key>
+    <false/>
+    <key>NSExceptionDomains</key>
+    <dict>
+      <key>explorer.animica.dev</key>
+      <dict>
+        <key>NSIncludesSubdomains</key><true/>
+        <key>NSTemporaryExceptionAllowsInsecureHTTPLoads</key><false/>
+        <key>NSExceptionRequiresForwardSecrecy</key><true/>
+        <key>NSExceptionAllowsInsecureHTTPLoads</key><false/>
+      </dict>
+      <key>rpc.animica.dev</key>
+      <dict>
+        <key>NSIncludesSubdomains</key><true/>
+        <key>NSTemporaryExceptionAllowsInsecureHTTPLoads</key><false/>
+        <key>NSExceptionRequiresForwardSecrecy</key><true/>
+        <key>NSExceptionAllowsInsecureHTTPLoads</key><false/>
+      </dict>
+      <!-- During development you may add localhost here or use tauri dev. -->
+    </dict>
+  </dict>
+
+  <!-- Copyright -->
+  <key>NSHumanReadableCopyright</key>
+  <string>© 2025 Animica Labs</string>
+
+  <!-- Hardened runtime entitlements are configured separately in the signing step. -->
+</dict>
+</plist>

@@ -1,0 +1,107 @@
+{
+  "name": "ai_agent",
+  "title": "AI Agent",
+  "version": "0.1.0",
+  "language": "python-vm",
+  "entry": "contract.py",
+
+  "abi": {
+    "functions": [
+      {
+        "name": "init",
+        "inputs": [
+          { "name": "owner_addr", "type": "bytes" },
+          { "name": "model", "type": "bytes" }
+        ],
+        "outputs": []
+      },
+      {
+        "name": "set_model",
+        "inputs": [
+          { "name": "caller", "type": "bytes" },
+          { "name": "model", "type": "bytes" }
+        ],
+        "outputs": []
+      },
+      {
+        "name": "request",
+        "inputs": [
+          { "name": "prompt", "type": "bytes" }
+        ],
+        "outputs": [
+          { "name": "task_id", "type": "bytes" }
+        ]
+      },
+      {
+        "name": "consume",
+        "inputs": [
+          { "name": "task_id", "type": "bytes" }
+        ],
+        "outputs": [
+          { "name": "ok", "type": "bool" }
+        ]
+      },
+
+      { "name": "owner",       "inputs": [], "outputs": [ { "name": "addr",   "type": "bytes" } ] },
+      { "name": "model",       "inputs": [], "outputs": [ { "name": "model",  "type": "bytes" } ] },
+      { "name": "last_task",   "inputs": [], "outputs": [ { "name": "task",   "type": "bytes" } ] },
+      { "name": "last_prompt", "inputs": [], "outputs": [ { "name": "prompt", "type": "bytes" } ] },
+      { "name": "last_result", "inputs": [], "outputs": [ { "name": "result", "type": "bytes" } ] }
+    ],
+
+    "events": [
+      {
+        "name": "AIRequested",
+        "inputs": [
+          { "name": "task_id", "type": "bytes", "indexed": false },
+          { "name": "model",   "type": "bytes", "indexed": false },
+          { "name": "prompt",  "type": "bytes", "indexed": false }
+        ]
+      },
+      {
+        "name": "AIResult",
+        "inputs": [
+          { "name": "task_id", "type": "bytes", "indexed": false },
+          { "name": "size",    "type": "uint",  "indexed": false },
+          { "name": "ok",      "type": "bool",  "indexed": false }
+        ]
+      }
+    ],
+
+    "errors": [
+      "ALREADY_INIT",
+      "OWNER_EMPTY",
+      "NOT_OWNER",
+      "MODEL_NOT_SET",
+      "PROMPT_EMPTY",
+      "BAD_TASK"
+    ]
+  },
+
+  "resources": {
+    "syscalls": [
+      "ai.enqueue",
+      "result.read"
+    ]
+  },
+
+  "deploy": {
+    "entrypoint": "init",
+    "args": [
+      { "var": "owner_address", "default": "0x" },
+      { "var": "model_id", "default": "gpt-mini" }
+    ]
+  },
+
+  "metadata": {
+    "description": "Template AI Agent contract that enqueues an AI job and consumes its result deterministically in a later block.",
+    "authors": [
+      { "name": "{{author_name}}", "email": "{{author_email}}" }
+    ],
+    "license": "Apache-2.0",
+    "source": {
+      "tool": "vm_py",
+      "determinism": "strict"
+    }
+  }
+}

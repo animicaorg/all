@@ -1,0 +1,68 @@
+{
+  "id": "dev.animica.studio",
+  "name": "Animica Studio",
+  "short_name": "Animica",
+  "lang": "en",
+  "dir": "ltr",
+  "description": "Animica Studio — web IDE to edit, simulate, deploy, and verify Python-VM contracts. No server-side keys; offline signing is disabled.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#0f172a",
+  "background_color": "#0b1020",
+  "categories": ["development", "productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Edit & Simulate",
+      "short_name": "Edit",
+      "url": "/edit",
+      "description": "Open the editor and run local simulations."
+    },
+    {
+      "name": "Deploy",
+      "short_name": "Deploy",
+      "url": "/deploy",
+      "description": "Connect wallet and deploy a contract."
+    },
+    {
+      "name": "Verify",
+      "short_name": "Verify",
+      "url": "/verify",
+      "description": "Recompile and verify deployed code."
+    },
+    {
+      "name": "AI Jobs",
+      "short_name": "AI",
+      "url": "/ai",
+      "description": "Enqueue AI jobs and view results."
+    },
+    {
+      "name": "Quantum Jobs",
+      "short_name": "Quantum",
+      "url": "/quantum",
+      "description": "Submit quantum jobs and inspect proofs."
+    },
+    {
+      "name": "Beacon",
+      "short_name": "Beacon",
+      "url": "/beacon",
+      "description": "View randomness beacon rounds and tools."
+    }
+  ],
+  "prefer_related_applications": false
+}

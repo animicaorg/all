@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://animica.dev/schemas/proof_envelope.json",
+  "title": "ProofEnvelope",
+  "description": "Canonical JSON representation of a proof envelope. Mirrors the CBOR schema used in consensus (see docs/schemas/block.cddl: proof-envelope). Used for off-chain transport, fixtures, and testing.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type_id", "body", "nullifier"],
+  "properties": {
+    "type_id": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Proof type identifier. Reserved mappings: 1=HashShare, 2=AIProof, 3=QuantumProof, 4=StorageHeartbeat, 5=VDFProof (subject to extension)."
+    },
+    "body": {
+      "description": "Opaque proof body bytes (scheme-specific). Prefer hex (0x…) for determinism; base64 is accepted for interoperability.",
+      "oneOf": [
+        { "$ref": "#/$defs/hexBytes" },
+        { "$ref": "#/$defs/base64Bytes" }
+      ]
+    },
+    "nullifier": {
+      "description": "Deterministic 32-byte nullifier to prevent proof reuse. MUST be exactly 32 bytes.",
+      "oneOf": [
+        { "$ref": "#/$defs/hexBytes32" }
+      ]
+    }
+  },
+  "$defs": {
+    "hexBytes": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]*$",
+      "examples": [
+        "0x",
+        "0xdeadbeef",
+        "0x11223344556677889900aabbccddeeff"
+      ],
+      "description": "Arbitrary-length bytes encoded as 0x-prefixed hex (lower/upper case allowed)."
+    },
+    "hexBytes32": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{64}$",
+      "examples": [
+        "0x5af3107a4000d3ba2d0bbd7d46d7b2f2c2a476b902ce9f9e9b7d3d1c4f0a5c1e"
+      ],
+      "description": "Exactly 32 bytes encoded as 0x-prefixed hex (64 hex chars)."
+    },
+    "base64Bytes": {
+      "type": "string",
+      "contentEncoding": "base64",
+      "description": "Arbitrary-length bytes encoded as base64 (standard alphabet)."
+    }
+  },
+  "examples": [
+    {
+      "type_id": 1,
+      "body": "0x01a20358c0deadbeefcafebabe",
+      "nullifier": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "type_id": 5,
+      "body": "MEUCIQCrW7yBzq2m1m1gG7E6m3a7b1m0r4f1q3n9j6Y0cQmYKA==",
+      "nullifier": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ]
+}

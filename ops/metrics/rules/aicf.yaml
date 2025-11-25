@@ -1,0 +1,191 @@
+# Prometheus alert rules — AICF (AI Compute Fund)
+# Assumed Animica AICF metrics (rename if your build exports different names):
+#   - animica_aicf_jobs_enqueued_total{instance}
+#   - animica_aicf_jobs_assigned_total{instance}
+#   - animica_aicf_jobs_completed_total{instance}
+#   - animica_aicf_jobs_timeout_total{instance}
+#   - animica_aicf_jobs_expired_total{instance}
+#   - animica_aicf_job_latency_seconds_bucket{instance,le}          # histogram
+#   - animica_aicf_sla_evaluations_total{instance}
+#   - animica_aicf_sla_fail_total{instance,dimension}               # counter (failures)
+#   - animica_aicf_slash_events_total{instance,reason,provider_id}  # counter
+#   - animica_aicf_queue_depth{instance}                            # gauge (optional)
+#   - animica_aicf_epoch_last_settlement_timestamp_seconds{instance}# gauge (unix ts)
+#
+# Thresholds tuned for devnet/small testnets — tighten for production.
+
+groups:
+  - name: aicf.rules
+    interval: 30s
+    rules:
+      # ───────────────────────────────────────────────────────────
+      # SLA BREACH RATES
+      - alert: AICFSLABreachRateWarning
+        expr: |
+          (
+            sum by(instance) (rate(animica_aicf_sla_fail_total[15m]))
+            /
+            clamp_min(sum by(instance) (rate(animica_aicf_sla_evaluations_total[15m])), 1e-6)
+          ) > 0.03
+        for: 15m
+        labels:
+          severity: warning
+          component: aicf
+        annotations:
+          summary: "AICF SLA breach rate > 3% (15m)"
+          description: |
+            {{ $labels.instance }} SLA failures trending {{ $value | printf "%.2%"}}
+            over the last 15m. Inspect provider health, trap/QoS metrics,
+            and model/circuit caps. Check top failing dimension via label {dimension}.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#aicf
+
+      - alert: AICFSLABreachRateCritical
+        expr: |
+          (
+            sum by(instance) (rate(animica_aicf_sla_fail_total[10m]))
+            /
+            clamp_min(sum by(instance) (rate(animica_aicf_sla_evaluations_total[10m])), 1e-6)
+          ) > 0.10
+        for: 10m
+        labels:
+          severity: critical
+          component: aicf
+        annotations:
+          summary: "AICF SLA breach rate > 10% (10m)"
+          description: |
+            {{ $labels.instance }} SLA breaches are severe; payouts/slashes likely spiking.
+            Verify recent policy changes and provider availability.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#aicf
+
+      # ───────────────────────────────────────────────────────────
+      # JOB TIMEOUT RATE (missed lease / exceeded deadline)
+      - alert: AICFJobTimeoutRateWarning
+        expr: |
+          (
+            sum by(instance) (rate(animica_aicf_jobs_timeout_total[15m]))
+            /
+            clamp_min(sum by(instance) (rate(animica_aicf_jobs_assigned_total[15m])), 1e-6)
+          ) > 0.03
+        for: 15m
+        labels:
+          severity: warning
+          component: aicf
+        annotations:
+          summary: "AICF job timeouts > 3% (15m)"
+          description: |
+            {{ $labels.instance }} timeout ratio above 3%. Investigate provider lease sizes,
+            dispatcher backlog, and network reachability to providers.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#aicf
+
+      - alert: AICFJobTimeoutRateCritical
+        expr: |
+          (
+            sum by(instance) (rate(animica_aicf_jobs_timeout_total[5m]))
+            /
+            clamp_min(sum by(instance) (rate(animica_aicf_jobs_assigned_total[5m])), 1e-6)
+          ) > 0.10
+        for: 10m
+        labels:
+          severity: critical
+          component: aicf
+        annotations:
+          summary: "AICF job timeouts > 10% (5m)"
+          description: |
+            {{ $labels.instance }} high timeout rate — jobs expiring before proof return.
+            Consider reducing lease TTL or throttling queue intake.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#aicf
+
+      # ───────────────────────────────────────────────────────────
+      # SLASHING BURSTS
+      - alert: AICFSlashingBurstWarning
+        expr: sum by(instance) (rate(animica_aicf_slash_events_total[10m])) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          component: aicf
+        annotations:
+          summary: "AICF slashing burst (> 3/min over 10m)"
+          description: |
+            {{ $labels.instance }} slashing rate is elevated. Inspect recent SLA failing providers,
+            top reasons, and potential policy misconfiguration.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#aicf
+
+      - alert: AICFSlashingBurstCritical
+        expr: sum by(instance) (rate(animica_aicf_slash_events_total[5m])) > 0.20
+        for: 5m
+        labels:
+          severity: critical
+          component: aicf
+        annotations:
+          summary: "AICF severe slashing burst (> 12/min over 5m)"
+          description: |
+            {{ $labels.instance }} slashing spikes; widespread provider faults or bad attestation inputs.
+            Pause matching if needed and rollback recent policy changes.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#aicf
+
+      # Surface top slashing reason to aid triage
+      - alert: AICFTopSlashReasonInfo
+        expr: topk(1, sum by(reason) (rate(animica_aicf_slash_events_total[10m]))) > 0.2
+        for: 10m
+        labels:
+          severity: info
+          component: aicf
+        annotations:
+          summary: "Top AICF slashing reason: {{ $labels.reason }}"
+          description: |
+            '{{ $labels.reason }}' ≈ {{ $value | printf "%.2f" }} events/sec over 10m.
+            Helps distinguish traps_fail, qos_breach, timeout, invalid_attest, etc.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#aicf
+
+      # ───────────────────────────────────────────────────────────
+      # SUPPORTING SIGNALS (optional but useful)
+      - alert: AICFQueueBacklogGrowing
+        expr: |
+          (sum by(instance) (rate(animica_aicf_jobs_enqueued_total[15m]))
+           >
+           1.10 * (sum by(instance) (rate(animica_aicf_jobs_completed_total[15m]))))
+           OR
+          (max by(instance) (animica_aicf_queue_depth) > 500)
+        for: 15m
+        labels:
+          severity: warning
+          component: aicf
+        annotations:
+          summary: "AICF queue backlog growing"
+          description: |
+            Enqueue rate exceeds completion by >10% over 15m or depth > 500.
+            Scale dispatcher/providers or adjust quotas.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#aicf
+
+      - alert: AICFSettlementLag
+        expr: |
+          (time()
+           - max by(instance) (animica_aicf_epoch_last_settlement_timestamp_seconds))
+           > 900
+        for: 15m
+        labels:
+          severity: warning
+          component: aicf
+        annotations:
+          summary: "AICF settlement lag > 15m"
+          description: |
+            Last epoch settlement is stale on {{ $labels.instance }}.
+            Check scheduler and treasury hooks.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#aicf
+
+      - alert: AICFJobLatencyP95High
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by(le, instance) (rate(animica_aicf_job_latency_seconds_bucket[10m]))
+          ) > 20
+        for: 15m
+        labels:
+          severity: warning
+          component: aicf
+        annotations:
+          summary: "AICF job latency p95 > 20s (10m)"
+          description: |
+            {{ $labels.instance }} job p95 is high; SLA breaches/timeouts likely to rise.
+            Check provider capacity and network paths.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#aicf

@@ -1,0 +1,58 @@
+# ==============================================================================
+# {{project_slug}} — requirements.txt
+# ------------------------------------------------------------------------------
+# This template is meant for local development of Python-VM contracts.
+#
+# Usage:
+#   python -m venv .venv && . .venv/bin/activate
+#   pip install -r requirements.txt
+#
+# Notes:
+# - Contracts are compiled to IR and executed in a deterministic VM; they don't
+#   import chain libraries at runtime. The deps below are for *tooling*:
+#   compilation, local simulation, tests, and linting.
+# - If you are working inside the monorepo, you can install vm_py and the
+#   Python SDK (omni_sdk) from local paths—see the "Local dev (optional)" block.
+# - If/when vm_py and omni_sdk are published, you may swap in the pinned
+#   package versions under "Published packages (optional)".
+# ==============================================================================
+
+##########
+# Core tooling
+##########
+pytest>=8.2
+pytest-cov>=5.0
+ruff>=0.6.8
+mypy>=1.11
+types-setuptools>=69.5.0.20240519
+msgspec>=0.18.6
+cbor2>=5.6.0
+
+##########
+# Published packages (optional)
+# Uncomment *when official packages exist* or you have access to a private index.
+# These provide the Python VM compiler/runtime (vm_py) and the Python SDK
+# for RPC/deploy tooling (omni_sdk).
+##########
+# vm_py>=0.1.0
+# omni_sdk>=0.1.0
+
+##########
+# Local dev (optional)
+# If you have local source checkouts for vm_py and the SDK, install them
+# in editable mode using absolute paths. Pick ONE of the forms below.
+#
+# Example (bash):
+#   VM_PY_PATH="$(pwd)/../../vm_py"
+#   SDK_PY_PATH="$(pwd)/../../sdk/python"
+#   pip install -e "$VM_PY_PATH" -e "$SDK_PY_PATH"
+#
+# Or hardcode absolute paths (recommended for isolated environments):
+# -e /ABSOLUTE/PATH/TO/vm_py
+# -e /ABSOLUTE/PATH/TO/sdk/python
+#
+# PEP 508 direct references (non-editable) also work:
+# vm_py @ file:///ABSOLUTE/PATH/TO/vm_py
+# omni_sdk @ file:///ABSOLUTE/PATH/TO/sdk/python
+##########
+

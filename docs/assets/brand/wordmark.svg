@@ -1,0 +1,76 @@
+<!--
+  Animica Wordmark
+  Format: SVG (paths/strokes — no font dependency)
+  Safe to recolor via CSS: `.animica-wordmark { color: #111 }`
+  Scaling: vector-effect="non-scaling-stroke" keeps strokes crisp.
+  License: Part of the Animica docs brand asset set.
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 900 180"
+     role="img"
+     aria-labelledby="animicaWordmarkTitle animicaWordmarkDesc"
+     class="animica-wordmark">
+  <title id="animicaWordmarkTitle">Animica Wordmark</title>
+  <desc id="animicaWordmarkDesc">Geometric stroke-built letters spelling ANIMICA with a brand gradient stroke.</desc>
+
+  <defs>
+    <!-- Brand gradient stroke; override by setting `color` on the element and
+         uncommenting the `currentColor` stroke in the .letters style below. -->
+    <linearGradient id="grad-brand" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#0ea5e9"/>  <!-- sky-500 -->
+      <stop offset="50%"  stop-color="#6366f1"/>  <!-- indigo-500 -->
+      <stop offset="100%" stop-color="#22d3ee"/>  <!-- cyan-400 -->
+    </linearGradient>
+
+    <style>
+      .letters {
+        fill: none;
+        /* To use solid color from CSS `color`, replace stroke with `currentColor` */
+        /* stroke: currentColor; */
+        stroke: url(#grad-brand);
+        stroke-width: 14;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        vector-effect: non-scaling-stroke;
+      }
+      @media (prefers-color-scheme: dark) {
+        /* optional gentle lift on dark backgrounds */
+        .bg-underline { opacity: 0.12; }
+      }
+    </style>
+  </defs>
+
+  <!-- Optional subtle underline for balance (can be removed) -->
+  <path class="bg-underline" d="M40 150 H860" stroke="currentColor" stroke-width="2" opacity="0.08"/>
+
+  <!-- Geometric letter grid: height 80 (y:40..120), width per glyph ~100, spacing 20 -->
+  <g class="letters">
+    <!-- A (x=30) -->
+    <path d="M30 120 L65 40 L100 120 M48 88 H82"/>
+
+    <!-- N (x=150) -->
+    <path d="M150 120 V40 M150 40 L220 120 M220 120 V40"/>
+
+    <!-- I (x=270) -->
+    <path d="M305 120 V40"/>
+
+    <!-- M (x=390) -->
+    <path d="M390 120 V40
+             M390 40 L425 80
+             M425 80 L460 40
+             M460 40 V120"/>
+
+    <!-- I (x=510) -->
+    <path d="M545 120 V40"/>
+
+    <!-- C (x=630) — left-open arc to form a C -->
+    <path d="M710 50
+             A45 45 0 0 0 710 110"/>
+
+    <!-- A (x=750) -->
+    <path d="M750 120 L785 40 L820 120 M768 88 H802"/>
+  </g>
+
+  <!-- Accessible hit box (invisible) -->
+  <rect x="0" y="0" width="900" height="180" fill="none"/>
+</svg>

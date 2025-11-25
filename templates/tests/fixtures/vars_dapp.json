@@ -1,0 +1,47 @@
+{
+  "project_slug": "example_dapp",
+  "project_name": "Example Dapp (React + TS)",
+  "description": "Rendered in tests to validate the React + TypeScript dapp template.",
+  "author_name": "Animica CI",
+  "author_email": "ci@example.com",
+  "license": "MIT",
+  "version": "0.1.0",
+
+  "chain_id": "devnet",
+  "rpc_http_url": "http://127.0.0.1:8545",
+  "rpc_ws_url": "ws://127.0.0.1:8546",
+  "explorer_base_url": "http://127.0.0.1:8082",
+  "explorer_api_url": "http://127.0.0.1:8081",
+  "faucet_url": "http://127.0.0.1:8080/faucet",
+
+  "native_currency": {
+    "symbol": "ANM",
+    "decimals": 18
+  },
+
+  "default_sender": "0x0000000000000000000000000000000000000001",
+  "default_recipient": "0x0000000000000000000000000000000000000002",
+  "default_amount": "1000000000000000000",
+
+  "contracts": {
+    "counter": "0x00000000000000000000000000000000000000c0",
+    "token20": "0x0000000000000000000000000000000000000020",
+    "escrow": "0x00000000000000000000000000000000000000e5"
+  },
+
+  "wallet_extension": {
+    "use_mock": true,
+    "mock_origin": "http://127.0.0.1:3333"
+  },
+
+  "ui": {
+    "theme": "light",
+    "brand_color": "#4f46e5"
+  },
+
+  "features": {
+    "enableSendPage": true,
+    "enableContractsPage": true,
+    "enableExplorerEmbeds": true
+  }
+}

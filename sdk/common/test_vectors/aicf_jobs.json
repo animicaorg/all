@@ -1,0 +1,182 @@
+{
+  "version": 1,
+  "notes": "Deterministic AICF job request/receipt/result vectors used across SDKs. Task IDs are fixed here to provide a single source of truth for round-trip tests. Heights reflect the 'next-block availability' rule (result becomes readable at height+1). Hex fields are 0x-prefixed bytes.",
+  "schema": {
+    "request.common": [
+      "chainId: string (e.g., 'animica:devnet')",
+      "height: uint64 (block height at enqueue)",
+      "txHash: bytes32_hex",
+      "caller: string (bech32m address)",
+      "kind: enum['AI','Quantum']",
+      "payload: object (see below)"
+    ],
+    "payload.ai": [
+      "model: string (e.g., 'text:tiny-1.0')",
+      "prompt: string",
+      "maxTokens?: uint32"
+    ],
+    "payload.quantum": [
+      "circuit: object { qubits:uint16, gates:array, measure:array }",
+      "shots: uint32",
+      "trapsRatioBps: uint16"
+    ],
+    "receipt": [
+      "taskId: bytes32_hex",
+      "enqueuedHeight: uint64",
+      "kind: enum",
+      "accepted: boolean",
+      "error?: string"
+    ],
+    "resultRecord": [
+      "taskId: bytes32_hex",
+      "completedHeight: uint64",
+      "status: enum['Completed','Failed','Expired']",
+      "producer: string (provider id / address)",
+      "costUnits: uint32",
+      "output: object (ai:{text:string}|quantum:{passed:boolean,digest:bytes32_hex})",
+      "attestation?: object"
+    ]
+  },
+  "vectors": [
+    {
+      "name": "ai_basic_ok_next_block",
+      "request": {
+        "chainId": "animica:devnet",
+        "height": 100,
+        "txHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "caller": "anim1a1cfl0rd0m0ck9u8s7t6r5q4p3o2n1m0k9j8h7",
+        "kind": "AI",
+        "payload": {
+          "model": "text:tiny-1.0",
+          "prompt": "hello world",
+          "maxTokens": 16
+        }
+      },
+      "expect": {
+        "taskId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "receipt": {
+          "taskId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+          "enqueuedHeight": 100,
+          "kind": "AI",
+          "accepted": true
+        },
+        "resultRecord": {
+          "taskId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+          "completedHeight": 101,
+          "status": "Completed",
+          "producer": "anim1prov33r0k3y7q9w8e7r6t5y4u3i2o1p0l9k8j7",
+          "costUnits": 42,
+          "output": {
+            "ai": {
+              "text": "hello world ✨"
+            }
+          },
+          "attestation": {
+            "tee": "SEV-SNP",
+            "quote": "0xabcdef"
+          }
+        }
+      }
+    },
+    {
+      "name": "quantum_ok_traps_pass_next_block",
+      "request": {
+        "chainId": "animica:devnet",
+        "height": 2077,
+        "txHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "caller": "anim1qpucl13nt0x9c8v7b6n5m4l3k2j1h0g9f8e7d",
+        "kind": "Quantum",
+        "payload": {
+          "circuit": {
+            "qubits": 4,
+            "gates": [
+              { "op": "H", "q": [0] },
+              { "op": "CNOT", "q": [0, 1] },
+              { "op": "MEASURE", "q": [0, 1] }
+            ],
+            "measure": [0, 1]
+          },
+          "shots": 1024,
+          "trapsRatioBps": 500
+        }
+      },
+      "expect": {
+        "taskId": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "receipt": {
+          "taskId": "0x2222222222222222222222222222222222222222222222222222222222222222",
+          "enqueuedHeight": 2077,
+          "kind": "Quantum",
+          "accepted": true
+        },
+        "resultRecord": {
+          "taskId": "0x2222222222222222222222222222222222222222222222222222222222222222",
+          "completedHeight": 2078,
+          "status": "Completed",
+          "producer": "anim1qpupr0v1d3rxx7y6z5a4s3d2f1g0h9j8k7l6",
+          "costUnits": 128,
+          "output": {
+            "quantum": {
+              "passed": true,
+              "digest": "0x8888888888888888888888888888888888888888888888888888888888888888"
+            }
+          },
+          "attestation": {
+            "qpu": "ionq-demo",
+            "bundle": "0xfeedface"
+          }
+        }
+      }
+    },
+    {
+      "name": "ai_model_not_allowed_rejected",
+      "request": {
+        "chainId": "animica:devnet",
+        "height": 4096,
+        "txHash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "caller": "anim1usr000deny7m6n5b4v3c2x1z0p9o8i7u6y5t",
+        "kind": "AI",
+        "payload": {
+          "model": "text:super-proprietary",
+          "prompt": "should be rejected",
+          "maxTokens": 8
+        }
+      },
+      "expect": {
+        "taskId": "0x3333333333333333333333333333333333333333333333333333333333333333",
+        "receipt": {
+          "taskId": "0x3333333333333333333333333333333333333333333333333333333333333333",
+          "enqueuedHeight": 4096,
+          "kind": "AI",
+          "accepted": false,
+          "error": "ModelNotAllowed"
+        }
+      }
+    },
+    {
+      "name": "ai_pending_same_block_no_result_yet",
+      "request": {
+        "chainId": "animica:devnet",
+        "height": 5100,
+        "txHash": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "caller": "anim1a1cfp3nd1ng0r1g1n9m8n7b6v5c4x3z2",
+        "kind": "AI",
+        "payload": {
+          "model": "text:tiny-1.0",
+          "prompt": "ping",
+          "maxTokens": 4
+        }
+      },
+      "expect": {
+        "taskId": "0x4444444444444444444444444444444444444444444444444444444444444444",
+        "receipt": {
+          "taskId": "0x4444444444444444444444444444444444444444444444444444444444444444",
+          "enqueuedHeight": 5100,
+          "kind": "AI",
+          "accepted": true
+        },
+        "noResultYetAtHeight": 5100,
+        "resultBecomesReadableAt": 5101
+      }
+    }
+  ]
+}

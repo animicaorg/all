@@ -1,0 +1,66 @@
+{
+  "$schema": "../schemas/variables.schema.json",
+
+  "project_slug": {
+    "prompt": "Project directory name (kebab-case)",
+    "default": "animica-rs-starter",
+    "pattern": "^[a-z0-9][a-z0-9-]*$",
+    "example": "my-animica-app",
+    "required": true
+  },
+
+  "crate_name": {
+    "prompt": "Crate name (snake_case, starts with a letter)",
+    "default": "animica_rs_starter",
+    "pattern": "^[a-z][a-z0-9_]*$",
+    "example": "wallet_cli",
+    "required": true
+  },
+
+  "description": {
+    "prompt": "Short description",
+    "default": "Example Rust CLI using animica-sdk to deploy and interact with contracts",
+    "example": "CLI to deploy Counter and subscribe to newHeads",
+    "required": true
+  },
+
+  "author_name": {
+    "prompt": "Author name",
+    "default": "Your Name",
+    "example": "Ada Lovelace",
+    "required": true
+  },
+
+  "author_email": {
+    "prompt": "Author email",
+    "default": "you@example.com",
+    "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$",
+    "example": "ada@example.org",
+    "required": true
+  },
+
+  "org": {
+    "prompt": "Repository org/user (used in README badges and URLs)",
+    "default": "your-org",
+    "pattern": "^[A-Za-z0-9_.-]+$",
+    "example": "animica-labs",
+    "required": true
+  },
+
+  "rpc_url": {
+    "prompt": "Default Animica RPC URL",
+    "default": "http://localhost:8545",
+    "pattern": "^https?://.+",
+    "example": "https://rpc.devnet.animica.dev",
+    "required": true
+  },
+
+  "chain_id": {
+    "prompt": "Chain ID (integer; e.g., 1=mainnet, 2=testnet, 1337=devnet)",
+    "type": "integer",
+    "default": 1337,
+    "min": 1,
+    "example": 1337,
+    "required": true
+  }
+}

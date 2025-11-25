@@ -1,0 +1,52 @@
+#######################################################################
+# Netlify-style response headers for static hosting (global defaults) #
+# Edit CSP connect-src/frame-src to include your actual hosts.        #
+#######################################################################
+
+/*
+  Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: DENY
+
+  # Powerful feature isolation — enable if your embeds/libs are COEP/COOP safe
+  Cross-Origin-Embedder-Policy: require-corp
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-origin
+
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), fullscreen=(self)
+  # ⚠️ Tune the CSP below to your actual endpoints (RPC, APIs, analytics, embeds)
+  Content-Security-Policy: default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'self'; manifest-src 'self'; worker-src 'self' blob:; img-src 'self' data: blob:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https://rpc.example.tld https://api.example.tld; frame-src 'self' https://www.youtube-nocookie.com https://player.vimeo.com; form-action 'self'; upgrade-insecure-requests
+*/
+
+#######################################################################
+# Long-cache immutable assets                                         #
+#######################################################################
+
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/public/*
+  Cache-Control: public, max-age=31536000, immutable
+
+#######################################################################
+# Fonts (allow cross-origin use if served from this domain)            #
+#######################################################################
+
+/public/fonts/*
+  Access-Control-Allow-Origin: *
+
+#######################################################################
+# API routes should not be cached                                      #
+#######################################################################
+
+/api/*
+  Cache-Control: no-store
+
+#######################################################################
+# OPTIONAL: Add analytics domains (only if user-consented)             #
+# Duplicate CSP line with additions or loosen via runtime headers.     #
+# Example add-ons:                                                     #
+#   script-src ... https://plausible.io https://cdn.posthog.com        #
+#   connect-src ... https://plausible.io https://events.posthog.com    #
+#######################################################################

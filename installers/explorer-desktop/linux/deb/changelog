@@ -1,0 +1,17 @@
+animica-explorer (0.1.0-1) stable; urgency=medium
+
+  * Initial stable release of Animica Explorer (Tauri desktop shell).
+  * GTK3 + WebKitGTK 4.1 runtime, Wayland/X11 support.
+  * Added packaging targets for AppImage/Flatpak/DEB/RPM.
+  * Integrated desktop entries and icons (512x512).
+  * Basic telemetry disabled; no auto-updater in Linux builds.
+
+ -- Animica Labs <support@animica.dev>  Wed, 08 Oct 2025 12:00:00 +0000
+
+animica-explorer (0.1.0~beta1-1) unstable; urgency=medium
+
+  * First public beta.
+  * Initial wiring to default Explorer URL and offline fallback.
+  * CI artifacts and basic signing pipeline.
+
+ -- Animica Labs <support@animica.dev>  Mon, 15 Sep 2025 12:00:00 +0000

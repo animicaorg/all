@@ -1,0 +1,138 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import Hero from "../components/Hero.astro";
+import FeatureGrid from "../components/FeatureGrid.astro";
+import CTAButtons from "../components/CTAButtons.astro";
+import LogosStrip from "../components/LogosStrip.astro";
+import Newsletter from "../components/Newsletter.astro";
+import FAQ from "../components/FAQ.astro";
+import Testimonial from "../components/Testimonial.astro";
+import ChainCard from "../components/ChainCard.astro";
+import StatusBadge from "../components/StatusBadge.tsx";
+import MetricTicker from "../components/MetricTicker.tsx";
+
+import { site } from "../config/site";
+import { links } from "../config/links";
+import chains from "../config/chains";
+
+const pageTitle = site.tagline || "Animica — Useful Proofs, Deterministic VM, and Open Tooling";
+const pageDesc =
+  "Animica is a post-quantum, useful-work chain with PoIES consensus, DA, a deterministic Python VM, and first-class AI/Quantum capabilities.";
+---
+
+<BaseLayout title={pageTitle} description={pageDesc}>
+  <!-- Hero -->
+  <section class="relative overflow-hidden">
+    <Hero
+      title="Build on useful work."
+      subtitle="PoIES consensus, Python VM, Data Availability, and verifiable AI/Quantum — all in one open stack."
+      primaryHref={links.studio.home}
+      primaryText="Open Studio"
+      secondaryHref={links.explorer.home}
+      secondaryText="Open Explorer"
+    />
+  </section>
+
+  <!-- Live Status / Metrics -->
+  <section class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 mt-8 sm:mt-12">
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div class="rounded-xl border p-4 sm:p-5 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-medium opacity-80">Network Status</h3>
+          <StatusBadge client:load rpcUrl={links.rpc.url} />
+        </div>
+        <p class="mt-3 text-2xl font-semibold tracking-tight">
+          <MetricTicker client:load rpcUrl={links.rpc.url} kind="height" />
+        </p>
+        <p class="text-xs opacity-70 mt-1">Current head height</p>
+      </div>
+
+      <div class="rounded-xl border p-4 sm:p-5 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <h3 class="text-sm font-medium opacity-80">Approx. TPS</h3>
+        <p class="mt-3 text-2xl font-semibold tracking-tight">
+          <MetricTicker client:load rpcUrl={links.rpc.url} kind="tps" />
+        </p>
+        <p class="text-xs opacity-70 mt-1">Recent 60s average</p>
+      </div>
+
+      <div class="rounded-xl border p-4 sm:p-5 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <h3 class="text-sm font-medium opacity-80">Chain ID</h3>
+        <p class="mt-3 text-2xl font-semibold tracking-tight">{links.chainId}</p>
+        <p class="text-xs opacity-70 mt-1">Configured RPC target</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 mt-14 sm:mt-20">
+    <FeatureGrid />
+    <div class="mt-8 sm:mt-10 flex justify-center">
+      <CTAButtons />
+    </div>
+  </section>
+
+  <!-- Known Chains -->
+  {Array.isArray(chains) && chains.length ? (
+    <section class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 mt-14 sm:mt-20">
+      <h2 class="text-xl sm:text-2xl font-semibold tracking-tight">Networks</h2>
+      <p class="mt-1 text-sm opacity-80">
+        Connect a wallet or use the SDKs to interact with any listed network.
+      </p>
+      <div class="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {chains.map((c) => (
+          <ChainCard chain={c} />
+        ))}
+      </div>
+    </section>
+  ) : null}
+
+  <!-- Logos -->
+  <section class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 mt-14 sm:mt-20">
+    <LogosStrip />
+  </section>
+
+  <!-- Testimonials -->
+  <section class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 mt-14 sm:mt-20">
+    <div class="grid gap-6 sm:grid-cols-2">
+      <Testimonial
+        quote="The Python VM with deterministic gas made our prototype week ridiculously productive."
+        author="Priya N."
+        org="ZK-ML Researcher"
+      />
+      <Testimonial
+        quote="Animica’s AICF flow and proofs let us settle verified AI jobs with clean economics."
+        author="Diego M."
+        org="AI Infra"
+      />
+    </div>
+  </section>
+
+  <!-- Newsletter -->
+  <section class="mx-auto max-w-2xl px-4 sm:px-6 lg:px-8 mt-14 sm:mt-20">
+    <Newsletter />
+  </section>
+
+  <!-- FAQ -->
+  <section class="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 mt-14 sm:mt-20">
+    <FAQ />
+  </section>
+
+  <!-- Secondary CTA -->
+  <section class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 mt-16 sm:mt-24 mb-16 sm:mb-28">
+    <div class="rounded-2xl border p-6 sm:p-10 text-center bg-[var(--bg-elevated)]
+                border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+      <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight">
+        Ready to ship?
+      </h2>
+      <p class="mt-2 opacity-80">
+        Start in the browser with Studio, deploy a contract, and watch it land on-chain.
+      </p>
+      <div class="mt-6 flex justify-center">
+        <CTAButtons />
+      </div>
+    </div>
+  </section>
+</BaseLayout>

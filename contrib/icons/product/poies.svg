@@ -1,0 +1,15 @@
+<!-- Animica Product Icon: PoIES (Proof of Intelligent/Effective/Useful Work)
+     Style: Monochrome, currentColor, 48×48 canvas -->
+<svg width="48" height="48" viewBox="0 0 48 48" role="img" aria-labelledby="title" xmlns="http://www.w3.org/2000/svg">
+  <title id="title">PoIES</title>
+  <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Badge (hexagon) -->
+    <polygon points="24,4 40,14 40,34 24,44 8,34 8,14"/>
+    <!-- Stylized Gamma (Γ) representing work metric -->
+    <path d="M18 16h12v6h-4v12h-4V22h-4z"/>
+    <!-- Spark nodes (useful-work signal) -->
+    <circle cx="34" cy="14" r="1.5" fill="currentColor" stroke="none"/>
+    <circle cx="36.5" cy="18" r="1.5" fill="currentColor" stroke="none"/>
+    <circle cx="33.5" cy="21" r="1.5" fill="currentColor" stroke="none"/>
+  </g>
+</svg>

@@ -1,0 +1,23 @@
+# Service for the Explorer Web static site (nginx). Typically fronted by an Ingress.
+# The Deployment/Pod should expose a named containerPort "http" (commonly 80).
+apiVersion: v1
+kind: Service
+metadata:
+  name: explorer-web
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: explorer-web
+    app.kubernetes.io/name: animica-explorer-web
+spec:
+  type: ClusterIP
+  ipFamilyPolicy: PreferDualStack
+  selector:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: explorer-web
+    app.kubernetes.io/name: animica-explorer-web
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: http

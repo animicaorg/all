@@ -1,0 +1,124 @@
+# ------------------------------------------------------------------------------
+# Docker build context ignore file (scoped for building images from repo root).
+# Note: These rules are safe when invoking builds like:
+#   docker build -f ops/docker/node.Dockerfile .
+#   docker build -f ops/docker/studio-web.Dockerfile .
+#   docker build -f ops/docker/explorer-web.Dockerfile .
+#   docker build -f ops/docker/studio-services.Dockerfile .
+# They aggressively drop tests, benches, caches, and local dev artifacts.
+# ------------------------------------------------------------------------------
+
+# VCS & metadata
+.git
+.git/**
+.gitattributes
+.gitignore
+.github/
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python caches & venvs
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+.python-version
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Node/TS caches & deps
+node_modules/
+**/node_modules/
+npm-debug.log*
+yarn.lock
+pnpm-lock.yaml
+pnpm-debug.log*
+package-lock.json
+.vite/
+**/.vite/
+.next/
+.turbo/
+dist/
+build/
+out/
+coverage/
+**/coverage/
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Local env / secrets (runtime will pass env vars)
+.env
+.env.*
+!.env.example
+
+# Docker/compose artifacts not needed in image contexts
+docker-compose*.yml
+*.local.yml
+*.override.yml
+
+# Logs & dumps
+*.log
+*.trace
+*.prof
+*.pid
+
+# CI outputs
+tests/reports/
+tests/artifacts/
+
+# Large dev/test-only trees
+tests/
+**/tests/
+**/fuzz/
+**/bench/
+**/e2e/
+
+# Example projects & demos (not required for production images)
+**/examples/
+wallet-extension/test/
+studio-wasm/test/
+studio-web/test/
+explorer-web/test/
+sdk/**/tests/
+
+# Keep critical build inputs even if patterns above would exclude them
+!spec/**
+!core/**
+!rpc/**
+!consensus/**
+!proofs/**
+!mining/**
+!p2p/**
+!mempool/**
+!da/**
+!execution/**
+!vm_py/**
+!capabilities/**
+!aicf/**
+!randomness/**
+!studio-services/**
+!studio-web/**
+!explorer-web/**
+!sdk/**
+!ops/**
+!scripts/**
+!Makefile
+!pyproject.toml
+!requirements*.txt
+!setup.cfg

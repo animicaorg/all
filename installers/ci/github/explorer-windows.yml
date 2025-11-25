@@ -1,0 +1,235 @@
+name: Explorer Windows — Tauri Build • Code Sign • MSI/EXE • Upload
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Release channel"
+        required: true
+        default: "stable"
+        type: choice
+        options: [stable, beta]
+      create_release:
+        description: "Create GitHub Release"
+        required: true
+        default: "true"
+        type: choice
+        options: ["true","false"]
+  push:
+    tags:
+      - "explorer-v*"
+
+env:
+  TAURI_PROJECT_PATH: installers/explorer-desktop/tauri
+  ARTIFACTS_DIR: dist\\windows
+  RUST_TOOLCHAIN: stable
+
+concurrency:
+  group: explorer-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build & Sign (Windows)
+    runs-on: windows-2022
+    environment: release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Derive version from tag or commit
+        id: ver
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like 'refs/tags/*') {
+            $tag = $env:GITHUB_REF -replace 'refs/tags/',''
+            $version = $tag -replace '^explorer-v',''
+          } else {
+            $version = "0.0.0-$($env:GITHUB_SHA.Substring(0,7))"
+          }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Version: $version"
+
+      - name: Set up Rust (${{ env.RUST_TOOLCHAIN }})
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          workspaces: ${{ env.TAURI_PROJECT_PATH }}
+
+      - name: (Optional) Node setup for front-end (only if package.json exists)
+        if: hashFiles(format('{0}/../package.json', env.TAURI_PROJECT_PATH)) != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ${{ env.TAURI_PROJECT_PATH }}/../package-lock.json
+
+      - name: Install front-end deps (optional)
+        if: hashFiles(format('{0}/../package.json', env.TAURI_PROJECT_PATH)) != ''
+        working-directory: ${{ env.TAURI_PROJECT_PATH }}/..
+        run: npm ci
+
+      - name: Prepare output dir
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path $env:ARTIFACTS_DIR | Out-Null
+
+      # ------------------------------------------------------------------
+      # Import Code Signing Certificate (PFX) into CurrentUser\My store
+      # Secrets expected:
+      #   WINDOWS_CERT_PFX_BASE64  — base64-encoded .pfx
+      #   WINDOWS_CERT_PASSWORD    — password for the .pfx
+      # Optional:
+      #   WINDOWS_CERT_SUBJECT     — exact subject to pick the cert (else first imported)
+      # ------------------------------------------------------------------
+      - name: Import code signing certificate
+        id: cert
+        shell: pwsh
+        env:
+          CERT_B64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          CERT_PASS: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+          CERT_SUBJ: ${{ secrets.WINDOWS_CERT_SUBJECT }}
+        run: |
+          if (-not $env:CERT_B64) { Write-Error "WINDOWS_CERT_PFX_BASE64 secret not set"; exit 1 }
+          if (-not $env:CERT_PASS) { Write-Error "WINDOWS_CERT_PASSWORD secret not set"; exit 1 }
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
+          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:CERT_B64))
+          $sec = ConvertTo-SecureString -String $env:CERT_PASS -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $pfxPath -Password $sec -CertStoreLocation Cert:\CurrentUser\My
+          if ($env:CERT_SUBJ) {
+            $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -eq $env:CERT_SUBJ } | Select-Object -First 1
+          }
+          if (-not $cert) { Write-Error "Failed to import/find certificate"; exit 1 }
+          $thumb = $cert.Thumbprint
+          "thumb=$thumb" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Imported cert thumbprint: $thumb"
+          Remove-Item $pfxPath -ErrorAction SilentlyContinue
+
+      # ------------------------------------------------------------------
+      # Build with tauri-action (installs WiX/NSIS as needed)
+      # ------------------------------------------------------------------
+      - name: Build with tauri-action
+        id: tauri
+        uses: tauri-apps/tauri-action@v0
+        env:
+          TAURI_APP_VERSION: ${{ steps.ver.outputs.version }}
+          TAURI_BUILD_VERSION: ${{ steps.ver.outputs.version }}
+        with:
+          projectPath: ${{ env.TAURI_PROJECT_PATH }}
+          args: --verbose
+          tagName: explorer-v__VERSION__           # replaced automatically by the action
+          releaseName: "Explorer Windows v__VERSION__"
+          releaseBody: "Windows installer(s) signed and timestamped."
+          releaseDraft: false
+          prerelease: ${{ (github.event_name == 'workflow_dispatch' && inputs.channel == 'beta') || (startsWith(github.ref, 'refs/tags/') && contains(github.ref_name, '-beta')) }}
+
+      - name: Collect artifacts -> ${{ env.ARTIFACTS_DIR }}
+        id: collect
+        shell: pwsh
+        run: |
+          $paths = ConvertFrom-Json '${{ steps.tauri.outputs.artifactPaths }}'
+          if (-not $paths) { Write-Error "No artifact paths from tauri-action"; exit 1 }
+          foreach ($p in $paths) {
+            if (Test-Path $p) {
+              Write-Host "Copy: $p"
+              Copy-Item -LiteralPath $p -Destination $env:ARTIFACTS_DIR -Force
+            }
+          }
+          Get-ChildItem -Path $env:ARTIFACTS_DIR | Format-Table -AutoSize
+
+      # ------------------------------------------------------------------
+      # Sign artifacts with signtool (EXE/MSI/MSIX)
+      # Optionally reads timestamp URL(s) from installers/signing/windows/timestamp_urls.txt
+      # Fallback to DigiCert TSA if file not present.
+      # ------------------------------------------------------------------
+      - name: Code sign artifacts
+        shell: pwsh
+        env:
+          THUMB: ${{ steps.cert.outputs.thumb }}
+        run: |
+          if (-not $env:THUMB) { Write-Error "Missing cert thumbprint"; exit 1 }
+          $tsaList = @()
+          $tsaFile = "installers/signing/windows/timestamp_urls.txt"
+          if (Test-Path $tsaFile) {
+            $tsaList = Get-Content $tsaFile | Where-Object { $_ -and -not $_.StartsWith('#') }
+          }
+          if (-not $tsaList -or $tsaList.Count -eq 0) {
+            $tsaList = @('http://timestamp.digicert.com','http://timestamp.sectigo.com')
+          }
+
+          $files = Get-ChildItem -Path $env:ARTIFACTS_DIR -Recurse -Include *.exe,*.msi,*.msix,*.appx -ErrorAction SilentlyContinue
+          if (-not $files) {
+            Write-Warning "No signable files found in $env:ARTIFACTS_DIR"
+          }
+
+          foreach ($f in $files) {
+            $signed = $false
+            foreach ($tsa in $tsaList) {
+              Write-Host "Signing $($f.Name) with TSA: $tsa"
+              & signtool sign /fd SHA256 /td SHA256 /tr $tsa /sha1 $env:THUMB $f.FullName
+              if ($LASTEXITCODE -eq 0) { $signed = $true; break }
+              Write-Warning "Signing attempt failed with TSA $tsa; trying next (if any)…"
+            }
+            if (-not $signed) { Write-Error "Failed to sign $($f.Name)"; exit 1 }
+            Write-Host "Verifying signature for $($f.Name)…"
+            & signtool verify /pa /v $f.FullName
+            if ($LASTEXITCODE -ne 0) { Write-Error "Signature verification failed for $($f.Name)"; exit 1 }
+          }
+
+      - name: Checksums
+        shell: pwsh
+        run: |
+          Set-Location $env:ARTIFACTS_DIR
+          $sha256 = @()
+          $sha512 = @()
+          Get-ChildItem -File | ForEach-Object {
+            $h1 = Get-FileHash -Algorithm SHA256 -Path $_.FullName
+            $h2 = Get-FileHash -Algorithm SHA512 -Path $_.FullName
+            $sha256 += "{0} *{1}" -f $h1.Hash, $_.Name
+            $sha512 += "{0} *{1}" -f $h2.Hash, $_.Name
+          }
+          $sha256 | Out-File -Encoding ascii -FilePath SHA256SUMS.txt
+          $sha512 | Out-File -Encoding ascii -FilePath SHA512SUMS.txt
+          Get-ChildItem
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: explorer-windows-${{ steps.ver.outputs.version }}
+          path: |
+            ${{ env.ARTIFACTS_DIR }}\\*.msi
+            ${{ env.ARTIFACTS_DIR }}\\*.exe
+            ${{ env.ARTIFACTS_DIR }}\\*.msix
+            ${{ env.ARTIFACTS_DIR }}\\*.appx
+            ${{ env.ARTIFACTS_DIR }}\\SHA256SUMS.txt
+            ${{ env.ARTIFACTS_DIR }}\\SHA512SUMS.txt
+
+      - name: Create GitHub Release (optional)
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.create_release == 'true') || startsWith(github.ref, 'refs/tags/') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name || format('explorer-v{0}', steps.ver.outputs.version) }}
+          name: "Explorer Windows v${{ steps.ver.outputs.version }}"
+          draft: false
+          prerelease: ${{ inputs.channel == 'beta' }}
+          files: |
+            ${{ env.ARTIFACTS_DIR }}\\*.msi
+            ${{ env.ARTIFACTS_DIR }}\\*.exe
+            ${{ env.ARTIFACTS_DIR }}\\*.msix
+            ${{ env.ARTIFACTS_DIR }}\\*.appx
+            ${{ env.ARTIFACTS_DIR }}\\SHA256SUMS.txt
+            ${{ env.ARTIFACTS_DIR }}\\SHA512SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,90 @@
+{
+  "$schema": "./schemas/tokens.schema.json",
+  "version": "1.0.0",
+
+  "animation": {
+    "duration": {
+      "instant": 0,
+      "xxs": 80,
+      "xs": 120,
+      "sm": 160,
+      "md": 220,
+      "lg": 300,
+      "xl": 450,
+      "xxl": 700
+    },
+    "delay": {
+      "none": 0,
+      "short": 60,
+      "medium": 120,
+      "long": 240
+    },
+    "easing": {
+      "linear": "cubic-bezier(0.000, 0.000, 1.000, 1.000)",
+      "standard": "cubic-bezier(0.200, 0.000, 0.000, 1.000)",
+      "emphasized": "cubic-bezier(0.200, 0.000, 0.000, 1.000)",
+      "decelerate": "cubic-bezier(0.000, 0.000, 0.000, 1.000)",
+      "accelerate": "cubic-bezier(0.300, 0.000, 1.000, 1.000)",
+      "spring-soft": "cubic-bezier(0.16, 1, 0.3, 1)",
+      "spring-bouncy": "cubic-bezier(0.34, 1.56, 0.64, 1)"
+    },
+    "presets": {
+      "fade-in": {
+        "duration": "{animation.duration.sm}",
+        "easing": "{animation.easing.decelerate}",
+        "properties": ["opacity"]
+      },
+      "fade-out": {
+        "duration": "{animation.duration.sm}",
+        "easing": "{animation.easing.accelerate}",
+        "properties": ["opacity"]
+      },
+      "slide-up-in": {
+        "duration": "{animation.duration.md}",
+        "easing": "{animation.easing.emphasized}",
+        "properties": ["transform", "opacity"]
+      },
+      "slide-down-in": {
+        "duration": "{animation.duration.md}",
+        "easing": "{animation.easing.emphasized}",
+        "properties": ["transform", "opacity"]
+      },
+      "scale-in": {
+        "duration": "{animation.duration.md}",
+        "easing": "{animation.easing.spring-soft}",
+        "properties": ["transform", "opacity"]
+      },
+      "scale-out": {
+        "duration": "{animation.duration.md}",
+        "easing": "{animation.easing.accelerate}",
+        "properties": ["transform", "opacity"]
+      },
+      "tooltip": {
+        "duration": "{animation.duration.xs}",
+        "easing": "{animation.easing.decelerate}",
+        "properties": ["transform", "opacity"]
+      },
+      "drawer": {
+        "duration": "{animation.duration.lg}",
+        "easing": "{animation.easing.emphasized}",
+        "properties": ["transform", "opacity"]
+      },
+      "modal": {
+        "duration": "{animation.duration.lg}",
+        "easing": "{animation.easing.emphasized}",
+        "properties": ["transform", "opacity", "backdrop-filter"]
+      },
+      "spinner": {
+        "duration": 1000,
+        "easing": "{animation.easing.linear}",
+        "iterationCount": "infinite",
+        "properties": ["transform"]
+      }
+    },
+    "reduceMotion": {
+      "enabled": true,
+      "durationMultiplier": 0.0,
+      "disablePresets": ["spinner"]
+    }
+  }
+}

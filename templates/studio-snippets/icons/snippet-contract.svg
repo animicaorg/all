@@ -1,0 +1,41 @@
+<!--
+  snippet-contract.svg
+  Minimal, scalable line icon for "contract snippet" cards in Studio.
+  - Document with folded corner
+  - Code-ish angle brackets as content
+  - Verified badge (check seal) to suggest on-chain verified source/manifest
+  Styling:
+    * stroke uses currentColor so the icon adapts to parent color.
+    * No hardcoded fills; works on dark/light backgrounds.
+  Viewbox: 64x64, optically balanced for 20–28px UI usage.
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 64 64"
+     role="img"
+     aria-label="Contract snippet icon">
+  <title>Contract Snippet</title>
+  <desc>Document with folded corner, code brackets, and a verification badge.</desc>
+
+  <!-- Common stroke style -->
+  <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+
+    <!-- Document outline with folded corner -->
+    <!-- Outer shape -->
+    <path d="M14 6h22l10 10v32c0 3.314-2.686 6-6 6H14c-3.314 0-6-2.686-6-6V12c0-3.314 2.686-6 6-6z"/>
+    <!-- Fold guideline -->
+    <path d="M36 6v8c0 3.314 2.686 6 6 6h8"/>
+
+    <!-- Content: code-ish angle brackets and a line -->
+    <!-- Left angle bracket '<' -->
+    <path d="M20 27l6-5-6-5"/>
+    <!-- Right angle bracket '>' -->
+    <path d="M34 17l6 5-6 5"/>
+    <!-- Middle line to suggest content/code -->
+    <path d="M20 33h20"/>
+    <path d="M20 39h12"/>
+
+    <!-- Verification badge (seal with check) -->
+    <circle cx="46" cy="46" r="8"/>
+    <path d="M42.5 46l3 3 5.5-5.5"/>
+  </g>
+</svg>

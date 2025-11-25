@@ -1,0 +1,2 @@
+# Keep this directory in version control.
+# CI writes JUnit XML and coverage HTML reports here.

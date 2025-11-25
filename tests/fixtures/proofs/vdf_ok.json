@@ -1,0 +1,30 @@
+{
+  "schema": "animica.proofs.vdf.fixture.v1",
+  "description": "Valid Wesolowski VDF proof fixture for devnet-style tests (structure-focused).",
+  "envelope": {
+    "type": "VDFProof",
+    "nullifier": "0x0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d",
+    "signature_alg": "dilithium3",
+    "signature": "0x"
+  },
+  "body": {
+    "headerHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "vdf": {
+      "profile": "wesolowski",
+      "discriminantBits": 2048,
+      "iterations": 500000,
+      "inputDigest": "0x6666666666666666666666666666666666666666666666666666666666666666",
+      "y": "0x1111111111111111111111111111111111111111111111111111111111111111",
+      "pi": "0x2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "metrics": {
+      "vdfSeconds": 2.5
+    },
+    "createdAt": "2025-10-02T00:00:06Z",
+    "accepted": true
+  },
+  "notes": [
+    "Deterministic, human-readable fixture. Values are placeholders for structure and flow tests.",
+    "Cryptographic correctness is exercised by module-local vectors in proofs/test_vectors/vdf.json."
+  ]
+}

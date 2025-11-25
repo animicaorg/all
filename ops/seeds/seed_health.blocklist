@@ -1,0 +1,46 @@
+# Animica — Seed Health Blocklist
+# Denylist checked by seed-health and rotation scripts. If an entry matches,
+# it is rejected even if allowed elsewhere (blocklist > allowlist).
+#
+# Format (one per line; comments start with '#'):
+#   asn:<NUMBER>          # Block an Autonomous System Number
+#   cidr:<IP/CIDR>        # Block an IPv4/IPv6 CIDR range
+#   fqdn:<HOSTNAME>       # Block a specific hostname
+#
+# Guidance:
+# - Include bogon/private/multicast ranges (never valid for public seeds).
+# - Avoid blocking documentation ranges we use for dev/test:
+#     192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24, 2001:db8::/32
+# - Prefer CIDRs/ASNs over FQDNs. Keep this list short and specific.
+
+# ── IPv4: private, link-local, loopback, benchmark, multicast/reserved ──────────
+cidr:0.0.0.0/8              # "this" network
+cidr:10.0.0.0/8             # RFC1918 private
+cidr:100.64.0.0/10          # RFC6598 CGNAT
+cidr:127.0.0.0/8            # loopback
+cidr:169.254.0.0/16         # link-local
+cidr:172.16.0.0/12          # RFC1918 private
+cidr:192.168.0.0/16         # RFC1918 private
+cidr:198.18.0.0/15          # RFC2544 benchmarking
+cidr:224.0.0.0/4            # multicast
+cidr:240.0.0.0/4            # reserved/future-use
+cidr:255.255.255.255/32     # limited broadcast
+
+# ── IPv6: unspecified, loopback, ULA, link-local, multicast, orchid ─────────────
+cidr:::/128                 # unspecified
+cidr::1/128                 # loopback
+cidr:fc00::/7               # Unique-Local (ULA)
+cidr:fe80::/10              # link-local
+cidr:ff00::/8               # multicast
+cidr:2001:10::/28           # ORCHID (deprecated/experimental)
+
+# ── ASNs to avoid for public seeds (examples) ───────────────────────────────────
+# Private-use ASNs (RFC6996). Block common edge cases; expand if you see abuse.
+asn:64512
+asn:65534
+
+# ── FQDN examples to hard-block (rare; prefer network-level rules) ─────────────
+fqdn:malicious.example.invalid
+fqdn:seed-blackhole.devnet.animica.dev   # placeholder; remove if reclaimed
+
+# Last reviewed: 2025-10-03

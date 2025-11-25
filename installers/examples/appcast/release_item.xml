@@ -1,0 +1,75 @@
+<!--
+  Single <item> template for a Sparkle (v2) appcast.
+  Embed this inside your channel appcast.xml between <channel> … </channel>.
+  The root <rss> should declare the Sparkle/Atom namespaces, e.g.:
+
+    <rss version="2.0"
+         xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"
+         xmlns:dc="http://purl.org/dc/elements/1.1/"
+         xmlns:atom="http://www.w3.org/2005/Atom">
+
+  Replace the placeholders below before publishing.
+-->
+
+<item>
+  <!-- Human-readable title shown in Sparkle UI -->
+  <title>Animica Wallet 1.2.3</title>
+
+  <!-- Optional: link to release notes (HTML) -->
+  <sparkle:releaseNotesLink>https://updates.animica.dev/wallet/1.2.3/release-notes.html</sparkle:releaseNotesLink>
+
+  <!-- Or embed brief notes inline (Sparkle will render simple HTML) -->
+  <!--
+  <description><![CDATA[
+    <h2>What’s new</h2>
+    <ul>
+      <li>Post-quantum signing now uses Dilithium3 by default.</li>
+      <li>Improved RPC reliability on poor connections.</li>
+      <li>Bug fixes and performance improvements.</li>
+    </ul>
+  ]]></description>
+  -->
+
+  <!-- Publication date (RFC 2822) -->
+  <pubDate>Thu, 09 Oct 2025 17:00:00 +0000</pubDate>
+
+  <!-- Minimum macOS required to install this update -->
+  <sparkle:minimumSystemVersion>12.0</sparkle:minimumSystemVersion>
+
+  <!-- Optional: require a minimum Sparkle version for in-app updates -->
+  <sparkle:minimumAutoupdateVersion>2.5</sparkle:minimumAutoupdateVersion>
+
+  <!-- Optional: mark as critical to prioritize update prompts -->
+  <!-- <sparkle:criticalUpdate>true</sparkle:criticalUpdate> -->
+
+  <!-- The downloadable artifact; Sparkle 2 uses Ed25519 signatures (edSignature). -->
+  <enclosure
+      url="https://downloads.animica.dev/wallet/macos/Animica-Wallet-1.2.3.dmg"
+      sparkle:edSignature="<INSERT_BASE64_ED25519_SIGNATURE_FROM_sign_update>"
+      length="<INSERT_BYTES_SIZE_OF_DMG>"
+      type="application/octet-stream"
+      sparkle:version="10203"
+      sparkle:shortVersionString="1.2.3" />
+
+  <!-- Optional: delta update (only if generating .delta files); include one <enclosure> per delta.
+       The 'sparkle:deltaFrom' must match a previously published sparkle:version. -->
+  <!--
+  <enclosure
+      url="https://downloads.animica.dev/wallet/macos/Animica-Wallet-1.2.3.delta"
+      sparkle:edSignature="<INSERT_BASE64_SIG_FOR_DELTA>"
+      length="<INSERT_BYTES_SIZE_OF_DELTA>"
+      type="application/octet-stream"
+      sparkle:version="10203"
+      sparkle:shortVersionString="1.2.3"
+      sparkle:deltaFrom="10109" />
+  -->
+
+  <!-- Optional: supply a direct link for users (appears as "More Information") -->
+  <link>https://animica.dev/wallet/releases/1.2.3</link>
+
+  <!-- Optional: point to the item itself for atom:link rel="self" in the parent channel -->
+  <!-- <guid isPermaLink="false">io.animica.wallet-macos-1.2.3</guid> -->
+
+  <!-- Optional: credit or author -->
+  <dc:creator>Animica Release Engineering</dc:creator>
+</item>

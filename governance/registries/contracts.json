@@ -1,0 +1,337 @@
+{
+  "version": 1,
+  "updated": "2025-10-12",
+  "schema_ref": "governance/schemas/contracts.schema.json#",
+  "hrp": "anim",
+  "notes": "Canonical governance contract addresses per network. Replace placeholders with actual deployment outputs during release. Both hex and bech32m may be provided; tools should prefer bech32m when present.",
+  "networks": {
+    "devnet": {
+      "label": "Animica Devnet",
+      "chain_id": 1337,
+      "rpc_url": "http://127.0.0.1:8547",
+      "explorer_url": "http://127.0.0.1:8787",
+      "contracts": {
+        "GovernanceHub": {
+          "id": "gov.hub.v1",
+          "address": {
+            "hex": "0x1111111111111111111111111111111111111111",
+            "bech32m": "anim1devhubreplaceme000000000000000000000"
+          },
+          "code_hash": "0x9f4d0f7b7e2a2a7dbd9c2c6a2c8d4f3a1b0c9e88bb77aa55d9e0f4f8e2c4a111",
+          "deploy_height": 1,
+          "artifact_url": "artifacts://governance/Hub.devnet.json"
+        },
+        "ProposalRegistry": {
+          "id": "gov.proposals.v1",
+          "address": {
+            "hex": "0x2222222222222222222222222222222222222222",
+            "bech32m": "anim1devpropsreplaceme000000000000000000"
+          },
+          "code_hash": "0x0c22b3b8e5c2b0af7c9d3eaa3e2d1b44521cbeaa2d7f3a9a0bc1c9e7a1d2e333",
+          "deploy_height": 1,
+          "artifact_url": "artifacts://governance/ProposalRegistry.devnet.json"
+        },
+        "Voting": {
+          "id": "gov.voting.v1",
+          "address": {
+            "hex": "0x3333333333333333333333333333333333333333",
+            "bech32m": "anim1devvotereplaceme0000000000000000000"
+          },
+          "code_hash": "0xd4f0b2a2a5e6f7c8d9e0a1b2c3d4e5f6172839405a6b7c8d9ea1b2c3d4e5f666",
+          "deploy_height": 2,
+          "artifact_url": "artifacts://governance/Voting.devnet.json"
+        },
+        "Timelock": {
+          "id": "gov.timelock.v1",
+          "address": {
+            "hex": "0x4444444444444444444444444444444444444444",
+            "bech32m": "anim1devtimereplaceme0000000000000000000"
+          },
+          "code_hash": "0x7db4f18e210a3c4e56f7a8b9c0d1e2f3456789ab0c1d2e3f4a5b6c7d8e9f4777",
+          "deploy_height": 2,
+          "artifact_url": "artifacts://governance/Timelock.devnet.json"
+        },
+        "ParamsGovernor": {
+          "id": "gov.params.v1",
+          "address": {
+            "hex": "0x5555555555555555555555555555555555555555",
+            "bech32m": "anim1devparamsreplaceme0000000000000000"
+          },
+          "code_hash": "0x5a5a5a5a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c588",
+          "deploy_height": 3,
+          "artifact_url": "artifacts://governance/ParamsGovernor.devnet.json"
+        },
+        "UpgradeGovernor": {
+          "id": "gov.upgrade.v1",
+          "address": {
+            "hex": "0x6666666666666666666666666666666666666666",
+            "bech32m": "anim1devupgradeplaceme00000000000000000"
+          },
+          "code_hash": "0x8e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e699",
+          "deploy_height": 3,
+          "artifact_url": "artifacts://governance/UpgradeGovernor.devnet.json"
+        },
+        "PQPolicyGovernor": {
+          "id": "gov.pqpolicy.v1",
+          "address": {
+            "hex": "0x7777777777777777777777777777777777777777",
+            "bech32m": "anim1devpqpolicylaceme00000000000000000"
+          },
+          "code_hash": "0xb1c2d3e4f50617283940a1b2c3d4e5f6a7b8c9d0e1f2031425364758697a6aa",
+          "deploy_height": 4,
+          "artifact_url": "artifacts://governance/PQPolicyGovernor.devnet.json"
+        },
+        "Treasury": {
+          "id": "gov.treasury.v1",
+          "address": {
+            "hex": "0x8888888888888888888888888888888888888888",
+            "bech32m": "anim1devtreasuryplaceme000000000000000"
+          },
+          "code_hash": "0x0a1b2c3d4e5f60718293a4b5c6d7e8f90112a3b4c5d6e7f8091a2b3c4d5e6abb",
+          "deploy_height": 2,
+          "artifact_url": "artifacts://governance/Treasury.devnet.json"
+        },
+        "SecurityCouncil": {
+          "id": "gov.security_council.v1",
+          "address": {
+            "hex": "0x9999999999999999999999999999999999999999",
+            "bech32m": "anim1devcouncilplaceme0000000000000000"
+          },
+          "code_hash": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefaccc",
+          "deploy_height": 4,
+          "artifact_url": "artifacts://governance/SecurityCouncil.devnet.json"
+        },
+        "DelegationRegistry": {
+          "id": "gov.delegation.v1",
+          "address": {
+            "hex": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bech32m": "anim1devdelegreplaceme0000000000000000"
+          },
+          "code_hash": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abddd",
+          "deploy_height": 2,
+          "artifact_url": "artifacts://governance/DelegationRegistry.devnet.json"
+        }
+      }
+    },
+    "testnet": {
+      "label": "Animica Testnet",
+      "chain_id": 2,
+      "rpc_url": "https://rpc.testnet.animica.org",
+      "explorer_url": "https://explorer.testnet.animica.org",
+      "contracts": {
+        "GovernanceHub": {
+          "id": "gov.hub.v1",
+          "address": {
+            "hex": "0x0f1e2d3c4b5a69788796a5b4c3d2e1f001122334",
+            "bech32m": "anim1tshubx6a0k8k3j5f2n6m7u9p4q2s3t4v5w6y7"
+          },
+          "code_hash": "0xf00112233445566778899aabbccddeeff00112233445566778899aabbccddeee",
+          "deploy_height": 100,
+          "artifact_url": "https://assets.testnet.animica.org/artifacts/governance/Hub.json"
+        },
+        "ProposalRegistry": {
+          "id": "gov.proposals.v1",
+          "address": {
+            "hex": "0x102132435465768798a9bacbdcedeff001122233",
+            "bech32m": "anim1tsprops5kz0p6u4l2e8r9y7q5m3n2x4v6z8t0"
+          },
+          "code_hash": "0x1112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2fff",
+          "deploy_height": 101,
+          "artifact_url": "https://assets.testnet.animica.org/artifacts/governance/ProposalRegistry.json"
+        },
+        "Voting": {
+          "id": "gov.voting.v1",
+          "address": {
+            "hex": "0x2233445566778899aabbccddeeff001122334455",
+            "bech32m": "anim1tsvote8q9w7e6r5t4y3u2i1o0p9l8k7j6h5g4"
+          },
+          "code_hash": "0x22232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e30aa0",
+          "deploy_height": 102,
+          "artifact_url": "https://assets.testnet.animica.org/artifacts/governance/Voting.json"
+        },
+        "Timelock": {
+          "id": "gov.timelock.v1",
+          "address": {
+            "hex": "0x33445566778899aabbccddeeff00112233445566",
+            "bech32m": "anim1tstime0a1s2d3f4g5h6j7k8l9z0x1c2v3b4n5"
+          },
+          "code_hash": "0x333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f3bb11",
+          "deploy_height": 102,
+          "artifact_url": "https://assets.testnet.animica.org/artifacts/governance/Timelock.json"
+        },
+        "ParamsGovernor": {
+          "id": "gov.params.v1",
+          "address": {
+            "hex": "0x445566778899aabbccddeeff0011223344556677",
+            "bech32m": "anim1tsparamsa1b2c3d4e5f6g7h8j9k0l1m2n3o4"
+          },
+          "code_hash": "0x4445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f4cc22",
+          "deploy_height": 103,
+          "artifact_url": "https://assets.testnet.animica.org/artifacts/governance/ParamsGovernor.json"
+        },
+        "UpgradeGovernor": {
+          "id": "gov.upgrade.v1",
+          "address": {
+            "hex": "0x5566778899aabbccddeeff001122334455667788",
+            "bech32m": "anim1tsupgrd1q2w3e4r5t6y7u8i9o0p1a2s3d4f5"
+          },
+          "code_hash": "0x55565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f5dd33",
+          "deploy_height": 103,
+          "artifact_url": "https://assets.testnet.animica.org/artifacts/governance/UpgradeGovernor.json"
+        },
+        "PQPolicyGovernor": {
+          "id": "gov.pqpolicy.v1",
+          "address": {
+            "hex": "0x66778899aabbccddeeff00112233445566778899",
+            "bech32m": "anim1tspqplc9z8x7c6v5b4n3m2l1k0j9h8g7f6d5"
+          },
+          "code_hash": "0x666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f608ee44",
+          "deploy_height": 104,
+          "artifact_url": "https://assets.testnet.animica.org/artifacts/governance/PQPolicyGovernor.json"
+        },
+        "Treasury": {
+          "id": "gov.treasury.v1",
+          "address": {
+            "hex": "0x778899aabbccddeeff00112233445566778899aa",
+            "bech32m": "anim1tstreasu7y6t5r4e3w2q1p0o9i8u7y6t5r4e"
+          },
+          "code_hash": "0x7778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f619ff55",
+          "deploy_height": 101,
+          "artifact_url": "https://assets.testnet.animica.org/artifacts/governance/Treasury.json"
+        },
+        "SecurityCouncil": {
+          "id": "gov.security_council.v1",
+          "address": {
+            "hex": "0x8899aabbccddeeff00112233445566778899aabb",
+            "bech32m": "anim1tscounc1l2k3j4h5g6f7d8s9a0q1w2e3r4t5"
+          },
+          "code_hash": "0x88898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a176066",
+          "deploy_height": 104,
+          "artifact_url": "https://assets.testnet.animica.org/artifacts/governance/SecurityCouncil.json"
+        },
+        "DelegationRegistry": {
+          "id": "gov.delegation.v1",
+          "address": {
+            "hex": "0x99aabbccddeeff00112233445566778899aabbcc",
+            "bech32m": "anim1tsdeleg1a2b3c4d5e6f7g8h9j0k1l2m3n4o5"
+          },
+          "code_hash": "0x999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b287177",
+          "deploy_height": 102,
+          "artifact_url": "https://assets.testnet.animica.org/artifacts/governance/DelegationRegistry.json"
+        }
+      }
+    },
+    "mainnet": {
+      "label": "Animica Mainnet",
+      "chain_id": 1,
+      "rpc_url": "https://rpc.animica.org",
+      "explorer_url": "https://explorer.animica.org",
+      "contracts": {
+        "GovernanceHub": {
+          "id": "gov.hub.v1",
+          "address": {
+            "hex": "0xa0b1c2d3e4f50617283940a1b2c3d4e5f6071829",
+            "bech32m": "anim1hub0m4jnr9q4y2m8k3e7v5u9t4s2c6p8x7h6"
+          },
+          "code_hash": "0xa1b2c3d4e5f60718293a4b5c6d7e8f90112233445566778899aabbccddeeff00",
+          "deploy_height": 1,
+          "artifact_url": "https://assets.animica.org/artifacts/governance/Hub.json"
+        },
+        "ProposalRegistry": {
+          "id": "gov.proposals.v1",
+          "address": {
+            "hex": "0xb1c2d3e4f50617283940a1b2c3d4e5f60718293a",
+            "bech32m": "anim1propsk5x8r2q7t9v3w6y1u4i8o2p5a7s9d3f"
+          },
+          "code_hash": "0xb2c3d4e5f60718293a4b5c6d7e8f90112233445566778899aabbccddeeff0011",
+          "deploy_height": 2,
+          "artifact_url": "https://assets.animica.org/artifacts/governance/ProposalRegistry.json"
+        },
+        "Voting": {
+          "id": "gov.voting.v1",
+          "address": {
+            "hex": "0xc2d3e4f50617283940a1b2c3d4e5f60718293a4b",
+            "bech32m": "anim1votez8q1w2e3r4t5y6u7i8o9p0a1s2d3f4g5"
+          },
+          "code_hash": "0xc3d4e5f60718293a4b5c6d7e8f90112233445566778899aabbccddeeff001122",
+          "deploy_height": 3,
+          "artifact_url": "https://assets.animica.org/artifacts/governance/Voting.json"
+        },
+        "Timelock": {
+          "id": "gov.timelock.v1",
+          "address": {
+            "hex": "0xd3e4f50617283940a1b2c3d4e5f60718293a4b5c",
+            "bech32m": "anim1timek3j4h5g6f7d8s9a0q1w2e3r4t5y6u7i8"
+          },
+          "code_hash": "0xd4e5f60718293a4b5c6d7e8f90112233445566778899aabbccddeeff00112233",
+          "deploy_height": 3,
+          "artifact_url": "https://assets.animica.org/artifacts/governance/Timelock.json"
+        },
+        "ParamsGovernor": {
+          "id": "gov.params.v1",
+          "address": {
+            "hex": "0xe4f50617283940a1b2c3d4e5f60718293a4b5c6d",
+            "bech32m": "anim1params1a2b3c4d5e6f7g8h9j0k1l2m3n4o5p6"
+          },
+          "code_hash": "0xe5f60718293a4b5c6d7e8f90112233445566778899aabbccddeeff0011223344",
+          "deploy_height": 4,
+          "artifact_url": "https://assets.animica.org/artifacts/governance/ParamsGovernor.json"
+        },
+        "UpgradeGovernor": {
+          "id": "gov.upgrade.v1",
+          "address": {
+            "hex": "0xf50617283940a1b2c3d4e5f60718293a4b5c6d7e",
+            "bech32m": "anim1upgrd0q1w2e3r4t5y6u7i8o9p0a1s2d3f4g5"
+          },
+          "code_hash": "0xf60718293a4b5c6d7e8f90112233445566778899aabbccddeeff001122334455",
+          "deploy_height": 4,
+          "artifact_url": "https://assets.animica.org/artifacts/governance/UpgradeGovernor.json"
+        },
+        "PQPolicyGovernor": {
+          "id": "gov.pqpolicy.v1",
+          "address": {
+            "hex": "0x0617283940a1b2c3d4e5f60718293a4b5c6d7e8f",
+            "bech32m": "anim1pqplc9z8x7c6v5b4n3m2l1k0j9h8g7f6d5s4"
+          },
+          "code_hash": "0x0718293a4b5c6d7e8f90112233445566778899aabbccddeeff00112233445566",
+          "deploy_height": 5,
+          "artifact_url": "https://assets.animica.org/artifacts/governance/PQPolicyGovernor.json"
+        },
+        "Treasury": {
+          "id": "gov.treasury.v1",
+          "address": {
+            "hex": "0x17283940a1b2c3d4e5f60718293a4b5c6d7e8f90",
+            "bech32m": "anim1treas7y6t5r4e3w2q1p0o9i8u7y6t5r4e3w2"
+          },
+          "code_hash": "0x18293a4b5c6d7e8f90112233445566778899aabbccddeeff0011223344556677",
+          "deploy_height": 2,
+          "artifact_url": "https://assets.animica.org/artifacts/governance/Treasury.json"
+        },
+        "SecurityCouncil": {
+          "id": "gov.security_council.v1",
+          "address": {
+            "hex": "0x283940a1b2c3d4e5f60718293a4b5c6d7e8f9011",
+            "bech32m": "anim1counc1l2k3j4h5g6f7d8s9a0q1w2e3r4t5y6"
+          },
+          "code_hash": "0x293a4b5c6d7e8f90112233445566778899aabbccddeeff001122334455667788",
+          "deploy_height": 5,
+          "artifact_url": "https://assets.animica.org/artifacts/governance/SecurityCouncil.json"
+        },
+        "DelegationRegistry": {
+          "id": "gov.delegation.v1",
+          "address": {
+            "hex": "0x3940a1b2c3d4e5f60718293a4b5c6d7e8f901122",
+            "bech32m": "anim1deleg1a2b3c4d5e6f7g8h9j0k1l2m3n4o5p6q"
+          },
+          "code_hash": "0x3a4b5c6d7e8f90112233445566778899aabbccddeeff00112233445566778899",
+          "deploy_height": 3,
+          "artifact_url": "https://assets.animica.org/artifacts/governance/DelegationRegistry.json"
+        }
+      }
+    }
+  },
+  "integrity": {
+    "algo": "sha3-256",
+    "value": ""
+  }
+}

@@ -1,0 +1,68 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Animica templates/.gitignore
+# Keeps the template index, schemas, and sources tracked while excluding
+# local scaffolding outputs, caches, editor junk, and packed artifacts.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.iml
+*.code-workspace
+
+# Caches & temporary files
+.cache/
+.template-cache/
+.tmp/
+*.tmp
+*.swp
+*.swo
+*~
+*.bak
+
+# Local environment files (never commit secrets)
+.env
+.env.local
+.env.*
+!.env.example
+
+# Node / build tooling (if used by local generators)
+node_modules/
+dist/
+build/
+.vite/
+.pnpm-store/
+.yarn/
+.yarnrc.yml
+
+# Python (if any helper scripts run here)
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pyright/
+.pytest_cache/
+
+# Local values/config produced by scaffolders
+values.local.json
+values.*.local.json
+*.local.values.json
+
+# Packed template artifacts
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+
+# Logs & reports
+*.log
+coverage/
+junit.xml
+
+# Keep canonical sources tracked (no negative rules needed as we don't glob-ignore JSON)
+# - templates/index.json
+# - templates/schemas/**
+

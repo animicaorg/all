@@ -1,0 +1,212 @@
+# Prometheus alert rules — Node health (head lag, peers, CPU/memory, RPC errors)
+# NOTE: Metric names assume the Animica node exports the following (rename if yours differ):
+#   - animica_head_height{chain,network,instance}
+#   - animica_finalized_height{chain,network,instance}
+#   - animica_p2p_peers_connected{chain,network,instance}
+#   - animica_rpc_requests_total{method,status,chain,network,instance} (status: "ok"|"error")
+#   - process_cpu_seconds_total, process_resident_memory_bytes (from Prom client)
+#
+# If you also scrape node_exporter/cAdvisor, consider tightening CPU/memory alerts to cgroup-aware metrics.
+
+groups:
+  - name: node.rules
+    interval: 30s
+    rules:
+      # ──────────────────────────────────────────────────────────────────────────
+      # Head lag (compared to the best instance)
+      # Per-instance lag = (best height across instances) - (this instance height)
+      - alert: NodeHeadLagWarning
+        expr: |
+          (max without(instance) (animica_head_height) - animica_head_height) > 5
+        for: 10m
+        labels:
+          severity: warning
+          component: node
+        annotations:
+          summary: "Node is {{ $value }} blocks behind best head (>5)"
+          description: |
+            Instance {{ $labels.instance }} lags the highest observed head by {{ $value }} blocks
+            on {{ $labels.chain }} ({{ $labels.network }}). Check P2P connectivity and logs.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#node
+
+      - alert: NodeHeadLagCritical
+        expr: |
+          (max without(instance) (animica_head_height) - animica_head_height) > 20
+        for: 15m
+        labels:
+          severity: critical
+          component: node
+        annotations:
+          summary: "Node critically behind best head (>20 blocks)"
+          description: |
+            Instance {{ $labels.instance }} is >20 blocks behind the best head on
+            {{ $labels.chain }} ({{ $labels.network }}). Suspect stuck sync, bad peers, or disk/CPU throttling.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#node
+
+      # Finality lag: how far finalized height is from best head across the fleet
+      - alert: NodeFinalityLagWarning
+        expr: |
+          (max without(instance) (animica_head_height) - max without(instance) (animica_finalized_height)) > 30
+        for: 10m
+        labels:
+          severity: warning
+          component: node
+        annotations:
+          summary: "Finality is lagging best head by >30 blocks"
+          description: |
+            Finalized height trails best head by {{ $value }} blocks on {{ $labels.chain }} ({{ $labels.network }}).
+            Investigate validator/consensus health and retarget/clamps if applicable.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#node
+
+      - alert: NodeFinalityStallCritical
+        expr: |
+          changes(max without(instance) (animica_finalized_height)[30m]) == 0
+        for: 10m
+        labels:
+          severity: critical
+          component: node
+        annotations:
+          summary: "Finalized height did not move for ≥30m"
+          description: |
+            No change in finalized height in the last 30 minutes on {{ $labels.chain }} ({{ $labels.network }}).
+            Network may be stalled; check consensus and block production.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#node
+
+      # ──────────────────────────────────────────────────────────────────────────
+      # Peers
+      - alert: NodeLowPeersWarning
+        expr: |
+          animica_p2p_peers_connected < 5
+        for: 10m
+        labels:
+          severity: warning
+          component: p2p
+        annotations:
+          summary: "Low peer count (<5)"
+          description: |
+            {{ $labels.instance }} has {{ $value }} peers on {{ $labels.chain }} ({{ $labels.network }}).
+            Verify seeds/bootstrap, NAT, and firewall rules.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#p2p
+
+      - alert: NodeZeroPeersCritical
+        expr: |
+          animica_p2p_peers_connected == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: p2p
+        annotations:
+          summary: "Zero peers for ≥5m"
+          description: |
+            {{ $labels.instance }} is disconnected from the network. No peers for ≥5m.
+            Check DNS seeds, bootstrap list, port exposure, and QUIC/TCP listeners.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#p2p
+
+      # ──────────────────────────────────────────────────────────────────────────
+      # CPU & Memory (process-level, conservative defaults)
+      # CPU burn ~ one core: rate(process_cpu_seconds_total[5m]) ≈ 1.0 means 100% of one CPU core.
+      - alert: NodeHighCpuWarning
+        expr: |
+          rate(process_cpu_seconds_total[5m]) > 0.90
+        for: 10m
+        labels:
+          severity: warning
+          component: runtime
+        annotations:
+          summary: "High CPU usage (> ~1 core for 10m)"
+          description: |
+            {{ $labels.instance }} sustained CPU >0.9 core for 10m. Consider profiling, fewer logs,
+            faster storage, or more CPU. Adjust threshold if running on >1 vCPU.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#runtime
+
+      - alert: NodeVeryHighCpuCritical
+        expr: |
+          rate(process_cpu_seconds_total[5m]) > 1.80
+        for: 10m
+        labels:
+          severity: critical
+          component: runtime
+        annotations:
+          summary: "Very high CPU usage (> ~2 cores for 10m)"
+          description: |
+            {{ $labels.instance }} consuming >1.8 CPU-seconds/second for 10m. Node may lag and miss peers/blocks.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#runtime
+
+      # Memory thresholds (tune for your deployment; these are safe defaults)
+      - alert: NodeHighMemoryWarning
+        expr: |
+          process_resident_memory_bytes > 1.5e9
+        for: 15m
+        labels:
+          severity: warning
+          component: runtime
+        annotations:
+          summary: "High memory usage (>1.5 GiB)"
+          description: |
+            {{ $labels.instance }} RSS > 1.5 GiB. Check mempool caps, RocksDB caches, and DA buffers.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#runtime
+
+      - alert: NodeHighMemoryCritical
+        expr: |
+          process_resident_memory_bytes > 3e9
+        for: 10m
+        labels:
+          severity: critical
+          component: runtime
+        annotations:
+          summary: "Very high memory usage (>3 GiB)"
+          description: |
+            {{ $labels.instance }} RSS > 3 GiB. Risk of OOM/restarts; tighten caches/queues.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#runtime
+
+      # ──────────────────────────────────────────────────────────────────────────
+      # RPC server failure rate
+      # Assumes counter animica_rpc_requests_total{status="ok"|"error"}.
+      - alert: RpcErrorRateWarning
+        expr: |
+          (
+            sum by(job,instance) (rate(animica_rpc_requests_total{status="error"}[5m])) /
+            clamp_min(sum by(job,instance) (rate(animica_rpc_requests_total[5m])), 1e-6)
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          component: rpc
+        annotations:
+          summary: "RPC error rate > 5% (5m)"
+          description: |
+            {{ $labels.instance }} RPC error rate exceeded 5% in the last 10m window.
+            Inspect method-level breakdown and recent deploys.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#rpc
+
+      - alert: RpcErrorRateCritical
+        expr: |
+          (
+            sum by(job,instance) (rate(animica_rpc_requests_total{status="error"}[5m])) /
+            clamp_min(sum by(job,instance) (rate(animica_rpc_requests_total[5m])), 1e-6)
+          ) > 0.20
+        for: 5m
+        labels:
+          severity: critical
+          component: rpc
+        annotations:
+          summary: "RPC error rate > 20% (5m)"
+          description: |
+            {{ $labels.instance }} RPC error rate exceeded 20% for 5m. Clients may fail broadly.
+            Roll back recent changes or scale out urgently.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#rpc
+
+      # Optional: network-wide head stall (no head movement anywhere)
+      - alert: NetworkHeadStallCritical
+        expr: |
+          changes(max without(instance) (animica_head_height)[15m]) == 0
+        for: 5m
+        labels:
+          severity: page
+          component: node
+        annotations:
+          summary: "No head movement across the network for ≥15m"
+          description: |
+            Best observed head height did not change for 15 minutes on {{ $labels.chain }} ({{ $labels.network }}).
+            Production may be halted; escalate.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#node

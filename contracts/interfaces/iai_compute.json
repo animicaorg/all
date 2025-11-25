@@ -1,0 +1,203 @@
+{
+  "functions": [
+    {
+      "type": "function",
+      "name": "version",
+      "inputs": [],
+      "outputs": [{ "type": "bytes" }],
+      "notice": "Semantic version of the AI-compute interface (e.g. b'1.0.0')."
+    },
+    {
+      "type": "function",
+      "name": "enqueue",
+      "inputs": [
+        { "name": "model", "type": "bytes" },
+        { "name": "prompt", "type": "bytes" },
+        { "name": "maxUnits", "type": "uint" },
+        { "name": "feeLimit", "type": "uint" }
+      ],
+      "outputs": [{ "name": "taskId", "type": "bytes" }],
+      "notice": "Request AI compute. Returns deterministic taskId. Result is readable NEXT block; prompt is deterministically capped and sanitized by the runtime."
+    },
+    {
+      "type": "function",
+      "name": "readResult",
+      "inputs": [
+        { "name": "taskId", "type": "bytes" }
+      ],
+      "outputs": [
+        { "name": "ready", "type": "bool" },
+        { "name": "success", "type": "bool" },
+        { "name": "output", "type": "bytes" },
+        { "name": "unitsUsed", "type": "uint" },
+        { "name": "evidence", "type": "bytes" }
+      ],
+      "notice": "Read the result record for a previously enqueued task. If ready=false, output/evidence are empty. evidence can be a compact proof/attestation digest."
+    },
+    {
+      "type": "function",
+      "name": "getJob",
+      "inputs": [
+        { "name": "taskId", "type": "bytes" }
+      ],
+      "outputs": [
+        { "name": "caller", "type": "address" },
+        { "name": "model", "type": "bytes" },
+        { "name": "heightEnqueued", "type": "uint" },
+        { "name": "unitsRequested", "type": "uint" },
+        { "name": "unitsUsed", "type": "uint" },
+        { "name": "status", "type": "uint" }
+      ],
+      "notice": "Return immutable job metadata. status enum: 0=ENQUEUED,1=ASSIGNED,2=COMPLETED,3=FAILED,4=CONSUMED,5=EXPIRED."
+    },
+    {
+      "type": "function",
+      "name": "estimateUnits",
+      "inputs": [
+        { "name": "model", "type": "bytes" },
+        { "name": "promptLen", "type": "uint" }
+      ],
+      "outputs": [
+        { "name": "units", "type": "uint" }
+      ],
+      "notice": "Deterministic upper-bound estimate of compute units for a given prompt length and model."
+    },
+    {
+      "type": "function",
+      "name": "modelInfo",
+      "inputs": [
+        { "name": "model", "type": "bytes" }
+      ],
+      "outputs": [
+        { "name": "enabled", "type": "bool" },
+        { "name": "maxPromptBytes", "type": "uint" },
+        { "name": "pricePerUnit", "type": "uint" }
+      ],
+      "notice": "Return current policy for a model identifier. pricePerUnit is quoted in the chain's native unit."
+    },
+    {
+      "type": "function",
+      "name": "cancel",
+      "inputs": [
+        { "name": "taskId", "type": "bytes" }
+      ],
+      "outputs": [{ "type": "bool" }],
+      "notice": "Cancel a pending job that has not been completed. Only the original caller may cancel; refunds follow deterministic rules."
+    }
+  ],
+  "events": [
+    {
+      "type": "event",
+      "name": "Enqueued",
+      "inputs": [
+        { "name": "taskId", "type": "bytes", "indexed": true },
+        { "name": "caller", "type": "address", "indexed": true },
+        { "name": "model", "type": "bytes", "indexed": true },
+        { "name": "unitsRequested", "type": "uint" },
+        { "name": "feeLimit", "type": "uint" }
+      ],
+      "notice": "Emitted when a job is enqueued."
+    },
+    {
+      "type": "event",
+      "name": "Completed",
+      "inputs": [
+        { "name": "taskId", "type": "bytes", "indexed": true },
+        { "name": "success", "type": "bool" },
+        { "name": "unitsUsed", "type": "uint" },
+        { "name": "outputDigest", "type": "bytes" }
+      ],
+      "notice": "Job completed. outputDigest is a short hash of the output for indexing."
+    },
+    {
+      "type": "event",
+      "name": "Consumed",
+      "inputs": [
+        { "name": "taskId", "type": "bytes", "indexed": true },
+        { "name": "consumer", "type": "address", "indexed": true }
+      ],
+      "notice": "Result was read/consumed by the original caller."
+    },
+    {
+      "type": "event",
+      "name": "Canceled",
+      "inputs": [
+        { "name": "taskId", "type": "bytes", "indexed": true },
+        { "name": "by", "type": "address", "indexed": true }
+      ],
+      "notice": "Job canceled before completion."
+    },
+    {
+      "type": "event",
+      "name": "ModelPolicyUpdated",
+      "inputs": [
+        { "name": "model", "type": "bytes", "indexed": true },
+        { "name": "enabled", "type": "bool" },
+        { "name": "maxPromptBytes", "type": "uint" },
+        { "name": "pricePerUnit", "type": "uint" }
+      ],
+      "notice": "Model policy updated (admin-only in implementing contract)."
+    }
+  ],
+  "errors": [
+    {
+      "type": "error",
+      "name": "Unauthorized",
+      "inputs": [
+        { "name": "who", "type": "address" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "UnsupportedModel",
+      "inputs": [
+        { "name": "model", "type": "bytes" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "NotDeterministic",
+      "inputs": [
+        { "name": "reason", "type": "bytes" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "LimitExceeded",
+      "inputs": [
+        { "name": "kind", "type": "bytes" },
+        { "name": "limit", "type": "uint" },
+        { "name": "got", "type": "uint" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "NoResultYet",
+      "inputs": [
+        { "name": "taskId", "type": "bytes" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "AlreadyConsumed",
+      "inputs": [
+        { "name": "taskId", "type": "bytes" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "InsufficientFee",
+      "inputs": [
+        { "name": "feeLimit", "type": "uint" },
+        { "name": "required", "type": "uint" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "JobNotFound",
+      "inputs": [
+        { "name": "taskId", "type": "bytes" }
+      ]
+    }
+  ]
+}

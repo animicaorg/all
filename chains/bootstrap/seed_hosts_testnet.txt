@@ -1,0 +1,10 @@
+# Animica — Testnet DNS Seed Hosts
+# One host per line. These should resolve to healthy, up-to-date testnet nodes.
+# Keep them geo-distributed and monitored; prune unhealthy backends automatically.
+
+seed1.testnet.animica.dev
+seed2.testnet.animica.dev
+# Optional community-operated seeds (commented examples):
+# community-seed.us.testnet.animica.dev
+# community-seed.eu.testnet.animica.dev
+# community-seed.ap.testnet.animica.dev

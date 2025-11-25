@@ -1,0 +1,198 @@
+{
+  "app": {
+    "title": "Animica Studio",
+    "tagline": "Construir • Simular • Desplegar"
+  },
+  "nav": {
+    "edit": "Editar",
+    "deploy": "Desplegar",
+    "verify": "Verificar",
+    "ai": "IA",
+    "quantum": "Cuántica",
+    "da": "Datos",
+    "beacon": "Baliza",
+    "explorer": "Explorador"
+  },
+  "common": {
+    "address": "Dirección",
+    "account": "Cuenta",
+    "network": "Red",
+    "chainId": "ID de cadena",
+    "connect": "Conectar",
+    "disconnect": "Desconectar",
+    "copy": "Copiar",
+    "copied": "Copiado",
+    "cancel": "Cancelar",
+    "close": "Cerrar",
+    "save": "Guardar",
+    "loading": "Cargando…",
+    "retry": "Reintentar",
+    "delete": "Eliminar",
+    "edit": "Editar",
+    "download": "Descargar",
+    "refresh": "Actualizar",
+    "yes": "Sí",
+    "no": "No",
+    "bytes": "{count, number} bytes",
+    "search": "Buscar",
+    "filter": "Filtrar"
+  },
+  "topbar": {
+    "connectWallet": "Conectar cartera",
+    "connectedAs": "Conectado como {address}",
+    "head": "Cabecera #{height}"
+  },
+  "editor": {
+    "title": "Editor",
+    "openFile": "Abrir archivo",
+    "newFile": "Archivo nuevo",
+    "format": "Formatear",
+    "run": "Ejecutar",
+    "compile": "Compilar",
+    "compiledOk": "Compilado correctamente",
+    "compiledFail": "Falló la compilación",
+    "gasEstimate": "Estimación de gas: {gas}",
+    "diagnostics": "Diagnósticos",
+    "ir": "Representación intermedia"
+  },
+  "simulate": {
+    "title": "Simular",
+    "call": "Llamar",
+    "function": "Función",
+    "args": "Argumentos",
+    "simulate": "Simular",
+    "result": "Resultado",
+    "logs": "Registros de eventos",
+    "noLogs": "Sin eventos",
+    "simulating": "Simulando…",
+    "simOk": "Simulación exitosa",
+    "simFail": "Fallo en la simulación"
+  },
+  "deploy": {
+    "title": "Desplegar",
+    "manifest": "Manifiesto",
+    "abi": "ABI",
+    "buildTx": "Construir transacción",
+    "sign": "Firmar",
+    "send": "Enviar",
+    "status": "Estado",
+    "txHash": "Hash de transacción",
+    "address": "Dirección desplegada",
+    "awaitingReceipt": "Esperando recibo…",
+    "pending": "Pendiente…",
+    "confirmed": "Confirmado en el bloque #{height}",
+    "failed": "Despliegue fallido",
+    "estFee": "Tarifa estimada: {fee}"
+  },
+  "verify": {
+    "title": "Verificar",
+    "uploadSource": "Subir código fuente",
+    "verifyBtn": "Verificar",
+    "jobQueued": "Verificación en cola",
+    "jobStatus": "Estado: {status}",
+    "matched": "Fuente verificada",
+    "mismatch": "Hash de código no coincide",
+    "error": "Error de verificación"
+  },
+  "events": {
+    "title": "Eventos",
+    "noEvents": "No hay eventos",
+    "decodeError": "Error al decodificar el evento"
+  },
+  "aicf": {
+    "title": "Trabajos de IA",
+    "enqueue": "Encolar trabajo",
+    "model": "Modelo",
+    "prompt": "Prompt",
+    "fee": "Tarifa",
+    "units": "Unidades",
+    "jobId": "ID de trabajo",
+    "status": "Estado",
+    "result": "Resultado",
+    "queued": "En cola",
+    "assigned": "Asignado",
+    "completed": "Completado",
+    "failed": "Fallido",
+    "expired": "Expirado",
+    "viewResult": "Ver resultado",
+    "copyDigest": "Copiar digest",
+    "enqueueOk": "Trabajo encolado",
+    "enqueueFail": "No se pudo encolar el trabajo"
+  },
+  "quantum": {
+    "title": "Trabajos cuánticos",
+    "circuit": "Circuito (JSON)",
+    "shots": "Ejecuciones"
+  },
+  "da": {
+    "title": "Disponibilidad de datos",
+    "pinBlob": "Fijar blob",
+    "namespace": "Espacio de nombres",
+    "file": "Archivo",
+    "commit": "Compromiso",
+    "nmtRoot": "Raíz NMT",
+    "size": "Tamaño",
+    "post": "Publicar",
+    "posted": "Blob publicado",
+    "get": "Obtener",
+    "proof": "Prueba",
+    "verify": "Verificar",
+    "pinOk": "Blob fijado",
+    "pinFail": "Error al fijar el blob"
+  },
+  "beacon": {
+    "title": "Baliza de aleatoriedad",
+    "round": "Ronda",
+    "open": "Abrir",
+    "close": "Cerrar",
+    "commit": "Commit",
+    "reveal": "Reveal",
+    "beacon": "Baliza",
+    "vdf": "VDF",
+    "commitOk": "Commit aceptado",
+    "revealOk": "Reveal aceptado",
+    "finalized": "Ronda finalizada"
+  },
+  "explorer": {
+    "title": "Explorador",
+    "blocks": "Bloques",
+    "txs": "Transacciones",
+    "latestBlocks": "Últimos bloques",
+    "viewBlock": "Ver bloque",
+    "viewTx": "Ver transacción"
+  },
+  "forms": {
+    "required": "Requerido",
+    "invalidAddress": "Dirección inválida",
+    "invalidHex": "Hex inválido",
+    "invalidJson": "JSON inválido"
+  },
+  "toasts": {
+    "error": "Error: {message}",
+    "success": "Éxito",
+    "copied": "Copiado al portapapeles"
+  },
+  "confirm": {
+    "leaveDirty": "Tienes cambios sin guardar. ¿Salir igualmente?"
+  },
+  "placeholders": {
+    "enterAddress": "Introduce la dirección…",
+    "enterHex": "0x…",
+    "enterJson": "{ }"
+  },
+  "time": {
+    "ago": "hace {value, number} {unit}",
+    "units": {
+      "s": "s",
+      "m": "m",
+      "h": "h",
+      "d": "d"
+    }
+  },
+  "errors": {
+    "rpc": "Error de RPC: {message}",
+    "network": "Error de red",
+    "notConnected": "Cartera no conectada",
+    "unsupportedNetwork": "Red no compatible (chainId {chainId})"
+  }
+}

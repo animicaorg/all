@@ -1,0 +1,133 @@
+# Animica Wallet — Flatpak manifest
+# Build expects a prebuilt Flutter bundle in:
+#   - build/linux/x86_64/release/bundle        (for x86_64)
+#   - build/linux/arm64/release/bundle OR
+#     build/linux/aarch64/release/bundle       (for aarch64)
+#
+# CI flow (example):
+#   flutter build linux --release
+#   flatpak-builder --force-clean build-dir installers/wallet/linux/flatpak/io.animica.Wallet.yml
+#
+# The custom field `x-animica-version` is updated by:
+#   installers/wallet/linux/scripts/bump_version.sh
+
+app-id: io.animica.Wallet
+runtime: org.freedesktop.Platform
+runtime-version: "23.08"
+sdk: org.freedesktop.Sdk
+command: AnimicaWallet
+
+# Updated by bump_version.sh (informational)
+x-animica-version: "0.0.0+local"
+
+finish-args:
+  # Network & display
+  - --share=network
+  - --socket=wayland
+  - --socket=x11
+  - --device=dri
+  - --socket=pulseaudio
+  # Portals & theming
+  - --talk-name=org.freedesktop.portal.Desktop
+  - --env=GTK_USE_PORTAL=1
+  - --env=GDK_BACKEND=wayland,x11
+  - --env=GTK_THEME=Adwaita:light
+  # Optional access to downloads for export/import (feel free to remove)
+  - --filesystem=xdg-download:rw
+
+# Keep app dir tidy after build
+cleanup:
+  - '*.a'
+  - '*.la'
+  - '/lib/pkgconfig'
+  - '/share/pkgconfig'
+  - '/include'
+  - '/share/man'
+  - '/share/doc'
+  - '/share/gtk-doc'
+
+modules:
+  # ───────────────────────────────────── Assets (desktop file & icons) ─────────────────────────────────────
+  - name: animica-assets
+    buildsystem: simple
+    sources:
+      - type: dir
+        path: .
+    build-commands:
+      - install -d /app/share/applications
+      - install -d /app/share/icons/hicolor
+      # Desktop entry: rewrite Exec & Icon to match flatpak command & icon name
+      - |
+        DESK="/app/share/applications/io.animica.Wallet.desktop"
+        if [ -f installers/wallet/linux/appimage/animica-wallet.desktop ]; then
+          install -Dm644 installers/wallet/linux/appimage/animica-wallet.desktop "$DESK"
+        else
+          cat > "$DESK" <<'EOF'
+        [Desktop Entry]
+        Type=Application
+        Name=Animica Wallet
+        Comment=Post-quantum wallet for the Animica network
+        Exec=AnimicaWallet %U
+        Icon=animica-wallet
+        Terminal=false
+        Categories=Finance;Network;
+        MimeType=x-scheme-handler/animica;
+        EOF
+        fi
+      - sed -i 's/^Exec=.*/Exec=AnimicaWallet %U/' /app/share/applications/io.animica.Wallet.desktop || true
+      - sed -i 's/^Icon=.*/Icon=animica-wallet/' /app/share/applications/io.animica.Wallet.desktop || true
+      # Icons (expects hicolor/*/apps/animica-wallet.png in repo)
+      - |
+        if [ -d installers/wallet/linux/icons ]; then
+          cp -a installers/wallet/linux/icons/. /app/share/icons/hicolor/
+        else
+          echo "No icons directory found (installers/wallet/linux/icons). Skipping themed icons."
+        fi
+
+  # ───────────────────────────────────── Bundle for x86_64 ────────────────────────────────────────────────
+  - name: animica-bundle-x86_64
+    only-arches: [x86_64]
+    buildsystem: simple
+    sources:
+      - type: dir
+        path: .
+    build-commands:
+      - install -d /app/AnimicaWallet /app/bin
+      - test -d build/linux/x86_64/release/bundle
+      - cp -a build/linux/x86_64/release/bundle/. /app/AnimicaWallet/
+      - |
+        if [ -x /app/AnimicaWallet/AnimicaWallet ]; then
+          ln -sf /app/AnimicaWallet/AnimicaWallet /app/bin/AnimicaWallet
+        else
+          BIN="$(find /app/AnimicaWallet -maxdepth 1 -type f -executable | head -n1)"
+          test -n "$BIN"
+          ln -sf "$BIN" /app/bin/AnimicaWallet
+        fi
+      - chmod +x /app/bin/AnimicaWallet
+
+  # ───────────────────────────────────── Bundle for aarch64 ───────────────────────────────────────────────
+  - name: animica-bundle-aarch64
+    only-arches: [aarch64]
+    buildsystem: simple
+    sources:
+      - type: dir
+        path: .
+    build-commands:
+      - install -d /app/AnimicaWallet /app/bin
+      - |
+        if [ -d build/linux/arm64/release/bundle ]; then
+          cp -a build/linux/arm64/release/bundle/. /app/AnimicaWallet/
+        elif [ -d build/linux/aarch64/release/bundle ]; then
+          cp -a build/linux/aarch64/release/bundle/. /app/AnimicaWallet/
+        else
+          echo "No aarch64 bundle found (expected build/linux/{arm64,aarch64}/release/bundle)"; exit 3
+        fi
+      - |
+        if [ -x /app/AnimicaWallet/AnimicaWallet ]; then
+          ln -sf /app/AnimicaWallet/AnimicaWallet /app/bin/AnimicaWallet
+        else
+          BIN="$(find /app/AnimicaWallet -maxdepth 1 -type f -executable | head -n1)"
+          test -n "$BIN"
+          ln -sf "$BIN" /app/bin/AnimicaWallet
+        fi
+      - chmod +x /app/bin/AnimicaWallet

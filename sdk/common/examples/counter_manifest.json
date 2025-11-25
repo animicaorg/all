@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "name": "Counter",
+  "namespace": "examples",
+  "language": "python",
+  "abiRef": "./counter_abi.json",
+  "abi": {
+    "version": 1,
+    "name": "Counter",
+    "namespace": "examples",
+    "language": "python",
+    "functions": [
+      {
+        "name": "get",
+        "inputs": [],
+        "outputs": [
+          { "name": "value", "type": "uint64" }
+        ],
+        "stateMutability": "view",
+        "payable": false,
+        "docs": "Return the current counter value."
+      },
+      {
+        "name": "inc",
+        "inputs": [
+          { "name": "delta", "type": "uint64" }
+        ],
+        "outputs": [
+          { "name": "new_value", "type": "uint64" }
+        ],
+        "stateMutability": "nonpayable",
+        "payable": false,
+        "docs": "Increment by `delta` (saturating at uint64 max); returns the new value."
+      },
+      {
+        "name": "set",
+        "inputs": [
+          { "name": "value", "type": "uint64" }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "payable": false,
+        "docs": "Set the counter to an exact value (typically owner-only in examples)."
+      }
+    ],
+    "events": [
+      {
+        "name": "Incremented",
+        "inputs": [
+          { "name": "value", "type": "uint64", "indexed": false }
+        ],
+        "docs": "Emitted after a successful increment; `value` is the new counter value."
+      },
+      {
+        "name": "Set",
+        "inputs": [
+          { "name": "value", "type": "uint64", "indexed": false }
+        ],
+        "docs": "Emitted when the counter is set directly."
+      }
+    ],
+    "errors": [
+      {
+        "name": "Unauthorized",
+        "inputs": [],
+        "docs": "Caller lacks permission for this action."
+      }
+    ],
+    "types": {},
+    "meta": {
+      "abiSchema": "sdk/common/schemas/abi.schema.json",
+      "description": "Canonical demo ABI for codegen in Python/TypeScript/Rust SDKs."
+    }
+  },
+  "artifact": {
+    "codeHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "compiler": "vm_py",
+    "format": "ir+cbor",
+    "note": "Placeholder values for SDK demos; real deploys will replace with actual code hash."
+  },
+  "meta": {
+    "description": "Example manifest for the Counter contract used by SDK codegen demos and tests."
+  }
+}

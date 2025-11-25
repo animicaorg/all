@@ -1,0 +1,150 @@
+[
+  {
+    "chainId": "animica:1",
+    "name": "Animica Mainnet",
+    "shortName": "animica",
+    "networkType": "mainnet",
+    "nativeCurrency": {
+      "name": "Animica",
+      "symbol": "ANM",
+      "decimals": 18
+    },
+    "address": {
+      "format": "bech32m",
+      "hrp": "anim",
+      "algorithms": ["dilithium3", "sphincs_shake_128s"]
+    },
+    "features": [
+      "poies",
+      "pq_signatures",
+      "kyber_p2p",
+      "python_vm",
+      "data_availability",
+      "aicf",
+      "quantum_ready"
+    ],
+    "rpc": [
+      { "type": "http", "url": "https://rpc.animica.org" },
+      { "type": "ws",   "url": "wss://rpc.animica.org/ws" }
+    ],
+    "explorers": [
+      { "name": "animica-explorer", "url": "https://explorer.animica.org" }
+    ],
+    "faucets": [],
+    "p2p": {
+      "defaultPorts": { "tcp": 26000, "quic": 26001, "ws": 26002 },
+      "protocols": ["tcp", "quic", "ws"]
+    },
+    "genesis": {
+      "height": 0,
+      "time": "TBD",
+      "hash": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "policyRoots": {
+      "algPolicyRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "poiesPolicyRoot": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "slip44": null,
+    "status": "planned"
+  },
+  {
+    "chainId": "animica:2",
+    "name": "Animica Testnet",
+    "shortName": "animica-testnet",
+    "networkType": "testnet",
+    "nativeCurrency": {
+      "name": "Animica Test",
+      "symbol": "tANM",
+      "decimals": 18
+    },
+    "address": {
+      "format": "bech32m",
+      "hrp": "ant",
+      "algorithms": ["dilithium3", "sphincs_shake_128s"]
+    },
+    "features": [
+      "poies",
+      "pq_signatures",
+      "kyber_p2p",
+      "python_vm",
+      "data_availability",
+      "aicf",
+      "quantum_ready"
+    ],
+    "rpc": [
+      { "type": "http", "url": "https://rpc-testnet.animica.org" },
+      { "type": "ws",   "url": "wss://rpc-testnet.animica.org/ws" }
+    ],
+    "explorers": [
+      { "name": "animica-explorer-testnet", "url": "https://explorer-testnet.animica.org" }
+    ],
+    "faucets": [
+      { "name": "default", "url": "https://faucet.animica.org" }
+    ],
+    "p2p": {
+      "defaultPorts": { "tcp": 27000, "quic": 27001, "ws": 27002 },
+      "protocols": ["tcp", "quic", "ws"]
+    },
+    "genesis": {
+      "height": 0,
+      "time": "TBD",
+      "hash": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "policyRoots": {
+      "algPolicyRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "poiesPolicyRoot": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "slip44": null,
+    "status": "active"
+  },
+  {
+    "chainId": "animica:1337",
+    "name": "Animica Devnet",
+    "shortName": "animica-devnet",
+    "networkType": "devnet",
+    "nativeCurrency": {
+      "name": "Animica Dev",
+      "symbol": "dANM",
+      "decimals": 18
+    },
+    "address": {
+      "format": "bech32m",
+      "hrp": "anv",
+      "algorithms": ["dilithium3", "sphincs_shake_128s"]
+    },
+    "features": [
+      "poies",
+      "pq_signatures",
+      "kyber_p2p",
+      "python_vm",
+      "data_availability",
+      "aicf",
+      "quantum_ready"
+    ],
+    "rpc": [
+      { "type": "http", "url": "http://127.0.0.1:8545" },
+      { "type": "ws",   "url": "ws://127.0.0.1:8546/ws" }
+    ],
+    "explorers": [
+      { "name": "local-explorer", "url": "http://127.0.0.1:8080" }
+    ],
+    "faucets": [
+      { "name": "local-faucet", "url": "http://127.0.0.1:8787" }
+    ],
+    "p2p": {
+      "defaultPorts": { "tcp": 28000, "quic": 28001, "ws": 28002 },
+      "protocols": ["tcp", "quic", "ws"]
+    },
+    "genesis": {
+      "height": 0,
+      "time": "TBD",
+      "hash": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "policyRoots": {
+      "algPolicyRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "poiesPolicyRoot": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "slip44": null,
+    "status": "active"
+  }
+]

@@ -1,0 +1,61 @@
+{
+  "name": "Counter",
+  "version": "1.0.0",
+  "manifestVersion": 1,
+  "language": "python-vm",
+  "entry": "contract.py",
+  "sources": {
+    "contract.py": "./contract.py"
+  },
+  "abi": {
+    "functions": [
+      {
+        "name": "inc",
+        "inputs": [],
+        "outputs": []
+      },
+      {
+        "name": "get",
+        "inputs": [],
+        "outputs": [
+          { "type": "int" }
+        ]
+      },
+      {
+        "name": "set",
+        "inputs": [
+          { "name": "n", "type": "int" }
+        ],
+        "outputs": []
+      }
+    ],
+    "events": [
+      {
+        "name": "Counter.Incremented",
+        "inputs": [
+          { "name": "new", "type": "int" }
+        ]
+      },
+      {
+        "name": "Counter.Set",
+        "inputs": [
+          { "name": "value", "type": "int" }
+        ]
+      }
+    ],
+    "errors": [
+      { "name": "counter: negative" },
+      { "name": "counter: overflow u64" },
+      { "name": "counter: bad type" }
+    ]
+  },
+  "deploy": {
+    "initStorage": {},
+    "metadata": {
+      "description": "Deterministic counter example for Animica Python-VM. Methods: inc(), get() -> int, set(n: int)."
+    }
+  },
+  "resources": {
+    "maxCodeBytes": 16384
+  }
+}

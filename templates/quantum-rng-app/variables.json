@@ -1,0 +1,112 @@
+{
+  "$schema": "../schemas/variables.schema.json",
+  "title": "Quantum RNG App — Template Variables",
+  "description": "Inputs used to scaffold a full project: a Python smart contract that mixes the randomness beacon with quantum bytes, plus a React+TS dapp to interact with it.",
+  "variables": {
+    "project_name": {
+      "type": "string",
+      "prompt": "Project name (human-readable)",
+      "default": "Quantum RNG App",
+      "examples": ["Quantum RNG App", "Acme Quantum Randomizer"],
+      "description": "Shown in READMEs and package metadata."
+    },
+    "project_slug": {
+      "type": "string",
+      "prompt": "Project slug (kebab-case directory name)",
+      "default": "quantum-rng-app",
+      "pattern": "^[a-z0-9-]+$",
+      "examples": ["quantum-rng-app", "acme-quantum-randomizer"],
+      "description": "Used for the top-level folder and package IDs. Lowercase letters, numbers, and hyphens only."
+    },
+    "author_name": {
+      "type": "string",
+      "prompt": "Author name",
+      "default": "",
+      "description": "Author/organization name for README/license headers."
+    },
+    "author_email": {
+      "type": "string",
+      "prompt": "Author email",
+      "default": "",
+      "description": "Optional; used in package metadata."
+    },
+    "license": {
+      "type": "string",
+      "prompt": "Project license",
+      "enum": ["MIT", "Apache-2.0", "BSD-3-Clause", "UNLICENSED"],
+      "default": "MIT",
+      "description": "Controls LICENSE text and headers."
+    },
+    "network": {
+      "type": "string",
+      "prompt": "Target network",
+      "enum": ["mainnet", "testnet", "devnet"],
+      "default": "devnet",
+      "description": "Used to prefill RPC URL and Chain ID defaults."
+    },
+    "rpc_url": {
+      "type": "string",
+      "prompt": "Animica RPC URL",
+      "default": "http://localhost:8545",
+      "examples": [
+        "http://localhost:8545",
+        "https://rpc.testnet.animica.org",
+        "https://rpc.mainnet.animica.org"
+      ],
+      "description": "Node RPC endpoint used by scripts and the dapp."
+    },
+    "chain_id": {
+      "type": "integer",
+      "prompt": "Chain ID",
+      "enum": [1, 2, 1337],
+      "default": 1337,
+      "description": "1 = mainnet, 2 = testnet, 1337 = devnet."
+    },
+    "contract_name": {
+      "type": "string",
+      "prompt": "Primary contract name",
+      "default": "QuantumRng",
+      "pattern": "^[A-Z][A-Za-z0-9_]*$",
+      "examples": ["QuantumRng", "BeaconQuantumMix"],
+      "description": "Class/name used in manifest/ABI and docs."
+    },
+    "dapp_port": {
+      "type": "integer",
+      "prompt": "Dapp dev server port (Vite)",
+      "default": 5173,
+      "description": "Port used by `npm run dev`."
+    },
+    "include_github_ci": {
+      "type": "boolean",
+      "prompt": "Include GitHub Actions CI workflow?",
+      "default": true,
+      "description": "Adds a simple build/test workflow referencing the dapp and contract toolchain."
+    },
+    "include_docker": {
+      "type": "boolean",
+      "prompt": "Include Dockerfile for the dapp?",
+      "default": true,
+      "description": "Adds a minimal nginx-based Dockerfile for the built dapp."
+    }
+  },
+  "derivations": {
+    "package_name": {
+      "from": "project_slug",
+      "transform": "kebab_to_snake",
+      "description": "Python package-safe name derived from project_slug."
+    },
+    "dapp_package_name": {
+      "from": "project_slug",
+      "transform": "append",
+      "suffix": "-dapp",
+      "description": "NPM package name for the dapp."
+    }
+  },
+  "required": [
+    "project_name",
+    "project_slug",
+    "rpc_url",
+    "chain_id",
+    "contract_name"
+  ]
+}

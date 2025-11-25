@@ -1,0 +1,67 @@
+{
+  "$schema": "../schemas/template.schema.json",
+  "id": "explorer-embeds",
+  "name": "Explorer Embeds (Static widgets)",
+  "version": "0.1.0",
+  "description": "Generates a tiny, framework-free set of Explorer widgets (head ticker, latest blocks/txs, block/tx cards, and a compact PoIES/Γ panel) you can drop into any site. Ships as plain HTML/CSS/JS and talks directly to Animica RPC/WS or the Explorer API using the SDK.",
+  "keywords": ["explorer", "widgets", "embeds", "static", "ws", "rpc", "analytics"],
+  "variables": [
+    "project_slug",
+    "rpc_url",
+    "ws_url",
+    "explorer_api_url",
+    "chain_id",
+    "site_title",
+    "theme"
+  ],
+  "defaults": {
+    "site_title": "Animica Explorer Embeds",
+    "theme": "light",
+    "chain_id": "1"
+  },
+  "render": [
+    { "from": "{{project_slug}}/README.md", "to": "{{project_slug}}/README.md" },
+    { "from": "{{project_slug}}/.gitignore", "to": "{{project_slug}}/.gitignore" },
+
+    { "from": "{{project_slug}}/public/index.html", "to": "{{project_slug}}/public/index.html" },
+    { "from": "{{project_slug}}/public/preview.css", "to": "{{project_slug}}/public/preview.css" },
+
+    { "from": "{{project_slug}}/src/config.example.js", "to": "{{project_slug}}/src/config.example.js" },
+    { "from": "{{project_slug}}/src/config.js", "to": "{{project_slug}}/src/config.js", "if_not_exists_copy_from": "{{project_slug}}/src/config.example.js" },
+
+    { "from": "{{project_slug}}/src/embed.js", "to": "{{project_slug}}/src/embed.js" },
+    { "from": "{{project_slug}}/src/styles.css", "to": "{{project_slug}}/src/styles.css" },
+
+    { "from": "{{project_slug}}/src/widgets/headTicker.js", "to": "{{project_slug}}/src/widgets/headTicker.js" },
+    { "from": "{{project_slug}}/src/widgets/blockCard.js", "to": "{{project_slug}}/src/widgets/blockCard.js" },
+    { "from": "{{project_slug}}/src/widgets/txCard.js", "to": "{{project_slug}}/src/widgets/txCard.js" },
+    { "from": "{{project_slug}}/src/widgets/txList.js", "to": "{{project_slug}}/src/widgets/txList.js" },
+    { "from": "{{project_slug}}/src/widgets/blockList.js", "to": "{{project_slug}}/src/widgets/blockList.js" },
+    { "from": "{{project_slug}}/src/widgets/metricsMini.js", "to": "{{project_slug}}/src/widgets/metricsMini.js" }
+  ],
+  "placeholders": {
+    "{{project_slug}}": { "rules": ["slug"], "example": "explorer-embeds-demo" },
+    "{{rpc_url}}": { "example": "https://rpc.devnet.animica.xyz/rpc" },
+    "{{ws_url}}": { "example": "wss://rpc.devnet.animica.xyz/ws" },
+    "{{explorer_api_url}}": { "example": "https://explorer.devnet.animica.xyz/api" },
+    "{{chain_id}}": { "example": "1" },
+    "{{site_title}}": { "example": "Animica Devnet Widgets" },
+    "{{theme}}": { "enum": ["light", "dark", "auto"], "example": "auto" }
+  },
+  "instructions": [
+    "Open public/index.html to preview widgets using {{rpc_url}} (WS: {{ws_url}}) on chain {{chain_id}}.",
+    "Copy the <script> snippets from README.md into any page; widgets auto-initialize via data-* attributes.",
+    "Edit src/config.js (generated from config.example.js) to change endpoints and theme without editing HTML."
+  ],
+  "snippets": {
+    "head_ticker": "<script src=\"/src/embed.js\" data-widget=\"head-ticker\" data-rpc=\"{{rpc_url}}\" data-ws=\"{{ws_url}}\" data-chain=\"{{chain_id}}\" data-theme=\"{{theme}}\"></script>",
+    "latest_blocks": "<script src=\"/src/embed.js\" data-widget=\"block-list\" data-limit=\"10\" data-rpc=\"{{rpc_url}}\" data-ws=\"{{ws_url}}\" data-chain=\"{{chain_id}}\" data-theme=\"{{theme}}\"></script>",
+    "latest_txs": "<script src=\"/src/embed.js\" data-widget=\"tx-list\" data-limit=\"10\" data-rpc=\"{{rpc_url}}\" data-ws=\"{{ws_url}}\" data-chain=\"{{chain_id}}\" data-theme=\"{{theme}}\"></script>",
+    "block_card": "<div id=\"block-card\"></div>\n<script src=\"/src/embed.js\" data-widget=\"block-card\" data-target=\"#block-card\" data-hash=\"<BLOCK_HASH>\" data-rpc=\"{{rpc_url}}\" data-chain=\"{{chain_id}}\" data-theme=\"{{theme}}\"></script>",
+    "tx_card": "<div id=\"tx-card\"></div>\n<script src=\"/src/embed.js\" data-widget=\"tx-card\" data-target=\"#tx-card\" data-hash=\"<TX_HASH>\" data-rpc=\"{{rpc_url}}\" data-chain=\"{{chain_id}}\" data-theme=\"{{theme}}\"></script>",
+    "metrics_mini": "<script src=\"/src/embed.js\" data-widget=\"metrics-mini\" data-rpc=\"{{rpc_url}}\" data-ws=\"{{ws_url}}\" data-theme=\"{{theme}}\"></script>"
+  },
+  "post_gen_hooks": [
+    { "name": "Initialize config.js", "action": "copy_if_missing", "from": "{{project_slug}}/src/config.example.js", "to": "{{project_slug}}/src/config.js" }
+  ]
+}

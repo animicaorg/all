@@ -1,0 +1,283 @@
+{
+  "functions": [
+    {
+      "type": "function",
+      "name": "version",
+      "inputs": [],
+      "outputs": [{ "type": "bytes" }],
+      "notice": "Semantic version of the escrow contract implementation"
+    },
+    {
+      "type": "function",
+      "name": "open",
+      "inputs": [
+        { "name": "payee", "type": "address" },
+        { "name": "amount", "type": "uint" },
+        { "name": "deadline", "type": "uint" },
+        { "name": "mediator", "type": "address" },
+        { "name": "metadata", "type": "bytes" }
+      ],
+      "outputs": [{ "type": "bytes" }],
+      "notice": "Create a new escrow and return its id; caller is the payer. Amount is the target locked value."
+    },
+    {
+      "type": "function",
+      "name": "deposit",
+      "inputs": [
+        { "name": "escrowId", "type": "bytes" },
+        { "name": "amount", "type": "uint" }
+      ],
+      "outputs": [{ "type": "bool" }],
+      "notice": "Deposit additional funds into an existing OPEN escrow. Returns true on success."
+    },
+    {
+      "type": "function",
+      "name": "release",
+      "inputs": [
+        { "name": "escrowId", "type": "bytes" }
+      ],
+      "outputs": [{ "type": "bool" }],
+      "notice": "Payer authorizes release of the full balance to the payee (no dispute)."
+    },
+    {
+      "type": "function",
+      "name": "refund",
+      "inputs": [
+        { "name": "escrowId", "type": "bytes" }
+      ],
+      "outputs": [{ "type": "bool" }],
+      "notice": "Payee authorizes refund of the full balance to the payer (no dispute)."
+    },
+    {
+      "type": "function",
+      "name": "dispute",
+      "inputs": [
+        { "name": "escrowId", "type": "bytes" },
+        { "name": "reason", "type": "bytes" }
+      ],
+      "outputs": [{ "type": "bool" }],
+      "notice": "Either party can open a dispute before deadline; mediator is required to resolve."
+    },
+    {
+      "type": "function",
+      "name": "resolve",
+      "inputs": [
+        { "name": "escrowId", "type": "bytes" },
+        { "name": "toPayee", "type": "uint" },
+        { "name": "toPayer", "type": "uint" },
+        { "name": "note", "type": "bytes" }
+      ],
+      "outputs": [{ "type": "bool" }],
+      "notice": "Mediator splits balance between payee and payer; amounts must sum to current balance."
+    },
+    {
+      "type": "function",
+      "name": "cancelExpired",
+      "inputs": [
+        { "name": "escrowId", "type": "bytes" }
+      ],
+      "outputs": [{ "type": "bool" }],
+      "notice": "Anyone may cancel and refund to payer after deadline if not disputed or already settled."
+    },
+    {
+      "type": "function",
+      "name": "get",
+      "inputs": [
+        { "name": "escrowId", "type": "bytes" }
+      ],
+      "outputs": [
+        { "name": "payer", "type": "address" },
+        { "name": "payee", "type": "address" },
+        { "name": "mediator", "type": "address" },
+        { "name": "amount", "type": "uint" },
+        { "name": "balance", "type": "uint" },
+        { "name": "state", "type": "uint" },
+        { "name": "deadline", "type": "uint" },
+        { "name": "metadata", "type": "bytes" }
+      ],
+      "notice": "Return full escrow record. state: 0=OPEN,1=DISPUTED,2=RELEASED,3=REFUNDED,4=RESOLVED,5=CANCELED,6=EXPIRED"
+    },
+    {
+      "type": "function",
+      "name": "stateOf",
+      "inputs": [
+        { "name": "escrowId", "type": "bytes" }
+      ],
+      "outputs": [{ "type": "uint" }],
+      "notice": "Get current state enum"
+    },
+    {
+      "type": "function",
+      "name": "balanceOf",
+      "inputs": [
+        { "name": "escrowId", "type": "bytes" }
+      ],
+      "outputs": [{ "type": "uint" }],
+      "notice": "Get current locked balance"
+    },
+    {
+      "type": "function",
+      "name": "payerOf",
+      "inputs": [
+        { "name": "escrowId", "type": "bytes" }
+      ],
+      "outputs": [{ "type": "address" }],
+      "notice": "Payer address"
+    },
+    {
+      "type": "function",
+      "name": "payeeOf",
+      "inputs": [
+        { "name": "escrowId", "type": "bytes" }
+      ],
+      "outputs": [{ "type": "address" }],
+      "notice": "Payee address"
+    },
+    {
+      "type": "function",
+      "name": "mediatorOf",
+      "inputs": [
+        { "name": "escrowId", "type": "bytes" }
+      ],
+      "outputs": [{ "type": "address" }],
+      "notice": "Mediator address"
+    },
+    {
+      "type": "function",
+      "name": "deadlineOf",
+      "inputs": [
+        { "name": "escrowId", "type": "bytes" }
+      ],
+      "outputs": [{ "type": "uint" }],
+      "notice": "Deadline (block timestamp)"
+    },
+    {
+      "type": "function",
+      "name": "amountOf",
+      "inputs": [
+        { "name": "escrowId", "type": "bytes" }
+      ],
+      "outputs": [{ "type": "uint" }],
+      "notice": "Target amount for the escrow (initial agreed value)"
+    }
+  ],
+  "events": [
+    {
+      "type": "event",
+      "name": "Opened",
+      "inputs": [
+        { "name": "escrowId", "type": "bytes", "indexed": true },
+        { "name": "payer", "type": "address", "indexed": true },
+        { "name": "payee", "type": "address", "indexed": true },
+        { "name": "amount", "type": "uint" },
+        { "name": "deadline", "type": "uint" },
+        { "name": "mediator", "type": "address" }
+      ],
+      "notice": "Emitted when a new escrow is opened"
+    },
+    {
+      "type": "event",
+      "name": "Deposited",
+      "inputs": [
+        { "name": "escrowId", "type": "bytes", "indexed": true },
+        { "name": "from", "type": "address", "indexed": true },
+        { "name": "amount", "type": "uint" },
+        { "name": "balance", "type": "uint" }
+      ],
+      "notice": "Funds deposited into the escrow"
+    },
+    {
+      "type": "event",
+      "name": "Released",
+      "inputs": [
+        { "name": "escrowId", "type": "bytes", "indexed": true },
+        { "name": "to", "type": "address", "indexed": true },
+        { "name": "amount", "type": "uint" }
+      ],
+      "notice": "Balance released to payee"
+    },
+    {
+      "type": "event",
+      "name": "Refunded",
+      "inputs": [
+        { "name": "escrowId", "type": "bytes", "indexed": true },
+        { "name": "to", "type": "address", "indexed": true },
+        { "name": "amount", "type": "uint" }
+      ],
+      "notice": "Balance refunded to payer"
+    },
+    {
+      "type": "event",
+      "name": "Disputed",
+      "inputs": [
+        { "name": "escrowId", "type": "bytes", "indexed": true },
+        { "name": "by", "type": "address", "indexed": true },
+        { "name": "reason", "type": "bytes" }
+      ],
+      "notice": "A dispute has been opened"
+    },
+    {
+      "type": "event",
+      "name": "Resolved",
+      "inputs": [
+        { "name": "escrowId", "type": "bytes", "indexed": true },
+        { "name": "mediator", "type": "address", "indexed": true },
+        { "name": "toPayee", "type": "uint" },
+        { "name": "toPayer", "type": "uint" },
+        { "name": "note", "type": "bytes" }
+      ],
+      "notice": "Mediator resolved the dispute and split funds"
+    },
+    {
+      "type": "event",
+      "name": "Canceled",
+      "inputs": [
+        { "name": "escrowId", "type": "bytes", "indexed": true },
+        { "name": "by", "type": "address", "indexed": true },
+        { "name": "reason", "type": "bytes" }
+      ],
+      "notice": "Escrow canceled (expired or by rule)"
+    }
+  ],
+  "errors": [
+    {
+      "type": "error",
+      "name": "Unauthorized",
+      "inputs": [
+        { "name": "requiredRole", "type": "bytes" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "InvalidState",
+      "inputs": [
+        { "name": "state", "type": "uint" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "DeadlineNotReached",
+      "inputs": [
+        { "name": "nowTs", "type": "uint" },
+        { "name": "deadline", "type": "uint" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "InsufficientBalance",
+      "inputs": [
+        { "name": "requested", "type": "uint" },
+        { "name": "available", "type": "uint" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "SplitMismatch",
+      "inputs": [
+        { "name": "toPayee", "type": "uint" },
+        { "name": "toPayer", "type": "uint" },
+        { "name": "balance", "type": "uint" }
+      ]
+    }
+  ]
+}

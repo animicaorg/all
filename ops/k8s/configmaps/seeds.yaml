@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: seeds
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    animica.dev/environment: devnet
+data:
+  # Text form (one hostname per line). Your node can read this directly or via
+  # an init script. Keep these pointing at stable, publicly reachable seed nodes.
+  seed_list.txt: |
+    seed1.${DOMAIN_BASE}
+    seed2.${DOMAIN_BASE}
+    seed3.${DOMAIN_BASE}
+
+  # Optional: environment-style convenience for deployments that prefer an env var.
+  # Mount as a file and source it, or use "envFrom: configMapRef".
+  seeds.env: |
+    # Comma-separated hostnames (ports omitted → use P2P default from p2p/constants.py)
+    P2P_SEEDS=seed1.${DOMAIN_BASE},seed2.${DOMAIN_BASE},seed3.${DOMAIN_BASE}
+
+  # Optional: richer bootstrap descriptors (multiaddr-like). Your p2p process may
+  # ignore peer_id if unknown; it’s mainly helpful for pinning.
+  bootstrap_nodes.json: |
+    [
+      { "id": "seed1", "addr": "/dns/seed1.${DOMAIN_BASE}/tcp/7150/quic", "peer_id": "" },
+      { "id": "seed2", "addr": "/dns/seed2.${DOMAIN_BASE}/tcp/7150/quic", "peer_id": "" },
+      { "id": "seed3", "addr": "/dns/seed3.${DOMAIN_BASE}/tcp/7150/quic", "peer_id": "" }
+    ]

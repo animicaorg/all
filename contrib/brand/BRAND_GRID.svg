@@ -1,0 +1,72 @@
+<!-- Animica Brand Construction Grid
+     Usage: Place logo artwork on top of this grid to check spacing, clear-space, and alignment.
+     Units: px; Artboard: 1024×512; Grid: 8px base; Safe area: 64px; Clear-space: cap height box.
+     SPDX-License-Identifier: MIT
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="512" viewBox="0 0 1024 512">
+  <defs>
+    <!-- Grid patterns -->
+    <pattern id="grid8" width="8" height="8" patternUnits="userSpaceOnUse">
+      <path d="M8 0H0V8" fill="none" stroke="#AAB2C5" stroke-opacity="0.18" stroke-width="0.5"/>
+    </pattern>
+    <pattern id="grid32" width="32" height="32" patternUnits="userSpaceOnUse">
+      <rect width="32" height="32" fill="none"/>
+      <path d="M32 0H0M0 32V0" fill="none" stroke="#AAB2C5" stroke-opacity="0.35" stroke-width="0.8"/>
+    </pattern>
+
+    <!-- Label styles -->
+    <style>
+      .lbl { font-family: system-ui, -apple-system, Segoe UI, Roboto, "Inter", Arial, sans-serif;
+             font-size: 12px; fill: #3A4152; opacity: 0.9; }
+      .hint { font-size: 11px; fill: #3A4152; opacity: 0.6; }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="1024" height="512" fill="#F7F9FF"/>
+
+  <!-- Base grids -->
+  <rect x="0" y="0" width="1024" height="512" fill="url(#grid8)"/>
+  <rect x="0" y="0" width="1024" height="512" fill="url(#grid32)"/>
+
+  <!-- Safe area (keep artwork inside this) -->
+  <rect x="64" y="64" width="896" height="384"
+        fill="none" stroke="#4B7DFF" stroke-width="2" stroke-dasharray="6 6" stroke-opacity="0.9"/>
+  <text class="lbl" x="72" y="56">Safe area (64px)</text>
+
+  <!-- Suggested lockup box (example logo bounding box) -->
+  <rect x="128" y="176" width="768" height="160"
+        fill="none" stroke="#2E63FF" stroke-width="1.5" stroke-opacity="0.9"/>
+  <text class="lbl" x="128" y="164">Suggested lockup bounds</text>
+
+  <!-- Cap height & baseline (for wordmark alignment) -->
+  <line x1="128" y1="216" x2="896" y2="216" stroke="#22A06B" stroke-width="2" stroke-dasharray="4 6" />
+  <text class="lbl" x="904" y="220">Cap height</text>
+  <line x1="128" y1="304" x2="896" y2="304" stroke="#22A06B" stroke-width="2" stroke-dasharray="4 6" />
+  <text class="lbl" x="904" y="308">Baseline</text>
+
+  <!-- Clear space (A) around lockup: show as an outer ring -->
+  <rect x="96" y="144" width="832" height="224"
+        fill="none" stroke="#E45757" stroke-width="1.5" stroke-dasharray="3 5" stroke-opacity="0.9"/>
+  <text class="lbl" x="96" y="136">Clear space = A (≈ height of “A”)</text>
+  <text class="hint" x="96" y="352">No other graphics or text may enter this red dashed zone.</text>
+
+  <!-- Golden ratio guide (optional) -->
+  <circle cx="128" cy="256" r="99.5" fill="none" stroke="#DFA71B" stroke-opacity="0.6" stroke-width="1"/>
+  <circle cx="128" cy="256" r="161.0" fill="none" stroke="#DFA71B" stroke-opacity="0.35" stroke-width="1"/>
+  <text class="hint" x="128" y="426">Optional compositional guides (φ)</text>
+
+  <!-- Axis labels -->
+  <text class="hint" x="8" y="16">Artboard: 1024×512</text>
+  <text class="hint" x="8" y="32">Grid: 8px (light) + 32px (bold)</text>
+  <text class="hint" x="8" y="48">Safe area margin: 64px</text>
+
+  <!-- Corner ticks -->
+  <path d="M64 56 v16 M56 64 h16" stroke="#4B7DFF" stroke-width="2" stroke-opacity="0.7"/>
+  <path d="M960 56 v16 M968 64 h-16" stroke="#4B7DFF" stroke-width="2" stroke-opacity="0.7"/>
+  <path d="M64 456 v-16 M56 448 h16" stroke="#4B7DFF" stroke-width="2" stroke-opacity="0.7"/>
+  <path d="M960 456 v-16 M968 448 h-16" stroke="#4B7DFF" stroke-width="2" stroke-opacity="0.7"/>
+
+  <!-- Placement hint -->
+  <text class="lbl" x="512" y="404" text-anchor="middle">Place mark + wordmark centered within blue box</text>
+</svg>

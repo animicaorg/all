@@ -1,0 +1,337 @@
+{
+  "domain": "animica/proofs/quantum-v1",
+  "version": 1,
+  "notes": "Focused vectors for QuantumProof v1: provider certificate/attestation, trap-circuit outcomes, QoS, and benchmark-derived quantum_units. Values are illustrative but internally consistent with traps math (passed/total) and simple benchmark scaling.",
+  "policy_assumptions": {
+    "min_traps_ratio": 0.92,
+    "min_redundancy": 1,
+    "min_qos_score": 0.80,
+    "max_cert_age_secs": 2592000,
+    "allowed_key_algs": ["ed25519", "dilithium3", "hybrid_ed25519_dilithium3"]
+  },
+  "vectors": [
+    {
+      "name": "accept_ionq_ok_high_traps",
+      "headerHash": "0x71f3f1b98e2c4a3db8d0a5e4b1c2d3e49f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c",
+      "envelope": {
+        "type_id": "quantum_v1",
+        "body": {
+          "attestation": {
+            "kind": "qpu_provider",
+            "provider": {
+              "id": "qpu:ionq:harmony-11",
+              "name": "IonQ",
+              "region": "us-east-1"
+            },
+            "cert": {
+              "issuer": "animica-qpu-demo-root",
+              "subject": "qpu:ionq:harmony-11",
+              "not_before": 1730000000,
+              "not_after": 1739500000,
+              "key_alg": "ed25519",
+              "pubkey_b64": "WEdEMlNDUkZMU0laQkFTRTY0UEtFWQ==",
+              "statement": {
+                "device_model": "Harmony",
+                "calibration_digest": "0x1234cafe5678babe0000aaaabbbbccccddddeeeeffff11112222333344445555",
+                "trap_family": "x-z-parity",
+                "gate_set": "native",
+                "max_qubits": 11
+              },
+              "signature_b64": "U0lHX0lPTlFfRURFRTE5X0RFTT=="
+            },
+            "timestamp": 1730000100
+          },
+          "work": {
+            "circuit_digest": "0x9a9b9c9d9e9ff0f1f2f3f4f5f6f7f8f90102030405060708090a0b0c0d0e0f10",
+            "depth": 24,
+            "width": 8,
+            "shots": 1000
+          },
+          "traps": {
+            "seed": "0x3b4c5d6e7f8091a2b3c4d5e6f718293a",
+            "total": 50,
+            "passed": 49
+          },
+          "qos": {
+            "uptime_1d": 0.996,
+            "p50_ms": 170,
+            "p95_ms": 320,
+            "p99_ms": 480
+          }
+        },
+        "nullifier": "0x0f5a9b7c3e2d1c0b99887766554433221100ffeeddccbbaa9988776655443322"
+      },
+      "expected": {
+        "accept": true,
+        "metrics": {
+          "traps_ratio": 0.98,
+          "qos_score": 0.94,
+          "quantum_units": 192.0
+        },
+        "psi_micro": 240000,
+        "reason": "Valid provider cert within age; traps_ratio>=0.92; QoS>=0.80; units computed from depth×width×shots scale."
+      }
+    },
+    {
+      "name": "accept_rigetti_ok_medium",
+      "headerHash": "0xa4b3c2d1e0f1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f718293a4b",
+      "envelope": {
+        "type_id": "quantum_v1",
+        "body": {
+          "attestation": {
+            "kind": "qpu_provider",
+            "provider": {
+              "id": "qpu:rigetti:asp-32",
+              "name": "Rigetti",
+              "region": "us-west-2"
+            },
+            "cert": {
+              "issuer": "animica-qpu-demo-root",
+              "subject": "qpu:rigetti:asp-32",
+              "not_before": 1730000000,
+              "not_after": 1735000000,
+              "key_alg": "dilithium3",
+              "pubkey_b64": "RExUTTNfUFVCX0JBU0U2NA==",
+              "statement": {
+                "device_model": "Aspen-M-3",
+                "calibration_digest": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "trap_family": "randomized-benchmarking",
+                "gate_set": "native",
+                "max_qubits": 32
+              },
+              "signature_b64": "U0lHX0RJTElUSElVTTNfREVN"
+            },
+            "timestamp": 1730000500
+          },
+          "work": {
+            "circuit_digest": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "depth": 18,
+            "width": 16,
+            "shots": 800
+          },
+          "traps": {
+            "seed": "0x0102030405060708090a0b0c0d0e0f10",
+            "total": 40,
+            "passed": 37
+          },
+          "qos": {
+            "uptime_1d": 0.990,
+            "p50_ms": 210,
+            "p95_ms": 420,
+            "p99_ms": 650
+          }
+        },
+        "nullifier": "0xdeadbeef00000000000000000000000000000000000000000000000000000001"
+      },
+      "expected": {
+        "accept": true,
+        "metrics": {
+          "traps_ratio": 0.925,
+          "qos_score": 0.88,
+          "quantum_units": 230.4
+        },
+        "psi_micro": 200000,
+        "reason": "Dilithium3 provider cert; traps & QoS just above thresholds."
+      }
+    },
+    {
+      "name": "reject_low_traps_ratio",
+      "headerHash": "0x0a1b2c3d4e5f60718293a4b5c6d7e8f90112a3b4c5d6e7f8091a2b3c4d5e6f70",
+      "envelope": {
+        "type_id": "quantum_v1",
+        "body": {
+          "attestation": {
+            "kind": "qpu_provider",
+            "provider": { "id": "qpu:oxford:qnu-8", "name": "OxfordQ", "region": "eu-west" },
+            "cert": {
+              "issuer": "animica-qpu-demo-root",
+              "subject": "qpu:oxford:qnu-8",
+              "not_before": 1730000000,
+              "not_after": 1738000000,
+              "key_alg": "ed25519",
+              "pubkey_b64": "RURTMTk1OV9QVUJfQkFTRTY0",
+              "statement": {
+                "device_model": "QNU-8",
+                "calibration_digest": "0x9999bbbbccccddddeeeeffff111122223333444455556666777788889999aaaa",
+                "trap_family": "x-z-parity",
+                "gate_set": "native",
+                "max_qubits": 8
+              },
+              "signature_b64": "U0lHX0VEMjU1MTlfREVN"
+            },
+            "timestamp": 1730000200
+          },
+          "work": {
+            "circuit_digest": "0x1111111111111111111111111111111111111111111111111111111111111111",
+            "depth": 20,
+            "width": 8,
+            "shots": 600
+          },
+          "traps": { "seed": "0x0bad", "total": 40, "passed": 34 },
+          "qos": { "uptime_1d": 0.992, "p50_ms": 180, "p95_ms": 360, "p99_ms": 520 }
+        },
+        "nullifier": "0x00000000000000000000000000000000cccccccccccccccccccccccccccccccc"
+      },
+      "expected": {
+        "accept": false,
+        "error": "TrapsRatioTooLow",
+        "metrics": {
+          "traps_ratio": 0.85,
+          "qos_score": 0.90
+        },
+        "reason": "traps_ratio 0.85 < 0.92 threshold."
+      }
+    },
+    {
+      "name": "reject_bad_provider_signature",
+      "headerHash": "0x9f8e7d6c5b4a39281706f5e4d3c2b1a0ffeeddccbbaa99887766554433221100",
+      "envelope": {
+        "type_id": "quantum_v1",
+        "body": {
+          "attestation": {
+            "kind": "qpu_provider",
+            "provider": { "id": "qpu:quantinuum:h2-1", "name": "Quantinuum", "region": "us-central" },
+            "cert": {
+              "issuer": "animica-qpu-demo-root",
+              "subject": "qpu:quantinuum:h2-1",
+              "not_before": 1730000000,
+              "not_after": 1739000000,
+              "key_alg": "ed25519",
+              "pubkey_b64": "UVVBTlRJTlVVTU1fRURfUFVC",
+              "statement": {
+                "device_model": "H2-1",
+                "calibration_digest": "0xabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd",
+                "trap_family": "x-z-parity",
+                "gate_set": "native",
+                "max_qubits": 32
+              },
+              "signature_b64": "SU5WQUxJRF9TSUdOQVRVUkU="
+            },
+            "timestamp": 1730000400
+          },
+          "work": {
+            "circuit_digest": "0x0102030405060708090a0b0c0d0e0f000102030405060708090a0b0c0d0e0f00",
+            "depth": 30,
+            "width": 10,
+            "shots": 1200
+          },
+          "traps": { "seed": "0xface", "total": 60, "passed": 58 },
+          "qos": { "uptime_1d": 0.997, "p50_ms": 140, "p95_ms": 300, "p99_ms": 460 }
+        },
+        "nullifier": "0x4ab1cd23ef4509876a5b4c3d2e1f00112233445566778899aabbccddeeff0011"
+      },
+      "expected": {
+        "accept": false,
+        "error": "ProviderSignatureInvalid",
+        "metrics": {
+          "traps_ratio": 0.9667,
+          "qos_score": 0.95
+        },
+        "reason": "Provider certificate signature does not verify against statement."
+      }
+    },
+    {
+      "name": "reject_cert_expired",
+      "headerHash": "0x4f4e6c8f2a1cbbd4f7a1e2c3b4d5e6f70123456789abcdef0123456789abcdef",
+      "envelope": {
+        "type_id": "quantum_v1",
+        "body": {
+          "attestation": {
+            "kind": "qpu_provider",
+            "provider": { "id": "qpu:pasqal:neutral-100", "name": "Pasqal", "region": "eu-central" },
+            "cert": {
+              "issuer": "animica-qpu-demo-root",
+              "subject": "qpu:pasqal:neutral-100",
+              "not_before": 1710000000,
+              "not_after": 1720000000,
+              "key_alg": "dilithium3",
+              "pubkey_b64": "UEFTUUFMX0RMM19QVUJfQkFTRTY0",
+              "statement": {
+                "device_model": "NeutralAtom-100",
+                "calibration_digest": "0x7777777777777777777777777777777777777777777777777777777777777777",
+                "trap_family": "randomized-benchmarking",
+                "gate_set": "native",
+                "max_qubits": 100
+              },
+              "signature_b64": "U0lHX0RMM19TVE9LRU4="
+            },
+            "timestamp": 1730000200
+          },
+          "work": {
+            "circuit_digest": "0x9999888877776666555544443333222211110000ffffeeeeddccbbbaaaffee",
+            "depth": 14,
+            "width": 50,
+            "shots": 500
+          },
+          "traps": { "seed": "0xcca1", "total": 25, "passed": 24 },
+          "qos": { "uptime_1d": 0.985, "p50_ms": 220, "p95_ms": 420, "p99_ms": 610 }
+        },
+        "nullifier": "0x7d4b55a4e0f9b6a41bf9b7a9fef6f7a0d6d1b7b8f6f1e0c9a3a2a19f0f0e0d0c"
+      },
+      "expected": {
+        "accept": false,
+        "error": "ProviderCertExpired",
+        "metrics": {
+          "traps_ratio": 0.96,
+          "qos_score": 0.86
+        },
+        "reason": "not_after < timestamp; certificate outside validity window."
+      }
+    },
+    {
+      "name": "accept_hybrid_pq_cert",
+      "headerHash": "0x22232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f4041",
+      "envelope": {
+        "type_id": "quantum_v1",
+        "body": {
+          "attestation": {
+            "kind": "qpu_provider",
+            "provider": { "id": "qpu:iqm:koala-20", "name": "IQM", "region": "eu-north" },
+            "cert": {
+              "issuer": "animica-qpu-demo-root",
+              "subject": "qpu:iqm:koala-20",
+              "not_before": 1730000000,
+              "not_after": 1738000000,
+              "key_alg": "hybrid_ed25519_dilithium3",
+              "pubkey_b64": {
+                "ed25519": "SFlCUklEX0VEX1BVQg==",
+                "dilithium3": "SFlCUklEX0RMM19QVUJfQkFTRTY0"
+              },
+              "statement": {
+                "device_model": "Koala-20",
+                "calibration_digest": "0x5555aaaa5555aaaa5555aaaa5555aaaa5555aaaa5555aaaa5555aaaa5555aaaa",
+                "trap_family": "x-z-parity",
+                "gate_set": "native",
+                "max_qubits": 20
+              },
+              "signature_b64": {
+                "ed25519": "SFlCUklEX0VEX1NJRw==",
+                "dilithium3": "SFlCUklEX0RMM19TSUc="
+              }
+            },
+            "timestamp": 1730000600
+          },
+          "work": {
+            "circuit_digest": "0x00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff00ff",
+            "depth": 22,
+            "width": 12,
+            "shots": 1500
+          },
+          "traps": { "seed": "0xbeef", "total": 60, "passed": 57 },
+          "qos": { "uptime_1d": 0.993, "p50_ms": 190, "p95_ms": 350, "p99_ms": 520 }
+        },
+        "nullifier": "0x0e9f8a7b6c5d4e3f2a1b0c0d0e0f101112131415161718191a1b1c1d1e1f2021"
+      },
+      "expected": {
+        "accept": true,
+        "metrics": {
+          "traps_ratio": 0.95,
+          "qos_score": 0.90,
+          "quantum_units": 396.0
+        },
+        "psi_micro": 230000,
+        "reason": "Hybrid cert: both Ed25519 and Dilithium3 signatures verify; traps & QoS meet thresholds; high work factor."
+      }
+    }
+  ]
+}

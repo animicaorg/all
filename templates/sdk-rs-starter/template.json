@@ -1,0 +1,36 @@
+{
+  "$schema": "../schemas/template.schema.json",
+  "name": "Animica SDK — Rust Starter",
+  "slug": "sdk-rs-starter",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "description": "Scaffold a Rust CLI/app using the animica-sdk crate. Includes examples for connecting to a node, deploying the Counter contract, subscribing to newHeads, and sending a basic transfer.",
+  "homepage": "https://animica.dev",
+  "repository": "https://github.com/animica-labs/animica",
+  "tags": ["sdk", "rust", "starter", "cli", "templates"],
+  "variables": [
+    "project_slug",
+    "crate_name",
+    "description",
+    "author_name",
+    "author_email",
+    "org",
+    "rpc_url",
+    "chain_id"
+  ],
+  "targets": [
+    {
+      "from": "{{template_dir}}/{{project_slug}}",
+      "to": "{{output_dir}}/{{project_slug}}",
+      "render": true,
+      "include_dotfiles": true
+    }
+  ],
+  "hints": {
+    "rust_version": ">=1.75",
+    "requires_tools": ["cargo"]
+  },
+  "post_init": {
+    "message": "✅ Created {{project_slug}} (crate: {{crate_name}})\n\nNext steps:\n  1) cd {{project_slug}}\n  2) cargo build\n  3) cargo test\n  4) Run the example:\n     cargo run --example deploy_counter -- --rpc {{rpc_url}} --chain {{chain_id}}\n\nTip: update Cargo.toml authors to “{{author_name}} <{{author_email}}>”."
+  }
+}

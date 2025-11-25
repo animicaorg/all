@@ -1,0 +1,63 @@
+# Strategic-merge patch to override Ingress hosts for the devnet overlay.
+# Target Ingress (defined in ops/k8s/ingress/ingress.yaml) named: animica-ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: animica-ingress
+  namespace: animica-devnet
+spec:
+  tls:
+    - hosts:
+        - studio.devnet.animica.test
+        - explorer.devnet.animica.test
+        - services.devnet.animica.test
+        - rpc.devnet.animica.test
+      secretName: animica-devnet-tls
+  rules:
+    - host: studio.devnet.animica.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: studio-web
+                port:
+                  number: 80
+    - host: explorer.devnet.animica.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: explorer-web
+                port:
+                  number: 80
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: explorer
+                port:
+                  number: 8080
+    - host: services.devnet.animica.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: studio-services
+                port:
+                  number: 8080
+    - host: rpc.devnet.animica.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: node-rpc
+                port:
+                  number: 8545

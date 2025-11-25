@@ -1,0 +1,73 @@
+{{-/*
+ConfigMap: genesis.json
+
+Sources (priority):
+1) .Values.genesis.file    -> load a bundled file via .Files.Get (e.g., "ops/k8s/configmaps/genesis.json")
+2) .Values.genesis.inline  -> inline JSON (tpl-rendered so you can interpolate values)
+3) Fallback: minimal, test-friendly devnet genesis
+
+Options:
+- .Values.genesis.immutable: set ConfigMap as immutable (K8s ≥1.19)
+- .Values.genesis.annotations: extra annotations
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "animica-devnet.fullname" . }}-genesis
+  labels:
+    {{- include "animica-devnet.labels" (dict "ctx" . "component" "genesis") | nindent 4 }}
+  {{- with .Values.genesis.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- if hasKey .Values.genesis "immutable" }}
+immutable: {{ .Values.genesis.immutable | default false }}
+{{- end }}
+data:
+  genesis.json: |-
+    {{- if .Values.genesis.file }}
+    {{- /*
+         Load raw JSON from a file packaged with this chart.
+         values.yaml:
+           genesis:
+             file: ops/k8s/configmaps/genesis.json
+    */ -}}
+    {{- .Files.Get .Values.genesis.file | nindent 4 }}
+    {{- else if .Values.genesis.inline }}
+    {{- /*
+         Render inline JSON with tpl so you can inject chainId or allocs.
+         values.yaml:
+           chain:
+             id: 1337
+           genesis:
+             inline: |
+               {
+                 "chainId": {{ .Values.chain.id }},
+                 "genesisTime": "2025-01-01T00:00:00Z",
+                 "alloc": {}
+               }
+    */ -}}
+    {{- include "animica-devnet.tplvalues.render" (dict "root" . "value" .Values.genesis.inline) | nindent 4 }}
+    {{- else }}
+    {{- $chainId := (default 1337 .Values.chain.id) -}}
+    {
+      "chainId": {{ $chainId }},
+      "genesisTime": "2025-01-01T00:00:00Z",
+      "params": {
+        "block": { "max_gas": 10000000, "max_txs": 1000 },
+        "gas": { "base_price": 1, "refund_cap_ratio": 0.2 },
+        "pq": { "enabled": true, "default_sig_alg": "dilithium3", "default_addr_alg": "dilithium3" },
+        "randomness": {
+          "commit_phase_seconds": 10,
+          "reveal_phase_seconds": 10,
+          "settle_phase_seconds": 0,
+          "round_seconds": 20,
+          "vdf": { "security_bits": 128, "discriminant_size_bits": 2048, "target_seconds": 5 }
+        }
+      },
+      "alloc": {
+        "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq0u3u8": { "balance": "1000000000000000000000", "nonce": 0 },
+        "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq6a7a2": { "balance": "1000000000000000000000", "nonce": 0 }
+      }
+    }
+    {{- end }}

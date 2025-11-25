@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "notes": "Common transaction vectors for all SDKs. Each vector supplies an unsigned transaction (the canonical payload to CBOR-encode for signing), plus minimal expectations used by tests. Numbers that may exceed JS safe integers are provided as decimal strings. Addresses are bech32m anim1… placeholders valid for codec roundtrips. SDK unit tests should: (1) encode SignBytes deterministically; (2) compute signing digest = sha3_256(SignBytes); (3) attach a signature (test-only stub acceptable) to form a SignedTx; (4) re-encode the SignedTx to CBOR and compute txId = sha3_256(EncodedTx); (5) ensure field ordering exactly matches spec (stable map order).",
+  "schema": {
+    "unsignedTx.common": [
+      "chainId:string",
+      "from:string(bech32m)",
+      "nonce:uint64",
+      "gasLimit:uint64",
+      "maxFee:uint128_decimal_string",
+      "kind:enum(transfer|call|deploy)"
+    ],
+    "unsignedTx.transfer": ["to:string(bech32m)", "amount:uint128_decimal_string"],
+    "unsignedTx.call": ["to:string(bech32m)", "method:string", "args:bytes(ABI-encoded)"],
+    "unsignedTx.deploy": ["code:bytes", "manifest:json", "salt:bytes32(optional)"],
+    "expect": [
+      "domainTag:string (e.g., ANIMICA_TX_SIGN_V1)",
+      "encodeCborStable:boolean",
+      "shouldAccept:boolean",
+      "reason?:string(human hint only)"
+    ]
+  },
+  "vectors": [
+    {
+      "name": "transfer_valid_minimal",
+      "unsigned": {
+        "chainId": "animica-devnet-1",
+        "from": "anim1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0l5",
+        "nonce": 1,
+        "gasLimit": 50000,
+        "maxFee": "250000",
+        "kind": "transfer",
+        "to": "anim1qqqsyqcyq5rqwzqfpg4dqqp9l3s0g7p7k9j3y0",
+        "amount": "1000000000000000000"
+      },
+      "expect": {
+        "domainTag": "ANIMICA_TX_SIGN_V1",
+        "encodeCborStable": true,
+        "shouldAccept": true
+      }
+    },
+    {
+      "name": "transfer_chain_mismatch",
+      "unsigned": {
+        "chainId": "animica-testnet-0",
+        "from": "anim1r9z3w4u5v6y7x8z9p0q1r2s3t4u5v6w7x8y9z0",
+        "nonce": 7,
+        "gasLimit": 52000,
+        "maxFee": "300000",
+        "kind": "transfer",
+        "to": "anim1hjk2l9dplf32r8qs7g0kdwmeu4z3xr8z5y2wqa",
+        "amount": "42000"
+      },
+      "expect": {
+        "domainTag": "ANIMICA_TX_SIGN_V1",
+        "encodeCborStable": true,
+        "shouldAccept": false,
+        "reason": "ChainMismatch (SDKs should reject locally if configured chainId != tx.chainId)."
+      }
+    },
+    {
+      "name": "transfer_low_fee",
+      "unsigned": {
+        "chainId": "animica-devnet-1",
+        "from": "anim1abcdef234567890hjk0lmnprstuvwx1234567",
+        "nonce": 2,
+        "gasLimit": 80000,
+        "maxFee": "1",
+        "kind": "transfer",
+        "to": "anim1xjk2l9dplf32r8qs7g0kdwmeu4z3xr8z5y2wqa",
+        "amount": "5000000000000"
+      },
+      "expect": {
+        "domainTag": "ANIMICA_TX_SIGN_V1",
+        "encodeCborStable": true,
+        "shouldAccept": false,
+        "reason": "FeeTooLow (client-side check optional; node should reject in mempool)."
+      }
+    },
+    {
+      "name": "deploy_counter_package",
+      "unsigned": {
+        "chainId": "animica-devnet-1",
+        "from": "anim1pa9yer3k2q8x7m0u9d2q3w4e5r6t7y8u9i0opq",
+        "nonce": 10,
+        "gasLimit": 1500000,
+        "maxFee": "5000000",
+        "kind": "deploy",
+        "code": "0xA1B2C3D4", 
+        "manifest": {
+          "name": "Counter",
+          "abi": [
+            { "name": "inc", "inputs": [{ "name": "by", "type": "uint64" }], "outputs": [] },
+            { "name": "get", "inputs": [], "outputs": [{ "name": "value", "type": "uint64" }] }
+          ],
+          "codeHash": "0x1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        "salt": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "domainTag": "ANIMICA_TX_SIGN_V1",
+        "encodeCborStable": true,
+        "shouldAccept": true
+      }
+    },
+    {
+      "name": "call_counter_inc",
+      "unsigned": {
+        "chainId": "animica-devnet-1",
+        "from": "anim1zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+        "nonce": 11,
+        "gasLimit": 120000,
+        "maxFee": "750000",
+        "kind": "call",
+        "to": "anim1contractaddresscounterxxxxxxxxxxxxxx",
+        "method": "inc",
+        "args": "0x0a" 
+      },
+      "expect": {
+        "domainTag": "ANIMICA_TX_SIGN_V1",
+        "encodeCborStable": true,
+        "shouldAccept": true
+      }
+    },
+    {
+      "name": "call_counter_get_view",
+      "unsigned": {
+        "chainId": "animica-devnet-1",
+        "from": "anim1zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+        "nonce": 12,
+        "gasLimit": 30000,
+        "maxFee": "0",
+        "kind": "call",
+        "to": "anim1contractaddresscounterxxxxxxxxxxxxxx",
+        "method": "get",
+        "args": "0x" 
+      },
+      "expect": {
+        "domainTag": "ANIMICA_TX_SIGN_V1",
+        "encodeCborStable": true,
+        "shouldAccept": true,
+        "reason": "View calls may be simulated locally; sending on-chain with zero fee allowed on some networks only if tx is marked as read-only by policy. Keep as positive example for local simulation."
+      }
+    }
+  ]
+}

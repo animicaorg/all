@@ -1,0 +1,269 @@
+{{-/*
+Deployment: Animica Studio Services (FastAPI)
+
+Purpose:
+- Stateless-ish proxy for deploy/verify/faucet/artifacts endpoints used by studio-web.
+- Reads/writes to the chain via in-cluster node RPC.
+- Exposes HTTP API and optional Prometheus metrics.
+- Uses an emptyDir by default for artifact/temp storage; can mount an existing PVC.
+
+Values (excerpt):
+image:
+  services:
+    repository: ghcr.io/animica/studio-services
+    tag: "latest"
+    pullPolicy: IfNotPresent
+    env: {}          # extra image-level env
+    command: []      # optional override
+    args: []         # optional override
+
+services:
+  replicas: 1
+  podLabels: {}
+  podAnnotations: {}
+  priorityClassName: ""
+  serviceAccountName: ""
+  securityContext: {}
+  containerSecurityContext: {}
+  resources: {}
+
+  # If not set, defaults to http://<fullname>-rpc:<node.ports.http>
+  rpcUrl: ""
+  # If not set, coalesces from node.chainId or top-level chainId, else 1
+  chainId: ~
+  http:
+    port: 8080
+  metrics:
+    enabled: true
+    port: 9102
+
+  cors:
+    allowOrigins: []   # e.g. ["https://studio.example.com","http://localhost:5173"]
+
+  rateLimits: ""       # optional per-route limits string (service parses)
+
+  storage:
+    dir: "/var/lib/studio-services"
+
+  faucet:
+    enabled: false
+    # When enabled, a Secret with key "key" is expected; by default the chart
+    # template 'secret-faucet.yaml' names it "<fullname>-faucet".
+    secretName: ""     # override if needed
+
+  persistence:
+    # If true, mount an existing PVC (no PVC is created by this template).
+    enabled: false
+    existingClaim: ""  # required when enabled
+
+  env: {}                 # map of extra env for the container
+  extraEnvFrom: []        # list of {configMapRef|secretRef} objects
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+*/ -}}
+
+{{- $img := .Values.image.services | default dict -}}
+{{- $svc := .Values.services | default dict -}}
+{{- $node := .Values.node | default dict -}}
+
+{{- $httpPort := (default 8080 (dig "http" "port" $svc)) -}}
+{{- $metrics := (default dict $svc.metrics) -}}
+{{- $metricsEnabled := (default true $metrics.enabled) -}}
+{{- $metricsPort := (default 9102 $metrics.port) -}}
+{{- $cors := (default dict $svc.cors) -}}
+{{- $corsOrigins := (default (list) $cors.allowOrigins) -}}
+{{- $rateLimits := (default "" $svc.rateLimits) -}}
+{{- $storageDir := (default "/var/lib/studio-services" (dig "storage" "dir" $svc)) -}}
+
+{{- $nodeRpcPort := (default 8545 $node.ports.http) -}}
+{{- $defaultRpc := printf "http://%s-rpc:%v" (include "animica-devnet.fullname" .) $nodeRpcPort -}}
+{{- $rpcUrl := (default $defaultRpc $svc.rpcUrl) -}}
+{{- $chainId := (coalesce $svc.chainId $node.chainId .Values.chainId 1) -}}
+
+{{- $faucet := (default dict $svc.faucet) -}}
+{{- $faucetEnabled := (default false $faucet.enabled) -}}
+{{- $defaultFaucetSecret := printf "%s-faucet" (include "animica-devnet.fullname" .) -}}
+{{- $faucetSecret := (default $defaultFaucetSecret $faucet.secretName) -}}
+
+{{- $persist := (default dict $svc.persistence) -}}
+{{- $persistEnabled := (default false $persist.enabled) -}}
+{{- $persistClaim := (default "" $persist.existingClaim) -}}
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "animica-devnet.fullname" . }}-services
+  labels:
+    {{- include "animica-devnet.labels" (dict "ctx" . "component" "services") | nindent 4 }}
+spec:
+  replicas: {{ default 1 $svc.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/name: {{ include "animica-devnet.name" . }}
+      app.kubernetes.io/component: services
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/name: {{ include "animica-devnet.name" . }}
+        app.kubernetes.io/component: services
+        {{- with $svc.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        {{- if $metricsEnabled }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ $metricsPort }}"
+        prometheus.io/path: "/metrics"
+        {{- end }}
+        {{- with $svc.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $svc.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with $svc.serviceAccountName }}
+      serviceAccountName: {{ . }}
+      {{- end }}
+      {{- with $svc.securityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: services
+          image: "{{ default "ghcr.io/animica/studio-services" $img.repository }}:{{ default "latest" $img.tag }}"
+          imagePullPolicy: {{ default "IfNotPresent" $img.pullPolicy }}
+          {{- if or $img.command $img.args }}
+          {{- with $img.command }}
+          command: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $img.args }}
+          args: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          {{- else }}
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              set -e
+              if [ -x "/entrypoints/services.sh" ]; then
+                exec /entrypoints/services.sh
+              fi
+              echo "[services] starting on :${STUDIO_HTTP_PORT:-{{ $httpPort }}} (rpc=${STUDIO_RPC_URL})"
+              exec python -m studio_services.main --host 0.0.0.0 --port "${STUDIO_HTTP_PORT:-{{ $httpPort }}}"
+          {{- end }}
+          env:
+            - name: STUDIO_RPC_URL
+              value: {{ $rpcUrl | quote }}
+            - name: STUDIO_CHAIN_ID
+              value: "{{ $chainId }}"
+            - name: STUDIO_HTTP_PORT
+              value: "{{ $httpPort }}"
+            - name: STUDIO_STORAGE_DIR
+              value: {{ $storageDir | quote }}
+            {{- if $metricsEnabled }}
+            - name: STUDIO_METRICS_PORT
+              value: "{{ $metricsPort }}"
+            {{- end }}
+            {{- if $rateLimits }}
+            - name: STUDIO_RATE_LIMITS
+              value: {{ $rateLimits | quote }}
+            {{- end }}
+            {{- if $corsOrigins }}
+            - name: STUDIO_CORS_ALLOW_ORIGINS
+              value: {{ (join "," $corsOrigins) | quote }}
+            {{- end }}
+            {{- if $faucetEnabled }}
+            - name: STUDIO_FAUCET_ENABLED
+              value: "true"
+            - name: FAUCET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $faucetSecret }}
+                  key: key
+                  optional: false
+            {{- else }}
+            - name: STUDIO_FAUCET_ENABLED
+              value: "false"
+            {{- end }}
+            {{- with $img.env }}
+            {{- range $k, $v := . }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with $svc.env }}
+            {{- range $k, $v := . }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            {{- end }}
+          {{- with $svc.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ $httpPort }}
+              protocol: TCP
+            {{- if $metricsEnabled }}
+            - name: metrics
+              containerPort: {{ $metricsPort }}
+              protocol: TCP
+            {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ $storageDir | quote }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            failureThreshold: 3
+          {{- with $svc.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $svc.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: data
+          {{- if $persistEnabled }}
+          persistentVolumeClaim:
+            claimName: {{ required "services.persistence.existingClaim is required when services.persistence.enabled=true" $persistClaim }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with $svc.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $svc.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $svc.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $svc.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

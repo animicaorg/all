@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=Animica Explorer
+GenericName=Blockchain Explorer
+Comment=Lightweight desktop shell for the Animica blockchain explorer
+TryExec=animica-explorer
+Exec=animica-explorer %U
+Icon=animica-explorer
+Terminal=false
+StartupNotify=true
+Categories=Network;Utility;Development;
+Keywords=Blockchain;Explorer;Animica;Blocks;Transactions;
+# Set if your WM class is defined (Tauri usually sets this to the exe name)
+StartupWMClass=animica-explorer
+# Prefer Wayland when available, but allow X11 fallback (handled by system)

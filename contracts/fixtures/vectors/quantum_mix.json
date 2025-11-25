@@ -1,0 +1,361 @@
+{
+  "schemaVersion": "1",
+  "description": "Vectors for a Quantum RNG contract that requests quantum bytes, then deterministically mixes them with the randomness beacon (extract-then-xor style) on the next block. Covers: happy path, idempotency, different-beacon/different-mix, trap-ratio rejection, and malformed payload guards.",
+  "notes": [
+    "Task IDs are derived deterministically, e.g., H(chainId|height|txHash|caller|payload).",
+    "Results are readable starting the NEXT block (height+1). Reads earlier must fail with NoResultYet.",
+    "Mixing rule (conceptual): mix_bytes = SHA3-256( HKDF(beacon_bytes, 'qmix') XOR quantum_bytes ). Contracts may implement equivalent extract-then-xor; tests check stable hash/length, not internal function names.",
+    "Trap-circuit ratio must meet a minimum (e.g., >= 0.60) or the result is rejected with TrapsFail."
+  ],
+  "chain": {
+    "chainId": 1337,
+    "block0": 0
+  },
+  "actors": {
+    "deployer": "anim1deployer00000000000000000000000000000000",
+    "caller":   "anim1caller00000000000000000000000000000000",
+    "treasury": "anim1treasury0000000000000000000000000000000",
+    "contract": "anim1qrng0000000000000000000000000000000000"
+  },
+  "initialState": {
+    "balances": {
+      "anim1deployer00000000000000000000000000000000": "1000000000000000000000",
+      "anim1caller00000000000000000000000000000000": "500000000000000000000",
+      "anim1qrng0000000000000000000000000000000000": "0",
+      "anim1treasury0000000000000000000000000000000": "0"
+    },
+    "storage": {
+      "anim1qrng0000000000000000000000000000000000": {
+        "last_task_id": "",
+        "last_mix_hash": "",
+        "mixes": {},
+        "receipts": {}
+      }
+    },
+    "height": 0
+  },
+  "cases": [
+    {
+      "name": "Roundtrip: request → next block result → consume & mix",
+      "resetState": true,
+      "txs": [
+        {
+          "op": "call",
+          "from": "$caller",
+          "to": "$contract",
+          "method": "request_bytes",
+          "args": {
+            "shots": 4096,
+            "bytes": 32,
+            "trap_depth": 8
+          },
+          "expect": {
+            "ok": true,
+            "events": [
+              {
+                "name": "QuantumJobEnqueued",
+                "args": {
+                  "taskId": "$q1",
+                  "bytes": 32,
+                  "shots": 4096
+                }
+              }
+            ],
+            "storage": {
+              "$contract": {
+                "last_task_id": "$q1"
+              }
+            },
+            "derived": {
+              "taskId": { "alias": "$q1", "rules": "deterministic_from_env" }
+            }
+          }
+        },
+        {
+          "op": "advanceBlocks",
+          "toHeight": 1,
+          "expect": { "ok": true }
+        },
+        {
+          "op": "injectBeacon",
+          "height": 1,
+          "beacon": "0x1111111111111111111111111111111111111111111111111111111111111111",
+          "expect": { "ok": true }
+        },
+        {
+          "op": "injectQuantumResult",
+          "taskId": "$q1",
+          "bytes_hex": "0x7f3cbe9a01c2d4ef55aa0033b1c9e4f08d112233445566778899aabbccddeeff",
+          "meta": {
+            "traps_ratio": 0.80,
+            "q_units": 128,
+            "latency_ms": 120
+          },
+          "expect": { "ok": true }
+        },
+        {
+          "op": "call",
+          "from": "$caller",
+          "to": "$contract",
+          "method": "consume_mix",
+          "args": { "task_id": "$q1" },
+          "expect": {
+            "ok": true,
+            "return": {
+              "task_id": "$q1",
+              "mix_hash": "$mix1",
+              "mix_len": 32
+            },
+            "events": [
+              {
+                "name": "QuantumMixed",
+                "args": {
+                  "taskId": "$q1",
+                  "beaconHeight": 1,
+                  "mixHash": "$mix1"
+                }
+              }
+            ],
+            "storage": {
+              "$contract": {
+                "last_mix_hash": "$mix1",
+                "mixes.$q1": "$mix1",
+                "receipts.$q1": "present"
+              }
+            },
+            "derived": {
+              "mixHash": {
+                "alias": "$mix1",
+                "rules": "sha3_256( hkdf(beacon,'qmix') xor quantum_bytes )"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Idempotency: consuming the same task twice fails",
+      "resetState": false,
+      "txs": [
+        {
+          "op": "call",
+          "from": "$caller",
+          "to": "$contract",
+          "method": "consume_mix",
+          "args": { "task_id": "$q1" },
+          "expect": {
+            "ok": false,
+            "error": "AlreadyConsumed",
+            "events": [],
+            "storage": {
+              "$contract": {
+                "mixes.$q1": "$mix1"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Different beacon → different mix for the same quantum bytes",
+      "resetState": true,
+      "txs": [
+        {
+          "op": "call",
+          "from": "$caller",
+          "to": "$contract",
+          "method": "request_bytes",
+          "args": { "shots": 2048, "bytes": 32, "trap_depth": 8 },
+          "expect": {
+            "ok": true,
+            "derived": { "taskId": { "alias": "$qa", "rules": "deterministic_from_env" } }
+          }
+        },
+        { "op": "advanceBlocks", "toHeight": 2, "expect": { "ok": true } },
+        {
+          "op": "injectBeacon",
+          "height": 2,
+          "beacon": "0x2222222222222222222222222222222222222222222222222222222222222222",
+          "expect": { "ok": true }
+        },
+        {
+          "op": "injectQuantumResult",
+          "taskId": "$qa",
+          "bytes_hex": "0x7f3cbe9a01c2d4ef55aa0033b1c9e4f08d112233445566778899aabbccddeeff",
+          "meta": { "traps_ratio": 0.85, "q_units": 128 },
+          "expect": { "ok": true }
+        },
+        {
+          "op": "call",
+          "from": "$caller",
+          "to": "$contract",
+          "method": "consume_mix",
+          "args": { "task_id": "$qa" },
+          "expect": {
+            "ok": true,
+            "return": { "mix_hash": "$mixA", "mix_len": 32 },
+            "derived": { "mixHash": { "alias": "$mixA", "rules": "sha3_256(...)" } }
+          }
+        },
+
+        {
+          "op": "call",
+          "from": "$caller",
+          "to": "$contract",
+          "method": "request_bytes",
+          "args": { "shots": 2048, "bytes": 32, "trap_depth": 8 },
+          "expect": {
+            "ok": true,
+            "derived": { "taskId": { "alias": "$qb", "rules": "deterministic_from_env" } }
+          }
+        },
+        { "op": "advanceBlocks", "toHeight": 3, "expect": { "ok": true } },
+        {
+          "op": "injectBeacon",
+          "height": 3,
+          "beacon": "0x3333333333333333333333333333333333333333333333333333333333333333",
+          "expect": { "ok": true }
+        },
+        {
+          "op": "injectQuantumResult",
+          "taskId": "$qb",
+          "bytes_hex": "0x7f3cbe9a01c2d4ef55aa0033b1c9e4f08d112233445566778899aabbccddeeff",
+          "meta": { "traps_ratio": 0.86, "q_units": 128 },
+          "expect": { "ok": true }
+        },
+        {
+          "op": "call",
+          "from": "$caller",
+          "to": "$contract",
+          "method": "consume_mix",
+          "args": { "task_id": "$qb" },
+          "expect": {
+            "ok": true,
+            "return": { "mix_hash": "$mixB", "mix_len": 32 },
+            "derived": { "mixHash": { "alias": "$mixB", "rules": "sha3_256(...)" } }
+          }
+        },
+        {
+          "op": "assert",
+          "expr": "$mixA != $mixB",
+          "message": "Mix must change when the beacon changes even if quantum bytes are identical"
+        }
+      ]
+    },
+    {
+      "name": "Trap ratio too low → reject with TrapsFail",
+      "resetState": true,
+      "txs": [
+        {
+          "op": "call",
+          "from": "$caller",
+          "to": "$contract",
+          "method": "request_bytes",
+          "args": { "shots": 1024, "bytes": 16, "trap_depth": 6 },
+          "expect": {
+            "ok": true,
+            "derived": { "taskId": { "alias": "$qt", "rules": "deterministic_from_env" } }
+          }
+        },
+        { "op": "advanceBlocks", "toHeight": 4, "expect": { "ok": true } },
+        {
+          "op": "injectBeacon",
+          "height": 4,
+          "beacon": "0x4444444444444444444444444444444444444444444444444444444444444444",
+          "expect": { "ok": true }
+        },
+        {
+          "op": "injectQuantumResult",
+          "taskId": "$qt",
+          "bytes_hex": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "meta": { "traps_ratio": 0.42, "q_units": 32 },
+          "expect": { "ok": true }
+        },
+        {
+          "op": "call",
+          "from": "$caller",
+          "to": "$contract",
+          "method": "consume_mix",
+          "args": { "task_id": "$qt" },
+          "expect": {
+            "ok": false,
+            "error": "TrapsFail",
+            "events": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "Too-early read: request then consume in same block → NoResultYet",
+      "resetState": true,
+      "txs": [
+        {
+          "op": "call",
+          "from": "$caller",
+          "to": "$contract",
+          "method": "request_bytes",
+          "args": { "shots": 256, "bytes": 32, "trap_depth": 4 },
+          "expect": {
+            "ok": true,
+            "derived": { "taskId": { "alias": "$qe", "rules": "deterministic_from_env" } }
+          }
+        },
+        {
+          "op": "call",
+          "from": "$caller",
+          "to": "$contract",
+          "method": "consume_mix",
+          "args": { "task_id": "$qe" },
+          "expect": {
+            "ok": false,
+            "error": "NoResultYet",
+            "events": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "Malformed quantum payload length → RejectBadPayload",
+      "resetState": true,
+      "txs": [
+        {
+          "op": "call",
+          "from": "$caller",
+          "to": "$contract",
+          "method": "request_bytes",
+          "args": { "shots": 512, "bytes": 32, "trap_depth": 6 },
+          "expect": {
+            "ok": true,
+            "derived": { "taskId": { "alias": "$qm", "rules": "deterministic_from_env" } }
+          }
+        },
+        { "op": "advanceBlocks", "toHeight": 5, "expect": { "ok": true } },
+        {
+          "op": "injectBeacon",
+          "height": 5,
+          "beacon": "0x5555555555555555555555555555555555555555555555555555555555555555",
+          "expect": { "ok": true }
+        },
+        {
+          "op": "injectQuantumResult",
+          "taskId": "$qm",
+          "bytes_hex": "0xdeadbeef", 
+          "meta": { "traps_ratio": 0.95, "q_units": 64 },
+          "expect": { "ok": true }
+        },
+        {
+          "op": "call",
+          "from": "$caller",
+          "to": "$contract",
+          "method": "consume_mix",
+          "args": { "task_id": "$qm" },
+          "expect": {
+            "ok": false,
+            "error": "RejectBadPayload",
+            "events": []
+          }
+        }
+      ]
+    }
+  ]
+}

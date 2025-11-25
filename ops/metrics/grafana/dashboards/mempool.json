@@ -1,0 +1,227 @@
+{
+  "title": "Animica — Mempool",
+  "uid": "animica-mempool",
+  "timezone": "browser",
+  "schemaVersion": 36,
+  "version": 1,
+  "refresh": "10s",
+  "style": "dark",
+  "editable": true,
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["5s","10s","30s","1m","5m"],
+    "hidden": false
+  },
+  "tags": ["mempool","animica"],
+  "templating": {
+    "list": [
+      {
+        "name": "ds",
+        "type": "datasource",
+        "query": "prometheus",
+        "label": "Datasource",
+        "current": {}
+      },
+      {
+        "name": "job",
+        "type": "query",
+        "datasource": "$ds",
+        "label": "job",
+        "refresh": 1,
+        "query": "label_values(animica_mempool_size, job)",
+        "includeAll": false,
+        "multi": false
+      },
+      {
+        "name": "instance",
+        "type": "query",
+        "datasource": "$ds",
+        "label": "instance",
+        "refresh": 1,
+        "query": "label_values(animica_mempool_size{job=\"$job\"}, instance)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".+"
+      },
+      {
+        "name": "reason",
+        "type": "query",
+        "datasource": "$ds",
+        "label": "reject reason",
+        "refresh": 1,
+        "query": "label_values(animica_mempool_reject_total{job=\"$job\"}, reason)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".+"
+      }
+    ]
+  },
+  "annotations": { "list": [{ "type": "dashboard", "name": "Annotations & Alerts", "enable": true }]},
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Pending (total)",
+      "datasource": "$ds",
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
+      "targets": [
+        { "refId": "A", "expr": "sum by(instance) (animica_mempool_size{job=\"$job\",instance=~\"$instance\"})" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green" }, { "color": "orange", "value": 5000 }, { "color": "red", "value": 20000 } ] }
+        }
+      },
+      "options": { "reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "justifyMode": "center" }
+    },
+    {
+      "type": "stat",
+      "title": "Ready queue",
+      "datasource": "$ds",
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
+      "targets": [
+        { "refId": "A", "expr": "sum by(instance) (animica_mempool_size{job=\"$job\",instance=~\"$instance\",queue=\"ready\"})" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "options": { "reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "justifyMode": "center" }
+    },
+    {
+      "type": "stat",
+      "title": "Held (nonce gaps)",
+      "datasource": "$ds",
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
+      "targets": [
+        { "refId": "A", "expr": "sum by(instance) (animica_mempool_size{job=\"$job\",instance=~\"$instance\",queue=\"held\"})" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "options": { "reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "justifyMode": "center" }
+    },
+    {
+      "type": "stat",
+      "title": "Min Gas Price (floor, gwei)",
+      "datasource": "$ds",
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 0},
+      "targets": [
+        { "refId": "A", "expr": "max by(instance) (animica_mempool_min_gas_price_wei{job=\"$job\",instance=~\"$instance\"}) / 1e9" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green" }, { "color": "orange", "value": 2 }, { "color": "red", "value": 10 } ] }
+        }
+      },
+      "options": { "reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none", "justifyMode": "center" }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Pool Size by Queue (stacked)",
+      "datasource": "$ds",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+      "targets": [
+        { "refId": "A", "legendFormat": "{{queue}}", "expr": "sum by(queue,instance) (animica_mempool_size{job=\"$job\",instance=~\"$instance\"})" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" }, "stacking": "normal" }
+    },
+    {
+      "type": "timeseries",
+      "title": "Ingress / Egress (tx/s)",
+      "datasource": "$ds",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
+      "targets": [
+        { "refId": "A", "legendFormat": "ingress tx/s", "expr": "sum by(instance) (rate(animica_mempool_ingress_txs_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" },
+        { "refId": "B", "legendFormat": "egress to miner tx/s", "expr": "sum by(instance) (rate(animica_mempool_egress_selected_txs_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Ingress (bytes/s)",
+      "datasource": "$ds",
+      "gridPos": {"h": 6, "w": 8, "x": 0, "y": 13},
+      "targets": [
+        { "refId": "A", "legendFormat": "ingress B/s", "expr": "sum by(instance) (rate(animica_mempool_ingress_bytes_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps" } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Evictions & Replacements (rate)",
+      "datasource": "$ds",
+      "gridPos": {"h": 6, "w": 8, "x": 8, "y": 13},
+      "targets": [
+        { "refId": "A", "legendFormat": "evictions/s", "expr": "sum by(instance) (rate(animica_mempool_evictions_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" },
+        { "refId": "B", "legendFormat": "replacements/s", "expr": "sum by(instance) (rate(animica_mempool_replacements_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Rate-limited submissions (tx/s)",
+      "datasource": "$ds",
+      "gridPos": {"h": 6, "w": 8, "x": 16, "y": 13},
+      "targets": [
+        { "refId": "A", "legendFormat": "rate-limited/s", "expr": "sum by(instance) (rate(animica_mempool_ratelimit_reject_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Admission Latency — p50 / p95",
+      "datasource": "$ds",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 19},
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "p50",
+          "expr": "histogram_quantile(0.5, sum by(le,instance) (rate(animica_mempool_admission_latency_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "p95",
+          "expr": "histogram_quantile(0.95, sum by(le,instance) (rate(animica_mempool_admission_latency_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Time-in-Pool (until inclusion) — p50 / p95",
+      "datasource": "$ds",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 19},
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "p50",
+          "expr": "histogram_quantile(0.5, sum by(le,instance) (rate(animica_mempool_time_in_pool_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "p95",
+          "expr": "histogram_quantile(0.95, sum by(le,instance) (rate(animica_mempool_time_in_pool_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+
+    {
+      "type": "bargauge",
+      "title": "Admission Rejections by Reason (tx/s)",
+      "datasource": "$ds",
+      "gridPos": {"h": 7, "w": 24, "x": 0, "y": 27},
+      "targets": [
+        { "refId": "A", "expr": "sum by(reason) (rate(animica_mempool_reject_total{job=\"$job\",instance=~\"$instance\",reason=~\"$reason\"}[$__rate_interval]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "displayMode": "gradient", "orientation": "horizontal" }
+    }
+  ]
+}

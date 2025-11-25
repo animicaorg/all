@@ -1,0 +1,44 @@
+; Animica Capabilities — Job Receipt (CBOR/CDDL)
+; ------------------------------------------------------------------
+; Deterministic receipt object returned when a contract enqueues an
+; AI/Quantum job via syscalls. The receipt binds the enqueue action
+; to chain/height/tx/caller and fixes the deterministic task_id used
+; for later result retrieval (read_result(task_id)).
+;
+; All maps use small integer keys to guarantee canonical CBOR ordering.
+; Unknown optional fields MUST be ignored (forward-compat).
+
+JobReceipt = {
+  0: uint,                    ; version (current: 0)
+  1: Hash32,                  ; task_id (deterministic id; see derivation note below)
+  2: kind,                    ; job kind (AI or Quantum)
+  3: chain_id: uint,          ; network discriminator (animica chain id)
+  4: Hash32,                  ; tx_hash of the calling transaction
+  5: Address,                 ; caller account address (alg_id||sha3_256(pubkey))
+  6: uint,                    ; enqueued_height (block height where request was accepted)
+  7: Hash32,                  ; request_hash = H(CBOR(JobRequest)) for audit/replay defense
+  8: uint,                    ; min_read_height = enqueued_height + 1 (next-block consumption rule)
+  ?9: Meta                    ; optional opaque metadata (non-consensus)
+}
+
+; ------------------------------------------------------------------
+
+kind = 0 / 1                   ; 0 = AI, 1 = Quantum
+
+Meta = {
+  * uint => any               ; extension space; ignored by consensus logic
+}
+
+Address = bstr .size 33       ; 1 byte alg_id || 32 bytes sha3_256(pubkey)
+Hash32  = bstr .size 32
+
+; Notes:
+; - task_id derivation (documented; performed outside schema):
+;     task_id = H("AICF|JobRequest"
+;                 || chain_id || enqueued_height || tx_hash || caller
+;                 || request_hash)
+; - Maps MUST be encoded canonically (keys in ascending numeric order).
+; - request_hash MUST be the hash of the canonical CBOR encoding of
+;   the corresponding JobRequest object accepted at enqueued_height.
+; - min_read_height enforces deterministic visibility: results are
+;   consumable beginning the block after enqueue.

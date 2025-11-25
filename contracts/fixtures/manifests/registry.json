@@ -1,0 +1,39 @@
+{
+  "manifestVersion": "1",
+  "name": "AnimicaNameRegistry",
+  "version": "1.0.0",
+  "language": "python-vm",
+
+  "entry": "../../examples/registry/contract.py",
+  "abi": { "$ref": "../abi/registry.json" },
+
+  "code": {
+    "format": "ir.cbor",
+    "hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "size": 0
+  },
+
+  "deploy": {
+    "method": "init",
+    "args": {}
+  },
+
+  "resources": {
+    "capabilities": [],
+    "storage": {
+      "estimatedKeys": 16,
+      "notes": "stores owner, mapping name(bytes32) -> address, and event counters"
+    }
+  },
+
+  "compat": {
+    "vm": { "min": "1.0.0", "max": "2.0.0" }
+  },
+
+  "metadata": {
+    "authors": ["Animica Labs"],
+    "license": "Apache-2.0",
+    "homepage": "https://animica.dev",
+    "description": "Simple on-chain name registry: maps 32-byte names to addresses with events for set/update/remove."
+  }
+}

@@ -1,0 +1,19 @@
+# Grafana provisioning: dashboards
+# Mount your JSON dashboards into /var/lib/grafana/dashboards/animica
+# (see ops/docker/docker-compose.observability.yml or your k8s manifests).
+apiVersion: 1
+
+providers:
+  - name: "Animica Dashboards"
+    uid: animica-dashboards
+    orgId: 1
+    folder: "Animica"
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    editable: false
+    updateIntervalSeconds: 30
+    options:
+      # All *.json files under this path will be provisioned.
+      path: /var/lib/grafana/dashboards/animica
+      foldersFromFilesStructure: true

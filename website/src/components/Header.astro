@@ -1,0 +1,145 @@
+---
+import site from "../config/site";
+import links from "../config/links";
+import chains from "../config/chains";
+import env from "../env";
+
+/**
+ * Top navigation header with brand, primary links, network pill, and CTA.
+ * - Reads PUBLIC_CHAIN_ID and PUBLIC_RPC_URL from env.
+ * - Attempts a lightweight JSON-RPC ping (chain.getHead) client-side to show online status.
+ */
+
+const nav = [
+  { href: "/docs", label: "Docs" },
+  { href: "/explorer", label: "Explorer" },
+  { href: "/blog", label: "Blog" },
+];
+
+const studioHref = links?.studio?.home ?? env.PUBLIC_STUDIO_URL ?? "/studio";
+const explorerHref = links?.explorer?.home ?? "/explorer";
+
+const chainId = env.PUBLIC_CHAIN_ID ?? "";
+const rpcUrl = env.PUBLIC_RPC_URL ?? "";
+
+const chainRec =
+  Array.isArray(chains?.list)
+    ? chains.list.find((c: any) => String(c.id) === String(chainId))
+    : undefined;
+
+const networkName =
+  chainRec?.name ??
+  (chainId ? `Chain ${chainId}` : "Network");
+
+const activePath = Astro.url.pathname;
+---
+
+<header class="header sticky top-0 z-40 backdrop-blur supports-[backdrop-filter]:bg-[color-mix(in_srgb,var(--bg-regular)_/_70%,transparent)] border-b border-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)]">
+  <div class="container mx-auto px-4 h-14 flex items-center justify-between gap-4">
+    <!-- Brand -->
+    <a href="/" class="inline-flex items-center gap-2 font-semibold text-[1.05rem]" aria-label={site.brand}>
+      <img src="/icons/logo.svg" width="20" height="20" alt="" />
+      <span>{site.brand}</span>
+    </a>
+
+    <!-- Primary nav -->
+    <nav class="hidden md:flex items-center gap-6 text-sm" aria-label="Primary">
+      {nav.map((item) => {
+        const isActive = activePath === item.href || activePath.startsWith(item.href + "/");
+        return (
+          <a
+            href={item.href}
+            class={`opacity-85 hover:opacity-100 transition-opacity ${isActive ? "font-medium" : ""}`}
+            aria-current={isActive ? "page" : undefined}
+          >
+            {item.label}
+          </a>
+        );
+      })}
+      <a
+        href={explorerHref}
+        class="opacity-85 hover:opacity-100 transition-opacity md:hidden"
+      >
+        Explorer
+      </a>
+    </nav>
+
+    <div class="flex items-center gap-3">
+      <!-- Network pill -->
+      <div
+        class="group inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs leading-none bg-[var(--bg-elevated)] border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]"
+        data-network-pill
+        title={rpcUrl ? \`RPC: \${rpcUrl}\` : "No RPC configured"}
+      >
+        <span
+          class="inline-block size-2 rounded-full bg-[color-mix(in_srgb,var(--text-primary)_/_40%,transparent)]"
+          aria-hidden="true"
+          data-dot
+        ></span>
+        <span class="truncate max-w-[10ch] sm:max-w-[16ch]" data-net-name>{networkName}</span>
+        {chainId && <span class="opacity-70" data-chain-id>· {chainId}</span>}
+        <span class="sr-only" data-status-sr>(status unknown)</span>
+      </div>
+
+      <!-- CTA -->
+      <a
+        href={studioHref}
+        class="inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium bg-white text-black hover:opacity-95 active:opacity-90 dark:bg-[var(--text-primary)] dark:text-[var(--bg-regular)]"
+      >
+        Launch Studio
+        <svg width="14" height="14" viewBox="0 0 24 24" class="opacity-90" aria-hidden="true">
+          <path fill="currentColor" d="M14 3h7v7h-2V6.41L9.41 16 8 14.59 16.59 6H14V3zM5 5h5V3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-5h-2v5H5V5z"/>
+        </svg>
+      </a>
+    </div>
+  </div>
+
+  <!-- Client-side: tiny JSON-RPC ping to show online/offline/lagging status -->
+  <script>
+    (function () {
+      const rpc = ${JSON.stringify(rpcUrl)};
+      if (!rpc) return;
+
+      const dot = document.querySelector("[data-network-pill] [data-dot]");
+      const pill = document.querySelector("[data-network-pill]");
+      const sr = document.querySelector("[data-network-pill] [data-status-sr]");
+
+      const setStatus = (state, tip) => {
+        if (!dot || !pill) return;
+        let color = "bg-[color-mix(in_srgb,var(--text-primary)_/_40%,transparent)]";
+        let srText = "status unknown";
+        if (state === "online") { color = "bg-emerald-500"; srText = "online"; }
+        if (state === "lagging") { color = "bg-amber-500"; srText = "degraded"; }
+        if (state === "offline") { color = "bg-rose-500"; srText = "offline"; }
+        dot.className = "inline-block size-2 rounded-full " + color;
+        if (sr) sr.textContent = "(" + srText + (tip ? ", head " + tip : "") + ")";
+        pill.dataset.status = state;
+      };
+
+      // Fire and forget
+      const ctrl = new AbortController();
+      setTimeout(() => ctrl.abort(), 6_000);
+
+      fetch(rpc, {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "chain.getHead",
+          params: []
+        }),
+        signal: ctrl.signal
+      })
+      .then(r => r.json())
+      .then(j => {
+        const head = j?.result;
+        // Heuristic: if we have a height and it’s numeric, declare online.
+        const h = head && (head.number ?? head.height);
+        const height = typeof h === "number" ? h : (typeof h === "string" ? Number(h) : undefined);
+        setStatus("online", Number.isFinite(height) ? String(height) : undefined);
+      })
+      .catch(() => setStatus("offline"));
+    })();
+  </script>
+</header>

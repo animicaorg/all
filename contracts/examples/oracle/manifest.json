@@ -1,0 +1,191 @@
+{
+  "schema_version": "1",
+  "name": "Oracle",
+  "version": "1.0.0",
+  "language": "python-vm",
+  "description": "Deterministic oracle that accepts price updates with Data-Availability (NMT root) commitments and exposes the latest value per pair.",
+  "entry": "contracts/examples/oracle/contract.py",
+  "code_hash": "<filled-by-build>",
+  "license": "MIT-0",
+  "authors": ["Animica Contributors"],
+  "capabilities": [],
+  "abi": {
+    "version": "1",
+    "functions": [
+      {
+        "name": "init",
+        "inputs": [
+          { "name": "owner", "type": "address" }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "notice": "Initialize contract owner. Callable exactly once."
+      },
+      {
+        "name": "set_feeder",
+        "inputs": [
+          { "name": "addr", "type": "address" },
+          { "name": "allowed", "type": "bool" }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "notice": "Owner-only. Grant or revoke a feeder that can submit updates."
+      },
+      {
+        "name": "set_pair_decimals",
+        "inputs": [
+          { "name": "pair", "type": "bytes32" },
+          { "name": "decimals", "type": "u8" }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "notice": "Owner-only. Configure decimals for a canonical pair key (e.g., b'ETH/USD\\x00…')."
+      },
+      {
+        "name": "has_pair",
+        "inputs": [
+          { "name": "pair", "type": "bytes32" }
+        ],
+        "outputs": [
+          { "name": "exists", "type": "bool" }
+        ],
+        "stateMutability": "view",
+        "notice": "Returns true if the pair has been configured."
+      },
+      {
+        "name": "get_decimals",
+        "inputs": [
+          { "name": "pair", "type": "bytes32" }
+        ],
+        "outputs": [
+          { "name": "decimals", "type": "u8" }
+        ],
+        "stateMutability": "view",
+        "notice": "Get configured decimals for the pair."
+      },
+      {
+        "name": "submit",
+        "inputs": [
+          { "name": "pair", "type": "bytes32" },
+          { "name": "value", "type": "int" },
+          { "name": "ts", "type": "u64" },
+          { "name": "source", "type": "bytes32" },
+          { "name": "commitment", "type": "bytes32" }
+        ],
+        "outputs": [
+          { "name": "round_id", "type": "u64" }
+        ],
+        "stateMutability": "nonpayable",
+        "notice": "Owner/feeder-only. Submit a value with a DA commitment; returns incremented round id."
+      },
+      {
+        "name": "get_latest",
+        "inputs": [
+          { "name": "pair", "type": "bytes32" }
+        ],
+        "outputs": [
+          { "name": "value", "type": "int" },
+          { "name": "decimals", "type": "u8" },
+          { "name": "ts", "type": "u64" },
+          { "name": "round_id", "type": "u64" },
+          { "name": "source", "type": "bytes32" },
+          { "name": "commitment", "type": "bytes32" }
+        ],
+        "stateMutability": "view",
+        "notice": "Return the latest submitted value and metadata for a pair."
+      },
+      {
+        "name": "get_round",
+        "inputs": [
+          { "name": "pair", "type": "bytes32" },
+          { "name": "round_id", "type": "u64" }
+        ],
+        "outputs": [
+          { "name": "value", "type": "int" },
+          { "name": "decimals", "type": "u8" },
+          { "name": "ts", "type": "u64" },
+          { "name": "source", "type": "bytes32" },
+          { "name": "commitment", "type": "bytes32" }
+        ],
+        "stateMutability": "view",
+        "notice": "Return a historic round value and metadata for a pair."
+      },
+      {
+        "name": "owner",
+        "inputs": [],
+        "outputs": [
+          { "name": "addr", "type": "address" }
+        ],
+        "stateMutability": "view",
+        "notice": "Return the current contract owner."
+      },
+      {
+        "name": "transfer_ownership",
+        "inputs": [
+          { "name": "new_owner", "type": "address" }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "notice": "Owner-only. Transfer ownership to a new address."
+      }
+    ],
+    "events": [
+      {
+        "name": "UpdateSubmitted",
+        "inputs": [
+          { "name": "pair", "type": "bytes32", "indexed": true },
+          { "name": "value", "type": "int", "indexed": false },
+          { "name": "ts", "type": "u64", "indexed": false },
+          { "name": "round_id", "type": "u64", "indexed": true },
+          { "name": "source", "type": "bytes32", "indexed": false },
+          { "name": "commitment", "type": "bytes32", "indexed": false },
+          { "name": "feeder", "type": "address", "indexed": true }
+        ],
+        "notice": "Emitted on successful submit for a pair."
+      },
+      {
+        "name": "DecimalsSet",
+        "inputs": [
+          { "name": "pair", "type": "bytes32", "indexed": true },
+          { "name": "decimals", "type": "u8", "indexed": false }
+        ],
+        "notice": "Emitted when decimals are configured for a pair."
+      },
+      {
+        "name": "FeederSet",
+        "inputs": [
+          { "name": "addr", "type": "address", "indexed": true },
+          { "name": "allowed", "type": "bool", "indexed": false }
+        ],
+        "notice": "Emitted when a feeder permission is updated."
+      },
+      {
+        "name": "OwnershipTransferred",
+        "inputs": [
+          { "name": "previous", "type": "address", "indexed": true },
+          { "name": "new", "type": "address", "indexed": true }
+        ],
+        "notice": "Emitted when the owner is changed."
+      }
+    ],
+    "errors": [
+      { "name": "NotOwner", "inputs": [] },
+      { "name": "NotOwnerOrFeeder", "inputs": [] },
+      { "name": "PairNotConfigured", "inputs": [] },
+      { "name": "InvalidTimestamp", "inputs": [] }
+    ]
+  },
+  "resources": {
+    "storage_keys_hint": [
+      "owner",
+      "feeders:*",
+      "pair_decimals:*",
+      "latest:*",
+      "round:*"
+    ]
+  },
+  "metadata": {
+    "tags": ["oracle", "data-availability", "prices", "commitment"],
+    "homepage": "https://animica.example/oracle"
+  }
+}

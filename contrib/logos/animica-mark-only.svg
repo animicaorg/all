@@ -1,0 +1,17 @@
+<!-- Animica Mark Only (symbol)
+     Usage: avatars, favicons, app icons, badges.
+     SPDX-License-Identifier: CC-BY-ND-4.0 (brand assets) -->
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Animica Mark</title>
+  <desc id="desc">Circular orb with stylized A and crossbar</desc>
+
+  <!-- Outer orb -->
+  <circle cx="128" cy="128" r="112" fill="#2E63FF"/>
+  <!-- Inner cut (surface) -->
+  <circle cx="128" cy="128" r="88" fill="#FFFFFF"/>
+
+  <!-- Stylized A (equilateral-like) -->
+  <path d="M128 68 L84 192 H172 L128 68 Z" fill="#2E63FF"/>
+  <!-- Crossbar -->
+  <rect x="104" y="160" width="48" height="16" rx="8" fill="#2E63FF"/>
+</svg>

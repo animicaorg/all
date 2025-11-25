@@ -1,0 +1,76 @@
+# Exposes node P2P endpoints to the internet for devnet/testnet.
+# We split TCP and UDP (QUIC) into two Services because some clouds/LB
+# implementations do not support mixed protocols on a single LB.
+#
+# Ports (customizable):
+#   - 38000/TCP  : native P2P over TCP
+#   - 38001/UDP  : P2P over QUIC (UDP)
+#   - 38002/TCP  : P2P over WebSocket
+#
+# NodePorts are pinned so this also works without a cloud LB.
+# For prod, consider firewalling via loadBalancerSourceRanges.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: node-p2p-tcp
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: node
+    app.kubernetes.io/name: animica-node
+  annotations:
+    # Uncomment the below on AWS to force NLB and IP targets:
+    # service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    # service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    # service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+    # Restrict who can connect (optional, CIDR list):
+    # service.beta.kubernetes.io/load-balancer-source-ranges: "203.0.113.0/24,198.51.100.0/24"
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  ipFamilyPolicy: PreferDualStack
+  selector:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: node
+    app.kubernetes.io/name: animica-node
+  ports:
+    - name: p2p-tcp
+      protocol: TCP
+      port: 38000
+      targetPort: p2p-tcp        # containerPort name expected on the node Pod
+      nodePort: 31100
+    - name: p2p-ws
+      protocol: TCP
+      port: 38002
+      targetPort: p2p-ws         # containerPort name expected on the node Pod
+      nodePort: 31102
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: node-p2p-udp
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: node
+    app.kubernetes.io/name: animica-node
+  annotations:
+    # For AWS NLB UDP:
+    # service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    # service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local
+  ipFamilyPolicy: PreferDualStack
+  selector:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: node
+    app.kubernetes.io/name: animica-node
+  ports:
+    - name: p2p-quic
+      protocol: UDP
+      port: 38001
+      targetPort: p2p-quic       # containerPort name expected on the node Pod
+      nodePort: 31101

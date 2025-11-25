@@ -1,0 +1,239 @@
+# Prometheus alerting rules — Data Availability (DA)
+# Expected metric names (adjust if your deployment uses different ones):
+#   Requests / errors:
+#     - animica_da_post_requests_total
+#     - animica_da_post_errors_total
+#     - animica_da_get_requests_total
+#     - animica_da_get_errors_total
+#   Latency histograms:
+#     - animica_da_post_latency_seconds_bucket
+#     - animica_da_get_latency_seconds_bucket
+#   Proofs / verification:
+#     - animica_da_nmt_verify_total
+#     - animica_da_nmt_verify_fail_total
+#     - animica_da_light_verify_total
+#     - animica_da_light_verify_fail_total
+#     - animica_da_erasure_decode_total
+#     - animica_da_erasure_decode_fail_total
+#     - animica_da_root_mismatch_total  (optional; block vs computed)
+#   Sampling:
+#     - animica_da_sampling_attempts_total
+#     - animica_da_sampling_estimated_p_fail  (gauge, 0..1)
+#   Misc (optional):
+#     - node_filesystem_avail_bytes{mount="/data"}  (from node_exporter)
+#     - container_fs_usage_bytes{container="da"}    (from cAdvisor)
+
+groups:
+  - name: da.rules
+    rules:
+      # ───────────────────────── Error rates (POST/GET) ─────────────────────────
+      - alert: DAPostErrorRateHigh
+        expr: |
+          rate(animica_da_post_errors_total[5m])
+          / clamp_min(rate(animica_da_post_requests_total[5m]), 1) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: animica
+          component: da
+        annotations:
+          summary: "DA post error rate >5% (10m)"
+          description: >
+            Elevated failures posting blobs to DA. Investigate store backends,
+            disk space, or schema mismatches.
+
+      - alert: DAPostErrorRateCritical
+        expr: |
+          rate(animica_da_post_errors_total[5m])
+          / clamp_min(rate(animica_da_post_requests_total[5m]), 1) > 0.15
+        for: 10m
+        labels:
+          severity: critical
+          service: animica
+          component: da
+        annotations:
+          summary: "DA post error rate >15% (critical)"
+          description: >
+            Many blob POSTs are failing. Likely persistence outage or schema break.
+
+      - alert: DARetrievalErrorRateHigh
+        expr: |
+          rate(animica_da_get_errors_total[5m])
+          / clamp_min(rate(animica_da_get_requests_total[5m]), 1) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: animica
+          component: da
+        annotations:
+          summary: "DA retrieval error rate >5% (10m)"
+          description: >
+            Elevated GET/proof failures. Check proof building and namespaces.
+
+      - alert: DARetrievalErrorRateCritical
+        expr: |
+          rate(animica_da_get_errors_total[5m])
+          / clamp_min(rate(animica_da_get_requests_total[5m]), 1) > 0.15
+        for: 10m
+        labels:
+          severity: critical
+          service: animica
+          component: da
+        annotations:
+          summary: "DA retrieval error rate >15% (critical)"
+          description: >
+            Retrieval failures are severe. Clients may not fetch blobs reliably.
+
+      # ─────────────────────────── Latency (p95) ───────────────────────────
+      - alert: DAPostLatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(animica_da_post_latency_seconds_bucket[5m]))
+          ) > 5
+        for: 10m
+        labels:
+          severity: warning
+          service: animica
+          component: da
+        annotations:
+          summary: "DA post latency p95 > 5s"
+          description: >
+            Posting blobs is slow (p95 > 5s). Check disk I/O, erasure coding
+            settings, and store contention.
+
+      - alert: DARetrievalLatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(animica_da_get_latency_seconds_bucket[5m]))
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+          service: animica
+          component: da
+        annotations:
+          summary: "DA retrieval latency p95 > 2s"
+          description: >
+            Retrieving blobs/proofs is slow (p95 > 2s). Verify cache and proof-path hot items.
+
+      # ─────────────────────── Proof verify failure rates ───────────────────────
+      - alert: DANMTProofVerifyFailing
+        expr: |
+          rate(animica_da_nmt_verify_fail_total[10m])
+          / clamp_min(rate(animica_da_nmt_verify_total[10m]), 1) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: animica
+          component: da
+        annotations:
+          summary: "NMT proof verification failures >5%"
+          description: >
+            Namespaced Merkle proof verification failing frequently. Check namespace
+            layout, leaf serialization, and tree parameters.
+
+      - alert: DALightVerifyFailing
+        expr: |
+          rate(animica_da_light_verify_fail_total[10m])
+          / clamp_min(rate(animica_da_light_verify_total[10m]), 1) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: animica
+          component: da
+        annotations:
+          summary: "Light-client verify failures >5%"
+          description: >
+            Light verification against header DA root is failing. Mismatch between
+            block header DA root and reconstructed root likely.
+
+      - alert: DAErasureDecodeFailureRate
+        expr: |
+          rate(animica_da_erasure_decode_fail_total[10m])
+          / clamp_min(rate(animica_da_erasure_decode_total[10m]), 1) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          service: animica
+          component: da
+        annotations:
+          summary: "Erasure decode failure rate >5%"
+          description: >
+            Reed–Solomon recovery often fails. Inspect (k,n) profile, shard sizes,
+            and corruption along the path.
+
+      # Mismatch detector (optional metric emitted when header root != recomputed)
+      - alert: DADARootMismatch
+        expr: increase(animica_da_root_mismatch_total[10m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: animica
+          component: da
+        annotations:
+          summary: "DA root mismatch detected"
+          description: >
+            Recomputed DA root does not match header DA root. Reject blocks until fixed.
+
+      # ───────────────────── Sampling health & p_fail bounds ────────────────────
+      - alert: DASamplingStalled
+        expr: |
+          increase(animica_da_sampling_attempts_total[30m]) == 0
+        for: 15m
+        labels:
+          severity: warning
+          service: animica
+          component: da
+        annotations:
+          summary: "DA sampling stalled"
+          description: >
+            No DA sampling attempts recorded for 30 minutes. Light availability
+            checks are not running; enable the sampler.
+
+      - alert: DASamplingPFailHigh
+        expr: |
+          avg_over_time(animica_da_sampling_estimated_p_fail[30m]) > 0.05
+          and increase(animica_da_sampling_attempts_total[30m]) > 0
+        for: 15m
+        labels:
+          severity: warning
+          service: animica
+          component: da
+        annotations:
+          summary: "Estimated p_fail > 5% over 30m"
+          description: >
+            Data availability sampling indicates higher-than-target failure probability.
+            Increase sampling rate, check gossip for missed shares, or raise redundancy.
+
+      - alert: DASamplingPFailCritical
+        expr: |
+          avg_over_time(animica_da_sampling_estimated_p_fail[30m]) > 0.10
+          and increase(animica_da_sampling_attempts_total[30m]) > 0
+        for: 10m
+        labels:
+          severity: critical
+          service: animica
+          component: da
+        annotations:
+          summary: "Estimated p_fail > 10% (critical)"
+          description: >
+            Availability risk is high. Investigate NMT/proof path, erasure parameters,
+            and network sampling coverage.
+
+      # ───────────────────────── Storage capacity (optional) ────────────────────
+      - alert: DAStorageLowSpace
+        expr: |
+          min without(device,fstype) (node_filesystem_avail_bytes{mount="/data"}) < 10 * 1024 * 1024 * 1024
+        for: 10m
+        labels:
+          severity: warning
+          service: animica
+          component: da
+        annotations:
+          summary: "DA storage free space < 10 GiB"
+          description: >
+            The filesystem hosting DA blobs is running low on space. Consider GC,
+            pruning, or expanding the volume.
+

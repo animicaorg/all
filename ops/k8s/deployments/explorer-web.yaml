@@ -1,0 +1,83 @@
+# Explorer Web (static SPA served by nginx) Deployment.
+# - Stateless; safe to run multiple replicas behind a Service/Ingress.
+# - Optionally mounts a runtime /config.json via ConfigMap "explorer-web-config"
+#   so you can change RPC/Services URLs without rebuilding.
+# - Health checks probe "/" (served by nginx).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: animica-explorer-web
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: explorer-web
+    app.kubernetes.io/name: animica-explorer-web
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: animica
+      app.kubernetes.io/component: explorer-web
+      app.kubernetes.io/name: animica-explorer-web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: animica
+        app.kubernetes.io/component: explorer-web
+        app.kubernetes.io/name: animica-explorer-web
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: explorer-web
+          # Replace with your published Explorer Web image
+          image: ghcr.io/animica/explorer-web:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080   # must align with nginx config in the image
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+          volumeMounts:
+            # Optional runtime config for SPA (served at /config.json in site root).
+            # Create a ConfigMap named "explorer-web-config" with key "config.json".
+            - name: runtime-config
+              mountPath: /usr/share/nginx/html/config.json
+              subPath: config.json
+              readOnly: true
+      volumes:
+        - name: runtime-config
+          configMap:
+            name: explorer-web-config
+            optional: true
+            items:
+              - key: config.json
+                path: config.json

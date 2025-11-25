@@ -1,0 +1,339 @@
+{
+  "title": "Animica — PoIES (Γ / Fairness / Mix)",
+  "uid": "animica-poies",
+  "timezone": "browser",
+  "schemaVersion": 36,
+  "version": 1,
+  "refresh": "10s",
+  "style": "dark",
+  "editable": true,
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["5s","10s","30s","1m","5m"],
+    "hidden": false
+  },
+  "tags": ["poies","consensus","animica"],
+  "templating": {
+    "list": [
+      {
+        "name": "ds",
+        "type": "datasource",
+        "query": "prometheus",
+        "label": "Datasource",
+        "current": {}
+      },
+      {
+        "name": "job",
+        "type": "query",
+        "datasource": "$ds",
+        "label": "job",
+        "refresh": 1,
+        "query": "label_values(animica_consensus_theta_current, job)",
+        "includeAll": false,
+        "multi": false
+      },
+      {
+        "name": "instance",
+        "type": "query",
+        "datasource": "$ds",
+        "label": "instance",
+        "refresh": 1,
+        "query": "label_values(animica_consensus_theta_current{job=\"$job\"}, instance)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".+"
+      },
+      {
+        "name": "ptype",
+        "type": "query",
+        "datasource": "$ds",
+        "label": "proof type",
+        "refresh": 1,
+        "query": "label_values(animica_consensus_mix_ratio{job=\"$job\"}, type)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".+"
+      }
+    ]
+  },
+  "annotations": {
+    "list": [{
+      "type": "dashboard",
+      "name": "Annotations & Alerts",
+      "enable": true
+    }]
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Θ (threshold, µ-nats)",
+      "description": "Current acceptance threshold Θ in micro-nats",
+      "datasource": "$ds",
+      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 0},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by(instance) (animica_consensus_theta_current{job=\"$job\",instance=~\"$instance\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green" },
+              { "color": "orange", "value": 800000 },
+              { "color": "red", "value": 1200000 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "values": false},
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Γ Utilization (epoch)",
+      "description": "Consumed Γ / cap for current epoch",
+      "datasource": "$ds",
+      "gridPos": {"h": 6, "w": 6, "x": 6, "y": 0},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by(instance) (100 * animica_consensus_gamma_consumed{job=\"$job\",instance=~\"$instance\"} / animica_consensus_gamma_cap{job=\"$job\",instance=~\"$instance\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              { "color": "green" },
+              { "color": "orange", "value": 70 },
+              { "color": "red", "value": 90 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "values": false},
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Acceptance Rate",
+      "description": "Blocks accepted / candidates over $__rate_interval",
+      "datasource": "$ds",
+      "gridPos": {"h": 6, "w": 6, "x": 12, "y": 0},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * (sum by(instance) (rate(animica_consensus_blocks_accepted_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])) / sum by(instance) (rate(animica_consensus_block_candidates_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0, "max": 100,
+          "thresholds": {
+            "mode": "percentage",
+            "steps": [
+              { "color": "red" },
+              { "color": "orange", "value": 40 },
+              { "color": "green", "value": 65 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "values": false},
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Mix Diversity (H, 0–1)",
+      "description": "Shannon diversity index H across proof-type mix",
+      "datasource": "$ds",
+      "gridPos": {"h": 6, "w": 6, "x": 18, "y": 0},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by(instance) (animica_consensus_mix_diversity{job=\"$job\",instance=~\"$instance\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red" },
+              { "color": "orange", "value": 0.45 },
+              { "color": "green", "value": 0.7 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "values": false},
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center"
+      }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Mix Ratios by Proof Type (stacked)",
+      "description": "Σψ contribution share per type; should sum ≈ 1.0",
+      "datasource": "$ds",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{type}}",
+          "expr": "avg by(type,instance) (animica_consensus_mix_ratio{job=\"$job\",instance=~\"$instance\",type=~\"$ptype\"})"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "min": 0, "max": 1 }, "overrides": [] },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" },
+        "stacking": "normal"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Γ Spent (units/s)",
+      "description": "Rate of Γ consumption (per second)",
+      "datasource": "$ds",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "Γ units/s",
+          "expr": "sum by(instance) (rate(animica_consensus_gamma_spent_units_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Retarget: Target vs Observed Block Interval",
+      "datasource": "$ds",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "target (s)",
+          "expr": "max by(instance) (animica_consensus_target_block_time_seconds{job=\"$job\",instance=~\"$instance\"})"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "observed p50 (s)",
+          "expr": "histogram_quantile(0.5, sum by(le,instance) (rate(animica_core_block_interval_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))"
+        },
+        {
+          "refId": "C",
+          "legendFormat": "observed p95 (s)",
+          "expr": "histogram_quantile(0.95, sum by(le,instance) (rate(animica_core_block_interval_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "α (fairness tuner) by Proof Type",
+      "datasource": "$ds",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14},
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{type}}",
+          "expr": "avg by(type,instance) (animica_consensus_alpha_value{job=\"$job\",instance=~\"$instance\",type=~\"$ptype\"})"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Score Margin (S − Θ) — p50/p95",
+      "description": "Histogram quantiles from score margin buckets",
+      "datasource": "$ds",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 22},
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "p50",
+          "expr": "histogram_quantile(0.5, sum by(le,instance) (rate(animica_consensus_score_margin_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "p95",
+          "expr": "histogram_quantile(0.95, sum by(le,instance) (rate(animica_consensus_score_margin_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Nullifier Rejections (rate)",
+      "datasource": "$ds",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 22},
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "nullifier rejects/s",
+          "expr": "sum by(instance) (rate(animica_consensus_nullifier_reject_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Caps Hit (rate) by Proof Type",
+      "description": "Per-type cap or total-Γ cap clipping events",
+      "datasource": "$ds",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 30},
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{type}} cap-hit/s",
+          "expr": "sum by(type,instance) (rate(animica_consensus_caps_hits_total{job=\"$job\",instance=~\"$instance\",type=~\"$ptype\"}[$__rate_interval]))"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "Γ cap-hit/s",
+          "expr": "sum by(instance) (rate(animica_consensus_gamma_cap_hits_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right" } }
+    }
+  ]
+}

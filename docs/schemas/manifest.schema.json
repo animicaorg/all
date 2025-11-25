@@ -1,0 +1,312 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://animica.dev/schemas/manifest.schema.json",
+  "title": "Animica Contract Package Manifest",
+  "description": "Canonical manifest for deployable contract bundles (code + ABI + capabilities + provenance). Mirrors spec/manifest.schema.json and is used by Studio/SDKs/Verifier services.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "encoding", "contract", "abi", "code"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "description": "Semantic version of the manifest format.",
+      "enum": ["1.0", "1.1"]
+    },
+    "encoding": {
+      "type": "string",
+      "description": "Manifest encoding identifier.",
+      "const": "animica.manifest.v1"
+    },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "$ref": "#/$defs/identifier" },
+        "version": { "type": "string", "description": "Author-defined semantic version." },
+        "author": { "type": "string" },
+        "license": { "type": "string" },
+        "description": { "type": "string" },
+        "homepage": { "type": "string", "format": "uri" },
+        "repository": { "type": "string", "format": "uri" }
+      }
+    },
+    "abi": {
+      "description": "ABI for function dispatch and (de)encoding. Either an inline ABI object or a reference (path/URL).",
+      "oneOf": [
+        { "type": "string", "format": "uri-reference", "description": "Path or URL to ABI JSON (relative, file:, ipfs:, https:)." },
+        { "$ref": "abi.schema.json" }
+      ]
+    },
+    "code": {
+      "type": "object",
+      "description": "Compiled contract artifact or reference and its canonical hash.",
+      "additionalProperties": false,
+      "required": ["format", "hash", "size"],
+      "properties": {
+        "format": {
+          "type": "string",
+          "description": "Artifact format identifier.",
+          "enum": [
+            "vm_py.ir.cbor",         /* CBOR-encoded IR bytes for VM-Py */
+            "vm_py.source.py",       /* source bytes (deterministic packaging) */
+            "vm_py.bytecode",        /* prelinked bytecode (if produced) */
+            "custom"
+          ]
+        },
+        "hash": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["algo", "sha3_256"],
+          "properties": {
+            "algo": {
+              "type": "string",
+              "description": "Hashing algorithm used for content addressing of 'bytes' or the resource at 'uri'.",
+              "enum": ["sha3-256"]
+            },
+            "sha3_256": { "$ref": "#/$defs/sha3_256" }
+          }
+        },
+        "size": { "type": "integer", "minimum": 0, "description": "Byte length of artifact (raw bytes as shipped)." },
+        "bytes": {
+          "description": "Optional inlined artifact content (use for small demos/tests); discouraged for large packages.",
+          "oneOf": [
+            { "$ref": "#/$defs/hexBytes" },
+            { "$ref": "#/$defs/base64Bytes" }
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "format": "uri",
+          "description": "Optional content-addressed or static location of the artifact (e.g., ipfs://, https://, file://)."
+        },
+        "build_flags": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Optional flags/feature toggles used during compilation/packaging."
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "description": "Capabilities the contract may exercise and upper-bound limits requested.",
+      "additionalProperties": false,
+      "properties": {
+        "caps": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/capability" },
+          "description": "Declared syscall capabilities required by this package."
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "max_blob_bytes": { "type": "integer", "minimum": 0 },
+            "max_ai_units": { "type": "integer", "minimum": 0 },
+            "max_quantum_units": { "type": "integer", "minimum": 0 },
+            "max_zk_units": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "deployment": {
+      "type": "object",
+      "description": "Optional deployment hints for deterministic addressing or preflight.",
+      "additionalProperties": false,
+      "properties": {
+        "chainId": { "type": "integer", "minimum": 0 },
+        "publisher": { "$ref": "#/$defs/address" },
+        "salt": { "$ref": "#/$defs/hex32" },
+        "predicted_address": { "$ref": "#/$defs/address" },
+        "init_call": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["function", "args"],
+          "properties": {
+            "function": { "$ref": "#/$defs/identifier" },
+            "args": {
+              "type": "array",
+              "items": {},
+              "description": "ABI-encoded arguments (JSON values matching ABI types)."
+            }
+          }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "description": "Optional extra artifacts tied to this build.",
+      "additionalProperties": false,
+      "properties": {
+        "source_uri": { "type": "string", "format": "uri" },
+        "docs_uri": { "type": "string", "format": "uri" },
+        "metadata_uri": { "type": "string", "format": "uri" }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "description": "Build & toolchain provenance for reproducibility.",
+      "additionalProperties": false,
+      "properties": {
+        "toolchain": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "vm_py_version": { "type": "string" },
+            "compiler_version": { "type": "string" },
+            "sdk_version": { "type": "string" }
+          }
+        },
+        "source_control": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "git_commit": { "type": "string" },
+            "git_describe": { "type": "string" },
+            "repo": { "type": "string", "format": "uri" }
+          }
+        },
+        "build": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "timestamp": { "type": "string", "format": "date-time" },
+            "builder": { "type": "string" },
+            "environment": { "type": "string" }
+          }
+        }
+      }
+    },
+    "signatures": {
+      "type": "array",
+      "description": "Optional publisher/vendor signatures over canonicalized manifest bytes.",
+      "items": { "$ref": "#/$defs/signature" }
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Arbitrary non-consensus metadata for tooling and catalogs.",
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+      "description": "ASCII identifier (letters, digits, underscore; not starting with a digit)."
+    },
+    "sha3_256": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{64}$",
+      "description": "Hex-encoded SHA3-256 digest."
+    },
+    "hexBytes": {
+      "type": "string",
+      "pattern": "^0x(?:[0-9a-fA-F]{2})+$",
+      "description": "Raw bytes encoded as 0x-prefixed hex."
+    },
+    "base64Bytes": {
+      "type": "string",
+      "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
+      "description": "Raw bytes encoded as base64."
+    },
+    "hex32": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{64}$",
+      "description": "32-byte hex value (0x + 64 hex chars)."
+    },
+    "address": {
+      "type": "string",
+      "description": "Animica bech32m address (HRP varies by network).",
+      "pattern": "^(anim|anmt|anmd)1[0-9a-z]{6,}$"
+    },
+    "capability": {
+      "type": "string",
+      "enum": [
+        "blob.pin",
+        "compute.ai.enqueue",
+        "compute.quantum.enqueue",
+        "compute.result.read",
+        "zk.verify",
+        "random.read",
+        "treasury.transfer"
+      ]
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["alg_id", "signer", "sig", "manifest_hash"],
+      "properties": {
+        "alg_id": {
+          "type": "string",
+          "description": "Signature algorithm identifier (e.g., dilithium3, sphincs_shake_128s)."
+        },
+        "signer": { "$ref": "#/$defs/address" },
+        "sig": { "$ref": "#/$defs/hexBytes" },
+        "manifest_hash": {
+          "$ref": "#/$defs/sha3_256",
+          "description": "Hash of canonical JSON of the manifest (without 'signatures')."
+        },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "examples": [
+    {
+      "schema_version": "1.1",
+      "encoding": "animica.manifest.v1",
+      "contract": {
+        "name": "Counter",
+        "version": "1.0.0",
+        "author": "Animica Labs",
+        "license": "Apache-2.0",
+        "description": "Deterministic counter example."
+      },
+      "abi": {
+        "schema_version": "1.1",
+        "encoding": "animica.abi.v1",
+        "contract": { "name": "Counter", "version": "1.0.0" },
+        "functions": [
+          { "name": "get", "inputs": [], "outputs": [{ "name": "value", "type": "u64" }], "stateMutability": "view" },
+          { "name": "inc", "inputs": [{ "name": "by", "type": "u64" }], "outputs": [], "stateMutability": "nonpayable" }
+        ],
+        "events": [],
+        "errors": []
+      },
+      "code": {
+        "format": "vm_py.ir.cbor",
+        "hash": { "algo": "sha3-256", "sha3_256": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+        "size": 512,
+        "bytes": "0xA1A2A3",
+        "build_flags": ["strict"]
+      },
+      "resources": {
+        "caps": ["zk.verify", "random.read"],
+        "limits": { "max_zk_units": 2000 }
+      },
+      "deployment": {
+        "chainId": 1,
+        "publisher": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq0k0k0k",
+        "salt": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "provenance": {
+        "toolchain": { "vm_py_version": "0.7.0", "compiler_version": "0.7.0" },
+        "source_control": { "git_commit": "deadbeef", "repo": "https://github.com/animica/animica" },
+        "build": { "timestamp": "2025-01-01T00:00:00Z", "builder": "studio-services" }
+      }
+    },
+    {
+      "schema_version": "1.1",
+      "encoding": "animica.manifest.v1",
+      "contract": { "name": "Escrow", "version": "0.2.0" },
+      "abi": "ipfs://bafy.../escrow.abi.json",
+      "code": {
+        "format": "vm_py.ir.cbor",
+        "hash": { "algo": "sha3-256", "sha3_256": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
+        "size": 2048,
+        "uri": "ipfs://bafy.../escrow.ir.cbor"
+      },
+      "resources": { "caps": ["blob.pin", "treasury.transfer"] }
+    }
+  ]
+}

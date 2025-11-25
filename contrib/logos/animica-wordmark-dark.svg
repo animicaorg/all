@@ -1,0 +1,15 @@
+<!-- Animica Wordmark — Dark Variant
+     Usage: for dark backgrounds (pre-tinted for contrast).
+     SPDX-License-Identifier: CC-BY-ND-4.0 (brand assets) -->
+<svg width="560" height="120" viewBox="0 0 560 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Animica Wordmark (Dark)</title>
+  <desc id="desc">The Animica wordmark tinted for dark UI</desc>
+  <defs>
+    <style>
+      .word { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+              font-weight: 800; font-size: 88px; letter-spacing: -0.8px; }
+    </style>
+  </defs>
+  <!-- Light foreground for dark backgrounds -->
+  <text class="word" x="0" y="84" fill="#E8ECF8">Animica</text>
+</svg>

@@ -1,0 +1,183 @@
+# Prometheus alerting rules — Node health (CPU, memory, block lag, peers, mempool)
+# Metric name notes (adjust if your exporters use different names):
+# - CPU / Memory: standard client metrics → process_cpu_seconds_total, process_resident_memory_bytes
+# - Head/blocks:  animica_node_head_height (gauge), animica_node_head_timestamp_seconds (gauge),
+#                 animica_node_blocks_imported_total (counter)
+# - P2P peers:    animica_p2p_peers_connected (gauge)
+# - Mempool:      animica_mempool_txs (gauge), animica_mempool_bytes (gauge),
+#                 animica_mempool_capacity (gauge, optional),
+#                 animica_mempool_admit_total / animica_mempool_admit_fail_total (counters)
+
+groups:
+  - name: node.rules
+    rules:
+      # ───────────────────────────── CPU ─────────────────────────────
+      # Single-process CPU: 1.0 ≈ fully saturating one core.
+      - alert: NodeCPUHigh
+        expr: rate(process_cpu_seconds_total[2m]) > 0.90
+        for: 5m
+        labels:
+          severity: warning
+          service: animica
+          component: node
+        annotations:
+          summary: "Node CPU high (>90% of a core)"
+          description: >
+            Process CPU is above 90% of a single core for 5 minutes.
+            Investigate hot loops (mempool, import, miner bridge) and recent load.
+
+      - alert: NodeCPUSaturated
+        expr: rate(process_cpu_seconds_total[2m]) > 1.50
+        for: 10m
+        labels:
+          severity: critical
+          service: animica
+          component: node
+        annotations:
+          summary: "Node CPU saturated (>150% of a core)"
+          description: >
+            Process CPU usage suggests the node is CPU-bound across cores.
+            Expect rising latencies and missed deadlines under sustained load.
+
+      # ─────────────────────────── Memory ────────────────────────────
+      # Prefer container-aware join if cadvisor is scraped; otherwise, fall back to absolute.
+      - alert: NodeMemoryHighRelative
+        expr: |
+          process_resident_memory_bytes
+          / ignoring(job) group_right
+          max by (instance) (container_spec_memory_limit_bytes{container=~"node|animica-node"} > 0)
+          > 0.85
+        for: 10m
+        labels:
+          severity: warning
+          service: animica
+          component: node
+        annotations:
+          summary: "Node memory high (>85% of container limit)"
+          description: >
+            Resident memory exceeds 85% of the container limit for 10 minutes.
+            Consider increasing limits or investigating leaks / oversized caches.
+
+      - alert: NodeMemoryHighAbsolute
+        expr: process_resident_memory_bytes > 3 * 1024 * 1024 * 1024
+        for: 10m
+        labels:
+          severity: warning
+          service: animica
+          component: node
+        annotations:
+          summary: "Node memory high (>3 GiB RSS)"
+          description: >
+            RSS is above 3 GiB for 10 minutes. Tune caches, reduce RocksDB page cache,
+            or enable compaction throttles.
+
+      # ───────────────────────── Block Lag / Head Age ─────────────────
+      - alert: NodeHeadStaleWarning
+        expr: |
+          (time() - animica_node_head_timestamp_seconds) > 120
+          or (increase(animica_node_blocks_imported_total[10m]) == 0)
+        for: 5m
+        labels:
+          severity: warning
+          service: animica
+          component: node
+        annotations:
+          summary: "Head appears stale (no recent blocks)"
+          description: >
+            No new blocks in the past ~2 minutes (or zero imports over 10m).
+            Check peer connectivity, consensus health, and miner activity.
+
+      - alert: NodeHeadStaleCritical
+        expr: |
+          (time() - animica_node_head_timestamp_seconds) > 600
+          or (increase(animica_node_blocks_imported_total[30m]) == 0)
+        for: 10m
+        labels:
+          severity: critical
+          service: animica
+          component: node
+        annotations:
+          summary: "Head is stale (≥10 minutes)"
+          description: >
+            No block progress for ≥10 minutes. Node may be partitioned or stuck.
+            Verify P2P peers and retarget/miner status.
+
+      # Optional: height divergence from explorer (if both are scraped with the same label set)
+      # - alert: NodeHeightBehindExplorer
+      #   expr: (on() group_left) (max(explorer_head_height) - animica_node_head_height) > 5
+
+      # ───────────────────────────── Peers ────────────────────────────
+      - alert: NodePeersLow
+        expr: animica_p2p_peers_connected < 2
+        for: 10m
+        labels:
+          severity: warning
+          service: animica
+          component: p2p
+        annotations:
+          summary: "Low peer count (<2)"
+          description: >
+            Node has fewer than 2 peers for 10 minutes. Discovery or NAT traversal
+            may be impaired; header/blocks sync might stall.
+
+      - alert: NodePeersZero
+        expr: animica_p2p_peers_connected == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: animica
+          component: p2p
+        annotations:
+          summary: "No connected peers"
+          description: >
+            Node lost all peers for 5 minutes. Check bootstrap seeds, ports,
+            firewalls, or identity/key issues.
+
+      # ─────────────────────────── Mempool ────────────────────────────
+      - alert: MempoolPressureHigh
+        expr: |
+          (animica_mempool_txs / ignoring(job) group_left
+           max by (instance) (animica_mempool_capacity > 0)) > 0.80
+          or animica_mempool_bytes > 256 * 1024 * 1024
+        for: 10m
+        labels:
+          severity: warning
+          service: animica
+          component: mempool
+        annotations:
+          summary: "Mempool under pressure (≥80% capacity or >256 MiB)"
+          description: >
+            Mempool nearing capacity or exceeding byte thresholds. Expect higher
+            min-fee watermark and evictions. Verify fee market dynamics.
+
+      - alert: MempoolAdmissionsFailing
+        expr: |
+          rate(animica_mempool_admit_fail_total[5m])
+          / clamp_min(rate(animica_mempool_admit_total[5m]), 1) > 0.50
+        for: 10m
+        labels:
+          severity: warning
+          service: animica
+          component: mempool
+        annotations:
+          summary: "High mempool rejection rate (>50%)"
+          description: >
+            More than half of incoming transactions are being rejected.
+            Check chainId mismatches, fee floor, size/TTL policies, or PQ-sig failures.
+
+      - alert: MempoolStalledDrain
+        expr: |
+          increase(animica_mempool_txs[15m]) > 0
+          and increase(animica_node_blocks_imported_total[15m]) > 0
+          and rate(animica_mempool_txs[15m]) > 0
+        for: 15m
+        labels:
+          severity: info
+          service: animica
+          component: mempool
+        annotations:
+          summary: "Mempool rising despite block production"
+          description: >
+            Transaction backlog is growing while blocks are being produced.
+            Consider increasing gas limits or reviewing surge/watermark parameters.
+

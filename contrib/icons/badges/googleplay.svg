@@ -1,0 +1,28 @@
+<!-- Animica Badge: Google Play (placeholder)
+     NOTE: For production, use Google's official badge and follow their brand guidelines/licensing.
+     This is a neutral placeholder with a generic play glyph + text. -->
+<svg width="180" height="54" viewBox="0 0 180 54" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Get it on Google Play (Placeholder)</title>
+  <desc id="desc">Generic Google Play-style badge; replace with official Google asset before release.</desc>
+
+  <!-- Badge background -->
+  <rect x="0.5" y="0.5" width="179" height="53" rx="12" fill="#111" stroke="#222"/>
+
+  <!-- Generic "play" glyph (NOT Google's trademark) -->
+  <g transform="translate(12,10)" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">
+    <rect x="0" y="0" width="34" height="34" rx="8"/>
+    <!-- Simple play triangle -->
+    <polygon points="12,9 24,17 12,25" fill="#fff" stroke="none"/>
+  </g>
+
+  <!-- Text -->
+  <g fill="#fff">
+    <text x="54" y="20" font-family="Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif"
+          font-size="12" letter-spacing=".2">Get it on</text>
+    <text x="54" y="38" font-family="Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif"
+          font-weight="700" font-size="20" letter-spacing="-.2">Google Play</text>
+  </g>
+
+  <!-- Focus ring (hidden by default; show via CSS if needed) -->
+  <rect x="3" y="3" width="174" height="48" rx="10" fill="none" stroke="#5B8CFF" stroke-width="2" opacity="0"/>
+</svg>

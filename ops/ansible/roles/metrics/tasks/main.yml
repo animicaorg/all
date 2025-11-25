@@ -1,0 +1,293 @@
+---
+# roles/metrics/tasks/main.yml
+# Installs/starts:
+#  - Prometheus Node Exporter (via apt on Debian/Ubuntu; optional binary fallback)
+#  - Grafana Promtail (binary) + minimal Loki push config
+#
+# Vars you can override in inventory/group_vars/host_vars:
+#   metrics_enable_node_exporter: true
+#   metrics_enable_promtail: true
+#   node_exporter_listen_addr: "0.0.0.0:9100"
+#   node_exporter_textfile_dir: "/var/lib/node_exporter/textfile"
+#   promtail_version: "2.9.3"
+#   promtail_loki_push_url: "http://localhost:3100/loki/api/v1/push"
+#   promtail_extra_scrape_paths: []   # e.g. ["/var/log/animica/*.log"]
+#   promtail_labels:
+#     job: "animica"
+#     env: "devnet"
+
+- name: "Set defaults for metrics role"
+  set_fact:
+    metrics_enable_node_exporter: "{{ metrics_enable_node_exporter | default(true) }}"
+    metrics_enable_promtail: "{{ metrics_enable_promtail | default(true) }}"
+    node_exporter_listen_addr: "{{ node_exporter_listen_addr | default('0.0.0.0:9100') }}"
+    node_exporter_textfile_dir: "{{ node_exporter_textfile_dir | default('/var/lib/node_exporter/textfile') }}"
+    promtail_version: "{{ promtail_version | default('2.9.3') }}"
+    promtail_loki_push_url: "{{ promtail_loki_push_url | default('http://localhost:3100/loki/api/v1/push') }}"
+    promtail_extra_scrape_paths: "{{ promtail_extra_scrape_paths | default([]) }}"
+    promtail_labels: "{{ promtail_labels | default({'job': 'animica', 'env': 'devnet'}) }}"
+
+#####################################################################
+# Node Exporter
+#####################################################################
+- name: "Install Node Exporter (Debian/Ubuntu via apt)"
+  become: true
+  apt:
+    name: prometheus-node-exporter
+    state: present
+    update_cache: true
+  when:
+    - metrics_enable_node_exporter
+    - ansible_facts.os_family == "Debian"
+
+# Optional binary fallback for non-Debian families (very lightweight)
+- name: "Derive GOARCH for node_exporter fallback"
+  set_fact:
+    _goarch: >-
+      {{ 'amd64' if ansible_facts.architecture in ['x86_64'] else
+         'arm64' if ansible_facts.architecture in ['aarch64', 'arm64'] else
+         'amd64' }}
+  when:
+    - metrics_enable_node_exporter
+    - ansible_facts.os_family != "Debian"
+
+- name: "Create node_exporter system user (fallback)"
+  become: true
+  user:
+    name: nodeexp
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+  when:
+    - metrics_enable_node_exporter
+    - ansible_facts.os_family != "Debian"
+
+- name: "Ensure node_exporter dirs exist"
+  become: true
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ 'nodeexp' if ansible_facts.os_family != 'Debian' else 'prometheus' | default('prometheus') }}"
+    group: "{{ 'nodeexp' if ansible_facts.os_family != 'Debian' else 'prometheus' | default('prometheus') }}"
+    mode: "0755"
+  loop:
+    - "{{ node_exporter_textfile_dir }}"
+  when: metrics_enable_node_exporter
+
+- name: "Install node_exporter (fallback binary) if apt not used"
+  become: true
+  block:
+    - name: "Set node_exporter version (fallback)"
+      set_fact:
+        _ne_version: "1.8.1"
+
+    - name: "Download node_exporter (fallback)"
+      get_url:
+        url: "https://github.com/prometheus/node_exporter/releases/download/v{{ _ne_version }}/node_exporter-{{ _ne_version }}.linux-{{ _goarch }}.tar.gz"
+        dest: "/tmp/node_exporter-{{ _ne_version }}.linux-{{ _goarch }}.tar.gz"
+        mode: "0644"
+
+    - name: "Unpack node_exporter (fallback)"
+      unarchive:
+        src: "/tmp/node_exporter-{{ _ne_version }}.linux-{{ _goarch }}.tar.gz"
+        dest: "/tmp"
+        remote_src: true
+
+    - name: "Install node_exporter binary (fallback)"
+      copy:
+        src: "/tmp/node_exporter-{{ _ne_version }}.linux-{{ _goarch }}/node_exporter"
+        dest: "/usr/local/bin/node_exporter"
+        mode: "0755"
+        remote_src: true
+
+    - name: "Install systemd unit for node_exporter (fallback)"
+      copy:
+        dest: /etc/systemd/system/node_exporter.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Prometheus Node Exporter (fallback)
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          User=nodeexp
+          Group=nodeexp
+          ExecStart=/usr/local/bin/node_exporter \
+            --web.listen-address={{ node_exporter_listen_addr }} \
+            --collector.textfile.directory={{ node_exporter_textfile_dir }}
+          Restart=always
+          RestartSec=3s
+          NoNewPrivileges=true
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: "Reload systemd (fallback)"
+      systemd:
+        daemon_reload: true
+  when:
+    - metrics_enable_node_exporter
+    - ansible_facts.os_family != "Debian"
+
+- name: "Enable & start Node Exporter service"
+  become: true
+  systemd:
+    name: "{{ 'prometheus-node-exporter' if ansible_facts.os_family == 'Debian' else 'node_exporter' }}"
+    enabled: true
+    state: started
+  when: metrics_enable_node_exporter
+
+#####################################################################
+# Promtail (Loki log shipper)
+#####################################################################
+- name: "Create promtail user & dirs"
+  become: true
+  block:
+    - user:
+        name: promtail
+        system: true
+        shell: /usr/sbin/nologin
+        create_home: false
+    - file:
+        path: /etc/promtail
+        state: directory
+        owner: promtail
+        group: promtail
+        mode: "0750"
+    - file:
+        path: /var/lib/promtail
+        state: directory
+        owner: promtail
+        group: promtail
+        mode: "0750"
+  when: metrics_enable_promtail
+
+- name: "Derive GOARCH for promtail"
+  set_fact:
+    _pt_goarch: >-
+      {{ 'amd64' if ansible_facts.architecture in ['x86_64'] else
+         'arm64' if ansible_facts.architecture in ['aarch64', 'arm64'] else
+         'amd64' }}
+  when: metrics_enable_promtail
+
+- name: "Download promtail {{ promtail_version }}"
+  become: true
+  get_url:
+    url: "https://github.com/grafana/loki/releases/download/v{{ promtail_version }}/promtail-linux-{{ _pt_goarch }}.zip"
+    dest: "/tmp/promtail-{{ promtail_version }}-linux-{{ _pt_goarch }}.zip"
+    mode: "0644"
+  when: metrics_enable_promtail
+
+- name: "Unpack promtail"
+  become: true
+  unarchive:
+    src: "/tmp/promtail-{{ promtail_version }}-linux-{{ _pt_goarch }}.zip"
+    dest: "/usr/local/bin"
+    remote_src: true
+  when: metrics_enable_promtail
+
+- name: "Ensure promtail binary is executable"
+  become: true
+  file:
+    path: /usr/local/bin/promtail-linux-{{ _pt_goarch }}
+    state: file
+    mode: "0755"
+  when: metrics_enable_promtail
+
+- name: "Symlink promtail -> promtail-linux-{{ _pt_goarch }}"
+  become: true
+  file:
+    src: /usr/local/bin/promtail-linux-{{ _pt_goarch }}
+    dest: /usr/local/bin/promtail
+    state: link
+    force: true
+  when: metrics_enable_promtail
+
+- name: "Render /etc/promtail/config.yml"
+  become: true
+  copy:
+    dest: /etc/promtail/config.yml
+    owner: promtail
+    group: promtail
+    mode: "0640"
+    content: |
+      server:
+        http_listen_port: 9080
+        grpc_listen_port: 0
+
+      clients:
+        - url: "{{ promtail_loki_push_url }}"
+
+      positions:
+        filename: /var/lib/promtail/positions.yaml
+
+      scrape_configs:
+        # Systemd & journald logs (if present)
+        - job_name: journald
+          journal:
+            max_age: 12h
+            labels:
+              job: "{{ promtail_labels.job | default('animica') }}"
+              env: "{{ promtail_labels.env | default('devnet') }}"
+              source: "journald"
+          relabel_configs:
+            - source_labels: ['__journal__systemd_unit']
+              target_label: 'unit'
+            - source_labels: ['__journal__hostname']
+              target_label: 'host'
+
+        # Optional glob paths for app logs
+        {% if promtail_extra_scrape_paths %}
+        - job_name: files
+          static_configs:
+            - targets: [localhost]
+              labels:
+                job: "{{ promtail_labels.job | default('animica') }}"
+                env: "{{ promtail_labels.env | default('devnet') }}"
+                source: "files"
+                __path__: "{{ promtail_extra_scrape_paths | join(',') }}"
+        {% endif %}
+
+- name: "Install systemd unit for promtail"
+  become: true
+  copy:
+    dest: /etc/systemd/system/promtail.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Grafana Promtail
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      User=promtail
+      Group=promtail
+      ExecStart=/usr/local/bin/promtail -config.file=/etc/promtail/config.yml
+      Restart=always
+      RestartSec=3s
+      NoNewPrivileges=true
+      CapabilityBoundingSet=
+      AmbientCapabilities=
+      ProtectSystem=strict
+      ProtectHome=true
+      PrivateTmp=true
+      ReadWritePaths=/var/lib/promtail
+
+      [Install]
+      WantedBy=multi-user.target
+  when: metrics_enable_promtail
+
+- name: "Reload systemd for promtail"
+  become: true
+  systemd:
+    daemon_reload: true
+  when: metrics_enable_promtail
+
+- name: "Enable & start promtail"
+  become: true
+  systemd:
+    name: promtail
+    enabled: true
+    state: started
+  when: metrics_enable_promtail

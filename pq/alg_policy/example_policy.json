@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "dilithium3",
+      "name": "CRYSTALS-Dilithium Level 3",
+      "kind": "sig",
+      "enabled": true,
+      "sunsetAfter": null,
+      "keySizes": { "pk": 1952, "sk": 4000 },
+      "sigSizes": { "sig": 3293 },
+      "kemSizes": null,
+      "weight": 1.0,
+      "minVersion": "1.0.0",
+      "notes": "Primary PQ signature; fast verify and compact keys."
+    },
+    {
+      "id": "sphincs-shake-128s",
+      "name": "SPHINCS+ SHAKE-128s",
+      "kind": "sig",
+      "enabled": true,
+      "sunsetAfter": null,
+      "keySizes": { "pk": 32, "sk": 64 },
+      "sigSizes": { "sig": 7856 },
+      "kemSizes": null,
+      "weight": 0.25,
+      "minVersion": "1.0.0",
+      "notes": "Stateless hash-based fallback; slower but conservative security."
+    },
+    {
+      "id": "kyber768",
+      "name": "Kyber-768",
+      "kind": "kem",
+      "enabled": true,
+      "sunsetAfter": null,
+      "keySizes": { "pk": 1184, "sk": 2400 },
+      "sigSizes": null,
+      "kemSizes": { "ct": 1088, "ss": 32 },
+      "weight": 1.0,
+      "minVersion": "1.0.0",
+      "notes": "KEM for P2P handshakes and session keys."
+    }
+  ],
+  "thresholds": {
+    "sig": { "minAlgs": 1, "minWeight": 1.0 },
+    "kem": { "minAlgs": 1, "minWeight": 1.0 }
+  }
+}

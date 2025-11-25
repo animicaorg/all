@@ -1,0 +1,26 @@
+[
+  {
+    "id": "counter",
+    "name": "Counter (stateful example)",
+    "description": "Minimal Python-VM contract with increment/get and events.",
+    "tags": ["starter", "state", "events"]
+  },
+  {
+    "id": "escrow",
+    "name": "Escrow (simple)",
+    "description": "Funds are held and released to a beneficiary once a condition is met.",
+    "tags": ["payments", "treasury", "examples"]
+  },
+  {
+    "id": "ai_agent",
+    "name": "AI Agent (AICF)",
+    "description": "Demonstrates ai_enqueue/read_result syscall to the AI Compute Fund.",
+    "tags": ["ai", "capabilities", "syscalls"]
+  },
+  {
+    "id": "quantum_rng",
+    "name": "Quantum RNG",
+    "description": "Requests a quantum job and mixes the result into on-chain state.",
+    "tags": ["quantum", "randomness", "capabilities"]
+  }
+]

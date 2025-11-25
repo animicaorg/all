@@ -1,0 +1,249 @@
+# Animica Devnet (dev profile)
+# -------------------------------------------------------------------
+# Spin up:
+#   - 2 nodes (RPC+WS on 8545/9545) using the repo source (mounted)
+#   - 1 CPU miner pointed at node1
+#   - studio-services API (deploy / verify / faucet) on 8787
+#   - explorer-web (static preview) on 5173
+#
+# Usage:
+#   docker compose -f tests/devnet/docker-compose.yml --profile dev up --build
+#   docker compose -f tests/devnet/docker-compose.yml --profile dev down -v
+#
+# Notes:
+# - This is a developer-friendly stack. It installs Python/Node deps at
+#   container start and runs directly from your local checkout.
+# - SQLite is used for persistence; volumes keep data across restarts.
+# - If your modules expose different CLIs, adjust commands/env below.
+# -------------------------------------------------------------------
+version: "3.9"
+
+name: animica-devnet
+
+profiles:
+  - dev
+
+networks:
+  devnet:
+    driver: bridge
+
+volumes:
+  node1_data:
+  node2_data:
+  services_data:
+
+services:
+  # ---------------------------------------------------------------
+  # Node 1: core + rpc (+ ws) using your local source tree
+  # ---------------------------------------------------------------
+  node1:
+    profiles: [dev]
+    image: python:3.11-slim
+    container_name: animica-node1
+    working_dir: /workspace
+    volumes:
+      - ../..:/workspace:rw
+      - node1_data:/data
+    environment:
+      # DB & chain config
+      CHAIN_ID: "1337"
+      CORE_DB_URL: "sqlite:////data/animica.db"
+      GENESIS_PATH: "core/genesis/genesis.json"
+      # RPC server config (FastAPI)
+      RPC_HOST: "0.0.0.0"
+      RPC_PORT: "8545"
+      CORS_ALLOW_ORIGINS: "*"
+      LOG_LEVEL: "INFO"
+    command: >
+      bash -lc "
+      set -euo pipefail;
+      python -m pip install -U pip wheel &&
+      python -m pip install
+        fastapi uvicorn[standard] pydantic msgspec websockets
+        prometheus-client cbor2 msgpack blake3 pycryptodomex anyio httpx typer rich &&
+      # Initialize DB/genesis if empty
+      python - <<'PY'
+import os,sys,subprocess
+db='${CORE_DB_URL}'
+if not os.path.exists('/data/animica.db'):
+    print('[node1] initializing genesis DB…', flush=True)
+    subprocess.check_call([
+        sys.executable,'-m','core.boot',
+        '--genesis','${GENESIS_PATH}',
+        '--db',db
+    ])
+else:
+    print('[node1] DB exists, skipping genesis init', flush=True)
+PY
+      ;
+      # Start RPC/WS server
+      python -m rpc.server --host ${RPC_HOST} --port ${RPC_PORT} --db ${CORE_DB_URL} --chain-id ${CHAIN_ID}
+      "
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8545/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "8545:8545"
+    networks: [devnet]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # ---------------------------------------------------------------
+  # Node 2: optional peer node (separate DB, different RPC port)
+  # ---------------------------------------------------------------
+  node2:
+    profiles: [dev]
+    image: python:3.11-slim
+    container_name: animica-node2
+    working_dir: /workspace
+    volumes:
+      - ../..:/workspace:rw
+      - node2_data:/data
+    environment:
+      CHAIN_ID: "1337"
+      CORE_DB_URL: "sqlite:////data/animica.db"
+      GENESIS_PATH: "core/genesis/genesis.json"
+      RPC_HOST: "0.0.0.0"
+      RPC_PORT: "9545"
+      CORS_ALLOW_ORIGINS: "*"
+      LOG_LEVEL: "INFO"
+    command: >
+      bash -lc "
+      set -euo pipefail;
+      python -m pip install -U pip wheel &&
+      python -m pip install
+        fastapi uvicorn[standard] pydantic msgspec websockets
+        prometheus-client cbor2 msgpack blake3 pycryptodomex anyio httpx typer rich &&
+      python - <<'PY'
+import os,sys,subprocess
+db='${CORE_DB_URL}'
+if not os.path.exists('/data/animica.db'):
+    print('[node2] initializing genesis DB…', flush=True)
+    subprocess.check_call([
+        sys.executable,'-m','core.boot',
+        '--genesis','${GENESIS_PATH}',
+        '--db',db
+    ])
+else:
+    print('[node2] DB exists, skipping genesis init', flush=True)
+PY
+      ;
+      python -m rpc.server --host ${RPC_HOST} --port ${RPC_PORT} --db ${CORE_DB_URL} --chain-id ${CHAIN_ID}
+      "
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9545/readyz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "9545:9545"
+    networks: [devnet]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      node1:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------
+  # CPU Miner targeting node1 (HashShare + useful-proof workers optional)
+  # ---------------------------------------------------------------
+  miner:
+    profiles: [dev]
+    image: python:3.11-slim
+    container_name: animica-miner
+    working_dir: /workspace
+    volumes:
+      - ../..:/workspace:rw
+    environment:
+      RPC_URL: "http://node1:8545"
+      DEVICE: "cpu"
+      THREADS: "2"
+      LOG_LEVEL: "INFO"
+    command: >
+      bash -lc "
+      set -euo pipefail;
+      python -m pip install -U pip wheel &&
+      python -m pip install anyio httpx msgspec websockets cbor2 blake3 rich &&
+      # Start miner (adjust flags to match mining/cli/miner.py)
+      python -m mining.cli.miner --threads ${THREADS} --device ${DEVICE} --rpc ${RPC_URL}
+      "
+    depends_on:
+      node1:
+        condition: service_healthy
+    networks: [devnet]
+
+  # ---------------------------------------------------------------
+  # studio-services (deploy / verify / faucet / artifacts)
+  # ---------------------------------------------------------------
+  services:
+    profiles: [dev]
+    build:
+      context: ../../studio-services
+      dockerfile: Dockerfile
+    container_name: animica-studio-services
+    environment:
+      RPC_URL: "http://node1:8545"
+      CHAIN_ID: "1337"
+      STORAGE_DIR: "/var/lib/services/storage"
+      RATE_LIMITS: "burst=20,per_min=120"
+      LOG_LEVEL: "INFO"
+      # FAUCET_KEY: ""   # optional hot key for dev faucets
+    volumes:
+      - services_data:/var/lib/services
+    ports:
+      - "8787:8787"
+    command: >
+      bash -lc "
+      set -euo pipefail;
+      # If image already contains deps, this is a no-op
+      python -m studio_services.main --host 0.0.0.0 --port 8787
+      "
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8787/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    depends_on:
+      node1:
+        condition: service_healthy
+    networks: [devnet]
+
+  # ---------------------------------------------------------------
+  # explorer-web (build once, serve with vite preview)
+  # ---------------------------------------------------------------
+  explorer:
+    profiles: [dev]
+    image: node:20-alpine
+    container_name: animica-explorer
+    working_dir: /app
+    environment:
+      VITE_RPC_URL: "http://localhost:8545"       # browser hits your host → forwarded to node1
+      VITE_CHAIN_ID: "1337"
+      # Optional studio-services integration
+      VITE_SERVICES_URL: "http://localhost:8787"
+    volumes:
+      - ../../explorer-web:/app:rw
+    ports:
+      - "5173:5173"
+    command: >
+      sh -lc "
+      set -eu;
+      corepack enable || true;
+      if ! command -v pnpm >/dev/null 2>&1; then npm i -g pnpm@9; fi;
+      pnpm install --frozen-lockfile || pnpm install;
+      pnpm run build;
+      pnpm exec vite preview --host 0.0.0.0 --port 5173
+      "
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5173/ >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    depends_on:
+      node1:
+        condition: service_healthy
+      services:
+        condition: service_healthy
+    networks: [devnet]

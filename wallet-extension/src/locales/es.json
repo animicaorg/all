@@ -1,0 +1,243 @@
+{
+  "app": {
+    "name": "Animica Wallet",
+    "tagline": "Billetera poscuántica para redes Animica"
+  },
+
+  "common": {
+    "ok": "OK",
+    "close": "Cerrar",
+    "cancel": "Cancelar",
+    "back": "Atrás",
+    "next": "Siguiente",
+    "done": "Listo",
+    "save": "Guardar",
+    "copy": "Copiar",
+    "copied": "¡Copiado!",
+    "edit": "Editar",
+    "refresh": "Actualizar",
+    "show": "Mostrar",
+    "hide": "Ocultar",
+    "loading": "Cargando…",
+    "error": "Error",
+    "retry": "Reintentar",
+    "advanced": "Avanzado",
+    "details": "Detalles"
+  },
+
+  "nav": {
+    "home": "Inicio",
+    "send": "Enviar",
+    "receive": "Recibir",
+    "contracts": "Contratos",
+    "settings": "Ajustes"
+  },
+
+  "units": {
+    "symbol": "ANM",
+    "wei": "atto-ANM",
+    "gas": "gas"
+  },
+
+  "network": {
+    "network": "Red",
+    "selectNetwork": "Seleccionar red",
+    "current": "Red actual",
+    "switch": "Cambiar de red",
+    "connected": "Conectado a {{network}}",
+    "notConnected": "No conectado",
+    "chainId": "ID de cadena",
+    "rpcUrl": "URL RPC",
+    "latency": "Latencia",
+    "blockHeight": "Altura de bloque",
+    "head": "Último"
+  },
+
+  "account": {
+    "account": "Cuenta",
+    "selectAccount": "Seleccionar cuenta",
+    "address": "Dirección",
+    "copyAddress": "Copiar dirección",
+    "export": "Exportar",
+    "lock": "Bloquear billetera",
+    "unlock": "Desbloquear",
+    "balance": "Saldo",
+    "balances": "Saldos",
+    "rename": "Renombrar cuenta"
+  },
+
+  "home": {
+    "assets": "Activos",
+    "activity": "Actividad",
+    "noTxs": "Aún no hay transacciones",
+    "recentTxs": "Transacciones recientes"
+  },
+
+  "send": {
+    "title": "Enviar",
+    "from": "Desde",
+    "to": "Hacia",
+    "amount": "Monto",
+    "maxFee": "Tarifa máxima",
+    "gasLimit": "Límite de gas",
+    "nonce": "Nonce (auto)",
+    "data": "Datos (hex, opcional)",
+    "simulate": "Simular",
+    "estGas": "Gas estimado",
+    "insufficientBalance": "Saldo insuficiente",
+    "invalidAddress": "Dirección inválida",
+    "send": "Enviar",
+    "sending": "Enviando…",
+    "submitted": "Transacción enviada",
+    "txHash": "Hash de transacción",
+    "viewInExplorer": "Ver en el Explorer",
+    "estimateFailed": "La simulación o estimación falló"
+  },
+
+  "receive": {
+    "title": "Recibir",
+    "scan": "Escanee este QR para recibir fondos",
+    "yourAddress": "Tu dirección",
+    "copyAddress": "Copiar dirección"
+  },
+
+  "contracts": {
+    "title": "Contratos",
+    "contractAddress": "Dirección del contrato",
+    "abi": "ABI",
+    "method": "Método",
+    "args": "Argumentos",
+    "call": "Llamar (lectura)",
+    "sendTx": "Enviar transacción (escritura)",
+    "result": "Resultado",
+    "logs": "Registros",
+    "invalidAbi": "ABI inválido",
+    "enterAddress": "Introduce una dirección de contrato"
+  },
+
+  "settings": {
+    "title": "Configuración",
+    "language": "Idioma",
+    "theme": "Tema",
+    "security": "Seguridad",
+    "exportMnemonic": "Exportar frase de recuperación",
+    "confirmExport": "¿Revelar tu frase de recuperación?",
+    "dangerZone": "Zona de peligro",
+    "factoryReset": "Restablecer de fábrica",
+    "about": "Acerca de",
+    "version": "Versión",
+    "developer": "Opciones de desarrollador",
+    "subscriptions": "Suscripciones en segundo plano",
+    "enableTelemetry": "Compartir telemetría de uso anónima",
+    "lockNow": "Bloquear ahora"
+  },
+
+  "onboarding": {
+    "welcome": {
+      "title": "Bienvenido a Animica Wallet",
+      "subtitle": "Una billetera poscuántica para redes Animica",
+      "create": "Crear una nueva billetera",
+      "import": "Ya tengo una frase de recuperación"
+    },
+    "createMnemonic": {
+      "title": "Frase de recuperación",
+      "intro": "Escribe estas palabras en orden y guárdalas en un lugar seguro. Cualquiera con esta frase puede acceder a tus fondos.",
+      "reveal": "Mostrar frase",
+      "hide": "Ocultar frase",
+      "copy": "Copiar frase",
+      "continue": "Ya la he guardado"
+    },
+    "verifyMnemonic": {
+      "title": "Verificar frase",
+      "instructions": "Escribe tu frase de recuperación para confirmar que la guardaste.",
+      "placeholder": "Escribe las palabras en orden…",
+      "mismatch": "La frase no coincide",
+      "verify": "Verificar"
+    },
+    "import": {
+      "title": "Importar billetera",
+      "instructions": "Pega tu frase de recuperación (palabras separadas por espacios).",
+      "placeholder": "frase de recuperación…",
+      "invalid": "No parece una frase válida",
+      "import": "Importar"
+    },
+    "finish": {
+      "title": "¡Todo listo!",
+      "subtitle": "Tu billetera está lista.",
+      "openWallet": "Abrir billetera"
+    }
+  },
+
+  "approve": {
+    "windowTitle": "Se requiere aprobación",
+    "connect": {
+      "title": "Solicitud de conexión",
+      "requestingSite": "Sitio solicitante",
+      "permissions": "Permisos solicitados",
+      "accounts": "Cuentas",
+      "remember": "Recordar este sitio",
+      "connect": "Conectar",
+      "reject": "Rechazar"
+    },
+    "sign": {
+      "title": "Solicitud de firma",
+      "domain": "Dominio",
+      "chainId": "ID de cadena",
+      "payload": "Contenido",
+      "warning": "Solo firma si confías en el sitio y entiendes el contenido.",
+      "sign": "Firmar",
+      "reject": "Rechazar"
+    },
+    "tx": {
+      "title": "Solicitud de transacción",
+      "from": "De",
+      "to": "Para",
+      "value": "Valor",
+      "data": "Datos",
+      "fee": "Tarifa máxima",
+      "gas": "Límite de gas",
+      "simulate": "Resultado simulado",
+      "send": "Aprobar y enviar",
+      "reject": "Rechazar"
+    }
+  },
+
+  "notifications": {
+    "newHead": "Nuevo bloque {{height}} en {{network}}",
+    "txConfirmed": "Transacción confirmada",
+    "txFailed": "Transacción fallida",
+    "txSent": "Transacción enviada"
+  },
+
+  "provider": {
+    "connect": "Conectar con Animica Wallet",
+    "connected": "Conectado",
+    "disconnected": "Desconectado",
+    "accountsChanged": "Las cuentas cambiaron",
+    "chainChanged": "La red cambió"
+  },
+
+  "errors": {
+    "generic": "Algo salió mal",
+    "network": "Error de red",
+    "timeout": "Tiempo de espera agotado",
+    "rejected": "Solicitud rechazada por el usuario",
+    "unauthorized": "No autorizado",
+    "invalidParams": "Parámetros inválidos",
+    "invalidAddress": "Dirección inválida",
+    "insufficientFunds": "Fondos insuficientes para la tarifa",
+    "simulationFailed": "La simulación falló",
+    "notSupported": "No compatible en esta red",
+    "providerMissing": "Proveedor de Animica no encontrado",
+    "vaultLocked": "La billetera está bloqueada",
+    "mnemonicRequired": "Se requiere la frase de recuperación"
+  },
+
+  "txStatus": {
+    "pending": "Pendiente",
+    "included": "Incluida",
+    "confirmed": "Confirmada",
+    "failed": "Fallida",
+    "replaced": "Reemplazada"
+  }
+}

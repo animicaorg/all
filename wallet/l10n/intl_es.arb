@@ -1,0 +1,169 @@
+{
+  "appTitle": "Billetera Animica",
+  "@appTitle": {
+    "description": "Título de la aplicación mostrado en barras y conmutador del SO."
+  },
+
+  "navHome": "Inicio",
+  "@navHome": { "description": "Navegación inferior/pestañas: pantalla de inicio." },
+
+  "navSend": "Enviar",
+  "@navSend": { "description": "Navegación: enviar fondos." },
+
+  "navReceive": "Recibir",
+  "@navReceive": { "description": "Navegación: recibir fondos." },
+
+  "navContracts": "Contratos",
+  "@navContracts": { "description": "Navegación: llamar/desplegar contratos." },
+
+  "navSettings": "Configuración",
+  "@navSettings": { "description": "Navegación: ajustes de la app." },
+
+  "ok": "Aceptar",
+  "cancel": "Cancelar",
+  "close": "Cerrar",
+  "back": "Atrás",
+  "next": "Siguiente",
+  "done": "Listo",
+  "confirm": "Confirmar",
+  "retry": "Reintentar",
+  "save": "Guardar",
+  "delete": "Eliminar",
+  "copy": "Copiar",
+  "copied": "Copiado",
+  "@ok": { "description": "Etiqueta de botón afirmativo." },
+  "@cancel": { "description": "Etiqueta de botón cancelar." },
+  "@copied": { "description": "Toast después de copiar al portapapeles." },
+
+  "loading": "Cargando…",
+  "@loading": { "description": "Etiqueta genérica de carga." },
+
+  "errorGeneric": "Algo salió mal. Inténtalo de nuevo.",
+  "@errorGeneric": { "description": "Mensaje de error genérico." },
+
+  "errorInvalidAddress": "Dirección no válida.",
+  "@errorInvalidAddress": { "description": "Se muestra cuando una dirección es inválida." },
+
+  "errorInsufficientFunds": "Fondos insuficientes.",
+  "@errorInsufficientFunds": { "description": "Se muestra cuando el balance < monto requerido + comisiones." },
+
+  "balanceLabel": "Saldo",
+  "@balanceLabel": { "description": "Encabezado de sección para saldos." },
+
+  "balanceValue": "{amount} {symbol}",
+  "@balanceValue": {
+    "description": "Saldo formateado con símbolo (p. ej., 12.34 ANM).",
+    "placeholders": {
+      "amount": { "type": "String", "example": "12.34" },
+      "symbol": { "type": "String", "example": "ANM" }
+    }
+  },
+
+  "address": "Dirección",
+  "@address": { "description": "Etiqueta de campo para dirección de la billetera." },
+
+  "memo": "Memo (opcional)",
+  "@memo": { "description": "Etiqueta para nota/memo opcional de la transacción." },
+
+  "amount": "Monto",
+  "@amount": { "description": "Etiqueta de campo para el monto." },
+
+  "fee": "Comisión",
+  "@fee": { "description": "Etiqueta de comisión de la transacción." },
+
+  "total": "Total",
+  "@total": { "description": "Total (monto + comisión)." },
+
+  "network": "Red",
+  "@network": { "description": "Etiqueta de ajustes de red." },
+
+  "language": "Idioma",
+  "@language": { "description": "Etiqueta de idioma." },
+
+  "theme": "Tema",
+  "@theme": { "description": "Etiqueta de tema." },
+
+  "themeLight": "Claro",
+  "themeDark": "Oscuro",
+  "@themeLight": { "description": "Opción de tema claro." },
+  "@themeDark": { "description": "Opción de tema oscuro." },
+
+  "settingsTitle": "Configuración",
+  "@settingsTitle": { "description": "Título de la página de configuración." },
+
+  "settingsSecurity": "Seguridad",
+  "@settingsSecurity": { "description": "Título de la sección de seguridad." },
+
+  "lockWallet": "Bloquear billetera",
+  "@lockWallet": { "description": "Acción para bloquear la billetera y requerir PIN/biometría." },
+
+  "exportKeys": "Exportar claves",
+  "@exportKeys": { "description": "Acción para exportar claves/semilla (con protección)." },
+
+  "networkPickerTitle": "Elegir red",
+  "@networkPickerTitle": { "description": "Título del diálogo para escoger la red." },
+
+  "networkMainnet": "Red principal",
+  "networkTestnet": "Red de pruebas",
+  "networkLocalnet": "Red local",
+  "@networkMainnet": { "description": "Red de producción." },
+  "@networkTestnet": { "description": "Red pública de pruebas." },
+  "@networkLocalnet": { "description": "Perfil de desarrollo local." },
+
+  "receiveTitle": "Recibir",
+  "@receiveTitle": { "description": "Título de la página de recibir." },
+
+  "yourAddress": "Tu dirección",
+  "@yourAddress": { "description": "Etiqueta sobre la dirección de recepción del usuario." },
+
+  "copyAddress": "Copiar dirección",
+  "@copyAddress": { "description": "Botón para copiar la dirección." },
+
+  "sendTitle": "Enviar",
+  "@sendTitle": { "description": "Título de la página de envío." },
+
+  "sendTo": "Enviar a",
+  "@sendTo": { "description": "Etiqueta para el campo de dirección de destino." },
+
+  "sendAmount": "Monto a enviar",
+  "@sendAmount": { "description": "Etiqueta para el monto en la página de envío." },
+
+  "insufficientForFees": "No alcanza para cubrir las comisiones.",
+  "@insufficientForFees": { "description": "Se muestra cuando el monto no deja margen para comisiones." },
+
+  "confirmTxTitle": "Confirmar transacción",
+  "@confirmTxTitle": { "description": "Título del modal de confirmación antes de enviar." },
+
+  "confirmTxSubtitle": "Enviar {amount} {symbol} a {address}",
+  "@confirmTxSubtitle": {
+    "description": "Línea de resumen en el modal de confirmación.",
+    "placeholders": {
+      "amount": { "type": "String", "example": "1.25" },
+      "symbol": { "type": "String", "example": "ANM" },
+      "address": { "type": "String", "example": "am1q…xyz" }
+    }
+  },
+
+  "txSubmitted": "Transacción enviada",
+  "@txSubmitted": { "description": "Toast o banner después de transmitir una transacción." },
+
+  "txHash": "Hash: {hash}",
+  "@txHash": {
+    "description": "Mostrar el hash de la transacción.",
+    "placeholders": {
+      "hash": { "type": "String", "example": "0xabc123…def" }
+    }
+  },
+
+  "viewOnExplorer": "Ver en el explorador",
+  "@viewOnExplorer": { "description": "Botón para abrir el explorador con tx/cuenta." },
+
+  "contractsTitle": "Contratos",
+  "@contractsTitle": { "description": "Título de la página de contratos." },
+
+  "devToolsTitle": "Herramientas de desarrollo",
+  "@devToolsTitle": { "description": "Título de la página de herramientas de desarrollo (con flag)." },
+
+  "rpcConsoleTitle": "Consola RPC",
+  "@rpcConsoleTitle": { "description": "Título para la consola RPC en herramientas de desarrollo." }
+}

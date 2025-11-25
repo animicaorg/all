@@ -1,0 +1,515 @@
+# ----------------------------------------------------------------------
+# GitHub Actions — Release (common Animica template)
+#
+# This workflow is designed to be *rendered* from the shared template.
+# It publishes versioned artifacts when a semantic tag is pushed,
+# and optionally uploads language packages (PyPI, npm, crates.io) and
+# container images (GHCR/Docker Hub). It can also sign and attest builds
+# and attach SBOMs to the GitHub Release.
+#
+# Toggle behavior via template variables at render time (preferred) or by
+# editing the "env:" booleans below after generation.
+#
+# Template variables (examples):
+#   {{ default_branch   | default('main') }}
+#   {{ include_python   | default(true) }}
+#   {{ include_node     | default(false) }}
+#   {{ include_rust     | default(false) }}
+#   {{ publish_pypi     | default(false) }}
+#   {{ publish_npm      | default(false) }}
+#   {{ publish_crates   | default(false) }}
+#   {{ enable_docker    | default(false) }}
+#   {{ push_dockerhub   | default(false) }}
+#   {{ sign_images      | default(false) }}
+#   {{ make_sbom        | default(true) }}
+#   {{ ci_release_name  | default('Release') }}
+#   {{ docker_context   | default('.') }}
+#   {{ dockerfile_path  | default('ops/docker/node.Dockerfile') }}
+#   {{ image_name       | default('ghcr.io/${{ github.repository }}') }}
+#   {{ node_package_dir | default('.') }}
+#   {{ python_package_dir | default('.') }}
+#   {{ rust_crate_dir   | default('sdk/rust') }}
+#
+# Required secrets (only if corresponding publish toggles are enabled):
+#   - For npm:           NPM_TOKEN
+#   - For crates.io:     CARGO_REGISTRY_TOKEN
+#   - For Docker Hub:    DOCKERHUB_USERNAME, DOCKERHUB_TOKEN (if push_dockerhub=true)
+# Optional secrets:
+#   - For Code signing:  none (keyless via OIDC if sign_images=true)
+#
+# Notes:
+# - Tag format expected: vX.Y.Z or vX.Y.Z-rc.1 (semver; pre-releases allowed)
+# - GitHub Release notes are auto-generated; you may supply a custom body.
+# ----------------------------------------------------------------------
+
+name: "{{ ci_release_name | default('Release') }}"
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Manual version (e.g., v1.2.3); overrides pushed tag if set"
+        required: false
+        type: string
+
+# Avoid overlapping releases per ref
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# Principle of least privilege; grant more only when required
+permissions:
+  contents: write          # create release, upload assets
+  packages: write          # publish to GHCR
+  id-token: write          # OIDC for PyPI trusted publisher & cosign keyless
+  attestations: write      # build provenance (optional)
+
+env:
+  # Feature toggles (string booleans "true"/"false")
+  INCLUDE_PYTHON: "{{ include_python | default(true)  | string | lower }}"
+  INCLUDE_NODE:   "{{ include_node   | default(false) | string | lower }}"
+  INCLUDE_RUST:   "{{ include_rust   | default(false) | string | lower }}"
+  PUBLISH_PYPI:   "{{ publish_pypi   | default(false) | string | lower }}"
+  PUBLISH_NPM:    "{{ publish_npm    | default(false) | string | lower }}"
+  PUBLISH_CRATES: "{{ publish_crates | default(false) | string | lower }}"
+  ENABLE_DOCKER:  "{{ enable_docker  | default(false) | string | lower }}"
+  PUSH_DOCKERHUB: "{{ push_dockerhub | default(false) | string | lower }}"
+  SIGN_IMAGES:    "{{ sign_images    | default(false) | string | lower }}"
+  MAKE_SBOM:      "{{ make_sbom      | default(true)  | string | lower }}"
+
+  # Paths / names
+  DOCKER_CONTEXT:   "{{ docker_context   | default('.') }}"
+  DOCKERFILE_PATH:  "{{ dockerfile_path  | default('ops/docker/node.Dockerfile') }}"
+  IMAGE_NAME:       "{{ image_name       | default('ghcr.io/${{ github.repository }}') }}"
+  NODE_DIR:         "{{ node_package_dir | default('.') }}"
+  PY_DIR:           "{{ python_package_dir | default('.') }}"
+  RUST_DIR:         "{{ rust_crate_dir   | default('sdk/rust') }}"
+
+  # Misc
+  PY_COLORS: "1"
+  FORCE_COLOR: "1"
+
+jobs:
+  compute-version:
+    name: Compute version & context
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.out.outputs.tag }}
+      version: ${{ steps.out.outputs.version }}
+      is_prerelease: ${{ steps.out.outputs.is_prerelease }}
+      major: ${{ steps.out.outputs.major }}
+      minor: ${{ steps.out.outputs.minor }}
+      patch: ${{ steps.out.outputs.patch }}
+      sha_short: ${{ steps.out.outputs.sha_short }}
+    steps:
+      - name: Resolve tag
+        id: ref
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            TAG="${{ github.event.inputs.version }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Parse semver
+        id: out
+        run: |
+          TAG="${{ steps.ref.outputs.tag }}"
+          # Strip leading "v"
+          VERSION="${TAG#v}"
+          echo "Version: $VERSION"
+
+          # Detect prerelease (-rc.*, -beta.*, etc.)
+          if echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-'; then
+            PRERELEASE=true
+          else
+            PRERELEASE=false
+          fi
+
+          MAJOR="$(echo "$VERSION" | cut -d. -f1)"
+          MINOR="$(echo "$VERSION" | cut -d. -f2)"
+          PATCH="$(echo "$VERSION" | cut -d. -f3 | cut -d- -f1)"
+          SHA_SHORT="$(echo "${GITHUB_SHA}" | cut -c1-7)"
+
+          {
+            echo "tag=v$VERSION"
+            echo "version=$VERSION"
+            echo "is_prerelease=$PRERELEASE"
+            echo "major=$MAJOR"
+            echo "minor=$MINOR"
+            echo "patch=$PATCH"
+            echo "sha_short=$SHA_SHORT"
+          } >> "$GITHUB_OUTPUT"
+
+  build-python:
+    name: Build Python package
+    runs-on: ubuntu-latest
+    needs: compute-version
+    if: env.INCLUDE_PYTHON == 'true'
+    outputs:
+      sdist: ${{ steps.paths.outputs.sdist }}
+      wheel: ${{ steps.paths.outputs.wheel }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Build sdist & wheel
+        working-directory: ${{ env.PY_DIR }}
+        run: |
+          python -m pip install -U pip wheel build
+          python -m build
+          ls -lah dist
+
+      - name: Capture artifact paths
+        id: paths
+        working-directory: ${{ env.PY_DIR }}
+        run: |
+          SDIST="$(ls dist/*.tar.gz | head -n1 || true)"
+          WHEEL="$(ls dist/*.whl    | head -n1 || true)"
+          echo "sdist=$SDIST" >> $GITHUB_OUTPUT
+          echo "wheel=$WHEEL" >> $GITHUB_OUTPUT
+
+      - name: Upload Python artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: |
+            ${{ steps.paths.outputs.sdist }}
+            ${{ steps.paths.outputs.wheel }}
+          if-no-files-found: error
+          retention-days: 7
+
+  build-node:
+    name: Build npm package
+    runs-on: ubuntu-latest
+    needs: compute-version
+    if: env.INCLUDE_NODE == 'true' && hashFiles(format('{0}/package.json', env.NODE_DIR)) != ''
+    outputs:
+      tarball: ${{ steps.find.outputs.tarball }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: ${{ env.NODE_DIR }}/package-lock.json
+
+      - name: Install & build
+        working-directory: ${{ env.NODE_DIR }}
+        run: |
+          npm ci
+          if npm run | grep -q "build"; then npm run build; fi
+
+      - name: Pack tarball
+        id: pack
+        working-directory: ${{ env.NODE_DIR }}
+        run: |
+          PKG_TGZ="$(npm pack --json | jq -r '.[0].filename')"
+          echo "pkg=$PKG_TGZ" >> $GITHUB_OUTPUT
+
+      - name: Move tarball to workspace root
+        id: find
+        run: |
+          SRC="${{ env.NODE_DIR }}/${{ steps.pack.outputs.pkg }}"
+          DEST="$(pwd)/$(basename "$SRC")"
+          mv "$SRC" "$DEST"
+          echo "tarball=$DEST" >> $GITHUB_OUTPUT
+          ls -lah "$DEST"
+
+      - name: Upload npm artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-tarball
+          path: ${{ steps.find.outputs.tarball }}
+          if-no-files-found: error
+          retention-days: 7
+
+  build-rust:
+    name: Build Rust crate (package)
+    runs-on: ubuntu-latest
+    needs: compute-version
+    if: env.INCLUDE_RUST == 'true' && hashFiles(format('{0}/Cargo.toml', env.RUST_DIR)) != ''
+    outputs:
+      crate_file: ${{ steps.out.outputs.crate_file }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo package (no publish)
+        working-directory: ${{ env.RUST_DIR }}
+        run: |
+          cargo package --allow-dirty
+          ls -lah target/package
+
+      - name: Locate crate
+        id: out
+        working-directory: ${{ env.RUST_DIR }}
+        run: |
+          FILE="$(ls target/package/*.crate | head -n1)"
+          echo "crate_file=$FILE" >> $GITHUB_OUTPUT
+
+      - name: Upload crate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-crate
+          path: ${{ steps.out.outputs.crate_file }}
+          if-no-files-found: error
+          retention-days: 7
+
+  docker-images:
+    name: Build & push container images
+    runs-on: ubuntu-latest
+    needs: compute-version
+    if: env.ENABLE_DOCKER == 'true'
+    outputs:
+      image_tags: ${{ steps.tags.outputs.tags }}
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: GHCR login
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker Hub login (optional)
+        if: env.PUSH_DOCKERHUB == 'true' && secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != ''
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Derive tags
+        id: tags
+        run: |
+          VER="${{ needs.compute-version.outputs.version }}"
+          IS_PRE="${{ needs.compute-version.outputs.is_prerelease }}"
+          IMAGE="${{ env.IMAGE_NAME }}"
+          TAGS="${IMAGE}:v${VER},${IMAGE}:sha-${{ needs.compute-version.outputs.sha_short }}"
+          # Add major/minor convenience tags for stable releases
+          if [ "$IS_PRE" = "false" ]; then
+            TAGS="$TAGS,${IMAGE}:v${{ needs.compute-version.outputs.major }}.${{ needs.compute-version.outputs.minor }}"
+            TAGS="$TAGS,${IMAGE}:latest"
+          fi
+          echo "tags=$TAGS" >> $GITHUB_OUTPUT
+          echo "Will push tags: $TAGS"
+
+      - name: Build & push (multi-arch)
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.DOCKER_CONTEXT }}
+          file: ${{ env.DOCKERFILE_PATH }}
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.tags.outputs.tags }}
+          provenance: false  # we'll generate provenance in a separate step
+          sbom: false        # SBOM done separately (syft)
+
+  sbom-and-provenance:
+    name: SBOM & Attest
+    runs-on: ubuntu-latest
+    needs: [compute-version, docker-images]
+    if: env.MAKE_SBOM == 'true' && env.ENABLE_DOCKER == 'true'
+    steps:
+      - name: Generate SBOM (syft) for primary image
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE_NAME }}:v${{ needs.compute-version.outputs.version }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-spdx
+          path: sbom.spdx.json
+          retention-days: 14
+
+      - name: Build provenance (GH attest)
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ needs.docker-images.outputs.digest }}
+          push-to-registry: true
+
+      - name: Cosign sign (keyless, optional)
+        if: env.SIGN_IMAGES == 'true'
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          VERSION="${{ needs.compute-version.outputs.version }}"
+          IMAGE="${{ env.IMAGE_NAME }}:v${VERSION}"
+          echo "Signing $IMAGE with keyless OIDC"
+          curl -sSL -o cosign.tgz https://github.com/sigstore/cosign/releases/download/v2.2.4/cosign-linux-amd64.tgz
+          tar -xzf cosign.tgz cosign
+          ./cosign version
+          ./cosign sign --yes "$IMAGE"
+
+  publish-pypi:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    needs: [compute-version, build-python]
+    if: env.PUBLISH_PYPI == 'true' && env.INCLUDE_PYTHON == 'true'
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist
+
+      - name: Publish (trusted publisher via OIDC)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages_dir: dist
+          verbose: true
+
+  publish-npm:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    needs: [compute-version, build-node]
+    if: env.PUBLISH_NPM == 'true' && env.INCLUDE_NODE == 'true'
+    steps:
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-tarball
+          path: .
+
+      - name: Publish tarball
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          TARBALL="$(ls *.tgz | head -n1)"
+          if [ -z "$TARBALL" ]; then echo "No npm tarball found"; exit 1; fi
+          npm publish "$TARBALL" --access public --provenance
+
+  publish-crates:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    needs: [compute-version, build-rust]
+    if: env.PUBLISH_CRATES == 'true' && env.INCLUDE_RUST == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: rust-crate
+          path: crate
+
+      - name: Publish crate
+        working-directory: ${{ env.RUST_DIR }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          FILE="$(ls ../crate/*.crate | head -n1)"
+          if [ -n "$FILE" ]; then
+            cargo publish --no-verify --token "$CARGO_REGISTRY_TOKEN" --allow-dirty
+          else
+            echo "No .crate file found; attempting direct publish from source."
+            cargo publish --no-verify --token "$CARGO_REGISTRY_TOKEN" --allow-dirty
+          fi
+
+  github-release:
+    name: Create GitHub Release & attach assets
+    runs-on: ubuntu-latest
+    needs:
+      - compute-version
+      - build-python
+      - build-node
+      - build-rust
+      - docker-images
+      - sbom-and-provenance
+      - publish-pypi
+      - publish-npm
+      - publish-crates
+    if: always()
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+        continue-on-error: true
+
+      - name: List artifacts to attach
+        id: ls
+        run: |
+          echo "Artifacts:"
+          find artifacts -type f -maxdepth 3 -print || true
+
+      - name: Create/Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.compute-version.outputs.version }}
+          name: "v${{ needs.compute-version.outputs.version }}"
+          body: |
+            ## Changes
+            This release was generated automatically.
+
+            - Version: v${{ needs.compute-version.outputs.version }}
+            - Prerelease: ${{ needs.compute-version.outputs.is_prerelease }}
+            - Commit: ${{ needs.compute-version.outputs.sha_short }}
+
+            Auto-generated notes are included below.
+          prerelease: ${{ needs.compute-version.outputs.is_prerelease == 'true' }}
+          generate_release_notes: true
+          files: |
+            artifacts/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  summary:
+    name: Release summary
+    runs-on: ubuntu-latest
+    needs:
+      - compute-version
+      - build-python
+      - build-node
+      - build-rust
+      - docker-images
+      - sbom-and-provenance
+      - publish-pypi
+      - publish-npm
+      - publish-crates
+      - github-release
+    if: always()
+    steps:
+      - name: Print recap
+        run: |
+          echo "Version: v${{ needs.compute-version.outputs.version }}"
+          echo "Prerelease: ${{ needs.compute-version.outputs.is_prerelease }}"
+          echo "Python build:     ${{ needs.build-python.result }}"
+          echo "Node build:       ${{ needs.build-node.result }}"
+          echo "Rust build:       ${{ needs.build-rust.result }}"
+          echo "Docker images:    ${{ needs.docker-images.result }}"
+          echo "SBOM/attest:      ${{ needs.sbom-and-provenance.result }}"
+          echo "Publish PyPI:     ${{ needs.publish-pypi.result }}"
+          echo "Publish npm:      ${{ needs.publish-npm.result }}"
+          echo "Publish crates:   ${{ needs.publish-crates.result }}"
+          echo "GitHub Release:   ${{ needs.github-release.result }}"

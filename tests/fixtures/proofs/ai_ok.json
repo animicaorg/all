@@ -1,0 +1,50 @@
+{
+  "schema": "animica.proofs.ai.fixture.v1",
+  "description": "Valid AIProof fixture: attestation + traps + QoS yield positive ψ inputs on devnet.",
+  "envelope": {
+    "type": "AIProof",
+    "nullifier": "0x0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+    "signature_alg": "dilithium3",
+    "signature": "0x"
+  },
+  "body": {
+    "headerHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "provider": {
+      "id": "prov-dev-01",
+      "address": "anim1provider0000000000000000000000000000000",
+      "certDigest": "0x1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "job": {
+      "taskId": "0x9999999999999999999999999999999999999999999999999999999999999999",
+      "model": "tiny-ai-devnet-1",
+      "promptDigest": "0x2222222222222222222222222222222222222222222222222222222222222222",
+      "outputDigest": "0x3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    "attestation": {
+      "tee": "sgx",
+      "quoteDigest": "0x4444444444444444444444444444444444444444444444444444444444444444",
+      "measurement": "0x5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    "traps": {
+      "seedDigest": "0x6666666666666666666666666666666666666666666666666666666666666666",
+      "passed": 95,
+      "total": 100
+    },
+    "qos": {
+      "latencyMs": 1500,
+      "availability": 0.999,
+      "redundancy": 2
+    },
+    "metrics": {
+      "aiUnits": 42,
+      "trapsRatio": 0.95,
+      "qosScore": 0.99
+    },
+    "createdAt": "2025-10-02T00:00:06Z",
+    "accepted": true
+  },
+  "notes": [
+    "Deterministic devnet sample with high traps pass ratio and strong QoS → positive ψ contribution.",
+    "Envelope signature is empty by design for structure-oriented tests."
+  ]
+}

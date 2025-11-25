@@ -1,0 +1,28 @@
+{
+  "domain": {
+    "name": "animica",
+    "version": "1",
+    "chainId": 2,
+    "network": "animica:testnet"
+  },
+  "tx": {
+    "type": "transfer",
+    "from": "am1q9e8x0p5k7t2c3m9n4r6s8l2h5j7k9p0u3w5y",
+    "to": "am1q0u3w5y7k9p2l4s6n8m3c5t7v9r1e2h4j6k8",
+    "amount": "100000000000000000", 
+    "nonce": 1,
+    "gas": {
+      "limit": 50000,
+      "price": "1000000"
+    },
+    "data": "0x",
+    "memo": "demo transfer",
+    "createdAt": "2025-11-01T00:00:00Z"
+  },
+  "meta": {
+    "encoding": "cbor",
+    "hashAlgo": "sha3-256",
+    "decimals": 18
+  },
+  "expectedHash": "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+}

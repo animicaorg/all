@@ -1,0 +1,20 @@
+<!-- Animica — Repeating Grid Pattern
+     Transparent background, minor lines every 16px, major lines every 64px.
+     Designed to tile seamlessly as a CSS background. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Repeating grid pattern (transparent)">
+  <defs>
+    <!-- Colors tuned for dark UIs; edit strokes to match theme -->
+    <pattern id="gridTile" width="64" height="64" patternUnits="userSpaceOnUse">
+      <!-- Minor verticals -->
+      <path d="M16 0V64 M32 0V64 M48 0V64" stroke="#11182e" stroke-width="0.5" stroke-linecap="square"/>
+      <!-- Minor horizontals -->
+      <path d="M0 16H64 M0 32H64 M0 48H64" stroke="#11182e" stroke-width="0.5" stroke-linecap="square"/>
+      <!-- Major axes (draw only top/left to avoid double-thick seams) -->
+      <path d="M0 0H64" stroke="#1b2444" stroke-width="1.25" stroke-linecap="square"/>
+      <path d="M0 0V64" stroke="#1b2444" stroke-width="1.25" stroke-linecap="square"/>
+    </pattern>
+  </defs>
+
+  <!-- Tile the pattern across the full SVG; keep background transparent -->
+  <rect x="0" y="0" width="512" height="512" fill="url(#gridTile)"/>
+</svg>

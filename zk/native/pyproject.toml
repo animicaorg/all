@@ -1,0 +1,59 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "animica-zk-native"
+description = "Native BN254 pairing & KZG verify fast paths for Animica (optional accelerator for zk.verifiers)"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Animica Contributors" }]
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Typing :: Typed",
+    "Operating System :: OS Independent",
+]
+# Version comes from Cargo.toml (maturin maps it automatically)
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/animica-labs/animica"
+Issues = "https://github.com/animica-labs/animica/issues"
+
+[tool.maturin]
+# Package the Python sources from ./python/ into the wheel
+python-source = "python"
+# Name the compiled extension so it imports as `import animica_zk_native._native`
+module-name = "animica_zk_native._native"
+# Disable default features to be explicit, then enable what we want for wheels
+default-features = false
+features = ["python", "pairing", "kzg"]
+# Manylinux policy; adjust if you need older glibc
+manylinux = "off"  # set to '2014' or '2_28' if you want manylinux wheels
+# Strip symbols in release wheels to keep them small
+strip = true
+
+# If you publish source distributions, include the Rust crate and Python pkg
+# (maturin auto-discovers Cargo.toml; these globs ensure README/etc. are bundled)
+sdist-include = [
+  "Cargo.toml",
+  "Cargo.lock",
+  "src/**",
+  "build.rs",
+  "README.md",
+  "python/**",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-q"
+testpaths = ["tests"]
+

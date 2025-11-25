@@ -1,0 +1,11 @@
+Animica SDKs — License
+
+This file intentionally mirrors the license found at the repository root.
+
+Please refer to the root license file for the authoritative text and terms:
+../../LICENSE
+
+When distributing the SDKs independently (e.g., to PyPI/npm/crates.io), include the
+repository root LICENSE in the packaged artifact to preserve attribution and terms.
+
+— The Animica SDKs follow the exact same license as the repository root. —

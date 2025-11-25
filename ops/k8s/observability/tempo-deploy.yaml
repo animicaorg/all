@@ -1,0 +1,251 @@
+# Grafana Tempo (single-process) for Animica devnet
+# - Monolithic mode with local filesystem storage (PVC)
+# - Receives OTLP (gRPC+HTTP), Jaeger (gRPC+HTTP), Zipkin
+# - Exposes query API on :3200 (Tempo/HTTP); Prometheus metrics also on :3200/metrics
+# - 7d retention (devnet)
+#
+# Send traces to (cluster-internal):
+#   OTLP gRPC : tempo.animica-devnet.svc.cluster.local:4317
+#   OTLP HTTP : tempo.animica-devnet.svc.cluster.local:4318
+#   Jaeger gRPC     : ...:14250
+#   Jaeger Thrift-HTTP : ...:14268
+#   Zipkin HTTP     : ...:9411
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tempo-config
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: tempo
+data:
+  tempo.yaml: |
+    server:
+      http_listen_port: 3200
+      grpc_listen_port: 9095
+      log_level: info
+
+    distributor:
+      receivers:
+        otlp:
+          protocols:
+            http:
+            grpc:
+        jaeger:
+          protocols:
+            grpc:
+            thrift_http:
+        zipkin: {}
+
+    ingester:
+      lifecycler:
+        ring:
+          kvstore:
+            store: inmemory
+          replication_factor: 1
+      max_block_bytes: 1048576        # ~1 MiB blocks (dev-friendly)
+      max_block_duration: 5m
+      trace_idle_period: 10s
+
+    compactor:
+      compaction:
+        block_retention: 168h          # 7 days
+
+    querier:
+      frontend_worker:
+        frontend_address: 127.0.0.1:9096
+      query_timeout: 30s
+
+    query_frontend:
+      max_outstanding_per_tenant: 2048
+
+    storage:
+      trace:
+        backend: local
+        wal:
+          path: /var/tempo/wal
+        local:
+          path: /var/tempo/traces
+
+    overrides:
+      per_tenant_override_config: ""
+      defaults:
+        max_traces_per_user: 1000000
+        ingestion_burst_size_bytes: 16777216
+        ingestion_rate_limit_bytes: 8388608
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tempo
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: tempo
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tempo-data
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: tempo
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 20Gi
+  # storageClassName: standard   # set/override per cluster
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: tempo
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: tempo
+spec:
+  serviceName: tempo
+  replicas: 1
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: animica
+      app.kubernetes.io/name: tempo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: animica
+        app.kubernetes.io/name: tempo
+    spec:
+      serviceAccountName: tempo
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: tempo
+          image: grafana/tempo:2.4.2
+          imagePullPolicy: IfNotPresent
+          args:
+            - "-config.file=/etc/tempo/tempo.yaml"
+          ports:
+            - name: http
+              containerPort: 3200
+              protocol: TCP
+            - name: grpc-int
+              containerPort: 9095
+              protocol: TCP
+            - name: otlp-grpc
+              containerPort: 4317
+              protocol: TCP
+            - name: otlp-http
+              containerPort: 4318
+              protocol: TCP
+            - name: jaeger-grpc
+              containerPort: 14250
+              protocol: TCP
+            - name: jaeger-http
+              containerPort: 14268
+              protocol: TCP
+            - name: zipkin
+              containerPort: 9411
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+          volumeMounts:
+            - name: data
+              mountPath: /var/tempo
+            - name: config
+              mountPath: /etc/tempo/tempo.yaml
+              subPath: tempo.yaml
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+      volumes:
+        - name: config
+          configMap:
+            name: tempo-config
+            items:
+              - key: tempo.yaml
+                path: tempo.yaml
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/part-of: animica
+          app.kubernetes.io/name: tempo
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi
+        # storageClassName: standard  # set per cluster if needed
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tempo
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: tempo
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: tempo
+  ports:
+    - name: http
+      port: 3200
+      targetPort: http
+      protocol: TCP
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      targetPort: otlp-http
+      protocol: TCP
+    - name: jaeger-grpc
+      port: 14250
+      targetPort: jaeger-grpc
+      protocol: TCP
+    - name: jaeger-http
+      port: 14268
+      targetPort: jaeger-http
+      protocol: TCP
+    - name: zipkin
+      port: 9411
+      targetPort: zipkin
+      protocol: TCP

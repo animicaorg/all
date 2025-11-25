@@ -1,0 +1,14 @@
+# Strategic-merge patch to set miner Deployment replicas for the devnet overlay.
+# Reference from kustomization.yaml with:
+# patches:
+#   - path: patches/miner-replicas.yaml
+#     target:
+#       kind: Deployment
+#       name: miner
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: miner
+spec:
+  replicas: 1

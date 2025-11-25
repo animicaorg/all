@@ -1,0 +1,84 @@
+# Studio Web (static site served by nginx) Deployment.
+# - Stateless; safe to run multiple replicas behind a Service/Ingress.
+# - Optionally mounts a runtime config.json from ConfigMap "studio-web-config"
+#   to allow changing RPC/Services URLs without rebuilding.
+# - Health checks probe "/" which nginx serves.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: animica-studio-web
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: studio-web
+    app.kubernetes.io/name: animica-studio-web
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: animica
+      app.kubernetes.io/component: studio-web
+      app.kubernetes.io/name: animica-studio-web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: animica
+        app.kubernetes.io/component: studio-web
+        app.kubernetes.io/name: animica-studio-web
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: studio-web
+          # Replace with your published Studio Web image
+          image: ghcr.io/animica/studio-web:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080   # must match ops/docker/nginx/default.conf
+              protocol: TCP
+          # Nginx serves 200 on "/", so probe root.
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+          volumeMounts:
+            # Optional runtime config for SPA (served at /config.json in site root).
+            # Create a ConfigMap named "studio-web-config" with a key "config.json".
+            - name: runtime-config
+              mountPath: /usr/share/nginx/html/config.json
+              subPath: config.json
+              readOnly: true
+      volumes:
+        - name: runtime-config
+          configMap:
+            name: studio-web-config
+            optional: true
+            items:
+              - key: config.json
+                path: config.json

@@ -1,0 +1,357 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://animica.org/schema/alg_policy.schema.json",
+  "title": "Animica PQ Algorithm Policy (Alg-Policy Tree Object)",
+  "description": "Canonical policy describing approved PQ signature/KEM algorithms, activation windows, combination rules, and Merkle-root derivation metadata. This JSON MUST pass validation before hashing into the alg-policy Merkle root.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "policyVersion",
+    "chainId",
+    "network",
+    "createdAt",
+    "validFrom",
+    "root",
+    "algorithms",
+    "combinationRules"
+  ],
+  "properties": {
+    "policyVersion": {
+      "type": "string",
+      "description": "Semver of the policy format, not the network.",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "examples": ["1.0.0"]
+    },
+    "chainId": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Animica chain identifier (e.g., 1=mainnet, 2=testnet, 1337=devnet)."
+    },
+    "network": {
+      "type": "string",
+      "description": "Human label for the network.",
+      "enum": ["mainnet", "testnet", "devnet", "custom"]
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Creation timestamp (ISO 8601, UTC)."
+    },
+    "validFrom": {
+      "description": "Activation point of this policy.",
+      "oneOf": [
+        { "$ref": "#/$defs/ActivationHeight" },
+        { "$ref": "#/$defs/ActivationTime" }
+      ]
+    },
+    "validUntil": {
+      "description": "Optional expiry for this policy.",
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/ActivationHeight" },
+        { "$ref": "#/$defs/ActivationTime" }
+      ],
+      "default": null
+    },
+    "notes": {
+      "type": "string",
+      "description": "Free-form operator notes (non-consensus).",
+      "maxLength": 10000
+    },
+
+    "root": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hash", "leafOrder", "leafDomainTag", "canonicalization"],
+      "description": "Merkle derivation metadata. Tools must follow this spec to reproduce the root.",
+      "properties": {
+        "hash": {
+          "type": "string",
+          "enum": ["sha3-512", "keccak-256"],
+          "description": "Digest for leaf & inner-node hashing."
+        },
+        "leafOrder": {
+          "type": "string",
+          "enum": ["lexicographic-json-pointer", "by-algId-ascending"],
+          "description": "Ordering of leaves prior to Merkle tree construction."
+        },
+        "leafDomainTag": {
+          "type": "string",
+          "description": "Domain separation tag prefixed to each leaf before hashing (ASCII).",
+          "pattern": "^[ -~]{8,64}$",
+          "examples": ["ALG-POLICY-V1"]
+        },
+        "innerNodeDomainTag": {
+          "type": "string",
+          "description": "Domain separation tag for inner node hashing.",
+          "pattern": "^[ -~]{8,64}$",
+          "default": "ALG-POLICY-NODE-V1"
+        },
+        "canonicalization": {
+          "type": "string",
+          "enum": ["animica-json-v1", "cbor-deterministic-v1"],
+          "description": "How leaves are serialized prior to hashing."
+        }
+      }
+    },
+
+    "algorithms": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Catalog of approved algorithms with sizes and activation windows.",
+      "items": { "$ref": "#/$defs/Algorithm" }
+    },
+
+    "combinationRules": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["addresses", "p2pHandshake", "multisig"],
+      "properties": {
+        "addresses": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["allowedAlgs", "threshold", "minAlgs"],
+          "properties": {
+            "allowedAlgs": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/AlgId" },
+              "uniqueItems": true,
+              "minItems": 1,
+              "description": "Algorithms permitted for address key material."
+            },
+            "threshold": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Minimum number of valid signatures required to accept an address-auth signature set."
+            },
+            "minAlgs": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Minimum number of distinct algorithm kinds present among the signatures."
+            },
+            "maxSignatures": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Optional upper bound on signatures carried for address proofs.",
+              "default": 2
+            }
+          }
+        },
+        "p2pHandshake": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kem", "identitySigAlgs", "identityThreshold"],
+          "properties": {
+            "kem": { "$ref": "#/$defs/AlgId", "description": "KEM to use for the handshake (e.g., Kyber-768)." },
+            "identitySigAlgs": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/AlgId" },
+              "uniqueItems": true,
+              "minItems": 1,
+              "description": "Allowed sig algs for node identity."
+            },
+            "identityThreshold": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Signatures required over the handshake transcript."
+            }
+          }
+        },
+        "multisig": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["rules", "globalThreshold"],
+          "properties": {
+            "globalThreshold": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Overall signatures required (across all algs) for multisig verification."
+            },
+            "rules": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["algId", "minSignatures"],
+                "properties": {
+                  "algId": { "$ref": "#/$defs/AlgId" },
+                  "minSignatures": { "type": "integer", "minimum": 0 },
+                  "weight": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "Optional weighting factor for fee/priority or future scoring."
+                  }
+                }
+              },
+              "description": "Per-algorithm requirements for a valid multisig bundle."
+            }
+          }
+        }
+      }
+    },
+
+    "deprecations": {
+      "type": "array",
+      "description": "Optional deprecation schedule entries.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["algId", "after"],
+        "properties": {
+          "algId": { "$ref": "#/$defs/AlgId" },
+          "after": {
+            "oneOf": [
+              { "$ref": "#/$defs/ActivationHeight" },
+              { "$ref": "#/$defs/ActivationTime" }
+            ]
+          },
+          "reason": { "type": "string", "maxLength": 2000 },
+          "advisory": { "type": "string", "maxLength": 256 }
+        }
+      },
+      "default": []
+    }
+  },
+
+  "$defs": {
+    "AlgId": {
+      "description": "Canonical algorithm ID (see pq/alg_ids.yaml).",
+      "oneOf": [
+        { "type": "integer", "minimum": 1, "maximum": 65535 },
+        { "type": "string", "pattern": "^(0x)?[0-9a-fA-F]{1,4}$" }
+      ]
+    },
+
+    "ActivationHeight": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["height"],
+      "properties": {
+        "height": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "ActivationTime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["time"],
+      "properties": {
+        "time": { "type": "string", "format": "date-time" }
+      }
+    },
+
+    "Algorithm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algId",
+        "name",
+        "kind",
+        "securityBits",
+        "sizes",
+        "enabled",
+        "activation"
+      ],
+      "properties": {
+        "algId": { "$ref": "#/$defs/AlgId" },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9_\\-\\.]{3,64}$",
+          "description": "Canonical short name (e.g., dilithium3, sphincs_shake_128s, kyber768)."
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["signature", "kem"]
+        },
+        "securityBits": {
+          "type": "integer",
+          "minimum": 64,
+          "maximum": 512,
+          "description": "Estimated classical security bits."
+        },
+        "enabled": { "type": "boolean", "default": true },
+        "deprecated": { "type": "boolean", "default": false },
+        "weights": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "address": { "type": "number", "minimum": 0, "maximum": 1, "default": 1 },
+            "identity": { "type": "number", "minimum": 0, "maximum": 1, "default": 1 },
+            "multisig": { "type": "number", "minimum": 0, "maximum": 1, "default": 1 }
+          },
+          "default": { "address": 1, "identity": 1, "multisig": 1 }
+        },
+        "activation": {
+          "description": "When this algorithm becomes valid for new objects.",
+          "oneOf": [
+            { "$ref": "#/$defs/ActivationHeight" },
+            { "$ref": "#/$defs/ActivationTime" }
+          ]
+        },
+        "sunset": {
+          "description": "Optional sunset/end-of-life for new use.",
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/ActivationHeight" },
+            { "$ref": "#/$defs/ActivationTime" }
+          ],
+          "default": null
+        },
+        "sizes": {
+          "description": "Key and artifact sizes (bytes).",
+          "oneOf": [
+            { "$ref": "#/$defs/SizesSignature" },
+            { "$ref": "#/$defs/SizesKEM" }
+          ]
+        },
+        "params": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Optional algorithm-specific parameterization (e.g., NTT params, SPHINCS+ variant)."
+        }
+      }
+    },
+
+    "SizesCommon": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["publicKey", "secretKey"],
+      "properties": {
+        "publicKey": { "type": "integer", "minimum": 1, "maximum": 1048576 },
+        "secretKey": { "type": "integer", "minimum": 1, "maximum": 1048576 }
+      }
+    },
+
+    "SizesSignature": {
+      "allOf": [
+        { "$ref": "#/$defs/SizesCommon" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["signature"],
+          "properties": {
+            "signature": { "type": "integer", "minimum": 1, "maximum": 1048576 }
+          }
+        }
+      ]
+    },
+
+    "SizesKEM": {
+      "allOf": [
+        { "$ref": "#/$defs/SizesCommon" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ciphertext", "sharedSecret"],
+          "properties": {
+            "ciphertext": { "type": "integer", "minimum": 1, "maximum": 1048576 },
+            "sharedSecret": { "type": "integer", "minimum": 16, "maximum": 4096 }
+          }
+        }
+      ]
+    }
+  }
+}

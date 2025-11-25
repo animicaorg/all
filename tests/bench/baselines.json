@@ -1,0 +1,92 @@
+{
+  "meta": {
+    "schema_version": 1,
+    "created": "2025-10-02T00:00:00Z",
+    "git": "",
+    "python": "",
+    "platform": "",
+    "note": "Canonical baseline metrics for CI comparison. Update via PR when expected performance changes."
+  },
+  "cases": {
+    "da.nmt_build(N=65536)": {
+      "script": "da/bench/nmt_build.py",
+      "params": { "N": 65536 },
+      "metric": "ops_per_s",
+      "value": 120000.0,
+      "higher_is_better": true,
+      "result": { "ops_per_s": 120000.0, "median_s": 0.0082, "p90_s": 0.0091 }
+    },
+    "da.rs_throughput(k=128,n=256,shard=4096)": {
+      "script": "da/bench/rs_throughput.py",
+      "params": { "k": 128, "n": 256, "shard": 4096 },
+      "metric": "ops_per_s",
+      "value": 52000.0,
+      "higher_is_better": true,
+      "result": { "ops_per_s": 52000.0, "median_s": 0.0191, "p90_s": 0.0204 }
+    },
+    "da.nmt_proof_verify(N=65536,branches=50)": {
+      "script": "da/bench/nmt_build.py",
+      "params": { "N": 65536, "branches": 50 },
+      "metric": "ops_per_s",
+      "value": 90000.0,
+      "higher_is_better": true,
+      "result": { "ops_per_s": 90000.0, "median_s": 0.0116, "p90_s": 0.0129 }
+    },
+    "mining.cpu_hashrate(theta=20)": {
+      "script": "mining/bench/cpu_hashrate.py",
+      "params": { "theta": 20 },
+      "metric": "ops_per_s",
+      "value": 250000.0,
+      "higher_is_better": true,
+      "result": { "ops_per_s": 250000.0, "median_s": 0.0041, "p90_s": 0.0048 }
+    },
+    "mining.template_latency()": {
+      "script": "mining/bench/template_latency.py",
+      "params": {},
+      "metric": "median_s",
+      "value": 0.0150,
+      "higher_is_better": false,
+      "result": { "median_s": 0.0150, "p90_s": 0.0175 }
+    },
+    "randomness.vdf_verify(lambda_bits=2048,iters=1000000)": {
+      "script": "randomness/bench/vdf_verify_time.py",
+      "params": { "lambda_bits": 2048, "iters": 1000000 },
+      "metric": "median_s",
+      "value": 0.85,
+      "higher_is_better": false,
+      "result": { "median_s": 0.85, "p90_s": 0.94 }
+    },
+    "consensus.bench_poies(batch=10000)": {
+      "script": "consensus/cli/bench_poies.py",
+      "params": { "batch": 10000 },
+      "metric": "ops_per_s",
+      "value": 420000.0,
+      "higher_is_better": true,
+      "result": { "ops_per_s": 420000.0, "median_s": 0.0021, "p90_s": 0.0026 }
+    },
+    "studio-wasm.startup_time()": {
+      "script": "studio-wasm/bench/startup_time.ts",
+      "params": {},
+      "metric": "median_s",
+      "value": 1.80,
+      "higher_is_better": false,
+      "result": { "median_s": 1.80, "p90_s": 2.05 }
+    },
+    "studio-wasm.compile_time(counter)": {
+      "script": "studio-wasm/bench/compile_time.ts",
+      "params": { "example": "counter" },
+      "metric": "median_s",
+      "value": 0.12,
+      "higher_is_better": false,
+      "result": { "median_s": 0.12, "p90_s": 0.14 }
+    },
+    "studio-wasm.run_time(counter.get)": {
+      "script": "studio-wasm/bench/run_time.ts",
+      "params": { "example": "counter.get" },
+      "metric": "ops_per_s",
+      "value": 8000.0,
+      "higher_is_better": true,
+      "result": { "ops_per_s": 8000.0, "median_s": 0.00013, "p90_s": 0.00016 }
+    }
+  }
+}

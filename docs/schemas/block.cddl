@@ -1,0 +1,217 @@
+; Animica — Block & Header CDDL (docs mirror)
+; Mirrors: spec/header_format.cddl, spec/blob_format.cddl, spec/tx_format.cddl
+; Purpose: Canonical CBOR schemas for:
+;   • Header (roots, Θ, mixSeed, nonce, chainId, parent linkage)
+;   • Block  (header + transactions + proofs + receipts)
+;
+; Notes:
+; - Maps use small INTEGER labels for compactness & deterministic ordering.
+; - All encodings MUST be canonical CBOR (major type & key ordering rules).
+; - Absent/optional fields MUST be omitted (not null).
+; - Hashes are raw bytes (bstr). Human encodings (hex/bech32m) are outside this schema.
+
+;--------------------------------
+; Common scalars & aliases
+;--------------------------------
+
+uint64  = uint .size 8 / uint .lt 18446744073709551616
+uvar    = uint                        ; generic non-negative
+i64     = int .size 8
+bytes   = bstr
+bytes8  = bstr .size 8
+bytes16 = bstr .size 16
+bytes32 = bstr .size 32
+bytes48 = bstr .size 48
+bytes64 = bstr .size 64
+
+hash256 = bytes32
+hash512 = bytes64
+
+address = bytes32                     ; sha3_256(pubkey) payload (bech32m is UI-only)
+chain-id = uvar
+
+;--------------------------------
+; Roots structure (Merkle/NMT)
+;--------------------------------
+; State, txs, receipts, proofs, and DA roots, all 32-byte digests.
+
+roots = {
+  1: hash256,    ; stateRoot
+  2: hash256,    ; txsRoot
+  3: hash256,    ; receiptsRoot
+  4: hash256,    ; proofsRoot
+  5: hash256     ; daRoot (NMT commitment)
+}
+
+;--------------------------------
+; Policy roots (pinning external policies)
+;--------------------------------
+; Optional policy root pins (enable/rotate via governance).
+;  1: poiesPolicyRoot  — PoIES scoring/caps policy tree root
+;  2: algPolicyRoot    — PQ alg-policy Merkle root (signature/KEM policy)
+
+policy-roots = {
+  1: hash256,
+  2: hash256
+}
+
+;--------------------------------
+; Header
+;--------------------------------
+; Canonical block header fields:
+;  1: v        — header format version (starts at 1)
+;  2: sd       — domain tag (e.g. "animica/header/v1") used for SignBytes/nonce binding
+;  3: chain    — chain id
+;  4: height   — block height (genesis = 0)
+;  5: time     — unix timestamp (seconds) per consensus clock
+;  6: parent   — parent block hash (hash of prior header encoding)
+;  7: mixSeed  — mixing seed (entropy beacon, u-draw, etc.)
+;  8: theta    — Θ threshold (difficulty parameter, micro-units)
+;  9: nonce    — miner nonce field (opaque bytes; domain-separated)
+; 10: roots    — Merkle/NMT roots bundle
+; 11: policy   — OPTIONAL policy roots bundle (when active)
+; 12: extra    — OPTIONAL extra-data (reserved for future extensions)
+
+header = {
+  1: uvar,           ; v
+  2: tstr,           ; sd
+  3: chain-id,       ; chain
+  4: uvar,           ; height
+  5: uvar,           ; time (unix seconds)
+  6: hash256,        ; parent
+  7: bytes32,        ; mixSeed
+  8: uvar,           ; theta (Θ in micro-units)
+  9: bytes8,         ; nonce (opaque, fixed 8 bytes)
+  10: roots,         ; roots
+  ? 11: policy-roots,
+  ? 12: bytes        ; extra
+}
+
+; Header hash (informative):
+;   H(header) = sha3_256( CBOR_canonical_encode(header) )
+; The consensus implementation MUST encode the header canonically before hashing.
+
+;--------------------------------
+; Transactions (reference)
+;--------------------------------
+; Transactions are defined in docs/schemas/tx.cddl as "tx".
+; For convenience this file defines a local reference with the same map labels.
+
+alg-id = uvar
+sig-env = {
+  1: alg-id,
+  2: bytes,
+  ? 3: bytes,
+  ? 4: bytes
+}
+
+access-entry = {
+  1: address,
+  2: [* bytes32]
+}
+access-list = [* access-entry]
+
+gas = {
+  1: uvar,     ; limit
+  2: uvar,     ; price
+  ? 3: uvar    ; tip
+}
+
+tx-kind = 0 / 1 / 2
+transfer-body = bstr .size 0 / nil
+deploy-body = { 1: bytes, 2: tstr }
+call-body   = { 1: bytes }
+kind-body = transfer-body / deploy-body / call-body
+
+tx = {
+  1: uvar,          ; v
+  2: tstr,          ; sd
+  3: chain-id,      ; chain
+  4: uvar,          ; nonce
+  5: gas,           ; gas
+  ? 6: address,     ; to
+  ? 7: uvar,        ; value
+  ? 8: access-list, ; alist
+  9: tx-kind,       ; kind
+  ? 10: kind-body,  ; body
+  11: sig-env       ; sig
+}
+
+;--------------------------------
+; Proof envelope (compact)
+;--------------------------------
+; Proof envelopes contribute to proofsRoot. Full bodies are scheme-specific.
+;  1: type_id   — proof type enum (e.g., HashShare=1, AI=2, Quantum=3, Storage=4, VDF=5)
+;  2: body      — opaque CBOR/bytes (validated by scheme-specific verifier)
+;  3: nullifier — deterministic nullifier bytes to prevent reuse
+
+proof-envelope = {
+  1: uvar,       ; type_id
+  2: bytes,      ; body (opaque to this schema)
+  3: bytes32     ; nullifier
+}
+
+;--------------------------------
+; Receipts (execution results)
+;--------------------------------
+; Minimal receipt for each included transaction (index-aligned with txs):
+;  1: status  — 0=REVERT, 1=SUCCESS, 2=OOG
+;  2: gasUsed — total gas consumed
+;  3: logs    — events emitted during execution
+;  4: bloom   — OPTIONAL bloom filter (bytes, fixed-size policy-specific)
+
+status = 0 / 1 / 2
+
+log = {
+  1: address,           ; contract address
+  2: [* bytes32],       ; topics
+  3: bytes              ; data
+}
+
+receipt = {
+  1: status,
+  2: uvar,              ; gasUsed
+  3: [* log],           ; logs
+  ? 4: bytes            ; bloom (size per spec/RECEIPTS.md)
+}
+
+;--------------------------------
+; Block
+;--------------------------------
+; Canonical block object:
+;  1: header   — the header above
+;  2: txs      — array of transactions (may be empty)
+;  3: proofs   — array of proof envelopes (may be empty)
+;  4: receipts — OPTIONAL array of receipts (index-aligned with txs)
+;                Present when blocks are stored with execution results.
+;                Omitted in mempool gossip or header-only sync.
+
+block = {
+  1: header,
+  2: [* tx],
+  3: [* proof-envelope],
+  ? 4: [* receipt]
+}
+
+;--------------------------------
+; Canonical root computations (informative)
+;--------------------------------
+; txsRoot:
+;   Merkle root over CBOR_canonical_encode(tx) for each tx in order.
+; receiptsRoot:
+;   Merkle root over CBOR_canonical_encode(receipt) for each receipt aligned to txs.
+; proofsRoot:
+;   Merkle root over CBOR_canonical_encode(proof-envelope) for each included proof.
+; daRoot:
+;   NMT (namespaced Merkle) root over DA blob leaves per spec/MERKLE_NMT.md.
+;
+; The "roots" map in the header MUST match these computed roots for the block
+; to be considered valid.
+
+;--------------------------------
+; Vectors (test helpers)
+;--------------------------------
+; For test vectors, we often store a sequence of headers or full blocks.
+
+headers = [* header]
+blocks  = [* block]

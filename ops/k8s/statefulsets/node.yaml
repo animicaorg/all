@@ -1,0 +1,196 @@
+# Stateful node with persistent storage for the DB.
+# Includes a headless Service for stable network IDs used by the StatefulSet.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: animica-node
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: node
+    app.kubernetes.io/name: animica-node
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: node
+    app.kubernetes.io/name: animica-node
+  ports:
+    # These names/ports must match the containerPort names below so other
+    # cluster-internal clients can discover them if needed.
+    - name: rpc-http
+      port: 8545
+      protocol: TCP
+    - name: rpc-ws
+      port: 8546
+      protocol: TCP
+    - name: p2p-tcp
+      port: 38000
+      protocol: TCP
+    - name: p2p-ws
+      port: 38002
+      protocol: TCP
+    - name: p2p-quic
+      port: 38001
+      protocol: UDP
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: animica-node
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: node
+    app.kubernetes.io/name: animica-node
+spec:
+  serviceName: animica-node
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: animica
+      app.kubernetes.io/component: node
+      app.kubernetes.io/name: animica-node
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: animica
+        app.kubernetes.io/component: node
+        app.kubernetes.io/name: animica-node
+      annotations:
+        # Enable scraping node metrics if exposed on HTTP (optional).
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8545"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Run one node per host by default; adjust if you shard roles.
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: node
+          # Replace with your published image/tag
+          image: ghcr.io/animica/node:latest
+          imagePullPolicy: IfNotPresent
+          # If your image includes an entrypoint that reads /etc/animica/node.toml,
+          # no args are needed. Otherwise, uncomment and provide explicit args:
+          # args:
+          #   - "--config=/etc/animica/node.toml"
+          env:
+            - name: ANIMICA_CONFIG
+              value: /etc/animica/node.toml
+            - name: ANIMICA_DB_PATH
+              value: /var/lib/animica/db
+            - name: ANIMICA_GENESIS
+              value: /config/genesis.json
+            - name: ANIMICA_PARAMS
+              value: /config/params.yaml
+            - name: ANIMICA_SEEDS
+              value: /config/seeds.txt
+            - name: TLS_CERT_PATH
+              value: /etc/animica/tls/tls.crt
+            - name: TLS_KEY_PATH
+              value: /etc/animica/tls/tls.key
+          ports:
+            - containerPort: 8545
+              name: rpc-http
+              protocol: TCP
+            - containerPort: 8546
+              name: rpc-ws
+              protocol: TCP
+            - containerPort: 38000
+              name: p2p-tcp
+              protocol: TCP
+            - containerPort: 38002
+              name: p2p-ws
+              protocol: TCP
+            - containerPort: 38001
+              name: p2p-quic
+              protocol: UDP
+          volumeMounts:
+            - name: db
+              mountPath: /var/lib/animica
+            - name: node-config
+              mountPath: /etc/animica/node.toml
+              subPath: node.toml
+            - name: genesis
+              mountPath: /config/genesis.json
+              subPath: genesis.json
+            - name: chain-params
+              mountPath: /config/params.yaml
+              subPath: params.yaml
+            - name: seeds
+              mountPath: /config/seeds.txt
+              subPath: seeds.txt
+            - name: tls
+              mountPath: /etc/animica/tls
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: rpc-http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: rpc-http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+      volumes:
+        - name: node-config
+          configMap:
+            name: node-config
+            items:
+              - key: node.toml
+                path: node.toml
+        - name: genesis
+          configMap:
+            name: genesis
+            items:
+              - key: genesis.json
+                path: genesis.json
+        - name: chain-params
+          configMap:
+            name: chain-params
+            items:
+              - key: params.yaml
+                path: params.yaml
+        - name: seeds
+          configMap:
+            name: bootstrap-seeds
+            optional: true
+            items:
+              - key: seeds.txt
+                path: seeds.txt
+        - name: tls
+          secret:
+            secretName: animica-tls
+            optional: true
+  volumeClaimTemplates:
+    - metadata:
+        name: db
+        labels:
+          app.kubernetes.io/part-of: animica
+          app.kubernetes.io/component: node
+          app.kubernetes.io/name: animica-node
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi
+        # Optionally pin a StorageClass:
+        # storageClassName: fast-ssd

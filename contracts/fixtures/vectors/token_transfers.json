@@ -1,0 +1,281 @@
+{
+  "schemaVersion": "1",
+  "description": "Deterministic vectors for Animica-20 (fungible) token transfer flows. Each case starts from the same initial state unless noted.",
+  "unit": "atto-EXT (decimals=18)",
+  "token": {
+    "name": "ExampleToken",
+    "symbol": "EXT",
+    "decimals": 18
+  },
+  "actors": {
+    "owner": "anim1owner000000000000000000000000000000000000",
+    "alice": "anim1alice0000000000000000000000000000000000",
+    "bob":   "anim1bob00000000000000000000000000000000000",
+    "carol": "anim1carol000000000000000000000000000000000",
+    "treasury": "anim1treasury0000000000000000000000000000000",
+    "zero": "anim1zero0000000000000000000000000000000000"
+  },
+  "initialState": {
+    "totalSupply": "1000000000000000000000",
+    "balances": {
+      "anim1owner000000000000000000000000000000000000": "1000000000000000000000",
+      "anim1alice0000000000000000000000000000000000": "0",
+      "anim1bob00000000000000000000000000000000000": "0",
+      "anim1carol000000000000000000000000000000000": "0",
+      "anim1treasury0000000000000000000000000000000": "0"
+    },
+    "allowances": {}
+  },
+  "cases": [
+    {
+      "name": "simple transfer: owner → alice (250 EXT)",
+      "resetState": true,
+      "txs": [
+        {
+          "op": "transfer",
+          "from": "anim1owner000000000000000000000000000000000000",
+          "to": "anim1alice0000000000000000000000000000000000",
+          "amount": "250000000000000000000",
+          "expect": {
+            "ok": true,
+            "events": [
+              {
+                "name": "Transfer",
+                "args": {
+                  "from": "anim1owner000000000000000000000000000000000000",
+                  "to": "anim1alice0000000000000000000000000000000000",
+                  "amount": "250000000000000000000"
+                }
+              }
+            ],
+            "balances": {
+              "anim1owner000000000000000000000000000000000000": "750000000000000000000",
+              "anim1alice0000000000000000000000000000000000": "250000000000000000000"
+            },
+            "totalSupply": "1000000000000000000000"
+          }
+        }
+      ]
+    },
+    {
+      "name": "insufficient balance: bob → carol (1 EXT) should revert",
+      "resetState": true,
+      "txs": [
+        {
+          "op": "transfer",
+          "from": "anim1bob00000000000000000000000000000000000",
+          "to": "anim1carol000000000000000000000000000000000",
+          "amount": "1000000000000000000",
+          "expect": {
+            "ok": false,
+            "revert": "InsufficientBalance",
+            "events": [],
+            "balances": {
+              "anim1bob00000000000000000000000000000000000": "0",
+              "anim1carol000000000000000000000000000000000": "0"
+            },
+            "totalSupply": "1000000000000000000000"
+          }
+        }
+      ]
+    },
+    {
+      "name": "approve + transferFrom: owner approves bob (100 EXT); bob spends 60 EXT to carol",
+      "resetState": true,
+      "txs": [
+        {
+          "op": "approve",
+          "owner": "anim1owner000000000000000000000000000000000000",
+          "spender": "anim1bob00000000000000000000000000000000000",
+          "amount": "100000000000000000000",
+          "expect": {
+            "ok": true,
+            "events": [
+              {
+                "name": "Approval",
+                "args": {
+                  "owner": "anim1owner000000000000000000000000000000000000",
+                  "spender": "anim1bob00000000000000000000000000000000000",
+                  "amount": "100000000000000000000"
+                }
+              }
+            ],
+            "allowances": {
+              "anim1owner000000000000000000000000000000000000": {
+                "anim1bob00000000000000000000000000000000000": "100000000000000000000"
+              }
+            }
+          }
+        },
+        {
+          "op": "transferFrom",
+          "spender": "anim1bob00000000000000000000000000000000000",
+          "from": "anim1owner000000000000000000000000000000000000",
+          "to": "anim1carol000000000000000000000000000000000",
+          "amount": "60000000000000000000",
+          "expect": {
+            "ok": true,
+            "events": [
+              {
+                "name": "Transfer",
+                "args": {
+                  "from": "anim1owner000000000000000000000000000000000000",
+                  "to": "anim1carol000000000000000000000000000000000",
+                  "amount": "60000000000000000000"
+                }
+              },
+              {
+                "name": "Approval",
+                "args": {
+                  "owner": "anim1owner000000000000000000000000000000000000",
+                  "spender": "anim1bob00000000000000000000000000000000000",
+                  "amount": "40000000000000000000"
+                }
+              }
+            ],
+            "balances": {
+              "anim1owner000000000000000000000000000000000000": "940000000000000000000",
+              "anim1carol000000000000000000000000000000000": "60000000000000000000"
+            },
+            "allowances": {
+              "anim1owner000000000000000000000000000000000000": {
+                "anim1bob00000000000000000000000000000000000": "40000000000000000000"
+              }
+            },
+            "totalSupply": "1000000000000000000000"
+          }
+        }
+      ]
+    },
+    {
+      "name": "transferFrom exceeds remaining allowance → revert",
+      "resetState": true,
+      "txs": [
+        {
+          "op": "approve",
+          "owner": "anim1owner000000000000000000000000000000000000",
+          "spender": "anim1bob00000000000000000000000000000000000",
+          "amount": "50000000000000000000",
+          "expect": {
+            "ok": true
+          }
+        },
+        {
+          "op": "transferFrom",
+          "spender": "anim1bob00000000000000000000000000000000000",
+          "from": "anim1owner000000000000000000000000000000000000",
+          "to": "anim1alice0000000000000000000000000000000000",
+          "amount": "60000000000000000000",
+          "expect": {
+            "ok": false,
+            "revert": "AllowanceExceeded",
+            "events": [],
+            "balances": {
+              "anim1owner000000000000000000000000000000000000": "1000000000000000000000",
+              "anim1alice0000000000000000000000000000000000": "0"
+            },
+            "allowances": {
+              "anim1owner000000000000000000000000000000000000": {
+                "anim1bob00000000000000000000000000000000000": "50000000000000000000"
+              }
+            },
+            "totalSupply": "1000000000000000000000"
+          }
+        }
+      ]
+    },
+    {
+      "name": "mint + burn: owner mints 50 EXT to alice; alice burns 10 EXT",
+      "resetState": true,
+      "prereq": "Requires mint/burn extension enabled and owner privileges for mint.",
+      "txs": [
+        {
+          "op": "mint",
+          "caller": "anim1owner000000000000000000000000000000000000",
+          "to": "anim1alice0000000000000000000000000000000000",
+          "amount": "50000000000000000000",
+          "expect": {
+            "ok": true,
+            "events": [
+              {
+                "name": "Transfer",
+                "args": {
+                  "from": "anim1zero0000000000000000000000000000000000",
+                  "to": "anim1alice0000000000000000000000000000000000",
+                  "amount": "50000000000000000000"
+                }
+              }
+            ],
+            "balances": {
+              "anim1alice0000000000000000000000000000000000": "50000000000000000000"
+            },
+            "totalSupply": "1050000000000000000000"
+          }
+        },
+        {
+          "op": "burn",
+          "caller": "anim1alice0000000000000000000000000000000000",
+          "from": "anim1alice0000000000000000000000000000000000",
+          "amount": "10000000000000000000",
+          "expect": {
+            "ok": true,
+            "events": [
+              {
+                "name": "Transfer",
+                "args": {
+                  "from": "anim1alice0000000000000000000000000000000000",
+                  "to": "anim1zero0000000000000000000000000000000000",
+                  "amount": "10000000000000000000"
+                }
+              }
+            ],
+            "balances": {
+              "anim1alice0000000000000000000000000000000000": "40000000000000000000"
+            },
+            "totalSupply": "1040000000000000000000"
+          }
+        }
+      ]
+    },
+    {
+      "name": "chained transfers: owner → alice (100), alice → bob (40), bob → carol (5)",
+      "resetState": true,
+      "txs": [
+        {
+          "op": "transfer",
+          "from": "anim1owner000000000000000000000000000000000000",
+          "to": "anim1alice0000000000000000000000000000000000",
+          "amount": "100000000000000000000",
+          "expect": {
+            "ok": true
+          }
+        },
+        {
+          "op": "transfer",
+          "from": "anim1alice0000000000000000000000000000000000",
+          "to": "anim1bob00000000000000000000000000000000000",
+          "amount": "40000000000000000000",
+          "expect": {
+            "ok": true
+          }
+        },
+        {
+          "op": "transfer",
+          "from": "anim1bob00000000000000000000000000000000000",
+          "to": "anim1carol000000000000000000000000000000000",
+          "amount": "5000000000000000000",
+          "expect": {
+            "ok": true,
+            "balances": {
+              "anim1owner000000000000000000000000000000000000": "900000000000000000000",
+              "anim1alice0000000000000000000000000000000000": "60000000000000000000",
+              "anim1bob00000000000000000000000000000000000": "35000000000000000000",
+              "anim1carol000000000000000000000000000000000": "5000000000000000000"
+            },
+            "totalSupply": "1000000000000000000000"
+          }
+        }
+      ]
+    }
+  ]
+}

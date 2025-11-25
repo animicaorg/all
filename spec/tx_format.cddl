@@ -1,0 +1,174 @@
+; spec/tx_format.cddl
+; Canonical CBOR schema for Animica transactions.
+; Deterministic CBOR encoding is REQUIRED:
+;  - Major types per RFC 8949
+;  - Map keys are text and MUST be sorted in bytewise lexicographic order
+;  - No indefinite-length items
+;  - Integers minimally encoded
+;
+; Signing domain (see spec/domains.yaml):
+;   DomainTag = "ANM|" + chainId + "|sig|{alg}|tx|v1"
+;   SignBytes = DomainTag || CBOR_D(etf: TxSignView)
+; where TxSignView is the Tx map with "auth" removed.
+;
+; Notes:
+; - chainId is CAIP-2 style string: "animica:1", "animica:2", "animica:1337".
+; - Address is a 20B or 32B payload (bech32m-encoded at the edge, bytes on-chain).
+; - AccessList is optional and can be empty; it enables optimistic scheduling.
+; - Kinds are explicit; "body" MUST match "kind".
+;
+; ---------------------------------------------------------------------------
+
+Tx = {
+  ; --- header (common) ---
+  "v":          uint .default 1,             ; tx version
+  "chainId":    tstr,                        ; e.g. "animica:1"
+  "nonce":      uint,                        ; account nonce (strictly increasing)
+  "sender":     Address,                     ; derived from PQ pubkey (domain-separated)
+  "gasLimit":   uint,                        ; maximum gas the sender will buy
+  "maxFeePerGas": uint,                      ; total fee ceiling (base+tip)
+  "maxPriorityFeePerGas": uint,              ; tip cap to block producer/treasury split
+  "access"?:    AccessList,                  ; optional access list
+  "epoch"?:     uint,                        ; optional epoch hint (non-consensus)
+  "memo"?:      bstr / tstr .size (0..96),   ; small memo (fee-charged as bytes)
+  ; --- payload (kind + body) ---
+  "kind":       TxKind,
+  "body":       TxBody,
+  ; --- authorization (PQ signatures, multi-sig capable) ---
+  "auth":       AuthSet
+}
+
+; The view used for signature hashing (exclude "auth" entirely).
+TxSignView = {
+  "v":          uint,
+  "chainId":    tstr,
+  "nonce":      uint,
+  "sender":     Address,
+  "gasLimit":   uint,
+  "maxFeePerGas": uint,
+  "maxPriorityFeePerGas": uint,
+  "access"?:    AccessList,
+  "epoch"?:     uint,
+  "memo"?:      bstr / tstr .size (0..96),
+  "kind":       TxKind,
+  "body":       TxBody
+}
+
+; ---------------------------------------------------------------------------
+; Address & utility types
+; ---------------------------------------------------------------------------
+
+; Address payload (on-chain bytes). UI uses bech32m with HRP per network.
+Address = bstr .size 20 / bstr .size 32
+
+; Storage keys are 32B logical keys in the contract/account keyspace.
+StorageKey = bstr .size 32
+
+; AccessList enables ahead-of-time access capture for schedulers.
+; Each item: [address, [* storageKey]]
+AccessList = [ * AccessItem ]
+AccessItem  = [ Address, [ * StorageKey ] ]
+
+; ---------------------------------------------------------------------------
+; Kinds & bodies
+; ---------------------------------------------------------------------------
+
+TxKind = &(transfer: 0, deploy: 1, call: 2, blob_pin: 3, rand_commit: 4, rand_reveal: 5)
+
+TxBody = Transfer / Deploy / Call / BlobPin / RandCommit / RandReveal
+
+; --- transfer (native token) ---
+Transfer = {
+  "to":    Address,
+  "value": uint                             ; amount in smallest unit
+}
+
+; --- deploy (Python VM contract) ---
+; Either inline the code+manifest OR reference a DA commitment (preferred in prod).
+Deploy = {
+  "mode": &(inline: 0, da_ref: 1),
+  ? "code":      bstr,                      ; IR/code bundle (when mode=inline)
+  ? "manifest":  Manifest,                  ; ABI + caps + metadata (when mode=inline)
+  ? "artifact":  BlobRef,                   ; DA commitment ref (when mode=da_ref)
+  ? "initData":  bstr,                      ; ABI-encoded constructor args (optional)
+  ? "value":     uint                       ; initial endowment to contract (optional)
+}
+
+; Manifest is validated by spec/manifest.schema.json (JSON inside CBOR bytes).
+Manifest = bstr
+
+; DA commitment reference (namespaced NMT root, as per spec/blob_format.cddl)
+BlobRef = {
+  "ns":     uint,                           ; namespace id
+  "size":   uint,                           ; total blob size (bytes)
+  "commit": bstr .size 32                   ; NMT root commitment (sha3_256)
+}
+
+; --- call (invoke contract method) ---
+; "data" is ABI-encoded per spec/abi.schema.json (vm_py ABI).
+Call = {
+  "to":    Address,
+  "data":  bstr,                            ; ABI-encoded input
+  ? "value": uint                           ; optional native token transfer
+}
+
+; --- blob pin (protocol-level reference without contract call) ---
+; This is a convenience transaction for DA-only workflows.
+BlobPin = {
+  "ref": BlobRef
+}
+
+; --- randomness commit/reveal helpers (on-chain ops) ---
+RandCommit = {
+  "salt":    bstr .size (16..64),
+  "payload": bstr .size (0..1024)           ; commitment preimage component
+}
+RandReveal = {
+  "salt":    bstr .size (16..64),
+  "payload": bstr .size (0..1024),
+  "commit":  bstr .size 32                  ; optional echo of prior commitment
+}
+
+; ---------------------------------------------------------------------------
+; Authorization: Post-Quantum signatures
+; ---------------------------------------------------------------------------
+
+; One or more authorizations; simple multisig achieved by multiple entries.
+AuthSet = [ + Auth ]
+
+; PQ alg ids are defined in pq/alg_ids.yaml and mirrored here as integers.
+; pk/sig sizes depend on alg.
+Auth = {
+  "alg": AlgId,                             ; e.g. 0xD301 (dilithium3), 0xS181 (sphincs-shake-128s)
+  "pk":  bstr,                              ; raw public key bytes
+  "sig": bstr,                              ; signature over SignBytes
+  ? "scope": SigScope                       ; optional scope annotation (future AA)
+}
+
+SigScope = &(full: 0, delegate: 1)
+
+AlgId = uint
+
+; ---------------------------------------------------------------------------
+; Canonical constraints / invariants (non-expressible in pure CDDL):
+; ---------------------------------------------------------------------------
+; 1) The "body" MUST correspond to "kind":
+;       kind=0 → body=Transfer
+;       kind=1 → body=Deploy
+;       kind=2 → body=Call
+;       kind=3 → body=BlobPin
+;       kind=4 → body=RandCommit
+;       kind=5 → body=RandReveal
+; 2) TxSignView is the map Tx with the "auth" key entirely omitted.
+; 3) Fee rule: maxFeePerGas >= maxPriorityFeePerGas.
+; 4) Gas charging: intrinsic gas depends on kind and sizes (see spec/opcodes_vm_py.yaml).
+; 5) AccessList keys MUST be unique within an item; items with empty key lists are allowed.
+; 6) For Deploy:
+;      - mode=inline requires ("code" AND "manifest") and forbids "artifact".
+;      - mode=da_ref requires "artifact" and forbids "code"/"manifest".
+; 7) Address derivation and bech32m presentation are specified in spec/domains.yaml & pq/addressing.
+; 8) Deterministic CBOR: canonical order of keys, definite lengths only.
+
+; ---------------------------------------------------------------------------
+; Test vectors live in spec/test_vectors/txs.json and MUST round-trip with this CDDL.
+; ---------------------------------------------------------------------------

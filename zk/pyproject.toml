@@ -1,0 +1,184 @@
+# ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+# ┃ zk/pyproject.toml — Python package for verifiers & adapters          ┃
+# ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+# This package hosts pure-Python adapters and (optionally) thin wrappers
+# over native backends for verifying zero-knowledge proofs across schemes
+# noted in zk/README.md (Groth16, PLONK/KZG, STARK). Heavy proving is out
+# of scope; verification, transcript helpers, and IO schemas live here.
+
+[build-system]
+requires = ["hatchling>=1.18"]
+build-backend = "hatchling.build"
+
+[project]
+name = "animica-zk"
+version = "0.1.0"
+description = "Animica zk verifiers & adapters (Groth16, PLONK/KZG, STARK) with optional native accelerators"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [
+  { name = "Animica Contributors" }
+]
+keywords = ["zk", "groth16", "plonk", "kzg", "stark", "cryptography", "blockchain", "animica"]
+classifiers = [
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Topic :: Security :: Cryptography",
+  "Typing :: Typed",
+]
+
+# Core deps are intentionally light; crypto backends are extras so the
+# package installs fast and can run in minimal CI environments.
+dependencies = [
+  "typing-extensions>=4.7",
+  # Structured/fast encoding of proof envelopes & inputs
+  "msgspec>=0.18",
+]
+
+[project.optional-dependencies]
+# Enables fast hashing / NMT utilities shared with verifiers.
+native = [
+  # Provides Python wheels backed by Rust (see native/). The wheel exposes the
+  # Python package `animica_native` under the distribution name below.
+  "animica-native>=0.1.0",
+]
+
+# Groth16 verifier helpers (pairing-friendly curves). Multiple choices are
+# supported; pick the backend that fits your environment best.
+groth16 = [
+  "py-ecc>=6.0.0",        # BLS12-381 primitives in Python
+  "pycryptodomex>=3.15",  # big-integer & field ops; pure-Python fallback
+]
+
+# PLONK with KZG commitments (EIP-4844 compatible c-kzg bindings).
+kzg = [
+  "py-c-kzg-4844>=1.0.0", # Python wrapper around c-kzg (BLS12-381)
+]
+
+# STARK-style verifiers; dependencies kept optional due to size.
+stark = [
+  "starkware-crypto>=0.5.0; platform_system != 'Windows'",
+]
+
+# Developer/CI extras.
+dev = [
+  "pytest>=7.4",
+  "pytest-cov>=4.1",
+  "hypothesis>=6.82",
+  "ruff>=0.4.0",
+  "mypy>=1.7.0",
+  "anyio>=4.0",      # async adapters/tests
+  "tomli; python_version < '3.11'",
+]
+
+[project.urls]
+Homepage = "https://github.com/animica-labs/animica"
+Documentation = "https://docs.animica.xyz/"
+Issues = "https://github.com/animica-labs/animica/issues"
+
+# ─────────────────────────────────────────────────────────────────────────
+# Hatch build config
+
+[tool.hatch.build]
+# Avoid shipping large local cache artifacts (SRS/VK/PK, fixtures).
+exclude = [
+  "artifacts/**",
+  "tools/**",
+  "**/__pycache__/**",
+  ".pytest_cache/**",
+  ".mypy_cache/**",
+  ".ruff_cache/**",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "README.md",
+  "pyproject.toml",
+  "animica_zk/**",
+  "tests/**",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["animica_zk"]
+
+# Optional per-env matrix shortcuts (hatch shell: `hatch -e dev run pytest`)
+[tool.hatch.envs.dev]
+features = ["dev"]
+dependencies = []
+[tool.hatch.envs.dev.scripts]
+test = "pytest -q"
+lint = "ruff check animica_zk tests"
+typecheck = "mypy animica_zk"
+cov = "pytest --cov=animica_zk --cov-report=term-missing"
+
+# ─────────────────────────────────────────────────────────────────────────
+# Tooling: ruff, mypy, pytest, coverage
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+src = ["animica_zk", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "E", "F", "W",       # pycodestyle/pyflakes
+  "I",                 # isort
+  "UP",                # pyupgrade
+  "B",                 # flake8-bugbear
+  "C90",               # mccabe
+  "N",                 # pep8-naming
+  "PIE",               # flake8-pie
+]
+ignore = [
+  "B008",  # function-call-in-default-arg (allowed in controlled adapters)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["animica_zk"]
+
+[tool.mypy]
+python_version = "3.9"
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+show_error_codes = true
+namespace_packages = true
+mypy_path = "."
+
+# tests may use dynamic fixtures/mocks
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+warn_unused_ignores = false
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-l -ra"
+testpaths = ["tests"]
+filterwarnings = [
+  "ignore::DeprecationWarning:py_ecc.*:",
+  "ignore::DeprecationWarning:starkware_crypto.*:",
+]
+markers = [
+  "groth16: tests that require Groth16 extras",
+  "plonk: tests that require KZG extras",
+  "stark: tests that require STARK extras",
+  "native: tests that require animica-native",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["animica_zk"]
+omit = [
+  "tests/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 80

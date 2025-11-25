@@ -1,0 +1,436 @@
+{
+  "openrpc": "1.2.6",
+  "info": {
+    "title": "Animica JSON-RPC",
+    "version": "0.1.0",
+    "description": "Machine-readable RPC schema for Animica nodes. This file is generated from the server bindings and kept in-sync with runtime models."
+  },
+  "servers": [
+    { "name": "HTTP JSON-RPC", "url": "https://node.animica.org/rpc" },
+    { "name": "WebSocket (push)", "url": "wss://node.animica.org/ws", "summary": "See docs/rpc/WEBSOCKETS.md for subscription topics." }
+  ],
+  "methods": [
+    {
+      "name": "chain.getParams",
+      "summary": "Return canonical chain parameters.",
+      "tags": [{ "name": "Chain" }],
+      "params": [],
+      "result": { "name": "result", "schema": { "$ref": "#/components/schemas/ChainParams" } }
+    },
+    {
+      "name": "chain.getChainId",
+      "summary": "Return the configured chainId.",
+      "tags": [{ "name": "Chain" }],
+      "params": [],
+      "result": { "name": "result", "schema": { "type": "integer" } }
+    },
+    {
+      "name": "chain.getHead",
+      "summary": "Return the current canonical head.",
+      "tags": [{ "name": "Chain" }],
+      "params": [],
+      "result": { "name": "result", "schema": { "$ref": "#/components/schemas/Head" } }
+    },
+
+    {
+      "name": "chain.getBlockByNumber",
+      "summary": "Lookup a block by height.",
+      "tags": [{ "name": "Blocks" }],
+      "params": [
+        { "name": "number", "required": true, "schema": { "type": "integer", "minimum": 0 } },
+        { "name": "includeTxs", "required": false, "schema": { "type": "boolean", "default": false } },
+        { "name": "includeReceipts", "required": false, "schema": { "type": "boolean", "default": false } }
+      ],
+      "result": { "name": "result", "schema": { "$ref": "#/components/schemas/BlockViewOrNull" } }
+    },
+    {
+      "name": "chain.getBlockByHash",
+      "summary": "Lookup a block by hash.",
+      "tags": [{ "name": "Blocks" }],
+      "params": [
+        { "name": "hash", "required": true, "schema": { "$ref": "#/components/schemas/Hash" } },
+        { "name": "includeTxs", "required": false, "schema": { "type": "boolean", "default": false } },
+        { "name": "includeReceipts", "required": false, "schema": { "type": "boolean", "default": false } }
+      ],
+      "result": { "name": "result", "schema": { "$ref": "#/components/schemas/BlockViewOrNull" } }
+    },
+
+    {
+      "name": "tx.sendRawTransaction",
+      "summary": "Submit a signed CBOR transaction (hex). Returns tx hash.",
+      "tags": [{ "name": "Transactions" }],
+      "params": [
+        { "name": "raw", "required": true, "schema": { "$ref": "#/components/schemas/Hex" } }
+      ],
+      "result": { "name": "result", "schema": { "$ref": "#/components/schemas/Hash" } },
+      "examples": [
+        {
+          "name": "submit",
+          "params": [{ "name": "raw", "value": "0xa1a2…" }],
+          "result": { "name": "result", "value": "0x7f…aa" }
+        }
+      ]
+    },
+    {
+      "name": "tx.getTransactionByHash",
+      "summary": "Return a transaction view by hash, if known.",
+      "tags": [{ "name": "Transactions" }],
+      "params": [{ "name": "hash", "required": true, "schema": { "$ref": "#/components/schemas/Hash" } }],
+      "result": { "name": "result", "schema": { "$ref": "#/components/schemas/TxViewOrNull" } }
+    },
+    {
+      "name": "tx.getTransactionReceipt",
+      "summary": "Return a transaction receipt by hash, if mined.",
+      "tags": [{ "name": "Transactions" }],
+      "params": [{ "name": "hash", "required": true, "schema": { "$ref": "#/components/schemas/Hash" } }],
+      "result": { "name": "result", "schema": { "$ref": "#/components/schemas/ReceiptViewOrNull" } }
+    },
+
+    {
+      "name": "state.getBalance",
+      "summary": "Return the balance of an address as a decimal string.",
+      "tags": [{ "name": "State" }],
+      "params": [{ "name": "address", "required": true, "schema": { "$ref": "#/components/schemas/Address" } }],
+      "result": { "name": "result", "schema": { "type": "string", "description": "Decimal string" } }
+    },
+    {
+      "name": "state.getNonce",
+      "summary": "Return the next transaction nonce for an address.",
+      "tags": [{ "name": "State" }],
+      "params": [{ "name": "address", "required": true, "schema": { "$ref": "#/components/schemas/Address" } }],
+      "result": { "name": "result", "schema": { "type": "integer", "minimum": 0 } }
+    },
+
+    {
+      "name": "da.putBlob",
+      "summary": "Post a blob to the DA service (namespace + data), returning commitment.",
+      "tags": [{ "name": "DataAvailability" }],
+      "params": [
+        { "name": "namespace", "required": true, "schema": { "type": "integer", "minimum": 0 } },
+        { "name": "dataB64", "required": true, "schema": { "type": "string", "format": "byte", "description": "Base64-encoded blob data" } }
+      ],
+      "result": { "name": "result", "schema": { "$ref": "#/components/schemas/BlobReceipt" } }
+    },
+    {
+      "name": "da.getBlob",
+      "summary": "Fetch a blob by commitment.",
+      "tags": [{ "name": "DataAvailability" }],
+      "params": [{ "name": "commitment", "required": true, "schema": { "$ref": "#/components/schemas/Hash" } }],
+      "result": { "name": "result", "schema": { "type": "string", "format": "byte", "description": "Base64-encoded blob data" } }
+    },
+    {
+      "name": "da.getProof",
+      "summary": "Fetch a DAS proof for a commitment.",
+      "tags": [{ "name": "DataAvailability" }],
+      "params": [
+        { "name": "commitment", "required": true, "schema": { "$ref": "#/components/schemas/Hash" } },
+        { "name": "samples", "required": false, "schema": { "type": "integer", "minimum": 1 } }
+      ],
+      "result": { "name": "result", "schema": { "$ref": "#/components/schemas/AvailabilityProof" } }
+    },
+
+    {
+      "name": "rand.getParams",
+      "summary": "Return randomness beacon parameters.",
+      "tags": [{ "name": "Randomness" }],
+      "params": [],
+      "result": { "name": "result", "schema": { "$ref": "#/components/schemas/RandomParams" } }
+    },
+    {
+      "name": "rand.getRound",
+      "summary": "Return current round metadata.",
+      "tags": [{ "name": "Randomness" }],
+      "params": [],
+      "result": { "name": "result", "schema": { "$ref": "#/components/schemas/RoundInfo" } }
+    },
+    {
+      "name": "rand.commit",
+      "summary": "Submit a commit for the open round.",
+      "tags": [{ "name": "Randomness" }],
+      "params": [
+        { "name": "salt", "required": true, "schema": { "$ref": "#/components/schemas/Hex" } },
+        { "name": "payload", "required": true, "schema": { "$ref": "#/components/schemas/Hex" } }
+      ],
+      "result": { "name": "result", "schema": { "$ref": "#/components/schemas/CommitResult" } }
+    },
+    {
+      "name": "rand.reveal",
+      "summary": "Reveal a prior commit for the current round.",
+      "tags": [{ "name": "Randomness" }],
+      "params": [
+        { "name": "salt", "required": true, "schema": { "$ref": "#/components/schemas/Hex" } },
+        { "name": "payload", "required": true, "schema": { "$ref": "#/components/schemas/Hex" } }
+      ],
+      "result": { "name": "result", "schema": { "$ref": "#/components/schemas/RevealResult" } }
+    },
+    {
+      "name": "rand.getBeacon",
+      "summary": "Return beacon output for a round (default: latest).",
+      "tags": [{ "name": "Randomness" }],
+      "params": [{ "name": "roundId", "required": false, "schema": { "type": "integer", "minimum": 0 } }],
+      "result": { "name": "result", "schema": { "$ref": "#/components/schemas/BeaconOut" } }
+    },
+
+    {
+      "name": "aicf.listProviders",
+      "summary": "List registered providers.",
+      "tags": [{ "name": "AICF" }],
+      "params": [
+        { "name": "offset", "required": false, "schema": { "type": "integer", "minimum": 0, "default": 0 } },
+        { "name": "limit", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } }
+      ],
+      "result": { "name": "result", "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Provider" } } }
+    },
+    {
+      "name": "aicf.getProvider",
+      "summary": "Get provider by id.",
+      "tags": [{ "name": "AICF" }],
+      "params": [{ "name": "providerId", "required": true, "schema": { "type": "string" } }],
+      "result": { "name": "result", "schema": { "$ref": "#/components/schemas/ProviderOrNull" } }
+    },
+    {
+      "name": "aicf.listJobs",
+      "summary": "List jobs (optionally filtered by status).",
+      "tags": [{ "name": "AICF" }],
+      "params": [
+        { "name": "status", "required": false, "schema": { "$ref": "#/components/schemas/JobStatus" } },
+        { "name": "offset", "required": false, "schema": { "type": "integer", "minimum": 0, "default": 0 } },
+        { "name": "limit", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } }
+      ],
+      "result": { "name": "result", "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Job" } } }
+    },
+    {
+      "name": "aicf.getJob",
+      "summary": "Get a job by id.",
+      "tags": [{ "name": "AICF" }],
+      "params": [{ "name": "jobId", "required": true, "schema": { "type": "string" } }],
+      "result": { "name": "result", "schema": { "$ref": "#/components/schemas/JobOrNull" } }
+    },
+
+    {
+      "name": "cap.getJob",
+      "summary": "Read-only view of a capabilities job (by deterministic task id).",
+      "tags": [{ "name": "Capabilities" }],
+      "params": [{ "name": "taskId", "required": true, "schema": { "type": "string" } }],
+      "result": { "name": "result", "schema": { "$ref": "#/components/schemas/CapJobOrNull" } }
+    },
+    {
+      "name": "cap.listJobs",
+      "summary": "List capability jobs (optionally filtered by caller address).",
+      "tags": [{ "name": "Capabilities" }],
+      "params": [
+        { "name": "caller", "required": false, "schema": { "$ref": "#/components/schemas/Address" } },
+        { "name": "offset", "required": false, "schema": { "type": "integer", "minimum": 0, "default": 0 } },
+        { "name": "limit", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } }
+      ],
+      "result": { "name": "result", "schema": { "type": "array", "items": { "$ref": "#/components/schemas/CapJob" } } }
+    },
+    {
+      "name": "cap.getResult",
+      "summary": "Get a deterministic result record for a task id (if available).",
+      "tags": [{ "name": "Capabilities" }],
+      "params": [{ "name": "taskId", "required": true, "schema": { "type": "string" } }],
+      "result": { "name": "result", "schema": { "$ref": "#/components/schemas/CapResultOrNull" } }
+    }
+  ],
+  "components": {
+    "schemas": {
+      "Hex": { "type": "string", "pattern": "^0x[0-9a-fA-F]+$" },
+      "Hash": { "type": "string", "pattern": "^0x[0-9a-fA-F]{64,}$", "description": "Keccak/SHA3 style hex hash" },
+      "Address": { "type": "string", "pattern": "^(anim1)[a-z0-9]{20,}$", "description": "bech32m address" },
+
+      "Head": {
+        "type": "object",
+        "required": ["height", "hash", "time"],
+        "properties": {
+          "height": { "type": "integer", "minimum": 0 },
+          "hash": { "$ref": "#/components/schemas/Hash" },
+          "time": { "type": "string", "format": "date-time" }
+        }
+      },
+
+      "TxView": {
+        "type": "object",
+        "required": ["hash", "from", "nonce", "gas"],
+        "properties": {
+          "hash": { "$ref": "#/components/schemas/Hash" },
+          "from": { "$ref": "#/components/schemas/Address" },
+          "to": { "oneOf": [{ "$ref": "#/components/schemas/Address" }, { "type": "null" }] },
+          "nonce": { "type": "integer", "minimum": 0 },
+          "gas": { "type": "string", "description": "decimal gas limit" },
+          "value": { "type": "string", "description": "decimal amount", "nullable": true },
+          "data": { "$ref": "#/components/schemas/Hex" }
+        }
+      },
+      "TxViewOrNull": { "oneOf": [ { "$ref": "#/components/schemas/TxView" }, { "type": "null" } ] },
+
+      "LogEvent": {
+        "type": "object",
+        "required": ["address", "topics", "data"],
+        "properties": {
+          "address": { "$ref": "#/components/schemas/Address" },
+          "topics": { "type": "array", "items": { "$ref": "#/components/schemas/Hex" } },
+          "data": { "$ref": "#/components/schemas/Hex" }
+        }
+      },
+
+      "ReceiptView": {
+        "type": "object",
+        "required": ["txHash", "status", "gasUsed", "logs"],
+        "properties": {
+          "txHash": { "$ref": "#/components/schemas/Hash" },
+          "status": { "type": "string", "enum": ["SUCCESS", "REVERT", "OOG"] },
+          "gasUsed": { "type": "string", "description": "decimal gas used" },
+          "logs": { "type": "array", "items": { "$ref": "#/components/schemas/LogEvent" } }
+        }
+      },
+      "ReceiptViewOrNull": { "oneOf": [ { "$ref": "#/components/schemas/ReceiptView" }, { "type": "null" } ] },
+
+      "BlockView": {
+        "type": "object",
+        "required": ["number", "hash", "parentHash", "time", "txs"],
+        "properties": {
+          "number": { "type": "integer", "minimum": 0 },
+          "hash": { "$ref": "#/components/schemas/Hash" },
+          "parentHash": { "$ref": "#/components/schemas/Hash" },
+          "time": { "type": "string", "format": "date-time" },
+          "txs": {
+            "oneOf": [
+              { "type": "array", "items": { "$ref": "#/components/schemas/TxView" } },
+              { "type": "array", "items": { "$ref": "#/components/schemas/Hash" } }
+            ],
+            "description": "Either full tx views or just hashes depending on includeTxs"
+          },
+          "receipts": {
+            "oneOf": [
+              { "type": "array", "items": { "$ref": "#/components/schemas/ReceiptView" } },
+              { "type": "null" }
+            ]
+          }
+        }
+      },
+      "BlockViewOrNull": { "oneOf": [ { "$ref": "#/components/schemas/BlockView" }, { "type": "null" } ] },
+
+      "BlobReceipt": {
+        "type": "object",
+        "required": ["commitment", "size", "namespace"],
+        "properties": {
+          "commitment": { "$ref": "#/components/schemas/Hash" },
+          "size": { "type": "integer", "minimum": 0 },
+          "namespace": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "AvailabilityProof": {
+        "type": "object",
+        "description": "Compact DAS proof (indices, branches, root). Exact layout per DA schema.",
+        "additionalProperties": true
+      },
+
+      "RandomParams": {
+        "type": "object",
+        "properties": {
+          "roundSeconds": { "type": "integer" },
+          "revealGraceSeconds": { "type": "integer" },
+          "vdfIterations": { "type": "integer" }
+        },
+        "additionalProperties": true
+      },
+      "RoundInfo": {
+        "type": "object",
+        "required": ["roundId", "phase", "openAt", "closeAt"],
+        "properties": {
+          "roundId": { "type": "integer" },
+          "phase": { "type": "string", "enum": ["OPEN", "REVEAL", "FINALIZING", "CLOSED"] },
+          "openAt": { "type": "string", "format": "date-time" },
+          "closeAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CommitResult": {
+        "type": "object",
+        "required": ["roundId", "commitment"],
+        "properties": {
+          "roundId": { "type": "integer" },
+          "commitment": { "$ref": "#/components/schemas/Hash" }
+        }
+      },
+      "RevealResult": {
+        "type": "object",
+        "required": ["roundId", "accepted"],
+        "properties": {
+          "roundId": { "type": "integer" },
+          "accepted": { "type": "boolean" }
+        }
+      },
+      "BeaconOut": {
+        "type": "object",
+        "required": ["roundId", "output"],
+        "properties": {
+          "roundId": { "type": "integer" },
+          "output": { "$ref": "#/components/schemas/Hex" },
+          "vdfProof": { "$ref": "#/components/schemas/Hex" }
+        }
+      },
+
+      "Provider": {
+        "type": "object",
+        "required": ["id", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "status": { "type": "string", "enum": ["ACTIVE", "JAILED", "OFFLINE"] },
+          "stake": { "type": "string", "description": "decimal" },
+          "capabilities": { "type": "array", "items": { "type": "string", "enum": ["AI", "QUANTUM"] } }
+        }
+      },
+      "ProviderOrNull": { "oneOf": [ { "$ref": "#/components/schemas/Provider" }, { "type": "null" } ] },
+
+      "JobStatus": { "type": "string", "enum": ["QUEUED", "ASSIGNED", "COMPLETED", "FAILED", "EXPIRED"] },
+      "JobKind": { "type": "string", "enum": ["AI", "QUANTUM"] },
+      "Job": {
+        "type": "object",
+        "required": ["id", "kind", "status", "createdAt"],
+        "properties": {
+          "id": { "type": "string" },
+          "kind": { "$ref": "#/components/schemas/JobKind" },
+          "status": { "$ref": "#/components/schemas/JobStatus" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "providerId": { "type": "string", "nullable": true }
+        }
+      },
+      "JobOrNull": { "oneOf": [ { "$ref": "#/components/schemas/Job" }, { "type": "null" } ] },
+
+      "CapJob": {
+        "type": "object",
+        "required": ["taskId", "caller", "kind", "height"],
+        "properties": {
+          "taskId": { "type": "string" },
+          "caller": { "$ref": "#/components/schemas/Address" },
+          "kind": { "$ref": "#/components/schemas/JobKind" },
+          "height": { "type": "integer" }
+        }
+      },
+      "CapJobOrNull": { "oneOf": [ { "$ref": "#/components/schemas/CapJob" }, { "type": "null" } ] },
+      "CapResult": {
+        "type": "object",
+        "required": ["taskId", "available"],
+        "properties": {
+          "taskId": { "type": "string" },
+          "available": { "type": "boolean" },
+          "result": { "type": "object", "additionalProperties": true, "nullable": true }
+        }
+      },
+      "CapResultOrNull": { "oneOf": [ { "$ref": "#/components/schemas/CapResult" }, { "type": "null" } ] },
+
+      "ChainParams": {
+        "type": "object",
+        "description": "Subset of chain parameters; full spec in spec/params.yaml.",
+        "properties": {
+          "chainId": { "type": "integer" },
+          "blockGasLimit": { "type": "string", "description": "decimal" },
+          "minGasPrice": { "type": "string", "description": "decimal" }
+        },
+        "additionalProperties": true
+      }
+    }
+  }
+}

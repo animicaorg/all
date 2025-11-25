@@ -1,0 +1,184 @@
+# Prometheus (vanilla, no Operator) for Animica devnet
+# - Uses ConfigMap "prometheus-config" created in ops/k8s/configmaps/prometheus.yml
+# - Scrapes in-cluster Services/Pods via kubernetes_sd_configs (RBAC below)
+# - Persists TSDB to a PVC
+# - Exposes :9090 via a ClusterIP Service (Ingress/Gateway optional)
+#
+# If your ConfigMap name differs, update the volume "config" reference below.
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: animica-prometheus
+
+---
+# RBAC for kubernetes_sd_configs (discover Services/Pods/Endpoints)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: animica-prometheus
+  labels:
+    app.kubernetes.io/part-of: animica
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - nodes/proxy
+      - services
+      - endpoints
+      - pods
+      - namespaces
+      - endpointslices
+      - configmaps
+    verbs: ["get", "list", "watch"]
+  - nonResourceURLs: ["/metrics", "/metrics/*"]
+    verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: animica-prometheus
+  labels:
+    app.kubernetes.io/part-of: animica
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: animica-prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: animica-devnet
+
+---
+# Persistent storage for TSDB
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-data
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: animica-prometheus
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 20Gi
+  # storageClassName: standard   # uncomment/override if needed
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: animica-prometheus
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: animica-prometheus
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: animica
+      app.kubernetes.io/name: animica-prometheus
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: animica
+        app.kubernetes.io/name: animica-prometheus
+    spec:
+      serviceAccountName: prometheus
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 65534 # 'nobody' group so Prometheus can write TSDB
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.54.1
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--config.file=/etc/prometheus/prometheus.yml"
+            - "--storage.tsdb.path=/prometheus"
+            - "--storage.tsdb.retention.time=15d"
+            - "--web.enable-lifecycle"
+            - "--web.enable-admin-api"
+          ports:
+            - name: http
+              containerPort: 9090
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+          volumeMounts:
+            - name: data
+              mountPath: /prometheus
+            - name: config
+              mountPath: /etc/prometheus/prometheus.yml
+              subPath: prometheus.yml
+              readOnly: true
+            # Empty rules dir by default; add a ConfigMap mount via overlay if you have rule files.
+            - name: rules-empty
+              mountPath: /etc/prometheus/rules
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: prometheus-data
+        - name: config
+          configMap:
+            name: prometheus-config   # <-- must match ops/k8s/configmaps/prometheus.yml
+            items:
+              - key: prometheus.yml
+                path: prometheus.yml
+        - name: rules-empty
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: animica-prometheus
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: animica-prometheus
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: animica-prometheus
+  ports:
+    - name: http
+      port: 9090
+      targetPort: http
+      protocol: TCP

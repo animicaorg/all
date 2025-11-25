@@ -1,0 +1,161 @@
+name: Website Deploy (Netlify)
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "website/**"
+  pull_request:
+    paths:
+      - "website/**"
+
+concurrency:
+  group: website-netlify-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # These must be set as GitHub Secrets (prefer protected environments).
+  NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+  NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}                # production site
+  NETLIFY_SITE_ID_PREVIEW: ${{ secrets.NETLIFY_SITE_ID_PREVIEW }} # optional preview site
+
+jobs:
+  preview:
+    if: github.event_name == 'pull_request' && env.NETLIFY_AUTH_TOKEN != ''
+    name: Preview Deploy (Draft URL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    defaults:
+      run:
+        working-directory: website
+
+    environment:
+      name: preview
+
+    # Provide safe defaults; override in Netlify UI/Secrets as needed
+    env:
+      NODE_ENV: production
+      PUBLIC_STUDIO_URL: https://studio.animica.dev
+      PUBLIC_EXPLORER_URL: https://explorer.animica.dev
+      PUBLIC_DOCS_URL: https://docs.animica.dev
+      PUBLIC_RPC_URL: https://rpc.animica.dev
+      PUBLIC_CHAIN_ID: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: website/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint & Typecheck
+        run: pnpm lint && pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      - name: Install Netlify CLI
+        run: pnpm add -g netlify-cli@latest
+
+      - name: Deploy (preview)
+        id: deploy
+        run: |
+          SITE_ID="${NETLIFY_SITE_ID_PREVIEW:-$NETLIFY_SITE_ID}"
+          echo "Using site: ${SITE_ID}"
+          # Deploy dist/ as a draft (non-prod) build; capture JSON to extract URLs
+          json="$(netlify deploy \
+            --dir=dist \
+            --auth="${NETLIFY_AUTH_TOKEN}" \
+            --site="${SITE_ID}" \
+            --json)"
+          echo "${json}" > deploy-preview.json
+          url=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("deploy-preview.json","utf8")).deploy_url)')
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+          echo "Preview URL: ${url}"
+
+      - name: Share URL
+        run: echo "🔗 Preview: \`${{ steps.deploy.outputs.url }}\`" >> $GITHUB_STEP_SUMMARY
+
+  production:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.NETLIFY_AUTH_TOKEN != ''
+    name: Production Deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    defaults:
+      run:
+        working-directory: website
+
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.url }}
+
+    env:
+      NODE_ENV: production
+      PUBLIC_STUDIO_URL: https://studio.animica.dev
+      PUBLIC_EXPLORER_URL: https://explorer.animica.dev
+      PUBLIC_DOCS_URL: https://docs.animica.dev
+      PUBLIC_RPC_URL: https://rpc.animica.dev
+      PUBLIC_CHAIN_ID: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: website/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Install Netlify CLI
+        run: pnpm add -g netlify-cli@latest
+
+      - name: Deploy (production)
+        id: deploy
+        run: |
+          # Use production site id
+          : "${NETLIFY_SITE_ID:?NETLIFY_SITE_ID is required for prod deploys}"
+          url="$(netlify deploy \
+            --dir=dist \
+            --auth="${NETLIFY_AUTH_TOKEN}" \
+            --site="${NETLIFY_SITE_ID}" \
+            --prod \
+            --message "GitHub Actions deploy ${GITHUB_SHA:0:7}")"
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+          echo "Production URL: ${url}"
+
+      - name: Share URL
+        run: echo "🚀 Production: \`${{ steps.deploy.outputs.url }}\`" >> $GITHUB_STEP_SUMMARY
+
+  no-secrets:
+    if: env.NETLIFY_AUTH_TOKEN == ''
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "::warning title=Netlify deploy skipped::NETLIFY_AUTH_TOKEN is not set as a secret. Skipping deploy." 

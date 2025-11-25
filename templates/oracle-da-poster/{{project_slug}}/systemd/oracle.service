@@ -1,0 +1,83 @@
+# /etc/systemd/system/oracle.service
+# Systemd unit for the Oracle DA Poster (daemon mode).
+# Adjust paths/user/group to your deployment (see comments below).
+
+[Unit]
+Description=Animica Oracle DA Poster
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=30
+StartLimitBurst=5
+Documentation=README.md
+
+[Service]
+# --- Runtime identity & paths -------------------------------------------------
+# Create a dedicated user and group (e.g. `oracle`) or reuse your app user.
+User={{project_slug}}
+Group={{project_slug}}
+
+# Directory where the app is installed (git checkout / deploy bundle).
+WorkingDirectory=/opt/{{project_slug}}
+
+# If using systemd >= 235, these create and manage writable dirs for you.
+# StateDirectory -> /var/lib/{{project_slug}}
+# LogsDirectory  -> /var/log/{{project_slug}}
+# CacheDirectory -> /var/cache/{{project_slug}}
+StateDirectory={{project_slug}}
+LogsDirectory={{project_slug}}
+CacheDirectory={{project_slug}}
+
+# --- Environment --------------------------------------------------------------
+Environment=PYTHONUNBUFFERED=1
+# Primary env file (application variables: RPC_URL, ORACLE_CONTRACT, etc.)
+EnvironmentFile=-/opt/{{project_slug}}/.env
+# Optional ops-managed override file:
+EnvironmentFile=-/etc/{{project_slug}}/oracle.env
+
+# --- Execution ----------------------------------------------------------------
+# Path to your venv Python. Change if you install differently.
+ExecStart=/opt/{{project_slug}}/.venv/bin/python -m oracle_poster.main
+
+# Use SIGTERM for a graceful stop; the app traps SIGINT/SIGTERM.
+KillMode=process
+Restart=always
+RestartSec=5s
+TimeoutStartSec=60s
+TimeoutStopSec=25s
+
+# --- Resource & reliability knobs --------------------------------------------
+Nice=5
+LimitNOFILE=32768
+
+# --- Logging ------------------------------------------------------------------
+StandardOutput=journal
+StandardError=journal
+# If you'd like to tag logs in journald/Loki, you can add:
+# SyslogIdentifier=oracle-poster
+
+# --- Hardening (tighten as your environment allows) ---------------------------
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=full
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+MemoryDenyWriteExecute=true
+# Allow only what we need: UNIX sockets and IPv4/IPv6 for RPC/HTTP(S)
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# Empty capability set; the service should not need elevated caps.
+AmbientCapabilities=
+CapabilityBoundingSet=
+UMask=0027
+
+# If your poster needs to write in specific locations beyond the defaults,
+# add them explicitly (kept minimal by default):
+ReadWritePaths=/opt/{{project_slug}} /var/lib/{{project_slug}} /var/log/{{project_slug}}
+
+[Install]
+WantedBy=multi-user.target

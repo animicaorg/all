@@ -1,0 +1,133 @@
+# cert-manager ACME configuration for Animica devnet.
+# Installs two ClusterIssuers (staging & prod) and Certificates for:
+#   - studio.animica.dev  -> secret: studio-animica-tls
+#   - explorer.animica.dev-> secret: explorer-animica-tls
+#   - rpc.animica.dev     -> secret: rpc-animica-tls
+#
+# Prereqs:
+#   - cert-manager CRDs & controller installed:
+#       kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.4/cert-manager.yaml
+#   - NGINX IngressClass name is "nginx" (change below if different).
+#
+# Step 1 (safe): apply the *staging* issuer + certs, verify Ready.
+# Step 2 (prod): switch `issuerRef.name` to "letsencrypt" on the Certificates or apply the prod docs here.
+#
+# --------------------------------------------------------------------------------
+# ClusterIssuer: Let's Encrypt STAGING (no rate limits; NOT trusted by browsers)
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: cert-issuer-staging
+spec:
+  acme:
+    # Staging directory (test only)
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: ops@example.com            # <-- CHANGE ME
+    privateKeySecretRef:
+      name: letsencrypt-staging-account-key
+    solvers:
+      - http01:
+          ingress:
+            class: nginx
+
+# --------------------------------------------------------------------------------
+# ClusterIssuer: Let's Encrypt PRODUCTION (trusted; rate-limited)
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: cert-issuer-prod
+spec:
+  acme:
+    # Production directory (live certs)
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: ops@example.com            # <-- CHANGE ME
+    privateKeySecretRef:
+      name: letsencrypt-account-key
+    solvers:
+      - http01:
+          ingress:
+            class: nginx
+
+# --------------------------------------------------------------------------------
+# Certificates (namespace-scoped) using the *staging* issuer by default.
+# After validation, switch issuerRef.name to "letsencrypt" for real certs.
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: studio-animica-cert
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: studio-web
+spec:
+  secretName: studio-animica-tls
+  issuerRef:
+    kind: ClusterIssuer
+    name: letsencrypt-staging         # switch to "letsencrypt" for prod
+  dnsNames:
+    - studio.animica.dev
+
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: explorer-animica-cert
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: explorer-web
+spec:
+  secretName: explorer-animica-tls
+  issuerRef:
+    kind: ClusterIssuer
+    name: letsencrypt-staging         # switch to "letsencrypt" for prod
+  dnsNames:
+    - explorer.animica.dev
+
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: rpc-animica-cert
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: node-rpc
+spec:
+  secretName: rpc-animica-tls
+  issuerRef:
+    kind: ClusterIssuer
+    name: letsencrypt-staging         # switch to "letsencrypt" for prod
+  dnsNames:
+    - rpc.animica.dev
+
+# --------------------------------------------------------------------------------
+# Optional: example DNS-01 solver (Cloudflare) you can copy into an Issuer/ClusterIssuer.
+# Requires a secret with your API token and the appropriate zone permissions.
+# Uncomment and tailor if you prefer DNS-01 instead of HTTP-01.
+#
+# apiVersion: cert-manager.io/v1
+# kind: ClusterIssuer
+# metadata:
+#   name: letsencrypt-dns-cloudflare
+# spec:
+#   acme:
+#     server: https://acme-v02.api.letsencrypt.org/directory
+#     email: ops@example.com
+#     privateKeySecretRef:
+#       name: letsencrypt-dns-account-key
+#     solvers:
+#       - dns01:
+#           cloudflare:
+#             apiTokenSecretRef:
+#               name: cloudflare-api-token
+#               key: token

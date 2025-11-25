@@ -1,0 +1,91 @@
+{
+  "schema": "https://animica.dev/schemas/air.toy.v1.json",
+  "name": "stark_merkle_membership_toy",
+  "air_version": "0.1.0",
+
+  "field": {
+    "name": "goldilocks",
+    "modulus": "18446744069414584321",
+    "generator": "7"
+  },
+
+  "trace": {
+    "width": 3,
+    "length": 8,
+    "registers": [
+      { "idx": 0, "name": "h", "role": "mutable", "doc": "current hash rolling up the path" },
+      { "idx": 1, "name": "s", "role": "advice",  "doc": "sibling at this level" },
+      { "idx": 2, "name": "b", "role": "advice",  "doc": "direction bit: 0=left, 1=right" }
+    ],
+    "clock": { "domain": "power_of_two", "po2": 3 }
+  },
+
+  "public_inputs": {
+    "signals": [
+      { "name": "leaf", "type": "felt" },
+      { "name": "root", "type": "felt" },
+      { "name": "path_len", "type": "u32" }
+    ],
+    "doc": "The AIR consumer provides concrete values in a separate input file at proof time."
+  },
+
+  "constraints": {
+    "degree": 2,
+    "transition": [
+      {
+        "name": "merkle_update",
+        "expr": "h_next - ((h*h + 3*s + 5) * (1 - b) + (h*h + 5*s + 7) * b)",
+        "doc": "Advance rule: mix with sibling using toy 2→1 hash, switched by direction bit b."
+      },
+      {
+        "name": "direction_bit_boolean",
+        "expr": "b * (b - 1)",
+        "enforce": "all",
+        "doc": "Booleanity of direction column."
+      }
+    ],
+    "boundary": [
+      {
+        "when": { "step": 0 },
+        "expr": "h - leaf",
+        "doc": "Initial hash equals provided leaf."
+      },
+      {
+        "when": { "step": "last" },
+        "expr": "h - root",
+        "doc": "Final hash equals provided root."
+      }
+    ],
+    "consistency": [
+      {
+        "name": "no_constraint_on_advice_ranges",
+        "expr": "0",
+        "doc": "Placeholder: advice columns are unconstrained except where referenced."
+      }
+    ]
+  },
+
+  "hints": {
+    "path_encoding": "Each row corresponds to one tree level; s= sibling hash, b ∈ {0,1} chooses left/right parent rule.",
+    "toy_hash_warning": "This AIR uses a polynomial mixer instead of a cryptographic hash. For tests only."
+  },
+
+  "fri": {
+    "lde_blowup": 8,
+    "ood_points": 2,
+    "grinding_bits": 0,
+    "doc": "Suggested defaults for a tiny toy instance; real provers may ignore."
+  },
+
+  "symbols": {
+    "locals": ["h", "s", "b"],
+    "nexts":  ["h_next"],
+    "public": ["leaf", "root", "path_len"]
+  },
+
+  "metadata": {
+    "authors": ["animica-dev"],
+    "license": "Apache-2.0",
+    "created": "2025-01-01T00:00:00Z"
+  }
+}

@@ -1,0 +1,71 @@
+---
+/**
+ * AnalyticsPostHog.astro
+ * Minimal, opt-in PostHog snippet with sensible defaults.
+ *
+ * Usage:
+ *   <AnalyticsPostHog />
+ *   <AnalyticsPostHog key="phc_XXXX" host="https://app.posthog.com" />
+ *
+ * Reads optional PUBLIC env vars (Vite/Astro):
+ *   - PUBLIC_POSTHOG_KEY      (required to enable)
+ *   - PUBLIC_POSTHOG_HOST     (default https://app.posthog.com)
+ *   - PUBLIC_ANALYTICS_ON_DEV ("true" to enable during `astro dev`)
+ *
+ * Safe defaults:
+ *   - capture_pageview: true
+ *   - autocapture: true
+ *   - session recording: off by default (set sessionRecording=true to enable)
+ *   - respect DNT: true
+ */
+
+interface Props {
+  /** PostHog project API key (phc_...). Falls back to PUBLIC_POSTHOG_KEY. */
+  key?: string;
+  /** PostHog host. Falls back to PUBLIC_POSTHOG_HOST or https://app.posthog.com. */
+  host?: string;
+  /** Force enable/disable. Defaults to enabled if key is present. */
+  enabled?: boolean;
+  /** Capture a pageview on load. */
+  capturePageview?: boolean;
+  /** Enable PostHog's autocapture (clicks, etc.). */
+  autocapture?: boolean;
+  /** Enable session recording (off by default here). */
+  sessionRecording?: boolean;
+  /** Respect Do Not Track. */
+  respectDnt?: boolean;
+}
+
+const {
+  key = import.meta.env.PUBLIC_POSTHOG_KEY as string | undefined,
+  host = (import.meta.env.PUBLIC_POSTHOG_HOST as string | undefined) ?? "https://app.posthog.com",
+  enabled = Boolean(import.meta.env.PUBLIC_POSTHOG_KEY),
+  capturePageview = true,
+  autocapture = true,
+  sessionRecording = false,
+  respectDnt = true
+} = Astro.props as Props;
+
+// Disable in local dev unless explicitly allowed
+const dev = import.meta.env.DEV;
+const allowInDev = (import.meta.env.PUBLIC_ANALYTICS_ON_DEV as string | undefined)?.toLowerCase() === "true";
+const shouldRender = !!key && enabled && (!dev || allowInDev);
+
+// Prepare a small config object to inline safely
+const cfg = {
+  api_host: host,
+  capture_pageview: capturePageview,
+  autocapture: autocapture,
+  disable_session_recording: !sessionRecording,
+  respect_dnt: respectDnt
+};
+---
+
+{shouldRender ? (
+  // Official light-weight PostHog loader (stub + async script + init)
+  // Reference: https://posthog.com/docs/libraries/js
+  <script is:inline>
+{`!function(t,e){var o,n,p,r;e.__SV||(window.posthog=e.posthog=[],e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.async=!0,p.src=(s.api_host||"https://app.posthog.com")+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+".people (stub)"},o="capture identify alias people.set people.set_once set_config register register_once unregister group identify_group set_group reset isFeatureEnabled onFeatureFlags debug".split(" ");for(n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
+posthog.init(${JSON.stringify(key)}, ${JSON.stringify(cfg)});`}
+  </script>
+) : null}

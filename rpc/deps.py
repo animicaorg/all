@@ -1,0 +1,404 @@
+from __future__ import annotations
+
+"""
+rpc.deps
+========
+Wires the RPC layer to the running node's storage and chain view:
+
+- Opens the configured KV (SQLite by default)
+- Instantiates typed DB facades (state/blocks/tx-index)
+- Exposes a light "head" accessor (height/hash/header)
+- Loads canonical chain params (from spec/params.yaml), surfaced as a dict
+- Provides FastAPI lifecycle hooks (startup/shutdown)
+- Offers small helper methods used by rpc services
+
+This module is intentionally defensive: it imports core/* adapters lazily and
+works even if optional backends are missing. It also tolerates slightly different
+symbol names in core/* (e.g., BlockDB vs block_db.BlockDB) to keep the system
+robust as the repository evolves.
+
+Typical usage
+-------------
+from fastapi import FastAPI
+from rpc.config import load_config
+from rpc.deps import attach_lifecycle, get_ctx
+
+app = FastAPI()
+attach_lifecycle(app, load_config())
+
+# elsewhere (e.g. in handlers)
+ctx = get_ctx()
+head = ctx.get_head()           # {'height': int, 'hash': '0x..', 'header': <obj or dict>}
+params = ctx.params             # dict (subset of spec/params.yaml)
+"""
+
+import json
+import os
+import re
+import threading
+import typing as t
+from dataclasses import dataclass
+from pathlib import Path
+
+# ---- local imports (lazy patterns for resiliency) ---------------------------
+
+def _import(path: str):
+    """Import a module by dotted path with a crisp error if it fails."""
+    import importlib
+    try:
+        return importlib.import_module(path)
+    except Exception as e:
+        raise RuntimeError(f"Failed to import {path}: {e}") from e
+
+
+# ---- repo root & spec loading ----------------------------------------------
+
+def _repo_root() -> Path:
+    # repo_root/rpc/deps.py → repo_root
+    return Path(__file__).resolve().parents[1]
+
+
+def _load_yaml(path: Path) -> t.Dict[str, t.Any]:
+    import yaml  # runtime dep present in this repo
+    with path.open("rt", encoding="utf-8") as fh:
+        return t.cast(dict, yaml.safe_load(fh) or {})
+
+
+def _params_from_spec() -> t.Dict[str, t.Any]:
+    """
+    Load canonical params from spec/params.yaml and return a dict view that is
+    stable for RPC responses. We do not force a specific dataclass here to keep
+    RPC loosely coupled to core/types. Handlers can shape/validate further.
+    """
+    p = _repo_root() / "spec" / "params.yaml"
+    if not p.exists():
+        return {}
+    raw = _load_yaml(p)
+
+    # Normalize a few fields commonly referenced by RPC:
+    out: dict[str, t.Any] = {}
+    # Copy selected top-level keys if present:
+    for k in ("chainName", "chainId", "targetBlockTimeMs", "gas", "pow", "economics", "limits"):
+        if k in raw:
+            out[k] = raw[k]
+
+    # Provide a compact "consensus" summary if available:
+    if "pow" in raw:
+        pow_ = raw["pow"]
+        out["consensus"] = {
+            "kind": "PoIES",
+            "thetaInitial": pow_.get("thetaInitial"),
+            "thetaBounds": pow_.get("thetaBounds"),
+            "shareTarget": pow_.get("shareTarget"),
+            "gammaCap": pow_.get("gammaCap"),
+        }
+    return out
+
+
+# ---- Config glue ------------------------------------------------------------
+
+@dataclass
+class _ConfigView:
+    db_uri: str
+    chain_id: int
+    genesis_path: Path | None
+    log_level: str
+
+def _load_rpc_config() -> _ConfigView:
+    # rpc.config.load_config() → object with db_uri/chain_id/genesis/logging
+    cfg_mod = _import("rpc.config")
+    load_config = getattr(cfg_mod, "load_config")
+    cfg = load_config()
+
+    # Accept a variety of attribute spellings
+    db_uri = getattr(cfg, "db_uri", getattr(cfg, "DB_URI", "sqlite:///animica.db"))
+    chain_id = int(getattr(cfg, "chain_id", getattr(cfg, "CHAIN_ID", 1)))
+    genesis = getattr(cfg, "genesis_path", getattr(cfg, "GENESIS_PATH", None))
+    if isinstance(genesis, str):
+        genesis = Path(genesis)
+    log_level = str(getattr(cfg, "log_level", getattr(cfg, "LOG_LEVEL", "INFO")))
+
+    return _ConfigView(db_uri=db_uri, chain_id=chain_id, genesis_path=genesis, log_level=log_level)
+
+
+# ---- KV open helpers --------------------------------------------------------
+
+def _parse_sqlite_uri(db_uri: str) -> str:
+    """
+    sqlite:///absolute/path.db  → /absolute/path.db
+    sqlite:///:memory:          → :memory:
+    """
+    m = re.match(r"^sqlite:///(.*)$", db_uri)
+    if not m:
+        raise ValueError(f"Unsupported DB URI (expected sqlite:///…): {db_uri}")
+    path = m.group(1)
+    return path if path == ":memory:" else os.path.expanduser(path)
+
+def _open_kv(db_uri: str):
+    """
+    Open the backing KV store using core.db.sqlite (preferred). If RocksDB is
+    configured in the future, you can extend this function to route by scheme.
+    """
+    path = _parse_sqlite_uri(db_uri)
+    db_sqlite = _import("core.db.sqlite")
+
+    # Prefer a helper called `open_kv(path)` if present; else instantiate SQLiteKV(path)
+    if hasattr(db_sqlite, "open_kv"):
+        return db_sqlite.open_kv(path)  # type: ignore[attr-defined]
+    if hasattr(db_sqlite, "SQLiteKV"):
+        return db_sqlite.SQLiteKV(path)  # type: ignore[attr-defined]
+    if hasattr(db_sqlite, "SqliteKV"):
+        return db_sqlite.SqliteKV(path)  # type: ignore[attr-defined]
+    raise RuntimeError("core.db.sqlite does not export open_kv/SQLiteKV/SqliteKV")
+
+
+# ---- DB facades & head access ----------------------------------------------
+
+@dataclass
+class _DbBundle:
+    kv: t.Any
+    state_db: t.Any
+    block_db: t.Any
+    tx_index: t.Any
+
+def _build_db_facades(kv: t.Any) -> _DbBundle:
+    db_state = _import("core.db.state_db")
+    db_block = _import("core.db.block_db")
+    db_txidx = _import("core.db.tx_index")
+
+    # Accept either factory functions or classes
+    state_db = getattr(db_state, "StateDB", None)
+    if callable(state_db):
+        state_db = state_db(kv)
+    elif hasattr(db_state, "open"):
+        state_db = db_state.open(kv)  # type: ignore
+
+    block_db = getattr(db_block, "BlockDB", None)
+    if callable(block_db):
+        block_db = block_db(kv)
+    elif hasattr(db_block, "open"):
+        block_db = db_block.open(kv)  # type: ignore
+
+    tx_index = getattr(db_txidx, "TxIndex", None)
+    if callable(tx_index):
+        tx_index = tx_index(kv)
+    elif hasattr(db_txidx, "open"):
+        tx_index = db_txidx.open(kv)  # type: ignore
+
+    return _DbBundle(kv=kv, state_db=state_db, block_db=block_db, tx_index=tx_index)
+
+
+class _HeadAccessor:
+    """
+    Small compatibility wrapper over core.chain.head & core.db.block_db to
+    retrieve the canonical head, its height, and header object.
+    """
+    def __init__(self, bundle: _DbBundle) -> None:
+        self._bundle = bundle
+        self._head_mod = _import("core.chain.head")
+        self._block_db_mod = _import("core.db.block_db")
+        self._lock = threading.RLock()
+
+    def get(self) -> dict[str, t.Any]:
+        """
+        Returns {'height': int|None, 'hash': '0x…'|None, 'header': <obj|dict>|None}
+        """
+        with self._lock:
+            # Try the canonical helper path first
+            if hasattr(self._head_mod, "read_head"):
+                head = self._head_mod.read_head(self._bundle.kv)  # type: ignore
+                if not head:
+                    return {"height": None, "hash": None, "header": None}
+                # Common header shape: {'height': int, 'hash': '0x..', 'obj': header}
+                if isinstance(head, dict) and "height" in head:
+                    return {"height": head.get("height"), "hash": head.get("hash"), "header": head.get("header") or head}
+                # Fallback: try to decode via BlockDB if head is a hash/height
+            # Fallback path via block_db facade:
+            if hasattr(self._block_db_mod, "get_canonical_head"):
+                h = self._block_db_mod.get_canonical_head(self._bundle.kv)  # type: ignore
+                if not h:
+                    return {"height": None, "hash": None, "header": None}
+                return {"height": h.get("height"), "hash": h.get("hash"), "header": h}
+            # Last resort: nothing known
+            return {"height": None, "hash": None, "header": None}
+
+    def height(self) -> int | None:
+        return t.cast(t.Optional[int], self.get()["height"])
+
+    def hash(self) -> str | None:
+        return t.cast(t.Optional[str], self.get()["hash"])
+
+    def header(self) -> t.Any | None:
+        return self.get()["header"]
+
+
+# ---- Genesis bootstrap (best-effort) ---------------------------------------
+
+def _maybe_bootstrap_genesis(bundle: _DbBundle, chain_id: int, genesis_path: Path | None) -> None:
+    """
+    Light-touch genesis bootstrap: if the DB appears empty (no head), try to
+    initialize it using core.genesis.loader. If anything is missing, this is a
+    no-op (RPC can still serve read-only methods with null head).
+    """
+    try:
+        head_mod = _import("core.chain.head")
+        need_boot = True
+        if hasattr(head_mod, "read_head"):
+            h = head_mod.read_head(bundle.kv)  # type: ignore
+            need_boot = not bool(h)
+
+        if not need_boot:
+            return
+
+        if genesis_path is None:
+            # Default to repo genesis
+            genesis_path = _repo_root() / "core" / "genesis" / "genesis.json"
+
+        loader = _import("core.genesis.loader")
+        # Prefer an explicit bootstrap signature if present
+        if hasattr(loader, "bootstrap"):
+            loader.bootstrap(bundle.kv, genesis_path, chain_id)  # type: ignore
+        elif hasattr(loader, "init_from_genesis"):
+            loader.init_from_genesis(bundle.kv, genesis_path, chain_id)  # type: ignore
+        elif hasattr(loader, "load_and_init"):
+            loader.load_and_init(bundle.kv, genesis_path)  # type: ignore
+        # else: silently ignore (RPC will report null head)
+    except Exception:
+        # We deliberately swallow errors here to avoid bringing down the RPC
+        # process if core/genesis evolves. The node CLI (core.boot) handles
+        # authoritative bootstrapping for production.
+        pass
+
+
+# ---- Runtime context (singleton) -------------------------------------------
+
+@dataclass
+class RpcContext:
+    cfg: _ConfigView
+    params: dict[str, t.Any]
+    kv: t.Any
+    state_db: t.Any
+    block_db: t.Any
+    tx_index: t.Any
+    head: _HeadAccessor
+
+    def get_head(self) -> dict[str, t.Any]:
+        return self.head.get()
+
+    def close(self) -> None:
+        # Close KV if it exposes a close() method
+        try:
+            close = getattr(self.kv, "close", None)
+            if callable(close):
+                close()
+        except Exception:
+            pass
+
+
+_CTX: RpcContext | None = None
+_CTX_LOCK = threading.RLock()
+
+
+def build_context() -> RpcContext:
+    cfg = _load_rpc_config()
+    params = _params_from_spec()
+    kv = _open_kv(cfg.db_uri)
+    bundle = _build_db_facades(kv)
+    _maybe_bootstrap_genesis(bundle, cfg.chain_id, cfg.genesis_path)
+    head = _HeadAccessor(bundle)
+    return RpcContext(
+        cfg=cfg,
+        params=params,
+        kv=bundle.kv,
+        state_db=bundle.state_db,
+        block_db=bundle.block_db,
+        tx_index=bundle.tx_index,
+        head=head,
+    )
+
+
+def get_ctx() -> RpcContext:
+    with _CTX_LOCK:
+        if _CTX is None:
+            raise RuntimeError("RPC context not initialized. Call attach_lifecycle(...), or build_context() first.")
+        return _CTX
+
+
+# ---- FastAPI lifecycle wiring ----------------------------------------------
+
+def attach_lifecycle(app, cfg: _ConfigView | None = None) -> None:
+    """
+    Attach startup/shutdown hooks to a FastAPI app so RPC handlers can call get_ctx().
+
+    If `cfg` is not provided, it is loaded from rpc.config.load_config().
+    """
+    from fastapi import Request
+
+    @app.on_event("startup")
+    async def _startup() -> None:
+        nonlocal cfg
+        with _CTX_LOCK:
+            if cfg is None:
+                cfg = _load_rpc_config()
+            global _CTX
+            _CTX = build_context()
+
+    @app.on_event("shutdown")
+    async def _shutdown() -> None:
+        with _CTX_LOCK:
+            global _CTX
+            if _CTX is not None:
+                try:
+                    _CTX.close()
+                finally:
+                    _CTX = None
+
+    # Optional: tiny health endpoints that do not require jsonrpc
+    @app.get("/healthz", include_in_schema=False)
+    async def _healthz() -> dict[str, t.Any]:
+        try:
+            ctx = get_ctx()
+            head = ctx.get_head()
+            return {"ok": True, "height": head["height"], "hash": head["hash"]}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @app.get("/readyz", include_in_schema=False)
+    async def _readyz() -> dict[str, t.Any]:
+        try:
+            _ = get_ctx()
+            return {"ready": True}
+        except Exception as e:
+            return {"ready": False, "error": str(e)}
+
+
+# ---- Convenience helpers for handlers --------------------------------------
+
+def cbor_dumps(obj: t.Any) -> bytes:
+    """Expose core.encoding.cbor.dumps for handlers (with a safe fallback)."""
+    try:
+        cbor = _import("core.encoding.cbor")
+        if hasattr(cbor, "dumps"):
+            return cbor.dumps(obj)  # type: ignore
+    except Exception:
+        pass
+    # Fallback to JSON (only for debugging; not wire-compatible)
+    return json.dumps(obj, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def cbor_loads(data: bytes) -> t.Any:
+    """Expose core.encoding.cbor.loads for handlers (with a strict error if missing)."""
+    cbor = _import("core.encoding.cbor")
+    if hasattr(cbor, "loads"):
+        return cbor.loads(data)  # type: ignore
+    raise RuntimeError("core.encoding.cbor.loads not available")
+
+
+__all__ = [
+    "attach_lifecycle",
+    "build_context",
+    "get_ctx",
+    "RpcContext",
+    "cbor_dumps",
+    "cbor_loads",
+]

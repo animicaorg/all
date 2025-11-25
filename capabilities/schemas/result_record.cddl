@@ -1,0 +1,92 @@
+; Animica Capabilities — Result Record (CBOR/CDDL)
+; ------------------------------------------------------------------
+; Deterministic result object, indexed by task_id. Populated when a
+; provider completes a job and an on-chain proof (or equivalent attested
+; completion) is observed. Contracts read this via read_result(task_id)
+; beginning at min_read_height (see JobReceipt).
+;
+; Conventions:
+; - Small integer map keys for canonical CBOR ordering.
+; - Unknown optional fields MUST be ignored for forward-compat.
+; - Hash32 = sha3_256 digests (32 bytes).
+
+ResultRecord = {
+  0: uint,                    ; version (current: 0)
+  1: Hash32,                  ; task_id (matches JobReceipt.task_id)
+  2: kind,                    ; job kind (AI or Quantum)
+  3: chain_id: uint,          ; network discriminator (animica chain id)
+  4: enqueued_height: uint,   ; height at which the JobRequest was accepted
+  5: Hash32,                  ; request_hash = H(CBOR(JobRequest)) (audit/replay defense)
+
+  6: status,                  ; lifecycle status (pending/completed/failed/expired/slashed)
+  ?7: finalized_height: uint, ; first height at/after which result is fixed (if terminal)
+
+  ; The result can be provided inline (small) or by DA reference (large).
+  ?8: ResultData,             ; inline result bytes (opaque to consensus)
+  ?9: DARef,                  ; DA commitment for large results
+
+  ?10: Hash32,                ; result_hash = H(result bytes or DA blob content)
+  ?11: Units,                 ; normalized work units used for pricing/accounting
+  ?12: ProviderId,            ; provider identity (content-addressed id)
+  ?13: ProofRef,              ; link to on-chain proof used to attest completion
+  ?14: ErrorInfo,             ; populated when status indicates failure/penalty
+  ?15: Meta                   ; extension space (non-consensus)
+}
+
+; ------------------------------------------------------------------
+; Enums & simple types
+
+kind   = 0 / 1                 ; 0 = AI, 1 = Quantum
+status = 0 / 1 / 2 / 3 / 4     ; 0 = pending, 1 = completed, 2 = failed,
+                               ; 3 = expired, 4 = slashed
+
+Hash32    = bstr .size 32
+Address   = bstr .size 33      ; 1 byte alg_id || 32 bytes sha3_256(pubkey)
+ProviderId = bstr .size 32     ; e.g., sha3_256(provider certificate or registry key)
+
+; ------------------------------------------------------------------
+; Structured members
+
+Units = {
+  0: uint                      ; work_units (dimension depends on kind)
+  ; Reserved for future: ai_units, q_units breakdowns, etc.
+}
+
+ProofRef = {
+  0: uint,                     ; proof type_id (per proofs/schemas)
+  1: Hash32,                   ; proof nullifier (domain-separated)
+  ?2: uint                     ; included_height (block height containing the proof)
+}
+
+; Data Availability reference for result payloads
+DARef = {
+  0: uint,                     ; namespace id (per da/constants.py)
+  1: Hash32,                   ; NMT commitment root (blob commitment)
+  2: uint                      ; size in bytes
+}
+
+; Inline opaque result data (only for small payloads)
+ResultData = bstr
+
+ErrorInfo = {
+  0: int,                      ; error_code (module-specific)
+  ?1: tstr                     ; error_message (diagnostic; non-consensus)
+}
+
+Meta = {
+  * uint => any                ; extension map; ignored by consensus logic
+}
+
+; ------------------------------------------------------------------
+; Notes:
+; - Exactly one of ResultData (8) or DARef (9) SHOULD be present when
+;   status = completed. Neither is present while status = pending.
+; - result_hash (10) MUST be the hash of the canonical result payload:
+;     • If ResultData present: H(ResultData)
+;     • If DARef present:      H(raw blob bytes addressed by DARef)
+; - finalized_height (7) records when the record became immutable; for
+;   completed/failed/expired/slashed it is set to the first block height
+;   at or after the attesting proof/decision was observed.
+; - request_hash (5) must equal the JobReceipt.request_hash for the
+;   same task_id; implementations SHOULD validate this link on write.
+; - All maps MUST be encoded canonically (ascending integer keys).

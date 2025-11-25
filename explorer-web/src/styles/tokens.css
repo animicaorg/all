@@ -1,0 +1,212 @@
+/* ==========================================================================
+   Animica Explorer — Design Tokens
+   Centralized CSS custom properties for color, spacing, radii, shadows,
+   typography, z-index, transitions, and chart palettes.
+   --------------------------------------------------------------------------
+   Usage:
+     - Reference semantic tokens (e.g., var(--color-bg)) in components.
+     - Theme overrides are handled in theme.css; this file defines the raw
+       scales and default semantic mappings.
+   ========================================================================== */
+
+/* ---------- Raw Scales --------------------------------------------------- */
+:root {
+  /* Typography */
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI,
+    Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+
+  --text-xs: 12px;
+  --text-sm: 14px;
+  --text-md: 16px;
+  --text-lg: 18px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --text-3xl: 28px;
+  --text-4xl: 32px;
+
+  --leading-tight: 1.15;
+  --leading-normal: 1.4;
+  --leading-loose: 1.6;
+
+  /* Spacing (4px baseline) */
+  --space-0: 0px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+  --space-9: 36px;
+  --space-10: 40px;
+  --space-11: 48px;
+  --space-12: 64px;
+
+  /* Radius */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-full: 999px;
+
+  /* Z-index */
+  --z-base: 0;
+  --z-sticky: 100;
+  --z-dropdown: 200;
+  --z-modal: 1000;
+  --z-toast: 1100;
+  --z-tooltip: 1200;
+
+  /* Motion */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emph: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+
+  /* Container widths */
+  --container-narrow: 760px;
+  --container: 1080px;
+  --container-wide: 1440px;
+
+  /* Neutral scale (light-first) */
+  --gray-0: #ffffff;
+  --gray-50: #f8fafc;
+  --gray-100: #f1f5f9;
+  --gray-200: #e2e8f0;
+  --gray-300: #cbd5e1;
+  --gray-400: #94a3b8;
+  --gray-500: #64748b;
+  --gray-600: #475569;
+  --gray-700: #334155;
+  --gray-800: #1f2937;
+  --gray-900: #0f172a;
+  --gray-950: #080c16;
+  --black: #070b13;
+
+  /* Brand / functional */
+  --brand-50: #eef0ff;
+  --brand-100: #e0e3ff;
+  --brand-200: #c3c6ff;
+  --brand-300: #9fa2ff;
+  --brand-400: #7a7dff;
+  --brand-500: #6d5ef9; /* primary */
+  --brand-600: #5b49e6;
+  --brand-700: #4a39c7;
+  --brand-800: #3c2ea0;
+  --brand-900: #2f257d;
+
+  --teal-500: #14b8a6;
+  --cyan-500: #06b6d4;
+  --green-500: #22c55e;
+  --yellow-500: #f59e0b;
+  --orange-500: #f97316;
+  --red-500: #ef4444;
+  --pink-500: #ec4899;
+  --purple-500: #8b5cf6;
+
+  /* Shadows (color-agnostic; rely on bg for elevation feel) */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06), 0 1px 1px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.08), 0 4px 14px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 8px 22px rgba(0, 0, 0, 0.12), 0 16px 40px rgba(0, 0, 0, 0.10);
+
+  /* ---------- Semantic Defaults (light) ---------------------------------- */
+  --color-bg: var(--gray-50);
+  --color-bg-elev: var(--gray-0);
+  --color-surface: var(--gray-0);
+  --color-card: var(--gray-0);
+  --color-border: var(--gray-200);
+  --color-muted: var(--gray-500);
+  --color-fg: var(--gray-900);
+
+  --color-accent: var(--brand-500);
+  --color-accent-contrast: #ffffff;
+
+  --color-info: var(--cyan-500);
+  --color-success: var(--green-500);
+  --color-warning: var(--yellow-500);
+  --color-danger: var(--red-500);
+
+  /* Inputs */
+  --input-bg: var(--gray-0);
+  --input-border: var(--gray-300);
+  --input-border-focus: var(--brand-400);
+  --input-placeholder: var(--gray-400);
+
+  /* Charts (stable mapping for PoIES & subsystems) */
+  --chart-1: var(--brand-500);
+  --chart-2: var(--teal-500);
+  --chart-3: var(--purple-500);
+  --chart-4: var(--orange-500);
+  --chart-5: var(--pink-500);
+  --chart-6: var(--cyan-500);
+
+  --poies-hash: var(--chart-1);
+  --poies-ai: var(--chart-2);
+  --poies-quantum: var(--chart-3);
+  --poies-storage: var(--chart-4);
+  --poies-vdf: var(--chart-5);
+
+  --da-color: var(--teal-500);
+  --beacon-color: var(--cyan-500);
+}
+
+/* ---------- Dark-friendly base palette (semantic override defaults) ------ */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: var(--gray-950);
+    --color-bg-elev: #0b1220;
+    --color-surface: #0d1526;
+    --color-card: #0f1a2e;
+    --color-border: #15213a;
+    --color-muted: #8aa0c7;
+    --color-fg: #e6edf7;
+
+    --input-bg: #0d1526;
+    --input-border: #1a2a4a;
+    --input-border-focus: var(--brand-500);
+    --input-placeholder: #6e84a8;
+
+    /* Slightly brighter brand in dark for contrast */
+    --color-accent: #7a70ff;
+    --color-accent-contrast: #ffffff;
+
+    /* Elevation tweaks */
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+    --shadow-md: 0 8px 20px rgba(0, 0, 0, 0.45);
+    --shadow-lg: 0 16px 44px rgba(0, 0, 0, 0.55);
+  }
+}
+
+/* ---------- Explicit Theme Hooks (theme.css may toggle these) ------------- */
+[data-theme="light"] {
+  color-scheme: light;
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg: var(--gray-950);
+  --color-bg-elev: #0b1220;
+  --color-surface: #0d1526;
+  --color-card: #0f1a2e;
+  --color-border: #15213a;
+  --color-muted: #8aa0c7;
+  --color-fg: #e6edf7;
+  --input-bg: #0d1526;
+  --input-border: #1a2a4a;
+  --input-border-focus: var(--brand-500);
+  --input-placeholder: #6e84a8;
+  --color-accent: #7a70ff;
+  --color-accent-contrast: #ffffff;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 8px 20px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 16px 44px rgba(0, 0, 0, 0.55);
+}
+
+/* ---------- Utility aliases (optional niceties) -------------------------- */
+:root {
+  --border-width: 1px;
+  --focus-ring: 0 0 0 3px color-mix(in oklab, var(--color-accent) 40%, transparent);
+}

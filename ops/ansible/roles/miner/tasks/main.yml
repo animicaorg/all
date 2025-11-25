@@ -1,0 +1,182 @@
+---
+# Animica Miner role — installs and manages the CPU (or GPU*) miner.
+# Idempotent and safe to re-run.
+#
+# Vars (override in group_vars/host_vars as needed):
+#   animica_user: animica
+#   animica_group: animica
+#   animica_shell: /usr/sbin/nologin
+#   miner_venv_dir: /opt/animica/miner-venv
+#   miner_config_path: /etc/animica/miner.toml
+#   miner_service_name: animica-miner
+#   miner_pip_ref: ""     # e.g. "animica-mining==0.1.0" or VCS URL "#subdirectory=mining"
+#   miner_editable_path: ""  # local repo path for -e install
+#   miner_extra_pip_packages: []  # e.g. ["msgspec","uvloop"]
+#   miner_env: {}         # extra environment for service
+#   miner_open_ports: []  # e.g. [3333, 3666] for Stratum/getwork (optional)
+#   gpu_backend: ""       # "opencl"|"cuda"|"rocm"|"" (drivers handled out-of-band)
+
+- name: Ensure animica group exists
+  ansible.builtin.group:
+    name: "{{ animica_group | default('animica') }}"
+    system: true
+
+- name: Ensure animica user exists
+  ansible.builtin.user:
+    name: "{{ animica_user | default('animica') }}"
+    group: "{{ animica_group | default('animica') }}"
+    shell: "{{ animica_shell | default('/usr/sbin/nologin') }}"
+    system: true
+    create_home: false
+
+- name: Install miner OS dependencies (Ubuntu/Debian)
+  ansible.builtin.apt:
+    name:
+      - python3
+      - python3-venv
+      - python3-pip
+      - build-essential
+      - gcc
+      - libssl-dev
+      - libffi-dev
+      - pkg-config
+      - librocksdb-dev
+      - zstd
+    state: present
+    update_cache: true
+  when: ansible_facts.os_family == "Debian"
+  tags: [packages, miner]
+
+- name: Install miner OS dependencies (RHEL/Fedora)
+  ansible.builtin.dnf:
+    name:
+      - python3
+      - python3-virtualenv
+      - python3-pip
+      - gcc
+      - gcc-c++
+      - make
+      - openssl-devel
+      - libffi-devel
+      - pkgconfig
+      - rocksdb-devel
+      - zstd
+    state: present
+  when: ansible_facts.os_family in ["RedHat", "Rocky", "AlmaLinux", "Fedora"]
+  tags: [packages, miner]
+
+- name: Create directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ animica_user | default('animica') }}"
+    group: "{{ animica_group | default('animica') }}"
+    mode: "{{ item.mode | default('0750') }}"
+  loop:
+    - { path: "/etc/animica", mode: "0755" }
+    - { path: "{{ miner_venv_dir | default('/opt/animica/miner-venv') }}", mode: "0755" }
+    - { path: "/var/lib/animica", mode: "0755" }
+    - { path: "/var/lib/animica/miner", mode: "0750" }
+    - { path: "/var/log/animica", mode: "0755" }
+  tags: [paths, miner]
+
+- name: Create Python venv for miner
+  ansible.builtin.command:
+    cmd: "python3 -m venv {{ miner_venv_dir | default('/opt/animica/miner-venv') }}"
+    creates: "{{ miner_venv_dir | default('/opt/animica/miner-venv') }}/bin/activate"
+  tags: [venv, miner]
+
+- name: Upgrade pip/setuptools/wheel in venv
+  ansible.builtin.pip:
+    name:
+      - pip
+      - setuptools
+      - wheel
+    state: latest
+    virtualenv: "{{ miner_venv_dir | default('/opt/animica/miner-venv') }}"
+  tags: [venv, miner]
+
+- name: Install Animica miner package (from ref if provided)
+  ansible.builtin.pip:
+    name: "{{ miner_pip_ref }}"
+    virtualenv: "{{ miner_venv_dir | default('/opt/animica/miner-venv') }}"
+    state: present
+  when: miner_pip_ref is defined and miner_pip_ref | length > 0
+  tags: [pip, miner]
+
+- name: Install Animica repo (editable) if local path is provided
+  ansible.builtin.pip:
+    name: "{{ miner_editable_path }}"
+    virtualenv: "{{ miner_venv_dir | default('/opt/animica/miner-venv') }}"
+    extra_args: "-e"
+    state: present
+  when: miner_editable_path is defined and miner_editable_path | length > 0
+  tags: [pip, miner]
+
+- name: Install optional extra Python packages into venv
+  ansible.builtin.pip:
+    name: "{{ miner_extra_pip_packages | default([]) }}"
+    virtualenv: "{{ miner_venv_dir | default('/opt/animica/miner-venv') }}"
+    state: present
+  when: (miner_extra_pip_packages | default([])) | length > 0
+  tags: [pip, miner]
+
+- name: Symlink miner CLI into /usr/local/bin
+  ansible.builtin.file:
+    src: "{{ miner_venv_dir | default('/opt/animica/miner-venv') }}/bin/omni-miner"
+    dest: "/usr/local/bin/omni-miner"
+    state: link
+  tags: [miner, cli]
+
+- name: Render miner configuration
+  ansible.builtin.template:
+    src: "templates/miner.toml.j2"
+    dest: "{{ miner_config_path | default('/etc/animica/miner.toml') }}"
+    owner: "{{ animica_user | default('animica') }}"
+    group: "{{ animica_group | default('animica') }}"
+    mode: "0644"
+  notify: Restart miner
+  tags: [config, miner]
+
+- name: Render systemd service unit for miner
+  ansible.builtin.template:
+    src: "templates/miner.service.j2"
+    dest: "/etc/systemd/system/{{ miner_service_name | default('animica-miner') }}.service"
+    owner: "root"
+    group: "root"
+    mode: "0644"
+  notify:
+    - Daemon reload
+    - Restart miner
+  tags: [systemd, miner]
+
+- name: Ensure miner service is enabled and started
+  ansible.builtin.systemd:
+    name: "{{ miner_service_name | default('animica-miner') }}"
+    enabled: true
+    state: started
+    daemon_reload: false
+  tags: [systemd, miner]
+
+# Optional: open firewall ports for Stratum and WS getwork (if using ufw/firewalld)
+- name: Open firewall ports (ufw) — optional
+  ansible.builtin.ufw:
+    rule: allow
+    proto: tcp
+    port: "{{ item }}"
+  loop: "{{ miner_open_ports | default([]) }}"
+  when: miner_open_ports is defined and (miner_open_ports | length) > 0
+  ignore_errors: true
+  tags: [firewall, miner]
+
+# Handlers
+- name: Daemon reload
+  ansible.builtin.systemd:
+    daemon_reload: true
+  listen: "Daemon reload"
+
+- name: Restart miner
+  ansible.builtin.systemd:
+    name: "{{ miner_service_name | default('animica-miner') }}"
+    state: restarted
+  listen: "Restart miner"

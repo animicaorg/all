@@ -1,0 +1,14 @@
+Arm CCA attestation uses vendor/platform-specific certificate chains.
+There is no single public Arm "CCA Root PEM" to fetch. You must obtain the
+platform issuer/root from the specific silicon/platform vendor and/or cloud provider.
+
+Primary specifications / docs (canonical):
+- Arm CCA Attestation Token (Realm/Platform, COSE/EAT-based) — spec & overview
+- TrustedFirmware CCA delegated attestation docs & software stacks
+- General intro decks used by Arm and ecosystem (good background)
+
+When integrating a concrete platform:
+- Request the platform's CCA/Realm attestation issuer chain (PEM) from the vendor
+  and add it here as arm_cca_root.pem (or arm_cca_chain.pem if intermediate CAs apply).
+- Record the exact URL or package version in this SOURCES file for auditability.
+

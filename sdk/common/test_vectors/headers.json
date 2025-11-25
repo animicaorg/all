@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "notes": "Common block-header vectors for all SDKs. These are designed to test (1) deterministic encoding/decoding (e.g., CBOR/JSON map key order rules where applicable); (2) safe handling of large integers (provided as decimal strings when they may exceed JS safe integers); and (3) stable hashing of header fields to compute headerHash. Addresses use bech32m anim1… format placeholders that round-trip through the codec. Hash-like fields are 0x-prefixed hex. Percent-like values are expressed in basis points (0–1000 = 0%–100%).",
+  "schema": {
+    "header.common": [
+      "chainId:string",
+      "height:uint64",
+      "parentHash:bytes32_hex",
+      "txRoot:bytes32_hex",
+      "stateRoot:bytes32_hex",
+      "receiptsRoot:bytes32_hex",
+      "daRoot:bytes32_hex",
+      "proofsRoot:bytes32_hex",
+      "beacon:object{round:uint64,output:bytes32_hex}",
+      "timestamp:uint64_unix",
+      "gasUsed:uint64",
+      "gasTarget:uint64",
+      "baseFee:uint128_decimal_string",
+      "proposer:string(bech32m)",
+      "mixBPS:object{hashshare:uint16,ai:uint16,quantum:uint16}",
+      "extraData:hex_bytes"
+    ],
+    "expect": [
+      "encodeStable:boolean",
+      "headerHash:bytes32_hex"
+    ]
+  },
+  "vectors": [
+    {
+      "name": "genesis_header",
+      "header": {
+        "chainId": "animica-devnet-1",
+        "height": 0,
+        "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "txRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "stateRoot": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "receiptsRoot": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "daRoot": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "proofsRoot": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "beacon": {
+          "round": 0,
+          "output": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        },
+        "timestamp": 1700000000,
+        "gasUsed": 0,
+        "gasTarget": 1000000,
+        "baseFee": "0",
+        "proposer": "anim1genesis0000000000000000000000000000000000000",
+        "mixBPS": { "hashshare": 1000, "ai": 0, "quantum": 0 },
+        "extraData": "0x"
+      },
+      "expect": {
+        "encodeStable": true,
+        "headerHash": "0x1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    },
+    {
+      "name": "first_block_two_txs",
+      "header": {
+        "chainId": "animica-devnet-1",
+        "height": 1,
+        "parentHash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "txRoot": "0x2222222222222222222222222222222222222222222222222222222222222222",
+        "stateRoot": "0x3333333333333333333333333333333333333333333333333333333333333333",
+        "receiptsRoot": "0x4444444444444444444444444444444444444444444444444444444444444444",
+        "daRoot": "0x5555555555555555555555555555555555555555555555555555555555555555",
+        "proofsRoot": "0x6666666666666666666666666666666666666666666666666666666666666666",
+        "beacon": {
+          "round": 1,
+          "output": "0x7777777777777777777777777777777777777777777777777777777777777777"
+        },
+        "timestamp": 1700000060,
+        "gasUsed": 42000,
+        "gasTarget": 1000000,
+        "baseFee": "1234",
+        "proposer": "anim1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0l5",
+        "mixBPS": { "hashshare": 800, "ai": 150, "quantum": 50 },
+        "extraData": "0x68656c6c6f2d6465766e6574" 
+      },
+      "expect": {
+        "encodeStable": true,
+        "headerHash": "0x8888888888888888888888888888888888888888888888888888888888888888"
+      }
+    },
+    {
+      "name": "height_100_ai_quantum_mix",
+      "header": {
+        "chainId": "animica-devnet-1",
+        "height": 100,
+        "parentHash": "0x9f0b2b9e3e8f7b5d3a1c4e6f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3",
+        "txRoot": "0x0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+        "stateRoot": "0xb0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0",
+        "receiptsRoot": "0xc0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "daRoot": "0xd0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0",
+        "proofsRoot": "0xe0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0",
+        "beacon": {
+          "round": 12,
+          "output": "0xf0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0"
+        },
+        "timestamp": 1700006000,
+        "gasUsed": 750000,
+        "gasTarget": 1000000,
+        "baseFee": "987654321000000000000",
+        "proposer": "anim1pa9yer3k2q8x7m0u9d2q3w4e5r6t7y8u9i0opq",
+        "mixBPS": { "hashshare": 550, "ai": 350, "quantum": 100 },
+        "extraData": "0x70726f2d6d69782d64656d6f" 
+      },
+      "expect": {
+        "encodeStable": true,
+        "headerHash": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+      }
+    }
+  ]
+}

@@ -1,0 +1,135 @@
+{
+  "$meta": {
+    "title": "Block Proofs Mix (Hash+AI+Quantum+Storage)",
+    "description": "Illustrative example of a block carrying multiple proof kinds used by PoIES. Canonical wire format is CBOR; this JSON is for documentation and tooling. Numbers are illustrative.",
+    "notes": [
+      "Each proof is wrapped in a generic envelope {type_id, body, nullifier}.",
+      "Metrics shown are the normalized, verifier-produced values fed into the policy adapter.",
+      "Σψ below are example contributions in µ-nats; in consensus the acceptance check is S = −ln(u) + Σψ ≥ Θ.",
+      "Hashes are non-binding sample values for docs."
+    ]
+  },
+
+  "block": {
+    "height": 1024,
+    "headerHash": "0x6abc1e0b3f9d3a6c4f2b98e7a61c5b2d9f0e1c2b3a4d5e6f718192a3b4c5d6e7",
+    "proofsRoot": "0x0f0e0d0c0b0a09080706050403020100112233445566778899aabbccddeeff00",
+
+    "proofs": [
+      {
+        "encoding": "animica.proof.envelope.v1",
+        "type_id": "hashshare_v1",
+        "nullifier": "0x1111eeeeddddccccbbbbaaaa9999888877776666555544443333222211110000",
+        "body": {
+          "headerHash": "0x6abc1e0b3f9d3a6c4f2b98e7a61c5b2d9f0e1c2b3a4d5e6f718192a3b4c5d6e7",
+          "nonce": "0x00000000000000000000000000000042",
+          "uDraw": "0x0c2f8f5b0e7a23c9a1b4d5e6f718192a3b4c5d6e729384756483726151413121",
+          "shareDifficultyRatio": 1.85
+        },
+        "metrics": {
+          "d_ratio": 1.85
+        }
+      },
+
+      {
+        "encoding": "animica.proof.envelope.v1",
+        "type_id": "ai_v1",
+        "nullifier": "0x2222eeeeddddccccbbbbaaaa9999888877776666555544443333222211110001",
+        "body": {
+          "attestation": {
+            "kind": "SGX",
+            "quoteDigest": "0x9f9e9d9c9b9a00010203040506070809aaaabbbbccccddddeeeeffff00001111"
+          },
+          "outputDigest": "0x1234567890abcdef1234567890abcdef11112222333344445555666677778888",
+          "redundancy": 3,
+          "traps": {
+            "seed": "0xfeedfacec0ffee",
+            "good": 97,
+            "total": 100
+          },
+          "qos": {
+            "latency_ms": 2200,
+            "availability": 0.999,
+            "score": 0.98
+          }
+        },
+        "metrics": {
+          "ai_units": 12.5,
+          "traps_ratio": 0.97,
+          "qos": 0.98
+        }
+      },
+
+      {
+        "encoding": "animica.proof.envelope.v1",
+        "type_id": "quantum_v1",
+        "nullifier": "0x3333eeeeddddccccbbbbaaaa9999888877776666555544443333222211110002",
+        "body": {
+          "providerCertRef": "qpu:example-provider:v1",
+          "trapResults": {
+            "good": 94,
+            "total": 100
+          },
+          "shots": 2048,
+          "circuit": {
+            "family": "Clifford+T",
+            "width": 32,
+            "depth": 12
+          },
+          "qos": {
+            "score": 0.99
+          }
+        },
+        "metrics": {
+          "quantum_units": 7.8,
+          "traps_ratio": 0.94,
+          "qos": 0.99
+        }
+      },
+
+      {
+        "encoding": "animica.proof.envelope.v1",
+        "type_id": "storage_v0",
+        "nullifier": "0x4444eeeeddddccccbbbbaaaa9999888877776666555544443333222211110003",
+        "body": {
+          "provider": "stor:provider-01",
+          "sectorsCommitted": 1024,
+          "window": {
+            "start": 1709999000,
+            "end": 1710000000
+          },
+          "retrievalTickets": 2,
+          "qos": {
+            "availability": 0.999
+          }
+        },
+        "metrics": {
+          "redundancy": 2.0,
+          "qos": 0.99
+        }
+      }
+    ],
+
+    "psiBreakdown": {
+      "byType": {
+        "hashshare": { "d_ratio": 1.85, "psi_micro": 100000 },
+        "ai":        { "ai_units": 12.5, "traps_ratio": 0.97, "qos": 0.98, "psi_micro": 500000 },
+        "quantum":   { "quantum_units": 7.8, "traps_ratio": 0.94, "qos": 0.99, "psi_micro": 400000 },
+        "storage":   { "redundancy": 2.0, "qos": 0.99, "psi_micro": 150000 }
+      },
+      "totalPsiMicro": 1150000,
+      "thetaMicro_at_height": 1200000,
+      "S_example_micro": 1260000,
+      "accepted_example": true
+    }
+  },
+
+  "annotations": {
+    "/block/proofs[].type_id": "Kind of proof envelope. See docs/spec/proofs/* for formats.",
+    "/block/proofs[].nullifier": "Domain-separated hash to prevent reuse across blocks.",
+    "/block/proofs[].metrics": "Verifier-derived metrics passed to the consensus policy adapter.",
+    "/block/psiBreakdown/byType/*/psi_micro": "Illustrative ψ contribution (µ-nats) after caps & weights.",
+    "/block/psiBreakdown/thetaMicro_at_height": "Difficulty threshold Θ at this height (µ-nats).",
+    "/block/psiBreakdown/S_example_micro": "Example S showing how Σψ and −ln(u) could exceed Θ."
+  }
+}

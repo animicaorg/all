@@ -1,0 +1,46 @@
+{
+  "name": "Counter",
+  "version": "1.0.0",
+  "language": "python",
+  "vm": "vm_py",
+  "description": "Deterministic counter example for the Animica Python VM. Exposes inc(by=1)->int and get()->int.",
+  "authors": ["Animica Labs"],
+  "license": "Apache-2.0",
+  "abi": {
+    "functions": [
+      {
+        "name": "inc",
+        "mutates": true,
+        "payable": false,
+        "inputs": [{ "name": "by", "type": "int", "default": 1 }],
+        "args":   [{ "name": "by", "type": "int", "default": 1 }],
+        "outputs": [{ "type": "int" }],
+        "returns": "int",
+        "notes": "Increment the counter by a non-negative amount."
+      },
+      {
+        "name": "get",
+        "mutates": false,
+        "payable": false,
+        "inputs": [],
+        "args": [],
+        "outputs": [{ "type": "int" }],
+        "returns": "int",
+        "notes": "Return the current counter value."
+      }
+    ],
+    "events": [
+      {
+        "name": "Inc",
+        "args": [
+          { "name": "by",  "type": "int" },
+          { "name": "new", "type": "int" }
+        ]
+      }
+    ],
+    "errors": []
+  },
+  "resources": {
+    "code": "contract.py"
+  }
+}

@@ -1,0 +1,133 @@
+{
+  "$meta": {
+    "title": "Counter ABI (Python-VM)",
+    "description": "Example ABI for the deterministic Python-VM Counter contract used throughout docs and tests.",
+    "notes": [
+      "Canonical validation is per spec/abi.schema.json.",
+      "State mutability uses: view | nonpayable.",
+      "Address strings use bech32m (anim1...)."
+    ]
+  },
+  "encoding": "animica.abi.v1",
+  "name": "Counter",
+  "version": "1.0.0",
+  "namespace": "examples.counter",
+  "types": [
+    {
+      "name": "Address",
+      "kind": "address",
+      "description": "bech32m HRP anim1..."
+    },
+    {
+      "name": "Int",
+      "kind": "int",
+      "description": "Deterministic bounded int (implementation-defined caps)."
+    },
+    {
+      "name": "Bytes",
+      "kind": "bytes",
+      "description": "Opaque byte string."
+    }
+  ],
+  "functions": [
+    {
+      "name": "get",
+      "stateMutability": "view",
+      "payable": false,
+      "inputs": [],
+      "outputs": [
+        { "name": "value", "type": "int" }
+      ],
+      "docs": "Return the current counter value."
+    },
+    {
+      "name": "inc",
+      "stateMutability": "nonpayable",
+      "payable": false,
+      "inputs": [
+        { "name": "by", "type": "int", "docs": "Amount to increment (>= 1)." }
+      ],
+      "outputs": [
+        { "name": "newValue", "type": "int" }
+      ],
+      "eventsEmitted": ["Incremented"],
+      "docs": "Increase counter by `by` and emit Incremented."
+    },
+    {
+      "name": "reset",
+      "stateMutability": "nonpayable",
+      "payable": false,
+      "inputs": [
+        { "name": "to", "type": "int", "docs": "New value to set." }
+      ],
+      "outputs": [
+        { "name": "value", "type": "int" }
+      ],
+      "eventsEmitted": ["Reset"],
+      "docs": "Set the counter to an exact value (owner-only in some variants)."
+    }
+  ],
+  "events": [
+    {
+      "name": "Incremented",
+      "inputs": [
+        { "name": "by", "type": "int", "indexed": false },
+        { "name": "value", "type": "int", "indexed": false }
+      ],
+      "docs": "Counter increased by `by`; new value in `value`."
+    },
+    {
+      "name": "Reset",
+      "inputs": [
+        { "name": "value", "type": "int", "indexed": false }
+      ],
+      "docs": "Counter was reset to `value`."
+    }
+  ],
+  "errors": [
+    {
+      "name": "Overflow",
+      "inputs": [
+        { "name": "max", "type": "int" }
+      ],
+      "docs": "Operation would exceed the maximum representable value."
+    },
+    {
+      "name": "Underflow",
+      "inputs": [
+        { "name": "min", "type": "int" }
+      ],
+      "docs": "Operation would go below the minimum representable value."
+    },
+    {
+      "name": "Unauthorized",
+      "inputs": [],
+      "docs": "Caller is not permitted to perform this operation."
+    }
+  ],
+  "examples": {
+    "calls": [
+      {
+        "fn": "get",
+        "args": [],
+        "returns": [42]
+      },
+      {
+        "fn": "inc",
+        "args": [5],
+        "returns": [47],
+        "emits": [
+          { "event": "Incremented", "args": { "by": 5, "value": 47 } }
+        ]
+      },
+      {
+        "fn": "reset",
+        "args": [0],
+        "returns": [0],
+        "emits": [
+          { "event": "Reset", "args": { "value": 0 } }
+        ]
+      }
+    ]
+  }
+}

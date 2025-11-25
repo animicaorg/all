@@ -1,0 +1,20 @@
+{
+  "groth16_embedding": {
+    "dir": "zk/tests/fixtures/groth16_embedding",
+    "proof": "zk/tests/fixtures/groth16_embedding/proof.json",
+    "vk": "zk/tests/fixtures/groth16_embedding/vk.json",
+    "public": "zk/tests/fixtures/groth16_embedding/public.json"
+  },
+  "plonk_poseidon": {
+    "dir": "zk/tests/fixtures/plonk_poseidon",
+    "proof": "zk/tests/fixtures/plonk_poseidon/proof.json",
+    "vk": "zk/tests/fixtures/plonk_poseidon/vk.json",
+    "public": "zk/tests/fixtures/plonk_poseidon/public.json"
+  },
+  "stark_merkle": {
+    "dir": "zk/tests/fixtures/stark_merkle",
+    "proof": "zk/tests/fixtures/stark_merkle/proof.json",
+    "vk": "zk/tests/fixtures/stark_merkle/vk.json",
+    "public": "zk/tests/fixtures/stark_merkle/public.json"
+  }
+}

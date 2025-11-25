@@ -1,0 +1,2 @@
+# Keeps ops/seeds/reports/ under version control.
+# Seed health JSON reports are written here by ops/seeds/check_seeds.py.

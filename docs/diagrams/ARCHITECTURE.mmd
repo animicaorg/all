@@ -1,0 +1,205 @@
+%% Mermaid diagram: Animica Node — Components & Flows
+%% View online: https://mermaid.live
+
+flowchart TB
+  %% ======= CLIENTS / SURFACES =======
+  subgraph C[Clients & Surfaces]
+    W[Website / Studio-Web]:::ui
+    Ext[Wallet Extension / Flutter Wallet]:::ui
+    SDK[SDKs (TypeScript / Python / Rust)]:::ui
+    StudioSvcs[studio-services (Deploy/Verify/Faucet)]:::svc
+  end
+
+  %% ======= NODE (RPC + CORE) =======
+  subgraph N[Animica Full Node]
+    direction TB
+
+    subgraph RPC[RPC Layer]
+      J[FastAPI JSON-RPC / WS]:::svc
+      PPool[Pending Pool (precheck)]:::svc
+      StateSvc[State/Chain Services]:::svc
+    end
+
+    subgraph CORE[Core & Storage]
+      DB[(KV / SQLite / RocksDB)\nstate_db | block_db | tx_index]:::store
+      Head[Head Tracker]:::core
+      Params[Chain Params]:::core
+      Genesis[Genesis Loader]:::core
+    end
+
+    subgraph CONS[Consensus]
+      Scorer[PoIES Scorer ψ(p)]:::cons
+      Caps[Caps & Γ rules]:::cons
+      Retarget[Difficulty Retarget (Θ)]:::cons
+      Fork[ Fork Choice ]:::cons
+      Nulls[Nullifiers / TTL]:::cons
+    end
+
+    subgraph EXEC[Execution]
+      ExeOrch[Executor (serial/optimistic)]:::exec
+      Receipts[Receipts/Logs/Bloom]:::exec
+      Accnts[Accounts/Storage/Journal]:::exec
+    end
+
+    subgraph VM[VM(Py)]
+      VMRt[Deterministic Python Runtime]:::vm
+      ABI[ABI Dispatcher]:::vm
+      Gas[Gas Meter]:::vm
+      Stdlib[stdlib: storage/events/hash/treasury/syscalls]:::vm
+    end
+
+    subgraph PROOFS[Proofs]
+      Verifiers[Hash/AI/Quantum/Storage/VDF verifiers]:::proof
+      ProofReg[Proof Registry & Schemas]:::proof
+      Nullifier[Per-proof nullifiers]:::proof
+    end
+
+    subgraph DA[Data Availability]
+      DAREST[Retrieval API (POST/GET/proof)]:::da
+      NMT[NMT & Erasure Coding]:::da
+      DAIdx[Blob Index & Commitments]:::da
+    end
+
+    subgraph P2P[P2P / Gossip / Sync]
+      Kyber[Handshake (Kyber+HKDF) + AEAD]:::p2p
+      Gossip[topics: headers / blocks / txs / shares / blobs]:::p2p
+      Sync[Header/Block/Tx/Share sync]:::p2p
+      PeerStore[Peerstore, scores, rate limits]:::p2p
+    end
+
+    subgraph MINING[Mining]
+      Tmpl[Header Templates]:::min
+      UDraw[u-draw helpers H(u)=-ln u]:::min
+      HashLoop[Hash search / Useful-work selectors]:::min
+      Submit[Share/Block Submitter]:::min
+    end
+
+    subgraph RAND[Randomness Beacon]
+      CR[Commit → Reveal]:::rand
+      VDF[Wesolowski VDF]:::rand
+      Beacon[Beacon Mix (optional QRNG)]:::rand
+    end
+
+    subgraph AICF[AI Compute Fund]
+      ProvReg[Provider Registry + Attest + Stake]:::aicf
+      Queue[Job Queue + Matcher + Leases]:::aicf
+      Pricing[Pricing / Epoch Settlement]:::aicf
+      SLA[SLA Eval / Slashing]:::aicf
+    end
+
+    subgraph CAP[Capabilities (Host Side)]
+      Syscalls[blob_pin / ai_enqueue / quantum_enqueue / zk.verify / random]:::cap
+      HostProv[Providers bridge (DA/AICF/zk/random)]:::cap
+      ResStore[Result Store / Resolver]:::cap
+    end
+
+    subgraph ZK[ZK]
+      ZKReg[VK Registry / Cache]:::zk
+      ZKVer[Groth16 / PLONK (KZG) / STARK(FRI)]:::zk
+      KZG[KZG & Pairing (BN254)]:::zk
+      Poseidon[Poseidon Params]:::zk
+      FSTx[Fiat–Shamir Transcript]:::zk
+    end
+
+    subgraph OBS[Observability]
+      Metrics[Prometheus Metrics]:::obs
+      Logs[Structured Logs]:::obs
+      Health[healthz/readyz]:::obs
+    end
+  end
+
+  %% ======= EXTERNAL PEERS =======
+  Peers[(Other Nodes / Peers)]:::net
+
+  %% ======= EDGES / FLOWS =======
+
+  %% Clients → RPC
+  W -->|status / read| J
+  Ext -->|sign tx / submit / subscribe| J
+  SDK -->|JSON-RPC / WS| J
+  StudioSvcs -->|relay tx / verify / faucet| J
+
+  %% RPC → Core / Pool / Services
+  J --> PPool
+  J --> StateSvc
+  StateSvc --> DB
+  PPool --> MINING
+  J -.openrpc.-> Params
+
+  %% Mining flow
+  MINING -->|shares/blocks| J
+  Tmpl --> HashLoop
+  HashLoop --> Submit
+  Submit --> J
+
+  %% Proofs path into Consensus
+  MINING --> PROOFS
+  PROOFS --> CONS
+  Verifiers --> ProofReg
+  Nullifier --> CONS
+
+  %% Consensus <-> Core
+  CONS -->|accept / head| CORE
+  Fork --> Head
+  Scorer --> Retarget
+  Retarget --> Scorer
+  CORE --> Head
+
+  %% Execution path
+  J -->|apply tx / call| EXEC
+  EXEC <--> CORE
+  EXEC --> Receipts
+  VM --> ExeOrch
+  VMRt --> Stdlib
+  Stdlib --> CAP
+
+  %% Capabilities bridges
+  CAP --> AICF
+  AICF --> PROOFS
+  CAP --> DA
+  CAP --> ZK
+
+  %% DA flow
+  DAREST --> NMT
+  NMT --> DAIdx
+  DAIdx --> CORE
+  CORE -->|header.da_root| CONS
+
+  %% Randomness into Consensus
+  RAND --> Beacon
+  Beacon --> CONS
+
+  %% P2P flows
+  P2P -->|gossip| Peers
+  Kyber --> Gossip
+  Gossip --> Sync
+  Sync --> CORE
+  P2P --> MINING
+
+  %% Studio services extras
+  StudioSvcs -->|compile/hash verify| VM
+  StudioSvcs -->|pin artifacts| DAREST
+
+  %% Observability taps
+  N --- Metrics
+  N --- Logs
+  N --- Health
+
+  %% ======= STYLES =======
+  classDef ui fill:#4f46e5,stroke:#333,stroke-width:1,color:#fff;
+  classDef svc fill:#6366f1,stroke:#333,stroke-width:1,color:#fff;
+  classDef core fill:#10b981,stroke:#0b4,stroke-width:1,color:#062;
+  classDef cons fill:#34d399,stroke:#0b4,stroke-width:1,color:#062;
+  classDef exec fill:#f59e0b,stroke:#a66,stroke-width:1,color:#111;
+  classDef vm fill:#fbbf24,stroke:#a66,stroke-width:1,color:#111;
+  classDef proof fill:#06b6d4,stroke:#066,stroke-width:1,color:#fff;
+  classDef da fill:#22d3ee,stroke:#066,stroke-width:1,color:#003;
+  classDef p2p fill:#60a5fa,stroke:#225,stroke-width:1,color:#001;
+  classDef min fill:#93c5fd,stroke:#225,stroke-width:1,color:#001;
+  classDef rand fill:#84cc16,stroke:#2a4,stroke-width:1,color:#031;
+  classDef aicf fill:#ef4444,stroke:#722,stroke-width:1,color:#fff;
+  classDef cap fill:#fb7185,stroke:#722,stroke-width:1,color:#300;
+  classDef zk fill:#c084fc,stroke:#623,stroke-width:1,color:#210;
+  classDef obs fill:#9ca3af,stroke:#444,stroke-width:1,color:#111;
+  classDef store fill:#059669,stroke:#063,stroke-width:1,color:#fff;
+  classDef net fill:#94a3b8,stroke:#334,stroke-width:1,color:#fff;

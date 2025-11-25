@@ -1,0 +1,13 @@
+{
+  "name": "Animica Explorer",
+  "identifier": "io.animica.explorer",
+  "bundle_ids": {
+    "macos": "dev.animica.explorer",
+    "windows": "Animica.Explorer",
+    "linux": "io.animica.Explorer"
+  },
+  "site": {
+    "remote": "https://explorer.animica.dev",
+    "fallback_offline": "app://localhost/index.html"
+  }
+}

@@ -1,0 +1,56 @@
+# Production TLS setup:
+# 1) A cert-manager Certificate for your public domains (edit dnsNames below).
+# 2) A strategic-merge patch for the Ingress to enable TLS, strict HTTPS, and HSTS.
+#
+# HOW TO USE:
+# - Make sure a ClusterIssuer named "letsencrypt-prod" exists (see base cert-manager config).
+# - Replace the example hosts with your actual domains.
+# - Include this file under `resources:` (for Certificate) and `patchesStrategicMerge:` (for the Ingress patch)
+#   in ops/k8s/overlays/prod/kustomization.yaml.
+
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: animica-wildcard
+  namespace: animica-prod
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/environment: prod
+spec:
+  secretName: animica-tls
+  issuerRef:
+    kind: ClusterIssuer
+    name: letsencrypt-prod
+  # Edit these to match your production domains.
+  # It's common to include a wildcard plus any apex you need.
+  dnsNames:
+    - animica.example.com
+    - "*.animica.example.com"
+    - rpc.animica.example.com
+    - explorer.animica.example.com
+    - studio.animica.example.com
+
+---
+# Ingress TLS + security hardening (nginx ingress annotations shown; adapt for your controller).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: animica-ingress   # <-- must match the base Ingress metadata.name
+  namespace: animica-prod
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/hsts: "true"
+    nginx.ingress.kubernetes.io/hsts-max-age: "31536000"
+    nginx.ingress.kubernetes.io/hsts-include-subdomains: "true"
+    nginx.ingress.kubernetes.io/hsts-preload: "true"
+spec:
+  tls:
+    # Hosts here should correspond to the rules.host entries in the same Ingress.
+    - secretName: animica-tls
+      hosts:
+        - rpc.animica.example.com
+        - explorer.animica.example.com
+        - studio.animica.example.com

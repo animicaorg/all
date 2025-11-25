@@ -1,0 +1,6 @@
+# Primary (RFC3161)
+http://timestamp.digicert.com
+# Backup (RFC3161)
+http://timestamp.sectigo.com
+# Backup 2 (RFC3161)
+http://rfc3161timestamp.globalsign.com/advanced

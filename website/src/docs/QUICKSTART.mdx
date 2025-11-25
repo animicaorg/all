@@ -1,0 +1,137 @@
+---
+title: "Quickstart"
+description: "Spin up a devnet, open Studio, and use the SDKs. Includes quick links into specs and docs."
+layout: ../layouts/DocsLayout.astro
+---
+
+import InlineLink from "../components/InlineLink.astro";
+
+> This page is a fast path into the **specs**, **Studio**, and **SDK** docs.  
+> If your canonical docs are hosted elsewhere, the links below will 302 to the external site.
+
+## 1) Prerequisites
+
+- **Node.js** ≥ 18 (for Studio/website tooling)
+- **Python** ≥ 3.10 (for the Python SDK & tools)
+- **Rust** ≥ 1.75 (optional; for Rust SDK & native ZK helpers)
+- **pnpm** or **npm**, and **pip** (or **uv**/**poetry**) installed
+
+Check:
+
+```bash
+node -v && npm -v
+python3 --version
+rustc --version
+
+
+⸻
+
+2) Start a local devnet
+
+# Start a local single-node devnet (example CLI)
+omni node --devnet
+# Keep this running in a terminal; it exposes HTTP RPC and WS endpoints locally.
+
+
+⸻
+
+3) Open Studio (web IDE)
+
+Use the hosted Studio or a self-hosted one.
+	•	Hosted: Open Studio
+	•	Self-hosted (example):
+
+# if you cloned the monorepo
+pnpm -C studio-web install
+pnpm -C studio-web dev
+# visit http://localhost:4321
+
+
+
+From Studio you can edit → simulate → deploy → verify contracts end-to-end.
+
+⸻
+
+4) Use an SDK
+
+Python
+
+pip install omni-sdk
+python - <<'PY'
+from omni_sdk.tx import build, send
+from omni_sdk.wallet.mnemonic import create_mnemonic
+
+mn = create_mnemonic()
+tx = build.transfer(to="anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqxyza", amount=12345)
+rcpt = send(tx, mnemonic=mn, rpc_url="http://localhost:8545")
+print("status:", rcpt["status"], "gas:", rcpt["gasUsed"])
+PY
+
+Doc: SDK overview ·
+Python SDK
+
+TypeScript
+
+npm i @animica/sdk
+# or: pnpm add @animica/sdk
+node - <<'JS'
+import { http } from '@animica/sdk/rpc/http.js'
+import { build, send } from '@animica/sdk/tx/send.js'
+
+const rpc = http({ url: 'http://localhost:8545' })
+const tx = await build.transfer({ to: 'anim1qqqq...xyza', amount: 12345 })
+const rcpt = await send({ tx, rpc })
+console.log('status:', rcpt.status, 'gas:', rcpt.gasUsed)
+JS
+
+Doc: TypeScript SDK
+
+Rust
+
+cargo add animica-sdk
+# examples
+cargo run --example quickstart
+
+Doc: Rust SDK
+
+⸻
+
+5) Quick links into spec/
+
+Foundational specs and schemas:
+	•	Consensus — PoIES: /docs/consensus/poies
+	•	Data Availability: /docs/da/overview
+	•	Python VM: /docs/vm/overview
+	•	OpenRPC (RPC surface): /docs/specs/openrpc
+	•	ABI schema (contracts): /docs/specs/abi
+	•	Tx/Header/Blob CDDL: /docs/specs/formats
+	•	ZK verifiers (Groth16/PLONK/STARK, Poseidon, KZG): /docs/zk/overview
+
+The /docs/* routes will either serve local MDX (if present) or redirect to the canonical docs site.
+
+⸻
+
+6) Common env vars
+
+If pointing UI/SDKs to your devnet:
+
+export PUBLIC_RPC_URL="http://localhost:8545"
+export PUBLIC_CHAIN_ID="1337"
+export PUBLIC_STUDIO_URL="http://localhost:4321"
+export PUBLIC_EXPLORER_URL="http://localhost:3000"
+
+
+⸻
+
+7) Troubleshooting
+	•	Can’t connect to RPC? Verify the devnet process is running and ports are open.
+	•	SDK type errors? Ensure Node ≥ 18 and a clean install (rm -rf node_modules && pnpm i).
+	•	Studio build fails? Clear cache: rm -rf node_modules .astro .vite then reinstall.
+
+⸻
+
+Next
+	•	Read the Overview: /docs/OVERVIEW
+	•	Explore the network status: /status
+	•	Dive into examples in the SDKs or open Studio to compile the Counter contract.
+

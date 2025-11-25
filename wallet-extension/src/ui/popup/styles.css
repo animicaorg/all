@@ -1,0 +1,363 @@
+/* -------------------------------------------------------
+ * Animica Wallet — Popup styles
+ * Scope: popup UI + shared components (cards, buttons, inputs)
+ * ----------------------------------------------------- */
+
+/* Fonts (packaged in /public/fonts/Inter) */
+@font-face {
+  font-family: "Inter";
+  src: url("/fonts/Inter/Inter-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("/fonts/Inter/Inter-SemiBold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Design tokens */
+:root {
+  --ami-font: Inter, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Noto Sans", "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", sans-serif;
+
+  --ami-bg: #0b0d12;
+  --ami-surface: #121621;
+  --ami-surface-2: #171b27;
+  --ami-text: #e8ebf4;
+  --ami-muted: rgba(232, 235, 244, .65);
+  --ami-border: rgba(255, 255, 255, 0.12);
+
+  --ami-primary: #4b7cff;     /* brand blue */
+  --ami-primary-contrast: #ffffff;
+  --ami-accent: #7a5cff;      /* purple accent */
+  --ami-success: #2f9d6a;
+  --ami-warning: #d9a300;
+  --ami-danger: #e45555;
+
+  --ami-radius: 12px;
+  --ami-radius-sm: 9px;
+  --ami-shadow: 0 .5px .5px rgba(0,0,0,.2), 0 10px 20px rgba(0,0,0,.18);
+  --ami-shadow-sm: 0 1px 2px rgba(0,0,0,.2);
+
+  --ami-gap: 12px;
+  --ami-gap-lg: 16px;
+  --ami-gap-sm: 8px;
+
+  --ami-code: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --ami-bg: #f6f8fc;
+    --ami-surface: #ffffff;
+    --ami-surface-2: #f2f4f9;
+    --ami-text: #0d1220;
+    --ami-muted: rgba(13, 18, 32, .7);
+    --ami-border: rgba(0, 23, 71, 0.12);
+    color-scheme: light;
+  }
+}
+
+/* Root popup canvas */
+html, body, #root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  font-family: var(--ami-font);
+  font-size: 14px;
+  line-height: 1.35;
+  color: var(--ami-text);
+  background: radial-gradient(1200px 700px at 50% -100px, color-mix(in srgb, var(--ami-accent) 16%, transparent), transparent 60%) no-repeat,
+              radial-gradient(900px 600px at -200px 0, color-mix(in srgb, var(--ami-primary) 16%, transparent), transparent 60%) no-repeat,
+              var(--ami-bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Popup sizing */
+.ami-popup {
+  min-width: 360px;           /* keep within MV3 popup bounds */
+  max-width: 420px;
+  min-height: 520px;
+  box-sizing: border-box;
+  padding: 14px;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: var(--ami-gap);
+}
+
+/* Top bar */
+.ami-topbar {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--ami-gap);
+}
+.ami-topbar .ami-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+/* Cards */
+.ami-card {
+  background: var(--ami-surface);
+  border: 1px solid var(--ami-border);
+  border-radius: var(--ami-radius);
+  box-shadow: var(--ami-shadow-sm);
+}
+.ami-card.pad {
+  padding: 12px;
+}
+.ami-card .ami-card-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+/* Sections */
+.ami-section {
+  display: grid;
+  gap: var(--ami-gap);
+}
+.ami-section-title {
+  font-weight: 600;
+  font-size: .95rem;
+  opacity: .95;
+}
+
+/* Grid helpers */
+.ami-grid-2 {
+  display: grid;
+  gap: var(--ami-gap);
+  grid-template-columns: 1fr 1fr;
+}
+.ami-grid {
+  display: grid;
+  gap: var(--ami-gap);
+}
+
+/* Lists */
+.ami-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: var(--ami-gap-sm);
+}
+
+/* Text utilities */
+.ami-mono { font-family: var(--ami-code); }
+.ami-muted { color: var(--ami-muted); }
+.ami-strong { font-weight: 600; }
+.ami-hr {
+  border: 0;
+  border-top: 1px solid var(--ami-border);
+  margin: 6px 0;
+}
+
+/* Buttons */
+.ami-btn {
+  appearance: none;
+  border: 1px solid var(--ami-border);
+  background: var(--ami-surface-2);
+  color: var(--ami-text);
+  padding: 9px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: border-color .15s ease, transform .02s ease;
+}
+.ami-btn:hover { border-color: color-mix(in srgb, var(--ami-primary) 55%, transparent); }
+.ami-btn:active { transform: translateY(1px); }
+.ami-btn[disabled] { opacity: .6; cursor: not-allowed; }
+
+.ami-btn.primary {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--ami-primary) 85%, #fff 0%), var(--ami-primary));
+  color: var(--ami-primary-contrast);
+  border: 1px solid color-mix(in srgb, var(--ami-primary) 60%, transparent);
+}
+.ami-btn.success {
+  background: color-mix(in srgb, var(--ami-success) 85%, #fff 0%);
+  border-color: color-mix(in srgb, var(--ami-success) 50%, transparent);
+  color: #fff;
+}
+.ami-btn.danger {
+  background: color-mix(in srgb, var(--ami-danger) 85%, #fff 0%);
+  border-color: color-mix(in srgb, var(--ami-danger) 50%, transparent);
+  color: #fff;
+}
+.ami-btn.ghost {
+  background: transparent;
+}
+
+/* Inputs */
+.ami-field {
+  display: grid;
+  gap: 6px;
+}
+.ami-label {
+  font-size: .86rem;
+  color: var(--ami-muted);
+}
+.ami-input, .ami-select, .ami-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--ami-surface);
+  color: var(--ami-text);
+  border: 1px solid var(--ami-border);
+  border-radius: 10px;
+  padding: 9px 10px;
+  outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.ami-input:focus, .ami-select:focus, .ami-textarea:focus {
+  border-color: color-mix(in srgb, var(--ami-primary) 60%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ami-primary) 18%, transparent);
+}
+.ami-textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+
+/* Pills / tags */
+.ami-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--ami-surface-2);
+  border: 1px solid var(--ami-border);
+  font-size: .78rem;
+}
+.ami-tag.success { color: var(--ami-success); border-color: color-mix(in srgb, var(--ami-success) 35%, transparent); }
+.ami-tag.warn    { color: var(--ami-warning); border-color: color-mix(in srgb, var(--ami-warning) 35%, transparent); }
+.ami-tag.danger  { color: var(--ami-danger); border-color: color-mix(in srgb, var(--ami-danger) 35%, transparent); }
+
+/* Top badges */
+.ami-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: .75rem;
+  border: 1px solid var(--ami-border);
+  background: var(--ami-surface-2);
+}
+
+/* Table-ish rows */
+.ami-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 10px;
+}
+.ami-row + .ami-row { margin-top: 8px; }
+
+/* Toasts (simple) */
+.ami-toast {
+  position: fixed;
+  inset: auto 12px 12px 12px;
+  background: var(--ami-surface);
+  border: 1px solid var(--ami-border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  box-shadow: var(--ami-shadow);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Icons */
+.ami-icon {
+  width: 16px;
+  height: 16px;
+  display: inline-block;
+  opacity: .9;
+}
+
+/* Page scaffolding */
+.ami-page {
+  display: grid;
+  gap: var(--ami-gap);
+}
+.ami-page .ami-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Account / network small components */
+.ami-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--ami-surface);
+  border: 1px solid var(--ami-border);
+  font-weight: 600;
+}
+
+/* Balance card emphasis */
+.ami-balance {
+  display: grid;
+  gap: 2px;
+}
+.ami-balance .amt {
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+.ami-balance .cur {
+  font-size: .8rem;
+  color: var(--ami-muted);
+}
+
+/* Link styles */
+a {
+  color: var(--ami-primary);
+  text-decoration: none;
+}
+a:hover { text-decoration: underline; }
+
+/* Small helpers */
+.ami-right { justify-self: end; }
+.ami-center { text-align: center; }
+.ami-spacer { height: 8px; }
+
+/* Loader */
+@keyframes ami-spin { to { transform: rotate(360deg); } }
+.ami-spinner {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--ami-primary) 25%, transparent);
+  border-top-color: var(--ami-primary);
+  animation: ami-spin 1s linear infinite;
+}
+
+/* Integrate with TxList.tsx local styles (class names are prefixed .ami-*) */
+/* The component injects its own styles for list rows; these tokens harmonize colors */
+:root {
+  --ami-tx-border: var(--ami-border);
+  --ami-tx-surface: var(--ami-surface);
+}
+
+/* Scrollbars (Chromium-based) */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--ami-text) 18%, transparent);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}

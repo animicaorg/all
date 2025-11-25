@@ -1,0 +1,143 @@
+---
+/**
+ * ChainCard.astro
+ * Renders a compact card with chain metadata and quick actions.
+ *
+ * Props:
+ * - chainId: number | string
+ * - name: string
+ * - rpc: string
+ * - explorer?: string  (falls back to PUBLIC_EXPLORER_URL + ?chainId=…)
+ * - class?: string
+ * - showStatus?: boolean (default: true) — pings RPC and shows StatusBadge
+ *
+ * Example:
+ *   <ChainCard chainId={1} name="Animica Mainnet" rpc="https://rpc.animica.org" explorer="https://explorer.animica.org" />
+ */
+
+import StatusBadge from "./StatusBadge.tsx";
+import env from "../env";
+
+interface Props {
+  chainId: number | string;
+  name: string;
+  rpc: string;
+  explorer?: string;
+  class?: string;
+  showStatus?: boolean;
+}
+
+const {
+  chainId,
+  name,
+  rpc,
+  explorer,
+  class: className = "",
+  showStatus = true,
+} = Astro.props as Props;
+
+const fallbackExplorer = env.PUBLIC_EXPLORER_URL ? String(env.PUBLIC_EXPLORER_URL) : "";
+const explorerHref =
+  explorer ||
+  (fallbackExplorer
+    ? `${fallbackExplorer}${fallbackExplorer.includes("?") ? "&" : "?"}chainId=${encodeURIComponent(
+        String(chainId)
+      )}`
+    : "");
+
+const prettyRpc = rpc.replace(/^https?:\/\//, "");
+---
+
+<article
+  class={`rounded-xl border bg-[var(--bg-elevated)]
+           border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]
+           p-4 sm:p-5 flex flex-col gap-3 ${className}`}
+>
+  <header class="flex items-start gap-3">
+    <div class="min-w-0">
+      <h3 class="text-base sm:text-lg font-semibold leading-tight truncate">{name}</h3>
+      <p class="mt-0.5 text-xs sm:text-sm opacity-75">
+        Chain ID: <code class="rounded bg-black/5 px-1 py-0.5">{String(chainId)}</code>
+      </p>
+    </div>
+    {showStatus && (
+      <div class="ml-auto">
+        <StatusBadge client:load rpcUrl={rpc} size="sm" />
+      </div>
+    )}
+  </header>
+
+  <div class="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center">
+    <div class="sm:col-span-7">
+      <label class="text-xs uppercase tracking-wide opacity-70">RPC URL</label>
+      <div class="mt-1 flex items-center gap-2">
+        <code class="inline-flex max-w-full truncate rounded bg-black/5 px-2 py-1 text-sm">
+          {rpc}
+        </code>
+        <button
+          class="shrink-0 rounded border px-2 py-1 text-xs hover:bg-black/5 active:scale-[0.99]
+                 border-[color-mix(in_srgb,var(--text-primary)_/_15%,transparent)]"
+          data-copy={rpc}
+          aria-label="Copy RPC URL"
+          title="Copy RPC URL"
+        >
+          Copy
+        </button>
+        <a
+          href={`${rpc}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="shrink-0 rounded border px-2 py-1 text-xs hover:bg-black/5
+                 border-[color-mix(in_srgb,var(--text-primary)_/_15%,transparent)]"
+          title={`Open ${prettyRpc}`}
+        >
+          Open
+        </a>
+      </div>
+    </div>
+
+    <div class="sm:col-span-5">
+      <label class="text-xs uppercase tracking-wide opacity-70">Explorer</label>
+      <div class="mt-1 flex items-center gap-2">
+        {explorerHref ? (
+          <a
+            href={explorerHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex items-center gap-2 rounded border px-2 py-1 text-xs hover:bg-black/5
+                   border-[color-mix(in_srgb,var(--text-primary)_/_15%,transparent)]"
+            title="Open in Explorer"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" class="size-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13 3h8v8h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H13V3ZM5 5h6v2H7v10h10v-4h2v6H5V5Z"/></svg>
+            <span class="truncate max-w-[12rem]">{explorerHref.replace(/^https?:\/\//, "")}</span>
+          </a>
+        ) : (
+          <span class="text-sm opacity-60">No explorer configured</span>
+        )}
+      </div>
+    </div>
+  </div>
+</article>
+
+<script is:inline>
+  // Lightweight copy-to-clipboard for any button with data-copy
+  document.currentScript?.parentElement?.addEventListener("click", async (ev) => {
+    const t = ev.target;
+    if (!(t instanceof HTMLElement)) return;
+    const btn = t.closest("[data-copy]");
+    if (!btn) return;
+    const value = btn.getAttribute("data-copy") || "";
+    try {
+      await navigator.clipboard.writeText(value);
+      btn.classList.add("ring-2","ring-emerald-400/50");
+      (btn as HTMLElement).textContent = "Copied";
+      setTimeout(() => {
+        btn.classList.remove("ring-2","ring-emerald-400/50");
+        (btn as HTMLElement).textContent = "Copy";
+      }, 900);
+    } catch (_) {
+      (btn as HTMLElement).textContent = "Press ⌘/Ctrl+C";
+      setTimeout(() => ((btn as HTMLElement).textContent = "Copy"), 1200);
+    }
+  });
+</script>

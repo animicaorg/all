@@ -1,0 +1,158 @@
+# ------------------------------------------------------------------------------
+# Pre-commit configuration shared by Animica templates
+#
+# Usage:
+#   pipx install pre-commit        # or: pip install pre-commit
+#   pre-commit install             # install git hooks
+#   pre-commit run --all-files     # check entire repo
+#
+# Philosophy:
+# - Fast, language-agnostic checks at commit time.
+# - Heavier or formatting hooks allowed, but tuned to avoid fighting editors.
+# - Markdown keeps trailing spaces (used for hard line-breaks).
+# ------------------------------------------------------------------------------
+
+minimum_pre_commit_version: "3.5.0"
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [commit]
+
+ci:
+  # If you use pre-commit.ci, this controls its behavior
+  autofix_prs: true
+  autoupdate_schedule: quarterly
+  skip: []  # add hook ids here to skip on CI only
+
+# Global excludes to keep hooks snappy.
+# Extend in repo-level .pre-commit-config.yaml if needed.
+exclude: |
+  (?x)(
+      ^\.git/
+    | ^\.venv/
+    | ^\.mypy_cache/
+    | ^\.ruff_cache/
+    | ^node_modules/
+    | ^dist/
+    | ^build/
+    | ^coverage/
+    | ^vendor/
+    | ^studio-wasm/vendor/
+    | \.min\.(js|css)$
+    | \.lock$
+  )
+
+repos:
+  # ---------------------------- Core safety & hygiene -------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=512"]
+      - id: check-yaml
+        args: ["--unsafe"]  # allow anchors/aliases
+      - id: check-toml
+      - id: check-json
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+        # Keep Markdown's two-space hard line-breaks intact
+        exclude: '\.md$'
+
+  # ---------------------------- Python: lint & format -------------------------
+  # Ruff lints (and optionally formats) Python. Prefer ruff-format over Black to
+  # keep a single formatter. If a repo still wants Black, it can layer its own.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.5.6
+    hooks:
+      - id: ruff
+        name: ruff (lint)
+        args:
+          - --fix
+          # Uncomment to allow riskier auto-fixes:
+          # - --unsafe-fixes
+        types_or: [python]
+      - id: ruff-format
+        name: ruff (format)
+        types_or: [python]
+
+  # ---------------------------- YAML style ------------------------------------
+  - repo: https://github.com/pre-commit/mirrors-yamllint
+    rev: v1.35.1
+    hooks:
+      - id: yamllint
+        args:
+          - -d
+          - "{extends: default, rules: {line-length: {max: 120, level: warning}}}"
+
+  # ---------------------------- Typos/wording ---------------------------------
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.2.6
+    hooks:
+      - id: codespell
+        stages: [commit, push]
+        additional_dependencies: []
+        args:
+          - --ignore-words-list=teh,adress,crate,acheive # add project terms here
+          - --skip="*.lock,*.min.js,*.min.css,*.png,*.svg,*.woff,*.woff2"
+          - --quiet-level=2
+
+  # ---------------------------- JSON/Schema checks ----------------------------
+  # Lightweight structural validation beyond "is it JSON".
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.28.6
+    hooks:
+      - id: check-jsonschema
+        name: check-jsonschema (OpenRPC/ABI/Manifests)
+        files: |
+          (?x)(
+              ^spec/openrpc\.json$
+            | ^spec/abi\.schema\.json$
+            | \.schema\.json$
+            | (^|/)manifest\.json$
+          )
+        args:
+          # Accept draft-2020-12 by default; relax unknown formats
+          - --schemafile-dialect
+          - https://json-schema.org/draft/2020-12/schema
+          - --no-cache
+          - --failover-bundle
+
+  # ---------------------------- Web assets formatting -------------------------
+  # Prettier for TS/JS/CSS/HTML/JSON/Markdown. Keeps md trailing spaces by default.
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v3.2.5
+    hooks:
+      - id: prettier
+        stages: [commit]
+        additional_dependencies: []   # pin plugins if your repo uses them
+        files: |
+          (?x)\.(?:c?js|mjs|ts|tsx|css|scss|less|html?|json|jsonc|md|yaml|yml)$
+        exclude: |
+          (?x)(
+              ^dist/
+            | ^build/
+            | ^vendor/
+            | ^studio-wasm/vendor/
+          )
+
+  # ---------------------------- Shell scripts ---------------------------------
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+        name: shellcheck
+        files: '\.sh$'
+        args: ["-x"]  # follow sourced files where possible
+
+  # ---------------------------- Security sanity -------------------------------
+  - repo: https://github.com/returntocorp/semgrep
+    rev: v1.86.0
+    hooks:
+      - id: semgrep
+        name: semgrep (light)
+        stages: [push]            # run on push to reduce commit-time cost
+        args:
+          - --config=p/ci         # curated, low-noise ruleset
+          - --error
+        pass_filenames: true

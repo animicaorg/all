@@ -1,0 +1,161 @@
+; Ansible/Jinja2 template for Grafana configuration
+; Override via group_vars/host_vars. Common vars:
+;   grafana_server_protocol: "http" | "https"
+;   grafana_server_http_port: 3000
+;   grafana_server_domain: "grafana.example.com"
+;   grafana_server_root_url: "%(protocol)s://%(domain)s:%(http_port)s/"
+;   grafana_server_enforce_domain: false
+;   grafana_server_serve_from_sub_path: false
+;   grafana_server_enable_gzip: true
+;   grafana_security_admin_user: "admin"
+;   grafana_security_admin_password: "supersecret"
+;   grafana_security_secret_key: "change-me"
+;   grafana_security_cookie_secure: false
+;   grafana_security_cookie_samesite: "lax"   ; lax|strict|none
+;   grafana_security_allow_embedding: false
+;   grafana_auth_anonymous_enabled: true|false
+;   grafana_auth_anonymous_org_name: "Main Org."
+;   grafana_auth_anonymous_org_role: "Viewer"
+;   grafana_auth_basic_enabled: true
+;   grafana_auth_generic_oauth_enabled: false
+;   grafana_auth_generic_oauth: { client_id, client_secret, auth_url, token_url, api_url, scopes, allowed_domains, login_attribute_path, name }
+;   grafana_database_type: "sqlite3" | "mysql" | "postgres"
+;   grafana_database_path: "/var/lib/grafana/grafana.db"
+;   grafana_database_host: "127.0.0.1:3306"
+;   grafana_database_name: "grafana"
+;   grafana_database_user: "grafana"
+;   grafana_database_password: "pass"
+;   grafana_database_ssl_mode: "disable"
+;   grafana_smtp_enabled: false
+;   grafana_smtp_host: "smtp.example.com:587"
+;   grafana_smtp_user: "user"
+;   grafana_smtp_password: "pass"
+;   grafana_smtp_from_address: "grafana@example.com"
+;   grafana_smtp_from_name: "Grafana"
+;   grafana_smtp_skip_verify: false
+;   grafana_smtp_starttls_policy: "OpportunisticStartTLS"
+;   grafana_analytics_reporting_enabled: false
+;   grafana_feature_toggles: ["publicDashboards","topnav"]
+;   grafana_log_level: "info"
+;   grafana_log_format: "console"             ; console|json
+;   grafana_metrics_enabled: true
+;   grafana_dashboards_default_home: "/etc/grafana/provisioning/dashboards/home.json"
+;   grafana_paths_provisioning: "/etc/grafana/provisioning"
+
+[paths]
+; data, logs and plugins paths are defaults for most distros
+data = /var/lib/grafana
+logs = /var/log/grafana
+plugins = /var/lib/grafana/plugins
+provisioning = {{ grafana_paths_provisioning | default('/etc/grafana/provisioning') }}
+
+[server]
+protocol = {{ grafana_server_protocol | default('http') }}
+http_port = {{ grafana_server_http_port | default(3000) }}
+domain = {{ grafana_server_domain | default(ansible_fqdn | default('localhost')) }}
+root_url = {{ (grafana_server_root_url | default('%(protocol)s://%(domain)s:%(http_port)s/')) | quote }}
+enforce_domain = {{ (grafana_server_enforce_domain | default(false) | bool) | ternary('true','false') }}
+serve_from_sub_path = {{ (grafana_server_serve_from_sub_path | default(false) | bool) | ternary('true','false') }}
+enable_gzip = {{ (grafana_server_enable_gzip | default(true) | bool) | ternary('true','false') }}
+
+[security]
+; Initial admin credentials (only used on first start if DB empty)
+admin_user = {{ grafana_security_admin_user | default('admin') }}
+admin_password = {{ grafana_security_admin_password | default('admin') }}
+secret_key = {{ grafana_security_secret_key | default('change-me') | quote }}
+cookie_secure = {{ (grafana_security_cookie_secure | default(false) | bool) | ternary('true','false') }}
+cookie_samesite = {{ grafana_security_cookie_samesite | default('lax') }}
+allow_embedding = {{ (grafana_security_allow_embedding | default(false) | bool) | ternary('true','false') }}
+disable_gravatar = {{ (grafana_security_disable_gravatar | default(true) | bool) | ternary('true','false') }}
+
+[users]
+allow_sign_up = {{ (grafana_users_allow_sign_up | default(false) | bool) | ternary('true','false') }}
+allow_org_create = {{ (grafana_users_allow_org_create | default(false) | bool) | ternary('true','false') }}
+auto_assign_org = true
+auto_assign_org_id = 1
+auto_assign_org_role = {{ grafana_users_auto_assign_org_role | default('Viewer') }}
+viewers_can_edit = {{ (grafana_users_viewers_can_edit | default(false) | bool) | ternary('true','false') }}
+editors_can_admin = {{ (grafana_users_editors_can_admin | default(false) | bool) | ternary('true','false') }}
+
+[auth]
+login_maximum_inactive_lifetime_duration = 7d
+login_maximum_lifetime_duration = 30d
+disable_login_form = {{ (grafana_auth_basic_enabled | default(true) | bool) | ternary('false','true') }}
+basic_auth_enabled = {{ (grafana_auth_basic_enabled | default(true) | bool) | ternary('true','false') }}
+
+[auth.anonymous]
+enabled = {{ (grafana_auth_anonymous_enabled | default(false) | bool) | ternary('true','false') }}
+org_name = {{ grafana_auth_anonymous_org_name | default('Main Org.') | quote }}
+org_role = {{ grafana_auth_anonymous_org_role | default('Viewer') }}
+
+{% if grafana_auth_generic_oauth_enabled | default(false) | bool %}
+[auth.generic_oauth]
+enabled = true
+name = {{ (grafana_auth_generic_oauth.name | default('OAuth')) | quote }}
+client_id = {{ grafana_auth_generic_oauth.client_id | default('') | quote }}
+client_secret = {{ grafana_auth_generic_oauth.client_secret | default('') | quote }}
+scopes = {{ grafana_auth_generic_oauth.scopes | default('openid profile email') | quote }}
+auth_url = {{ grafana_auth_generic_oauth.auth_url | default('') | quote }}
+token_url = {{ grafana_auth_generic_oauth.token_url | default('') | quote }}
+api_url = {{ grafana_auth_generic_oauth.api_url | default('') | quote }}
+allow_sign_up = {{ (grafana_auth_generic_oauth.allow_sign_up | default(true) | bool) | ternary('true','false') }}
+use_pkce = {{ (grafana_auth_generic_oauth.use_pkce | default(true) | bool) | ternary('true','false') }}
+; Optional claims mapping
+login_attribute_path = {{ grafana_auth_generic_oauth.login_attribute_path | default('') | quote }}
+{% endif %}
+
+[database]
+type = {{ grafana_database_type | default('sqlite3') }}
+{% if (grafana_database_type | default('sqlite3')) == 'sqlite3' %}
+path = {{ grafana_database_path | default('/var/lib/grafana/grafana.db') }}
+{% else %}
+host = {{ grafana_database_host | default('127.0.0.1:5432') }}
+name = {{ grafana_database_name | default('grafana') }}
+user = {{ grafana_database_user | default('grafana') }}
+password = {{ grafana_database_password | default('') | quote }}
+ssl_mode = {{ grafana_database_ssl_mode | default('disable') }}
+{% endif %}
+
+[smtp]
+enabled = {{ (grafana_smtp_enabled | default(false) | bool) | ternary('true','false') }}
+host = {{ grafana_smtp_host | default('localhost:25') | quote }}
+user = {{ grafana_smtp_user | default('') | quote }}
+password = {{ grafana_smtp_password | default('') | quote }}
+from_address = {{ grafana_smtp_from_address | default('grafana@localhost') | quote }}
+from_name = {{ grafana_smtp_from_name | default('Grafana') | quote }}
+skip_verify = {{ (grafana_smtp_skip_verify | default(false) | bool) | ternary('true','false') }}
+startTLS_policy = {{ grafana_smtp_starttls_policy | default('OpportunisticStartTLS') }}
+
+[dashboards]
+min_refresh_interval = {{ grafana_dashboards_min_refresh_interval | default('5s') }}
+{% if grafana_dashboards_default_home is defined and grafana_dashboards_default_home %}
+default_home_dashboard_path = {{ grafana_dashboards_default_home | quote }}
+{% endif %}
+
+[unified_alerting]
+enabled = {{ (grafana_unified_alerting_enabled | default(true) | bool) | ternary('true','false') }}
+
+[alerting]
+enabled = {{ (grafana_legacy_alerting_enabled | default(false) | bool) | ternary('true','false') }}
+
+[metrics]
+enabled = {{ (grafana_metrics_enabled | default(true) | bool) | ternary('true','false') }}
+interval_seconds = {{ grafana_metrics_interval_seconds | default(10) }}
+
+[analytics]
+reporting_enabled = {{ (grafana_analytics_reporting_enabled | default(false) | bool) | ternary('true','false') }}
+check_for_updates = {{ (grafana_check_for_updates | default(true) | bool) | ternary('true','false') }}
+
+[log]
+mode = console
+level = {{ grafana_log_level | default('info') }}
+
+[log.console]
+format = {{ grafana_log_format | default('console') }}
+
+[feature_toggles]
+{% if grafana_feature_toggles is defined and grafana_feature_toggles|length > 0 %}
+{{ grafana_feature_toggles | join(',') }}
+{% else %}
+; no feature toggles enabled
+{% endif %}

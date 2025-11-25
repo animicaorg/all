@@ -1,0 +1,146 @@
+; spec/header_format.cddl
+; Canonical CBOR schema for Animica block headers.
+; Deterministic CBOR REQUIRED:
+;  - Text keys, sorted bytewise
+;  - Definite-length items only
+;  - Minimal integer encoding
+;
+; Hashing/signing domains defined in spec/domains.yaml.
+; Header hash H(header) is sha3-256 over deterministic CBOR of Header map.
+
+; ---------- Aliases ----------
+Hash32    = bstr .size 32
+Hash20or32 = bstr .size 20 / bstr .size 32  ; Address payload (on-chain)
+UIntTs    = uint                             ; UNIX seconds (chain time)
+ChainId   = tstr                             ; e.g. "animica:1"
+
+; ---------- Top-level ----------
+Header = {
+  "v":           uint .default 1,            ; header schema version
+  "chainId":     ChainId,
+  "height":      uint,                       ; block number (genesis = 0)
+  "parent":      Hash32,                     ; parent block hash
+  "time":        UIntTs,                     ; proposer-set, bounded drift (see SPEC)
+  "proposer":    Hash20or32,                 ; coinbase / fee recipient
+
+  ; Roots for integrity and light verification
+  "roots":       Roots,
+
+  ; Gas envelope for the block
+  "gas":         Gas,
+
+  ; PoIES/PoW mix + nonce domain (source of u for H(u) = −ln u)
+  "mix":         Mix,
+
+  ; Policy anchors pinning consensus/crypto tables for this block
+  "policy":      PolicyAnchors,
+
+  ; Consensus parameters in effect at this height
+  "consensus":   ConsensusFields,
+
+  ; Counts & sizes for quick validation/DoS limits
+  "counts":      Counts,
+
+  ; Optional randomness beacon reference usable by contracts/assignment
+  ? "rand":      RandRef,
+
+  ; Optional treasury deltas (for audits/receipts aggregation)
+  ? "treasury":  TreasuryDelta,
+
+  ; Optional extension space for feature-gated data (must be deterministic)
+  ? "ext":       { * tstr => bstr .size (0..64) }
+}
+
+; ---------- Roots ----------
+Roots = {
+  "state":       Hash32,                     ; state root (account/storage Merkle)
+  "txs":         Hash32,                     ; Merkle/Trie root of transactions
+  "receipts":    Hash32,                     ; root of receipts/logs
+  "proofs":      Hash32,                     ; root of attached proof receipts
+  "da":          Hash32,                     ; Data-Availability (NMT) root over posted blobs
+  ? "logsBloom": bstr .size 256              ; optional compact logs bloom (256B)
+}
+
+; ---------- Gas ----------
+Gas = {
+  "limit":       uint,                       ; per-block gas limit
+  "used":        uint                        ; total gas used by included txs
+}
+
+; ---------- Mix / Nonce domain ----------
+; Miners vary "nonce" to alter the u-draw seed; mixSeed couples to parent & beacon.
+; The acceptance test is S = H(u) + Σψ ≥ Θ (see spec/poies_math.md).
+Mix = {
+  "nonce":       bstr .size (8..32),         ; opaque nonce chosen by miner
+  "seed":        Hash32,                     ; mixSeed: H(parent|rand|proposer|height)
+  ? "extra":     bstr .size (0..32)          ; optional future room; counted in hashing domain
+}
+
+; ---------- Policy anchors ----------
+; These pin policy trees/versions so verifiers know how to score ψ and verify PQ.
+PolicyAnchors = {
+  "poiesPolicyRoot":  Hash32,                ; Merkle root over PoIES policy (spec/poies_policy.yaml)
+  "pqAlgPolicyRoot":  Hash32,                ; Merkle root over PQ alg-policy (spec/pq_policy.yaml)
+  "vmGasTableV":      uint                   ; VM gas-table version (spec/opcodes_vm_py.yaml)
+}
+
+; ---------- Consensus fields ----------
+; Θ (theta) uses fixed-point "micro-nats" for compactness/stability.
+; shareTarget encodes HashShare micro-target for miner shares in this block/template.
+ConsensusFields = {
+  "thetaMicro":       uint,                  ; Θ in µ-nats (1e-6 nats)
+  "shareTargetMicro": uint,                  ; HashShare threshold (micro scale)
+  "epoch":            uint,                  ; current difficulty/retarget epoch id
+  ? "alphaType":      uint                   ; fairness tuner α snapshot (optional)
+}
+
+; ---------- Counts ----------
+Counts = {
+  "txs":        uint,                        ; number of transactions
+  "proofs":     uint,                        ; number of attached proofs across all types
+  "blobs":      uint,                        ; number of DA blob commitments referenced
+  "sizeBytes":  uint                         ; serialized block size (header+body)
+}
+
+; ---------- Randomness beacon reference ----------
+RandRef = {
+  "beacon":     Hash32,                      ; latest finalized beacon output
+  "round":      uint                         ; beacon round number
+}
+
+; ---------- Treasury delta (optional audit hint) ----------
+TreasuryDelta = {
+  "mint":       uint,                        ; newly minted to treasury (subsidy slice)
+  "fees":       uint,                        ; fees credited this block
+  "aicf":       uint                         ; portion reserved for AICF payouts
+}
+
+; ---------- Invariants (not fully expressible in CDDL) ----------
+; 1) mix.seed MUST be deterministic: sha3_256("ANM|mix|v1" | parent | height | proposer | rand.beacon?)
+; 2) header hash domain separates "candidate" vs "sealed" states per spec/domains.yaml.
+; 3) thetaMicro, shareTargetMicro evolve via fractional EMA retarget (see consensus/difficulty).
+; 4) policy roots MUST match those advertised by the P2P handshake for this node/network.
+; 5) time drift bounded per params.yaml; parent.height + 1 == height; parent==0x00..00 for genesis.
+; 6) roots.* MUST be recomputable from the included body when validating a block.
+; 7) ext map keys MUST be namespaced (e.g., "zk:vkRoot") and ≤64B values, or omitted.
+
+; ---------- Light-client header view ----------
+; Used in OpenRPC schemas and SDKs for compact sync (no logsBloom/treasury/ext).
+LightHeader = {
+  "v":           uint,
+  "chainId":     ChainId,
+  "height":      uint,
+  "parent":      Hash32,
+  "time":        UIntTs,
+  "proposer":    Hash20or32,
+  "roots":       {
+    "state":     Hash32,
+    "txs":       Hash32,
+    "receipts":  Hash32,
+    "proofs":    Hash32,
+    "da":        Hash32
+  },
+  "mix":         { "nonce": bstr .size (8..32), "seed": Hash32 },
+  "policy":      { "poiesPolicyRoot": Hash32, "pqAlgPolicyRoot": Hash32, "vmGasTableV": uint },
+  "consensus":   { "thetaMicro": uint, "shareTargetMicro": uint, "epoch": uint }
+}

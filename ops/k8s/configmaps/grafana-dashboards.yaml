@@ -1,0 +1,329 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    animica.dev/environment: devnet
+    grafana_dashboard: "1" # picked up by grafana sidecar if enabled
+data:
+  node.json: |
+    {
+      "uid": "anim-node",
+      "title": "Animica • Node",
+      "timezone": "browser",
+      "schemaVersion": 38,
+      "version": 1,
+      "editable": true,
+      "time": {"from":"now-6h","to":"now"},
+      "annotations":{"list":[{"builtIn":1,"type":"dashboard","name":"Annotations & Alerts","enable":true,"hide":false}]},
+      "templating":{"list":[{"type":"constant","name":"namespace","label":"namespace","query":"animica-devnet","current":{"selected":true,"text":"animica-devnet","value":"animica-devnet"}}]},
+      "panels": [
+        {
+          "type": "timeseries",
+          "title": "Head Height",
+          "gridPos": {"h":8,"w":12,"x":0,"y":0},
+          "targets": [{"expr":"animica_node_head_height{namespace=\"$namespace\"}"}]
+        },
+        {
+          "type": "timeseries",
+          "title": "Block Time (s)",
+          "gridPos": {"h":8,"w":12,"x":12,"y":0},
+          "targets": [{"expr":"rate(animica_node_block_time_seconds_sum{namespace=\"$namespace\"}[5m]) / rate(animica_node_block_time_seconds_count{namespace=\"$namespace\"}[5m])"}]
+        },
+        {
+          "type": "timeseries",
+          "title": "Peers",
+          "gridPos": {"h":8,"w":8,"x":0,"y":8},
+          "targets": [{"expr":"animica_p2p_peers{namespace=\"$namespace\"}"}]
+        },
+        {
+          "type": "timeseries",
+          "title": "Mempool Size (tx)",
+          "gridPos": {"h":8,"w":8,"x":8,"y":8},
+          "targets": [{"expr":"animica_mempool_size{namespace=\"$namespace\"}"}]
+        },
+        {
+          "type": "timeseries",
+          "title": "RPC Requests/s",
+          "gridPos": {"h":8,"w":8,"x":16,"y":8},
+          "targets": [{"expr":"sum by (method) (rate(animica_rpc_requests_total{namespace=\"$namespace\"}[5m]))"}],
+          "options":{"legend":{"showLegend":true}}
+        }
+      ]
+    }
+  poies.json: |
+    {
+      "uid": "anim-poies",
+      "title": "Animica • PoIES (Γ / fairness / mix)",
+      "timezone": "browser",
+      "schemaVersion": 38,
+      "version": 1,
+      "time": {"from":"now-6h","to":"now"},
+      "annotations":{"list":[{"builtIn":1,"type":"dashboard","name":"Annotations & Alerts","enable":true}]},
+      "templating":{"list":[{"type":"constant","name":"namespace","label":"namespace","query":"animica-devnet","current":{"selected":true,"text":"animica-devnet","value":"animica-devnet"}}]},
+      "panels": [
+        {
+          "type":"timeseries",
+          "title":"Γ (Total Useful Work Budget)",
+          "gridPos":{"h":8,"w":12,"x":0,"y":0},
+          "targets":[{"expr":"animica_poies_gamma{namespace=\"$namespace\"}"}]
+        },
+        {
+          "type":"timeseries",
+          "title":"Fairness Index",
+          "gridPos":{"h":8,"w":12,"x":12,"y":0},
+          "targets":[{"expr":"animica_poies_fairness_index{namespace=\"$namespace\"}"}]
+        },
+        {
+          "type":"timeseries",
+          "title":"Mix Entropy",
+          "gridPos":{"h":8,"w":12,"x":0,"y":8},
+          "targets":[{"expr":"animica_poies_mix_entropy_bits{namespace=\"$namespace\"}"}]
+        },
+        {
+          "type":"timeseries",
+          "title":"Accept Ratio vs Θ",
+          "gridPos":{"h":8,"w":12,"x":12,"y":8},
+          "targets":[{"expr":"rate(animica_consensus_accept_total{namespace=\"$namespace\"}[5m]) / (rate(animica_consensus_accept_total{namespace=\"$namespace\"}[5m]) + rate(animica_consensus_reject_total{namespace=\"$namespace\"}[5m]))"}]
+        }
+      ]
+    }
+  mempool.json: |
+    {
+      "uid": "anim-mempool",
+      "title": "Animica • Mempool",
+      "timezone": "browser",
+      "schemaVersion": 38,
+      "version": 1,
+      "time": {"from":"now-6h","to":"now"},
+      "annotations":{"list":[{"builtIn":1,"type":"dashboard","name":"Annotations & Alerts","enable":true}]},
+      "templating":{"list":[{"type":"constant","name":"namespace","label":"namespace","query":"animica-devnet","current":{"selected":true,"text":"animica-devnet","value":"animica-devnet"}}]},
+      "panels": [
+        {
+          "type":"timeseries",
+          "title":"Pool Size (tx)",
+          "gridPos":{"h":8,"w":8,"x":0,"y":0},
+          "targets":[{"expr":"animica_mempool_size{namespace=\"$namespace\"}"}]
+        },
+        {
+          "type":"timeseries",
+          "title":"Ingress Rate (tx/s)",
+          "gridPos":{"h":8,"w":8,"x":8,"y":0},
+          "targets":[{"expr":"rate(animica_mempool_admit_total{namespace=\"$namespace\"}[5m])"}]
+        },
+        {
+          "type":"timeseries",
+          "title":"Evictions (tx/s)",
+          "gridPos":{"h":8,"w":8,"x":16,"y":0},
+          "targets":[{"expr":"rate(animica_mempool_evict_total{namespace=\"$namespace\"}[5m])"}]
+        },
+        {
+          "type":"timeseries",
+          "title":"Min Fee (gwei)",
+          "gridPos":{"h":8,"w":12,"x":0,"y":8},
+          "targets":[{"expr":"animica_mempool_min_fee_gwei{namespace=\"$namespace\"}"}]
+        },
+        {
+          "type":"timeseries",
+          "title":"Replace-By-Fee Events",
+          "gridPos":{"h":8,"w":12,"x":12,"y":8},
+          "targets":[{"expr":"rate(animica_mempool_replace_total{namespace=\"$namespace\"}[5m])"}]
+        }
+      ]
+    }
+  p2p.json: |
+    {
+      "uid": "anim-p2p",
+      "title": "Animica • P2P",
+      "timezone": "browser",
+      "schemaVersion": 38,
+      "version": 1,
+      "time": {"from":"now-6h","to":"now"},
+      "annotations":{"list":[{"builtIn":1,"type":"dashboard","name":"Annotations & Alerts","enable":true}]},
+      "templating":{"list":[{"type":"constant","name":"namespace","label":"namespace","query":"animica-devnet","current":{"selected":true,"text":"animica-devnet","value":"animica-devnet"}}]},
+      "panels": [
+        {
+          "type":"timeseries",
+          "title":"Peers",
+          "gridPos":{"h":8,"w":12,"x":0,"y":0},
+          "targets":[{"expr":"animica_p2p_peers{namespace=\"$namespace\"}"}]
+        },
+        {
+          "type":"timeseries",
+          "title":"Gossip Messages/s",
+          "gridPos":{"h":8,"w":12,"x":12,"y":0},
+          "targets":[{"expr":"sum by (topic) (rate(animica_p2p_gossip_msgs_total{namespace=\"$namespace\"}[5m]))"}]
+        },
+        {
+          "type":"timeseries",
+          "title":"Handshake RTT (ms)",
+          "gridPos":{"h":8,"w":12,"x":0,"y":8},
+          "targets":[{"expr":"histogram_quantile(0.5, sum by (le) (rate(animica_p2p_handshake_rtt_ms_bucket{namespace=\"$namespace\"}[5m])))"}]
+        },
+        {
+          "type":"timeseries",
+          "title":"Rate-Limit Drops/s",
+          "gridPos":{"h":8,"w":12,"x":12,"y":8},
+          "targets":[{"expr":"rate(animica_p2p_rate_limit_drops_total{namespace=\"$namespace\"}[5m])"}]
+        }
+      ]
+    }
+  da.json: |
+    {
+      "uid": "anim-da",
+      "title": "Animica • Data Availability",
+      "timezone": "browser",
+      "schemaVersion": 38,
+      "version": 1,
+      "time": {"from":"now-6h","to":"now"},
+      "annotations":{"list":[{"builtIn":1,"type":"dashboard","name":"Annotations & Alerts","enable":true}]},
+      "templating":{"list":[{"type":"constant","name":"namespace","label":"namespace","query":"animica-devnet","current":{"selected":true,"text":"animica-devnet","value":"animica-devnet"}}]},
+      "panels": [
+        {
+          "type":"timeseries",
+          "title":"POST Bytes/s",
+          "gridPos":{"h":8,"w":12,"x":0,"y":0},
+          "targets":[{"expr":"rate(animica_da_post_bytes_total{namespace=\"$namespace\"}[5m])"}]
+        },
+        {
+          "type":"timeseries",
+          "title":"GET Bytes/s",
+          "gridPos":{"h":8,"w":12,"x":12,"y":0},
+          "targets":[{"expr":"rate(animica_da_get_bytes_total{namespace=\"$namespace\"}[5m])"}]
+        },
+        {
+          "type":"timeseries",
+          "title":"Sampling p_fail",
+          "gridPos":{"h":8,"w":12,"x":0,"y":8},
+          "targets":[{"expr":"animica_da_sampling_fail_rate{namespace=\"$namespace\"}"}]
+        },
+        {
+          "type":"timeseries",
+          "title":"Proof Verify/s",
+          "gridPos":{"h":8,"w":12,"x":12,"y":8},
+          "targets":[{"expr":"rate(animica_da_proof_verify_total{namespace=\"$namespace\"}[5m])"}]
+        }
+      ]
+    }
+  aicf.json: |
+    {
+      "uid": "anim-aicf",
+      "title": "Animica • AICF (AI/Quantum)",
+      "timezone": "browser",
+      "schemaVersion": 38,
+      "version": 1,
+      "time": {"from":"now-6h","to":"now"},
+      "annotations":{"list":[{"builtIn":1,"type":"dashboard","name":"Annotations & Alerts","enable":true}]},
+      "templating":{"list":[{"type":"constant","name":"namespace","label":"namespace","query":"animica-devnet","current":{"selected":true,"text":"animica-devnet","value":"animica-devnet"}}]},
+      "panels": [
+        {
+          "type":"timeseries",
+          "title":"Jobs Queued",
+          "gridPos":{"h":8,"w":8,"x":0,"y":0},
+          "targets":[{"expr":"animica_aicf_jobs_queued{namespace=\"$namespace\"}"}]
+        },
+        {
+          "type":"timeseries",
+          "title":"Jobs Assigned/s",
+          "gridPos":{"h":8,"w":8,"x":8,"y":0},
+          "targets":[{"expr":"rate(animica_aicf_jobs_assigned_total{namespace=\"$namespace\"}[5m])"}]
+        },
+        {
+          "type":"timeseries",
+          "title":"Proof Claims/s",
+          "gridPos":{"h":8,"w":8,"x":16,"y":0},
+          "targets":[{"expr":"rate(animica_aicf_proof_claims_total{namespace=\"$namespace\"}[5m])"}]
+        },
+        {
+          "type":"timeseries",
+          "title":"SLA Pass Rate",
+          "gridPos":{"h":8,"w":12,"x":0,"y":8},
+          "targets":[{"expr":"animica_aicf_sla_pass_rate{namespace=\"$namespace\"}"}]
+        },
+        {
+          "type":"timeseries",
+          "title":"Slashes/s",
+          "gridPos":{"h":8,"w":12,"x":12,"y":8},
+          "targets":[{"expr":"rate(animica_aicf_slash_events_total{namespace=\"$namespace\"}[5m])"}]
+        }
+      ]
+    }
+  randomness.json: |
+    {
+      "uid": "anim-rand",
+      "title": "Animica • Randomness Beacon",
+      "timezone": "browser",
+      "schemaVersion": 38,
+      "version": 1,
+      "time": {"from":"now-6h","to":"now"},
+      "annotations":{"list":[{"builtIn":1,"type":"dashboard","name":"Annotations & Alerts","enable":true}]},
+      "templating":{"list":[{"type":"constant","name":"namespace","label":"namespace","query":"animica-devnet","current":{"selected":true,"text":"animica-devnet","value":"animica-devnet"}}]},
+      "panels": [
+        {
+          "type":"timeseries",
+          "title":"Round ID",
+          "gridPos":{"h":8,"w":12,"x":0,"y":0},
+          "targets":[{"expr":"animica_rand_round_id{namespace=\"$namespace\"}"}]
+        },
+        {
+          "type":"timeseries",
+          "title":"Commits/s",
+          "gridPos":{"h":8,"w":12,"x":12,"y":0},
+          "targets":[{"expr":"rate(animica_rand_commits_total{namespace=\"$namespace\"}[5m])"}]
+        },
+        {
+          "type":"timeseries",
+          "title":"VDF Verify Time (s)",
+          "gridPos":{"h":8,"w":12,"x":0,"y":8},
+          "targets":[{"expr":"avg_over_time(animica_rand_vdf_verify_seconds{namespace=\"$namespace\"}[5m])"}]
+        },
+        {
+          "type":"timeseries",
+          "title":"Beacon Mix Entropy",
+          "gridPos":{"h":8,"w":12,"x":12,"y":8},
+          "targets":[{"expr":"animica_rand_mix_entropy_bits{namespace=\"$namespace\"}"}]
+        }
+      ]
+    }
+  explorer.json: |
+    {
+      "uid": "anim-explorer",
+      "title": "Animica • Explorer/API",
+      "timezone": "browser",
+      "schemaVersion": 38,
+      "version": 1,
+      "time": {"from":"now-6h","to":"now"},
+      "annotations":{"list":[{"builtIn":1,"type":"dashboard","name":"Annotations & Alerts","enable":true}]},
+      "templating":{"list":[{"type":"constant","name":"namespace","label":"namespace","query":"animica-devnet","current":{"selected":true,"text":"animica-devnet","value":"animica-devnet"}}]},
+      "panels": [
+        {
+          "type":"timeseries",
+          "title":"HTTP Requests/s",
+          "gridPos":{"h":8,"w":12,"x":0,"y":0},
+          "targets":[{"expr":"sum(rate(animica_explorer_http_requests_total{namespace=\"$namespace\"}[5m])) by (code)"}]
+        },
+        {
+          "type":"timeseries",
+          "title":"Latency p50 / p95 (ms)",
+          "gridPos":{"h":8,"w":12,"x":12,"y":0},
+          "targets":[
+            {"expr":"histogram_quantile(0.5, sum by (le) (rate(animica_explorer_http_request_duration_ms_bucket{namespace=\"$namespace\"}[5m])))"},
+            {"expr":"histogram_quantile(0.95, sum by (le) (rate(animica_explorer_http_request_duration_ms_bucket{namespace=\"$namespace\"}[5m])))"}
+          ]
+        },
+        {
+          "type":"timeseries",
+          "title":"WS Subscribers",
+          "gridPos":{"h":8,"w":12,"x":0,"y":8},
+          "targets":[{"expr":"animica_explorer_ws_clients{namespace=\"$namespace\"}"}]
+        },
+        {
+          "type":"timeseries",
+          "title":"Indexer Lag (blocks)",
+          "gridPos":{"h":8,"w":12,"x":12,"y":8},
+          "targets":[{"expr":"animica_explorer_indexer_lag_blocks{namespace=\"$namespace\"}"}]
+        }
+      ]
+    }

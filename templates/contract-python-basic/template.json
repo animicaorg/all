@@ -1,0 +1,87 @@
+{
+  "$schema": "../schemas/template.schema.json",
+  "id": "contract-python-basic",
+  "name": "Python Contract (Basic)",
+  "version": "0.1.0",
+  "description": "Scaffold a minimal Animica Python smart contract project (vm_py) with a Counter-style example, manifest, README, and quick compile hook.",
+  "tags": ["contracts", "python", "vm_py", "starter", "counter"],
+  "variables": [
+    {
+      "key": "project_name",
+      "type": "string",
+      "prompt": "Human-friendly project name",
+      "default": "My Contract",
+      "pattern": "^[A-Za-z0-9 _.-]{3,64}$",
+      "description": "Used in README and manifest metadata."
+    },
+    {
+      "key": "project_slug",
+      "type": "string",
+      "prompt": "Project directory slug (e.g. my-contract)",
+      "default": "{{ project_name|lower|replace(' ', '-')|replace('_','-') }}",
+      "pattern": "^[a-z0-9][a-z0-9-]{2,64}$",
+      "description": "Destination directory; safe for file paths."
+    },
+    {
+      "key": "contract_class",
+      "type": "string",
+      "prompt": "Contract class name",
+      "default": "Counter",
+      "pattern": "^[A-Z][A-Za-z0-9]{1,63}$",
+      "description": "Top-level class name exported by contract.py."
+    },
+    {
+      "key": "license",
+      "type": "enum",
+      "prompt": "License identifier",
+      "choices": ["Apache-2.0", "MIT", "UNLICENSED"],
+      "default": "Apache-2.0"
+    },
+    {
+      "key": "description",
+      "type": "string",
+      "prompt": "Short description",
+      "default": "A minimal Animica Python contract with get/inc methods and events."
+    },
+    {
+      "key": "init_value",
+      "type": "integer",
+      "prompt": "Initial counter value",
+      "default": 0,
+      "minimum": 0,
+      "maximum": 2147483647
+    }
+  ],
+  "files": [
+    {
+      "path": "{{ project_slug }}/README.md",
+      "mode": "text",
+      "template": "# {{ project_name }}\n\n{{ description }}\n\n## Layout\n\n```\n{{ project_slug }}/\n├─ contract.py\n├─ manifest.json\n├─ .gitignore\n└─ README.md\n```\n\n## Quickstart\n\n### 1) Compile locally (vm_py CLI)\n\n```bash\npython -m vm_py.cli.compile \\\n  --manifest {{ project_slug }}/manifest.json \\\n  --out {{ project_slug }}/build/{{ project_slug }}.ir\n```\n\n### 2) Run a local simulation (optional)\n\n```bash\npython -m vm_py.cli.run \\\n  --manifest {{ project_slug }}/manifest.json \\\n  --call get\n```\n\n### 3) Deploy with SDK (example)\n\n```bash\nomni-sdk deploy \\\n  --manifest {{ project_slug }}/manifest.json \\\n  --rpc $RPC_URL --chain-id $CHAIN_ID\n```\n\n## Notes\n- Deterministic subset of Python only; avoid I/O, time, randomness (use stdlib APIs).\n- Events are emitted with canonical names and ABI-friendly arguments.\n"
+    },
+    {
+      "path": "{{ project_slug }}/.gitignore",
+      "mode": "text",
+      "template": "# build artifacts\n/build/\n__pycache__/\n*.pyc\n*.pyo\n*.cache/\n"
+    },
+    {
+      "path": "{{ project_slug }}/contract.py",
+      "mode": "text",
+      "template": "from stdlib import storage, events, abi\n\n# {{ license }}\n# {{ project_name }} — {{ description }}\n# Contract class: {{ contract_class }}\n\nclass {{ contract_class }}:\n    \"\"\"\n    A tiny counter contract.\n\n    Methods:\n      - inc(by: int = 1) -> int : increments and returns the new value\n      - get() -> int             : returns the current value\n\n    Events:\n      - Init(value: int)\n      - Inc(by: int, after: int)\n    \"\"\"\n\n    def __init__(self):\n        # One-time initializer (idempotent): set count if not initialized.\n        if storage.get(b\"__inited__\") is None:\n            storage.set(b\"count\", int({{ init_value }}))\n            storage.set(b\"__inited__\", 1)\n            events.emit(b\"Init\", {b\"value\": int({{ init_value }})})\n\n    def inc(self, by: int = 1) -> int:\n        # Validate input ranges (simple, deterministic)\n        if by < 0:\n            abi.revert(b\"INC_NEGATIVE\")\n        cur = int(storage.get(b\"count\") or 0)\n        nxt = cur + int(by)\n        storage.set(b\"count\", nxt)\n        events.emit(b\"Inc\", {b\"by\": int(by), b\"after\": nxt})\n        return nxt\n\n    def get(self) -> int:\n        return int(storage.get(b\"count\") or 0)\n"
+    },
+    {
+      "path": "{{ project_slug }}/manifest.json",
+      "mode": "text",
+      "template": "{\n  \"name\": \"{{ project_name }}\",\n  \"version\": \"0.1.0\",\n  \"description\": \"{{ description }}\",\n  \"abi\": {\n    \"$schema\": \"../../contracts/schemas/abi.schema.json\",\n    \"contract\": \"{{ contract_class }}\",\n    \"functions\": [\n      {\n        \"name\": \"inc\",\n        \"inputs\": [{ \"name\": \"by\", \"type\": \"int\", \"optional\": true }],\n        \"outputs\": [{ \"type\": \"int\" }]\n      },\n      {\n        \"name\": \"get\",\n        \"inputs\": [],\n        \"outputs\": [{ \"type\": \"int\" }]\n      }\n    ],\n    \"events\": [\n      { \"name\": \"Init\", \"args\": { \"value\": \"int\" } },\n      { \"name\": \"Inc\", \"args\": { \"by\": \"int\", \"after\": \"int\" } }\n    ]\n  },\n  \"meta\": {\n    \"license\": \"{{ license }}\",\n    \"authors\": [],\n    \"links\": {}\n  }\n}\n"
+    }
+  ],
+  "hooks": {
+    "pre": [
+      { "run": "echo \"Scaffolding '{{ project_name }}' ({{ project_slug }})...\"" }
+    ],
+    "post": [
+      { "run": "mkdir -p {{ project_slug }}/build" },
+      { "run": "python -m vm_py.cli.compile --manifest {{ project_slug }}/manifest.json --out {{ project_slug }}/build/{{ project_slug }}.ir || true" },
+      { "run": "echo \"Done: {{ project_slug }}\"" }
+    ]
+  }
+}

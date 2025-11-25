@@ -1,0 +1,68 @@
+# Animica Wallet — WinGet (stable) singleton manifest
+# Schema docs: https://learn.microsoft.com/windows/package-manager/package/manifest
+# CI: replace the PLACEHOLDERS before publishing (see notes at bottom).
+
+PackageIdentifier: AnimicaLabs.AnimicaWallet
+PackageVersion: 1.0.0
+PackageLocale: en-US
+Publisher: Animica Labs, Inc.
+PublisherUrl: https://animica.dev
+PublisherSupportUrl: https://animica.dev/support
+PrivacyUrl: https://animica.dev/privacy
+Author: Animica Labs, Inc.
+PackageName: Animica Wallet
+PackageUrl: https://animica.dev/wallet
+License: Proprietary
+LicenseUrl: https://animica.dev/license
+ShortDescription: Post-quantum wallet for the Animica network. MSIX-packaged, code-signed, auto-update friendly.
+Description: |
+  Animica Wallet is a post-quantum ready desktop wallet for the Animica network.
+  • Deterministic address format (bech32m)
+  • JSON-RPC integration for send/call
+  • MSIX packaging with code signing and optional enterprise deployment
+Moniker: animica-wallet
+Tags:
+  - animica
+  - wallet
+  - blockchain
+  - crypto
+  - post-quantum
+  - msix
+ReleaseNotesUrl: https://animica.dev/wallet/releases
+# Optional: icon (public URL)
+# Icons:
+#   - IconUrl: https://animica.dev/assets/wallet/icon256.png
+#     IconFileType: png
+
+Installers:
+  - Architecture: x64
+    InstallerType: msix
+    InstallerUrl: https://downloads.animica.dev/wallet/stable/Animica-Wallet_1.0.0.0_x64.msix  # CI: update
+    InstallerSha256: FILL_ME_SHA256  # CI: sha256 of the MSIX payload (hex, no 0x)
+    SignatureSha256: FILL_ME_SIG_SHA256  # Optional: signature hash; leave or remove
+    PackageFamilyName: FILL_ME_PACKAGE_FAMILY_NAME  # e.g., AnimicaWallet_abcdefghijklm
+    MinimumOSVersion: 10.0.17763.0
+    # Optional: Restrict to Desktop
+    # Scope: user
+
+# Apps & Features entry helps winget detect upgrades/uninstalls.
+AppsAndFeaturesEntries:
+  - DisplayName: Animica Wallet
+    Publisher: Animica Labs, Inc.
+    DisplayVersion: 1.0.0
+    InstallerType: msix
+    # For MSIX, ARP keys are derived; leave ProductCode empty.
+
+# Manifest metadata
+ManifestType: singleton
+ManifestVersion: 1.6.0
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CI/PUBLISHING NOTES
+# - Update PackageVersion to match MSIX (can be 1.0.0 or 1.0.0.0).
+# - Set InstallerUrl to the final, public HTTPS URL for the MSIX.
+# - Compute InstallerSha256:   certutil -hashfile <msix> SHA256
+# - PackageFamilyName comes from the built MSIX:
+#     powershell: (Get-AppPackage -Path .\Animica-Wallet_x64.msix).PackageFamilyName
+#   or: makeappx unpack; read AppxManifest Identity/Name+Publisher → PFN.
+# - For multi-arch (arm64), add another entry under Installers with Architecture: arm64.

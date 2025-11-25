@@ -1,0 +1,41 @@
+# Animica — Seed Health Allowlist
+# This optional allowlist is used by ops scripts and seed-health checks to gate which
+# networks/ASNs are considered “known-good” for bootstrap/seed nodes.
+#
+# Format (one entry per line; comments start with '#'):
+#   asn:<NUMBER>                # Allow an Autonomous System Number
+#   cidr:<IP/CIDR>              # Allow an IPv4/IPv6 CIDR range
+#   fqdn:<HOSTNAME>             # (Optional) Allow a specific hostname
+#
+# Notes:
+# - Empty lines and comments are ignored.
+# - Use documentation/test ranges for devnets; switch to real ASNs/CIDRs for prod.
+# - Keep this list tight; prefer AS-level entries over broad CIDRs when possible.
+# - The health checker typically evaluates: (resolved/observed IP in any allowed CIDR)
+#   OR (origin ASN in allowed ASN set) OR (peer hostname in allowed FQDN set).
+
+# ── Common documentation/test CIDRs (safe for dev/test) ──────────────────────────
+cidr:198.51.100.0/24         # TEST-NET-2 (RFC 5737) — used in examples/devnet seeds
+cidr:203.0.113.0/24          # TEST-NET-3 (RFC 5737)
+cidr:192.0.2.0/24            # TEST-NET-1 (RFC 5737)
+cidr:2001:db8::/32           # IPv6 documentation prefix (RFC 3849)
+
+# ── Devnet ASNs (documentation-only block per RFC 5398) ─────────────────────────
+asn:64496
+asn:64497
+asn:64498
+asn:64499
+asn:64500
+asn:64501
+
+# ── Optional FQDN pins (use sparingly; prefer ASNs/CIDRs) ───────────────────────
+fqdn:seed-us-1.devnet.animica.dev
+fqdn:seed-eu-1.devnet.animica.dev
+fqdn:seed-ap-1.devnet.animica.dev
+fqdn:seed-us-2.devnet.animica.dev
+fqdn:seed-eu-2.devnet.animica.dev
+
+# ── Example placeholders for future mainnet/testnet (replace with real data) ────
+# asn:NNNNN                     # e.g., upstream network ASN
+# cidr:203.0.113.0/25           # example tighter slice if needed
+# fqdn:seed-xx-1.mainnet.animica.net

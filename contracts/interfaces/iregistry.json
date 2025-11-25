@@ -1,0 +1,181 @@
+{
+  "functions": [
+    {
+      "type": "function",
+      "name": "version",
+      "inputs": [],
+      "outputs": [{ "type": "bytes" }],
+      "notice": "Semantic version of the Name Registry interface (e.g. b'1.0.0')."
+    },
+    {
+      "type": "function",
+      "name": "exists",
+      "inputs": [{ "name": "name", "type": "bytes32" }],
+      "outputs": [{ "type": "bool" }],
+      "notice": "Returns true if a record for name exists."
+    },
+    {
+      "type": "function",
+      "name": "ownerOf",
+      "inputs": [{ "name": "name", "type": "bytes32" }],
+      "outputs": [{ "type": "address" }],
+      "notice": "Returns the owner/controller address for the given name. Zero-address if unclaimed."
+    },
+    {
+      "type": "function",
+      "name": "claim",
+      "inputs": [
+        { "name": "name", "type": "bytes32" },
+        { "name": "owner", "type": "address" }
+      ],
+      "outputs": [{ "type": "bool" }],
+      "notice": "Claim an unowned name and set its owner. Implementations MUST enforce unclaimed-only or appropriate permissions."
+    },
+    {
+      "type": "function",
+      "name": "setOwner",
+      "inputs": [
+        { "name": "name", "type": "bytes32" },
+        { "name": "newOwner", "type": "address" }
+      ],
+      "outputs": [{ "type": "bool" }],
+      "notice": "Transfer ownership of name to newOwner. Only current owner (or policy-governed authority) may call."
+    },
+    {
+      "type": "function",
+      "name": "setRecord",
+      "inputs": [
+        { "name": "name", "type": "bytes32" },
+        { "name": "addr", "type": "address" }
+      ],
+      "outputs": [{ "type": "bool" }],
+      "notice": "Set (or overwrite) the address record for name. Only owner may call."
+    },
+    {
+      "type": "function",
+      "name": "getRecord",
+      "inputs": [{ "name": "name", "type": "bytes32" }],
+      "outputs": [
+        { "name": "found", "type": "bool" },
+        { "name": "addr", "type": "address" },
+        { "name": "owner", "type": "address" }
+      ],
+      "notice": "Fetch the current mapping for name. If not found, found=false and addr/owner are zero-values."
+    },
+    {
+      "type": "function",
+      "name": "removeRecord",
+      "inputs": [{ "name": "name", "type": "bytes32" }],
+      "outputs": [{ "type": "bool" }],
+      "notice": "Delete the record for name (owner remains). Only owner may call."
+    },
+    {
+      "type": "function",
+      "name": "resolve",
+      "inputs": [{ "name": "name", "type": "bytes32" }],
+      "outputs": [
+        { "name": "found", "type": "bool" },
+        { "name": "addr", "type": "address" }
+      ],
+      "notice": "Resolve name to its address. found=false when no record exists."
+    },
+    {
+      "type": "function",
+      "name": "setReverse",
+      "inputs": [
+        { "name": "addr", "type": "address" },
+        { "name": "name", "type": "bytes32" }
+      ],
+      "outputs": [{ "type": "bool" }],
+      "notice": "Optionally set reverse mapping addr -> name. Implementations may restrict to owner of name or addr."
+    },
+    {
+      "type": "function",
+      "name": "getReverse",
+      "inputs": [{ "name": "addr", "type": "address" }],
+      "outputs": [
+        { "name": "found", "type": "bool" },
+        { "name": "name", "type": "bytes32" }
+      ],
+      "notice": "Return reverse mapping for an address if one is set and valid."
+    }
+  ],
+  "events": [
+    {
+      "type": "event",
+      "name": "Claimed",
+      "inputs": [
+        { "name": "name", "type": "bytes32", "indexed": true },
+        { "name": "owner", "type": "address", "indexed": true }
+      ],
+      "notice": "Emitted when a previously unclaimed name is claimed."
+    },
+    {
+      "type": "event",
+      "name": "OwnerChanged",
+      "inputs": [
+        { "name": "name", "type": "bytes32", "indexed": true },
+        { "name": "oldOwner", "type": "address" },
+        { "name": "newOwner", "type": "address" }
+      ],
+      "notice": "Emitted when ownership of a name changes."
+    },
+    {
+      "type": "event",
+      "name": "RecordSet",
+      "inputs": [
+        { "name": "name", "type": "bytes32", "indexed": true },
+        { "name": "addr", "type": "address" }
+      ],
+      "notice": "Emitted on successful setRecord."
+    },
+    {
+      "type": "event",
+      "name": "RecordRemoved",
+      "inputs": [
+        { "name": "name", "type": "bytes32", "indexed": true },
+        { "name": "by", "type": "address" }
+      ],
+      "notice": "Emitted when a record is removed."
+    },
+    {
+      "type": "event",
+      "name": "ReverseSet",
+      "inputs": [
+        { "name": "addr", "type": "address", "indexed": true },
+        { "name": "name", "type": "bytes32" }
+      ],
+      "notice": "Emitted when a reverse mapping is created or updated."
+    }
+  ],
+  "errors": [
+    {
+      "type": "error",
+      "name": "Unauthorized",
+      "inputs": [
+        { "name": "who", "type": "address" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "AlreadyClaimed",
+      "inputs": [
+        { "name": "name", "type": "bytes32" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "NotFound",
+      "inputs": [
+        { "name": "name", "type": "bytes32" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "InvalidName",
+      "inputs": [
+        { "name": "name", "type": "bytes32" }
+      ]
+    }
+  ]
+}

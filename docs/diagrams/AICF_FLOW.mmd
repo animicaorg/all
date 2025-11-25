@@ -1,0 +1,120 @@
+%% Mermaid: AICF Job Lifecycle & Proofs
+%% View online: https://mermaid.live
+
+flowchart LR
+  %% ===================== ACTORS / SWIMLANES =====================
+  subgraph REQ[Requester / Contract (on-chain)]
+    direction TB
+    Ctx[Tx: contract calls\nsyscalls.ai_enqueue(...)]:::onchain
+    Tid[Deterministic task_id\nH(chainId|height|txHash|caller|payload)]:::onchain
+    ReadRes[Next block: read_result(task_id)\n(syscalls.read_result)]:::onchain
+  end
+
+  subgraph CAP[Capabilities Host (node)]
+    direction TB
+    CapProv[capabilities.host.provider\n(registry & dispatch)]:::cap
+    Enq[Enqueue: persist JobRequest\n→ queue + receipt]:::cap
+    Resolver[Result Resolver\n(proofs → result_store)]:::cap
+  end
+
+  subgraph AICF[AICF Service]
+    direction TB
+    Q[Queue (SQLite/Rocks)\nindexes + TTL]:::aicf
+    Match[Matcher/Dispatcher\n(eligibility + quotas + priority)]:::aicf
+    Lease[Lease issue/renew/cancel]:::aicf
+    Econ[aicf.economics.pricing/split]:::aicf
+    SLA[aicf.sla.evaluator\n(latency, traps, QoS)]:::aicf
+    Payouts[Settlement Batch\n→ treasury credits]:::aicf
+  end
+
+  subgraph PROV[Compute Provider]
+    direction TB
+    Fetch[Poll/receive lease\n(job spec, limits)]:::prov
+    Run[Run job (AI/Quantum)\nproduce output digest]:::prov
+    Attest[Attach attestation\n(TEE/QPU certs)]:::prov
+    Return[Submit completion\n(output digest + attest)]:::prov
+  end
+
+  subgraph PROOFS[On-chain Proofs Module]
+    direction TB
+    BuildProof[Build AIProof/QuantumProof\nfrom attest + metrics]:::proofs
+    Gossip[Relay proof envelope\n(p2p/gossip)]:::proofs
+    Verify[Verify proof metrics\n(policy_adapter → ψ inputs)]:::proofs
+  end
+
+  subgraph CONS[Consensus / Block]
+    direction TB
+    Pack[Block builder packs proofs\n+ txs under caps/Γ]:::cons
+    Score[PoIES scorer: Σψ + H(u)\n≥ Θ acceptance]:::cons
+    Seal[Seal block; proofsRoot/receiptsRoot]:::cons
+  end
+
+  subgraph ECON[Treasury & Rewards]
+    direction TB
+    Claims[Map proofs → job claims]:::econ
+    Split[aicf.economics.split\n(provider/treasury/miner]:::econ
+    Credit[Credit provider balances\n(lockups/withdraw)]:::econ
+    Slash[If SLA fail → slash/jail]:::econ
+  end
+
+  %% ===================== DATA FLOW EDGES =====================
+
+  %% Contract → Capabilities
+  Ctx -->|calls| Tid --> CapProv
+  CapProv --> Enq --> Q
+
+  %% Queue → Matcher → Provider
+  Q --> Match --> Lease -->|lease info| Fetch
+  Fetch --> Run --> Attest --> Return -->|completed output| Q
+
+  %% AICF integrates with Proofs
+  Return -->|normalized evidence| BuildProof
+  BuildProof --> Gossip --> Verify
+
+  %% Proofs → Capabilities Resolver
+  Verify -->|metrics & ψ-inputs| Resolver
+
+  %% Proofs → Consensus
+  Verify --> Pack --> Score --> Seal
+
+  %% Result availability
+  Resolver -->|populate result_store| ReadRes
+
+  %% Economics & Settlement
+  Verify -->|pricing units| Econ
+  Econ --> Split --> Payouts --> Credit
+  SLA -->|evaluate| Slash
+  Verify -->|QoS/traps| SLA
+
+  %% WebSocket / Events (optional)
+  subgraph EVENTS[Events / Notifications (WS)]
+    direction TB
+    E1[jobEnqueued]:::evt
+    E2[jobAssigned]:::evt
+    E3[jobCompleted]:::evt
+    E4[epochSettled]:::evt
+    E5[providerSlashed]:::evt
+  end
+  Enq --> E1
+  Lease --> E2
+  Return --> E3
+  Payouts --> E4
+  Slash --> E5
+
+  %% ===================== NOTES =====================
+  %% - task_id is deterministic and derived from chain data + tx context → stable across replays.
+  %% - read_result(task_id) is only available at/after the next block once proofs resolve into the store.
+  %% - Verify maps attestation bundles to ProofMetrics; policy caps happen in consensus, not in proofs.
+  %% - Economics converts metered units to rewards; splits are configurable per kind (AI/Quantum).
+  %% - SLA failure triggers penalties and possible jailing; repeated faults escalate punishments.
+
+  %% ===================== STYLES =====================
+  classDef onchain fill:#d1fae5,stroke:#065f46,stroke-width:1,color:#064e3b;
+  classDef cap fill:#bfdbfe,stroke:#1e40af,stroke-width:1,color:#1e3a8a;
+  classDef aicf fill:#fde68a,stroke:#92400e,stroke-width:1,color:#78350f;
+  classDef prov fill:#fbcfe8,stroke:#a21caf,stroke-width:1,color:#831843;
+  classDef proofs fill:#e5e7eb,stroke:#374151,stroke-width:1,color:#111827;
+  classDef cons fill:#c7d2fe,stroke:#3730a3,stroke-width:1,color:#1e1b4b;
+  classDef econ fill:#bbf7d0,stroke:#14532d,stroke-width:1,color:#064e3b;
+  classDef evt fill:#f3f4f6,stroke:#6b7280,stroke-width:1,color:#111827;
+

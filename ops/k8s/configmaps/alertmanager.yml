@@ -1,0 +1,182 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    animica.dev/environment: devnet
+data:
+  # Run Alertmanager with:
+  #   alertmanager --config.file=/etc/alertmanager/alertmanager.yml --storage.path=/alertmanager
+  # If you want to use environment variables below, render with envsubst first.
+  alertmanager.yml: |
+    global:
+      resolve_timeout: 5m
+      smtp_smarthost: ${SMTP_SMARTHOST:-smtp.example.com:587}
+      smtp_from: ${SMTP_FROM:-animica-alerts@example.com}
+      smtp_require_tls: true
+
+    templates:
+      - /etc/alertmanager/templates/*.tmpl
+
+    route:
+      receiver: slack-default
+      group_by: ['alertname', 'namespace']
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 3h
+      routes:
+        # Silence the Watchdog into a null receiver
+        - receiver: devnull
+          matchers:
+            - alertname = "Watchdog"
+
+        # Critical incidents page/oncall + Slack
+        - receiver: email-oncall
+          matchers:
+            - severity = "critical"
+          continue: true
+        - receiver: slack-critical
+          matchers:
+            - severity = "critical"
+
+        # Team-specific routes
+        - receiver: slack-aicf
+          matchers:
+            - team = "aicf"
+        - receiver: slack-da
+          matchers:
+            - team = "da"
+        - receiver: slack-poies
+          matchers:
+            - team = "poies"
+        - receiver: slack-randomness
+          matchers:
+            - team = "randomness"
+
+    inhibit_rules:
+      # If a service is hard down, inhibit noisy symptom alerts for the same ns/service
+      - source_matchers: [ 'alertname = ServiceDown' ]
+        target_matchers: [ 'severity =~ warning|info' ]
+        equal: ['cluster', 'namespace', 'service']
+
+      # Node down inhibits pod/target down noise
+      - source_matchers: [ 'alertname = NodeDown' ]
+        target_matchers: [ 'alertname =~ TargetDown|PodCrashLoop' ]
+        equal: ['cluster', 'node']
+
+      # Head stalled inhibits downstream PoIES mix/Γ threshold noise
+      - source_matchers: [ 'alertname = ChainHeadStalled' ]
+        target_matchers: [ 'team = poies' ]
+        equal: ['cluster', 'namespace']
+
+      # DA service down inhibits sampling failure-rate warnings
+      - source_matchers: [ 'alertname = DAServiceDown' ]
+        target_matchers: [ 'team = da' ]
+        equal: ['cluster', 'namespace']
+
+    receivers:
+      - name: devnull
+
+      - name: slack-default
+        slack_configs:
+          - api_url: ${SLACK_WEBHOOK_URL_DEFAULT:-https://hooks.slack.com/services/REDACTED}
+            channel: ${SLACK_CHANNEL_DEFAULT:-#animica-alerts}
+            send_resolved: true
+            title: '{{ template "animica.title" . }}'
+            text: '{{ template "animica.body" . }}'
+            http_config:
+              proxy_url: ${HTTP_PROXY_URL:-}
+
+      - name: slack-critical
+        slack_configs:
+          - api_url: ${SLACK_WEBHOOK_URL_CRIT:-https://hooks.slack.com/services/REDACTED}
+            channel: ${SLACK_CHANNEL_CRIT:-#animica-incidents}
+            send_resolved: true
+            title: ':rotating_light: {{ template "animica.title" . }}'
+            text: '{{ template "animica.body" . }}'
+
+      - name: slack-aicf
+        slack_configs:
+          - api_url: ${SLACK_WEBHOOK_URL_AICF:-https://hooks.slack.com/services/REDACTED}
+            channel: ${SLACK_CHANNEL_AICF:-#animica-aicf}
+            send_resolved: true
+            title: '{{ template "animica.title" . }}'
+            text: '{{ template "animica.body" . }}'
+
+      - name: slack-da
+        slack_configs:
+          - api_url: ${SLACK_WEBHOOK_URL_DA:-https://hooks.slack.com/services/REDACTED}
+            channel: ${SLACK_CHANNEL_DA:-#animica-da}
+            send_resolved: true
+            title: '{{ template "animica.title" . }}'
+            text: '{{ template "animica.body" . }}'
+
+      - name: slack-poies
+        slack_configs:
+          - api_url: ${SLACK_WEBHOOK_URL_POIES:-https://hooks.slack.com/services/REDACTED}
+            channel: ${SLACK_CHANNEL_POIES:-#animica-poies}
+            send_resolved: true
+            title: '{{ template "animica.title" . }}'
+            text: '{{ template "animica.body" . }}'
+
+      - name: slack-randomness
+        slack_configs:
+          - api_url: ${SLACK_WEBHOOK_URL_RANDOMNESS:-https://hooks.slack.com/services/REDACTED}
+            channel: ${SLACK_CHANNEL_RANDOMNESS:-#animica-randomness}
+            send_resolved: true
+            title: '{{ template "animica.title" . }}'
+            text: '{{ template "animica.body" . }}'
+
+      - name: email-oncall
+        email_configs:
+          - to: ${ONCALL_EMAIL_TO:-oncall@example.com}
+            headers:
+              subject: '[${CLUSTER_NAME:-animica-devnet}] {{ template "animica.title" . }}'
+            html: '{{ template "animica.email_html" . }}'
+
+      # Optional webhook for custom incident pipeline
+      - name: webhook-incidents
+        webhook_configs:
+          - url: ${INCIDENT_WEBHOOK_URL:-http://incident-handler.animica-devnet.svc.cluster.local:8080/alerts}
+            send_resolved: true
+
+  # Minimal Go template used by the Slack/email receivers above.
+  templates/animica.tmpl: |
+    {{ define "animica.title" -}}
+    {{ .Status | toUpper }}: {{ .CommonLabels.alertname }} ({{ .CommonLabels.severity | default "info" }})
+    {{- end }}
+
+    {{ define "animica.body" -}}
+    *Alert:* {{ .CommonLabels.alertname }}
+    *Status:* {{ .Status }}
+    *Severity:* {{ .CommonLabels.severity | default "info" }}
+    *Namespace:* {{ .CommonLabels.namespace }}
+    *Service:* {{ .CommonLabels.service | default "-" }}
+    *Node/Instance:* {{ .CommonLabels.instance | default "-" }}
+    {{- if gt (len .Alerts) 1 }}
+    *Count:* {{ len .Alerts }}
+    {{- end }}
+
+    {{ range .Alerts -}}
+    • *{{ .Labels.instance | default .Labels.pod | default "-" }}* — {{ .Annotations.summary | default .Annotations.description | default "no description" }}
+      startsAt={{ .StartsAt }} endsAt={{ .EndsAt }}
+    {{ end -}}
+
+    *Details:*
+    {{ range .CommonAnnotations }}
+    • {{ .Name }}: {{ .Value }}
+    {{ end }}
+    {{- end }}
+
+    {{ define "animica.email_html" -}}
+    <h3>{{ template "animica.title" . }}</h3>
+    <p><b>Status:</b> {{ .Status }} &nbsp; <b>Severity:</b> {{ .CommonLabels.severity | default "info" }}</p>
+    <p><b>Namespace:</b> {{ .CommonLabels.namespace }} &nbsp; <b>Service:</b> {{ .CommonLabels.service | default "-" }}</p>
+    <ul>
+    {{ range .Alerts -}}
+      <li><b>{{ .Labels.instance | default .Labels.pod | default "-" }}</b> — {{ .Annotations.summary | default .Annotations.description | default "no description" }} (starts: {{ .StartsAt }})</li>
+    {{ end -}}
+    </ul>
+    {{- end }}

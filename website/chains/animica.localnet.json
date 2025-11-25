@@ -1,0 +1,19 @@
+{
+  "id": "animica.localnet",
+  "chainId": 1337,
+  "name": "Animica Localnet (Developer)",
+  "rpc": [
+    "http://127.0.0.1:8645/rpc",
+    "ws://127.0.0.1:8645/ws"
+  ],
+  "explorer": "http://localhost:3000",
+  "testnet": true,
+  "docs": "https://docs.animica.org/network/localnet",
+  "faucets": [],
+  "status": "local",
+  "features": ["PoIES", "DA", "VM(Py)", "PQ", "Quantum", "AICF"],
+  "blockTimeMs": 2000,
+  "finality": "probabilistic",
+  "caip2": "animica:1337",
+  "notes": "Used by Studio/local dev. Update RPC/Explorer URLs to match your local node processes."
+}

@@ -1,0 +1,109 @@
+/* Animica Tokens (dark theme) — [data-theme="dark"] variables
+   Source: contrib/tokens/tokens.dark.json (overrides) + tokens.json (base)
+   Apply by setting: <html data-theme="dark">…</html>
+   SPDX-License-Identifier: MIT
+*/
+
+:root[data-theme="dark"] {
+  /* -------------------- Color overrides -------------------- */
+  /* Surfaces (deeper neutrals for backgrounds) */
+  --anm-color-surface-0:   #0D0F18;
+  --anm-color-surface-50:  #0F1220;
+  --anm-color-surface-100: #121623;
+  --anm-color-surface-800: #0B0E17;
+  --anm-color-surface-900: #070A11;
+
+  /* Neutral (inverted for legibility on dark) */
+  --anm-color-neutral-50:  #E8ECF8;
+  --anm-color-neutral-100: #D5DBEF;
+  --anm-color-neutral-200: #C2CBE3;
+  --anm-color-neutral-300: #A7B2CF;
+  --anm-color-neutral-400: #8E9BBD;
+  --anm-color-neutral-500: #7C8AAE;
+  --anm-color-neutral-600: #AEB8CF;
+  --anm-color-neutral-700: #C7CFE0;
+  --anm-color-neutral-800: #E1E6F5;
+  --anm-color-neutral-900: #F6F8FF;
+
+  /* Primary (slightly lighter on dark for contrast) */
+  --anm-color-primary-400: #8AA9FF;
+  --anm-color-primary-500: #5E86FF;
+  --anm-color-primary-600: #4B7DFF;
+  --anm-color-primary-700: #2E63FF;
+  --anm-color-primary-800: #254FCC;
+
+  /* Success / Warning / Error tweaks */
+  --anm-color-success-400: #50C79B;
+  --anm-color-success-500: #3AB889;
+  --anm-color-success-600: #2CAF7E;
+
+  --anm-color-warning-400: #F4BE45;
+  --anm-color-warning-500: #EFB435;
+  --anm-color-warning-600: #E3A822;
+
+  --anm-color-error-400: #F07474;
+  --anm-color-error-500: #EA6060;
+  --anm-color-error-600: #E45757;
+
+  /* -------------------- Shadows (subtler in dark) -------------------- */
+  --anm-shadow-sm: 0 1px 1px rgba(0,0,0,0.35);
+  --anm-shadow-md: 0 2px 6px rgba(0,0,0,0.40);
+  --anm-shadow-lg: 0 8px 18px rgba(0,0,0,0.44);
+
+  /* Convenience foregrounds on dark */
+  --anm-text-color: var(--anm-color-neutral-900);
+  --anm-surface-bg: var(--anm-color-surface-900);
+}
+
+/* Optional: auto-enable on OS dark preference if no explicit data-theme is set */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --anm-color-surface-0:   #0D0F18;
+    --anm-color-surface-50:  #0F1220;
+    --anm-color-surface-100: #121623;
+    --anm-color-surface-800: #0B0E17;
+    --anm-color-surface-900: #070A11;
+
+    --anm-color-neutral-50:  #E8ECF8;
+    --anm-color-neutral-100: #D5DBEF;
+    --anm-color-neutral-200: #C2CBE3;
+    --anm-color-neutral-300: #A7B2CF;
+    --anm-color-neutral-400: #8E9BBD;
+    --anm-color-neutral-500: #7C8AAE;
+    --anm-color-neutral-600: #AEB8CF;
+    --anm-color-neutral-700: #C7CFE0;
+    --anm-color-neutral-800: #E1E6F5;
+    --anm-color-neutral-900: #F6F8FF;
+
+    --anm-color-primary-400: #8AA9FF;
+    --anm-color-primary-500: #5E86FF;
+    --anm-color-primary-600: #4B7DFF;
+    --anm-color-primary-700: #2E63FF;
+    --anm-color-primary-800: #254FCC;
+
+    --anm-color-success-400: #50C79B;
+    --anm-color-success-500: #3AB889;
+    --anm-color-success-600: #2CAF7E;
+
+    --anm-color-warning-400: #F4BE45;
+    --anm-color-warning-500: #EFB435;
+    --anm-color-warning-600: #E3A822;
+
+    --anm-color-error-400: #F07474;
+    --anm-color-error-500: #EA6060;
+    --anm-color-error-600: #E45757;
+
+    --anm-shadow-sm: 0 1px 1px rgba(0,0,0,0.35);
+    --anm-shadow-md: 0 2px 6px rgba(0,0,0,0.40);
+    --anm-shadow-lg: 0 8px 18px rgba(0,0,0,0.44);
+
+    --anm-text-color: var(--anm-color-neutral-900);
+    --anm-surface-bg: var(--anm-color-surface-900);
+  }
+}
+
+/* Dark helpers */
+[data-theme="dark"] .anm-surface   { background: var(--anm-color-surface-900); color: var(--anm-color-neutral-900); }
+[data-theme="dark"] .anm-card      { background: var(--anm-color-surface-100); box-shadow: var(--anm-shadow-md); border-radius: var(--anm-radius-lg); }
+[data-theme="dark"] .anm-link      { color: var(--anm-color-primary-400); }
+[data-theme="dark"] .anm-link:hover{ text-decoration: underline; }

@@ -1,0 +1,470 @@
+/* ==========================================================================
+   Animica Explorer — Theme
+   Component-level styles and semantic mappings built on top of tokens.css.
+   This file avoids hard-coded colors and composes from CSS variables.
+   ========================================================================== */
+
+/* ---------- Base / Global ------------------------------------------------- */
+
+html, body {
+  padding: 0;
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--color-accent) 24%, transparent);
+  color: var(--color-fg);
+}
+
+a {
+  color: var(--color-accent);
+  text-decoration-color: color-mix(in oklab, var(--color-accent) 40%, transparent);
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1.5px;
+}
+a:hover {
+  text-decoration-color: var(--color-accent);
+}
+a:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+hr {
+  border: none;
+  border-top: var(--border-width) solid var(--color-border);
+  margin: var(--space-6) 0;
+}
+
+code, pre, kbd, samp {
+  font-family: var(--font-mono);
+  font-size: 0.95em;
+}
+pre {
+  background: color-mix(in oklab, var(--color-bg-elev) 92%, var(--color-border));
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  overflow: auto;
+  box-shadow: var(--shadow-sm);
+}
+
+kbd {
+  background: color-mix(in oklab, var(--color-bg-elev) 86%, var(--color-border));
+  border: var(--border-width) solid var(--color-border);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 -1px 0 rgba(0,0,0,0.06);
+}
+
+/* Containers */
+.container {
+  width: 100%;
+  max-width: var(--container);
+  margin: 0 auto;
+  padding-left: var(--space-6);
+  padding-right: var(--space-6);
+}
+.container.narrow { max-width: var(--container-narrow); }
+.container.wide { max-width: var(--container-wide); }
+
+/* ---------- Elevation Helpers --------------------------------------------- */
+
+.elev-0 { box-shadow: none; }
+.elev-1 { box-shadow: var(--shadow-sm); }
+.elev-2 { box-shadow: var(--shadow-md); }
+.elev-3 { box-shadow: var(--shadow-lg); }
+
+/* ---------- Cards / Surfaces ---------------------------------------------- */
+
+.card {
+  background: var(--color-card);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+.card.headered > .card__header {
+  padding: var(--space-4) var(--space-5);
+  border-bottom: var(--border-width) solid var(--color-border);
+  font-weight: 600;
+}
+.card > .card__body {
+  padding: var(--space-5);
+}
+.card > .card__footer {
+  padding: var(--space-4) var(--space-5);
+  border-top: var(--border-width) solid var(--color-border);
+  display: flex;
+  gap: var(--space-3);
+  justify-content: flex-end;
+}
+
+/* Panels (elevated sections) */
+.panel {
+  background: var(--color-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+}
+
+/* ---------- Buttons ------------------------------------------------------- */
+
+.btn {
+  --_bg: var(--color-accent);
+  --_fg: var(--color-accent-contrast);
+  --_bd: transparent;
+
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: calc(var(--space-2) + 2px) var(--space-4);
+  border-radius: var(--radius-md);
+  border: var(--border-width) solid var(--_bd);
+  background: var(--_bg);
+  color: var(--_fg);
+  font-weight: 600;
+  line-height: 1.1;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--dur-fast) var(--ease-emph),
+              box-shadow var(--dur-fast) var(--ease-emph),
+              background-color var(--dur-fast) var(--ease-emph),
+              border-color var(--dur-fast) var(--ease-emph);
+  user-select: none;
+}
+.btn:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+  background: color-mix(in oklab, var(--_bg) 88%, white);
+}
+.btn:active {
+  transform: translateY(0);
+  box-shadow: var(--shadow-sm);
+}
+.btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring), var(--shadow-md);
+}
+
+/* Button sizes */
+.btn.sm { padding: var(--space-2) var(--space-3); font-size: var(--text-sm); border-radius: var(--radius-sm); }
+.btn.lg { padding: var(--space-3) var(--space-5); font-size: var(--text-lg); border-radius: var(--radius-lg); }
+
+/* Variants */
+.btn.primary { --_bg: var(--color-accent); --_fg: var(--color-accent-contrast); --_bd: transparent; }
+.btn.secondary { --_bg: color-mix(in oklab, var(--color-bg-elev) 92%, var(--color-border)); --_fg: var(--color-fg); --_bd: var(--color-border); }
+.btn.ghost { --_bg: transparent; --_fg: var(--color-fg); --_bd: var(--color-border); }
+.btn.outline { --_bg: transparent; --_fg: var(--color-accent); --_bd: var(--color-accent); }
+.btn.danger { --_bg: var(--color-danger); --_fg: #fff; --_bd: transparent; }
+
+.btn.icon {
+  padding: var(--space-2);
+  aspect-ratio: 1 / 1;
+  justify-content: center;
+}
+
+/* Disabled */
+.btn[disabled], .btn.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* ---------- Inputs / Forms ------------------------------------------------ */
+
+.label {
+  display: inline-block;
+  font-weight: 600;
+  margin-bottom: var(--space-2);
+}
+.help {
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+  margin-top: var(--space-2);
+}
+
+.input, .select, .textarea {
+  width: 100%;
+  background: var(--input-bg);
+  color: var(--color-fg);
+  border: var(--border-width) solid var(--input-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  transition: border-color var(--dur-fast) var(--ease-standard),
+              box-shadow var(--dur-fast) var(--ease-standard),
+              background-color var(--dur-fast) var(--ease-standard);
+}
+.input::placeholder,
+.textarea::placeholder {
+  color: var(--input-placeholder);
+}
+.input:focus-visible,
+.select:focus-visible,
+.textarea:focus-visible {
+  outline: none;
+  border-color: var(--input-border-focus);
+  box-shadow: var(--focus-ring);
+}
+.input[disabled],
+.select[disabled],
+.textarea[disabled] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.input.prefix {
+  padding-left: var(--space-8);
+  background-image: var(--_prefix-icon);
+  background-repeat: no-repeat;
+  background-size: 18px 18px;
+  background-position: var(--space-3) center;
+}
+
+/* Checkbox / Radio (simple, theme-aware) */
+.control {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.control input[type="checkbox"],
+.control input[type="radio"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-accent);
+}
+
+/* Input groups */
+.input-row {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+}
+.input-row > * { flex: 1 1 auto; }
+
+/* ---------- Tables -------------------------------------------------------- */
+
+.table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+}
+.table th, .table td {
+  text-align: left;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+.table thead th {
+  background: color-mix(in oklab, var(--color-surface) 92%, var(--color-border));
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+.table tbody tr:hover {
+  background: color-mix(in oklab, var(--color-surface) 94%, var(--color-border));
+}
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* ---------- Badges / Tags ------------------------------------------------- */
+
+.badge, .tag {
+  --_bg: color-mix(in oklab, var(--color-accent) 12%, transparent);
+  --_fg: var(--color-accent);
+  --_bd: color-mix(in oklab, var(--color-accent) 36%, transparent);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+  font-size: var(--text-sm);
+  border: var(--border-width) solid var(--_bd);
+  background: var(--_bg);
+  color: var(--_fg);
+  white-space: nowrap;
+}
+.badge.gray { --_bg: var(--gray-100); --_fg: var(--gray-700); --_bd: var(--gray-200); }
+.badge.success { --_bg: color-mix(in oklab, var(--color-success) 12%, transparent); --_fg: var(--color-success); --_bd: color-mix(in oklab, var(--color-success) 36%, transparent); }
+.badge.warning { --_bg: color-mix(in oklab, var(--color-warning) 12%, transparent); --_fg: var(--color-warning); --_bd: color-mix(in oklab, var(--color-warning) 36%, transparent); }
+.badge.danger { --_bg: color-mix(in oklab, var(--color-danger) 12%, transparent); --_fg: var(--color-danger); --_bd: color-mix(in oklab, var(--color-danger) 36%, transparent); }
+
+/* ---------- Tabs ---------------------------------------------------------- */
+
+.tabs {
+  display: flex;
+  gap: var(--space-1);
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+.tab {
+  padding: var(--space-3) var(--space-4);
+  font-weight: 600;
+  color: var(--color-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.tab:hover {
+  color: var(--color-fg);
+  background: color-mix(in oklab, var(--color-surface) 92%, var(--color-border));
+}
+.tab.active {
+  color: var(--color-fg);
+  border-bottom-color: var(--color-accent);
+}
+
+/* ---------- Tooltips (structural) ---------------------------------------- */
+
+.tooltip {
+  position: relative;
+}
+.tooltip[aria-label]::after {
+  content: attr(aria-label);
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 8px);
+  transform: translateX(-50%) translateY(4px);
+  background: var(--color-bg-elev);
+  color: var(--color-fg);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  box-shadow: var(--shadow-sm);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease-standard),
+              transform var(--dur-fast) var(--ease-standard);
+  z-index: var(--z-tooltip);
+}
+.tooltip:hover::after,
+.tooltip:focus-within::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ---------- Toasts (basic) ----------------------------------------------- */
+
+.toast {
+  background: var(--color-bg-elev);
+  color: var(--color-fg);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-3) var(--space-4);
+}
+.toast.success { border-color: color-mix(in oklab, var(--color-success) 50%, var(--color-border)); }
+.toast.warning { border-color: color-mix(in oklab, var(--color-warning) 50%, var(--color-border)); }
+.toast.danger { border-color: color-mix(in oklab, var(--color-danger) 50%, var(--color-border)); }
+
+/* ---------- Skeleton / Loading ------------------------------------------- */
+
+.skeleton {
+  display: inline-block;
+  width: 100%;
+  height: 1em;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(90deg,
+    color-mix(in oklab, var(--color-surface) 92%, var(--color-border)),
+    color-mix(in oklab, var(--color-surface) 96%, var(--color-border)),
+    color-mix(in oklab, var(--color-surface) 92%, var(--color-border))
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.2s infinite var(--ease-standard);
+}
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ---------- Scrollbars ---------------------------------------------------- */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--color-border) 80%, transparent) transparent;
+}
+*::-webkit-scrollbar { height: 10px; width: 10px; }
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--color-border) 80%, transparent);
+  border-radius: var(--radius-full);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--color-border) 100%, transparent);
+}
+
+/* ---------- Utility Text / Color Roles ----------------------------------- */
+
+.text-muted { color: var(--color-muted); }
+.text-success { color: var(--color-success); }
+.text-warning { color: var(--color-warning); }
+.text-danger  { color: var(--color-danger); }
+.text-mono { font-family: var(--font-mono); }
+
+/* PoIES / subsystem color helpers (for legends & chips) */
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.dot.hash { background: var(--poies-hash); }
+.dot.ai { background: var(--poies-ai); }
+.dot.quantum { background: var(--poies-quantum); }
+.dot.storage { background: var(--poies-storage); }
+.dot.vdf { background: var(--poies-vdf); }
+
+/* ---------- Headbar / Footer (optional shared styles) -------------------- */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  background: var(--color-bg-elev);
+  border-bottom: var(--border-width) solid var(--color-border);
+  backdrop-filter: saturate(120%) blur(6px);
+}
+.topbar__inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-6);
+}
+
+.footer {
+  margin-top: var(--space-10);
+  padding: var(--space-6);
+  border-top: var(--border-width) solid var(--color-border);
+  color: var(--color-muted);
+}
+
+/* ---------- Dark / Light hooks ------------------------------------------- */
+/* tokens.css already adjusts variables for [data-theme] and media queries,
+   we only need minor component-level tweaks if desired. */
+
+[data-theme="dark"] .table thead th {
+  background: color-mix(in oklab, var(--color-surface) 88%, var(--color-border));
+}
+[data-theme="dark"] .btn:hover {
+  background: color-mix(in oklab, var(--_bg) 94%, black);
+}
+
+/* ---------- Charts (CSS variables only; chart lib consumes them) ---------- */
+
+.chart-colors {
+  --series-1: var(--chart-1);
+  --series-2: var(--chart-2);
+  --series-3: var(--chart-3);
+  --series-4: var(--chart-4);
+  --series-5: var(--chart-5);
+  --series-6: var(--chart-6);
+}

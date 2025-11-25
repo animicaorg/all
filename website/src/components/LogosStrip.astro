@@ -1,0 +1,177 @@
+---
+/**
+ * LogosStrip.astro
+ * Responsive partner/provider logos strip.
+ *
+ * Props:
+ * - logos: { src, alt, href?, title?, width?, height? }[]
+ * - title?: string
+ * - subtitle?: string
+ * - variant?: "grid" | "marquee" (default: "grid")
+ * - columns?: 3 | 4 | 5 | 6 (grid only; default: 5)
+ * - grayscale?: boolean (default: true)
+ * - class?: string (extra wrapper classes)
+ */
+interface Logo {
+  src: string;
+  alt: string;
+  href?: string;
+  ariaLabel?: string;
+  title?: string;
+  width?: number | string;
+  height?: number | string;
+}
+
+interface Props {
+  logos?: Logo[];
+  title?: string;
+  subtitle?: string;
+  variant?: "grid" | "marquee";
+  columns?: 3 | 4 | 5 | 6;
+  grayscale?: boolean;
+  class?: string;
+}
+
+const defaults: Logo[] = [
+  { src: "/icons/wordmark.svg", alt: "Animica", href: "#" },
+  { src: "/icons/logo.svg", alt: "AICF", href: "#" },
+  { src: "/icons/wordmark.svg", alt: "Quantum Provider", href: "#" },
+  { src: "/icons/logo.svg", alt: "DA Cloud", href: "#" },
+  { src: "/icons/wordmark.svg", alt: "PQ Labs", href: "#" },
+  { src: "/icons/logo.svg", alt: "StorageNet", href: "#" },
+];
+
+const {
+  logos = defaults,
+  title = "Powered by our ecosystem",
+  subtitle = "",
+  variant = "grid",
+  columns = 5,
+  grayscale = true,
+  class: className = "",
+} = Astro.props as Props;
+
+const gridCols =
+  columns === 3
+    ? "grid-cols-2 sm:grid-cols-3"
+    : columns === 4
+    ? "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4"
+    : columns === 6
+    ? "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6"
+    : "grid-cols-2 sm:grid-cols-3 lg:grid-cols-5"; // default 5
+
+const imgBase =
+  "h-7 sm:h-8 md:h-9 w-auto transition-all duration-200";
+const imgFx = grayscale
+  ? "grayscale opacity-70 hover:grayscale-0 hover:opacity-100"
+  : "opacity-85 hover:opacity-100";
+---
+
+<section class={`container mx-auto px-4 py-10 sm:py-14 ${className}`}>
+  <header class="mb-6 sm:mb-8 text-center">
+    <h2 class="text-base sm:text-lg font-semibold">{title}</h2>
+    {subtitle && <p class="mt-1 text-sm opacity-80">{subtitle}</p>}
+  </header>
+
+  {variant === "grid" ? (
+    <div
+      class={`grid ${gridCols} items-center justify-items-center gap-x-10 gap-y-6
+                 rounded-xl border bg-[var(--bg-elevated)]
+                 border-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)] px-4 py-6`}
+    >
+      {logos.map((logo) => (
+        logo.href ? (
+          <a
+            href={logo.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex items-center justify-center"
+            aria-label={logo.ariaLabel ?? logo.title ?? logo.alt}
+          >
+            <img
+              src={logo.src}
+              alt={logo.alt}
+              title={logo.title ?? logo.alt}
+              loading="lazy"
+              decoding="async"
+              width={logo.width ?? 160}
+              height={logo.height ?? 40}
+              class={`${imgBase} ${imgFx}`}
+            />
+          </a>
+        ) : (
+          <div class="inline-flex items-center justify-center">
+            <img
+              src={logo.src}
+              alt={logo.alt}
+              title={logo.title ?? logo.alt}
+              loading="lazy"
+              decoding="async"
+              width={logo.width ?? 160}
+              height={logo.height ?? 40}
+              class={`${imgBase} ${imgFx}`}
+            />
+          </div>
+        )
+      ))}
+    </div>
+  ) : (
+    // marquee
+    <div
+      class="relative overflow-hidden rounded-xl border
+             border-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)] bg-[var(--bg-elevated)]"
+    >
+      <div class="absolute inset-y-0 left-0 w-12 bg-gradient-to-r from-[var(--bg-elevated)] to-transparent pointer-events-none" />
+      <div class="absolute inset-y-0 right-0 w-12 bg-gradient-to-l from-[var(--bg-elevated)] to-transparent pointer-events-none" />
+
+      <div class="marquee flex items-center gap-12 py-6 px-6 hover:[animation-play-state:paused]">
+        {[...logos, ...logos].map((logo, idx) => (
+          logo.href ? (
+            <a
+              href={logo.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="shrink-0 inline-flex items-center"
+              aria-label={logo.ariaLabel ?? logo.title ?? logo.alt}
+            >
+              <img
+                src={logo.src}
+                alt={logo.alt}
+                title={logo.title ?? logo.alt}
+                loading="lazy"
+                decoding="async"
+                width={logo.width ?? 160}
+                height={logo.height ?? 40}
+                class={`${imgBase} ${imgFx}`}
+              />
+            </a>
+          ) : (
+            <span class="shrink-0 inline-flex items-center">
+              <img
+                src={logo.src}
+                alt={logo.alt}
+                title={logo.title ?? logo.alt}
+                loading="lazy"
+                decoding="async"
+                width={logo.width ?? 160}
+                height={logo.height ?? 40}
+                class={`${imgBase} ${imgFx}`}
+              />
+            </span>
+          )
+        ))}
+      </div>
+    </div>
+  )}
+</section>
+
+<style>
+  @keyframes logos-marquee {
+    from { transform: translateX(0); }
+    to   { transform: translateX(-50%); }
+  }
+  .marquee {
+    animation: logos-marquee 28s linear infinite;
+    will-change: transform;
+  }
+</style>

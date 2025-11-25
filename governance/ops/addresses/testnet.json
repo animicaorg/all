@@ -1,0 +1,35 @@
+{
+  "name": "Animica Testnet Addresses (Placeholder)",
+  "description": "Non-binding placeholders for testnet governance and system targets. Safe for docs, CI, and tooling until real values are proposed.",
+  "schemaVersion": "1.0",
+  "network": "testnet",
+  "chainId": 2,
+  "version": "0.1.0",
+  "updated": "2025-10-31T00:00:00Z",
+
+  "addresses": {
+    "governanceMultisig": "am1tqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqgovms",
+    "foundationMultisig": "am1tqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqfoundn",
+    "escrowGovernanceDeposit": "am1tqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqescrow",
+    "treasury": "am1tqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqtreasy",
+
+    "timelockController": "am1tqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqtimelk",
+    "upgradeExecutor": "am1tqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqupgrad",
+    "paramRegistry": "am1tqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqparams",
+    "vmRegistry": "am1tqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqvmregy",
+    "providerRegistry": "am1tqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqpvdreg",
+
+    "aicfScheduler": "am1tqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqaicfsch",
+    "randomnessBeacon": "am1tqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqrndmtn",
+    "daCommitment": "am1tqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqdacomm",
+
+    "ballotIngest": "am1tqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqballot",
+    "incidentHotwallet": "am1tqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqhotwal"
+  },
+
+  "notes": [
+    "All values are placeholders to unblock development and documentation.",
+    "Authoritative addresses should be set via proposals and merged with transparent review.",
+    "Never use these placeholders for value transfers on public networks."
+  ]
+}

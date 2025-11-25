@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Animica Wallet — MSIX Package.appxmanifest
+  Notes:
+    • Identity.Publisher MUST match the subject of your code-signing certificate.
+    • Update Version with four parts (Major.Minor.Patch.Build), e.g., 1.2.3.0.
+    • Ensure the Executable points to your built runner EXE.
+    • Place logo assets under installers/wallet/windows/msix/Assets/ (or adjust paths).
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap rescap">
+
+  <!-- ===== Identity ===== -->
+  <Identity
+    Name="AnimicaWallet"
+    Publisher="CN=Animica Labs, Inc."
+    Version="1.0.0.0"
+    ProcessorArchitecture="x64" />
+
+  <!-- ===== Properties / Logos ===== -->
+  <Properties>
+    <DisplayName>Animica Wallet</DisplayName>
+    <PublisherDisplayName>Animica Labs, Inc.</PublisherDisplayName>
+    <Logo>Assets/StoreLogo.png</Logo>
+  </Properties>
+
+  <!-- ===== Target device family ===== -->
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <!-- ===== Language resources ===== -->
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <!-- ===== Application (Win32 full trust) =====
+       Executable should match your built binary name. -->
+  <Applications>
+    <Application
+      Id="AnimicaWallet"
+      Executable="Animica Wallet.exe"
+      EntryPoint="Windows.FullTrustApplication">
+
+      <uap:VisualElements
+        DisplayName="Animica Wallet"
+        Description="Post-quantum wallet for the Animica network"
+        Square150x150Logo="Assets/Square150x150Logo.png"
+        Square44x44Logo="Assets/Square44x44Logo.png"
+        BackgroundColor="transparent">
+        <uap:DefaultTile
+          Square310x310Logo="Assets/Square310x310Logo.png"
+          Square71x71Logo="Assets/Square71x71Logo.png"
+          Wide310x150Logo="Assets/Wide310x150Logo.png" />
+        <uap:SplashScreen Image="Assets/SplashScreen.png" />
+      </uap:VisualElements>
+
+      <!-- Enable packaged Win32 (full-trust) process -->
+      <Extensions>
+        <uap:Extension Category="windows.fullTrustProcess">
+          <uap:FullTrustProcess />
+        </uap:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <!-- ===== Capabilities =====
+       Keep minimal. Add more only if strictly required (and review security). -->
+  <Capabilities>
+    <Capability Name="internetClient" />
+    <!-- Required for packaged Win32 apps -->
+    <rescap:Capability Name="runFullTrust" />
+    <!-- Optional examples (commented out):
+    <uap:Capability Name="sharedUserCertificates" />
+    <Capability Name="enterpriseAuthentication" />
+    -->
+  </Capabilities>
+</Package>

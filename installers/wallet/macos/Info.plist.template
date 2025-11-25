@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Info.plist.template
+  This file is a template; your CI/build pipeline should substitute the {{TOKENS}}
+  from installers/wallet/config/app_metadata.json and channels.json, e.g.:
+    - {{APP_NAME}}, {{BUNDLE_ID}}, {{VERSION}}, {{BUILD_NUMBER}}
+    - {{SPARKLE_FEED_URL}}, {{SPARKLE_PUBLIC_ED25519}}
+    - {{HOMEPAGE_URL}}, {{COPYRIGHT}}
+-->
+<plist version="1.0">
+<dict>
+
+  <!-- Identity -->
+  <key>CFBundleIdentifier</key>
+  <string>{{BUNDLE_ID}}</string>
+  <key>CFBundleName</key>
+  <string>{{APP_NAME}}</string>
+  <key>CFBundleDisplayName</key>
+  <string>{{APP_NAME}}</string>
+  <key>CFBundleExecutable</key>
+  <string>{{APP_NAME}}</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+
+  <!-- Versioning -->
+  <key>CFBundleShortVersionString</key>
+  <string>{{VERSION}}</string>
+  <key>CFBundleVersion</key>
+  <string>{{BUILD_NUMBER}}</string>
+
+  <!-- Presentation -->
+  <key>LSMinimumSystemVersion</key>
+  <string>12.0</string>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.finance</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>LSMultipleInstancesProhibited</key>
+  <true/>
+  <key>NSHumanReadableCopyright</key>
+  <string>{{COPYRIGHT}}</string>
+
+  <!-- URLs & deep links (animica://) -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>{{BUNDLE_ID}}.deeplink</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>animica</string>
+      </array>
+    </dict>
+  </array>
+
+  <!-- Document types (optional; keep minimal by default) -->
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>Animica Wallet Package</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.data</string>
+      </array>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+    </dict>
+  </array>
+
+  <!-- App Transport Security: restrict to our update/CDN hosts -->
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsArbitraryLoads</key>
+    <false/>
+    <key>NSExceptionDomains</key>
+    <dict>
+      <key>updates.animica.dev</key>
+      <dict>
+        <key>NSIncludesSubdomains</key><true/>
+        <key>NSTemporaryExceptionAllowsInsecureHTTPLoads</key><false/>
+        <key>NSTemporaryExceptionMinimumTLSVersion</key><string>TLSv1.2</string>
+      </dict>
+      <key>api.animica.dev</key>
+      <dict>
+        <key>NSIncludesSubdomains</key><true/>
+        <key>NSTemporaryExceptionAllowsInsecureHTTPLoads</key><false/>
+        <key>NSTemporaryExceptionMinimumTLSVersion</key><string>TLSv1.2</string>
+      </dict>
+      <key>status.animica.dev</key>
+      <dict>
+        <key>NSIncludesSubdomains</key><true/>
+        <key>NSTemporaryExceptionAllowsInsecureHTTPLoads</key><false/>
+        <key>NSTemporaryExceptionMinimumTLSVersion</key><string>TLSv1.2</string>
+      </dict>
+    </dict>
+  </dict>
+
+  <!-- Sparkle 2 auto-updates (Ed25519) -->
+  <key>SUEnableAutomaticChecks</key>
+  <true/>
+  <key>SUAllowsAutomaticUpdates</key>
+  <true/>
+  <key>SUFeedURL</key>
+  <string>{{SPARKLE_FEED_URL}}</string>
+  <key>SUPublicEDKey</key>
+  <string>{{SPARKLE_PUBLIC_ED25519}}</string>
+  <!-- Optional: check interval in seconds (e.g., daily) -->
+  <key>SUScheduledCheckInterval</key>
+  <integer>86400</integer>
+
+  <!-- About box / links -->
+  <key>NSHelpAnchor</key>
+  <string>{{HOMEPAGE_URL}}</string>
+  <key>LSApplicationQueriesSchemes</key>
+  <array>
+    <string>animica</string>
+    <string>https</string>
+  </array>
+
+  <!-- If you embed Sparkle's updater app (recommended in Sparkle 2) -->
+  <key>SUEnableDownloaderService</key>
+  <true/>
+
+  <!-- Optional: Crash reporter toggle if you integrate one (left off by default) -->
+  <key>NSSupportsAutomaticTermination</key>
+  <false/>
+  <key>NSDisableAutomaticTermination</key>
+  <true/>
+
+  <!-- Principal class -->
+  <key>NSPrincipalClass</key>
+  <string>NSApplication</string>
+
+</dict>
+</plist>

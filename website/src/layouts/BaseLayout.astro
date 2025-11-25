@@ -1,0 +1,133 @@
+---
+import site from "../config/site";
+import "../styles/global.css";
+
+interface Props {
+  title?: string;
+  description?: string;
+  lang?: string;
+  image?: string;          // path or absolute URL
+  canonical?: string;      // explicit canonical URL (falls back to site.url + current path)
+  noIndex?: boolean;       // set true for drafts/private pages
+  bodyClass?: string;      // optional <body> class
+  jsonLd?: Record<string, any> | Array<Record<string, any>>; // optional structured data
+}
+
+const {
+  title = site.brand,
+  description = site.description ?? "Animica — scalable, useful-proof L1.",
+  lang = "en",
+  image = "/icons/wordmark.svg",
+  canonical = site.url
+    ? new URL(Astro.url.pathname, site.url).toString()
+    : Astro.url.href,
+  noIndex = false,
+  bodyClass = "",
+  jsonLd,
+} = Astro.props as Props;
+
+const fullTitle = title === site.brand ? title : `${title} · ${site.brand}`;
+const ogImageAbs = (() => {
+  try {
+    return new URL(image, site.url || Astro.url.origin).toString();
+  } catch {
+    return image;
+  }
+})();
+
+// Optional JSON-LD payload
+const jsonLdPayload = Array.isArray(jsonLd) ? jsonLd : (jsonLd ? [jsonLd] : []);
+---
+
+<html lang={lang} dir="ltr">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="generator" content="Astro" />
+
+    <title>{fullTitle}</title>
+    <meta name="description" content={description} />
+
+    <!-- Canonical & robots -->
+    <link rel="canonical" href={canonical} />
+    {noIndex ? (
+      <meta name="robots" content="noindex,nofollow" />
+    ) : (
+      <meta name="robots" content="index,follow" />
+    )}
+
+    <!-- Theme colors for light/dark -->
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b0b0e" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content={site.brand} />
+    <meta property="og:title" content={fullTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={ogImageAbs} />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={fullTitle} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImageAbs} />
+
+    <!-- Icons & PWA basics -->
+    <link rel="icon" href="/icons/favicon.ico" sizes="any" />
+    <link rel="icon" href="/icons/icon-192.png" type="image/png" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+
+    <!-- Fonts: Inter variable -->
+    <link
+      rel="preload"
+      href="/fonts/inter-variable.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+
+    <!-- JSON-LD (optional) -->
+    {jsonLdPayload.map((obj) => (
+      <script type="application/ld+json" set:html={JSON.stringify(obj)} />
+    ))}
+
+    <!-- Netlify/Vercel headers can inject here if needed -->
+  </head>
+
+  <body class={`theme tokens ${bodyClass}`}>
+    <a href="#main" class="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 bg-[var(--bg-elevated)] text-[var(--text-primary)] px-3 py-2 rounded">
+      Skip to content
+    </a>
+
+    <header id="site-header">
+      <slot name="header" />
+    </header>
+
+    <main id="main" tabindex="-1">
+      <slot />
+    </main>
+
+    <footer id="site-footer">
+      <slot name="footer" />
+    </footer>
+
+    <!-- Example analytics hook (opt-in). Uncomment & configure if desired.
+    <script type="module">
+      import analytics from "../utils/analytics";
+      analytics.initAnalytics({
+        enabled: false,                // flip to true or control via UI toggle
+        provider: "plausible",         // "plausible" | "posthog"
+        plausibleDomain: new URL("{canonical}").host
+      });
+      // analytics.pageview();
+    </script>
+    -->
+  </body>
+</html>

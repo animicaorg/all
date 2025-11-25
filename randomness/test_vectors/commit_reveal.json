@@ -1,0 +1,61 @@
+{
+  "meta": {
+    "hash": "sha3_256",
+    "domain_commit": "animica|rand|commit|v1",
+    "domain_reveal": "animica|rand|reveal|v1",
+    "aggregate": "xor_of_hashes(reveal_hash := sha3_256(domain_reveal || addr || salt || payload))",
+    "window_model": "times are seconds relative to round start; commit:[0,30), reveal:[30,60]"
+  },
+  "rounds": [
+    {
+      "round": 1001,
+      "window": { "commit_open": 0, "commit_close": 30, "reveal_open": 30, "reveal_close": 60 },
+      "cases": [
+        {
+          "addr": "0x2803c91df4bfa0f28638374c3b5c0729a00b6ecbd6f560c0dc8fe4ad7211b30c",
+          "salt": "0x0a92800d23a818a993933f4bfb915924",
+          "payload": "0x86447bd8ffca58e4",
+          "commitment": "0x6b4d3921ca8e4c7007a9203f3d4fe58fc06e7c2aff36c4debc13e2d40978cbf3",
+          "t_commit": 5,
+          "t_reveal": 32,
+          "accept": true
+        },
+        {
+          "addr": "0x7eb94a3ebcb6f7b690796834ca2c294f5b35fd2bcf67b37fedf5016f857ffb31",
+          "salt": "0x3a314520f53f0c3167b096d0c3f6f455",
+          "payload": "0x4ae7f81b7f9e9df5",
+          "commitment": "0x5bca0b57a516ccd3d98cefe1b847ffaeea7122f7e4275082a8520c4d11d1c8a1",
+          "t_commit": 8,
+          "t_reveal": 36,
+          "accept": true
+        }
+      ],
+      "aggregate": "0x0eb7d6a51d625e33a1bb41f2a11a0708a74731c4f3a2b02b2d794a050ccbb916"
+    },
+    {
+      "round": 1002,
+      "window": { "commit_open": 0, "commit_close": 30, "reveal_open": 30, "reveal_close": 60 },
+      "cases": [
+        {
+          "addr": "0x2b9b2bd341fbf563655269830d74c14101bac05378821d30ba53eebce0f3f434",
+          "salt": "0x47db1e4ae9d36a8c3a8cea9ad2f8e555",
+          "payload": "0xdd3c2fb313d6fa3a",
+          "commitment": "0x75a804503e90a159db8840b855592dff9771b28da342c4b470dcfaeb1543be57",
+          "t_commit": 5,
+          "t_reveal": 32,
+          "accept": true
+        },
+        {
+          "addr": "0x8998dad3bc46970523dbed669073e18c2969461dd79bb6cf425a9433bf6128a9",
+          "salt": "0xea4fe77b7fc48e54cb47fbdf9ba1a43e",
+          "payload": "0xff4ef9eaf9e4bff7",
+          "commitment": "0xbbc839fcc363bf48678ceaba99110d9c7f6368584fd2fef9e7217cd0c32baff4",
+          "t_commit": 8,
+          "t_reveal": 66,
+          "accept": false
+        }
+      ],
+      "aggregate": "0x78f61c263f974768a759252c647b2f9a2ec90f4bba4a15b3d3aa793c208e2a8c"
+    }
+  ]
+}

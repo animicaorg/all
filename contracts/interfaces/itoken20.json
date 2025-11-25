@@ -1,0 +1,122 @@
+{
+  "functions": [
+    {
+      "type": "function",
+      "name": "name",
+      "inputs": [],
+      "outputs": [{ "type": "bytes" }],
+      "notice": "UTF-8 token name"
+    },
+    {
+      "type": "function",
+      "name": "symbol",
+      "inputs": [],
+      "outputs": [{ "type": "bytes" }],
+      "notice": "UTF-8 ticker symbol"
+    },
+    {
+      "type": "function",
+      "name": "decimals",
+      "inputs": [],
+      "outputs": [{ "type": "uint" }],
+      "notice": "Number of fractional decimals"
+    },
+    {
+      "type": "function",
+      "name": "totalSupply",
+      "inputs": [],
+      "outputs": [{ "type": "uint" }],
+      "notice": "Total token supply"
+    },
+    {
+      "type": "function",
+      "name": "balanceOf",
+      "inputs": [
+        { "name": "owner", "type": "address" }
+      ],
+      "outputs": [{ "type": "uint" }],
+      "notice": "Balance of an address"
+    },
+    {
+      "type": "function",
+      "name": "transfer",
+      "inputs": [
+        { "name": "to", "type": "address" },
+        { "name": "amount", "type": "uint" }
+      ],
+      "outputs": [{ "type": "bool" }],
+      "notice": "Move tokens to another address"
+    },
+    {
+      "type": "function",
+      "name": "allowance",
+      "inputs": [
+        { "name": "owner", "type": "address" },
+        { "name": "spender", "type": "address" }
+      ],
+      "outputs": [{ "type": "uint" }],
+      "notice": "Remaining authorized spend from owner to spender"
+    },
+    {
+      "type": "function",
+      "name": "approve",
+      "inputs": [
+        { "name": "spender", "type": "address" },
+        { "name": "amount", "type": "uint" }
+      ],
+      "outputs": [{ "type": "bool" }],
+      "notice": "Set spender's allowance to amount"
+    },
+    {
+      "type": "function",
+      "name": "transferFrom",
+      "inputs": [
+        { "name": "from", "type": "address" },
+        { "name": "to", "type": "address" },
+        { "name": "amount", "type": "uint" }
+      ],
+      "outputs": [{ "type": "bool" }],
+      "notice": "Move tokens using allowance"
+    }
+  ],
+  "events": [
+    {
+      "type": "event",
+      "name": "Transfer",
+      "inputs": [
+        { "name": "from", "type": "address", "indexed": true },
+        { "name": "to", "type": "address", "indexed": true },
+        { "name": "value", "type": "uint" }
+      ],
+      "notice": "Emitted on successful transfers"
+    },
+    {
+      "type": "event",
+      "name": "Approval",
+      "inputs": [
+        { "name": "owner", "type": "address", "indexed": true },
+        { "name": "spender", "type": "address", "indexed": true },
+        { "name": "value", "type": "uint" }
+      ],
+      "notice": "Emitted when allowance is set"
+    }
+  ],
+  "errors": [
+    {
+      "type": "error",
+      "name": "InsufficientBalance",
+      "inputs": [
+        { "name": "requested", "type": "uint" },
+        { "name": "available", "type": "uint" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "InsufficientAllowance",
+      "inputs": [
+        { "name": "requested", "type": "uint" },
+        { "name": "allowance", "type": "uint" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,210 @@
+{
+  "name": "multisig",
+  "version": "1.0.0",
+  "description": "Threshold N-of-M multisig with post-quantum-aware permits and deterministic execution semantics.",
+  "authors": ["Animica Stdlib"],
+  "license": "Apache-2.0",
+  "abi": [
+    {
+      "type": "function",
+      "name": "get_config",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        { "name": "owners", "type": "address[]" },
+        { "name": "threshold", "type": "u8" }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "get_nonce",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        { "name": "nonce", "type": "u128" }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "is_owner",
+      "stateMutability": "view",
+      "inputs": [
+        { "name": "addr", "type": "address" }
+      ],
+      "outputs": [
+        { "name": "active", "type": "bool" }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "permit_domain",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        { "name": "domain", "type": "bytes32" }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "propose",
+      "inputs": [
+        { "name": "to", "type": "address" },
+        { "name": "value", "type": "u128" },
+        { "name": "data", "type": "bytes" },
+        { "name": "gas_limit", "type": "u64" }
+      ],
+      "outputs": [
+        { "name": "nonce", "type": "u128" },
+        { "name": "action_hash", "type": "bytes32" }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "approve",
+      "inputs": [
+        { "name": "nonce", "type": "u128" }
+      ],
+      "outputs": []
+    },
+    {
+      "type": "function",
+      "name": "revoke",
+      "inputs": [
+        { "name": "nonce", "type": "u128" }
+      ],
+      "outputs": []
+    },
+    {
+      "type": "function",
+      "name": "execute",
+      "inputs": [
+        { "name": "nonce", "type": "u128" }
+      ],
+      "outputs": [
+        { "name": "success", "type": "bool" },
+        { "name": "ret", "type": "bytes" }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "execute_with_permits",
+      "inputs": [
+        { "name": "nonce", "type": "u128" },
+        { "name": "to", "type": "address" },
+        { "name": "value", "type": "u128" },
+        { "name": "data", "type": "bytes" },
+        { "name": "gas_limit", "type": "u64" },
+        { "name": "expiry_height", "type": "u64" },
+        {
+          "name": "permits",
+          "type": "tuple[]",
+          "components": [
+            { "name": "signer_addr", "type": "address" },
+            { "name": "alg_id", "type": "u16" },
+            { "name": "sig", "type": "bytes" },
+            { "name": "pubkey_hash", "type": "bytes32" }
+          ]
+        }
+      ],
+      "outputs": [
+        { "name": "success", "type": "bool" },
+        { "name": "ret", "type": "bytes" }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "set_threshold",
+      "inputs": [
+        { "name": "new_threshold", "type": "u8" }
+      ],
+      "outputs": []
+    },
+    {
+      "type": "function",
+      "name": "add_owner",
+      "inputs": [
+        { "name": "addr", "type": "address" },
+        { "name": "alg_id", "type": "u16" },
+        { "name": "pubkey_hash", "type": "bytes32" }
+      ],
+      "outputs": []
+    },
+    {
+      "type": "function",
+      "name": "remove_owner",
+      "inputs": [
+        { "name": "addr", "type": "address" }
+      ],
+      "outputs": []
+    },
+    {
+      "type": "function",
+      "name": "replace_owner",
+      "inputs": [
+        { "name": "old", "type": "address" },
+        { "name": "new", "type": "address" },
+        { "name": "new_alg_id", "type": "u16" },
+        { "name": "new_pubkey_hash", "type": "bytes32" }
+      ],
+      "outputs": []
+    },
+    {
+      "type": "event",
+      "name": "Proposed",
+      "inputs": [
+        { "name": "nonce", "type": "u128", "indexed": false },
+        { "name": "action_hash", "type": "bytes32", "indexed": false },
+        { "name": "proposer", "type": "address", "indexed": true }
+      ]
+    },
+    {
+      "type": "event",
+      "name": "Approved",
+      "inputs": [
+        { "name": "nonce", "type": "u128", "indexed": false },
+        { "name": "owner", "type": "address", "indexed": true }
+      ]
+    },
+    {
+      "type": "event",
+      "name": "Revoked",
+      "inputs": [
+        { "name": "nonce", "type": "u128", "indexed": false },
+        { "name": "owner", "type": "address", "indexed": true }
+      ]
+    },
+    {
+      "type": "event",
+      "name": "Executed",
+      "inputs": [
+        { "name": "nonce", "type": "u128", "indexed": false },
+        { "name": "action_hash", "type": "bytes32", "indexed": false },
+        { "name": "success", "type": "bool", "indexed": false },
+        { "name": "ret", "type": "bytes", "indexed": false }
+      ]
+    },
+    {
+      "type": "event",
+      "name": "OwnersChanged",
+      "inputs": [
+        { "name": "owners", "type": "address[]", "indexed": false },
+        { "name": "threshold", "type": "u8", "indexed": false }
+      ]
+    },
+    {
+      "type": "event",
+      "name": "OwnerKeyUpdated",
+      "inputs": [
+        { "name": "owner", "type": "address", "indexed": true },
+        { "name": "alg_id", "type": "u16", "indexed": false },
+        { "name": "pubkey_hash", "type": "bytes32", "indexed": false }
+      ]
+    }
+  ],
+  "code_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "metadata": {
+    "language": "py",
+    "runtime": "vm_py",
+    "tags": ["multisig", "pq", "security", "wallet", "deterministic"]
+  }
+}

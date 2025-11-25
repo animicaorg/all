@@ -1,0 +1,173 @@
+{{-/*
+Deployment: Animica Studio Web (static site served by nginx)
+
+Purpose:
+- Web IDE to edit → simulate → deploy → verify contracts.
+- Purely static assets served by nginx; no server-side signing.
+- Talks to:
+    * Node RPC (JSON-RPC + WS)
+    * Studio Services API (deploy/verify/faucet/artifacts proxy)
+
+Values (excerpt):
+image:
+  studioWeb:
+    repository: ghcr.io/animica/studio-web
+    tag: "latest"
+    pullPolicy: IfNotPresent
+
+studioWeb:
+  replicas: 1
+  podLabels: {}
+  podAnnotations: {}
+  priorityClassName: ""
+  serviceAccountName: ""
+  securityContext: {}
+  containerSecurityContext: {}
+  resources: {}
+
+  http:
+    # Must match the container's nginx listen. Our nginx default.conf listens on 8080.
+    port: 8080
+
+  # If not set, defaults to http://<fullname>-rpc:<node.ports.http>
+  rpcUrl: ""
+  # If not set, coalesces from node.chainId or top-level chainId, else 1
+  chainId: ~
+  # If not set, defaults to http://<fullname>-services:8080
+  servicesUrl: ""
+
+  # Extra environment variables exported for runtime config script (if image supports it)
+  env: {}
+  extraEnvFrom: []
+
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+*/ -}}
+
+{{- $img := .Values.image.studioWeb | default dict -}}
+{{- $web := .Values.studioWeb | default dict -}}
+{{- $node := .Values.node | default dict -}}
+
+{{- $httpPort := (default 8080 (dig "http" "port" $web)) -}}
+{{- $nodeRpcPort := (default 8545 $node.ports.http) -}}
+{{- $defaultRpc := printf "http://%s-rpc:%v" (include "animica-devnet.fullname" .) $nodeRpcPort -}}
+{{- $rpcUrl := (default $defaultRpc $web.rpcUrl) -}}
+{{- $chainId := (coalesce $web.chainId $node.chainId .Values.chainId 1) -}}
+{{- $defaultServices := printf "http://%s-services:%v" (include "animica-devnet.fullname" .) 8080 -}}
+{{- $servicesUrl := (default $defaultServices $web.servicesUrl) -}}
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "animica-devnet.fullname" . }}-studio-web
+  labels:
+    {{- include "animica-devnet.labels" (dict "ctx" . "component" "studio-web") | nindent 4 }}
+spec:
+  replicas: {{ default 1 $web.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/name: {{ include "animica-devnet.name" . }}
+      app.kubernetes.io/component: studio-web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/name: {{ include "animica-devnet.name" . }}
+        app.kubernetes.io/component: studio-web
+        {{- with $web.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        {{- with $web.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $web.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with $web.serviceAccountName }}
+      serviceAccountName: {{ . }}
+      {{- end }}
+      {{- with $web.securityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: studio-web
+          image: "{{ default "ghcr.io/animica/studio-web" $img.repository }}:{{ default "latest" $img.tag }}"
+          imagePullPolicy: {{ default "IfNotPresent" $img.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $httpPort }}
+              protocol: TCP
+          # Health checks: nginx serves index on /
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            failureThreshold: 3
+          env:
+            # Public config for the app (the image can expose these via a /config.json or env-subst)
+            - name: VITE_RPC_URL
+              value: {{ $rpcUrl | quote }}
+            - name: VITE_CHAIN_ID
+              value: "{{ $chainId }}"
+            - name: VITE_SERVICES_URL
+              value: {{ $servicesUrl | quote }}
+            # Also export generic names some builds look for:
+            - name: STUDIO_WEB_RPC_URL
+              value: {{ $rpcUrl | quote }}
+            - name: STUDIO_WEB_CHAIN_ID
+              value: "{{ $chainId }}"
+            - name: STUDIO_WEB_SERVICES_URL
+              value: {{ $servicesUrl | quote }}
+            {{- with $web.env }}
+            {{- range $k, $v := . }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            {{- end }}
+          {{- with $web.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $web.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $web.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with $web.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $web.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $web.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $web.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

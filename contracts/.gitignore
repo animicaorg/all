@@ -1,0 +1,77 @@
+# ------------------------------------------------------------------------------
+# Animica Contracts — .gitignore
+# Build artifacts, virtual envs, caches, local secrets, and editor junk.
+# Keep the repo clean and reproducible.
+# ------------------------------------------------------------------------------
+
+# Python bytecode & caches
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytype/
+.pyre/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+pip-wheel-metadata/
+
+# Local environment & secrets
+.env
+.env.*        # allow per-developer overrides
+!.env.example # keep the example in VCS
+secrets/*
+!secrets/.gitkeep
+
+# Build outputs (generic)
+build/
+dist/
+artifacts/
+out/
+wheelhouse/
+htmlcov/
+.coverage*
+coverage.xml
+reports/
+logs/
+
+# Contract compilation outputs (conservative; adjust if needed)
+*.ir            # VM IR blobs from compilers/inspectors
+*.abi.json      # generated ABI dumps (source ABIs should live under spec/)
+*.deploy.cbor   # signed deploy txs created locally
+*.pkg.zip       # bundle outputs (manifest+code)
+
+# Test artifacts (when running tools from contracts/)
+tests/artifacts/
+tests/reports/
+
+# Node/JS (if any helper scripts are used locally)
+node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-lock.yaml
+
+# Editor/OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Containers & local overrides (rare in contracts/, but safe)
+docker-compose.override.yml
+
+# Misc temp files
+*.tmp
+*.temp
+*.bak
+~*

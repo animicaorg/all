@@ -1,0 +1,374 @@
+{
+  "app": {
+    "title": "Explorador de Animica",
+    "subtitle": "Bloques · Transacciones · Contratos · AICF · DA · Baliza",
+    "network": "Red",
+    "theme": "Tema",
+    "light": "Claro",
+    "dark": "Oscuro",
+    "system": "Sistema"
+  },
+  "nav": {
+    "home": "Inicio",
+    "blocks": "Bloques",
+    "tx": "Transacción",
+    "address": "Dirección",
+    "contracts": "Contratos",
+    "aicf": "IA y Cuántica",
+    "da": "Disponibilidad de Datos",
+    "beacon": "Aleatoriedad",
+    "network": "Red"
+  },
+  "common": {
+    "loading": "Cargando…",
+    "error": "Error",
+    "success": "Éxito",
+    "warning": "Advertencia",
+    "info": "Información",
+    "retry": "Reintentar",
+    "refresh": "Actualizar",
+    "copy": "Copiar",
+    "copied": "¡Copiado!",
+    "close": "Cerrar",
+    "cancel": "Cancelar",
+    "confirm": "Confirmar",
+    "search": "Buscar",
+    "filter": "Filtrar",
+    "clear": "Limpiar",
+    "details": "Detalles",
+    "view": "Ver",
+    "download": "Descargar",
+    "upload": "Subir",
+    "showMore": "Ver más",
+    "showLess": "Ver menos",
+    "yes": "Sí",
+    "no": "No",
+    "unknown": "Desconocido",
+    "notAvailable": "N/D",
+    "optional": "Opcional",
+    "required": "Obligatorio"
+  },
+  "units": {
+    "ms": "ms",
+    "s": "s",
+    "sec": "seg",
+    "min": "min",
+    "h": "h",
+    "gas": "gas",
+    "bytes": "bytes",
+    "kb": "KB",
+    "mb": "MB",
+    "gb": "GB",
+    "tz": "UTC",
+    "block": "bloque",
+    "blocks": "bloques"
+  },
+  "format": {
+    "ago": "hace {value}",
+    "in": "en {value}",
+    "at": "a las {time}",
+    "on": "el {date}",
+    "hashShort": "{prefix}…{suffix}",
+    "numShort": "{value}"
+  },
+  "labels": {
+    "height": "Altura",
+    "hash": "Hash",
+    "parentHash": "Hash padre",
+    "blockHash": "Hash de bloque",
+    "txHash": "Hash de tx",
+    "timestamp": "Marca temporal",
+    "time": "Hora",
+    "age": "Antigüedad",
+    "txs": "Txs",
+    "gasUsed": "Gas usado",
+    "gasLimit": "Límite de gas",
+    "fee": "Tarifa",
+    "from": "Origen",
+    "to": "Destino",
+    "value": "Valor",
+    "nonce": "Nonce",
+    "index": "Índice",
+    "status": "Estado",
+    "success": "Éxito",
+    "failed": "Fallida",
+    "pending": "Pendiente",
+    "logs": "Logs",
+    "method": "Método",
+    "data": "Datos",
+    "address": "Dirección",
+    "balance": "Saldo",
+    "codeHash": "Hash de código",
+    "contract": "Contrato",
+    "validator": "Validador",
+    "mix": "Mezcla",
+    "gamma": "Γ (Uniformidad de mezcla)",
+    "gini": "Gini",
+    "hhi": "HHI",
+    "effectiveN": "Fuentes efectivas",
+    "entropy": "Entropía",
+    "size": "Tamaño",
+    "commitment": "Compromiso",
+    "proof": "Prueba",
+    "round": "Ronda",
+    "beacon": "Baliza",
+    "providers": "Proveedores",
+    "jobs": "Trabajos",
+    "settlements": "Liquidaciones",
+    "sla": "SLA",
+    "latency": "Latencia",
+    "queue": "Cola",
+    "successRate": "Tasa de éxito",
+    "model": "Modelo",
+    "circuit": "Circuito",
+    "cost": "Costo",
+    "submittedAt": "Enviado",
+    "completedAt": "Completado",
+    "includedAt": "Incluido",
+    "head": "Cabecera",
+    "finalized": "Finalizado",
+    "peers": "Pares",
+    "health": "Salud",
+    "latencyRpc": "Latencia RPC",
+    "latencyWs": "Latencia WS",
+    "wsStatus": "Estado WS",
+    "online": "En línea",
+    "offline": "Fuera de línea"
+  },
+  "tooltips": {
+    "gamma": "Γ es una medida de uniformidad en [0,1]. Valores altos indican una mezcla de entropía más equilibrada entre fuentes.",
+    "gini": "Coeficiente de Gini en [0,1]. Más bajo es más uniforme.",
+    "hhi": "Índice Herfindahl–Hirschman. Más bajo indica menor concentración.",
+    "effectiveN": "1 / HHI — número efectivo de fuentes independientes.",
+    "commitment": "Compromiso con direccionamiento por contenido de un blob de DA.",
+    "beacon": "Baliza de aleatoriedad derivada de commit/reveal y mezcla de fuentes."
+  },
+  "home": {
+    "welcome": "Bienvenido al Explorador de Animica",
+    "intro": "Inspecciona en tiempo real bloques, transacciones, contratos, aleatoriedad, disponibilidad de datos y trabajos de IA/Cuántica.",
+    "networkSummary": "Resumen de la red",
+    "latestBlocks": "Últimos bloques",
+    "latestTxs": "Últimas transacciones",
+    "seeAllBlocks": "Ver todos los bloques",
+    "seeAllTxs": "Ver todas las transacciones"
+  },
+  "blocks": {
+    "title": "Bloques",
+    "subtitle": "Bloques finalizados y canónicos más recientes",
+    "columns": {
+      "height": "Altura",
+      "hash": "Hash",
+      "age": "Antigüedad",
+      "txs": "Txs",
+      "gasUsed": "Gas usado",
+      "gamma": "Γ",
+      "validator": "Validador"
+    },
+    "empty": "No hay bloques para mostrar.",
+    "loadMore": "Cargar más bloques",
+    "viewBlock": "Ver bloque"
+  },
+  "block": {
+    "title": "Bloque {height}",
+    "overview": "Resumen",
+    "mix": "Mezcla PoIES",
+    "transactions": "Transacciones",
+    "fields": {
+      "height": "Altura",
+      "hash": "Hash de bloque",
+      "parent": "Padre",
+      "timestamp": "Marca temporal",
+      "txCount": "Transacciones",
+      "gasUsed": "Gas usado",
+      "gasLimit": "Límite de gas",
+      "validator": "Validador",
+      "gamma": "Γ",
+      "gini": "Gini",
+      "hhi": "HHI",
+      "effectiveN": "Fuentes efectivas"
+    }
+  },
+  "tx": {
+    "title": "Transacción",
+    "searchPlaceholder": "Buscar por hash, remitente o bloque…",
+    "notFound": "Transacción no encontrada.",
+    "overview": "Resumen",
+    "logs": "Logs",
+    "raw": "Datos sin procesar",
+    "fields": {
+      "hash": "Hash",
+      "status": "Estado",
+      "block": "Bloque",
+      "index": "Índice",
+      "timestamp": "Marca temporal",
+      "from": "Origen",
+      "to": "Destino",
+      "method": "Método",
+      "value": "Valor",
+      "fee": "Tarifa",
+      "gasUsed": "Gas usado",
+      "gasLimit": "Límite de gas",
+      "nonce": "Nonce",
+      "data": "Datos"
+    },
+    "status": {
+      "pending": "Pendiente",
+      "success": "Éxito",
+      "failed": "Fallida"
+    }
+  },
+  "addressPage": {
+    "title": "Dirección",
+    "overview": "Resumen",
+    "holdings": "Tenencias",
+    "activity": "Actividad",
+    "contracts": "Contratos",
+    "fields": {
+      "address": "Dirección",
+      "balance": "Saldo",
+      "nonce": "Nonce",
+      "codeHash": "Hash de código",
+      "contract": "¿Contrato?"
+    },
+    "txs": {
+      "title": "Transacciones recientes",
+      "empty": "Sin transacciones recientes."
+    },
+    "contractsList": {
+      "title": "Contratos desplegados",
+      "empty": "No se encontraron contratos."
+    }
+  },
+  "contractsPage": {
+    "title": "Contratos Verificados",
+    "subtitle": "Contratos con código verificado, metadatos y hash de código",
+    "searchPlaceholder": "Buscar por nombre o dirección…",
+    "columns": {
+      "address": "Dirección",
+      "name": "Nombre",
+      "codeHash": "Hash de código",
+      "compiler": "Compilador",
+      "verifiedAt": "Verificado"
+    },
+    "empty": "Aún no hay contratos verificados."
+  },
+  "aicf": {
+    "title": "IA y Cuántica",
+    "providers": {
+      "title": "Proveedores",
+      "columns": {
+        "id": "ID",
+        "name": "Nombre",
+        "successRate": "Tasa de éxito",
+        "latency": "Latencia prom.",
+        "queue": "Cola"
+      },
+      "empty": "No hay proveedores disponibles."
+    },
+    "jobs": {
+      "title": "Trabajos",
+      "columns": {
+        "id": "ID de trabajo",
+        "type": "Tipo",
+        "model": "Modelo / Circuito",
+        "status": "Estado",
+        "cost": "Costo",
+        "submittedAt": "Enviado",
+        "completedAt": "Completado"
+      },
+      "status": {
+        "queued": "En cola",
+        "running": "En ejecución",
+        "settled": "Liquidado",
+        "failed": "Fallido",
+        "expired": "Expirado"
+      },
+      "empty": "No se encontraron trabajos."
+    },
+    "settlements": {
+      "title": "Liquidaciones",
+      "columns": {
+        "id": "ID de liquidación",
+        "jobId": "Trabajo",
+        "provider": "Proveedor",
+        "status": "Estado",
+        "latency": "Latencia",
+        "cost": "Costo"
+      },
+      "empty": "No hay liquidaciones."
+    }
+  },
+  "da": {
+    "title": "Disponibilidad de Datos",
+    "blobs": {
+      "title": "Blobs",
+      "columns": {
+        "commitment": "Compromiso",
+        "size": "Tamaño",
+        "postedAt": "Publicado",
+        "includedAt": "Incluido",
+        "proof": "Prueba"
+      },
+      "actions": {
+        "copyCommitment": "Copiar compromiso",
+        "view": "Ver blob",
+        "fetch": "Obtener"
+      },
+      "empty": "Aún no hay blobs."
+    }
+  },
+  "beacon": {
+    "title": "Baliza de Aleatoriedad",
+    "rounds": {
+      "title": "Rondas",
+      "columns": {
+        "round": "Ronda",
+        "beacon": "Baliza",
+        "timestamp": "Marca temporal",
+        "revealers": "Reveladores",
+        "entropy": "Entropía"
+      },
+      "empty": "No se encontraron rondas."
+    },
+    "proof": {
+      "title": "Prueba ligera",
+      "verify": "Verificar prueba"
+    }
+  },
+  "network": {
+    "title": "Red",
+    "health": {
+      "title": "Salud",
+      "rpcLatency": "Latencia RPC",
+      "wsLatency": "Latencia WS",
+      "wsStatus": "WebSocket",
+      "peers": "Pares",
+      "head": "Altura de cabecera",
+      "finalized": "Altura finalizada",
+      "ping": "Ping"
+    }
+  },
+  "toasts": {
+    "copied": "Copiado al portapapeles.",
+    "copyFailed": "No se pudo copiar.",
+    "loadFailed": "Error al cargar los datos.",
+    "networkChanged": "La red cambió a {name}.",
+    "wsReconnected": "WebSocket reconectado.",
+    "wsDisconnected": "WebSocket desconectado."
+  },
+  "emptyStates": {
+    "search": "No hay resultados que coincidan con tu búsqueda.",
+    "filters": "No hay elementos que coincidan con los filtros actuales."
+  },
+  "validation": {
+    "invalidHash": "Hash inválido.",
+    "invalidAddress": "Dirección inválida.",
+    "required": "Este campo es obligatorio.",
+    "tooShort": "Demasiado corto.",
+    "tooLong": "Demasiado largo."
+  },
+  "placeholders": {
+    "enterHash": "Introduce un hash de transacción…",
+    "enterAddress": "Introduce una dirección…"
+  }
+}

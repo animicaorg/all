@@ -1,0 +1,83 @@
+[
+  {
+    "alg_support": {
+      "ai_models": ["demo-llm-1", "demo-embed-1"],
+      "quantum": []
+    },
+    "attestation": {
+      "bundle_hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "tee",
+      "vendor": "intel-tdx"
+    },
+    "caps": {
+      "ai": true,
+      "quantum": false
+    },
+    "endpoints": {
+      "p2p": "12D3KooDemoPeerIdProvA",
+      "rpc": "https://prov-a.example.org/rpc"
+    },
+    "provider_id": "prov_demo_ai_01",
+    "region": "us-east-1",
+    "registered_at": 1710000000,
+    "stake": {
+      "amount": 1500000,
+      "locked_until": 0
+    },
+    "status": "active"
+  },
+  {
+    "alg_support": {
+      "ai_models": ["demo-llm-2"],
+      "quantum": ["trap-circ-v1", "vqe-4q"]
+    },
+    "attestation": {
+      "bundle_hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "kind": "qpu",
+      "vendor": "qpu-demo"
+    },
+    "caps": {
+      "ai": true,
+      "quantum": true
+    },
+    "endpoints": {
+      "p2p": "12D3KooDemoPeerIdProvB",
+      "rpc": "https://prov-b.example.org/rpc"
+    },
+    "provider_id": "prov_demo_hybrid_01",
+    "region": "eu-central-1",
+    "registered_at": 1710001000,
+    "stake": {
+      "amount": 4200000,
+      "locked_until": 1712592000
+    },
+    "status": "active"
+  },
+  {
+    "alg_support": {
+      "ai_models": [],
+      "quantum": ["trap-circ-v1"]
+    },
+    "attestation": {
+      "bundle_hash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "kind": "qpu",
+      "vendor": "qpu-demo"
+    },
+    "caps": {
+      "ai": false,
+      "quantum": true
+    },
+    "endpoints": {
+      "p2p": "12D3KooDemoPeerIdProvC",
+      "rpc": "https://prov-c.example.org/rpc"
+    },
+    "provider_id": "prov_demo_qpu_01",
+    "region": "ap-southeast-1",
+    "registered_at": 1710002000,
+    "stake": {
+      "amount": 800000,
+      "locked_until": 0
+    },
+    "status": "jailed"
+  }
+]

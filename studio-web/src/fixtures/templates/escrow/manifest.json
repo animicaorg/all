@@ -1,0 +1,89 @@
+{
+  "name": "Escrow",
+  "version": "1.0.0",
+  "language": "python",
+  "entry": "contract.py",
+  "abi": {
+    "functions": [
+      {
+        "name": "status",
+        "stateMutability": "view",
+        "inputs": [],
+        "outputs": [
+          { "name": "amount", "type": "int" },
+          { "name": "beneficiary", "type": "address" },
+          { "name": "contract_balance", "type": "int" }
+        ]
+      },
+      {
+        "name": "lock",
+        "stateMutability": "nonpayable",
+        "inputs": [
+          { "name": "beneficiary", "type": "address" },
+          { "name": "amount", "type": "int" }
+        ],
+        "outputs": [
+          { "name": "locked", "type": "int" }
+        ]
+      },
+      {
+        "name": "release",
+        "stateMutability": "nonpayable",
+        "inputs": [],
+        "outputs": [
+          { "name": "released", "type": "int" }
+        ]
+      },
+      {
+        "name": "cancel",
+        "stateMutability": "nonpayable",
+        "inputs": [
+          { "name": "refund_to", "type": "address" }
+        ],
+        "outputs": [
+          { "name": "refunded", "type": "int" }
+        ]
+      }
+    ],
+    "events": [
+      {
+        "name": "Locked",
+        "inputs": [
+          { "name": "to", "type": "address", "indexed": false },
+          { "name": "amount", "type": "int", "indexed": false }
+        ]
+      },
+      {
+        "name": "Released",
+        "inputs": [
+          { "name": "to", "type": "address", "indexed": false },
+          { "name": "amount", "type": "int", "indexed": false }
+        ]
+      },
+      {
+        "name": "Canceled",
+        "inputs": [
+          { "name": "to", "type": "address", "indexed": false },
+          { "name": "amount", "type": "int", "indexed": false }
+        ]
+      }
+    ],
+    "errors": [
+      { "name": "LOCK_AMOUNT_MUST_BE_POSITIVE" },
+      { "name": "ESCROW_ALREADY_LOCKED" },
+      { "name": "INSUFFICIENT_CONTRACT_FUNDS" },
+      { "name": "NO_ACTIVE_LOCK" },
+      { "name": "NO_BENEFICIARY_SET" }
+    ]
+  },
+  "deploy": {
+    "init": [],
+    "payable": false
+  },
+  "metadata": {
+    "description": "Deterministic one-slot escrow demo. Lock funds for a beneficiary, then release or cancel.",
+    "authors": ["Animica templates"],
+    "license": "MIT",
+    "tags": ["escrow", "demo", "deterministic"]
+  }
+}

@@ -1,0 +1,200 @@
+{
+  "manifestVersion": 1,
+  "name": "Escrow",
+  "version": "0.1.0",
+  "description": "Deterministic Python-VM escrow with optional dispute and arbiter resolution.",
+  "license": "Apache-2.0",
+  "authors": ["Animica Labs <dev@animica.example>"],
+  "language": "python",
+  "vm": "animica-py-v1",
+  "encoding": "cbor-ir-v1",
+  "sources": {
+    "main": "contracts/examples/escrow/contract.py"
+  },
+  "deploy": {
+    "init": {
+      "name": "init",
+      "args": [
+        {"name": "buyer", "type": "address"},
+        {"name": "seller", "type": "address"},
+        {"name": "arbiter", "type": "address"},
+        {"name": "amount", "type": "uint128"},
+        {"name": "deadline_height", "type": "uint64"}
+      ]
+    }
+  },
+  "abi": {
+    "functions": [
+      {
+        "name": "init",
+        "inputs": [
+          {"name": "buyer", "type": "address"},
+          {"name": "seller", "type": "address"},
+          {"name": "arbiter", "type": "address"},
+          {"name": "amount", "type": "uint128"},
+          {"name": "deadline_height", "type": "uint64"}
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "name": "deposit",
+        "inputs": [],
+        "outputs": [],
+        "stateMutability": "payable",
+        "notes": "Caller must be buyer; call should be accompanied by transfer so escrow balance >= amount."
+      },
+      {
+        "name": "release",
+        "inputs": [],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "notes": "Buyer releases funds to seller; requires deposited & not disputed."
+      },
+      {
+        "name": "refund",
+        "inputs": [],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "notes": "Buyer refunds after deadline when not in dispute."
+      },
+      {
+        "name": "dispute",
+        "inputs": [
+          {"name": "reason", "type": "bytes", "maxLen": 256}
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "name": "resolve",
+        "inputs": [
+          {"name": "to_seller", "type": "bool"}
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "notes": "Arbiter resolves dispute; pays either seller (true) or buyer (false)."
+      },
+      {
+        "name": "cancel_before_deposit",
+        "inputs": [],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "notes": "Either party may cancel before any deposit; requires escrow balance == 0."
+      },
+      {
+        "name": "state",
+        "inputs": [],
+        "outputs": [
+          {
+            "name": "snapshot",
+            "type": "tuple",
+            "components": [
+              {"name": "inited", "type": "bool"},
+              {"name": "buyer", "type": "address"},
+              {"name": "seller", "type": "address"},
+              {"name": "arbiter", "type": "address"},
+              {"name": "amount", "type": "uint128"},
+              {"name": "deadline_height", "type": "uint64"},
+              {"name": "deposited", "type": "bool"},
+              {"name": "disputed", "type": "bool"},
+              {"name": "finalized", "type": "bool"}
+            ]
+          }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "name": "balance",
+        "inputs": [],
+        "outputs": [
+          {"name": "escrow_balance", "type": "uint128"}
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "name": "parties",
+        "inputs": [],
+        "outputs": [
+          {
+            "name": "roles",
+            "type": "tuple",
+            "components": [
+              {"name": "buyer", "type": "address"},
+              {"name": "seller", "type": "address"},
+              {"name": "arbiter", "type": "address"}
+            ]
+          }
+        ],
+        "stateMutability": "view"
+      }
+    ],
+    "events": [
+      {
+        "name": "Deposited",
+        "inputs": [
+          {"name": "buyer", "type": "address", "indexed": false},
+          {"name": "amount", "type": "uint128", "indexed": false}
+        ]
+      },
+      {
+        "name": "Released",
+        "inputs": [
+          {"name": "seller", "type": "address", "indexed": false},
+          {"name": "amount", "type": "uint128", "indexed": false}
+        ]
+      },
+      {
+        "name": "Refunded",
+        "inputs": [
+          {"name": "buyer", "type": "address", "indexed": false},
+          {"name": "amount", "type": "uint128", "indexed": false}
+        ]
+      },
+      {
+        "name": "Disputed",
+        "inputs": [
+          {"name": "opener", "type": "address", "indexed": false},
+          {"name": "reason", "type": "bytes", "indexed": false}
+        ]
+      },
+      {
+        "name": "Resolved",
+        "inputs": [
+          {"name": "arbiter", "type": "address", "indexed": false},
+          {"name": "to_seller", "type": "bool", "indexed": false},
+          {"name": "amount", "type": "uint128", "indexed": false}
+        ]
+      },
+      {
+        "name": "Cancelled",
+        "inputs": []
+      }
+    ],
+    "errors": [
+      {"name": "bad address"},
+      {"name": "bad amount"},
+      {"name": "bad deadline"},
+      {"name": "finalized"},
+      {"name": "not inited"},
+      {"name": "already inited"},
+      {"name": "already deposited"},
+      {"name": "only buyer"},
+      {"name": "only arbiter"},
+      {"name": "only parties"},
+      {"name": "not deposited"},
+      {"name": "in dispute"},
+      {"name": "no dispute"},
+      {"name": "deadline not reached"},
+      {"name": "escrow underfunded"},
+      {"name": "reason too long"},
+      {"name": "nonzero balance"}
+    ]
+  },
+  "capabilities": [],
+  "metadata": {
+    "tags": ["escrow", "payments", "arbiter", "deterministic"],
+    "readme": "contracts/examples/escrow/README.md"
+  },
+  "codeHash": null
+}

@@ -1,0 +1,44 @@
+# Animica contracts workspace — pinned Python deps
+# ------------------------------------------------
+# This file pins the minimal, reproducible toolchain needed to:
+#  - build & test contracts locally (vm_py runtime + helpers)
+#  - use the Python SDK (RPC, deploy, subscribe)
+#  - run linters/type-checkers and property tests
+#
+# Notes:
+#  • The first two lines install local packages in editable mode so you can iterate:
+#       - vm_py     → deterministic Python VM
+#       - sdk/python→ omni_sdk (Python SDK)
+#  • Relative paths are resolved from the location of this file by pip.
+#  • To refresh third-party pins safely, prefer a virtualenv and test CI gates.
+
+# --- Local editable packages (from this monorepo) -----------------------------
+-e ../vm_py
+-e ../sdk/python
+
+# --- Serialization & hashing (aligned with core/runtime expectations) ---------
+msgspec==0.18.6          # fast CBOR/JSON codecs used by tools & tests
+cbor2==5.4.6             # canonical CBOR fallback / utilities
+blake3==0.4.1            # BLAKE3 hashing (optional but used by helpers)
+pysha3==1.0.5            # Keccak (SHA3 variants) for vm_py hash API
+
+# --- Networking & CLI (Python SDK runtime) ------------------------------------
+httpx==0.27.0            # HTTP JSON-RPC client with HTTP/2 and retries
+websockets==12.0         # WS subscriptions (newHeads, events)
+typer==0.12.3            # CLI ergonomics for local helpers
+anyio==4.4.0             # async base for httpx/websockets
+certifi==2024.2.2        # stable CA bundle for reproducible TLS
+
+# --- Testing (unit, property, coverage) ---------------------------------------
+pytest==8.2.0
+pytest-cov==4.1.0
+hypothesis==6.99.13      # property-based tests (ABI/CBOR/storage invariants)
+
+# --- Linters / type checking (keep in sync with contracts/pyproject.toml) -----
+ruff==0.5.5              # linter + import order + optional formatter
+mypy==1.10.0             # static typing (contracts are small but we check)
+black==24.4.2            # optional formatter (if you prefer over ruff fmt)
+
+# --- Developer convenience (optional; uncomment as needed) --------------------
+# pip-tools==7.4.1       # use `pip-compile` to lock transitive deps
+# ipython==8.25.0        # quick REPL when experimenting with SDK

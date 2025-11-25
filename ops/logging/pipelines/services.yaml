@@ -1,0 +1,238 @@
+# Promtail pipeline for Animica studio-services (FastAPI/uvicorn) logs.
+# Goals:
+# - Parse structured JSON (structlog) and uvicorn access/plaintext lines
+# - Normalize timestamp and log level
+# - Redact secrets (api_key, Authorization) and querystrings in path
+# - Attach LOW-cardinality labels only (method, status_code bucket, route when available)
+# - Keep original message concise and privacy-safe
+#
+# Example JSON (preferred):
+# {"time":"2025-01-01T00:00:00Z","level":"info","msg":"deploy ok",
+#  "method":"POST","path":"/deploy","route":"/deploy","status_code":200,
+#  "process_time":0.012,"client_ip":"1.2.3.4","request_id":"r-abc"}
+#
+# Example uvicorn access (plaintext):
+# '127.0.0.1:57604 - "GET /openapi.json HTTP/1.1" 200'
+#
+# Include from your promtail scrape job:
+# scrape_configs:
+#   - job_name: animica-services
+#     pipeline_stages:
+#       - include: /etc/promtail/pipelines/services.yaml
+#     static_configs: ...
+
+pipeline_stages:
+  # Handle Kubernetes CRI or Docker-prefixed logs (noop if not applic.)
+  - cri: {}
+  - docker: {}
+
+  # --- Parse structured JSON first (structlog / our JSON logger) -------------
+  - json:
+      expressions:
+        time: time
+        ts: ts
+        "@timestamp": '@timestamp'
+        asctime: asctime
+
+        level: level
+        severity: severity
+        msg: msg
+        message: message
+
+        # HTTP / request context
+        method: method
+        path: path
+        route: route
+        status_code: status_code
+        status: status
+        process_time: process_time       # seconds (float)
+        duration_ms: duration_ms         # milliseconds (float/int)
+        latency_ms: latency_ms
+        client_ip: client_ip
+        user_agent: user_agent
+        referer: referer
+        request_id: request_id
+        trace_id: trace_id
+        span_id: span_id
+
+        # Bytes/lengths (optional)
+        bytes_in: bytes_in
+        bytes_out: bytes_out
+        content_length: content_length
+
+        # Potentially sensitive fields (to be redacted)
+        api_key: api_key
+        api_key_id: api_key_id
+        authorization: authorization
+
+        # App fields
+        component: component
+        module: module
+
+  # Timestamps (try several common fields, skip if absent)
+  - timestamp:
+      source: time
+      format: RFC3339Nano
+      action_on_failure: skip
+  - timestamp:
+      source: ts
+      format: RFC3339Nano
+      action_on_failure: skip
+  - timestamp:
+      source: '@timestamp'
+      format: RFC3339Nano
+      action_on_failure: skip
+  - timestamp:
+      source: asctime
+      format: '2006-01-02 15:04:05'
+      action_on_failure: skip
+
+  # Normalize log level (warning -> warn, INFO -> info)
+  - replace:
+      source: level
+      expression: '(?i)^warning$'
+      replace: warn
+  - replace:
+      source: level
+      expression: '(?i)^error$'
+      replace: error
+  - replace:
+      source: level
+      expression: '(?i)^info$'
+      replace: info
+  - replace:
+      source: level
+      expression: '(?i)^debug$'
+      replace: debug
+
+  # --- Plaintext fallback parsers (uvicorn access) ---------------------------
+  - regex:
+      # Example: 127.0.0.1:57604 - "GET /openapi.json HTTP/1.1" 200
+      expression: '^\S+ - "(?P<ph_method>[A-Z]+) (?P<ph_path>\S+) HTTP/\S+" (?P<ph_status>[0-9]{3})'
+      source: log
+
+  # --- Redaction & sanitization ----------------------------------------------
+  # Redact Authorization and api_key in any form present in the log line before output.
+  - replace:
+      source: log
+      expression: '(?i)(authorization\s*[:=]\s*Bearer\s+)[A-Za-z0-9\-\._~\+/]+=*'
+      replace: '$1***'
+  - replace:
+      source: log
+      expression: '(?i)("authorization"\s*:\s*")([^"]+)(")'
+      replace: '$1***$3'
+  - replace:
+      source: log
+      expression: '(?i)(api[_-]?key\s*[:=]\s*)[A-Za-z0-9\-\._]+'
+      replace: '$1***'
+  - replace:
+      source: log
+      expression: '(?i)("api[_-]?key"\s*:\s*")([^"]+)(")'
+      replace: '$1***$3'
+
+  # Sanitize path: drop query string for rendering; do not create labels from full path.
+  - regex:
+      expression: '^(?P<path_noquery>[^?]+)(?:\?.*)?$'
+      source: path
+  - regex:
+      expression: '^(?P<ph_path_noquery>[^?]+)(?:\?.*)?$'
+      source: ph_path
+
+  # --- Synthesis / defaults ---------------------------------------------------
+  - template:
+      source: service
+      template: services
+  - template:
+      source: component_norm
+      template: '{{ if .component }}{{ .component }}{{ else if .module }}{{ .module }}{{ else }}services{{ end }}'
+  - template:
+      source: method_norm
+      template: '{{ if .method }}{{ .method }}{{ else if .ph_method }}{{ .ph_method }}{{ else }}-{{ end }}'
+  - template:
+      source: status_code_norm
+      template: '{{ if .status_code }}{{ .status_code }}{{ else if .ph_status }}{{ .ph_status }}{{ else }}0{{ end }}'
+  - template:
+      source: route_norm
+      # Prefer FastAPI "route" (low-card); otherwise do not label with raw path.
+      template: '{{ if .route }}{{ .route }}{{ else }}-{{ end }}'
+  - template:
+      source: path_render
+      template: >-
+        {{- if .path_noquery -}}
+          {{ .path_noquery }}
+        {{- else if .ph_path_noquery -}}
+          {{ .ph_path_noquery }}
+        {{- else if .path -}}
+          {{ .path }}
+        {{- else if .ph_path -}}
+          {{ .ph_path }}
+        {{- else -}}
+          /
+        {{- end -}}
+
+  # Status bucket (2xx/3xx/4xx/5xx/other)
+  - template:
+      source: status_bucket
+      template: >-
+        {{- $s := .status_code_norm -}}
+        {{- if or (eq $s "0") (eq $s "") -}}other
+        {{- else if ge (toInt $s) 500 -}}5xx
+        {{- else if ge (toInt $s) 400 -}}4xx
+        {{- else if ge (toInt $s) 300 -}}3xx
+        {{- else if ge (toInt $s) 200 -}}2xx
+        {{- else -}}other{{- end -}}
+
+  # Latency render (prefer ms fields; else derive text from process_time seconds)
+  - template:
+      source: latency_render
+      template: >-
+        {{- if .latency_ms -}}
+          {{ .latency_ms }}ms
+        {{- else if .duration_ms -}}
+          {{ .duration_ms }}ms
+        {{- else if .process_time -}}
+          {{ printf "%.1fms" (mulf .process_time 1000) }}
+        {{- else -}}
+          -
+        {{- end -}}
+
+  # Promote LOW-cardinality labels only.
+  - labels:
+      service:
+      level:
+      component_norm:
+      method_norm:
+      status_code_norm:
+      status_bucket:
+      route_norm:
+
+  # Optional noise filter (uncomment to drop healthz/readyz/metrics)
+  # - match:
+  #     selector: '{service="services"} |= "/healthz"'
+  #     action: drop
+  # - match:
+  #     selector: '{service="services"} |= "/readyz"'
+  #     action: drop
+  # - match:
+  #     selector: '{service="services"} |= "/metrics"'
+  #     action: drop
+
+  # --- Output selection -------------------------------------------------------
+  # Prefer structured message if present; otherwise synthesize concise line.
+  - template:
+      source: line_fallback
+      template: >-
+        [{{ .component_norm }}] {{ .method_norm }} {{ .path_render }}
+        → status={{ .status_code_norm }} latency={{ .latency_render }}
+        req_id={{ or .request_id "-" }}
+
+  - output:
+      source: msg
+  - output:
+      source: message
+      when:
+        expression: '"{{ .msg }}" == ""'
+  - output:
+      source: line_fallback
+      when:
+        expression: '"{{ .msg }}" == "" && "{{ .message }}" == ""'

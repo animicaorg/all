@@ -1,0 +1,66 @@
+<!--
+  Animica Logo — scalable SVG
+  - Stylized "A" inside a hexagon outline
+  - No background; works on light/dark themes
+  - Gradient strokes for subtle depth
+-->
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 256 256"
+  width="256"
+  height="256"
+  role="img"
+  aria-labelledby="title desc"
+>
+  <title id="title">Animica Logo</title>
+  <desc id="desc">A stylized letter A inside a hexagon outline, representing the Animica brand.</desc>
+
+  <defs>
+    <linearGradient id="g-accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#22d3ee"/>
+      <stop offset="100%" stop-color="#0ea5e9"/>
+    </linearGradient>
+
+    <!-- Subtle inner glow for the monogram (kept minimal for crisp scaling) -->
+    <filter id="soft-glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="1.2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Hexagon outline -->
+  <polygon
+    points="128,28  thirtyeight,92 38,164 128,228 218,164 218,92"
+    fill="none"
+    stroke="url(#g-accent)"
+    stroke-width="12"
+    stroke-linejoin="round"
+    vector-effect="non-scaling-stroke"
+  />
+
+  <!-- Monogram "A" -->
+  <g filter="url(#soft-glow)">
+    <!-- Main A shape -->
+    <polygon
+      points="128,64 84,172 108,172 120,144 136,144 148,172 172,172"
+      fill="none"
+      stroke="url(#g-accent)"
+      stroke-width="14"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      vector-effect="non-scaling-stroke"
+    />
+    <!-- Crossbar -->
+    <line
+      x1="104" y1="132"
+      x2="152" y2="132"
+      stroke="url(#g-accent)"
+      stroke-width="14"
+      stroke-linecap="round"
+      vector-effect="non-scaling-stroke"
+    />
+  </g>
+</svg>

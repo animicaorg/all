@@ -1,0 +1,136 @@
+{
+  "$schema": "../schemas/template.schema.json",
+  "id": "indexer-lite",
+  "version": "1.0.0",
+  "name": "Indexer Lite (Python + SQLite/Postgres)",
+  "summary": "Lightweight Animica indexer that tails newHeads over WS, fetches blocks/txs/events via RPC, persists into SQLite (default) or Postgres, and optionally serves a FastAPI read API.",
+  "description": "This template scaffolds a small, production-lean indexer suitable for devnet/testnet and as a starting point for production. It subscribes to newHeads, backfills from a configurable start height, indexes blocks/transactions/receipts/events into a relational schema, and (optionally) exposes a FastAPI service for querying. It includes a Makefile, Dockerfile, systemd unit, simple k8s manifests, and basic tests.",
+  "tags": [
+    "indexer",
+    "python",
+    "fastapi",
+    "websocket",
+    "json-rpc",
+    "sqlite",
+    "postgres",
+    "docker",
+    "k8s",
+    "observability"
+  ],
+  "variables": "variables.json",
+
+  "render": {
+    "sourceDir": "{{project_slug}}",
+    "targetDir": "{{project_slug}}",
+    "include": [
+      "**/*"
+    ],
+    "exclude": [
+      "**/__pycache__/**",
+      "**/.pytest_cache/**",
+      "**/.DS_Store",
+      "dist/**",
+      "build/**"
+    ]
+  },
+
+  "transforms": [
+    {
+      "type": "rename",
+      "from": "src/indexer_lite",
+      "to": "src/{{module_name}}"
+    },
+    {
+      "type": "text",
+      "globs": [
+        "**/*.py",
+        "**/*.md",
+        "**/*.toml",
+        "**/*.yaml",
+        "**/*.yml",
+        "**/*.ini",
+        "Dockerfile",
+        "Makefile",
+        ".env.example"
+      ],
+      "substitutions": {
+        "INDEXER_MODULE": "{{module_name}}",
+        "INDEXER_PROJECT": "{{project_slug}}",
+        "INDEXER_DB_URL": "{{db_url}}",
+        "INDEXER_RPC_URL": "{{rpc_url}}",
+        "INDEXER_WS_URL": "{{ws_url}}",
+        "INDEXER_CHAIN_ID": "{{chain_id}}",
+        "INDEXER_START_HEIGHT": "{{start_height}}"
+      }
+    }
+  ],
+
+  "postHooks": [
+    {
+      "name": "git-initialize",
+      "shell": "git init && git add . && git commit -m \"Scaffold {{project_slug}} from indexer-lite template\""
+    },
+    {
+      "name": "create-virtualenv",
+      "shell": "python -m venv .venv && . .venv/bin/activate && pip install -U pip && pip install -r requirements.txt"
+    },
+    {
+      "name": "prepare-database",
+      "shell": ". .venv/bin/activate && python -m {{module_name}}.db.migrate || true"
+    },
+    {
+      "name": "print-next-steps",
+      "shell": "printf \"\\nNext steps for {{project_slug}}:\\n  1) cp .env.example .env && edit RPC_URL / WS_URL / DB_URL / CHAIN_ID\\n  2) make dev        # run the tailer + API locally\\n  3) make backfill START={{start_height}}  # one-shot historical import\\n  4) make docker-build && make docker-run  # optional container run\\n\\n\""
+    }
+  ],
+
+  "filesOverview": [
+    "README.md  — how to run locally, backfill, and deploy",
+    "pyproject.toml / requirements.txt — pinned deps (fastapi, msgspec, aiosqlite/asyncpg, websockets)",
+    "Makefile — make dev | tail | backfill | test | docker-build | k8s-apply",
+    ".env.example — RPC_URL, WS_URL, DB_URL, CHAIN_ID, START_HEIGHT",
+    "src/{{module_name}}/ingest/tailer.py — WS newHeads subscriber and fetch pipeline",
+    "src/{{module_name}}/ingest/backfill.py — range backfill with rate limiting and retries",
+    "src/{{module_name}}/rpc/client.py — JSON-RPC/WS clients with retries & metrics",
+    "src/{{module_name}}/db/models.py — SQL schema (blocks, txs, receipts, logs, addresses)",
+    "src/{{module_name}}/db/migrate.py — migration runner (SQLite/Postgres)",
+    "src/{{module_name}}/api/server.py — optional FastAPI read endpoints (blocks/txs/events)",
+    "src/{{module_name}}/metrics.py — Prometheus counters/histograms",
+    "tests/test_smoke.py — minimal smoke test against a live/devnet node",
+    "docker/Dockerfile — slim runtime with venv wheels",
+    "k8s/deployment.yaml | service.yaml — minimal k8s manifests",
+    "systemd/indexer.service — example unit for single-host deployment"
+  ],
+
+  "examples": {
+    "quickstart": [
+      "python -m venv .venv && . .venv/bin/activate",
+      "pip install -U pip && pip install -r requirements.txt",
+      "cp .env.example .env && $EDITOR .env",
+      "make dev   # starts tailer and API (if enabled)"
+    ],
+    "backfill": [
+      "make backfill START={{start_height}} END=latest"
+    ],
+    "docker": [
+      "make docker-build",
+      "make docker-run"
+    ]
+  },
+
+  "notes": [
+    "SQLite is the default for simplicity. Set DB_URL to a Postgres DSN to switch drivers.",
+    "Event decoding is ABI-optional; drop ABIs into ./abi/ and restart to enrich topics->names.",
+    "The API is optional; disable via INCLUDE_API=false in .env to run tailer-only."
+  ],
+
+  "changelog": [
+    {
+      "version": "1.0.0",
+      "date": "2025-10-05",
+      "changes": [
+        "Initial release of the indexer-lite template with WS tailer, RPC fetch, SQLite/Postgres support, FastAPI read API, Docker/K8s/systemd assets, and basic tests."
+      ]
+    }
+  ]
+}

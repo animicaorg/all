@@ -1,0 +1,195 @@
+---
+# Animica — Production/Devnet Deployment Playbook
+# ------------------------------------------------
+# Usage examples:
+#   ansible-playbook -i inventory.ini ops/ansible/playbooks/deploy.yml
+#   ansible-playbook -i inventory.ini ops/ansible/playbooks/deploy.yml --limit nodes -t config,restart
+#   ansible-playbook -i inventory.ini ops/ansible/playbooks/deploy.yml --tags metrics
+#
+# Assumes inventory groups:
+#   [nodes]   # core node(s)
+#   [miners]  # mining workers
+#   [metrics] # prometheus/grafana exporters stack
+#
+# Variables are primarily sourced from group_vars/all.yml and host/group vars.
+# This playbook is idempotent and safe for rolling restarts.
+
+#############################################
+# Preflight: facts, packages, environment
+#############################################
+- name: Preflight checks and base packages
+  hosts: all
+  gather_facts: true
+  become: true
+  tags: [always]
+  pre_tasks:
+    - name: Assert Linux hosts
+      ansible.builtin.assert:
+        that:
+          - ansible_system == "Linux"
+        fail_msg: "This playbook targets Linux hosts only."
+        success_msg: "Host is Linux."
+
+    - name: Show target summary
+      ansible.builtin.debug:
+        msg:
+          - "Host: {{ inventory_hostname }}"
+          - "OS  : {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_architecture }})"
+          - "Kernel: {{ ansible_kernel }}"
+
+  tasks:
+    - name: Ensure base packages present
+      ansible.builtin.package:
+        name:
+          - curl
+          - ca-certificates
+          - tar
+          - gzip
+          - unzip
+          - git
+          - jq
+        state: present
+      register: pkgs_result
+      retries: 3
+      delay: 5
+      until: pkgs_result is succeeded
+
+    - name: Ensure systemd is available
+      ansible.builtin.assert:
+        that: ansible_service_mgr == "systemd"
+        fail_msg: "systemd is required (found {{ ansible_service_mgr }})."
+        success_msg: "systemd present."
+
+    - name: Create animica config directory
+      ansible.builtin.file:
+        path: /etc/animica
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+################################################
+# Deploy / Update core node(s)
+################################################
+- name: Deploy core node(s)
+  hosts: nodes
+  become: true
+  gather_facts: true
+  serial: "{{ rollout_batch | default('50%') }}"
+  max_fail_percentage: 20
+  vars:
+    wait_for_rpc: "{{ node_wait_for_rpc | default(true) | bool }}"
+    rpc_host: "{{ node_rpc_host | default('127.0.0.1') }}"
+    rpc_port: "{{ node_rpc_port | default(8545) }}"
+    rpc_timeout: "{{ node_rpc_wait_timeout | default(120) }}"
+  roles:
+    - { role: node, tags: ['node','deploy','config'] }
+  post_tasks:
+    - name: Wait for RPC to be ready
+      ansible.builtin.wait_for:
+        host: "{{ rpc_host }}"
+        port: "{{ rpc_port }}"
+        state: started
+        timeout: "{{ rpc_timeout }}"
+      when: wait_for_rpc
+      tags: ['node','health']
+
+################################################
+# Deploy / Update miner worker(s)
+################################################
+- name: Deploy miner worker(s)
+  hosts: miners
+  become: true
+  gather_facts: true
+  serial: "{{ rollout_batch | default('100%') }}"
+  vars:
+    wait_for_submit_ok: "{{ miner_wait_for_submit | default(true) | bool }}"
+    node_rpc_host: "{{ miner_node_rpc_host | default('127.0.0.1') }}"
+    node_rpc_port: "{{ miner_node_rpc_port | default(8545) }}"
+  roles:
+    - { role: miner, tags: ['miner','deploy','config'] }
+  post_tasks:
+    - name: Sanity check node RPC reachable from miner
+      ansible.builtin.wait_for:
+        host: "{{ node_rpc_host }}"
+        port: "{{ node_rpc_port }}"
+        state: started
+        timeout: 60
+      when: wait_for_submit_ok
+      tags: ['miner','health']
+
+################################################
+# Deploy / Update metrics stack (Prometheus/Grafana)
+################################################
+- name: Deploy metrics & dashboards
+  hosts: metrics
+  become: true
+  gather_facts: true
+  vars:
+    prometheus_listen_port: "{{ prometheus_port | default(9090) }}"
+    grafana_listen_port: "{{ grafana_port | default(3000) }}"
+  roles:
+    - { role: metrics, tags: ['metrics','deploy','config'] }
+  post_tasks:
+    - name: Wait for Prometheus
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ prometheus_listen_port }}"
+        state: started
+        timeout: 90
+      tags: ['metrics','health']
+
+    - name: Wait for Grafana
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ grafana_listen_port }}"
+        state: started
+        timeout: 120
+      tags: ['metrics','health']
+
+#############################################
+# Optional restarts via tags
+#############################################
+- name: Restart core node(s) (tag-driven)
+  hosts: nodes
+  become: true
+  gather_facts: false
+  tags: ['restart','node']
+  tasks:
+    - name: Restart node service
+      ansible.builtin.service:
+        name: animica-node
+        state: restarted
+        enabled: true
+
+- name: Restart miner(s) (tag-driven)
+  hosts: miners
+  become: true
+  gather_facts: false
+  tags: ['restart','miner']
+  tasks:
+    - name: Restart miner service
+      ansible.builtin.service:
+        name: animica-miner
+        state: restarted
+        enabled: true
+
+- name: Restart metrics (tag-driven)
+  hosts: metrics
+  become: true
+  gather_facts: false
+  tags: ['restart','metrics']
+  tasks:
+    - name: Restart prometheus
+      ansible.builtin.service:
+        name: prometheus
+        state: restarted
+        enabled: true
+      ignore_errors: true
+
+    - name: Restart grafana-server
+      ansible.builtin.service:
+        name: grafana-server
+        state: restarted
+        enabled: true
+      ignore_errors: true

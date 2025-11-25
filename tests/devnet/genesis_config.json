@@ -1,0 +1,128 @@
+{
+  "schema": "animica.genesis.devnet.v1",
+  "notes": [
+    "Tiny, test-only genesis config for Animica devnet.",
+    "Prefunds are resolved by tests using tests/devnet/seed_wallets.json names.",
+    "Randomness/VDF parameters are deliberately small so property/integration tests complete quickly."
+  ],
+
+  "chain": {
+    "chainId": 1337,
+    "name": "animica-devnet",
+    "hrp": "anim"
+  },
+
+  "genesis": {
+    "time": "2025-10-02T00:00:00Z",
+    "height": 0
+  },
+
+  "economics": {
+    "unit_decimals": 18,
+    "initial_supply_animbn": "100000000000000000000000000",
+    "block_reward_animbn": "0",
+    "treasury_address": "anim1treasury000000000000000000000000000000000"
+  },
+
+  "gas": {
+    "block_gas_limit": 15000000,
+    "tx_intrinsic": {
+      "transfer": 21000,
+      "deploy": 120000,
+      "call": 5300,
+      "blob": 10000
+    },
+    "min_gas_price_animgwei": 0
+  },
+
+  "blocks": {
+    "target_seconds": 6,
+    "timestamp_grace_seconds": 2,
+    "max_txs_per_block": 5000,
+    "max_block_bytes": 2000000
+  },
+
+  "consensus": {
+    "theta_target_munats": 1000000,
+    "theta_update": {
+      "ema_alpha_num": 1,
+      "ema_alpha_den": 8,
+      "min_factor_ppm": 500000,
+      "max_factor_ppm": 2000000
+    },
+    "randomness": {
+      "round_seconds": 30,
+      "commit_phase_seconds": 10,
+      "reveal_phase_seconds": 10,
+      "settle_phase_seconds": 10,
+      "vdf": {
+        "security_bits": 128,
+        "discriminant_size_bits": 2048,
+        "target_seconds": 12,
+        "iterations": 600000,
+        "seconds_per_iter": 0.00002
+      }
+    }
+  },
+
+  "randomness": {
+    "round_seconds": 30,
+    "commit_phase_seconds": 10,
+    "reveal_phase_seconds": 10,
+    "settle_phase_seconds": 10,
+    "vdf": {
+      "security_bits": 128,
+      "discriminant_size_bits": 2048,
+      "target_seconds": 12,
+      "iterations": 600000,
+      "seconds_per_iter": 0.00002
+    }
+  },
+
+  "beacon": {
+    "vdf": {
+      "security_bits": 128,
+      "discriminant_size_bits": 2048,
+      "target_seconds": 12,
+      "iterations": 600000,
+      "seconds_per_iter": 0.00002
+    },
+    "round_seconds": 30,
+    "commit_phase_seconds": 10,
+    "reveal_phase_seconds": 10,
+    "settle_phase_seconds": 10
+  },
+
+  "domains": {
+    "tx_sign": "ANIMICA-TX-V1",
+    "header_sign": "ANIMICA-HDR-V1",
+    "nonce_u_draw": "ANIMICA-U-DRAW-V1",
+    "beacon_commit": "ANIMICA-BEACON-COMMIT-V1",
+    "beacon_reveal": "ANIMICA-BEACON-REVEAL-V1"
+  },
+
+  "mempool": {
+    "min_gas_price_animgwei": 0,
+    "max_txs": 100000,
+    "ttl_seconds": 600,
+    "replacement_bump_percent": 10
+  },
+
+  "da": {
+    "max_blob_bytes": 1048576,
+    "erasure": { "k": 8, "n": 16, "shard_size": 4096 },
+    "namespaces": { "min": 0, "max": 65535 }
+  },
+
+  "pq": {
+    "default_sig_alg": "dilithium3",
+    "allowed_sig_algs": ["dilithium3", "sphincs_shake_128s"],
+    "default_kem_alg": "kyber768"
+  },
+
+  "prefund": {
+    "mode": "by-name",
+    "amount_wei": "1000000000000000000000",
+    "labels": ["alice", "bob", "carol", "dave", "erin", "faucet"]
+  }
+}

@@ -1,0 +1,113 @@
+{
+  "name": "AI Agent",
+  "version": "1.0.0",
+  "language": "python",
+  "entry": "contract.py",
+  "capabilities": ["ai"],
+  "abi": {
+    "functions": [
+      {
+        "name": "get_model",
+        "inputs": [],
+        "returns": [{ "name": "model", "type": "bytes" }],
+        "stateMutability": "view"
+      },
+      {
+        "name": "status",
+        "inputs": [],
+        "returns": [
+          { "name": "model", "type": "bytes" },
+          { "name": "last_task_id", "type": "bytes" },
+          { "name": "last_result_hash", "type": "bytes32" }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "name": "last_prompt",
+        "inputs": [],
+        "returns": [{ "name": "prompt", "type": "bytes" }],
+        "stateMutability": "view"
+      },
+      {
+        "name": "last_result",
+        "inputs": [],
+        "returns": [{ "name": "result", "type": "bytes" }],
+        "stateMutability": "view"
+      },
+      {
+        "name": "set_model",
+        "inputs": [{ "name": "model", "type": "bytes" }],
+        "returns": [],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "name": "request",
+        "inputs": [{ "name": "prompt", "type": "bytes" }],
+        "returns": [{ "name": "task_id", "type": "bytes" }],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "name": "read",
+        "inputs": [{ "name": "task_id", "type": "bytes" }],
+        "returns": [{ "name": "result_or_empty", "type": "bytes" }],
+        "stateMutability": "view"
+      },
+      {
+        "name": "consume_last",
+        "inputs": [],
+        "returns": [{ "name": "result_or_empty", "type": "bytes" }],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "name": "clear_cache",
+        "inputs": [],
+        "returns": [],
+        "stateMutability": "nonpayable"
+      }
+    ],
+    "events": [
+      {
+        "name": "ModelSet",
+        "inputs": [
+          { "name": "model", "type": "bytes", "indexed": false },
+          { "name": "model_hash", "type": "bytes32", "indexed": false }
+        ]
+      },
+      {
+        "name": "AIRequested",
+        "inputs": [
+          { "name": "model", "type": "bytes", "indexed": false },
+          { "name": "prompt_hash", "type": "bytes32", "indexed": false },
+          { "name": "task_id", "type": "bytes", "indexed": false }
+        ]
+      },
+      {
+        "name": "AIResult",
+        "inputs": [
+          { "name": "task_id", "type": "bytes", "indexed": false },
+          { "name": "result_hash", "type": "bytes32", "indexed": false },
+          { "name": "size", "type": "u64", "indexed": false }
+        ]
+      },
+      {
+        "name": "CacheCleared",
+        "inputs": [
+          { "name": "cleared_hash", "type": "bytes32", "indexed": false },
+          { "name": "prev_size", "type": "u64", "indexed": false }
+        ]
+      }
+    ],
+    "errors": [
+      { "name": "MODEL_EMPTY" },
+      { "name": "NO_MODEL_CONFIGURED" },
+      { "name": "PROMPT_EMPTY" },
+      { "name": "TASK_ID_EMPTY" },
+      { "name": "NO_LAST_TASK" }
+    ]
+  },
+  "metadata": {
+    "description": "Deterministic AI Agent facade: configure model, enqueue prompt, and read/consume next-block results.",
+    "authors": ["Animica Studio Templates"],
+    "tags": ["ai", "agent", "templates"]
+  }
+}

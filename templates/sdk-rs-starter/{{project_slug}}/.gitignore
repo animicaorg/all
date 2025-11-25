@@ -1,0 +1,125 @@
+################################################################################
+# Rust build artifacts
+################################################################################
+
+# Cargo build output
+/target/
+
+# Backups made by rustfmt / editors
+**/*.rs.bk
+
+# If this template is used as a library, it's common to ignore Cargo.lock.
+# If you're building a binary application or a workspace, consider committing it.
+Cargo.lock
+
+################################################################################
+# Environment & local config
+################################################################################
+
+# Keep example env files tracked, ignore real secrets
+.env
+.env.*
+!.env.example
+
+# direnv / shell hook files
+.envrc
+.direnv/
+
+################################################################################
+# Logs, temp files, caches
+################################################################################
+
+*.log
+logs/
+log/
+tmp/
+temp/
+*.tmp
+*.cache
+.cache/
+
+# Profiling / perf artifacts
+*.profraw
+*.profdata
+perf.data*
+flamegraph.svg
+flamegraph-*.svg
+
+# Coverage reports
+coverage/
+lcov.info
+*.lcov
+
+################################################################################
+# OS / filesystem noise
+################################################################################
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Common editors' swap/backup files
+*~
+*.swp
+*.swo
+*.orig
+
+################################################################################
+# IDE / editor settings
+################################################################################
+
+# VS Code
+.vscode/
+
+# IntelliJ / CLion / RustRover
+.idea/
+
+# Sublime
+*.sublime-workspace
+*.sublime-project
+
+# VS / Rider
+.vs/
+
+################################################################################
+# Tooling & packaging
+################################################################################
+
+# Local cargo configuration (often user-specific)
+.cargo/
+.cargo-ok
+
+# Binary / object files (usually already under /target)
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+*.pdb
+
+# Archives
+*.zip
+*.tar
+*.gz
+*.bz2
+*.xz
+*.7z
+
+################################################################################
+# Project-specific artifacts (examples, benches, etc.)
+################################################################################
+
+# Example/bench build dirs if created outside top-level target
+examples/**/target/
+benches/**/target/
+
+# Generated docs (if you run `cargo doc --no-deps --open` and host locally)
+/target/doc/

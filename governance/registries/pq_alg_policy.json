@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "updated": "2025-10-12",
+  "schema_ref": "spec/alg_policy.schema.json#",
+  "hashing": {
+    "leaf_hash": "sha3-512",
+    "tree": "binary-left-ordered"
+  },
+  "phases": {
+    "canary": "Enabled for limited use; wallets/nodes MAY produce/accept.",
+    "default": "Preferred algorithm(s); wallets SHOULD use.",
+    "required": "Mandatory for consensus/handshake; nodes MUST enforce.",
+    "deprecated": "Accept-only for a grace window; production use discouraged.",
+    "disabled": "Rejected by policy."
+  },
+  "algorithms": {
+    "signatures": [
+      {
+        "id": "dilithium3",
+        "name": "CRYSTALS-Dilithium3",
+        "family": "dilithium",
+        "strength_bits": 128,
+        "params": {
+          "hash": "SHAKE-256",
+          "domain_sep": "tx|header|addr",
+          "address_hrp": "anim",
+          "address_payload": "alg_id || sha3_256(pubkey)"
+        },
+        "limits": {
+          "max_pubkey_bytes": 4096,
+          "max_sig_bytes": 4096
+        }
+      },
+      {
+        "id": "sphincs_shake_128s",
+        "name": "SPHINCS+-SHAKE-128s-robust",
+        "family": "sphincs+",
+        "strength_bits": 128,
+        "params": {
+          "hash": "SHAKE-128",
+          "domain_sep": "tx|header|addr",
+          "address_hrp": "anim",
+          "address_payload": "alg_id || sha3_256(pubkey)"
+        },
+        "limits": {
+          "max_pubkey_bytes": 4096,
+          "max_sig_bytes": 50000
+        }
+      }
+    ],
+    "handshake": {
+      "kem": {
+        "id": "kyber768",
+        "name": "CRYSTALS-Kyber-768",
+        "family": "kyber",
+        "strength_bits": 128,
+        "kdf": "HKDF-SHA3-256",
+        "aead": ["chacha20-poly1305", "aes-256-gcm"]
+      }
+    }
+  },
+  "networks": [
+    {
+      "chain_id": 1337,
+      "name": "animica.devnet",
+      "rollout": {
+        "tx_signing": [
+          { "alg_id": "dilithium3", "phase": "default", "from_height": 0 },
+          { "alg_id": "sphincs_shake_128s", "phase": "canary", "from_height": 0 }
+        ],
+        "address_derivation": { "default_alg": "dilithium3", "accept": ["dilithium3", "sphincs_shake_128s"] },
+        "p2p_node_identity": { "accept": ["dilithium3", "sphincs_shake_128s"], "default": "dilithium3" },
+        "handshake": { "kem_id": "kyber768", "phase": "required", "from_height": 0 }
+      }
+    },
+    {
+      "chain_id": 2,
+      "name": "animica.testnet",
+      "rollout": {
+        "tx_signing": [
+          { "alg_id": "dilithium3", "phase": "default", "from_height": 0 },
+          { "alg_id": "sphincs_shake_128s", "phase": "canary", "from_height": 0 }
+        ],
+        "deprecation": {
+          "sunset": []
+        },
+        "address_derivation": { "default_alg": "dilithium3", "accept": ["dilithium3", "sphincs_shake_128s"] },
+        "p2p_node_identity": { "accept": ["dilithium3", "sphincs_shake_128s"], "default": "dilithium3" },
+        "handshake": { "kem_id": "kyber768", "phase": "required", "from_height": 0 }
+      }
+    },
+    {
+      "chain_id": 1,
+      "name": "animica.mainnet",
+      "rollout": {
+        "tx_signing": [
+          { "alg_id": "dilithium3", "phase": "default", "from_height": 0 },
+          { "alg_id": "sphincs_shake_128s", "phase": "canary", "from_height": 0 }
+        ],
+        "emergency_switch": {
+          "to_alg": "sphincs_shake_128s",
+          "trigger": "governance-emergency",
+          "grace_blocks": 720
+        },
+        "address_derivation": { "default_alg": "dilithium3", "accept": ["dilithium3", "sphincs_shake_128s"] },
+        "p2p_node_identity": { "accept": ["dilithium3", "sphincs_shake_128s"], "default": "dilithium3" },
+        "handshake": { "kem_id": "kyber768", "phase": "required", "from_height": 0 }
+      }
+    }
+  ],
+  "validation": {
+    "min_signature_strength_bits": 128,
+    "allowed_signature_ids": ["dilithium3", "sphincs_shake_128s"],
+    "required_kem_id": "kyber768",
+    "max_sig_bytes_global": 50000,
+    "max_pubkey_bytes_global": 4096
+  },
+  "wallet_defaults": {
+    "preferred_sig_alg": "dilithium3",
+    "fallback_sig_alg": "sphincs_shake_128s",
+    "address_hrp": "anim"
+  },
+  "policy_metadata": {
+    "policy_root_hash_alg": "sha3-512",
+    "policy_merkle_layout": "binary-left-ordered",
+    "notes": "This JSON is normalized and hashed into the alg-policy Merkle root (see pq/alg_policy). Rotation or deprecation requires governance approval."
+  }
+}

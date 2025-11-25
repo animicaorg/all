@@ -1,0 +1,123 @@
+<mjml>
+  <mj-head>
+    <mj-attributes>
+      <mj-all font-family="Inter, -apple-system, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif" />
+      <mj-text font-size="16px" color="#0F172A" line-height="1.6" />
+      <mj-section padding="0px" />
+      <mj-column padding="0px" />
+      <mj-button background-color="#5EEAD4" color="#0B0D12" font-weight="700" inner-padding="12px 20px" border-radius="10px" />
+    </mj-attributes>
+    <mj-preview>{{preheader}}</mj-preview>
+    <mj-style inline="inline">
+      .muted { color:#475569 !important; }
+      .eyebrow { text-transform: uppercase; letter-spacing: .08em; font-size:12px; color:#64748B; }
+      .kpi { font-size:28px; font-weight:700; color:#0F172A; }
+      .card { border:1px solid #E5E7EB; border-radius:12px; }
+      .spacer-8 { height:8px; }
+      .spacer-16 { height:16px; }
+      .spacer-24 { height:24px; }
+      .tag { background:#ECFEFF; color:#0B0D12; border-radius:999px; padding:4px 10px; font-size:12px; display:inline-block; }
+      @media (prefers-color-scheme: dark) { .body { background:#0B0D12 !important; } }
+    </mj-style>
+  </mj-head>
+
+  <mj-body background-color="#FFFFFF" css-class="body">
+    <mj-section padding="0"><mj-column>
+      <mj-text font-size="1px" line-height="1px" color="#ffffff" padding="0">{{preheader}}</mj-text>
+    </mj-column></mj-section>
+
+    <mj-section background-color="#0B0D12" padding="20px 0">
+      <mj-column width="100%" vertical-align="middle">
+        <mj-image src="{{logo_url}}" alt="Animica" width="160" align="center" padding="0" href="{{home_url}}" />
+      </mj-column>
+    </mj-section>
+
+    <mj-section background-color="#FFFFFF" padding="32px 24px 0">
+      <mj-column width="100%">
+        <mj-text css-class="eyebrow" align="center">{{eyebrow}}</mj-text>
+        <mj-text align="center" font-size="28px" font-weight="800" color="#0F172A" padding-bottom="8px">{{title}}</mj-text>
+        <mj-text align="center" font-size="16px" color="#475569">{{subtitle}}</mj-text>
+      </mj-column>
+    </mj-section>
+
+    {{#hero_url}}
+    <mj-section background-color="#FFFFFF" padding="16px 24px 0">
+      <mj-column>
+        <mj-image src="{{hero_url}}" alt="{{hero_alt}}" width="552" padding="0" />
+      </mj-column>
+    </mj-section>
+    {{/hero_url}}
+
+    <mj-section background-color="#FFFFFF" padding="16px 24px 0">
+      <mj-column>
+        <mj-text>{{intro_html}}</mj-text>
+      </mj-column>
+    </mj-section>
+
+    {{#highlights}}
+    <mj-section background-color="#FFFFFF" padding="8px 24px 0">
+      <mj-column>
+        <mj-wrapper padding="0" border="1px solid #E5E7EB" border-radius="12px">
+          <mj-section padding="16px 16px 0">
+            <mj-column>
+              <mj-text font-weight="700" font-size="16px">Highlights</mj-text>
+              <mj-text padding-top="8px">
+                <ul style="padding-left:20px; margin:8px 0;">
+                  {{#items}}
+                  <li style="margin:6px 0;"><span style="color:#0F172A;"><strong>{{title}}</strong></span> — <span style="color:#475569;">{{summary}}</span></li>
+                  {{/items}}
+                </ul>
+              </mj-text>
+            </mj-column>
+          </mj-section>
+        </mj-wrapper>
+      </mj-column>
+    </mj-section>
+    {{/highlights}}
+
+    <mj-section background-color="#FFFFFF" padding="16px 24px 0">
+      <mj-column>
+        <mj-button href="{{cta_url}}" align="center">{{cta_label}}</mj-button>
+      </mj-column>
+    </mj-section>
+
+    {{#articles}}
+    <mj-section background-color="#FFFFFF" padding="24px 24px 0">
+      <mj-column>
+        <mj-text font-size="18px" font-weight="700" padding-bottom="8px">{{section_title}}</mj-text>
+        {{#list}}
+        <mj-text padding="12px 0" font-size="16px">
+          <a href="{{url}}" style="color:#0B0D12; text-decoration:none;"><strong>{{title}}</strong></a><br/>
+          <span class="muted">{{desc}}</span>
+        </mj-text>
+        <mj-divider border-width="1px" border-color="#E5E7EB" />
+        {{/list}}
+      </mj-column>
+    </mj-section>
+    {{/articles}}
+
+    <mj-section background-color="#FFFFFF" padding="24px 24px 0">
+      <mj-column>
+        <mj-text align="center">
+          <a href="{{twitter_url}}" style="color:#0B0D12; text-decoration:none;">Twitter</a> ·
+          <a href="{{discord_url}}" style="color:#0B0D12; text-decoration:none;">Discord</a> ·
+          <a href="{{blog_url}}" style="color:#0B0D12; text-decoration:none;">Blog</a> ·
+          <a href="{{docs_url}}" style="color:#0B0D12; text-decoration:none;">Docs</a>
+        </mj-text>
+      </mj-column>
+    </mj-section>
+
+    <mj-section background-color="#0B0D12" padding="24px">
+      <mj-column>
+        <mj-text align="center" color="#E5E7EB" font-size="12px">
+          {{footer_address}} ·
+          <a href="{{preferences_url}}" style="color:#5EEAD4; text-decoration:none;">Manage preferences</a> ·
+          <a href="{{unsubscribe_url}}" style="color:#5EEAD4; text-decoration:none;">Unsubscribe</a>
+        </mj-text>
+        <mj-text align="center" color="#94A3B8" font-size="11px">
+          Sent by Animica • {{send_date}}
+        </mj-text>
+      </mj-column>
+    </mj-section>
+  </mj-body>
+</mjml>

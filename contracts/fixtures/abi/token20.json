@@ -1,0 +1,121 @@
+{
+  "abiVersion": "1",
+  "contract": {
+    "name": "Token20",
+    "version": "1.0.0",
+    "description": "Animica-20 fungible token (ERC-20-like) ABI suitable for vm_py & SDK."
+  },
+  "functions": [
+    {
+      "name": "name",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        { "name": "name", "type": "string" }
+      ]
+    },
+    {
+      "name": "symbol",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        { "name": "symbol", "type": "string" }
+      ]
+    },
+    {
+      "name": "decimals",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        { "name": "decimals", "type": "uint8" }
+      ]
+    },
+    {
+      "name": "totalSupply",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        { "name": "supply", "type": "uint256" }
+      ]
+    },
+    {
+      "name": "balanceOf",
+      "stateMutability": "view",
+      "inputs": [
+        { "name": "owner", "type": "address" }
+      ],
+      "outputs": [
+        { "name": "balance", "type": "uint256" }
+      ]
+    },
+    {
+      "name": "allowance",
+      "stateMutability": "view",
+      "inputs": [
+        { "name": "owner", "type": "address" },
+        { "name": "spender", "type": "address" }
+      ],
+      "outputs": [
+        { "name": "remaining", "type": "uint256" }
+      ]
+    },
+    {
+      "name": "transfer",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "to", "type": "address" },
+        { "name": "amount", "type": "uint256" }
+      ],
+      "outputs": [
+        { "name": "success", "type": "bool" }
+      ]
+    },
+    {
+      "name": "approve",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "spender", "type": "address" },
+        { "name": "amount", "type": "uint256" }
+      ],
+      "outputs": [
+        { "name": "success", "type": "bool" }
+      ]
+    },
+    {
+      "name": "transferFrom",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "from", "type": "address" },
+        { "name": "to", "type": "address" },
+        { "name": "amount", "type": "uint256" }
+      ],
+      "outputs": [
+        { "name": "success", "type": "bool" }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "Transfer",
+      "inputs": [
+        { "name": "from", "type": "address", "indexed": true },
+        { "name": "to", "type": "address", "indexed": true },
+        { "name": "amount", "type": "uint256", "indexed": false }
+      ]
+    },
+    {
+      "name": "Approval",
+      "inputs": [
+        { "name": "owner", "type": "address", "indexed": true },
+        { "name": "spender", "type": "address", "indexed": true },
+        { "name": "amount", "type": "uint256", "indexed": false }
+      ]
+    }
+  ],
+  "errors": [
+    { "name": "InsufficientBalance" },
+    { "name": "InsufficientAllowance" },
+    { "name": "Paused" },
+    { "name": "Unauthorized" }
+  ]
+}

@@ -1,0 +1,260 @@
+---
+import BaseLayout from "./BaseLayout.astro";
+import site from "../config/site";
+
+type Linkish = { href: string; title: string };
+
+interface Hero {
+  src: string;
+  alt?: string;
+}
+
+interface Props {
+  title: string;
+  description?: string;
+  authorName?: string;
+  authorUrl?: string;
+  authorAvatar?: string;
+  pubDate: string | Date;
+  updatedDate?: string | Date;
+  tags?: string[];
+  hero?: Hero;
+  canonical?: string;
+  noIndex?: boolean;
+  draft?: boolean;
+  /** If provided, used verbatim; else computed from wordCount at ~200 wpm. */
+  readingTimeMins?: number;
+  /** Optional hint for computing reading time. */
+  wordCount?: number;
+  /** Previous/Next links for article footer. */
+  prev?: Linkish | null;
+  next?: Linkish | null;
+  /** Optional JSON-LD additions (merged into Article object). */
+  jsonLdExtra?: Record<string, any>;
+}
+
+/* ----------------------------- Helpers ----------------------------- */
+
+const {
+  title,
+  description = "",
+  authorName = "Animica",
+  authorUrl,
+  authorAvatar = "/icons/logo.svg",
+  pubDate,
+  updatedDate,
+  tags = [],
+  hero,
+  canonical = site.url ? new URL(Astro.url.pathname, site.url).toString() : Astro.url.href,
+  draft = false,
+  noIndex = draft,
+  readingTimeMins,
+  wordCount,
+  prev = null,
+  next = null,
+  jsonLdExtra = {},
+} = Astro.props as Props;
+
+function toISO(d: string | Date | undefined): string | undefined {
+  if (!d) return undefined;
+  try { return new Date(d).toISOString(); } catch { return undefined; }
+}
+
+function fmtDate(d: string | Date): string {
+  try {
+    return new Date(d).toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+    });
+  } catch {
+    return String(d);
+  }
+}
+
+const etaMins = (() => {
+  if (typeof readingTimeMins === "number") return Math.max(1, Math.round(readingTimeMins));
+  if (typeof wordCount === "number" && isFinite(wordCount)) return Math.max(1, Math.round(wordCount / 200));
+  return undefined;
+})();
+
+const ogImageAbs = (() => {
+  const img = hero?.src ?? "/icons/wordmark.svg";
+  try {
+    return new URL(img, site.url || Astro.url.origin).toString();
+  } catch {
+    return img;
+  }
+})();
+
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "Article",
+  mainEntityOfPage: canonical,
+  headline: title,
+  description,
+  image: ogImageAbs,
+  datePublished: toISO(pubDate),
+  dateModified: toISO(updatedDate ?? pubDate),
+  author: {
+    "@type": "Person",
+    name: authorName,
+    url: authorUrl,
+  },
+  publisher: {
+    "@type": "Organization",
+    name: site.brand,
+    logo: {
+      "@type": "ImageObject",
+      url: new URL("/icons/logo.svg", site.url || Astro.url.origin).toString(),
+    },
+  },
+  keywords: tags.join(", "),
+  ...jsonLdExtra,
+};
+---
+
+<BaseLayout
+  title={title}
+  description={description}
+  canonical={canonical}
+  noIndex={noIndex}
+  image={ogImageAbs}
+  jsonLd={jsonLd}
+>
+  <fragment slot="header">
+    <header class="container mx-auto px-4 py-5 flex items-center justify-between gap-4">
+      <a href="/" class="inline-flex items-center gap-2 font-semibold">
+        <img src="/icons/logo.svg" alt={site.brand} width="24" height="24" />
+        <span>{site.brand}</span>
+      </a>
+      <nav class="text-sm flex items-center gap-4">
+        <a href="/blog" class="opacity-80 hover:opacity-100">All Posts</a>
+        <a href="/docs" class="opacity-80 hover:opacity-100">Docs</a>
+        <a href="/explorer" class="opacity-80 hover:opacity-100">Explorer</a>
+      </nav>
+    </header>
+  </fragment>
+
+  <article class="container mx-auto px-4 py-8 max-w-3xl" itemscope itemtype="https://schema.org/Article">
+    {hero && (
+      <figure class="mb-8 rounded overflow-hidden border border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <img src={hero.src} alt={hero.alt ?? title} loading="eager" decoding="async" class="w-full h-auto object-cover" />
+        {hero.alt && <figcaption class="sr-only">{hero.alt}</figcaption>}
+      </figure>
+    )}
+
+    <header class="mb-6">
+      {draft && (
+        <div class="mb-3 inline-flex items-center gap-2 text-xs rounded px-2 py-1 border border-dashed">
+          Draft · noindex
+        </div>
+      )}
+      <h1 class="text-3xl sm:text-4xl leading-tight font-semibold" itemprop="headline">{title}</h1>
+      {description && (
+        <p class="mt-3 text-[0.98rem] opacity-90" itemprop="description">{description}</p>
+      )}
+
+      <div class="mt-4 flex items-center gap-3 text-sm opacity-90">
+        <img src={authorAvatar} alt={authorName} width="28" height="28" class="rounded-full border border-[color-mix(in_srgb,var(--text-primary)_/_14%,transparent)]" />
+        <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span itemprop="author" itemscope itemtype="https://schema.org/Person">
+            {authorUrl ? <a href={authorUrl} rel="author noopener" class="hover:opacity-100 opacity-90" itemprop="url"><span itemprop="name">{authorName}</span></a>
+                       : <span itemprop="name">{authorName}</span>}
+          </span>
+          <span aria-hidden="true">•</span>
+          <time datetime={toISO(pubDate)} itemprop="datePublished">{fmtDate(pubDate)}</time>
+          {updatedDate && (
+            <>
+              <span aria-hidden="true">•</span>
+              <time datetime={toISO(updatedDate)} itemprop="dateModified">Updated {fmtDate(updatedDate)}</time>
+            </>
+          )}
+          {etaMins && (
+            <>
+              <span aria-hidden="true">•</span>
+              <span>{etaMins} min read</span>
+            </>
+          )}
+        </div>
+      </div>
+
+      {tags.length > 0 && (
+        <ul class="mt-4 flex flex-wrap gap-2 text-xs" aria-label="Tags">
+          {tags.map((t) => (
+            <li>
+              <a href={`/blog/tag/${encodeURIComponent(t.toLowerCase())}`} class="inline-block rounded px-2 py-1 border hover:bg-[var(--bg-elevated)]">
+                #{t}
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+    </header>
+
+    <div class="prose prose-invert max-w-none" itemprop="articleBody">
+      <slot />
+    </div>
+
+    <hr class="my-10 border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]" />
+
+    <section class="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
+      <div class="flex items-center gap-3">
+        <img src={authorAvatar} alt={authorName} width="40" height="40" class="rounded-full border" />
+        <div class="text-sm">
+          <div class="font-medium">{authorName}</div>
+          {authorUrl && <a href={authorUrl} class="opacity-80 hover:opacity-100">Author profile</a>}
+        </div>
+      </div>
+
+      <div class="flex items-center gap-3 text-sm">
+        <span class="opacity-80">Share:</span>
+        <a
+          class="underline-offset-4 hover:underline"
+          href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(title)}&url=${encodeURIComponent(canonical)}`}
+          rel="noopener"
+          >X/Twitter</a
+        >
+        <a
+          class="underline-offset-4 hover:underline"
+          href={`https://www.linkedin.com/shareArticle?mini=true&url=${encodeURIComponent(canonical)}&title=${encodeURIComponent(title)}&summary=${encodeURIComponent(description)}`}
+          rel="noopener"
+          >LinkedIn</a
+        >
+        <button class="underline-offset-4 hover:underline" onClick={() => navigator.clipboard?.writeText(canonical)}>
+          Copy link
+        </button>
+      </div>
+    </section>
+
+    {(prev || next) && (
+      <nav class="mt-10 grid gap-4 sm:grid-cols-2" aria-label="Post navigation">
+        {prev && (
+          <a href={prev.href} class="block rounded border p-4 hover:bg-[var(--bg-elevated)]">
+            <div class="text-xs opacity-70">Previous</div>
+            <div class="font-medium line-clamp-2">{prev.title}</div>
+          </a>
+        )}
+        {next && (
+          <a href={next.href} class="block rounded border p-4 hover:bg-[var(--bg-elevated)] sm:text-right">
+            <div class="text-xs opacity-70">Next</div>
+            <div class="font-medium line-clamp-2">{next.title}</div>
+          </a>
+        )}
+      </nav>
+    )}
+  </article>
+
+  <fragment slot="footer">
+    <footer class="container mx-auto px-4 py-12 text-sm opacity-80">
+      <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <span>© {new Date().getFullYear()} {site.brand}</span>
+        <div class="flex gap-4">
+          <a href="/privacy" class="hover:opacity-100 opacity-80">Privacy</a>
+          <a href="/terms" class="hover:opacity-100 opacity-80">Terms</a>
+          <a href="/blog/rss.xml" class="hover:opacity-100 opacity-80">RSS</a>
+        </div>
+      </div>
+    </footer>
+  </fragment>
+</BaseLayout>

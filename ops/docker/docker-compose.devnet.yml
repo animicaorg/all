@@ -1,0 +1,291 @@
+version: "3.9"
+
+# 1-click public devnet: node + miner + studio-services + explorer + metrics
+# Usage:
+#   docker compose -f ops/docker/docker-compose.devnet.yml up -d --build
+#   docker compose -f ops/docker/docker-compose.devnet.yml logs -f node
+#   open http://localhost:8080 (Explorer UI) / http://localhost:3000 (Grafana) / http://localhost:9090 (Prometheus)
+#
+# Notes:
+# - Images are built from repo sources via the Dockerfiles under ops/docker/.
+# - Metrics are scraped by Prometheus from each service's /metrics endpoint.
+# - Health checks use ops/docker/healthchecks/http_health.sh (curl/wget/nc).
+# - For tunables, see ops/.env.example (you can pass --env-file ops/.env.example).
+
+name: animica-devnet
+
+x-health-script: &healthchecks_mount
+  - ./healthchecks:/healthchecks:ro
+
+x-common-env: &common_env
+  ANIMICA_LOG_FORMAT=json
+  ANIMICA_LOG_LEVEL=info
+
+x-node-env: &node_env
+  <<: *common_env
+  # RPC / WS
+  RPC_HOST=0.0.0.0
+  RPC_PORT=8545
+  RPC_CORS=*
+  RPC_ALLOW_ORIGINS=*
+  RPC_RATE_LIMITS=default
+  # Chain / DB
+  CHAIN_ID=${CHAIN_ID:-1337}
+  DB_BACKEND=sqlite
+  DB_PATH=/data/node/animica.db
+  # P2P (public devnet defaults)
+  P2P_ENABLE=true
+  P2P_LISTEN=0.0.0.0:30333
+  P2P_SEEDS=${P2P_SEEDS:-}
+  # Metrics
+  METRICS_ENABLE=true
+
+x-services-env: &services_env
+  <<: *common_env
+  RPC_URL=http://node:8545
+  WS_URL=ws://node:8545/ws
+  CHAIN_ID=${CHAIN_ID:-1337}
+  SERVICES_HOST=0.0.0.0
+  SERVICES_PORT=8081
+  SERVICES_CORS=*
+  SERVICES_LOG_LEVEL=info
+  SERVICES_DB_BACKEND=sqlite
+  SERVICES_SQLITE_FILE=studio_services.db
+  SERVICES_STORAGE_DIR=/data/services
+  START_WORKER=true
+  RUN_MIGRATIONS=true
+  METRICS_ENABLE=true
+  # Faucet (devnet only; leave FAUCET_KEY empty to disable sending funds)
+  FAUCET_ENABLE=${FAUCET_ENABLE:-false}
+  FAUCET_KEY=${FAUCET_KEY:-}
+  FAUCET_DRIP_AMOUNT=100000000000000000
+
+x-miner-env: &miner_env
+  <<: *common_env
+  RPC_URL=http://node:8545
+  WS_URL=ws://node:8545/ws
+  CHAIN_ID=${CHAIN_ID:-1337}
+  MINER_DEVICE=cpu
+  MINER_THREADS=${MINER_THREADS:-2}
+  # Easy blocks in devnet
+  SHARE_TARGET_EASING=high
+  METRICS_HOST=0.0.0.0
+  METRICS_PORT=9103
+
+x-explorer-env: &explorer_env
+  <<: *common_env
+  RPC_URL=http://node:8545
+  CHAIN_ID=${CHAIN_ID:-1337}
+  EXPLORER_HOST=0.0.0.0
+  EXPLORER_PORT=8082
+  METRICS_ENABLE=true
+
+networks:
+  animica:
+    driver: bridge
+
+volumes:
+  node-data:
+  miner-data:
+  services-data:
+  explorer-data:
+  prom-data:
+  grafana-data:
+
+services:
+  node:
+    build:
+      context: ../..
+      dockerfile: ops/docker/node.Dockerfile
+    container_name: animica-node
+    restart: unless-stopped
+    environment: *node_env
+    command: ["/bin/sh", "-lc", "/app/ops/docker/entrypoints/node.sh"]
+    volumes:
+      - node-data:/data
+      - ./entrypoints:/entrypoints:ro
+      - *healthchecks_mount
+    ports:
+      - "8545:8545"   # RPC/WS (WS served at /ws)
+      - "30333:30333" # P2P
+    healthcheck:
+      test: ["CMD-SHELL", "/healthchecks/http_health.sh --url http://localhost:8545/healthz --timeout 10 --retries 12 --backoff 500"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    networks: [animica]
+
+  miner:
+    build:
+      context: ../..
+      dockerfile: ops/docker/miner.Dockerfile
+    container_name: animica-miner
+    restart: unless-stopped
+    environment: *miner_env
+    command: ["/bin/sh", "-lc", "/app/ops/docker/entrypoints/miner.sh"]
+    depends_on:
+      node:
+        condition: service_healthy
+    volumes:
+      - miner-data:/data
+      - ./entrypoints:/entrypoints:ro
+      - *healthchecks_mount
+    ports:
+      - "3333:3333"   # Stratum (optional for external miners)
+    healthcheck:
+      test: ["CMD-SHELL", "/healthchecks/http_health.sh --tcp localhost:3333 --retries 10 --backoff 500 || /healthchecks/http_health.sh --url http://localhost:9103/metrics --retries 10 --backoff 500"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks: [animica]
+
+  services:
+    build:
+      context: ../..
+      dockerfile: ops/docker/studio-services.Dockerfile
+    container_name: animica-services
+    restart: unless-stopped
+    environment: *services_env
+    command: ["/bin/sh", "-lc", "/app/ops/docker/entrypoints/services.sh"]
+    depends_on:
+      node:
+        condition: service_healthy
+    volumes:
+      - services-data:/data
+      - ./entrypoints:/entrypoints:ro
+      - *healthchecks_mount
+    ports:
+      - "8081:8081"  # Studio Services API
+    healthcheck:
+      test: ["CMD-SHELL", "/healthchecks/http_health.sh --url http://localhost:8081/healthz --timeout 10 --retries 12 --backoff 500"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    networks: [animica]
+
+  explorer:
+    build:
+      context: ../..
+      dockerfile: ops/docker/explorer.Dockerfile
+    container_name: animica-explorer
+    restart: unless-stopped
+    environment: *explorer_env
+    command: ["/bin/sh", "-lc", "/app/ops/docker/entrypoints/explorer.sh"]
+    depends_on:
+      node:
+        condition: service_healthy
+    volumes:
+      - explorer-data:/data
+      - ./entrypoints:/entrypoints:ro
+      - *healthchecks_mount
+    ports:
+      - "8082:8082"  # Explorer API
+    healthcheck:
+      test: ["CMD-SHELL", "/healthchecks/http_health.sh --url http://localhost:8082/healthz --timeout 10 --retries 12 --backoff 500"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    networks: [animica]
+
+  explorer-web:
+    build:
+      context: ../..
+      dockerfile: ops/docker/explorer-web.Dockerfile
+    container_name: animica-explorer-web
+    restart: unless-stopped
+    environment:
+      VITE_RPC_URL: "http://localhost:8545"
+      VITE_CHAIN_ID: "${CHAIN_ID:-1337}"
+      VITE_EXPLORER_API: "http://explorer:8082"
+      NODE_ENV: production
+    depends_on:
+      explorer:
+        condition: service_healthy
+    ports:
+      - "8080:80" # Public UI
+    networks: [animica]
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: animica-prometheus
+    restart: unless-stopped
+    user: "0:0"
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        cat > /etc/prometheus/prometheus.yml <<'CFG'
+        global:
+          scrape_interval: 5s
+          evaluation_interval: 5s
+        scrape_configs:
+          - job_name: 'animica-node'
+            metrics_path: /metrics
+            static_configs: [{ targets: ['node:8545'] }]
+          - job_name: 'animica-miner'
+            metrics_path: /metrics
+            static_configs: [{ targets: ['miner:9103'] }]
+          - job_name: 'animica-services'
+            metrics_path: /metrics
+            static_configs: [{ targets: ['services:8081'] }]
+          - job_name: 'animica-explorer'
+            metrics_path: /metrics
+            static_configs: [{ targets: ['explorer:8082'] }]
+        CFG
+        exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus --web.enable-lifecycle
+    volumes:
+      - prom-data:/prometheus
+      - *healthchecks_mount
+    ports:
+      - "9090:9090"
+    healthcheck:
+      test: ["CMD-SHELL", "/healthchecks/http_health.sh --url http://localhost:9090/-/ready --timeout 10 --retries 12 --backoff 500"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    networks: [animica]
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: animica-grafana
+    restart: unless-stopped
+    user: "0:0"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        mkdir -p /etc/grafana/provisioning/datasources
+        cat > /etc/grafana/provisioning/datasources/prom.yml <<'CFG'
+        apiVersion: 1
+        datasources:
+          - name: Prometheus
+            type: prometheus
+            access: proxy
+            isDefault: true
+            url: http://prometheus:9090
+        CFG
+        /run.sh
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - *healthchecks_mount
+    ports:
+      - "3000:3000"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "/healthchecks/http_health.sh --url http://localhost:3000/api/health --timeout 10 --retries 12 --backoff 500"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks: [animica]

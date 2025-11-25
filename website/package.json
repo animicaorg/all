@@ -1,0 +1,70 @@
+{
+  "name": "animica-website",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Animica marketing & docs site built with Astro + TypeScript (+ optional Tailwind).",
+  "type": "module",
+  "license": "MIT",
+  "packageManager": "pnpm@9",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check",
+    "sync": "astro sync",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --ext .js,.jsx,.ts,.tsx,.astro,.mdx",
+    "format": "prettier --write \"**/*.{js,jsx,ts,tsx,astro,md,mdx,css}\"",
+    "test": "vitest run",
+    "test:ui": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "prepare": "husky install",
+    "predeploy": "astro build",
+    "serve": "astro preview --host",
+    "postinstall": "playwright install --with-deps || true"
+  },
+  "dependencies": {
+    "@animica/sdk": "file:../sdk",
+    "@astrojs/mdx": "^3.1.0",
+    "@astrojs/sitemap": "^3.1.0",
+    "@types/node": "^20.14.10",
+    "astro": "^4.12.0"
+  },
+  "devDependencies": {
+    "@astrojs/tailwind": "^5.1.0",
+    "@eslint/js": "^9.9.0",
+    "@playwright/test": "^1.49.0",
+    "@typescript-eslint/eslint-plugin": "^8.3.0",
+    "@typescript-eslint/parser": "^8.3.0",
+    "@vitest/ui": "^1.6.0",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^9.9.0",
+    "eslint-plugin-astro": "^1.2.3",
+    "eslint-plugin-import": "^2.30.0",
+    "husky": "^9.1.5",
+    "jsdom": "^24.1.0",
+    "lint-staged": "^15.2.9",
+    "postcss": "^8.4.47",
+    "prettier": "^3.3.3",
+    "prettier-plugin-astro": "^0.14.1",
+    "tailwindcss": "^3.4.12",
+    "typescript": "^5.6.3",
+    "vitest": "^1.6.0"
+  },
+  "lint-staged": {
+    "*.{js,jsx,ts,tsx,astro,md,mdx,css}": [
+      "prettier --write"
+    ]
+  },
+  "keywords": [
+    "astro",
+    "typescript",
+    "tailwind",
+    "animica",
+    "website"
+  ]
+}

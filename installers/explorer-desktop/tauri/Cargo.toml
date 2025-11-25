@@ -1,0 +1,119 @@
+[package]
+name = "animica-explorer"
+version = "0.1.0"
+edition = "2021"
+description = "Animica Explorer — lightweight Tauri shell for the Animica block explorer UI."
+authors = ["Animica Labs <release@animica.dev>"]
+license = "Proprietary"
+repository = "https://animica.dev"
+# default-run lets `cargo run --release` start the app binary directly
+default-run = "animica-explorer"
+
+[features]
+# Build the app with bundled (offline) UI by default. Switch to `url-mode` to load a remote URL.
+default = ["offline"]
+offline = []          # UI assets are packaged inside the app (distDir)
+url-mode = []         # App points the WebView at EXPLORER_URL (with offline fallback if available)
+updater = ["tauri/updater"]  # Enable Tauri's signed auto-updater
+
+[dependencies]
+tauri = { version = "2", features = [] }
+# Enable the line above as: { version = "2", features = ["updater"] } or via the `updater` crate feature.
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+thiserror = "1.0"
+once_cell = "1.19"
+url = "2.5"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[profile.release]
+# Favor small, fast binaries
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+opt-level = "s"
+
+# -------------------------------
+# Tauri bundler / runtime config
+# (Tauri v2 also supports tauri.conf.json;
+#  we keep key bits here to keep the crate self-contained in CI.)
+# -------------------------------
+[package.metadata.tauri]
+# Product metadata (mirrors installers/explorer-desktop/config/app_metadata.json)
+productName = "Animica Explorer"
+identifier  = "io.animica.explorer"
+
+# Development server URL (used by `cargo tauri dev`)
+# Change if your web UI dev server runs on a different port.
+devPath = "http://localhost:5173"
+
+# Offline (bundled) distribution directory for `cargo tauri build` when the `offline` feature is used.
+# Point this to the Explorer UI's production build output (e.g., ../dist).
+distDir = "../dist"
+
+# The shell will only allow these external origins in URL mode (renderer navigation).
+allowedExternalUrls = [
+  "https://explorer.animica.dev",
+  "https://rpc.animica.dev",
+  "wss://rpc.animica.dev"
+]
+
+# Optional CSP to harden offline builds (adjust as your UI requires).
+# For remote builds, ensure the CDN serves a compatible CSP.
+securityCsp = "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https://* wss://*; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+
+[package.metadata.tauri.bundle]
+active = true
+# Generate common Linux formats and platform installers in CI
+targets = ["all"]
+icon = [
+  "icons/icon.icns",   # macOS
+  "icons/icon.ico",    # Windows
+  "icons/128x128.png", # Linux hicolor (include other sizes alongside)
+  "icons/256x256.png"
+]
+resources = []
+copyright = "© 2025 Animica Labs"
+
+[package.metadata.tauri.updater]
+# Enable only when the `updater` feature is used and you have signed feeds in place.
+active = false
+endpoints = []        # e.g., ["https://updates.animica.dev/explorer/{{target}}/{{current_version}}"]
+dialog = true
+pubkey = ""           # REQUIRED when active=true. Keep the public key in repo; private key offline.
+
+[package.metadata.tauri.macOS]
+# Remove `exceptionDomain` entries if you bundle offline only.
+minimumSystemVersion = "11.0"
+signingIdentity = null
+entitlements = null
+exceptionDomain = ["explorer.animica.dev", "rpc.animica.dev"]
+
+[package.metadata.tauri.windows]
+# Use MSIX in CI where possible; otherwise MSI is generated.
+webviewInstallMode = { type = "downloadBootstrapper" }
+
+[package.metadata.tauri.windows.wix]
+# For MSI-based installs (if used)
+language = ["en-US"]
+
+[package.metadata.tauri.windows.msix]
+# For MSIX-based installs
+publisher = "CN=Animica Labs"
+displayName = "Animica Explorer"
+identityName = "Animica.Explorer"
+# When submitting to the Store, you'll need a real Publisher and identityName.
+
+[package.metadata.tauri.linux]
+# Desktop category and Debian/RPM package metadata
+category = "Network"
+shortDescription = "Animica Explorer — desktop shell (small footprint, offline-capable)"
+deb = { depends = ["libgtk-3-0", "libayatana-appindicator3-1", "libx11-6", "libxcb1", "libxrandr2", "libxi6", "libxtst6", "libxext6", "libxfixes3", "libxkbcommon0", "libnss3", "libasound2", "libglib2.0-0"] }
+rpm = { depends = ["gtk3", "libX11", "libxcb", "libXrandr", "libXi", "libXtst", "libXext", "libXfixes", "libxkbcommon", "nss", "alsa-lib", "glib2"] }
+appimage = { }
+categoryDescription = "Blockchain explorer"
+

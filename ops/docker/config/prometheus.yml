@@ -1,0 +1,112 @@
+# Prometheus configuration for Animica docker-compose devnet/observability
+# Static scrape targets correspond to container names defined in the compose files.
+# Each service exposes Prometheus metrics on its own port:
+#   - node:      9102  (core/rpc)
+#   - miner:     9103
+#   - explorer:  9104
+#   - services:  9105  (studio-services)
+# Optional infra (only if present in your compose):
+#   - prometheus:    9090 (self-scrape)
+#   - node-exporter: 9100
+#   - cadvisor:      8080
+#   - loki:          3100
+#   - tempo:         3200
+#   - grafana:       3000
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: "devnet"
+
+# You may include rule files later if desired.
+# rule_files:
+#   - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  # ─────────────────────────── Prometheus self ────────────────────────────
+  - job_name: prometheus
+    static_configs:
+      - targets: ["prometheus:9090"]
+
+  # ─────────────────────────── Animica services ───────────────────────────
+  - job_name: animica_node
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["node:9102"]
+        labels:
+          component: node
+          service: animica
+
+  - job_name: animica_miner
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["miner:9103"]
+        labels:
+          component: miner
+          service: animica
+
+  - job_name: animica_explorer_api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["explorer:9104"]
+        labels:
+          component: explorer-api
+          service: animica
+
+  - job_name: animica_studio_services
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["services:9105"]
+        labels:
+          component: studio-services
+          service: animica
+
+  # ───────────────────────── Optional infra (if present) ──────────────────
+  - job_name: node_exporter
+    static_configs:
+      - targets: ["node-exporter:9100"]
+        labels:
+          component: node-exporter
+    relabel_configs:
+      # Preserve container name as instance when available (optional)
+      - source_labels: [__address__]
+        regex: "([^:]+):.*"
+        target: instance
+        replacement: "$1"
+
+  - job_name: cadvisor
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["cadvisor:8080"]
+        labels:
+          component: cadvisor
+
+  - job_name: loki
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["loki:3100"]
+        labels:
+          component: loki
+
+  - job_name: tempo
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["tempo:3200"]
+        labels:
+          component: tempo
+
+  - job_name: grafana
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["grafana:3000"]
+        labels:
+          component: grafana
+
+# Uncomment to enable remote write to a long-term store.
+# remote_write:
+#   - url: https://example.com/api/v1/write
+#     queue_config:
+#       capacity: 5000
+#       max_shards: 4

@@ -1,0 +1,11 @@
+{
+  "$schema": "../schemas/variables.schema.json",
+  "values": {
+    "project_name": "My Contract",
+    "project_slug": "my-contract",
+    "contract_class": "Counter",
+    "license": "Apache-2.0",
+    "description": "A minimal Animica Python contract with get/inc methods and events.",
+    "init_value": 0
+  }
+}

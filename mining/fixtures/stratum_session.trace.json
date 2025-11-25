@@ -1,0 +1,241 @@
+{
+  "meta": {
+    "protocol": "Animica Stratum v1.0 (JSON-RPC over TCP)",
+    "server": "127.0.0.1:3333",
+    "client": "animica-cpu/0.1.0",
+    "chainId": 1337,
+    "notes": "Example subscribe→notify→submit flow incl. useful-work attachments and acceptance."
+  },
+  "frames": [
+    {
+      "ts": "2025-09-20T12:00:00.100Z",
+      "dir": "c->s",
+      "request": {
+        "id": 1,
+        "method": "mining.subscribe",
+        "params": {
+          "client": "animica-cpu/0.1.0",
+          "features": ["hashshare", "ai", "quantum", "storage", "vdf"],
+          "pq": { "sigAlgs": ["dilithium3", "sphincs+shake-128s"] },
+          "capabilities": { "threads": 8, "device": "cpu" }
+        }
+      }
+    },
+    {
+      "ts": "2025-09-20T12:00:00.140Z",
+      "dir": "s->c",
+      "response": {
+        "id": 1,
+        "result": {
+          "sessionId": "sess-3QfW6g8k",
+          "extranonce1": "V9sD2u2d",
+          "extranonce2Size": 8,
+          "algPolicyRoot": "0x7777777777777777777777777777777777777777777777777777777777777777",
+          "thetaMicro": 5400000,
+          "welcome": "Subscribed. Will push difficulty & job shortly."
+        }
+      }
+    },
+    {
+      "ts": "2025-09-20T12:00:00.150Z",
+      "dir": "s->c",
+      "notify": {
+        "method": "mining.set_difficulty",
+        "params": { "value": 4096, "thetaMicro": 5400000 }
+      }
+    },
+    {
+      "ts": "2025-09-20T12:00:00.155Z",
+      "dir": "s->c",
+      "notify": {
+        "method": "mining.notify",
+        "params": {
+          "jobId": "job_fixture_0001",
+          "cleanJobs": true,
+          "headerTemplate": {
+            "parentHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "number": 123456,
+            "chainId": 1337,
+            "mixSeed": "0x5555555555555555555555555555555555555555555555555555555555555555",
+            "thetaMicro": 5400000,
+            "policyRoots": {
+              "poies": "0x6666666666666666666666666666666666666666666666666666666666666666",
+              "algPolicy": "0x7777777777777777777777777777777777777777777777777777777777777777"
+            },
+            "roots": {
+              "state":  "0x1111111111111111111111111111111111111111111111111111111111111111",
+              "txs":    "0x2222222222222222222222222222222222222222222222222222222222222222",
+              "proofs": "0x3333333333333333333333333333333333333333333333333333333333333333",
+              "da":     "0x4444444444444444444444444444444444444444444444444444444444444444"
+            },
+            "nonceDomainTag": "ANIMICA-NONCE-V1"
+          },
+          "extranonce1": "V9sD2u2d",
+          "extranonce2Size": 8
+        }
+      }
+    },
+    {
+      "ts": "2025-09-20T12:00:01.010Z",
+      "dir": "c->s",
+      "request": {
+        "id": 2,
+        "method": "mining.submit",
+        "params": {
+          "sessionId": "sess-3QfW6g8k",
+          "jobId": "job_fixture_0001",
+          "extranonce2": "0000000000000001",
+          "nonce": "0x00000000000000000000000000000001",
+          "u": 0.3141592653,
+          "mixDigest": "0x9d4f20c2c0b7c9d4a1a1d2e3f4b5c6d7e8f90123456789abcdef01234567890",
+          "hash": "0xabcdecfa0f0e0d0c0b0a090807060504030201ffeeddccbbaa998877665544",
+          "proofs": {
+            "hashshare": {
+              "d_ratio": 0.00048,
+              "header_hash": "0x0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+              "nonce_domain": "ANIMICA-NONCE-V1"
+            },
+            "ai": {
+              "digest": "0x1111eeee2222dddd3333cccc4444bbbb5555aaaa666699998888777766665555",
+              "nullifier": "0x9999888877776666555544443333222211110000aaaabbbbccccddddeeeeffff",
+              "units": 64,
+              "qos": 0.97,
+              "traps_ratio": 0.11
+            }
+          }
+        }
+      }
+    },
+    {
+      "ts": "2025-09-20T12:00:01.020Z",
+      "dir": "s->c",
+      "response": {
+        "id": 2,
+        "result": {
+          "accepted": true,
+          "reason": null,
+          "psiMicroNats": 12500,
+          "difficultyRatio": 0.00048,
+          "isBlock": false
+        }
+      }
+    },
+    {
+      "ts": "2025-09-20T12:00:02.000Z",
+      "dir": "s->c",
+      "notify": {
+        "method": "mining.notify",
+        "params": {
+          "jobId": "job_fixture_0002",
+          "cleanJobs": false,
+          "headerTemplate": {
+            "parentHash": "0x0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+            "number": 123457,
+            "chainId": 1337,
+            "mixSeed": "0x8888888888888888888888888888888888888888888888888888888888888888",
+            "thetaMicro": 5400000,
+            "policyRoots": {
+              "poies": "0x6666666666666666666666666666666666666666666666666666666666666666",
+              "algPolicy": "0x7777777777777777777777777777777777777777777777777777777777777777"
+            },
+            "roots": {
+              "state":  "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "txs":    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "proofs": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+              "da":     "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+            },
+            "nonceDomainTag": "ANIMICA-NONCE-V1"
+          },
+          "extranonce1": "V9sD2u2d",
+          "extranonce2Size": 8
+        }
+      }
+    },
+    {
+      "ts": "2025-09-20T12:00:03.420Z",
+      "dir": "c->s",
+      "request": {
+        "id": 3,
+        "method": "mining.submit",
+        "params": {
+          "sessionId": "sess-3QfW6g8k",
+          "jobId": "job_fixture_0002",
+          "extranonce2": "0000000000000002",
+          "nonce": "0x00000000000000000000000000000002",
+          "u": 0.018281828,
+          "mixDigest": "0x0b1c2d3e4f5061728394a5b6c7d8e9f00112233445566778899aabbccddeeff",
+          "hash": "0xfedcba9876543210ffeeddccbbbaaaff00112233445566778899aabbccddeef0",
+          "proofs": {
+            "hashshare": {
+              "d_ratio": 0.00092,
+              "header_hash": "0x111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000",
+              "nonce_domain": "ANIMICA-NONCE-V1"
+            },
+            "quantum": {
+              "digest": "0xaaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666777788889999aaaa",
+              "nullifier": "0x1234123412341234123412341234123412341234123412341234123412341234",
+              "units": 128,
+              "traps_ratio": 0.13,
+              "qos": 0.95
+            }
+          }
+        }
+      }
+    },
+    {
+      "ts": "2025-09-20T12:00:03.436Z",
+      "dir": "s->c",
+      "response": {
+        "id": 3,
+        "result": {
+          "accepted": true,
+          "reason": null,
+          "psiMicroNats": 20800,
+          "difficultyRatio": 0.00092,
+          "isBlock": true,
+          "blockHash": "0x0c0c0c0cf0f0f0f0eeeeeeee1234567890abcdef1234567890abcdef12345678",
+          "height": 123457
+        }
+      }
+    },
+    {
+      "ts": "2025-09-20T12:00:03.500Z",
+      "dir": "s->c",
+      "notify": {
+        "method": "mining.set_difficulty",
+        "params": { "value": 4352, "thetaMicro": 5480000 }
+      }
+    },
+    {
+      "ts": "2025-09-20T12:00:03.510Z",
+      "dir": "s->c",
+      "notify": {
+        "method": "mining.notify",
+        "params": {
+          "jobId": "job_fixture_0003",
+          "cleanJobs": true,
+          "headerTemplate": {
+            "parentHash": "0x0c0c0c0cf0f0f0f0eeeeeeee1234567890abcdef1234567890abcdef12345678",
+            "number": 123458,
+            "chainId": 1337,
+            "mixSeed": "0x9999999999999999999999999999999999999999999999999999999999999999",
+            "thetaMicro": 5480000,
+            "policyRoots": {
+              "poies": "0x6666666666666666666666666666666666666666666666666666666666666666",
+              "algPolicy": "0x7777777777777777777777777777777777777777777777777777777777777777"
+            },
+            "roots": {
+              "state":  "0x0101010101010101010101010101010101010101010101010101010101010101",
+              "txs":    "0x0202020202020202020202020202020202020202020202020202020202020202",
+              "proofs": "0x0303030303030303030303030303030303030303030303030303030303030303",
+              "da":     "0x0404040404040404040404040404040404040404040404040404040404040404"
+            },
+            "nonceDomainTag": "ANIMICA-NONCE-V1"
+          },
+          "extranonce1": "V9sD2u2d",
+          "extranonce2Size": 8
+        }
+      }
+    }
+  ]
+}

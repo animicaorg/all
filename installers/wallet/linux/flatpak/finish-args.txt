@@ -1,0 +1,14 @@
+# Flatpak finish-args for Animica Wallet
+# Each line is a single permission/arg passed to `flatpak-builder` or included under
+# `finish-args:` in the Flatpak manifest (io.animica.Wallet.yml).
+
+--share=network
+--socket=wayland
+--socket=x11
+--device=dri
+--socket=pulseaudio
+--talk-name=org.freedesktop.portal.Desktop
+--env=GTK_USE_PORTAL=1
+--env=GDK_BACKEND=wayland,x11
+--env=GTK_THEME=Adwaita:light
+--filesystem=xdg-download:rw

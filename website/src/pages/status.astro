@@ -1,0 +1,339 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import StatusBadge from "../components/StatusBadge.tsx";
+import MetricTicker from "../components/MetricTicker.tsx";
+import InlineLink from "../components/InlineLink.astro";
+import CodeBlock from "../components/CodeBlock.astro";
+import { links } from "../config/links";
+
+const pageTitle = "Network Status — RPC, WS, Head, Peers, TPS";
+const pageDesc =
+  "Live status dashboard for Animica networks: RPC/WS reachability, head height, approximate TPS, and peer/latency hints.";
+
+const baseRpc = links.rpc.url; // May be https://node.example.com or https://node.example.com/rpc
+const rpcHttp = baseRpc.endsWith("/rpc") ? baseRpc : `${baseRpc}/rpc`;
+const wsUrl = (() => {
+  const u = new URL(baseRpc);
+  const proto = u.protocol === "https:" ? "wss:" : "ws:";
+  const path = u.pathname.endsWith("/rpc") ? u.pathname.replace(/\/rpc$/, "/ws") : (u.pathname.endsWith("/") ? `${u.pathname}ws` : `${u.pathname}/ws`);
+  return `${proto}//${u.host}${path}${u.search}`;
+})();
+
+const friendlyRpc = rpcHttp;
+---
+
+<BaseLayout title={pageTitle} description={pageDesc}>
+  <section class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 py-10 sm:py-14">
+    <h1 class="text-3xl sm:text-4xl font-semibold tracking-tight">Live Status</h1>
+    <p class="mt-3 text-base opacity-80">
+      Reaching <code class="font-mono text-[0.95em] break-all">{friendlyRpc}</code>.
+      WebSocket target: <code class="font-mono text-[0.95em] break-all">{wsUrl}</code>.
+    </p>
+
+    <!-- KPI cards -->
+    <div class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <!-- RPC reachability -->
+      <div class="rounded-xl border p-5 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <div class="flex items-center justify-between gap-3">
+          <h3 class="text-sm font-medium opacity-80">RPC</h3>
+          <StatusBadge client:load rpcUrl={baseRpc} />
+        </div>
+        <p class="mt-4 text-xs opacity-70">HTTP endpoint</p>
+        <p class="font-mono text-xs break-all opacity-90">{friendlyRpc}</p>
+      </div>
+
+      <!-- WS status -->
+      <div class="rounded-xl border p-5 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-medium opacity-80">WebSocket</h3>
+          <span id="ws-pill" class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs border opacity-80">
+            <span id="ws-dot" class="inline-block size-2 rounded-full bg-[color-mix(in_srgb,var(--text-primary)_/_45%,transparent)]"></span>
+            <span id="ws-text">checking…</span>
+          </span>
+        </div>
+        <p class="mt-4 text-xs opacity-70">Latency (ms)</p>
+        <p id="ws-lat" class="text-lg font-semibold tracking-tight">—</p>
+      </div>
+
+      <!-- Head height -->
+      <div class="rounded-xl border p-5 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <h3 class="text-sm font-medium opacity-80">Head height</h3>
+        <p class="mt-3 text-2xl font-semibold tracking-tight">
+          <MetricTicker client:load rpcUrl={baseRpc} kind="height" />
+        </p>
+        <p class="text-xs opacity-70 mt-1">Updates live</p>
+      </div>
+
+      <!-- Approx TPS -->
+      <div class="rounded-xl border p-5 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <h3 class="text-sm font-medium opacity-80">Throughput</h3>
+        <p class="mt-3 text-2xl font-semibold tracking-tight">
+          <span id="tps">—</span>
+          <span class="text-sm font-normal opacity-70 ml-1">TPS</span>
+        </p>
+        <p class="text-xs opacity-70 mt-1">
+          <span id="bps">—</span> blocks/s · ~<span id="txpb">—</span> tx/block
+        </p>
+      </div>
+    </div>
+
+    <!-- Secondary: peers & head/meta -->
+    <div class="mt-6 grid gap-4 sm:grid-cols-2">
+      <div class="rounded-xl border p-5 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <h3 class="text-sm font-medium opacity-80">Node Health (best-effort)</h3>
+        <dl class="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+          <div>
+            <dt class="opacity-70">Peers</dt>
+            <dd id="peers" class="mt-0.5 font-medium">—</dd>
+          </div>
+          <div>
+            <dt class="opacity-70">RPC latency</dt>
+            <dd id="rpc-lat" class="mt-0.5 font-medium">—</dd>
+          </div>
+          <div class="col-span-2">
+            <dt class="opacity-70">Health endpoint</dt>
+            <dd class="mt-0.5 font-mono text-xs break-all">
+              <span id="health-endpoint">auto-detected</span>
+            </dd>
+          </div>
+        </dl>
+        <p class="mt-3 text-xs opacity-70">
+          Peers/health depend on optional endpoints (<code>/healthz</code>, <code>/readyz</code>).
+          Values may be unavailable on some nodes.
+        </p>
+      </div>
+
+      <div class="rounded-xl border p-5 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <h3 class="text-sm font-medium opacity-80">Head Meta</h3>
+        <dl class="mt-3 text-sm space-y-2">
+          <div>
+            <dt class="opacity-70">Hash</dt>
+            <dd id="head-hash" class="mt-0.5 font-mono text-xs break-all">—</dd>
+          </div>
+          <div>
+            <dt class="opacity-70">Height</dt>
+            <dd id="head-height" class="mt-0.5 font-mono text-xs">—</dd>
+          </div>
+          <div>
+            <dt class="opacity-70">Timestamp (node)</dt>
+            <dd id="head-time" class="mt-0.5 font-mono text-xs">—</dd>
+          </div>
+        </dl>
+      </div>
+    </div>
+
+    <!-- How to query -->
+    <div class="mt-8 rounded-2xl border p-6 sm:p-8 bg-[var(--bg-elevated)]
+                border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+      <h2 class="text-xl font-semibold tracking-tight">Query examples</h2>
+      <div class="mt-4 grid gap-6 md:grid-cols-2">
+        <CodeBlock lang="bash" title="Get head (cURL)">
+{`curl -s ${friendlyRpc} \\
+  -H 'content-type: application/json' \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":[]}' | jq .`}
+        </CodeBlock>
+        <CodeBlock lang="bash" title="WebSocket subscribe (wscat)">
+{`wscat -c ${wsUrl}
+# Then send:
+# {"jsonrpc":"2.0","id":1,"method":"subscribe","params":["newHeads"]}`}
+        </CodeBlock>
+      </div>
+    </div>
+  </section>
+
+  <!-- Inline controller: fetch head, estimate TPS/BPS, ping, WS, peers -->
+  <script is:inline>
+    (function () {
+      const baseRpc = ${JSON.stringify(baseRpc)};
+      const rpcHttp = ${JSON.stringify(rpcHttp)};
+      const wsUrl = ${JSON.stringify(wsUrl)};
+
+      const el = (id) => document.getElementById(id);
+      const tpsEl = el('tps');
+      const bpsEl = el('bps');
+      const txpbEl = el('txpb');
+      const headHashEl = el('head-hash');
+      const headHeightEl = el('head-height');
+      const headTimeEl = el('head-time');
+      const rpcLatEl = el('rpc-lat');
+      const peersEl = el('peers');
+      const wsText = el('ws-text');
+      const wsDot = el('ws-dot');
+      const wsLat = el('ws-lat');
+      const healthEndpointEl = el('health-endpoint');
+
+      const json = async (res) => {
+        const t = await res.text();
+        try { return JSON.parse(t); } catch { throw new Error("bad JSON"); }
+      };
+
+      async function rpc(method, params) {
+        const body = { jsonrpc: "2.0", id: Math.floor(Math.random()*1e6), method, params: params ?? [] };
+        const t0 = performance.now();
+        const res = await fetch(rpcHttp, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+          keepalive: false,
+          cache: "no-store",
+        });
+        const dt = performance.now() - t0;
+        let data;
+        try { data = await res.json(); } catch { throw new Error("RPC parse error"); }
+        if (data && data.result !== undefined) {
+          return { result: data.result, ms: dt };
+        }
+        throw new Error((data && data.error && data.error.message) || "RPC error");
+      }
+
+      // Maintain small window for BPS/TPS estimate
+      const windowMs = 20_000; // 20s sliding window
+      const heads = []; // {h, ts, txs}
+
+      async function getTxCount(height) {
+        // Best effort: try to fetch block with txs and count them.
+        try {
+          const { result } = await rpc("chain.getBlockByNumber", [height, true, false]);
+          if (!result) return 0;
+          const txs = Array.isArray(result.txs) ? result.txs : (Array.isArray(result.transactions) ? result.transactions : []);
+          return txs.length || 0;
+        } catch {
+          return 0;
+        }
+      }
+
+      async function updateHeadAndRates() {
+        try {
+          const { result, ms } = await rpc("chain.getHead", []);
+          rpcLatEl && (rpcLatEl.textContent = ms.toFixed(0) + " ms");
+
+          if (result) {
+            const h = result.height ?? result.number ?? null;
+            const hash = result.hash ?? result.blockHash ?? null;
+            const ts = Date.now();
+            headHashEl && (headHashEl.textContent = hash || "—");
+            headHeightEl && (headHeightEl.textContent = h != null ? String(h) : "—");
+            headTimeEl && (headTimeEl.textContent = result.timestamp ? String(result.timestamp) : "—");
+
+            if (h != null) {
+              // Only when height increases, sample tx count.
+              const last = heads.length ? heads[heads.length - 1] : null;
+              if (!last || h > last.h) {
+                const txs = await getTxCount(h);
+                heads.push({ h, ts, txs });
+              } else {
+                // refresh timestamp for same height to keep latency fresh
+                heads.push({ h, ts, txs: (last && last.txs) || 0 });
+              }
+
+              // Trim window
+              while (heads.length && (ts - heads[0].ts) > windowMs) heads.shift();
+
+              // Compute BPS & TPS
+              if (heads.length >= 2) {
+                const first = heads[0];
+                const lastS = heads[heads.length - 1];
+                const dh = lastS.h - first.h;
+                const dt = (lastS.ts - first.ts) / 1000;
+                const bps = dt > 0 ? (dh / dt) : 0;
+
+                const totalTx = heads.reduce((acc, it) => acc + (Number.isFinite(it.txs) ? it.txs : 0), 0);
+                const avgTxPerBlock = dh > 0 ? (totalTx / Math.max(1, dh)) : (heads[heads.length - 1].txs || 0);
+
+                const tps = bps * avgTxPerBlock;
+
+                bpsEl && (bpsEl.textContent = bps.toFixed(2));
+                txpbEl && (txpbEl.textContent = Number.isFinite(avgTxPerBlock) ? avgTxPerBlock.toFixed(1) : "—");
+                tpsEl && (tpsEl.textContent = Number.isFinite(tps) ? tps.toFixed(1) : "—");
+              }
+            }
+          }
+        } catch (e) {
+          // degrade: show dashes
+        }
+      }
+
+      // WS connect (best-effort), measure simple open latency and keep status light
+      function connectWS() {
+        try {
+          const t0 = performance.now();
+          const sock = new WebSocket(wsUrl);
+          let opened = false;
+          let pingTimer = null;
+
+          function setWsState(state, colorVar, lat) {
+            wsText && (wsText.textContent = state);
+            wsDot && (wsDot.style.background = colorVar);
+            if (lat != null && wsLat) wsLat.textContent = lat.toFixed(0) + " ms";
+          }
+
+          sock.onopen = () => {
+            opened = true;
+            const dt = performance.now() - t0;
+            setWsState("connected", "var(--ok,#22c55e)", dt);
+
+            // Light ping via RPC head fetch, reported in WS tile (every 10s)
+            pingTimer = setInterval(async () => {
+              try {
+                const t1 = performance.now();
+                await rpc("chain.getHead", []);
+                const dt2 = performance.now() - t1;
+                if (wsLat) wsLat.textContent = dt2.toFixed(0) + " ms";
+              } catch {}
+            }, 10_000);
+          };
+
+          sock.onclose = () => {
+            setWsState("closed", "var(--warn,#f59e0b)");
+            if (pingTimer) clearInterval(pingTimer);
+            // Attempt reconnect after a short delay
+            setTimeout(connectWS, 3_000);
+          };
+
+          sock.onerror = () => {
+            if (!opened) {
+              setWsState("unreachable", "var(--err,#ef4444)");
+            }
+          };
+        } catch {
+          // ignore
+        }
+      }
+
+      // Optional /healthz or /readyz probe for peers
+      async function loadHealth() {
+        try {
+          const u = new URL(baseRpc);
+          const base = u.pathname.endsWith("/rpc") ? u.pathname.replace(/\/rpc$/, "") : u.pathname;
+          const healthZ = `${u.origin}${base}/healthz`;
+          const readyZ  = `${u.origin}${base}/readyz`;
+          healthEndpointEl && (healthEndpointEl.textContent = healthZ + " (or " + readyZ + ")");
+
+          let res = await fetch(healthZ, { cache: "no-store" });
+          if (!res.ok) res = await fetch(readyZ, { cache: "no-store" });
+          if (res.ok) {
+            const data = await json(res).catch(() => null);
+            if (data) {
+              const peers = data.peers ?? data.peerCount ?? data.connectedPeers ?? "—";
+              peersEl && (peersEl.textContent = String(peers));
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      // Schedule loops
+      connectWS();
+      loadHealth();
+      updateHeadAndRates();
+      setInterval(updateHeadAndRates, 3_000);
+    })();
+  </script>
+</BaseLayout>

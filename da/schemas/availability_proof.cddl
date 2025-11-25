@@ -1,0 +1,166 @@
+; Animica DA — Data-Availability Sampling (DAS) proofs
+; ----------------------------------------------------
+; Deterministic CBOR schemas for proving availability of erasure-encoded,
+; namespaced data under a single DA commitment (NMT root).
+;
+; This file defines:
+;   • Per-sample inclusion proofs (simple form)
+;   • A compact multi-sample form with deduplicated branch steps
+;   • A namespace-range proof form (proves coverage of a target ns interval)
+;
+; See also (informative):
+;   - da/schemas/blob.cddl        : blob envelope & chunk layout
+;   - da/schemas/nmt.cddl         : NMT leaf/inner descriptors & hashing domains
+;
+; Conventions
+; -----------
+; - All maps use small integer keys for canonical ordering.
+; - Hash function is SHA3-256 with domain tags as described in nmt.cddl.
+; - “Namespace” and “range” constraints are enforced at the verifier level.
+; - Indices are zero-based.
+;
+; NOTE: This schema focuses on *proof shapes*; the precise verification
+; algorithm (leaf indexing, layout mapping, namespace rules) is normative in
+; code and referenced specifications.
+
+; ---------------------------------- Types ------------------------------------
+
+sha3_256 = bstr .size 32
+namespace = uint
+
+; Closed namespace interval [min, max]
+ns_range = {
+  0: min: namespace,
+  1: max: namespace,
+}
+
+; Erasure/chunking layout (duplicated here for convenience)
+layout = {
+  0: k: uint,             ; data shards
+  1: n: uint,             ; total shards
+  2: share_size: uint     ; bytes per share
+}
+
+; Orientation of the sibling relative to the running hash when walking up.
+; dir = 0 => current node is left child, sibling is right
+; dir = 1 => current node is right child, sibling is left
+dir = 0 / 1
+
+; One step in a Merkle/NMT branch from leaf -> root.
+branch_step = {
+  0: dir: dir,
+  1: sibling: sha3_256,
+  2: range: ns_range,     ; sibling subtree namespace covering range
+}
+
+; Minimal leaf descriptor (mirrors nmt.cddl, data optional for carrying proofs).
+leaf = {
+  0: ns: namespace,
+  1: size: uint,          ; length of the leaf payload (pre-erasure slice)
+  2: hash: sha3_256,      ; SHA3-256(0x00 || varint(ns) || varint(size) || data?)
+  3: data: bstr / nil,    ; OPTIONAL: present when a proof carries the leaf payload
+}
+
+; ------------------------- Simple inclusion proof ----------------------------
+
+; Proves that a specific leaf (by index) is included under `root`.
+sample_proof = {
+  0: leaf_index: uint,        ; index in the leaf sequence used for the NMT
+  1: leaf: leaf,              ; descriptor (may carry data)
+  2: branch: [ + branch_step] ; bottom-up order (leaf -> root)
+}
+
+proof_simple = {
+  0: type: 0,                 ; discriminator for simple inclusion proof
+  1: root: sha3_256,          ; NMT root (commitment)
+  2: total_leaves: uint,      ; total leaf count in the tree
+  3: layout: layout / nil,    ; OPTIONAL: helps map indices to shares
+  4: samples: [ + sample_proof ],
+}
+
+; -------------------- Compact multi-sample inclusion proof -------------------
+
+; Deduplicate repeated branch steps across many samples.
+; The `nodes` array holds unique (sibling,range) pairs; each sample path
+; references them by index and supplies the orientation flag per step.
+
+branch_node = {
+  0: sibling: sha3_256,
+  1: range: ns_range,
+}
+
+path_step_ref = {
+  0: dir: dir,
+  1: ref: uint,               ; index into `nodes`
+}
+
+path_ref = [ + path_step_ref ]
+
+compact_sample = {
+  0: leaf_index: uint,
+  1: leaf: leaf,
+  2: path: path_ref,
+}
+
+proof_compact = {
+  0: type: 1,                 ; discriminator for compact proof
+  1: root: sha3_256,
+  2: total_leaves: uint,
+  3: layout: layout / nil,
+  4: nodes: [ + branch_node ],    ; dedup table
+  5: samples: [ + compact_sample ],
+}
+
+; ------------------------- Namespace-range proof -----------------------------
+
+; Proves that *all* leaves whose namespaces fall within `target` are present
+; under `root`. The proof is expressed as a set of “cover nodes” whose ranges
+; exactly partition the target interval; each cover node carries a branch to
+; the root. Verifier checks:
+;  - union of `covers[*].range` equals `target` with no gaps/overlaps
+;  - each cover node’s branch recomputes `root`
+;  - ranges are consistent with branch ns-ranges at each step
+
+cover_node = {
+  0: range: ns_range,     ; closed interval covered by this subtree
+  1: hash: sha3_256,      ; hash of the subtree root for this interval
+}
+
+ns_cover_with_branch = {
+  0: cover: cover_node,
+  1: branch: [ + branch_step ],
+}
+
+proof_namespace = {
+  0: type: 2,                 ; discriminator for namespace-range proof
+  1: root: sha3_256,
+  2: target: ns_range,        ; interval proven available
+  3: covers: [ + ns_cover_with_branch ],
+}
+
+; ------------------------------ Constraints ----------------------------------
+
+; Semantic constraints (not fully expressible in CDDL) that MUST hold:
+;
+; For sample_proof:
+;   - Recompute leaf.hash from (ns, size, data?) per nmt.cddl rules.
+;   - Starting from leaf.hash and walking `branch`, recompute root.
+;   - `leaf_index` ∈ [0, total_leaves).
+;
+; For proof_compact:
+;   - Each path_step_ref.ref is a valid index in `nodes`.
+;   - Reconstruct per-sample branches from refs and verify as above.
+;
+; For proof_namespace:
+;   - Sort `covers` by cover.range.min; the union of ranges equals `target`
+;     with no gaps/overlaps, and ranges are non-decreasing.
+;   - For each `covers[i]`, verify its branch recomputes `root`.
+;   - Namespace bounds in branch steps are consistent with subtree ranges.
+;
+; Implementations MUST also enforce namespace policy/ranges from config.
+
+; --------------------------------- Root --------------------------------------
+
+availability_proof = proof_simple / proof_compact / proof_namespace
+
+$root = availability_proof

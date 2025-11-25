@@ -1,0 +1,45 @@
+{
+  "name": "Animica Explorer",
+  "short_name": "Explorer",
+  "description": "Live chain explorer for Animica with PoIES metrics and AICF dashboards.",
+  "id": "/",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui", "browser"],
+  "theme_color": "#0b0f1a",
+  "background_color": "#0b0f1a",
+  "dir": "ltr",
+  "lang": "en",
+  "orientation": "any",
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Blocks",
+      "short_name": "Blocks",
+      "url": "/#/blocks",
+      "description": "Latest blocks and PoIES breakdown"
+    },
+    {
+      "name": "AICF Dashboard",
+      "short_name": "AICF",
+      "url": "/#/aicf",
+      "description": "Providers, jobs, and payouts"
+    }
+  ],
+  "categories": ["utilities", "finance", "productivity"]
+}

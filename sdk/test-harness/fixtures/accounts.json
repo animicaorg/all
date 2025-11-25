@@ -1,0 +1,6 @@
+{
+  "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+  "alg": "dilithium3",
+  "index": 0,
+  "note": "Test-only mnemonic for local devnets. DO NOT use on mainnet or with real funds."
+}

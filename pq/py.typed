@@ -1,0 +1,2 @@
+# PEP 561 marker file: this package ships inline type hints.
+# The file can be empty; a comment keeps linters happy.

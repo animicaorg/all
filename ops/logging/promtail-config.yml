@@ -1,0 +1,121 @@
+# Promtail config
+# Works for both Docker Compose hosts (JSON container logs) and k8s nodes (CRI logs).
+# Ships logs to Loki using env-configurable endpoint. Matches our label/PII guidance in ops/logging/README.md.
+
+server:
+  http_listen_port: ${PROMTAIL_HTTP_PORT:-9080}
+  grpc_listen_port: ${PROMTAIL_GRPC_PORT:-0}
+  log_level: ${PROMTAIL_LOG_LEVEL:-info}
+
+# Where Promtail remembers last read positions
+positions:
+  filename: ${PROMTAIL_POSITIONS_FILE:-/var/promtail/positions.yaml}
+
+# Push destination(s) — set LOKI_PUSH_URL to override (e.g. http://loki:3100/loki/api/v1/push)
+clients:
+  - url: ${LOKI_PUSH_URL:-http://loki:3100/loki/api/v1/push}
+    tenant_id: ${LOKI_TENANT_ID:-""}
+    batchwait: 1s
+    batchsize: 1048576            # 1 MiB
+    timeout: 10s
+    backoff_config:
+      min_backoff: 500ms
+      max_backoff: 5m
+      max_retries: 20
+
+target_config:
+  sync_period: 10s
+
+limits_config:
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h  # 7 days
+  readline_rate: ${PROMTAIL_READLINE_RATE:-0}  # 0 = unlimited
+
+scrape_configs:
+  # ---- Docker host (Compose) -------------------------------------------------
+  - job_name: docker
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: docker
+          __path__: ${PROMTAIL_DOCKER_PATH:-/var/lib/docker/containers/*/*-json.log}
+          host: ${PROMTAIL_HOST_LABEL:-${HOSTNAME}}
+    pipeline_stages:
+      - docker: {}          # parse Docker JSON log format
+      # Extract container_id from filename; promote as label; add short id
+      - regex:
+          source: filename
+          expression: '/var/lib/docker/containers/(?P<container_id>[a-f0-9]{64})/.+-json\.log'
+      - labels:
+          container_id:
+      - replace:
+          source: container_id
+          expression: '^([a-f0-9]{12}).*'
+          replace: '$1'
+          target: container_short
+      # Optional: parse common JSON payload fields (level/msg) if present
+      - json:
+          expressions:
+            level: level|lvl|severity
+            msg: message|msg
+      - labels:
+          level:
+      # Drop very noisy health/metrics pings if they appear as single-line messages
+      - match:
+          selector: '{job="docker"} != ""'
+          stages:
+            - drop:
+                expression: '^(GET|POST|HEAD) /(metrics|healthz|readyz)\b'
+      # Trim label set
+      - labeldrop:
+          - filename
+          - stream
+
+  # ---- Kubernetes node (CRI logs under /var/log/containers) ------------------
+  - job_name: kubernetes-cri
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: kubernetes
+          __path__: ${PROMTAIL_K8S_PATH:-/var/log/containers/*.log}
+    pipeline_stages:
+      - cri: {}             # parse CRI log format (timestamp stream tag)
+      # Extract namespace/pod/container from file path
+      - regex:
+          source: filename
+          expression: '/var/log/containers/(?P<pod>[^_]+)_(?P<namespace>[^_]+)_(?P<container>[^-]+)-[a-f0-9]+\.log'
+      - labels:
+          namespace:
+          pod:
+          container:
+      - json:
+          expressions:
+            level: level|severity
+            msg: message|msg
+      - labels:
+          level:
+      - match:
+          selector: '{job="kubernetes"} != ""'
+          stages:
+            - drop:
+                expression: '^(GET|POST|HEAD) /(metrics|healthz|readyz)\b'
+      - labeldrop:
+          - filename
+
+  # ---- NGINX/access logs (optional), demonstrate plain text tail -------------
+  - job_name: nginx
+    static_configs:
+      - targets: [localhost]
+        labels:
+          job: nginx
+          app: nginx
+          __path__: ${PROMTAIL_NGINX_PATH:-/var/log/nginx/*.log}
+    pipeline_stages:
+      # Example: drop health checks to reduce cardinality
+      - drop:
+          expression: ' /(healthz|readyz)(\?| )'
+
+# Notes:
+# - Mount /var/lib/docker/containers (Docker hosts) or /var/log/containers (k8s nodes) read-only.
+# - Mount /var/promtail for the positions file to persist across restarts.
+# - Tune label set carefully; prefer low-cardinality labels (job, namespace, pod, container_short).

@@ -1,0 +1,333 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Animica SDK — Browser Quickstart (Wallet Extension)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root { --bg:#0b0f14; --fg:#e6f0ff; --muted:#9bb3d0; --accent:#59f; --card:#111826; --ok:#19c37d; --warn:#e8a20c; --err:#ff5460; }
+    html,body { margin:0; padding:0; background:var(--bg); color:var(--fg); font:14px/1.35 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif; }
+    .wrap { max-width: 920px; margin: 40px auto; padding: 0 16px; }
+    h1 { font-size: 22px; margin: 0 0 8px; }
+    p.lead { color: var(--muted); margin-top: 0; }
+    .row { display:flex; gap:16px; flex-wrap:wrap; margin: 16px 0; }
+    .card { background: var(--card); border-radius: 10px; padding: 16px; flex: 1 1 280px; min-width: 280px; }
+    .controls { display:flex; gap:8px; flex-wrap:wrap; margin-top: 8px; }
+    button, input, select { background:#0c1220; color:var(--fg); border:1px solid #20304a; border-radius:8px; padding:8px 12px; outline:none; }
+    button { cursor:pointer; }
+    button.primary { background: var(--accent); color:#001; border-color: transparent; }
+    small.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--muted); }
+    pre.log { background:#0a0f19; border:1px solid #172033; border-radius:10px; padding:12px; max-height: 380px; overflow:auto; white-space: pre-wrap; word-break: break-word; }
+    .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
+    label { display:block; font-weight:600; margin-top: 8px; }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; background:#0e1a2b; border:1px solid #1b2a45; color:var(--muted); font-size:12px; }
+    .kv { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .kv > div { background:#0c1220; border:1px solid #1b2a45; padding:6px 10px; border-radius:8px; }
+    a.link { color:#9cf; text-decoration:none; border-bottom:1px dashed #59f; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Animica — Browser Quickstart</h1>
+    <p class="lead">This demo talks to the injected <code>window.animica</code> provider from the wallet extension. Use it to connect, read the head, subscribe to <code>newHeads</code>, and (optionally) send a tiny transfer.</p>
+
+    <div class="row">
+      <div class="card">
+        <strong>Provider</strong>
+        <div class="controls">
+          <button id="btn-detect">Detect</button>
+          <button id="btn-connect" class="primary">Connect Wallet</button>
+          <button id="btn-accounts">Get Accounts</button>
+          <button id="btn-chain">Get Chain ID</button>
+        </div>
+        <div style="margin-top:10px" class="kv">
+          <div id="prov-status" class="pill">provider: unknown</div>
+          <div id="acc-status" class="pill">accounts: —</div>
+          <div id="chain-status" class="pill">chainId: —</div>
+        </div>
+        <p style="margin-top:10px;">
+          Don’t have the wallet? See the repo’s <em>wallet-extension/README.md</em>. After installing, reload this page.
+        </p>
+      </div>
+
+      <div class="card">
+        <strong>Chain</strong>
+        <div class="controls">
+          <button id="btn-head">Get Head</button>
+          <button id="btn-subscribe">Subscribe newHeads</button>
+        </div>
+        <div id="head-out" style="margin-top:10px;"><small class="mono">head: —</small></div>
+      </div>
+
+      <div class="card">
+        <strong>Send Transfer (optional)</strong>
+        <div class="grid2">
+          <div>
+            <label for="to">To (anim1…)</label>
+            <input id="to" placeholder="anim1..." />
+          </div>
+          <div>
+            <label for="amount">Amount</label>
+            <input id="amount" type="number" value="1234" min="1" />
+          </div>
+        </div>
+        <div class="controls">
+          <button id="btn-send" class="primary">Send</button>
+        </div>
+        <div id="send-out" style="margin-top:10px;"><small class="mono">tx: —</small></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <strong>Log</strong>
+      <pre class="log" id="log"></pre>
+    </div>
+
+    <p class="lead">Tip: Open DevTools console for additional details. This page attempts multiple method names to be compatible with minor provider variations.</p>
+  </div>
+
+  <script type="module">
+    // Utility logging
+    const logEl = document.getElementById('log');
+    function log(...args) {
+      const line = args.map(x => {
+        try { return typeof x === 'string' ? x : JSON.stringify(x, null, 2) }
+        catch { return String(x) }
+      }).join(' ');
+      logEl.textContent += line + "\\n";
+      logEl.scrollTop = logEl.scrollHeight;
+      console.log('[demo]', ...args);
+    }
+
+    const provBadge = document.getElementById('prov-status');
+    const accBadge = document.getElementById('acc-status');
+    const chainBadge = document.getElementById('chain-status');
+    const headOut = document.getElementById('head-out');
+    const sendOut = document.getElementById('send-out');
+
+    function getProvider() {
+      const p = window.animica || window.ethereum || null; // prefer animica
+      return p && p.isAnimica ? p : (window.animica || p);
+    }
+
+    function setBadge(el, text, color) {
+      el.textContent = text;
+      if (color) el.style.borderColor = color;
+    }
+
+    // Tolerant request wrapper (different method names are tried)
+    async function request(p, method, params) {
+      if (!p || typeof p.request !== 'function') throw new Error('No provider.request available');
+      try { return await p.request({ method, params }); }
+      catch (e) {
+        // retry with alt shapes (some providers accept positional arrays only)
+        try { return await p.request({ method, params: params ?? [] }); } catch {}
+        throw e;
+      }
+    }
+
+    // Accounts: try several common methods
+    async function requestAccounts(p, interactive=false) {
+      const trials = [];
+      if (interactive) {
+        trials.push(['wallet_requestPermissions', [{ eth_accounts: {} }]]);
+        trials.push(['animica_requestPermissions', [{ accounts: {} }]]);
+        trials.push(['eth_requestAccounts', []]);
+        trials.push(['requestAccounts', []]);
+        trials.push(['animica_requestAccounts', []]);
+      } else {
+        trials.push(['eth_accounts', []]);
+        trials.push(['accounts', []]);
+        trials.push(['animica_accounts', []]);
+      }
+      for (const [m, ps] of trials) {
+        try {
+          const out = await request(p, m, ps);
+          if (Array.isArray(out) && out.length) return out;
+          if (m.includes('Permissions')) {
+            // follow-up read
+            try { const accs = await request(p, 'eth_accounts', []); if (accs?.length) return accs; } catch {}
+          }
+          if (out && typeof out === 'object' && out.accounts) return out.accounts;
+        } catch (e) { /* try next */ }
+      }
+      return [];
+    }
+
+    async function getChainId(p) {
+      const trials = [
+        ['chain.getChainId', []],
+        ['eth_chainId', []],
+        ['chainId', []],
+      ];
+      for (const [m, ps] of trials) {
+        try { return await request(p, m, ps); } catch {}
+      }
+      return null;
+    }
+
+    async function getHead(p) {
+      const trials = [
+        ['chain.getHead', []],
+        ['chain_head', []],
+      ];
+      for (const [m, ps] of trials) {
+        try { return await request(p, m, ps); } catch {}
+      }
+      throw new Error('No head method available');
+    }
+
+    function listenHeads(p) {
+      let attached = false;
+      const handler = (msg) => {
+        const head = msg?.result ?? msg?.params?.result ?? msg;
+        log('newHead', head);
+        headOut.innerHTML = '<small class="mono">head: ' + escapeHtml(JSON.stringify(head)) + '</small>';
+      };
+
+      // Prefer event emitter
+      if (typeof p.on === 'function') {
+        try { p.on('newHeads', handler); attached = true; } catch {}
+        if (!attached) try { p.on('message', (m) => { if (m?.type === 'newHeads') handler(m); }); attached = true; } catch {}
+      }
+
+      // Also try explicit subscribe calls for providers that require it
+      (async () => {
+        const subs = [
+          ['subscribe', ['newHeads']],
+          ['ws.subscribe', ['newHeads']]
+        ];
+        for (const [m, ps] of subs) {
+          try { await request(p, m, ps); attached = true; break; } catch {}
+        }
+      })();
+
+      if (attached) {
+        log('Subscribed to newHeads (provider event / ws).');
+      } else {
+        log('Could not attach newHeads listener; provider may not support subscriptions.');
+      }
+    }
+
+    async function sendTx(p, from, to, value, chainId) {
+      const tx = {
+        from, to,
+        value: Number(value) || 1,
+        gasPrice: 1,         // minimal demo defaults; your node may enforce floors
+        gasLimit: 50000,
+        chainId
+      };
+      const trials = [
+        ['tx.sendTransaction', [tx]],
+        ['animica_sendTransaction', [tx]],
+        ['wallet_sendTransaction', [tx]],
+        ['eth_sendTransaction', [tx]],
+        ['sendTransaction', [tx]],
+      ];
+      for (const [m, ps] of trials) {
+        try {
+          const hash = await request(p, m, ps);
+          return String(hash);
+        } catch (e) { /* try next */ }
+      }
+      throw new Error('No sendTransaction method accepted this payload.');
+    }
+
+    function escapeHtml(s) { return s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+    // Wire UI
+    document.getElementById('btn-detect').onclick = () => {
+      const p = getProvider();
+      if (p) {
+        setBadge(provBadge, 'provider: found ✓', 'var(--ok)');
+        log('Provider detected:', { isAnimica: !!p.isAnimica, version: p.version ?? '?' });
+      } else {
+        setBadge(provBadge, 'provider: not found', 'var(--err)');
+        log('No provider found. Install the wallet extension and reload.');
+      }
+    };
+
+    document.getElementById('btn-connect').onclick = async () => {
+      const p = getProvider();
+      if (!p) return alert('No provider found.');
+      try {
+        const accs = await requestAccounts(p, true);
+        setBadge(accBadge, 'accounts: ' + (accs[0] || '—'), 'var(--ok)');
+        log('Connected accounts:', accs);
+        // Listen to live changes
+        if (typeof p.on === 'function') {
+          try { p.on('accountsChanged', (a) => { setBadge(accBadge, 'accounts: ' + (a?.[0] || '—')); log('accountsChanged', a); }); } catch {}
+          try { p.on('chainChanged', (cid) => { setBadge(chainBadge, 'chainId: ' + cid); log('chainChanged', cid); }); } catch {}
+        }
+      } catch (e) {
+        setBadge(accBadge, 'accounts: (failed)', 'var(--err)');
+        log('Connect failed:', e);
+      }
+    };
+
+    document.getElementById('btn-accounts').onclick = async () => {
+      const p = getProvider();
+      if (!p) return alert('No provider found.');
+      const accs = await requestAccounts(p, false);
+      setBadge(accBadge, 'accounts: ' + (accs[0] || '—'));
+      log('accounts:', accs);
+    };
+
+    document.getElementById('btn-chain').onclick = async () => {
+      const p = getProvider();
+      if (!p) return alert('No provider found.');
+      const cid = await getChainId(p);
+      setBadge(chainBadge, 'chainId: ' + (cid ?? '—'));
+      log('chainId:', cid);
+    };
+
+    document.getElementById('btn-head').onclick = async () => {
+      const p = getProvider();
+      if (!p) return alert('No provider found.');
+      try {
+        const head = await getHead(p);
+        headOut.innerHTML = '<small class="mono">head: ' + escapeHtml(JSON.stringify(head)) + '</small>';
+        log('head:', head);
+      } catch (e) {
+        headOut.innerHTML = '<small class="mono">head: (error)</small>';
+        log('getHead error:', e);
+      }
+    };
+
+    document.getElementById('btn-subscribe').onclick = async () => {
+      const p = getProvider();
+      if (!p) return alert('No provider found.');
+      listenHeads(p);
+    };
+
+    document.getElementById('btn-send').onclick = async () => {
+      const p = getProvider();
+      if (!p) return alert('No provider found.');
+      const [from] = await requestAccounts(p, false);
+      if (!from) return alert('Connect and select an account first.');
+      const cid = await getChainId(p) ?? 1;
+      const to = (document.getElementById('to')).value.trim();
+      const amount = (document.getElementById('amount')).value;
+      if (!to) return alert('Enter a destination address.');
+      try {
+        const hash = await sendTx(p, from, to, amount, cid);
+        sendOut.innerHTML = '<small class="mono">tx: ' + escapeHtml(hash) + '</small>';
+        log('sent tx:', hash);
+      } catch (e) {
+        sendOut.innerHTML = '<small class="mono">tx: (error)</small>';
+        log('send tx error:', e);
+      }
+    };
+
+    // Auto-detect on load
+    (function init(){
+      const p = getProvider();
+      if (p) {
+        setBadge(provBadge, 'provider: found ✓', 'var(--ok)');
+      } else {
+        setBadge(provBadge, 'provider: not found', 'var(--warn)');
+      }
+    })();
+  </script>
+</body>
+</html>

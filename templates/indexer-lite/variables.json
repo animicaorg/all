@@ -1,0 +1,153 @@
+{
+  "$schema": "../schemas/variables.schema.json",
+  "variables": [
+    {
+      "name": "project_name",
+      "title": "Project name",
+      "description": "Human-friendly project name used in README and metadata.",
+      "type": "string",
+      "default": "Animica Indexer Lite",
+      "required": true
+    },
+    {
+      "name": "project_slug",
+      "title": "Project slug",
+      "description": "Lowercase, dash-separated slug used for the output directory and package naming.",
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "default": "animica-indexer-lite",
+      "required": true
+    },
+    {
+      "name": "module_name",
+      "title": "Python module name",
+      "description": "Import-safe module name placed under src/, e.g., src/<module_name>/...",
+      "type": "string",
+      "pattern": "^[a-z_][a-z0-9_]*$",
+      "default": "indexer_lite",
+      "required": true
+    },
+    {
+      "name": "rpc_url",
+      "title": "Node RPC URL (HTTP)",
+      "description": "HTTP JSON-RPC endpoint of your Animica node (mounted at /rpc).",
+      "type": "string",
+      "default": "http://localhost:8545/rpc",
+      "required": true
+    },
+    {
+      "name": "ws_url",
+      "title": "Node WS URL",
+      "description": "WebSocket endpoint for subscriptions (mounted at /ws).",
+      "type": "string",
+      "default": "ws://localhost:8545/ws",
+      "required": true
+    },
+    {
+      "name": "chain_id",
+      "title": "Chain ID",
+      "description": "Numeric chain id (CAIP-2 registry: 1=mainnet, 2=testnet, 1337=devnet).",
+      "type": "integer",
+      "default": 1337,
+      "required": true
+    },
+    {
+      "name": "db_engine",
+      "title": "Database engine",
+      "description": "Driver/backend used by the indexer storage layer.",
+      "type": "string",
+      "enum": ["sqlite", "postgres"],
+      "default": "sqlite",
+      "required": true
+    },
+    {
+      "name": "db_url",
+      "title": "Database URL",
+      "description": "SQLite example: sqlite:///./indexer.db  •  Postgres example: postgresql+psycopg://user:pass@localhost:5432/indexer",
+      "type": "string",
+      "default": "sqlite:///./indexer.db",
+      "required": true
+    },
+    {
+      "name": "start_height",
+      "title": "Backfill start height",
+      "description": "Block number where historical backfill should begin (0 = genesis).",
+      "type": "integer",
+      "default": 0,
+      "required": true
+    },
+    {
+      "name": "include_api",
+      "title": "Expose read API",
+      "description": "If true, the scaffold enables a FastAPI server for read-only queries.",
+      "type": "boolean",
+      "default": true,
+      "required": false
+    },
+    {
+      "name": "api_port",
+      "title": "API port",
+      "description": "Port for the optional FastAPI service.",
+      "type": "integer",
+      "default": 8081,
+      "required": false
+    },
+    {
+      "name": "metrics_port",
+      "title": "Prometheus metrics port",
+      "description": "Port where Prometheus metrics are exposed.",
+      "type": "integer",
+      "default": 9109,
+      "required": false
+    },
+    {
+      "name": "log_level",
+      "title": "Log level",
+      "description": "Verbosity for the indexer processes.",
+      "type": "string",
+      "enum": ["debug", "info", "warning", "error"],
+      "default": "info",
+      "required": false
+    },
+    {
+      "name": "fetch_concurrency",
+      "title": "Fetch concurrency",
+      "description": "Max number of in-flight RPC fetch tasks for blocks/txs/receipts.",
+      "type": "integer",
+      "default": 8,
+      "required": false
+    },
+    {
+      "name": "backfill_batch_size",
+      "title": "Backfill batch size",
+      "description": "Number of blocks to fetch per batch during backfill.",
+      "type": "integer",
+      "default": 100,
+      "required": false
+    },
+    {
+      "name": "http_timeout_sec",
+      "title": "HTTP timeout (seconds)",
+      "description": "Timeout for individual HTTP RPC calls.",
+      "type": "integer",
+      "default": 30,
+      "required": false
+    },
+    {
+      "name": "ws_max_retries",
+      "title": "WS max retries (0 = infinite)",
+      "description": "Maximum reconnect attempts for the WS subscriber; 0 means retry forever with backoff.",
+      "type": "integer",
+      "default": 0,
+      "required": false
+    },
+    {
+      "name": "db_pool_size",
+      "title": "DB pool size (Postgres only)",
+      "description": "Connection pool size when using Postgres. Ignored for SQLite.",
+      "type": "integer",
+      "default": 10,
+      "required": false
+    }
+  ]
+}

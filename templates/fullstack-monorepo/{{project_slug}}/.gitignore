@@ -1,0 +1,111 @@
+# =========================
+# Fullstack Monorepo .gitignore
+# =========================
+
+# --- OS / Editor junk ---
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+# Keep .vscode tracked if you rely on shared settings; uncomment to ignore locally
+#.vscode/
+.idea/
+*.code-workspace
+
+# --- Node / JS / TS ---
+node_modules/
+.pnpm-store/
+.npm/
+dist/
+build/
+lib/
+.eslintcache
+.nyc_output/
+coverage/
+.vite/
+storybook-static/
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+# Framework caches (safe even if unused)
+.next/
+.out/
+.cache/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+.mypy_cache/
+.pytype/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+.build/
+build/
+dist/
+*.egg-info/
+.coverage
+.coverage.*
+htmlcov/
+
+# --- Rust ---
+# Do NOT ignore Cargo.lock (commit it for reproducible builds)
+target/
+
+# --- Databases & local state ---
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+data/
+tmp/
+temp/
+logs/
+*.log
+
+# --- Env & secrets ---
+.env
+.env.*
+!.env.example
+# TLS/keys (remove these if you intentionally track examples)
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# --- Docker / Compose devnet volumes ---
+infra/**/volumes/
+infra/**/volumes/**/
+infra/**/data/
+infra/**/data/**
+
+# --- Observability local state (Grafana/Prometheus/etc.) ---
+infra/**/grafana/
+infra/**/prometheus/
+infra/**/loki/
+infra/**/tempo/
+
+# --- Kubernetes / Helm artifacts ---
+chart.tgz
+values.local.yaml
+
+# --- Reports & build artifacts ---
+reports/
+artifacts/
+junit*.xml
+*.tgz
+*.tar
+*.tar.gz
+
+# --- Misc other caches ---
+.sass-cache/
+.parcel-cache/
+.bazel/
+.cmake-build-*/

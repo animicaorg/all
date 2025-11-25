@@ -1,0 +1,36 @@
+{
+  "formatVersion": "1.0",
+  "ballotId": "BAL-2025-11-0001",
+  "proposalId": "GOV-2025-11-VM-OPC-01",
+  "chainId": 2,
+  "snapshot": {
+    "type": "height",
+    "value": 1234567
+  },
+  "voter": {
+    "identity": "anim1qxy2zd5t9v0examplevoteraddr", 
+    "pubkey": "0x04b6b8d1f5f2c9d0f0a1c2b3d4e5f60718293a4b5c6d7e8f9a0b1c2d3e4f5061",
+    "pubkeyType": "ed25519"
+  },
+  "vote": {
+    "choice": "yes",
+    "weight": "1.000000",
+    "reason": "Adds deterministic BLAKE3 opcode for gas efficiency on hashing workloads."
+  },
+  "attestation": {
+    "sigAlg": "ed25519",
+    "signature": "0x9c84a2b6c7d8e9fa0b1c2d3e4f5061728394a5b6c7d8e9fa0b1c2d3e4f5061728394a5b6c7d8e9fa0b1c2d3e4f50617",
+    "signedPayload": {
+      "domain": "animica.gov/ballot",
+      "version": "1",
+      "timestamp": "2025-10-31T15:00:00Z",
+      "nonce": "0x7f4e3a12b9"
+    }
+  },
+  "metadata": {
+    "client": "animica-wallet/0.9.3",
+    "network": "testnet",
+    "statement": "I support enabling OP_BLAKE3 after the gated rollout succeeds.",
+    "contact": "voter@example.com"
+  }
+}

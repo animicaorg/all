@@ -1,0 +1,76 @@
+{
+  "name": "QuantumRNG",
+  "version": "1.0.0",
+  "language": "python-vm",
+  "entrypoint": "contracts/examples/quantum_rng/contract.py",
+  "code_hash": "TO_BE_FILLED_BY_BUILD",
+  "abi": {
+    "functions": [
+      {
+        "name": "request",
+        "mutability": "nonpayable",
+        "inputs": [
+          { "name": "bits", "type": "u32" },
+          { "name": "shots", "type": "u32" },
+          { "name": "trap_rate", "type": "u32" }
+        ],
+        "outputs": [
+          { "name": "task_id", "type": "bytes" }
+        ]
+      },
+      {
+        "name": "poll",
+        "mutability": "nonpayable",
+        "inputs": [
+          { "name": "task_id", "type": "bytes" }
+        ],
+        "outputs": [
+          { "name": "ready", "type": "bool" },
+          { "name": "out", "type": "bytes" }
+        ]
+      },
+      {
+        "name": "last",
+        "mutability": "view",
+        "inputs": [],
+        "outputs": [
+          { "name": "out", "type": "bytes" }
+        ]
+      }
+    ],
+    "events": [
+      {
+        "name": "Requested",
+        "inputs": [
+          { "name": "task_id", "type": "bytes" },
+          { "name": "bits", "type": "u32" },
+          { "name": "shots", "type": "u32" },
+          { "name": "trap_rate", "type": "u32" }
+        ]
+      },
+      {
+        "name": "Fulfilled",
+        "inputs": [
+          { "name": "task_id", "type": "bytes" },
+          { "name": "out", "type": "bytes" }
+        ]
+      }
+    ],
+    "errors": [
+      { "name": "trap_rate out of bounds" },
+      { "name": "request already pending" },
+      { "name": "bad task_id" }
+    ]
+  },
+  "capabilities": {
+    "quantum": true,
+    "randomness_beacon": true,
+    "syscalls": ["quantum_enqueue", "read_result", "read_beacon"]
+  },
+  "metadata": {
+    "description": "Quantum randomness request mixed with the chain beacon using extract-then-xor (sha3-256).",
+    "authors": ["Animica Labs"],
+    "license": "Apache-2.0",
+    "tags": ["randomness", "quantum", "beacon", "demo"]
+  }
+}

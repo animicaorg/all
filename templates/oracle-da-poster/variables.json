@@ -1,0 +1,134 @@
+{
+  "$schema": "../schemas/variables.schema.json",
+
+  "variables": {
+    "project_slug": {
+      "type": "string",
+      "title": "Project Slug",
+      "description": "Directory/repo name (lowercase, hyphenated).",
+      "default": "oracle-da-poster",
+      "pattern": "^[a-z][a-z0-9-]{1,48}$",
+      "examples": ["oracle-da-poster", "price-feed-da-writer"]
+    },
+
+    "service_name": {
+      "type": "string",
+      "title": "Service Name",
+      "description": "Human-friendly name shown in docs and UI.",
+      "default": "Oracle DA Poster",
+      "minLength": 3,
+      "maxLength": 64
+    },
+
+    "author_name": {
+      "type": "string",
+      "title": "Author / Organization",
+      "description": "Used in LICENSE headers and container image coordinates.",
+      "default": "you"
+    },
+
+    "license": {
+      "type": "string",
+      "title": "License",
+      "description": "Choose a license identifier.",
+      "enum": ["MIT", "Apache-2.0", "BSD-3-Clause", "UNLICENSED"],
+      "default": "MIT"
+    },
+
+    "rpc_url": {
+      "type": "string",
+      "title": "Animica JSON-RPC URL",
+      "description": "HTTP(S) endpoint for a node (e.g., http://localhost:8545).",
+      "default": "http://localhost:8545",
+      "format": "uri"
+    },
+
+    "chain_id": {
+      "type": "integer",
+      "title": "Chain ID",
+      "description": "Animica chain identifier (e.g., 1 mainnet, 2 testnet, 1337 devnet).",
+      "default": 1337,
+      "minimum": 1
+    },
+
+    "da_namespace": {
+      "type": "integer",
+      "title": "DA Namespace",
+      "description": "Namespaced Merkle Tree (NMT) namespace for posted blobs (0–255).",
+      "default": 24,
+      "minimum": 0,
+      "maximum": 255
+    },
+
+    "oracle_address": {
+      "type": "string",
+      "title": "Oracle Contract Address",
+      "description": "Optional contract address to call after posting a DA blob (bech32m anim1… or leave empty).",
+      "default": "",
+      "pattern": "^$|^(anim1[0-9a-z]{10,})$"
+    },
+
+    "deploy_env": {
+      "type": "string",
+      "title": "Deploy Environment",
+      "description": "Tag used for image names and configuration selection.",
+      "enum": ["dev", "test", "prod"],
+      "default": "dev"
+    },
+
+    "port_api": {
+      "type": "integer",
+      "title": "API Port",
+      "description": "FastAPI listen port for the service.",
+      "default": 8088,
+      "minimum": 1,
+      "maximum": 65535
+    },
+
+    "log_level": {
+      "type": "string",
+      "title": "Log Level",
+      "description": "Application log level.",
+      "enum": ["DEBUG", "INFO", "WARNING", "ERROR"],
+      "default": "INFO"
+    }
+  },
+
+  "required": ["project_slug", "service_name", "rpc_url", "chain_id", "da_namespace", "deploy_env"],
+
+  "computed": {
+    "py_package": {
+      "title": "Python package name",
+      "template": "{{ project_slug | replace('-', '_') }}"
+    },
+    "author_slug": {
+      "title": "Author slug",
+      "template": "{{ author_name | lower | replace(' ', '-') }}"
+    },
+    "image_repo": {
+      "title": "Container image repo",
+      "template": "ghcr.io/{{ author_slug }}/{{ project_slug }}"
+    },
+    "image_tag": {
+      "title": "Container image tag",
+      "template": "{{ deploy_env }}-latest"
+    },
+    "image_ref": {
+      "title": "Container image reference",
+      "template": "{{ image_repo }}:{{ image_tag }}"
+    },
+    "k8s_name": {
+      "title": "Kubernetes-safe name",
+      "template": "{{ project_slug }}"
+    }
+  },
+
+  "env_template": {
+    "RPC_URL": "{{ rpc_url }}",
+    "CHAIN_ID": "{{ chain_id }}",
+    "DA_NAMESPACE": "{{ da_namespace }}",
+    "ORACLE_ADDRESS": "{{ oracle_address }}",
+    "LOG_LEVEL": "{{ log_level }}",
+    "PORT": "{{ port_api }}"
+  }
+}

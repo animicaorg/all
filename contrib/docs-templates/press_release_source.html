@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Animica Press Release Template</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    @page { margin: 1in; }
+    body {
+      font-family: Inter, -apple-system, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: #0B0D12; line-height: 1.55; font-size: 11pt;
+    }
+    .kicker { letter-spacing: .08em; font-variant: small-caps; color: #64748B; }
+    h1 { font-size: 22pt; margin: .25in 0 .05in; line-height: 1.2; }
+    h2 { font-size: 14pt; color: #334155; margin: 0 0 .2in; }
+    .dateline { color: #475569; font-weight: 600; margin: 0 0 .15in; }
+    p { margin: 0 0 .14in; }
+    strong { color: #0B0D12; }
+    .lead { font-size: 12pt; }
+    blockquote {
+      border-left: 3px solid #5EEAD4;
+      margin: .18in 0; padding: .02in .18in; color: #0F172A;
+      background: #F8FAFC; border-radius: 6px;
+    }
+    hr { border: 0; height: 1px; background: #E5E7EB; margin: .25in 0; }
+    .cta { background: #0B0D12; color: white; display: inline-block; padding: .08in .18in; border-radius: 8px; text-decoration: none; }
+    .section-title { font-weight: 700; color: #0F172A; margin-top: .18in; }
+    .about {
+      background: #F1F5F9; padding: .18in; border-radius: 8px; color: #0F172A;
+    }
+    .contact {
+      border: 1px solid #CBD5E1; padding: .18in; border-radius: 8px; background: #FFFFFF;
+    }
+    .footer-note { color: #64748B; font-size: 9pt; margin-top: .18in; }
+    .brand-pill {
+      display: inline-block; background: #5EEAD4; color: #0B0D12; font-weight: 700;
+      padding: 2px 10px; border-radius: 999px; font-size: 10pt;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="brand-pill">ANIMICA</div><br>
+  <div class="kicker">For Immediate Release</div>
+
+  <h1>{{HEADLINE_GOES_HERE}}</h1>
+  <h2>{{Subhead that adds useful context and supports the headline}}</h2>
+
+  <p class="dateline">{{CITY, STATE}} — {{MONTH DAY, YEAR}}</p>
+
+  <p class="lead">
+    <strong>{{COMPANY_OR_PROJECT}}</strong> announced {{WHAT}} today, enabling {{WHO}}
+    to {{BENEFIT}}. The launch advances {{THEME}} with a focus on {{PRIORITY}}.
+  </p>
+
+  <p>
+    {{PARAGRAPH_1: Expand on the news. Provide one or two sentences of concrete detail:
+    availability, pricing, timing, and how it works at a high level.}}
+  </p>
+
+  <blockquote>
+    “{{QUOTE_1 — a crisp, one-sentence claim from a founder or exec}}”
+    <br><strong>— {{NAME, TITLE}}, {{COMPANY}}</strong>
+  </blockquote>
+
+  <p>
+    {{PARAGRAPH_2: Add proof points (early users, performance numbers, audits, partners)
+    and explain why it matters in the market.}}
+  </p>
+
+  <blockquote>
+    “{{QUOTE_2 — customer/user/partner perspective, focusing on outcomes}}”
+    <br><strong>— {{NAME, ROLE}}, {{ORG}}</strong>
+  </blockquote>
+
+  <p class="section-title">Availability</p>
+  <p>
+    {{PRODUCT_OR_FEATURE}} is available {{WHEN/WHERE}}. Visit
+    <a href="{{PRIMARY_URL}}" class="cta">{{PRIMARY_URL_LABEL}}</a> to get started.
+  </p>
+
+  <hr>
+
+  <div class="about">
+    <p class="section-title">About Animica</p>
+    <p>
+      Animica is a next-generation blockchain platform focused on deterministic Python smart
+      contracts, post-quantum security, and a fair, useful-work mining economy. The stack includes
+      a DA layer, verifiable randomness, and governance built for safe upgrades.
+    </p>
+    <p>
+      Learn more at <a href="https://clearblocker.com">https://clearblocker.com</a> or
+      <a href="https://animica.dev">https://animica.dev</a>.
+    </p>
+  </div>
+
+  <p class="section-title">Media Contact</p>
+  <div class="contact">
+    <p><strong>{{CONTACT_NAME}}</strong> — {{TITLE}}</p>
+    <p><a href="mailto:{{CONTACT_EMAIL}}">{{CONTACT_EMAIL}}</a> · {{CONTACT_PHONE}}</p>
+    <p>{{PRESS_URL}}</p>
+  </div>
+
+  <p class="footer-note">
+    © {{YEAR}} Animica. All product names, logos, and brands are property of their respective owners.
+  </p>
+
+</body>
+</html>

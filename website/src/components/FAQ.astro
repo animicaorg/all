@@ -1,0 +1,145 @@
+---
+/**
+ * FAQ.astro
+ * Accessible FAQ accordion with schema.org markup and deep-link support.
+ *
+ * Props:
+ * - title?: string
+ * - items?: Array<{ question: string; answer: string; id?: string; open?: boolean }>
+ *   (answer may contain trusted HTML; it will be rendered with set:html)
+ * - openFirst?: boolean   // defaults to false
+ * - class?: string        // extra classes for the outer <section>
+ *
+ * Notes:
+ * - If no items are provided, you can pass custom content via <slot/>.
+ */
+
+interface FAQItem {
+  question: string;
+  answer: string; // may contain HTML (trusted content recommended)
+  id?: string;
+  open?: boolean;
+}
+interface Props {
+  title?: string;
+  items?: FAQItem[];
+  openFirst?: boolean;
+  class?: string;
+}
+
+const {
+  title = "Frequently Asked Questions",
+  items = [],
+  openFirst = false,
+  class: className = "",
+} = Astro.props as Props;
+
+function slugify(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/['"`]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
+const normalized = items.map((it, i) => ({
+  ...it,
+  id: it.id || `faq-${i}-${slugify(it.question)}`,
+}));
+
+// JSON-LD for FAQPage (only if we have items)
+const jsonLd = normalized.length
+  ? {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      mainEntity: normalized.map((it) => ({
+        "@type": "Question",
+        name: it.question,
+        acceptedAnswer: {
+          "@type": "Answer",
+          text: it.answer,
+        },
+      })),
+    }
+  : null;
+---
+
+<section
+  class={`rounded-xl border bg-[var(--bg-elevated)]
+          border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]
+          p-4 sm:p-6 ${className}`}
+  itemscope
+  itemtype="https://schema.org/FAQPage"
+>
+  {title && (
+    <h2 class="text-xl sm:text-2xl font-semibold tracking-tight mb-3 sm:mb-4">{title}</h2>
+  )}
+
+  {normalized.length > 0 ? (
+    <div class="flex flex-col gap-2 sm:gap-3">
+      {normalized.map((it, i) => (
+        <details
+          id={it.id}
+          class="group rounded-lg border overflow-hidden
+                 border-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)]
+                 open:shadow-sm"
+          {...((openFirst && i === 0) || it.open ? { open: true } : {})}
+        >
+          <summary
+            class="flex items-center justify-between gap-3 cursor-pointer select-none
+                   px-3 sm:px-4 py-2 sm:py-3 font-medium
+                   bg-[color-mix(in_srgb,var(--bg-elevated)_/_92%,transparent)]
+                   hover:bg-[color-mix(in_srgb,var(--bg-elevated)_/_86%,transparent)]"
+          >
+            <span class="text-sm sm:text-base">{it.question}</span>
+            <span
+              class="shrink-0 inline-flex items-center justify-center rounded-full border
+                     size-6 sm:size-7
+                     border-[color-mix(in_srgb,var(--text-primary)_/_15%,transparent)]
+                     transition-transform duration-200 group-open:rotate-45"
+              aria-hidden="true"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" class="size-3.5" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M11 4h2v16h-2zM4 11h16v2H4z"/>
+              </svg>
+            </span>
+          </summary>
+          <div class="px-3 sm:px-4 py-3 sm:py-4">
+            <div class="prose prose-invert:prose-invert max-w-none text-sm sm:text-base leading-relaxed"
+                 set:html={it.answer} />
+          </div>
+        </details>
+      ))}
+    </div>
+  ) : (
+    <slot />
+  )}
+
+  {jsonLd && (
+    <script type="application/ld+json">
+      {JSON.stringify(jsonLd)}
+    </script>
+  )}
+</section>
+
+<script is:inline>
+  // Open a specific FAQ entry if URL has a hash (#faq-…)
+  const hash = location.hash.slice(1);
+  if (hash) {
+    const el = document.getElementById(hash);
+    if (el && el.tagName.toLowerCase() === "details") {
+      el.setAttribute("open", "");
+      // Small delay to ensure layout is ready before scrolling
+      setTimeout(() => el.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+    }
+  }
+
+  // Keyboard focus outline tweak for summary elements
+  document.currentScript?.parentElement?.addEventListener("keydown", (e) => {
+    if (!(e.target instanceof HTMLElement)) return;
+    if (e.key === "Enter" || e.key === " ") {
+      const isSummary = e.target.tagName.toLowerCase() === "summary";
+      if (isSummary) e.preventDefault(); // Let browser toggle details without page scroll
+    }
+  });
+</script>

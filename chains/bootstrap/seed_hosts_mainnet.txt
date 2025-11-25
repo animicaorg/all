@@ -1,0 +1,20 @@
+# Animica — Mainnet DNS Seed Hosts
+# Status: placeholders until mainnet launch.
+# One host per line. These should be stable, geo-distributed DNS seeds
+# that resolve to a rotating subset of healthy full nodes.
+#
+# Guidelines:
+# - Use dedicated subdomains; avoid pointing to a single IP.
+# - Back seeders with multiple anycasted instances where possible.
+# - TTL 60–300s recommended.
+# - Monitor liveness and prune unhealthy backends automatically.
+
+# Examples (commented out):
+# seed1.mainnet.animica.dev
+# seed2.mainnet.animica.dev
+# seed3.mainnet.animica.dev
+# community-seed.us.mainnet.animica.dev
+# community-seed.eu.mainnet.animica.dev
+# community-seed.ap.mainnet.animica.dev
+
+# Add real seeds here prior to launch.

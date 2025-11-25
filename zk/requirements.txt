@@ -1,0 +1,56 @@
+# ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+# ┃ zk/requirements.txt — pinned runtime deps for verifiers/adapters     ┃
+# ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+# This file intentionally keeps the core runtime tiny and reproducible.
+# Optional backends (Groth16 via py_ecc, PLONK/KZG via c-kzg with blst,
+# STARK helpers) are provided as commented pins you can opt into by
+# uncommenting the relevant lines.
+#
+# Usage:
+#   python -m venv .venv && . .venv/bin/activate
+#   pip install --upgrade pip
+#   pip install -r zk/requirements.txt
+#
+# If you need optional verifiers, uncomment their lines below.
+
+############################
+# Core (always installed)  #
+############################
+# Fast structured codecs for proof envelopes / inputs (schema-first).
+msgspec==0.18.7
+
+# Backport for typing features on older Pythons (<=3.12 safe).
+typing-extensions==4.12.2
+
+########################################
+# Optional: Groth16 verifier helpers   #
+########################################
+# Pure-Python BLS12-381 primitives (fields, pairings) suitable for Groth16
+# verification in environments without native pairings. Slower than native,
+# but portable and great for CI and local testing.
+# py-ecc==6.0.0
+
+######################################################
+# Optional: PLONK with KZG (ships blst via c-kzg)    #
+######################################################
+# EIP-4844-compatible KZG bindings. Wheels bundle the
+# blst pairing library, so no separate blst install is
+# required. If a wheel isn't available for your arch,
+# you'll need a C toolchain.
+# py-c-kzg-4844==1.0.0
+
+########################################
+# Optional: STARK-style verifiers      #
+########################################
+# Upstream publishes Linux/macOS wheels more reliably than Windows.
+# starkware-crypto==0.5.0 ; platform_system != "Windows"
+
+############################
+# (Optional) Dev/CI tools  #
+############################
+# Uncomment if you want to run zk package tests locally.
+# pytest==7.4.4
+# pytest-cov==4.1.0
+# hypothesis==6.103.0
+# ruff==0.4.10
+# mypy==1.10.0

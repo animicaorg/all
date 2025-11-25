@@ -1,0 +1,12 @@
+<!-- Animica System Icon: refresh -->
+<svg width="24" height="24" viewBox="0 0 24 24" role="img" aria-labelledby="title" xmlns="http://www.w3.org/2000/svg">
+  <title id="title">Refresh</title>
+  <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Top-right arc + arrow (clockwise) -->
+    <path d="M20 7A8 8 0 0 0 4 12"/>
+    <polyline points="20 3 20 7 16 7"/>
+    <!-- Bottom-left arc + arrow -->
+    <path d="M4 17A8 8 0 0 0 20 12"/>
+    <polyline points="4 21 4 17 8 17"/>
+  </g>
+</svg>

@@ -1,0 +1,161 @@
+name: Website E2E (Playwright + dev RPC mock)
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - "website/**"
+  pull_request:
+    paths:
+      - "website/**"
+
+concurrency:
+  group: website-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Run Playwright E2E with mocked RPC
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        working-directory: website
+
+    env:
+      # Point site server-side calls at a local mock RPC (we'll launch it below).
+      PUBLIC_RPC_URL: http://127.0.0.1:8787
+      PUBLIC_CHAIN_ID: "1"
+      # Use explicit docs host to exercise redirect logic in tests
+      PUBLIC_DOCS_URL: https://docs.animica.dev
+      # Studio/Explorer can be left unset to verify internal-route fallbacks,
+      # but we provide explicit values to keep links deterministic.
+      PUBLIC_STUDIO_URL: https://studio.animica.dev
+      PUBLIC_EXPLORER_URL: https://explorer.animica.dev
+      NODE_ENV: test
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PNPM
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: website/pnpm-lock.yaml
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        uses: microsoft/playwright-github-action@v1
+
+      - name: Build site
+        run: pnpm build
+
+      - name: Write dev RPC mock (JSON-RPC shim)
+        run: |
+          cat > mock_rpc.js <<'JS'
+          // Tiny JSON-RPC mock for CI (chain.getHead & ping)
+          const http = require('http');
+          const PORT = 8787;
+          const HOST = '127.0.0.1';
+
+          const server = http.createServer(async (req, res) => {
+            const respond = (obj, code = 200) => {
+              const body = JSON.stringify(obj);
+              res.writeHead(code, {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(body),
+                'Access-Control-Allow-Origin': '*',
+              });
+              res.end(body);
+            };
+
+            if (req.method !== 'POST') {
+              return respond({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'POST only' } }, 405);
+            }
+
+            let data = '';
+            req.on('data', (chunk) => (data += chunk));
+            req.on('end', () => {
+              try {
+                const payload = JSON.parse(data || '{}');
+                const id = payload.id ?? 1;
+                const method = payload.method;
+
+                if (method === 'chain.getHead') {
+                  return respond({
+                    jsonrpc: '2.0',
+                    id,
+                    result: {
+                      height: 12345,
+                      hash: '0xabc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abcd',
+                      time: Math.floor(Date.now() / 1000),
+                    },
+                  });
+                }
+
+                if (method === 'chain.getParams') {
+                  return respond({
+                    jsonrpc: '2.0',
+                    id,
+                    result: {
+                      chainId: 1,
+                      name: 'Animica Devnet (Mock)',
+                    },
+                  });
+                }
+
+                // Generic ping/passthrough
+                if (method === 'web3_clientVersion' || method === 'ping') {
+                  return respond({ jsonrpc: '2.0', id, result: 'animica-mock/1.0' });
+                }
+
+                return respond({ jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } });
+              } catch (e) {
+                return respond({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }, 400);
+              }
+            });
+          });
+
+          server.listen(PORT, HOST, () => {
+            console.log(`[mock-rpc] listening on http://${HOST}:${PORT}`);
+          });
+
+          // Keep process alive
+          process.on('SIGTERM', () => server.close(() => process.exit(0)));
+          JS
+
+      - name: Run E2E (starts preview via Playwright config)
+        run: |
+          node mock_rpc.js & echo $! > /tmp/mock_rpc.pid
+          # Playwright config will auto-start "pnpm preview" on :4321
+          pnpm test:e2e || STATUS=$?
+          kill $(cat /tmp/mock_rpc.pid) || true
+          exit ${STATUS:-0}
+
+      - name: Upload Playwright report (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: website/playwright-report
+          if-no-files-found: ignore
+
+      - name: Upload test artifacts (screenshots/videos)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          path: |
+            website/.artifacts
+            website/test-results
+          if-no-files-found: ignore

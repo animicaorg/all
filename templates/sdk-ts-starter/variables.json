@@ -1,0 +1,109 @@
+{
+  "$schema": "../schemas/variables.schema.json",
+  "variables": [
+    {
+      "key": "project_name",
+      "type": "string",
+      "prompt": "Project name",
+      "default": "animica-ts-starter",
+      "required": true,
+      "validate": { "min_len": 3, "max_len": 64 }
+    },
+    {
+      "key": "project_slug",
+      "type": "string",
+      "prompt": "Project slug (directory/package)",
+      "default_from": "project_name",
+      "transform": "slugify",
+      "required": true,
+      "validate": {
+        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+        "message": "lowercase letters, numbers, and hyphens only"
+      }
+    },
+    {
+      "key": "description",
+      "type": "string",
+      "prompt": "Short description",
+      "default": "TypeScript starter using the Animica SDK"
+    },
+    {
+      "key": "author",
+      "type": "string",
+      "prompt": "Author (name or org)",
+      "default": "you"
+    },
+    {
+      "key": "package_manager",
+      "type": "string",
+      "prompt": "Preferred package manager",
+      "choices": ["pnpm", "npm", "yarn"],
+      "default": "pnpm"
+    },
+    {
+      "key": "license",
+      "type": "string",
+      "prompt": "License",
+      "choices": ["MIT", "Apache-2.0", "BSD-3-Clause", "UNLICENSED"],
+      "default": "MIT"
+    },
+    {
+      "key": "sdk_ts_version",
+      "type": "string",
+      "prompt": "@animica/sdk version range (semver)",
+      "default": "^0.1.0",
+      "validate": {
+        "pattern": "^[~^]?\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$",
+        "message": "Use a semver range like ^0.1.0"
+      }
+    },
+    {
+      "key": "rpc_url",
+      "type": "string",
+      "prompt": "Default RPC HTTP URL",
+      "default": "http://localhost:8545",
+      "validate": {
+        "pattern": "^https?://.+$",
+        "message": "Must be an http(s) URL"
+      }
+    },
+    {
+      "key": "ws_url",
+      "type": "string",
+      "prompt": "Default RPC WebSocket URL",
+      "default": "ws://localhost:8546",
+      "validate": {
+        "pattern": "^wss?://.+$",
+        "message": "Must be a ws(s) URL"
+      }
+    },
+    {
+      "key": "chain_id",
+      "type": "string",
+      "prompt": "Default chain ID",
+      "default": "1337",
+      "validate": {
+        "pattern": "^[0-9]+$",
+        "message": "Numeric chain id (e.g., 1, 2, 1337)"
+      }
+    },
+    {
+      "key": "init_git",
+      "type": "boolean",
+      "prompt": "Initialize a git repository",
+      "default": true
+    },
+    {
+      "key": "include_examples",
+      "type": "boolean",
+      "prompt": "Include example scripts (get block, send tx, subscribe newHeads)",
+      "default": true
+    },
+    {
+      "key": "use_ws_examples",
+      "type": "boolean",
+      "prompt": "Include WebSocket subscription example",
+      "default": true
+    }
+  ]
+}

@@ -1,0 +1,116 @@
+# Promtail pipeline for Animica P2P logs.
+# - Parses container headers (CRI/Docker)
+# - Extracts JSON fields from structured P2P logs
+# - Normalizes timestamp and level
+# - Promotes low-cardinality fields (topic/dir/transport/code) to labels
+# - Keeps peer_id out of labels to avoid cardinality blow-ups
+# - Uses msg as output line (fallback to a formatted line if msg missing)
+#
+# Example structured line expected (fields are flexible):
+# {"time":"2025-01-01T00:00:00Z","level":"info","component":"p2p","dir":"out","topic":"blocks",
+#  "msg_id":"0xabc...","transport":"quic","bytes":512,"rtt":"42ms","msg":"published INV"}
+#
+# Include from your promtail scrape job:
+# scrape_configs:
+#   - job_name: animica-p2p
+#     pipeline_stages:
+#       - include: /etc/promtail/pipelines/p2p.yaml
+#     static_configs: ...
+
+pipeline_stages:
+  # Handle Kubernetes CRI or Docker prefixes if present (safe no-ops otherwise).
+  - cri: {}
+  - docker: {}
+
+  # Parse JSON log body; extract common P2P fields with flexible names.
+  - json:
+      expressions:
+        time: time
+        ts: ts
+        level: level
+        msg: msg
+        message: message
+        component: component
+        subsystem: subsystem
+        module: module
+        dir: dir
+        direction: direction
+        topic: topic
+        msg_id: msg_id
+        message_id: message_id
+        code: code
+        err: err
+        error: error
+        transport: transport
+        bytes: bytes
+        size: size
+        rtt: rtt
+        latency: latency
+        peer: peer          # human-readable peer string (not labeled)
+        peer_id: peer_id    # high-cardinality; do NOT promote to labels
+
+  # Timestamp: prefer "time", then "ts". Skip if absent (Loki will assign ingestion time).
+  - timestamp:
+      source: time
+      format: RFC3339Nano
+      action_on_failure: skip
+  - timestamp:
+      source: ts
+      format: RFC3339Nano
+      action_on_failure: skip
+
+  # Normalize level casing and synonyms (e.g., "warning" → "warn").
+  - replace:
+      source: level
+      expression: '(?i)^warning$'
+      replace: warn
+
+  # Synthesize "dir_norm" and "topic_norm" for consistent labels.
+  - template:
+      source: dir_norm
+      template: '{{ if .dir }}{{ .dir }}{{ else if .direction }}{{ .direction }}{{ else }}unknown{{ end }}'
+  - template:
+      source: topic_norm
+      template: '{{ if .topic }}{{ .topic }}{{ else }}unknown{{ end }}'
+  - template:
+      source: component_norm
+      template: '{{ if .component }}{{ .component }}{{ else if .subsystem }}{{ .subsystem }}{{ else }}p2p{{ end }}'
+  - template:
+      source: msg_id_norm
+      template: '{{ if .msg_id }}{{ .msg_id }}{{ else if .message_id }}{{ .message_id }}{{ else }}-{{ end }}'
+  - template:
+      source: size_bytes
+      template: '{{ if .bytes }}{{ .bytes }}{{ else if .size }}{{ .size }}{{ else }}0{{ end }}'
+
+  # Promote low-cardinality attributes to labels for efficient querying.
+  - labels:
+      level:
+      component_norm:
+      dir_norm:
+      topic_norm:
+      transport:
+      code:
+
+  # Build a safe fallback line if "msg" is missing.
+  - template:
+      source: line_fallback
+      template: >-
+        [{{ .component_norm }} {{ .dir_norm }} {{ .topic_norm }}]
+        msg_id={{ .msg_id_norm }} size={{ .size_bytes }} rtt={{ or .rtt .latency "-" }}
+
+  # Prefer the structured message if present; otherwise use fallback.
+  - output:
+      source: msg
+  - output:
+      source: message
+      when:
+        expression: '"{{ .msg }}" == ""'
+  - output:
+      source: line_fallback
+      when:
+        expression: '"{{ .msg }}" == "" && "{{ .message }}" == ""'
+
+  # Optional noise control examples (uncomment to enable):
+  # - match:
+  #     selector: '{level="debug",component_norm="p2p"} |= "handshake"'
+  #     action: drop

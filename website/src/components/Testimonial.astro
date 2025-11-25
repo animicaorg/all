@@ -1,0 +1,198 @@
+---
+/**
+ * Testimonial.astro
+ * Polished testimonial / review card with optional avatar, logo, link and rating.
+ *
+ * Props:
+ * - quote: string                    // The testimonial text (or use <slot/>)
+ * - author: string                   // Person's name
+ * - role?: string                    // Title/role (e.g., "CTO")
+ * - company?: string                 // Company name
+ * - href?: string                    // Link to case study / source
+ * - avatarUrl?: string               // Author avatar URL (optional)
+ * - logoUrl?: string                 // Company logo URL (optional)
+ * - rating?: number                  // 0..5, renders stars (optional)
+ * - align?: "left" | "center"        // default "left"
+ * - size?: "sm" | "md" | "lg"        // default "md"
+ * - class?: string                   // extra classes for outer <figure>
+ *
+ * Notes:
+ * - Renders schema.org Review JSON-LD when author/quote provided.
+ * - If quote not provided, the slotted content will be used as the review body.
+ */
+
+interface Props {
+  quote?: string;
+  author: string;
+  role?: string;
+  company?: string;
+  href?: string;
+  avatarUrl?: string;
+  logoUrl?: string;
+  rating?: number;
+  align?: "left" | "center";
+  size?: "sm" | "md" | "lg";
+  class?: string;
+}
+
+const {
+  quote = "",
+  author,
+  role,
+  company,
+  href,
+  avatarUrl,
+  logoUrl,
+  rating,
+  align = "left",
+  size = "md",
+  class: className = "",
+} = Astro.props as Props;
+
+const hasSlot = Astro.slots.has("default");
+const reviewBody = hasSlot ? "" : quote;
+
+const sizeCls =
+  size === "sm"
+    ? { pad: "p-4", text: "text-sm", quote: "text-base", avatar: "size-8", logo: "h-6" }
+    : size === "lg"
+    ? { pad: "p-6 sm:p-8", text: "text-base", quote: "text-xl sm:text-2xl", avatar: "size-12", logo: "h-8 sm:h-9" }
+    : { pad: "p-5 sm:p-6", text: "text-base", quote: "text-lg sm:text-xl", avatar: "size-10", logo: "h-7" };
+
+const alignCls =
+  align === "center"
+    ? "text-center items-center"
+    : "text-left items-start";
+
+function initials(name: string): string {
+  const parts = name.split(/\s+/).filter(Boolean);
+  const pick = (s: string) => s.charAt(0)?.toUpperCase() ?? "";
+  if (parts.length === 1) return pick(parts[0]);
+  return pick(parts[0]) + pick(parts[parts.length - 1]);
+}
+
+const jsonLd =
+  author && (reviewBody || hasSlot)
+    ? {
+        "@context": "https://schema.org",
+        "@type": "Review",
+        reviewBody: reviewBody || undefined, // if slot is used we omit body in JSON-LD to avoid duplication
+        author: { "@type": "Person", name: author },
+        itemReviewed: company
+          ? { "@type": "Organization", name: company }
+          : undefined,
+        reviewRating:
+          typeof rating === "number"
+            ? {
+                "@type": "Rating",
+                ratingValue: Math.max(0, Math.min(5, rating)),
+                bestRating: 5,
+                worstRating: 0,
+              }
+            : undefined,
+      }
+    : null;
+---
+
+<figure
+  class={`rounded-xl border bg-[var(--bg-elevated)]
+          border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]
+          shadow-sm ${sizeCls.pad} flex flex-col gap-4 ${className}`}
+  itemscope
+  itemtype="https://schema.org/Review"
+>
+  <!-- Header: Avatar / Logo -->
+  <div class={`flex ${align === "center" ? "justify-center" : "justify-start"} gap-3 sm:gap-4`}>
+    <!-- Avatar -->
+    <div class="relative shrink-0">
+      {avatarUrl ? (
+        <img
+          src={avatarUrl}
+          alt={`${author} avatar`}
+          width="96"
+          height="96"
+          class={`rounded-full object-cover ${sizeCls.avatar} ring-2 ring-black/5`}
+          onerror="this.replaceWith(this.nextElementSibling)"
+          loading="lazy"
+          decoding="async"
+        />
+      ) : null}
+      <div
+        class={`rounded-full ${sizeCls.avatar} grid place-items-center font-semibold
+                    bg-[color-mix(in_srgb,var(--text-primary)_/_8%,transparent)] text-[color-mix(in_srgb,var(--text-primary)_/_80%,black)]`}
+        aria-hidden={avatarUrl ? "true" : "false"}
+      >
+        {initials(author)}
+      </div>
+    </div>
+
+    <!-- Name / Role / Company -->
+    <figcaption class={`flex flex-col ${alignCls} gap-0.5`}>
+      <div class="font-semibold leading-tight" itemprop="author" itemscope itemtype="https://schema.org/Person">
+        <span itemprop="name">{author}</span>
+      </div>
+      {(role || company) && (
+        <div class="opacity-75 text-sm leading-tight">
+          {role}{role && company ? " · " : ""}{company ? (
+            href ? <a href={href} class="underline underline-offset-2 hover:opacity-90" target="_blank" rel="noopener noreferrer">{company}</a>
+                 : company
+          ) : null}
+        </div>
+      )}
+      {logoUrl && (
+        <div class={`mt-1 ${align === "center" ? "mx-auto" : ""}`}>
+          <img src={logoUrl} alt={`${company || "Company"} logo`} class={`${sizeCls.logo} w-auto opacity-80`} loading="lazy" decoding="async" />
+        </div>
+      )}
+    </figcaption>
+  </div>
+
+  <!-- Quote -->
+  <blockquote class={`${sizeCls.quote} leading-relaxed`}>
+    <svg xmlns="http://www.w3.org/2000/svg" class="inline-block size-4 align-top opacity-40 mr-1" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M7.17 6A5.17 5.17 0 0 0 2 11.17V22h8v-8H6.83A3.17 3.17 0 0 1 10 10.83V6H7.17Zm10 0A5.17 5.17 0 0 0 12 11.17V22h8v-8h-3.17A3.17 3.17 0 0 1 20 10.83V6h-2.83Z"/>
+    </svg>
+    <span class={`${sizeCls.text}`} itemprop="reviewBody">
+      {hasSlot ? <slot /> : reviewBody}
+    </span>
+  </blockquote>
+
+  <!-- Rating (optional) & Link -->
+  {(typeof rating === "number" || href) && (
+    <div class={`flex ${align === "center" ? "justify-center" : "justify-start"} items-center gap-3`}>
+      {typeof rating === "number" && (
+        <div class="flex items-center gap-0.5" aria-label={`Rating: ${Math.max(0, Math.min(5, rating))} out of 5`}>
+          {Array.from({ length: 5 }).map((_, i) => (
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              class="size-4"
+              viewBox="0 0 24 24"
+              fill={i < Math.round(Math.max(0, Math.min(5, rating))) ? "currentColor" : "none"}
+              stroke="currentColor"
+              stroke-width="1.5"
+              aria-hidden="true"
+            >
+              <path d="M12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.62L12 2 9.19 8.62 2 9.24l5.46 4.73L5.82 21z"/>
+            </svg>
+          ))}
+        </div>
+      )}
+      {href && (
+        <a
+          href={href}
+          class="text-sm underline underline-offset-2 hover:opacity-90"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Read the story
+        </a>
+      )}
+    </div>
+  )}
+
+  {jsonLd && (
+    <script type="application/ld+json">
+      {JSON.stringify(jsonLd)}
+    </script>
+  )}
+</figure>

@@ -1,0 +1,16 @@
+# Animica — Localnet Seed Hosts
+# Scope: developer/devnet usage only. Not for public distribution.
+# These entries are used by docker-compose/devnet setups and single-node labs.
+# One host per line.
+
+127.0.0.1
+localhost
+
+# Docker service names (if using docker-compose):
+seed1
+seed2
+bootnode
+
+# K8s-style cluster DNS (examples):
+seed-0.animica-local.svc.cluster.local
+seed-1.animica-local.svc.cluster.local

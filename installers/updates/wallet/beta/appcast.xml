@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Animica Wallet — Sparkle Appcast (beta channel)
+  Serve over HTTPS at:
+    https://updates.animica.dev/wallet/beta/appcast.xml
+
+  IMPORTANT: Replace placeholders for:
+    - enclosure@url
+    - enclosure@length (exact byte size)
+    - enclosure@sparkle:edSignature (Ed25519 of the DMG/PKG)
+    - dates and release notes URLs as appropriate
+
+  Notes:
+  - Ensure the Wallet app embeds the **beta feed URL** and the **Sparkle Ed25519 public key**.
+  - DMG/PKG must be **codesigned + notarized**.
+-->
+<rss version="2.0"
+     xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"
+     xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Animica Wallet Updates (beta)</title>
+    <link>https://updates.animica.dev/wallet/beta/appcast.xml</link>
+    <description>Beta channel updates for Animica Wallet</description>
+    <language>en</language>
+    <sparkle:publisher>Animica Labs</sparkle:publisher>
+    <sparkle:minimumAutoupdateVersion>1.0.0</sparkle:minimumAutoupdateVersion>
+
+    <!-- Latest beta -->
+    <item>
+      <title>Animica Wallet 1.5.0-beta.2</title>
+      <sparkle:releaseNotesLink>https://animica.dev/changelog/wallet/1.5.0-beta.2</sparkle:releaseNotesLink>
+      <pubDate>Wed, 08 Oct 2025 12:00:00 +0000</pubDate>
+      <enclosure
+        url="https://updates.animica.dev/wallet/beta/Animica-Wallet-1.5.0-beta.2.dmg"
+        sparkle:version="1.5.0-beta.2"
+        sparkle:shortVersionString="1.5.0-beta.2"
+        sparkle:os="macos"
+        sparkle:minimumSystemVersion="11.0"
+        length="REPLACE_WITH_DMG_SIZE_BYTES"
+        type="application/octet-stream"
+        sparkle:edSignature="REPLACE_WITH_ED25519_SIGNATURE_BASE64"/>
+    </item>
+
+    <!-- Previous beta -->
+    <item>
+      <title>Animica Wallet 1.5.0-beta.1</title>
+      <sparkle:releaseNotesLink>https://animica.dev/changelog/wallet/1.5.0-beta.1</sparkle:releaseNotesLink>
+      <pubDate>Mon, 29 Sep 2025 12:00:00 +0000</pubDate>
+      <enclosure
+        url="https://updates.animica.dev/wallet/beta/Animica-Wallet-1.5.0-beta.1.dmg"
+        sparkle:version="1.5.0-beta.1"
+        sparkle:shortVersionString="1.5.0-beta.1"
+        sparkle:os="macos"
+        sparkle:minimumSystemVersion="11.0"
+        length="REPLACE_WITH_DMG_SIZE_BYTES"
+        type="application/octet-stream"
+        sparkle:edSignature="REPLACE_WITH_ED25519_SIGNATURE_BASE64"/>
+    </item>
+
+  </channel>
+</rss>

@@ -1,0 +1,76 @@
+{
+  "manifest_version": 3,
+
+  // These fields are patched by scripts/build.ts during packaging.
+  "name": "Animica Wallet",
+  "short_name": "Animica",
+  "description": "PQ-secure browser wallet for Animica: keyring, in-page provider (window.animica), approvals, and simulation.",
+  "version": "0.1.0",
+
+  "default_locale": "en",
+  "author": "Animica Labs",
+
+  "action": {
+    "default_title": "Animica Wallet",
+    "default_popup": "popup.html"
+  },
+
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content/bridge.js",
+        "content/inject.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "provider.js",
+        "fonts/Inter/Inter-Regular.woff2",
+        "fonts/Inter/Inter-SemiBold.woff2"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ],
+
+  "permissions": [
+    "storage",
+    "alarms",
+    "notifications",
+    "scripting"
+  ],
+
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+
+  "incognito": "split",
+
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; base-uri 'self'"
+  },
+
+  // Hints for per-browser tweaks (filled by build script):
+  //   chrome.minimum_version, firefox.browser_specific_settings, etc.
+  "minimum_chrome_version": "108"
+}

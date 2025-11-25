@@ -1,0 +1,372 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.animica.org/governance/pq_rotation.schema.json",
+  "title": "Animica Governance — PQ Rotation Proposal",
+  "description": "JSON-Schema for proposals that rotate Post-Quantum (PQ) cryptography policies, including allowed signature/KEM sets, rollout phases, and deprecations.",
+  "type": "object",
+  "additionalProperties": false,
+
+  "properties": {
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "proposal_id": {
+      "type": "string",
+      "pattern": "^[A-Z0-9._:-]{3,128}$",
+      "description": "Human-stable identifier (e.g., PQ-ROT-2026.01-Aegis)."
+    },
+    "kind": { "const": "PQRotation" },
+    "network": { "type": "string", "enum": ["mainnet", "testnet", "devnet"] },
+
+    "title": { "type": "string", "minLength": 3, "maxLength": 180 },
+    "summary": { "type": "string", "maxLength": 400 },
+    "description": { "type": "string", "minLength": 10 },
+
+    "proposer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "address": { "$ref": "#/$defs/address" },
+        "display_name": { "type": "string", "maxLength": 140 },
+        "organization": { "type": "string", "maxLength": 140 },
+        "contact": { "type": "string", "format": "uri" }
+      },
+      "required": ["address"]
+    },
+
+    "created_at": { "type": "string", "format": "date-time" },
+
+    "voting_window": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "start_time":   { "type": "string", "format": "date-time" },
+        "end_time":     { "type": "string", "format": "date-time" },
+        "start_height": { "type": "integer", "minimum": 0 },
+        "end_height":   { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "references": { "type": "array", "items": { "type": "string", "format": "uri" } },
+    "attachments": { "type": "array", "items": { "$ref": "#/$defs/artifact" } },
+    "integrity": { "$ref": "#/$defs/integrity_block" },
+    "signatures": { "type": "array", "items": { "$ref": "#/$defs/signature" } },
+    "labels": { "type": "array", "items": { "type": "string", "maxLength": 48 }, "maxItems": 32 },
+
+    "risk_assessment": { "type": "string" },
+    "implementation_notes": { "type": "string" },
+
+    "payload": {
+      "type": "object",
+      "title": "PQRotationPayload",
+      "additionalProperties": false,
+      "properties": {
+        "policy_version": { "$ref": "#/$defs/semver" },
+
+        "target_sets": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "signatures": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/sig_alg" },
+              "description": "Allowed signature algorithms for on-chain accounts & governance attestations."
+            },
+            "handshake_kem": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "$ref": "#/$defs/kem_alg" },
+              "description": "Allowed KEMs (or hybrids) for P2P handshakes and client connections."
+            },
+            "hash": {
+              "type": "string",
+              "enum": ["sha3-256","blake3","shake256"],
+              "description": "Default hash for new address/key derivations (not transaction hashing)."
+            },
+            "address_scheme": {
+              "type": "string",
+              "enum": ["bech32m-pq","bech32m-dual","legacy-compatible"],
+              "description": "Address encoding flavor for new keys."
+            }
+          },
+          "required": ["signatures","handshake_kem"]
+        },
+
+        "compatibility": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "min_node_version": { "$ref": "#/$defs/semver" },
+            "min_wallet_version": { "$ref": "#/$defs/semver" },
+            "min_sdk_versions": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "typescript": { "$ref": "#/$defs/semver" },
+                "python":     { "$ref": "#/$defs/semver" },
+                "rust":       { "$ref": "#/$defs/semver" }
+              }
+            }
+          }
+        },
+
+        "phases": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "phase_id": { "type": "string", "pattern": "^[a-z0-9._-]{1,40}$" },
+              "name": { "type": "string", "maxLength": 120 },
+              "activation": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "method": { "type": "string", "enum": ["height","time","manual"] },
+                  "height": { "type": "integer", "minimum": 0 },
+                  "time":   { "type": "string", "format": "date-time" }
+                },
+                "allOf": [
+                  {
+                    "if": { "properties": { "method": { "const": "height" } } },
+                    "then": { "required": ["height"] }
+                  },
+                  {
+                    "if": { "properties": { "method": { "const": "time" } } },
+                    "then": { "required": ["time"] }
+                  }
+                ],
+                "required": ["method"]
+              },
+
+              "actions": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "enable_signatures":  { "type": "array", "items": { "$ref": "#/$defs/sig_alg" } },
+                  "disable_signatures": { "type": "array", "items": { "$ref": "#/$defs/sig_alg" } },
+                  "enable_kem":         { "type": "array", "items": { "$ref": "#/$defs/kem_alg" } },
+                  "disable_kem":        { "type": "array", "items": { "$ref": "#/$defs/kem_alg" } },
+
+                  "require_dual_signing": { "type": "boolean", "description": "If true, require (classical + PQ) signatures for new transactions/keys in this phase." },
+                  "dual_required_pairs": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "classical": { "type": "string", "enum": ["ed25519","secp256k1"] },
+                        "pq": { "$ref": "#/$defs/sig_alg" }
+                      },
+                      "required": ["classical","pq"]
+                    }
+                  },
+
+                  "new_key_default": { "$ref": "#/$defs/sig_alg", "description": "Default signature algorithm for newly created keys in wallets." },
+                  "reject_new_with": { "type": "array", "items": { "$ref": "#/$defs/sig_alg" }, "description": "Reject new transactions/keys using these signature algorithms (legacy cut-off)." },
+
+                  "min_accept_ratio_legacy": {
+                    "type": "number", "minimum": 0, "maximum": 1,
+                    "description": "If provided, minimum fraction of legacy-only transactions still accepted (gradual ramp-down)."
+                  }
+                }
+              },
+
+              "wallet_enforcement_after_blocks": { "type": "integer", "minimum": 0, "default": 0, "description": "Grace period for wallet UIs to enforce new defaults." },
+              "node_enforcement_after_blocks":   { "type": "integer", "minimum": 0, "default": 0, "description": "Grace period for nodes to enforce mempool/rpc restrictions." },
+              "notes": { "type": "string" }
+            },
+            "required": ["phase_id","activation"]
+          }
+        },
+
+        "deprecations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "alg": { "$ref": "#/$defs/sig_or_kem" },
+              "category": { "type": "string", "enum": ["signature","kem"] },
+              "replacement": { "$ref": "#/$defs/sig_or_kem" },
+              "effective_after_blocks": { "type": "integer", "minimum": 0 },
+              "final_reject_height": { "type": "integer", "minimum": 0 },
+              "notes": { "type": "string" }
+            },
+            "required": ["alg","category"]
+          }
+        }
+      },
+      "required": ["policy_version","target_sets","phases"]
+    }
+  },
+
+  "required": [
+    "schema_version",
+    "proposal_id",
+    "kind",
+    "network",
+    "title",
+    "description",
+    "proposer",
+    "created_at",
+    "payload"
+  ],
+
+  "$defs": {
+    "address": {
+      "type": "string",
+      "pattern": "^(anim1)[0-9a-z]{10,}$",
+      "description": "Animica bech32m address (anim1…); minimal pattern."
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$",
+      "description": "Semantic version (SemVer 2.0.0)."
+    },
+    "hex": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]*$"
+    },
+    "sha3_256": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{64}$",
+      "description": "Hex-encoded SHA3-256 digest."
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "uri": { "type": "string", "format": "uri" },
+        "content_type": { "type": "string", "maxLength": 120 },
+        "sha3_256": { "$ref": "#/$defs/sha3_256" },
+        "size_bytes": { "type": "integer", "minimum": 0 },
+        "notes": { "type": "string" }
+      },
+      "required": ["uri"]
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "address": { "$ref": "#/$defs/address" },
+        "alg": { "type": "string", "enum": ["dilithium3","sphincs_shake_128s","ed25519","secp256k1"] },
+        "signature": { "$ref": "#/$defs/hex" },
+        "signed_at": { "type": "string", "format": "date-time" },
+        "payload_hash": { "$ref": "#/$defs/sha3_256" }
+      },
+      "required": ["address","alg","signature","payload_hash"]
+    },
+    "integrity_block": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "algo": { "type": "string", "enum": ["sha3-256","blake3"] },
+        "value": { "$ref": "#/$defs/sha3_256" },
+        "signatures": { "type": "array", "items": { "$ref": "#/$defs/signature" } }
+      },
+      "required": ["algo","value"]
+    },
+
+    "sig_alg": {
+      "type": "string",
+      "enum": [
+        "dilithium2","dilithium3","dilithium5",
+        "falcon512","falcon1024",
+        "sphincs_shake_128s","sphincs_shake_192s","sphincs_shake_256s",
+        "ed25519","secp256k1"
+      ],
+      "description": "Signature algorithm identifiers (includes classical for dual-signing & migrations)."
+    },
+    "kem_alg": {
+      "type": "string",
+      "enum": [
+        "kyber512","kyber768","kyber1024",
+        "mlkem768","mlkem1024",
+        "hybrid_x25519_mlkem768","hybrid_p256_mlkem768"
+      ],
+      "description": "KEM (or hybrid) identifiers for handshakes."
+    },
+    "sig_or_kem": {
+      "type": "string",
+      "enum": [
+        "dilithium2","dilithium3","dilithium5",
+        "falcon512","falcon1024",
+        "sphincs_shake_128s","sphincs_shake_192s","sphincs_shake_256s",
+        "ed25519","secp256k1",
+        "kyber512","kyber768","kyber1024",
+        "mlkem768","mlkem1024",
+        "hybrid_x25519_mlkem768","hybrid_p256_mlkem768"
+      ]
+    }
+  },
+
+  "examples": [
+    {
+      "schema_version": 1,
+      "proposal_id": "PQ-ROT-2026.01-Aegis",
+      "kind": "PQRotation",
+      "network": "testnet",
+      "title": "Rotate to ML-KEM + Dilithium3; ramp down Falcon; require dual signing for 30 days",
+      "summary": "Move default KEM to ML-KEM-768 and signatures to Dilithium3; hybrid handshakes for a canary; deprecate Falcon.",
+      "description": "Following NIST finalization and new implementation guidance…",
+      "proposer": { "address": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqz9v3r" },
+      "created_at": "2026-01-05T12:00:00Z",
+      "payload": {
+        "policy_version": "2.1.0",
+        "target_sets": {
+          "signatures": ["dilithium3","sphincs_shake_128s","ed25519"],
+          "handshake_kem": ["mlkem768","hybrid_x25519_mlkem768"],
+          "hash": "sha3-256",
+          "address_scheme": "bech32m-dual"
+        },
+        "compatibility": {
+          "min_node_version": "1.12.0",
+          "min_wallet_version": "0.7.0",
+          "min_sdk_versions": { "typescript": "0.6.0", "python": "0.6.0", "rust": "0.6.0" }
+        },
+        "phases": [
+          {
+            "phase_id": "p0-canary",
+            "name": "Canary — enable ML-KEM hybrids; keep legacy on",
+            "activation": { "method": "height", "height": 2222000 },
+            "actions": {
+              "enable_kem": ["hybrid_x25519_mlkem768","mlkem768"],
+              "enable_signatures": ["dilithium3"],
+              "require_dual_signing": true,
+              "dual_required_pairs": [{ "classical": "ed25519", "pq": "dilithium3" }],
+              "new_key_default": "dilithium3",
+              "min_accept_ratio_legacy": 0.25
+            },
+            "wallet_enforcement_after_blocks": 1000,
+            "node_enforcement_after_blocks": 1500
+          },
+          {
+            "phase_id": "p1-cut-falcon",
+            "name": "Cut Falcon; keep SPHINCS+ optional",
+            "activation": { "method": "height", "height": 2228000 },
+            "actions": {
+              "disable_signatures": ["falcon512","falcon1024"],
+              "reject_new_with": ["falcon512","falcon1024"]
+            }
+          },
+          {
+            "phase_id": "p2-dual-off",
+            "name": "End dual-signing requirement",
+            "activation": { "method": "height", "height": 2235000 },
+            "actions": { "require_dual_signing": false }
+          }
+        ],
+        "deprecations": [
+          {
+            "alg": "falcon512",
+            "category": "signature",
+            "replacement": "dilithium3",
+            "effective_after_blocks": 0,
+            "final_reject_height": 2250000
+          }
+        ]
+      }
+    }
+  ]
+}

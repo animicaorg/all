@@ -1,0 +1,137 @@
+{
+  "namespace_bytes": 8,
+  "hash": "sha3_256",
+  "cases": [
+    {
+      "name": "three-leaves-two-ns",
+      "leaves": [
+        { "ns": "0x0000000000000001", "data": "0x68656c6c6f" },
+        { "ns": "0x0000000000000001", "data": "0x776f726c64" },
+        { "ns": "0x00000000000000ff", "data": "0x00" }
+      ],
+      "expect": {
+        "min_ns": "0x0000000000000001",
+        "max_ns": "0x00000000000000ff",
+        "root": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "inclusion_proofs": [
+          {
+            "leaf_index": 0,
+            "ns": "0x0000000000000001",
+            "data": "0x68656c6c6f",
+            "proof": {
+              "branches": [],
+              "positions": []
+            },
+            "valid": true
+          },
+          {
+            "leaf_index": 2,
+            "ns": "0x00000000000000ff",
+            "data": "0x00",
+            "proof": {
+              "branches": [],
+              "positions": []
+            },
+            "valid": true
+          }
+        ],
+        "range_proofs": [
+          {
+            "ns_min": "0x0000000000000001",
+            "ns_max": "0x0000000000000001",
+            "proof": {
+              "left_bound": "0x0000000000000000000000000000000000000000000000000000000000000000",
+              "right_bound": "0x0000000000000000000000000000000000000000000000000000000000000000",
+              "branches": []
+            },
+            "valid": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "single-leaf-single-namespace",
+      "leaves": [
+        { "ns": "0x00000000000000aa", "data": "0x01ff" }
+      ],
+      "expect": {
+        "min_ns": "0x00000000000000aa",
+        "max_ns": "0x00000000000000aa",
+        "root": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "inclusion_proofs": [
+          {
+            "leaf_index": 0,
+            "ns": "0x00000000000000aa",
+            "data": "0x01ff",
+            "proof": {
+              "branches": [],
+              "positions": []
+            },
+            "valid": true
+          }
+        ],
+        "range_proofs": [
+          {
+            "ns_min": "0x00000000000000aa",
+            "ns_max": "0x00000000000000aa",
+            "proof": {
+              "left_bound": "0x0000000000000000000000000000000000000000000000000000000000000000",
+              "right_bound": "0x0000000000000000000000000000000000000000000000000000000000000000",
+              "branches": []
+            },
+            "valid": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "out-of-order-inputs-must-sort-by-(ns,original-order)",
+      "leaves": [
+        { "ns": "0x0000000000000005", "data": "0xaa" },
+        { "ns": "0x0000000000000001", "data": "0xbb" },
+        { "ns": "0x0000000000000003", "data": "0xcc" },
+        { "ns": "0x0000000000000001", "data": "0xdd" }
+      ],
+      "expect": {
+        "sorted_order_indices": [1, 3, 2, 0],
+        "min_ns": "0x0000000000000001",
+        "max_ns": "0x0000000000000005",
+        "root": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "inclusion_proofs": [
+          {
+            "leaf_index": 1,
+            "ns": "0x0000000000000001",
+            "data": "0xbb",
+            "proof": {
+              "branches": [],
+              "positions": []
+            },
+            "valid": true
+          },
+          {
+            "leaf_index": 3,
+            "ns": "0x0000000000000001",
+            "data": "0xdd",
+            "proof": {
+              "branches": [],
+              "positions": []
+            },
+            "valid": true
+          }
+        ],
+        "range_proofs": [
+          {
+            "ns_min": "0x0000000000000001",
+            "ns_max": "0x0000000000000003",
+            "proof": {
+              "left_bound": "0x0000000000000000000000000000000000000000000000000000000000000000",
+              "right_bound": "0x0000000000000000000000000000000000000000000000000000000000000000",
+              "branches": []
+            },
+            "valid": true
+          }
+        ]
+      }
+    }
+  ]
+}

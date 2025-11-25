@@ -1,0 +1,317 @@
+{
+  "title": "Animica — Data Availability (DA)",
+  "uid": "animica-da",
+  "timezone": "browser",
+  "schemaVersion": 36,
+  "version": 1,
+  "refresh": "10s",
+  "style": "dark",
+  "editable": true,
+  "tags": ["da", "animica"],
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["5s", "10s", "30s", "1m", "5m"],
+    "hidden": false
+  },
+  "annotations": {
+    "list": [
+      { "type": "dashboard", "name": "Annotations & Alerts", "enable": true }
+    ]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "ds",
+        "type": "datasource",
+        "query": "prometheus",
+        "label": "Datasource",
+        "current": {}
+      },
+      {
+        "name": "job",
+        "type": "query",
+        "datasource": "$ds",
+        "label": "job",
+        "refresh": 1,
+        "query": "label_values(animica_da_post_total, job)",
+        "includeAll": false,
+        "multi": false
+      },
+      {
+        "name": "instance",
+        "type": "query",
+        "datasource": "$ds",
+        "label": "instance",
+        "refresh": 1,
+        "query": "label_values(animica_da_post_total{job=\"$job\"}, instance)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".+"
+      },
+      {
+        "name": "ns",
+        "type": "query",
+        "datasource": "$ds",
+        "label": "namespace",
+        "refresh": 1,
+        "query": "label_values(animica_da_post_total{job=\"$job\"}, ns)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".+"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "POST rate (ok) — blobs/s",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(instance) (rate(animica_da_post_total{job=\"$job\",instance=~\"$instance\",result=\"ok\"}[$__rate_interval]))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green" },
+              { "color": "orange", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "GET rate (hits) — req/s",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(instance) (rate(animica_da_get_total{job=\"$job\",instance=~\"$instance\",result=\"hit\"}[$__rate_interval]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Proofs served — proofs/s",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(instance) (rate(animica_da_proof_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Egress — bytes/s",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(instance) (rate(animica_da_bytes_total{job=\"$job\",instance=~\"$instance\",dir=\"out\"}[$__rate_interval]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps", "min": 0 } },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center"
+      }
+    },
+
+    {
+      "type": "stat",
+      "title": "Sampling queries — qps",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 5 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(instance) (rate(animica_da_sampler_queries_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "Estimated p_fail",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 5 },
+      "targets": [
+        { "refId": "A", "expr": "avg by(instance) (animica_da_sampling_p_fail_estimate{job=\"$job\",instance=~\"$instance\"})" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green" },
+              { "color": "orange", "value": 0.01 },
+              { "color": "red", "value": 0.05 }
+            ]
+          }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "Proof verify failures — rate",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 5 },
+      "targets": [
+        { "refId": "A", "expr": "sum by(instance) (rate(animica_da_proof_verify_fail_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "Cache hit ratio (GET)",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 5 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(instance) (rate(animica_da_get_total{job=\"$job\",instance=~\"$instance\",result=\"hit\"}[$__rate_interval])) / clamp_min(sum by(instance) (rate(animica_da_get_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])), 1)"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "POST / GET / PROOF — rates",
+      "datasource": "$ds",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "targets": [
+        { "refId": "A", "legendFormat": "post ok",  "expr": "sum by(instance) (rate(animica_da_post_total{job=\"$job\",instance=~\"$instance\",result=\"ok\"}[$__rate_interval]))" },
+        { "refId": "B", "legendFormat": "post err", "expr": "sum by(instance) (rate(animica_da_post_total{job=\"$job\",instance=~\"$instance\",result=\"error\"}[$__rate_interval]))" },
+        { "refId": "C", "legendFormat": "get hit",  "expr": "sum by(instance) (rate(animica_da_get_total{job=\"$job\",instance=~\"$instance\",result=\"hit\"}[$__rate_interval]))" },
+        { "refId": "D", "legendFormat": "get miss", "expr": "sum by(instance) (rate(animica_da_get_total{job=\"$job\",instance=~\"$instance\",result=\"miss\"}[$__rate_interval]))" },
+        { "refId": "E", "legendFormat": "proof",     "expr": "sum by(instance) (rate(animica_da_proof_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Ingress / Egress — bytes/s",
+      "datasource": "$ds",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "targets": [
+        { "refId": "A", "legendFormat": "ingress", "expr": "sum by(instance) (rate(animica_da_bytes_total{job=\"$job\",instance=~\"$instance\",dir=\"in\"}[$__rate_interval]))" },
+        { "refId": "B", "legendFormat": "egress",  "expr": "sum by(instance) (rate(animica_da_bytes_total{job=\"$job\",instance=~\"$instance\",dir=\"out\"}[$__rate_interval]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "Bps", "min": 0 } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "API latency quantiles (POST / GET / PROOF) — ms",
+      "datasource": "$ds",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 18 },
+      "targets": [
+        { "refId": "A", "legendFormat": "POST p95",  "expr": "1000 * histogram_quantile(0.95, sum by(le,instance) (rate(animica_da_post_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))" },
+        { "refId": "B", "legendFormat": "GET p95",   "expr": "1000 * histogram_quantile(0.95, sum by(le,instance) (rate(animica_da_get_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))" },
+        { "refId": "C", "legendFormat": "PROOF p95", "expr": "1000 * histogram_quantile(0.95, sum by(le,instance) (rate(animica_da_proof_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))" },
+        { "refId": "D", "legendFormat": "POST p50",  "expr": "1000 * histogram_quantile(0.50, sum by(le,instance) (rate(animica_da_post_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))" },
+        { "refId": "E", "legendFormat": "GET p50",   "expr": "1000 * histogram_quantile(0.50, sum by(le,instance) (rate(animica_da_get_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))" },
+        { "refId": "F", "legendFormat": "PROOF p50", "expr": "1000 * histogram_quantile(0.50, sum by(le,instance) (rate(animica_da_proof_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms", "min": 0 } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "NMT build / verify — p95 latency (ms)",
+      "datasource": "$ds",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 26 },
+      "targets": [
+        { "refId": "A", "legendFormat": "build p95",  "expr": "1000 * histogram_quantile(0.95, sum by(le,instance) (rate(animica_da_nmt_build_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))" },
+        { "refId": "B", "legendFormat": "verify p95", "expr": "1000 * histogram_quantile(0.95, sum by(le,instance) (rate(animica_da_nmt_verify_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms", "min": 0 } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Reed–Solomon encode / decode — p95 latency (ms)",
+      "datasource": "$ds",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 26 },
+      "targets": [
+        { "refId": "A", "legendFormat": "encode p95", "expr": "1000 * histogram_quantile(0.95, sum by(le,instance) (rate(animica_da_rs_encode_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))" },
+        { "refId": "B", "legendFormat": "decode p95", "expr": "1000 * histogram_quantile(0.95, sum by(le,instance) (rate(animica_da_rs_decode_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms", "min": 0 } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "POSTs by namespace (ns) — blobs/s",
+      "datasource": "$ds",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 33 },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "ns={{ns}}",
+          "expr": "sum by(ns) (rate(animica_da_post_total{job=\"$job\",instance=~\"$instance\",ns=~\"$ns\",result=\"ok\"}[$__rate_interval]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+
+    {
+      "type": "bargauge",
+      "title": "DA errors by kind — rate",
+      "datasource": "$ds",
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 41 },
+      "targets": [
+        { "refId": "A", "expr": "sum by(kind) (rate(animica_da_errors_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "displayMode": "gradient", "orientation": "horizontal" }
+    }
+  ]
+}

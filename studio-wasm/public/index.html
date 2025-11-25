@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <title>Animica Studio (WASM) — Simulator Preview</title>
+    <style>
+      :root {
+        --bg: #0b0f14;
+        --panel: #0f141b;
+        --muted: #a8b3c2;
+        --fg: #e6edf3;
+        --accent: #66d9ef;
+        --ok: #21c07a;
+        --warn: #ffcc66;
+        --err: #ff6b6b;
+        --border: #1f2a36;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      }
+      html, body {
+        height: 100%;
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+      }
+      a { color: var(--accent); text-decoration: none; }
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      header h1 {
+        font-size: 18px;
+        margin: 0;
+        font-weight: 600;
+        letter-spacing: .2px;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+      .col {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 14px;
+      }
+      .col h2 {
+        margin: 0 0 8px 0;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--muted);
+        letter-spacing: .3px;
+        text-transform: uppercase;
+      }
+      textarea, pre, input, select, button {
+        width: 100%;
+        box-sizing: border-box;
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--fg);
+        background: #0b1016;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+      }
+      textarea { min-height: 260px; padding: 10px; resize: vertical; }
+      pre { min-height: 120px; padding: 10px; overflow: auto; background: #0a0f15; }
+      .controls {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 8px;
+      }
+      button {
+        cursor: pointer;
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: #122031;
+        border: 1px solid #1b2a3b;
+      }
+      button.primary { background: #143452; border-color: #1f4b72; }
+      button:disabled { opacity: .6; cursor: not-allowed; }
+      .kv {
+        display: grid;
+        grid-template-columns: 160px 1fr;
+        gap: 6px 10px;
+        align-items: center;
+      }
+      .tag { display: inline-block; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 11px; }
+      .ok { color: var(--ok); }
+      .err { color: var(--err); }
+      .muted { color: var(--muted); }
+      .logs li { margin: 6px 0; }
+      .footer { margin-top: 18px; color: var(--muted); font-size: 12px; }
+      .inline { display: inline-flex; gap:8px; align-items:center; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="10" stroke="#66d9ef" stroke-width="2"/>
+          <path d="M7 13l3 3 7-7" stroke="#21c07a" stroke-width="2" fill="none"/>
+        </svg>
+        <h1>Animica Studio — WASM Simulator Preview</h1>
+        <span class="tag">dev</span>
+      </header>
+
+      <div class="row" style="margin-bottom:16px">
+        <div class="col">
+          <h2>Contract Source (Python)</h2>
+          <textarea id="source"></textarea>
+          <div class="footer">
+            Tip: edit code then <strong>Compile</strong> → <strong>Deploy (Sim)</strong> → <strong>Call</strong>.
+          </div>
+        </div>
+
+        <div class="col">
+          <h2>Manifest (ABI + Meta)</h2>
+          <textarea id="manifest"></textarea>
+          <div class="footer inline">
+            <span>Method:</span>
+            <select id="method"></select>
+            <span>Args (JSON array):</span>
+            <input id="args" value="[]"/>
+          </div>
+        </div>
+      </div>
+
+      <div class="row" style="margin-bottom:16px">
+        <div class="col">
+          <h2>Actions</h2>
+          <div class="controls" style="margin-bottom:10px">
+            <button id="compile" class="primary">Compile</button>
+            <button id="deploy">Deploy (Sim)</button>
+            <button id="call">Call</button>
+          </div>
+          <div class="kv">
+            <div>IR bytes:</div><div id="irBytes" class="muted">—</div>
+            <div>Gas (upper bound):</div><div id="gas" class="muted">—</div>
+            <div>Sim Address:</div><div id="simAddr" class="muted">—</div>
+            <div>Status:</div><div id="status" class="muted">Idle</div>
+          </div>
+        </div>
+
+        <div class="col">
+          <h2>Diagnostics</h2>
+          <pre id="diag">—</pre>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="col">
+          <h2>Return / Result</h2>
+          <pre id="result">—</pre>
+        </div>
+        <div class="col">
+          <h2>Events</h2>
+          <ul id="logs" class="logs"></ul>
+        </div>
+      </div>
+
+      <div class="footer" style="margin-top:16px">
+        Uses in-browser <strong>Pyodide</strong> and a trimmed Python VM. No server required.
+      </div>
+    </div>
+
+    <!-- Dev-only preview script -->
+    <script type="module">
+      import { compileSource } from '/src/api/compiler.ts';
+      import { simulateDeploy, simulateCall, estimateGas } from '/src/api/simulator.ts';
+      import { logger, setGlobalLogLevel } from '/src/utils/logger.ts';
+      import '/src/polyfills/browser.ts';
+
+      setGlobalLogLevel('info');
+      const log = logger('preview');
+
+      // Elements
+      const el = (id) => document.getElementById(id);
+      const $source = el('source');
+      const $manifest = el('manifest');
+      const $method = el('method');
+      const $args = el('args');
+      const $compile = el('compile');
+      const $deploy = el('deploy');
+      const $call = el('call');
+      const $diag = el('diag');
+      const $result = el('result');
+      const $logs = el('logs');
+      const $irBytes = el('irBytes');
+      const $gas = el('gas');
+      const $simAddr = el('simAddr');
+      const $status = el('status');
+
+      // Example: Counter (must match studio-wasm examples & ABI expectations)
+      const defaultSource = `# examples/counter/contract.py
+from stdlib import storage, events, abi
+
+def inc():
+    cur = storage.get_int(b"count") or 0
+    storage.set_int(b"count", cur + 1)
+    events.emit(b"Inc", {b"value": cur + 1})
+
+def get() -> int:
+    cur = storage.get_int(b"count") or 0
+    return cur
+`;
+      const defaultManifest = {
+        name: "Counter",
+        version: "1.0.0",
+        abi: {
+          functions: [
+            { name: "inc", mutates: true, inputs: [], outputs: [] },
+            { name: "get", mutates: false, inputs: [], outputs: [{ name: "value", type: "int" }] }
+          ],
+          events: [
+            { name: "Inc", inputs: [{ name: "value", type: "int", indexed: false }] }
+          ]
+        },
+        metadata: { preview: true }
+      };
+
+      // Initialize fields
+      $source.value = defaultSource;
+      $manifest.value = JSON.stringify(defaultManifest, null, 2);
+
+      function setStatus(text, cls='muted') {
+        $status.className = cls;
+        $status.textContent = text;
+      }
+
+      function populateMethodOptions(manifest) {
+        $method.innerHTML = '';
+        const fns = (manifest?.abi?.functions || []);
+        for (const f of fns) {
+          const opt = document.createElement('option');
+          opt.value = f.name;
+          opt.textContent = f.name + (f.mutates ? ' (mutates)' : '');
+          $method.appendChild(opt);
+        }
+        if (fns.length) $method.value = fns[0].name;
+      }
+
+      populateMethodOptions(defaultManifest);
+
+      let IR = null;
+      let MANIFEST = defaultManifest;
+      let SIM_ADDR = null;
+
+      async function onCompile() {
+        setStatus('Compiling...', 'muted');
+        try {
+          const manifest = JSON.parse($manifest.value);
+          MANIFEST = manifest;
+          populateMethodOptions(manifest);
+
+          const res = await compileSource({ source: $source.value, filename: 'contract.py' });
+          IR = res.ir;
+          $irBytes.textContent = IR ? (IR.byteLength + ' bytes') : '—';
+          $diag.textContent = res.diagnostics?.length
+            ? JSON.stringify(res.diagnostics, null, 2)
+            : 'OK';
+          const est = await estimateGas({ manifest, ir: IR, method: $method.value, args: [] }).catch(() => null);
+          $gas.textContent = est?.upper ?? '—';
+          setStatus('Compiled', 'ok');
+        } catch (e) {
+          console.error(e);
+          $diag.textContent = (e && (e.stack || e.message)) || String(e);
+          setStatus('Compile failed', 'err');
+        }
+      }
+
+      async function onDeploy() {
+        if (!IR) return setStatus('Compile first', 'warn');
+        setStatus('Deploying (sim)...', 'muted');
+        try {
+          const out = await simulateDeploy({ manifest: MANIFEST, ir: IR, method: undefined, args: [] });
+          SIM_ADDR = out.simAddress || 'sim://local';
+          $simAddr.textContent = SIM_ADDR;
+          $result.textContent = JSON.stringify({ ok: out.ok, gasUsed: out.gasUsed, codeHash: out.codeHash }, null, 2);
+          renderLogs(out.logs);
+          setStatus(out.ok ? 'Deployed (sim)' : 'Deploy error', out.ok ? 'ok' : 'err');
+        } catch (e) {
+          console.error(e);
+          $result.textContent = (e && (e.stack || e.message)) || String(e);
+          setStatus('Deploy failed', 'err');
+        }
+      }
+
+      function renderLogs(logs) {
+        $logs.innerHTML = '';
+        for (const ev of logs || []) {
+          const li = document.createElement('li');
+          li.innerText = `${ev.name} ${JSON.stringify(ev.args)}`;
+          $logs.appendChild(li);
+        }
+        if (!logs?.length) {
+          const li = document.createElement('li');
+          li.className = 'muted';
+          li.innerText = '— no events —';
+          $logs.appendChild(li);
+        }
+      }
+
+      async function onCall() {
+        if (!IR) return setStatus('Compile first', 'warn');
+        setStatus('Calling...', 'muted');
+        try {
+          const method = $method.value;
+          const args = JSON.parse($args.value || '[]');
+          const out = await simulateCall({ manifest: MANIFEST, ir: IR, method, args });
+          const display = out.returnValue ?? (out.returnData ? `0x${Buffer.from(out.returnData).toString('hex')}` : null);
+          $result.textContent = JSON.stringify({
+            ok: out.ok,
+            gasUsed: out.gasUsed,
+            returnValue: display
+          }, null, 2);
+          renderLogs(out.logs);
+          setStatus(out.ok ? 'Call OK' : 'Call error', out.ok ? 'ok' : 'err');
+        } catch (e) {
+          console.error(e);
+          $result.textContent = (e && (e.stack || e.message)) || String(e);
+          setStatus('Call failed', 'err');
+        }
+      }
+
+      // Wire up buttons
+      $compile.addEventListener('click', onCompile);
+      $deploy.addEventListener('click', onDeploy);
+      $call.addEventListener('click', onCall);
+
+      log.info('Preview loaded. Ready.');
+    </script>
+  </body>
+</html>

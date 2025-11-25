@@ -1,0 +1,97 @@
+{
+  "$schema": "../schemas/variables.schema.json",
+
+  "project_name": {
+    "type": "string",
+    "prompt": "Project name",
+    "description": "Human-readable name shown in README and page titles.",
+    "default": "Animica Dapp",
+    "minLength": 2,
+    "maxLength": 64,
+    "examples": ["Animica Dapp", "My Studio Demo"]
+  },
+
+  "project_slug": {
+    "type": "slug",
+    "prompt": "Directory/package slug",
+    "description": "Filesystem and package-safe slug derived from project_name by default.",
+    "default": "{{ project_name }}",
+    "minLength": 2,
+    "maxLength": 64,
+    "examples": ["animica-dapp", "studio-demo"]
+  },
+
+  "package_name": {
+    "type": "string",
+    "prompt": "npm package name",
+    "description": "Published name used in package.json. Must be a valid npm name.",
+    "default": "{{ project_slug }}",
+    "pattern": "^[a-z0-9-~][a-z0-9-._~]*$",
+    "examples": ["@org/animica-dapp", "animica-dapp"]
+  },
+
+  "rpc_url": {
+    "type": "string",
+    "prompt": "Node RPC URL",
+    "description": "HTTP endpoint for the node's JSON-RPC service.",
+    "default": "http://localhost:8545",
+    "format": "uri",
+    "examples": ["http://localhost:8545", "https://rpc.devnet.animica.xyz"]
+  },
+
+  "ws_url": {
+    "type": "string",
+    "prompt": "Node WebSocket URL",
+    "description": "WebSocket endpoint for subscriptions (newHeads, pendingTxs).",
+    "default": "ws://localhost:8546",
+    "format": "uri",
+    "examples": ["ws://localhost:8546", "wss://ws.devnet.animica.xyz"]
+  },
+
+  "chain_id": {
+    "type": "integer",
+    "prompt": "Chain ID",
+    "description": "Numeric chain identifier this dapp will target.",
+    "default": 1337,
+    "minimum": 1,
+    "examples": [1, 2, 1337]
+  },
+
+  "services_url": {
+    "type": "string",
+    "prompt": "studio-services URL (deploy/verify/faucet)",
+    "description": "Base URL for the optional Studio Services proxy (deploy/verify/faucet).",
+    "default": "http://localhost:8080",
+    "format": "uri",
+    "examples": ["http://localhost:8080", "https://services.devnet.animica.xyz"]
+  },
+
+  "wallet_provider": {
+    "type": "enum",
+    "prompt": "Wallet provider",
+    "description": "Choose the transaction signer/provider. 'extension' uses the Animica browser wallet (window.animica). 'sdk' uses a local signer stub for demos.",
+    "choices": ["extension", "sdk"],
+    "default": "extension"
+  },
+
+  "use_tailwind": {
+    "type": "boolean",
+    "prompt": "Include Tailwind CSS?",
+    "description": "Adds Tailwind config and utility styles to the project.",
+    "default": true
+  },
+
+  "use_playwright": {
+    "type": "boolean",
+    "prompt": "Include Playwright E2E tests?",
+    "description": "Adds Playwright config and a basic connect/send test.",
+    "default": true
+  },
+
+  "include_examples": {
+    "type": "boolean",
+    "prompt": "Include example components (Head/Balance/SendTx)?",
+    "description": "Scaffold example UI components and a Home page wired to RPC and the wallet.",
+    "default": true
+  }
+}

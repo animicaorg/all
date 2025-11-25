@@ -1,0 +1,133 @@
+/* Animica Explorer — Dark Theme
+   Depends on: contrib/tokens/build/css/tokens.css (loaded first)
+   Scope: applies when <html data-theme="dark"> is set.
+*/
+
+[data-theme="dark"] {
+  /* Surfaces & text */
+  --exp-bg: #0B0D12;
+  --exp-surface: #0F172A;
+  --exp-surface-alt: #0B1220;
+  --exp-border: #1E2A44;
+  --exp-border-strong: #2A3A5E;
+  --exp-text: #E5E7EB;
+  --exp-text-muted: #94A3B8;
+
+  /* Brand & accents (same brand hue; contrast stays dark) */
+  --exp-accent: var(--accent-animica, #5EEAD4);
+  --exp-accent-contrast: #0B0D12;
+
+  /* Charts (dark) */
+  --exp-chart-bg: #0B1220;
+  --exp-chart-grid: #1E2A44;
+  --exp-chart-axis: #93A3B4;
+
+  /* Chart palette (kept in sync with contrib/explorer/charts/palette.json) */
+  --exp-gamma-line: #5EEAD4;         /* Γ spark */
+  --exp-gamma-glow: rgba(94,234,212,0.2);
+  --exp-mempool: #60A5FA;
+  --exp-da-ok: #22C55E;
+  --exp-da-warn: #F59E0B;
+  --exp-da-error: #EF4444;
+
+  /* Layout tokens (fallbacks if not defined by global tokens) */
+  --exp-radius-sm: var(--radius-sm, 8px);
+  --exp-radius: var(--radius-md, 12px);
+  --exp-radius-lg: var(--radius-lg, 16px);
+  --exp-shadow-sm: var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.5));
+  --exp-shadow: var(--shadow-md, 0 10px 30px rgba(0,0,0,0.4));
+  --exp-gap: var(--space-4, 16px);
+  --exp-gap-lg: var(--space-6, 24px);
+}
+
+/* Dark-specific component tweaks where light.css used fixed values */
+
+[data-theme="dark"] .explorer-app {
+  background: var(--exp-bg);
+  color: var(--exp-text);
+}
+
+[data-theme="dark"] .exp-card {
+  background: var(--exp-surface);
+  border-color: var(--exp-border);
+  box-shadow: var(--exp-shadow-sm);
+}
+
+[data-theme="dark"] .exp-card.headered .exp-card__header {
+  background: var(--exp-surface-alt);
+  border-bottom-color: var(--exp-border);
+  color: var(--exp-text);
+}
+
+[data-theme="dark"] .exp-table th,
+[data-theme="dark"] .exp-table td {
+  border-bottom-color: var(--exp-border);
+}
+[data-theme="dark"] .exp-table th {
+  background: var(--exp-surface-alt);
+  color: var(--exp-text-muted);
+}
+
+[data-theme="dark"] .exp-badge {
+  background: var(--exp-surface-alt);
+  border-color: var(--exp-border);
+  color: var(--exp-text);
+}
+[data-theme="dark"] .exp-badge.accent {
+  background: color-mix(in srgb, var(--exp-accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--exp-accent) 50%, transparent);
+  color: var(--exp-accent);
+}
+
+[data-theme="dark"] .exp-button {
+  background: var(--exp-surface);
+  border-color: var(--exp-border);
+  color: var(--exp-text);
+  box-shadow: var(--exp-shadow-sm);
+}
+[data-theme="dark"] .exp-button:hover {
+  border-color: var(--exp-border-strong);
+}
+[data-theme="dark"] .exp-button.accent {
+  background: var(--exp-accent);
+  color: var(--exp-accent-contrast);
+  border-color: transparent;
+  box-shadow: var(--exp-shadow);
+}
+
+/* Inputs had a hard-coded light bg in light.css; override for dark */
+[data-theme="dark"] .exp-input {
+  background: var(--exp-surface);
+  color: var(--exp-text);
+  border-color: var(--exp-border);
+}
+[data-theme="dark"] .exp-input:focus {
+  outline: 2px solid color-mix(in srgb, var(--exp-accent) 45%, transparent);
+  border-color: color-mix(in srgb, var(--exp-accent) 55%, var(--exp-border));
+}
+
+/* Charts */
+[data-theme="dark"] .exp-chart {
+  background: var(--exp-chart-bg);
+  border-color: var(--exp-border);
+}
+[data-theme="dark"] .exp-chart .grid line {
+  stroke: var(--exp-chart-grid);
+}
+[data-theme="dark"] .exp-chart .axis line,
+[data-theme="dark"] .exp-chart .axis path {
+  stroke: var(--exp-chart-axis);
+}
+[data-theme="dark"] .exp-sparkline path.gamma {
+  stroke: var(--exp-gamma-line);
+  filter: drop-shadow(0 2px 10px var(--exp-gamma-glow));
+}
+
+/* Utilities */
+[data-theme="dark"] .exp-muted { color: var(--exp-text-muted); }
+[data-theme="dark"] .exp-sep { background: var(--exp-border); }
+[data-theme="dark"] .exp-kpi .item {
+  background: var(--exp-surface);
+  border-color: var(--exp-border);
+  color: var(--exp-text);
+}

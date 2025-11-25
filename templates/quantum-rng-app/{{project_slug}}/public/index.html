@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#111827" />
+    <meta
+      name="description"
+      content="Quantum RNG demo — mixes the on-chain randomness beacon with quantum bytes, all in the browser."
+    />
+
+    <!-- Simple inline SVG favicon (no extra files needed) -->
+    <link
+      rel="icon"
+      href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="%23111827"/><path d="M12 32h40M32 12v40" stroke="%23a3e635" stroke-width="6" stroke-linecap="round"/><circle cx="32" cy="32" r="8" fill="%23f59e0b"/></svg>'
+    />
+
+    <!-- Social cards (optional) -->
+    <meta property="og:title" content="Quantum RNG (demo)" />
+    <meta
+      property="og:description"
+      content="Mix on-chain beacon entropy with quantum bytes — reproducible in your browser."
+    />
+    <meta property="og:type" content="website" />
+
+    <title>Quantum RNG (demo)</title>
+
+    <!-- Minimal base styles so the page looks decent even before React hydrates -->
+    <style>
+      :root {
+        --bg: #0b1020;
+        --fg: #e5e7eb;
+        --muted: #9ca3af;
+        --card: #0f172a;
+        --border: #1f2937;
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: #f8fafc;
+          --fg: #0f172a;
+          --muted: #475569;
+          --card: #ffffff;
+          --border: #e2e8f0;
+        }
+      }
+      * { box-sizing: border-box; }
+      html, body, #root {
+        height: 100%;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto,
+          Helvetica, Arial, Ubuntu, Inter, system-ui, "Apple Color Emoji",
+          "Segoe UI Emoji";
+      }
+      /* A gentle loading state before React mounts */
+      #root::before {
+        content: "Loading Quantum RNG…";
+        display: grid;
+        place-items: center;
+        height: 100%;
+        color: var(--muted);
+      }
+      .no-js {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        background: var(--bg);
+        color: var(--fg);
+        padding: 24px;
+        text-align: center;
+      }
+      .no-js small { color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <noscript>
+      <div class="no-js">
+        <div>
+          <h1>JavaScript required</h1>
+          <p>
+            This demo fetches the on-chain randomness beacon via JSON-RPC and
+            mixes it with quantum bytes in your browser. Please enable JavaScript.
+          </p>
+          <small>Tip: you can configure the RPC URL inside the app UI.</small>
+        </div>
+      </div>
+    </noscript>
+
+    <!-- React mounts here -->
+    <div id="root"></div>
+
+    <!-- Vite/React entry point -->
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

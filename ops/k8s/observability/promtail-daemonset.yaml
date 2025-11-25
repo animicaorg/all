@@ -1,0 +1,213 @@
+# Promtail DaemonSet for Animica devnet
+# - Scrapes container logs from each node and pushes to Loki
+# - Uses Kubernetes service discovery for labels
+# - Exposes /metrics on :3101 for Prometheus
+#
+# Loki URL: http://loki.animica-devnet.svc.cluster.local:3100/loki/api/v1/push
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: promtail-config
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: promtail
+data:
+  promtail.yaml: |
+    server:
+      http_listen_port: 3101
+      grpc_listen_port: 0
+    positions:
+      filename: /run/promtail/positions.yaml
+    clients:
+      - url: http://loki.animica-devnet.svc.cluster.local:3100/loki/api/v1/push
+        batchwait: 1s
+        batchsize: 1048576
+        # external labels help filtering by cluster in Grafana/Loki:
+        external_labels:
+          cluster: animica-devnet
+    scrape_configs:
+      - job_name: kubernetes-pods
+        pipeline_stages:
+          - cri: {}
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          # Attach useful k8s labels
+          - action: replace
+            source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - action: replace
+            source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - action: replace
+            source_labels: [__meta_kubernetes_pod_container_name]
+            target_label: container
+          - action: replace
+            source_labels: [__meta_kubernetes_node_name]
+            target_label: node
+          - action: replace
+            source_labels: [__meta_kubernetes_pod_uid]
+            target_label: pod_uid
+          - action: replace
+            source_labels: [__meta_kubernetes_pod_labels]
+            target_label: __tmp_labels
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+          # Read logs from containerd/docker symlinks under /var/log/containers
+          - action: replace
+            replacement: /var/log/containers/*$1*.log
+            target_label: __path__
+            source_labels: [__meta_kubernetes_pod_container_name]
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: promtail
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: promtail
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: promtail
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: promtail
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "nodes", "namespaces"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: promtail
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: promtail
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: promtail
+subjects:
+  - kind: ServiceAccount
+    name: promtail
+    namespace: animica-devnet
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: promtail
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: promtail
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: animica
+      app.kubernetes.io/name: promtail
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: animica
+        app.kubernetes.io/name: promtail
+    spec:
+      serviceAccountName: promtail
+      tolerations:
+        - operator: Exists   # allow running on tainted nodes (masters, etc.)
+      securityContext:
+        runAsUser: 0                  # needs access to host log files
+        runAsNonRoot: false
+      containers:
+        - name: promtail
+          image: grafana/promtail:2.9.5
+          imagePullPolicy: IfNotPresent
+          args:
+            - "-config.file=/etc/promtail/promtail.yaml"
+            - "-client.external-labels=cluster=animica-devnet"
+          ports:
+            - name: http-metrics
+              containerPort: 3101
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/promtail/promtail.yaml
+              subPath: promtail.yaml
+              readOnly: true
+            - name: positions
+              mountPath: /run/promtail
+            - name: varlog
+              mountPath: /var/log
+              readOnly: true
+            - name: dockerlog
+              mountPath: /var/lib/docker/containers
+              readOnly: true
+              # safe to be absent on containerd-only nodes
+              # (promtail tolerates missing mount if path doesn't exist)
+              # Leave as-is for compatibility across runtimes.
+            - name: podslog
+              mountPath: /var/log/pods
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: promtail-config
+            items:
+              - key: promtail.yaml
+                path: promtail.yaml
+        - name: positions
+          emptyDir: {}
+        - name: varlog
+          hostPath:
+            path: /var/log
+        - name: dockerlog
+          hostPath:
+            path: /var/lib/docker/containers
+            type: DirectoryOrCreate
+        - name: podslog
+          hostPath:
+            path: /var/log/pods
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: promtail
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: promtail
+spec:
+  selector:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/name: promtail
+  type: ClusterIP
+  ports:
+    - name: http-metrics
+      port: 3101
+      targetPort: http-metrics
+      protocol: TCP

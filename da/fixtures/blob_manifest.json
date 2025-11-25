@@ -1,0 +1,8 @@
+{
+  "filename": "blob_small.bin",
+  "namespace": 24,
+  "mime": "application/octet-stream",
+  "size_bytes": 4096,
+  "sha3_256": "0xda0886f9ca00b7176dc85f1f1e4648ec46b4389b9c6001744d6a41ffae103b57",
+  "tags": ["fixture", "example"]
+}

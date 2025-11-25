@@ -1,0 +1,55 @@
+<!--
+  snippet-provider.svg
+  Scalable line icon representing an off-chain "provider" service:
+    • Left: service/server stack (three bays + status LEDs)
+    • Right: verified capability gear with checkmark
+    • Bottom: two linked endpoints to suggest jobs in/out
+  Design notes:
+    - Pure strokes using currentColor for theme adaptability.
+    - 64x64 viewBox; optically tuned for 20–28px placements.
+    - Minimal geometry for crisp rendering on HiDPI.
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 64 64"
+     role="img"
+     aria-label="Provider snippet icon">
+  <title>Provider Snippet</title>
+  <desc>Server stack with a verified gear and linked endpoints, indicating an off-chain provider.</desc>
+
+  <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+
+    <!-- Server / service tower -->
+    <rect x="10" y="12" width="24" height="32" rx="3" ry="3"/>
+    <!-- Three bays with LEDs -->
+    <circle cx="16" cy="20" r="1.5"/>
+    <path d="M20 20h10"/>
+    <circle cx="16" cy="26" r="1.5"/>
+    <path d="M20 26h10"/>
+    <circle cx="16" cy="32" r="1.5"/>
+    <path d="M20 32h10"/>
+
+    <!-- Gear (provider capability) -->
+    <!-- Gear body -->
+    <circle cx="44" cy="26" r="7"/>
+    <!-- Teeth (cardinal + diagonal) -->
+    <path d="M44 16v4"/>
+    <path d="M44 32v4"/>
+    <path d="M34 26h4"/>
+    <path d="M50 26h4"/>
+    <path d="M38.05 20.05l2.83 2.83"/>
+    <path d="M47.12 29.12l2.83 2.83"/>
+    <path d="M49.95 20.05l-2.83 2.83"/>
+    <path d="M40.88 29.12l-2.83 2.83"/>
+    <!-- Verification checkmark inside gear -->
+    <path d="M40.5 26.5l2.5 2.5 4.5-5"/>
+
+    <!-- Job I/O endpoints -->
+    <circle cx="20" cy="48" r="3"/>
+    <circle cx="44" cy="48" r="3"/>
+    <path d="M23 48h18"/>
+    <!-- Uplink lines to represent flow between server/gear and endpoints -->
+    <path d="M22 44v-4"/>
+    <path d="M44 44v-6"/>
+
+  </g>
+</svg>

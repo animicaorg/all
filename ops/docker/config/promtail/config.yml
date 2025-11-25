@@ -1,0 +1,100 @@
+# Promtail — scrape Docker container logs and push to Loki.
+# Pairs with ops/docker/config/loki/config.yml and the compose stack.
+# Expect the container to mount:
+#  - /var/run/docker.sock:/var/run/docker.sock:ro
+#  - /var/log/promtail:/var/log/promtail
+#  - (optional) /etc/promtail/config.yml:/etc/promtail/config.yml:ro
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: info
+
+positions:
+  filename: /var/log/promtail/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+    batchwait: 1s
+    backoff_config:
+      min_period: 500ms
+      max_period: 5s
+      max_retries: 10
+
+target_config:
+  sync_period: 10s
+
+# Global limits sane for a devnet; raise for prod.
+limits_config:
+  max_streams: 0              # unlimited
+  readline_rate: 512KB
+  readline_rate_enabled: true
+
+scrape_configs:
+  - job_name: docker-logs
+    # Discover running containers via the Docker Engine.
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+
+    # Attach useful labels from Docker/Compose metadata.
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: container
+      - source_labels: ['__meta_docker_container_image']
+        target_label: image
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: compose_service
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_project']
+        target_label: compose_project
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_container_number']
+        target_label: compose_num
+      - source_labels: ['__meta_docker_container_label_org_opencontainers_image_title']
+        target_label: image_title
+      - source_labels: ['__meta_docker_container_label_org_opencontainers_image_version']
+        target_label: image_version
+      - replacement: docker
+        target_label: job
+
+      # Optional: drop promtail's own logs to avoid noise.
+      - source_labels: ['__meta_docker_container_name']
+        regex: '.+promtail.+'
+        action: drop
+
+      # Respect opt-out via label: logging=ignore
+      - source_labels: ['__meta_docker_container_label_logging']
+        regex: 'ignore'
+        action: drop
+
+    # Parse Docker JSON log driver format; then try to extract common JSON fields from the log line.
+    pipeline_stages:
+      - docker: {}   # yields .log (message), .stream, .time
+      - json:
+          expressions:
+            level: level
+            msg: msg
+            message: message
+            ts: ts
+            service: service
+            request_id: request_id
+          source: log
+          # it's fine if the line isn't JSON; stage is best-effort
+          # non-JSON lines will simply keep their original .log
+
+      # Promote selected extracted fields to labels (if present).
+      - labels:
+          level:
+          service:
+          request_id:
+
+      # Prefer a JSON-provided timestamp if present; otherwise keep Docker's.
+      - timestamp:
+          source: ts
+          format: RFC3339
+          action_on_failure: skip
+
+      # Drop empty lines after processing.
+      - drop:
+          source: log
+          expression: '^\s*$'

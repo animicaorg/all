@@ -1,0 +1,222 @@
+{{-/*
+Deployment: Animica Explorer API
+
+Purpose:
+- Read-only API that aggregates chain data for explorer-web and dashboards.
+- Talks to in-cluster node RPC; exposes HTTP (and optional Prometheus metrics).
+- Stateless (no PVC by default). Config via env or optional ConfigMap.
+
+Related templates expected (already in chart):
+- templates/svc-node-rpc.yaml  -> in-cluster RPC endpoint the explorer consumes
+
+Values (excerpt):
+image:
+  explorer:
+    repository: ghcr.io/animica/explorer
+    tag: "latest"
+    pullPolicy: IfNotPresent
+    env: {}          # extra image-level env
+    command: []      # optional override
+    args: []         # optional override
+
+explorer:
+  replicas: 1
+  podLabels: {}
+  podAnnotations: {}
+  priorityClassName: ""
+  serviceAccountName: ""
+  securityContext: {}
+  containerSecurityContext: {}
+  resources: {}
+
+  # If not set, defaults to http://<fullname>-rpc:<node.ports.http>
+  rpcUrl: ""
+  # If not set, coalesces from node.chainId or top-level chainId, else 1
+  chainId: ~
+  http:
+    port: 8081
+  metrics:
+    enabled: true
+    port: 9103
+
+  # Optional config ConfigMap named "<fullname>-explorer" with key "explorer.toml"
+  useConfigMap: false
+
+  env: {}                 # map of extra env
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+*/ -}}
+
+{{- $img := .Values.image.explorer | default dict -}}
+{{- $expl := .Values.explorer | default dict -}}
+{{- $node := .Values.node | default dict -}}
+{{- $httpPort := (default 8081 (dig "http" "port" $expl)) -}}
+{{- $metrics := (default dict $expl.metrics) -}}
+{{- $metricsEnabled := (default true $metrics.enabled) -}}
+{{- $metricsPort := (default 9103 $metrics.port) -}}
+{{- $nodeRpcPort := (default 8545 $node.ports.http) -}}
+{{- $defaultRpc := printf "http://%s-rpc:%v" (include "animica-devnet.fullname" .) $nodeRpcPort -}}
+{{- $rpcUrl := (default $defaultRpc $expl.rpcUrl) -}}
+{{- $chainId := (coalesce $expl.chainId $node.chainId .Values.chainId 1) -}}
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "animica-devnet.fullname" . }}-explorer
+  labels:
+    {{- include "animica-devnet.labels" (dict "ctx" . "component" "explorer") | nindent 4 }}
+spec:
+  replicas: {{ default 1 $expl.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/name: {{ include "animica-devnet.name" . }}
+      app.kubernetes.io/component: explorer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/name: {{ include "animica-devnet.name" . }}
+        app.kubernetes.io/component: explorer
+        {{- with $expl.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        {{- if $metricsEnabled }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ $metricsPort }}"
+        prometheus.io/path: "/metrics"
+        {{- end }}
+        {{- with $expl.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $expl.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with $expl.serviceAccountName }}
+      serviceAccountName: {{ . }}
+      {{- end }}
+      {{- with $expl.securityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: explorer
+          image: "{{ default "ghcr.io/animica/explorer" $img.repository }}:{{ default "latest" $img.tag }}"
+          imagePullPolicy: {{ default "IfNotPresent" $img.pullPolicy }}
+          {{- if or $img.command $img.args }}
+          {{- with $img.command }}
+          command: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $img.args }}
+          args: {{ toYaml . | nindent 12 }}
+          {{- end }}
+          {{- else }}
+          command: ["/bin/sh","-c"]
+          args:
+            - |
+              set -e
+              if [ -x "/entrypoints/explorer.sh" ]; then
+                exec /entrypoints/explorer.sh
+              fi
+              echo "[explorer] starting API on :${EXPLORER_HTTP_PORT:-{{ $httpPort }}} (rpc=${EXPLORER_RPC_URL})"
+              exec python -m explorer.api.main --host 0.0.0.0 --port "${EXPLORER_HTTP_PORT:-{{ $httpPort }}}"
+          {{- end }}
+          env:
+            - name: EXPLORER_RPC_URL
+              value: {{ $rpcUrl | quote }}
+            - name: EXPLORER_CHAIN_ID
+              value: "{{ $chainId }}"
+            - name: EXPLORER_HTTP_PORT
+              value: "{{ $httpPort }}"
+            {{- if $metricsEnabled }}
+            - name: EXPLORER_METRICS_PORT
+              value: "{{ $metricsPort }}"
+            {{- end }}
+            {{- if $expl.useConfigMap }}
+            - name: EXPLORER_CONFIG
+              value: /etc/animica/explorer/explorer.toml
+            {{- end }}
+            {{- with $img.env }}
+            {{- range $k, $v := . }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with $expl.env }}
+            {{- range $k, $v := . }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ $httpPort }}
+              protocol: TCP
+            {{- if $metricsEnabled }}
+            - name: metrics
+              containerPort: {{ $metricsPort }}
+              protocol: TCP
+            {{- end }}
+          {{- if $expl.useConfigMap }}
+          volumeMounts:
+            - name: explorer-config
+              mountPath: /etc/animica/explorer/explorer.toml
+              subPath: explorer.toml
+              readOnly: true
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            failureThreshold: 3
+          {{- with $expl.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $expl.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- if $expl.useConfigMap }}
+      volumes:
+        - name: explorer-config
+          configMap:
+            name: {{ include "animica-devnet.fullname" . }}-explorer
+            optional: true
+            items:
+              - key: explorer.toml
+                path: explorer.toml
+      {{- end }}
+      {{- with $expl.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $expl.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $expl.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $expl.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

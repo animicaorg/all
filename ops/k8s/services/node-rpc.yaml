@@ -1,0 +1,41 @@
+# Exposes the node's HTTP JSON-RPC and WebSocket endpoints.
+# By default we publish both 8545 (HTTP) and 8546 (WS). If your node serves
+# WS on the same port as HTTP (via Upgrade at /ws), you can drop the 8546
+# port and keep only 8545.
+#
+# Consider restricting exposure with loadBalancerSourceRanges in production.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: node-rpc
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: node
+    app.kubernetes.io/name: animica-node
+  annotations:
+    # Uncomment for AWS NLB:
+    # service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    # service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: "ip"
+    # Restrict access (optional, CIDR list):
+    # service.beta.kubernetes.io/load-balancer-source-ranges: "203.0.113.0/24,198.51.100.0/24"
+spec:
+  type: LoadBalancer
+  ipFamilyPolicy: PreferDualStack
+  externalTrafficPolicy: Cluster
+  selector:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: node
+    app.kubernetes.io/name: animica-node
+  ports:
+    - name: http-rpc
+      protocol: TCP
+      port: 8545
+      targetPort: rpc-http   # containerPort name on the node Pod
+      nodePort: 30045
+    - name: ws-rpc
+      protocol: TCP
+      port: 8546
+      targetPort: rpc-ws     # containerPort name on the node Pod (remove if WS shares 8545)
+      nodePort: 30046

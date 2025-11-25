@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8" />
+  <meta name="x-apple-disable-message-reformatting" />
+  <meta http-equiv="x-ua-compatible" content="ie=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Transaction Receipt — Animica</title>
+  <style>
+    /* ===== Base ===== */
+    :root { color-scheme: light dark; supported-color-schemes: light dark; }
+    body, table, td, a { font-family: Inter, -apple-system, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
+    body { margin:0; padding:0; background:#0B0D12; -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; }
+    img { border:0; outline:none; text-decoration:none; -ms-interpolation-mode:bicubic; }
+    table { border-collapse:collapse !important; }
+    a { color:#0B0D12; text-decoration:none; }
+    .container { width:100%; background:#0B0D12; }
+    .wrapper { width:100%; max-width:600px; margin:0 auto; }
+    .card { background:#FFFFFF; border:1px solid #E5E7EB; border-radius:12px; }
+    .muted { color:#475569 !important; }
+    .mono  { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace; }
+    .sep { height:1px; background:#E5E7EB; line-height:1px; font-size:0; }
+    .btn { display:inline-block; background:#5EEAD4; color:#0B0D12 !important; font-weight:700; padding:12px 20px; border-radius:10px; }
+    .btn-dark { display:inline-block; background:#0B0D12; color:#5EEAD4 !important; font-weight:700; padding:12px 20px; border-radius:10px; border:1px solid #1E293B; }
+    .pill { display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px; font-weight:700; }
+    .pill.ok { background:#DCFCE7; color:#166534; }
+    .pill.pending { background:#FEF9C3; color:#78350F; }
+    .pill.fail { background:#FEE2E2; color:#991B1B; }
+    .kv td { padding:8px 0; vertical-align:top; }
+    .kv .k { width:42%; color:#475569; }
+    .kv .v { width:58%; color:#0F172A; word-break:break-all; }
+    .pad-24 { padding:24px; }
+    .pad-16 { padding:16px; }
+    .head-title { font-size:22px; font-weight:800; color:#0F172A; margin:0; }
+    .sub { font-size:14px; color:#64748B; margin:6px 0 0; }
+
+    /* ===== Dark mode ===== */
+    @media (prefers-color-scheme: dark) {
+      body, .container { background:#0B0D12 !important; }
+      .card { background:#0F172A !important; border-color:#1E2A44 !important; }
+      .sep { background:#1E2A44 !important; }
+      .muted { color:#93A3B4 !important; }
+      a { color:#5EEAD4 !important; }
+      .kv .k { color:#93A3B4 !important; }
+      .kv .v { color:#E5E7EB !important; }
+      .head-title { color:#E5E7EB !important; }
+      .sub { color:#93A3B4 !important; }
+    }
+
+    /* ===== Mobile ===== */
+    @media screen and (max-width: 640px) {
+      .pad-24 { padding:18px !important; }
+      .pad-16 { padding:12px !important; }
+      .head-title { font-size:20px !important; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Full-width background -->
+  <table role="presentation" class="container" width="100%" cellpadding="0" cellspacing="0" aria-hidden="true">
+    <tr>
+      <td align="center" style="padding:20px 12px;">
+        <!-- Wrapper -->
+        <table role="presentation" class="wrapper" width="100%" cellpadding="0" cellspacing="0">
+          <!-- Header -->
+          <tr>
+            <td align="center" style="padding:12px 0 16px;">
+              <a href="{{home_url}}">
+                <img src="{{logo_url}}" width="160" alt="Animica" style="display:block;">
+              </a>
+            </td>
+          </tr>
+
+          <!-- Title card -->
+          <tr>
+            <td class="card pad-24" style="border-radius:12px;">
+              <table role="presentation" width="100%">
+                <tr>
+                  <td>
+                    <h1 class="head-title" style="margin:0 0 6px 0;">Transaction receipt</h1>
+                    <p class="sub" style="margin:0;">
+                      {{send_date}} — Order <span class="mono">{{order_id}}</span>
+                    </p>
+                  </td>
+                  <td align="right" style="white-space:nowrap;">
+                    {{#delivery_status_ok}}<span class="pill ok">Delivered</span>{{/delivery_status_ok}}
+                    {{#delivery_status_pending}}<span class="pill pending">Pending</span>{{/delivery_status_pending}}
+                    {{#delivery_status_failed}}<span class="pill fail">Failed</span>{{/delivery_status_failed}}
+                  </td>
+                </tr>
+              </table>
+
+              <div class="sep" style="margin:16px 0;"></div>
+
+              <!-- Summary totals -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td width="33.33%" class="pad-16" style="padding-left:0;">
+                    <div class="muted" style="font-size:12px; text-transform:uppercase; letter-spacing:.06em;">Amount paid (USD)</div>
+                    <div style="font-size:20px; font-weight:800; color:#0F172A;">${{amount_usd}}</div>
+                  </td>
+                  <td width="33.33%" class="pad-16">
+                    <div class="muted" style="font-size:12px; text-transform:uppercase; letter-spacing:.06em;">ANM delivered</div>
+                    <div style="font-size:20px; font-weight:800; color:#0F172A;">{{amount_anm}} ANM</div>
+                  </td>
+                  <td width="33.33%" class="pad-16" style="padding-right:0;">
+                    <div class="muted" style="font-size:12px; text-transform:uppercase; letter-spacing:.06em;">Price per ANM</div>
+                    <div style="font-size:20px; font-weight:800; color:#0F172A;">${{price_per_anm_usd}}</div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <tr><td style="height:12px; line-height:12px; font-size:12px;">&nbsp;</td></tr>
+
+          <!-- Details card -->
+          <tr>
+            <td class="card pad-24" style="border-radius:12px;">
+              <table role="presentation" width="100%" class="kv" cellpadding="0" cellspacing="0" aria-describedby="details-desc">
+                <tr>
+                  <td colspan="2" id="details-desc" class="muted" style="padding-bottom:12px;">Payment & delivery details</td>
+                </tr>
+                <tr>
+                  <td class="k">Customer</td>
+                  <td class="v">{{customer_name}} &lt;<a href="mailto:{{customer_email}}">{{customer_email}}</a>&gt;</td>
+                </tr>
+                <tr>
+                  <td class="k">Payment method</td>
+                  <td class="v">{{payment_method}}</td>
+                </tr>
+                <tr>
+                  <td class="k">Network</td>
+                  <td class="v">{{network_name}}</td>
+                </tr>
+                <tr>
+                  <td class="k">Destination address</td>
+                  <td class="v mono">{{address}}</td>
+                </tr>
+                <tr>
+                  <td class="k">Transaction hash</td>
+                  <td class="v mono"><a href="{{tx_explorer_url}}">{{tx_hash}}</a></td>
+                </tr>
+                <tr>
+                  <td class="k">Block / height</td>
+                  <td class="v">{{block_height}}</td>
+                </tr>
+                <tr>
+                  <td class="k">Delivery timestamp</td>
+                  <td class="v">{{timestamp}}</td>
+                </tr>
+              </table>
+
+              <div class="sep" style="margin:16px 0;"></div>
+
+              <!-- CTA row -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="left" class="pad-16" style="padding-left:0;">
+                    <a href="{{tx_explorer_url}}" class="btn">View on Explorer</a>
+                  </td>
+                  <td align="right" class="pad-16" style="padding-right:0;">
+                    {{#receipt_pdf_url}}<a href="{{receipt_pdf_url}}" class="btn-dark">Download PDF</a>{{/receipt_pdf_url}}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <tr><td style="height:12px; line-height:12px; font-size:12px;">&nbsp;</td></tr>
+
+          <!-- Line items (optional) -->
+          {{#line_items}}
+          <tr>
+            <td class="card pad-24" style="border-radius:12px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td colspan="2" class="muted" style="padding-bottom:8px;">Order breakdown</td>
+                </tr>
+                {{#items}}
+                <tr>
+                  <td style="padding:6px 0; color:#0F172A;"><strong>{{name}}</strong><br/>
+                    <span class="muted">{{desc}}</span>
+                  </td>
+                  <td align="right" style="padding:6px 0; white-space:nowrap; color:#0F172A;">{{amount}}</td>
+                </tr>
+                {{/items}}
+                <tr><td colspan="2"><div class="sep" style="margin:8px 0;"></div></td></tr>
+                <tr>
+                  <td class="muted">Subtotal</td>
+                  <td align="right" style="white-space:nowrap;">{{subtotal}}</td>
+                </tr>
+                <tr>
+                  <td class="muted">Fees</td>
+                  <td align="right" style="white-space:nowrap;">{{fees}}</td>
+                </tr>
+                <tr>
+                  <td class="muted">Total paid</td>
+                  <td align="right" style="white-space:nowrap;"><strong>{{total}}</strong></td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr><td style="height:12px; line-height:12px; font-size:12px;">&nbsp;</td></tr>
+          {{/line_items}}
+
+          <!-- Footer -->
+          <tr>
+            <td align="center" style="padding:16px 8px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="wrapper">
+                <tr>
+                  <td align="center" class="muted" style="font-size:12px; padding:8px 0;">
+                    Need help? <a href="{{support_url}}">Contact support</a> ·
+                    <a href="{{docs_url}}">Docs</a> ·
+                    <a href="{{explorer_url}}">Explorer</a>
+                  </td>
+                </tr>
+                <tr>
+                  <td align="center" class="muted" style="font-size:11px; padding:4px 0;">
+                    {{footer_address}}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <tr><td style="height:8px; line-height:8px; font-size:8px;">&nbsp;</td></tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+
+  <!-- Plain-text fallbacks for clients that strip HTML -->
+  <!--
+  Transaction receipt — Animica
+  Date: {{send_date}}
+  Order: {{order_id}}
+  Amount paid (USD): ${{amount_usd}}
+  ANM delivered: {{amount_anm}} at ${{price_per_anm_usd}}/ANM
+  Network: {{network_name}}
+  Address: {{address}}
+  Tx: {{tx_hash}}  ({{tx_explorer_url}})
+  -->
+</body>
+</html>

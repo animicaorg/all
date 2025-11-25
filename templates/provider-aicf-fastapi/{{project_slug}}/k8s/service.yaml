@@ -1,0 +1,116 @@
+# Service exposing the FastAPI HTTP endpoint for the AICF provider.
+# Apply with:
+#   kubectl apply -n {{k8s_namespace}} -f service.yaml
+#
+# Templated fields you should replace via your generator or manually:
+#   {{project_slug}}       - short name of this provider instance
+#   {{k8s_namespace}}      - Kubernetes namespace (e.g. "animica-devnet")
+#   {{service_type}}       - ClusterIP | LoadBalancer | NodePort
+#   {{http_port}}          - container port the server listens on (e.g. 8080)
+#   {{service_annotations}}- optional map of annotations (e.g. for Ingress/mesh)
+#
+# Notes:
+# - The Deployment defines the containerPort "http" matching {{http_port}}.
+# - This Service routes port 80 -> targetPort "http" for convenience.
+# - Prometheus scrape annotations are included by default; adjust as needed.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{project_slug}}
+  namespace: {{k8s_namespace}}
+  labels:
+    app.kubernetes.io/name: aicf-provider
+    app.kubernetes.io/instance: {{project_slug}}
+    app.kubernetes.io/component: backend
+  annotations:
+    # --- Observability (Prometheus auto-scrape) ---
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "{{http_port}}"
+    prometheus.io/path: "/metrics"
+
+    # --- Service Mesh / Ingress examples (optional) ---
+    # service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    # cloud.google.com/neg: '{"ingress": true}'
+    # kuma.io/mesh: "default"
+
+    # --- Custom annotations placeholder (render a flat map here) ---
+    {{service_annotations}}
+spec:
+  # Choose the exposure model for your cluster:
+  # - ClusterIP (default, internal only)
+  # - LoadBalancer (public or internal LB depending on your cloud)
+  # - NodePort (rarely recommended; use only if you must)
+  type: {{service_type}}          # e.g. "ClusterIP"
+  # Prefer dual-stack if your cluster supports it; otherwise Cluster default wins.
+  ipFamilyPolicy: PreferDualStack
+  selector:
+    app.kubernetes.io/name: aicf-provider
+    app.kubernetes.io/instance: {{project_slug}}
+  ports:
+    - name: http
+      port: 80                    # Service port exposed inside cluster (or via LB)
+      targetPort: http            # Matches containerPort name from Deployment
+      protocol: TCP
+
+  # For LoadBalancer types you may want these (uncomment & tune):
+  # externalTrafficPolicy: Local   # Preserve client source IP; requires sufficient pods per node
+  # loadBalancerClass: ""         # Set to cloud-specific class if needed
+  # loadBalancerSourceRanges:     # Lock down public access to trusted CIDRs
+  #   - 1.2.3.4/32
+  #   - 5.6.7.0/24
+
+  # For NodePort (if you set type: NodePort), you can pin the port range (optional):
+  # ports:
+  #   - name: http
+  #     port: 80
+  #     targetPort: http
+  #     nodePort: 30080
+
+---
+# Optional: a dedicated headless Service for intra-cluster discovery (DNS only).
+# Most setups do not require this; uncomment if you need stable DNS for sidecars/jobs.
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: {{project_slug}}-headless
+#   namespace: {{k8s_namespace}}
+#   labels:
+#     app.kubernetes.io/name: aicf-provider
+#     app.kubernetes.io/instance: {{project_slug}}
+# spec:
+#   clusterIP: None
+#   selector:
+#     app.kubernetes.io/name: aicf-provider
+#     app.kubernetes.io/instance: {{project_slug}}
+#   ports:
+#     - name: http
+#       port: 80
+#       targetPort: http
+#       protocol: TCP
+
+---
+# Optional: ServiceMonitor for Prometheus Operator (if installed).
+# Requires the monitoring.coreos.com CRDs. Comment out if not using Prometheus Operator.
+# apiVersion: monitoring.coreos.com/v1
+# kind: ServiceMonitor
+# metadata:
+#   name: {{project_slug}}
+#   namespace: {{k8s_namespace}}
+#   labels:
+#     release: prometheus           # match your operator's selector
+#     app.kubernetes.io/name: aicf-provider
+#     app.kubernetes.io/instance: {{project_slug}}
+# spec:
+#   selector:
+#     matchLabels:
+#       app.kubernetes.io/name: aicf-provider
+#       app.kubernetes.io/instance: {{project_slug}}
+#   namespaceSelector:
+#     matchNames:
+#       - {{k8s_namespace}}
+#   endpoints:
+#     - port: http
+#       path: /metrics
+#       interval: 15s
+#       scrapeTimeout: 10s

@@ -1,0 +1,122 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import InlineLink from "../components/InlineLink.astro";
+
+const title = "Privacy Policy";
+const description = "How we collect, use, and protect information across the Animica website, apps, and services.";
+const lastUpdated = "October 9, 2025";
+---
+
+<BaseLayout title={title} description={description}>
+  <section class="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-10 sm:py-14 prose prose-invert prose-a:no-underline">
+    <h1 class="mb-2">{title}</h1>
+    <p class="text-sm opacity-70">Last updated: {lastUpdated}</p>
+
+    <p>
+      This Privacy Policy explains what information we collect when you use Animica websites, apps, SDKs,
+      wallets, and related services (the “Services”), how we use it, and the choices you have. “We”, “us”,
+      and “our” refer to the Animica project and maintainers.
+    </p>
+
+    <h2>1) What we <em>don’t</em> collect</h2>
+    <ul>
+      <li>No private keys or seed phrases. Keys stay on your device or in your wallet.</li>
+      <li>No contract source or user data from the on-chain execution unless you explicitly upload it to our services.</li>
+      <li>No invasive device identifiers (we avoid fingerprinting).</li>
+    </ul>
+
+    <h2>2) Information we may collect</h2>
+    <ul>
+      <li><strong>Basic telemetry</strong> (optional): anonymous performance metrics to improve reliability (e.g., load times, crash reports).</li>
+      <li><strong>Web server logs</strong>: IP address, user-agent, referrer, and timestamps for security and abuse prevention. Logs are rotated and retained briefly.</li>
+      <li><strong>Support messages</strong>: content you send to us (e.g., email, forms).</li>
+      <li><strong>Newsletter</strong> (opt-in): email address; you can unsubscribe anytime.</li>
+      <li><strong>Analytics</strong> (opt-in): privacy-focused tools like Plausible/PostHog (cookie-free or minimal, if enabled).</li>
+    </ul>
+
+    <h2>3) Cookies & local storage</h2>
+    <p>
+      We prefer no or minimal cookies. Where needed (e.g., remembering theme, network selection, or session
+      state), we use local storage or short-lived cookies. You can clear them in your browser settings.
+    </p>
+
+    <h2>4) How we use information</h2>
+    <ul>
+      <li>To operate the Services (routing requests to RPC/WS endpoints, delivering docs and assets).</li>
+      <li>To secure our infrastructure (rate limiting, DDoS mitigation, fraud prevention).</li>
+      <li>To improve performance and user experience (aggregated, anonymized metrics).</li>
+      <li>To communicate with you if you opt in (newsletter, critical notices).</li>
+    </ul>
+
+    <h2>5) Third-party processors</h2>
+    <p>
+      We may use reputable providers for hosting, analytics (opt-in), crash reporting, or email delivery. We
+      require contractual safeguards and minimize data sharing. Current providers may be listed in our
+      <InlineLink href="/humans.txt">humans.txt</InlineLink> or documentation.
+    </p>
+
+    <h2>6) Data retention</h2>
+    <p>
+      Server logs are retained for a short period (typically ≤ 30 days) unless needed to investigate abuse.
+      Newsletter emails are kept until you unsubscribe or we close the list. Support messages are kept as
+      long as reasonably necessary to address your request.
+    </p>
+
+    <h2>7) Your choices & rights</h2>
+    <ul>
+      <li>Opt out of analytics in the UI (where available) or block via your browser.</li>
+      <li>Unsubscribe from email via the link in the footer.</li>
+      <li>Request deletion of support messages by contacting us.</li>
+    </ul>
+
+    <h2>8) Security</h2>
+    <p>
+      We use transport encryption (HTTPS), least-privilege access, and defense-in-depth practices. Despite
+      these measures, no system is perfectly secure—please handle secrets (seed phrases, private keys) with care.
+    </p>
+
+    <h2>9) Children’s privacy</h2>
+    <p>
+      The Services are not directed to children under 13 (or the equivalent age in your jurisdiction). We do
+      not knowingly collect personal information from children.
+    </p>
+
+    <h2>10) International transfers</h2>
+    <p>
+      Our infrastructure and providers may operate globally. Where required, we implement appropriate
+      safeguards for cross-border data transfers.
+    </p>
+
+    <h2>11) Changes to this policy</h2>
+    <p>
+      We may update this policy from time to time. Material changes will be noted here with a new “Last updated”
+      date. Your continued use of the Services after changes take effect indicates acceptance.
+    </p>
+
+    <h2>12) Contact us</h2>
+    <p>
+      Questions or requests? Email
+      <InlineLink href="mailto:privacy@animica.dev">privacy@animica.dev</InlineLink>
+      or <InlineLink href="mailto:security@animica.dev">security@animica.dev</InlineLink>.
+    </p>
+
+    <hr />
+
+    <p class="text-xs opacity-70">
+      Note: On-chain data (transactions, addresses, events) is public by design and may be mirrored by third-party
+      indexers and explorers. Exercise caution when associating addresses with personal identities.
+    </p>
+
+    <script type="application/ld+json" is:inline>
+      {JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "PrivacyPolicy",
+        name: "Animica Privacy Policy",
+        dateModified: lastUpdated,
+        url: "/privacy",
+        publisher: { "@type": "Organization", name: "Animica" },
+        inLanguage: "en"
+      })}
+    </script>
+  </section>
+</BaseLayout>

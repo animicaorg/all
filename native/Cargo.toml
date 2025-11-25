@@ -1,0 +1,95 @@
+[package]
+name        = "animica_native"
+version     = "0.1.0"
+edition     = "2021"
+license     = "MIT OR Apache-2.0"
+repository  = "https://example.com/animica/animica"
+description = "Animica native kernels (hashing, NMT, RS, VDF) with C/Python/Node FFI."
+
+# If you add a build.rs that conditionally compiles C sources (e.g. Keccak),
+# keep cc in build-dependencies. It's harmless if unused.
+build = "build.rs"
+
+[lib]
+# rlib for Rust dependents, cdylib for C ABI / Python (pyo3) / Node (napi-rs) bindings.
+crate-type = ["rlib", "cdylib"]
+name = "animica_native"
+
+[features]
+# ---- Feature flags -----------------------------------------------------------
+# simd: enable CPU feature detection / SIMD codepaths where available.
+# rayon: enable parallel implementations (NMT/RS) via rayon.
+# isal:  prefer Intel ISA-L (if present) for erasure coding hotpaths.
+# c_keccak: use a C-backed Keccak implementation (compiled via build.rs).
+# python: build as a Python extension module using pyo3/maturin.
+default = ["simd"]
+
+simd    = []                 # code uses `#[cfg(feature = "simd")]`
+rayon   = ["dep:rayon"]
+isal    = ["dep:isal"]
+c_keccak = []                # code & build.rs gate the C path with this flag
+python  = ["dep:pyo3"]       # enables pyo3-based Python bindings
+
+[dependencies]
+# Core utils
+anyhow     = "1"
+thiserror  = "1"
+cfg-if     = "1"
+once_cell  = "1"
+zeroize    = { version = "1", features = ["zeroize_derive"] }
+reed-solomon-erasure = "5"
+
+# Hashing
+blake3       = { version = "1", default-features = true }
+sha3         = "0.10"
+tiny-keccak  = { version = "2", optional = true }        # alternative pure-Rust Keccak
+
+# Parallelism (optional)
+rayon = { version = "1.10", optional = true }
+
+# Erasure coding fast-paths (optional; link to ISA-L if available)
+# NOTE: Depending on your environment you might use a different crate/binding.
+# Swap or pin as appropriate in your repo.
+isal = { package = "isal-rs", version = "0.3.1", optional = true }
+
+# Python bindings (optional)
+pyo3 = { version = "0.21", features = ["extension-module"], optional = true }
+
+[build-dependencies]
+# Used when `--features c_keccak` is on to compile bundled C sources, if any.
+cc = "1"
+pkg-config = "0.3"
+
+[package.metadata.maturin]
+# When building Python wheels, maturin will honor this section.
+# Set manylinux policy as needed for your distribution targets.
+name = "animica_native"
+requires-python = ">=3.9"
+# manylinux = "auto"  # uncomment if you want stricter policy (e.g., manylinux_2_28)
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+debug = false
+
+[profile.dev]
+opt-level = 1
+debug = true
+panic = "unwind"
+
+# --- Target-specific knobs (optional examples) -------------------------------
+# [target.'cfg(target_arch = "x86_64")'.rustflags]
+# rustflags = ["-C", "target-cpu=native"]
+
+# [target.'cfg(target_os = "linux")'.dependencies]
+# <linux-only deps here>
+
+# ---- Notes ------------------------------------------------------------------
+# - `c_keccak` is intentionally empty here; your build.rs should check the
+#   feature and compile/link a C implementation (e.g., Keccak Code Package).
+# - For `isal`, ensure your CI/build agents have ISA-L installed or provide a
+#   vendored build; otherwise rely on the pure-Rust RS path in your code.
+# - The Python feature pairs with pyo3; maturin builds wheels from this crate.

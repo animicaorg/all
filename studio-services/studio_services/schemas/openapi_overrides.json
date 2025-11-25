@@ -1,0 +1,169 @@
+{
+  "info": {
+    "title": "Animica Studio Services",
+    "description": "Small, human-friendly enrichments layered onto the generated OpenAPI schema.\nThese overrides add examples, tag descriptions, and a standard API-key scheme.\nThey do not remove or rename any existing endpoints.",
+    "x-logo": { "url": "/static/logo.svg" }
+  },
+  "externalDocs": {
+    "description": "Project docs",
+    "url": "https://example.com/docs"
+  },
+  "servers": [
+    { "url": "http://localhost:8787", "description": "Local dev" }
+  ],
+  "tags": [
+    { "name": "health", "description": "Liveness/readiness and version endpoints." },
+    { "name": "deploy", "description": "Submit signed transactions for deployment, or run preflight checks." },
+    { "name": "verify", "description": "Recompile source and match code hashes; fetch verification status/results." },
+    { "name": "faucet", "description": "Optional testnet drip with strict rate limits." },
+    { "name": "artifacts", "description": "Content-addressed artifact storage and lookups linked to addresses." },
+    { "name": "simulate", "description": "Compile and run read-only contract calls against an ephemeral state." },
+    { "name": "openapi", "description": "OpenAPI schema and documentation endpoints." }
+  ],
+  "x-tagGroups": [
+    { "name": "Core",   "tags": ["health", "openapi"] },
+    { "name": "Build",  "tags": ["simulate", "artifacts"] },
+    { "name": "On-chain", "tags": ["deploy", "verify", "faucet"] }
+  ],
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-api-key",
+        "description": "Provide an API key issued by the service operator. Some routes may also accept the key in the query string as `api_key`, but headers are preferred."
+      }
+    },
+    "schemas": {
+      "Hex": {
+        "type": "string",
+        "pattern": "^0x[0-9a-fA-F]*$",
+        "example": "0xdeadbeef",
+        "description": "0x-prefixed hex string (even-length)."
+      },
+      "Hash": {
+        "type": "string",
+        "pattern": "^0x[0-9a-fA-F]{64,128}$",
+        "example": "0x2f5b2c0ff2b4c3a6a8b3b2e2d1c0f9e8d7c6b5a49382716f5e4d3c2b1a0f0e0d",
+        "description": "Content hash (commonly 32–64 bytes as hex)."
+      },
+      "Address": {
+        "type": "string",
+        "example": "anim1q9c0s4e7d6n5x4y3z2k0h7x5a0p9m4u2y3gq8r",
+        "description": "Bech32m-encoded Animica address (see pq bech32 rules)."
+      },
+      "ChainId": {
+        "type": "integer",
+        "minimum": 0,
+        "example": 1337,
+        "description": "Numeric chain id."
+      },
+      "ArtifactPut": {
+        "type": "object",
+        "required": ["kind", "content"],
+        "properties": {
+          "kind": { "type": "string", "enum": ["source", "manifest", "abi", "package", "ir", "bytecode", "other"] },
+          "content": { "$ref": "#/components/schemas/Hex" },
+          "media_type": { "type": "string", "example": "application/json" },
+          "filename": { "type": "string", "example": "manifest.json" },
+          "chain_id": { "$ref": "#/components/schemas/ChainId" },
+          "address": { "$ref": "#/components/schemas/Address" },
+          "code_hash": { "$ref": "#/components/schemas/Hash" },
+          "labels": {
+            "type": "object",
+            "additionalProperties": { "type": "string" },
+            "example": { "template": "counter", "env": "devnet" }
+          }
+        },
+        "example": {
+          "kind": "manifest",
+          "content": "0x7b22616269223a205b5d7d",
+          "media_type": "application/json",
+          "filename": "manifest.json",
+          "chain_id": 1337,
+          "labels": { "template": "counter" }
+        },
+        "description": "Request body for storing an artifact blob (content-addressed)."
+      },
+      "ArtifactMeta": {
+        "type": "object",
+        "required": ["id", "content_hash", "size", "kind", "media_type", "created_at"],
+        "properties": {
+          "id": { "type": "string", "example": "art_01hv4k6m5rq3q3j5j2n3m4k6m8" },
+          "content_hash": { "$ref": "#/components/schemas/Hash" },
+          "size": { "type": "integer", "minimum": 0, "example": 512 },
+          "kind": { "type": "string" },
+          "media_type": { "type": "string" },
+          "filename": { "type": "string", "nullable": true },
+          "chain_id": { "$ref": "#/components/schemas/ChainId" },
+          "address": { "$ref": "#/components/schemas/Address" },
+          "code_hash": { "$ref": "#/components/schemas/Hash" },
+          "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+          "created_at": { "type": "string", "format": "date-time" },
+          "download_path": { "type": "string", "example": "/artifacts/art_01hv4k6..." }
+        },
+        "description": "Metadata of a stored artifact."
+      },
+      "SimulateCall": {
+        "type": "object",
+        "required": ["chain_id", "function"],
+        "properties": {
+          "chain_id": { "$ref": "#/components/schemas/ChainId" },
+          "source": { "type": "string", "description": "Python contract source (exclusive with `address`)." },
+          "manifest": { "type": "object", "description": "ABI/manifest JSON." },
+          "address": { "$ref": "#/components/schemas/Address" },
+          "abi": { "type": "object" },
+          "function": { "type": "string", "example": "get" },
+          "args": { "type": "object", "additionalProperties": true, "example": {} },
+          "sender": { "$ref": "#/components/schemas/Address" },
+          "value": { "type": "integer", "minimum": 0, "example": 0 },
+          "gas_limit": { "type": "integer", "minimum": 0, "example": 500000 },
+          "gas_price": { "type": "integer", "minimum": 0, "example": 1 },
+          "seed": { "$ref": "#/components/schemas/Hex" },
+          "context": { "type": "object", "additionalProperties": true, "example": { "height": 1, "timestamp": 1700000000 } }
+        },
+        "example": {
+          "chain_id": 1337,
+          "source": "from stdlib import events\\nvalue = 0\\ndef get():\\n    return value\\n",
+          "manifest": { "abi": [{ "name": "get", "type": "function", "inputs": [], "outputs": [{ "type": "int" }] }] },
+          "function": "get",
+          "args": {},
+          "gas_limit": 200000
+        },
+        "description": "Request to simulate a single contract function call."
+      },
+      "SimulateResult": {
+        "type": "object",
+        "required": ["ok", "gas_used"],
+        "properties": {
+          "ok": { "type": "boolean", "example": true },
+          "return_value": { "description": "Decoded return value." },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": { "type": "string" },
+                "args": { "type": "object", "additionalProperties": true }
+              }
+            }
+          },
+          "gas_used": { "type": "integer", "minimum": 0, "example": 12345 },
+          "logs_text": { "type": "array", "items": { "type": "string" } },
+          "error": { "type": "string", "nullable": true },
+          "code_hash": { "$ref": "#/components/schemas/Hash" },
+          "abi": { "type": "object" },
+          "state_diff": { "type": "object", "additionalProperties": true }
+        },
+        "example": {
+          "ok": true,
+          "return_value": 0,
+          "events": [],
+          "gas_used": 8421,
+          "logs_text": []
+        },
+        "description": "Result envelope from the simulator (no side effects)."
+      }
+    }
+  }
+}

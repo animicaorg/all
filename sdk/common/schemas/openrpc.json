@@ -1,0 +1,463 @@
+{
+  "openrpc": "1.2.6",
+  "info": {
+    "title": "Animica Node JSON-RPC",
+    "version": "0.1.0",
+    "description": "Canonical OpenRPC description for the Animica node. SDKs (py/ts/rs) are generated from this document. Keep in sync with spec."
+  },
+  "servers": [
+    { "name": "default", "url": "http://localhost:8545" }
+  ],
+  "methods": [
+    {
+      "name": "rpc.discover",
+      "summary": "Return this OpenRPC document.",
+      "params": [],
+      "result": {
+        "name": "openrpcDocument",
+        "schema": { "type": "object", "description": "OpenRPC document." }
+      }
+    },
+
+    /* ---------------- Core chain ---------------- */
+    {
+      "name": "chain.getHead",
+      "summary": "Get the latest head summary.",
+      "params": [],
+      "result": { "name": "head", "schema": { "$ref": "#/components/schemas/Head" } }
+    },
+    {
+      "name": "chain.getBlockByHash",
+      "summary": "Fetch a block by its hash.",
+      "params": [
+        { "name": "hash", "required": true, "schema": { "$ref": "#/components/schemas/Hash" } }
+      ],
+      "result": { "name": "block", "schema": { "$ref": "#/components/schemas/Block" } }
+    },
+    {
+      "name": "chain.getBlockByHeight",
+      "summary": "Fetch a block by height.",
+      "params": [
+        { "name": "height", "required": true, "schema": { "type": "integer", "minimum": 0 } }
+      ],
+      "result": { "name": "block", "schema": { "$ref": "#/components/schemas/Block" } }
+    },
+
+    /* ---------------- Transactions ---------------- */
+    {
+      "name": "tx.send",
+      "summary": "Submit a signed transaction (CBOR bytes as hex).",
+      "params": [
+        { "name": "raw", "required": true, "schema": { "$ref": "#/components/schemas/HexBytes" } }
+      ],
+      "result": { "name": "txHash", "schema": { "$ref": "#/components/schemas/Hash" } }
+    },
+    {
+      "name": "tx.getReceipt",
+      "summary": "Get a transaction receipt by hash.",
+      "params": [
+        { "name": "txHash", "required": true, "schema": { "$ref": "#/components/schemas/Hash" } }
+      ],
+      "result": { "name": "receipt", "schema": { "$ref": "#/components/schemas/Receipt" } }
+    },
+    {
+      "name": "tx.call",
+      "summary": "Execute a read-only call against the latest state.",
+      "params": [
+        { "name": "request", "required": true, "schema": { "$ref": "#/components/schemas/CallRequest" } }
+      ],
+      "result": { "name": "returnData", "schema": { "$ref": "#/components/schemas/HexBytes" } }
+    },
+    {
+      "name": "tx.estimateGas",
+      "summary": "Estimate gas for a transaction/call.",
+      "params": [
+        { "name": "request", "required": true, "schema": { "$ref": "#/components/schemas/CallRequest" } }
+      ],
+      "result": { "name": "gas", "schema": { "type": "integer", "minimum": 0 } }
+    },
+
+    /* ---------------- Logs & events ---------------- */
+    {
+      "name": "events.getLogs",
+      "summary": "Query logs over a block range.",
+      "params": [
+        { "name": "filter", "required": true, "schema": { "$ref": "#/components/schemas/LogFilter" } }
+      ],
+      "result": { "name": "logs", "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Log" } } }
+    },
+
+    /* ---------------- Data Availability ---------------- */
+    {
+      "name": "da.postBlob",
+      "summary": "Post a blob to DA; returns commitment and size.",
+      "params": [
+        { "name": "namespace", "required": true, "schema": { "$ref": "#/components/schemas/NamespaceId" } },
+        { "name": "data", "required": true, "schema": { "$ref": "#/components/schemas/HexBytes" } }
+      ],
+      "result": { "name": "result", "schema": { "$ref": "#/components/schemas/DaPostResult" } }
+    },
+    {
+      "name": "da.getBlob",
+      "summary": "Retrieve a previously posted blob by commitment.",
+      "params": [
+        { "name": "commitment", "required": true, "schema": { "$ref": "#/components/schemas/Hash" } }
+      ],
+      "result": { "name": "data", "schema": { "$ref": "#/components/schemas/HexBytes" } }
+    },
+    {
+      "name": "da.getProof",
+      "summary": "Get a membership proof for a blob commitment.",
+      "params": [
+        { "name": "commitment", "required": true, "schema": { "$ref": "#/components/schemas/Hash" } }
+      ],
+      "result": { "name": "proof", "schema": { "$ref": "#/components/schemas/DaProof" } }
+    },
+
+    /* ---------------- AICF (AI / Quantum) ---------------- */
+    {
+      "name": "aicf.listProviders",
+      "summary": "List registered providers and capabilities.",
+      "params": [],
+      "result": { "name": "providers", "schema": { "type": "array", "items": { "$ref": "#/components/schemas/ProviderInfo" } } }
+    },
+    {
+      "name": "aicf.getProvider",
+      "summary": "Get a provider by id.",
+      "params": [
+        { "name": "providerId", "required": true, "schema": { "$ref": "#/components/schemas/ProviderId" } }
+      ],
+      "result": { "name": "provider", "schema": { "$ref": "#/components/schemas/ProviderInfo" } }
+    },
+    {
+      "name": "aicf.listJobs",
+      "summary": "List jobs with optional status filter.",
+      "params": [
+        { "name": "status", "required": false, "schema": { "$ref": "#/components/schemas/JobStatus" } },
+        { "name": "cursor", "required": false, "schema": { "type": "string" } },
+        { "name": "limit", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } }
+      ],
+      "result": { "name": "jobs", "schema": { "type": "array", "items": { "$ref": "#/components/schemas/JobSummary" } } }
+    },
+    {
+      "name": "aicf.getJob",
+      "summary": "Get a job by task id.",
+      "params": [
+        { "name": "taskId", "required": true, "schema": { "$ref": "#/components/schemas/Hash" } }
+      ],
+      "result": { "name": "job", "schema": { "$ref": "#/components/schemas/JobRecord" } }
+    },
+    {
+      "name": "aicf.claimPayout",
+      "summary": "Claim payout for a completed job (if applicable).",
+      "params": [
+        { "name": "taskId", "required": true, "schema": { "$ref": "#/components/schemas/Hash" } }
+      ],
+      "result": { "name": "payout", "schema": { "$ref": "#/components/schemas/PayoutReceipt" } }
+    },
+    {
+      "name": "aicf.getBalance",
+      "summary": "Get provider balance (available/locked).",
+      "params": [
+        { "name": "providerId", "required": true, "schema": { "$ref": "#/components/schemas/ProviderId" } }
+      ],
+      "result": { "name": "balance", "schema": { "$ref": "#/components/schemas/Balance" } }
+    },
+
+    /* ---------------- Randomness Beacon ---------------- */
+    {
+      "name": "rand.getParams",
+      "summary": "Get randomness module parameters.",
+      "params": [],
+      "result": { "name": "params", "schema": { "$ref": "#/components/schemas/RandParams" } }
+    },
+    {
+      "name": "rand.getRound",
+      "summary": "Get current round status.",
+      "params": [],
+      "result": { "name": "round", "schema": { "$ref": "#/components/schemas/RoundStatus" } }
+    },
+    {
+      "name": "rand.commit",
+      "summary": "Submit a commitment for the current round.",
+      "params": [
+        { "name": "payload", "required": true, "schema": { "$ref": "#/components/schemas/HexBytes" } },
+        { "name": "salt", "required": true, "schema": { "$ref": "#/components/schemas/HexBytes" } }
+      ],
+      "result": { "name": "commitment", "schema": { "$ref": "#/components/schemas/Hash" } }
+    },
+    {
+      "name": "rand.reveal",
+      "summary": "Reveal payload+salt for the current round.",
+      "params": [
+        { "name": "payload", "required": true, "schema": { "$ref": "#/components/schemas/HexBytes" } },
+        { "name": "salt", "required": true, "schema": { "$ref": "#/components/schemas/HexBytes" } }
+      ],
+      "result": { "name": "ok", "schema": { "type": "boolean" } }
+    },
+    {
+      "name": "rand.getBeacon",
+      "summary": "Get the finalized beacon for a round (or latest if omitted).",
+      "params": [
+        { "name": "roundId", "required": false, "schema": { "type": "integer", "minimum": 0 } }
+      ],
+      "result": { "name": "beacon", "schema": { "$ref": "#/components/schemas/BeaconOut" } }
+    },
+    {
+      "name": "rand.getHistory",
+      "summary": "Paginated beacon history.",
+      "params": [
+        { "name": "cursor", "required": false, "schema": { "type": "string" } },
+        { "name": "limit", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } }
+      ],
+      "result": { "name": "page", "schema": { "$ref": "#/components/schemas/BeaconPage" } }
+    }
+  ],
+  "components": {
+    "schemas": {
+      "HexBytes": {
+        "type": "string",
+        "pattern": "^0x[0-9a-fA-F]*$",
+        "description": "Hex-encoded bytes with 0x prefix."
+      },
+      "Hash": {
+        "type": "string",
+        "pattern": "^0x[0-9a-fA-F]{64}$",
+        "description": "32-byte hash as 0x-prefixed hex."
+      },
+      "Address": {
+        "type": "string",
+        "pattern": "^anim1[ac-hj-np-z02-9]{20,}$",
+        "description": "Bech32m address (anim1...)."
+      },
+      "NamespaceId": {
+        "type": "string",
+        "pattern": "^[a-z0-9._-]{1,32}$",
+        "description": "Logical namespace for DA blobs."
+      },
+
+      "Head": {
+        "type": "object",
+        "required": ["chainId", "height", "hash", "parentHash", "timestamp"],
+        "additionalProperties": false,
+        "properties": {
+          "chainId": { "type": "integer", "minimum": 0 },
+          "height": { "type": "integer", "minimum": 0 },
+          "hash": { "$ref": "#/components/schemas/Hash" },
+          "parentHash": { "$ref": "#/components/schemas/Hash" },
+          "timestamp": { "type": "integer", "description": "Unix epoch seconds." }
+        }
+      },
+
+      "Header": {
+        "type": "object",
+        "required": ["height", "hash", "parentHash", "timestamp"],
+        "properties": {
+          "height": { "type": "integer", "minimum": 0 },
+          "hash": { "$ref": "#/components/schemas/Hash" },
+          "parentHash": { "$ref": "#/components/schemas/Hash" },
+          "timestamp": { "type": "integer" },
+          "daRoot": { "$ref": "#/components/schemas/Hash" },
+          "proofMix": {
+            "type": "object",
+            "description": "Per-proof-type mix percentages (optional).",
+            "additionalProperties": { "type": "number" }
+          }
+        },
+        "additionalProperties": true
+      },
+
+      "Tx": {
+        "type": "object",
+        "description": "Transaction summary (fields vary; raw CBOR is used for submission).",
+        "properties": {
+          "hash": { "$ref": "#/components/schemas/Hash" },
+          "from": { "$ref": "#/components/schemas/Address" },
+          "to": { "oneOf": [ { "$ref": "#/components/schemas/Address" }, { "type": "null" } ] },
+          "value": { "type": "string", "description": "uint as decimal string" },
+          "gasLimit": { "type": "integer", "minimum": 0 },
+          "nonce": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": true
+      },
+
+      "Receipt": {
+        "type": "object",
+        "required": ["txHash", "status", "gasUsed", "blockHash", "blockHeight"],
+        "properties": {
+          "txHash": { "$ref": "#/components/schemas/Hash" },
+          "status": { "type": "string", "enum": ["success", "revert", "failed"] },
+          "gasUsed": { "type": "integer", "minimum": 0 },
+          "blockHash": { "$ref": "#/components/schemas/Hash" },
+          "blockHeight": { "type": "integer", "minimum": 0 },
+          "logs": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Log" },
+            "default": []
+          },
+          "returnData": { "$ref": "#/components/schemas/HexBytes" }
+        }
+      },
+
+      "Log": {
+        "type": "object",
+        "required": ["address", "name", "data"],
+        "properties": {
+          "address": { "$ref": "#/components/schemas/Address" },
+          "name": { "type": "string" },
+          "topics": { "type": "array", "items": { "$ref": "#/components/schemas/Hash" }, "default": [] },
+          "data": { "$ref": "#/components/schemas/HexBytes" },
+          "blockHeight": { "type": "integer" },
+          "txHash": { "$ref": "#/components/schemas/Hash" }
+        }
+      },
+
+      "LogFilter": {
+        "type": "object",
+        "properties": {
+          "address": { "$ref": "#/components/schemas/Address" },
+          "topics": { "type": "array", "items": { "$ref": "#/components/schemas/Hash" } },
+          "fromHeight": { "type": "integer", "minimum": 0 },
+          "toHeight": { "type": "integer", "minimum": 0 }
+        },
+        "additionalProperties": false
+      },
+
+      "Block": {
+        "type": "object",
+        "required": ["header", "txs"],
+        "properties": {
+          "header": { "$ref": "#/components/schemas/Header" },
+          "txs": { "type": "array", "items": { "$ref": "#/components/schemas/Tx" } },
+          "proofs": { "type": "array", "items": { "type": "object" } }
+        }
+      },
+
+      "CallRequest": {
+        "type": "object",
+        "required": ["to", "data"],
+        "additionalProperties": false,
+        "properties": {
+          "to": { "$ref": "#/components/schemas/Address" },
+          "from": { "$ref": "#/components/schemas/Address" },
+          "value": { "type": "string", "description": "uint as decimal string" },
+          "gasLimit": { "type": "integer", "minimum": 0 },
+          "data": { "$ref": "#/components/schemas/HexBytes" }
+        }
+      },
+
+      /* -------- DA -------- */
+      "DaPostResult": {
+        "type": "object",
+        "required": ["commitment", "size"],
+        "properties": {
+          "commitment": { "$ref": "#/components/schemas/Hash" },
+          "size": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "DaProof": {
+        "type": "object",
+        "required": ["root", "proof"],
+        "properties": {
+          "root": { "$ref": "#/components/schemas/Hash" },
+          "proof": { "$ref": "#/components/schemas/HexBytes" }
+        }
+      },
+
+      /* -------- AICF -------- */
+      "ProviderId": { "type": "string", "pattern": "^[a-zA-Z0-9._-]{3,64}$" },
+      "ProviderInfo": {
+        "type": "object",
+        "required": ["id", "capabilities", "stake"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/ProviderId" },
+          "capabilities": { "type": "array", "items": { "type": "string", "enum": ["AI", "Quantum"] } },
+          "stake": { "type": "string", "description": "uint as decimal string" },
+          "region": { "type": "string" },
+          "status": { "type": "string", "enum": ["active", "jailed", "cooldown"] }
+        }
+      },
+      "JobStatus": { "type": "string", "enum": ["queued", "running", "completed", "failed", "expired"] },
+      "JobSummary": {
+        "type": "object",
+        "required": ["taskId", "status", "kind"],
+        "properties": {
+          "taskId": { "$ref": "#/components/schemas/Hash" },
+          "status": { "$ref": "#/components/schemas/JobStatus" },
+          "kind": { "type": "string", "enum": ["AI", "Quantum"] },
+          "createdAt": { "type": "integer" }
+        }
+      },
+      "JobRecord": {
+        "type": "object",
+        "required": ["taskId", "status", "kind"],
+        "properties": {
+          "taskId": { "$ref": "#/components/schemas/Hash" },
+          "status": { "$ref": "#/components/schemas/JobStatus" },
+          "kind": { "type": "string", "enum": ["AI", "Quantum"] },
+          "request": { "type": "object" },
+          "result": { "type": "object" },
+          "providerId": { "$ref": "#/components/schemas/ProviderId" }
+        }
+      },
+      "PayoutReceipt": {
+        "type": "object",
+        "required": ["id", "taskId", "amount", "providerId"],
+        "properties": {
+          "id": { "type": "string" },
+          "taskId": { "$ref": "#/components/schemas/Hash" },
+          "amount": { "type": "string", "description": "uint as decimal string" },
+          "providerId": { "$ref": "#/components/schemas/ProviderId" }
+        }
+      },
+      "Balance": {
+        "type": "object",
+        "required": ["available", "locked"],
+        "properties": {
+          "available": { "type": "string" },
+          "locked": { "type": "string" }
+        }
+      },
+
+      /* -------- Randomness -------- */
+      "RandParams": {
+        "type": "object",
+        "properties": {
+          "commitWindowSec": { "type": "integer", "minimum": 1 },
+          "revealWindowSec": { "type": "integer", "minimum": 1 },
+          "vdfIterations": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "RoundStatus": {
+        "type": "object",
+        "required": ["roundId", "commitOpen", "revealOpen", "commitDeadline", "revealDeadline"],
+        "properties": {
+          "roundId": { "type": "integer", "minimum": 0 },
+          "commitOpen": { "type": "boolean" },
+          "revealOpen": { "type": "boolean" },
+          "commitDeadline": { "type": "integer" },
+          "revealDeadline": { "type": "integer" }
+        }
+      },
+      "BeaconOut": {
+        "type": "object",
+        "required": ["roundId", "beacon", "vdfProof"],
+        "properties": {
+          "roundId": { "type": "integer", "minimum": 0 },
+          "beacon": { "$ref": "#/components/schemas/Hash" },
+          "vdfInput": { "$ref": "#/components/schemas/Hash" },
+          "vdfProof": { "$ref": "#/components/schemas/HexBytes" },
+          "mix": { "$ref": "#/components/schemas/HexBytes" }
+        }
+      },
+      "BeaconPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/BeaconOut" } },
+          "nextCursor": { "type": "string" }
+        }
+      }
+    }
+  }
+}

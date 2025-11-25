@@ -1,0 +1,105 @@
+/* Animica Typography Utilities
+ * Depends on token variables from:
+ *   - contrib/tokens/build/css/tokens.css
+ *   - contrib/tokens/build/css/tokens.dark.css (optional)
+ * SPDX-License-Identifier: MIT
+ */
+
+/* Base families */
+.font-base { font-family: var(--anm-typography-font-base, Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif); }
+.font-code { font-family: var(--anm-typography-font-code, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace); }
+
+/* Size scale */
+.text-xs   { font-size: var(--anm-typography-size-xs, 12px); }
+.text-sm   { font-size: var(--anm-typography-size-sm, 14px); }
+.text-base { font-size: var(--anm-typography-size-base, 16px); }
+.text-md   { font-size: var(--anm-typography-size-md, 18px); }
+.text-lg   { font-size: var(--anm-typography-size-lg, 20px); }
+.text-xl   { font-size: var(--anm-typography-size-xl, 24px); }
+.text-2xl  { font-size: var(--anm-typography-size-2xl, 32px); }
+.text-3xl  { font-size: var(--anm-typography-size-3xl, 40px); }
+.text-4xl  { font-size: var(--anm-typography-size-4xl, 48px); }
+
+/* Line height */
+.leading-tight  { line-height: var(--anm-typography-line-tight, 1.15); }
+.leading-normal { line-height: var(--anm-typography-line-normal, 1.5); }
+.leading-loose  { line-height: var(--anm-typography-line-loose, 1.7); }
+
+/* Font weight */
+.weight-regular  { font-weight: var(--anm-typography-weight-regular, 400); }
+.weight-medium   { font-weight: var(--anm-typography-weight-medium, 500); }
+.weight-semibold { font-weight: var(--anm-typography-weight-semibold, 600); }
+.weight-bold     { font-weight: var(--anm-typography-weight-bold, 700); }
+
+/* Tracking (letter-spacing uses em to scale with size) */
+.track-tight  { letter-spacing: calc(var(--anm-typography-track-tight, -0.01) * 1em); }
+.track-normal { letter-spacing: calc(var(--anm-typography-track-normal, 0) * 1em); }
+.track-loose  { letter-spacing: calc(var(--anm-typography-track-loose, 0.01) * 1em); }
+
+/* Headings (opinionated defaults; override as needed) */
+.h1, h1 { font-family: var(--anm-typography-font-base); font-size: var(--anm-typography-size-3xl); line-height: var(--anm-typography-line-tight); font-weight: var(--anm-typography-weight-semibold); letter-spacing: calc(var(--anm-typography-track-tight) * 1em); margin: 0; }
+.h2, h2 { font-family: var(--anm-typography-font-base); font-size: var(--anm-typography-size-2xl); line-height: var(--anm-typography-line-tight); font-weight: var(--anm-typography-weight-semibold); margin: 0; }
+.h3, h3 { font-family: var(--anm-typography-font-base); font-size: var(--anm-typography-size-xl);  line-height: var(--anm-typography-line-tight); font-weight: var(--anm-typography-weight-semibold); margin: 0; }
+
+/* Paragraph */
+.p, p { font-family: var(--anm-typography-font-base); font-size: var(--anm-typography-size-base); line-height: var(--anm-typography-line-normal); margin: 0; }
+
+/* Small print */
+.small, small { font-size: var(--anm-typography-size-sm); line-height: var(--anm-typography-line-normal); }
+
+/* Code block & inline */
+pre, code, kbd, samp {
+  font-family: var(--anm-typography-font-code);
+  font-size: var(--anm-typography-size-sm);
+}
+pre {
+  padding: var(--anm-space-4, 16px);
+  border-radius: var(--anm-radius-md, 10px);
+  background: var(--anm-color-surface-100, #F2F5FF);
+  color: var(--anm-color-neutral-800, #39425A);
+  overflow: auto;
+}
+
+/* Links (using neutral + primary tokens) */
+a {
+  color: var(--anm-color-primary-600, #2E63FF);
+  text-decoration: none;
+}
+a:hover { text-decoration: underline; }
+
+/* Utilities: text color against surfaces */
+.text-on-surface   { color: var(--anm-color-neutral-900, #0E1222); }
+.text-on-primary   { color: var(--anm-color-surface-0, #FFFFFF); }
+.text-muted        { color: var(--anm-color-neutral-600, #7B88A3); }
+.text-success      { color: var(--anm-color-success-600, #22A06B); }
+.text-warning      { color: var(--anm-color-warning-600, #DFA71B); }
+.text-error        { color: var(--anm-color-error-600, #E45757); }
+
+/* Reduced motion: respect user preference (animations provided by tokens presets) */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: calc(var(--anm-anim-reduce-multiplier, 0) * 1ms);
+    transition-duration: calc(var(--anm-anim-reduce-multiplier, 0) * 1ms);
+  }
+}
+
+/* Spacing helpers (from token scale) */
+.mt-0 { margin-top: 0; }
+.mb-0 { margin-bottom: 0; }
+.mt-4 { margin-top: var(--anm-space-4, 16px); }
+.mb-4 { margin-bottom: var(--anm-space-4, 16px); }
+.pt-4 { padding-top: var(--anm-space-4, 16px); }
+.pb-4 { padding-bottom: var(--anm-space-4, 16px); }
+
+/* Example card composed from tokens */
+.card {
+  background: var(--anm-color-surface-0, #FFFFFF);
+  color: var(--anm-color-neutral-900, #0E1222);
+  border-radius: var(--anm-radius-xl, 18px);
+  box-shadow: var(--anm-shadow-lg, 0 8px 24px rgba(0,0,0,0.10));
+  padding: var(--anm-space-6, 24px);
+}
+[data-theme="dark"] .card {
+  background: var(--anm-color-surface-50, #0F1220);
+  color: var(--anm-color-neutral-50, #E8ECF8);
+}

@@ -1,0 +1,44 @@
+{
+  "name": "counter",
+  "displayName": "Counter",
+  "version": "1.0.0",
+  "language": "python-vm",
+  "entry": "contract.py",
+  "abi": {
+    "functions": [
+      {
+        "name": "get",
+        "inputs": [],
+        "outputs": [{ "type": "int" }],
+        "view": true,
+        "payable": false
+      },
+      {
+        "name": "inc",
+        "inputs": [
+          { "name": "n", "type": "int", "optional": true, "default": 1 }
+        ],
+        "outputs": [{ "type": "int" }],
+        "view": false,
+        "payable": false
+      }
+    ],
+    "events": [
+      {
+        "name": "Incremented",
+        "fields": [
+          { "name": "by", "type": "int" },
+          { "name": "value", "type": "int" }
+        ]
+      }
+    ],
+    "errors": []
+  },
+  "resources": {
+    "storage": ["counter:value"],
+    "events": ["Incremented"]
+  },
+  "deploy": {
+    "args": []
+  }
+}

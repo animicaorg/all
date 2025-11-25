@@ -1,0 +1,259 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://animica.dev/schemas/tokens.schema.json",
+  "title": "Animica Design Tokens",
+  "description": "Canonical token bundle for colors, typography, spacing, radii, shadows, and optional animation + dark overrides.",
+  "type": "object",
+  "additionalProperties": false,
+
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Semver-like version string for the token bundle."
+    },
+
+    "light": { "$ref": "#/definitions/theme" },
+    "dark":  { "$ref": "#/definitions/darkOverrides" },
+
+    "animation": { "$ref": "#/definitions/animation" }
+  },
+
+  "required": ["version", "light"],
+
+  "definitions": {
+    "hexColor": {
+      "type": "string",
+      "pattern": "^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{8})$",
+      "examples": ["#4B7DFF", "#0A0C14", "#FFFFFFFF"]
+    },
+
+    "colorScale": {
+      "type": "object",
+      "description": "A numeric keyed color scale (e.g. 50..900) or surface keys like 0/50/100/800/900.",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^(0|50|100|200|300|400|500|600|700|800|900)$": { "$ref": "#/definitions/hexColor" }
+      },
+      "minProperties": 1
+    },
+
+    "colors": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primary", "neutral", "surface", "success", "warning", "error"],
+      "properties": {
+        "primary": { "$ref": "#/definitions/colorScale" },
+        "neutral": { "$ref": "#/definitions/colorScale" },
+        "surface": { "$ref": "#/definitions/colorScale" },
+        "success": { "$ref": "#/definitions/colorScale" },
+        "warning": { "$ref": "#/definitions/colorScale" },
+        "error":   { "$ref": "#/definitions/colorScale" }
+      }
+    },
+
+    "typography": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fontFamily", "scale", "lineHeight", "tracking", "weight"],
+      "properties": {
+        "fontFamily": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["base", "code"],
+          "properties": {
+            "base": { "type": "string", "minLength": 1 },
+            "code": { "type": "string", "minLength": 1 }
+          }
+        },
+        "scale": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["xs","sm","base","md","lg","xl","2xl","3xl","4xl"],
+          "properties": {
+            "xs":   { "type": "number" },
+            "sm":   { "type": "number" },
+            "base": { "type": "number" },
+            "md":   { "type": "number" },
+            "lg":   { "type": "number" },
+            "xl":   { "type": "number" },
+            "2xl":  { "type": "number" },
+            "3xl":  { "type": "number" },
+            "4xl":  { "type": "number" }
+          }
+        },
+        "lineHeight": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tight","normal","loose"],
+          "properties": {
+            "tight":  { "type": "number" },
+            "normal": { "type": "number" },
+            "loose":  { "type": "number" }
+          }
+        },
+        "tracking": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tight","normal","loose"],
+          "properties": {
+            "tight":  { "type": "number" },
+            "normal": { "type": "number" },
+            "loose":  { "type": "number" }
+          }
+        },
+        "weight": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["regular","medium","semibold","bold"],
+          "properties": {
+            "regular":  { "type": "number" },
+            "medium":   { "type": "number" },
+            "semibold": { "type": "number" },
+            "bold":     { "type": "number" }
+          }
+        }
+      }
+    },
+
+    "space": {
+      "type": "object",
+      "description": "Spacing scale keyed by stringified integers (e.g. '1','2','3',...); values are pixel numbers.",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[0-9]+$": { "type": "number", "minimum": 0 }
+      },
+      "minProperties": 1
+    },
+
+    "radius": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sm","md","lg","xl","2xl","pill"],
+      "properties": {
+        "sm":   { "type": "number", "minimum": 0 },
+        "md":   { "type": "number", "minimum": 0 },
+        "lg":   { "type": "number", "minimum": 0 },
+        "xl":   { "type": "number", "minimum": 0 },
+        "2xl":  { "type": "number", "minimum": 0 },
+        "pill": { "type": "number", "minimum": 0 }
+      }
+    },
+
+    "shadow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sm","md","lg"],
+      "properties": {
+        "sm": { "type": "string" },
+        "md": { "type": "string" },
+        "lg": { "type": "string" }
+      }
+    },
+
+    "theme": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["color","typography","space","radius","shadow"],
+      "properties": {
+        "color":      { "$ref": "#/definitions/colors" },
+        "typography": { "$ref": "#/definitions/typography" },
+        "space":      { "$ref": "#/definitions/space" },
+        "radius":     { "$ref": "#/definitions/radius" },
+        "shadow":     { "$ref": "#/definitions/shadow" }
+      }
+    },
+
+    "darkOverrides": {
+      "type": "object",
+      "description": "Partial theme overrides intended to be merged atop `light` for dark mode.",
+      "additionalProperties": false,
+      "properties": {
+        "color":  { "$ref": "#/definitions/colors" },
+        "shadow": { "$ref": "#/definitions/shadow" }
+      }
+    },
+
+    "animation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["duration","delay","easing","presets","reduceMotion"],
+      "properties": {
+        "duration": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "instant": { "type": "number", "minimum": 0 },
+            "xxs":     { "type": "number", "minimum": 0 },
+            "xs":      { "type": "number", "minimum": 0 },
+            "sm":      { "type": "number", "minimum": 0 },
+            "md":      { "type": "number", "minimum": 0 },
+            "lg":      { "type": "number", "minimum": 0 },
+            "xl":      { "type": "number", "minimum": 0 },
+            "xxl":     { "type": "number", "minimum": 0 }
+          },
+          "minProperties": 1
+        },
+        "delay": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "none":   { "type": "number", "minimum": 0 },
+            "short":  { "type": "number", "minimum": 0 },
+            "medium": { "type": "number", "minimum": 0 },
+            "long":   { "type": "number", "minimum": 0 }
+          }
+        },
+        "easing": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "properties": {
+            "linear":         { "type": "string" },
+            "standard":       { "type": "string" },
+            "emphasized":     { "type": "string" },
+            "decelerate":     { "type": "string" },
+            "accelerate":     { "type": "string" },
+            "spring-soft":    { "type": "string" },
+            "spring-bouncy":  { "type": "string" }
+          },
+          "minProperties": 1
+        },
+        "presets": {
+          "type": "object",
+          "description": "Named animation presets.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["duration","easing","properties"],
+            "properties": {
+              "duration": {
+                "oneOf": [{ "type": "number", "minimum": 0 }, { "type": "string" }]
+              },
+              "easing": { "type": "string" },
+              "properties": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string" }
+              },
+              "iterationCount": {
+                "oneOf": [{ "type": "number", "minimum": 0 }, { "type": "string" }]
+              }
+            }
+          }
+        },
+        "reduceMotion": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled","durationMultiplier","disablePresets"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "durationMultiplier": { "type": "number", "minimum": 0 },
+            "disablePresets": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

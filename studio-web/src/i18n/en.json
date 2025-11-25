@@ -1,0 +1,198 @@
+{
+  "app": {
+    "title": "Animica Studio",
+    "tagline": "Build • Simulate • Deploy"
+  },
+  "nav": {
+    "edit": "Edit",
+    "deploy": "Deploy",
+    "verify": "Verify",
+    "ai": "AI",
+    "quantum": "Quantum",
+    "da": "Data",
+    "beacon": "Beacon",
+    "explorer": "Explorer"
+  },
+  "common": {
+    "address": "Address",
+    "account": "Account",
+    "network": "Network",
+    "chainId": "Chain ID",
+    "connect": "Connect",
+    "disconnect": "Disconnect",
+    "copy": "Copy",
+    "copied": "Copied",
+    "cancel": "Cancel",
+    "close": "Close",
+    "save": "Save",
+    "loading": "Loading…",
+    "retry": "Retry",
+    "delete": "Delete",
+    "edit": "Edit",
+    "download": "Download",
+    "refresh": "Refresh",
+    "yes": "Yes",
+    "no": "No",
+    "bytes": "{count, number} bytes",
+    "search": "Search",
+    "filter": "Filter"
+  },
+  "topbar": {
+    "connectWallet": "Connect Wallet",
+    "connectedAs": "Connected as {address}",
+    "head": "Head #{height}"
+  },
+  "editor": {
+    "title": "Editor",
+    "openFile": "Open File",
+    "newFile": "New File",
+    "format": "Format",
+    "run": "Run",
+    "compile": "Compile",
+    "compiledOk": "Compiled successfully",
+    "compiledFail": "Compilation failed",
+    "gasEstimate": "Gas estimate: {gas}",
+    "diagnostics": "Diagnostics",
+    "ir": "Intermediate Representation"
+  },
+  "simulate": {
+    "title": "Simulate",
+    "call": "Call",
+    "function": "Function",
+    "args": "Arguments",
+    "simulate": "Simulate",
+    "result": "Result",
+    "logs": "Event Logs",
+    "noLogs": "No logs emitted",
+    "simulating": "Simulating…",
+    "simOk": "Simulation successful",
+    "simFail": "Simulation failed"
+  },
+  "deploy": {
+    "title": "Deploy",
+    "manifest": "Manifest",
+    "abi": "ABI",
+    "buildTx": "Build Transaction",
+    "sign": "Sign",
+    "send": "Send",
+    "status": "Status",
+    "txHash": "Transaction Hash",
+    "address": "Deployed Address",
+    "awaitingReceipt": "Awaiting receipt…",
+    "pending": "Pending…",
+    "confirmed": "Confirmed in block #{height}",
+    "failed": "Deployment failed",
+    "estFee": "Estimated fee: {fee}"
+  },
+  "verify": {
+    "title": "Verify",
+    "uploadSource": "Upload Source",
+    "verifyBtn": "Verify",
+    "jobQueued": "Verification queued",
+    "jobStatus": "Status: {status}",
+    "matched": "Source verified",
+    "mismatch": "Code hash mismatch",
+    "error": "Verification error"
+  },
+  "events": {
+    "title": "Events",
+    "noEvents": "No events",
+    "decodeError": "Failed to decode event"
+  },
+  "aicf": {
+    "title": "AI Jobs",
+    "enqueue": "Enqueue Job",
+    "model": "Model",
+    "prompt": "Prompt",
+    "fee": "Fee",
+    "units": "Units",
+    "jobId": "Job ID",
+    "status": "Status",
+    "result": "Result",
+    "queued": "Queued",
+    "assigned": "Assigned",
+    "completed": "Completed",
+    "failed": "Failed",
+    "expired": "Expired",
+    "viewResult": "View Result",
+    "copyDigest": "Copy digest",
+    "enqueueOk": "Job enqueued",
+    "enqueueFail": "Failed to enqueue job"
+  },
+  "quantum": {
+    "title": "Quantum Jobs",
+    "circuit": "Circuit (JSON)",
+    "shots": "Shots"
+ ",
+  "da": {
+    "title": "Data Availability",
+    "pinBlob": "Pin Blob",
+    "namespace": "Namespace",
+    "file": "File",
+    "commit": "Commitment",
+    "nmtRoot": "NMT Root",
+    "size": "Size",
+    "post": "Post",
+    "posted": "Blob posted",
+    "get": "Get",
+    "proof": "Proof",
+    "verify": "Verify",
+    "pinOk": "Blob pinned",
+    "pinFail": "Pin failed"
+  },
+  "beacon": {
+    "title": "Randomness Beacon",
+    "round": "Round",
+    "open": "Open",
+    "close": "Close",
+    "commit": "Commit",
+    "reveal": "Reveal",
+    "beacon": "Beacon",
+    "vdf": "VDF",
+    "commitOk": "Commit accepted",
+    "revealOk": "Reveal accepted",
+    "finalized": "Round finalized"
+  },
+  "explorer": {
+    "title": "Explorer",
+    "blocks": "Blocks",
+    "txs": "Transactions",
+    "latestBlocks": "Latest Blocks",
+    "viewBlock": "View Block",
+    "viewTx": "View Transaction"
+  },
+  "forms": {
+    "required": "Required",
+    "invalidAddress": "Invalid address",
+    "invalidHex": "Invalid hex",
+    "invalidJson": "Invalid JSON"
+  },
+  "toasts": {
+    "error": "Error: {message}",
+    "success": "Success",
+    "copied": "Copied to clipboard"
+  },
+  "confirm": {
+    "leaveDirty": "You have unsaved changes. Leave anyway?"
+  },
+  "placeholders": {
+    "enterAddress": "Enter address…",
+    "enterHex": "0x…",
+    "enterJson": "{ }"
+  },
+  "time": {
+    "ago": "{value, number} {unit} ago",
+    "units": {
+      "s": "s",
+      "m": "m",
+      "h": "h",
+      "d": "d"
+    }
+  },
+  "errors": {
+    "rpc": "RPC error: {message}",
+    "network": "Network error",
+    "notConnected": "Wallet not connected",
+    "unsupportedNetwork": "Unsupported network (chainId {chainId})"
+  }
+}

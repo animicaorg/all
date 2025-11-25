@@ -1,0 +1,25 @@
+# Animica — Authoritative DNS Seed Hostnames
+# One hostname per line. Lines beginning with "#" are comments.
+# These are the DNS seeds that new nodes query to obtain an initial peer set.
+# Each hostname should resolve to a small, geo-diverse rotating set of IPs.
+# Keep lists short (3–5 per network) and highly available.
+#
+# Chains:
+#  - animica:1  -> mainnet
+#  - animica:2  -> testnet
+#  - animica:1337 -> devnet
+
+# --- mainnet (animica:1) ---
+seed-us-1.animica.net
+seed-eu-1.animica.net
+seed-ap-1.animica.net
+
+# --- testnet (animica:2) ---
+seed-us-1.testnet.animica.dev
+seed-eu-1.testnet.animica.dev
+seed-ap-1.testnet.animica.dev
+
+# --- devnet (animica:1337) ---
+seed-us-1.devnet.animica.dev
+seed-eu-1.devnet.animica.dev
+seed-ap-1.devnet.animica.dev

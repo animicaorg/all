@@ -1,0 +1,291 @@
+{
+  "schemaVersion": "1",
+  "description": "End-to-end vectors for an AI Agent contract that enqueues AI jobs via capabilities, then deterministically consumes results on the next block. Covers: happy-path roundtrip, idempotent consumption, multiple enqueues in a block, and late/no-result behavior.",
+  "notes": [
+    "Task IDs are derived deterministically (e.g., H(chainId|height|txHash|caller|payload)); two submits in the same block with different payloads MUST yield different IDs.",
+    "Results are readable starting the NEXT block (height+1). Reading before that should fail with NoResultYet.",
+    "Upon successful consumption, the contract stores the result and emits AIResultConsumed. Re-consuming should be idempotent and fail (AlreadyConsumed) unless the contract keeps a copy internally.",
+    "Vectors assume a devnet with permissive AICF and a stub model returning a small response blob."
+  ],
+  "chain": {
+    "chainId": 1337,
+    "block0": 0
+  },
+  "models": {
+    "toy-echo-1": {
+      "desc": "Echo model for deterministic demo; returns prompt with suffix ' ✓'",
+      "maxTokens": 128
+    }
+  },
+  "actors": {
+    "deployer": "anim1deployer00000000000000000000000000000000",
+    "caller":   "anim1caller00000000000000000000000000000000",
+    "treasury": "anim1treasury0000000000000000000000000000000",
+    "contract": "anim1agent000000000000000000000000000000000"
+  },
+  "initialState": {
+    "balances": {
+      "anim1deployer00000000000000000000000000000000": "1000000000000000000000",
+      "anim1caller00000000000000000000000000000000": "500000000000000000000",
+      "anim1agent000000000000000000000000000000000": "0",
+      "anim1treasury0000000000000000000000000000000": "0"
+    },
+    "storage": {
+      "anim1agent000000000000000000000000000000000": {
+        "last_task_id": "",
+        "last_result": "",
+        "prompts": {},
+        "results": {}
+      }
+    },
+    "height": 0
+  },
+  "cases": [
+    {
+      "name": "Roundtrip: submit → next block result → consume",
+      "resetState": true,
+      "txs": [
+        {
+          "op": "call",
+          "from": "$caller",
+          "to": "$contract",
+          "method": "submit_prompt",
+          "args": {
+            "model": "toy-echo-1",
+            "prompt": "Hello AI"
+          },
+          "expect": {
+            "ok": true,
+            "events": [
+              {
+                "name": "AIJobEnqueued",
+                "args": {
+                  "taskId": "$t1",
+                  "model": "toy-echo-1",
+                  "promptHash": "sha3_256('Hello AI')"
+                }
+              }
+            ],
+            "storage": {
+              "$contract": {
+                "last_task_id": "$t1",
+                "prompts.$t1": "Hello AI"
+              }
+            },
+            "derived": {
+              "taskId": {
+                "alias": "$t1",
+                "rules": "deterministic_from_env"
+              }
+            }
+          }
+        },
+        {
+          "op": "advanceBlocks",
+          "toHeight": 1,
+          "expect": { "ok": true }
+        },
+        {
+          "op": "injectAICFResult",
+          "taskId": "$t1",
+          "model": "toy-echo-1",
+          "result": "Hello AI \u2713",
+          "meta": {
+            "ai_units": 32,
+            "latency_ms": 100
+          },
+          "expect": { "ok": true }
+        },
+        {
+          "op": "call",
+          "from": "$caller",
+          "to": "$contract",
+          "method": "consume_result",
+          "args": { "task_id": "$t1" },
+          "expect": {
+            "ok": true,
+            "return": {
+              "task_id": "$t1",
+              "result": "Hello AI \u2713"
+            },
+            "events": [
+              {
+                "name": "AIResultConsumed",
+                "args": {
+                  "taskId": "$t1",
+                  "resultHash": "sha3_256('Hello AI ✓')"
+                }
+              }
+            ],
+            "storage": {
+              "$contract": {
+                "last_result": "Hello AI \u2713",
+                "results.$t1": "Hello AI \u2713"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Idempotency: consuming the same task twice should fail",
+      "resetState": false,
+      "txs": [
+        {
+          "op": "call",
+          "from": "$caller",
+          "to": "$contract",
+          "method": "consume_result",
+          "args": { "task_id": "$t1" },
+          "expect": {
+            "ok": false,
+            "error": "AlreadyConsumed",
+            "events": [],
+            "storage": {
+              "$contract": {
+                "results.$t1": "Hello AI \u2713"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Multiple prompts same block → distinct task IDs",
+      "resetState": true,
+      "txs": [
+        {
+          "op": "call",
+          "from": "$caller",
+          "to": "$contract",
+          "method": "submit_prompt",
+          "args": { "model": "toy-echo-1", "prompt": "alpha" },
+          "expect": {
+            "ok": true,
+            "derived": { "taskId": { "alias": "$ta", "rules": "deterministic_from_env" } }
+          }
+        },
+        {
+          "op": "call",
+          "from": "$caller",
+          "to": "$contract",
+          "method": "submit_prompt",
+          "args": { "model": "toy-echo-1", "prompt": "beta" },
+          "expect": {
+            "ok": true,
+            "derived": { "taskId": { "alias": "$tb", "rules": "deterministic_from_env" } }
+          }
+        },
+        {
+          "op": "assert",
+          "expr": "$ta != $tb",
+          "message": "Distinct prompts in same block must yield distinct task IDs"
+        },
+        {
+          "op": "advanceBlocks",
+          "toHeight": 2,
+          "expect": { "ok": true }
+        },
+        {
+          "op": "injectAICFResult",
+          "taskId": "$ta",
+          "model": "toy-echo-1",
+          "result": "alpha \u2713",
+          "meta": { "ai_units": 16 },
+          "expect": { "ok": true }
+        },
+        {
+          "op": "injectAICFResult",
+          "taskId": "$tb",
+          "model": "toy-echo-1",
+          "result": "beta \u2713",
+          "meta": { "ai_units": 16 },
+          "expect": { "ok": true }
+        },
+        {
+          "op": "call",
+          "from": "$caller",
+          "to": "$contract",
+          "method": "consume_result",
+          "args": { "task_id": "$ta" },
+          "expect": {
+            "ok": true,
+            "return": { "task_id": "$ta", "result": "alpha \u2713" },
+            "events": [ { "name": "AIResultConsumed", "args": { "taskId": "$ta" } } ]
+          }
+        },
+        {
+          "op": "call",
+          "from": "$caller",
+          "to": "$contract",
+          "method": "consume_result",
+          "args": { "task_id": "$tb" },
+          "expect": {
+            "ok": true,
+            "return": { "task_id": "$tb", "result": "beta \u2713" },
+            "events": [ { "name": "AIResultConsumed", "args": { "taskId": "$tb" } } ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Too-early read should fail with NoResultYet",
+      "resetState": true,
+      "txs": [
+        {
+          "op": "call",
+          "from": "$caller",
+          "to": "$contract",
+          "method": "submit_prompt",
+          "args": { "model": "toy-echo-1", "prompt": "soon" },
+          "expect": {
+            "ok": true,
+            "derived": { "taskId": { "alias": "$tSoon", "rules": "deterministic_from_env" } }
+          }
+        },
+        {
+          "op": "call",
+          "from": "$caller",
+          "to": "$contract",
+          "method": "consume_result",
+          "args": { "task_id": "$tSoon" },
+          "expect": {
+            "ok": false,
+            "error": "NoResultYet",
+            "events": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "Late/no result path: enqueue → advance 3 blocks without result → consume stays failing",
+      "resetState": true,
+      "txs": [
+        {
+          "op": "call",
+          "from": "$caller",
+          "to": "$contract",
+          "method": "submit_prompt",
+          "args": { "model": "toy-echo-1", "prompt": "never" },
+          "expect": {
+            "ok": true,
+            "derived": { "taskId": { "alias": "$tNever", "rules": "deterministic_from_env" } }
+          }
+        },
+        { "op": "advanceBlocks", "toHeight": 5, "expect": { "ok": true } },
+        {
+          "op": "call",
+          "from": "$caller",
+          "to": "$contract",
+          "method": "consume_result",
+          "args": { "task_id": "$tNever" },
+          "expect": {
+            "ok": false,
+            "error": "NoResultYet",
+            "events": []
+          }
+        }
+      ]
+    }
+  ]
+}

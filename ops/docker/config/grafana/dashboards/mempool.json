@@ -1,0 +1,351 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["animica", "mempool", "fees", "throughput", "DoS"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": true },
+        "hide": 0,
+        "label": "Prometheus",
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource"
+      },
+      {
+        "datasource": "${DS_PROMETHEUS}",
+        "definition": "label_values(up{job=~\".*\"}, job)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "job",
+        "multi": false,
+        "name": "job",
+        "options": [],
+        "query": {
+          "query": "label_values(up{job=~\".*\"}, job)",
+          "refId": "PromVarJob"
+        },
+        "refresh": 1,
+        "regex": "/mempool|node|animica.*/",
+        "skipUrlSync": false,
+        "type": "query"
+      },
+      {
+        "datasource": "${DS_PROMETHEUS}",
+        "definition": "label_values(animica_mempool_pool_size_txs{job=~\"$job\"}, instance)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "instance",
+        "multi": false,
+        "name": "instance",
+        "options": [],
+        "query": {
+          "query": "label_values(animica_mempool_pool_size_txs{job=~\"$job\"}, instance)",
+          "refId": "PromVarInstance"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "query"
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m"],
+    "time_options": ["1h", "3h", "6h", "12h", "24h", "2d", "7d", "30d"]
+  },
+  "timezone": "",
+  "title": "Animica — Mempool (size / admits / rejects / fees / latency)",
+  "uid": "animica-mempool-01",
+  "version": 1,
+  "panels": [
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Current total pending transactions in the pool.",
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "animica_mempool_pool_size_txs{instance=\"$instance\"}", "legendFormat": "pending txs", "refId": "A" }
+      ],
+      "title": "Pool Size — Txs",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Bytes currently held in the mempool.",
+      "fieldConfig": { "defaults": { "unit": "bytes", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "animica_mempool_pool_size_bytes{instance=\"$instance\"}", "legendFormat": "bytes", "refId": "A" }
+      ],
+      "title": "Pool Size — Bytes",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Txs ready for inclusion by the block builder.",
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "animica_mempool_ready_txs{instance=\"$instance\"}", "legendFormat": "ready", "refId": "A" }
+      ],
+      "title": "Ready Queue",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Txs held due to nonce gaps or policy holds.",
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "animica_mempool_held_txs{instance=\"$instance\"}", "legendFormat": "held", "refId": "A" }
+      ],
+      "title": "Held Queue",
+      "type": "stat"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Admission vs rejection rates over time.",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "id": 5,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "sum by (instance) (rate(animica_mempool_admit_total{instance=\"$instance\"}[5m]))", "legendFormat": "admit/s", "refId": "A" },
+        { "expr": "sum by (instance) (rate(animica_mempool_reject_total{instance=\"$instance\"}[5m]))", "legendFormat": "reject/s", "refId": "B" }
+      ],
+      "title": "Admissions vs Rejections (rate, 5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Rejections broken down by reason (e.g. low_fee, invalid, ratelimit).",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "id": 6,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" },
+        "stacking": { "mode": "none" }
+      },
+      "targets": [
+        { "expr": "sum by (reason) (rate(animica_mempool_reject_total{instance=\"$instance\"}[5m]))", "legendFormat": "{{reason}}", "refId": "A" }
+      ],
+      "title": "Rejects by Reason (rate, 5m)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Evictions and replacements (RBF) rate.",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 13 },
+      "id": 7,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "sum by (instance) (rate(animica_mempool_eviction_total{instance=\"$instance\"}[5m]))", "legendFormat": "evictions/s", "refId": "A" },
+        { "expr": "sum by (instance) (rate(animica_mempool_replacement_total{instance=\"$instance\"}[5m]))", "legendFormat": "replacements/s", "refId": "B" }
+      ],
+      "title": "Evictions & Replacements (rate, 5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Dynamic fee floor (gwei) and rolling watermark (gwei).",
+      "fieldConfig": { "defaults": { "unit": "gwei", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 13 },
+      "id": 8,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "animica_mempool_fee_floor_gwei{instance=\"$instance\"}", "legendFormat": "fee floor", "refId": "A" },
+        { "expr": "animica_mempool_watermark_gwei{instance=\"$instance\"}", "legendFormat": "watermark", "refId": "B" }
+      ],
+      "title": "Fee Floor & Watermark",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Surge multiplier (dimensionless) used to raise the effective floor during bursts.",
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 20 },
+      "id": 9,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "animica_mempool_surge_multiplier{instance=\"$instance\"}", "legendFormat": "surge x", "refId": "A" }
+      ],
+      "title": "Surge Multiplier",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Ingress rates (tx/s and bytes/s) observed at the pool boundary.",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 20 },
+      "id": 10,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "sum by (instance) (rate(animica_mempool_ingress_txs_total{instance=\"$instance\"}[5m]))", "legendFormat": "tx/s", "refId": "A" },
+        { "expr": "sum by (instance) (rate(animica_mempool_ingress_bytes_total{instance=\"$instance\"}[5m]))", "legendFormat": "bytes/s", "refId": "B" }
+      ],
+      "title": "Ingress Rates (5m)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Admission latency from receive → admitted (seconds).",
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 27 },
+      "id": 11,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(animica_mempool_admission_latency_seconds_bucket{instance=\"$instance\"}[5m])))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(animica_mempool_admission_latency_seconds_bucket{instance=\"$instance\"}[5m])))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ],
+      "title": "Admission Latency (p50/p95, 5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Time from admission → inclusion in a block (seconds).",
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 27 },
+      "id": 12,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(animica_mempool_time_to_inclusion_seconds_bucket{instance=\"$instance\"}[15m])))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(animica_mempool_time_to_inclusion_seconds_bucket{instance=\"$instance\"}[15m])))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ],
+      "title": "Inclusion Delay (p50/p95, 15m)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Drops (e.g. low_fee, expired, duplicate) — rate by reason.",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 35 },
+      "id": 13,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" },
+        "stacking": { "mode": "none" }
+      },
+      "targets": [
+        { "expr": "sum by (reason) (rate(animica_mempool_drop_total{instance=\"$instance\"}[5m]))", "legendFormat": "{{reason}}", "refId": "A" }
+      ],
+      "title": "Drops by Reason (rate, 5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Per-sender queued txs (top 10). If not available, leave blank.",
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 35 },
+      "id": 14,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "topk(10, sum by (sender) (animica_mempool_sender_pending_txs{instance=\"$instance\"}))", "legendFormat": "{{sender}}", "refId": "A" }
+      ],
+      "title": "Top Senders — Pending Txs",
+      "type": "timeseries"
+    }
+  ]
+}

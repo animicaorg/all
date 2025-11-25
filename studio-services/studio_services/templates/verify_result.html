@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta
+    name="viewport"
+    content="width=device-width,initial-scale=1,viewport-fit=cover"
+  />
+  <title>{% if title is defined %}{{ title }}{% else %}Animica • Verification Result{% endif %}</title>
+  <meta name="color-scheme" content="light dark" />
+  <style>
+    :root{
+      --bg: #0b0c0f;
+      --card: #14161a;
+      --muted:#a0a7b4;
+      --text:#e8ecf2;
+      --ok:#1fbf75;
+      --bad:#ff5d5d;
+      --warn:#f0b429;
+      --link:#7bb7ff;
+      --hr:#262a31;
+      --code:#101216;
+    }
+    @media (prefers-color-scheme: light){
+      :root{
+        --bg:#f7f8fb; --card:#fff; --muted:#5b6472; --text:#09111a;
+        --ok:#158a55; --bad:#c43b3b; --warn:#b37b09; --link:#246bff; --hr:#e6e8ee; --code:#f1f3f7;
+      }
+    }
+    html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font:14px/1.45 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Apple Color Emoji","Segoe UI Emoji";}
+    a{color:var(--link);text-decoration:none}
+    a:hover{text-decoration:underline}
+    .container{max-width:980px;margin:24px auto;padding:0 16px}
+    header{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+    .logo{width:20px;height:20px;border-radius:4px;background:linear-gradient(135deg,#7bb7ff, #1fbf75)}
+    h1{font-size:18px;margin:0}
+    .card{background:var(--card);border:1px solid var(--hr);border-radius:10px;padding:16px;margin:16px 0}
+    .row{display:flex;flex-wrap:wrap;gap:12px}
+    .kv{flex:1 1 280px;min-width:240px}
+    .k{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+    .v{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;word-break:break-all}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace}
+    .badge{display:inline-flex;align-items:center;gap:6px;border-radius:999px;border:1px solid var(--hr);padding:4px 10px;font-weight:600}
+    .ok{background:color-mix(in srgb,var(--ok) 14%, transparent);border-color:color-mix(in srgb,var(--ok) 30%, var(--hr));}
+    .bad{background:color-mix(in srgb,var(--bad) 14%, transparent);border-color:color-mix(in srgb,var(--bad) 30%, var(--hr));}
+    .pending{background:color-mix(in srgb,var(--warn) 14%, transparent);border-color:color-mix(in srgb,var(--warn) 30%, var(--hr));}
+    .grid{display:grid;grid-template-columns:1fr;gap:10px}
+    .hr{height:1px;background:var(--hr);margin:14px 0}
+    details{border-radius:8px;border:1px solid var(--hr)}
+    details[open]{background:var(--card)}
+    summary{cursor:pointer;padding:10px 12px;color:var(--muted)}
+    pre{margin:0;padding:12px;background:var(--code);border-top:1px solid var(--hr);overflow:auto}
+    .actions{display:flex;gap:8px;flex-wrap:wrap}
+    .btn{border:1px solid var(--hr);background:var(--card);border-radius:8px;padding:6px 10px;color:var(--text);cursor:pointer}
+    .btn:hover{filter:brightness(1.08)}
+    .pill{padding:2px 8px;border-radius:999px;border:1px solid var(--hr);font-size:12px;color:var(--muted)}
+    footer{margin:24px 0;color:var(--muted);font-size:12px}
+    .list{margin:0;padding-left:16px}
+    .nowrap{white-space:nowrap}
+    @media (min-width:820px){ .grid{grid-template-columns:1fr 1fr} }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo" aria-hidden="true"></div>
+      <h1>Verification Result</h1>
+      <span class="pill">{% if network_name is defined %}{{ network_name }}{% elif chain_id is defined %}chainId={{ chain_id }}{% else %}offline{% endif %}</span>
+    </header>
+
+    {% set status_txt = (result.status if result is defined and result.status is not none else (result['status'] if result is defined and 'status' in result else 'UNKNOWN')) %}
+    {% set status_l = (status_txt|string).lower() %}
+    {% set is_ok = (('pass' in status_l) or ('ok' in status_l) or ('match' in status_l) or ('verified' in status_l) or (result.verified is defined and result.verified)) %}
+    {% set is_bad = (('fail' in status_l) or ('error' in status_l)) %}
+    <div class="card">
+      <div class="row" style="align-items:center;justify-content:space-between">
+        <div class="actions">
+          <span class="badge {% if is_ok %}ok{% elif is_bad %}bad{% else %}pending{% endif %}">
+            {% if is_ok %}✓{% elif is_bad %}✕{% else %}…{% endif %}
+            {{ status_txt }}
+          </span>
+        </div>
+        <div class="actions">
+          {% if result is defined and (result.address is defined or result.tx_hash is defined) %}
+          <button class="btn" data-copy="{{ result.address if result.address is defined else '' }}{{ result.tx_hash if result.tx_hash is defined else '' }}" title="Copy primary id">Copy ID</button>
+          {% endif %}
+          <button class="btn" id="copy-json">Copy JSON</button>
+        </div>
+      </div>
+
+      <div class="hr"></div>
+
+      <div class="grid">
+        <div class="kv">
+          <div class="k">Address</div>
+          <div class="v">
+            {% if result.address is defined and result.address %}
+              <span class="mono" id="addr">{{ result.address }}</span>
+              <button class="btn" data-copy="{{ result.address }}">Copy</button>
+            {% else %}
+              <span class="muted">—</span>
+            {% endif %}
+          </div>
+        </div>
+        <div class="kv">
+          <div class="k">Tx Hash</div>
+          <div class="v">
+            {% if result.tx_hash is defined and result.tx_hash %}
+              <span class="mono" id="tx">{{ result.tx_hash }}</span>
+              <button class="btn" data-copy="{{ result.tx_hash }}">Copy</button>
+            {% else %}
+              <span class="muted">—</span>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="kv">
+          <div class="k">Code Hash</div>
+          <div class="v">
+            {% if result.code_hash is defined and result.code_hash %}
+              <span class="mono" id="code">{{ result.code_hash }}</span>
+              <button class="btn" data-copy="{{ result.code_hash }}">Copy</button>
+            {% else %}<span class="muted">—</span>{% endif %}
+          </div>
+        </div>
+        <div class="kv">
+          <div class="k">Manifest Hash</div>
+          <div class="v">
+            {% if result.manifest_hash is defined and result.manifest_hash %}
+              <span class="mono">{{ result.manifest_hash }}</span>
+            {% else %}<span class="muted">—</span>{% endif %}
+          </div>
+        </div>
+
+        <div class="kv">
+          <div class="k">ABI Hash</div>
+          <div class="v">
+            {% if result.abi_hash is defined and result.abi_hash %}
+              <span class="mono">{{ result.abi_hash }}</span>
+            {% else %}<span class="muted">—</span>{% endif %}
+          </div>
+        </div>
+        <div class="kv">
+          <div class="k">Compiler / VM</div>
+          <div class="v">
+            <span class="mono">
+              {% if result.compiler_version is defined %}{{ result.compiler_version }}{% else %}n/a{% endif %}
+              {% if result.vm_version is defined %} · VM {{ result.vm_version }}{% endif %}
+            </span>
+          </div>
+        </div>
+
+        <div class="kv">
+          <div class="k">Created</div>
+          <div class="v mono">{% if result.created_at is defined %}{{ result.created_at }}{% else %}—{% endif %}</div>
+        </div>
+        <div class="kv">
+          <div class="k">Updated</div>
+          <div class="v mono">{% if result.updated_at is defined %}{{ result.updated_at }}{% else %}—{% endif %}</div>
+        </div>
+      </div>
+    </div>
+
+    {% if result.artifacts is defined and result.artifacts %}
+    <div class="card">
+      <h2 style="margin:0 0 8px 0;font-size:16px">Artifacts</h2>
+      <ul class="list">
+        {% for art in result.artifacts %}
+          <li class="mono">
+            {% if art.id is defined %}
+              <a href="/artifacts/{{ art.id }}">artifact {{ art.id }}</a>
+            {% else %}
+              artifact
+            {% endif %}
+            {% if art.kind is defined %}<span class="pill nowrap">{{ art.kind }}</span>{% endif %}
+            {% if art.size is defined %}<span class="pill nowrap">{{ art.size }} bytes</span>{% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    <details class="card">
+      <summary>Raw record</summary>
+      <pre id="raw">{{ result }}</pre>
+    </details>
+
+    <footer>
+      Rendered by Animica Studio Services — {% set now = now or None %}{% if now %}{{ now }}{% endif %}
+    </footer>
+  </div>
+
+  <script>
+    (function(){
+      function copy(text){
+        if(!text) return;
+        navigator.clipboard?.writeText(text).catch(function(){
+          const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta);
+          ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+        });
+      }
+      document.querySelectorAll('[data-copy]').forEach(function(btn){
+        btn.addEventListener('click', function(){ copy(this.getAttribute('data-copy')||''); });
+      });
+      const rawBtn=document.getElementById('copy-json');
+      if(rawBtn){
+        rawBtn.addEventListener('click', function(){
+          const raw=document.getElementById('raw');
+          copy(raw ? raw.textContent.trim() : '');
+        });
+      }
+    })();
+  </script>
+</body>
+</html>

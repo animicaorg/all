@@ -1,0 +1,113 @@
+# Animica native build tuning
+# - Target-specific CPU baselines for reproducible, fast builds.
+# - Conservative link flags (security hardening on Linux, dead_strip on macOS).
+# - Optional sccache integration.
+#
+# Notes:
+# • x86-64-v3 enables AVX2/AES/SHA on modern Intel/AMD. If you need older CPUs, swap to x86-64 or set RUSTFLAGS/CARGO_BUILD_TARGET.
+# • CI can override any of this via env (e.g., CARGO_BUILD_TARGET, RUSTFLAGS).
+
+[build]
+# Keep dev builds snappy while still surfacing reasonable symbols.
+incremental = true
+rustflags = [
+  "-C", "symbol-mangling-version=v0",
+  "-C", "debuginfo=1",
+]
+
+# Use sccache if available (but don't force it).
+[env]
+RUSTC_WRAPPER = { value = "sccache", force = false }
+
+# ------------------------------ Linux x86_64 (glibc) ------------------------------
+[target.'cfg(all(target_arch = "x86_64", target_os = "linux", target_env = "gnu"))']
+rustflags = [
+  # Modern baseline for servers; change to x86-64 if you support legacy CPUs.
+  "-C", "target-cpu=x86-64-v3",
+  "-C", "target-feature=+sse2,+sse3,+ssse3,+sse4.1,+sse4.2,+popcnt,+aes,+avx,+avx2",
+
+  # Hardening & cleaner binaries
+  "-C", "link-arg=-Wl,--as-needed",
+  "-C", "link-arg=-Wl,-z,relro,-z,now",
+]
+
+# ------------------------------ Linux aarch64 (glibc) -----------------------------
+[target.'cfg(all(target_arch = "aarch64", target_os = "linux", target_env = "gnu"))']
+rustflags = [
+  # Good server-class baseline (Graviton2/Neoverse-N1+).
+  "-C", "target-cpu=neoverse-n1",
+  "-C", "target-feature=+neon,+crypto",
+
+  "-C", "link-arg=-Wl,--as-needed",
+  "-C", "link-arg=-Wl,-z,relro,-z,now",
+]
+
+# ------------------------------ Linux (musl) --------------------------------------
+# Static-friendly builds; set CARGO_BUILD_TARGET=*-unknown-linux-musl to use.
+[target.'cfg(all(target_os = "linux", target_env = "musl"))']
+rustflags = [
+  "-C", "target-cpu=x86-64-v3",
+  "-C", "target-feature=+sse2,+sse3,+ssse3,+sse4.1,+sse4.2,+popcnt,+aes,+avx,+avx2",
+  "-C", "link-arg=-Wl,--as-needed",
+  "-C", "link-arg=-Wl,-z,relro,-z,now",
+]
+
+# ------------------------------ macOS x86_64 --------------------------------------
+[target.'cfg(all(target_arch = "x86_64", target_os = "macos"))']
+rustflags = [
+  # Reasonable desktop baseline; Apple toolchains ignore unknown cpu names safely.
+  "-C", "target-cpu=haswell",
+  "-C", "target-feature=+sse2,+sse3,+ssse3,+sse4.1,+sse4.2,+popcnt,+aes,+avx,+avx2",
+  "-C", "link-arg=-dead_strip",
+]
+
+# ------------------------------ macOS aarch64 (Apple Silicon) ---------------------
+[target.'cfg(all(target_arch = "aarch64", target_os = "macos"))']
+rustflags = [
+  "-C", "target-cpu=apple-m1",
+  "-C", "target-feature=+neon",
+  "-C", "link-arg=-dead_strip",
+]
+
+# ------------------------------ Windows (MSVC) ------------------------------------
+[target.'cfg(all(target_os = "windows", target_env = "msvc"))']
+rustflags = [
+  "-C", "target-cpu=native",   # Prefer local max perf on dev machines
+  "-C", "link-arg=/OPT:REF",   # Remove unreferenced functions/data
+  "-C", "link-arg=/OPT:ICF",   # Fold identical COMDATs
+]
+
+# ------------------------------ Cross & linkers (examples) ------------------------
+# Uncomment and adapt if you use custom linkers or cross toolchains:
+#
+# [target.x86_64-unknown-linux-gnu]
+# linker = "clang"
+# rustflags = ["-Clink-arg=-fuse-ld=lld"]
+#
+# [target.aarch64-unknown-linux-gnu]
+# linker = "aarch64-linux-gnu-gcc"
+# rustflags = ["-Clink-arg=-fuse-ld=lld"]
+#
+# [target.x86_64-apple-darwin]
+# # Use the Xcode toolchain linker explicitly if needed:
+# linker = "clang"
+
+# ------------------------------ Cargo aliases -------------------------------------
+[alias]
+b = "build --workspace"
+br = "build --release --workspace"
+t = "test --workspace --all-features"
+clippy = "clippy --workspace --all-features -- -D warnings"
+
+# ------------------------------ Tips ---------------------------------------------
+# • Reproducible release builds (example):
+#     CARGO_PROFILE_RELEASE_LTO=thin \
+#     CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
+#     RUSTFLAGS="-C target-cpu=x86-64-v3 -C strip=symbols" \
+#     cargo build --release --workspace
+#
+# • Override target for cross-build:
+#     CARGO_BUILD_TARGET=aarch64-unknown-linux-gnu cargo build --release
+#
+# • If you hit unknown-cpu issues on older toolchains, switch to:
+#     -C target-cpu=x86-64

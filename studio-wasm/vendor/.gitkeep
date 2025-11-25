@@ -1,0 +1,2 @@
+# Placeholder to keep the vendor/ directory in version control.
+# Pyodide assets (pyodide.js/wasm/data) are fetched here by scripts/fetch_pyodide.mjs.

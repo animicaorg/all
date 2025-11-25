@@ -1,0 +1,71 @@
+# Animica zk.registry metadata
+# Canonical registry describing supported verifier "kinds" and circuit entries.
+# Focus: scheme, curve/field, transcript hash, and binding version.
+
+schema_version: "1"
+
+kinds:
+  groth16_bn254:
+    scheme: groth16
+    curve: bn254                 # alt_bn128 / BN254
+    field_modulus: "21888242871839275222246405745257275088548364400416034343698204186575808495617"
+    pairing: ate_bn254
+    transcript:
+      hash: sha3-256             # Fiat–Shamir transcript hash
+      domain: "animica:zk:fs:v1"
+    vk_format: snarkjs
+    version: "1"
+
+  plonk_kzg_bn254:
+    scheme: plonk
+    curve: bn254
+    field_modulus: "21888242871839275222246405745257275088548364400416034343698204186575808495617"
+    commitments:
+      kind: kzg
+      srs_label: "ptau_bn254_2^20"   # example SRS label; replace with your ceremony label
+      g1_size: 1048576               # 2^20 (example/dev)
+      g2_size: 2
+    transcript:
+      hash: sha3-256
+      domain: "animica:zk:fs:v1"
+    vk_format: plonkjs
+    version: "1"
+
+  stark_fri_merkle:
+    scheme: stark
+    field:
+      name: goldilocks
+      modulus: "18446744069414584321"   # 2^64 - 2^32 + 1
+    fri_params:
+      blowup: 4
+      num_rounds: 6
+    merkle_hash: sha3-256
+    transcript:
+      hash: sha3-256
+      domain: "animica:zk:fs:v1"
+    vk_format: fri_params_only
+    version: "0"
+
+circuits:
+  # Demo / placeholder entries aligned with vk_cache.json
+  counter_groth16_bn254@1:
+    kind: groth16_bn254
+    public_inputs: ["initial_value"]
+    vk_cache_key: "counter_groth16_bn254@1"
+    vk_hash: "sha3-256:0000000000000000000000000000000000000000000000000000000000000000"
+    version: "1"
+
+  poseidon2_arity3_plonk_kzg_bn254@1:
+    kind: plonk_kzg_bn254
+    circuit_hash_function: poseidon2
+    public_inputs: ["hash_out"]
+    vk_cache_key: "poseidon2_arity3_plonk_kzg_bn254@1"
+    vk_hash: "sha3-256:0000000000000000000000000000000000000000000000000000000000000000"
+    version: "1"
+
+  merkle_membership_air_stark_fri@0:
+    kind: stark_fri_merkle
+    public_inputs: ["root", "leaf", "index"]
+    vk_cache_key: "merkle_membership_air_stark_fri@0"
+    vk_hash: "none"
+    version: "0"

@@ -1,0 +1,132 @@
+{
+  "functions": [
+    {
+      "type": "function",
+      "name": "version",
+      "inputs": [],
+      "outputs": [{ "type": "bytes" }],
+      "notice": "Semantic version for the Randomness Beacon interface (e.g. b'1.0.0')."
+    },
+    {
+      "type": "function",
+      "name": "params",
+      "inputs": [],
+      "outputs": [
+        { "name": "roundSeconds",   "type": "uint32" },
+        { "name": "commitSeconds",  "type": "uint32" },
+        { "name": "revealSeconds",  "type": "uint32" },
+        { "name": "settleSeconds",  "type": "uint32" },
+        { "name": "vdfSecurityBits","type": "uint16" }
+      ],
+      "notice": "Canonical timing parameters and VDF security target."
+    },
+    {
+      "type": "function",
+      "name": "currentRound",
+      "inputs": [],
+      "outputs": [{ "name": "roundId", "type": "uint64" }],
+      "notice": "Returns the identifier of the round currently active in the beacon schedule."
+    },
+    {
+      "type": "function",
+      "name": "currentPhase",
+      "inputs": [],
+      "outputs": [{ "name": "phase", "type": "uint8" }],
+      "notice": "Returns the current phase code: 0=Commit, 1=Reveal, 2=Settle, 3=Closed."
+    },
+    {
+      "type": "function",
+      "name": "roundSchedule",
+      "inputs": [{ "name": "roundId", "type": "uint64" }],
+      "outputs": [
+        { "name": "tStart",      "type": "uint64" },
+        { "name": "tCommitEnd",  "type": "uint64" },
+        { "name": "tRevealEnd",  "type": "uint64" },
+        { "name": "tSettleEnd",  "type": "uint64" }
+      ],
+      "notice": "Returns epoch timestamps (seconds) that delimit the phases for roundId."
+    },
+    {
+      "type": "function",
+      "name": "phaseAt",
+      "inputs": [{ "name": "timestamp", "type": "uint64" }],
+      "outputs": [{ "name": "phase", "type": "uint8" }],
+      "notice": "Phase code at a given timestamp according to the active schedule (0..3)."
+    },
+    {
+      "type": "function",
+      "name": "latestBeacon",
+      "inputs": [],
+      "outputs": [
+        { "name": "roundId",  "type": "uint64" },
+        { "name": "output",   "type": "bytes32" }
+      ],
+      "notice": "Returns the most recent finalized beacon output."
+    },
+    {
+      "type": "function",
+      "name": "getBeacon",
+      "inputs": [{ "name": "roundId", "type": "uint64" }],
+      "outputs": [
+        { "name": "found",     "type": "bool"    },
+        { "name": "output",    "type": "bytes32" },
+        { "name": "aggregate", "type": "bytes32" },
+        { "name": "vdfInput",  "type": "bytes32" }
+      ],
+      "notice": "Returns the finalized beacon values for roundId if available. When found=false, other fields are zero."
+    },
+    {
+      "type": "function",
+      "name": "getLightProof",
+      "inputs": [{ "name": "roundId", "type": "uint64" }],
+      "outputs": [
+        { "name": "found", "type": "bool"  },
+        { "name": "proof", "type": "bytes" }
+      ],
+      "notice": "Returns a compact, CBOR-encoded light proof object suitable for client verification."
+    }
+  ],
+  "events": [
+    {
+      "type": "event",
+      "name": "RoundOpened",
+      "inputs": [
+        { "name": "roundId", "type": "uint64", "indexed": true },
+        { "name": "tStart",  "type": "uint64" }
+      ],
+      "notice": "A new round window has opened."
+    },
+    {
+      "type": "event",
+      "name": "RoundClosed",
+      "inputs": [
+        { "name": "roundId", "type": "uint64", "indexed": true },
+        { "name": "tClose",  "type": "uint64" }
+      ],
+      "notice": "The round window has closed (prior to finalization)."
+    },
+    {
+      "type": "event",
+      "name": "BeaconFinalized",
+      "inputs": [
+        { "name": "roundId",   "type": "uint64",  "indexed": true },
+        { "name": "output",    "type": "bytes32" },
+        { "name": "aggregate", "type": "bytes32" },
+        { "name": "vdfInput",  "type": "bytes32" }
+      ],
+      "notice": "Emitted when the VDF proof verifies and the beacon for roundId is finalized."
+    }
+  ],
+  "errors": [
+    {
+      "type": "error",
+      "name": "RoundNotFound",
+      "inputs": [{ "name": "roundId", "type": "uint64" }]
+    },
+    {
+      "type": "error",
+      "name": "InvalidRound",
+      "inputs": [{ "name": "roundId", "type": "uint64" }]
+    }
+  ]
+}

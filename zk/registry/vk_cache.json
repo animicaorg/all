@@ -1,0 +1,67 @@
+{
+  "schema_version": "1",
+  "entries": {
+    "counter_groth16_bn254@1": {
+      "kind": "groth16_bn254",
+      "vk_format": "snarkjs",
+      "vk": {
+        "protocol": "groth16",
+        "curve": "bn128",
+        "nPublic": 1,
+        "vk_alfa_1": ["1", "2", "1"],
+        "vk_beta_2": [["1", "2"], ["3", "4"], ["1", "0"]],
+        "vk_gamma_2": [["5", "6"], ["7", "8"], ["1", "0"]],
+        "vk_delta_2": [["9", "10"], ["11", "12"], ["1", "0"]],
+        "IC": [
+          ["13", "14", "1"],
+          ["15", "16", "1"]
+        ]
+      },
+      "vk_hash": "sha3-256:0000000000000000000000000000000000000000000000000000000000000000",
+      "meta": {
+        "circuit": "counter",
+        "desc": "Demo Groth16 VK (placeholders), SnarkJS-compatible shape.",
+        "public_inputs": ["initial_value"]
+      }
+    },
+    "poseidon2_arity3_plonk_kzg_bn254@1": {
+      "kind": "plonk_kzg_bn254",
+      "vk_format": "plonkjs",
+      "vk": {
+        "protocol": "plonk",
+        "curve": "bn128",
+        "nPublic": 1,
+        "domain": {
+          "size": 16384,
+          "root": "0x00"
+        },
+        "kzg": {
+          "g1_ck_len": 0,
+          "g2_ck": "0x00"
+        }
+      },
+      "vk_hash": "sha3-256:0000000000000000000000000000000000000000000000000000000000000000",
+      "meta": {
+        "circuit": "poseidon2_hash_arity3",
+        "desc": "Demo PLONK/KZG VK (shape compatible with typical PlonkJS exports).",
+        "public_inputs": ["hash_out"]
+      }
+    },
+    "merkle_membership_air_stark_fri@0": {
+      "kind": "stark_fri_merkle",
+      "vk_format": "fri_params",
+      "vk": null,
+      "fri_params": {
+        "domain_size": 65536,
+        "rate_bits": 2,
+        "blowup": 4,
+        "num_rounds": 6
+      },
+      "vk_hash": "none",
+      "meta": {
+        "circuit": "toy_merkle_air",
+        "desc": "Toy STARK FRI verifier uses params only; no structured VK."
+      }
+    }
+  }
+}

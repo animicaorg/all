@@ -1,0 +1,58 @@
+# Animica Contrib — .gitignore
+# Focus: thumbnails, ad-hoc exports, and stray archives.
+# NOTE: We intentionally COMMIT canonical build artifacts (tokens builds, icon sprite,
+# email HTML, press zips listed below). Do not add those to ignores.
+
+# --- OS/editor cruft ----------------------------------------------------------
+**/.DS_Store
+**/Thumbs.db
+**/*.swp
+**/*.swo
+**/*~
+**/*.bak
+**/*.tmp
+**/*.orig
+**/.idea/
+**/.vscode/
+
+# --- Thumbnails ---------------------------------------------------------------
+**/thumbs/
+**/thumbnails/
+**/*-thumb.*
+**/*_thumb.*
+**/*-preview.*
+**/*_preview.*
+
+# --- Generic export folders (from design tools) -------------------------------
+# Keep canonical "build" outputs tracked; this targets ad-hoc export dirs only.
+**/export/
+**/exports/
+**/Export/
+**/Exports/
+**/renders/
+**/render/
+**/out/
+**/outputs/
+**/previews/
+**/screenshots/
+
+# --- Archives (ZIPs) ----------------------------------------------------------
+# Ignore random zips EXCEPT the official, versioned press bundles.
+**/*.zip
+!press/logos/animica-logo.zip
+!press/kits/press-kit.zip
+
+# --- Caches & envs (if any scripts live here) --------------------------------
+**/node_modules/
+**/.pnpm-store/
+**/.cache/
+**/.venv/
+**/venv/
+**/__pycache__/
+
+# --- Do NOT ignore committed build artifacts ---------------------------------
+# (Documented for clarity; the negations ensure they remain tracked.)
+!tokens/build/**
+!icons/sprite/sprite.svg
+!email/templates/**
+!explorer/themes/**

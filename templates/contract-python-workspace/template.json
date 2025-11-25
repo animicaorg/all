@@ -1,0 +1,104 @@
+{
+  "$schema": "../schemas/template.schema.json",
+  "id": "contract-python-workspace",
+  "name": "Python Contract Workspace",
+  "version": "0.1.0",
+  "description": "Multi-contract workspace for Animica's Python VM: batteries-included layout (tools, tests, examples) that compiles, deploys, and verifies contracts end-to-end.",
+  "keywords": ["animica", "contracts", "python", "vm", "workspace", "templates"],
+  "variables": {
+    "workspace_slug": {
+      "type": "string",
+      "title": "Workspace directory name",
+      "default": "animica-contracts",
+      "pattern": "^[a-zA-Z0-9._-]+$"
+    },
+    "org_name": {
+      "type": "string",
+      "title": "Organization / author (display)",
+      "default": "Animica Labs"
+    },
+    "author_name": {
+      "type": "string",
+      "title": "Primary author name",
+      "default": "Your Name"
+    },
+    "author_email": {
+      "type": "string",
+      "title": "Author email",
+      "default": "you@example.com"
+    },
+    "license": {
+      "type": "string",
+      "title": "License short ID",
+      "default": "MIT"
+    },
+    "rpc_url": {
+      "type": "string",
+      "title": "Default RPC URL",
+      "default": "http://127.0.0.1:8545"
+    },
+    "chain_id": {
+      "type": "integer",
+      "title": "Default Chain ID",
+      "default": 1337,
+      "minimum": 1
+    },
+    "include_examples": {
+      "type": "boolean",
+      "title": "Include example contracts (counter, token, escrow)",
+      "default": true
+    },
+    "init_git": {
+      "type": "boolean",
+      "title": "Initialize a Git repository",
+      "default": true
+    }
+  },
+  "files": [
+    { "source": "skeleton/README.md",           "target": "{{workspace_slug}}/README.md" },
+    { "source": "skeleton/.gitignore",          "target": "{{workspace_slug}}/.gitignore" },
+    { "source": "skeleton/.env.example",        "target": "{{workspace_slug}}/.env.example" },
+    { "source": "skeleton/pyproject.toml",      "target": "{{workspace_slug}}/pyproject.toml" },
+    { "source": "skeleton/requirements.txt",    "target": "{{workspace_slug}}/requirements.txt" },
+    { "source": "skeleton/Makefile",            "target": "{{workspace_slug}}/Makefile" },
+    { "source": "skeleton/ruff.toml",           "target": "{{workspace_slug}}/.ruff.toml" },
+    { "source": "skeleton/mypy.ini",            "target": "{{workspace_slug}}/mypy.ini" },
+    { "source": "skeleton/tools/__init__.py",   "target": "{{workspace_slug}}/tools/__init__.py" },
+    { "source": "skeleton/tools/build_all.py",  "target": "{{workspace_slug}}/tools/build_all.py",  "executable": true },
+    { "source": "skeleton/tools/deploy_all.py", "target": "{{workspace_slug}}/tools/deploy_all.py", "executable": true },
+    { "source": "skeleton/contracts/__init__.py","target": "{{workspace_slug}}/contracts/__init__.py" },
+    { "source": "skeleton/tests/__init__.py",   "target": "{{workspace_slug}}/tests/__init__.py" },
+    { "source": "skeleton/tests/conftest.py",   "target": "{{workspace_slug}}/tests/conftest.py" },
+
+    { "source": "examples/counter/contract.py", "target": "{{workspace_slug}}/contracts/counter/contract.py",      "when": "include_examples" },
+    { "source": "examples/counter/manifest.json","target": "{{workspace_slug}}/contracts/counter/manifest.json",   "when": "include_examples" },
+    { "source": "examples/token/contract.py",   "target": "{{workspace_slug}}/contracts/token/contract.py",        "when": "include_examples" },
+    { "source": "examples/token/manifest.json", "target": "{{workspace_slug}}/contracts/token/manifest.json",      "when": "include_examples" },
+    { "source": "examples/escrow/contract.py",  "target": "{{workspace_slug}}/contracts/escrow/contract.py",       "when": "include_examples" },
+    { "source": "examples/escrow/manifest.json","target": "{{workspace_slug}}/contracts/escrow/manifest.json",     "when": "include_examples" },
+    { "source": "examples/tests/test_counter.py","target": "{{workspace_slug}}/tests/test_counter.py",             "when": "include_examples" }
+  ],
+  "post_hooks": [
+    {
+      "when": "init_git",
+      "run": "git init && git add . && git commit -m \"init contract-python-workspace\"",
+      "cwd": "{{workspace_slug}}",
+      "shell": true
+    },
+    {
+      "run": "python3 -m venv .venv",
+      "cwd": "{{workspace_slug}}"
+    },
+    {
+      "run": ". .venv/bin/activate && pip install -r requirements.txt",
+      "cwd": "{{workspace_slug}}",
+      "shell": true
+    }
+  ],
+  "hints": [
+    "Edit {{workspace_slug}}/.env with RPC_URL={{rpc_url}} and CHAIN_ID={{chain_id}}.",
+    "Run `make -C {{workspace_slug}} build` to compile all contracts.",
+    "Try `make -C {{workspace_slug}} deploy EX=counter` to deploy the counter example.",
+    "Configure ruff/mypy locally or in CI; default configs are included."
+  ]
+}

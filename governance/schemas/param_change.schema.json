@@ -1,0 +1,233 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.animica.org/governance/param_change.schema.json",
+  "title": "Animica Governance — ParamChange Proposal",
+  "description": "JSON-Schema for a governance proposal of kind `ParamChange`.",
+  "type": "object",
+  "additionalProperties": false,
+
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Schema revision for this document."
+    },
+    "proposal_id": {
+      "type": "string",
+      "pattern": "^[A-Z0-9._:-]{3,128}$",
+      "description": "Human-stable identifier (e.g., PARAMS-2025-ThetaTuning)."
+    },
+    "kind": {
+      "const": "ParamChange",
+      "description": "Discriminator for this schema. Must be 'ParamChange'."
+    },
+    "network": {
+      "type": "string",
+      "enum": ["mainnet", "testnet", "devnet"],
+      "description": "Target network for enactment."
+    },
+    "title": { "type": "string", "minLength": 3, "maxLength": 180 },
+    "summary": { "type": "string", "maxLength": 400 },
+    "description": { "type": "string", "minLength": 10 },
+
+    "proposer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "address": { "$ref": "#/$defs/address" },
+        "display_name": { "type": "string", "maxLength": 140 },
+        "organization": { "type": "string", "maxLength": 140 },
+        "contact": { "type": "string", "format": "uri" }
+      },
+      "required": ["address"]
+    },
+
+    "created_at": { "type": "string", "format": "date-time" },
+
+    "voting_window": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "start_time":   { "type": "string", "format": "date-time" },
+        "end_time":     { "type": "string", "format": "date-time" },
+        "start_height": { "type": "integer", "minimum": 0 },
+        "end_height":   { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "references": {
+      "type": "array",
+      "items": { "type": "string", "format": "uri" }
+    },
+
+    "attachments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "uri": { "type": "string", "format": "uri" },
+          "content_type": { "type": "string", "maxLength": 120 },
+          "hash": { "$ref": "#/$defs/sha3_256" }
+        },
+        "required": ["uri"]
+      }
+    },
+
+    "integrity": { "$ref": "#/$defs/integrity_block" },
+
+    "signatures": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/signature" },
+      "description": "Off-chain attestations from proposers/co-signers."
+    },
+
+    "labels": {
+      "type": "array",
+      "items": { "type": "string", "maxLength": 48 },
+      "maxItems": 32
+    },
+
+    "risk_assessment": { "type": "string" },
+    "backwards_compatibility": { "type": "string" },
+    "implementation_notes": { "type": "string" },
+
+    "extensions": {
+      "type": "object",
+      "description": "Free-form extension data, namespaced keys recommended.",
+      "additionalProperties": true
+    },
+
+    "payload": {
+      "type": "object",
+      "title": "ParamChangePayload",
+      "additionalProperties": false,
+      "properties": {
+        "changes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_.-]{1,128}$",
+                "description": "Dot-path into the governed params registry (e.g., consensus.theta.ema_alpha)."
+              },
+              "old_value": { "$ref": "#/$defs/anyJson" },
+              "new_value": { "$ref": "#/$defs/anyJson" },
+              "bounds": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "min": { "$ref": "#/$defs/anyJson" },
+                  "max": { "$ref": "#/$defs/anyJson" }
+                }
+              },
+              "justification": { "type": "string" }
+            },
+            "required": ["path", "new_value"]
+          }
+        },
+        "effective_after_blocks": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 720,
+          "description": "Activation delay to give operators time to prepare."
+        }
+      },
+      "required": ["changes"]
+    }
+  },
+
+  "required": [
+    "schema_version",
+    "proposal_id",
+    "kind",
+    "network",
+    "title",
+    "description",
+    "proposer",
+    "created_at",
+    "payload"
+  ],
+
+  "$defs": {
+    "address": {
+      "type": "string",
+      "pattern": "^(anim1)[0-9a-z]{10,}$",
+      "description": "Animica bech32m address (anim1…); minimal pattern."
+    },
+    "hex": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]*$"
+    },
+    "sha3_256": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{64}$",
+      "description": "Hex-encoded SHA3-256 digest."
+    },
+    "anyJson": {
+      "description": "Loosely-typed value: string | number | integer | boolean | object | array | null",
+      "anyOf": [
+        { "type": "string" },
+        { "type": "number" },
+        { "type": "integer" },
+        { "type": "boolean" },
+        { "type": "object" },
+        { "type": "array" },
+        { "type": "null" }
+      ]
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "address": { "$ref": "#/$defs/address" },
+        "alg": {
+          "type": "string",
+          "enum": ["dilithium3", "sphincs_shake_128s", "ed25519", "secp256k1"]
+        },
+        "signature": { "$ref": "#/$defs/hex" },
+        "signed_at": { "type": "string", "format": "date-time" },
+        "payload_hash": { "$ref": "#/$defs/sha3_256" }
+      },
+      "required": ["address", "alg", "signature", "payload_hash"]
+    },
+    "integrity_block": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "algo": { "type": "string", "enum": ["sha3-256", "blake3"] },
+        "value": { "$ref": "#/$defs/sha3_256" },
+        "signatures": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/signature" }
+        }
+      },
+      "required": ["algo", "value"]
+    }
+  },
+
+  "examples": [
+    {
+      "schema_version": 1,
+      "proposal_id": "PARAMS-2025-ThetaTuning",
+      "kind": "ParamChange",
+      "network": "mainnet",
+      "title": "Retarget Θ to stabilize 10s blocks",
+      "summary": "Tighter EMA clamps; Θ_min tweak.",
+      "description": "This proposal adjusts **Θ** retarget clamps per research in …",
+      "proposer": { "address": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqz9v3r" },
+      "created_at": "2025-10-12T12:00:00Z",
+      "payload": {
+        "changes": [
+          { "path": "consensus.theta.ema_alpha", "old_value": 0.125, "new_value": 0.10 },
+          { "path": "consensus.theta.min", "new_value": 1.0e-6, "justification": "Prevents stalls at low activity." }
+        ],
+        "effective_after_blocks": 720
+      }
+    }
+  ]
+}

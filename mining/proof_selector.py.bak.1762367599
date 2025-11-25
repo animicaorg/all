@@ -1,0 +1,440 @@
+from __future__ import annotations
+
+"""
+Animica mining.proof_selector
+-----------------------------
+
+Selects a *subset* of verified proof envelopes to attach to a candidate block,
+respecting PoIES policy caps (per-type & total Γ), diversity/escort rules, and
+aiming to maximize expected acceptance margin S = H(u) + Σψ − Θ.
+
+Input candidates are assumed to be *already verified* (schema + attestation + trap checks)
+and accompanied by measured metrics. Upstream, `mining/adapters/proofs_view.py` should
+normalize raw envelopes into these candidates.
+
+This module is deterministic and side-effect free.
+
+Key ideas
+---------
+- Score each candidate by an estimated ψ contribution (micro-nats) using
+  `proofs.policy_adapter` + `consensus.scorer` if available; otherwise fall back to
+  sane heuristics from `proofs.metrics` fields.
+- Enforce policy caps: per-type, per-proof, and total Γ (fund units per block/epoch).
+- Diversity & escort: optionally ensure a minimum presence of "escort" proof types
+  (e.g., storage heartbeats) per N useful AI/Quantum proofs.
+- Greedy, density-first selection (ψ per Γ unit), with deterministic tie-breakers.
+
+Duck-typing policy
+------------------
+We accept any object or dict exposing these fields (names are flexible):
+- total_gamma_cap (float/int) or ["Gamma"]["total_cap"]
+- per_type_caps: dict[type_id or name]→cap
+- escort: optional dict like {"ai": {"storage_per": 4}} meaning ≥1 storage per 4 AI.
+- weights: optional dict for unit→psi scaling when scorer is unavailable.
+
+Types
+-----
+We refer to proof types by *string ids*:
+  "hash", "ai", "quantum", "storage", "vdf"
+(consistent with `consensus/types.py` & `proofs/types.py` conventions).
+
+Public API
+----------
+- select_proofs(candidates, policy, theta_micro, h_u_micro, fairness_state=None, max_count=None)
+    → (selected_list, breakdown)
+"""
+
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+import hashlib
+import json
+import math
+
+# Optional integrations (used when available)
+try:
+    from consensus.scorer import score_psi_inputs  # type: ignore
+except Exception:
+    score_psi_inputs = None  # type: ignore
+
+try:
+    from proofs.policy_adapter import metrics_to_psi_inputs  # type: ignore
+except Exception:
+    metrics_to_psi_inputs = None  # type: ignore
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Data structures
+# ────────────────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class ProofCandidate:
+    """Normalized candidate from adapters/proofs_view.py."""
+    type_id: str               # "ai" | "quantum" | "storage" | "vdf" | "hash"
+    envelope: Dict[str, Any]   # canonical envelope (will be carried into block)
+    metrics: Dict[str, Any]    # proofs.metrics::* values (ai_units, traps_ratio, qos, etc.)
+    size_bytes: int = 0        # serialized envelope size (optional)
+    psi_inputs: Optional[Dict[str, float]] = None  # optional precomputed ψ inputs
+
+    def nullifier(self) -> Optional[str]:
+        n = self.envelope.get("nullifier")
+        if isinstance(n, str):
+            return n
+        if isinstance(n, bytes):
+            return "0x" + n.hex()
+        return None
+
+@dataclass
+class CandidateScore:
+    cand: ProofCandidate
+    psi_est: float           # estimated ψ (micro-nats) pre-caps
+    gamma_cost: float        # Γ units consumed (AI/Quantum units; storage/vdf ~0)
+    density: float           # psi_est / max(gamma_cost, ε) for ordering
+    reasons: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class SelectionBreakdown:
+    theta_micro: float
+    h_u_micro: float
+    psi_sum_micro: float
+    s_margin_micro: float
+    per_type_counts: Dict[str, int]
+    per_type_gamma: Dict[str, float]
+    total_gamma: float
+    caps_hit: Dict[str, Any]
+    dropped_by_reason: Dict[str, int]
+    used_escort: Dict[str, Any]
+    notes: List[str] = field(default_factory=list)
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Policy helpers (robust to schema variation)
+# ────────────────────────────────────────────────────────────────────────
+
+def _policy_get(d: Any, *path: str, default=None):
+    cur = d
+    for k in path:
+        if cur is None:
+            return default
+        if isinstance(cur, dict):
+            cur = cur.get(k)
+        else:
+            cur = getattr(cur, k, None)
+    return default if cur is None else cur
+
+def _gamma_total_cap(policy: Any) -> float:
+    return float(
+        _policy_get(policy, "total_gamma_cap") or
+        _policy_get(policy, "Gamma", "total_cap") or
+        _policy_get(policy, "gamma", "total_cap") or
+        1e9  # very high default to avoid accidental clipping during dev
+    )
+
+def _per_type_caps(policy: Any) -> Dict[str, int]:
+    caps = (
+        _policy_get(policy, "per_type_caps") or
+        _policy_get(policy, "caps", "per_type") or
+        {}
+    )
+    # Normalize keys to our type ids
+    norm: Dict[str, int] = {}
+    for k, v in caps.items():
+        norm[str(k).lower()] = int(v)
+    return norm
+
+def _escort_rules(policy: Any) -> Dict[str, Dict[str, int]]:
+    # Example: {"ai": {"storage_per": 4}, "quantum": {"storage_per": 2}}
+    esc = _policy_get(policy, "escort") or _policy_get(policy, "diversity", "escort") or {}
+    out: Dict[str, Dict[str, int]] = {}
+    for k, v in getattr(esc, "items", lambda: [])():
+        dst = {}
+        if isinstance(v, dict):
+            if "storage_per" in v:
+                dst["storage_per"] = int(v["storage_per"])
+        if dst:
+            out[str(k).lower()] = dst
+    return out
+
+def _weights(policy: Any) -> Dict[str, float]:
+    # Used only when scorer/policy_adapter not available
+    w = _policy_get(policy, "weights") or {}
+    return {str(k): float(v) for k, v in w.items()}
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Scoring
+# ────────────────────────────────────────────────────────────────────────
+
+def _psi_estimate(c: ProofCandidate, policy: Any) -> Tuple[float, Dict[str, Any]]:
+    """
+    Returns (psi_micro, reasons). Uses proper scorer if available, else heuristic:
+    - ai:      ai_units * w_ai * f(traps_ratio,qos)
+    - quantum: quantum_units * w_q * f(traps_ratio,qos)
+    - storage: base bonus * w_s * availability
+    - vdf:     seconds_equiv * w_vdf (bonus)
+    - hash:    share d_ratio scaled into micro-nats using a calibrated slope
+    """
+    reasons: Dict[str, Any] = {}
+    # Preferred path: adapter → scorer
+    try:
+        if c.psi_inputs is not None and score_psi_inputs is not None:
+            psi = float(score_psi_inputs(c.type_id, c.psi_inputs))
+            reasons["mode"] = "scorer.inputs"
+            return psi, reasons
+        if metrics_to_psi_inputs is not None and score_psi_inputs is not None:
+            psi_inputs = metrics_to_psi_inputs(c.type_id, c.metrics)
+            psi = float(score_psi_inputs(c.type_id, psi_inputs))
+            reasons["mode"] = "scorer.metrics"
+            return psi, reasons
+    except Exception as e:
+        reasons["scorer_error"] = str(e)
+
+    # Heuristic fallback
+    w = _weights(policy)
+    t = c.type_id
+    m = c.metrics
+    traps = float(m.get("traps_ratio", 1.0))
+    qos = float(m.get("qos", 1.0))
+    quality = max(0.0, min(1.0, 0.5 * traps + 0.5 * qos))
+
+    if t == "ai":
+        units = float(m.get("ai_units", 0.0))
+        psi = 1e3 * units * float(w.get("ai", 1.0)) * quality
+        reasons.update(units=units, quality=quality)
+    elif t == "quantum":
+        units = float(m.get("quantum_units", 0.0))
+        psi = 1e3 * units * float(w.get("quantum", 1.2)) * quality
+        reasons.update(units=units, quality=quality)
+    elif t == "storage":
+        avail = float(m.get("availability", 1.0))
+        psi = 5e2 * float(w.get("storage", 0.3)) * avail
+        reasons.update(avail=avail)
+    elif t == "vdf":
+        secs = float(m.get("vdf_seconds", 0.0))
+        psi = 8e2 * float(w.get("vdf", 0.2)) * math.log1p(secs)
+        reasons.update(seconds=secs)
+    elif t == "hash":
+        d_ratio = float(m.get("d_ratio", 0.0))  # share difficulty / target
+        psi = 1e3 * float(w.get("hash", 0.05)) * d_ratio
+        reasons.update(d_ratio=d_ratio)
+    else:
+        psi = 0.0
+        reasons["unknown_type"] = t
+
+    reasons["mode"] = "heuristic"
+    return psi, reasons
+
+
+def _gamma_cost(c: ProofCandidate) -> float:
+    t = c.type_id
+    m = c.metrics
+    if t == "ai":
+        return float(m.get("ai_units", 0.0))
+    if t == "quantum":
+        return float(m.get("quantum_units", 0.0))
+    # Storage/VDF/Hash do not consume Γ fund units directly in most policies.
+    return 0.0
+
+
+def _hash_for_tiebreak(obj: Any) -> str:
+    # Deterministic tie-breaker: sha3_256 of canonical JSON
+    js = json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha3_256(js).hexdigest()
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Main selection algorithm
+# ────────────────────────────────────────────────────────────────────────
+
+def select_proofs(
+    candidates: Iterable[ProofCandidate],
+    policy: Any,
+    theta_micro: float,
+    h_u_micro: float,
+    *,
+    fairness_state: Optional[Dict[str, Any]] = None,
+    max_count: Optional[int] = None,
+) -> Tuple[List[ProofCandidate], SelectionBreakdown]:
+    """
+    Greedy density-first selection subject to caps and escort rules.
+
+    Returns (selected, breakdown). `selected` can be passed straight into
+    mining.header_packer.pack_candidate_block() (use .envelope objects).
+    """
+    # Deduplicate by nullifier if present
+    uniq: Dict[str, ProofCandidate] = {}
+    dropped_by: Dict[str, int] = {"dup_nullifier": 0, "cap_total_gamma": 0, "cap_per_type": 0, "escort_shortfall": 0}
+    for c in candidates:
+        nf = c.nullifier()
+        key = f"{c.type_id}:{nf}" if nf else f"{c.type_id}:{_hash_for_tiebreak(c.envelope)}"
+        if key in uniq:
+            dropped_by["dup_nullifier"] += 1
+            continue
+        uniq[key] = c
+    cands = list(uniq.values())
+
+    # Score candidates
+    scored: List[CandidateScore] = []
+    for c in cands:
+        psi, reasons = _psi_estimate(c, policy)
+        gamma = _gamma_cost(c)
+        density = psi / (gamma if gamma > 0.0 else 1e-9)
+        scored.append(CandidateScore(cand=c, psi_est=psi, gamma_cost=gamma, density=density, reasons=reasons))
+
+    # Order by (density desc, psi desc, size asc, hash tie-break)
+    scored.sort(key=lambda s: (
+        -s.density,
+        -s.psi_est,
+        s.cand.size_bytes,
+        _hash_for_tiebreak(s.cand.envelope),
+    ))
+
+    # Caps & escort config
+    total_gamma_cap = _gamma_total_cap(policy)
+    per_type_cap = _per_type_caps(policy)
+    escort = _escort_rules(policy)
+
+    per_type_counts: Dict[str, int] = {"ai": 0, "quantum": 0, "storage": 0, "vdf": 0, "hash": 0}
+    per_type_gamma: Dict[str, float] = {"ai": 0.0, "quantum": 0.0, "storage": 0.0, "vdf": 0.0, "hash": 0.0}
+    total_gamma = 0.0
+    psi_sum = 0.0
+
+    selected: List[ProofCandidate] = []
+    caps_hit: Dict[str, Any] = {}
+    used_escort: Dict[str, Any] = {}
+
+    def _escort_ok_if_added(t: str, add_counts: Dict[str, int]) -> bool:
+        # Check resulting counts after hypothetically adding cand of type t
+        nxt = {k: per_type_counts.get(k, 0) + add_counts.get(k, 0) for k in per_type_counts}
+        # For rules like {"ai":{"storage_per":4}}
+        for work_type, rules in escort.items():
+            if "storage_per" in rules:
+                per = max(1, int(rules["storage_per"]))
+                if nxt.get(work_type, 0) > 0:
+                    # require >= ceil(work/per) storage
+                    need = (nxt[work_type] + per - 1) // per
+                    if nxt.get("storage", 0) < need:
+                        return False
+        return True
+
+    for s in scored:
+        if max_count is not None and len(selected) >= max_count:
+            break
+
+        t = s.cand.type_id
+        # Per-type cap
+        cap_t = per_type_cap.get(t)
+        if cap_t is not None and per_type_counts.get(t, 0) >= cap_t:
+            caps_hit[f"cap_{t}"] = cap_t
+            dropped_by["cap_per_type"] += 1
+            continue
+
+        # Total Γ cap (only counts AI/Quantum)
+        if total_gamma + s.gamma_cost > total_gamma_cap + 1e-12:
+            caps_hit["cap_gamma_total"] = total_gamma_cap
+            dropped_by["cap_total_gamma"] += 1
+            continue
+
+        # Escort/diversity (simulate post-add)
+        add_counts = {t: 1, "storage": 0}
+        if not _escort_ok_if_added(t, add_counts):
+            dropped_by["escort_shortfall"] += 1
+            continue
+
+        # Accept
+        selected.append(s.cand)
+        per_type_counts[t] = per_type_counts.get(t, 0) + 1
+        per_type_gamma[t] = per_type_gamma.get(t, 0.0) + s.gamma_cost
+        total_gamma += s.gamma_cost
+        psi_sum += s.psi_est
+
+        # Track escort satisfaction opportunistically
+        if t == "storage":
+            used_escort["storage"] = per_type_counts["storage"]
+
+    s_margin = h_u_micro + psi_sum - float(theta_micro)
+
+    breakdown = SelectionBreakdown(
+        theta_micro=float(theta_micro),
+        h_u_micro=float(h_u_micro),
+        psi_sum_micro=float(psi_sum),
+        s_margin_micro=float(s_margin),
+        per_type_counts=per_type_counts,
+        per_type_gamma=per_type_gamma,
+        total_gamma=float(total_gamma),
+        caps_hit=caps_hit,
+        dropped_by_reason=dropped_by,
+        used_escort=used_escort,
+        notes=[]
+    )
+    return selected, breakdown
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Convenience: transform raw envelopes → ProofCandidate
+# ────────────────────────────────────────────────────────────────────────
+
+def make_candidate(
+    envelope: Dict[str, Any],
+    metrics: Dict[str, Any],
+    *,
+    type_id: Optional[str] = None,
+    size_bytes: Optional[int] = None,
+    psi_inputs: Optional[Dict[str, float]] = None,
+) -> ProofCandidate:
+    """Best-effort normalizer for callers who have raw dicts."""
+    t = type_id or str(envelope.get("type") or envelope.get("type_id") or metrics.get("type_id") or "").lower()
+    if not t:
+        # Try to infer from present fields
+        if "ai_units" in metrics:
+            t = "ai"
+        elif "quantum_units" in metrics:
+            t = "quantum"
+        elif "vdf_seconds" in metrics:
+            t = "vdf"
+        elif "availability" in metrics:
+            t = "storage"
+        else:
+            t = "hash"
+    sz = int(size_bytes if size_bytes is not None else len(json.dumps(envelope, sort_keys=True).encode("utf-8")))
+    return ProofCandidate(type_id=t, envelope=envelope, metrics=metrics, size_bytes=sz, psi_inputs=psi_inputs)
+
+
+# ────────────────────────────────────────────────────────────────────────
+# CLI (dev aid)
+# ────────────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":  # pragma: no cover
+    import argparse
+    import sys
+    parser = argparse.ArgumentParser(description="Select best proofs under caps/Γ/fairness.")
+    parser.add_argument("--policy", required=True, help="JSON file containing PoIES policy (caps/Γ/escort/weights)")
+    parser.add_argument("--theta", required=True, type=float, help="Θ in micro-nats")
+    parser.add_argument("--h_u", required=True, type=float, help="H(u) in micro-nats (from hashshare)")
+    parser.add_argument("--cand", action="append", default=[], help="Path to candidate JSON file (envelope+metrics)")
+    parser.add_argument("--out", required=True, help="Write selected envelopes JSON list")
+    parser.add_argument("--max", type=int, default=None, help="Max proofs to select")
+    args = parser.parse_args()
+
+    try:
+        with open(args.policy, "rb") as fh:
+            policy = json.loads(fh.read())
+    except Exception as e:
+        print(f"Failed to read policy: {e}", file=sys.stderr)
+        sys.exit(2)
+
+    raw_cands: List[ProofCandidate] = []
+    for p in args.cand:
+        with open(p, "rb") as fh:
+            obj = json.loads(fh.read())
+        env = obj.get("envelope") or obj.get("proof") or {}
+        met = obj.get("metrics") or {}
+        t = obj.get("type_id")
+        raw_cands.append(make_candidate(env, met, type_id=t))
+
+    sel, br = select_proofs(raw_cands, policy, theta_micro=args.theta, h_u_micro=args.h_u, max_count=args.max)
+    with open(args.out, "wb") as fh:
+        fh.write(json.dumps([c.envelope for c in sel], sort_keys=True, indent=2).encode("utf-8"))
+    # Emit breakdown to stderr
+    sys.stderr.write(json.dumps(br.__dict__, sort_keys=True, indent=2) + "\n")
+    print(f"Selected {len(sel)} proofs → {args.out}")

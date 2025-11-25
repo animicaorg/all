@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+.pnp.*
+.pnpm-store/
+
+# Builds & caches
+dist/
+out/
+.astro/
+.cache/
+.vite/
+vite.config.timestamp-*
+
+# Hosting providers
+.vercel/
+.netlify/
+
+# Tests / reports
+coverage/
+.vitest/
+playwright-report/
+test-results/
+blob-report/
+.playwright/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+
+# Misc
+*.local
+*.tmp
+*.temp

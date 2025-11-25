@@ -1,0 +1,73 @@
+{
+  "$meta": {
+    "title": "Sample Transfer Transaction (Annotated)",
+    "description": "Human-readable JSON view of a signed transfer. The canonical wire format is CBOR per docs/spec/TX_FORMAT.md; this JSON is for documentation and tooling examples.",
+    "notes": [
+      "Amounts use attoANM (1e-18 ANM) for integer safety unless otherwise stated.",
+      "The 'body_cbor_hex' is the canonical CBOR encoding of 'tx.body' with deterministic map ordering.",
+      "The 'tx_hash' is sha3-256 over the canonical CBOR envelope (body + signature) per spec.",
+      "SignBytes are domain-separated canonical bytes hashed with sha3-256 before PQ signing."
+    ]
+  },
+
+  "tx": {
+    "encoding": "animica.tx.v1",
+
+    "body": {
+      "$comment": "Fields covered by SignBytes (domain-separated) and then signed.",
+      "chainId": 1337,
+      "sender": "anmd1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqr5n3k2", 
+      "nonce": 12,
+      "gas": {
+        "limit": 120000,
+        "basePrice": "1000000000",
+        "tip": "0"
+      },
+      "kind": "transfer",
+      "to": "anmd1x4k0sy9fvt5cqs0e2w9ld2gk6p8y9qsxk0e7mn",
+      "value_atto": "250000000000000000", 
+      "accessList": []
+    },
+
+    "signing": {
+      "$comment": "SignBytes domain and digest used for the PQ signature.",
+      "sign_domain": "animica:tx:v1:dilithium3:chainId=1337",
+      "sign_bytes_sha3_256": "0x5a7b1a84f7c8b3b6d0a9e1c2f4e5a6b7c8d9e0f1a2b3c4d5e6f708192a3b4c5d"
+    },
+
+    "signature": {
+      "$comment": "Post-Quantum signature over SignBytes (Dilithium3 shown; SPHINCS+ also supported).",
+      "alg_id": "dilithium3",
+      "pubkey_sha3_256": "0x0c9f2bd2e9a0f7a7e2d4c3b1a5f6e7c8d9e0f1a2b3c4d5e6f708192a3b4c5d6e",
+      "sig_hex": "0x01a4...d3ff",
+      "length_hint_bytes": 2701
+    }
+  },
+
+  "hashes": {
+    "$comment": "Derived hashes for indexing and debugging.",
+    "body_cbor_hex": "0xa264636861696e4964...6b76616c75655f6174746f", 
+    "tx_hash": "0x7caa1e0b3f9d3a6c4f2b98e7a61c5b2d9f0e1c2b3a4d5e6f718192a3b4c5d6e7",
+    "envelope_sha3_256": "0x7caa1e0b3f9d3a6c4f2b98e7a61c5b2d9f0e1c2b3a4d5e6f718192a3b4c5d6e7"
+  },
+
+  "annotations": {
+    "/tx/body/chainId": "Network identifier (see docs/spec/CHAIN_PARAMS.md).",
+    "/tx/body/sender": "Bech32m address of the signer. For display only; consensus uses signature to authorize.",
+    "/tx/body/nonce": "Monotonically increasing per-sender to prevent replay.",
+    "/tx/body/gas/limit": "Max gas the sender is willing to spend.",
+    "/tx/body/gas/basePrice": "Minimum price per gas unit (floor set by mempool/fee market).",
+    "/tx/body/gas/tip": "Optional miner tip per gas unit.",
+    "/tx/body/kind": "Transaction kind: transfer | deploy | call | blob.",
+    "/tx/body/to": "Recipient address for transfers; contract address for calls.",
+    "/tx/body/value_atto": "Amount in attoANM (1e-18 ANM).",
+    "/tx/body/accessList": "Optional upfront storage/key access hints; can be empty.",
+    "/tx/signing/sign_domain": "Domain-separated context to prevent cross-protocol replay.",
+    "/tx/signing/sign_bytes_sha3_256": "Hash of canonical SignBytes that is signed.",
+    "/tx/signature/alg_id": "PQ signature algorithm (e.g., dilithium3 or sphincs_shake_128s).",
+    "/tx/signature/pubkey_sha3_256": "Hash of the public key; address = bech32m(alg_id || sha3_256(pubkey)).",
+    "/tx/signature/sig_hex": "Raw signature bytes (hex).",
+    "/hashes/tx_hash": "Canonical transaction hash used for indexing and receipts.",
+    "/hashes/body_cbor_hex": "Deterministic CBOR encoding of the body (pre-sign)."
+  }
+}

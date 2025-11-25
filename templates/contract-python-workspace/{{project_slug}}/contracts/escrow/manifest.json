@@ -1,0 +1,159 @@
+{
+  "name": "Escrow",
+  "version": "0.1.0",
+  "language": "python-vm",
+  "abi": {
+    "functions": [
+      {
+        "name": "init",
+        "type": "function",
+        "stateMutability": "nonpayable",
+        "inputs": [
+          { "name": "payer_addr", "type": "address" },
+          { "name": "payee_addr", "type": "address" },
+          { "name": "arbiter_addr", "type": "address" },
+          { "name": "amount", "type": "uint256" }
+        ],
+        "outputs": []
+      },
+      {
+        "name": "fund",
+        "type": "function",
+        "stateMutability": "nonpayable",
+        "inputs": [
+          { "name": "amount", "type": "uint256" }
+        ],
+        "outputs": [
+          { "name": "ok", "type": "bool" }
+        ]
+      },
+      {
+        "name": "release",
+        "type": "function",
+        "stateMutability": "nonpayable",
+        "inputs": [],
+        "outputs": [
+          { "name": "ok", "type": "bool" }
+        ]
+      },
+      {
+        "name": "refund",
+        "type": "function",
+        "stateMutability": "nonpayable",
+        "inputs": [],
+        "outputs": [
+          { "name": "ok", "type": "bool" }
+        ]
+      },
+      {
+        "name": "cancel",
+        "type": "function",
+        "stateMutability": "nonpayable",
+        "inputs": [],
+        "outputs": [
+          { "name": "ok", "type": "bool" }
+        ]
+      },
+      {
+        "name": "initialized",
+        "type": "function",
+        "stateMutability": "view",
+        "inputs": [],
+        "outputs": [
+          { "name": "flag", "type": "uint8" }
+        ]
+      },
+      {
+        "name": "payer",
+        "type": "function",
+        "stateMutability": "view",
+        "inputs": [],
+        "outputs": [
+          { "name": "addr", "type": "address" }
+        ]
+      },
+      {
+        "name": "payee",
+        "type": "function",
+        "stateMutability": "view",
+        "inputs": [],
+        "outputs": [
+          { "name": "addr", "type": "address" }
+        ]
+      },
+      {
+        "name": "arbiter",
+        "type": "function",
+        "stateMutability": "view",
+        "inputs": [],
+        "outputs": [
+          { "name": "addr", "type": "address" }
+        ]
+      },
+      {
+        "name": "agreed_amount",
+        "type": "function",
+        "stateMutability": "view",
+        "inputs": [],
+        "outputs": [
+          { "name": "amount", "type": "uint256" }
+        ]
+      },
+      {
+        "name": "locked_amount",
+        "type": "function",
+        "stateMutability": "view",
+        "inputs": [],
+        "outputs": [
+          { "name": "amount", "type": "uint256" }
+        ]
+      },
+      {
+        "name": "status",
+        "type": "function",
+        "stateMutability": "view",
+        "inputs": [],
+        "outputs": [
+          { "name": "state", "type": "bytes" }
+        ]
+      }
+    ],
+    "events": [
+      {
+        "name": "Funded",
+        "inputs": [
+          { "name": "payer", "type": "address", "indexed": false },
+          { "name": "amount", "type": "uint256", "indexed": false }
+        ]
+      },
+      {
+        "name": "Released",
+        "inputs": [
+          { "name": "payee", "type": "address", "indexed": false },
+          { "name": "amount", "type": "uint256", "indexed": false }
+        ]
+      },
+      {
+        "name": "Refunded",
+        "inputs": [
+          { "name": "payer", "type": "address", "indexed": false },
+          { "name": "amount", "type": "uint256", "indexed": false }
+        ]
+      },
+      {
+        "name": "Canceled",
+        "inputs": []
+      }
+    ]
+  },
+  "permissions": {
+    "capabilities": []
+  },
+  "meta": {
+    "authors": [],
+    "description": "Deterministic escrow contract (arbiter-controlled release/refund) for the Python-VM.",
+    "source": "contracts/escrow/contract.py",
+    "license": "Apache-2.0"
+  },
+  "codeHash": "0x__CODE_HASH_PLACEHOLDER__"
+}

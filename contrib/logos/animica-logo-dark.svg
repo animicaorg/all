@@ -1,0 +1,30 @@
+<!-- Animica Primary Logo — Dark variant
+     Usage: default on dark backgrounds (pre-tinted for contrast).
+     Wordmark uses light foreground; symbol adapted for dark UI.
+     SPDX-License-Identifier: CC-BY-ND-4.0 (brand assets) -->
+<svg width="640" height="160" viewBox="0 0 640 160" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Animica Logo (Dark)</title>
+  <desc id="desc">Circular mark with stylized A and Animica wordmark for dark backgrounds</desc>
+
+  <!-- MARK -->
+  <g transform="translate(16,16)">
+    <!-- Outer orb (lighter primary for dark bg) -->
+    <circle cx="64" cy="64" r="56" fill="#7BA3FF"/>
+    <!-- Inner cut (near-black surface glow ring via stroke) -->
+    <circle cx="64" cy="64" r="44" fill="#0F1220" stroke="#BFD0FF" stroke-width="2"/>
+    <!-- Stylized A (triangle) -->
+    <path d="M64 34 L36 112 H92 L64 34 Z" fill="#BFD0FF"/>
+    <!-- Crossbar -->
+    <rect x="46" y="86" width="36" height="10" rx="5" fill="#BFD0FF"/>
+  </g>
+
+  <!-- WORDMARK -->
+  <g transform="translate(160,0)">
+    <style>
+      .word { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+              font-weight: 700; font-size: 64px; letter-spacing: -0.5px; }
+    </style>
+    <!-- Pre-tinted light text for dark surfaces -->
+    <text class="word" x="0" y="106" fill="#E8ECF8">Animica</text>
+  </g>
+</svg>

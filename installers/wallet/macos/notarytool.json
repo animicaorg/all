@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "key": {
+    "id": "${ASC_KEY_ID}",
+    "issuer": "${ASC_ISSUER_ID}",
+
+    /* The CI should Base64-decode this env var to a PEM file before submit:
+       echo "$ASC_API_KEY_P8_BASE64" | base64 --decode > asc_key.p8
+       Keep the decoded file ephemeral and out of repo. */
+    "pem_b64_env": "ASC_API_KEY_P8_BASE64",
+    "pem_path": "asc_key.p8"
+  },
+
+  "submit": {
+    /* Example CI usage:
+       xcrun notarytool submit "$ARTIFACT" \
+         --key asc_key.p8 \
+         --key-id "$ASC_KEY_ID" \
+         --issuer "$ASC_ISSUER_ID" \
+         --wait
+       xcrun stapler staple "$ARTIFACT"
+    */
+    "wait": true,
+    "staple": true
+  },
+
+  "artifact": {
+    /* The pipeline should set this dynamically (DMG or PKG path). */
+    "path_env": "NOTARY_ARTIFACT_PATH"
+  },
+
+  "security": {
+    /* Optional: used by our verify script post-notarization. */
+    "apple_team_id": "ABCDE12345"
+  }
+}

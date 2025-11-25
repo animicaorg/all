@@ -1,0 +1,30 @@
+{
+  "schema": "animica.proofs.hashshare.fixture.v1",
+  "description": "Illustrative invalid HashShare proof for negative-path tests (dRatio > Θ).",
+  "envelope": {
+    "type": "HashShare",
+    "nullifier": "0x1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f",
+    "signature_alg": "dilithium3",
+    "signature": "0x"
+  },
+  "body": {
+    "headerHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "mixSeed": "0x6666666666666666666666666666666666666666666666666666666666666666",
+    "miner": {
+      "address": "anim1testsminer0000000000000000000000000000000",
+      "pubkey_hash": "0x2222222222222222222222222222222222222222222222222222222222222222",
+      "alg_id": "dilithium3"
+    },
+    "nonce": "0x00000000000000a5",
+    "thetaMicro": 1000000,
+    "u": 0.301,
+    "hMicro": 1200000,
+    "dRatio": 1.2,
+    "accepted": false,
+    "createdAt": "2025-10-02T00:00:06Z"
+  },
+  "notes": [
+    "This share is above threshold (dRatio > 1), so validators should reject it.",
+    "Structure matches the valid fixture to exercise rejection paths cleanly."
+  ]
+}

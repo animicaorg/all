@@ -1,0 +1,135 @@
+/* Animica Tokens (light theme) — :root variables
+   Source: contrib/tokens/tokens.json
+   SPDX-License-Identifier: MIT
+*/
+
+:root {
+  /* -------------------- Color -------------------- */
+  /* Primary */
+  --anm-color-primary-50:  #EEF3FF;
+  --anm-color-primary-100: #DCE7FF;
+  --anm-color-primary-200: #C3D6FF;
+  --anm-color-primary-300: #A7C1FF;
+  --anm-color-primary-400: #7FA2FF;
+  --anm-color-primary-500: #4B7DFF;
+  --anm-color-primary-600: #2E63FF;
+  --anm-color-primary-700: #254FCC;
+  --anm-color-primary-800: #1C3D99;
+  --anm-color-primary-900: #132966;
+
+  /* Neutral */
+  --anm-color-neutral-50:  #F6F8FF;
+  --anm-color-neutral-100: #ECEFFC;
+  --anm-color-neutral-200: #E1E6F5;
+  --anm-color-neutral-300: #CDD4E6;
+  --anm-color-neutral-400: #B4BED3;
+  --anm-color-neutral-500: #98A4BD;
+  --anm-color-neutral-600: #7B88A3;
+  --anm-color-neutral-700: #5E6B88;
+  --anm-color-neutral-800: #39425A;
+  --anm-color-neutral-900: #0E1222;
+
+  /* Surfaces */
+  --anm-color-surface-0:   #FFFFFF;
+  --anm-color-surface-50:  #F8FAFF;
+  --anm-color-surface-100: #F2F5FF;
+  --anm-color-surface-800: #121623;
+  --anm-color-surface-900: #0A0C14;
+
+  /* Success */
+  --anm-color-success-50:  #EAF6F1;
+  --anm-color-success-100: #CDEBDD;
+  --anm-color-success-200: #A0DCC4;
+  --anm-color-success-300: #72CCA9;
+  --anm-color-success-400: #45BD90;
+  --anm-color-success-500: #2CAF7E;
+  --anm-color-success-600: #22A06B;
+  --anm-color-success-700: #1B7C54;
+  --anm-color-success-800: #145D40;
+  --anm-color-success-900: #0E402C;
+
+  /* Warning */
+  --anm-color-warning-50:  #FFF7E6;
+  --anm-color-warning-100: #FFE8B3;
+  --anm-color-warning-200: #FFD780;
+  --anm-color-warning-300: #FEC54D;
+  --anm-color-warning-400: #F2B32A;
+  --anm-color-warning-500: #E8A41F;
+  --anm-color-warning-600: #DFA71B;
+  --anm-color-warning-700: #B77E12;
+  --anm-color-warning-800: #8E5F0C;
+  --anm-color-warning-900: #693F07;
+
+  /* Error */
+  --anm-color-error-50:  #FDEBEB;
+  --anm-color-error-100: #F9CFCF;
+  --anm-color-error-200: #F2A8A8;
+  --anm-color-error-300: #EB8282;
+  --anm-color-error-400: #E86767;
+  --anm-color-error-500: #E65B5B;
+  --anm-color-error-600: #E45757;
+  --anm-color-error-700: #B74141;
+  --anm-color-error-800: #8D3131;
+  --anm-color-error-900: #622121;
+
+  /* -------------------- Typography -------------------- */
+  --anm-typography-font-base: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  --anm-typography-font-code: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+
+  --anm-typography-size-xs: 12px;
+  --anm-typography-size-sm: 14px;
+  --anm-typography-size-base: 16px;
+  --anm-typography-size-md: 18px;
+  --anm-typography-size-lg: 20px;
+  --anm-typography-size-xl: 24px;
+  --anm-typography-size-2xl: 32px;
+  --anm-typography-size-3xl: 40px;
+  --anm-typography-size-4xl: 48px;
+
+  --anm-typography-line-tight: 1.15;
+  --anm-typography-line-normal: 1.5;
+  --anm-typography-line-loose: 1.7;
+
+  --anm-typography-track-tight: -0.01em;
+  --anm-typography-track-normal: 0em;
+  --anm-typography-track-loose: 0.01em;
+
+  --anm-typography-weight-regular: 400;
+  --anm-typography-weight-medium: 500;
+  --anm-typography-weight-semibold: 600;
+  --anm-typography-weight-bold: 700;
+
+  /* -------------------- Spacing -------------------- */
+  --anm-space-1: 4px;
+  --anm-space-2: 8px;
+  --anm-space-3: 12px;
+  --anm-space-4: 16px;
+  --anm-space-5: 20px;
+  --anm-space-6: 24px;
+  --anm-space-8: 32px;
+  --anm-space-10: 40px;
+  --anm-space-12: 48px;
+  --anm-space-16: 64px;
+  --anm-space-20: 80px;
+  --anm-space-24: 96px;
+
+  /* -------------------- Radius -------------------- */
+  --anm-radius-sm: 6px;
+  --anm-radius-md: 10px;
+  --anm-radius-lg: 14px;
+  --anm-radius-xl: 18px;
+  --anm-radius-2xl: 24px;
+  --anm-radius-pill: 9999px;
+
+  /* -------------------- Shadows -------------------- */
+  --anm-shadow-sm: 0 1px 2px rgba(0,0,0,0.06);
+  --anm-shadow-md: 0 2px 8px rgba(0,0,0,0.08);
+  --anm-shadow-lg: 0 8px 24px rgba(0,0,0,0.10);
+}
+
+/* Convenience classes (optional) */
+.anm-text-body { color: var(--anm-color-neutral-900); }
+.anm-surface   { background: var(--anm-color-surface-0); color: var(--anm-color-neutral-900); }
+.anm-card      { background: var(--anm-color-surface-0); box-shadow: var(--anm-shadow-md); border-radius: var(--anm-radius-lg); }
+.anm-link      { color: var(--anm-color-primary-700); text-decoration: none; }
+.anm-link:hover{ text-decoration: underline; }

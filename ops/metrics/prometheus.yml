@@ -1,0 +1,110 @@
+# Canonical Prometheus scrape config for Animica stack
+# Jobs covered: node, miner, p2p, da, aicf, randomness, explorer
+# Adjust targets to match your deployment (ports below are examples).
+# Prometheus will still start if a target is down/unreachable.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+  external_labels:
+    project: animica
+    environment: devnet
+    chain_id: "1337"
+
+# Optional: point to local rule files (you can vendor the ones under ops/docker/config/rules/* here)
+# rule_files:
+#   - rules/*.yaml
+
+scrape_configs:
+  # Self-scrape
+  - job_name: prometheus
+    honor_labels: true
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          network: devnet
+          component: prometheus
+
+  # Core node (RPC/consensus/execution/VM expose /metrics)
+  - job_name: node
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets: ['localhost:9101']
+        labels:
+          network: devnet
+          component: node
+
+  # Miner (orchestrator, hash loop, stratum/getwork)
+  - job_name: miner
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets: ['localhost:9102']
+        labels:
+          network: devnet
+          component: miner
+
+  # P2P (gossip, sync, transports)
+  - job_name: p2p
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets: ['localhost:9103']
+        labels:
+          network: devnet
+          component: p2p
+
+  # Data Availability (DA) service
+  - job_name: da
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets: ['localhost:9104']
+        labels:
+          network: devnet
+          component: da
+
+  # AI Compute Fund (AICF)
+  - job_name: aicf
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets: ['localhost:9105']
+        labels:
+          network: devnet
+          component: aicf
+
+  # Randomness beacon (commit/reveal/VDF)
+  - job_name: randomness
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets: ['localhost:9106']
+        labels:
+          network: devnet
+          component: randomness
+
+  # Explorer API (aggregates, rollups)
+  - job_name: explorer
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets: ['localhost:9107']
+        labels:
+          network: devnet
+          component: explorer
+
+# --- Optional advanced knobs -------------------------------------------------
+# You can drop or keep high-cardinality metrics here if needed:
+# metric_relabel_configs:
+#   - source_labels: [__name__]
+#     regex: 'go_.*|process_.*'
+#     action: drop
+
+# You can also add file-based SD to allow ops to add targets without editing this file:
+#   - job_name: file_sd_extra
+#     file_sd_configs:
+#       - files: ['ops/metrics/targets/*.yml']
+#         refresh_interval: 30s

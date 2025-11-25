@@ -1,0 +1,47 @@
+{
+  // Strict TypeScript for Astro + (optional) React islands
+  "extends": "astro/tsconfigs/strict",
+  "compilerOptions": {
+    // Module/emit
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "target": "ES2020",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+
+    // Paths & resolving (match aliases you may use in Vite/Astro)
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "@content/*": ["src/content/*"],
+      "@components/*": ["src/components/*"]
+    },
+
+    // React islands (safe even if you haven't added React yet)
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+
+    // Strictness
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "useDefineForClassFields": true,
+
+    // Type roots & global types
+    "types": ["astro/client", "vite/client"],
+
+    // Nice-to-haves
+    "allowSyntheticDefaultImports": true,
+    "skipLibCheck": true
+  },
+  "include": [
+    "src",
+    "astro.config.mjs",
+    "astro.config.ts",
+    "env.d.ts",
+    ".astro/types.d.ts"
+  ],
+  "exclude": ["dist", "out", "node_modules"]
+}

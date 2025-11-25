@@ -1,0 +1,171 @@
+{{-/*
+Ingress: Public HTTP entry for Studio Web, Explorer Web, and (optionally) proxied RPC.
+
+Values (examples):
+ingress:
+  enabled: true
+  className: nginx
+  annotations: {}                # common annotations for ALL ingresses
+  tlsSecretName: ""              # single cert for simple setups (applied per-host)
+  tls: []                        # OR advanced: list of {secretName, hosts: [..]} (ignored per-host here)
+  hosts:
+    studio: studio.example.com
+    explorer: explorer.example.com
+    rpc: rpc.example.com
+  rpc:
+    enableCors: true             # add CORS for RPC ingress (nginx)
+    extraAnnotations: {}         # rpc-specific annotations (merged)
+
+Notes:
+- We render separate Ingress objects per host so RPC can carry different annotations (CORS/WebSocket).
+- If tlsSecretName is set, each host gets TLS with that secret. For fully custom multi-certs,
+  prefer a separate overlay or edit this template to use .Values.ingress.tls.
+*/ -}}
+
+{{- if .Values.ingress.enabled }}
+
+{{- $fullname := include "animica-devnet.fullname" . -}}
+{{- $labels := include "animica-devnet.labels" (dict "ctx" . "component" "ingress") -}}
+{{- $ing := .Values.ingress | default dict -}}
+{{- $class := $ing.className | default "nginx" -}}
+{{- $commonAnn := $ing.annotations | default dict -}}
+{{- $tlsSecret := $ing.tlsSecretName | default "" -}}
+{{- $hosts := $ing.hosts | default dict -}}
+
+{{- $node := .Values.node | default dict -}}
+{{- $rpcHttpPort := (default 8545 $node.ports.http) -}}
+
+{{/* ------------------------ Studio Web ------------------------ */}}
+{{- if $hosts.studio }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullname }}-studio
+  labels:
+{{ $labels | nindent 4 }}
+  annotations:
+    kubernetes.io/ingress.class: {{ $class | quote }}
+    {{- with $commonAnn }}
+{{ toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ $class | quote }}
+  {{- if $tlsSecret }}
+  tls:
+    - secretName: {{ $tlsSecret }}
+      hosts:
+        - {{ $hosts.studio | quote }}
+  {{- end }}
+  rules:
+    - host: {{ $hosts.studio | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ printf "%s-studio-web" $fullname }}
+                port:
+                  number: 8080
+---
+{{- end }}
+
+{{/* ------------------------ Explorer Web ------------------------ */}}
+{{- if $hosts.explorer }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullname }}-explorer
+  labels:
+{{ (include "animica-devnet.labels" (dict "ctx" . "component" "explorer-web")) | nindent 4 }}
+  annotations:
+    kubernetes.io/ingress.class: {{ $class | quote }}
+    {{- with $commonAnn }}
+{{ toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ $class | quote }}
+  {{- if $tlsSecret }}
+  tls:
+    - secretName: {{ $tlsSecret }}
+      hosts:
+        - {{ $hosts.explorer | quote }}
+  {{- end }}
+  rules:
+    - host: {{ $hosts.explorer | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ printf "%s-explorer-web" $fullname }}
+                port:
+                  number: 8080
+---
+{{- end }}
+
+{{/* ------------------------ RPC (proxied) ------------------------ */}}
+{{- if $hosts.rpc }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullname }}-rpc
+  labels:
+{{ (include "animica-devnet.labels" (dict "ctx" . "component" "rpc")) | nindent 4 }}
+  annotations:
+    kubernetes.io/ingress.class: {{ $class | quote }}
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "86400"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "86400"
+    nginx.ingress.kubernetes.io/client-body-buffer-size: "8m"
+    {{- if (dig "rpc" "enableCors" $ing) }}
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Content-Type, api_key, Authorization"
+    {{- end }}
+    {{- with (dig "rpc" "extraAnnotations" $ing) }}
+{{ toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with $commonAnn }}
+{{ toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ $class | quote }}
+  {{- if $tlsSecret }}
+  tls:
+    - secretName: {{ $tlsSecret }}
+      hosts:
+        - {{ $hosts.rpc | quote }}
+  {{- end }}
+  rules:
+    - host: {{ $hosts.rpc | quote }}
+      http:
+        paths:
+          # JSON-RPC HTTP (FastAPI mounts /rpc)
+          - path: /rpc
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ printf "%s-rpc" $fullname }}
+                port:
+                  number: {{ $rpcHttpPort }}
+          # OpenRPC schema passthrough
+          - path: /openrpc.json
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ printf "%s-rpc" $fullname }}
+                port:
+                  number: {{ $rpcHttpPort }}
+          # WebSocket endpoint (FastAPI/WS mounted at /ws)
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ printf "%s-rpc" $fullname }}
+                port:
+                  number: {{ $rpcHttpPort }}
+{{- end }}
+
+{{- end }}

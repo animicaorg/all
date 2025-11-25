@@ -1,0 +1,369 @@
+{
+  "title": "Animica — Node",
+  "uid": "animica-node",
+  "timezone": "browser",
+  "schemaVersion": 36,
+  "version": 1,
+  "refresh": "10s",
+  "style": "dark",
+  "editable": true,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": ["5s","10s","30s","1m","5m"],
+    "hidden": false
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "ds",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0,
+        "label": "Datasource"
+      },
+      {
+        "name": "job",
+        "type": "query",
+        "datasource": "$ds",
+        "refresh": 1,
+        "label": "job",
+        "query": "label_values(animica_core_head_height, job)",
+        "includeAll": false,
+        "multi": false,
+        "current": {}
+      },
+      {
+        "name": "instance",
+        "type": "query",
+        "datasource": "$ds",
+        "refresh": 1,
+        "label": "instance",
+        "query": "label_values(animica_core_head_height{job=\"$job\"}, instance)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".+",
+        "current": {}
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "type": "dashboard",
+        "name": "Annotations & Alerts",
+        "enable": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Head Height",
+      "description": "Current best height reported by node",
+      "datasource": "$ds",
+      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "max by(instance) (animica_core_head_height{job=\"$job\",instance=~\"$instance\"})",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "textMode": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Head Lag (s)",
+      "description": "Seconds behind the network tip (local view)",
+      "datasource": "$ds",
+      "gridPos": {"h": 6, "w": 6, "x": 6, "y": 0},
+      "targets": [
+        {
+          "expr": "max by(instance) (animica_core_head_lag_seconds{job=\"$job\",instance=~\"$instance\"})",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green"},
+              {"color": "orange", "value": 5},
+              {"color": "red", "value": 15}
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Block Import Duration — p50/p95",
+      "datasource": "$ds",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "p50",
+          "expr": "histogram_quantile(0.5, sum by (le,instance) (rate(animica_core_block_import_duration_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "p95",
+          "expr": "histogram_quantile(0.95, sum by (le,instance) (rate(animica_core_block_import_duration_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU (process)",
+      "datasource": "$ds",
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 6},
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{instance}}",
+          "expr": "rate(process_cpu_seconds_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]) * 100"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory RSS",
+      "datasource": "$ds",
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 6},
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{instance}}",
+          "expr": "process_resident_memory_bytes{job=\"$job\",instance=~\"$instance\"}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Open FDs",
+      "datasource": "$ds",
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 6},
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{instance}}",
+          "expr": "process_open_fds{job=\"$job\",instance=~\"$instance\"}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right" } }
+    },
+    {
+      "type": "stat",
+      "title": "Peers",
+      "datasource": "$ds",
+      "gridPos": {"h": 6, "w": 4, "x": 0, "y": 13},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by(instance) (animica_p2p_peers{job=\"$job\",instance=~\"$instance\"})"
+        }
+      ],
+      "options": {
+        "reduceOptions": {"calcs": ["lastNotNull"], "values": false},
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "P2P RTT — p50/p95",
+      "datasource": "$ds",
+      "gridPos": {"h": 6, "w": 8, "x": 4, "y": 13},
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "p50",
+          "expr": "1e3 * histogram_quantile(0.5, sum by (le,instance) (rate(animica_p2p_rtt_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "p95",
+          "expr": "1e3 * histogram_quantile(0.95, sum by (le,instance) (rate(animica_p2p_rtt_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Mempool — Pending Txs",
+      "datasource": "$ds",
+      "gridPos": {"h": 6, "w": 6, "x": 12, "y": 13},
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "pending",
+          "expr": "sum by(instance) (animica_mempool_pending_txs{job=\"$job\",instance=~\"$instance\"})"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] }
+    },
+    {
+      "type": "timeseries",
+      "title": "Mempool — Admits / Rejects (rate)",
+      "datasource": "$ds",
+      "gridPos": {"h": 6, "w": 6, "x": 18, "y": 13},
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "admit/s",
+          "expr": "sum by(instance) (rate(animica_mempool_admit_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "reject/s",
+          "expr": "sum by(instance) (rate(animica_mempool_reject_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "RPC — Requests by Method (top 5)",
+      "datasource": "$ds",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 19},
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{method}}",
+          "expr": "topk(5, sum by(method) (rate(animica_rpc_http_requests_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "req/s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "RPC — 5xx Rate & p95 Latency",
+      "datasource": "$ds",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 19},
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "5xx/s",
+          "expr": "sum by(instance) (rate(animica_rpc_http_requests_total{job=\"$job\",instance=~\"$instance\",code=~\"5..\"}[$__rate_interval]))"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "p95 latency (s)",
+          "expr": "histogram_quantile(0.95, sum by(le,instance) (rate(animica_rpc_http_request_duration_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "DA — Post Rate & DAS p_fail",
+      "datasource": "$ds",
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 27},
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "post/s",
+          "expr": "sum by(instance) (rate(animica_da_post_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "p_fail",
+          "expr": "avg by(instance) (animica_da_sampling_p_fail{job=\"$job\",instance=~\"$instance\"})"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Randomness — Round & VDF verify (p95)",
+      "datasource": "$ds",
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 27},
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "round",
+          "expr": "max by(instance) (animica_randomness_round_id{job=\"$job\",instance=~\"$instance\"})"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "vdf verify p95 (s)",
+          "expr": "histogram_quantile(0.95, sum by (le,instance) (rate(animica_randomness_vdf_verify_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "AICF — Jobs Assigned / Completed (rate)",
+      "datasource": "$ds",
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 34},
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "assigned/s",
+          "expr": "sum by(instance) (rate(animica_aicf_jobs_assigned_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "completed/s",
+          "expr": "sum by(instance) (rate(animica_aicf_jobs_completed_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Miner — Hashshares & Submissions (rate)",
+      "datasource": "$ds",
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 34},
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "hashshare/s",
+          "expr": "sum by(instance) (rate(animica_mining_hashshares_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "submit/s",
+          "expr": "sum by(instance) (rate(animica_mining_share_submit_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    }
+  ]
+}

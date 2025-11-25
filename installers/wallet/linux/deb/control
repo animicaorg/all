@@ -1,0 +1,18 @@
+Package: animica-wallet
+Version: 0.0.0+local
+Section: utils
+Priority: optional
+Architecture: any
+Maintainer: Animica Labs <support@animica.dev>
+Homepage: https://animica.dev/wallet
+Provides: animica-wallet
+Conflicts: animica-wallet-beta (<< 0.0.0), animica-wallet-dev (<< 0.0.0)
+Replaces: animica-wallet-beta (<< 0.0.0), animica-wallet-dev (<< 0.0.0)
+Depends: libc6 (>= 2.31), libstdc++6 (>= 10), zlib1g, libgtk-3-0, libglib2.0-0 (>= 2.64), libgdk-pixbuf-2.0-0, libpango-1.0-0, libatk1.0-0, libatk-bridge2.0-0, libx11-6, libxcb1, libxkbcommon0, libxrandr2, libxi6, libxtst6, libxext6, libxfixes3, libwayland-client0, libnss3, libasound2, libpulse0, libgbm1, libdrm2
+Recommends: xdg-desktop-portal, gvfs
+Description: Animica Wallet (post-quantum) — desktop client for the Animica network
+ Animica Wallet is a desktop wallet with post-quantum signature support,
+ deterministic transaction building, and a secure RPC client for the Animica
+ network. It bundles a modern UI, account management, and transaction
+ simulation. This DEB installs the application under /opt/AnimicaWallet and a
+ launcher entry in your desktop environment.

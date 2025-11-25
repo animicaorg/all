@@ -1,0 +1,10 @@
+<!-- Animica System Icon: copy -->
+<svg width="24" height="24" viewBox="0 0 24 24" role="img" aria-labelledby="title" xmlns="http://www.w3.org/2000/svg">
+  <title id="title">Copy</title>
+  <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Back sheet -->
+    <rect x="8" y="8" width="11" height="13" rx="2"/>
+    <!-- Front sheet -->
+    <rect x="5" y="3" width="11" height="13" rx="2"/>
+  </g>
+</svg>

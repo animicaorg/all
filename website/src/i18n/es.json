@@ -1,0 +1,209 @@
+{
+  "app": {
+    "name": "Animica",
+    "tagline": "Trabajo útil. Cadena útil."
+  },
+
+  "nav": {
+    "home": "Inicio",
+    "studio": "Studio",
+    "explorer": "Explorador",
+    "docs": "Documentación",
+    "downloads": "Descargas",
+    "network": "Red",
+    "status": "Estado",
+    "roadmap": "Hoja de ruta",
+    "blog": "Blog",
+    "privacy": "Privacidad",
+    "terms": "Términos"
+  },
+
+  "buttons": {
+    "openStudio": "Abrir Studio",
+    "openExplorer": "Abrir Explorer",
+    "readDocs": "Leer documentación",
+    "viewGithub": "Ver en GitHub",
+    "getStarted": "Comenzar",
+    "learnMore": "Más información",
+    "copy": "Copiar",
+    "copied": "¡Copiado!",
+    "submit": "Enviar",
+    "subscribe": "Suscribirse",
+    "retry": "Reintentar",
+    "backHome": "Volver al inicio",
+    "download": "Descargar"
+  },
+
+  "hero": {
+    "title": "Crea en Animica",
+    "subtitle": "Una L1 programable con Prueba de Sinergia Interdisciplinaria y Eficiente (PoIES), disponibilidad de datos de primera clase, una VM de Python determinista y capacidades nativas de IA/Cuántica."
+  },
+
+  "features": {
+    "gridTitle": "Por qué Animica",
+    "poies": {
+      "title": "Consenso PoIES",
+      "desc": "Agrega pruebas diversas (hash, IA, cuántica, almacenamiento, VDF) en un único predicado de aceptación justo."
+    },
+    "da": {
+      "title": "Disponibilidad de Datos",
+      "desc": "Árboles de Merkle con espacios de nombres y codificación de borrado con muestreo para clientes ligeros."
+    },
+    "vm_py": {
+      "title": "VM de Python determinista",
+      "desc": "Valida → compila → ejecuta contratos en Python con gas estricto y stdlib aislada."
+    },
+    "aicf": {
+      "title": "Fondo de Cómputo de IA",
+      "desc": "Trabajos de IA/Cuántica atestados on-chain, evaluación de SLA y pagos."
+    },
+    "pq": {
+      "title": "Post-Cuántico",
+      "desc": "Firmas Dilithium/SPHINCS+, handshake Kyber y direcciones bech32m."
+    },
+    "quantum": {
+      "title": "Preparado para Cuántica",
+      "desc": "Circuitos trampa y proveedores verificables con identidad comprobable."
+    }
+  },
+
+  "status": {
+    "title": "Estado de la red",
+    "healthy": "Saludable",
+    "degraded": "Degradado",
+    "offline": "Sin conexión",
+    "connecting": "Conectando…",
+    "rpcLatency": "Latencia RPC",
+    "peers": "Pares",
+    "tps": "TPS",
+    "headHeight": "Altura de cabeza",
+    "lastBlock": "Último bloque",
+    "updated": "Actualizado {ago}"
+  },
+
+  "metrics": {
+    "ticker": {
+      "connecting": "Conectando…",
+      "loading": "Cargando…",
+      "errored": "Error al cargar métricas"
+    }
+  },
+
+  "chains": {
+    "title": "Redes",
+    "mainnet": "Animica Mainnet",
+    "testnet": "Animica Testnet",
+    "localnet": "Localnet",
+    "chainId": "ID de cadena",
+    "rpc": "RPC",
+    "ws": "WebSocket",
+    "explorer": "Explorador",
+    "copyRpc": "Copiar URL de RPC",
+    "copiedRpc": "URL de RPC copiada"
+  },
+
+  "footer": {
+    "tagline": "Construido a la vista de todos.",
+    "links": {
+      "studio": "Studio",
+      "explorer": "Explorer",
+      "docs": "Documentación",
+      "github": "GitHub",
+      "privacy": "Privacidad",
+      "terms": "Términos"
+    },
+    "copyright": "© {year} Animica Labs. Todos los derechos reservados."
+  },
+
+  "newsletter": {
+    "title": "Mantente al día",
+    "subtitle": "Lanzamientos, testnets y novedades para desarrolladores—sin spam.",
+    "emailPlaceholder": "tu@ejemplo.com",
+    "cta": "Suscribirse",
+    "success": "¡Gracias! Revisa tu correo para confirmar.",
+    "error": "Algo salió mal. Inténtalo de nuevo."
+  },
+
+  "faq": {
+    "title": "Preguntas frecuentes",
+    "items": [
+      {
+        "q": "¿Animica es compatible con EVM?",
+        "a": "Animica prioriza una VM de Python determinista. La compatibilidad con EVM puede añadirse con adaptadores y precompilados con el tiempo."
+      },
+      {
+        "q": "¿Cómo se verifica el trabajo útil?",
+        "a": "Las pruebas (IA/Cuántica/Almacenamiento/VDF/Hash) producen métricas medibles que alimentan al evaluador PoIES bajo políticas y límites."
+      },
+      {
+        "q": "¿Existe un token?",
+        "a": "El plan del proyecto incluye tokens de tarifas y mecánicas de staking. Consulta la hoja de ruta y el blog para detalles."
+      }
+    ]
+  },
+
+  "docs": {
+    "splashTitle": "Documentación",
+    "splashSubtitle": "Especificaciones, SDKs y guías.",
+    "redirecting": "Redirigiéndote a la documentación canónica…",
+    "notFound": "Documento no encontrado."
+  },
+
+  "downloads": {
+    "title": "Descargas",
+    "subtitle": "Compilaciones de la billetera y el explorador por plataforma.",
+    "note": "Las firmas y la notarización están en las notas de la versión.",
+    "wallet": "Billetera",
+    "explorer": "Aplicación Explorer"
+  },
+
+  "roadmap": {
+    "title": "Hoja de ruta",
+    "subtitle": "Hitos principales y criterios de entrega.",
+    "comingSoon": "Más hitos próximamente."
+  },
+
+  "page": {
+    "studio": {
+      "title": "Studio Web",
+      "intro": "Edita, simula y despliega contratos en tu navegador con una VM de Python compilada a WASM."
+    },
+    "explorer": {
+      "title": "Explorer",
+      "intro": "Busca bloques, transacciones y eventos con métricas en vivo."
+    },
+    "status": {
+      "cta": "Actualizar estado"
+    }
+  },
+
+  "code": {
+    "copy": "Copiar",
+    "copied": "Copiado al portapapeles"
+  },
+
+  "errors": {
+    "required": "Este campo es obligatorio.",
+    "invalidEmail": "Ingresa un correo válido.",
+    "network": "Error de red. Revisa tu conexión e inténtalo de nuevo.",
+    "timeout": "Tiempo de espera agotado. Vuelve a intentarlo."
+  },
+
+  "blog": {
+    "title": "Blog",
+    "readMore": "Leer más",
+    "byline": "Por {author} — {date}"
+  },
+
+  "legal": {
+    "privacy": "Política de privacidad",
+    "terms": "Términos del servicio",
+    "cookies": "Política de cookies y almacenamiento"
+  },
+
+  "notFound": {
+    "title": "Página no encontrada",
+    "subtitle": "La página que buscas no existe o fue movida.",
+    "cta": "Ir al inicio"
+  }
+}

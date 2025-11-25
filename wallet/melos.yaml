@@ -1,0 +1,62 @@
+# Melos workspace — optional multi-package tooling for Animica
+# Docs: https://melos.invertase.dev/
+
+name: animica
+packages:
+  - "wallet"
+  - "packages/*"
+  - "apps/*"
+
+command:
+  bootstrap:
+    usePubspecOverrides: true
+    runPubGetInParallel: true
+
+scripts:
+  clean:
+    run: melos exec -c 1 -- flutter clean
+    description: Clean all Flutter packages
+
+  pub:get:
+    run: melos exec -c 1 -- flutter pub get
+    description: Get dependencies for all packages
+
+  analyze:
+    run: melos exec -c 1 -- flutter analyze
+    description: Run static analysis
+
+  format:
+    run: melos exec -c 1 -- dart format --fix .
+    description: Format Dart code (apply fixes)
+
+  test:
+    run: melos exec -c 1 -- flutter test
+    description: Run unit & widget tests
+
+  l10n:
+    run: melos exec -c 1 -- sh -c 'if [ -f tool/gen_l10n.sh ]; then bash tool/gen_l10n.sh; else flutter gen-l10n; fi'
+    description: Generate localization code
+
+  run:dev:
+    run: melos exec -c 1 -- flutter run -d chrome
+    description: Quick dev run (web/Chrome)
+
+  build:web:
+    run: melos exec -c 1 -- flutter build web --release
+    description: Build web release
+
+  build:android:
+    run: melos exec -c 1 -- flutter build apk --flavor prod --release
+    description: Build Android APK (prod flavor)
+
+  build:ios:
+    run: melos exec -c 1 -- flutter build ipa --flavor prod --release
+    description: Build iOS IPA (prod flavor)
+
+  build:desktop:
+    run: >
+      melos exec -c 1 -- sh -c '
+      if [ -d macos ]; then flutter build macos --release; fi;
+      if [ -d linux ]; then flutter build linux --release; fi;
+      if [ -d windows ]; then flutter build windows --release; fi;'
+    description: Build desktop platforms if present

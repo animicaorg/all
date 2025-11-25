@@ -1,0 +1,35 @@
+{
+  "name": "Animica Mainnet Addresses (Placeholder)",
+  "description": "Non-binding placeholders for mainnet governance and system targets. Replace with real addresses at launch.",
+  "schemaVersion": "1.0",
+  "network": "mainnet",
+  "chainId": 1,
+  "version": "0.1.0",
+  "updated": "2025-10-31T00:00:00Z",
+
+  "addresses": {
+    "governanceMultisig": "am1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqkz9x0",
+    "foundationMultisig": "am1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqfdn000",
+    "escrowGovernanceDeposit": "am1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqd3p0m",
+    "treasury": "am1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqtresry",
+
+    "timelockController": "am1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqtime1k",
+    "upgradeExecutor": "am1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqupgrde",
+    "paramRegistry": "am1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqparams",
+    "vmRegistry": "am1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqvmrgsty",
+    "providerRegistry": "am1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqpvdrreg",
+
+    "aicfScheduler": "am1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqa1cfsch",
+    "randomnessBeacon": "am1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqrndmnes",
+    "daCommitment": "am1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqdacmmit",
+
+    "ballotIngest": "am1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqbal1ot",
+    "incidentHotwallet": "am1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqhotfix"
+  },
+
+  "notes": [
+    "All values are placeholders for repository scaffolding and documentation.",
+    "Use governance proposals to populate authoritative addresses at launch.",
+    "Do not rely on these for production transactions."
+  ]
+}

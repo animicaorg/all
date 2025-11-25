@@ -1,0 +1,126 @@
+{
+  "name": "ai_agent_template",
+  "version": "0.1.0",
+  "language": "python",
+  "entry": "contract.py",
+  "abi": {
+    "functions": [
+      {
+        "name": "init",
+        "inputs": [
+          { "name": "model", "type": "bytes" }
+        ],
+        "outputs": [],
+        "stateMutability": "write",
+        "notice": "Initialize the agent with a preferred model id."
+      },
+      {
+        "name": "set_model",
+        "inputs": [
+          { "name": "model", "type": "bytes" }
+        ],
+        "outputs": [],
+        "stateMutability": "write",
+        "notice": "Update the preferred model id (1..64 bytes)."
+      },
+      {
+        "name": "get_model",
+        "inputs": [],
+        "outputs": [
+          { "name": "model", "type": "bytes" }
+        ],
+        "stateMutability": "read",
+        "notice": "Return the configured model id or empty bytes."
+      },
+      {
+        "name": "submit",
+        "inputs": [
+          { "name": "prompt", "type": "bytes" }
+        ],
+        "outputs": [
+          { "name": "task_id", "type": "bytes" }
+        ],
+        "stateMutability": "write",
+        "notice": "Enqueue the prompt to AICF using the configured model; returns deterministic task_id."
+      },
+      {
+        "name": "last_task",
+        "inputs": [],
+        "outputs": [
+          { "name": "task_id", "type": "bytes" }
+        ],
+        "stateMutability": "read",
+        "notice": "Return the last submitted task_id or empty bytes."
+      },
+      {
+        "name": "read_last_result",
+        "inputs": [],
+        "outputs": [
+          { "name": "result", "type": "bytes" }
+        ],
+        "stateMutability": "write",
+        "notice": "Read and cache the result for the last task; reverts if not ready yet."
+      },
+      {
+        "name": "get_last_prompt",
+        "inputs": [],
+        "outputs": [
+          { "name": "prompt", "type": "bytes" }
+        ],
+        "stateMutability": "read",
+        "notice": "Return the last submitted prompt or empty bytes."
+      },
+      {
+        "name": "get_last_result",
+        "inputs": [],
+        "outputs": [
+          { "name": "result", "type": "bytes" }
+        ],
+        "stateMutability": "read",
+        "notice": "Return the cached last result or empty bytes."
+      }
+    ],
+    "events": [
+      {
+        "name": "Configured",
+        "inputs": [
+          { "name": "model", "type": "bytes", "indexed": false }
+        ],
+        "notice": "Emitted when the model id is set or updated."
+      },
+      {
+        "name": "Enqueued",
+        "inputs": [
+          { "name": "task_id", "type": "bytes", "indexed": true },
+          { "name": "model", "type": "bytes", "indexed": false }
+        ],
+        "notice": "Emitted after a prompt is enqueued to AICF."
+      },
+      {
+        "name": "Completed",
+        "inputs": [
+          { "name": "task_id", "type": "bytes", "indexed": true }
+        ],
+        "notice": "Emitted when a task result is successfully read."
+      }
+    ],
+    "errors": [
+      { "name": "ALREADY_INIT" },
+      { "name": "MODEL_LEN" },
+      { "name": "NOT_CONFIGURED" },
+      { "name": "PROMPT_LEN" },
+      { "name": "NO_TASK" },
+      { "name": "NO_RESULT_YET" }
+    ]
+  },
+  "capabilities": [
+    "sys.ai_enqueue",
+    "sys.read_result"
+  ],
+  "metadata": {
+    "description": "Template AI Agent contract that enqueues AI jobs via AICF and reads results deterministically on the next block.",
+    "authors": ["Animica Templates"],
+    "license": "MIT-0",
+    "source": "contracts/templates/ai_agent/contract.py"
+  }
+}

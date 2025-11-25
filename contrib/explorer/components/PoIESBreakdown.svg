@@ -1,0 +1,98 @@
+<!-- Animica Explorer — PoIES composition glyph
+     - Left: donut breakdown (Stake / Entropy / AI / Quantum)
+     - Right: color legend
+     - Themeable via CSS variables with sensible fallbacks.
+     - Tip: if rasterizing with ImageMagick, convert text to paths first. -->
+<svg width="320" height="140" viewBox="0 0 320 140" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="PoIES composition">
+  <title>PoIES composition</title>
+  <desc>Donut chart showing Stake, Entropy, AI, and Quantum composition with legend.</desc>
+
+  <style>
+    :root {
+      --poies-stake:   #60A5FA; /* blue */
+      --poies-entropy: #5EEAD4; /* mint */
+      --poies-ai:      #F59E0B; /* amber */
+      --poies-quantum: #A78BFA; /* violet */
+      --ring-bg:       #1E2A44; /* fallback for dark border */
+      --label:         #0F172A; /* light text */
+      --label-muted:   #475569;
+    }
+    [data-theme="dark"] :root, [data-theme="dark"] {
+      --label:       #E5E7EB;
+      --label-muted: #93A3B4;
+    }
+    text { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, Apple Color Emoji, Segoe UI Emoji; }
+  </style>
+
+  <!-- Donut geometry -->
+  <!-- Circumference for r=48 is ~302.0; we use 302 for whole ring -->
+  <!-- Segment sizes (% of 302): Stake 34% ≈ 103; Entropy 30% ≈ 91; AI 22% ≈ 66; Quantum 14% ≈ 42 -->
+  <!-- Start angle at -90° so first stroke begins at 12 o'clock -->
+  <g transform="translate(70,70)">
+    <!-- Background ring -->
+    <circle r="48" cx="0" cy="0" stroke="var(--ring-bg)" stroke-width="16" fill="none"/>
+
+    <!-- Stake -->
+    <circle r="48" cx="0" cy="0"
+            stroke="var(--poies-stake)"
+            stroke-width="16" fill="none"
+            stroke-dasharray="103 199"
+            transform="rotate(-90)"/>
+
+    <!-- Entropy (offset by previous 103) -->
+    <circle r="48" cx="0" cy="0"
+            stroke="var(--poies-entropy)"
+            stroke-width="16" fill="none"
+            stroke-dasharray="91 211"
+            stroke-dashoffset="-103"
+            transform="rotate(-90)"/>
+
+    <!-- AI / Compute (offset by 103+91=194) -->
+    <circle r="48" cx="0" cy="0"
+            stroke="var(--poies-ai)"
+            stroke-width="16" fill="none"
+            stroke-dasharray="66 236"
+            stroke-dashoffset="-194"
+            transform="rotate(-90)"/>
+
+    <!-- Quantum (offset by 194+66=260) -->
+    <circle r="48" cx="0" cy="0"
+            stroke="var(--poies-quantum)"
+            stroke-width="16" fill="none"
+            stroke-dasharray="42 260"
+            stroke-dashoffset="-260"
+            transform="rotate(-90)"/>
+  </g>
+
+  <!-- Center label -->
+  <g transform="translate(70,70)">
+    <text x="0" y="-2" text-anchor="middle" font-size="14" font-weight="700" fill="var(--label)">PoIES</text>
+    <text x="0" y="14" text-anchor="middle" font-size="11" fill="var(--label-muted)">composition</text>
+  </g>
+
+  <!-- Legend -->
+  <g transform="translate(140,30)">
+    <!-- Stake -->
+    <rect x="0" y="0" width="14" height="14" rx="3" fill="var(--poies-stake)"/>
+    <text x="22" y="11" font-size="12" fill="var(--label)">Stake</text>
+    <text x="80" y="11" font-size="12" fill="var(--label-muted)">34%</text>
+
+    <!-- Entropy -->
+    <rect x="0" y="24" width="14" height="14" rx="3" fill="var(--poies-entropy)"/>
+    <text x="22" y="35" font-size="12" fill="var(--label)">Entropy</text>
+    <text x="80" y="35" font-size="12" fill="var(--label-muted)">30%</text>
+
+    <!-- AI / Compute -->
+    <rect x="0" y="48" width="14" height="14" rx="3" fill="var(--poies-ai)"/>
+    <text x="22" y="59" font-size="12" fill="var(--label)">AI / Compute</text>
+    <text x="110" y="59" font-size="12" fill="var(--label-muted)">22%</text>
+
+    <!-- Quantum -->
+    <rect x="0" y="72" width="14" height="14" rx="3" fill="var(--poies-quantum)"/>
+    <text x="22" y="83" font-size="12" fill="var(--label)">Quantum</text>
+    <text x="80" y="83" font-size="12" fill="var(--label-muted)">14%</text>
+  </g>
+
+  <!-- Outline / hairline to help on light backgrounds when embedded without card -->
+  <rect x="0.5" y="0.5" width="319" height="139" rx="12" ry="12" fill="none" stroke="rgba(0,0,0,0.04)"/>
+</svg>

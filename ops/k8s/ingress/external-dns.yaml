@@ -1,0 +1,44 @@
+# ExternalDNS annotations overlay for animica-ingress.
+#
+# Usage options:
+#  A) Kustomize: add this file to patchesStrategicMerge in ops/k8s/kustomization.yaml:
+#       patchesStrategicMerge:
+#         - ingress/external-dns.yaml
+#  B) One-off kubectl merge patch:
+#       kubectl -n animica-devnet patch ingress animica-ingress --type=merge --patch "$(cat ops/k8s/ingress/external-dns.yaml)"
+#
+# What this does:
+#  - Ensures ExternalDNS selects this Ingress when started with
+#    --annotation-filter=external-dns.alpha.kubernetes.io/enable=true
+#  - Sets a default TTL for created DNS records.
+#  - Includes optional provider-specific knobs (commented) for Cloudflare and Route53.
+#
+# Notes:
+#  - ExternalDNS will automatically read hostnames from spec.rules[*].host in the
+#    existing Ingress (ops/k8s/ingress/ingress.yaml). The hostname annotation here
+#    is optional and mainly useful when using annotation-only sources.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: animica-ingress
+  namespace: animica-devnet
+  annotations:
+    # Select by annotation (matches common ExternalDNS --annotation-filter usage)
+    external-dns.alpha.kubernetes.io/enable: "true"
+
+    # DNS TTL (in seconds). ExternalDNS respects this on most providers.
+    external-dns.alpha.kubernetes.io/ttl: "300"
+
+    # Explicit hostnames (optional; ExternalDNS normally reads spec.rules[*].host)
+    external-dns.alpha.kubernetes.io/hostname: "studio.animica.dev,explorer.animica.dev,rpc.animica.dev"
+
+    # --- Provider-specific examples (uncomment as needed) -----------------------
+    # Cloudflare: create proxied (orange cloud) records
+    # external-dns.alpha.kubernetes.io/cloudflare-proxied: "true"
+
+    # Route53: weighted/identifier for multi-region or canary setups
+    # external-dns.alpha.kubernetes.io/set-identifier: "animica-devnet"
+    # external-dns.alpha.kubernetes.io/aws-weight: "100"
+
+    # Alias/target override: point DNS records to a specific global LB name
+    # external-dns.alpha.kubernetes.io/target: "global-lb.example.com"

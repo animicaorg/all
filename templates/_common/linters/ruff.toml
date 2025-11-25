@@ -1,0 +1,141 @@
+# ----------------------------------------------------------------------
+# Ruff configuration (shared Animica template)
+#
+# This file is meant to be rendered into projects produced by the template
+# engine. It enables fast, opinionated linting + import sorting, while
+# keeping sensible exceptions for tests and generated files.
+#
+# You can override any value per-repo by creating a local `ruff.toml`
+# or `[tool.ruff]` table in `pyproject.toml` that extends or overrides this.
+#
+# Template-aware variables (render-time; safe defaults provided):
+#   {{ python_target | default('py311') }}  -> target Python version
+#   {{ package_name  | default('animica') }}-> first-party import root
+#   {{ use_bandit    | default(true) }}     -> enable security rules (S)
+# ----------------------------------------------------------------------
+
+# --- Core ---
+line-length = 100
+indent-width = 4
+target-version = "{{ python_target | default('py311') }}"
+
+# Paths treated as source roots (affects import resolution & isort first/third party)
+src = [
+  "src",
+  "node",
+  "contracts",
+  "tools",
+  "templates",
+]
+
+# Exclude heavyweight or generated trees from linting by default.
+extend-exclude = [
+  ".git",
+  ".hg",
+  ".mypy_cache",
+  ".ruff_cache",
+  ".venv",
+  "venv",
+  "build",
+  "dist",
+  "site",
+  "node_modules",
+  "**/__pycache__",
+  # Common template/project output directories
+  "tests/reports",
+  "tests/artifacts",
+  "contracts/build",
+  "ops/docker/config/grafana/dashboards",
+]
+
+# Auto-apply safe fixes when running `ruff` directly (CI may set --no-fix).
+fix = true
+unsafe-fixes = false
+
+# --- Lint rule selection ---
+# Keep a focused but comprehensive set: style, correctness, imports, modernization,
+# common error prevention, and light security. Additional families can be enabled
+# per-project as needed.
+[lint]
+select = [
+  # Pyflakes / pycodestyle / warnings
+  "F",   # Pyflakes
+  "E",   # pycodestyle errors
+  "W",   # pycodestyle warnings
+  "I",   # isort (import sorting)
+  "UP",  # pyupgrade (modern Python idioms)
+  "B",   # flake8-bugbear
+  "C4",  # flake8-comprehensions
+  "T20", # flake8-print (no stray prints)
+  "ARG", # flake8-unused-arguments
+  "SIM", # flake8-simplify
+  "RET", # flake8-return
+  "PIE", # flake8-pie (misc correctness)
+  "PTH", # prefer pathlib
+  "PLC", # Pylint conv. (lightweight)
+  "PLE", # Pylint errors
+  "PLR", # Pylint refactor (careful; see ignores below)
+  "RUF", # Ruff-specific rules
+  "DTZ", # flake8-datetimez (timezone awareness)
+  "TID251", # absolute imports
+  # Security (Bandit) — can be toggled at render time
+  {{ " \"S\"," if use_bandit | default(true) else "" }}
+  # Docstrings (pydocstyle via Ruff)
+  "D",
+]
+# Project-wide ignores (keep minimal; prefer per-file ignores below)
+ignore = [
+  "E203", # whitespace before ':' — conflicts with Black-like formatting
+  "E266", # too many leading '#' for block comments — allow section dividers
+  "PLR2004", # magic value used in comparison — often fine in tests/constants
+  "D100", # missing docstring in public module
+  "D104", # missing docstring in package
+  "D401", # non-imperative mood — stylistic preference
+]
+
+# Make most fixes eligible; CI can still restrict via CLI flags.
+fixable = ["ALL"]
+unfixable = []
+
+# Prefer Google-style docstrings (can be changed to "numpy" per project)
+[lint.pydocstyle]
+convention = "google"
+
+# Import sorting behavior
+[lint.isort]
+force-single-line = false
+combine-as-imports = true
+known-first-party = ["{{ package_name | default('animica') }}", "contracts"]
+order-by-type = true
+lines-after-imports = 2
+case-sensitive = false
+
+# Per-file overrides — keep tests practical and allow asserts/fixtures patterns.
+[lint.per-file-ignores]
+"tests/**" = [
+  "S101",    # use of assert allowed in tests
+  "D",       # docstring requirements relaxed in tests
+  "PLR2004", # magic numbers common in parameterized tests
+]
+"**/migrations/*.py" = ["D", "E501"]
+"**/__init__.py" = ["F401"]  # allow re-export patterns
+
+# --- Formatter (optional; use Ruff formatter if desired) ---
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+skip-magic-trailing-comma = false
+docstring-code-format = true
+docstring-code-line-length = 100
+
+# --- Flake8-annotations (disabled by default; enable per project)
+# To require type hints across the codebase, uncomment and tune:
+# [lint.flake8-annotations]
+# mypy-init-return = false
+# suppress-dummy-args = true
+# allow-star-arg-any = true
+
+# --- Preview features (off by default for stability)
+# Set to true per-repo to try bleeding-edge rules.
+# preview = false

@@ -1,0 +1,101 @@
+%% PARAMS_REGISTRY.mmd — Where parameter bounds live and how they are enforced
+%% Render at https://mermaid.live (Flowchart)
+
+flowchart TB
+  %% Lanes as subgraphs
+  subgraph R[Registries (source of truth)]
+    R1[params_bounds.json\n(min/max/step/type/enum)]
+    R2[params_current.json\n(flat dotted keys → values)]
+    R3[contracts.json / addresses\n(context for some params)]
+  end
+
+  subgraph S[Schema Layer]
+    S1[param_change.schema.json]
+    S2[upgrade.schema.json]
+    S3[pq_rotation.schema.json]
+  end
+
+  subgraph T[Tooling / CLIs]
+    T1[validate_proposal.py\n• schema check\n• bounds check]
+    T2[check_registry.py\n• dup keys\n• bounds on registries\n• upgrade_paths sanity]
+    T3[tally_votes.py\n(not bounds; integrity of vote)]
+  end
+
+  subgraph C[CI / Tests]
+    C1[test_schemas.py\nDraft 2020-12 valid + examples]
+    C2[test_validate_examples.py\nexamples pass strict bounds & quorum]
+  end
+
+  subgraph P[Proposals & Examples]
+    P1[examples/param_change_*.md\n(YAML front-matter)]
+    P2[examples/upgrade_*.md]
+    P3[examples/pq_rotate_*.md]
+    P4[examples/ballots/*.json]
+    P5[examples/tallies/*.json]
+  end
+
+  subgraph E[Enforcement Timeline]
+    E0[Authoring\nLocal validation]
+    E1[PR / CI Gate\nschema + bounds]
+    E2[Governance Screening\nstewards run tools]
+    E3[On-chain Vote\nballots + tally]
+    E4[Activation / Runtime]\n(params take effect)
+  end
+
+  %% Flows
+  %% Authoring
+  P1 --> E0
+  P2 --> E0
+  P3 --> E0
+
+  E0 --> T1
+  T1 --> S1
+  T1 --> R1
+  T1 --> R2
+
+  %% CI gates
+  E1 --> C1
+  E1 --> C2
+  C1 --> S1 & S2 & S3
+  C2 --> P1 & P2 & P3
+
+  %% Registry lint
+  E1 --> T2
+  T2 --> R1
+  T2 --> R2
+  T2 --> R3
+
+  %% Governance path
+  E2 --> T1
+  E2 --> T2
+  E3 --> T3
+
+  %% Runtime: where bounds matter
+  R1 -. defines limits .- T1
+  R1 -. enforces format/limits .- T2
+  R2 -. current values audited by .- T2
+
+  %% Notes & callouts
+  classDef src fill:#e6f4ff,stroke:#1677ff,color:#002766,stroke-width:1px;
+  classDef schema fill:#fff7e6,stroke:#d48806,color:#613400,stroke-width:1px;
+  classDef tool fill:#e6fff2,stroke:#00a66f,color:#0b5137,stroke-width:1px;
+  classDef ci fill:#f9f0ff,stroke:#722ed1,color:#22075e,stroke-width:1px;
+  classDef prop fill:#fff1f0,stroke:#cf1322,color:#820014,stroke-width:1px;
+
+  class R1,R2,R3 src
+  class S1,S2,S3 schema
+  class T1,T2,T3 tool
+  class C1,C2 ci
+  class P1,P2,P3,P4,P5 prop
+
+  %% Helpful deep-links (click in supported renderers)
+  click T1 "governance/scripts/validate_proposal.py" "Open validator script"
+  click T2 "governance/scripts/check_registry.py" "Open registry linter"
+  click C1 "governance/tests/test_schemas.py" "Open schema tests"
+  click C2 "governance/tests/test_validate_examples.py" "Open example tests"
+  click R1 "governance/registries/params_bounds.json" "Open bounds registry"
+  click R2 "governance/registries/params_current.json" "Open current params"
+
+  %% Legend
+  L1([Registries define hard safety rails.\nAll param-change proposals MUST remain within bounds.\nCI enforces before merge; stewards re-run before scheduling a vote.])
+  L1 --- R1

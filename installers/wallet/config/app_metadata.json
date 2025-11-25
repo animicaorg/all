@@ -1,0 +1,13 @@
+{
+  "name": "Animica Wallet",
+  "homepage": "https://animica.dev/wallet",
+  "bundle": {
+    "macos": "org.animica.wallet",
+    "windows": {
+      "identityName": "AnimicaWallet",
+      "publisher": "CN=Animica Labs, O=Animica Labs, L=Austin, S=Texas, C=US"
+    },
+    "linux": "org.animica.wallet"
+  },
+  "copyright": "© 2025 Animica Labs. All rights reserved."
+}

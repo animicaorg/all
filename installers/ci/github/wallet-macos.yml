@@ -1,0 +1,280 @@
+name: Wallet macOS — Build • Sign • Notarize • DMG • Appcast
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Release channel"
+        required: true
+        default: "stable"
+        type: choice
+        options: [stable, beta]
+      create_release:
+        description: "Create GitHub Release"
+        required: true
+        default: "true"
+        type: choice
+        options: ["true","false"]
+  push:
+    tags:
+      - "wallet-v*"
+
+env:
+  # Flutter version/channel used for macOS builds
+  FLUTTER_CHANNEL: "stable"
+  FLUTTER_VERSION: "3.24.0"
+  # Where your Flutter wallet app lives (adjust if different)
+  WALLET_APP_DIR: "wallet-app"
+  # Output staging directory for signed artifacts
+  ARTIFACTS_DIR: "dist/macos"
+  # Sparkle appcast roots (served by your CDN/site)
+  APPCAST_ROOT: "installers/updates/wallet"
+  # Timestamp server for codesign (optional)
+  TIMESTAMP_URL: "http://timestamp.apple.com/ts01"
+  # Keychain parameters (ephemeral)
+  KEYCHAIN_NAME: "build-login.keychain-db"
+  KEYCHAIN_PASSWORD: "animica-ci-keychain"
+
+concurrency:
+  group: wallet-macos-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    name: Build & Notarize (macOS)
+    runs-on: macos-14
+    environment: release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Set up Flutter ${{ env.FLUTTER_VERSION }} (${{ env.FLUTTER_CHANNEL }})
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: ${{ env.FLUTTER_CHANNEL }}
+
+      - name: Show Flutter/Dart versions
+        run: |
+          flutter --version
+          dart --version
+
+      - name: Cache Flutter pub
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+            ${{ env.WALLET_APP_DIR }}/.dart_tool
+          key: ${{ runner.os }}-pub-${{ hashFiles(format('{0}/pubspec.lock', env.WALLET_APP_DIR)) }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      - name: Pub get
+        working-directory: ${{ env.WALLET_APP_DIR }}
+        run: flutter pub get
+
+      - name: Prepare output dirs
+        run: mkdir -p "$ARTIFACTS_DIR"
+
+      # -----------------------------
+      #  Codesigning setup (macOS)
+      # -----------------------------
+      - name: Create ephemeral keychain
+        run: |
+          bash installers/scripts/setup_keychain_macos.sh
+        env:
+          KEYCHAIN_NAME: ${{ env.KEYCHAIN_NAME }}
+          KEYCHAIN_PASSWORD: ${{ env.KEYCHAIN_PASSWORD }}
+
+      - name: Import Apple Developer ID certificates (.p12)
+        run: |
+          echo "$APPLE_DEV_ID_APP_P12_BASE64" | base64 --decode > app.p12
+          echo "$APPLE_DEV_ID_INSTALLER_P12_BASE64" | base64 --decode > installer.p12
+          bash installers/scripts/import_p12_macos.sh app.p12 "$APPLE_P12_PASSWORD"
+          bash installers/scripts/import_p12_macos.sh installer.p12 "$APPLE_P12_PASSWORD"
+          rm -f app.p12 installer.p12
+        env:
+          APPLE_DEV_ID_APP_P12_BASE64: ${{ secrets.APPLE_DEV_ID_APP_P12_BASE64 }}
+          APPLE_DEV_ID_INSTALLER_P12_BASE64: ${{ secrets.APPLE_DEV_ID_INSTALLER_P12_BASE64 }}
+          APPLE_P12_PASSWORD: ${{ secrets.APPLE_P12_PASSWORD }}
+          KEYCHAIN_NAME: ${{ env.KEYCHAIN_NAME }}
+          KEYCHAIN_PASSWORD: ${{ env.KEYCHAIN_PASSWORD }}
+
+      - name: Write notarytool credentials (App Store Connect)
+        run: |
+          mkdir -p installers/wallet/macos
+          echo "$APPLE_NOTARY_PRIVATE_KEY_P8_BASE64" | base64 --decode > /tmp/notary_key.p8
+          # Encode P8 with literal newlines for JSON single-line value
+          P8="$(awk '{printf "%s\\n",$0}' /tmp/notary_key.p8 | sed 's/\\n$//')"
+          cat > installers/wallet/macos/notarytool.json <<JSON
+          { "issuer": "$APPLE_NOTARY_ISSUER_ID", "key-id": "$APPLE_NOTARY_KEY_ID", "key": "$P8" }
+          JSON
+          rm -f /tmp/notary_key.p8
+        env:
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_PRIVATE_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_PRIVATE_KEY_P8_BASE64 }}
+
+      # -----------------------------
+      #  Build macOS app (Flutter)
+      # -----------------------------
+      - name: Derive version from tag or commit
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            VERSION="${TAG#wallet-v}"
+          else
+            VERSION="0.0.0-${GITHUB_SHA::7}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Bump app version (if script exists)
+        run: |
+          if [[ -x installers/wallet/macos/scripts/bump_version.sh ]]; then
+            bash installers/wallet/macos/scripts/bump_version.sh "${{ steps.ver.outputs.version }}"
+          else
+            echo "No bump_version.sh; continuing."
+          fi
+
+      - name: Flutter build macOS
+        working-directory: ${{ env.WALLET_APP_DIR }}
+        run: |
+          flutter config --enable-macos-desktop
+          flutter build macos --release
+
+      - name: Locate built .app
+        id: app
+        run: |
+          APP_PATH="$(/usr/bin/find "${WALLET_APP_DIR}/build/macos/Build/Products/Release" -maxdepth 1 -name "*.app" -print -quit)"
+          if [[ -z "$APP_PATH" ]]; then
+            echo "App .app not found"; exit 1
+          fi
+          echo "path=$APP_PATH" >> $GITHUB_OUTPUT
+
+      # -----------------------------
+      #  Sign → Notarize → Staple
+      # -----------------------------
+      - name: Sign & Notarize app
+        run: |
+          if [[ -x installers/wallet/macos/sign_and_notarize.sh ]]; then
+            bash installers/wallet/macos/sign_and_notarize.sh "${{ steps.app.outputs.path }}"
+          else
+            echo "Using inline codesign/notarytool flow"
+            APP="${{ steps.app.outputs.path }}"
+            # Sign app (replace with your Developer ID Application identity CN if needed)
+            IDENTITY_APP="$(security find-identity -v -p codesigning | awk -F\" '/Developer ID Application/ {print $2; exit}')"
+            /usr/bin/codesign --force --options runtime --timestamp \
+              --sign "$IDENTITY_APP" "$APP" --deep
+            # Zip for notarization
+            ZIP="/tmp/$(basename "$APP").zip"
+            /usr/bin/ditto -c -k --keepParent "$APP" "$ZIP"
+            # Submit to notary
+            xcrun notarytool submit "$ZIP" --keychain-profile "AnimicaCI" --wait \
+              --key installers/wallet/macos/notarytool.json
+            # Staple ticket
+            xcrun stapler staple "$APP"
+            mv "$APP" "$ARTIFACTS_DIR/"
+          fi
+
+      # -----------------------------
+      #  Create DMG
+      # -----------------------------
+      - name: Create DMG (appdmg)
+        run: |
+          brew install appdmg
+          APP_NAME="$(basename "${{ steps.app.outputs.path }}" .app)"
+          APP_STAGED="${ARTIFACTS_DIR}/${APP_NAME}.app"
+          if [[ ! -d "$APP_STAGED" ]]; then
+            cp -R "${{ steps.app.outputs.path }}" "$APP_STAGED"
+          fi
+          DMG_PATH="${ARTIFACTS_DIR}/${APP_NAME}-${{ steps.ver.outputs.version }}.dmg"
+          jq ".title=\"${APP_NAME}\"" installers/wallet/macos/dmg/appdmg.json > /tmp/appdmg.json
+          appdmg /tmp/appdmg.json "$DMG_PATH"
+          echo "DMG_PATH=$DMG_PATH" >> $GITHUB_ENV
+
+      - name: Staple DMG (optional)
+        run: |
+          if [[ -x installers/wallet/macos/scripts/staple.sh ]]; then
+            bash installers/wallet/macos/scripts/staple.sh "$DMG_PATH"
+          else
+            xcrun stapler staple "$DMG_PATH" || true
+          fi
+
+      # -----------------------------
+      #  Sparkle appcast signing
+      # -----------------------------
+      - name: Decrypt Sparkle private key
+        run: |
+          mkdir -p installers/wallet/macos/sparkle
+          echo "$SPARKLE_ED25519_PRIV_PEM_ENC_BASE64" | base64 --decode > installers/wallet/macos/sparkle/ed25519_private.pem.enc
+          # decrypt to ed25519_private.pem
+          openssl enc -aes-256-cbc -md sha256 -d \
+            -in installers/wallet/macos/sparkle/ed25519_private.pem.enc \
+            -out installers/wallet/macos/sparkle/ed25519_private.pem \
+            -pass env:SPARKLE_PRIV_PASSPHRASE
+        env:
+          SPARKLE_ED25519_PRIV_PEM_ENC_BASE64: ${{ secrets.SPARKLE_ED25519_PRIV_PEM_ENC_BASE64 }}
+          SPARKLE_PRIV_PASSPHRASE: ${{ secrets.SPARKLE_PRIV_PASSPHRASE }}
+
+      - name: Update appcast (inject latest version & hashes)
+        run: |
+          CHANNEL="${{ inputs.channel || 'stable' }}"
+          APPCAST_PATH="${APPCAST_ROOT}/${CHANNEL}/appcast.xml"
+          python3 installers/updates/scripts/update_appcast.py \
+            --appcast "$APPCAST_PATH" \
+            --artifact "$DMG_PATH" \
+            --version "${{ steps.ver.outputs.version }}" \
+            --channel "$CHANNEL"
+
+      - name: Sign appcast (Ed25519)
+        run: |
+          CHANNEL="${{ inputs.channel || 'stable' }}"
+          APPCAST_PATH="${APPCAST_ROOT}/${CHANNEL}/appcast.xml"
+          bash installers/updates/scripts/sign_appcast_macos.sh \
+            "$APPCAST_PATH" installers/wallet/macos/sparkle/ed25519_private.pem
+          # copy final appcast alongside DMG
+          cp "$APPCAST_PATH" "$ARTIFACTS_DIR/appcast.${CHANNEL}.xml"
+
+      # -----------------------------
+      #  Checksums
+      # -----------------------------
+      - name: Checksums
+        run: |
+          (cd "$ARTIFACTS_DIR" && shasum -a 256 * > SHA256SUMS.txt && shasum -a 512 * > SHA512SUMS.txt)
+
+      # -----------------------------
+      #  Upload artifacts
+      # -----------------------------
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wallet-macos-${{ steps.ver.outputs.version }}
+          path: |
+            ${{ env.ARTIFACTS_DIR }}/*.dmg
+            ${{ env.ARTIFACTS_DIR }}/*.app
+            ${{ env.ARTIFACTS_DIR }}/appcast.*.xml
+            ${{ env.ARTIFACTS_DIR }}/SHA256SUMS.txt
+            ${{ env.ARTIFACTS_DIR }}/SHA512SUMS.txt
+
+      - name: Create GitHub Release (optional)
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.create_release == 'true') || startsWith(github.ref, 'refs/tags/') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name || format('wallet-v{0}', steps.ver.outputs.version) }}
+          name: "Wallet macOS v${{ steps.ver.outputs.version }}"
+          draft: false
+          prerelease: ${{ inputs.channel == 'beta' }}
+          files: |
+            ${{ env.ARTIFACTS_DIR }}/*.dmg
+            ${{ env.ARTIFACTS_DIR }}/SHA256SUMS.txt
+            ${{ env.ARTIFACTS_DIR }}/SHA512SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

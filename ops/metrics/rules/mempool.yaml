@@ -1,0 +1,140 @@
+# Prometheus alert rules — Mempool health (queue depth, rejection spikes)
+# Assumed metrics exported by Animica mempool (rename if your build uses different names):
+#   - animica_mempool_size_txs{chain,network,instance}
+#   - animica_mempool_size_bytes{chain,network,instance}
+#   - animica_mempool_limit_bytes{chain,network,instance}            # optional gauge
+#   - animica_mempool_admit_total{chain,network,instance}            # counter
+#   - animica_mempool_reject_total{reason,chain,network,instance}    # counter (with reason label)
+#
+# Thresholds are conservative defaults for devnet/small testnets. Tune for prod scale.
+
+groups:
+  - name: mempool.rules
+    interval: 30s
+    rules:
+      # ──────────────────────────────────────────────────────────────────────────
+      # Queue depth — transactions (absolute)
+      - alert: MempoolQueueDepthWarning
+        expr: animica_mempool_size_txs > 5000
+        for: 10m
+        labels:
+          severity: warning
+          component: mempool
+        annotations:
+          summary: "Mempool queue depth high (>5k txs)"
+          description: |
+            {{ $labels.instance }} has {{ $value }} transactions queued on
+            {{ $labels.chain }} ({{ $labels.network }}). Consider raising ingress/selection
+            throughput or fee floor.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#mempool
+
+      - alert: MempoolQueueDepthCritical
+        expr: animica_mempool_size_txs > 15000
+        for: 10m
+        labels:
+          severity: critical
+          component: mempool
+        annotations:
+          summary: "Mempool queue depth very high (>15k txs)"
+          description: |
+            {{ $labels.instance }} has {{ $value }} txs waiting. Risk of user-visible delays
+            and eviction churn. Check miner intake, fee floor, and RPC submit rate.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#mempool
+
+      # Queue depth — bytes relative to configured capacity (if limit metric exists)
+      - alert: MempoolBytesNearCapacityWarning
+        expr: (animica_mempool_size_bytes / clamp_min(animica_mempool_limit_bytes, 1)) > 0.80
+        for: 10m
+        labels:
+          severity: warning
+          component: mempool
+        annotations:
+          summary: "Mempool bytes near capacity (>80%)"
+          description: |
+            {{ $labels.instance }} mempool is using >80% of configured capacity.
+            Expect more rejections/evictions. Increase capacity or raise min-fee.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#mempool
+
+      - alert: MempoolBytesNearCapacityCritical
+        expr: (animica_mempool_size_bytes / clamp_min(animica_mempool_limit_bytes, 1)) > 0.95
+        for: 5m
+        labels:
+          severity: critical
+          component: mempool
+        annotations:
+          summary: "Mempool bytes at capacity (>95%)"
+          description: |
+            {{ $labels.instance }} mempool is >95% full; aggressive evictions likely.
+            Scale miners/throughput or temporarily increase fee thresholds.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#mempool
+
+      # Fallback absolute bytes (when limit gauge is not exported)
+      - alert: MempoolBytesHighWarning
+        expr: absent(animica_mempool_limit_bytes) and (animica_mempool_size_bytes > 1.5e9)
+        for: 10m
+        labels:
+          severity: warning
+          component: mempool
+        annotations:
+          summary: "Mempool bytes high (>1.5 GiB)"
+          description: |
+            {{ $labels.instance }} mempool RSS proxy >1.5 GiB (no capacity gauge exported).
+            Tune mempool limits or block gas/byte budgets.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#mempool
+
+      # ──────────────────────────────────────────────────────────────────────────
+      # Rejection spikes — ratio of rejects to total admission attempts
+      - alert: MempoolRejectionSpikeWarning
+        expr: |
+          (
+            sum by(instance) (rate(animica_mempool_reject_total[5m])) /
+            clamp_min(
+              sum by(instance) (rate(animica_mempool_reject_total[5m])) +
+              sum by(instance) (rate(animica_mempool_admit_total[5m]))
+            , 1e-6)
+          ) > 0.10
+        for: 10m
+        labels:
+          severity: warning
+          component: mempool
+        annotations:
+          summary: "Mempool rejection rate >10% (5m)"
+          description: |
+            {{ $labels.instance }} rejection ratio >10% over 10 minutes on {{ $labels.chain }} ({{ $labels.network }}).
+            Common causes: min-fee watermark raises, oversize txs, nonce gaps, or DoS-limiter trips.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#mempool
+
+      - alert: MempoolRejectionSpikeCritical
+        expr: |
+          (
+            sum by(instance) (rate(animica_mempool_reject_total[5m])) /
+            clamp_min(
+              sum by(instance) (rate(animica_mempool_reject_total[5m])) +
+              sum by(instance) (rate(animica_mempool_admit_total[5m]))
+            , 1e-6)
+          ) > 0.30
+        for: 5m
+        labels:
+          severity: critical
+          component: mempool
+        annotations:
+          summary: "Mempool rejection rate >30% (5m)"
+          description: |
+            {{ $labels.instance }} is rejecting >30% of incoming txs. Users likely observe failures.
+            Inspect top reasons (label 'reason') and adjust fee floor or ingress limits.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#mempool
+
+      # Helpful SLI: expose top rejection reason as an alert (warn-only)
+      - alert: MempoolTopRejectionReason
+        expr: |
+          topk(1, sum by(reason) (rate(animica_mempool_reject_total[5m]))) > 5
+        for: 10m
+        labels:
+          severity: info
+          component: mempool
+        annotations:
+          summary: "Dominant mempool rejection reason: {{ $labels.reason }}"
+          description: |
+            '{{ $labels.reason }}' averaging {{ $value | printf "%.2f" }} rejects/sec (5m window).
+            Use to triage why rejection ratio rose (fee too low, nonce_gap, oversize, invalid_sig, etc).
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#mempool

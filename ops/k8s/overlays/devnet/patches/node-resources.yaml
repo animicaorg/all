@@ -1,0 +1,27 @@
+# Strategic-merge patch for the node StatefulSet to tune container resources in devnet.
+# Reference from kustomization.yaml using:
+# patches:
+#   - path: patches/node-resources.yaml
+#     target:
+#       kind: StatefulSet
+#       name: node
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: node
+spec:
+  template:
+    spec:
+      containers:
+        - name: node
+          resources:
+            requests:
+              cpu: "750m"
+              memory: "2Gi"
+              # ephemeral-storage request helps kube schedule with local scratch use
+              ephemeral-storage: "2Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+              ephemeral-storage: "8Gi"

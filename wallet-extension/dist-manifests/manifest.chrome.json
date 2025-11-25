@@ -1,0 +1,55 @@
+{
+  "manifest_version": 3,
+  "name": "Animica Wallet",
+  "description": "Post-quantum wallet with in-page provider (window.animica), tx signing, simulation, and network tools.",
+  "version": "0.1.0",
+  "minimum_chrome_version": "109",
+  "action": {
+    "default_title": "Animica Wallet",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": [
+    "storage",
+    "notifications",
+    "alarms",
+    "scripting"
+  ],
+  "host_permissions": [
+    "*://*/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content/inject.js",
+        "content/bridge.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "provider/index.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; base-uri 'self';"
+  }
+}

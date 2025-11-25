@@ -1,0 +1,105 @@
+%% Mermaid: Randomness Pipeline — Commit/Reveal → VDF → Optional QRNG Mix
+%% View online: https://mermaid.live
+
+flowchart LR
+  %% ===================== ACTORS / STAGES =====================
+  subgraph USERS[Participants (Users/Contracts)]
+    direction TB
+    Prep[Prepare salt+payload]:::user
+    CommitTx[Submit commit: C = H(tag | addr | salt | payload)]:::user
+    RevealTx[Submit reveal: (salt, payload)]:::user
+    Consume[Consume beacon in contracts\nor off-chain apps]:::user
+  end
+
+  subgraph CRW[Commit–Reveal Window (Node)]
+    direction TB
+    Sched[randomness.beacon.schedule\n(round windows)]:::node
+    AcceptC[Accept commitment\n(window open)]:::node
+    StoreC[Store commitment in KV]:::node
+    AcceptR[Accept reveal\n(window open, commitment found)]:::node
+    VerifyR[Verify reveal ↔ commitment]:::node
+    Agg[Aggregate reveals\n(hash-xor fold; bias-resistant)]:::node
+  end
+
+  subgraph VDF[VDF Stage]
+    direction TB
+    Input[Derive VDF input\nfrom aggregate + prev beacon]:::node
+    Prover[VDF Prover (optional worker)\nWesolowski π]:::worker
+    Verifier[VDF Verifier (consensus check)]:::node
+  end
+
+  subgraph QRNG[Optional QRNG Mixing]
+    direction TB
+    QR[Read QRNG bytes\n(providers/file/http)]:::qrng
+    Attest[Attest QRNG provenance\n(optional)]:::qrng
+    Mix[Extract-then-XOR with beacon\n(transcript updated)]:::qrng
+  end
+
+  subgraph FIN[Finalize & Publish Beacon]
+    direction TB
+    Finalize[Finalize BeaconOut\n{roundId, output, vdfProof, lightProof}]:::node
+    Persist[Persist state & history]:::node
+    Gossip[P2P gossip: beacon/light proof]:::p2p
+    RPC[RPC: rand.getBeacon, getHistory]:::rpc
+  end
+
+  subgraph LC[Light Clients / Verifiers]
+    direction TB
+    Light[Verify light_proof\n(hash-chain + VDF proof)]:::light
+    Use[Use beacon for lotteries,\nsybil beacons, scheduling]:::light
+  end
+
+  %% ===================== FLOWS =====================
+
+  %% Users → Commit–Reveal
+  Prep --> CommitTx --> Sched -->|if commit window open| AcceptC --> StoreC
+  StoreC -->|later| RevealTx --> AcceptR --> VerifyR --> Agg
+
+  %% Aggregation → VDF
+  Agg --> Input --> Prover -->|π| Verifier
+
+  %% VDF → Finalization
+  Verifier --> Finalize --> Persist --> Gossip --> RPC
+
+  %% Optional QRNG Mix (after VDF verify, before finalize OR as post-mix variant)
+  Verifier -. optional .-> QR
+  QR --> Attest --> Mix --> Finalize
+
+  %% Light clients & consumers
+  RPC --> Light --> Use
+  Finalize --> Consume
+
+  %% ===================== EVENTS (WS) =====================
+  subgraph EVENTS[Events / WS Notifications]
+    direction TB
+    E1[roundOpened]:::evt
+    E2[commitAccepted]:::evt
+    E3[revealAccepted]:::evt
+    E4[vdfVerified]:::evt
+    E5[beaconFinalized]:::evt
+  end
+  Sched --> E1
+  AcceptC --> E2
+  AcceptR --> E3
+  Verifier --> E4
+  Finalize --> E5
+
+  %% ===================== NOTES =====================
+  %% - Round schedule defines commit and reveal windows. Late/early submissions rejected.
+  %% - Commitment: domain-separated SHA3; binds addr + salt + payload; prevents reveal grinding.
+  %% - Aggregation: order-independent fold (e.g., H^*(concat) or XOR of hashes) to resist bias.
+  %% - VDF: Wesolowski proof π verified in consensus; prover may be miner/worker.
+  %% - Optional QRNG: mixed via extract-then-XOR; transcript must record bytes and source.
+  %% - Light proof: compact chain (prev→curr) + VDF proof lets light clients verify cheaply.
+  %% - All transitions are persisted with roundId and window boundaries to support audits.
+
+  %% ===================== STYLES =====================
+  classDef user fill:#d1fae5,stroke:#065f46,stroke-width:1,color:#064e3b;
+  classDef node fill:#e0f2fe,stroke:#075985,stroke-width:1,color:#0c4a6e;
+  classDef worker fill:#fde68a,stroke:#92400e,stroke-width:1,color:#78350f;
+  classDef qrng fill:#f5d0fe,stroke:#86198f,stroke-width:1,color:#701a75;
+  classDef p2p fill:#f3f4f6,stroke:#6b7280,stroke-width:1,color:#111827;
+  classDef rpc fill:#ddd6fe,stroke:#6d28d9,stroke-width:1,color:#4c1d95;
+  classDef light fill:#bbf7d0,stroke:#14532d,stroke-width:1,color:#064e3b;
+  classDef evt fill:#fee2e2,stroke:#991b1b,stroke-width:1,color:#7f1d1d;
+

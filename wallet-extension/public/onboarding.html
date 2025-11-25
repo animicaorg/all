@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>Animica Wallet — Onboarding</title>
+    <meta name="description" content="Animica Wallet onboarding window (MV3)" />
+    <link rel="icon" href="/icons/icon48.png" />
+    <!-- MV3: no inline scripts/styles; everything loaded as modules. -->
+    <link rel="preload" as="font" type="font/woff2" href="/fonts/Inter/Inter-Regular.woff2" crossorigin />
+    <link rel="preload" as="font" type="font/woff2" href="/fonts/Inter/Inter-SemiBold.woff2" crossorigin />
+  </head>
+  <body>
+    <noscript>This extension requires JavaScript to run.</noscript>
+    <div id="root"></div>
+    <!-- Vite bundles this entry (see vite.config.ts multi-entry) -->
+    <script type="module" src="/src/ui/onboarding/main.tsx"></script>
+  </body>
+</html>

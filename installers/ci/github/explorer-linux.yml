@@ -1,0 +1,170 @@
+name: Explorer Linux — Tauri Build • AppImage • DEB • RPM
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Release channel"
+        required: true
+        default: "stable"
+        type: choice
+        options: [stable, beta]
+      create_release:
+        description: "Create GitHub Release"
+        required: true
+        default: "true"
+        type: choice
+        options: ["true","false"]
+  push:
+    tags:
+      - "explorer-v*"
+
+env:
+  TAURI_PROJECT_PATH: installers/explorer-desktop/tauri
+  ARTIFACTS_DIR: dist/linux
+  RUST_TOOLCHAIN: stable
+
+concurrency:
+  group: explorer-linux-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    name: Build & Package (Linux)
+    runs-on: ubuntu-22.04
+    environment: release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Derive version from tag or commit
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            VERSION="${TAG#explorer-v}"
+          else
+            VERSION="0.0.0-${GITHUB_SHA::7}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - name: Set up Rust (${{ env.RUST_TOOLCHAIN }})
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          workspaces: ${{ env.TAURI_PROJECT_PATH }}
+
+      - name: (Optional) Node setup for front-end (only if package.json exists)
+        if: hashFiles(format('{0}/../package.json', env.TAURI_PROJECT_PATH)) != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ${{ env.TAURI_PROJECT_PATH }}/../package-lock.json
+
+      - name: Install front-end deps (optional)
+        if: hashFiles(format('{0}/../package.json', env.TAURI_PROJECT_PATH)) != ''
+        working-directory: ${{ env.TAURI_PROJECT_PATH }}/..
+        run: npm ci
+
+      - name: Install Linux dependencies for Tauri bundling
+        run: |
+          sudo dpkg --add-architecture amd64 || true
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.0-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            curl \
+            jq \
+            xz-utils
+
+      - name: Prepare output dir
+        run: mkdir -p "$ARTIFACTS_DIR"
+
+      # ------------------------------------------------------------------
+      # Build with tauri-action (produces .AppImage, .deb, .rpm by default)
+      # ------------------------------------------------------------------
+      - name: Build with tauri-action
+        id: tauri
+        uses: tauri-apps/tauri-action@v0
+        env:
+          TAURI_APP_VERSION: ${{ steps.ver.outputs.version }}
+          TAURI_BUILD_VERSION: ${{ steps.ver.outputs.version }}
+        with:
+          projectPath: ${{ env.TAURI_PROJECT_PATH }}
+          args: --verbose
+          tagName: explorer-v__VERSION__           # replaced automatically by the action
+          releaseName: "Explorer Linux v__VERSION__"
+          releaseBody: "Linux bundles (.AppImage, .deb, .rpm)."
+          releaseDraft: false
+          prerelease: ${{ (github.event_name == 'workflow_dispatch' && inputs.channel == 'beta') || (startsWith(github.ref, 'refs/tags/') && contains(github.ref_name, '-beta')) }}
+
+      - name: Collect artifacts -> ${{ env.ARTIFACTS_DIR }}
+        run: |
+          echo "Paths from tauri-action:"
+          echo '${{ steps.tauri.outputs.artifactPaths }}'
+          paths=$(python3 - <<'PY'
+import json, os
+arr=json.loads(os.environ['ARTS'])
+for p in arr:
+  if os.path.exists(p):
+    print(p)
+PY
+          )
+          mkdir -p "$ARTIFACTS_DIR"
+          while IFS= read -r p; do
+            echo "Copy: $p"
+            cp -v "$p" "$ARTIFACTS_DIR"/
+          done <<< "$paths"
+        env:
+          ARTS: ${{ steps.tauri.outputs.artifactPaths }}
+
+      - name: Checksums
+        run: |
+          (cd "$ARTIFACTS_DIR" && sha256sum * > SHA256SUMS.txt && sha512sum * > SHA512SUMS.txt || true)
+          ls -lah "$ARTIFACTS_DIR"
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: explorer-linux-${{ steps.ver.outputs.version }}
+          path: |
+            ${{ env.ARTIFACTS_DIR }}/*.AppImage
+            ${{ env.ARTIFACTS_DIR }}/*.deb
+            ${{ env.ARTIFACTS_DIR }}/*.rpm
+            ${{ env.ARTIFACTS_DIR }}/SHA256SUMS.txt
+            ${{ env.ARTIFACTS_DIR }}/SHA512SUMS.txt
+
+      - name: Create GitHub Release (optional)
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.create_release == 'true') || startsWith(github.ref, 'refs/tags/') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name || format('explorer-v{0}', steps.ver.outputs.version) }}
+          name: "Explorer Linux v${{ steps.ver.outputs.version }}"
+          draft: false
+          prerelease: ${{ inputs.channel == 'beta' }}
+          files: |
+            ${{ env.ARTIFACTS_DIR }}/*.AppImage
+            ${{ env.ARTIFACTS_DIR }}/*.deb
+            ${{ env.ARTIFACTS_DIR }}/*.rpm
+            ${{ env.ARTIFACTS_DIR }}/SHA256SUMS.txt
+            ${{ env.ARTIFACTS_DIR }}/SHA512SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

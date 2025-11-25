@@ -1,0 +1,134 @@
+---
+/**
+ * InlineLink.astro
+ * Secure outbound link wrapper with sane defaults.
+ *
+ * Features:
+ * - Auto-detects external vs internal URLs.
+ * - Blocks dangerous protocols (javascript:, data:).
+ * - Adds rel="noopener noreferrer" and target="_blank" for external links by default.
+ * - Optional small "external" icon (auto for external links; can be disabled).
+ * - Optional UTM parameter injection for http(s) externals.
+ *
+ * Props:
+ * - href: string (required)
+ * - external?: boolean            // force external detection (overrides auto)
+ * - newTab?: boolean              // open in new tab (default: external ? true : false)
+ * - underline?: boolean           // force underline styles (default: false)
+ * - noIcon?: boolean              // hide external icon (default: false)
+ * - title?: string
+ * - ariaLabel?: string
+ * - class?: string
+ * - utm?: Record<string,string>   // appended to query for http(s) externals
+ * - referrerPolicy?: string       // default: "no-referrer-when-downgrade"
+ *
+ * Usage:
+ *   <InlineLink href="https://example.com">Example</InlineLink>
+ */
+
+interface Props {
+  href: string;
+  external?: boolean;
+  newTab?: boolean;
+  underline?: boolean;
+  noIcon?: boolean;
+  title?: string;
+  ariaLabel?: string;
+  class?: string;
+  utm?: Record<string, string>;
+  referrerPolicy?: string;
+}
+
+const {
+  href,
+  external,
+  newTab,
+  underline = false,
+  noIcon = false,
+  title,
+  ariaLabel,
+  class: className = "",
+  utm = {},
+  referrerPolicy = "no-referrer-when-downgrade",
+} = Astro.props as Props;
+
+// Allowed protocols
+const SAFE_PROTOCOLS = new Set(["http:", "https:", "mailto:", "tel:", "ipfs:", "ipns:"]);
+
+function isAbsolute(u: string) {
+  try { new URL(u); return true; } catch { return false; }
+}
+
+function toURL(u: string): URL | null {
+  try { return new URL(u, Astro.site ?? "http://local.test"); } catch { return null; }
+}
+
+function isExternalUrl(u: string): boolean {
+  if (!isAbsolute(u)) return false;
+  const url = toURL(u);
+  if (!url) return true;
+  const siteHost = (Astro.site && new URL(Astro.site).host) || "";
+  // Treat different host or protocol-relative absolute as external
+  return siteHost ? (url.host !== siteHost) : true;
+}
+
+// sanitize href
+function sanitizeHref(u: string): string {
+  const url = toURL(u);
+  if (!url) return "#";
+  if (!SAFE_PROTOCOLS.has(url.protocol)) return "#";
+  return url.toString();
+}
+
+// append UTM for http(s) externals only
+function withUtm(u: string): string {
+  const url = toURL(u);
+  if (!url) return u;
+  if ((url.protocol === "http:" || url.protocol === "https:") && Object.keys(utm).length) {
+    for (const [k, v] of Object.entries(utm)) {
+      url.searchParams.set(k, v);
+    }
+  }
+  return url.toString();
+}
+
+const computedExternal = typeof external === "boolean" ? external : isExternalUrl(href);
+const willOpenNewTab = typeof newTab === "boolean" ? newTab : computedExternal;
+const rawHref = sanitizeHref(href);
+const finalHref = withUtm(rawHref);
+
+// rel attribute logic
+let rel = "";
+if (computedExternal && willOpenNewTab) {
+  rel = "noopener noreferrer";
+}
+
+// CSS helpers (works with plain CSS or Tailwind-like tokens)
+const baseClass =
+  "inline-flex items-center gap-1 align-baseline hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[color-mix(in_srgb,var(--text-primary,_#000)_/_30%,transparent)]";
+const underlineClass = underline ? "underline underline-offset-2 decoration-current" : "no-underline";
+---
+
+<a
+  href={finalHref}
+  class={`${baseClass} ${underlineClass} ${className}`}
+  target={willOpenNewTab ? "_blank" : undefined}
+  rel={rel || undefined}
+  title={title}
+  aria-label={ariaLabel}
+  referrerpolicy={referrerPolicy}
+>
+  <slot />
+  {computedExternal && !noIcon ? (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 20 20"
+      class="size-3.5 translate-y-[1px] opacity-70"
+      fill="currentColor"
+    >
+      <!-- external-link icon -->
+      <path d="M11 3a1 1 0 100 2h2.586L8.293 10.293a1 1 0 001.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z"/>
+      <path d="M5 5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z"/>
+    </svg>
+  ) : null}
+</a>

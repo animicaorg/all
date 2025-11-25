@@ -1,0 +1,75 @@
+---
+/**
+ * AnalyticsPlausible.astro
+ * Lightweight, opt-in Plausible snippet.
+ *
+ * Usage:
+ *   <AnalyticsPlausible />
+ *   <AnalyticsPlausible domain="analytics.example.com" />
+ *
+ * Reads these optional PUBLIC env vars (Vite/Astro):
+ *   - PUBLIC_PLAUSIBLE_DOMAIN  (e.g. "animica.xyz")
+ *   - PUBLIC_PLAUSIBLE_SCRIPT  (default "https://plausible.io/js/script.js")
+ *   - PUBLIC_PLAUSIBLE_API     (set if self-hosting; becomes data-api attr)
+ *   - PUBLIC_ANALYTICS_ON_DEV  ("true" to enable during `astro dev`)
+ */
+
+interface Props {
+  /** Override domain if not using env. */
+  domain?: string;
+  /** Override script URL (self-hosted). */
+  src?: string;
+  /** Override API endpoint (self-hosted). */
+  api?: string;
+  /** Force enable/disable. Defaults to enabled if domain is present. */
+  enabled?: boolean;
+  /** Track outbound links helper (adds a tiny inline helper). */
+  trackOutbound?: boolean;
+}
+
+const {
+  domain = import.meta.env.PUBLIC_PLAUSIBLE_DOMAIN as string | undefined,
+  src = (import.meta.env.PUBLIC_PLAUSIBLE_SCRIPT as string | undefined) ?? "https://plausible.io/js/script.js",
+  api = import.meta.env.PUBLIC_PLAUSIBLE_API as string | undefined,
+  enabled = Boolean(import.meta.env.PUBLIC_PLAUSIBLE_DOMAIN),
+  trackOutbound = true
+} = Astro.props as Props;
+
+// Disable in local dev unless explicitly allowed
+const dev = import.meta.env.DEV;
+const allowInDev = (import.meta.env.PUBLIC_ANALYTICS_ON_DEV as string | undefined)?.toLowerCase() === "true";
+const shouldRender = !!domain && enabled && (!dev || allowInDev);
+
+// Tiny helper to avoid TS complaints in inline script
+const OUTBOUND_HELPER = `
+  (function(){
+    if (!window.plausible) return;
+    function onClick(e){
+      const a = e.target.closest('a[href]');
+      if(!a) return;
+      const url = new URL(a.href, location.href);
+      if (url.origin !== location.origin) {
+        window.plausible('Outbound Link: Click', { props: { href: url.href } });
+      }
+    }
+    document.addEventListener('click', onClick, { capture: true });
+  })();
+`;
+---
+
+{shouldRender ? (
+  <>
+    {api ? (
+      <script is:inline defer data-domain={domain} data-api={api} src={src}></script>
+    ) : (
+      <script is:inline defer data-domain={domain} src={src}></script>
+    )}
+
+    {trackOutbound && (
+      // Minimal helper to send an event on external link clicks
+      <script is:inline>
+        {OUTBOUND_HELPER}
+      </script>
+    )}
+  </>
+) : null}

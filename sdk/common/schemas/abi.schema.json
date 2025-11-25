@@ -1,0 +1,193 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://animica.dev/schemas/abi.schema.json",
+  "title": "Animica Contract ABI",
+  "description": "Canonical schema for Animica contract ABIs used by SDKs and tools. Keep in sync with spec/ABI.",
+  "type": "object",
+  "required": ["name", "version", "functions"],
+  "additionalProperties": false,
+
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Human-readable contract name (e.g., Counter)."
+    },
+    "version": {
+      "type": "string",
+      "description": "Semantic version for this ABI.",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.]+)?$"
+    },
+    "language": {
+      "type": "string",
+      "description": "Implementation language of the contract (informational).",
+      "enum": ["python"],
+      "default": "python"
+    },
+    "codeHash": {
+      "type": "string",
+      "description": "Optional hex code hash this ABI is known to pair with (for manifests/verification).",
+      "pattern": "^0x[0-9a-fA-F]{64}$"
+    },
+
+    "functions": {
+      "type": "array",
+      "description": "Externally callable functions.",
+      "items": { "$ref": "#/$defs/Function" },
+      "minItems": 1
+    },
+
+    "events": {
+      "type": "array",
+      "description": "Events the contract can emit.",
+      "items": { "$ref": "#/$defs/Event" },
+      "default": []
+    },
+
+    "errors": {
+      "type": "array",
+      "description": "Named error codes/messages (optional, for tooling/docs).",
+      "items": { "$ref": "#/$defs/Error" },
+      "default": []
+    },
+
+    "metadata": {
+      "type": "object",
+      "description": "Free-form metadata (tooling may store docs, source pointers, etc.).",
+      "additionalProperties": true,
+      "default": {}
+    }
+  },
+
+  "$defs": {
+    "Identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+    },
+
+    "Param": {
+      "type": "object",
+      "required": ["name", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/Identifier" },
+        "type": {
+          "type": "string",
+          "description": "Canonical scalar type.",
+          "enum": ["int", "bool", "bytes", "address"]
+        },
+        "doc": {
+          "type": "string",
+          "description": "Optional documentation for this parameter."
+        }
+      }
+    },
+
+    "Function": {
+      "type": "object",
+      "required": ["name", "inputs", "outputs"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/Identifier" },
+        "inputs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Param" },
+          "default": []
+        },
+        "outputs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Param" },
+          "default": []
+        },
+        "stateMutability": {
+          "type": "string",
+          "description": "Whether calling this function can mutate state.",
+          "enum": ["view", "nonpayable", "payable"],
+          "default": "nonpayable"
+        },
+        "doc": {
+          "type": "string",
+          "description": "Function-level documentation."
+        }
+      }
+    },
+
+    "EventField": {
+      "type": "object",
+      "required": ["name", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/Identifier" },
+        "type": {
+          "type": "string",
+          "enum": ["int", "bool", "bytes", "address"]
+        },
+        "indexed": {
+          "type": "boolean",
+          "description": "If true, this field participates in the event index/bloom.",
+          "default": false
+        },
+        "doc": {
+          "type": "string"
+        }
+      }
+    },
+
+    "Event": {
+      "type": "object",
+      "required": ["name", "fields"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/Identifier" },
+        "fields": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/EventField" },
+          "default": []
+        },
+        "anonymous": {
+          "type": "boolean",
+          "description": "If true, omit the event name from the topic hash (rare).",
+          "default": false
+        },
+        "doc": {
+          "type": "string"
+        }
+      }
+    },
+
+    "Error": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/Identifier" },
+        "code": {
+          "type": "integer",
+          "description": "Numeric code (optional).",
+          "minimum": 0
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable message."
+        }
+      }
+    }
+  },
+
+  "examples": [
+    {
+      "name": "Counter",
+      "version": "1.0.0",
+      "language": "python",
+      "functions": [
+        { "name": "get", "inputs": [], "outputs": [{ "name": "value", "type": "int" }], "stateMutability": "view" },
+        { "name": "inc", "inputs": [{ "name": "delta", "type": "int" }], "outputs": [], "stateMutability": "nonpayable" }
+      ],
+      "events": [
+        { "name": "Incremented", "fields": [
+          { "name": "by", "type": "int", "indexed": false },
+          { "name": "new_value", "type": "int", "indexed": true }
+        ]}
+      ]
+    }
+  ]
+}

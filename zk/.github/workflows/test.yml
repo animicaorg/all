@@ -1,0 +1,117 @@
+name: zk verifiers & benches
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zk-ci-${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: py${{ matrix.python-version }} • ${{ matrix.variant }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: [ "3.10", "3.11" ]
+        variant: [ "py-only", "native" ]  # run both pure-Python and native-accelerated paths
+    env:
+      # Make repo root importable as a package so `import zk` works.
+      PYTHONPATH: ${{ github.workspace }}
+      # Criterion benches: keep CI output lean/fast.
+      CRITERION_DISABLE_PLOTTING: "1"
+      CARGO_TERM_COLOR: always
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            zk/**/requirements*.txt
+
+      - name: Install Python deps (core + tests)
+        run: |
+          python -m pip install -U pip wheel
+          # Core runtime deps used across verifiers/adapters/tests
+          python -m pip install msgspec py-ecc pytest
+          # Optional: speedier JSON and hashing libs if present (non-fatal)
+          python -m pip install --only-binary=:all: orjson blake3 || true
+
+      - name: Set up Rust (native only)
+        if: ${{ matrix.variant == 'native' }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Cache Cargo (native only)
+        if: ${{ matrix.variant == 'native' }}
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            zk/native/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('zk/native/Cargo.toml', 'zk/native/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build & install native extension (maturin develop)
+        if: ${{ matrix.variant == 'native' }}
+        run: |
+          python -m pip install maturin>=1.5,<2.0
+          maturin develop -m zk/native/Cargo.toml --release
+
+      - name: Force pure-Python path
+        if: ${{ matrix.variant == 'py-only' }}
+        run: echo "ZK_DISABLE_NATIVE=1" >> $GITHUB_ENV
+
+      - name: Show availability/version info
+        run: |
+          python - <<'PY'
+          from animica_zk_native import available, version_info
+          print("available:", available())
+          print("version_info:", version_info())
+          PY
+
+      - name: Python tests (verifiers & integration)
+        run: |
+          pytest -q zk/tests
+
+      - name: Rust tests (native crate)
+        if: ${{ matrix.variant == 'native' }}
+        working-directory: zk/native
+        run: |
+          cargo test --features "pairing kzg" --release --all-targets
+
+      - name: Rust benches (verify_bench)
+        if: ${{ matrix.variant == 'native' }}
+        working-directory: zk/native
+        run: |
+          cargo bench --features "pairing kzg" --bench verify_bench -- --warm-up-time 0.03 --measurement-time 0.12
+
+      - name: Python micro-bench (JSON output)
+        # Run both variants to compare; the script should auto-detect native availability.
+        run: |
+          python zk/bench/verify_speed.py --json bench-${{ matrix.variant }}-py${{ matrix.python-version }}.json --quick || python zk/bench/verify_speed.py --json bench-${{ matrix.variant }}-py${{ matrix.python-version }}.json
+
+      - name: Upload bench artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results-${{ matrix.variant }}-py${{ matrix.python-version }}
+          path: |
+            bench-${{ matrix.variant }}-py${{ matrix.python-version }}.json
+            zk/native/target/criterion/**/benchmark.json
+          if-no-files-found: warn

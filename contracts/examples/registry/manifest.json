@@ -1,0 +1,90 @@
+{
+  "manifestVersion": 1,
+  "name": "NameRegistry",
+  "version": "1.0.0",
+  "language": "python",
+  "entry": "contract.py",
+  "description": "Deterministic bytes32 → address registry with simple set/get/has/remove and canonical events.",
+  "license": "MIT-0",
+
+  "abi": {
+    "functions": [
+      {
+        "name": "set",
+        "stateMutability": "nonpayable",
+        "inputs": [
+          { "name": "name", "type": "bytes32" },
+          { "name": "addr", "type": "address" }
+        ],
+        "outputs": []
+      },
+      {
+        "name": "get",
+        "stateMutability": "view",
+        "inputs": [
+          { "name": "name", "type": "bytes32" }
+        ],
+        "outputs": [
+          { "name": "addr", "type": "address" }
+        ]
+      },
+      {
+        "name": "has",
+        "stateMutability": "view",
+        "inputs": [
+          { "name": "name", "type": "bytes32" }
+        ],
+        "outputs": [
+          { "name": "exists", "type": "bool" }
+        ]
+      },
+      {
+        "name": "remove",
+        "stateMutability": "nonpayable",
+        "inputs": [
+          { "name": "name", "type": "bytes32" }
+        ],
+        "outputs": []
+      }
+    ],
+    "events": [
+      {
+        "name": "NameSet",
+        "inputs": [
+          { "name": "name", "type": "bytes32", "indexed": false },
+          { "name": "addr", "type": "address", "indexed": false }
+        ]
+      },
+      {
+        "name": "NameRemoved",
+        "inputs": [
+          { "name": "name", "type": "bytes32", "indexed": false }
+        ]
+      }
+    ],
+    "errors": [
+      { "name": "name-bad-len" },
+      { "name": "zero-address" },
+      { "name": "addr-bad-hrp" },
+      { "name": "addr-too-long" },
+      { "name": "not-found" },
+      { "name": "corrupt-state" }
+    ]
+  },
+
+  "build": {
+    "tool": "vm_py",
+    "format": "ir+cbor",
+    "optLevel": 0
+  },
+
+  "deployment": {
+    "constructor": null,
+    "args": []
+  },
+
+  "metadata": {
+    "tags": ["registry", "mapping", "deterministic", "stdlib-free"],
+    "readmeHint": "Use set/get/has/remove. Returns empty string for unset get()."
+  }
+}

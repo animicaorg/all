@@ -1,0 +1,90 @@
+{
+  "algorithm": "kyber768",
+  "aliases": ["ML-KEM-768", "Kyber768"],
+  "notes": "Kyber768 (ML-KEM-768) is a KEM: encapsulation is randomized. DO NOT compare ciphertext/shared-secret bytes to fixed constants. Instead, assert sizes and that decapsulation under the correct secret key reproduces the same 32-byte shared secret derived by encapsulation. Under FO transform, corrupted or mis-keyed decapsulation should yield *a different* 32-byte secret (not an error) unless the implementation validates sizes and rejects outright.",
+  "expected_lengths": {
+    "public_key": 1184,
+    "secret_key": 2400,
+    "ciphertext": 1088,
+    "shared_secret": 32
+  },
+  "harness_conventions": {
+    "gen_keypair": "Generate a fresh Kyber768 keypair via the active backend (e.g., liboqs).",
+    "encapsulate": "Encapsulate to pk → (ct, ss_enc).",
+    "decapsulate": "Decapsulate ct with matching sk → ss_dec.",
+    "assert_lengths": "Check object sizes match expected_lengths.",
+    "assert_ss_equal": "Require ss_enc == ss_dec (byte-equal).",
+    "assert_ss_not_equal": "Require ss_enc != ss_dec.",
+    "expect_error_or_mismatch": "Either raise on malformed sizes or produce a different ss; both are acceptable per backend."
+  },
+  "cases": [
+    {
+      "name": "basic_roundtrip",
+      "steps": ["gen_keypair", "encapsulate", "decapsulate", "assert_lengths", "assert_ss_equal"],
+      "rng_hint": "0x000102030405060708090a0b0c0d0e0f",
+      "comment": "Sanity: fresh kp, single encaps/decap → equal 32-byte shared secret."
+    },
+    {
+      "name": "two_encaps_same_pk",
+      "steps": ["gen_keypair"],
+      "repeats": 2,
+      "repeat_steps": ["encapsulate", "decapsulate", "assert_lengths", "assert_ss_equal"],
+      "assert_distinct_between_repeats": {
+        "ciphertext": true,
+        "shared_secret": true
+      },
+      "rng_hint": "0x11111111111111111111111111111111",
+      "comment": "Encapsulate twice to the *same* pk: both rounds must succeed; ciphertexts and shared secrets should differ due to fresh randomness."
+    },
+    {
+      "name": "wrong_secret_key_decapsulation",
+      "steps": ["gen_keypair", "encapsulate"],
+      "alt_secret_key": "generate_new_sk",
+      "post_steps": ["decapsulate_with_alt_sk", "assert_lengths", "assert_ss_not_equal"],
+      "rng_hint": "0x22222222222222222222222222222222",
+      "comment": "Decapsulating with a different secret key should NOT reproduce the original shared secret."
+    },
+    {
+      "name": "corrupted_ciphertext_bitflip",
+      "steps": ["gen_keypair", "encapsulate"],
+      "mutate_ciphertext": {
+        "kind": "bitflip",
+        "byte_index": 0,
+        "bit_mask": 1
+      },
+      "post_steps": ["decapsulate", "assert_lengths", "assert_ss_not_equal"],
+      "rng_hint": "0x33333333333333333333333333333333",
+      "comment": "Single-bit corruption in ct should lead to a different ss after decapsulation (FO transform)."
+    },
+    {
+      "name": "truncated_ciphertext",
+      "steps": ["gen_keypair", "encapsulate"],
+      "mutate_ciphertext": {
+        "kind": "truncate",
+        "remove_last_bytes": 1
+      },
+      "post_steps": ["decapsulate"],
+      "expected": "expect_error_or_mismatch",
+      "comment": "Backends may reject length-mismatched ct with an error, or (rarely) yield a different ss; test harness should accept either as a pass."
+    },
+    {
+      "name": "extended_ciphertext",
+      "steps": ["gen_keypair", "encapsulate"],
+      "mutate_ciphertext": {
+        "kind": "append",
+        "extra_bytes_hex": "deadbeef"
+      },
+      "post_steps": ["decapsulate"],
+      "expected": "expect_error_or_mismatch",
+      "comment": "Extra trailing bytes should not be accepted; either an error or different ss is acceptable."
+    },
+    {
+      "name": "many_rounds_stability",
+      "steps": ["gen_keypair"],
+      "rounds": 8,
+      "per_round": ["encapsulate", "decapsulate", "assert_lengths", "assert_ss_equal"],
+      "assert_no_duplicate_ciphertexts": true,
+      "comment": "Perform several encaps/decap cycles; ensure each round succeeds and ciphertexts are not duplicated across rounds for the same pk."
+    }
+  ]
+}

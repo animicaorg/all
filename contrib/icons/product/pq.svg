@@ -1,0 +1,17 @@
+<!-- Animica Product Icon: PQ (Post-Quantum)
+     Motif: shield with lattice grid and keyhole, representing PQ security.
+     Style: Monochrome, currentColor, 48×48 canvas -->
+<svg width="48" height="48" viewBox="0 0 48 48" role="img" aria-labelledby="title" xmlns="http://www.w3.org/2000/svg">
+  <title id="title">Post-Quantum Security</title>
+  <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Shield outline -->
+    <path d="M24 6L38 12v10c0 9-6 15-14 20C16 37 10 31 10 22V12l14-6z"/>
+    <!-- Lattice grid (symbolizing lattices) -->
+    <path d="M14 16l20 10M14 22l20 10M32 14L16 22M36 18L20 26"/>
+    <!-- Vertical lattice ribs -->
+    <path d="M20 14v18M28 14v18"/>
+  </g>
+  <!-- Keyhole -->
+  <circle cx="24" cy="22" r="2" fill="currentColor"/>
+  <rect x="23" y="24" width="2" height="6" rx="1" fill="currentColor"/>
+</svg>

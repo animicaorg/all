@@ -1,0 +1,149 @@
+{
+  "name": "{{ project_name }}",
+  "version": "0.1.0",
+  "language": "python",
+  "entry": "contracts/contract.py",
+
+  "abi": {
+    "functions": [
+      {
+        "name": "init",
+        "inputs": [
+          { "name": "initial", "type": "int" },
+          { "name": "owner",   "type": "bytes" }
+        ],
+        "outputs": [
+          { "name": "value", "type": "int" }
+        ],
+        "mutability": "write"
+      },
+      {
+        "name": "version",
+        "inputs": [],
+        "outputs": [
+          { "name": "semver", "type": "bytes" }
+        ],
+        "mutability": "read"
+      },
+      {
+        "name": "get",
+        "inputs": [],
+        "outputs": [
+          { "name": "value", "type": "int" }
+        ],
+        "mutability": "read"
+      },
+      {
+        "name": "get_owner",
+        "inputs": [],
+        "outputs": [
+          { "name": "owner", "type": "bytes" }
+        ],
+        "mutability": "read"
+      },
+      {
+        "name": "inc",
+        "inputs": [
+          { "name": "delta", "type": "int" }
+        ],
+        "outputs": [
+          { "name": "value", "type": "int" }
+        ],
+        "mutability": "write"
+      },
+      {
+        "name": "dec",
+        "inputs": [
+          { "name": "delta", "type": "int" }
+        ],
+        "outputs": [
+          { "name": "value", "type": "int" }
+        ],
+        "mutability": "write"
+      },
+      {
+        "name": "set_value",
+        "inputs": [
+          { "name": "value", "type": "int" },
+          { "name": "who",   "type": "bytes" }
+        ],
+        "outputs": [
+          { "name": "new_value", "type": "int" }
+        ],
+        "mutability": "write"
+      },
+      {
+        "name": "metadata",
+        "inputs": [],
+        "outputs": [
+          { "name": "json", "type": "bytes" }
+        ],
+        "mutability": "read"
+      }
+    ],
+    "events": [
+      {
+        "name": "Init",
+        "fields": [
+          { "name": "owner",   "type": "bytes" },
+          { "name": "value",   "type": "int" },
+          { "name": "version", "type": "bytes" }
+        ]
+      },
+      {
+        "name": "Inc",
+        "fields": [
+          { "name": "before", "type": "int" },
+          { "name": "after",  "type": "int" },
+          { "name": "delta",  "type": "int" }
+        ]
+      },
+      {
+        "name": "Dec",
+        "fields": [
+          { "name": "before", "type": "int" },
+          { "name": "after",  "type": "int" },
+          { "name": "delta",  "type": "int" }
+        ]
+      },
+      {
+        "name": "Set",
+        "fields": [
+          { "name": "before", "type": "int" },
+          { "name": "after",  "type": "int" },
+          { "name": "who",    "type": "bytes" }
+        ]
+      }
+    ],
+    "errors": [
+      { "name": "not-initialized" },
+      { "name": "already-initialized" },
+      { "name": "delta-must-be-nonnegative" },
+      { "name": "unauthorized" }
+    ]
+  },
+
+  "metadata": {
+    "description": "Counter contract template for {{ project_name }} (deterministic, Python-VM).",
+    "authors": ["anonymous"],
+    "license": "Apache-2.0",
+    "homepage": "",
+    "source": "contracts/contract.py"
+  },
+
+  "build": {
+    "tool": "vm_py",
+    "ir_out": "build/{{ project_slug }}.ir",
+    "package_out": "build/{{ project_slug }}.pkg.json"
+  },
+
+  "deploy": {
+    "initMethod": "init",
+    "args": {
+      "initial": 0,
+      "owner": ""
+    }
+  },
+
+  "capabilities": []
+}

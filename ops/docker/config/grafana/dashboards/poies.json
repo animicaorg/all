@@ -1,0 +1,523 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["animica", "consensus", "PoIES", "Θ", "Γ", "ψ", "fairness"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": true },
+        "hide": 0,
+        "label": "Prometheus",
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource"
+      },
+      {
+        "datasource": "${DS_PROMETHEUS}",
+        "definition": "label_values(up{job=~\".*\"}, job)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "job",
+        "multi": false,
+        "name": "job",
+        "options": [],
+        "query": {
+          "query": "label_values(up{job=~\".*\"}, job)",
+          "refId": "PromVarJob"
+        },
+        "refresh": 1,
+        "regex": "/consensus|node|animica.*/",
+        "skipUrlSync": false,
+        "type": "query"
+      },
+      {
+        "datasource": "${DS_PROMETHEUS}",
+        "definition": "label_values(animica_consensus_theta_target_micro_nats{job=~\"$job\"}, instance)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "instance",
+        "multi": false,
+        "name": "instance",
+        "options": [],
+        "query": {
+          "query": "label_values(animica_consensus_theta_target_micro_nats{job=~\"$job\"}, instance)",
+          "refId": "PromVarInstance"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "query"
+      },
+      {
+        "datasource": "${DS_PROMETHEUS}",
+        "definition": "label_values(animica_poies_cap_utilization_ratio{job=~\"$job\"}, type)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "proof type",
+        "multi": true,
+        "name": "ptype",
+        "options": [],
+        "query": {
+          "query": "label_values(animica_poies_cap_utilization_ratio{job=~\"$job\"}, type)",
+          "refId": "PromVarType"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "query"
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m"],
+    "time_options": ["1h", "3h", "6h", "12h", "24h", "2d", "7d", "30d"]
+  },
+  "timezone": "",
+  "title": "Animica — PoIES (Θ / Γ / ψ / Mix / Fairness)",
+  "uid": "animica-poies-01",
+  "version": 1,
+  "panels": [
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Target threshold Θ (micro-nats). Retarget should move slowly and be stable.",
+      "fieldConfig": {
+        "defaults": { "unit": "none", "decimals": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "pluginVersion": "9.5.0",
+      "targets": [
+        {
+          "expr": "max by (instance) (animica_consensus_theta_target_micro_nats{instance=\"$instance\"})",
+          "legendFormat": "Θ (µnats)",
+          "refId": "A"
+        }
+      ],
+      "title": "Θ Target (µnats)",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Average Σψ over recent blocks (micro-nats).",
+      "fieldConfig": {
+        "defaults": { "unit": "none", "decimals": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "pluginVersion": "9.5.0",
+      "targets": [
+        {
+          "expr": "avg_over_time(animica_poies_sigma_psi_micro_nats{instance=\"$instance\"}[15m])",
+          "legendFormat": "Σψ (µnats)",
+          "refId": "A"
+        }
+      ],
+      "title": "Σψ Avg (15m, µnats)",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Total Γ budget utilization (0..1) in the last 15m.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "orange", "value": null },
+              { "color": "green", "value": 0.3 },
+              { "color": "red", "value": 0.95 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "pluginVersion": "9.5.0",
+      "targets": [
+        {
+          "expr": "avg_over_time(animica_poies_gamma_utilization_ratio{instance=\"$instance\"}[15m])",
+          "legendFormat": "Γ util",
+          "refId": "A"
+        }
+      ],
+      "title": "Γ Utilization (15m)",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Acceptance ratio of candidates over the last 15 minutes.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.5 },
+              { "color": "green", "value": 0.8 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "pluginVersion": "9.5.0",
+      "targets": [
+        {
+          "expr": "sum by (instance) (rate(animica_poies_candidate_accepted_total{instance=\"$instance\"}[15m])) / sum by (instance) (rate(animica_poies_candidate_submitted_total{instance=\"$instance\"}[15m]))",
+          "legendFormat": "accept rate",
+          "refId": "A"
+        }
+      ],
+      "title": "Acceptance Rate (15m)",
+      "type": "stat"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Block score S = H(u) + Σψ in micro-nats.",
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "id": 5,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "pluginVersion": "9.5.0",
+      "targets": [
+        {
+          "expr": "animica_poies_block_score_micro_nats{instance=\"$instance\"}",
+          "legendFormat": "S (µnats)",
+          "refId": "A"
+        },
+        {
+          "expr": "animica_consensus_theta_target_micro_nats{instance=\"$instance\"}",
+          "legendFormat": "Θ (µnats)",
+          "refId": "B"
+        }
+      ],
+      "title": "Block Score S vs Θ",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Retarget dynamics: Θ target vs. estimator.",
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "id": 6,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "expr": "animica_consensus_theta_target_micro_nats{instance=\"$instance\"}",
+          "legendFormat": "Θ target",
+          "refId": "A"
+        },
+        {
+          "expr": "animica_consensus_theta_estimate_micro_nats{instance=\"$instance\"}",
+          "legendFormat": "Θ estimate",
+          "refId": "B"
+        }
+      ],
+      "title": "Θ Retarget",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Inter-block time quantiles from histogram.",
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "id": 7,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(animica_consensus_interblock_seconds_bucket{instance=\"$instance\"}[15m])))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(animica_consensus_interblock_seconds_bucket{instance=\"$instance\"}[15m])))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ],
+      "title": "Inter-Block Time (p50/p95)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Share mix by kind (percent stack, last 5m rate). Healthy mix should have non-zero useful work.",
+      "fieldConfig": { "defaults": { "unit": "none" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "id": 8,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" },
+        "stacking": { "mode": "percent" },
+        "fillOpacity": 80
+      },
+      "targets": [
+        {
+          "expr": "sum by (instance, kind) (rate(animica_poies_shares_accepted_total{instance=\"$instance\",kind=\"hash\"}[5m]))",
+          "legendFormat": "hash",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (instance, kind) (rate(animica_poies_shares_accepted_total{instance=\"$instance\",kind=\"ai\"}[5m]))",
+          "legendFormat": "ai",
+          "refId": "B"
+        },
+        {
+          "expr": "sum by (instance, kind) (rate(animica_poies_shares_accepted_total{instance=\"$instance\",kind=\"quantum\"}[5m]))",
+          "legendFormat": "quantum",
+          "refId": "C"
+        },
+        {
+          "expr": "sum by (instance, kind) (rate(animica_poies_shares_accepted_total{instance=\"$instance\",kind=\"storage\"}[5m]))",
+          "legendFormat": "storage",
+          "refId": "D"
+        },
+        {
+          "expr": "sum by (instance, kind) (rate(animica_poies_shares_accepted_total{instance=\"$instance\",kind=\"vdf\"}[5m]))",
+          "legendFormat": "vdf",
+          "refId": "E"
+        }
+      ],
+      "title": "Share Mix by Kind (rate→%)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Per-type acceptance rate (accepted/submitted, 15m).",
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
+      "id": 9,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        {
+          "expr": "sum by (type) (rate(animica_poies_shares_accepted_total{instance=\"$instance\",type=\"hash\"}[15m])) / sum by (type) (rate(animica_poies_shares_submitted_total{instance=\"$instance\",type=\"hash\"}[15m]))",
+          "legendFormat": "hash",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (type) (rate(animica_poies_shares_accepted_total{instance=\"$instance\",type=\"ai\"}[15m])) / sum by (type) (rate(animica_poies_shares_submitted_total{instance=\"$instance\",type=\"ai\"}[15m]))",
+          "legendFormat": "ai",
+          "refId": "B"
+        },
+        {
+          "expr": "sum by (type) (rate(animica_poies_shares_accepted_total{instance=\"$instance\",type=\"quantum\"}[15m])) / sum by (type) (rate(animica_poies_shares_submitted_total{instance=\"$instance\",type=\"quantum\"}[15m]))",
+          "legendFormat": "quantum",
+          "refId": "C"
+        },
+        {
+          "expr": "sum by (type) (rate(animica_poies_shares_accepted_total{instance=\"$instance\",type=\"storage\"}[15m])) / sum by (type) (rate(animica_poies_shares_submitted_total{instance=\"$instance\",type=\"storage\"}[15m]))",
+          "legendFormat": "storage",
+          "refId": "D"
+        },
+        {
+          "expr": "sum by (type) (rate(animica_poies_shares_accepted_total{instance=\"$instance\",type=\"vdf\"}[15m])) / sum by (type) (rate(animica_poies_shares_submitted_total{instance=\"$instance\",type=\"vdf\"}[15m]))",
+          "legendFormat": "vdf",
+          "refId": "E"
+        }
+      ],
+      "title": "Acceptance Rate by Type",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Γ / caps utilization per type (0..1). Panel repeats per selected ptype.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.75 },
+              { "color": "red", "value": 0.95 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 4, "x": 12, "y": 21 },
+      "id": 10,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "maxPerRow": 3,
+      "repeat": "ptype",
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "expr": "avg_over_time(animica_poies_cap_utilization_ratio{instance=\"$instance\",type=\"$__repeat.pattern\"}[15m])",
+          "legendFormat": "{{type}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Cap Utilization — $__repeat.pattern",
+      "type": "stat"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "α tuner values by type (fairness correction).",
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 3 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 29 },
+      "id": 11,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "animica_poies_alpha_value{instance=\"$instance\",type=\"hash\"}", "legendFormat": "hash", "refId": "A" },
+        { "expr": "animica_poies_alpha_value{instance=\"$instance\",type=\"ai\"}", "legendFormat": "ai", "refId": "B" },
+        { "expr": "animica_poies_alpha_value{instance=\"$instance\",type=\"quantum\"}", "legendFormat": "quantum", "refId": "C" },
+        { "expr": "animica_poies_alpha_value{instance=\"$instance\",type=\"storage\"}", "legendFormat": "storage", "refId": "D" },
+        { "expr": "animica_poies_alpha_value{instance=\"$instance\",type=\"vdf\"}", "legendFormat": "vdf", "refId": "E" }
+      ],
+      "title": "α Tuner by Type",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Cap clamp events (psi or per-type caps hit).",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 29 },
+      "id": 12,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "sum by (type) (rate(animica_poies_cap_clamp_total{instance=\"$instance\"}[15m]))", "legendFormat": "{{type}}", "refId": "A" }
+      ],
+      "title": "Cap Clamp Events (rate)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Nullifier reuse / policy rejections (should be near zero).",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 37 },
+      "id": 13,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "sum by (type) (rate(animica_consensus_nullifier_reject_total{instance=\"$instance\"}[15m]))", "legendFormat": "{{type}}", "refId": "A" },
+        { "expr": "sum by (reason) (rate(animica_poies_reject_total{instance=\"$instance\"}[15m]))", "legendFormat": "reject: {{reason}}", "refId": "B" }
+      ],
+      "title": "Rejections & Nullifier Reuse (rate)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Distribution of H(u) and Σψ via histogram quantiles (micro-nats).",
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 37 },
+      "id": 14,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(animica_poies_u_draw_micro_nats_bucket{instance=\"$instance\"}[15m])))",
+          "legendFormat": "H(u) p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(animica_poies_u_draw_micro_nats_bucket{instance=\"$instance\"}[15m])))",
+          "legendFormat": "H(u) p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(animica_poies_sigma_psi_micro_nats_bucket{instance=\"$instance\"}[15m])))",
+          "legendFormat": "Σψ p50",
+          "refId": "C"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(animica_poies_sigma_psi_micro_nats_bucket{instance=\"$instance\"}[15m])))",
+          "legendFormat": "Σψ p95",
+          "refId": "D"
+        }
+      ],
+      "title": "H(u) & Σψ Quantiles (µnats, 15m)",
+      "type": "timeseries"
+    }
+  ]
+}

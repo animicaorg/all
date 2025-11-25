@@ -1,0 +1,77 @@
+{
+  "name": "escrow",
+  "version": "0.1.0",
+  "language": "python",
+  "entry": "contract.py",
+  "description": "Deterministic escrow example for the Animica Python-VM (demo only).",
+  "abi": {
+    "functions": [
+      {
+        "name": "setup",
+        "inputs": [
+          { "name": "depositor", "type": "bytes" },
+          { "name": "beneficiary", "type": "bytes" },
+          { "name": "amount", "type": "int" }
+        ],
+        "outputs": []
+      },
+      {
+        "name": "status",
+        "inputs": [],
+        "outputs": [
+          { "type": "bytes" }
+        ]
+      },
+      {
+        "name": "ready",
+        "inputs": [],
+        "outputs": [
+          { "type": "bool" }
+        ]
+      },
+      {
+        "name": "deposit_check",
+        "inputs": [],
+        "outputs": []
+      },
+      {
+        "name": "release",
+        "inputs": [],
+        "outputs": []
+      },
+      {
+        "name": "refund",
+        "inputs": [],
+        "outputs": []
+      }
+    ],
+    "events": [
+      {
+        "name": "Escrow.Setup",
+        "inputs": [
+          { "name": "amount", "type": "int" }
+        ]
+      },
+      {
+        "name": "Escrow.Funded",
+        "inputs": [
+          { "name": "amount", "type": "int" }
+        ]
+      },
+      {
+        "name": "Escrow.Released",
+        "inputs": [
+          { "name": "to", "type": "bytes" },
+          { "name": "amount", "type": "int" }
+        ]
+      },
+      {
+        "name": "Escrow.Refunded",
+        "inputs": [
+          { "name": "to", "type": "bytes" },
+          { "name": "amount", "type": "int" }
+        ]
+      }
+    ]
+  }
+}

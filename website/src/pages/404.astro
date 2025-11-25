@@ -1,0 +1,53 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import CTAButtons from "../components/CTAButtons.astro";
+import InlineLink from "../components/InlineLink.astro";
+
+const title = "404 — Page not found";
+const description = "The page you were looking for doesn’t exist or has moved.";
+---
+
+<BaseLayout title={title} description={description}>
+  <section class="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-16 sm:py-24 text-center">
+    <p class="text-sm tracking-widest uppercase opacity-60">Error</p>
+    <h1 class="mt-2 text-4xl sm:text-5xl font-semibold">404 — Nothing to see here</h1>
+    <p class="mt-4 opacity-80">
+      The link might be broken, or the page may have been renamed. Try one of these:
+    </p>
+
+    <div class="mt-8 flex flex-col items-center gap-2">
+      <CTAButtons />
+      <div class="text-sm opacity-80 mt-4">
+        Or jump to
+        <InlineLink href="/">homepage</InlineLink>,
+        <InlineLink href="/status">network status</InlineLink>,
+        <InlineLink href="/explorer">Explorer</InlineLink>,
+        <InlineLink href="/studio">Studio</InlineLink>,
+        or <InlineLink href="/docs">Docs</InlineLink>.
+      </div>
+    </div>
+
+    <div class="mt-12 mx-auto max-w-xl">
+      <div class="rounded-lg border border-white/10 bg-white/5 p-4 text-left">
+        <h2 class="m-0 text-base font-semibold">Technical details</h2>
+        <ul class="mt-2 text-sm opacity-80">
+          <li>Requested URL: <code>{Astro.url.pathname}</code></li>
+          <li>Method: <code>{Astro.request.method}</code></li>
+          <li>Timestamp: <code>{new Date().toISOString()}</code></li>
+        </ul>
+      </div>
+    </div>
+
+    <script type="application/ld+json" is:inline>
+      {JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "WebPage",
+        name: "404 — Page not found",
+        description,
+        isPartOf: { "@type": "WebSite", name: "Animica" },
+        inLanguage: "en",
+        dateModified: new Date().toISOString()
+      })}
+    </script>
+  </section>
+</BaseLayout>

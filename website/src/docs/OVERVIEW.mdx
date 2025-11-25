@@ -1,0 +1,108 @@
+---
+title: "Animica — Overview"
+description: "A high-level tour of the Animica stack: consensus (PoIES), DA, Python VM, ZK, AICF, P2P, SDKs, wallet, explorer, and tooling."
+layout: ../layouts/DocsLayout.astro
+---
+
+import InlineLink from "../components/InlineLink.astro";
+
+> This is an **optional built-in landing page** for the docs.  
+> If you host canonical documentation elsewhere, you can safely remove this file and rely on the `/docs` redirect behavior.
+
+## What is Animica?
+
+Animica is a modular L1/L2 stack that combines **PoIES consensus** (Proof-of-Integrated-External-Services), **Data Availability** with Namespaced Merkle Trees and erasure coding, a **deterministic Python VM**, **ZK verification** helpers, an **AI Compute Fund (AICF)**, and a **PQ-first key system**. It ships with a developer **Studio** (web IDE), **Explorer**, browser **wallet**, and SDKs in **Python**, **TypeScript**, and **Rust**.
+
+---
+
+## Quick links
+
+- **Getting started** → <InlineLink href="/docs/get-started">/docs/get-started</InlineLink>  
+- **Consensus (PoIES)** → <InlineLink href="/docs/consensus/poies">/docs/consensus/poies</InlineLink>  
+- **Data Availability** → <InlineLink href="/docs/da/overview">/docs/da/overview</InlineLink>  
+- **Python VM** → <InlineLink href="/docs/vm/overview">/docs/vm/overview</InlineLink>  
+- **ZK Verifiers** → <InlineLink href="/docs/zk/overview">/docs/zk/overview</InlineLink>  
+- **AICF** → <InlineLink href="/docs/aicf/overview">/docs/aicf/overview</InlineLink>  
+- **SDKs** → <InlineLink href="/docs/sdk/overview">/docs/sdk/overview</InlineLink>  
+- **Operations/Devnet** → <InlineLink href="/docs/ops/devnet">/docs/ops/devnet</InlineLink>
+
+---
+
+## Architecture at a glance
+
+- **Consensus (PoIES)** — blocks are accepted when `S = H(u) + Σ ψ ≥ Θ`, with fairness controls and caps `Γ` to balance proof types.
+- **DA** — blob commitments become DA roots via NMT; light clients verify availability with sampling & proofs.
+- **Execution** — a deterministic Python VM with a small IR, ABI, and strict gas model.
+- **ZK** — built-in verifiers (Groth16/PLONK/STARK), Poseidon/KZG helpers, and policy pinning for VKs.
+- **AICF** — off-chain compute providers (AI/Quantum) with attestations, SLAs, pricing, and settlements.
+- **Networking** — PQ-first P2P handshake (Kyber+HKDF), transports (TCP/QUIC/WS), gossip topics, and sync flows.
+- **Tooling** — Studio (simulate → deploy → verify), Explorer, wallet extension, and multi-language SDKs.
+
+---
+
+## Hello, devnet (60 seconds)
+
+```bash
+# 1) Run a local node (or attach to an existing devnet)
+omni node --devnet
+
+# 2) Use the SDK to send a transfer (Python example)
+pip install omni-sdk
+python - <<'PY'
+from omni_sdk.tx import build, send
+from omni_sdk.wallet.mnemonic import create_mnemonic
+mn = create_mnemonic()
+tx = build.transfer(to="anim1qq...xyz", amount=12345)
+receipt = send(tx, mnemonic=mn, rpc_url="http://localhost:8545")
+print("Status:", receipt["status"], "Gas:", receipt["gasUsed"])
+PY
+
+# 3) Open Studio in your browser to compile & simulate contracts
+#    (If deployed separately, substitute your PUBLIC_STUDIO_URL)
+open https://studio.animica.dev
+
+
+⸻
+
+Contracts: Python VM (Counter example)
+
+# examples/counter/contract.py
+from stdlib.storage import get_int, set_int
+from stdlib.events import emit
+
+def inc():
+    v = get_int(b"count") + 1
+    set_int(b"count", v)
+    emit(b"Inc", {"value": v})
+
+def get() -> int:
+    return get_int(b"count")
+
+	•	Deterministic interpretation (no I/O, no time, no randomness except seeded PRNG for tests).
+	•	ABI encoding/decoding is canonical; gas metering is first-class.
+
+⸻
+
+ZK verification (outline)
+	•	Groth16 (BN254) — snarkjs JSON-compatible loader + verifier.
+	•	PLONK (KZG BN254) — single-opening demo verifier for small circuits.
+	•	STARK (FRI) — minimal verifier for toy AIRs (e.g., Merkle membership).
+	•	Poseidon — hash parameters used in circuits.
+	•	VK pinning — registry with signatures/hashes to prevent malleability.
+
+See /docs/zk/overview.
+
+⸻
+
+Where to next?
+	•	Read the PoIES math & policy → /docs/consensus/poies
+	•	Try the Studio quickstart → /studio
+	•	Explore the network status → /status
+	•	Browse SDK examples → /docs/sdk/overview
+
+⸻
+
+Feedback
+
+Found a bug or have a question?
+Open an issue on GitHub or email docs@animica.dev. Contributions welcome!

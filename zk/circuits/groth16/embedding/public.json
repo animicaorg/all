@@ -1,0 +1,14 @@
+{
+  "publicSignals": ["0", "0", "800", "1"],
+  "names": ["hash_x", "hash_w", "tau", "ok"],
+  "meta": {
+    "circuit": "embedding.circom",
+    "statement": "Prove dot(x, w) ≥ τ with commitments to x and w",
+    "example_dot": "816",
+    "threshold_tau": "800",
+    "result_ok": "1",
+    "poseidon_commitments_note": "hash_x/hash_w are placeholders for doctests; replace with real Poseidon hashes to bind x and w",
+    "field_curve": "bn128",
+    "format": "snarkjs publicSignals array"
+  }
+}

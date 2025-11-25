@@ -1,0 +1,131 @@
+{
+  "$schema": "https://animica.dev/schemas/contract/manifest.schema.json",
+  "name": "counter",
+  "displayName": "Counter (Monorepo Starter)",
+  "version": 1,
+  "language": "python",
+  "vm": "animica-vm-py",
+  "entrypoint": "contract.py",
+  "description": "A minimal owner-gated counter demonstrating deterministic Python contracts (init/inc/get/reset/owner/transfer_ownership) and event emission.",
+  "metadata": {
+    "authors": ["{{ author | default('you') }}"],
+    "license": "MIT",
+    "source": "contracts/contract.py",
+    "homepage": "{{ homepage | default('') }}"
+  },
+
+  "abi": {
+    "functions": [
+      {
+        "name": "init",
+        "inputs": [
+          { "name": "owner", "type": "bytes32", "optional": true },
+          { "name": "version", "type": "uint32" }
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "notes": "Sets owner (defaults to ctx.sender), initializes counter to 0, writes version. Reverts if already initialized."
+      },
+      {
+        "name": "inc",
+        "inputs": [
+          { "name": "delta", "type": "uint64" }
+        ],
+        "outputs": [
+          { "name": "value", "type": "uint64" }
+        ],
+        "stateMutability": "nonpayable",
+        "notes": "Increments the counter by delta (>0). Returns the new value."
+      },
+      {
+        "name": "get",
+        "inputs": [],
+        "outputs": [
+          { "name": "value", "type": "uint64" }
+        ],
+        "stateMutability": "view",
+        "notes": "Reads the current counter value."
+      },
+      {
+        "name": "reset",
+        "inputs": [
+          { "name": "value", "type": "uint64" }
+        ],
+        "outputs": [
+          { "name": "value", "type": "uint64" }
+        ],
+        "stateMutability": "nonpayable",
+        "notes": "Owner-only: sets the counter to an exact value."
+      },
+      {
+        "name": "owner",
+        "inputs": [],
+        "outputs": [
+          { "name": "owner", "type": "bytes32" }
+        ],
+        "stateMutability": "view",
+        "notes": "Returns the current owner."
+      },
+      {
+        "name": "transfer_ownership",
+        "inputs": [
+          { "name": "new_owner", "type": "bytes32" }
+        ],
+        "outputs": [
+          { "name": "owner", "type": "bytes32" }
+        ],
+        "stateMutability": "nonpayable",
+        "notes": "Owner-only: transfers ownership to a new address."
+      }
+    ],
+    "events": [
+      {
+        "name": "Initialized",
+        "inputs": [
+          { "name": "owner", "type": "bytes32", "indexed": false },
+          { "name": "version", "type": "uint32", "indexed": false }
+        ]
+      },
+      {
+        "name": "Incremented",
+        "inputs": [
+          { "name": "delta", "type": "uint64", "indexed": false },
+          { "name": "new_value", "type": "uint64", "indexed": false }
+        ]
+      },
+      {
+        "name": "Reset",
+        "inputs": [
+          { "name": "value", "type": "uint64", "indexed": false }
+        ]
+      },
+      {
+        "name": "OwnershipTransferred",
+        "inputs": [
+          { "name": "previous_owner", "type": "bytes32", "indexed": false },
+          { "name": "new_owner", "type": "bytes32", "indexed": false }
+        ]
+      }
+    ]
+  },
+
+  "deployment": {
+    "constructor": "init",
+    "args": [
+      { "name": "owner", "from": "deployer", "optional": true },
+      { "name": "version", "literal": 1 }
+    ]
+  },
+
+  "verification": {
+    "codeHash": "{{ CODE_HASH_HEX | default('0x') }}",
+    "compiler": {
+      "name": "animica-contracts-toolchain",
+      "version": "{{ toolchain_version | default('latest') }}"
+    },
+    "build": {
+      "bytecode": "{{ BYTECODE_HEX | default('0x') }}",
+      "artifact": "build/counter.package.json"
+    }
+  }
+}

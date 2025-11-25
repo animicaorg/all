@@ -1,0 +1,74 @@
+{
+  "schemaVersion": "1.0",
+  "name": "Counter",
+  "version": "0.1.0",
+  "language": "python-vm",
+  "entry": "contract.py",
+  "description": "A minimal deterministic counter with u128 storage, bounded increments, and canonical events.",
+  "abi": {
+    "functions": [
+      {
+        "name": "get",
+        "inputs": [],
+        "outputs": [
+          { "name": "value", "type": "int" }
+        ],
+        "stateMutability": "view",
+        "notice": "Return the current counter value."
+      },
+      {
+        "name": "inc",
+        "inputs": [
+          { "name": "by", "type": "int", "default": 1, "min": 1, "max": 1000000 }
+        ],
+        "outputs": [
+          { "name": "new_value", "type": "int" }
+        ],
+        "stateMutability": "nonpayable",
+        "notice": "Increase the counter by `by` and return the new value."
+      }
+    ],
+    "events": [
+      {
+        "name": "Inc",
+        "inputs": [
+          { "name": "by", "type": "int", "indexed": false },
+          { "name": "value", "type": "int", "indexed": false }
+        ],
+        "anonymous": false,
+        "notice": "Emitted after a successful increment."
+      }
+    ],
+    "errors": [
+      { "name": "INC_MUST_BE_POSITIVE", "notice": "Increment must be > 0." },
+      { "name": "INC_TOO_LARGE", "notice": "Increment exceeds MAX_INC." },
+      { "name": "U128_OVERFLOW", "notice": "Result exceeds u128 bound." },
+      { "name": "BAD_STORED_LENGTH", "notice": "Stored value is not 0..16 bytes." }
+    ]
+  },
+  "resources": {
+    "storageKeys": [
+      "counter:value"
+    ]
+  },
+  "capabilities": {
+    "syscalls": [],
+    "da": false,
+    "aicf": false,
+    "randomness": false,
+    "zkVerify": false
+  },
+  "determinism": {
+    "forbiddenImports": true,
+    "boundedInputs": true,
+    "numericCaps": {
+      "u128Max": "0xffffffffffffffffffffffffffffffff",
+      "maxInc": 1000000
+    }
+  },
+  "metadata": {
+    "authors": ["Animica Templates"],
+    "license": "Apache-2.0",
+    "homepage": "https://example.animica.dev/templates/counter"
+  }
+}

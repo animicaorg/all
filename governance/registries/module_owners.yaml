@@ -1,0 +1,283 @@
+# Animica Module Ownership & Review Registry
+# - Drives CODEOWNERS, review routing, and escalation paths.
+# - Human-edited; validated in CI. See governance/PROCESS.md for change flow.
+
+version: 1
+updated: "2025-10-12"
+schema_ref: "governance/schemas/module_owners.schema.json#"
+
+defaults:
+  reviewers_min: 2                  # minimum LGTM count on non-trivial PRs
+  approvers_min: 1                  # at least 1 maintainer approval required
+  security_review_for:
+    - "pq/**"
+    - "p2p/**"
+    - "randomness/**"
+    - "zk/**"
+    - "proofs/**"
+    - "consensus/**"
+  label_map:
+    interface: "interface-change"
+    breaking: "breaking-change"
+    security: "security-review"
+    docs: "docs-only"
+    ops: "ops-change"
+  vacation_backup: true             # if all maintainers on PTO, backup may approve
+
+escalation:
+  security_incident: "@animica/security-council"
+  release_blocker: "@animica/release-engineering"
+  p0_ops: "@animica/ops-oncall"
+  governance: "@animica/governance-editors"
+
+policies:
+  - id: security-critical
+    applies_to: ["pq/**","p2p/**","zk/**","proofs/**","consensus/**","randomness/**"]
+    required_labels: ["security-review"]
+    extra_reviewers: ["@animica/security-council"]
+    rationale: "Cryptography/consensus paths require security sign-off."
+  - id: interface-surface
+    applies_to: ["spec/**","rpc/**","sdk/**","vm_py/**","execution/**","website/src/pages/api/**"]
+    required_labels: ["interface-change"]
+    notify: ["@animica/specs","@animica/sdk-leads"]
+    rationale: "Public interfaces and encodings must sync across repos."
+  - id: docs-fastpath
+    applies_to: ["docs/**","website/src/docs/**","website/content/**"]
+    required_labels: ["docs-only"]
+    reviewers_min_override: 1
+    rationale: "Docs can merge with one reviewer unless touching specs."
+
+modules:
+  - id: spec
+    name: "Protocol Specifications"
+    paths: ["spec/**","docs/spec/**"]
+    maintainers: ["@animica/specs","@alice","@ben"]
+    reviewers: ["@carmen","@diego","@emi"]
+    backups: ["@animica/editors"]
+    sla:
+      first_response_hours: 24
+      merge_window_hours: 72
+    notes: "Canonical formats and params; changes may require network coordination."
+
+  - id: pq
+    name: "Post-Quantum (keys, addresses, KEM)"
+    paths: ["pq/**","docs/pq/**"]
+    maintainers: ["@animica/pq","@carmen","@ivan"]
+    reviewers: ["@ben","@farah","@qi"]
+    backups: ["@animica/security-council"]
+    notes: "Alg-policy roots, address rules, PQ libs; security-review required."
+
+  - id: core
+    name: "Core types/DB/encoding"
+    paths: ["core/**","docs/dev/NODE_ARCHITECTURE.md"]
+    maintainers: ["@animica/core","@ben","@gabe"]
+    reviewers: ["@mira","@nate","@owen"]
+    backups: ["@animica/release-engineering"]
+
+  - id: rpc
+    name: "JSON-RPC/WS server"
+    paths: ["rpc/**","docs/rpc/**"]
+    maintainers: ["@animica/rpc","@emi","@gabe"]
+    reviewers: ["@lina","@owen","@pri"]
+    backups: ["@animica/specs"]
+
+  - id: consensus
+    name: "Consensus (PoIES, retarget, fork-choice)"
+    paths: ["consensus/**","docs/spec/poies/**","docs/spec/DIFFICULTY_RETARGET.md","docs/spec/FORK_CHOICE.md"]
+    maintainers: ["@animica/consensus","@diego","@rhea"]
+    reviewers: ["@kirk","@mira","@sasha"]
+    backups: ["@animica/security-council"]
+
+  - id: proofs
+    name: "Proof verifiers (hash/AI/quantum/storage/vdf)"
+    paths: ["proofs/**","docs/spec/proofs/**"]
+    maintainers: ["@animica/proofs","@farah","@qi"]
+    reviewers: ["@rhea","@sasha","@tariq"]
+    backups: ["@animica/security-council"]
+
+  - id: mining
+    name: "Mining/Stratum/GetWork"
+    paths: ["mining/**","docs/dev/QUICKSTART.md"]
+    maintainers: ["@animica/mining","@kirk"]
+    reviewers: ["@nate","@owen","@tariq"]
+    backups: ["@animica/ops-oncall"]
+
+  - id: p2p
+    name: "P2P transports, gossip, sync"
+    paths: ["p2p/**","docs/spec/P2P.md"]
+    maintainers: ["@animica/p2p","@ivan","@jules"]
+    reviewers: ["@kirk","@lina","@sasha"]
+    backups: ["@animica/security-council"]
+
+  - id: mempool
+    name: "Mempool & fee market"
+    paths: ["mempool/**","docs/spec/MEMPOOL.md"]
+    maintainers: ["@animica/mempool","@mira"]
+    reviewers: ["@ben","@emi","@owen"]
+    backups: ["@animica/core"]
+
+  - id: da
+    name: "Data Availability (NMT/erasure/retrieval)"
+    paths: ["da/**","docs/da/**"]
+    maintainers: ["@animica/da","@rhea"]
+    reviewers: ["@farah","@nate","@tariq"]
+    backups: ["@animica/consensus"]
+
+  - id: execution
+    name: "Execution engine (state, receipts)"
+    paths: ["execution/**","docs/execution/**","docs/spec/RECEIPTS_EVENTS.md"]
+    maintainers: ["@animica/execution","@gabe"]
+    reviewers: ["@lina","@mira","@owen"]
+    backups: ["@animica/core"]
+
+  - id: vm_py
+    name: "Python VM (validator, compiler, runtime)"
+    paths: ["vm_py/**","docs/vm/**"]
+    maintainers: ["@animica/vm","@pri"]
+    reviewers: ["@ben","@emi","@lina"]
+    backups: ["@animica/security-council"]
+
+  - id: capabilities
+    name: "Syscalls (blob/compute/zk/random/treasury)"
+    paths: ["capabilities/**","docs/spec/CAPABILITIES.md"]
+    maintainers: ["@animica/capabilities","@pri","@tariq"]
+    reviewers: ["@gabe","@nate","@rhea"]
+    backups: ["@animica/execution"]
+
+  - id: aicf
+    name: "AI Compute Fund (registry, payouts, SLA)"
+    paths: ["aicf/**","docs/aicf/**"]
+    maintainers: ["@animica/aicf","@farah"]
+    reviewers: ["@diego","@mira","@sasha"]
+    backups: ["@animica/economics"]
+
+  - id: randomness
+    name: "Beacon (commit→reveal→VDF→mix)"
+    paths: ["randomness/**","docs/randomness/**"]
+    maintainers: ["@animica/randomness","@jules"]
+    reviewers: ["@ivan","@kirk","@rhea"]
+    backups: ["@animica/security-council"]
+
+  - id: zk
+    name: "ZK verifiers/registry/native crate"
+    paths: ["zk/**"]
+    maintainers: ["@animica/zk","@qi"]
+    reviewers: ["@farah","@sasha","@tariq"]
+    backups: ["@animica/security-council"]
+
+  - id: wallet
+    name: "Wallets (extension + Flutter installers)"
+    paths: ["wallet-extension/**","installers/wallet/**","docs/dev/WALLET_*","docs/wallets/**"]
+    maintainers: ["@animica/wallet","@lina"]
+    reviewers: ["@emi","@mira","@owen"]
+    backups: ["@animica/release-engineering"]
+
+  - id: sdk
+    name: "SDKs & codegen (py/ts/rs)"
+    paths: ["sdk/**","docs/dev/SDK_*"]
+    maintainers: ["@animica/sdk-leads","@owen"]
+    reviewers: ["@emi","@lina","@pri"]
+    backups: ["@animica/specs"]
+
+  - id: studio
+    name: "Studio (wasm, services, web)"
+    paths: ["studio-wasm/**","studio-services/**","studio-web/**"]
+    maintainers: ["@animica/studio","@emi"]
+    reviewers: ["@lina","@owen","@pri"]
+    backups: ["@animica/release-engineering"]
+
+  - id: website
+    name: "Marketing/site (astro)"
+    paths: ["website/**"]
+    maintainers: ["@animica/web","@nate"]
+    reviewers: ["@emi","@lina"]
+    backups: ["@animica/editors"]
+
+  - id: installers
+    name: "Installers & CI signing"
+    paths: ["installers/**"]
+    maintainers: ["@animica/release-engineering","@kirk"]
+    reviewers: ["@nate","@owen"]
+    backups: ["@animica/security-council"]
+
+  - id: docs
+    name: "Documentation (general)"
+    paths: ["docs/**"]
+    maintainers: ["@animica/editors"]
+    reviewers: ["@animica/specs","@animica/consensus","@animica/core"]
+    backups: ["@animica/maintainers"]
+
+  - id: ops
+    name: "Ops/Seeds/Devnet"
+    paths: ["ops/**","docs/ops/**"]
+    maintainers: ["@animica/ops","@tariq"]
+    reviewers: ["@kirk","@nate"]
+    backups: ["@animica/ops-oncall"]
+
+  - id: governance
+    name: "Governance docs & registries"
+    paths: ["governance/**"]
+    maintainers: ["@animica/governance-editors"]
+    reviewers: ["@animica/maintainers","@animica/security-council"]
+    backups: ["@animica/foundation"]
+
+  - id: research
+    name: "Research notes & math"
+    paths: ["docs/research/**"]
+    maintainers: ["@animica/research","@sasha"]
+    reviewers: ["@diego","@rhea","@qi"]
+    backups: ["@animica/specs"]
+
+# Optional CODEOWNERS synthesis (consumed by a small CI tool to generate .github/CODEOWNERS)
+codeowners:
+  - pattern: "/spec/**"
+    owners: ["@animica/specs","@alice","@ben"]
+  - pattern: "/pq/**"
+    owners: ["@animica/pq","@carmen","@ivan"]
+  - pattern: "/core/**"
+    owners: ["@animica/core","@ben","@gabe"]
+  - pattern: "/rpc/**"
+    owners: ["@animica/rpc","@emi","@gabe"]
+  - pattern: "/consensus/**"
+    owners: ["@animica/consensus","@diego","@rhea"]
+  - pattern: "/proofs/**"
+    owners: ["@animica/proofs","@farah","@qi"]
+  - pattern: "/mining/**"
+    owners: ["@animica/mining","@kirk"]
+  - pattern: "/p2p/**"
+    owners: ["@animica/p2p","@ivan","@jules"]
+  - pattern: "/mempool/**"
+    owners: ["@animica/mempool","@mira"]
+  - pattern: "/da/**"
+    owners: ["@animica/da","@rhea"]
+  - pattern: "/execution/**"
+    owners: ["@animica/execution","@gabe"]
+  - pattern: "/vm_py/**"
+    owners: ["@animica/vm","@pri"]
+  - pattern: "/capabilities/**"
+    owners: ["@animica/capabilities","@pri","@tariq"]
+  - pattern: "/aicf/**"
+    owners: ["@animica/aicf","@farah"]
+  - pattern: "/randomness/**"
+    owners: ["@animica/randomness","@jules"]
+  - pattern: "/zk/**"
+    owners: ["@animica/zk","@qi"]
+  - pattern: "/wallet-extension/**"
+    owners: ["@animica/wallet","@lina"]
+  - pattern: "/sdk/**"
+    owners: ["@animica/sdk-leads","@owen"]
+  - pattern: "/studio-wasm/**"
+    owners: ["@animica/studio","@emi"]
+  - pattern: "/studio-services/**"
+    owners: ["@animica/studio","@emi"]
+  - pattern: "/studio-web/**"
+    owners: ["@animica/studio","@emi"]
+  - pattern: "/website/**"
+    owners: ["@animica/web","@nate"]
+  - pattern: "/installers/**"
+    owners: ["@animica/release-engineering","@kirk"]
+  - pattern: "/docs/**"
+    owners: ["@animica/editors"]
+  - pattern: "/governance/**"
+    owners: ["@animica/governance-editors"]
+

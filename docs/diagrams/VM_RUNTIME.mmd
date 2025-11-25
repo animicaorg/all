@@ -1,0 +1,112 @@
+%% Mermaid: VM Runtime — compiler → sandbox → syscalls
+%% View online: https://mermaid.live
+
+flowchart TB
+  %% ===================== SOURCES =====================
+  subgraph SRC[Contract Sources & Metadata]
+    direction TB
+    SrcPy[contract.py\n(deterministic Python subset)]:::data
+    Manifest[manifest.json\n(ABI, deploy meta, caps)]:::data
+  end
+
+  %% ===================== COMPILER =====================
+  subgraph COMP[Compiler Pipeline]
+    direction TB
+    Vld[Validator\n- forbidden imports\n- AST whitelist\n- recursion/size caps]:::compile
+    Lower[AST → Core Subset\n(ast_lower.py)]:::compile
+    Tchk[Typecheck\n(int/bytes/bool/address)]:::compile
+    IR[IR Build\n(ir.Module/Blocks/Instr)]:::compile
+    GasEst[Static Gas Estimator]:::compile
+    Enc[IR Encode\n(CBOR/msgspec)]:::compile
+  end
+
+  %% ===================== ARTIFACTS =====================
+  subgraph ART[Artifacts]
+    direction TB
+    CodeHash[Code Hash (keccak/sha3)\ncontent-addressed]:::artifact
+    ABI[ABI JSON (functions/events/errors)]:::artifact
+    Bytecode[IR Bytes\n(canonical encoding)]:::artifact
+  end
+
+  %% ===================== RUNTIME / LOADER =====================
+  subgraph RT[Runtime & Loader]
+    direction TB
+    Loader[Loader\n(load manifest + code → link stdlib)]:::runtime
+    Sandbox[Sandbox\n- inject stdlib module\n- ban sys I/O/time/threads\n- deterministic PRNG]:::runtime
+    Engine[Interpreter Engine\n(vm_py.runtime.engine)]:::runtime
+    ABI_disp[ABI Dispatcher\n(decode call → method → encode return)]:::runtime
+    Gmeter[GasMeter\n(debit/refund; OOG)]:::runtime
+    Ctx[Block/Tx Context\n(height, coinbase, gasPrice, chainId)]:::runtime
+    Events[Events API\n(deterministic ordering + topics)]:::runtime
+    Storage[Storage API\n(key/value; journaled)]:::runtime
+    Hashes[Hash API\n(keccak256/sha3_256/512)]:::runtime
+    Treasury[Treasury API\n(balance, transfer) — local sim safe]:::runtime
+    Syscalls[Syscalls API surface\n(blob_pin, ai_enqueue, quantum_enqueue,\nread_result, zk_verify, random)]:::runtime
+  end
+
+  %% ===================== HOST / CAPABILITIES =====================
+  subgraph HOST[Host Capability Providers (deterministic bridge)]
+    direction LR
+    Prov[capabilities.host.provider\n(registry + routing)]:::host
+    BlobHost[blob_pin → da.adapters]:::host
+    ComputeHost[ai_enqueue / quantum_enqueue\n→ aicf.adapters]:::host
+    ResultHost[read_result(task_id)\n(next-block deterministic read)]:::host
+    ZkHost[zk_verify(circuit, proof, input)\n→ zk/integration/omni_hooks]:::host
+    RandHost[random(bytes)\n(+beacon mix when available)]:::host
+    TresHost[treasury debit/credit hooks]:::host
+  end
+
+  %% ===================== EXECUTION & RECEIPTS =====================
+  subgraph EXEC[Execution Integration]
+    direction TB
+    ApplyTx[execution.runtime.executor.apply_tx]:::exec
+    Access[Access Tracker\n(access list capture)]:::exec
+    Receipt[Receipt Builder\n(status, gasUsed, logs, bloom)]:::exec
+  end
+
+  %% ===================== DATA FLOW =====================
+  SrcPy --> Vld --> Lower --> Tchk --> IR --> GasEst --> Enc
+  Manifest --> Vld
+  IR --> Bytecode --> CodeHash
+  ABI --> Loader
+  CodeHash --> Loader
+  Bytecode --> Loader --> Sandbox --> Engine
+  Engine -->|dispatch| ABI_disp
+  Ctx --> Engine
+  Gmeter <--> Engine
+  Storage <--> Engine
+  Events <--> Engine
+  Hashes --> Engine
+  Treasury --> Engine
+  Syscalls --> Engine
+
+  %% Syscalls bridge
+  Syscalls --> Prov
+  Prov --> BlobHost
+  Prov --> ComputeHost
+  Prov --> ResultHost
+  Prov --> ZkHost
+  Prov --> RandHost
+  Prov --> TresHost
+
+  %% Apply within node execution
+  Engine --> ApplyTx
+  ApplyTx --> Access
+  ApplyTx --> Receipt
+
+  %% ===================== NOTES =====================
+  %% - Validator + Sandbox enforce determinism: no wall-clock, FS, sockets, threads, RNG outside seeded stub.
+  %% - Gas metering is first-class: every IR op and stdlib/syscall has a fixed, documented cost.
+  %% - Syscalls are *deterministic interfaces*: enqueue returns a receipt/id; results are consumed at/after the
+  %%   next block via read_result(task_id) once corresponding on-chain proofs resolve into the store.
+  %% - zk_verify is pure and deterministic: verification depends only on inputs and pinned verification keys.
+  %% - Storage/events integrate with the node's execution journal to support revert/commit and receipt logs.
+  %% - CodeHash pins byte-for-byte IR to avoid malleability; ABI is used only for call decoding/encoding.
+
+  %% ===================== STYLES =====================
+  classDef data fill:#f3f4f6,stroke:#9aa,stroke-width:1,color:#111;
+  classDef compile fill:#93c5fd,stroke:#225,stroke-width:1,color:#001;
+  classDef artifact fill:#d1fae5,stroke:#065f46,stroke-width:1,color:#064e3b;
+  classDef runtime fill:#c4b5fd,stroke:#4c1d95,stroke-width:1,color:#2e1065;
+  classDef host fill:#a7f3d0,stroke:#065f46,stroke-width:1,color:#064e3b;
+  classDef exec fill:#fde68a,stroke:#92400e,stroke-width:1,color:#78350f;

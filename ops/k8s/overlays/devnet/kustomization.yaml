@@ -1,0 +1,80 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Devnet overlay applying on top of the base in ../../
+namespace: animica-devnet
+namePrefix: dev-
+commonLabels:
+  app.kubernetes.io/part-of: animica
+  app.kubernetes.io/environment: devnet
+  app.kubernetes.io/instance: devnet
+
+resources:
+  - ../../
+
+# Optional: override images for devnet builds (non-matching names are ignored)
+images:
+  - name: ghcr.io/animica/node
+    newTag: devnet
+  - name: ghcr.io/animica/miner
+    newTag: devnet
+  - name: ghcr.io/animica/explorer
+    newTag: devnet
+  - name: ghcr.io/animica/studio-services
+    newTag: devnet
+  - name: ghcr.io/animica/studio-web
+    newTag: devnet
+  - name: ghcr.io/animica/explorer-web
+    newTag: devnet
+
+# Optional tweaks; patches with unmatched targets are ignored safely.
+patches:
+  # Keep single replicas by default in devnet
+  - target:
+      kind: Deployment
+      name: miner
+      namespace: animica-devnet
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  - target:
+      kind: Deployment
+      name: explorer
+      namespace: animica-devnet
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  - target:
+      kind: Deployment
+      name: studio-web
+      namespace: animica-devnet
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  - target:
+      kind: Deployment
+      name: explorer-web
+      namespace: animica-devnet
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+
+  # Expose RPC and P2P as LoadBalancer if not already
+  - target:
+      kind: Service
+      name: node-rpc
+    patch: |-
+      - op: replace
+        path: /spec/type
+        value: LoadBalancer
+  - target:
+      kind: Service
+      name: node-p2p
+    patch: |-
+      - op: replace
+        path: /spec/type
+        value: LoadBalancer

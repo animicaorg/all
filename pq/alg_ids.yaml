@@ -1,0 +1,84 @@
+# Animica PQ Algorithm IDs (canonical)
+# -------------------------------------------------------------
+# These IDs are used everywhere a compact algorithm reference is
+# needed (addresses, tx SignBytes headers, P2P HELLO, alg-policy
+# Merkle tree leaves, RPC metadata).
+#
+# Conventions
+# - 0x1*** : Signature schemes
+# - 0x2*** : KEM schemes
+# - Values are uint16 in CBOR/MsgPack surfaces.
+# - Sizes are exact byte lengths for raw keys/signatures/ciphertexts.
+# - "nist_level" follows NIST PQC categories (1, 3, 5).
+#
+# NOTE: Public addresses use payload = alg_id || sha3_256(pubkey),
+# bech32m-encoded with network HRP (see spec/domains.yaml and pq/address.py).
+#
+version: 1
+updated: 2025-09-19
+registry:
+  - id: 0x1001
+    name: dilithium3
+    display: "CRYSTALS-Dilithium3"
+    kind: signature
+    nist_level: 3
+    status: active
+    sizes:
+      pk: 1952        # bytes
+      sk: 4000        # bytes
+      sig: 3293       # bytes (deterministic)
+    hashing:
+      address_hash: sha3_256
+      domain_default: "animica:tx:signbytes:v1"
+    notes:
+      - "Primary PQ signature for nodes & wallets."
+      - "Fast with liboqs; reference fallbacks are development-only."
+
+  - id: 0x1002
+    name: sphincs_shake_128s
+    display: "SPHINCS+ (SHAKE-128s)"
+    kind: signature
+    nist_level: 1
+    status: active
+    sizes:
+      pk: 64          # 32-byte root || 32-byte pub-seed
+      sk: 64          # 32 sk-seed || 32 sk-prf || (pub components)
+      sig: 7856       # bytes (128s parameter set)
+    hashing:
+      address_hash: sha3_256
+      domain_default: "animica:tx:signbytes:v1"
+    notes:
+      - "Stateless hash-based fallback; larger signatures."
+      - "Recommended for archival keys or special-purpose policy mixes."
+
+  - id: 0x2001
+    name: kyber768
+    display: "CRYSTALS-Kyber768"
+    kind: kem
+    nist_level: 3
+    status: active
+    sizes:
+      pk: 1184        # bytes
+      sk: 2400        # bytes
+      ct: 1088        # ciphertext bytes
+      ss: 32          # shared secret bytes
+    handshake:
+      kdf: hkdf_sha3_256
+      aead: chacha20_poly1305 # or aes_gcm by policy/feature flag
+      transcript_domain: "animica:p2p:handshake:v1"
+    notes:
+      - "Default KEM for P2P handshakes (AEAD keys via HKDF-SHA3-256)."
+
+# Reserved ranges for future extensions
+# 0x1003–0x10FF : other PQ signatures (Dilithium2/5, Falcon*, SPHINCS+ variants)
+# 0x2002–0x20FF : other KEMs (Kyber1024, ML-KEM profiles)
+# 0x3000–0x3FFF : hybrid or composite descriptors, if ever standardized
+
+# Cross-checks (non-consensus metadata)
+checks:
+  bech32_hrp_examples:
+    mainnet: anim
+    testnet: tnim
+    devnet: dnim
+  address_payload_length: 2 + 32   # alg_id (u16) + sha3_256(pubkey)
+

@@ -1,0 +1,66 @@
+{
+  "chain_id": "animica:1337",
+  "generated_at": "2025-10-03T00:00:00Z",
+  "seeds": [
+    {
+      "peer_id": "12D3KooWB8mX3o2cGxYvQ8rGg2G5LxqWkR9u1kJt9YpJr9cZk9dA",
+      "multiaddrs": [
+        "/dns/seed-us-1.devnet.animica.dev/udp/443/quic-v1",
+        "/ip4/198.51.100.23/udp/443/quic-v1",
+        "/ip4/198.51.100.23/tcp/30333"
+      ],
+      "region": "us-east",
+      "asn": 64497,
+      "score": 0.90,
+      "comment": "US primary QUIC + TCP fallback"
+    },
+    {
+      "peer_id": "12D3KooWJ7tqY2aKk4b1cVqX3nX9z4XgLr8f7wCv2mQh1sX5pRtE",
+      "multiaddrs": [
+        "/dns/seed-eu-1.devnet.animica.dev/udp/443/quic-v1",
+        "/ip4/203.0.113.10/udp/443/quic-v1",
+        "/ip4/203.0.113.10/tcp/30333"
+      ],
+      "region": "eu-west",
+      "asn": 64496,
+      "score": 0.92,
+      "comment": "EU primary; low RTT to US/EU"
+    },
+    {
+      "peer_id": "12D3KooWQx9f4c1mTaV6yHwJ2sPb7dKuZkGg1nXc3RvYb8WcLm9F",
+      "multiaddrs": [
+        "/dns/seed-ap-1.devnet.animica.dev/udp/443/quic-v1",
+        "/ip4/203.0.113.77/udp/443/quic-v1",
+        "/ip4/203.0.113.77/tcp/30333"
+      ],
+      "region": "ap-southeast",
+      "asn": 64500,
+      "score": 0.89,
+      "comment": "APAC primary"
+    },
+    {
+      "peer_id": "12D3KooWcVa6sGQ4ZxE4YgqZpLwB3mNnUy7cJt1QpHr5eFs2Kd1X",
+      "multiaddrs": [
+        "/dns/seed-us-2.devnet.animica.dev/udp/443/quic-v1",
+        "/ip4/198.51.100.45/udp/443/quic-v1",
+        "/ip4/198.51.100.45/tcp/30333"
+      ],
+      "region": "us-west",
+      "asn": 64498,
+      "score": 0.87,
+      "comment": "US secondary; different ASN"
+    },
+    {
+      "peer_id": "12D3KooWH3n8ePj2Qv9sLm4Za5YtCx7Vb2RqNp6Ud8KmRf1TgA2B",
+      "multiaddrs": [
+        "/dns/seed-eu-2.devnet.animica.dev/udp/443/quic-v1",
+        "/ip4/203.0.113.88/udp/443/quic-v1",
+        "/ip4/203.0.113.88/tcp/30333"
+      ],
+      "region": "eu-central",
+      "asn": 64501,
+      "score": 0.88,
+      "comment": "EU secondary; separate DC/provider"
+    }
+  ]
+}

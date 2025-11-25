@@ -1,0 +1,166 @@
+<!-- Animica — PoIES (Proof of Intelligent/Effective/Useful Work) Diagram
+     Section illustration showing the high-level flow: submit → orchestrate →
+     providers → Γ (Gamma) metering → validation → payouts/slashing.
+     ViewBox: 960×540, scalable. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" role="img" aria-labelledby="title desc">
+  <title id="title">PoIES Flow Diagram</title>
+  <desc id="desc">Task submitter sends work to the orchestrator, providers return results, Γ metering scores usefulness, validators verify, and payouts/slashing settle.</desc>
+
+  <defs>
+    <style>
+      :root { color: #2E63FF; }
+      .bg     { fill: #0B0F1C; }
+      .panel  { fill: #0F1426; stroke: #2A3353; }
+      .panel2 { fill: #101733; stroke: #2A3353; }
+      .node   { fill: #0E1222; stroke: #2E63FF; }
+      .sub    { fill: #0E1222; stroke: #16D2FF; }
+      .warn   { fill: #0E1222; stroke: #FF4DC1; }
+      .ok     { fill: #0E1222; stroke: #16D2FF; }
+      .grid   { stroke: #11182e; }
+      .txt    { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; fill: #E8ECF8; font-size: 14px; }
+      .title  { font-weight: 700; font-size: 16px; }
+      .mono   { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+      .muted  { fill: #A7B3CA; font-size: 12px; }
+      .label  { fill: #CFE0FF; font-size: 12px; }
+      .stroke { stroke: #7B88A3; }
+      .arrow  { stroke: #7B88A3; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+      .arrow2 { stroke: #2E63FF; stroke-width: 2; fill: none; marker-end: url(#arrowBlue); }
+      .dashed { stroke-dasharray: 6 6; }
+    </style>
+
+    <!-- Grid pattern (subtle) -->
+    <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
+      <path d="M20 0H0V20" class="grid" stroke-width="1" fill="none"/>
+    </pattern>
+
+    <!-- Arrowheads -->
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7B88A3"/>
+    </marker>
+    <marker id="arrowBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2E63FF"/>
+    </marker>
+
+    <!-- Γ gauge gradient -->
+    <linearGradient id="gGamma" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"  stop-color="#16D2FF"/>
+      <stop offset="50%" stop-color="#7B3DFF"/>
+      <stop offset="100%" stop-color="#FF4DC1"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="960" height="540" class="bg"/>
+  <rect x="0" y="0" width="960" height="540" fill="url(#grid)" opacity="0.25"/>
+
+  <!-- Left: Submitter -->
+  <g transform="translate(40,60)">
+    <rect x="0" y="0" width="240" height="90" rx="12" class="node"/>
+    <text x="16" y="28" class="txt title">Task Submitter</text>
+    <text x="16" y="50" class="txt muted">User / Contract / dApp</text>
+    <text x="16" y="72" class="txt mono">submit(job, constraints)</text>
+  </g>
+
+  <!-- Center: Orchestrator -->
+  <g transform="translate(360,210)">
+    <rect x="0" y="0" width="240" height="110" rx="12" class="node"/>
+    <text x="16" y="30" class="txt title">Work Orchestrator</text>
+    <text x="16" y="54"  class="txt">Routes tasks, verifies format,</text>
+    <text x="16" y="74"  class="txt">collects proofs & metrics</text>
+  </g>
+
+  <!-- Providers cluster -->
+  <g transform="translate(320,60)">
+    <rect x="0" y="0" width="320" height="120" rx="12" class="panel"/>
+    <text x="16" y="28" class="txt title">AICF Providers</text>
+
+    <g transform="translate(16,44)">
+      <rect x="0" y="0" width="90" height="56" rx="10" class="sub"/>
+      <text x="12" y="24" class="txt">AI</text>
+      <text x="12" y="44" class="muted">LLM / CV</text>
+    </g>
+
+    <g transform="translate(114,44)">
+      <rect x="0" y="0" width="90" height="56" rx="10" class="sub"/>
+      <text x="12" y="24" class="txt">Quantum</text>
+      <text x="12" y="44" class="muted">Anneal / NISQ</text>
+    </g>
+
+    <g transform="translate(212,44)">
+      <rect x="0" y="0" width="92" height="56" rx="10" class="sub"/>
+      <text x="12" y="24" class="txt">Compute</text>
+      <text x="12" y="44" class="muted">CPUs/GPUs</text>
+    </g>
+  </g>
+
+  <!-- Right: Validators -->
+  <g transform="translate(700,190)">
+    <rect x="0" y="0" width="220" height="120" rx="12" class="node"/>
+    <text x="16" y="30" class="txt title">Validators</text>
+    <text x="16" y="54" class="txt">Replay checks & spot audits</text>
+    <text x="16" y="76" class="txt">Verify proofs / constraints</text>
+  </g>
+
+  <!-- Bottom-right: Payouts/Slashing -->
+  <g transform="translate(700,350)">
+    <rect x="0" y="0" width="220" height="110" rx="12" class="node"/>
+    <text x="16" y="30" class="txt title">Payouts &amp; Slashing</text>
+    <text x="16" y="56" class="txt ok">γ ≥ threshold → reward</text>
+    <text x="16" y="82" class="txt warn">fraud / fail → slash</text>
+  </g>
+
+  <!-- Γ Meter -->
+  <g transform="translate(390,350)">
+    <rect x="0" y="0" width="200" height="110" rx="12" class="node"/>
+    <text x="16" y="30" class="txt title">Γ Meter</text>
+    <text x="16" y="52" class="txt">Useful-work score</text>
+
+    <!-- Gauge -->
+    <g transform="translate(22,64)">
+      <path d="M0,30 A30,30 0 0 1 120,30" fill="none" stroke="#2A3353" stroke-width="10"/>
+      <path d="M0,30 A30,30 0 0 1 90,30" fill="none" stroke="url(#gGamma)" stroke-width="10"/>
+      <circle cx="90" cy="30" r="6" fill="#CFE0FF"/>
+      <text x="0" y="52" class="muted">γ = 0.78</text>
+    </g>
+  </g>
+
+  <!-- Ledger band (background context) -->
+  <g transform="translate(40,480)">
+    <rect x="0" y="0" width="880" height="36" rx="8" class="panel2"/>
+    <text x="16" y="24" class="txt">Ledger (on-chain): commitments, proofs, γ, result hash, payouts/slashes</text>
+  </g>
+
+  <!-- Connectors -->
+  <!-- Submitter → Orchestrator -->
+  <path class="arrow2" d="M280,105 C320,105 340,210 360,235"/>
+
+  <!-- Orchestrator → Providers (fan-out) -->
+  <path class="arrow" d="M480,210 C480,160 420,160 420,132"/>
+  <path class="arrow" d="M480,210 C500,160 510,160 510,132"/>
+  <path class="arrow" d="M480,210 C520,160 600,160 600,132"/>
+
+  <!-- Providers → Orchestrator (returns) -->
+  <path class="arrow dashed" d="M420,132 C420,160 440,180 480,210"/>
+  <path class="arrow dashed" d="M510,132 C510,160 500,185 480,210"/>
+  <path class="arrow dashed" d="M600,132 C600,170 540,190 480,210"/>
+
+  <!-- Orchestrator → Γ -->
+  <path class="arrow2" d="M480,320 C480,335 490,340 490,350"/>
+
+  <!-- Γ → Validators -->
+  <path class="arrow2" d="M590,405 C640,405 700,280 700,250"/>
+
+  <!-- Validators → Payouts -->
+  <path class="arrow2" d="M810,310 C810,330 810,350 810,350"/>
+
+  <!-- Legend -->
+  <g transform="translate(40,18)">
+    <rect x="0" y="0" width="480" height="28" rx="8" class="panel2"/>
+    <circle cx="16" cy="14" r="5" fill="#2E63FF"/><text x="28" y="18" class="label">primary flow</text>
+    <circle cx="116" cy="14" r="5" fill="#7B88A3"/><text x="128" y="18" class="label">aux/return</text>
+    <rect x="220" y="7" width="20" height="10" fill="none" stroke="#7B88A3" class="dashed"/>
+    <text x="246" y="18" class="label">asynchronous</text>
+    <rect x="350" y="5" width="20" height="14" class="sub"/><text x="376" y="18" class="label">providers</text>
+  </g>
+
+</svg>

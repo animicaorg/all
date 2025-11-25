@@ -1,0 +1,257 @@
+# Animica — Voter Classes & Power Caps
+# This registry is consumed by tally tools and docs to:
+#  - classify voters into roles (by allowlists/tags),
+#  - apply class- and address-level caps,
+#  - expose proposal-type overrides (e.g., PQ rotations),
+#  - describe rights (propose, veto, fast-track),
+#  - document delegation limits and cooldowns.
+#
+# See also:
+#  - governance/THRESHOLDS.md           (quorum & supermajority per proposal type)
+#  - governance/PROPOSAL_TYPES.md       (canonical proposal type ids)
+#  - governance/DELEGATION.md           (how delegation works)
+#  - governance/ROLES.md                (human descriptions of each role)
+#  - governance/SECURITY_COUNCIL.md     (emergency powers & time-bounds)
+
+version: 1
+updated: "2025-10-12"
+schema_ref: "governance/schemas/voter_roles.schema.json#"
+notes: |
+  Caps are applied on *effective voting power* after delegation aggregation.
+  Each class cap is a hard upper bound on the fraction of the *total tallied
+  voting power* that can be attributed to that class for a given proposal.
+  If multiple classes hit their caps simultaneously, the tally engine
+  proportionally scales down the over-capped classes and renormalizes.
+
+# Canonical proposal types (must match governance/PROPOSAL_TYPES.md)
+proposal_types:
+  - ParamChange
+  - Upgrade
+  - PQRotation
+  - Policy
+  - Treasury
+
+global:
+  # The snapshot that defines "who can vote" and stake balances.
+  # Tools should accept a block number or timestamp; this is a human note.
+  snapshot_hint: "Block-height or timestamp snapshot; fixed per proposal at creation."
+  abstain_counts_for_quorum: true
+  # Raw per-address cap to limit dominance from a single entity, independent of class.
+  per_address_cap_pct_of_total: 5.0
+  # Delegation plumbing
+  delegation:
+    enabled: true
+    max_chain_depth: 4                 # A -> B -> C -> D is ok; deeper is rejected
+    redelegation_cooldown_days: 7
+    max_incoming_delegators_per_target: 10000
+  withheld_power_reallocation: "proportional"  # How to renormalize when caps bite
+  identity_attestation_hint: |
+    Custodial & exchange clusters should use proof-of-custody attestations to
+    tag addresses as 'custodial_exchange' to ensure the correct caps are applied.
+
+classes:
+  - id: token_voter
+    name: "Liquid Token Holders"
+    description: "Any address holding ANM at the snapshot."
+    eligibility:
+      source: "onchain_balance"
+      min_stake_anm: 1
+    voting_enabled: true
+    # Hard cap of this class's share of the *total* vote, across all addresses in the class.
+    cap_pct_of_total: 40.0
+    per_address_cap_pct_of_total: 5.0
+    weight_multiplier: 1.0
+    delegation:
+      allowed: true
+      can_receive_from: ["*"]
+      can_subdelegate: true
+    rights:
+      can_propose: ["ParamChange","Policy","Treasury"]
+      can_fast_track: []
+      can_veto: []
+    conflict_of_interest: "General market participants; no special COI obligations."
+
+  - id: delegate
+    name: "Recognized Delegates"
+    description: "Community delegates listed in the delegates registry with public disclosures."
+    eligibility:
+      source: "registry"
+      registry_ref: "governance/DELEGATION.md"
+      min_stake_anm: 0
+      min_delegated_anm: 100_000
+    voting_enabled: true
+    cap_pct_of_total: 35.0
+    per_address_cap_pct_of_total: 6.0
+    weight_multiplier: 1.0
+    delegation:
+      allowed: true
+      can_receive_from: ["token_voter","ecosystem_partner","foundation"]
+      can_subdelegate: false
+    rights:
+      can_propose: ["ParamChange","Policy","Treasury"]
+      can_fast_track: []
+      can_veto: []
+    disclosures_required: true
+
+  - id: maintainers
+    name: "Maintainers"
+    description: "Technical maintainers per governance/MAINTAINERS.md"
+    eligibility:
+      source: "registry"
+      registry_ref: "governance/MAINTAINERS.md"
+    voting_enabled: true
+    cap_pct_of_total: 10.0
+    per_address_cap_pct_of_total: 2.0
+    weight_multiplier: 1.0
+    delegation:
+      allowed: false
+    rights:
+      can_propose: ["Upgrade","ParamChange","Policy"]
+      can_fast_track: ["Upgrade"]
+      can_veto: []
+
+  - id: security_council
+    name: "Security Council"
+    description: "Elected multisig with narrowly scoped emergency powers."
+    eligibility:
+      source: "registry"
+      registry_ref: "governance/SECURITY_COUNCIL.md"
+    voting_enabled: true
+    cap_pct_of_total: 15.0
+    per_address_cap_pct_of_total: 3.0
+    weight_multiplier: 1.0
+    delegation:
+      allowed: false
+    rights:
+      can_propose: ["Upgrade","PQRotation","Policy"]
+      can_fast_track: ["Upgrade","PQRotation"]
+      can_veto:
+        - type: "emergency_only"
+          window_hours: 72
+          quorum_requirement: "2/3 of council signers"
+    notes: "Fast-track limited to security fixes; subject to postmortem and sunset."
+
+  - id: foundation
+    name: "Foundation/Steward"
+    description: "Nonprofit steward; limited governance influence."
+    eligibility:
+      source: "legal_entity"
+    voting_enabled: true
+    cap_pct_of_total: 10.0
+    per_address_cap_pct_of_total: 5.0
+    weight_multiplier: 1.0
+    delegation:
+      allowed: true
+      can_receive_from: ["*"]
+      can_subdelegate: false
+    rights:
+      can_propose: ["Treasury","Policy","ParamChange"]
+      can_fast_track: []
+      can_veto: []
+    notes: "Treasury proposals must include transparency report & auditor attestation."
+
+  - id: ecosystem_partner
+    name: "Ecosystem Partners"
+    description: "Projects and organizations whitelisted by governance."
+    eligibility:
+      source: "registry"
+      criteria: "Partnership MOU + minimum on-chain activity"
+    voting_enabled: true
+    cap_pct_of_total: 10.0
+    per_address_cap_pct_of_total: 3.0
+    weight_multiplier: 1.0
+    delegation:
+      allowed: true
+      can_receive_from: ["token_voter"]
+      can_subdelegate: false
+    rights:
+      can_propose: ["Policy","ParamChange"]
+      can_fast_track: []
+      can_veto: []
+
+  - id: custodial_exchange
+    name: "Custodial Exchanges"
+    description: "Centralized custodians voting on behalf of depositors."
+    eligibility:
+      source: "attestation"
+      criteria: "Proof-of-custody + segregation attestations"
+    voting_enabled: true
+    cap_pct_of_total: 5.0
+    per_address_cap_pct_of_total: 3.0
+    weight_multiplier: 1.0
+    delegation:
+      allowed: false
+    rights:
+      can_propose: []
+      can_fast_track: []
+      can_veto: []
+    notes: "Encouraged to pass-through voting to depositors."
+
+  - id: observer
+    name: "Observers/Advisors (non-voting)"
+    description: "Advisory role for comment-only; cannot vote."
+    voting_enabled: false
+    rights:
+      can_propose: []
+      can_fast_track: []
+      can_veto: []
+
+# Per-proposal-type overrides (only list differences from class defaults)
+overrides:
+  Upgrade:
+    class_caps:
+      maintainers: 15.0          # maintainers increased due to technical nature
+      security_council: 20.0     # council has more weight for urgent upgrades
+      token_voter: 35.0
+      delegate: 30.0
+  PQRotation:
+    class_caps:
+      security_council: 30.0     # elevated given time-sensitive PQ rotations
+      delegate: 25.0
+      token_voter: 30.0
+      maintainers: 10.0
+  Treasury:
+    class_caps:
+      foundation: 20.0           # foundation has program context
+      token_voter: 50.0
+      delegate: 35.0
+  ParamChange:
+    class_caps:
+      token_voter: 45.0
+      delegate: 35.0
+      maintainers: 10.0
+  Policy:
+    # use defaults (no overrides)
+
+# Implementation notes for tally engines
+engine:
+  algorithm: |
+    1) Aggregate delegated voting power to targets at snapshot.
+    2) For each voter, apply per_address_cap: v_i = min(raw_i, cap_addr * Total).
+    3) Sum by class; compute class shares S_c.
+    4) If any S_c > cap_class[c], scale class c down to cap_class[c] * Total.
+       Redistribute the excess by proportional scaling across non-capped classes.
+    5) Apply proposal-type overrides (if any) at step (4).
+  abstain_weight: 1.0           # counts fully toward quorum if abstain_counts_for_quorum=true
+  tie_break: "fail"             # ties fail & can be re-proposed
+  audit_fields:
+    - "snapshot_height"
+    - "delegation_graph_hash"
+    - "voter_classification_hash"
+    - "per_class_caps_applied"
+    - "renormalization_vector"
+
+# Minimal example (for tools/tests)
+example:
+  total_supply_snapshot_anm: 1_000_000_000
+  votes:
+    - address: "anm1abcd..."
+      class: "token_voter"
+      raw_power_anm: 30_000_000
+    - address: "anm1wxyz..."
+      class: "custodial_exchange"
+      raw_power_anm: 80_000_000
+  expected_behavior: |
+    Custodial exchange is capped at 5% of total effective power; token_voter
+    class capped at 40% (or override). Engine renormalizes to maintain 100%.
+

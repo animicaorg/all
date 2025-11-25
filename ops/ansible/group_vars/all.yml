@@ -1,0 +1,277 @@
+# -----------------------------------------------------------------------------
+# Animica Ansible — group_vars/all.yml
+# Global defaults for all hosts and environments.
+# Override per-environment in: ops/ansible/group_vars/{devnet,prod}.yml (optional)
+# -----------------------------------------------------------------------------
+
+# ---- Environment -------------------------------------------------------------
+animica_env: devnet                 # devnet | testnet | prod
+animica_domain_root: animica.local  # used by ingress/proxies (override in prod)
+chain_id: 1337                      # animica:1 mainnet, :2 testnet, :1337 devnet
+
+# ---- Paths & Layout ----------------------------------------------------------
+animica_user: animica
+animica_group: animica
+
+# Where compose/files live on targets
+animica_root_dir: /opt/animica
+animica_compose_dir: "{{ animica_root_dir }}/compose"
+
+# Persistent data locations
+animica_var_dir: /var/lib/animica
+node_data_dir:    "{{ animica_var_dir }}/node"
+miner_data_dir:   "{{ animica_var_dir }}/miner"
+services_data_dir:"{{ animica_var_dir }}/services"
+explorer_data_dir:"{{ animica_var_dir }}/explorer"
+observability_var_dir: /var/lib/animica-observability
+
+# Config mounts (rendered from templates or synced files)
+animica_etc_dir: /etc/animica
+node_config_dir: "{{ animica_etc_dir }}/node"
+miner_config_dir:"{{ animica_etc_dir }}/miner"
+services_config_dir:"{{ animica_etc_dir }}/services"
+explorer_config_dir:"{{ animica_etc_dir }}/explorer"
+
+# ---- Container Images (override tags per rollout) ---------------------------
+images:
+  node:
+    repo: ghcr.io/animica/node
+    tag: latest
+  miner:
+    repo: ghcr.io/animica/miner
+    tag: latest
+  explorer:
+    repo: ghcr.io/animica/explorer
+    tag: latest
+  studio_services:
+    repo: ghcr.io/animica/studio-services
+    tag: latest
+  studio_web:
+    repo: ghcr.io/animica/studio-web
+    tag: latest
+  explorer_web:
+    repo: ghcr.io/animica/explorer-web
+    tag: latest
+  prometheus:
+    repo: prom/prometheus
+    tag: v2.54.1
+  grafana:
+    repo: grafana/grafana
+    tag: 11.1.3
+  loki:
+    repo: grafana/loki
+    tag: 3.1.1
+  promtail:
+    repo: grafana/promtail
+    tag: 3.1.1
+  tempo:
+    repo: grafana/tempo
+    tag: 2.5.0
+
+# ---- Networking (defaults; can be per-host) ---------------------------------
+# Public bind addresses; set to "0.0.0.0" for internet exposure (use firewalls!)
+node_rpc_host: "0.0.0.0"
+node_rpc_port_http: 8545
+node_rpc_port_ws:   8546
+
+# P2P (QUIC/TCP/WS) — ensure firewall allows/limits as appropriate
+p2p_quic_port: 31001/udp
+p2p_tcp_port:  31002
+p2p_ws_port:   31003
+
+# Metrics ports
+node_metrics_port:     9301
+miner_metrics_port:    9302
+explorer_metrics_port: 9303
+services_metrics_port: 9304
+da_metrics_port:       9305
+aicf_metrics_port:     9306
+randomness_metrics_port: 9307
+p2p_metrics_port:      9308
+
+# Web services
+explorer_http_port: 8700
+studio_services_http_port: 8800
+studio_web_http_port: 8081
+explorer_web_http_port: 8082
+
+# ---- RPC & CORS / Security ---------------------------------------------------
+# For node RPC & studio-services
+cors_allowlist:
+  - "http://localhost:5173"             # dev: vite default
+  - "http://localhost:{{ studio_web_http_port }}"
+  - "http://localhost:{{ explorer_web_http_port }}"
+  - "https://studio.{{ animica_domain_root }}"
+  - "https://explorer.{{ animica_domain_root }}"
+
+rpc_rate_limits:
+  # token-bucket style: requests per second burst
+  default_rps: 10
+  burst: 50
+  per_ip_overrides: {}
+  method_overrides:
+    "tx.sendRawTransaction": { rps: 3, burst: 10 }
+    "state.getBalance":      { rps: 30, burst: 120 }
+
+# Optional IP allowlist for admin-only paths (empty = disabled)
+admin_ip_allowlist: []
+
+# ---- Seeds / Bootstrapping ---------------------------------------------------
+# Used by node to join the network. Provide at least one reachable address.
+# Multiaddr-like strings or host:port; QUIC examples use /quic
+bootstrap_nodes:
+  - "/ip4/203.0.113.10/udp/31001/quic"   # sample; replace in real deployments
+  - "/dns/seeds.{{ animica_domain_root }}/udp/31001/quic"
+
+dns_seeds:
+  - "seeds.{{ animica_domain_root }}"
+
+# ---- Chain Files (mounted into containers) -----------------------------------
+genesis_json_src:     "{{ playbook_dir }}/../tests/devnet/genesis_config.json"
+chain_params_yaml_src:"{{ playbook_dir }}/../spec/params.yaml"
+
+# ---- Node Configuration ------------------------------------------------------
+node_log_level: info
+node_extra_args: []  # additional CLI args list if the image supports CLI flags
+
+# ---- Miner Configuration -----------------------------------------------------
+miner_threads: 4
+miner_device: "cpu"         # cpu | cuda | rocm | opencl | metal
+miner_share_target_micro: 1000   # devnet-friendly
+miner_rpc_url: "http://127.0.0.1:{{ node_rpc_port_http }}"  # local by default
+miner_ws_url:  "ws://127.0.0.1:{{ node_rpc_port_ws }}"
+
+# ---- Studio Services (API proxy) --------------------------------------------
+services_env:
+  RPC_URL: "http://127.0.0.1:{{ node_rpc_port_http }}"
+  CHAIN_ID: "{{ chain_id }}"
+  CORS_ALLOWLIST: "{{ cors_allowlist | join(',') }}"
+  RATE_LIMITS_DEFAULT_RPS: "{{ rpc_rate_limits.default_rps }}"
+  RATE_LIMITS_BURST: "{{ rpc_rate_limits.burst }}"
+  # Optional faucet; leave empty to disable
+  FAUCET_KEY: ""
+  STORAGE_DIR: "{{ services_data_dir }}"
+
+# ---- Explorer API ------------------------------------------------------------
+explorer_config:
+  RPC_URL: "http://127.0.0.1:{{ node_rpc_port_http }}"
+  WS_URL:  "ws://127.0.0.1:{{ node_rpc_port_ws }}"
+  CHAIN_ID: "{{ chain_id }}"
+  BIND_HOST: "0.0.0.0"
+  BIND_PORT: "{{ explorer_http_port }}"
+  METRICS_PORT: "{{ explorer_metrics_port }}"
+  LOG_LEVEL: info
+
+# ---- Web UIs (static) --------------------------------------------------------
+studio_web_env:
+  VITE_RPC_URL: "http://127.0.0.1:{{ node_rpc_port_http }}"
+  VITE_CHAIN_ID: "{{ chain_id }}"
+  VITE_SERVICES_URL: "http://127.0.0.1:{{ studio_services_http_port }}"
+
+explorer_web_env:
+  VITE_RPC_URL: "http://127.0.0.1:{{ node_rpc_port_http }}"
+  VITE_CHAIN_ID: "{{ chain_id }}"
+  VITE_EXPLORER_API: "http://127.0.0.1:{{ explorer_http_port }}"
+  VITE_SERVICES_URL: "http://127.0.0.1:{{ studio_services_http_port }}"
+
+# ---- Observability -----------------------------------------------------------
+deploy_observability: true
+observability:
+  prometheus:
+    port: 9090
+    data_dir: "{{ observability_var_dir }}/prometheus"
+    scrape_interval: 15s
+    external_labels:
+      cluster: "{{ animica_env }}"
+  grafana:
+    port: 3000
+    data_dir: "{{ observability_var_dir }}/grafana"
+    admin_user: admin
+    admin_password: admin
+  loki:
+    port: 3100
+    data_dir: "{{ observability_var_dir }}/loki"
+  promtail:
+    # Paths promtail will watch on each host
+    log_paths:
+      - /var/log/*.log
+      - "{{ animica_var_dir }}/**/*.log"
+  tempo:
+    port: 3200
+    data_dir: "{{ observability_var_dir }}/tempo"
+    enabled: false
+
+# Prometheus scrape targets (auto-templated per host)
+prometheus_static_targets:
+  node:
+    - "localhost:{{ node_metrics_port }}"
+  miner:
+    - "localhost:{{ miner_metrics_port }}"
+  explorer:
+    - "localhost:{{ explorer_metrics_port }}"
+  services:
+    - "localhost:{{ services_metrics_port }}"
+  p2p:
+    - "localhost:{{ p2p_metrics_port }}"
+  da:
+    - "localhost:{{ da_metrics_port }}"
+  aicf:
+    - "localhost:{{ aicf_metrics_port }}"
+  randomness:
+    - "localhost:{{ randomness_metrics_port }}"
+
+# ---- TLS / Ingress (nginx or k8s ingress controllers) -----------------------
+tls_enabled: false
+letsencrypt_email: "you@example.com"
+ingress_hosts:
+  rpc:       "rpc.{{ animica_domain_root }}"
+  studio:    "studio.{{ animica_domain_root }}"
+  explorer:  "explorer.{{ animica_domain_root }}"
+  services:  "services.{{ animica_domain_root }}"
+
+# ---- System / Packages -------------------------------------------------------
+# Let roles decide what to install; these drive generic tasks in playbooks.
+packages_common:
+  - curl
+  - jq
+  - ca-certificates
+  - unzip
+  - tar
+
+docker:
+  install: true
+  state: present
+  compose_plugin: true
+
+# ---- Firewall (optional; only applied if a firewall role is used) -----------
+firewall:
+  enabled: false
+  allow_tcp:
+    - 22                                   # SSH
+    - "{{ node_rpc_port_http }}"
+    - "{{ node_rpc_port_ws }}"
+    - "{{ explorer_http_port }}"
+    - "{{ studio_services_http_port }}"
+    - "{{ studio_web_http_port }}"
+    - "{{ explorer_web_http_port }}"
+    - "{{ observability.prometheus.port }}"
+    - "{{ observability.grafana.port }}"
+  allow_udp:
+    - "{{ (p2p_quic_port | string).split('/')[0] | int | default(31001) }}"
+
+# ---- Backups (placeholders) --------------------------------------------------
+backups:
+  enabled: false
+  target: s3://my-bucket/animica
+  include_paths:
+    - "{{ node_data_dir }}"
+    - "{{ services_data_dir }}"
+    - "{{ explorer_data_dir }}"
+  schedule: "daily 03:00"
+
+# ---- Misc --------------------------------------------------------------------
+timezone: "UTC"
+ulimits:
+  nofile: 1048576
+  nproc:  65536
+

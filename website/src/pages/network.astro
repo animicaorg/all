@@ -1,0 +1,183 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import InlineLink from "../components/InlineLink.astro";
+import StatusBadge from "../components/StatusBadge.tsx";
+import MetricTicker from "../components/MetricTicker.tsx";
+import CodeBlock from "../components/CodeBlock.astro";
+
+import { chains } from "../config/chains";
+import { links } from "../config/links";
+
+const pageTitle = "Networks — Chain list & RPC endpoints";
+const pageDesc =
+  "Browse available Animica networks, their chain IDs, RPC endpoints, and Explorer links.";
+
+type Rpcish = string | undefined;
+
+function firstRpc(c: any): Rpcish {
+  // Try common shapes produced by chain registries
+  // 1) c.rpcUrls.public.http[0] (viem/ethers-style)
+  // 2) c.rpcUrls[0] or c.rpc
+  // 3) fallback to global env RPC (links.rpc.url)
+  try {
+    if (c?.rpcUrls?.public?.http?.[0]) return c.rpcUrls.public.http[0] as string;
+    if (Array.isArray(c?.rpcUrls) && c.rpcUrls[0]) return c.rpcUrls[0] as string;
+    if (typeof c?.rpc === "string") return c.rpc as string;
+  } catch {}
+  return links.rpc.url;
+}
+
+const primary = chains.find((c: any) => c.id === 1) ?? chains[0];
+const primaryRpc = firstRpc(primary);
+const chainCount = chains.length;
+---
+
+<BaseLayout title={pageTitle} description={pageDesc}>
+  <section class="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-10 sm:py-14">
+    <h1 class="text-3xl sm:text-4xl font-semibold tracking-tight">Networks</h1>
+    <p class="mt-3 text-base opacity-80">
+      This page lists known Animica networks discovered at build time. The canonical main
+      network is <strong>Animica (chainId = 1)</strong>. Use the RPC endpoints below in your
+      tools, SDKs, or wallet configuration.
+    </p>
+
+    <div class="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div class="rounded-xl border p-4 sm:p-5 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-medium opacity-80">Mainnet status</h3>
+          <StatusBadge client:load rpcUrl={primaryRpc} />
+        </div>
+        <p class="mt-3 text-2xl font-semibold tracking-tight">
+          <MetricTicker client:load rpcUrl={primaryRpc} kind="height" />
+        </p>
+        <p class="text-xs opacity-70 mt-1">Head height</p>
+      </div>
+
+      <div class="rounded-xl border p-4 sm:p-5 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <h3 class="text-sm font-medium opacity-80">Primary RPC</h3>
+        <p class="mt-3 font-mono text-xs break-all">{primaryRpc}</p>
+        <p class="text-xs opacity-70 mt-1">Animica (chainId=1)</p>
+      </div>
+
+      <div class="rounded-xl border p-4 sm:p-5 bg-[var(--bg-elevated)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+        <h3 class="text-sm font-medium opacity-80">Total chains</h3>
+        <p class="mt-3 text-2xl font-semibold tracking-tight">{chainCount}</p>
+        <p class="text-xs opacity-70 mt-1">Imported from registry</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Chain list -->
+  <section class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
+    <div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+      {chains.map((c: any) => {
+        const rpc = firstRpc(c);
+        const explorer = c.explorerUrl ?? (links.explorer?.home ?? "#");
+        return (
+          <div class="rounded-2xl border p-5 bg-[var(--bg-elevated)]
+                      border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h3 class="text-lg font-semibold tracking-tight">
+                  {c.name ?? "Unnamed Network"}
+                </h3>
+                <p class="text-xs opacity-70 mt-0.5">
+                  chainId <span class="font-mono">{c.id ?? "?"}</span>
+                  {c?.testnet ? " · testnet" : ""}
+                </p>
+              </div>
+              <div class="shrink-0">
+                <StatusBadge client:load rpcUrl={rpc} />
+              </div>
+            </div>
+
+            <dl class="mt-4 space-y-2">
+              <div>
+                <dt class="text-xs opacity-70">RPC</dt>
+                <dd class="mt-0.5 font-mono text-xs break-all">
+                  {rpc}
+                </dd>
+              </div>
+              <div>
+                <dt class="text-xs opacity-70">Explorer</dt>
+                <dd class="mt-0.5 text-sm">
+                  <InlineLink href={c.explorerUrl ?? explorer} underline>
+                    {c.explorerUrl ?? explorer}
+                  </InlineLink>
+                </dd>
+              </div>
+              {c?.studioUrl && (
+                <div>
+                  <dt class="text-xs opacity-70">Studio</dt>
+                  <dd class="mt-0.5 text-sm">
+                    <InlineLink href={c.studioUrl} underline>{c.studioUrl}</InlineLink>
+                  </dd>
+                </div>
+              )}
+              {c?.symbol && (
+                <div>
+                  <dt class="text-xs opacity-70">Native token</dt>
+                  <dd class="mt-0.5 text-sm">{c.symbol}</dd>
+                </div>
+              )}
+            </dl>
+
+            <div class="mt-4 flex gap-2">
+              <a
+                href={(c.explorerUrl ?? explorer)}
+                target="_blank" rel="noopener noreferrer"
+                class="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-sm
+                       border border-[color-mix(in_srgb,var(--text-primary)_/_16%,transparent)]
+                       hover:bg-[color-mix(in_srgb,var(--text-primary)_/_6%,transparent)]">
+                Open Explorer
+              </a>
+              <a
+                href={rpc}
+                target="_blank" rel="noopener noreferrer"
+                class="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-sm
+                       border border-[color-mix(in_srgb,var(--text-primary)_/_16%,transparent)]
+                       hover:bg-[color-mix(in_srgb,var(--text-primary)_/_6%,transparent)]">
+                Open RPC
+              </a>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  </section>
+
+  <!-- Usage examples -->
+  <section class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 my-12 sm:my-16">
+    <div class="rounded-2xl border p-6 sm:p-8 bg-[var(--bg-elevated)]
+                border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
+      <h2 class="text-xl font-semibold tracking-tight">Quickstart</h2>
+      <div class="mt-4 grid gap-6 md:grid-cols-2">
+        <CodeBlock lang="bash" title="Query head via cURL">
+{`curl -s ${primaryRpc}/rpc \\
+  -H 'content-type: application/json' \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"chain.getHead","params":[]}' | jq .`}
+        </CodeBlock>
+
+        <CodeBlock lang="ts" title="TypeScript SDK (connect & get head)">
+{`import { Client } from '@animica/sdk';
+const client = new Client({ rpcUrl: '${primaryRpc}' });
+const head = await client.http.request('chain.getHead', []);
+console.log(head.height, head.hash);`}
+        </CodeBlock>
+      </div>
+    </div>
+  </section>
+
+  <!-- Add a custom network -->
+  <section class="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 mb-16 sm:mb-24">
+    <h2 class="text-xl font-semibold tracking-tight">Add a custom network</h2>
+    <p class="mt-2 text-sm opacity-80">
+      This site imports chains at build time. To add or override entries, edit your
+      chain registry (e.g. <code>website/chains/*.json</code>) or set environment variables that
+      influence the default RPC/Chain ID (<code>.env</code> → <code>PUBLIC_RPC_URL</code>, <code>PUBLIC_CHAIN_ID</code>).
+    </p>
+  </section>
+</BaseLayout>

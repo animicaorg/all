@@ -1,0 +1,7 @@
+packages:
+  - sdk
+  - studio-wasm
+  - website
+  - explorer-web
+  - studio-web
+  - wallet

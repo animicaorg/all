@@ -1,0 +1,19 @@
+{
+  "id": "animica.testnet",
+  "chainId": 2,
+  "name": "Animica Testnet (Public Devnet)",
+  "rpc": [
+    "https://rpc.testnet.animica.org",
+    "wss://ws.testnet.animica.org"
+  ],
+  "explorer": "https://explorer.testnet.animica.org",
+  "testnet": true,
+  "docs": "https://docs.animica.org/network/testnet",
+  "faucets": ["https://faucet.testnet.animica.org"],
+  "status": "online",
+  "features": ["PoIES", "DA", "VM(Py)", "PQ", "Quantum", "AICF"],
+  "blockTimeMs": 2000,
+  "finality": "probabilistic",
+  "caip2": "animica:2",
+  "notes": "Default public devnet endpoints; rate limited and reset periodically."
+}

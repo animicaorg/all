@@ -1,0 +1,150 @@
+---
+title: "Quantum, Day 1: Trap-Circuits, Attestations, and Payouts"
+description: "Bringing verifiable quantum work into Animica via AICF: provider onboarding, trap sampling, proof format, and how miners attach quantum units to blocks."
+date: 2025-10-09
+author: "Animica Research"
+tags:
+  - quantum
+  - aicf
+  - proofs
+  - traps
+  - zk
+hero: "/icons/logo.svg"
+---
+
+> **TL;DR** — The **AI Compute Fund (AICF)** can now schedule **quantum jobs** and accept **verifiable receipts** backed by trap-circuit checks and provider attestations. Miners attach a `QuantumProof` to candidate blocks; PoIES scores it (with caps) alongside hashing and other useful-work signals.
+
+---
+
+## What shipped today
+
+- **Provider registry & staking**: identity certs, capability flags, liveness heartbeats.
+- **Trap-circuit pipeline**: embed random traps in user circuits; verify outcome distributions.
+- **Proof envelope** (`QuantumProof v1`): attestation bundle + trap outcomes + QoS metrics.
+- **Consensus mapping**: verified metrics → `ψ_quantum` via policy; per-type/Γ caps enforced.
+- **SDK hooks**: enqueue → get result; miners package receipts into blocks.
+
+See: `aicf/registry/*`, `proofs/quantum.py`, `proofs/quantum_attest/*`, `consensus/policy.py`, `consensus/scorer.py`.
+
+---
+
+## The quantum flow (high level)
+
+enqueue → (queue) → assignment → run(circuit+traps) → receipt
+↘ retries / timeout          ↘ attest+metrics → QuantumProof
+miner attaches proof → block accepted?
+
+1. **Client** enqueues a job (depth×width×shots) with a fee budget.
+2. **Matcher** assigns to an eligible provider (stake, health, region, alg support).
+3. **Provider** runs the circuit with hidden **trap insertions**.
+4. **Receipt** includes: provider cert, run transcript, trap outcomes, QoS stats.
+5. **QuantumProof** is derived and **bound to the header**; PoIES scores `ψ`.
+
+---
+
+## Quickstart: enqueue & consume (Python SDK)
+
+```python
+from omni_sdk.aicf.client import AICFClient
+from omni_sdk.config import Config
+import json
+
+cfg = Config(rpc_url="http://127.0.0.1:8545", chain_id=1)
+aicf = AICFClient(cfg)
+
+job = {
+  "kind": "quantum",
+  "circuit": {"gates": [["H",0],["CNOT",0,1]], "qubits": 2, "shots": 2048},
+  "max_fee": {"unit":"quantum_units","amount": 200},
+}
+j = aicf.enqueue(job)
+print("task_id:", j["task_id"])
+
+# … wait next block …
+res = aicf.get_result(j["task_id"])
+print("status:", res["status"], "metrics:", res.get("metrics"))
+
+Miners with mining/quantum_worker.py enabled will pick up eligible jobs, and once verified, the result becomes available next block.
+
+⸻
+
+Provider onboarding (CLI)
+
+# 1) Register with attestation bundle
+python -m aicf.cli.provider_register \
+  --name "Qubit Labs" \
+  --capabilities quantum \
+  --attest proofs/fixtures/qpu_provider_cert.json
+
+# 2) Stake minimum
+python -m aicf.cli.provider_stake --amount 10000
+
+# 3) Send periodic heartbeats (ops)
+python -m aicf.cli.provider_heartbeat
+
+A valid provider cert example (trimmed):
+
+{
+  "provider_id": "qubit-labs-01",
+  "pubkey": "ed25519:8f…",
+  "alg": "ed25519+pq_hybrid",
+  "hardware": {"family":"ion-trap","model":"QL-7"},
+  "attest": {
+    "ts": "2025-10-09T12:00:00Z",
+    "signature": "base64…"
+  }
+}
+
+
+⸻
+
+Proof anatomy (QuantumProof v1)
+	•	ProviderAttest: identity/cert chain, signature over job digest.
+	•	TrapReport: number of traps, expected vs observed error rates, confidence bounds.
+	•	QoS: latency percentiles, availability, job success ratio.
+	•	Binding: H(chainId | headerHash | task_id | payload_digest) prevents replay.
+
+Verifier checks live in proofs/quantum.py, which outputs metrics:
+
+quantum_units, traps_ratio, qos, redundancy
+
+consensus/policy_adapter.py maps these → ψ inputs. Caps and Γ limits apply.
+
+⸻
+
+Tuning traps & confidence
+
+Trap parameters live under proofs/quantum_attest/traps.py.
+	•	Traps ratio: typically 5–15% of shots; raises with job value.
+	•	Acceptance: one-sided Clopper–Pearson bound against the provider’s declared error model.
+	•	Failures: bad traps → reject; borderline → reduce ψ_quantum via policy damping.
+
+⸻
+
+Security notes
+	•	Header binding: proofs hashed with the exact header template used for the candidate block.
+	•	Nullifiers: prevent using the same result twice across windows.
+	•	SLA & slashing: repeated QoS failures or trap anomalies trigger penalties and jailing.
+	•	Malleability: receipts are canonicalized before hashing; msgspec/CBOR schemas are fixed.
+
+⸻
+
+Policy knobs (excerpt)
+
+weights:
+  quantum: 0.50
+per_type_caps:
+  quantum: 0.80
+total_gamma_cap: 1.20
+escort_q: 0.25
+
+Tip: Start conservative. Increase per_type_caps.quantum only after observing stable provider SLAs.
+
+⸻
+
+Roadmap
+	•	ZK attest of trap sampling (succinct FRI-based gadget).
+	•	Cross-run calibration: auto-learn per-device error drifts.
+	•	Multi-region routing and latency-aware pricing.
+
+If you operate quantum hardware and want to participate, reach out with your attestation format and service-level expectations. We’re eager to collaborate on robust, auditable interfaces.

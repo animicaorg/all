@@ -1,0 +1,11 @@
+{
+  "protocol": "plonk",
+  "curve": "bn128",
+  "proof": "0x0123456789abcdef0123456789abcdef6a7b8c9d0e1f2233445566778899aabbc0ffee0ddba11a55a5a5f00dbabe0123456789abcdef0123456789abcdef6a7b8c9d0e1f2233445566778899aabbc0ffee0ddba11a55a5a5f00dbabe",
+  "publicSignals": [
+    "1",
+    "2",
+    "3",
+    "0"
+  ]
+}

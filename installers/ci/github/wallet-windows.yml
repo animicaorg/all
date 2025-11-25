@@ -1,0 +1,288 @@
+name: Wallet Windows — Build • Package (MSIX/NSIS) • Code Sign • Artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Release channel"
+        required: true
+        default: "stable"
+        type: choice
+        options: [stable, beta]
+      create_release:
+        description: "Create GitHub Release"
+        required: true
+        default: "true"
+        type: choice
+        options: ["true","false"]
+  push:
+    tags:
+      - "wallet-v*"
+
+env:
+  FLUTTER_CHANNEL: "stable"
+  FLUTTER_VERSION: "3.24.0"
+  WALLET_APP_DIR: "wallet-app"           # path to Flutter app
+  ARTIFACTS_DIR: "dist/windows"          # staging for signed outputs
+  TIMESTAMP_URLS_FILE: "installers/signing/windows/timestamp_urls.txt"
+  CERT_SUBJECT_FILE: "installers/signing/windows/cert_subject.txt"
+
+concurrency:
+  group: wallet-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build & Sign (Windows)
+    runs-on: windows-latest
+    environment: release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Set up Flutter ${{ env.FLUTTER_VERSION }} (${{ env.FLUTTER_CHANNEL }})
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: ${{ env.FLUTTER_CHANNEL }}
+
+      - name: Show Flutter/Dart versions
+        shell: pwsh
+        run: |
+          flutter --version
+          dart --version
+
+      - name: Cache Flutter pub
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\AppData\Local\Pub\Cache
+            ${{ env.WALLET_APP_DIR }}\.dart_tool
+          key: ${{ runner.os }}-pub-${{ hashFiles(format('{0}\pubspec.lock', env.WALLET_APP_DIR)) }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      - name: Pub get
+        shell: pwsh
+        working-directory: ${{ env.WALLET_APP_DIR }}
+        run: flutter pub get
+
+      - name: Prepare output dirs
+        shell: pwsh
+        run: New-Item -Force -ItemType Directory -Path "$env:ARTIFACTS_DIR" | Out-Null
+
+      # -----------------------------
+      # Version derivation
+      # -----------------------------
+      - name: Derive version from tag or commit
+        id: ver
+        shell: pwsh
+        run: |
+          if ("${{ github.ref }}".StartsWith("refs/tags/")) {
+            $tag = "${{ github.ref }}".Substring(10)           # drop refs/tags/
+            $version = $tag -replace '^wallet-v',''
+          } else {
+            $version = "0.0.0-${{ github.sha }}".Substring(0, 14)
+          }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Version: $version"
+
+      - name: Bump Windows version (if script exists)
+        shell: pwsh
+        run: |
+          $script = "installers/wallet/windows/scripts/bump_version.ps1"
+          if (Test-Path $script) {
+            & $script -Version "${{ steps.ver.outputs.version }}"
+          } else {
+            Write-Host "No bump_version.ps1; continuing."
+          }
+
+      # -----------------------------
+      # Build (Flutter Windows)
+      # -----------------------------
+      - name: Enable Windows desktop & build
+        shell: pwsh
+        working-directory: ${{ env.WALLET_APP_DIR }}
+        run: |
+          flutter config --enable-windows-desktop
+          flutter build windows --release
+
+      - name: Locate built EXE and build dir
+        id: built
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path "${env:WALLET_APP_DIR}\build\windows" -Filter *.exe -Recurse |
+            Where-Object { $_.FullName -match '\\Release\\' } |
+            Select-Object -First 1
+          if (-not $exe) { Write-Error "Release .exe not found"; exit 1 }
+          $buildDir = Split-Path $exe.FullName -Parent
+          "exe=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "builddir=$buildDir"   | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "EXE: $($exe.FullName)"
+          Write-Host "BuildDir: $buildDir"
+
+      # -----------------------------
+      # Import Code Signing cert
+      # -----------------------------
+      - name: Import Code Signing certificate (.pfx)
+        shell: pwsh
+        run: |
+          $pfxPath = Join-Path $env:RUNNER_TEMP "codesign.pfx"
+          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String("${{ secrets.WIN_CODESIGN_PFX_BASE64 }}"))
+          ./installers/scripts/import_pfx_windows.ps1 -PfxPath $pfxPath -Password "${{ secrets.WIN_CODESIGN_PFX_PASSWORD }}" -StoreLocation "CurrentUser" -StoreName "My"
+          Remove-Item $pfxPath -Force
+        env:
+          POWERSHELL_TELEMETRY_OPTOUT: "1"
+
+      - name: Resolve Cert Subject & Timestamp URLs
+        id: ts
+        shell: pwsh
+        run: |
+          $subject = (Get-Content "${env:CERT_SUBJECT_FILE}" -ErrorAction SilentlyContinue | Where-Object { $_ -and -not $_.StartsWith('#') } | Select-Object -First 1)
+          if (-not $subject) { $subject = "${{ secrets.WIN_CODESIGN_SUBJECT }}" }
+          $urls = @(Get-Content "${env:TIMESTAMP_URLS_FILE}" -ErrorAction SilentlyContinue | Where-Object { $_ -and -not $_.StartsWith('#') })
+          if ($urls.Count -eq 0) { $urls = @("http://timestamp.digicert.com") }
+          "subject=$subject" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "primary=$($urls[0])" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          if ($urls.Count -gt 1) { "backup=$($urls[1])" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8 }
+          Write-Host "Cert Subject: $subject"
+          Write-Host "Primary TSA: $($urls[0])"
+
+      # -----------------------------
+      # Package — MSIX
+      # -----------------------------
+      - name: Build MSIX package
+        shell: pwsh
+        run: |
+          $make = "installers/wallet/windows/msix/MakeMSIX.ps1"
+          if (Test-Path $make) {
+            & $make `
+              -BuildDir "${{ steps.built.outputs.builddir }}" `
+              -Manifest "installers/wallet/windows/msix/Package.appxmanifest" `
+              -Version "${{ steps.ver.outputs.version }}" `
+              -OutputDir "$env:ARTIFACTS_DIR" `
+              -SkipSign
+          } else {
+            # Fallback minimal pack with makeappx (expects manifest/icons already arranged)
+            $msix = Join-Path $env:ARTIFACTS_DIR ("AnimicaWallet-${{ steps.ver.outputs.version }}.msix")
+            & "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\makeappx.exe" pack /d "${{ steps.built.outputs.builddir }}" /p "$msix"
+          }
+
+      # -----------------------------
+      # Package — NSIS (optional)
+      # -----------------------------
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis -y
+
+      - name: Build NSIS installer (if script present)
+        shell: pwsh
+        run: |
+          $nsi = "installers/wallet/windows/nsis/installer.nsi"
+          if (Test-Path $nsi) {
+            # Common defines passed to NSIS
+            $Out = Join-Path $env:ARTIFACTS_DIR ("AnimicaWallet-Setup-${{ steps.ver.outputs.version }}.exe")
+            & makensis /DVERSION="${{ steps.ver.outputs.version }}" /DINPUT_DIR="${{ steps.built.outputs.builddir }}" /DOUT_FILE="$Out" $nsi
+          } else {
+            Write-Host "NSIS script not found — skipping."
+          }
+
+      # -----------------------------
+      # Code sign artifacts
+      # -----------------------------
+      - name: Sign MSIX/EXE artifacts
+        shell: pwsh
+        run: |
+          $primary = "${{ steps.ts.outputs.primary }}"
+          $backup  = "${{ steps.ts.outputs.backup }}"
+          $subject = "${{ steps.ts.outputs.subject }}"
+
+          $signScript = "installers/wallet/windows/codesign.ps1"
+          $files = Get-ChildItem "$env:ARTIFACTS_DIR" -Recurse -Include *.msix,*.appx,*.exe | Select-Object -ExpandProperty FullName
+          if ($files.Count -eq 0) { Write-Error "No artifacts found to sign"; exit 1 }
+
+          if (Test-Path $signScript) {
+            foreach ($f in $files) {
+              & $signScript -File $f -Subject $subject -TimestampUrl $primary
+              if ($LASTEXITCODE -ne 0 -and $backup) {
+                Write-Warning "Retry signing with backup TSA for $f"
+                & $signScript -File $f -Subject $subject -TimestampUrl $backup
+              }
+            }
+          } else {
+            # Fallback: direct signtool
+            $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Select-Object -Last 1 -ExpandProperty FullName
+            foreach ($f in $files) {
+              & $signtool sign /fd SHA256 /td SHA256 /tr $primary /n "$subject" "$f"
+              if ($LASTEXITCODE -ne 0 -and $backup) {
+                & $signtool sign /fd SHA256 /td SHA256 /tr $backup /n "$subject" "$f"
+              }
+            }
+          }
+
+      - name: Verify Authenticode signatures
+        shell: pwsh
+        run: |
+          $bad = @()
+          Get-ChildItem "$env:ARTIFACTS_DIR" -Recurse -Include *.msix,*.appx,*.exe | ForEach-Object {
+            $sig = Get-AuthenticodeSignature $_.FullName
+            if ($sig.Status -ne 'Valid') {
+              Write-Warning "Invalid signature: $($_.FullName) => $($sig.Status)"
+              $bad += $_.FullName
+            } else {
+              Write-Host "OK: $($_.Name) signed by $($sig.SignerCertificate.Subject)"
+            }
+          }
+          if ($bad.Count -gt 0) { Write-Error "One or more artifacts failed signature validation."; exit 1 }
+
+      # -----------------------------
+      # Checksums
+      # -----------------------------
+      - name: Checksums
+        shell: pwsh
+        run: |
+          Push-Location "$env:ARTIFACTS_DIR"
+          Get-ChildItem -File | ForEach-Object {
+            (Get-FileHash $_.FullName -Algorithm SHA256).Hash + "  " + $_.Name
+          } | Out-File -Encoding ASCII SHA256SUMS.txt
+          Get-ChildItem -File | ForEach-Object {
+            (Get-FileHash $_.FullName -Algorithm SHA512).Hash + "  " + $_.Name
+          } | Out-File -Encoding ASCII SHA512SUMS.txt
+          Pop-Location
+
+      # -----------------------------
+      # Upload artifacts
+      # -----------------------------
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wallet-windows-${{ steps.ver.outputs.version }}
+          path: |
+            ${{ env.ARTIFACTS_DIR }}\*.msix
+            ${{ env.ARTIFACTS_DIR }}\*.appx
+            ${{ env.ARTIFACTS_DIR }}\*.exe
+            ${{ env.ARTIFACTS_DIR }}\SHA256SUMS.txt
+            ${{ env.ARTIFACTS_DIR }}\SHA512SUMS.txt
+
+      - name: Create GitHub Release (optional)
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.create_release == 'true') || startsWith(github.ref, 'refs/tags/') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name || format('wallet-v{0}', steps.ver.outputs.version) }}
+          name: "Wallet Windows v${{ steps.ver.outputs.version }}"
+          draft: false
+          prerelease: ${{ inputs.channel == 'beta' }}
+          files: |
+            ${{ env.ARTIFACTS_DIR }}\*.msix
+            ${{ env.ARTIFACTS_DIR }}\*.exe
+            ${{ env.ARTIFACTS_DIR }}\SHA256SUMS.txt
+            ${{ env.ARTIFACTS_DIR }}\SHA512SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

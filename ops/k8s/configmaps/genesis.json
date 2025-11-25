@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: genesis
+  namespace: animica-devnet
+  labels:
+    app.kubernetes.io/part-of: animica
+    animica.dev/environment: devnet
+data:
+  # Mount this key as /config/genesis.json in node/miner pods.
+  genesis.json: |
+    {
+      "version": 1,
+      "chain": {
+        "chain_id": 1337,
+        "name": "animica-devnet"
+      },
+      "genesis_time": "2025-01-01T00:00:00Z",
+
+      "alloc": [
+        /*
+          Optional pre-funded accounts for devnet.
+          You can replace or extend these with keys from tests/devnet/seed_wallets.json.
+          Balances are arbitrary devnet units.
+          Example (bech32m anim1… or 0x-hex, whichever your loader supports):
+          { "address": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq0l2m2q", "balance": "1000000000000000" },
+          { "address": "0x1111111111111111111111111111111111111111", "balance": "1000000000000000" }
+        */
+      ],
+
+      "policy_roots": {
+        "poies_policy_root": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "pq_alg_policy_root": "0x0000000000000000000000000000000000000000000000000000000000000000"
+      },
+
+      "randomness": {
+        "commit_phase_seconds": 15,
+        "reveal_phase_seconds": 15,
+        "settle_phase_seconds": 10,
+        "round_seconds": 40,
+        "vdf": {
+          "security_bits": 128,
+          "discriminant_size_bits": 2048,
+          "target_seconds": 20,
+          "iterations": 100000,
+          "seconds_per_iter": 0.0002
+        }
+      },
+
+      "pq": {
+        "signatures": { "enabled": ["dilithium3", "sphincs_shake_128s"] },
+        "kem": { "default": "kyber768" }
+      }
+    }

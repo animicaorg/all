@@ -1,0 +1,31 @@
+{
+  "schema": "animica.proofs.hashshare.fixture.v1",
+  "description": "Illustrative valid HashShare proof body/envelope for tests (devnet).",
+  "envelope": {
+    "type": "HashShare",
+    "nullifier": "0x0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+    "signature_alg": "dilithium3",
+    "signature": "0x"
+  },
+  "body": {
+    "headerHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "mixSeed": "0x6666666666666666666666666666666666666666666666666666666666666666",
+    "miner": {
+      "address": "anim1testsminer0000000000000000000000000000000",
+      "pubkey_hash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+      "alg_id": "dilithium3"
+    },
+    "nonce": "0x0000000000000042",
+    "thetaMicro": 1000000,
+    "u": 0.449329,                // ~exp(-0.8), i.e., H(u) ≈ 0.8 nats
+    "hMicro": 800000,             // H(u) in micro-nats
+    "dRatio": 0.8,                // hMicro / thetaMicro
+    "accepted": true,
+    "createdAt": "2025-10-02T00:00:06Z"
+  },
+  "notes": [
+    "Devnet-only, deterministic sample.",
+    "The share is below Θ (dRatio=0.8), so it would be accepted as a valid HashShare.",
+    "Envelope/signature fields are placeholders for structure-focused tests."
+  ]
+}

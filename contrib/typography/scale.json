@@ -1,0 +1,33 @@
+{
+  "fontFamily": {
+    "base": "Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif",
+    "code": "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", monospace"
+  },
+  "scale": {
+    "xs": 12,
+    "sm": 14,
+    "base": 16,
+    "md": 18,
+    "lg": 20,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 40,
+    "4xl": 48
+  },
+  "lineHeight": {
+    "tight": 1.15,
+    "normal": 1.5,
+    "loose": 1.7
+  },
+  "weight": {
+    "regular": 400,
+    "medium": 500,
+    "semibold": 600,
+    "bold": 700
+  },
+  "tracking": {
+    "tight": -0.01,
+    "normal": 0,
+    "loose": 0.01
+  }
+}

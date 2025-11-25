@@ -1,0 +1,290 @@
+name: Wallet Linux — Build • AppImage • Flatpak • DEB • RPM
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Release channel"
+        required: true
+        default: "stable"
+        type: choice
+        options: [stable, beta]
+      create_release:
+        description: "Create GitHub Release"
+        required: true
+        default: "true"
+        type: choice
+        options: ["true","false"]
+  push:
+    tags:
+      - "wallet-v*"
+
+env:
+  FLUTTER_CHANNEL: "stable"
+  FLUTTER_VERSION: "3.24.0"
+  WALLET_APP_DIR: "wallet-app"                    # path to Flutter app
+  ARTIFACTS_DIR: "dist/linux"                     # staging for outputs
+  APPIMAGE_RECIPE: "installers/wallet/linux/appimage/AppImageBuilder.yml"
+  FLATPAK_MANIFEST: "installers/wallet/linux/flatpak/io.animica.Wallet.yml"
+  DEB_DIR: "installers/wallet/linux/deb"
+  RPM_SPEC: "installers/wallet/linux/rpm/specfile.spec" # (not used directly; FPM path used)
+  APP_ID: "io.animica.Wallet"
+
+concurrency:
+  group: wallet-linux-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    name: Build & Package (Linux)
+    runs-on: ubuntu-22.04
+    environment: release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Set up Flutter ${{ env.FLUTTER_VERSION }} (${{ env.FLUTTER_CHANNEL }})
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: ${{ env.FLUTTER_CHANNEL }}
+
+      - name: Show Flutter/Dart versions
+        run: |
+          flutter --version
+          dart --version
+
+      - name: Cache Flutter pub
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+            ${{ env.WALLET_APP_DIR }}/.dart_tool
+          key: ${{ runner.os }}-pub-${{ hashFiles(format('{0}/pubspec.lock', env.WALLET_APP_DIR)) }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+
+      - name: Pub get
+        working-directory: ${{ env.WALLET_APP_DIR }}
+        run: flutter pub get
+
+      - name: Prepare output dirs
+        run: mkdir -p "$ARTIFACTS_DIR"
+
+      # -------------------------------------------------
+      # Build Flutter Linux bundle (x64)
+      # -------------------------------------------------
+      - name: Enable Linux desktop & build
+        working-directory: ${{ env.WALLET_APP_DIR }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev ninja-build libunwind-dev pkg-config
+          flutter config --enable-linux-desktop
+          flutter build linux --release
+
+      - name: Locate Linux bundle and executable
+        id: bundle
+        run: |
+          BUNDLE_DIR="${WALLET_APP_DIR}/build/linux/x64/release/bundle"
+          test -d "$BUNDLE_DIR" || { echo "Bundle dir not found"; exit 1; }
+          # Try to guess main binary (first executable file in bundle root)
+          BIN_PATH="$(find "$BUNDLE_DIR" -maxdepth 1 -type f -executable | head -n1)"
+          if [ -z "$BIN_PATH" ]; then
+            echo "No executable found in bundle root; listing for debug:"; ls -lah "$BUNDLE_DIR"; exit 1;
+          fi
+          BIN_NAME="$(basename "$BIN_PATH")"
+          echo "bundle=$BUNDLE_DIR"   >> $GITHUB_OUTPUT
+          echo "bin=$BIN_NAME"        >> $GITHUB_OUTPUT
+          echo "Bundle: $BUNDLE_DIR"
+          echo "Binary: $BIN_NAME"
+
+      - name: Derive version from tag or commit
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            VERSION="${TAG#wallet-v}"
+          else
+            VERSION="0.0.0-${GITHUB_SHA::7}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      # -------------------------------------------------
+      # AppImage (appimage-builder)
+      # -------------------------------------------------
+      - name: Install AppImageBuilder deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            python3-pip python3-venv \
+            libfuse2 fuse \
+            patchelf zsync desktop-file-utils appstream jq curl xz-utils squashfs-tools
+          python3 -m pip install --upgrade pip wheel
+          python3 -m pip install appimage-builder
+
+      - name: Build AppImage
+        run: |
+          export APPDIR_INPUT="${{ steps.bundle.outputs.bundle }}"
+          export APPIMAGE_OUTPUT_DIR="$PWD/out-appimage"
+          mkdir -p "$APPIMAGE_OUTPUT_DIR"
+          # appimage-builder picks up recipe path; some recipes reference env vars like APPDIR_INPUT
+          appimage-builder --recipe "$APPIMAGE_RECIPE" --skip-test
+          # Collect results
+          find . -maxdepth 2 -name "*.AppImage" -print -exec cp -v {} "$ARTIFACTS_DIR"/ \;
+
+      # -------------------------------------------------
+      # Flatpak
+      # -------------------------------------------------
+      - name: Install Flatpak tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder elfutils
+          sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+
+      - name: Build Flatpak bundle
+        run: |
+          BUILD_DIR="$PWD/flatpak-build"
+          REPO_DIR="$PWD/flatpak-repo"
+          rm -rf "$BUILD_DIR" "$REPO_DIR"
+          mkdir -p "$BUILD_DIR" "$REPO_DIR"
+          # Allow manifest to consume our local bundle path via env
+          export FLUTTER_BUNDLE_DIR="${{ steps.bundle.outputs.bundle }}"
+          flatpak-builder --force-clean --repo="$REPO_DIR" "$BUILD_DIR" "$FLATPAK_MANIFEST"
+          # Create single-file bundle for distribution
+          FLATPAK_OUT="$ARTIFACTS_DIR/animica-wallet-${{ steps.ver.outputs.version }}.flatpak"
+          flatpak build-bundle "$REPO_DIR" "$FLATPAK_OUT" "${APP_ID}" "${{ steps.ver.outputs.version }}" --runtime-repo='https://flathub.org/repo/flathub.flatpakrepo'
+
+      # -------------------------------------------------
+      # DEB (dpkg-deb)
+      # -------------------------------------------------
+      - name: Build DEB package
+        run: |
+          set -euo pipefail
+          STAGE="$PWD/pkgroot"
+          BINNAME="${{ steps.bundle.outputs.bin }}"
+          BUNDLE="${{ steps.bundle.outputs.bundle }}"
+          VERSION="${{ steps.ver.outputs.version }}"
+          ARCH="amd64"
+
+          rm -rf "$STAGE"; mkdir -p "$STAGE/DEBIAN"
+          # Install tree
+          install -d "$STAGE/opt/animica/wallet"
+          cp -a "$BUNDLE/." "$STAGE/opt/animica/wallet/"
+          # Wrapper
+          install -d "$STAGE/usr/bin"
+          cat > "$STAGE/usr/bin/animica-wallet" <<SH
+          #!/usr/bin/env bash
+          exec /opt/animica/wallet/${BINNAME} "\$@"
+          SH
+          chmod +x "$STAGE/usr/bin/animica-wallet"
+
+          # Desktop entry (optional)
+          if [ -f "$DEB_DIR/animica-wallet.desktop" ]; then
+            install -d "$STAGE/usr/share/applications"
+            install -m 0644 "$DEB_DIR/animica-wallet.desktop" "$STAGE/usr/share/applications/animica-wallet.desktop"
+          fi
+
+          # Control file
+          if grep -q '@VERSION@' "$DEB_DIR/control" 2>/dev/null; then
+            sed "s/@VERSION@/${VERSION}/g; s/@ARCH@/${ARCH}/g" "$DEB_DIR/control" > "$STAGE/DEBIAN/control"
+          elif [ -f "$DEB_DIR/control" ]; then
+            # copy as-is (assumed already parameterized)
+            cp "$DEB_DIR/control" "$STAGE/DEBIAN/control"
+          else
+            cat > "$STAGE/DEBIAN/control" <<CTRL
+            Package: animica-wallet
+            Version: ${VERSION}
+            Section: utils
+            Priority: optional
+            Architecture: ${ARCH}
+            Maintainer: Animica <support@animica.io>
+            Description: Animica Wallet (Flutter)
+CTRL
+          fi
+
+          # Maintainer scripts (if available)
+          for s in postinst prerm; do
+            if [ -f "$DEB_DIR/$s" ]; then
+              install -m 0755 "$DEB_DIR/$s" "$STAGE/DEBIAN/$s"
+            fi
+          done
+
+          DEB_OUT="$ARTIFACTS_DIR/animica-wallet_${VERSION}_${ARCH}.deb"
+          dpkg-deb --build "$STAGE" "$DEB_OUT"
+
+      # -------------------------------------------------
+      # RPM (fpm)
+      # -------------------------------------------------
+      - name: Install FPM & RPM tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ruby-full ruby-dev build-essential rpm
+          sudo gem install --no-document fpm
+
+      - name: Build RPM package (from staged tree)
+        run: |
+          set -e
+          VERSION="${{ steps.ver.outputs.version }}"
+          ARCH="x86_64"
+          # Reuse DEB stage tree
+          STAGE="$PWD/pkgroot"
+          test -d "$STAGE" || { echo "pkgroot not found"; exit 1; }
+          fpm -s dir -t rpm \
+            -n animica-wallet \
+            -v "$VERSION" \
+            --license "Proprietary" \
+            --vendor "Animica" \
+            --description "Animica Wallet (Flutter)" \
+            --url "https://animica.io" \
+            --rpm-os linux \
+            --architecture "$ARCH" \
+            -C "$STAGE" \
+            .
+
+          mv *.rpm "$ARTIFACTS_DIR/"
+
+      # -------------------------------------------------
+      # Checksums & Upload
+      # -------------------------------------------------
+      - name: Checksums
+        run: |
+          (cd "$ARTIFACTS_DIR" && sha256sum * > SHA256SUMS.txt && sha512sum * > SHA512SUMS.txt || true)
+          ls -lah "$ARTIFACTS_DIR"
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wallet-linux-${{ steps.ver.outputs.version }}
+          path: |
+            ${{ env.ARTIFACTS_DIR }}/*.AppImage
+            ${{ env.ARTIFACTS_DIR }}/*.flatpak
+            ${{ env.ARTIFACTS_DIR }}/*.deb
+            ${{ env.ARTIFACTS_DIR }}/*.rpm
+            ${{ env.ARTIFACTS_DIR }}/SHA256SUMS.txt
+            ${{ env.ARTIFACTS_DIR }}/SHA512SUMS.txt
+
+      - name: Create GitHub Release (optional)
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.create_release == 'true') || startsWith(github.ref, 'refs/tags/') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name || format('wallet-v{0}', steps.ver.outputs.version) }}
+          name: "Wallet Linux v${{ steps.ver.outputs.version }}"
+          draft: false
+          prerelease: ${{ inputs.channel == 'beta' }}
+          files: |
+            ${{ env.ARTIFACTS_DIR }}/*.AppImage
+            ${{ env.ARTIFACTS_DIR }}/*.flatpak
+            ${{ env.ARTIFACTS_DIR }}/*.deb
+            ${{ env.ARTIFACTS_DIR }}/*.rpm
+            ${{ env.ARTIFACTS_DIR }}/SHA256SUMS.txt
+            ${{ env.ARTIFACTS_DIR }}/SHA512SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

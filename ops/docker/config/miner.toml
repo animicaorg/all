@@ -1,0 +1,118 @@
+# Animica Miner — container default config (TOML)
+# Runs the built-in CPU miner against a local node in docker-compose.
+# All values can be overridden via environment (see entrypoints/miner.sh).
+
+# ───────────────────────────── identity / chain ─────────────────────────────
+[core]
+chain_id = 1
+
+# ───────────────────────────────── logging ──────────────────────────────────
+[logging]
+level  = "info"     # "debug" | "info" | "warning" | "error"
+format = "json"     # "json" | "text"
+
+# ───────────────────────────────── metrics ──────────────────────────────────
+[metrics]
+enabled = true
+port    = 9103      # Prometheus exporter (internal)
+
+# ─────────────────────────────── node endpoints ─────────────────────────────
+# Miner talks to the node for:
+#  - template refresh (getWork over WS)
+#  - share/block submit (JSON-RPC HTTP)
+[rpc]
+http_url = "http://node:8545"
+ws_url   = "ws://node:8546/ws"   # FastAPI WS, miner.getWork/miner.submitShare bridge
+
+# Optional CORS origin checks for WS (usually not needed in container-to-container)
+cors_allow_origins = []
+
+# Backoff for submit/refresh calls
+[rpc.retries]
+max_attempts = 5
+base_ms      = 250
+max_ms       = 4000
+jitter       = 0.2
+
+# ───────────────────────────── mining engine (CPU) ──────────────────────────
+[mining]
+device   = "cpu"   # "cpu" | "cuda" | "rocm" | "opencl" | "metal" (GPU backends are optional)
+threads  = 0       # 0 = auto (use all logical cores minus one)
+batch_size_hashes = 4096       # inner-loop batch; tune per CPU
+template_refresh_seconds = 2   # poll/stream cadence for new templates
+share_buffer_capacity     = 16384
+
+# Local share target (abstract difficulty). Closer to 0 → harder shares.
+# This should roughly match node.services/mining.share_target_ratio when running single-node devnets.
+share_target_ratio = 0.001
+
+# If a template is near expiry, stop scanning to avoid late submits.
+work_expiry_slack_seconds = 3
+
+[mining.cpu]
+use_numba      = false   # enable if image includes numba
+vector_width   = 1       # 1, 2, 4, 8 (auto-tune when >1 and supported)
+prefetch_bytes = 0
+
+# ────────────────────────────── share submission ────────────────────────────
+[submitter]
+# Send HashShare proofs and candidate blocks to the node.
+# The miner will auto-switch between share and full-block submit based on selection.
+pipeline_parallelism = 4
+inflight_limit       = 64
+
+[submitter.backoff]
+min_ms = 250
+max_ms = 5000
+jitter = 0.25
+
+# ───────────────────────────── proof attachment -----------------------------
+# Off-chain workers to attach useful proofs to candidate blocks (dev/demo).
+# These are OFF by default in the container profile; enable in devnet/e2e runs as needed.
+[workers.ai]
+enabled = false
+queue_url = "http://services:8700"   # studio-services (or AICF proxy) if used
+max_concurrent = 1
+
+[workers.quantum]
+enabled = false
+queue_url = "http://services:8700"
+max_concurrent = 1
+
+[workers.storage]
+enabled = false
+poll_interval_seconds = 15
+
+[workers.vdf]
+enabled = false
+# If enabled, runs a reference Wesolowski prover sized for devnet rounds.
+iterations_override = 0   # 0 = derive from round params; else use fixed
+
+# ───────────────────────────── selection / packing ──────────────────────────
+[packing]
+# Choose best proofs+txs under Γ/caps/fairness from the current mempool snapshot.
+enable_ai_quantum_storage = true
+enable_vdf_bonus          = true
+max_txs                   = 2000
+max_block_bytes           = 2000000
+max_proofs                = 4096
+
+# ───────────────────────────── stratum server (optional) ────────────────────
+# Expose a local Stratum endpoint for external miners to connect.
+[stratum]
+enabled      = false
+listen_addr  = "0.0.0.0:3333"
+min_difficulty = 1.0
+password     = "x"
+
+# ───────────────────────────── observability / tracing ──────────────────────
+[trace]
+enable_submit_trace   = true
+enable_template_trace = false
+
+# ───────────────────────────── safety / limits ──────────────────────────────
+[limits]
+max_template_age_seconds = 20
+max_reorg_depth          = 12
+min_head_confirmations   = 0
+

@@ -1,0 +1,87 @@
+# ------------------------------------------------------------------------------
+# Animica Explorer — Flatpak manifest
+# Builds and packages the Tauri-based desktop shell for Linux.
+#
+# Usage:
+#   flatpak-builder --force-clean build-dir installers/explorer-desktop/linux/flatpak/io.animica.Explorer.yml
+#
+# Notes:
+#   - Uses GNOME 46 runtime which provides GTK3 and WebKitGTK 4.1 needed by Tauri.
+#   - Pulls Rust & Node via SDK extensions for reproducible builds.
+#   - Expects the Tauri Rust crate at installers/explorer-desktop/tauri/.
+#     The manifest compiles the Rust target and installs the resulting binary.
+#   - If you have a separate frontend, ensure it bakes assets into Tauri before build
+#     or add an extra module that runs your Node build.
+# ------------------------------------------------------------------------------
+
+app-id: io.animica.Explorer
+runtime: org.gnome.Platform
+runtime-version: "46"
+sdk: org.gnome.Sdk
+
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+  - org.freedesktop.Sdk.Extension.node20
+
+command: animica-explorer
+
+finish-args:
+  # Display backends & GPU
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  # Network access for Explorer
+  - --share=network
+  # File portal (open/save dialogs)
+  - --talk-name=org.freedesktop.portal.Desktop
+  - --env=GTK_USE_PORTAL=1
+  # Optional: allow saving exports to Downloads
+  - --filesystem=xdg-download:rw
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/node20/bin
+  env:
+    # Leaner Rust release builds
+    RUSTFLAGS: "-C debuginfo=0 -C link-arg=-Wl,-O1 -C lto=fat -C codegen-units=1"
+    CARGO_PROFILE_RELEASE_LTO: "true"
+    CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
+    TAURI_SKIP_DEVSERVER: "1"
+
+modules:
+  # Main app module: compile the Tauri crate and install binary + desktop file + icon.
+  - name: animica-explorer
+    buildsystem: simple
+    build-commands:
+      # If you keep a separate frontend, you can kick builds here (best-effort / optional).
+      # Example (uncomment & fix path if needed):
+      # - bash -euxo pipefail -c 'if [ -f frontend/package.json ]; then (cd frontend && npm ci && npm run build); fi'
+      - bash -euxo pipefail -c 'cd tauri && cargo fetch'
+      - bash -euxo pipefail -c 'cd tauri && cargo build --release --locked'
+      - install -Dm0755 tauri/target/release/animica-explorer /app/bin/animica-explorer
+      - install -Dm0644 io.animica.Explorer.desktop /app/share/applications/io.animica.Explorer.desktop
+      - install -Dm0644 io.animica.Explorer.png /app/share/icons/hicolor/512x512/apps/io.animica.Explorer.png
+      # Optional smaller icon sizes (created here if you ship them)
+      # - install -Dm0644 io.animica.Explorer.128.png /app/share/icons/hicolor/128x128/apps/io.animica.Explorer.png
+    sources:
+      # The Tauri crate from the repository (local dir)
+      - type: dir
+        path: ../../tauri
+        dest: tauri
+      # Desktop entry (inline)
+      - type: inline
+        dest-filename: io.animica.Explorer.desktop
+        contents: |
+          [Desktop Entry]
+          Type=Application
+          Name=Animica Explorer
+          Comment=Lightweight desktop shell for the Animica Explorer
+          Exec=animica-explorer
+          Icon=io.animica.Explorer
+          Terminal=false
+          Categories=Network;Utility;Development;
+          StartupNotify=true
+      # App icon (512x512) — reuse the Tauri icon if present, otherwise replace with your asset
+      - type: file
+        path: ../../tauri/icons/512x512.png
+        dest-filename: io.animica.Explorer.png

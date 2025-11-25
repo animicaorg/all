@@ -1,0 +1,67 @@
+---
+import site from "../config/site";
+import links from "../config/links";
+import env from "../env";
+
+const studioHref = links?.studio?.home ?? env.PUBLIC_STUDIO_URL ?? "/studio";
+const explorerHref = links?.explorer?.home ?? "/explorer";
+const docsHref = links?.docs?.home ?? env.PUBLIC_DOCS_URL ?? "/docs";
+const githubHref = site?.links?.github ?? "https://github.com/animica";
+
+const year = new Date().getFullYear();
+---
+
+<footer class="border-t border-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)] bg-[var(--bg-regular)]">
+  <div class="container mx-auto px-4 py-12 grid gap-8 sm:grid-cols-[1fr_auto_auto_auto] items-start">
+    <!-- Brand & blurb -->
+    <div class="space-y-3 max-w-md">
+      <a href="/" class="inline-flex items-center gap-2 font-semibold text-[1.05rem]" aria-label={site.brand}>
+        <img src="/icons/logo.svg" width="20" height="20" alt="" />
+        <span>{site.brand}</span>
+      </a>
+      {site?.tagline && <p class="opacity-80 text-sm">{site.tagline}</p>}
+      {site?.contact?.email && (
+        <p class="opacity-75 text-sm">Contact: <a class="underline underline-offset-2" href={`mailto:${site.contact.email}`}>{site.contact.email}</a></p>
+      )}
+    </div>
+
+    <!-- Quick links -->
+    <nav class="text-sm">
+      <div class="font-medium mb-3">Build</div>
+      <ul class="space-y-2">
+        <li><a href={studioHref} class="opacity-85 hover:opacity-100">Studio</a></li>
+        <li><a href={explorerHref} class="opacity-85 hover:opacity-100">Explorer</a></li>
+        <li><a href={docsHref} class="opacity-85 hover:opacity-100">Docs</a></li>
+      </ul>
+    </nav>
+
+    <nav class="text-sm">
+      <div class="font-medium mb-3">Community</div>
+      <ul class="space-y-2">
+        <li><a href={githubHref} rel="noopener noreferrer" class="opacity-85 hover:opacity-100">GitHub</a></li>
+        {site?.links?.discord && <li><a href={site.links.discord} class="opacity-85 hover:opacity-100">Discord</a></li>}
+        {site?.links?.twitter && <li><a href={site.links.twitter} class="opacity-85 hover:opacity-100">X/Twitter</a></li>}
+      </ul>
+    </nav>
+
+    <nav class="text-sm">
+      <div class="font-medium mb-3">Legal</div>
+      <ul class="space-y-2">
+        <li><a href="/privacy" class="opacity-85 hover:opacity-100">Privacy</a></li>
+        <li><a href="/terms" class="opacity-85 hover:opacity-100">Terms</a></li>
+        <li><a href="/security" class="opacity-85 hover:opacity-100">Security</a></li>
+      </ul>
+    </nav>
+  </div>
+
+  <div class="border-t border-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)]">
+    <div class="container mx-auto px-4 h-12 text-xs flex items-center justify-between">
+      <span class="opacity-70">© {year} {site.brand}. All rights reserved.</span>
+      <div class="flex items-center gap-4 opacity-75">
+        <a href="/status" class="hover:opacity-100">Status</a>
+        <a href="/changelog" class="hover:opacity-100">Changelog</a>
+        <a href="/rss.xml" class="hover:opacity-100">RSS</a>
+      </div>
+    </div>
+  </div>
+</footer>

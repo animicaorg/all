@@ -1,0 +1,14 @@
+# robots.txt for Animica Explorer
+# SPA app: generally safe to allow all routes. Block dev/build internals.
+
+User-agent: *
+Allow: /
+
+# Block internal dev/build endpoints and source maps
+Disallow: /assets/*.map
+Disallow: /@vite
+Disallow: /@id
+Disallow: /__vite_ping
+
+# Optional crawl rate hint (uncomment to enforce)
+# Crawl-delay: 5

@@ -1,0 +1,103 @@
+%% Governance lifecycle — Mermaid flowchart with swimlanes (subgraphs)
+%% Render at https://mermaid.live or in any Mermaid-enabled viewer.
+
+flowchart LR
+  %% Lanes (swimlanes via subgraphs)
+  subgraph L1[Proposer]
+    A0[Draft Idea]
+    A1[Write Proposal\n(MD with YAML header)]
+    A2[Local Validate\nvalidate_proposal.py]
+    A3{Valid?}
+    A4[Open Discussion\nforum / DISCUSSION.md]
+    A5[Submit Deposit]
+  end
+
+  subgraph L2[Governance Stewards / Multisig]
+    B1[Intake & Triage]
+    B2[Schema Check\n(CI bot)]
+    B3[Bounds & Safety\n(params, PQ policy)]
+    B4{Eligible?}
+    B5[Assign ID\nUpdate registries]
+    B6[Schedule Vote\ncalendars/governance.md]
+  end
+
+  subgraph L3[Community]
+    C1[Discussion & Signaling\n(off-chain snapshot optional)]
+    C2[Wallets Prepare\nrelease notes]
+  end
+
+  subgraph L4[Voting (On-chain)]
+    D1[Ballots Open]
+    D2[Submit Ballots\n(generate_ballot.py)]
+    D3[Close Voting\nquorum & thresholds]
+    D4[Tally\n(tally_votes.py)]
+    D5{Passed?}
+  end
+
+  subgraph L5[Execution / Rollout]
+    E1[Prepare Release Artifacts\ncontracts.json / upgrade_paths.json]
+    E2[Stage Gates\nrisk checklists]
+    E3[Activate\nparam/upgrade on chain]
+    E4[Canaries & Telemetry]
+    E5{Abort Switch?}
+    E6[Full Rollout]
+    E7[Postmortem & Docs\nTRANSPARENCY.md]
+  end
+
+  subgraph L6[Tooling / CI]
+    F1[CI: Validate Schemas\n(test_schemas.py)]
+    F2[CI: Examples Pass\n(test_validate_examples.py)]
+    F3[Registry Lints\n(check_registry.py)]
+  end
+
+  %% Edges within lanes (authoring)
+  A0 --> A1 --> A2 --> A3
+  A3 -- no --> A1
+  A3 -- yes --> A4 --> A5
+
+  %% Intake & screening
+  A5 --> B1 --> B2 --> B3 --> B4
+  B4 -- no --> A1
+  B4 -- yes --> B5 --> B6
+
+  %% Community prep
+  B6 --> C1
+  C1 --> C2
+
+  %% Voting
+  C2 --> D1 --> D2 --> D3 --> D4 --> D5
+  D5 -- no --> E7
+
+  %% Execution path
+  D5 -- yes --> E1 --> E2 --> E3 --> E4 --> E5
+  E5 -- abort --> E7
+  E5 -- continue --> E6 --> E7
+
+  %% CI surfaces at multiple points
+  A2 -. triggers .-> F1
+  B2 -. triggers .-> F1
+  B3 -. triggers .-> F3
+  D4 -. verification .-> F2
+
+  %% Legend / Notes
+  classDef good fill:#e6fff2,stroke:#00a66f,stroke-width:1px,color:#0b5137;
+  classDef warn fill:#fff7e6,stroke:#d48806,stroke-width:1px,color:#614700;
+  classDef bad  fill:#fff1f0,stroke:#cf1322,stroke-width:1px,color:#820014;
+
+  class A3,B4,D5,E5 warn
+  class E6,E7 good
+  class A1,A2,B2,B3,D4,F1,F2,F3 good
+
+  %% Checklist callouts (hover text)
+  click E2 "governance/risk/UPGRADE_RISK_CHECKLIST.md" "Open pre/post deployment gates"
+  click D2 "governance/scripts/generate_ballot.py" "CLI: produce ballot JSON"
+  click D4 "governance/scripts/tally_votes.py" "CLI: tally and quorum checks"
+  click A2 "governance/scripts/validate_proposal.py" "CLI: schema + bounds validation"
+  click F3 "governance/scripts/check_registry.py" "CLI: registry lint (dups, bounds)"
+
+  %% Outcomes
+  O1([Rejected / Withdrawn]):::bad
+  O2([Executed & Documented]):::good
+
+  D5 -- no --> O1
+  E6 --> O2

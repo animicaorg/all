@@ -1,0 +1,10 @@
+{
+  "version": "0.24.1",
+  "createdAt": "2025-09-28T00:00:00Z",
+  "source": {
+    "mode": "uninitialized",
+    "offlineDir": null,
+    "cdnBase": "https://cdn.jsdelivr.net/pyodide/v0.24.1/full"
+  },
+  "files": []
+}

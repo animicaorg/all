@@ -1,0 +1,339 @@
+---
+# Animica — Teardown / Uninstall Playbook
+# --------------------------------------
+# DANGER: This can remove data directories and service units.
+#
+# Usage:
+#   # Dry run (no changes):
+#   ansible-playbook -i inventory.ini ops/ansible/playbooks/teardown.yml --check
+#
+#   # Stop services only (no file removal):
+#   ansible-playbook -i inventory.ini ops/ansible/playbooks/teardown.yml -e confirm_teardown=true
+#
+#   # Stop + remove configs (keeps DB & logs):
+#   ansible-playbook -i inventory.ini ops/ansible/playbooks/teardown.yml \
+#       -e confirm_teardown=true -e remove_configs=true
+#
+#   # Full purge (DBs, logs, binaries, units, users) — IRREVERSIBLE:
+#   ansible-playbook -i inventory.ini ops/ansible/playbooks/teardown.yml \
+#       -e confirm_teardown=true -e purge_db=true -e purge_logs=true -e purge_binaries=true -e remove_users=true
+#
+# Expected inventory groups (any subset is fine):
+#   [nodes]   # core node(s)
+#   [miners]  # miner workers
+#   [metrics] # prometheus/grafana/loki/promtail/tempo hosts
+#
+# Variables (all optional unless noted):
+#   confirm_teardown (required: true to proceed)
+#   remove_configs: bool (default: false)   # remove /etc/animica and service units
+#   purge_db: bool (default: false)         # remove /var/lib/animica and related state
+#   purge_logs: bool (default: false)       # remove /var/log/animica (and metrics logs)
+#   purge_binaries: bool (default: false)   # remove /opt/* tool installs (metrics)
+#   remove_users: bool (default: false)     # remove animica system user/group if created
+#   animica_user: str (default: "animica")
+#   animica_group: str (default: "animica")
+
+- name: Preflight and safety guard
+  hosts: all
+  gather_facts: true
+  become: true
+  vars:
+    remove_configs: "{{ remove_configs | default(false) | bool }}"
+    purge_db: "{{ purge_db | default(false) | bool }}"
+    purge_logs: "{{ purge_logs | default(false) | bool }}"
+    purge_binaries: "{{ purge_binaries | default(false) | bool }}"
+    remove_users: "{{ remove_users | default(false) | bool }}"
+    animica_user: "{{ animica_user | default('animica') }}"
+    animica_group: "{{ animica_group | default('animica') }}"
+  tasks:
+    - name: Require explicit confirmation
+      ansible.builtin.assert:
+        that:
+          - confirm_teardown | default(false) | bool
+        fail_msg: >
+          Refusing to run without -e confirm_teardown=true. This playbook can delete data.
+        success_msg: "Teardown confirmed."
+
+    - name: Ensure systemd based host
+      ansible.builtin.assert:
+        that:
+          - ansible_service_mgr == 'systemd'
+        fail_msg: "systemd is required on targets."
+        success_msg: "systemd present."
+
+    - name: Show planned actions
+      ansible.builtin.debug:
+        msg:
+          - "remove_configs={{ remove_configs }}"
+          - "purge_db={{ purge_db }}"
+          - "purge_logs={{ purge_logs }}"
+          - "purge_binaries={{ purge_binaries }}"
+          - "remove_users={{ remove_users }}"
+          - "animica_user={{ animica_user }}"
+
+# -----------------------------
+# Core nodes
+# -----------------------------
+- name: Teardown core node(s)
+  hosts: nodes
+  gather_facts: false
+  become: true
+  vars:
+    node_service: animica-node
+    node_unit_path: /etc/systemd/system/animica-node.service
+    node_paths_config:
+      - /etc/animica/node.toml
+      - /etc/animica/genesis.json
+      - /etc/animica/params.yaml
+    node_paths_db:
+      - /var/lib/animica
+    node_paths_logs:
+      - /var/log/animica
+    node_paths_common:
+      - /etc/animica
+  tasks:
+    - name: Stop node service if present
+      ansible.builtin.service:
+        name: "{{ node_service }}"
+        state: stopped
+        enabled: false
+      ignore_errors: true
+
+    - name: Mask node service to prevent auto starts during teardown
+      ansible.builtin.systemd:
+        name: "{{ node_service }}"
+        masked: true
+      ignore_errors: true
+
+    - name: Remove node unit file (when remove_configs)
+      ansible.builtin.file:
+        path: "{{ node_unit_path }}"
+        state: absent
+      when: remove_configs
+
+    - name: Remove node config files (when remove_configs)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ node_paths_config }}"
+      when: remove_configs
+
+    - name: Remove node DB/state (when purge_db)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ node_paths_db }}"
+      when: purge_db
+
+    - name: Remove node logs (when purge_logs)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ node_paths_logs }}"
+      when: purge_logs
+
+    - name: Remove shared animica config dir if empty (best-effort)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ node_paths_common }}"
+      when: remove_configs
+      ignore_errors: true
+
+    - name: Daemon reload after unit removal
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+# -----------------------------
+# Miners
+# -----------------------------
+- name: Teardown miner(s)
+  hosts: miners
+  gather_facts: false
+  become: true
+  vars:
+    miner_service: animica-miner
+    miner_unit_path: /etc/systemd/system/animica-miner.service
+    miner_paths_config:
+      - /etc/animica/miner.toml
+    miner_paths_state:
+      - /var/lib/animica-miner
+      - /var/log/animica-miner
+  tasks:
+    - name: Stop miner service if present
+      ansible.builtin.service:
+        name: "{{ miner_service }}"
+        state: stopped
+        enabled: false
+      ignore_errors: true
+
+    - name: Mask miner service
+      ansible.builtin.systemd:
+        name: "{{ miner_service }}"
+        masked: true
+      ignore_errors: true
+
+    - name: Remove miner unit file (when remove_configs)
+      ansible.builtin.file:
+        path: "{{ miner_unit_path }}"
+        state: absent
+      when: remove_configs
+
+    - name: Remove miner config files (when remove_configs)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ miner_paths_config }}"
+      when: remove_configs
+
+    - name: Remove miner state/logs (when purge_db or purge_logs)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: >-
+        {{
+          (purge_db | ternary(['/var/lib/animica-miner'], [])) +
+          (purge_logs | ternary(['/var/log/animica-miner'], []))
+        }}
+
+    - name: Daemon reload after unit removal
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+# -----------------------------
+# Metrics stack
+# -----------------------------
+- name: Teardown metrics hosts
+  hosts: metrics
+  gather_facts: false
+  become: true
+  vars:
+    metric_services:
+      - prometheus
+      - grafana-server
+      - loki
+      - promtail
+      - tempo
+    # Common install paths (adjusted by metrics role if used)
+    metrics_units:
+      - /etc/systemd/system/prometheus.service
+      - /etc/systemd/system/grafana-server.service
+      - /etc/systemd/system/loki.service
+      - /etc/systemd/system/promtail.service
+      - /etc/systemd/system/tempo.service
+    metrics_configs:
+      - /etc/prometheus
+      - /etc/grafana
+      - /etc/loki
+      - /etc/promtail
+      - /etc/tempo
+    metrics_data:
+      - /var/lib/prometheus
+      - /var/lib/grafana
+      - /var/lib/loki
+      - /var/lib/promtail
+      - /var/lib/tempo
+    metrics_logs:
+      - /var/log/grafana
+      - /var/log/loki
+      - /var/log/promtail
+      - /var/log/tempo
+    metrics_bins:
+      - /opt/prometheus
+      - /opt/grafana
+      - /opt/loki
+      - /opt/promtail
+      - /opt/tempo
+  tasks:
+    - name: Stop metrics services if present
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop: "{{ metric_services }}"
+      ignore_errors: true
+
+    - name: Mask metrics services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        masked: true
+      loop: "{{ metric_services }}"
+      ignore_errors: true
+
+    - name: Remove metrics unit files (when remove_configs)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ metrics_units }}"
+      when: remove_configs
+
+    - name: Remove metrics configs (when remove_configs)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ metrics_configs }}"
+      when: remove_configs
+
+    - name: Remove metrics data (when purge_db)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ metrics_data }}"
+      when: purge_db
+
+    - name: Remove metrics logs (when purge_logs)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ metrics_logs }}"
+      when: purge_logs
+
+    - name: Remove metrics binaries (when purge_binaries)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ metrics_bins }}"
+      when: purge_binaries
+
+    - name: Daemon reload after unit removal
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+# -----------------------------
+# Optional user/group cleanup
+# -----------------------------
+- name: Remove animica system user/group (optional)
+  hosts: all
+  gather_facts: false
+  become: true
+  vars:
+    animica_user: "{{ animica_user | default('animica') }}"
+    animica_group: "{{ animica_group | default('animica') }}"
+  tasks:
+    - name: Remove animica user
+      ansible.builtin.user:
+        name: "{{ animica_user }}"
+        state: absent
+        remove: false    # do not remove home automatically
+      when: remove_users | default(false) | bool
+      ignore_errors: true
+
+    - name: Remove animica group
+      ansible.builtin.group:
+        name: "{{ animica_group }}"
+        state: absent
+      when: remove_users | default(false) | bool
+      ignore_errors: true
+
+# -----------------------------
+# Final summary
+# -----------------------------
+- name: Teardown complete — summary
+  hosts: all
+  gather_facts: false
+  become: false
+  tasks:
+    - ansible.builtin.debug:
+        msg:
+          - "Teardown finished on {{ inventory_hostname }}."
+          - "Tip: run 'systemctl list-units | grep animica' to verify no units remain."

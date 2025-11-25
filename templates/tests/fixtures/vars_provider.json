@@ -1,0 +1,107 @@
+{
+  "project_slug": "aicf_provider_demo",
+  "project_name": "AICF Provider (FastAPI)",
+  "description": "Minimal provider implementing AI & Quantum capabilities with a polling worker and metrics.",
+  "author_name": "Animica CI",
+  "author_email": "ci@example.com",
+  "license": "MIT",
+  "version": "0.1.0",
+
+  "chain_id": "devnet",
+  "rpc_http_url": "http://127.0.0.1:8545",
+  "rpc_ws_url": "ws://127.0.0.1:8546",
+  "explorer_base_url": "http://127.0.0.1:8082",
+  "explorer_api_url": "http://127.0.0.1:8081",
+  "services_base_url": "http://127.0.0.1:8083",
+
+  "native_currency": {
+    "symbol": "ANM",
+    "decimals": 18
+  },
+
+  "provider": {
+    "id": "prov_demo_001",
+    "display_name": "Demo Provider",
+    "public_base_url": "http://127.0.0.1:7000",
+    "bind_host": "0.0.0.0",
+    "bind_port": 7000,
+    "metrics_port": 9095,
+    "enable_metrics": true,
+    "healthcheck_path": "/healthz",
+    "auth": {
+      "scheme": "hmac",
+      "key_id": "prov_demo_key",
+      "secret": "changeme"
+    },
+    "signing": {
+      "mnemonic": "test test test test test test test test test test test junk",
+      "derivation_path": "m/44'/12345'/0'/0/0"
+    },
+    "logging": {
+      "level": "INFO",
+      "json": true
+    }
+  },
+
+  "capabilities": {
+    "ai": {
+      "enabled": true,
+      "models": ["text-embed-small", "text-gen-mini"],
+      "max_input_bytes": 262144,
+      "max_output_tokens": 1024,
+      "pricing": {
+        "unit": "ANM",
+        "per_1k_tokens_in": "0.005",
+        "per_1k_tokens_out": "0.020",
+        "per_job_minimum": "0.001"
+      },
+      "sla": {
+        "p95_latency_ms": 2000,
+        "max_queue_ms": 5000
+      }
+    },
+    "quantum": {
+      "enabled": true,
+      "backend": "simulator",
+      "shots_default": 256,
+      "shots_max": 4096,
+      "trap_density": 0.125,
+      "pricing": {
+        "unit": "ANM",
+        "per_shot": "0.00001",
+        "per_job_minimum": "0.001"
+      },
+      "sla": {
+        "p95_latency_ms": 5000,
+        "max_queue_ms": 15000
+      }
+    }
+  },
+
+  "worker": {
+    "enabled": true,
+    "poll_interval_ms": 500,
+    "max_concurrency": 2,
+    "max_retries": 3,
+    "retry_backoff_ms": 250,
+    "queue_names": {
+      "ai": "aicf.jobs.ai",
+      "quantum": "aicf.jobs.quantum"
+    }
+  },
+
+  "k8s": {
+    "namespace": "animica-devnet",
+    "image_repo": "ghcr.io/animica/aicf-provider",
+    "image_tag": "local",
+    "replicas": 1,
+    "resources": {
+      "requests": { "cpu": "250m", "memory": "256Mi" },
+      "limits": { "cpu": "1", "memory": "1Gi" }
+    },
+    "service": {
+      "type": "ClusterIP",
+      "port": 7000
+    }
+  }
+}

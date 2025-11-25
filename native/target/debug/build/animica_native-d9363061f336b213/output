@@ -1,0 +1,9 @@
+cargo:rerun-if-changed=build.rs
+cargo:rerun-if-env-changed=CARGO_CFG_TARGET_ARCH
+cargo:rerun-if-env-changed=CARGO_CFG_TARGET_FEATURE
+cargo:rerun-if-env-changed=CARGO_FEATURE_C_KECCAK
+cargo:rerun-if-env-changed=CARGO_FEATURE_ISAL
+cargo:rerun-if-env-changed=ANIMICA_NATIVE_FORCE_CPU
+cargo:rustc-cfg=has_avx2
+cargo:rustc-cfg=has_aesni
+cargo:rustc-cfg=simd_optimized

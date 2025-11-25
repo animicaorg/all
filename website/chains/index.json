@@ -1,0 +1,25 @@
+{
+  "chains": [
+    {
+      "id": "animica.mainnet",
+      "name": "Animica Mainnet (Reserved)",
+      "chainId": 1,
+      "caip2": "animica:1",
+      "testnet": false
+    },
+    {
+      "id": "animica.testnet",
+      "name": "Animica Testnet (Public Devnet)",
+      "chainId": 2,
+      "caip2": "animica:2",
+      "testnet": true
+    },
+    {
+      "id": "animica.localnet",
+      "name": "Animica Localnet (Developer)",
+      "chainId": 1337,
+      "caip2": "animica:1337",
+      "testnet": true
+    }
+  ]
+}

@@ -1,0 +1,317 @@
+# spec/domains.yaml
+# Canonical domain separators & personalization strings for Animica.
+# These tags are concatenated into a DomainTag used for:
+#  - hashing (SHA3-256/512 default)
+#  - post-quantum signatures (Dilithium3, SPHINCS+)
+#  - KEM handshakes (Kyber768 → AEAD keys)
+#  - address payload derivation
+#  - proof nullifiers and receipts
+#  - data-availability (NMT) commitments
+#  - VM code/manifest hashing
+#  - randomness (commit/reveal/VDF)
+#
+# Canonical construction (MUST):
+#   DomainTag = b"ANM|" + chainId_ascii + b"|" + path_ascii + b"|v" + str(version)
+#   Where chainId_ascii is one of: "animica:1", "animica:2", "animica:1337".
+#   SignBytes = DomainTag || CanonicalEncode(payload)   # CBOR for core objects
+#   Hash      = SHA3-256( DomainTag || bytes_to_hash )
+#
+# Rationale:
+#  - Prefix "ANM|" avoids cross-protocol collisions.
+#  - Including chainId prevents replay across networks.
+#  - Path segments give human-auditable purpose.
+#  - Version allows schema evolution without ambiguity.
+
+meta:
+  specVersion: 1
+  prefix: "ANM|"
+  defaultHash: "sha3_256"
+  chainIdRequired: true
+  encoding:
+    payload: "cbor_deterministic"     # See spec/*.cddl
+    domain: "ascii_path"              # "segment|segment|...|vN"
+  notes:
+    - "Use SHA3-512 where explicitly stated (e.g., alg-policy Merkle)."
+    - "For bech32m addresses, domain guards the payload before HRP encoding."
+
+addressing:
+  bech32m:
+    hrp:
+      mainnet: "anim"   # anim1...
+      testnet: "ant"    # ant1...
+      devnet: "anv"     # anv1...
+    domains:
+      payload_v1:
+        id: 0x0100
+        tag: "addr|payload"
+        comment: "H(ANM|{chainId}|addr|payload|v1 || pubkey/alg_id) → 20/32B payload"
+
+hashing:
+  defaults:
+    hash_fn: "sha3_256"
+  domains:
+    tx_hash_v1:
+      id: 0x0200
+      tag: "hash|tx"
+      comment: "Tx canonical hash (pre-signature for txid; post-sig for tx record as needed)"
+    header_hash_v1:
+      id: 0x0201
+      tag: "hash|header"
+      comment: "Block header hash (without PoW nonce fields for sign/domain binds where specified)"
+    block_hash_v1:
+      id: 0x0202
+      tag: "hash|block"
+      comment: "Full block body hash (header||txs||proofs) when required"
+    state_root_v1:
+      id: 0x0203
+      tag: "root|state"
+      comment: "Merkle root over canonical state keyspace"
+    receipts_root_v1:
+      id: 0x0204
+      tag: "root|receipts"
+      comment: "Merkle root of receipts/logs"
+    txs_root_v1:
+      id: 0x0205
+      tag: "root|txs"
+      comment: "Merkle root of ordered transactions"
+    proofs_root_v1:
+      id: 0x0206
+      tag: "root|proofs"
+      comment: "Merkle root of attached proofs (PoIES)"
+    da_root_v1:
+      id: 0x0207
+      tag: "root|da|nmt"
+      comment: "Namespaced Merkle Tree commitment root for DA"
+    mix_seed_v1:
+      id: 0x0208
+      tag: "consensus|mixseed"
+      comment: "Header mix/nonce domain; feeds u-draw and beacon mixing"
+    vm_code_hash_v1:
+      id: 0x0209
+      tag: "vm|code|hash"
+      comment: "Deterministic code bundle hash (manifest+source/IR)"
+    vm_manifest_hash_v1:
+      id: 0x020A
+      tag: "vm|manifest|hash"
+      comment: "Deterministic manifest hash (capabilities/ABI/resources)"
+    vdf_input_v1:
+      id: 0x020B
+      tag: "rand|vdf|input"
+      comment: "Input transcript to Wesolowski VDF"
+    light_beacon_proof_v1:
+      id: 0x020C
+      tag: "rand|beacon|light"
+      comment: "Compact light-client proof transcript hash"
+
+signing:
+  algorithms:
+    dilithium3:
+      domains:
+        tx_v1:
+          id: 0x0300
+          tag: "sig|dilithium3|tx"
+          comment: "SignBytes for transactions"
+        header_v1:
+          id: 0x0301
+          tag: "sig|dilithium3|header"
+          comment: "Validator/miner signatures on headers when used"
+        da_receipt_v1:
+          id: 0x0302
+          tag: "sig|dilithium3|da|receipt"
+          comment: "Optional DA receipt signatures"
+        aicf_claim_v1:
+          id: 0x0303
+          tag: "sig|dilithium3|aicf|claim"
+          comment: "Providers signing payout/claim attestations"
+    sphincs_shake_128s:
+      domains:
+        tx_v1:
+          id: 0x0310
+          tag: "sig|sphincs|tx"
+        header_v1:
+          id: 0x0311
+          tag: "sig|sphincs|header"
+        aicf_claim_v1:
+          id: 0x0312
+          tag: "sig|sphincs|aicf|claim"
+
+kem:
+  kyber768:
+    handshake_v1:
+      id: 0x0400
+      tag: "p2p|handshake|kyber768"
+      comment: "Ephemeral handshake transcript tag for KEM → HKDF → AEAD"
+    key_schedule_v1:
+      id: 0x0401
+      tag: "p2p|handshake|kdf"
+      comment: "HKDF label for deriveKey/deriveIV personalization"
+
+p2p:
+  peer_id_v1:
+    id: 0x0500
+    tag: "p2p|peerid"
+    comment: "H(ANM|{chainId}|p2p|peerid|v1 || identity pubkey)"
+  wire_checksum_v1:
+    id: 0x0501
+    tag: "p2p|wire|checksum"
+    comment: "Per-frame checksum tag (AEAD AAD or integrity hash)"
+  topic_id_v1:
+    id: 0x0502
+    tag: "p2p|topic|id"
+    comment: "Hash personalization for canonical topic ids"
+
+proofs:
+  # Nullifiers are per-type; bodies are CBOR as per proofs/schemas/*
+  hashshare:
+    nullifier_v1:
+      id: 0x0600
+      tag: "proof|hashshare|nullifier"
+      comment: "Prevents re-use of the same HashShare"
+  ai:
+    nullifier_v1:
+      id: 0x0601
+      tag: "proof|ai|nullifier"
+      comment: "Prevents re-use of the same AI proof"
+    receipt_v1:
+      id: 0x0602
+      tag: "proof|ai|receipt"
+      comment: "Receipt hash for inclusion/merkle"
+  quantum:
+    nullifier_v1:
+      id: 0x0603
+      tag: "proof|quantum|nullifier"
+    receipt_v1:
+      id: 0x0604
+      tag: "proof|quantum|receipt"
+  storage:
+    heartbeat_nullifier_v1:
+      id: 0x0605
+      tag: "proof|storage|heartbeat|nullifier"
+  vdf:
+    proof_v1:
+      id: 0x0606
+      tag: "proof|vdf|wesolowski"
+      comment: "Transcript/tag for verifying the VDF proof"
+
+policies:
+  pq_alg_policy_root_v1:
+    id: 0x0700
+    tag: "policy|pq|root"
+    hash_fn: "sha3_512"
+    comment: "Merkle root of PQ alg-policy tree"
+  poies_policy_root_v1:
+    id: 0x0701
+    tag: "policy|poies|root"
+    hash_fn: "sha3_512"
+    comment: "Merkle root of PoIES caps/weights/diversity policy"
+
+data_availability:
+  blob_commitment_v1:
+    id: 0x0800
+    tag: "da|blob|commitment"
+    comment: "Commit(blob) → NMT root personalization"
+  availability_proof_v1:
+    id: 0x0801
+    tag: "da|proof|availability"
+    comment: "DAS proof envelope personalization"
+
+vm:
+  abi_hash_v1:
+    id: 0x0900
+    tag: "vm|abi|hash"
+    comment: "ABI schema hash used in manifests"
+  event_hash_v1:
+    id: 0x0901
+    tag: "vm|event|hash"
+    comment: "Event signature/topic hashing"
+  syscall_record_v1:
+    id: 0x0902
+    tag: "vm|syscall|record"
+    comment: "Record of syscalls used for receipts/debugging"
+
+capabilities:
+  job_request_v1:
+    id: 0x0A00
+    tag: "cap|job|request"
+  job_receipt_v1:
+    id: 0x0A01
+    tag: "cap|job|receipt"
+  result_record_v1:
+    id: 0x0A02
+    tag: "cap|job|result"
+
+randomness:
+  commit_v1:
+    id: 0x0B00
+    tag: "rand|commit"
+    comment: "Commit payload domain (bias-resistant aggregation)"
+  reveal_v1:
+    id: 0x0B01
+    tag: "rand|reveal"
+  beacon_v1:
+    id: 0x0B02
+    tag: "rand|beacon"
+    comment: "Finalized beacon output transcript"
+
+miner:
+  share_v1:
+    id: 0x0C00
+    tag: "miner|share"
+    comment: "Share envelope hash/sign domain (if signed)"
+  template_v1:
+    id: 0x0C01
+    tag: "miner|template"
+    comment: "Header-template integrity tag (getwork/stratum)"
+
+# Collision-avoidance registry (optional helper):
+# Each id MUST be unique across this table. New domains should use a new id,
+# and bump version in tag path when semantics change.
+registry:
+  - { id: 0x0100, path: "addr|payload" }
+  - { id: 0x0200, path: "hash|tx" }
+  - { id: 0x0201, path: "hash|header" }
+  - { id: 0x0202, path: "hash|block" }
+  - { id: 0x0203, path: "root|state" }
+  - { id: 0x0204, path: "root|receipts" }
+  - { id: 0x0205, path: "root|txs" }
+  - { id: 0x0206, path: "root|proofs" }
+  - { id: 0x0207, path: "root|da|nmt" }
+  - { id: 0x0208, path: "consensus|mixseed" }
+  - { id: 0x0209, path: "vm|code|hash" }
+  - { id: 0x020A, path: "vm|manifest|hash" }
+  - { id: 0x020B, path: "rand|vdf|input" }
+  - { id: 0x020C, path: "rand|beacon|light" }
+  - { id: 0x0300, path: "sig|dilithium3|tx" }
+  - { id: 0x0301, path: "sig|dilithium3|header" }
+  - { id: 0x0302, path: "sig|dilithium3|da|receipt" }
+  - { id: 0x0303, path: "sig|dilithium3|aicf|claim" }
+  - { id: 0x0310, path: "sig|sphincs|tx" }
+  - { id: 0x0311, path: "sig|sphincs|header" }
+  - { id: 0x0312, path: "sig|sphincs|aicf|claim" }
+  - { id: 0x0400, path: "p2p|handshake|kyber768" }
+  - { id: 0x0401, path: "p2p|handshake|kdf" }
+  - { id: 0x0500, path: "p2p|peerid" }
+  - { id: 0x0501, path: "p2p|wire|checksum" }
+  - { id: 0x0502, path: "p2p|topic|id" }
+  - { id: 0x0600, path: "proof|hashshare|nullifier" }
+  - { id: 0x0601, path: "proof|ai|nullifier" }
+  - { id: 0x0602, path: "proof|ai|receipt" }
+  - { id: 0x0603, path: "proof|quantum|nullifier" }
+  - { id: 0x0604, path: "proof|quantum|receipt" }
+  - { id: 0x0605, path: "proof|storage|heartbeat|nullifier" }
+  - { id: 0x0606, path: "proof|vdf|wesolowski" }
+  - { id: 0x0700, path: "policy|pq|root" }
+  - { id: 0x0701, path: "policy|poies|root" }
+  - { id: 0x0800, path: "da|blob|commitment" }
+  - { id: 0x0801, path: "da|proof|availability" }
+  - { id: 0x0900, path: "vm|abi|hash" }
+  - { id: 0x0901, path: "vm|event|hash" }
+  - { id: 0x0902, path: "vm|syscall|record" }
+  - { id: 0x0A00, path: "cap|job|request" }
+  - { id: 0x0A01, path: "cap|job|receipt" }
+  - { id: 0x0A02, path: "cap|job|result" }
+  - { id: 0x0B00, path: "rand|commit" }
+  - { id: 0x0B01, path: "rand|reveal" }
+  - { id: 0x0B02, path: "rand|beacon" }
+  - { id: 0x0C00, path: "miner|share" }
+  - { id: 0x0C01, path: "miner|template" }

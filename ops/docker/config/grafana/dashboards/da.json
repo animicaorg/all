@@ -1,0 +1,424 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["animica", "da", "data-availability", "nmt", "erasure", "sampler"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": true },
+        "hide": 0,
+        "label": "Prometheus",
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource"
+      },
+      {
+        "datasource": "${DS_PROMETHEUS}",
+        "definition": "label_values(up{job=~\".*\"}, job)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "job",
+        "multi": false,
+        "name": "job",
+        "options": [],
+        "query": { "query": "label_values(up{job=~\".*\"}, job)", "refId": "PromVarJob" },
+        "refresh": 1,
+        "regex": "/da|services|node.*/",
+        "skipUrlSync": false,
+        "type": "query"
+      },
+      {
+        "datasource": "${DS_PROMETHEUS}",
+        "definition": "label_values(animica_da_post_total{job=~\"$job\"}, instance)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "instance",
+        "multi": false,
+        "name": "instance",
+        "options": [],
+        "query": {
+          "query": "label_values(animica_da_post_total{job=~\"$job\"}, instance)",
+          "refId": "PromVarInstance"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "query"
+      },
+      {
+        "datasource": "${DS_PROMETHEUS}",
+        "definition": "label_values(animica_da_http_request_duration_seconds_bucket{instance=\"$instance\"}, route)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "route",
+        "multi": true,
+        "name": "route",
+        "options": [],
+        "query": {
+          "query": "label_values(animica_da_http_request_duration_seconds_bucket{instance=\"$instance\"}, route)",
+          "refId": "PromVarRoute"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "query"
+      },
+      {
+        "datasource": "${DS_PROMETHEUS}",
+        "definition": "label_values(animica_da_post_total{instance=\"$instance\"}, ns)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "namespace",
+        "multi": true,
+        "name": "ns",
+        "options": [],
+        "query": {
+          "query": "label_values(animica_da_post_total{instance=\"$instance\"}, ns)",
+          "refId": "PromVarNs"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "query"
+      },
+      {
+        "datasource": "${DS_PROMETHEUS}",
+        "definition": "label_values(animica_da_proofs_generated_total{instance=\"$instance\"}, kind)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "proof kind",
+        "multi": true,
+        "name": "proof_kind",
+        "options": [],
+        "query": {
+          "query": "label_values(animica_da_proofs_generated_total{instance=\"$instance\"}, kind)",
+          "refId": "PromVarProofKind"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "query"
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m"],
+    "time_options": ["1h", "3h", "6h", "12h", "24h", "2d", "7d", "30d"]
+  },
+  "timezone": "",
+  "title": "Animica — Data Availability (DA)",
+  "uid": "animica-da-01",
+  "version": 1,
+  "panels": [
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Total blobs retained by local DA store.",
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "id": 10,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "animica_da_store_blobs{instance=\"$instance\"}", "legendFormat": "blobs", "refId": "A" }
+      ],
+      "title": "Store: Blobs",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "On-disk bytes used by DA store (content-addressed).",
+      "fieldConfig": { "defaults": { "unit": "bytes", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "id": 11,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "animica_da_store_bytes{instance=\"$instance\"}", "legendFormat": "bytes", "refId": "A" }
+      ],
+      "title": "Store: Bytes",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Blob POST accept rate (HTTP 2xx).",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "id": 12,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "sum(rate(animica_da_post_total{instance=\"$instance\"}[5m]))", "legendFormat": "post/s", "refId": "A" }
+      ],
+      "title": "POST /da/blob (5m rate)",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Blob GET (bytes/s) served by local node.",
+      "fieldConfig": { "defaults": { "unit": "Bps", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "id": 13,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "sum(rate(animica_da_get_bytes_total{instance=\"$instance\"}[5m]))", "legendFormat": "bytes/s", "refId": "A" }
+      ],
+      "title": "GET Bytes (5m rate)",
+      "type": "stat"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Ingress/egress throughput for DA API.",
+      "fieldConfig": { "defaults": { "unit": "Bps", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "id": 20,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } },
+      "targets": [
+        { "expr": "sum by (instance) (rate(animica_da_post_bytes_total{instance=\"$instance\"}[5m]))", "legendFormat": "POST bytes/s", "refId": "A" },
+        { "expr": "sum by (instance) (rate(animica_da_get_bytes_total{instance=\"$instance\"}[5m]))", "legendFormat": "GET bytes/s", "refId": "B" }
+      ],
+      "title": "DA Throughput (bytes/s, 5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Request rates by route (filter with the Route variable).",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "id": 21,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } },
+      "targets": [
+        { "expr": "sum by (route,method) (rate(animica_da_http_requests_total{instance=\"$instance\",route=~\"$route\"}[5m]))", "legendFormat": "{{route}} {{method}}", "refId": "A" }
+      ],
+      "title": "HTTP Requests by Route (5m)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "HTTP latency quantiles per route.",
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 3 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 13 },
+      "id": 30,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le,route) (rate(animica_da_http_request_duration_seconds_bucket{instance=\"$instance\",route=~\"$route\"}[5m])))",
+          "legendFormat": "p50 {{route}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le,route) (rate(animica_da_http_request_duration_seconds_bucket{instance=\"$instance\",route=~\"$route\"}[5m])))",
+          "legendFormat": "p95 {{route}}",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le,route) (rate(animica_da_http_request_duration_seconds_bucket{instance=\"$instance\",route=~\"$route\"}[5m])))",
+          "legendFormat": "p99 {{route}}",
+          "refId": "C"
+        }
+      ],
+      "title": "HTTP Latency (p50/p95/p99, 5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "NMT build and proof-verify latency (dev/path).",
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 3 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 13 },
+      "id": 31,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(animica_da_nmt_build_seconds_bucket{instance=\"$instance\"}[5m])))",
+          "legendFormat": "NMT build p95",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(animica_da_nmt_verify_seconds_bucket{instance=\"$instance\"}[5m])))",
+          "legendFormat": "NMT verify p95",
+          "refId": "B"
+        }
+      ],
+      "title": "NMT Latency (p95, 5m)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Erasure coding (RS) encode/decode latency.",
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 3 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 20 },
+      "id": 40,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(animica_da_rs_encode_seconds_bucket{instance=\"$instance\"}[5m])))",
+          "legendFormat": "RS encode p95",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(animica_da_rs_decode_seconds_bucket{instance=\"$instance\"}[5m])))",
+          "legendFormat": "RS decode p95",
+          "refId": "B"
+        }
+      ],
+      "title": "Erasure Coding Latency (p95, 5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Proof verification and light-client verification rates.",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 20 },
+      "id": 41,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } },
+      "targets": [
+        { "expr": "sum(rate(animica_da_proof_verify_ok_total{instance=\"$instance\",kind=~\"$proof_kind\"}[5m]))", "legendFormat": "verify ok {{kind}}/s", "refId": "A" },
+        { "expr": "sum(rate(animica_da_proof_verify_fail_total{instance=\"$instance\",kind=~\"$proof_kind\"}[5m]))", "legendFormat": "verify fail {{kind}}/s", "refId": "B" },
+        { "expr": "sum(rate(animica_da_light_verify_ok_total{instance=\"$instance\"}[5m]))", "legendFormat": "light ok/s", "refId": "C" },
+        { "expr": "sum(rate(animica_da_light_verify_fail_total{instance=\"$instance\"}[5m]))", "legendFormat": "light fail/s", "refId": "D" }
+      ],
+      "title": "Proof Verify Rates (5m)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Observed sampling failure probability vs configured target.",
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 3 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 27 },
+      "id": 50,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+      "targets": [
+        { "expr": "avg_over_time(animica_da_sampling_p_fail_estimate{instance=\"$instance\"}[5m])", "legendFormat": "observed p_fail", "refId": "A" },
+        { "expr": "avg_over_time(animica_da_sampling_p_fail_target{instance=\"$instance\"}[5m])", "legendFormat": "target p_fail", "refId": "B" }
+      ],
+      "title": "DAS p_fail — Observed vs Target (5m avg)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Audit success ratio over time from sampler attempts.",
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 27 },
+      "id": 51,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } },
+      "targets": [
+        {
+          "expr": "1 - clamp_min(sum(rate(animica_da_sampling_fail_total{instance=\"$instance\"}[5m])) / sum(rate(animica_da_sampling_attempt_total{instance=\"$instance\"}[5m])), 0)",
+          "legendFormat": "audit success",
+          "refId": "A"
+        }
+      ],
+      "title": "Sampling Audit Success (5m)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Retrieval cache hit ratio (LRU).",
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 35 },
+      "id": 60,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(animica_da_retrieval_cache_hit_total{instance=\"$instance\"}[5m])) / (sum(rate(animica_da_retrieval_cache_hit_total{instance=\"$instance\"}[5m])) + sum(rate(animica_da_retrieval_cache_miss_total{instance=\"$instance\"}[5m])))",
+          "legendFormat": "hit ratio",
+          "refId": "A"
+        }
+      ],
+      "title": "Cache Hit Ratio (5m)",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Namespace distribution of recent blob posts.",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 12, "x": 6, "y": 35 },
+      "id": 61,
+      "options": {
+        "displayMode": "gradient",
+        "min": 0,
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showUnfilled": true
+      },
+      "targets": [
+        { "expr": "sum by (ns) (rate(animica_da_post_total{instance=\"$instance\",ns=~\"$ns\"}[5m]))", "legendFormat": "{{ns}}", "refId": "A" }
+      ],
+      "title": "Posts by Namespace (5m)",
+      "type": "bargauge"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "DA error rates grouped by kind.",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 35 },
+      "id": 62,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "sum(rate(animica_da_errors_total{instance=\"$instance\"}[5m]))", "legendFormat": "errors/s", "refId": "A" }
+      ],
+      "title": "Errors (all kinds, 5m rate)",
+      "type": "stat"
+    }
+  ]
+}

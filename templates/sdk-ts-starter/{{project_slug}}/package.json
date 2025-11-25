@@ -1,0 +1,81 @@
+{
+  "name": "{{project_slug}}",
+  "version": "0.1.0",
+  "private": true,
+  "description": "{{description}}",
+  "license": "{{license}}",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "tsx",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --ext .ts",
+    "format": "prettier --write .",
+    "example:head": "tsx src/examples/getHead.ts",
+    "example:sub": "tsx src/examples/subscribeNewHeads.ts",
+    "example:send": "tsx src/examples/sendTransfer.ts",
+    "example:call": "tsx src/examples/contractCall.ts"
+  },
+  "dependencies": {
+    "@animica/sdk": "{{sdk_ts_version}}",
+    "dotenv": "^16.4.5",
+    "tslib": "^2.6.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.12",
+    "@typescript-eslint/eslint-plugin": "^7.8.0",
+    "@typescript-eslint/parser": "^7.8.0",
+    "eslint": "^8.57.0",
+    "prettier": "^3.3.3",
+    "tsx": "^4.15.7",
+    "typescript": "^5.4.5"
+  },
+  "eslintConfig": {
+    "root": true,
+    "env": {
+      "es2022": true,
+      "node": true
+    },
+    "ignorePatterns": [
+      "dist/",
+      "node_modules/"
+    ],
+    "overrides": [
+      {
+        "files": [
+          "**/*.ts"
+        ],
+        "parser": "@typescript-eslint/parser",
+        "parserOptions": {
+          "ecmaVersion": "latest",
+          "sourceType": "module",
+          "project": false
+        },
+        "plugins": [
+          "@typescript-eslint"
+        ],
+        "extends": [
+          "eslint:recommended",
+          "plugin:@typescript-eslint/recommended"
+        ],
+        "rules": {
+          "@typescript-eslint/no-explicit-any": "off"
+        }
+      }
+    ]
+  },
+  "prettier": {
+    "printWidth": 100,
+    "singleQuote": true,
+    "semi": true,
+    "trailingComma": "es5"
+  }
+}

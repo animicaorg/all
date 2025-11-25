@@ -1,0 +1,73 @@
+; Animica — HashShare Proof Body CDDL
+; -----------------------------------
+; A HashShare proves a valid u-draw from the header’s nonce domain and binds to a
+; specific header *template* (header with nonce zeroed in the SignBytes domain).
+; Verifiers recompute u from (domain | header_template_hash | nonce) using the
+; canonical Keccak stream (see proofs/utils/keccak_stream.py) and then derive
+; H(u) = −ln(u). Consensus compares H(u) against the current Θ (and computes the
+; share difficulty ratio d_ratio = H(u)/Θ) outside of this body.
+;
+; Encoding rules:
+;  • Deterministic CBOR (canonical order, definite lengths).
+;  • Integer keys (1..6) for stability.
+;  • No floating-point encodings; any “quality” hints are fixed-point.
+;
+; Field summary:
+;   1: ver                    → uint version (starts at 1)
+;   2: header_template_hash   → 32-byte digest of the header SignBytes with nonce=0
+;   3: nonce                  → variable-length nonce bytes from the header’s nonce domain
+;   4: mix_digest             → keccak256(TAG | header_template_hash | nonce)
+;   5: work_mu_nats           → OPTIONAL verifier-hint of H(u) in µ-nats (fixed-point, 1e6)
+;   6: ext                    → OPTIONAL opaque extension bytes for future use
+;
+; Notes:
+;  • The verifier MUST ignore field 5 for consensus; it MAY validate it matches
+;    recomputed H(u) within rounding rules.
+;  • `mix_digest` is included for audit/debug; it MUST match the recomputation.
+;  • The binding TAG is the domain separator defined in spec/domains.yaml
+;    under proofs.hashshare.mix (e.g., "animica/proof/hashshare/mix:v1").
+;
+;-----------------------------------------
+; Scalar aliases
+;-----------------------------------------
+
+Digest32 = bstr .size 32
+
+; Allow a small set of nonce lengths to support different mining backends and
+; future expansion while keeping the encoding simple and unambiguous.
+Nonce =  bstr .size 8
+      /  bstr .size 12
+      /  bstr .size 16
+      /  bstr .size 24
+      /  bstr .size 32
+
+; Fixed-point “micro-nats”: floor( H(u) * 1_000_000 ).
+; (Range fits in uint64 for all practical Θ.)
+WorkMuNats = uint
+
+;-----------------------------------------
+; HashShare body
+;-----------------------------------------
+
+HashShare = {
+  1: uint,        ; ver (starts at 1). Reject unknown future versions unless feature-gated.
+  2: Digest32,    ; header_template_hash = H(SignBytes(header with nonce=0))
+  3: Nonce,       ; nonce sampled in the header’s nonce domain
+  4: Digest32,    ; mix_digest = keccak256(TAG || header_template_hash || nonce)
+  ?5: WorkMuNats, ; OPTIONAL: verifier-hint H(u) in µ-nats (non-consensus)
+  ?6: bstr,       ; OPTIONAL: ext (opaque extension area for future fields)
+}
+
+; For convenience when carrying multiple shares (non-consensus):
+HashShareList = [* HashShare]
+
+;-----------------------------------------
+; Verification (non-normative)
+;-----------------------------------------
+; 1) Decode HashShare canonically.
+; 2) Recompute mix' = keccak256(TAG || header_template_hash || nonce); require mix'==mix_digest.
+; 3) Derive u from the keccak stream as specified (proofs/utils/keccak_stream.py).
+; 4) Compute H(u) = −ln(u). Optionally check field 5 (if present) matches rounding.
+; 5) Produce ProofMetrics: { d_ratio = H(u)/Θ, ... } for PoIES scorer (outside this body).
+;
+; End of file.

@@ -1,0 +1,287 @@
+/* Theme variables — light & dark
+   This file defines color palettes, elevations, and component-level tokens
+   layered on top of tokens.css. It also includes a few pragmatic utilities.
+*/
+
+/* ========== Light theme (default) ========== */
+:root {
+  /* Backgrounds & surfaces */
+  --bg: #ffffff;
+  --surface: #f6f7f9;
+  --surface-2: #eef0f4;
+  --surface-3: #e5e8ef;
+
+  /* Text */
+  --text: #0f172a;          /* slate-900 */
+  --text-muted: #475569;    /* slate-600 */
+  --text-inverse: #ffffff;
+
+  /* Borders & outlines */
+  --border: #d7dbe3;
+  --focus-ring-color: #2563eb; /* primary-600 */
+  --focus-ring-alpha: 0.55;
+
+  /* Brand & statuses */
+  --primary: #3b82f6;         /* blue-500 */
+  --primary-600: #2563eb;
+  --primary-700: #1d4ed8;
+  --primary-contrast: #ffffff;
+
+  --accent: #8b5cf6;          /* violet-500 */
+  --success: #16a34a;         /* green-600 */
+  --warning: #d97706;         /* amber-600 */
+  --danger: #ef4444;          /* red-500 */
+
+  /* Subtle tints (for badges/pills) */
+  --primary-tint: color-mix(in srgb, var(--primary) 12%, white);
+  --success-tint: color-mix(in srgb, var(--success) 12%, white);
+  --warning-tint: color-mix(in srgb, var(--warning) 12%, white);
+  --danger-tint:  color-mix(in srgb, var(--danger)  12%, white);
+
+  /* Shadows / elevations */
+  --shadow-1: 0 1px 2px rgba(15, 23, 42, 0.05), 0 1px 1px rgba(15, 23, 42, 0.04);
+  --shadow-2: 0 8px 24px rgba(15, 23, 42, 0.10), 0 2px 8px rgba(15, 23, 42, 0.06);
+  --shadow-3: 0 18px 40px rgba(15, 23, 42, 0.14), 0 6px 16px rgba(15, 23, 42, 0.08);
+
+  /* Backdrop */
+  --backdrop: rgba(15, 23, 42, 0.3);
+
+  /* Component radii (inherit base from tokens.css when not overridden) */
+  --radius-card: var(--radius-lg);
+  --radius-panel: var(--radius-md);
+  --radius-control: 10px;
+}
+
+/* ========== Dark theme ========== */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b0f17;
+    --surface: #0f172a;     /* slate-900 */
+    --surface-2: #111827;   /* gray-900 */
+    --surface-3: #1f2937;   /* gray-800 */
+
+    --text: #e5e7eb;        /* gray-200 */
+    --text-muted: #9ca3af;  /* gray-400 */
+    --text-inverse: #0b0f17;
+
+    --border: #233044;
+
+    --primary: #60a5fa;     /* blue-400 */
+    --primary-600: #3b82f6;
+    --primary-700: #2563eb;
+    --primary-contrast: #0b0f17;
+
+    --accent: #a78bfa;      /* violet-400 */
+    --success: #22c55e;
+    --warning: #f59e0b;
+    --danger: #f87171;
+
+    --primary-tint: color-mix(in srgb, var(--primary) 18%, black);
+    --success-tint: color-mix(in srgb, var(--success) 18%, black);
+    --warning-tint: color-mix(in srgb, var(--warning) 18%, black);
+    --danger-tint:  color-mix(in srgb, var(--danger)  18%, black);
+
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.28), 0 1px 1px rgba(0, 0, 0, 0.24);
+    --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.36), 0 2px 8px rgba(0, 0, 0, 0.28);
+    --shadow-3: 0 18px 40px rgba(0, 0, 0, 0.45), 0 6px 16px rgba(0, 0, 0, 0.32);
+
+    --backdrop: rgba(0, 0, 0, 0.45);
+    --focus-ring-color: #60a5fa;
+    --focus-ring-alpha: 0.7;
+  }
+}
+
+/* Manual theme override via data attribute (wins over media query) */
+[data-theme="light"] {
+  color-scheme: light;
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0b0f17;
+  --surface: #0f172a;
+  --surface-2: #111827;
+  --surface-3: #1f2937;
+  --text: #e5e7eb;
+  --text-muted: #9ca3af;
+  --text-inverse: #0b0f17;
+  --border: #233044;
+  --primary: #60a5fa;
+  --primary-600: #3b82f6;
+  --primary-700: #2563eb;
+  --primary-contrast: #0b0f17;
+  --accent: #a78bfa;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --danger: #f87171;
+  --primary-tint: color-mix(in srgb, var(--primary) 18%, black);
+  --success-tint: color-mix(in srgb, var(--success) 18%, black);
+  --warning-tint: color-mix(in srgb, var(--warning) 18%, black);
+  --danger-tint:  color-mix(in srgb, var(--danger)  18%, black);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.28), 0 1px 1px rgba(0, 0, 0, 0.24);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.36), 0 2px 8px rgba(0, 0, 0, 0.28);
+  --shadow-3: 0 18px 40px rgba(0, 0, 0, 0.45), 0 6px 16px rgba(0, 0, 0, 0.32);
+  --backdrop: rgba(0, 0, 0, 0.45);
+  --focus-ring-color: #60a5fa;
+  --focus-ring-alpha: 0.7;
+}
+
+/* ========== Base application wiring ========== */
+html, body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: var(--space-6) 0;
+}
+
+/* Scrollbars (fallback-safe) */
+* {
+  scrollbar-color: var(--border) transparent;
+  scrollbar-width: thin;
+}
+*::-webkit-scrollbar { height: 10px; width: 10px; }
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: var(--radius-pill);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-track { background: transparent; }
+
+/* ========== Focus ring utility ========== */
+.focus-ring,
+:where(a, button, [role="button"], input, textarea, select):focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 var(--focus-ring-offset) color-mix(in srgb, var(--bg) 100%, transparent),
+    0 0 0 calc(var(--focus-ring-width) + var(--focus-ring-offset))
+      color-mix(in srgb, var(--focus-ring-color) calc(var(--focus-ring-alpha) * 100%), transparent);
+  transition: box-shadow var(--transition-fast);
+  border-radius: inherit;
+}
+
+/* High contrast preference bumps */
+@media (prefers-contrast: more) {
+  .focus-ring,
+  :where(a, button, [role="button"], input, textarea, select):focus-visible {
+    --focus-ring-alpha: 0.9;
+  }
+}
+
+/* ========== Component primitives ========== */
+
+/* Card / Panel */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-1);
+}
+.panel {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-1);
+}
+
+/* Elevation helpers */
+.elevate-1 { box-shadow: var(--shadow-1); }
+.elevate-2 { box-shadow: var(--shadow-2); }
+.elevate-3 { box-shadow: var(--shadow-3); }
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: calc(var(--space-2) + 2px) var(--space-4);
+  border-radius: var(--radius-control);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: var(--weight-medium);
+  line-height: 1;
+  transition: background var(--transition-medium), border-color var(--transition-medium), transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+.btn:hover { background: var(--surface-2); }
+.btn:active { transform: translateY(1px); }
+.btn[disabled], .btn:disabled { opacity: 0.6; pointer-events: none; }
+
+.btn-primary {
+  background: var(--primary);
+  border-color: color-mix(in srgb, var(--primary) 70%, black);
+  color: var(--primary-contrast);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--primary) 50%, black) inset;
+}
+.btn-primary:hover { background: var(--primary-600); }
+.btn-primary:active { background: var(--primary-700); }
+
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text);
+}
+.btn-ghost:hover { background: var(--surface); border-color: var(--border); }
+
+/* Inputs */
+.input, .select, .textarea {
+  width: 100%;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  padding: calc(var(--space-2) + 2px) var(--space-3);
+  transition: border-color var(--transition-medium), background var(--transition-medium);
+}
+.input::placeholder, .textarea::placeholder { color: color-mix(in srgb, var(--text-muted) 70%, transparent); }
+.input:focus, .select:focus, .textarea:focus { border-color: color-mix(in srgb, var(--primary) 60%, var(--border)); }
+
+/* Tags / Pills */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+.tag.primary { background: var(--primary-tint); color: var(--primary-700); border-color: color-mix(in srgb, var(--primary) 30%, var(--border)); }
+.tag.success { background: var(--success-tint); color: color-mix(in srgb, var(--success) 80%, black); border-color: color-mix(in srgb, var(--success) 30%, var(--border)); }
+.tag.warning { background: var(--warning-tint); color: color-mix(in srgb, var(--warning) 85%, black); border-color: color-mix(in srgb, var(--warning) 30%, var(--border)); }
+.tag.danger  { background: var(--danger-tint);  color: color-mix(in srgb, var(--danger)  85%, black); border-color: color-mix(in srgb, var(--danger)  30%, var(--border)); }
+
+/* Backdrop (for modals/sheets) */
+.backdrop {
+  position: fixed; inset: 0;
+  background: var(--backdrop);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+/* Utility text colors */
+.text-muted { color: var(--text-muted); }
+.text-inverse { color: var(--text-inverse); }
+
+/* Border & surface utilities */
+.surface { background: var(--surface); }
+.surface-2 { background: var(--surface-2); }
+.surface-3 { background: var(--surface-3); }
+.border { border: 1px solid var(--border); }
+.border-top { border-top: 1px solid var(--border); }
+.border-bottom { border-bottom: 1px solid var(--border); }
+
+/* Animations: gentle fade/slide (respect reduced motion) */
+@media (prefers-reduced-motion: no-preference) {
+  .fade-in { animation: fade-in var(--transition-medium) ease-out both; }
+  .slide-up { animation: slide-up var(--transition-medium) ease-out both; }
+  @keyframes fade-in { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes slide-up { from { transform: translateY(6px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }
+}

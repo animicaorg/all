@@ -1,0 +1,34 @@
+<!-- Animica Logo — Monochrome (White)
+     Usage: one-color prints, emboss, dark backgrounds.
+     SPDX-License-Identifier: CC-BY-ND-4.0 (brand assets) -->
+<svg width="640" height="160" viewBox="0 0 640 160" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Animica Monochrome White</title>
+  <desc id="desc">Single-color white mark + wordmark on transparent background</desc>
+
+  <!-- MARK (all white) -->
+  <g transform="translate(16,16)" fill="#FFFFFF">
+    <!-- Outer orb -->
+    <circle cx="64" cy="64" r="56"/>
+    <!-- Inner cut (knockout) simulated by subtractive ring via mask -->
+    <mask id="cut">
+      <rect x="0" y="0" width="160" height="160" fill="#fff"/>
+      <circle cx="64" cy="64" r="44" fill="#000"/>
+    </mask>
+    <g mask="url(#cut)">
+      <!-- Keep the outer fill, hole created by mask -->
+      <rect x="8" y="8" width="112" height="112" fill="#FFFFFF"/>
+    </g>
+    <!-- Stylized A + crossbar (white on transparent) -->
+    <path d="M64 34 L36 112 H92 L64 34 Z"/>
+    <rect x="46" y="86" width="36" height="10" rx="5"/>
+  </g>
+
+  <!-- WORDMARK (white) -->
+  <g transform="translate(160,0)">
+    <style>
+      .word { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+              font-weight: 800; font-size: 64px; letter-spacing: -0.5px; }
+    </style>
+    <text class="word" x="0" y="106" fill="#FFFFFF">Animica</text>
+  </g>
+</svg>

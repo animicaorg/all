@@ -1,0 +1,136 @@
+%% Mermaid: P2P Gossip — topics, scoring, backpressure
+%% View online: https://mermaid.live
+
+flowchart LR
+  %% ===================== NODE A (LOCAL) =====================
+  subgraph NODEA[Node A]
+    direction TB
+
+    subgraph A_STACK[Stack]
+      direction LR
+
+      subgraph A_GOSSIP[Gossip Engine]
+        direction TB
+        A_SUB[Subscriptions\n(subscribe/unsubscribe)]:::box
+        A_MESH[Topic Mesh Manager\n(fanout, graft/prune)]:::box
+        A_QUEUE[Per-Peer Outbox\n(priority queue)]:::box
+        A_BACKP[Backpressure\n(token buckets & credits)]:::box
+      end
+
+      subgraph A_VALIDATION[Validators]
+        direction TB
+        V_HDR[Headers Validator\n(cheap schedule/Θ checks)]:::val
+        V_BLK[Blocks Validator\n(link, sizes, roots)]:::val
+        V_TX[Tx Validator\n(stateless+PQ precheck)]:::val
+        V_SHR[Shares Validator\n(policy precheck)]:::val
+        V_DA[DA Validator\n(DA commitment form)]:::val
+      end
+
+      subgraph A_SCORES[Scoring]
+        direction TB
+        S_TOPIC[Topic Score (per topic):\n time_in_mesh, first_message_deliveries,\n mesh_message_deliveries, mesh_failure_penalty]:::score
+        S_PEER[Peer Score (aggregate):\n Σ topic_score·w + app_penalties\n (invalid msgs, rate abuse)]:::score
+      end
+
+      subgraph A_RL[Rate Limiters]
+        direction TB
+        RL_PEER[Per-Peer buckets\n(msg/s, bytes/s)]:::rl
+        RL_TOPIC[Per-Topic buckets\n(blocks, txs, shares)]:::rl
+        RL_GLOBAL[Global ingress/egress\nheadroom]:::rl
+      end
+    end
+
+    A_EVENTS[(Internal Events):\n newHead, newTx, newShare]:::evt
+  end
+
+  %% ===================== TOPICS =====================
+  subgraph TOPICS[Topics]
+    direction TB
+    T_HDR[[gossip/headers]]:::topic
+    T_BLK[[gossip/blocks]]:::topic
+    T_TX[[gossip/txs]]:::topic
+    T_SHR[[gossip/shares]]:::topic
+    T_BLOB[[gossip/blobs]]:::topic
+  end
+
+  %% ===================== REMOTE PEERS =====================
+  subgraph REMOTE[Remote Peers]
+    direction LR
+    subgraph PB[Peer B]
+      direction TB
+      PB_MESH[Mesh (B)]:::peer
+      PB_SCORE[Score (B)]:::peer
+    end
+    subgraph PC[Peer C]
+      direction TB
+      PC_MESH[Mesh (C)]:::peer
+      PC_SCORE[Score (C)]:::peer
+    end
+    subgraph PD[Peer D]
+      direction TB
+      PD_MESH[Mesh (D)]:::peer
+      PD_SCORE[Score (D)]:::peer
+    end
+  end
+
+  %% ===================== SUBSCRIPTIONS / MESH MGMT =====================
+  A_SUB -- "SUBSCRIBE" --> T_HDR
+  A_SUB -- "SUBSCRIBE" --> T_BLK
+  A_SUB -- "SUBSCRIBE" --> T_TX
+  A_SUB -- "SUBSCRIBE" --> T_SHR
+  A_SUB -- "SUBSCRIBE (optional)" --> T_BLOB
+
+  A_MESH -- "GRAFT" --> PB_MESH
+  A_MESH -- "GRAFT" --> PC_MESH
+  A_MESH -- "PRUNE (low score/backpressure)" --> PD_MESH
+
+  %% ===================== PUBLISH FLOW =====================
+  A_EVENTS -- "newTx -> PUBLISH tx" --> A_GOSSIP
+  A_EVENTS -- "newHead -> PUBLISH header" --> A_GOSSIP
+  A_EVENTS -- "newShare -> PUBLISH share" --> A_GOSSIP
+
+  %% Validation path (topic-routed)
+  A_GOSSIP -->|route to validator| V_TX
+  A_GOSSIP -->|route to validator| V_HDR
+  A_GOSSIP -->|route to validator| V_SHR
+  V_TX & V_HDR & V_SHR -->|ok| A_QUEUE
+  V_TX & V_HDR & V_SHR -.->|invalid -> penalty| S_TOPIC
+
+  %% ===================== BACKPRESSURE & SENDING =====================
+  A_QUEUE --> A_BACKP
+  A_BACKP --> RL_PEER
+  A_BACKP --> RL_TOPIC
+  A_BACKP --> RL_GLOBAL
+
+  RL_PEER -- "credits > 0" --> PB_MESH
+  RL_PEER -- "credits > 0" --> PC_MESH
+  RL_PEER -- "credits = 0" -->|queue/backoff| A_QUEUE
+
+  RL_TOPIC -- "burst clamp" --> A_QUEUE
+  RL_GLOBAL -- "shed lowest score / drop oldest" --> A_QUEUE
+
+  %% ===================== SCORING FEEDBACKS =====================
+  PB_MESH -- "first delivery / timely" --> S_TOPIC
+  PC_MESH -- "mesh deliveries" --> S_TOPIC
+  PD_MESH -- "late/duplicates/invalid" --> S_TOPIC
+
+  S_TOPIC --> S_PEER
+  S_PEER -- "below prune threshold" --> A_MESH
+  A_MESH -- "PRUNE peer" --> PD_MESH
+
+  %% ===================== NOTES / LEGEND =====================
+  classDef box fill:#eef2ff,stroke:#3730a3,stroke-width:1.2,color:#1e1b4b;
+  classDef val fill:#ecfccb,stroke:#3f6212,stroke-width:1.2,color:#1a2e05;
+  classDef score fill:#fff7ed,stroke:#9a3412,stroke-width:1.2,color:#7c2d12;
+  classDef rl fill:#fce7f3,stroke:#9d174d,stroke-width:1.2,color:#831843;
+  classDef evt fill:#e5e7eb,stroke:#4b5563,stroke-width:1.2,color:#111827;
+  classDef topic fill:#cffafe,stroke:#0e7490,stroke-width:1.2,color:#164e63;
+  classDef peer fill:#f5f3ff,stroke:#7c3aed,stroke-width:1.2,color:#4c1d95;
+
+  %% ===================== COMMENTARY =====================
+  %% - Topics: headers/blocks/txs/shares/blobs (DA) are independent; each has its own validator and rate policy.
+  %% - Scoring: tracks per-topic health (time in mesh, message deliveries) and penalizes invalids/behaviors. Aggregated per peer.
+  %% - Backpressure: token-bucket credits per-peer, per-topic, plus a global safety cap. When empty, messages are queued or dropped by priority.
+  %% - Mesh: GRAFT adds peers to mesh; PRUNE removes low-scoring or slow peers. Fanout maintains healthy redundancy.
+  %% - DoS: Early validation is cheap (size/shape), expensive work deferred; abusive peers lose score → PRUNE and tighter rate limits.
+

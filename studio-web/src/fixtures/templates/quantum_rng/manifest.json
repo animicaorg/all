@@ -1,0 +1,121 @@
+{
+  "name": "Quantum RNG",
+  "version": "1.0.0",
+  "language": "python-vm",
+  "entry": "contract.py",
+  "description": "Demo contract that requests quantum randomness when available and falls back to deterministic keccak-derived bytes for local/browser simulation.",
+  "abi": {
+    "functions": [
+      {
+        "name": "get_seed",
+        "inputs": [],
+        "outputs": [{ "name": "seed", "type": "bytes" }],
+        "stateMutability": "view"
+      },
+      {
+        "name": "set_seed",
+        "inputs": [{ "name": "seed", "type": "bytes" }],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "name": "last_task",
+        "inputs": [],
+        "outputs": [{ "name": "task_id", "type": "bytes" }],
+        "stateMutability": "view"
+      },
+      {
+        "name": "last",
+        "inputs": [],
+        "outputs": [{ "name": "rand", "type": "bytes" }],
+        "stateMutability": "view"
+      },
+      {
+        "name": "status",
+        "inputs": [],
+        "outputs": [
+          { "name": "task_id", "type": "bytes" },
+          { "name": "last_rand", "type": "bytes" },
+          { "name": "ctr", "type": "int" }
+        ],
+        "stateMutability": "view"
+      },
+      {
+        "name": "request",
+        "inputs": [{ "name": "bits", "type": "int" }],
+        "outputs": [{ "name": "task_id", "type": "bytes" }],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "name": "read",
+        "inputs": [{ "name": "task_id", "type": "bytes" }],
+        "outputs": [{ "name": "data", "type": "bytes" }],
+        "stateMutability": "view"
+      },
+      {
+        "name": "consume_last",
+        "inputs": [],
+        "outputs": [{ "name": "rand", "type": "bytes" }],
+        "stateMutability": "nonpayable"
+      },
+      {
+        "name": "clear",
+        "inputs": [],
+        "outputs": [],
+        "stateMutability": "nonpayable"
+      }
+    ],
+    "events": [
+      {
+        "name": "SeedSet",
+        "args": {
+          "seed_hash": "bytes"
+        }
+      },
+      {
+        "name": "Requested",
+        "args": {
+          "bits": "int",
+          "task_id": "bytes",
+          "payload_hash": "bytes"
+        }
+      },
+      {
+        "name": "Result",
+        "args": {
+          "task_id": "bytes",
+          "result_hash": "bytes",
+          "size": "int"
+        }
+      },
+      {
+        "name": "CacheCleared",
+        "args": {
+          "prev_hash": "bytes",
+          "prev_size": "int"
+        }
+      }
+    ],
+    "errors": []
+  },
+  "capabilities": {
+    "requires": [
+      "syscalls.quantum_enqueue",
+      "syscalls.read_result"
+    ],
+    "optional": [
+      "syscalls.quantum_enqueue",
+      "syscalls.read_result"
+    ],
+    "notes": "In browsers (studio-wasm), these syscalls are unavailable; the contract uses a deterministic keccak fallback."
+  },
+  "resources": {
+    "deployGasHint": 120000,
+    "callGasHint": 45000
+  },
+  "metadata": {
+    "authors": ["Animica Studio"],
+    "license": "Apache-2.0",
+    "url": "https://animica.example/templates/quantum_rng"
+  }
+}

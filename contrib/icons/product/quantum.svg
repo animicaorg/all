@@ -1,0 +1,21 @@
+<!-- Animica Product Icon: Quantum
+     Motif: Bloch sphere with three orthogonal orbitals and node markers.
+     Style: Monochrome, currentColor, 48×48 canvas -->
+<svg width="48" height="48" viewBox="0 0 48 48" role="img" aria-labelledby="title" xmlns="http://www.w3.org/2000/svg">
+  <title id="title">Quantum</title>
+  <!-- Sphere + orbitals -->
+  <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Bloch sphere -->
+    <circle cx="24" cy="24" r="14"/>
+    <!-- Equatorial orbital -->
+    <ellipse cx="24" cy="24" rx="14" ry="6"/>
+    <!-- Meridian orbitals (rotated) -->
+    <ellipse cx="24" cy="24" rx="14" ry="6" transform="rotate(60 24 24)"/>
+    <ellipse cx="24" cy="24" rx="14" ry="6" transform="rotate(-60 24 24)"/>
+  </g>
+  <!-- Node markers (electron/qubit state hints) -->
+  <circle cx="24" cy="10" r="1.6" fill="currentColor"/>
+  <circle cx="24" cy="38" r="1.6" fill="currentColor"/>
+  <circle cx="10" cy="24" r="1.6" fill="currentColor"/>
+  <circle cx="38" cy="24" r="1.6" fill="currentColor"/>
+</svg>

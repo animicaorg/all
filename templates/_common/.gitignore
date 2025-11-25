@@ -1,0 +1,158 @@
+# ------------------------------------------------------------------------------
+# Common .gitignore for scaffolded projects
+# Polyglot: Python / TypeScript / Rust / Docs / Ops
+# Note: lockfiles are intentionally NOT ignored (package-lock.json, pnpm-lock.yaml,
+# yarn.lock, Cargo.lock). Commit them to ensure reproducible builds.
+# ------------------------------------------------------------------------------
+
+# OS / Editor junk
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.orig
+*.rej
+*.bak
+*.tmp
+*.temp
+*.old
+*.local
+~$*
+._*
+.nfs*
+
+# IDE / workspace
+.vscode/
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Logs
+logs/
+*.log
+*.log.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ------------------------------------------------------------------------------
+# Python
+# ------------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+*.abi3.so
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+site/
+wheelhouse/
+pip-wheel-metadata/
+*.manifest
+*.spec
+
+# Virtualenvs
+.venv*/
+venv*/
+env*/
+ENV*/
+
+# Testing / coverage / tooling caches
+.coverage
+.coverage.*
+coverage/
+htmlcov/
+.pytest_cache/
+.tox/
+.nox/
+.mypy_cache/
+.pytype/
+.ruff_cache/
+.cache/
+
+# ------------------------------------------------------------------------------
+# TypeScript / Node
+# ------------------------------------------------------------------------------
+node_modules/
+dist/
+build/
+.out/
+.next/
+.nuxt/
+.storybook-out/
+.eslintcache
+.vite/
+.vitest/
+.playwright/
+coverage-final.json
+nyc_output/
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# Frontend artifacts
+*.map
+
+# ------------------------------------------------------------------------------
+# Rust
+# ------------------------------------------------------------------------------
+target/
+# (Keep Cargo.lock checked in for applications; ignore only if you know you must)
+# Cargo.lock
+
+# ------------------------------------------------------------------------------
+# WebAssembly / Pyodide (optional)
+# ------------------------------------------------------------------------------
+*.wasm
+*.wat
+pyodide/
+vendor/pyodide/
+
+# ------------------------------------------------------------------------------
+# Data / artifacts / local state
+# ------------------------------------------------------------------------------
+artifacts/
+*.artifact
+.tmp/
+tmp/
+tmp-*/
+.cache/
+.reports/
+reports/
+benchmarks/
+bench/
+profiles/
+*.prof
+*.perf
+
+# ------------------------------------------------------------------------------
+# Containers / env
+# ------------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+docker-data/
+*.pid
+
+# ------------------------------------------------------------------------------
+# Documentation build outputs
+# ------------------------------------------------------------------------------
+_site/
+public/
+.docs-cache/
+.docusaurus/
+.sphinx/
+_build/
+.doctrees/
+
+# ------------------------------------------------------------------------------
+# Project-specific test outputs (conservative)
+# ------------------------------------------------------------------------------
+tests/reports/
+tests/artifacts/
+coverage.xml
+junit.xml

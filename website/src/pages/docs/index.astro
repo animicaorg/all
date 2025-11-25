@@ -1,0 +1,183 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro";
+import InlineLink from "../../components/InlineLink.astro";
+
+const title = "Documentation";
+const description = "Browse Animica docs: consensus (PoIES), data availability, VM (Python), SDKs, ZK, AICF, wallet, explorer, P2P, randomness, and more.";
+
+type Card = {
+  title: string;
+  href: string;
+  description: string;
+  tags: string[];
+};
+
+const cards: Card[] = [
+  {
+    title: "Getting Started",
+    href: "/docs/get-started",
+    description: "Quickstart: install, connect to a devnet, send your first transaction.",
+    tags: ["quickstart", "install", "devnet", "hello world"]
+  },
+  {
+    title: "Consensus — PoIES",
+    href: "/docs/consensus/poies",
+    description: "Proof-of-Integrated-External-Services (ψ mapping, Θ retarget, fairness, Γ caps).",
+    tags: ["consensus", "poies", "theta", "fairness", "policy"]
+  },
+  {
+    title: "Data Availability (DA)",
+    href: "/docs/da/overview",
+    description: "Blob commitments, namespaced Merkle trees (NMT), erasure coding, light verification.",
+    tags: ["da", "blobs", "nmt", "erasure", "sampling"]
+  },
+  {
+    title: "VM (Python)",
+    href: "/docs/vm/overview",
+    description: "Deterministic Python VM: ABI, gas, stdlib, examples (Counter, Escrow).",
+    tags: ["vm", "python", "abi", "gas", "contracts"]
+  },
+  {
+    title: "SDKs",
+    href: "/docs/sdk/overview",
+    description: "Python, TypeScript, and Rust SDKs with codegen and E2E harness.",
+    tags: ["sdk", "python", "typescript", "rust", "codegen"]
+  },
+  {
+    title: "ZK Verifiers",
+    href: "/docs/zk/overview",
+    description: "Groth16/PLONK/STARK basics, Poseidon, KZG, VK pinning & policy hooks.",
+    tags: ["zk", "groth16", "plonk", "stark", "kzg", "poseidon"]
+  },
+  {
+    title: "AI Compute Fund (AICF)",
+    href: "/docs/aicf/overview",
+    description: "Job queue, provider registry, attestations, SLA, pricing & settlement.",
+    tags: ["aicf", "ai", "quantum", "sla", "settlement"]
+  },
+  {
+    title: "Randomness Beacon",
+    href: "/docs/randomness/overview",
+    description: "Commit–reveal, VDF, optional QRNG mixing, light proofs.",
+    tags: ["randomness", "vdf", "qrng", "beacon"]
+  },
+  {
+    title: "P2P & Gossip",
+    href: "/docs/p2p/overview",
+    description: "Handshake (Kyber), transports (TCP/QUIC/WS), gossip topics, sync flows.",
+    tags: ["p2p", "quic", "gossip", "sync", "kyber"]
+  },
+  {
+    title: "Wallet & Provider",
+    href: "/docs/wallet/overview",
+    description: "MV3 extension keys (Dilithium/SPHINCS+), provider API, simulation.",
+    tags: ["wallet", "provider", "pq", "mv3", "signing"]
+  },
+  {
+    title: "Explorer & Studio",
+    href: "/docs/tools/overview",
+    description: "Web IDE (simulate, deploy, verify) and Explorer views and APIs.",
+    tags: ["studio", "explorer", "ide", "verify", "deploy"]
+  },
+  {
+    title: "Operations & Devnet",
+    href: "/docs/ops/devnet",
+    description: "Run a node, metrics, logging, configs, fixtures and testnets.",
+    tags: ["ops", "node", "devnet", "metrics", "configs"]
+  }
+];
+---
+
+<DocsLayout title={title} description={description}>
+  <section class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-10 sm:py-14">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <h1 class="text-3xl sm:text-4xl font-semibold m-0">{title}</h1>
+        <p class="opacity-80 mt-2 m-0">{description}</p>
+      </div>
+
+      <div class="mt-4 sm:mt-0 w-full sm:w-80">
+        <label for="docs-search" class="sr-only">Search docs</label>
+        <div class="relative">
+          <input
+            id="docs-search"
+            type="search"
+            placeholder="Search docs (press /)"
+            class="w-full rounded-md bg-white/5 border border-white/10 px-3 py-2 outline-none focus:ring-2 focus:ring-white/20"
+            autocomplete="off"
+          />
+          <kbd class="absolute right-2 top-1/2 -translate-y-1/2 text-xs opacity-60 bg-white/10 rounded px-1 py-0.5">/</kbd>
+        </div>
+      </div>
+    </div>
+
+    <div class="mt-8 grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3" id="docs-cards">
+      {cards.map((c) => (
+        <a
+          href={c.href}
+          class="group block rounded-lg border border-white/10 bg-white/5 p-4 hover:border-white/20 hover:bg-white/10 transition-colors"
+          data-title={c.title.toLowerCase()}
+          data-tags={c.tags.join(" ").toLowerCase()}
+        >
+          <h2 class="m-0 text-lg font-semibold group-hover:underline">{c.title}</h2>
+          <p class="m-0 mt-1 opacity-80 text-sm">{c.description}</p>
+          <div class="mt-3 flex flex-wrap gap-1">
+            {c.tags.slice(0, 4).map((t) => (
+              <span class="text-[11px] uppercase tracking-wide opacity-70 bg-white/10 border border-white/10 rounded px-2 py-0.5">{t}</span>
+            ))}
+          </div>
+        </a>
+      ))}
+    </div>
+
+    <p class="mt-8 text-sm opacity-70">
+      Can’t find what you’re looking for? Try the <InlineLink href="/search">site search</InlineLink>,
+      open an issue on <InlineLink href="https://github.com/animica">GitHub</InlineLink>, or ask in the community chat.
+    </p>
+  </section>
+
+  <script is:inline type="module">
+    // Simple client-side filter (no heavy search lib by default)
+    const input = document.getElementById("docs-search");
+    const cards = Array.from(document.querySelectorAll("#docs-cards > a"));
+
+    function filter() {
+      const q = (input.value || "").trim().toLowerCase();
+      if (!q) {
+        cards.forEach((el) => (el.style.display = ""));
+        return;
+      }
+      for (const el of cards) {
+        const hay = (el.dataset.title + " " + el.dataset.tags).toLowerCase();
+        el.style.display = hay.includes(q) ? "" : "none";
+      }
+    }
+
+    input?.addEventListener("input", filter);
+
+    // Keyboard shortcut to focus
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "/" && document.activeElement !== input) {
+        e.preventDefault();
+        input?.focus();
+      }
+    });
+  </script>
+
+  <script type="application/ld+json" is:inline>
+    {JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "CollectionPage",
+      name: "Animica Documentation",
+      url: "/docs",
+      description,
+      hasPart: cards.map((c) => ({
+        "@type": "WebPage",
+        name: c.title,
+        url: c.href,
+        about: c.tags
+      })),
+      inLanguage: "en"
+    })}
+  </script>
+</DocsLayout>

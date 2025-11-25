@@ -1,0 +1,46 @@
+{
+  "compilerOptions": {
+    /* Target & module system */
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+
+    /* Declarations (JS is bundled by Vite; tsc only emits .d.ts) */
+    "declaration": true,
+    "declarationMap": false,
+    "emitDeclarationOnly": false,
+    "outDir": "dist",
+    "rootDir": "src",
+
+    /* Language & strictness */
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true,
+    "useDefineForClassFields": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+
+    /* Interop & ergonomics */
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "verbatimModuleSyntax": true,
+
+    /* Libs & types */
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+
+    /* Source maps for nicer DX (Vite controls final output maps) */
+    "sourceMap": true
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": [
+    "dist",
+    "node_modules",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx"
+  ]
+}

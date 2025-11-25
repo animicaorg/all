@@ -1,0 +1,395 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["animica", "explorer", "overview", "poies", "da", "aicf", "mempool", "p2p", "randomness"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": true },
+        "hide": 0,
+        "label": "Prometheus",
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource"
+      },
+      {
+        "datasource": "${DS_PROMETHEUS}",
+        "definition": "label_values(up{job=~\".*\"}, job)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "job",
+        "multi": false,
+        "name": "job",
+        "options": [],
+        "query": { "query": "label_values(up{job=~\".*\"}, job)", "refId": "PromVarJob" },
+        "refresh": 1,
+        "regex": "/(node|explorer|services|randomness|da|aicf|p2p|mempool).*/",
+        "skipUrlSync": false,
+        "type": "query"
+      },
+      {
+        "datasource": "${DS_PROMETHEUS}",
+        "definition": "label_values(animica_chain_head_height{job=~\"$job\"}, instance)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "instance",
+        "multi": false,
+        "name": "instance",
+        "options": [],
+        "query": {
+          "query": "label_values(animica_chain_head_height{job=~\"$job\"}, instance)",
+          "refId": "PromVarInstance"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "query"
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["5s", "10s", "30s", "1m", "5m", "15m"],
+    "time_options": ["1h", "3h", "6h", "12h", "24h", "2d", "7d", "30d"]
+  },
+  "timezone": "",
+  "title": "Animica — Explorer Overview",
+  "uid": "animica-explorer-01",
+  "version": 1,
+  "panels": [
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Best known chain height for the selected node.",
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 4, "x": 0, "y": 0 },
+      "id": 10,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "max(animica_chain_head_height{instance=\"$instance\"})", "legendFormat": "height", "refId": "A" }
+      ],
+      "title": "Head Height",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Blocks finalized per second (5m rate).",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 4, "x": 4, "y": 0 },
+      "id": 11,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "sum(rate(animica_blocks_finalized_total{instance=\"$instance\"}[5m]))", "legendFormat": "blocks/s", "refId": "A" }
+      ],
+      "title": "Blocks/s (5m)",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "p50 block time from the last 5 minutes.",
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 4, "x": 8, "y": 0 },
+      "id": 12,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(animica_block_time_seconds_bucket{instance=\"$instance\"}[5m])))",
+          "legendFormat": "p50 block time",
+          "refId": "A"
+        }
+      ],
+      "title": "Block Time (p50, 5m)",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Current mempool size (tx count).",
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 4, "x": 12, "y": 0 },
+      "id": 13,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "max(animica_mempool_size{instance=\"$instance\"})", "legendFormat": "txs", "refId": "A" }
+      ],
+      "title": "Mempool Txs",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Current mempool memory footprint (bytes).",
+      "fieldConfig": { "defaults": { "unit": "bytes", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 4, "x": 16, "y": 0 },
+      "id": 14,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "max(animica_mempool_bytes{instance=\"$instance\"})", "legendFormat": "bytes", "refId": "A" }
+      ],
+      "title": "Mempool Bytes",
+      "type": "stat"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Connected peers as seen by the node.",
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 4, "x": 20, "y": 0 },
+      "id": 15,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        { "expr": "max(animica_p2p_peers{instance=\"$instance\"})", "legendFormat": "peers", "refId": "A" }
+      ],
+      "title": "Peers",
+      "type": "stat"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Transactions per second included in blocks (5m rate).",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 5 },
+      "id": 20,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "sum(rate(animica_tx_included_total{instance=\"$instance\"}[5m]))", "legendFormat": "tps (incl.)", "refId": "A" }
+      ],
+      "title": "Throughput — TPS",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Mempool flow: admits, evictions, and replacements (5m rates).",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 5 },
+      "id": 21,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "sum(rate(animica_mempool_admit_total{instance=\"$instance\"}[5m]))", "legendFormat": "admit/s", "refId": "A" },
+        { "expr": "sum(rate(animica_mempool_evict_total{instance=\"$instance\"}[5m]))", "legendFormat": "evict/s", "refId": "B" },
+        { "expr": "sum(rate(animica_mempool_replace_total{instance=\"$instance\"}[5m]))", "legendFormat": "replace/s", "refId": "C" }
+      ],
+      "title": "Mempool Flow (5m)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Dynamic min fee (floor) and rolling watermark; values shown in gwei (derived).",
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 3 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 12 },
+      "id": 30,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "animica_mempool_min_fee_wei{instance=\"$instance\"} / 1e9", "legendFormat": "min fee (gwei)", "refId": "A" },
+        { "expr": "animica_mempool_watermark_wei{instance=\"$instance\"} / 1e9", "legendFormat": "watermark (gwei)", "refId": "B" }
+      ],
+      "title": "Fee Floor & Watermark",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "PoIES Γ utilization and fairness index (unitless ratio).",
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 12 },
+      "id": 31,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "avg_over_time(animica_poies_gamma_utilization_ratio{instance=\"$instance\"}[5m])", "legendFormat": "Γ utilization", "refId": "A" },
+        { "expr": "avg_over_time(animica_poies_fairness_index{instance=\"$instance\"}[5m])", "legendFormat": "fairness index", "refId": "B" }
+      ],
+      "title": "PoIES Γ & Fairness (5m avg)",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Beacon finalize rate and entropy, useful as background randomness health.",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 19 },
+      "id": 40,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "sum(rate(animica_rand_beacon_finalized_total{instance=\"$instance\"}[5m]))", "legendFormat": "beacon finalized/s", "refId": "A" },
+        { "expr": "avg_over_time(animica_rand_beacon_entropy_bits{instance=\"$instance\"}[5m])", "legendFormat": "entropy bits (avg 5m)", "refId": "B" }
+      ],
+      "title": "Randomness — Beacon",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "DA post/get/proof rates and sampling failure probability.",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 19 },
+      "id": 41,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "sum(rate(animica_da_post_total{instance=\"$instance\"}[5m]))", "legendFormat": "POST /s", "refId": "A" },
+        { "expr": "sum(rate(animica_da_get_total{instance=\"$instance\"}[5m]))", "legendFormat": "GET /s", "refId": "B" },
+        { "expr": "sum(rate(animica_da_proof_total{instance=\"$instance\"}[5m]))", "legendFormat": "PROOF /s", "refId": "C" },
+        { "expr": "avg_over_time(animica_da_sampling_p_fail{instance=\"$instance\"}[5m])", "legendFormat": "p_fail (avg 5m)", "refId": "D" }
+      ],
+      "title": "Data Availability — Traffic & p_fail",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Queue depth and completions for AI/Quantum jobs.",
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 26 },
+      "id": 50,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "max(animica_aicf_jobs_queued{instance=\"$instance\"})", "legendFormat": "queued", "refId": "A" },
+        { "expr": "sum(rate(animica_aicf_jobs_completed_total{instance=\"$instance\"}[5m]))", "legendFormat": "completed/s", "refId": "B" }
+      ],
+      "title": "AICF — Queue & Completions",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "SLA pass ratio and slashing rate (5m).",
+      "fieldConfig": { "defaults": { "unit": "percentunit", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 26 },
+      "id": 51,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(animica_aicf_sla_pass_total{instance=\"$instance\"}[5m])) / clamp_min(sum(rate(animica_aicf_sla_pass_total{instance=\"$instance\"}[5m])) + sum(rate(animica_aicf_sla_fail_total{instance=\"$instance\"}[5m])), 1)",
+          "legendFormat": "SLA pass ratio",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(animica_aicf_slashed_total{instance=\"$instance\"}[5m]))",
+          "legendFormat": "slashes/s",
+          "refId": "B"
+        }
+      ],
+      "title": "AICF — SLA & Slashing",
+      "type": "timeseries"
+    },
+
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Inbound/outbound gossip message rates (5m).",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 33 },
+      "id": 60,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "sum(rate(animica_p2p_msgs_in_total{instance=\"$instance\"}[5m]))", "legendFormat": "in/s", "refId": "A" },
+        { "expr": "sum(rate(animica_p2p_msgs_out_total{instance=\"$instance\"}[5m]))", "legendFormat": "out/s", "refId": "B" }
+      ],
+      "title": "P2P — Gossip Rates",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "${DS_PROMETHEUS}",
+      "description": "Explorer API request volume and latency (5m). Filter by the 'job' variable to target explorer services.",
+      "fieldConfig": { "defaults": { "unit": "ops", "decimals": 2 }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 33 },
+      "id": 61,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        { "expr": "sum(rate(http_requests_total{job=~\"$job\", instance=\"$instance\"}[5m]))", "legendFormat": "req/s", "refId": "A" },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=~\"$job\", instance=\"$instance\"}[5m])))",
+          "legendFormat": "latency p95",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(rate(http_requests_total{job=~\"$job\", instance=\"$instance\", status=~\"5..|4..\"}[5m]))",
+          "legendFormat": "errors/s (4xx+5xx)",
+          "refId": "C"
+        }
+      ],
+      "title": "Explorer API — Traffic & Latency",
+      "type": "timeseries"
+    }
+  ]
+}

@@ -1,0 +1,225 @@
+# Prometheus alert rules — Explorer API / WS
+#
+# Assumed Animica explorer metrics (rename if your build exports different names):
+#   - animica_explorer_http_inflight{instance}                         # gauge: current in-flight HTTP requests
+#   - animica_explorer_http_requests_total{instance,code,method,route} # counter: HTTP responses by code
+#   - animica_explorer_http_request_duration_seconds_bucket{le,instance} # histogram: request latency
+#   - animica_explorer_ws_connected{instance,topic}                    # gauge: live WS connections
+#   - animica_explorer_ws_connects_total{instance}                     # counter: WS connects
+#   - animica_explorer_ws_disconnects_total{instance,reason}           # counter: WS disconnects
+#   - animica_explorer_ws_broadcast_queue{instance,topic}              # gauge: queued WS messages
+#   - animica_explorer_ws_send_errors_total{instance}                  # counter: WS send failures
+#
+# NOTE: Thresholds are tuned for devnet/small testnets. Tighten for production.
+
+groups:
+  - name: explorer.rules
+    interval: 30s
+    rules:
+      # ───────────────────────────────────────────────────────────
+      # API saturation (in-flight pressure)
+      - alert: ExplorerAPISaturationWarning
+        expr: sum by(instance) (animica_explorer_http_inflight) > 200
+        for: 5m
+        labels:
+          severity: warning
+          component: explorer
+        annotations:
+          summary: "Explorer API saturation — in-flight requests > 200 for 5m"
+          description: |
+            {{ $labels.instance }} has sustained high concurrent HTTP load.
+            Consider scaling the explorer API or enabling a CDN/cache for hot endpoints.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#explorer
+
+      - alert: ExplorerAPISaturationCritical
+        expr: sum by(instance) (animica_explorer_http_inflight) > 400
+        for: 5m
+        labels:
+          severity: critical
+          component: explorer
+        annotations:
+          summary: "Explorer API heavily saturated — in-flight > 400"
+          description: |
+            {{ $labels.instance }} is likely CPU- or IO-bound; requests may time out.
+            Scale replicas and/or add caching in front of expensive list/detail routes.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#explorer
+
+      # ───────────────────────────────────────────────────────────
+      # HTTP 5xx rate — relative and absolute guards
+      - alert: ExplorerAPI5xxRateWarning
+        expr: |
+          (
+            sum by(instance) (rate(animica_explorer_http_requests_total{code=~"5.."}[10m]))
+            /
+            clamp_min(sum by(instance) (rate(animica_explorer_http_requests_total[10m])), 1e-6)
+          ) > 0.05
+          OR
+          sum by(instance) (rate(animica_explorer_http_requests_total{code=~"5.."}[10m])) > 1
+        for: 10m
+        labels:
+          severity: warning
+          component: explorer
+        annotations:
+          summary: "Explorer API 5xx > 5% (or >1/s) over 10m"
+          description: |
+            Elevated 5xx on {{ $labels.instance }}. Check upstream RPC dependency and hot endpoints.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#explorer
+
+      - alert: ExplorerAPI5xxRateCritical
+        expr: |
+          (
+            sum by(instance) (rate(animica_explorer_http_requests_total{code=~"5.."}[5m]))
+            /
+            clamp_min(sum by(instance) (rate(animica_explorer_http_requests_total[5m])), 1e-6)
+          ) > 0.15
+          OR
+          sum by(instance) (rate(animica_explorer_http_requests_total{code=~"5.."}[5m])) > 5
+        for: 5m
+        labels:
+          severity: critical
+          component: explorer
+        annotations:
+          summary: "Explorer API 5xx > 15% (or >5/s) over 5m"
+          description: |
+            Widespread API failures on {{ $labels.instance }}. Triage backend health and rate limits.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#explorer
+
+      # ───────────────────────────────────────────────────────────
+      # Latency (p95)
+      - alert: ExplorerAPILatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by(le, instance) (rate(animica_explorer_http_request_duration_seconds_bucket[10m]))
+          ) > 0.75
+        for: 10m
+        labels:
+          severity: warning
+          component: explorer
+        annotations:
+          summary: "Explorer API latency p95 > 750ms (10m)"
+          description: |
+            {{ $labels.instance }} API tail latency high; investigate slow queries, RPC fanouts, or hot routes.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#explorer
+
+      - alert: ExplorerAPILatencySevere
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by(le, instance) (rate(animica_explorer_http_request_duration_seconds_bucket[10m]))
+          ) > 1.5
+        for: 10m
+        labels:
+          severity: critical
+          component: explorer
+        annotations:
+          summary: "Explorer API latency p95 > 1.5s (10m)"
+          description: |
+            Severe tail latency on {{ $labels.instance }}; users likely experiencing timeouts.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#explorer
+
+      # ───────────────────────────────────────────────────────────
+      # WebSocket disconnect rate relative to connects (spike detector)
+      - alert: ExplorerWSDisconnectSpikeWarning
+        expr: |
+          (
+            sum by(instance) (rate(animica_explorer_ws_disconnects_total[5m]))
+            /
+            clamp_min(sum by(instance) (rate(animica_explorer_ws_connects_total[5m])), 1e-6)
+          ) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          component: explorer
+        annotations:
+          summary: "WS disconnect spike (disconnects/connects > 50%)"
+          description: |
+            {{ $labels.instance }} frequent WS disconnects; check reverse-proxy timeouts and WS keepalives.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#explorer
+
+      - alert: ExplorerWSDisconnectSpikeCritical
+        expr: |
+          (
+            sum by(instance) (rate(animica_explorer_ws_disconnects_total[5m]))
+            /
+            clamp_min(sum by(instance) (rate(animica_explorer_ws_connects_total[5m])), 1e-6)
+          ) > 1.0
+        for: 5m
+        labels:
+          severity: critical
+          component: explorer
+        annotations:
+          summary: "WS disconnects exceed connects — clients churning"
+          description: |
+            {{ $labels.instance }} WS stability degraded; clients cannot maintain subscriptions.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#explorer
+
+      # ───────────────────────────────────────────────────────────
+      # Active WS connections dropped to zero (but were non-zero recently)
+      - alert: ExplorerWSAllClientsGone
+        expr: |
+          (max_over_time(sum by(instance) (animica_explorer_ws_connected)[1h]) > 0)
+          and
+          (sum by(instance) (animica_explorer_ws_connected) == 0)
+        for: 10m
+        labels:
+          severity: warning
+          component: explorer
+        annotations:
+          summary: "WS clients dropped to zero for 10m"
+          description: |
+            {{ $labels.instance }} shows zero WS clients despite having clients within the last hour.
+            Possible outage or frontend connectivity issue.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#explorer
+
+      # ───────────────────────────────────────────────────────────
+      # Broadcast backpressure: growing WS queue depth
+      - alert: ExplorerWSBackpressureWarning
+        expr: sum by(instance) (animica_explorer_ws_broadcast_queue) > 1000
+        for: 10m
+        labels:
+          severity: warning
+          component: explorer
+        annotations:
+          summary: "WS broadcast queue depth > 1k for 10m"
+          description: |
+            {{ $labels.instance }} WS broadcaster is falling behind; consider throttling event rate or scaling.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#explorer
+
+      - alert: ExplorerWSBackpressureCritical
+        expr: sum by(instance) (animica_explorer_ws_broadcast_queue) > 5000
+        for: 5m
+        labels:
+          severity: critical
+          component: explorer
+        annotations:
+          summary: "WS broadcast queue depth > 5k"
+          description: |
+            {{ $labels.instance }} likely dropping WS updates; users will see stale dashboards.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#explorer
+
+      # ───────────────────────────────────────────────────────────
+      # WS send errors
+      - alert: ExplorerWSSendErrorsWarning
+        expr: sum by(instance) (rate(animica_explorer_ws_send_errors_total[5m])) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          component: explorer
+        annotations:
+          summary: "WS send errors > 0.5/s over 10m"
+          description: |
+            {{ $labels.instance }} WS send failures elevated; inspect network/proxy and payload sizes.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#explorer
+
+      - alert: ExplorerWSSendErrorsCritical
+        expr: sum by(instance) (rate(animica_explorer_ws_send_errors_total[5m])) > 2
+        for: 5m
+        labels:
+          severity: critical
+          component: explorer
+        annotations:
+          summary: "WS send errors > 2/s"
+          description: |
+            {{ $labels.instance }} dropping many WS messages; dashboards may not update.
+          runbook_url: https://github.com/animica/ops/blob/main/ops/metrics/README.md#explorer

@@ -1,0 +1,62 @@
+# ────────────────────────────────────────────────────────────────
+# Animica Explorer Embeds — .gitignore
+# Keep this lean: ignore local-only artifacts, caches, and builds.
+# Lockfiles (yarn.lock / pnpm-lock.yaml / package-lock.json) are NOT ignored
+# so consumers can choose to commit them for reproducible installs.
+# ────────────────────────────────────────────────────────────────
+
+# Node & toolchain
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+build/
+
+# Vite / bundlers / TS caches
+.vite/
+.esbuild/
+.rollup.cache/
+.parcel-cache/
+.cache/
+*.tsbuildinfo
+
+# Lint/type/style caches
+.eslintcache
+.stylelintcache
+TYPECHECK_*
+
+# Coverage & test outputs
+coverage/
+.nyc_output/
+*.coverage.*
+junit.xml
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Environment files (keep example)
+.env
+.env.*
+!.env.example
+
+# IDE/OS cruft
+.DS_Store
+Thumbs.db
+.idea/
+*.iml
+
+# Editor swap/backup files
+*.swp
+*.swo
+*~
+*.orig
+
+# Local playground / scratch (if you create one)
+playground/

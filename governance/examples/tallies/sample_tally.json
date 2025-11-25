@@ -1,0 +1,67 @@
+{
+  "formatVersion": "1.0",
+  "tallyId": "TAL-2025-11-0001",
+  "proposalId": "GOV-2025-11-VM-OPC-01",
+  "chainId": 2,
+
+  "snapshot": { "type": "height", "value": 1234567 },
+
+  "votingWindow": {
+    "start": "2025-10-31T16:00:00Z",
+    "end":   "2025-11-07T16:00:00Z"
+  },
+
+  "rules": {
+    "quorumPercent": 10.0,
+    "approvalThresholdPercent": 66.7
+  },
+
+  "counts": {
+    "yes":     "752345.123456",
+    "no":      "112340.000000",
+    "abstain": "005234.000000",
+    "veto":    "000000.000000"
+  },
+
+  "totals": {
+    "participatingVotingPower": "869919.123456",
+    "eligibleVotingPower":      "1500000.000000"
+  },
+
+  "metrics": {
+    "participationPercent": 57.995,
+    "approvalPercent": 86.993
+  },
+
+  "evaluation": {
+    "quorumMet": true,
+    "approvalMet": true,
+    "outcome": "passed"
+  },
+
+  "audit": {
+    "ballotsCounted": 1024,
+    "ballotsRejected": 3,
+    "rejections": [
+      { "code": "invalid_signature", "count": 2 },
+      { "code": "outside_window", "count": 1 }
+    ],
+    "generator": "gov-tools/tally_votes.py@v0.1.0"
+  },
+
+  "attestation": {
+    "sigAlg": "ed25519",
+    "signature": "0x6a9f9d0fbe7a7e98c2d4b1aa0c5f3b8d1e2c3a4b5c6d7e8f90a1b2c3d4e5f6076a9f9d0fbe7a7e98c2d4b1aa0c5f3b8d",
+    "signedPayload": {
+      "domain": "animica.gov/tally",
+      "version": "1",
+      "timestamp": "2025-11-07T16:05:12Z",
+      "nonce": "0x01ab22ef"
+    }
+  },
+
+  "metadata": {
+    "network": "testnet",
+    "notes": "Example tally for OP_BLAKE3 activation; numbers are illustrative."
+  }
+}

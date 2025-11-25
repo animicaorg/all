@@ -1,0 +1,28 @@
+<!-- Animica Explorer — Gamma sparkline (themeable) -->
+<svg width="120" height="36" viewBox="0 0 120 36" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Γ sparkline">
+  <title>Gamma sparkline</title>
+  <desc>Small decorative line chart used in headers/cards. Colors are driven by CSS variables.</desc>
+
+  <!-- Optional glow (uses the same stroke color with lower opacity) -->
+  <path class="gamma glow"
+        d="M2 28 C8 24,14 22,20 24 S32 18,38 20 S50 12,58 14 S70 10,78 12 S90 8,98 11 S110 6,118 8"
+        stroke="var(--exp-gamma-line, #5EEAD4)"
+        stroke-opacity="0.25"
+        stroke-width="6"
+        stroke-linecap="round"
+        fill="none"/>
+
+  <!-- Main line -->
+  <path class="gamma"
+        d="M2 28 C8 24,14 22,20 24 S32 18,38 20 S50 12,58 14 S70 10,78 12 S90 8,98 11 S110 6,118 8"
+        stroke="var(--exp-gamma-line, #5EEAD4)"
+        stroke-width="2"
+        stroke-linecap="round"
+        fill="none"/>
+  <style>
+    /* Theme hooks: override from light.css / dark.css */
+    /* Example:
+       .exp-sparkline path.gamma { stroke: var(--exp-gamma-line); filter: drop-shadow(0 2px 8px var(--exp-gamma-glow)); }
+    */
+  </style>
+</svg>

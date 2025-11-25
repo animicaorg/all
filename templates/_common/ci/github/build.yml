@@ -1,0 +1,359 @@
+# ----------------------------------------------------------------------
+# GitHub Actions — Build & Test (common Animica template)
+#
+# This workflow is designed to be *rendered* from the shared template.
+# It supports Python- and optional Node-based repos, optional Docker
+# image builds, short fuzz smoke, and artifact collection.
+#
+# Toggle behavior via variables at render time (preferred) or by
+# editing the "env:" booleans below after generation.
+#
+# Template variables (examples):
+#   {{ default_branch | default('main') }}
+#   {{ matrix_python | default(['3.11']) }}
+#   {{ matrix_node   | default(['20']) }}
+#   {{ include_node  | default(false) }}
+#   {{ run_fuzz      | default(false) }}
+#   {{ run_e2e       | default(false) }}
+#   {{ enable_docker | default(false) }}
+#   {{ enable_helm   | default(false) }}
+#   {{ ci_workflow_name | default('Build & Test') }}
+# ----------------------------------------------------------------------
+
+name: "{{ ci_workflow_name | default('Build & Test') }}"
+
+on:
+  push:
+    branches: ["{{ default_branch | default('main') }}", "release/**"]
+    # Skip docs-only changes by default; adjust for your repo
+    paths-ignore:
+      - "**/*.md"
+      - "**/*.rst"
+      - "docs/**"
+      - "**/*.png"
+      - "**/*.jpg"
+      - "**/*.svg"
+      - ".vscode/**"
+  pull_request:
+    branches: ["{{ default_branch | default('main') }}", "release/**"]
+  workflow_dispatch:
+
+# Cancel superseded runs on the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Principle of least privilege
+permissions:
+  contents: read
+  # checks: write       # uncomment if you post annotations
+  # pull-requests: write
+
+env:
+  # Render-time toggles (string booleans "true"/"false")
+  INCLUDE_NODE: "{{ include_node | default(false) | string | lower }}"
+  RUN_FUZZ: "{{ run_fuzz | default(false) | string | lower }}"
+  RUN_E2E: "{{ run_e2e | default(false) | string | lower }}"
+  DOCKER_BUILD: "{{ enable_docker | default(false) | string | lower }}"
+  HELM_LINT: "{{ enable_helm | default(false) | string | lower }}"
+
+  # Matrices (JSON arrays → parsed via fromJson())
+  PYTHON_MATRIX: "{{ matrix_python | default(['3.11']) | tojson }}"
+  NODE_MATRIX: "{{ matrix_node | default(['20']) | tojson }}"
+
+  # Common knobs
+  PIP_CACHE_DIR: ~/.cache/pip
+  COVERAGE_FILE: .coverage
+  PY_COLORS: "1"
+  FORCE_COLOR: "1"
+
+  # Optional coverage upload; leave empty if not using Codecov
+  CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+jobs:
+  lint:
+    name: "Lint (py${{ matrix.python }})"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ${{ fromJson(env.PYTHON_MATRIX) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: "pip"
+
+      - name: Show tool versions
+        run: |
+          python -V
+          pip -V
+
+      - name: Install lint deps (best-effort)
+        run: |
+          pip install -U pip wheel
+          pip install ruff==0.6.9 mypy==1.11.2 pre-commit==3.8.0 || true
+
+      - name: Python linters
+        run: |
+          ruff version || true
+          ruff check . --output-format=github || true
+          ruff format --check . || true
+          mypy --version || true
+          mypy . || true
+
+      - name: Run pre-commit (if configured)
+        run: |
+          if [ -f ".pre-commit-config.yaml" ]; then
+            pre-commit run --all-files || true
+          fi
+
+      - name: Node lint (optional)
+        if: env.INCLUDE_NODE == 'true' && hashFiles('package.json') != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ fromJson(env.NODE_MATRIX)[0] }}
+          cache: "npm"
+
+      - name: Install & run Node lint (optional)
+        if: env.INCLUDE_NODE == 'true' && hashFiles('package.json') != ''
+        run: |
+          npm ci
+          if npm run | grep -qE 'eslint|lint'; then
+            npm run lint || npx eslint . || true
+          else
+            echo "No lint script; skipping."
+          fi
+
+  test-py:
+    name: "Tests (py${{ matrix.python }})"
+    runs-on: ubuntu-latest
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ${{ fromJson(env.PYTHON_MATRIX) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: "pip"
+
+      - name: Install dependencies (flexible)
+        run: |
+          set -e
+          python -m pip install -U pip wheel
+          if [ -f "requirements.txt" ]; then
+            pip install -r requirements.txt
+          fi
+          if [ -f "pyproject.toml" ]; then
+            # Prefer dev extras if available; fall back to editable
+            python - <<'PY'
+import tomllib, sys, subprocess, pathlib
+p = pathlib.Path("pyproject.toml")
+data = tomllib.loads(p.read_text())
+name = (data.get("project") or {}).get("name")
+extras = (data.get("project") or {}).get("optional-dependencies", {})
+cmd = ["pip","install","-e",".[dev,test]"] if any(k in extras for k in ("dev","test")) else ["pip","install","-e","."]
+subprocess.check_call(cmd)
+PY
+          fi
+          # Common test utilities (no-op if already present)
+          pip install pytest pytest-cov anyio httpx msgspec || true
+
+      - name: Run unit/integration tests
+        run: |
+          mkdir -p tests/reports
+          pytest -q \
+            --maxfail=1 \
+            --disable-warnings \
+            --cov=. --cov-report=term-missing \
+            --junitxml=tests/reports/junit-${{ matrix.python }}.xml
+
+      - name: Upload JUnit & coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-py${{ matrix.python }}
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            tests/reports/**
+            .coverage
+            .pytest_cache/**
+
+      - name: Upload to Codecov (optional)
+        if: env.CODECOV_TOKEN != ''
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ env.CODECOV_TOKEN }}
+          files: ./coverage.xml
+          fail_ci_if_error: false
+        continue-on-error: true
+
+  test-node:
+    name: "Tests (node ${{ matrix.node }})"
+    runs-on: ubuntu-latest
+    if: env.INCLUDE_NODE == 'true' && hashFiles('package.json') != ''
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ${{ fromJson(env.NODE_MATRIX) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: "npm"
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Run tests
+        run: |
+          if npm run | grep -q "test"; then
+            npm test --silent || npm test
+          else
+            echo "No test script in package.json; skipping."
+          fi
+
+      - name: Upload Node test artifacts (if any)
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-node${{ matrix.node }}
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            coverage/**
+            junit.xml
+            test-results/**
+
+  fuzz-smoke:
+    name: "Fuzz smoke (atheris)"
+    runs-on: ubuntu-latest
+    if: env.RUN_FUZZ == 'true'
+    needs: [test-py]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ fromJson(env.PYTHON_MATRIX)[0] }}
+          cache: "pip"
+
+      - name: Install fuzz deps
+        run: |
+          pip install -U pip wheel
+          pip install atheris pytest
+
+      - name: Run fuzz smoke (60s each, if targets exist)
+        shell: bash
+        run: |
+          mkdir -p tests/reports
+          if [ -d "tests/fuzz" ]; then
+            for tgt in tests/fuzz/fuzz_*.py; do
+              echo "::group::Fuzz $tgt"
+              PYTHONPATH=. python "$tgt" --max_total_time=60 || true
+              echo "::endgroup::"
+            done
+          else
+            echo "No tests/fuzz/ directory; skipping."
+          fi
+
+      - name: Upload fuzz logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-logs
+          if-no-files-found: ignore
+          path: tests/reports/**
+
+  docker-build:
+    name: "Docker build"
+    runs-on: ubuntu-latest
+    if: env.DOCKER_BUILD == 'true'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    needs: [test-py]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR (optional)
+        if: ${{ secrets.GHCR_PAT != '' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Build (node image as example)
+        run: |
+          IMAGE_BASE="ghcr.io/${GITHUB_REPOSITORY@L}"
+          TAG="${IMAGE_BASE}/node:sha-${GITHUB_SHA::7}"
+          if [ -f "ops/docker/node.Dockerfile" ]; then
+            docker buildx build \
+              -f ops/docker/node.Dockerfile \
+              --platform linux/amd64 \
+              --tag "$TAG" \
+              --load .
+            echo "Built: $TAG"
+          else
+            echo "No ops/docker/node.Dockerfile; skipping."
+          fi
+
+  helm-lint:
+    name: "Helm lint (optional)"
+    runs-on: ubuntu-latest
+    if: env.HELM_LINT == 'true'
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.4
+      - name: Lint chart
+        run: |
+          if [ -d "ops/helm/animica-devnet" ]; then
+            helm lint ops/helm/animica-devnet
+          else
+            echo "No Helm chart found; skipping."
+          fi
+
+  summary:
+    name: "CI Summary"
+    runs-on: ubuntu-latest
+    needs:
+      - test-py
+      - test-node
+      - fuzz-smoke
+      - docker-build
+      - helm-lint
+    if: always()
+    steps:
+      - name: Job conclusion
+        run: |
+          echo "Lint conclusion:      ${{ needs.lint.result }}"
+          echo "Tests (py) conclusion: ${{ needs.test-py.result }}"
+          echo "Tests (node) concl.:  ${{ needs.test-node.result }}"
+          echo "Fuzz smoke concl.:    ${{ needs.fuzz-smoke.result }}"
+          echo "Docker build concl.:  ${{ needs.docker-build.result }}"
+          echo "Helm lint concl.:     ${{ needs.helm-lint.result }}"

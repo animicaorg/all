@@ -1,0 +1,144 @@
+{
+  "functions": [
+    {
+      "type": "function",
+      "name": "version",
+      "inputs": [],
+      "outputs": [{ "type": "bytes" }],
+      "notice": "Semantic version for the ZK-Verify interface (e.g. b'1.0.0')."
+    },
+    {
+      "type": "function",
+      "name": "limits",
+      "inputs": [],
+      "outputs": [
+        { "name": "maxCircuitBytes", "type": "uint32" },
+        { "name": "maxProofBytes",   "type": "uint32" },
+        { "name": "maxPublicBytes",  "type": "uint32" },
+        { "name": "maxBatchItems",   "type": "uint32" }
+      ],
+      "notice": "Hard caps enforced by the host zk.verify provider (per-call and per-batch)."
+    },
+    {
+      "type": "function",
+      "name": "hashCircuit",
+      "inputs": [
+        { "name": "circuit", "type": "bytes" }
+      ],
+      "outputs": [
+        { "name": "circuitHash", "type": "bytes32" }
+      ],
+      "notice": "Returns canonical SHA3-256(circuit) used to identify circuits in logs and cost tables."
+    },
+    {
+      "type": "function",
+      "name": "costOf",
+      "inputs": [
+        { "name": "circuitHash", "type": "bytes32" },
+        { "name": "proofSize",   "type": "uint32" },
+        { "name": "publicSize",  "type": "uint32" }
+      ],
+      "outputs": [
+        { "name": "units", "type": "uint64" }
+      ],
+      "notice": "Deterministic cost estimator (units) given sizes, independent of proof validity."
+    },
+    {
+      "type": "function",
+      "name": "verify",
+      "inputs": [
+        { "name": "circuit", "type": "bytes" },
+        { "name": "proof",   "type": "bytes" },
+        { "name": "public",  "type": "bytes" }
+      ],
+      "outputs": [
+        { "name": "ok",    "type": "bool"   },
+        { "name": "units", "type": "uint64" },
+        { "name": "circuitHash", "type": "bytes32" }
+      ],
+      "notice": "Verifies a single proof against the provided circuit and public input blob. Returns success and metered units. Emits ZkProofVerified."
+    },
+    {
+      "type": "function",
+      "name": "verifyHashed",
+      "inputs": [
+        { "name": "circuitHash", "type": "bytes32" },
+        { "name": "proof",       "type": "bytes" },
+        { "name": "public",      "type": "bytes" }
+      ],
+      "outputs": [
+        { "name": "ok",    "type": "bool"   },
+        { "name": "units", "type": "uint64" }
+      ],
+      "notice": "Verifies using a pre-agreed circuitHash (caller manages circuit bytes off-chain). Emits ZkProofVerified."
+    },
+    {
+      "type": "function",
+      "name": "verifyBatch",
+      "inputs": [
+        {
+          "name": "batch",
+          "type": "bytes",
+          "notice": "CBOR-encoded array of items; each item = {circuitHash: bytes32, proof: bytes, public: bytes}. See capabilities/schemas/zk_verify.schema.json."
+        }
+      ],
+      "outputs": [
+        { "name": "total",     "type": "uint32" },
+        { "name": "okCount",   "type": "uint32" },
+        { "name": "units",     "type": "uint64" }
+      ],
+      "notice": "Verifies a CBOR batch in a single call (subject to limits.maxBatchItems and size caps). Emits ZkBatchVerified."
+    }
+  ],
+  "events": [
+    {
+      "type": "event",
+      "name": "ZkProofVerified",
+      "inputs": [
+        { "name": "circuitHash", "type": "bytes32", "indexed": true },
+        { "name": "ok",          "type": "bool" },
+        { "name": "units",       "type": "uint64" }
+      ],
+      "notice": "Emitted after verify/verifyHashed; ok indicates validity; units are the charged metering units."
+    },
+    {
+      "type": "event",
+      "name": "ZkBatchVerified",
+      "inputs": [
+        { "name": "total",   "type": "uint32" },
+        { "name": "okCount", "type": "uint32" },
+        { "name": "units",   "type": "uint64" }
+      ],
+      "notice": "Emitted once per verifyBatch call summarizing the batch outcome."
+    }
+  ],
+  "errors": [
+    {
+      "type": "error",
+      "name": "InputTooLarge",
+      "inputs": [
+        { "name": "which", "type": "bytes" },
+        { "name": "size",  "type": "uint32" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "BatchTooLarge",
+      "inputs": [
+        { "name": "count", "type": "uint32" }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "MalformedBatch",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "UnsupportedCircuit",
+      "inputs": [
+        { "name": "circuitHash", "type": "bytes32" }
+      ]
+    }
+  ]
+}

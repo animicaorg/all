@@ -1,0 +1,123 @@
+{
+  "name": "Escrow",
+  "version": "1.0.0",
+  "language": "python",
+  "vm": "vm_py",
+  "description": "Deterministic escrow demo for the Animica Python VM. Local accounting only for browser simulation.",
+  "authors": ["Animica Labs"],
+  "license": "Apache-2.0",
+  "abi": {
+    "functions": [
+      {
+        "name": "configure",
+        "mutates": true,
+        "payable": false,
+        "inputs": [
+          { "name": "payer", "type": "bytes" },
+          { "name": "payee", "type": "bytes" }
+        ],
+        "args": [
+          { "name": "payer", "type": "bytes" },
+          { "name": "payee", "type": "bytes" }
+        ],
+        "outputs": [],
+        "returns": "void",
+        "notes": "One-time configuration of parties; fails if already configured."
+      },
+      {
+        "name": "deposit",
+        "mutates": true,
+        "payable": false,
+        "inputs": [{ "name": "amount", "type": "int" }],
+        "args": [{ "name": "amount", "type": "int" }],
+        "outputs": [{ "type": "int" }],
+        "returns": "int",
+        "notes": "Increase escrowed balance by amount (> 0). Returns new balance."
+      },
+      {
+        "name": "release",
+        "mutates": true,
+        "payable": false,
+        "inputs": [],
+        "args": [],
+        "outputs": [{ "type": "int" }],
+        "returns": "int",
+        "notes": "Release full balance to payee (accounting-only). Returns amount released."
+      },
+      {
+        "name": "refund",
+        "mutates": true,
+        "payable": false,
+        "inputs": [],
+        "args": [],
+        "outputs": [{ "type": "int" }],
+        "returns": "int",
+        "notes": "Refund full balance to payer (accounting-only). Returns amount refunded."
+      },
+      {
+        "name": "balance",
+        "mutates": false,
+        "payable": false,
+        "inputs": [],
+        "args": [],
+        "outputs": [{ "type": "int" }],
+        "returns": "int",
+        "notes": "Return current escrowed balance."
+      },
+      {
+        "name": "get_payer",
+        "mutates": false,
+        "payable": false,
+        "inputs": [],
+        "args": [],
+        "outputs": [{ "type": "bytes" }],
+        "returns": "bytes",
+        "notes": "Return configured payer bytes."
+      },
+      {
+        "name": "get_payee",
+        "mutates": false,
+        "payable": false,
+        "inputs": [],
+        "args": [],
+        "outputs": [{ "type": "bytes" }],
+        "returns": "bytes",
+        "notes": "Return configured payee bytes."
+      }
+    ],
+    "events": [
+      {
+        "name": "Configured",
+        "args": [
+          { "name": "payer", "type": "bytes" },
+          { "name": "payee", "type": "bytes" }
+        ]
+      },
+      {
+        "name": "Deposit",
+        "args": [
+          { "name": "amount", "type": "int" },
+          { "name": "balance", "type": "int" }
+        ]
+      },
+      {
+        "name": "Released",
+        "args": [
+          { "name": "amount", "type": "int" },
+          { "name": "to", "type": "bytes" }
+        ]
+      },
+      {
+        "name": "Refunded",
+        "args": [
+          { "name": "amount", "type": "int" },
+          { "name": "to", "type": "bytes" }
+        ]
+      }
+    ],
+    "errors": []
+  },
+  "resources": {
+    "code": "contract.py"
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://animica.dev/schemas/explorer.palette.schema.json",
+  "version": "1.0.0",
+  "updated": "2025-11-01",
+  "gamma": {
+    "line": "#5EEAD4",
+    "glow": "rgba(94,234,212,0.25)",
+    "areaStart": "rgba(94,234,212,0.18)",
+    "areaEnd": "rgba(94,234,212,0.00)"
+  },
+  "mempool": {
+    "tx": "#60A5FA",
+    "bgLight": "#FFFFFF",
+    "bgDark": "#0B1220"
+  },
+  "da": {
+    "ok": "#22C55E",
+    "warn": "#F59E0B",
+    "error": "#EF4444",
+    "unknown": "#9CA3AF"
+  },
+  "grid": {
+    "light": "#E2E8F0",
+    "dark": "#1E2A44"
+  },
+  "axis": {
+    "light": "#94A3B8",
+    "dark": "#93A3B4"
+  },
+  "ranges": {
+    "lpRange": "#34D399",
+    "lpRangeAlt": "#A7F3D0"
+  }
+}

@@ -1,0 +1,100 @@
+# PodDisruptionBudgets for production to keep critical services available during voluntary disruptions.
+# Add this file under `resources:` in overlays/prod/kustomization.yaml.
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: node-pdb
+  namespace: animica-prod
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: node
+    app.kubernetes.io/environment: prod
+spec:
+  # Never evict the last node pod (StatefulSet).
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: node
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: miner-pdb
+  namespace: animica-prod
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: miner
+    app.kubernetes.io/environment: prod
+spec:
+  # Allow at most one miner pod to be voluntarily disrupted at a time.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: miner
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: explorer-pdb
+  namespace: animica-prod
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: explorer
+    app.kubernetes.io/environment: prod
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: explorer
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: services-pdb
+  namespace: animica-prod
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: services
+    app.kubernetes.io/environment: prod
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: services
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: explorer-web-pdb
+  namespace: animica-prod
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: explorer-web
+    app.kubernetes.io/environment: prod
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: explorer-web
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: studio-web-pdb
+  namespace: animica-prod
+  labels:
+    app.kubernetes.io/part-of: animica
+    app.kubernetes.io/component: studio-web
+    app.kubernetes.io/environment: prod
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: studio-web

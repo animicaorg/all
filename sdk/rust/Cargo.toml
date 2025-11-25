@@ -1,0 +1,98 @@
+[package]
+name = "animica-sdk"
+version = "0.1.0"
+edition = "2021"
+description = "Animica SDK (Rust): RPC client, wallet helpers, contracts, DA/AICF/Randomness, and light verification."
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/animica-labs/animica"
+readme = "README.md"
+keywords = ["blockchain", "sdk", "jsonrpc", "cbor", "animica"]
+categories = ["api-bindings", "cryptography", "wasm", "network-programming"]
+# build.rs optionally bundles schemas (see sdk/rust/build.rs)
+build = "build.rs"
+
+[lib]
+name = "animica_sdk"
+path = "src/lib.rs"
+# rlib for normal Rust usage; cdylib enables optional wasm packaging
+crate-type = ["rlib", "cdylib"]
+
+[features]
+# Native is the default target (tokio + reqwest + tungstenite).
+default = ["native"]
+native = [
+  "dep:reqwest",
+  "dep:tokio",
+  "dep:tokio-tungstenite",
+  "dep:tungstenite",
+  "reqwest/rustls-tls",
+  "reqwest/http2",
+  "tungstenite/rustls-tls-webpki-roots",
+]
+# WebAssembly (browser): use gloo-net for HTTP/WS and wasm-bindgen types.
+wasm = [
+  "dep:gloo-net",
+  "dep:wasm-bindgen",
+  "dep:js-sys",
+  "dep:web-sys",
+]
+# Post-quantum signers via liboqs (optional). If disabled, PQ functions are stubbed.
+pq = ["dep:oqs"]
+
+[dependencies]
+# --- Core serialization and utils ---
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_bytes = "0.11"
+ciborium = { version = "0.2", features = ["serde"] }          # CBOR codec
+thiserror = "1.0"
+futures = "0.3"
+bytes = "1.6"
+url = "2.5"
+hex = "0.4"
+bech32 = "0.9"
+sha3 = "0.10"                                                 # keccak + sha3
+blake3 = { version = "1.5", optional = true }
+
+# --- PQ (feature-gated) ---
+oqs = { version = "0.9", optional = true }
+
+# --- Native networking (feature: native) ---
+reqwest = { version = "0.12", default-features = false, features = ["json"], optional = true }
+tokio = { version = "1.38", features = ["rt-multi-thread", "macros", "time"], optional = true }
+tokio-tungstenite = { version = "0.24", optional = true }
+tungstenite = { version = "0.21", default-features = false, features = ["handshake"], optional = true }
+
+# --- WASM networking (feature: wasm) ---
+gloo-net = { version = "0.5", optional = true, features = ["http", "websocket"] }
+wasm-bindgen = { version = "0.2", optional = true }
+js-sys = { version = "0.3", optional = true }
+web-sys = { version = "0.3", optional = true, features = [
+  "Performance",
+  "Window",
+  "WebSocket",
+  "MessageEvent",
+  "ErrorEvent",
+  "CloseEvent"
+] }
+
+# Optional convenience (enable via your own features if desired)
+#anyhow = "1.0"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { version = "1.38", features = ["rt", "macros", "time"] }
+
+[dev-dependencies]
+serde_test = "1.0"
+
+[package.metadata.docs.rs]
+all-features = true
+targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = "z"
+
+[profile.dev]
+opt-level = 1

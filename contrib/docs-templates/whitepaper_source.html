@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Animica Whitepaper Template</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    @page { margin: 1in; }
+    body {
+      font-family: Inter, -apple-system, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: #0F172A; line-height: 1.6; font-size: 12pt;
+    }
+    h1, h2, h3 { color: #0F172A; margin: 0 0 .3em; }
+    h1 { font-size: 28pt; font-weight: 800; }
+    h2 { font-size: 18pt; font-weight: 700; margin-top: 1.2em; }
+    h3 { font-size: 14pt; font-weight: 700; margin-top: 1em; }
+    .muted { color: #475569; }
+    .accent { color: #0B0D12; background: #5EEAD4; padding: 2px 8px; border-radius: 8px; font-weight: 700; }
+    .meta { margin-top: .5em; font-size: 10pt; color: #475569; }
+    .page-break { page-break-before: always; }
+    .cover { margin-top: 25vh; }
+    .list-tight li { margin: .2em 0; }
+    code, pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace;
+      background: #F8FAFC; border-radius: 6px; padding: 0 .25em;
+    }
+    blockquote { border-left: 3px solid #CBD5E1; margin: .8em 0; padding: .2em .8em; color: #334155; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #E5E7EB; padding: 6px 8px; }
+    th { background: #F8FAFC; text-align: left; }
+    .kw { font-variant: small-caps; letter-spacing: .04em; color: #64748B; }
+    .toc li { margin: .3em 0; }
+  </style>
+</head>
+<body>
+
+  <!-- ===== Cover ===== -->
+  <section class="cover">
+    <div class="accent">Animica</div>
+    <h1>{{TITLE}}</h1>
+    <p class="muted">{{SUBTITLE}}</p>
+    <p class="meta">
+      <span class="kw">Version</span> {{VERSION}} ·
+      <span class="kw">Date</span> {{DATE}} ·
+      <span class="kw">Authors</span> {{AUTHORS}}
+    </p>
+  </section>
+
+  <div class="page-break"></div>
+
+  <!-- ===== Abstract ===== -->
+  <section>
+    <h2>Abstract</h2>
+    <p>
+      {{ABSTRACT}}
+    </p>
+  </section>
+
+  <!-- ===== Table of Contents (manual—update after editing in Word) ===== -->
+  <section>
+    <h2>Table of Contents</h2>
+    <ol class="toc">
+      <li>1. Introduction</li>
+      <li>2. Architecture</li>
+      <li>3. Consensus & Security</li>
+      <li>4. Data Availability</li>
+      <li>5. Virtual Machine & ABI</li>
+      <li>6. Randomness</li>
+      <li>7. Economics</li>
+      <li>8. Governance</li>
+      <li>9. Roadmap</li>
+      <li>10. References</li>
+    </ol>
+    <p class="muted">Tip: In Word, Insert → Table of Contents to auto-generate once headings are finalized.</p>
+  </section>
+
+  <div class="page-break"></div>
+
+  <!-- ===== 1. Introduction ===== -->
+  <section>
+    <h2>1. Introduction</h2>
+    <p>Provide context, problem statement, and summary of contributions.</p>
+    <ul class="list-tight">
+      <li>Background and motivation</li>
+      <li>Design goals & constraints</li>
+      <li>Threat model overview</li>
+    </ul>
+  </section>
+
+  <!-- ===== 2. Architecture ===== -->
+  <section>
+    <h2>2. Architecture</h2>
+    <h3>2.1 Components</h3>
+    <p>Briefly describe nodes, consensus layer, VM, DA layer, and networking.</p>
+    <h3>2.2 Data Model</h3>
+    <p>Blocks, transactions, state, blobs; serialization formats.</p>
+    <h3>2.3 Interfaces</h3>
+    <p>JSON-RPC, event streams, indexers.</p>
+  </section>
+
+  <!-- ===== 3. Consensus & Security ===== -->
+  <section>
+    <h2>3. Consensus & Security</h2>
+    <h3>3.1 Consensus algorithm</h3>
+    <p>Describe PoIES or relevant scheme, fork choice, finality, parameters.</p>
+    <h3>3.2 Adversarial analysis</h3>
+    <ul class="list-tight">
+      <li>Sybil resistance</li>
+      <li>Long-range & censorship resistance</li>
+      <li>Bribery and MEV considerations</li>
+    </ul>
+  </section>
+
+  <!-- ===== 4. Data Availability ===== -->
+  <section>
+    <h2>4. Data Availability</h2>
+    <p>NMT namespaces, blob sizes, sampling model, erasure coding rates.</p>
+    <table>
+      <tr><th>Parameter</th><th>Value</th><th>Notes</th></tr>
+      <tr><td>Max Blob Size</td><td>{{MAX_BLOB_SIZE}}</td><td>bytes</td></tr>
+      <tr><td>RS Rate</td><td>{{RS_RATE}}</td><td>e.g., 50%</td></tr>
+    </table>
+  </section>
+
+  <!-- ===== 5. Virtual Machine & ABI ===== -->
+  <section>
+    <h2>5. Virtual Machine & ABI</h2>
+    <h3>5.1 Determinism</h3>
+    <p>Language, gas model, disabled syscalls, canonical hashing rules.</p>
+    <h3>5.2 ABI & Contracts</h3>
+    <p>Types, events, errors, upgrade paths.</p>
+  </section>
+
+  <!-- ===== 6. Randomness ===== -->
+  <section>
+    <h2>6. Randomness</h2>
+    <p>Method (e.g., VDF+QRNG), commitment scheme, beacon cadence.</p>
+  </section>
+
+  <!-- ===== 7. Economics ===== -->
+  <section>
+    <h2>7. Economics</h2>
+    <p>Supply, issuance, fees, incentives, treasury policies.</p>
+  </section>
+
+  <!-- ===== 8. Governance ===== -->
+  <section>
+    <h2>8. Governance</h2>
+    <p>Proposals, ballots, quorums, timelocks, emergency procedures.</p>
+  </section>
+
+  <!-- ===== 9. Roadmap ===== -->
+  <section>
+    <h2>9. Roadmap</h2>
+    <ul>
+      <li><strong>Phase 1:</strong> {{PHASE1}}</li>
+      <li><strong>Phase 2:</strong> {{PHASE2}}</li>
+      <li><strong>Phase 3:</strong> {{PHASE3}}</li>
+    </ul>
+  </section>
+
+  <!-- ===== 10. References ===== -->
+  <section>
+    <h2>10. References</h2>
+    <ol>
+      <li>Author, <em>Title</em>, Venue/Year, DOI/URL.</li>
+      <li>…</li>
+    </ol>
+  </section>
+
+  <div class="page-break"></div>
+
+  <!-- ===== Template Guide (remove before publishing) ===== -->
+  <section>
+    <h2>Template Guide</h2>
+    <ul>
+      <li>Edit placeholders like <code>{{TITLE}}</code>, then in Word use Heading styles (H1/H2/H3).</li>
+      <li>Insert an automatic ToC (References → Table of Contents) and update before export.</li>
+      <li>Export to PDF with embedded fonts (sRGB) for web distribution.</li>
+    </ul>
+    <p class="muted">© Animica — internal template.</p>
+  </section>
+
+</body>
+</html>

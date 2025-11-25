@@ -1,0 +1,141 @@
+# Animica contracts — local tooling config
+# This file configures linters/type-checkers that you can run from the
+# contracts/ directory without needing a repo-wide config. It focuses on
+# Python 3.11 and the typical layout:
+#   contracts/
+#     packages/<name>/contract.py
+#     packages/<name>/manifest.json
+#   build/<name>/*.ir (artifacts; excluded from tools)
+
+[project]
+name = "animica-contracts-tools"
+version = "0.0.0"
+description = "Local tooling (ruff, mypy) for Animica contracts workspace."
+requires-python = ">=3.11"
+
+###############################################################################
+# Ruff (linter + optional formatter)
+# Docs: https://docs.astral.sh/ruff/configuration/
+###############################################################################
+[tool.ruff]
+# Keep this aligned with repo-wide defaults if/when they exist.
+target-version = "py311"
+line-length = 100
+# Exclude common build & virtualenv folders.
+exclude = [
+  "build",
+  ".venv",
+  "venv",
+  ".tox",
+  "__pycache__",
+  ".pytest_cache",
+  ".mypy_cache",
+]
+
+[tool.ruff.lint]
+# A curated default set:
+# E = pycodestyle errors, F = pyflakes, I = isort, B = bugbear, UP = pyupgrade
+# W = pycodestyle warnings, A = flake8-builtins, C4 = comprehensions
+select = ["E", "F", "W", "I", "B", "UP", "A", "C4"]
+# Reasonable ignores for contract samples (often short, script-like style):
+ignore = [
+  "E203",  # whitespace before ':', conflicts with some formatters
+  "E501",  # line length (we gate with 100 but allow long strings when needed)
+]
+# Let ruff apply safe fixes on `ruff check --fix`
+fix = true
+
+[tool.ruff.lint.isort]
+# Keep imports tidy and consistent; add local third-party namespaces here if needed.
+known-first-party = ["vm_py", "omni_sdk"]
+combine-as-imports = true
+force-single-line = false
+
+[tool.ruff.format]
+# If you prefer Ruff as a formatter, enable this and run `ruff format`.
+# If you use Black, see [tool.black] below.
+quote-style = "preserve"
+indent-style = "space"
+
+###############################################################################
+# Black (optional formatter)
+# If you use Black, we keep it consistent with Ruff's line length & target.
+###############################################################################
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+skip-string-normalization = true
+exclude = '''
+/(
+  \.venv
+ | venv
+ | build
+ | dist
+ | \.tox
+ | \.mypy_cache
+ | \.pytest_cache
+ | __pycache__
+)/
+'''
+
+###############################################################################
+# Mypy (type checker)
+# Docs: https://mypy.readthedocs.io/en/stable/config_file.html
+###############################################################################
+[tool.mypy]
+python_version = "3.11"
+# Contracts are often lightweight and may rely on external packages; keep this forgiving.
+ignore_missing_imports = true
+follow_imports = "silent"
+
+# Sensible strictness without being painful for small samples:
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_no_return = true
+no_implicit_optional = true
+strict_optional = true
+# Allow untyped defs (contracts may be concise scripts)
+disallow_untyped_defs = false
+check_untyped_defs = false
+
+# Improve namespace handling for mixed layouts.
+namespace_packages = true
+explicit_package_bases = false
+
+# Exclude generated artifacts and caches.
+exclude = '(?x)(
+    ^build/|
+    ^dist/|
+    ^\.venv/|
+    ^venv/|
+    ^\.mypy_cache/|
+    ^\.pytest_cache/
+)$'
+
+# If your contracts import local SDK/VM directly from this mono-repo during dev,
+# you can help mypy locate them by uncommenting and tuning the path hints below:
+# mypy_path = [
+#   "vm_py",            # VM (source) for local dev
+#   "sdk/python",       # Python SDK (source) for local dev
+# ]
+
+# Per-module relaxations (example: allow dynamic parts of SDK/VM):
+# [[tool.mypy.overrides]]
+# module = ["vm_py.*", "omni_sdk.*"]
+# ignore_missing_imports = true
+
+###############################################################################
+# Pytest (optional convenience if you add tests under contracts/)
+###############################################################################
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-q"
+testpaths = ["packages"]
+python_files = ["test_*.py", "*_test.py"]
+
+###############################################################################
+# Editor hints
+###############################################################################
+[tool.ruff.lint.per-file-ignores]
+# Allow __init__ convenience imports without unused warnings.
+"**/__init__.py" = ["F401"]

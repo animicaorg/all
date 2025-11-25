@@ -1,0 +1,63 @@
+{
+  "$schema": "../schemas/template.schema.json",
+  "name": "Quantum RNG App (Contract + Dapp)",
+  "slug": "quantum-rng-app",
+  "version": "0.1.0",
+  "description": "Scaffold a complete quantum randomness demo: a Python smart contract that mixes the on-chain beacon with quantum bytes, plus a React+TypeScript dapp to trigger rounds, submit receipts, and visualize outputs.",
+  "variables": { "$ref": "variables.json" },
+
+  "render": [
+    {
+      "from": "../_common",
+      "to": ".",
+      "mode": "inherit"
+    },
+    {
+      "from": "{{project_slug}}",
+      "to": "{{project_slug}}"
+    }
+  ],
+
+  "post_hooks": [
+    {
+      "name": "Initialize contracts environment",
+      "cmd": "python -m venv .venv && . .venv/bin/activate && pip install -r contracts/requirements.txt",
+      "cwd": "{{project_slug}}"
+    },
+    {
+      "name": "Install dapp dependencies",
+      "cmd": "npm install",
+      "cwd": "{{project_slug}}/dapp"
+    },
+    {
+      "name": "Write dapp .env from deploy output (best-effort)",
+      "cmd": "node -e \"try{const fs=require('fs');const p='{{project_slug}}/deploy.out.json';if(fs.existsSync(p)){const o=JSON.parse(fs.readFileSync(p));const f='{{project_slug}}/dapp/.env';const t=['VITE_RPC_URL='+ (process.env.RPC_URL||''),'VITE_CHAIN_ID='+ (process.env.CHAIN_ID||''),'VITE_CONTRACT_ADDRESS='+ (o.contractAddress||'')].join('\\n');fs.writeFileSync(f,t+'\\n');console.log('Wrote',f)}else{console.log('Note: deploy.out.json not found; run deploy step to fill dapp env.')}}catch(e){console.error(e)}\""
+    }
+  ],
+
+  "tags": [
+    "contracts",
+    "dapp",
+    "typescript",
+    "react",
+    "quantum",
+    "randomness",
+    "demo"
+  ],
+
+  "requires": {
+    "tools": {
+      "python": ">=3.10",
+      "node": ">=18",
+      "npm": ">=9"
+    }
+  },
+
+  "next_steps": [
+    "cd {{project_slug}}",
+    "cp .env.example .env  # set RPC_URL/CHAIN_ID and deployer creds",
+    "make build-contracts",
+    "make deploy-contracts    # writes deploy.out.json with contract address",
+    "npm --prefix dapp run dev  # start the demo UI"
+  ]
+}

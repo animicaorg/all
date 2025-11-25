@@ -1,0 +1,326 @@
+{
+  "title": "Animica — AICF (AI Compute Fund)",
+  "uid": "animica-aicf",
+  "timezone": "browser",
+  "schemaVersion": 36,
+  "version": 1,
+  "refresh": "10s",
+  "style": "dark",
+  "editable": true,
+  "tags": ["aicf", "animica"],
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["5s", "10s", "30s", "1m", "5m"],
+    "hidden": false
+  },
+  "annotations": {
+    "list": [
+      { "type": "dashboard", "name": "Annotations & Alerts", "enable": true }
+    ]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "ds",
+        "type": "datasource",
+        "query": "prometheus",
+        "label": "Datasource",
+        "current": {}
+      },
+      {
+        "name": "job",
+        "type": "query",
+        "datasource": "$ds",
+        "label": "job",
+        "refresh": 1,
+        "query": "label_values(animica_aicf_enqueue_total, job)",
+        "includeAll": false,
+        "multi": false
+      },
+      {
+        "name": "instance",
+        "type": "query",
+        "datasource": "$ds",
+        "label": "instance",
+        "refresh": 1,
+        "query": "label_values(animica_aicf_enqueue_total{job=\"$job\"}, instance)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".+"
+      },
+      {
+        "name": "kind",
+        "type": "query",
+        "datasource": "$ds",
+        "label": "kind",
+        "refresh": 1,
+        "query": "label_values(animica_aicf_queue_depth{job=\"$job\"}, kind)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".+"
+      },
+      {
+        "name": "provider",
+        "type": "query",
+        "datasource": "$ds",
+        "label": "provider",
+        "refresh": 1,
+        "query": "label_values(animica_aicf_leases_active{job=\"$job\"}, provider)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".+"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Enqueue rate — jobs/s",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(instance) (rate(animica_aicf_enqueue_total{job=\"$job\",instance=~\"$instance\",result=\"ok\"}[$__rate_interval]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Assignments — /s",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(instance) (rate(animica_aicf_assign_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "Completed — /s",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(instance) (rate(animica_aicf_complete_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "Payouts — /s",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "sum by(instance) (rate(animica_aicf_payouts_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "type": "stat",
+      "title": "Queue depth (sum)",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 5 },
+      "targets": [
+        { "refId": "A", "expr": "sum by(instance) (animica_aicf_queue_depth{job=\"$job\",instance=~\"$instance\",kind=~\"$kind\"})" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "min": 0 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "graphMode": "none" }
+    },
+    {
+      "type": "stat",
+      "title": "Active leases (sum)",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 5 },
+      "targets": [
+        { "refId": "A", "expr": "sum by(instance) (animica_aicf_leases_active{job=\"$job\",instance=~\"$instance\",kind=~\"$kind\"})" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "min": 0 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "SLA pass ratio",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 5 },
+      "targets": [
+        { "refId": "A", "expr": "avg by(instance) (animica_aicf_sla_pass_ratio{job=\"$job\",instance=~\"$instance\",kind=~\"$kind\"})" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": 0 },
+              { "color": "orange", "value": 0.8 },
+              { "color": "green", "value": 0.95 }
+            ]
+          }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "Slashes — /s",
+      "datasource": "$ds",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 5 },
+      "targets": [
+        { "refId": "A", "expr": "sum by(instance) (rate(animica_aicf_slash_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Pipeline rates — enqueue / assign / complete / proof-claims",
+      "datasource": "$ds",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "targets": [
+        { "refId": "A", "legendFormat": "enqueue ok", "expr": "sum by(instance) (rate(animica_aicf_enqueue_total{job=\"$job\",instance=~\"$instance\",result=\"ok\"}[$__rate_interval]))" },
+        { "refId": "B", "legendFormat": "assign",      "expr": "sum by(instance) (rate(animica_aicf_assign_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" },
+        { "refId": "C", "legendFormat": "complete",    "expr": "sum by(instance) (rate(animica_aicf_complete_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" },
+        { "refId": "D", "legendFormat": "proof-claim", "expr": "sum by(instance) (rate(animica_aicf_proof_claim_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Queue depth by kind",
+      "datasource": "$ds",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{kind}}", "expr": "sum by(kind) (animica_aicf_queue_depth{job=\"$job\",instance=~\"$instance\",kind=~\"$kind\"})" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "min": 0 } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Latency quantiles — assign / complete / payout (ms)",
+      "datasource": "$ds",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 18 },
+      "targets": [
+        { "refId": "A", "legendFormat": "assign p95",   "expr": "1000 * histogram_quantile(0.95, sum by(le,instance) (rate(animica_aicf_assign_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))" },
+        { "refId": "B", "legendFormat": "complete p95", "expr": "1000 * histogram_quantile(0.95, sum by(le,instance) (rate(animica_aicf_complete_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))" },
+        { "refId": "C", "legendFormat": "payout p95",   "expr": "1000 * histogram_quantile(0.95, sum by(le,instance) (rate(animica_aicf_payout_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))" },
+        { "refId": "D", "legendFormat": "assign p50",   "expr": "1000 * histogram_quantile(0.50, sum by(le,instance) (rate(animica_aicf_assign_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))" },
+        { "refId": "E", "legendFormat": "complete p50", "expr": "1000 * histogram_quantile(0.50, sum by(le,instance) (rate(animica_aicf_complete_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))" },
+        { "refId": "F", "legendFormat": "payout p50",   "expr": "1000 * histogram_quantile(0.50, sum by(le,instance) (rate(animica_aicf_payout_seconds_bucket{job=\"$job\",instance=~\"$instance\"}[$__rate_interval])))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms", "min": 0 } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "SLA metrics — traps ratio / QoS / success %",
+      "datasource": "$ds",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 26 },
+      "targets": [
+        { "refId": "A", "legendFormat": "traps ratio", "expr": "avg by(instance) (animica_aicf_sla_traps_ratio{job=\"$job\",instance=~\"$instance\",kind=~\"$kind\"})" },
+        { "refId": "B", "legendFormat": "QoS score",   "expr": "avg by(instance) (animica_aicf_sla_qos_score{job=\"$job\",instance=~\"$instance\",kind=~\"$kind\"})" },
+        { "refId": "C", "legendFormat": "success %",   "expr": "avg by(instance) (animica_aicf_sla_pass_ratio{job=\"$job\",instance=~\"$instance\",kind=~\"$kind\"})" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "none", "min": 0 },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "success %" }, "properties": [{ "id": "unit", "value": "percentunit" }] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Payout amount — per second",
+      "datasource": "$ds",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 26 },
+      "targets": [
+        { "refId": "A", "legendFormat": "amount/s", "expr": "sum by(instance) (rate(animica_aicf_payouts_amount_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+
+    {
+      "type": "bargauge",
+      "title": "Slashes by reason — rate",
+      "datasource": "$ds",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 34 },
+      "targets": [
+        { "refId": "A", "expr": "sum by(reason) (rate(animica_aicf_slash_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "displayMode": "gradient", "orientation": "horizontal" }
+    },
+    {
+      "type": "bargauge",
+      "title": "Queue by kind (current)",
+      "datasource": "$ds",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 34 },
+      "targets": [
+        { "refId": "A", "expr": "sum by(kind) (animica_aicf_queue_depth{job=\"$job\",instance=~\"$instance\",kind=~\"$kind\"})" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "min": 0 } },
+      "options": { "displayMode": "lcd", "orientation": "horizontal" }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Top providers by active leases (top 5)",
+      "datasource": "$ds",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 41 },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{provider}}", "expr": "topk(5, sum by(provider) (animica_aicf_leases_active{job=\"$job\",instance=~\"$instance\",provider=~\"$provider\"}))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "min": 0 } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Provider heartbeats — /s",
+      "datasource": "$ds",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 49 },
+      "targets": [
+        { "refId": "A", "legendFormat": "heartbeats", "expr": "sum by(instance) (rate(animica_aicf_provider_heartbeat_total{job=\"$job\",instance=~\"$instance\"}[$__rate_interval]))" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0 } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Providers online / registered",
+      "datasource": "$ds",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 49 },
+      "targets": [
+        { "refId": "A", "legendFormat": "online",     "expr": "sum by(instance) (animica_aicf_providers_online{job=\"$job\",instance=~\"$instance\"})" },
+        { "refId": "B", "legendFormat": "registered", "expr": "sum by(instance) (animica_aicf_providers_registered{job=\"$job\",instance=~\"$instance\"})" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "min": 0 } },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    }
+  ]
+}

@@ -1,0 +1,82 @@
+# ------------------------------
+# Animica SDK (Python) Starter
+# ------------------------------
+
+# Python cache / compiled
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments & pyenv
+.venv/
+venv/
+env/
+ENV/
+.python-version
+.pyenv/
+
+# Packaging / build outputs
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+pip-wheel-metadata/
+
+# Tests / coverage / fuzz caches
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.cache/
+
+# Linters / type-checkers
+.mypy_cache/
+.pytype/
+.ruff_cache/
+.pyright/
+
+# Logs / PIDs / temp
+*.log
+logs/
+*.pid
+tmp/
+temp/
+
+# Local data / artifacts
+artifacts/
+reports/
+*.sqlite
+*.sqlite3
+*.db
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Editors / IDEs
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Node leftovers (sometimes present in mixed repos)
+node_modules/
+npm-debug.log*
+yarn-error.log
+
+# Locks (uncomment if you don't want to commit these)
+# poetry.lock
+# Pipfile.lock

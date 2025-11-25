@@ -1,0 +1,70 @@
+<!-- Animica Mesh Hero Background
+     Responsive gradient mesh with subtle grain + vignette.
+     Safe to color-shift by editing gradient stops.
+     Size: scalable via viewBox (1600×900 design grid). -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" role="img" aria-label="Abstract gradient mesh background">
+  <defs>
+    <!-- Base backdrop -->
+    <linearGradient id="base" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"  stop-color="#0E1222"/>
+      <stop offset="100%" stop-color="#0B0F1C"/>
+    </linearGradient>
+
+    <!-- Mesh blobs (brand-ish hues) -->
+    <radialGradient id="g-blue" cx="0" cy="0" r="1">
+      <stop offset="0%"  stop-color="#2E63FF" stop-opacity="0.95"/>
+      <stop offset="70%" stop-color="#2E63FF" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#2E63FF" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="g-violet" cx="0" cy="0" r="1">
+      <stop offset="0%"  stop-color="#7B3DFF" stop-opacity="0.90"/>
+      <stop offset="70%" stop-color="#7B3DFF" stop-opacity="0.30"/>
+      <stop offset="100%" stop-color="#7B3DFF" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="g-cyan" cx="0" cy="0" r="1">
+      <stop offset="0%"  stop-color="#16D2FF" stop-opacity="0.85"/>
+      <stop offset="70%" stop-color="#16D2FF" stop-opacity="0.28"/>
+      <stop offset="100%" stop-color="#16D2FF" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="g-pink" cx="0" cy="0" r="1">
+      <stop offset="0%"  stop-color="#FF4DC1" stop-opacity="0.75"/>
+      <stop offset="70%" stop-color="#FF4DC1" stop-opacity="0.24"/>
+      <stop offset="100%" stop-color="#FF4DC1" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Soft vignette -->
+    <radialGradient id="vignette" cx="0.5" cy="0.5" r="0.65">
+      <stop offset="60%" stop-color="#000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0.45"/>
+    </radialGradient>
+
+    <!-- Subtle grain -->
+    <filter id="grain" x="-20%" y="-20%" width="140%" height="140%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" seed="7" result="noise"/>
+      <feColorMatrix type="saturate" values="0" in="noise" result="mono"/>
+      <feComponentTransfer in="mono">
+        <feFuncA type="table" tableValues="0 0.02"/>
+      </feComponentTransfer>
+    </filter>
+  </defs>
+
+  <!-- Base -->
+  <rect width="1600" height="900" fill="url(#base)"/>
+
+  <!-- Mesh blobs (positions sized for 1600×900; scale with viewBox) -->
+  <ellipse cx="360"  cy="260" rx="420" ry="320" fill="url(#g-blue)"/>
+  <ellipse cx="1240" cy="260" rx="380" ry="300" fill="url(#g-violet)"/>
+  <ellipse cx="520"  cy="700" rx="420" ry="300" fill="url(#g-cyan)"/>
+  <ellipse cx="1120" cy="640" rx="420" ry="320" fill="url(#g-pink)"/>
+
+  <!-- Grain overlay -->
+  <rect width="1600" height="900" filter="url(#grain)"/>
+
+  <!-- Vignette -->
+  <rect width="1600" height="900" fill="url(#vignette)"/>
+
+  <!-- Safe bleed (no content) -->
+</svg>

@@ -1,0 +1,11 @@
+<!-- Animica System Icon: external-link -->
+<svg width="24" height="24" viewBox="0 0 24 24" role="img" aria-labelledby="title" xmlns="http://www.w3.org/2000/svg">
+  <title id="title">External Link</title>
+  <g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Box -->
+    <rect x="4" y="8" width="12" height="12" rx="2"/>
+    <!-- Arrow pointing out (to NE) -->
+    <path d="M14 4h6v6"/>
+    <path d="M10 14L20 4"/>
+  </g>
+</svg>
