@@ -17,12 +17,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable, NewType, Optional, Tuple, Union, overload
 
-from pq.py.utils.bech32 import (
-    bech32_encode,
-    bech32_decode,
-    convertbits,
-    Encoding,
-)
+try:
+    from pq.py.utils.bech32 import (
+        bech32_encode,
+        bech32_decode,
+        convertbits,
+        Encoding,
+    )
+except ImportError:  # Older pq builds expose functions without Encoding enum
+    from pq.py.utils import bech32 as _bech32  # type: ignore
+
+    bech32_encode = _bech32.bech32_encode  # type: ignore[attr-defined]
+    bech32_decode = _bech32.bech32_decode  # type: ignore[attr-defined]
+    convertbits = _bech32.convertbits  # type: ignore[attr-defined]
+
+    class Encoding:  # type: ignore[override]
+        BECH32M = "bech32m"
 
 # ───────────────────────────────────────────────────────────────────────────────
 # Newtypes (for readability in annotations)
@@ -146,6 +156,13 @@ def _payload_from_parts(parts: AddressParts) -> bytes:
     return bytes([parts.alg_id]) + bytes(parts.pubkey_hash)
 
 
+def _is_bech32m(enc: object) -> bool:
+    target = getattr(Encoding, "BECH32M", "bech32m")
+    if isinstance(enc, str):
+        return enc.lower() == str(target).lower()
+    return enc == target
+
+
 def _parts_from_payload(hrp: str, payload: bytes) -> AddressParts:
     if len(payload) != 33:
         raise ValueError("address payload must be 33 bytes (1 alg_id + 32 pubkey_hash)")
@@ -177,7 +194,7 @@ def decode_address(addr: str, *, allowed_hrps: Optional[Iterable[str]] = None) -
     hrp, data, enc = bech32_decode(addr)
     if hrp is None or data is None or enc is None:
         raise ValueError("invalid bech32 address (decode failed)")
-    if enc is not Encoding.BECH32M:
+    if not _is_bech32m(enc):
         raise ValueError("address must use bech32m encoding")
     if allowed_hrps is not None:
         allowed = set(allowed_hrps)

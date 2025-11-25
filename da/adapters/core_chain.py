@@ -72,8 +72,14 @@ from da.errors import DAError
 from da.utils.bytes import hex_to_bytes, bytes_to_hex
 from da.utils.merkle import merkle_root
 from da.utils.hash import sha3_256
-from da.nmt.codec import leaf_encode
-from da.nmt.commit import compute_nmt_root  # root over encoded leaves
+try:
+    from da.nmt.codec import leaf_encode  # type: ignore
+except ImportError:  # fallback for newer codec API
+    from da.nmt.codec import encode_leaf as leaf_encode  # type: ignore
+try:
+    from da.nmt.commit import compute_nmt_root  # root over encoded leaves
+except ImportError:  # fallback to newer API name
+    from da.nmt.commit import root_from_encoded_leaves as compute_nmt_root  # type: ignore
 
 
 # --------------------------------------------------------------------------------------
