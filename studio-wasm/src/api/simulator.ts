@@ -3,89 +3,126 @@
  * =============
  * High-level helpers that talk to the Pyodide-backed Python VM running inside
  * the dedicated worker. Provides:
- *  - simulateCall: run a contract method locally (no state writes)
- *  - simulateDeploy: dry-run a deploy (compile + estimate gas)
+ *  - simulateCall: run a contract method locally (optionally stateful)
+ *  - simulateDeploy: dry-run a deploy
  *  - estimateGas: helper for either call/deploy
- *
- * The worker must support:
- *  - bridge.entry.version()
- *  - bridge.entry.run_call(source: str, manifest: dict, method: str, args: list)
- *  - bridge.entry.simulate_tx(kind: "deploy"|"call", manifest: dict, source?: str,
- *        method?: str, args?: list)
- *  - bridge.entry.compile_bytes(source: bytes, manifest: dict)
  */
 
+import type { StateHandle } from "./state";
 import { PyVmWorkerClient, createModuleWorker } from "../worker/protocol";
 
-type Json = Record<string, any>;
+export type Json = Record<string, any>;
 
 export interface EventLog {
   name: string;
   args: Record<string, any>;
 }
 
+export interface CompiledContract {
+  ir: Uint8Array;
+  codeHash?: string;
+  gasUpperBound?: number;
+  entry?: string;
+  abi?: Json;
+  manifest?: Json;
+  diagnostics?: string[];
+}
+
 export interface SimulateCallParams {
-  /** Python contract source code (utf-8). */
-  source: string;
-  /** Contract manifest JSON (ABI + metadata). */
+  compiled: CompiledContract;
   manifest: Json;
-  /** Method to call. */
-  method: string;
-  /** Positional arguments for the method. */
-  args?: any[];
+  /** Method/entry name to invoke. */
+  entry?: string;
+  method?: string;
+  /** Positional args or named args keyed by ABI param name. */
+  args?: any[] | Record<string, any>;
+  /** Optional execution context overrides (block/tx). */
+  context?: Json;
+  /** Optional gas limit override (defaults to 500k). */
+  gasLimit?: number;
+  /** Optional state handle for persistent storage. */
+  state?: StateHandle;
   /** Optional init options for the underlying Pyodide worker. */
   init?: SimulatorInit;
 }
 
-export interface SimulateCallResult {
+export interface SimulateCallOk {
+  ok: true;
   returnValue: any;
   gasUsed: number;
   events: EventLog[];
-  logs?: string[]; // optional debug logs from the VM
+  logs?: string[];
+  returnData?: Uint8Array;
 }
 
+export interface SimulateCallFail {
+  ok: false;
+  error: any;
+  gasUsed: number;
+  events: EventLog[];
+  logs?: string[];
+  returnData?: Uint8Array;
+}
+
+export type SimulateCallResult = SimulateCallOk | SimulateCallFail;
+
 export interface SimulateDeployParams {
-  source: string;
+  compiled: CompiledContract;
   manifest: Json;
   /** Optional initializer function name (default: "init") */
   initMethod?: string;
   /** Optional initializer args */
-  initArgs?: any[];
+  initArgs?: any[] | Record<string, any>;
+  context?: Json;
+  gasLimit?: number;
   init?: SimulatorInit;
+  state?: StateHandle;
 }
 
 export interface SimulateDeployResult {
+  ok: boolean;
   gasUsed: number;
   /** Hex (0x…) code hash if available from compile step. */
   codeHash?: string;
   /** Size in bytes of compiled artifact, if available. */
   codeSize?: number;
+  logs?: string[];
+  error?: any;
 }
 
 export type EstimateGasMode = "call" | "deploy";
 
 export interface EstimateGasParamsCall {
-  mode: "call";
-  source: string;
+  mode?: "call";
+  compiled: CompiledContract;
   manifest: Json;
-  method: string;
-  args?: any[];
+  entry?: string;
+  method?: string;
+  args?: any[] | Record<string, any>;
+  context?: Json;
+  gasLimit?: number;
   init?: SimulatorInit;
+  state?: StateHandle;
 }
 
 export interface EstimateGasParamsDeploy {
   mode: "deploy";
-  source: string;
+  compiled: CompiledContract;
   manifest: Json;
   initMethod?: string;
-  initArgs?: any[];
+  initArgs?: any[] | Record<string, any>;
+  context?: Json;
+  gasLimit?: number;
   init?: SimulatorInit;
+  state?: StateHandle;
 }
 
 export type EstimateGasParams = EstimateGasParamsCall | EstimateGasParamsDeploy;
 
 export interface GasEstimateResult {
-  gasUsed: number;
+  upperBound: number;
+  lowerBound?: number;
+  diagnostics?: string[];
 }
 
 /* ------------------------------ Worker wiring ------------------------------ */
@@ -131,122 +168,203 @@ export async function ensurePyReady(init?: SimulatorInit): Promise<PyVmWorkerCli
 
 /* --------------------------------- Helpers --------------------------------- */
 
-function ensureArray<T>(v: T[] | undefined): T[] {
-  return Array.isArray(v) ? v : [];
+function normalizeArgs(args: any[] | Record<string, any> | undefined, manifest: Json, method: string): any[] {
+  if (Array.isArray(args)) return args;
+  if (!args || typeof args !== "object") return [];
+
+  const fn = manifest?.abi?.functions?.find((f: any) => f?.name === method);
+  if (fn?.inputs && Array.isArray(fn.inputs)) {
+    return fn.inputs.map((inp: any) => (args as any)[inp.name]);
+  }
+  return Object.values(args);
 }
 
-function toSimError(prefix: string, err: unknown): Error {
-  if (err instanceof Error) {
-    err.message = `${prefix}: ${err.message}`;
-    return err;
+function decodeBase64(b64: string): Uint8Array {
+  if (typeof atob === "function") {
+    const s = atob(b64);
+    const out = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+    return out;
   }
-  return new Error(`${prefix}: ${String(err)}`);
+  const maybeBuf = (globalThis as any).Buffer?.from?.(b64, "base64");
+  if (maybeBuf) {
+    const buf: any = maybeBuf;
+    const offset = buf.byteOffset ?? 0;
+    const length = buf.byteLength ?? buf.length ?? 0;
+    return new Uint8Array(buf.buffer ?? buf, offset, length);
+  }
+  throw new Error("No base64 decoder available");
+}
+
+function decodeBytesBox(box: any): Uint8Array | undefined {
+  if (!box || typeof box !== "object" || typeof box.__bytes_b64 !== "string") return undefined;
+  return decodeBase64(box.__bytes_b64);
+}
+
+function mapCallResult(res: any): SimulateCallResult {
+  const gasUsed = typeof res?.gas_used === "number" ? res.gas_used : 0;
+  const events = (res?.events ?? []) as EventLog[];
+  const logs = res?.logs ? [...(res.logs as any[])] : undefined;
+  const returnData = decodeBytesBox(res?.return_data ?? res?.returnBytes);
+
+  if (res?.ok === false) {
+    return {
+      ok: false,
+      error: res.error ?? new Error("Simulation failed"),
+      gasUsed,
+      events,
+      logs,
+      returnData,
+    };
+  }
+
+  return {
+    ok: true,
+    returnValue: res?.return ?? res?.return_value ?? res?.result ?? null,
+    gasUsed,
+    events,
+    logs,
+    returnData,
+  };
+}
+
+function mapDeployResult(res: any, fallbackHash?: string): SimulateDeployResult {
+  const gasUsed = typeof res?.gas_used === "number" ? res.gas_used : 0;
+  const ok = res?.ok !== false;
+  return {
+    ok,
+    gasUsed,
+    codeHash: res?.code_hash ?? fallbackHash,
+    codeSize: typeof res?.code_size === "number" ? res.code_size : undefined,
+    logs: res?.logs ? [...(res.logs as any[])] : undefined,
+    error: ok ? undefined : res?.error,
+  };
+}
+
+function mapDiagnostics(v: any): string[] | undefined {
+  const msgs = v?.diagnostics;
+  if (!msgs) return undefined;
+  if (Array.isArray(msgs)) return msgs.map(String);
+  return [String(msgs)];
 }
 
 /* --------------------------------- API impl -------------------------------- */
 
 export async function simulateCall(params: SimulateCallParams): Promise<SimulateCallResult> {
-  const { source, manifest, method } = params;
-  const args = ensureArray(params.args);
+  const { compiled, manifest } = params;
+  const method = params.method ?? params.entry ?? compiled.entry;
+  if (!compiled?.ir) {
+    return { ok: false, error: new Error("compiled IR is required"), gasUsed: 0, events: [] } as SimulateCallFail;
+  }
+  if (!method) {
+    return { ok: false, error: new Error("method/entry is required"), gasUsed: 0, events: [] } as SimulateCallFail;
+  }
+  const argArray = normalizeArgs(params.args, manifest, method);
+
   try {
+    if (params.state && typeof (params.state as any).call === "function") {
+      return await (params.state as any).call({
+        compiled,
+        manifest,
+        method,
+        args: argArray,
+        context: params.context,
+        gasLimit: params.gasLimit,
+      });
+    }
+
     const client = await ensurePyReady(params.init);
-    const result = await client.call(
+    const res = await client.call(
       "bridge.entry.run_call",
-      [],
-      { source, manifest, method, args },
+      [compiled.ir, method, argArray],
+      { gas_limit: params.gasLimit ?? 500_000, ctx: params.context },
       120_000
     );
-    // Expected shape (from Python bridge):
-    // { return_value: any, gas_used: int, events: [{name, args}, ...], logs?: [str] }
-    return {
-      returnValue: result?.return_value ?? null,
-      gasUsed: result?.gas_used ?? 0,
-      events: (result?.events ?? []) as EventLog[],
-      logs: result?.logs ?? undefined,
-    };
+    return mapCallResult(res);
   } catch (e) {
-    throw toSimError("simulateCall failed", e);
+    return { ok: false, error: e, gasUsed: 0, events: [] };
   }
 }
 
 export async function simulateDeploy(params: SimulateDeployParams): Promise<SimulateDeployResult> {
-  const { source, manifest } = params;
-  const initMethod = params.initMethod ?? "init";
-  const initArgs = ensureArray(params.initArgs);
+  const { compiled, manifest } = params;
+  const method = params.initMethod ?? "init";
+  const argArray = normalizeArgs(params.initArgs, manifest, method);
+
+  if (params.state && typeof (params.state as any).deploy === "function") {
+    return await (params.state as any).deploy({
+      compiled,
+      manifest,
+      initMethod: method,
+      initArgs: argArray,
+      context: params.context,
+      gasLimit: params.gasLimit,
+    });
+  }
 
   try {
     const client = await ensurePyReady(params.init);
-
-    // First, try to get code hash/size from compile step (best-effort).
-    let codeHash: string | undefined;
-    let codeSize: number | undefined;
-    try {
-      const comp = await client.call(
-        "bridge.entry.compile_bytes",
-        [],
-        { source, manifest },
-        90_000
-      );
-      codeHash = comp?.code_hash;
-      codeSize = typeof comp?.code_size === "number" ? comp.code_size : undefined;
-    } catch {
-      // ignore compile hash error; gas sim may still work (bridge may compile internally)
-    }
-
-    const sim = await client.call(
+    const res = await client.call(
       "bridge.entry.simulate_tx",
-      [],
-      { kind: "deploy", source, manifest, method: initMethod, args: initArgs },
+      [manifest, compiled.ir, method, argArray],
+      { kind: "deploy", gas_limit: params.gasLimit ?? 500_000, ctx: params.context },
       120_000
     );
-    // Expected: { gas_used: int }
-    return {
-      gasUsed: sim?.gas_used ?? 0,
-      codeHash,
-      codeSize,
-    };
+    return mapDeployResult(res, compiled.codeHash);
   } catch (e) {
-    throw toSimError("simulateDeploy failed", e);
+    return { ok: false, gasUsed: 0, error: e };
   }
 }
 
 export async function estimateGas(params: EstimateGasParams): Promise<GasEstimateResult> {
+  const mode: EstimateGasMode = params.mode ?? "call";
+  const compiled = params.compiled;
+  const manifest = params.manifest;
+
   try {
     const client = await ensurePyReady(params.init);
-
-    if (params.mode === "call") {
+    if (mode === "call") {
+      const method = (params as EstimateGasParamsCall).method ?? (params as EstimateGasParamsCall).entry ?? compiled.entry;
+      if (!method) return { upperBound: 0 };
+      const args = normalizeArgs((params as EstimateGasParamsCall).args, manifest, method);
       const res = await client.call(
         "bridge.entry.simulate_tx",
-        [],
+        [manifest, compiled.ir, method, args],
         {
           kind: "call",
-          source: params.source,
-          manifest: params.manifest,
-          method: params.method,
-          args: ensureArray(params.args),
           estimate_only: true,
+          gas_limit: (params as EstimateGasParamsCall).gasLimit ?? 500_000,
+          ctx: (params as EstimateGasParamsCall).context,
         },
         120_000
       );
-      return { gasUsed: res?.gas_used ?? 0 };
-    } else {
-      const res = await client.call(
-        "bridge.entry.simulate_tx",
-        [],
-        {
-          kind: "deploy",
-          source: params.source,
-          manifest: params.manifest,
-          method: params.initMethod ?? "init",
-          args: ensureArray(params.initArgs),
-          estimate_only: true,
-        },
-        120_000
-      );
-      return { gasUsed: res?.gas_used ?? 0 };
+      return {
+        upperBound: typeof res?.gas_used === "number" ? res.gas_used : 0,
+        lowerBound: typeof res?.gas_lower_bound === "number" ? res.gas_lower_bound : undefined,
+        diagnostics: mapDiagnostics(res),
+      };
     }
+
+    const method = (params as EstimateGasParamsDeploy).initMethod ?? "init";
+    const args = normalizeArgs((params as EstimateGasParamsDeploy).initArgs, manifest, method);
+    const res = await client.call(
+      "bridge.entry.simulate_tx",
+      [manifest, compiled.ir, method, args],
+      {
+        kind: "deploy",
+        estimate_only: true,
+        gas_limit: (params as EstimateGasParamsDeploy).gasLimit ?? 500_000,
+        ctx: (params as EstimateGasParamsDeploy).context,
+      },
+      120_000
+    );
+    return {
+      upperBound: typeof res?.gas_used === "number" ? res.gas_used : 0,
+      lowerBound: typeof res?.gas_lower_bound === "number" ? res.gas_lower_bound : undefined,
+      diagnostics: mapDiagnostics(res),
+    };
   } catch (e) {
-    throw toSimError("estimateGas failed", e);
+    return { upperBound: 0, diagnostics: [e instanceof Error ? e.message : String(e)] };
   }
 }
 
