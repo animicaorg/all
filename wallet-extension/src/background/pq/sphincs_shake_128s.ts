@@ -11,8 +11,8 @@
  * Exports are async and cache the loaded backend.
  */
 
-import { sha3_256 } from '@noble/hashes/sha3';
-import { hmac } from '@noble/hashes/hmac';
+import { sha3_256 } from '../../polyfills/noble/sha3.ts';
+import { hmac } from '../../polyfills/noble/hmac.ts';
 import { loadSphincsShake128s } from './wasm/loader';
 import { hkdfExpand } from './hkdf';
 

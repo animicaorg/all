@@ -14,7 +14,8 @@
  */
 
 import type { KeyAlgo } from './storage';
-import { toWords, fromWords, bech32mEncode, bech32mDecode } from '../../utils/bech32';
+import { toWords, fromWords, encodeBech32m, decodeBech32m } from '../../utils/bech32';
+import { sha3_256 as sha3Fast } from '../../polyfills/noble/sha3.ts';
 
 /** Default human-readable part (HRP) for addresses. */
 export const DEFAULT_HRP = 'anim';
@@ -22,7 +23,7 @@ export const DEFAULT_HRP = 'anim';
 /** Numeric identifiers for supported algorithms (stable on-chain). */
 export const ALGO_IDS: Record<KeyAlgo, number> = {
   'dilithium3': 0x01,
-  'sphincs-shake-128s': 0x02,
+  'sphincs_shake_128s': 0x02,
 } as const;
 
 const ID_TO_ALGO: Record<number, KeyAlgo> = Object.fromEntries(
@@ -31,42 +32,7 @@ const ID_TO_ALGO: Record<number, KeyAlgo> = Object.fromEntries(
 
 /** Compute SHA3-256(bytes) → Uint8Array(32). */
 async function sha3_256(bytes: Uint8Array): Promise<Uint8Array> {
-  // Prefer @noble/hashes (ESM, tiny & fast). Fallback to js-sha3 if available.
-  try {
-    const mod = await import(/* @vite-ignore */ '@noble/hashes/sha3');
-    const out = mod.sha3_256.create().update(bytes).digest();
-    return new Uint8Array(out);
-  } catch {
-    try {
-      const mod = await import(/* @vite-ignore */ 'js-sha3');
-      // js-sha3 returns hex by default; request ArrayBuffer if available
-      if (typeof (mod as any).sha3_256 === 'function') {
-        const h = (mod as any).sha3_256;
-        // Prefer arrayBuffer() if present; else hex → bytes
-        if (h.arrayBuffer) {
-          const ab: ArrayBuffer = h.arrayBuffer(bytes);
-          return new Uint8Array(ab);
-        }
-        const hex: string = h(bytes);
-        return hexToBytes(hex);
-      }
-    } catch {
-      // no-op; fall through to explicit error
-    }
-    throw new Error(
-      'SHA3-256 implementation not found. Install @noble/hashes or js-sha3 in wallet-extension/package.json.',
-    );
-  }
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  const s = hex.startsWith('0x') ? hex.slice(2) : hex;
-  if (s.length % 2 !== 0) throw new Error('Invalid hex length');
-  const out = new Uint8Array(s.length / 2);
-  for (let i = 0; i < out.length; i++) {
-    out[i] = parseInt(s.slice(i * 2, i * 2 + 2), 16);
-  }
-  return out;
+  return sha3Fast.create().update(bytes).digest();
 }
 
 /**
@@ -92,7 +58,7 @@ export async function encodeAddress(
   payload.set(hash, 1);
 
   const words = toWords(payload); // 8-bit → 5-bit
-  return bech32mEncode(hrp, words);
+  return encodeBech32m(hrp, words);
 }
 
 /**
@@ -100,7 +66,7 @@ export async function encodeAddress(
  * The returned `hash` is the 32-byte SHA3-256(pubkey) digest stored in the address.
  */
 export function decodeAddress(addr: string): { hrp: string; algo: KeyAlgo; hash: Uint8Array } {
-  const { hrp, words } = bech32mDecode(addr);
+  const { hrp, words } = decodeBech32m(addr);
   const payload = fromWords(words); // 5-bit → 8-bit
 
   if (payload.length !== 33) {
@@ -124,6 +90,11 @@ export function assertValidAddress(addr: string, expected?: { hrp?: string; algo
     throw new Error(`Address algo mismatch: expected ${expected.algo}, got ${algo}`);
   }
   return true;
+}
+
+/** Convenience shim used by keyring: derive bech32m address directly from pubkey bytes. */
+export async function bech32AddressFromPub(pubkey: Uint8Array, algo: KeyAlgo, hrp: string = DEFAULT_HRP): Promise<string> {
+  return encodeAddress(pubkey, algo, hrp);
 }
 
 /** Quick boolean validation wrapper (never throws). */

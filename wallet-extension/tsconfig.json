@@ -30,7 +30,9 @@
     /* Paths & base url */
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "@noble/hashes/sha3": ["src/polyfills/noble/sha3.ts"],
+      "@noble/hashes/hmac": ["src/polyfills/noble/hmac.ts"]
     },
 
     /* Global types for MV3 + Vite */
