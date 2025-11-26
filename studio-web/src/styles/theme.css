@@ -11,13 +11,26 @@
   --surface-2: #eef0f4;
   --surface-3: #e5e8ef;
 
+  /* Layered surfaces (used by inline component styles) */
+  --surface-1: var(--surface);
+  --surface-2: var(--surface-2);
+  --surface-3: var(--surface-3);
+  --surface-elev-1: color-mix(in srgb, var(--surface) 92%, white 8%);
+  --surface-elev-2: color-mix(in srgb, var(--surface-2) 90%, white 10%);
+  --surface-elev-3: color-mix(in srgb, var(--surface-3) 88%, white 12%);
+
   /* Text */
   --text: #0f172a;          /* slate-900 */
   --text-muted: #475569;    /* slate-600 */
   --text-inverse: #ffffff;
+  --fg: var(--text);
+  --fg-strong: color-mix(in srgb, var(--text) 94%, black 6%);
+  --fg-muted: var(--text-muted);
+  --fg-dim: color-mix(in srgb, var(--text-muted) 80%, transparent);
 
   /* Borders & outlines */
   --border: #d7dbe3;
+  --border-muted: color-mix(in srgb, var(--border) 80%, transparent);
   --focus-ring-color: #2563eb; /* primary-600 */
   --focus-ring-alpha: 0.55;
 
@@ -31,6 +44,11 @@
   --success: #16a34a;         /* green-600 */
   --warning: #d97706;         /* amber-600 */
   --danger: #ef4444;          /* red-500 */
+  --ok: var(--success);
+
+  --accent-weak: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  --accent-strong: color-mix(in srgb, var(--accent) 88%, black 12%);
+  --on-accent: var(--primary-contrast);
 
   /* Subtle tints (for badges/pills) */
   --primary-tint: color-mix(in srgb, var(--primary) 12%, white);
@@ -60,11 +78,23 @@
     --surface-2: #111827;   /* gray-900 */
     --surface-3: #1f2937;   /* gray-800 */
 
+    --surface-1: var(--surface);
+    --surface-2: var(--surface-2);
+    --surface-3: var(--surface-3);
+    --surface-elev-1: color-mix(in srgb, var(--surface) 84%, white 16%);
+    --surface-elev-2: color-mix(in srgb, var(--surface-2) 82%, white 18%);
+    --surface-elev-3: color-mix(in srgb, var(--surface-3) 80%, white 20%);
+
     --text: #e5e7eb;        /* gray-200 */
     --text-muted: #9ca3af;  /* gray-400 */
     --text-inverse: #0b0f17;
+    --fg: var(--text);
+    --fg-strong: color-mix(in srgb, var(--text) 92%, white 8%);
+    --fg-muted: var(--text-muted);
+    --fg-dim: color-mix(in srgb, var(--text-muted) 75%, transparent);
 
     --border: #233044;
+    --border-muted: color-mix(in srgb, var(--border) 70%, transparent);
 
     --primary: #60a5fa;     /* blue-400 */
     --primary-600: #3b82f6;
@@ -75,6 +105,11 @@
     --success: #22c55e;
     --warning: #f59e0b;
     --danger: #f87171;
+    --ok: var(--success);
+
+    --accent-weak: color-mix(in srgb, var(--accent) 18%, var(--surface));
+    --accent-strong: color-mix(in srgb, var(--accent) 90%, white 10%);
+    --on-accent: var(--primary-contrast);
 
     --primary-tint: color-mix(in srgb, var(--primary) 18%, black);
     --success-tint: color-mix(in srgb, var(--success) 18%, black);
@@ -101,10 +136,21 @@
   --surface: #0f172a;
   --surface-2: #111827;
   --surface-3: #1f2937;
+  --surface-1: var(--surface);
+  --surface-2: var(--surface-2);
+  --surface-3: var(--surface-3);
+  --surface-elev-1: color-mix(in srgb, var(--surface) 84%, white 16%);
+  --surface-elev-2: color-mix(in srgb, var(--surface-2) 82%, white 18%);
+  --surface-elev-3: color-mix(in srgb, var(--surface-3) 80%, white 20%);
   --text: #e5e7eb;
   --text-muted: #9ca3af;
   --text-inverse: #0b0f17;
+  --fg: var(--text);
+  --fg-strong: color-mix(in srgb, var(--text) 92%, white 8%);
+  --fg-muted: var(--text-muted);
+  --fg-dim: color-mix(in srgb, var(--text-muted) 75%, transparent);
   --border: #233044;
+  --border-muted: color-mix(in srgb, var(--border) 70%, transparent);
   --primary: #60a5fa;
   --primary-600: #3b82f6;
   --primary-700: #2563eb;
@@ -113,6 +159,10 @@
   --success: #22c55e;
   --warning: #f59e0b;
   --danger: #f87171;
+  --ok: var(--success);
+  --accent-weak: color-mix(in srgb, var(--accent) 18%, var(--surface));
+  --accent-strong: color-mix(in srgb, var(--accent) 90%, white 10%);
+  --on-accent: var(--primary-contrast);
   --primary-tint: color-mix(in srgb, var(--primary) 18%, black);
   --success-tint: color-mix(in srgb, var(--success) 18%, black);
   --warning-tint: color-mix(in srgb, var(--warning) 18%, black);
