@@ -46,7 +46,7 @@ export default function App() {
       <GlobalLoaderOverlay />
       <ToastHost />
       <Footer />
-      <style jsx global>{globalCss}</style>
+      <style>{globalCss}</style>
     </div>
   );
 }
