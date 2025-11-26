@@ -222,6 +222,8 @@ export function ProjectTree({
 }: ProjectTreeProps) {
   const { isExpanded, toggle, set } = useExpandState();
 
+  const safeNodes = React.useMemo(() => (Array.isArray(nodes) ? nodes : []), [nodes]);
+
   const toggleDir = React.useCallback(
     (p: string) => {
       const willExpand = !isExpanded(p);
@@ -231,7 +233,7 @@ export function ProjectTree({
     [isExpanded, toggle, onToggleDir]
   );
 
-  const filtered = React.useMemo(() => filterTree(nodes, filterText || ""), [nodes, filterText]);
+  const filtered = React.useMemo(() => filterTree(safeNodes, filterText || ""), [safeNodes, filterText]);
 
   return (
     <div className="h-full w-full overflow-auto text-[var(--fg)]">

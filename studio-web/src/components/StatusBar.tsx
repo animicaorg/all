@@ -115,7 +115,7 @@ export default function StatusBar() {
         )}
       </div>
 
-      <style jsx>{`
+      <style>{`
         .statusbar {
           position: fixed;
           left: 0;
