@@ -83,6 +83,9 @@ def mount_background_tasks(app: FastAPI) -> None:
         try:
             if create_default_scheduler:
                 scheduler_handle = create_default_scheduler(app)  # type: ignore[misc]
+                start = getattr(scheduler_handle, "start", None)
+                if callable(start):
+                    await start()  # type: ignore[func-returns-value]
             elif Scheduler:
                 # Fallback: construct with sensible defaults
                 scheduler_handle = Scheduler(app=app)  # type: ignore[call-arg]
