@@ -192,6 +192,33 @@ class SQLiteTaskQueue:
         await conn.execute("PRAGMA foreign_keys=ON;")
         await conn.execute("PRAGMA synchronous=NORMAL;")
         await conn.execute("PRAGMA temp_store=MEMORY;")
+        await conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS queue (
+              id TEXT PRIMARY KEY,
+              kind TEXT NOT NULL,
+              idempotency_key TEXT UNIQUE,
+              payload TEXT NOT NULL,
+              priority INTEGER NOT NULL DEFAULT 0,
+              status TEXT NOT NULL,
+              attempts INTEGER NOT NULL DEFAULT 0,
+              max_attempts INTEGER NOT NULL DEFAULT 8,
+              available_at INTEGER NOT NULL,
+              lease_owner TEXT,
+              lease_until INTEGER,
+              result TEXT,
+              error TEXT,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS queue_lookup_available
+              ON queue(status, available_at, priority, created_at);
+            CREATE INDEX IF NOT EXISTS queue_kind_status
+              ON queue(kind, status);
+            CREATE INDEX IF NOT EXISTS queue_lease_until
+              ON queue(status, lease_until);
+            """
+        )
         await conn.commit()
         self._conn = conn
 

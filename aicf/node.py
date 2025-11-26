@@ -49,6 +49,9 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             self._send({"jsonrpc":"2.0","id":None,"error":{"code":-32700,"message":"Parse error"}}, 400); return
 
+        if not isinstance(req, dict):
+            self._send({"jsonrpc":"2.0","id":None,"error":{"code":-32600,"message":"Invalid Request"}}, 400); return
+
         mid    = req.get("id", 1)
         method = req.get("method")
         params = req.get("params", []) or []

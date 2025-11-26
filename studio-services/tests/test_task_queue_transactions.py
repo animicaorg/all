@@ -65,3 +65,21 @@ def test_poll_rolls_back_on_error(tmp_path, monkeypatch):
 
     asyncio.run(_run())
 
+
+def test_connect_creates_schema(tmp_path):
+    async def _run():
+        db_path = tmp_path / "queue.sqlite"
+        queue = SQLiteTaskQueue(str(db_path))
+
+        await queue.connect()
+        assert queue._conn is not None  # noqa: SLF001 - test needs direct access
+        cur = await queue._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='queue';"
+        )
+        row = await cur.fetchone()
+        assert row is not None
+
+        await queue.close()
+
+    asyncio.run(_run())
+
