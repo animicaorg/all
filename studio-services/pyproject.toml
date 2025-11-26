@@ -36,7 +36,8 @@ dependencies = [
   "cbor2>=5.6",             # CBOR payload handling for signed tx/artifacts when needed
   "python-dotenv>=1.0",     # load .env in local/dev
   "structlog>=24.1",        # structured JSON logging
-  "prometheus-client>=0.20" # /metrics exporter
+  "prometheus-client>=0.20",  # /metrics exporter
+  "aiosqlite>=0.19"           # async SQLite backend for task queue
 ]
 
 [project.optional-dependencies]
