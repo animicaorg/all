@@ -105,6 +105,50 @@ def _sha3_256_hex(data: bytes) -> str:
     return "0x" + hashlib.sha3_256(data).hexdigest()
 
 
+def code_hash_bytes(build: CompileArtifact | Dict[str, Any]) -> bytes:
+    """Extract code hash bytes from a CompileArtifact or mapping."""
+
+    if isinstance(build, CompileArtifact):
+        h = build.code_hash
+    elif isinstance(build, dict):
+        h = build.get("code_hash") or build.get("codeHash") or build.get("code")
+    else:
+        raise VmCompileError("Unsupported build object for code_hash_bytes")
+
+    if isinstance(h, (bytes, bytearray)):
+        return bytes(h)
+
+    if isinstance(h, str):
+        hs = h.strip().lower()
+        if hs.startswith("0x"):
+            try:
+                return bytes.fromhex(hs[2:])
+            except ValueError as e:
+                raise VmCompileError(f"Invalid code hash hex: {h!r}") from e
+    raise VmCompileError("Could not extract code hash bytes")
+
+
+def estimate_gas_for_deploy(build: CompileArtifact | Dict[str, Any]) -> Optional[int]:
+    """Best-effort gas estimate accessor for deploy artifacts."""
+
+    if isinstance(build, CompileArtifact):
+        return build.gas_upper_bound
+    if isinstance(build, dict):
+        gv = build.get("gas_upper_bound") or build.get("gasUpperBound") or build.get("gas_estimate")
+        try:
+            return int(gv) if gv is not None else None
+        except Exception:
+            return None
+    return None
+
+
+def simulate_deploy_locally(build: CompileArtifact | Dict[str, Any], call_data: Dict[str, Any]):
+    """Placeholder local simulation; returns None when unavailable."""
+
+    # If vm_py exposes a simulator, wire it here in the future.
+    return None
+
+
 def _first_attr(obj: Any, names: Tuple[str, ...]) -> Any:
     for n in names:
         if hasattr(obj, n):
@@ -275,9 +319,18 @@ def compile_files(source_path: str, manifest_path: str, encoding: str = "utf-8")
     return compile_source(src, manifest)
 
 
+# Compatibility shim: some call sites import ``compile_package``.
+def compile_package(source_path: str, manifest_path: str, encoding: str = "utf-8") -> CompileArtifact:
+    return compile_files(source_path, manifest_path, encoding=encoding)
+
+
 __all__ = [
     "VmCompileError",
     "CompileArtifact",
+    "code_hash_bytes",
+    "estimate_gas_for_deploy",
+    "simulate_deploy_locally",
     "compile_source",
     "compile_files",
+    "compile_package",
 ]

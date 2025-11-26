@@ -175,6 +175,10 @@ async def run_scheduler(app, *, queue: SQLiteTaskQueue, config: SchedulerConfig 
     await scheduler.run_until_stopped()
 
 
+# Compatibility alias for legacy imports
+Scheduler = TaskScheduler
+
+
 if __name__ == "__main__":  # pragma: no cover - dev convenience
     import asyncio
 
