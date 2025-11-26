@@ -21,7 +21,6 @@ from .version import __version__  # defined in consensus/version.py
 from . import (
     errors,
     math,
-    policy,
     caps,
     scorer,
     difficulty,
@@ -40,7 +39,6 @@ __all__ = [
     # submodules
     "errors",
     "math",
-    "policy",
     "caps",
     "scorer",
     "difficulty",
