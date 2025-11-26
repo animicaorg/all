@@ -64,14 +64,21 @@ class NMTCodecError(ValueError):
 # Encode / Decode
 # --------------------------------------------------------------------------- #
 
-def encode_leaf(ns: int | NamespaceId, data: bytes) -> bytes:
+def encode_leaf(ns: int | NamespaceId, data: bytes, ns_bytes: int | None = None) -> bytes:
     """
-    Serialize one leaf as: ns_be || uvarint(len) || data.
+    Serialize one leaf as: ``ns_be || uvarint(len) || data``.
+
+    The optional ``ns_bytes`` parameter keeps compatibility with older call-sites
+    that explicitly passed the namespace width; when omitted we fall back to the
+    configured width derived from :data:`NAMESPACE_BITS`.
     """
     ns_id = NamespaceId(int(ns))
     if not isinstance(data, (bytes, bytearray, memoryview)):
         raise NMTCodecError("data must be bytes-like")
-    ns_be = int(ns_id).to_bytes(_NS_BYTES, "big")
+    width = _NS_BYTES if ns_bytes is None else int(ns_bytes)
+    if width <= 0:
+        raise NMTCodecError("ns_bytes must be positive")
+    ns_be = int(ns_id).to_bytes(width, "big")
     return ns_be + write_uvarint(len(data)) + (bytes(data) if not isinstance(data, bytes) else data)
 
 

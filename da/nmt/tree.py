@@ -36,6 +36,7 @@ _NS_BYTES = (_NAMESPACE_BITS + 7) // 8
 
 from .namespace import NamespaceId, NamespaceRange
 from .node import Node, make_leaf, make_parent, NMTNodeError
+from .codec import encode_leaf
 from ..utils.hash import sha3_256
 from ..utils.bytes import read_uvarint
 
@@ -64,8 +65,9 @@ class NMT:
       new blob/chunk set.
     """
 
-    def __init__(self, *, duplicate_last: bool = True) -> None:
+    def __init__(self, *, duplicate_last: bool = True, ns_bytes: int | None = None) -> None:
         self._duplicate_last = duplicate_last
+        self._ns_bytes = int(ns_bytes) if ns_bytes is not None else _NS_BYTES
         self._leaves: List[Node] = []
         self._layers: Optional[List[List[Node]]] = None
         self._root: Optional[Node] = None
@@ -92,8 +94,15 @@ class NMT:
         serialized payload. If you use a structured leaf encoding, prefer
         `append_encoded`.
         """
-        ph = sha3_256(_b(payload_bytes))
-        return self.append_hashed(ns, ph)
+        encoded = encode_leaf(ns, _b(payload_bytes), self._ns_bytes)
+        leaf = _leaf_from_encoded(encoded, ns_bytes=self._ns_bytes)
+        self._leaves.append(leaf)
+        return len(self._leaves) - 1
+
+    # Compatibility alias: several tests look for a generic ``append(ns, data)``
+    # entry-point. Delegate to ``append_data`` to avoid duplicating logic.
+    def append(self, ns: int | NamespaceId, payload_bytes: bytes) -> int:  # pragma: no cover - thin wrapper
+        return self.append_data(ns, payload_bytes)
 
     def append_encoded(self, encoded_leaf: bytes) -> int:
         """
@@ -106,16 +115,11 @@ class NMT:
         """
         self._ensure_not_finalized()
         b = _b(encoded_leaf)
-        if len(b) < _NS_BYTES + 1:
+        if len(b) < self._ns_bytes + 1:
             raise NMTNodeError("encoded leaf too short to contain namespace and length")
-        ns = int.from_bytes(b[:_NS_BYTES], "big")
-        # payload_serialized := length(varint) + data
-        _, off_after_len = read_uvarint(b, offset=_NS_BYTES)
-        if off_after_len > len(b):
-            raise NMTNodeError("encoded leaf length varint overruns buffer")
-        payload_serialized = b[_NS_BYTES:]
-        ph = sha3_256(payload_serialized)
-        return self.append_hashed(ns, ph)
+        leaf = _leaf_from_encoded(b, ns_bytes=self._ns_bytes)
+        self._leaves.append(leaf)
+        return len(self._leaves) - 1
 
     # ------------------------------------------------------------------ #
     # Finalize / root / stats
@@ -244,6 +248,20 @@ def _hash32(h: bytes, *, where: str = "hash") -> bytes:
     if len(b) != 32:
         raise NMTNodeError(f"{where} must be 32 bytes, got {len(b)}")
     return b
+
+
+def _leaf_from_encoded(encoded_leaf: bytes, *, ns_bytes: int = _NS_BYTES) -> Node:
+    """Create a :class:`Node` directly from an encoded leaf buffer."""
+    if len(encoded_leaf) < ns_bytes + 1:
+        raise NMTNodeError("encoded leaf too short to contain namespace and length")
+    ns = int.from_bytes(encoded_leaf[:ns_bytes], "big")
+    _, off_after_len = read_uvarint(encoded_leaf, offset=ns_bytes)
+    if off_after_len > len(encoded_leaf):
+        raise NMTNodeError("encoded leaf length varint overruns buffer")
+    ns_id = NamespaceId(ns)
+    rng = NamespaceRange(ns_id, ns_id)
+    h = sha3_256(encoded_leaf)
+    return Node(hash=h, ns_range=rng)
 
 
 __all__ = ["NMT", "TreeStats"]
