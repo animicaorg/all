@@ -24,6 +24,11 @@ import importlib.util
 
 import pytest
 
+try:
+    import yaml  # type: ignore
+except Exception:
+    yaml = None  # type: ignore[assignment]
+
 # Repo layout
 ROOT = Path(__file__).resolve().parents[2]
 EXAMPLES = ROOT / "governance" / "examples"
@@ -40,6 +45,8 @@ import validate_proposal   # type: ignore
 import tally_votes         # type: ignore
 
 
+if yaml is None:
+    pytest.skip("PyYAML not installed (pip install pyyaml)", allow_module_level=True)
 if importlib.util.find_spec("jsonschema") is None or validate_proposal.Draft202012Validator is None:
     pytest.skip("jsonschema not installed (pip install jsonschema)", allow_module_level=True)
 

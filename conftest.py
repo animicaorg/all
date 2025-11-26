@@ -1,3 +1,4 @@
+import asyncio
 import importlib
 import pytest
 
@@ -65,3 +66,28 @@ def _animica_autopatch_slashing():
             return ev2
         setattr(mod, "_process_with_engine", _pwe)
         setattr(mod, "_animica_pwe_patch", True)
+
+
+def pytest_configure(config):
+    # Register common markers used across the repo without requiring external plugins.
+    config.addinivalue_line("markers", "asyncio: mark test as requiring asyncio event loop")
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_pyfunc_call(pyfuncitem):
+    """
+    Provide a minimal asyncio runner for tests marked with @pytest.mark.asyncio when
+    pytest-asyncio isn't available in the environment.
+    """
+    if pyfuncitem.get_closest_marker("asyncio") is None:
+        return None
+
+    test_func = pyfuncitem.obj
+    if asyncio.iscoroutinefunction(test_func):
+        # Only pass fixtures that correspond to the function signature.
+        argnames = getattr(pyfuncitem, "_fixtureinfo", None)
+        wanted = set(getattr(argnames, "argnames", []) or [])
+        kwargs = {k: v for k, v in pyfuncitem.funcargs.items() if k in wanted}
+        asyncio.run(test_func(**kwargs))
+        return True
+    return None
