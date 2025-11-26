@@ -110,7 +110,7 @@ const ToastItem: React.FC<{
       >
         ✕
       </button>
-      <style jsx>{`
+      <style>{`
         .toast {
           display: grid;
           grid-template-columns: 4px 24px 1fr auto;
@@ -227,7 +227,7 @@ export default function ToastHost() {
           />
         ))}
       </div>
-      <style jsx global>{`
+      <style>{`
         .toast-host {
           position: fixed;
           right: 16px;

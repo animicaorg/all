@@ -37,7 +37,7 @@ function Emoji({ children }: { children: React.ReactNode }) {
   return (
     <span aria-hidden="true" className="emj">
       {children}
-      <style jsx>{`
+      <style>{`
         .emj {
           display: inline-flex;
           width: 1.25rem;
@@ -123,7 +123,7 @@ export default function SideBar() {
         </a>
       </div>
 
-      <style jsx>{`
+      <style>{`
         .sidebar {
           position: sticky;
           top: 56px; /* below TopBar height */
