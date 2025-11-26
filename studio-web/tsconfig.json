@@ -10,7 +10,9 @@
     "moduleResolution": "Bundler",
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "@animica/sdk": ["src/sdk-shim"],
+      "@animica/sdk/*": ["src/sdk-shim/*"]
     },
 
     "types": ["vite/client", "vitest/globals", "node"],
