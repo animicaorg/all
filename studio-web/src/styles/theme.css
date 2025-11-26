@@ -228,11 +228,6 @@
   --radius-panel: var(--radius-md);
   --radius-control: 10px;
 }
-  --shadow-3: 0 18px 40px rgba(0, 0, 0, 0.45), 0 6px 16px rgba(0, 0, 0, 0.32);
-  --backdrop: rgba(0, 0, 0, 0.45);
-  --focus-ring-color: #60a5fa;
-  --focus-ring-alpha: 0.7;
-}
 
 /* ========== Base application wiring ========== */
 html, body {
