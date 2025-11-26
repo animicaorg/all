@@ -2,6 +2,7 @@ import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import wasm from "vite-plugin-wasm";
 import topLevelAwait from "vite-plugin-top-level-await";
+import path from "node:path";
 
 // Vite config for React + WASM (Pyodide) + Web Workers
 export default defineConfig(({ mode }) => {
@@ -15,7 +16,10 @@ export default defineConfig(({ mode }) => {
       __APP_VERSION__: JSON.stringify(process.env.npm_package_version)
     },
     resolve: {
-      alias: { "@": "/src" }
+      alias: {
+        "@": "/src",
+        "@animica/sdk": path.resolve(__dirname, "src/sdk-shim"),
+      }
     },
     server: {
       port: 5173,
