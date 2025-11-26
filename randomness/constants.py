@@ -28,6 +28,10 @@ DOMAIN_REVEAL: bytes      = DOMAIN_PREFIX + b"reveal.v1"
 DOMAIN_VDF_INPUT: bytes   = DOMAIN_PREFIX + b"vdf.input.v1"
 DOMAIN_VDF_OUTPUT: bytes  = DOMAIN_PREFIX + b"vdf.output.v1"
 
+# Beacon finalization (post-aggregation / post-VDF)
+DOMAIN_BEACON_VDF_INPUT: bytes = DOMAIN_PREFIX + b"beacon.vdf_input.v1"
+DOMAIN_BEACON_FINAL: bytes     = DOMAIN_PREFIX + b"beacon.final.v1"
+
 # Final beacon mixing (post VDF, optional QRNG mix)
 DOMAIN_BEACON_MIX: bytes  = DOMAIN_PREFIX + b"mix.v1"
 
@@ -78,6 +82,8 @@ __all__ = [
     "DOMAIN_REVEAL",
     "DOMAIN_VDF_INPUT",
     "DOMAIN_VDF_OUTPUT",
+    "DOMAIN_BEACON_VDF_INPUT",
+    "DOMAIN_BEACON_FINAL",
     "DOMAIN_BEACON_MIX",
     "DOMAIN_ROUND_ID",
     # Hash names
