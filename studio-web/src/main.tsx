@@ -14,6 +14,11 @@ if (!rootEl) {
   throw new Error('Animica Studio: missing <div id="root"></div> in index.html');
 }
 
+// Default to the dark theme to align the experience across OS preferences
+if (!document.documentElement.dataset.theme) {
+  document.documentElement.dataset.theme = 'dark';
+}
+
 const RootApp: React.FC = () => {
   return (
     <React.StrictMode>
