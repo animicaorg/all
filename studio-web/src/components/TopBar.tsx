@@ -112,7 +112,7 @@ export default function TopBar() {
     const preset = presets[idx];
     if (preset) {
       setNetwork(preset);
-      push({ kind: "success", message: `Switched to ${preset.name} (chainId ${preset.chainId})` });
+      push({ kind: "success", message: `Switched to ${preset.label ?? preset.id} (chainId ${preset.chainId})` });
     }
   }
 
@@ -144,8 +144,8 @@ export default function TopBar() {
             value={activePreset ? String(presets.indexOf(activePreset)) : ""}
           >
             {presets.map((p, i) => (
-              <option key={`${p.name}-${p.chainId}-${i}`} value={i}>
-                {p.name} (chain {p.chainId})
+              <option key={`${p.label ?? p.id}-${p.chainId}-${i}`} value={i}>
+                {p.label ?? p.id} (chain {p.chainId})
               </option>
             ))}
           </select>

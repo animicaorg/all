@@ -46,7 +46,7 @@ export default function EditPage() {
   const { pushToast } = useToasts();
 
   // Project state
-  const files = useProjectStore((s) => s.files);
+  const files = useProjectStore((s) => s.files ?? {});
   const activePath = useProjectStore((s) => s.activePath);
   const setActive = useProjectStore((s) => s.setActive);
   const updateFile = useProjectStore((s) => s.updateFile);
@@ -54,7 +54,7 @@ export default function EditPage() {
   const createFile = useProjectStore((s) => s.createFile);
   const isDirty = useProjectStore((s) => s.isDirty);
   const saveProject = useProjectStore((s) => s.saveToLocal);
-  const loadProject = useProjectStore((s) => s.loadFromLocal);
+  const loadProject = useProjectStore((s) => s.loadFromStorage);
 
   // Compile/simulate state
   const compiling = useCompileStore((s) => s.status === "running");
@@ -72,18 +72,20 @@ export default function EditPage() {
   const [rightTab, setRightTab] = React.useState<RightTab>("compile");
 
   // Load default template on first mount if project is empty
+  const hasFiles = React.useMemo(() => Object.keys(files ?? {}).length > 0, [files]);
+
   React.useEffect(() => {
-    if (Object.keys(files).length === 0) {
-      // Try to restore last project, else load default "counter"
-      const restored = loadProject();
-      if (!restored) {
-        ensureDefaultTemplate()
-          .then((tpl) => useTemplate(tpl.id))
-          .catch(() => void 0);
-      }
+    if (hasFiles) return;
+
+    // Try to restore last project, else load default "counter"
+    const restored = loadProject?.();
+    if (!restored) {
+      ensureDefaultTemplate()
+        .then((tpl) => useTemplate(tpl.id))
+        .catch(() => void 0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [hasFiles]);
 
   const useTemplate = async (id: string) => {
     try {
