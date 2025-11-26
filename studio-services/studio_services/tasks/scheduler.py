@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 from ..logging import get_logger  # structured logger; falls back to std logging in worker if absent
-from .queue import SQLiteTaskQueue
+from .queue import SQLiteTaskQueue, create_queue_from_app
 from .worker import VerifyWorker, WorkerConfig
 
 
@@ -173,6 +173,19 @@ async def run_scheduler(app, *, queue: SQLiteTaskQueue, config: SchedulerConfig 
     """
     scheduler = TaskScheduler(app=app, queue=queue, config=config)
     await scheduler.run_until_stopped()
+
+
+def create_default_scheduler(app, *, config: SchedulerConfig | None = None) -> TaskScheduler:
+    """
+    Build a scheduler using defaults inferred from the FastAPI app.
+
+    This wires the scheduler to the app's configured SQLite DB (if present)
+    via :func:`create_queue_from_app` and otherwise falls back to a local
+    ``studio_services.sqlite`` file.
+    """
+
+    queue = create_queue_from_app(app)
+    return TaskScheduler(app=app, queue=queue, config=config)
 
 
 # Compatibility alias for legacy imports
