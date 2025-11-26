@@ -6,13 +6,11 @@
  */
 
 import { utf8ToBytes, bytesToHex } from './bytes';
-
-// Re-exported hashing primitives from the SDK (sync, deterministic)
 import {
   keccak256 as sdkKeccak256,
   sha3_256 as sdkSha3_256,
   sha3_512 as sdkSha3_512,
-} from '@animica/sdk/utils/hash';
+} from '../sdk-shim/utils/hash';
 
 export type BytesLike = string | Uint8Array | ArrayBuffer | ArrayBufferView;
 
@@ -49,4 +47,6 @@ export function sha3_256Hex(input: BytesLike): string {
 export function sha3_512Hex(input: BytesLike): string {
   return '0x' + bytesToHex(sha3_512(input));
 }
+
+export const sha3_512_hex = sha3_512Hex;
 

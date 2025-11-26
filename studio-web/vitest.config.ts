@@ -6,6 +6,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),
+      '@animica/sdk': path.resolve(__dirname, 'src/sdk-shim'),
+      '@animica/studio-wasm': path.resolve(__dirname, 'src/sdk-shim/studio-wasm.ts'),
     },
   },
 

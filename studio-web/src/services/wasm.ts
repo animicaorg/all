@@ -73,8 +73,8 @@ async function boot(): Promise<void> {
   _ready = (async () => {
     // Dynamic import to avoid bundling in SSR / non-browser contexts.
     _lib = await import('@animica/studio-wasm').catch(async () => {
-      // Fallback for monorepo local path (useful during dev if alias not set)
-      return await import('/studio-wasm/src/index.ts');
+      // Fallback to the local shim when the package isn't available.
+      return await import('../sdk-shim/studio-wasm');
     });
 
     // The library exposes a few namespaces; we handle both "named API" and "flat" exports.

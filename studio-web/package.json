@@ -26,7 +26,8 @@
     "react-dom": "^18.2.0",
     "zustand": "^4.5.0",
     "monaco-editor": "^0.47.0",
-    "@animica/studio-wasm": "workspace:*"
+    "@animica/studio-wasm": "workspace:*",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@playwright/test": "^1.47.0",

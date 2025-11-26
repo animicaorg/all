@@ -9,7 +9,7 @@
  * backed by the studio-wasm package (Pyodide).
  */
 
-import { registerSlice, type SliceCreator, type StoreState, type SetState, type GetState } from './store';
+import useStore, { registerSlice, type SliceCreator, type StoreState, type SetState, type GetState } from './store';
 import * as Wasm from '../services/wasm';
 
 export type Sev = 'error' | 'warning' | 'info';
@@ -247,5 +247,7 @@ const compileSlice: SliceCreator<CompileSlice> = (set: SetState<StoreState>, get
 });
 
 registerSlice<CompileSlice>(compileSlice);
+
+export const useCompileStore = useStore;
 
 export default undefined;

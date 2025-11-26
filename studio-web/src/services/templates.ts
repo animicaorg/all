@@ -121,10 +121,22 @@ export async function listTemplateIds(): Promise<string[]> {
   return metas.map((m) => m.id);
 }
 
+/** Backwards-compatible alias. */
+export const loadTemplateById = loadTemplate;
+
+/** Ensure at least the first template is loaded (used as a safe default). */
+export async function ensureDefaultTemplate(): Promise<Template> {
+  const ids = await listTemplateIds();
+  const firstId = ids[0] ?? DEFAULT_TEMPLATE_IDS[0];
+  return loadTemplate(firstId);
+}
+
 export default {
   listTemplates,
   listTemplateIds,
   loadTemplate,
+  loadTemplateById,
   loadAllTemplates,
   clearTemplateCache,
+  ensureDefaultTemplate,
 };
