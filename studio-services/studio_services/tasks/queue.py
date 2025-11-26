@@ -433,38 +433,44 @@ class SQLiteTaskQueue:
         await self.connect()
         assert self._conn is not None
         now = _now()
-        await self._conn.execute("BEGIN IMMEDIATE;")
-        try:
-            # SQLite lacks UPDATE ... RETURNING changes() in older versions, so use two-step.
-            rows = await self._execute_fetchall(
-                """
-                SELECT id FROM queue
-                WHERE status = 'running' AND lease_until IS NOT NULL AND lease_until < ?
-                LIMIT ?
-                """,
-                (now, limit),
-            )
-            ids = [r["id"] for r in rows]
-            if not ids:
+        async with self._lock:
+            # Defensive: if a previous statement left the connection mid-transaction,
+            # roll it back so we can acquire an explicit transaction safely.
+            if self._conn.in_transaction:
+                await self._conn.execute("ROLLBACK;")
+
+            await self._conn.execute("BEGIN IMMEDIATE;")
+            try:
+                # SQLite lacks UPDATE ... RETURNING changes() in older versions, so use two-step.
+                rows = await self._execute_fetchall(
+                    """
+                    SELECT id FROM queue
+                    WHERE status = 'running' AND lease_until IS NOT NULL AND lease_until < ?
+                    LIMIT ?
+                    """,
+                    (now, limit),
+                )
+                ids = [r["id"] for r in rows]
+                if not ids:
+                    await self._conn.execute("COMMIT;")
+                    return 0
+                placeholders = ",".join("?" for _ in ids)
+                await self._conn.execute(
+                    f"""
+                    UPDATE queue SET
+                      status = 'queued',
+                      lease_owner = NULL,
+                      lease_until = NULL,
+                      updated_at = ?
+                    WHERE id IN ({placeholders})
+                    """,
+                    (now, *ids),
+                )
                 await self._conn.execute("COMMIT;")
-                return 0
-            placeholders = ",".join("?" for _ in ids)
-            await self._conn.execute(
-                f"""
-                UPDATE queue SET
-                  status = 'queued',
-                  lease_owner = NULL,
-                  lease_until = NULL,
-                  updated_at = ?
-                WHERE id IN ({placeholders})
-                """,
-                (now, *ids),
-            )
-            await self._conn.execute("COMMIT;")
-            return len(ids)
-        except Exception:
-            await self._conn.execute("ROLLBACK;")
-            raise
+                return len(ids)
+            except Exception:
+                await self._conn.execute("ROLLBACK;")
+                raise
 
     # --- Completion / Retry ----------------------------------------------------
 
