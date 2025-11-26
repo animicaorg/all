@@ -55,6 +55,10 @@ export function bytesToHex(bytes: ArrayLike<number>): Hex {
   return ('0x' + hex.join('')) as Hex;
 }
 
+/** Convenience aliases for compatibility with older imports. */
+export const bytesFromHex = hexToBytes;
+export const hexFromBytes = bytesToHex;
+
 /* ---------------------------------------------------------------------------------------------
  * Bytes utilities
  * -------------------------------------------------------------------------------------------*/

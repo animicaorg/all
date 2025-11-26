@@ -14,7 +14,7 @@
  *  - The Project slice may hold a manifest.json file we can parse for ABI.
  */
 
-import { registerSlice, type SliceCreator, type StoreState, type SetState, type GetState } from './store';
+import useStore, { registerSlice, type SliceCreator, type StoreState, type SetState, type GetState } from './store';
 import type { Diagnostic } from './compile';
 import * as Wasm from '../services/wasm';
 
@@ -394,5 +394,7 @@ const simulateSlice: SliceCreator<SimulateSlice> = (set: SetState<StoreState>, g
 });
 
 registerSlice<SimulateSlice>(simulateSlice);
+
+export const useSimulateStore = useStore;
 
 export default undefined;

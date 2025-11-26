@@ -8,7 +8,7 @@
  * Paths are canonicalized to forward-slash form without leading slash.
  */
 
-import { registerSlice, type SliceCreator, type StoreState, type SetState, type GetState } from './store';
+import useStore, { registerSlice, type SliceCreator, type StoreState, type SetState, type GetState } from './store';
 
 export type Lang =
   | 'python'
@@ -412,5 +412,7 @@ const projectSlice: SliceCreator<ProjectSlice> = (set: SetState<StoreState>, get
 });
 
 registerSlice<ProjectSlice>(projectSlice);
+
+export const useProjectStore = useStore;
 
 export default undefined;
