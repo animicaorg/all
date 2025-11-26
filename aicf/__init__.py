@@ -1,6 +1,6 @@
 from __future__ import annotations
 """
-AICF — AI Compute Fund package.
+AICF - AI Compute Fund package.
 
 This package coordinates off-chain AI/Quantum jobs with on-chain proofs,
 provider registry/staking, settlement economics, SLAs/slashing, and RPC/CLI
