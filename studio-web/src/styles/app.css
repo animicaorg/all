@@ -175,6 +175,33 @@ hr {
 }
 
 /* App shell */
+.app-root {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--fg, var(--text));
+}
+.app-body {
+  display: flex;
+  align-items: stretch;
+  min-height: calc(100vh - 64px);
+}
+.app-main {
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: 1440px;
+  padding: var(--space-5, 1.25rem) var(--space-6, 1.5rem)
+    calc(var(--space-6, 1.5rem) + 48px);
+  margin: 0 auto;
+}
+.app-main > *:first-child {
+  margin-top: 0;
+}
+@media (max-width: 900px) {
+  .app-main {
+    padding: var(--space-4, 1rem) var(--space-4, 1rem)
+      calc(var(--space-5, 1.25rem) + 48px);
+  }
+}
 .app-shell {
   min-height: 100%;
   display: grid;
