@@ -144,8 +144,8 @@ export default function SideBar() {
       <style>{`
         .sidebar {
           position: sticky;
-          top: 56px; /* below TopBar height */
-          height: calc(100vh - 56px);
+          top: 64px; /* below TopBar height */
+          height: calc(100vh - 64px);
           width: 232px;
           min-width: 232px;
           background: var(--surface);
