@@ -244,6 +244,15 @@ export function parseOrThrow<T>(schema: z.ZodType<T>, data: unknown): T {
   return schema.parse(data);
 }
 
+/** Safe JSON.parse that falls back on error. */
+export function safeJsonParse<T>(input: string, fallback: T): T {
+  try {
+    return JSON.parse(input) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 /* --------------------------------- Exports -------------------------------- */
 
 export default {
@@ -261,4 +270,5 @@ export default {
   firstErrorPerField,
   safeParseWithErrors,
   parseOrThrow,
+  safeJsonParse,
 };
