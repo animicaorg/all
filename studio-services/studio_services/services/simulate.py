@@ -233,4 +233,23 @@ class SimulateService:
         )
 
 
-__all__ = ["SimulateService"]
+_SERVICE = SimulateService()
+
+
+def simulate_call(req: SimulateCall) -> SimulateResult:
+    return _SERVICE.simulate(req)
+
+
+# Backward-compatible aliases for router resolution
+simulate = simulate_call
+run_simulation = simulate_call
+exec_simulation = simulate_call
+
+
+__all__ = [
+    "SimulateService",
+    "simulate_call",
+    "simulate",
+    "run_simulation",
+    "exec_simulation",
+]

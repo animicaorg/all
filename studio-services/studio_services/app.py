@@ -11,10 +11,10 @@ from .version import __version__
 from .config import Config, load_config
 from .metrics import setup_metrics
 from .middleware.request_id import RequestIdMiddleware
-from .middleware.logging import LoggingMiddleware
-from .middleware.errors import register_exception_handlers
-from .security.cors import apply_cors
-from .security.rate_limit import RateLimitMiddleware
+from .middleware.logging import install_access_log_middleware
+from .middleware.errors import install_error_handlers
+from .security.cors import setup_cors
+from .security.rate_limit import RateLimitMiddleware, RateLimiter
 
 # Routers
 from .routers.health import router as health_router
@@ -93,16 +93,18 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
     # Core middleware stack
     app.add_middleware(RequestIdMiddleware)
     # Rate limiter (global + per-route buckets configured in Config)
-    app.add_middleware(RateLimitMiddleware, limits=cfg.rate_limits)
+    limiter_cfg = cfg.to_rate_config() if hasattr(cfg, "to_rate_config") else None
+    app.add_middleware(RateLimitMiddleware, limiter=RateLimiter(config=limiter_cfg))
 
     # Access logging after rate-limit so rejected requests are visible with status
-    app.add_middleware(LoggingMiddleware)
+    install_access_log_middleware(app)
 
     # CORS (strict allowlist from config)
-    apply_cors(app, cfg)
+    cors_cfg = cfg.to_cors_config() if hasattr(cfg, "to_cors_config") else None
+    setup_cors(app, config=cors_cfg)
 
     # Error → JSON problem+status mapping
-    register_exception_handlers(app)
+    install_error_handlers(app)
 
     # Metrics (/metrics)
     setup_metrics(app)

@@ -501,4 +501,31 @@ class ArtifactService:
         )
 
 
-__all__ = ["ArtifactService"]
+_SERVICE = ArtifactService()
+
+
+def _decode_content_hex(content_hex: str) -> bytes:
+    s = content_hex[2:] if content_hex.startswith("0x") else content_hex
+    return bytes.fromhex(s)
+
+
+def put_artifact(req: ArtifactPut) -> ArtifactMeta:
+    data = _decode_content_hex(req.content)
+    return _SERVICE.put(req, data)
+
+
+def get_artifact(artifact_id: str) -> ArtifactMeta:
+    meta, _ = _SERVICE.get(artifact_id)
+    return meta
+
+
+def list_artifacts_by_address(address: str) -> List[ArtifactMeta]:
+    return _SERVICE.list_by_address(address)
+
+
+__all__ = [
+    "ArtifactService",
+    "put_artifact",
+    "get_artifact",
+    "list_artifacts_by_address",
+]
