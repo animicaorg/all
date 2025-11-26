@@ -290,4 +290,64 @@ def verify_source_and_store(
     )
 
 
-__all__ = ["verify_source_and_store"]
+def submit_verify(req: VerifyRequest) -> VerifyResult:
+    """Compatibility wrapper for router discovery."""
+
+    node = from_env()
+    return verify_source_and_store(node, req)
+
+
+def get_verify_by_address(address: str) -> VerifyResult:
+    """Best-effort lookup placeholder when persistent store is unavailable."""
+
+    try:
+        from studio_services.config import load_config
+
+        chain_id = getattr(load_config(), "CHAIN_ID", 0)
+    except Exception:
+        chain_id = 0
+
+    return VerifyResult(
+        job_id="unknown",
+        status=VerifyStatus.LOCAL_ONLY,
+        matched=False,
+        chain_id=chain_id,
+        address=address,
+        tx_hash=None,
+        computed_code_hash="0x",
+        expected_code_hash=None,
+        abi={},
+        diagnostics=[],
+        error="verification storage not available",
+    )
+
+
+def get_verify_by_txhash(tx_hash: str) -> VerifyResult:
+    try:
+        from studio_services.config import load_config
+
+        chain_id = getattr(load_config(), "CHAIN_ID", 0)
+    except Exception:
+        chain_id = 0
+
+    return VerifyResult(
+        job_id="unknown",
+        status=VerifyStatus.LOCAL_ONLY,
+        matched=False,
+        chain_id=chain_id,
+        address=None,
+        tx_hash=tx_hash,
+        computed_code_hash="0x",
+        expected_code_hash=None,
+        abi={},
+        diagnostics=[],
+        error="verification storage not available",
+    )
+
+
+__all__ = [
+    "verify_source_and_store",
+    "submit_verify",
+    "get_verify_by_address",
+    "get_verify_by_txhash",
+]

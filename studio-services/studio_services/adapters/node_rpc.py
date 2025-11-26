@@ -275,8 +275,13 @@ def from_env() -> NodeRpc:
     return NodeRpc(NodeRpcConfig(url=url, headers=headers))
 
 
+# Compatibility alias (legacy code expects NodeRPC)
+NodeRPC = NodeRpc
+
+
 __all__ = [
     "NodeRpc",
+    "NodeRPC",
     "NodeRpcConfig",
     "NodeRpcError",
     "RpcTransportError",
