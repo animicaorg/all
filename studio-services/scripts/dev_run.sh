@@ -49,15 +49,18 @@ if ! command -v uvicorn >/dev/null 2>&1; then
 fi
 
 # Basic Python import check so reload target is valid
-python - <<PYCHK || {
-  echo "ERROR: Unable to import studio_services.app:create_app. Check your venv and PYTHONPATH." >&2
-  exit 1
-}
+if python - <<'PYCHK'
 import importlib, sys
 m = importlib.import_module("studio_services.app")
 assert hasattr(m, "create_app"), "create_app() not found in studio_services.app"
 print("OK: studio_services.app loaded; create_app present.")
 PYCHK
+then
+  :
+else
+  echo "ERROR: Unable to import studio_services.app:create_app. Check your venv and PYTHONPATH." >&2
+  exit 1
+fi
 
 # --- Runtime env -------------------------------------------------------------
 export PYTHONPATH="${APP_ROOT}:${PYTHONPATH:-}"
