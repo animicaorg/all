@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Generator, Iterable, Iterator, List, Sequence, Tuple
 
-from .params import ErasureParams
+from .params import ErasureParams, DEFAULT_PARAMS
 
 
 # --------------------------------------------------------------------------- #
@@ -163,4 +163,13 @@ __all__ = [
     "partition_blob",
     "make_namespaced_leaves",
     "data_shard_count_for_blob",
+    "partition",
 ]
+
+
+# Compatibility aliases ---------------------------------------------------------------
+
+def partition(blob: bytes, namespace: bytes) -> List[bytes]:  # pragma: no cover - thin wrapper
+    """Convenience alias used by some legacy callers/tests."""
+    shards = partition_blob(blob, DEFAULT_PARAMS)
+    return make_namespaced_leaves(shards, namespace)
