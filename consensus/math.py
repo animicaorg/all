@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from decimal import Decimal, getcontext, localcontext, ROUND_HALF_EVEN, InvalidOperation
 from dataclasses import dataclass
+import math
 from typing import Tuple
 
 from .types import MicroNat, Psi, ThetaMicro, GammaMicro
@@ -200,6 +201,40 @@ def gamma_from_micronats(x: int) -> GammaMicro:
     if x < 0:
         raise ValueError("GammaMicro cannot be negative")
     return GammaMicro(x)
+
+
+# -------------------------
+# Lightweight float helpers (legacy test shim)
+# -------------------------
+
+def H(u: float) -> float:
+    """
+    Return H(u) = -ln(u) in natural units as a float.
+
+    This is a simple, non-decimal wrapper used by lightweight tests. The
+    consensus path continues to use the deterministic Decimal-based helpers
+    above for micronat calculations.
+    """
+
+    if not (0.0 < u <= 1.0) or not math.isfinite(u):
+        raise ValueError("u must lie in (0, 1] and be finite")
+    return -math.log(u)
+
+
+def to_munats(x: float) -> int:
+    """Convert a float (nats) to µ-nats as an int with round-half-even semantics."""
+
+    if not math.isfinite(x):
+        raise ValueError("input must be finite")
+    with localcontext(_dec_ctx()):
+        return int((Decimal(x) * _MICRO_D).to_integral_value(rounding=DEC_ROUNDING))
+
+
+def from_munats(x: int) -> float:
+    """Convert an integer µ-nats value back to a float in natural units."""
+
+    with localcontext(_dec_ctx()):
+        return float(Decimal(x) / _MICRO_D)
 
 
 def add_micronats(a: int, b: int) -> int:

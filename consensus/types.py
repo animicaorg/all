@@ -103,6 +103,25 @@ def proof_type_name(pt: ProofType) -> str:
     """Return the canonical lowercase name for a ProofType."""
     return _NAME_BY_PT[ProofType(pt)]
 
+
+# ---------------------------------------------------------------------------
+# Legacy enums
+# ---------------------------------------------------------------------------
+
+class ProofKind(IntEnum):
+    """
+    Legacy/compatibility alias expected by older callers and tests.
+
+    The members intentionally mirror :class:`ProofType` so the enum can be used
+    interchangeably in comparisons and lookups.
+    """
+
+    HASH = ProofType.HASH
+    AI = ProofType.AI
+    QUANTUM = ProofType.QUANTUM
+    STORAGE = ProofType.STORAGE
+    VDF = ProofType.VDF
+
 # -------------------------
 # Roots & identifiers
 # -------------------------
@@ -137,6 +156,7 @@ __all__ = [
     "Height",
     "Epoch",
     "ProofType",
+    "ProofKind",
     "proof_type_from_name",
     "proof_type_name",
     # roots
