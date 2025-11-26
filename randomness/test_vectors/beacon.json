@@ -1,6 +1,6 @@
 {
   "meta": {
-    "scheme": "commit-reveal → wesolowski VDF → optional QRNG mix",
+    "scheme": "commit-reveal \u2192 wesolowski VDF \u2192 optional QRNG mix",
     "encoding": "hex-lower, 0x-prefixed",
     "notes": [
       "Toy vectors using tiny Wesolowski parameters for determinism in tests.",
@@ -44,7 +44,8 @@
         "l": "0x61",
         "x": "0x2a",
         "y": "0x0844",
-        "pi": "0x0aab"
+        "pi": "0x0aab",
+        "input": "0x2a"
       },
       "qrng_bytes": null,
       "beacon": "0x4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c",
@@ -53,9 +54,13 @@
           "0x1111222233334444111122223333444411112222333344441111222233334444",
           "0xaaaa5555aaaa5555aaaa5555aaaa5555aaaa5555aaaa5555aaaa5555aaaa5555"
         ],
-        "vdf": { "y": "0x0844", "pi": "0x0aab" }
+        "vdf": {
+          "y": "0x0844",
+          "pi": "0x0aab"
+        }
       },
-      "expected": true
+      "expected": true,
+      "prev_output": "0x0000000000000000000000000000000000000000000000000000000000000000"
     },
     {
       "round": 7001,
@@ -69,7 +74,8 @@
         "l": "0x65",
         "x": "0x12d687",
         "y": "0x034c2ec5",
-        "pi": "0x000f8264"
+        "pi": "0x000f8264",
+        "input": "0x12d687"
       },
       "qrng_bytes": null,
       "beacon": "0x99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff",
@@ -78,9 +84,13 @@
           "0x2222333344445555222233334444555522223333444455552222333344445555",
           "0xbbbb6666bbbb6666bbbb6666bbbb6666bbbb6666bbbb6666bbbb6666bbbb6666"
         ],
-        "vdf": { "y": "0x034c2ec5", "pi": "0x000f8264" }
+        "vdf": {
+          "y": "0x034c2ec5",
+          "pi": "0x000f8264"
+        }
       },
-      "expected": true
+      "expected": true,
+      "prev_output": "0x4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c"
     },
     {
       "round": 7002,
@@ -94,7 +104,8 @@
         "l": "0x61",
         "x": "0x2a",
         "y": "0x0844",
-        "pi": "0x0aab"
+        "pi": "0x0aab",
+        "input": "0x2a"
       },
       "qrng_bytes": "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
       "beacon": "0x0f1e2d3c0f1e2d3c0f1e2d3c0f1e2d3c0f1e2d3c0f1e2d3c0f1e2d3c0f1e2d3c",
@@ -103,9 +114,105 @@
           "0x3333444455556666333344445555666633334444555566663333444455556666",
           "0xcccc7777cccc7777cccc7777cccc7777cccc7777cccc7777cccc7777cccc7777"
         ],
-        "vdf": { "y": "0x0844", "pi": "0x0aab" }
+        "vdf": {
+          "y": "0x0844",
+          "pi": "0x0aab"
+        }
       },
-      "expected": true
+      "expected": true,
+      "prev_output": "0x99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff"
+    }
+  ],
+  "vectors": [
+    {
+      "round": 7000,
+      "prev_beacon": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "commit_count": 5,
+      "reveal_count": 4,
+      "aggregate": "0x8c9f2b3d8c9f2b3d8c9f2b3d8c9f2b3d8c9f2b3d8c9f2b3d8c9f2b3d8c9f2b3d",
+      "vdf": {
+        "N": "0x0ca1",
+        "T": 20,
+        "l": "0x61",
+        "x": "0x2a",
+        "y": "0x0844",
+        "pi": "0x0aab",
+        "input": "0x2a"
+      },
+      "qrng_bytes": null,
+      "beacon": "0x4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c",
+      "light_proof": {
+        "hash_chain": [
+          "0x1111222233334444111122223333444411112222333344441111222233334444",
+          "0xaaaa5555aaaa5555aaaa5555aaaa5555aaaa5555aaaa5555aaaa5555aaaa5555"
+        ],
+        "vdf": {
+          "y": "0x0844",
+          "pi": "0x0aab"
+        }
+      },
+      "expected": true,
+      "prev_output": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "round": 7001,
+      "prev_beacon": "0x4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c",
+      "commit_count": 6,
+      "reveal_count": 5,
+      "aggregate": "0x1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd",
+      "vdf": {
+        "N": "0x05f8523f",
+        "T": 18,
+        "l": "0x65",
+        "x": "0x12d687",
+        "y": "0x034c2ec5",
+        "pi": "0x000f8264",
+        "input": "0x12d687"
+      },
+      "qrng_bytes": null,
+      "beacon": "0x99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff",
+      "light_proof": {
+        "hash_chain": [
+          "0x2222333344445555222233334444555522223333444455552222333344445555",
+          "0xbbbb6666bbbb6666bbbb6666bbbb6666bbbb6666bbbb6666bbbb6666bbbb6666"
+        ],
+        "vdf": {
+          "y": "0x034c2ec5",
+          "pi": "0x000f8264"
+        }
+      },
+      "expected": true,
+      "prev_output": "0x4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c4d7e1a2c"
+    },
+    {
+      "round": 7002,
+      "prev_beacon": "0x99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff",
+      "commit_count": 4,
+      "reveal_count": 4,
+      "aggregate": "0xf0e1d2c3f0e1d2c3f0e1d2c3f0e1d2c3f0e1d2c3f0e1d2c3f0e1d2c3f0e1d2c3",
+      "vdf": {
+        "N": "0x0ca1",
+        "T": 20,
+        "l": "0x61",
+        "x": "0x2a",
+        "y": "0x0844",
+        "pi": "0x0aab",
+        "input": "0x2a"
+      },
+      "qrng_bytes": "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+      "beacon": "0x0f1e2d3c0f1e2d3c0f1e2d3c0f1e2d3c0f1e2d3c0f1e2d3c0f1e2d3c0f1e2d3c",
+      "light_proof": {
+        "hash_chain": [
+          "0x3333444455556666333344445555666633334444555566663333444455556666",
+          "0xcccc7777cccc7777cccc7777cccc7777cccc7777cccc7777cccc7777cccc7777"
+        ],
+        "vdf": {
+          "y": "0x0844",
+          "pi": "0x0aab"
+        }
+      },
+      "expected": true,
+      "prev_output": "0x99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff99aa00ff"
     }
   ]
 }
