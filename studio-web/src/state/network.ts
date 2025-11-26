@@ -8,7 +8,7 @@
  * - Persist the current selection to localStorage and rehydrate on boot.
  */
 
-import { registerSlice, type SliceCreator, type StoreState, type SetState, type GetState } from './store';
+import useStore, { registerSlice, type SliceCreator, type StoreState, type SetState, type GetState } from './store';
 
 const STORAGE_KEY = 'studio-web.network.v1';
 
@@ -235,6 +235,29 @@ const createNetworkSlice: SliceCreator<NetworkSlice> = (set: SetState<StoreState
 };
 
 registerSlice<NetworkSlice>(createNetworkSlice);
+
+function defaultNetworkSelector(slice: NetworkSlice) {
+  const { network, presets, setNetwork, setNetworkById, addOrUpdatePreset, removePreset, resetToDefault } = slice;
+  return {
+    rpcUrl: network.rpcUrl,
+    chainId: network.chainId,
+    servicesUrl: network.servicesUrl,
+    presets: Object.values(presets),
+    setNetwork,
+    setNetworkById,
+    addOrUpdatePreset,
+    removePreset,
+    resetToDefault,
+  } as const;
+}
+
+export function useNetwork<T = ReturnType<typeof defaultNetworkSelector>>(selector?: (s: NetworkSlice) => T): T {
+  return useStore((s) => (selector ? selector(s as unknown as NetworkSlice) : defaultNetworkSelector(s as unknown as NetworkSlice)));
+}
+
+export function useNetworkState() {
+  return useNetwork((s) => ({ rpcUrl: s.network.rpcUrl, chainId: s.network.chainId, servicesUrl: s.network.servicesUrl }));
+}
 
 export type { NetworkConfig };
 export default undefined;

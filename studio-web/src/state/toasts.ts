@@ -8,7 +8,7 @@
  *   dismiss(id);
  */
 
-import { registerSlice, type SliceCreator, type StoreState, type SetState, type GetState } from './store';
+import useStore, { registerSlice, type SliceCreator, type StoreState, type SetState, type GetState } from './store';
 
 export type ToastKind = 'info' | 'success' | 'warning' | 'error';
 
@@ -152,6 +152,18 @@ const createToastsSlice: SliceCreator<ToastsSlice> = (set: SetState<StoreState>,
 });
 
 registerSlice<ToastsSlice>(createToastsSlice);
+
+export function useToasts<T = ToastsSlice & { push: ToastsSlice['notify'] }>(selector?: (s: ToastsSlice & { push: ToastsSlice['notify'] }) => T): T {
+  return useStore((s) => {
+    const slice = s as unknown as ToastsSlice;
+    const withPush = { ...slice, push: slice.notify };
+    return selector ? selector(withPush) : (withPush as T);
+  });
+}
+
+export function useToastState() {
+  return useToasts((s) => ({ toasts: s.toasts }));
+}
 
 // No default export to avoid accidental component imports creating multiple stores.
 export default undefined;

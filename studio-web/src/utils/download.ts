@@ -91,6 +91,9 @@ export async function downloadJSON(
   return downloadText(text, filename, mime);
 }
 
+// Backwards-compatible casing
+export const downloadJson = downloadJSON;
+
 /** Download raw bytes with an optional MIME type. */
 export async function downloadBytes(bytes: BytesLike, filename: string, mime = 'application/octet-stream'): Promise<void> {
   const blob = new Blob([toBytes(bytes)], { type: mime });

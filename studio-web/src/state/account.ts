@@ -11,7 +11,7 @@
  * We follow an AIP-1193-like provider: window.animica.request({ method, params? }).
  */
 
-import { registerSlice, type SliceCreator, type StoreState, type SetState, type GetState } from './store';
+import useStore, { registerSlice, type SliceCreator, type StoreState, type SetState, type GetState } from './store';
 import type { NetworkSlice } from './network';
 
 type ProviderStatus = 'unknown' | 'available' | 'unavailable';
@@ -268,5 +268,26 @@ const accountSlice: SliceCreator<AccountSlice> = (set: SetState<StoreState>, get
 };
 
 registerSlice<AccountSlice>(accountSlice);
+
+export function useAccount<T = AccountSlice & { connected: boolean }>(selector?: (s: AccountSlice & { connected: boolean }) => T): T {
+  return useStore((s) => {
+    const slice = s as unknown as AccountSlice;
+    const withAlias = { ...slice, connected: slice.isConnected };
+    return selector ? selector(withAlias) : (withAlias as T);
+  });
+}
+
+export function useAccountState() {
+  return useAccount((s) => ({
+    providerStatus: s.providerStatus,
+    isConnected: s.isConnected,
+    connecting: s.connecting,
+    address: s.address,
+    chainId: s.chainId,
+    balance: s.balance,
+    networkMismatch: s.networkMismatch,
+    lastError: s.lastError,
+  }));
+}
 
 export default undefined;

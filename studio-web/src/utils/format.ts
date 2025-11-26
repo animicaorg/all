@@ -50,6 +50,11 @@ export function truncateMiddle(value: string, prefix = 6, suffix = 4, ellipsis =
   return `${v.slice(0, prefix)}${ellipsis}${v.slice(-suffix)}`;
 }
 
+/** Legacy alias for truncateMiddle tailored to hex-like identifiers. */
+export function shortenHex(hex: string, prefix = 6, suffix = 4): string {
+  return truncateMiddle(hex, prefix, suffix);
+}
+
 /** Normalize hex string to 0x-prefixed lowercase (no validation beyond hex chars). */
 export function normalizeHex(hex: string): string {
   if (!hex) return '0x';
