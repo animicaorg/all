@@ -157,6 +157,22 @@ class SQLiteTaskQueue:
         self._conn: Optional[aiosqlite.Connection] = None
         self._lock = asyncio.Lock()
 
+    async def _execute_fetchone(
+        self, sql: str, params: Sequence[Any] | tuple[Any, ...] | list[Any]
+    ) -> Optional[aiosqlite.Row]:
+        """Compatibility helper for aiosqlite versions without execute_fetchone."""
+        assert self._conn is not None
+        cur = await self._conn.execute(sql, params)
+        return await cur.fetchone()
+
+    async def _execute_fetchall(
+        self, sql: str, params: Sequence[Any] | tuple[Any, ...] | list[Any]
+    ) -> list[aiosqlite.Row]:
+        """Compatibility helper for aiosqlite versions without execute_fetchall."""
+        assert self._conn is not None
+        cur = await self._conn.execute(sql, params)
+        return await cur.fetchall()
+
     @property
     def db_path(self) -> str:
         return self._db_path
@@ -209,7 +225,7 @@ class SQLiteTaskQueue:
 
         # Fast-path: idempotency check
         if idempotency_key:
-            row = await self._conn.execute_fetchone(
+            row = await self._execute_fetchone(
                 "SELECT * FROM queue WHERE idempotency_key = ?;",
                 (idempotency_key,),
             )
@@ -239,7 +255,7 @@ class SQLiteTaskQueue:
             ),
         )
         await self._conn.commit()
-        row = await self._conn.execute_fetchone(
+        row = await self._execute_fetchone(
             "SELECT * FROM queue WHERE id = ?;", (task_id,)
         )
         assert row is not None
@@ -248,7 +264,7 @@ class SQLiteTaskQueue:
     async def get(self, task_id: str) -> Optional[Task]:
         await self.connect()
         assert self._conn is not None
-        row = await self._conn.execute_fetchone(
+        row = await self._execute_fetchone(
             "SELECT * FROM queue WHERE id = ?;", (task_id,)
         )
         return Task.from_row(row) if row else None
@@ -276,7 +292,7 @@ class SQLiteTaskQueue:
             sql += " WHERE " + " AND ".join(where)
         sql += " ORDER BY created_at ASC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
-        rows = await self._conn.execute_fetchall(sql, params)
+        rows = await self._execute_fetchall(sql, params)
         return [Task.from_row(r) for r in rows]
 
     # --- Leases / Polling -----------------------------------------------------
@@ -325,7 +341,7 @@ class SQLiteTaskQueue:
                     """
                     params = [now]
 
-                row = await self._conn.execute_fetchone(select_sql, params)
+                row = await self._execute_fetchone(select_sql, params)
                 if not row:
                     await self._conn.execute("COMMIT;")
                     return None
@@ -361,7 +377,7 @@ class SQLiteTaskQueue:
                 raise
 
         # Return the fresh row
-        row = await self._conn.execute_fetchone(
+        row = await self._execute_fetchone(
             "SELECT * FROM queue WHERE id = ?;", (task_id,)
         )
         return Task.from_row(row) if row else None
@@ -393,7 +409,7 @@ class SQLiteTaskQueue:
         await self._conn.execute("BEGIN IMMEDIATE;")
         try:
             # SQLite lacks UPDATE ... RETURNING changes() in older versions, so use two-step.
-            rows = await self._conn.execute_fetchall(
+            rows = await self._execute_fetchall(
                 """
                 SELECT id FROM queue
                 WHERE status = 'running' AND lease_until IS NOT NULL AND lease_until < ?
@@ -463,7 +479,7 @@ class SQLiteTaskQueue:
         now = _now()
 
         # Load attempts/max to decide path
-        row = await self._conn.execute_fetchone(
+        row = await self._execute_fetchone(
             "SELECT attempts, max_attempts FROM queue WHERE id = ?;", (task_id,)
         )
         if not row:
@@ -533,7 +549,7 @@ class SQLiteTaskQueue:
         assert self._conn is not None
         out: dict[str, int] = {}
         for status in ("queued", "running", "done", "failed"):
-            row = await self._conn.execute_fetchone(
+            row = await self._execute_fetchone(
                 "SELECT COUNT(1) AS c FROM queue WHERE status = ?;", (status,)
             )
             out[status] = int(row["c"]) if row else 0
