@@ -1,5 +1,5 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { NavLink } from "react-router-dom";
+import { BrowserRouter, NavLink } from "react-router-dom";
 
 // Router (will be provided in explorer-web/src/router.tsx)
 import AppRouter from "./router";
@@ -30,24 +30,28 @@ export const setGlobalLoading = (on: boolean, label?: string) =>
 // App Shell
 // ────────────────────────────────────────────────────────────────────────────────
 export default function App() {
-  return (
-    <div className="app-root">
-      <TopBar />
-      <TopProgressBar />
-      <div className="app-container">
-        <SideNav />
-        <main className="app-main" role="main" aria-live="polite">
-          <Suspense fallback={<RouteFallback />}>
-            <AppRouter />
-          </Suspense>
-        </main>
-      </div>
+  const basename = (import.meta as any).env?.VITE_BASE_PATH || undefined;
 
-      <GlobalLoaderOverlay />
-      <ToastHost />
-      <Footer />
-      <style>{globalCss}</style>
-    </div>
+  return (
+    <BrowserRouter basename={basename}>
+      <div className="app-root">
+        <TopBar />
+        <TopProgressBar />
+        <div className="app-container">
+          <SideNav />
+          <main className="app-main" role="main" aria-live="polite">
+            <Suspense fallback={<RouteFallback />}>
+              <AppRouter />
+            </Suspense>
+          </main>
+        </div>
+
+        <GlobalLoaderOverlay />
+        <ToastHost />
+        <Footer />
+        <style>{globalCss}</style>
+      </div>
+    </BrowserRouter>
   );
 }
 
