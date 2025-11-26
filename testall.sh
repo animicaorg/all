@@ -22,9 +22,15 @@ activate_venv() {
 }
 
 ensure_pytest() {
+  # Ensure pytest and minimal plugins needed by the repo's suites are present.
+  # PyYAML is required by governance scripts and test fixtures; pytest-asyncio
+  # enables async tests marked with @pytest.mark.asyncio.
+  local pkgs=(pytest pytest-asyncio pyyaml)
   if ! command -v pytest >/dev/null 2>&1; then
-    warn "pytest not found; attempting install via python3 -m pip install -U pytest"
-    python3 -m pip install -U pytest || fail "Unable to install pytest"
+    warn "pytest not found; attempting install via python3 -m pip install -U ${pkgs[*]}"
+    python3 -m pip install -U "${pkgs[@]}" || fail "Unable to install pytest"
+  else
+    python3 -m pip install -U "${pkgs[@]}" >/dev/null 2>&1 || warn "Could not refresh pytest plugins"
   fi
 }
 
