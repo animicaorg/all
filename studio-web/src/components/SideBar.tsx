@@ -58,6 +58,24 @@ export default function SideBar() {
     const v = localStorage.getItem("studio.sidebar.collapsed");
     if (v === "1") setCollapsed(true);
   }, []);
+
+  // Respect viewport size — collapse on small screens, expand on large unless user opted-in
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mq = window.matchMedia("(max-width: 960px)");
+    const sync = (e?: MediaQueryListEvent) => {
+      const matches = e ? e.matches : mq.matches;
+      if (matches) {
+        setCollapsed(true);
+      } else {
+        const pref = localStorage.getItem("studio.sidebar.collapsed");
+        if (pref !== "1") setCollapsed(false);
+      }
+    };
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
   useEffect(() => {
     localStorage.setItem("studio.sidebar.collapsed", collapsed ? "1" : "0");
   }, [collapsed]);

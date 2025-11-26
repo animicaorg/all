@@ -62,6 +62,15 @@ function safeParseInt(v: unknown, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function isLoopback(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.hostname === 'localhost' || u.hostname === '127.0.0.1';
+  } catch {
+    return false;
+  }
+}
+
 function deriveWsUrl(httpUrl: string): string {
   try {
     const u = new URL(httpUrl);
@@ -95,6 +104,21 @@ function rehydrateSelection(): NetworkConfig | null {
   } catch {
     return null;
   }
+}
+
+function sanitizeConfig(cfg: NetworkConfig): NetworkConfig {
+  // Force env RPC when a loopback address sneaks in
+  if (isLoopback(cfg.rpcUrl) && ENV_RPC && !isLoopback(ENV_RPC)) {
+    return {
+      ...cfg,
+      label: cfg.label ?? 'Env Config',
+      rpcUrl: ENV_RPC,
+      wsUrl: deriveWsUrl(ENV_RPC),
+      servicesUrl: ENV_SERVICES,
+    };
+  }
+
+  return { ...cfg, wsUrl: cfg.wsUrl ?? deriveWsUrl(cfg.rpcUrl) };
 }
 
 /* -------------------------------- defaults ------------------------------- */
@@ -149,22 +173,22 @@ function initialPresets(): Record<NetworkId, NetworkConfig> {
     servicesUrl: ENV_SERVICES,
   };
   return {
-    local: DEFAULT_LOCAL,
-    devnet: DEFAULT_DEVNET,
-    testnet: DEFAULT_TESTNET,
-    mainnet: DEFAULT_MAINNET,
-    env: envPreset,
+    local: sanitizeConfig(DEFAULT_LOCAL),
+    devnet: sanitizeConfig(DEFAULT_DEVNET),
+    testnet: sanitizeConfig(DEFAULT_TESTNET),
+    mainnet: sanitizeConfig(DEFAULT_MAINNET),
+    env: sanitizeConfig(envPreset),
   };
 }
 
 function initialSelection(presets: Record<NetworkId, NetworkConfig>): NetworkConfig {
   const saved = rehydrateSelection();
-  if (saved) return { ...saved, wsUrl: saved.wsUrl ?? deriveWsUrl(saved.rpcUrl) };
+  if (saved) return sanitizeConfig(saved);
   // Prefer env preset if env differs from default
   if (ENV_RPC && (ENV_RPC !== DEFAULT_LOCAL.rpcUrl || ENV_CHAIN !== DEFAULT_LOCAL.chainId)) {
-    return presets['env'];
+    return sanitizeConfig(presets['env']);
   }
-  return presets['local'];
+  return sanitizeConfig(presets['local']);
 }
 
 /* --------------------------------- slice --------------------------------- */
@@ -174,8 +198,9 @@ const createNetworkSlice: SliceCreator<NetworkSlice> = (set: SetState<StoreState
   const selected = initialSelection(presets);
 
   function commit(next: NetworkConfig) {
-    persistSelection(next);
-    set({ network: next } as Partial<StoreState>);
+    const sanitized = sanitizeConfig(next);
+    persistSelection(sanitized);
+    set({ network: sanitized } as Partial<StoreState>);
   }
 
   return {
@@ -205,7 +230,7 @@ const createNetworkSlice: SliceCreator<NetworkSlice> = (set: SetState<StoreState
     addOrUpdatePreset: (cfg: NetworkConfig) => {
       set((s) => {
         const ps = { ...(s as unknown as NetworkSlice).presets };
-        ps[cfg.id] = { ...cfg, wsUrl: cfg.wsUrl ?? deriveWsUrl(cfg.rpcUrl) };
+        ps[cfg.id] = sanitizeConfig(cfg);
         return { presets: ps } as Partial<StoreState>;
       });
     },
