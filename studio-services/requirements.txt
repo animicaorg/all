@@ -9,6 +9,7 @@ cbor2==5.6.4
 python-dotenv==1.0.1
 structlog==24.4.0
 prometheus-client==0.20.0
+aiosqlite==0.20.0
 
 # --- Monorepo locals (optional) ---
 # If running inside the Animica repo, you can install the local SDK/VM packages in editable mode:
