@@ -9,18 +9,32 @@ const fs = require('fs');
 const path = require('path');
 
 const tryLoad = (pkg) => {
-  try { return require(pkg); } catch { return null; }
+  try {
+    return require(pkg);
+  } catch {
+    return null;
+  }
 };
 
 const hasTailwind =
   fs.existsSync(path.join(__dirname, 'tailwind.config.cjs')) &&
   !!tryLoad('tailwindcss');
 
-const plugins = [
-  require('postcss-import'),
-  hasTailwind && require('tailwindcss'),
-  require('postcss-nesting'),
-  require('autoprefixer'),
-].filter(Boolean);
+const plugins = [];
+
+// Resolve @import directives when available
+const postcssImport = tryLoad('postcss-import');
+if (postcssImport) plugins.push(postcssImport());
+
+// Optional TailwindCSS support
+if (hasTailwind) plugins.push(require('tailwindcss'));
+
+// CSS nesting — prefer spec plugin, fall back to postcss-nested if present
+const nesting = tryLoad('postcss-nesting') || tryLoad('postcss-nested');
+if (nesting) plugins.push(nesting());
+
+// Vendor prefixing
+const autoprefixer = tryLoad('autoprefixer');
+if (autoprefixer) plugins.push(autoprefixer());
 
 module.exports = { plugins };
