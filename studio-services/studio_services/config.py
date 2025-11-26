@@ -157,7 +157,7 @@ class StorageConfig(BaseModel):
 
 class Settings(BaseSettings):
     # Core
-    rpc_url: str = Field(..., description="Node JSON-RPC endpoint")
+    rpc_url: str = Field("http://127.0.0.1:8545", description="Node JSON-RPC endpoint")
     chain_id: int = Field(1337, description="Network chain id to enforce")
     log_level: str = Field("INFO", description="Logging level (DEBUG, INFO, WARNING, ERROR)")
 
@@ -269,10 +269,82 @@ def get_settings() -> Settings:
 
 __all__ = [
     "Settings",
+    "Config",
     "CorsConfig",
     "SecurityConfig",
     "RateLimitSpec",
     "RateLimitConfig",
     "StorageConfig",
+    "load_config",
     "get_settings",
 ]
+
+
+class Config(Settings):
+    """Compatibility wrapper around :class:`Settings`.
+
+    The legacy codebase expects a ``Config`` object with a handful of
+    uppercase attributes (e.g., ``CHAIN_ID``) and helper accessors for CORS
+    and rate-limit configs.  We expose those as properties while retaining the
+    strongly typed ``Settings`` fields.
+    """
+
+    # Legacy attribute shims -------------------------------------------------
+    @property
+    def RPC_URL(self) -> str:
+        return self.rpc_url
+
+    @property
+    def CHAIN_ID(self) -> int:
+        return self.chain_id
+
+    @property
+    def ENV(self) -> Optional[str]:
+        # Optional marker used in health/version endpoints
+        import os
+
+        return os.getenv("STUDIO_SERVICES_ENV")
+
+    # Helper builders --------------------------------------------------------
+    def to_cors_config(self):
+        """Convert to the security.cors CORSConfig model."""
+        from .security.cors import CORSConfig
+
+        return CORSConfig(
+            allow_origins=list(self.cors.allow_origins),
+            allow_origin_regex=None,
+            allow_methods=list(self.cors.allow_methods),
+            allow_headers=list(self.cors.allow_headers),
+            expose_headers=[],
+            allow_credentials=self.cors.allow_credentials,
+            max_age=600,
+            debug=False,
+        )
+
+    def to_rate_config(self):
+        """Convert to the security.rate_limit RateConfig model."""
+        from .security.rate_limit import RateConfig, RateRule
+
+        global_limit = self.rates.global_limit
+        route_rules = {
+            path: RateRule(
+                name=f"route:{path}",
+                refill_per_sec=spec.rps,
+                capacity=float(spec.burst),
+            )
+            for path, spec in self.rates.route_overrides.items()
+        }
+
+        return RateConfig(
+            global_rule=RateRule("global", refill_per_sec=global_limit.rps, capacity=float(global_limit.burst)),
+            ip_rule=RateRule("ip", refill_per_sec=global_limit.rps, capacity=float(global_limit.burst)),
+            key_rule=RateRule("key", refill_per_sec=global_limit.rps, capacity=float(global_limit.burst)),
+            route_rules=route_rules,
+        )
+
+
+@lru_cache(maxsize=1)
+def load_config() -> Config:
+    """Legacy entrypoint expected by app/CLI modules."""
+
+    return Config()  # type: ignore[call-arg]

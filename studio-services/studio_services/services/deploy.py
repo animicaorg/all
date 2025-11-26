@@ -28,7 +28,7 @@ from studio_services.models.deploy import (
     PreflightResponse,
 )
 from studio_services.models.common import ChainId
-from studio_services.adapters.node_rpc import NodeRPC
+from studio_services.adapters.node_rpc import NodeRPC, from_env
 from studio_services.adapters.vm_compile import (
     compile_package,
     code_hash_bytes,
@@ -133,6 +133,25 @@ def relay_signed_tx(
     return DeployResponse(tx_hash=tx_hash, receipt=receipt)
 
 
+def submit_deploy(req: DeployRequest) -> DeployResponse:
+    """Compatibility wrapper used by the router.
+
+    Builds a NodeRPC from the environment/config and delegates to
+    :func:`relay_signed_tx`.
+    """
+
+    try:
+        from studio_services.config import load_config
+
+        cfg = load_config()
+        expected_chain = getattr(cfg, "CHAIN_ID", None)
+    except Exception:
+        expected_chain = None
+
+    node = from_env()
+    return relay_signed_tx(node, req, expected_chain_id=expected_chain)
+
+
 def preflight_simulate(req: PreflightRequest) -> PreflightResponse:
     """
     Offline compile & simulate a contract package locally (no state writes).
@@ -173,4 +192,13 @@ def preflight_simulate(req: PreflightRequest) -> PreflightResponse:
     )
 
 
-__all__ = ["relay_signed_tx", "preflight_simulate"]
+# Router compatibility aliases
+run_preflight = preflight_simulate
+
+
+__all__ = [
+    "relay_signed_tx",
+    "submit_deploy",
+    "preflight_simulate",
+    "run_preflight",
+]

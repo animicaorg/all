@@ -55,7 +55,20 @@ import time
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional, Sequence
 
-import aiosqlite
+try:
+    import aiosqlite
+except Exception:  # pragma: no cover - optional dependency
+    import sqlite3
+
+    class _AioSqliteShim:
+        Row = sqlite3.Row
+        Connection = sqlite3.Connection
+
+        @staticmethod
+        async def connect(*_, **__):
+            raise ImportError("aiosqlite is required for SQLiteTaskQueue")
+
+    aiosqlite = _AioSqliteShim()  # type: ignore
 
 
 # --- Data model ----------------------------------------------------------------
