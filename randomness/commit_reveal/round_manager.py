@@ -130,6 +130,35 @@ class RoundManager:
         if self._round_len <= 0:
             raise ValueError("round length must be positive")
 
+    # Compatibility helpers used by tests -----------------------------------------------------
+    def windows(self, round_id: RoundId):  # pragma: no cover - thin struct wrapper
+        """Return commit/reveal/grace window boundaries for ``round_id``.
+
+        The returned object exposes ``commit_start``, ``commit_end``, ``reveal_start``,
+        ``reveal_end``, and ``grace_end`` attributes to mirror the test fixtures.
+        """
+
+        @dataclass(frozen=True)
+        class _Windows:
+            commit_start: int
+            commit_end: int
+            reveal_start: int
+            reveal_end: int
+            grace_end: int
+
+        b = self.boundaries(round_id)
+        grace = int(getattr(self.cfg, "reveal_grace_s", 0))
+        return _Windows(
+            commit_start=b.start_s,
+            commit_end=b.commit_end_s,
+            reveal_start=b.commit_end_s,
+            reveal_end=b.reveal_end_s,
+            grace_end=b.reveal_end_s + grace,
+        )
+
+    def current_round(self, now_s: int) -> RoundId:  # pragma: no cover - convenience
+        return self.round_id_for_time(now_s)
+
     # ---- Core time ↔ round mapping ----
 
     def boundaries(self, round_id: RoundId) -> RoundBoundaries:
