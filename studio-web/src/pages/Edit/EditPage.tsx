@@ -14,7 +14,7 @@ import { useProjectStore } from "../../state/project";
 import { useCompileStore } from "../../state/compile";
 import { useSimulateStore } from "../../state/simulate";
 import { useToasts } from "../../state/toasts";
-import { loadTemplateById, ensureDefaultTemplate } from "../../services/templates";
+import { ensureDefaultTemplate, listTemplates, loadTemplateById, type TemplateMeta } from "../../services/templates";
 import { cx } from "../../utils/classnames";
 import { formatAddress } from "../../utils/format";
 import type { ProjectFile } from "../../types";
@@ -52,6 +52,7 @@ export default function EditPage() {
   const updateFile = useProjectStore((s) => s.updateFile);
   const removePath = useProjectStore((s) => s.removePath);
   const createFile = useProjectStore((s) => s.createFile);
+  const resetProject = useProjectStore((s) => s.resetProject);
   const isDirty = useProjectStore((s) => s.isDirty);
   const saveProject = useProjectStore((s) => s.saveToLocal);
   const loadProject = useProjectStore((s) => s.loadFromStorage);
@@ -68,11 +69,30 @@ export default function EditPage() {
 
   // UI local state (resizable panes, selected right tab)
   const [leftW, setLeftW] = React.useState<number>(280);
-  const [rightW, setRightW] = React.useState<number>(360);
+  const [rightW, setRightW] = React.useState<number>(420);
   const [rightTab, setRightTab] = React.useState<RightTab>("compile");
+
+  // Template catalog (examples)
+  const [templates, setTemplates] = React.useState<TemplateMeta[]>([]);
+  const [selectedTemplate, setSelectedTemplate] = React.useState<string>("");
+  const [loadingTemplate, setLoadingTemplate] = React.useState(false);
+  const [templateError, setTemplateError] = React.useState<string | null>(null);
 
   // Load default template on first mount if project is empty
   const hasFiles = React.useMemo(() => Object.keys(files ?? {}).length > 0, [files]);
+
+  React.useEffect(() => {
+    // fetch templates (examples) for the selector
+    listTemplates()
+      .then((metas) => {
+        setTemplates(metas);
+        if (metas.length) {
+          setSelectedTemplate((curr) => curr || metas[0].id);
+        }
+      })
+      .catch((err: any) => setTemplateError(String(err?.message || err)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   React.useEffect(() => {
     if (hasFiles) return;
@@ -88,15 +108,21 @@ export default function EditPage() {
   }, [hasFiles]);
 
   const useTemplate = async (id: string) => {
+    setTemplateError(null);
+    setLoadingTemplate(true);
     try {
       const tpl = await loadTemplateById(id);
+      resetProject?.();
       tpl.files.forEach((f: ProjectFile) => {
         createFile(f.path, f.content);
       });
       if (tpl.entry) setActive(tpl.entry);
       pushToast({ kind: "success", title: `Loaded template: ${tpl.name}` });
     } catch (err: any) {
+      setTemplateError(String(err?.message || err));
       pushToast({ kind: "error", title: "Template failed", description: String(err?.message || err) });
+    } finally {
+      setLoadingTemplate(false);
     }
   };
 
@@ -155,7 +181,7 @@ export default function EditPage() {
         setLeftW(next);
       } else {
         const total = container.getBoundingClientRect().width;
-        const next = Math.min(560, Math.max(280, startRight - dx));
+        const next = Math.min(720, Math.max(320, startRight - dx));
         // clamp so center area doesn't collapse
         const centerMin = 420;
         if (total - (leftW + next) < centerMin) return;
@@ -202,6 +228,40 @@ export default function EditPage() {
           className="border-r border-[color:var(--divider,#e5e7eb)] bg-[var(--panel-bg,#fafafa)] min-w-[200px] max-w-[520px]"
           style={{ width: leftW }}
         >
+          <div className="border-b border-[color:var(--divider,#e5e7eb)] p-3 space-y-2">
+            <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-[color:var(--muted,#6b7280)]">
+              <span>Examples</span>
+              <span aria-hidden>•</span>
+              <span className="normal-case text-[color:var(--fg,#111827)]">Load a template</span>
+            </div>
+            <label className="flex flex-col gap-1 text-sm" htmlFor="template-select">
+              <span className="text-[color:var(--muted,#6b7280)]">Choose example</span>
+              <div className="flex gap-2 items-center">
+                <select
+                  id="template-select"
+                  className="flex-1 rounded border border-[color:var(--divider,#e5e7eb)] bg-white px-2 py-1 text-sm"
+                  value={selectedTemplate}
+                  onChange={(e) => setSelectedTemplate(e.target.value)}
+                  disabled={loadingTemplate || templates.length === 0}
+                >
+                  {templates.map((tpl) => (
+                    <option key={tpl.id} value={tpl.id}>
+                      {tpl.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="rounded px-3 py-1 text-sm font-medium bg-[var(--accent-bg,#e0f2fe)] text-[color:var(--accent-fg,#075985)] border border-[color:var(--divider,#e5e7eb)]"
+                  onClick={() => selectedTemplate && useTemplate(selectedTemplate)}
+                  disabled={!selectedTemplate || loadingTemplate}
+                >
+                  {loadingTemplate ? "Loading…" : "Load"}
+                </button>
+              </div>
+              {templateError && <span className="text-xs text-[color:var(--danger,#b91c1c)]">{templateError}</span>}
+            </label>
+          </div>
           <div className="h-full overflow-auto">
             <ProjectTree
               files={files}
@@ -247,8 +307,8 @@ export default function EditPage() {
 
         {/* Right: Panels */}
         <aside
-          className="border-l border-[color:var(--divider,#e5e7eb)] bg-[var(--panel-bg,#fafafa)] min-w-[280px] max-w-[600px] flex flex-col"
-          style={{ width: rightW }}
+          className="border-l border-[color:var(--divider,#e5e7eb)] bg-[var(--panel-bg,#fafafa)] min-w-[320px] max-w-[720px] flex flex-col"
+          style={{ width: rightW, maxWidth: 720 }}
         >
           {/* Tabs */}
           <div className="flex items-end px-2">
