@@ -91,7 +91,13 @@ function RouteChangeEffects() {
     const t = window.setTimeout(() => setGlobalLoading(false), 350);
     // Scroll to top unless a deep hash is provided
     if (!hash) window.scrollTo({ top: 0, behavior: "smooth" });
-    return () => window.clearTimeout(t);
+    return () => {
+      window.clearTimeout(t);
+      // Ensure every navigation start is balanced with a stop event even if the
+      // timeout is cleared (e.g., rapid route changes) so the overlay does not
+      // get stuck in a pending state.
+      setGlobalLoading(false);
+    };
   }, [pathname, search, hash]);
 
   return null;
