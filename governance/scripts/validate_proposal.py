@@ -51,8 +51,10 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 try:
     import yaml  # PyYAML
 except Exception as e:  # pragma: no cover
-    print("ERROR: PyYAML is required. pip install pyyaml", file=sys.stderr)
-    sys.exit(4)
+    yaml = None  # type: ignore[assignment]
+    _YAML_IMPORT_ERROR = e
+else:
+    _YAML_IMPORT_ERROR = None
 
 _jsonschema_spec = importlib.util.find_spec("jsonschema")
 if _jsonschema_spec is not None:
@@ -87,6 +89,8 @@ def load_payload(path: Path) -> Dict[str, Any]:
     Returns a dict representing the proposal payload.
     For .md files, extracts the first YAML front-matter block.
     """
+    if yaml is None:
+        raise RuntimeError("PyYAML is required. pip install pyyaml")
     suffix = path.suffix.lower()
     text = read_text(path)
 
