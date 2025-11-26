@@ -3,6 +3,7 @@ import { BrowserRouter, NavLink } from "react-router-dom";
 
 // Router (will be provided in explorer-web/src/router.tsx)
 import AppRouter from "./router";
+import { ExplorerStoreProvider } from "./state/store";
 
 // ────────────────────────────────────────────────────────────────────────────────
 // Global event channels so other modules can toggle loader / push toasts without
@@ -33,25 +34,27 @@ export default function App() {
   const basename = (import.meta as any).env?.VITE_BASE_PATH || undefined;
 
   return (
-    <BrowserRouter basename={basename}>
-      <div className="app-root">
-        <TopBar />
-        <TopProgressBar />
-        <div className="app-container">
-          <SideNav />
-          <main className="app-main" role="main" aria-live="polite">
-            <Suspense fallback={<RouteFallback />}>
-              <AppRouter />
-            </Suspense>
-          </main>
-        </div>
+    <ExplorerStoreProvider>
+      <BrowserRouter basename={basename}>
+        <div className="app-root">
+          <TopBar />
+          <TopProgressBar />
+          <div className="app-container">
+            <SideNav />
+            <main className="app-main" role="main" aria-live="polite">
+              <Suspense fallback={<RouteFallback />}>
+                <AppRouter />
+              </Suspense>
+            </main>
+          </div>
 
-        <GlobalLoaderOverlay />
-        <ToastHost />
-        <Footer />
-        <style>{globalCss}</style>
-      </div>
-    </BrowserRouter>
+          <GlobalLoaderOverlay />
+          <ToastHost />
+          <Footer />
+          <style>{globalCss}</style>
+        </div>
+      </BrowserRouter>
+    </ExplorerStoreProvider>
   );
 }
 
@@ -132,11 +135,14 @@ function SideNav() {
 // Route Suspense Fallback
 // ────────────────────────────────────────────────────────────────────────────────
 function RouteFallback() {
-  setGlobalLoading(true, "Loading…");
-  // auto-clear after short delay in case the route resolved but fallback persisted
   useEffect(() => {
+    setGlobalLoading(true, "Loading…");
+    // auto-clear after short delay in case the route resolved but fallback persisted
     const t = setTimeout(() => setGlobalLoading(false), 600);
-    return () => clearTimeout(t);
+    return () => {
+      clearTimeout(t);
+      setGlobalLoading(false);
+    };
   }, []);
   return null;
 }
