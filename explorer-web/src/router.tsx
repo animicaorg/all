@@ -1,11 +1,5 @@
 import React, { lazy, useEffect } from "react";
-import {
-  BrowserRouter,
-  Routes,
-  Route,
-  Navigate,
-  useLocation,
-} from "react-router-dom";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
 
 /**
  * NOTE ON CIRCULAR IMPORTS:
@@ -34,11 +28,8 @@ const HomePage = null;
 // Public API
 // ────────────────────────────────────────────────────────────────────────────────
 export default function AppRouter() {
-  // Optional base path support (e.g. when hosting under /explorer)
-  const basename = (import.meta as any).env?.VITE_BASE_PATH || undefined;
-
   return (
-    <BrowserRouter basename={basename}>
+    <>
       <RouteChangeEffects />
       <Routes>
         {/* Home: redirect to /blocks by default if no HomePage yet */}
@@ -84,7 +75,7 @@ export default function AppRouter() {
         {/* 404 */}
         <Route path="*" element={<NotFound />} />
       </Routes>
-    </BrowserRouter>
+    </>
   );
 }
 
