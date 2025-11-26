@@ -51,6 +51,10 @@ ERASURE_N_MAX: int = 1024
 MAX_BLOB_BYTES_DEFAULT: int = 8 * 1024 * 1024  # 8 MiB
 #: Hard safety cap for blob size (absolute upper bound; config must not exceed).
 MAX_BLOB_BYTES_HARD_CAP: int = 64 * 1024 * 1024  # 64 MiB
+#: Canonical soft limit imported by blob-handling modules (alias for default).
+#: Keeping a dedicated name preserves backwards compatibility with callers
+#: that expect ``da.constants.MAX_BLOB_BYTES`` to exist.
+MAX_BLOB_BYTES: int = MAX_BLOB_BYTES_DEFAULT
 
 
 # ------------------------------ namespaces ----------------------------------
@@ -116,6 +120,7 @@ __all__ = [
     "ERASURE_N_DEFAULT",
     "ERASURE_N_MAX",
     # blobs
+    "MAX_BLOB_BYTES",
     "MAX_BLOB_BYTES_DEFAULT",
     "MAX_BLOB_BYTES_HARD_CAP",
     # namespaces

@@ -197,4 +197,19 @@ def encode_blob_to_leaves(
 __all__ = [
     "ErasureEncodeInfo",
     "encode_blob_to_leaves",
+    "encode_leaves",
+    "encode",
 ]
+
+
+# Lightweight compatibility wrappers -------------------------------------------------
+
+def encode_leaves(blob: bytes, namespace: bytes) -> List[bytes]:
+    """Alias for :func:`encode_blob_to_leaves` returning only the leaf list."""
+    leaves, _info = encode_blob_to_leaves(blob, namespace)
+    return leaves
+
+
+# Some older callers look for a very short name; mirror ``encode_leaves``.
+def encode(blob: bytes, namespace: bytes) -> List[bytes]:  # pragma: no cover - thin alias
+    return encode_leaves(blob, namespace)
