@@ -43,7 +43,7 @@ paths can replace it with a vectorized backend transparently.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .params import ErasureParams
 
@@ -251,10 +251,9 @@ def _mat_mul_bytes(mat: List[List[int]], rows: Sequence[bytes]) -> List[bytes]:
 # Public API
 # =============================================================================
 
-def rs_encode(data_shards: Sequence[bytes], params: ErasureParams) -> List[bytes]:
+def _rs_encode_from_shards(data_shards: Sequence[bytes], params: ErasureParams) -> List[bytes]:
     """
-    Compute parity shards for a block of `k` data shards; each shard must be exactly
-    `params.share_bytes` long. Returns a list of length `params.parity_shards`.
+    Core encoder operating on pre-split data shards.
     """
     k = params.data_shards
     n = params.total_shards
@@ -294,6 +293,42 @@ def rs_encode(data_shards: Sequence[bytes], params: ErasureParams) -> List[bytes
         parity_out.append(bytes(acc))
 
     return parity_out
+
+
+def rs_encode(
+    data: Sequence[bytes] | bytes,
+    params_or_k: ErasureParams | int,
+    n: int | None = None,
+    share_bytes: int | None = None,
+) -> List[bytes]:
+    """
+    Flexible RS encoder supporting both shard-based and byte-buffer entrypoints.
+
+    Accepted call forms:
+        rs_encode(data_shards, params)
+        rs_encode(data_bytes, k, n, share_bytes)
+    """
+    # Shard-based form: (Sequence[bytes], ErasureParams)
+    if isinstance(params_or_k, ErasureParams):
+        return _rs_encode_from_shards(data, params_or_k)  # type: ignore[arg-type]
+
+    # Byte-buffer form: (bytes, k, n, share_bytes)
+    if not isinstance(data, (bytes, bytearray, memoryview)):
+        raise TypeError("rs_encode(data, k, n, share_bytes) expects a bytes-like data buffer")
+    if n is None or share_bytes is None:
+        raise TypeError("rs_encode(data, k, n, share_bytes) requires k, n, and share_bytes")
+
+    k = int(params_or_k)
+    n_int = int(n)
+    share = int(share_bytes)
+    buf = bytes(data)
+    expected = k * share
+    if len(buf) != expected:
+        raise ValueError(f"data length must be exactly k*share_bytes={expected}, got {len(buf)}")
+    params = ErasureParams(k, n_int, share)
+    shards = [buf[i * share : (i + 1) * share] for i in range(k)]
+    parity = _rs_encode_from_shards(shards, params)
+    return shards + parity
 
 
 def rs_decode(
@@ -338,6 +373,71 @@ def rs_decode(
 
     # data_rows are in canonical order (row 0 = data shard 0, ... row k-1 = shard k-1)
     return data_rows
+
+
+# -----------------------------------------------------------------------------
+# Convenience wrappers for common call signatures used in tests
+# -----------------------------------------------------------------------------
+
+
+def encode(data: bytes, k: int, n: int, share_bytes: int) -> List[bytes]:  # pragma: no cover - light wrapper
+    return rs_encode(data, k, n, share_bytes)
+
+
+def encode_bytes(data: bytes, k: int, n: int, share_bytes: int) -> List[bytes]:  # pragma: no cover - alias
+    return encode(data, k, n, share_bytes)
+
+
+def encode_shards(data_shards: Sequence[bytes], k: int, n: int, share_bytes: int) -> List[bytes]:
+    params = ErasureParams(k, n, share_bytes)
+    if len(data_shards) != k:
+        raise ValueError(f"expected {k} data shards, got {len(data_shards)}")
+    for s in data_shards:
+        if len(s) != share_bytes:
+            raise ValueError("data shard has wrong length")
+    parity = _rs_encode_from_shards(data_shards, params)
+    return list(data_shards) + parity
+
+
+def reconstruct(shards: Sequence[Optional[bytes]], k: int, n: int, share_bytes: int) -> List[bytes]:
+    params = ErasureParams(k, n, share_bytes)
+    provided: Dict[int, bytes] = {i: s for i, s in enumerate(shards) if s is not None}
+    if len(provided) < k:
+        raise ValueError("insufficient shards to reconstruct")
+    data = rs_decode(provided, params)
+    parity = _rs_encode_from_shards(data, params)
+    full: List[bytes] = []
+    for idx in range(n):
+        if idx < k:
+            full.append(data[idx])
+        else:
+            full.append(parity[idx - k])
+    return full
+
+
+def decode_shards(shards: Sequence[Optional[bytes]], k: int, n: int, share_bytes: int) -> List[bytes]:  # pragma: no cover - thin wrapper
+    return reconstruct(shards, k, n, share_bytes)
+
+
+def decode(data_shards: Sequence[Optional[bytes]], k: int, n: int, share_bytes: int) -> bytes:
+    full = reconstruct(data_shards, k, n, share_bytes)
+    return b"".join(full[:k])
+
+
+def decode_bytes(data_shards: Sequence[Optional[bytes]], k: int, n: int, share_bytes: int) -> bytes:  # pragma: no cover - alias
+    return decode(data_shards, k, n, share_bytes)
+
+
+def verify(shards: Sequence[bytes], k: int, n: int, share_bytes: int) -> bool:
+    if len(shards) != n:
+        return False
+    for s in shards:
+        if not isinstance(s, (bytes, bytearray)) or len(s) != share_bytes:
+            return False
+    data = list(shards[:k])
+    params = ErasureParams(k, n, share_bytes)
+    parity_expected = _rs_encode_from_shards(data, params)
+    return list(shards[k:]) == parity_expected
 
 
 # -----------------------------------------------------------------------------

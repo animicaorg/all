@@ -121,6 +121,22 @@ def validate(ns: int | str) -> None:
     _validate_ns(_coerce_to_int(ns))
 
 
+# Backwards-compatibility shims ------------------------------------------------
+# Older call-sites (and some tests) import ``validate_namespace_id`` and
+# ``normalize_namespace``. Provide thin aliases that delegate to the modern
+# helpers above so callers don't need to special-case the new names.
+
+
+def validate_namespace_id(ns: int | str) -> None:
+    """Alias for :func:`validate` (kept for API stability)."""
+    validate(ns)
+
+
+def normalize_namespace(ns: int | str) -> NamespaceId:
+    """Return a validated :class:`NamespaceId` (alias wrapper)."""
+    return NamespaceId(ns)
+
+
 def is_reserved(ns: int | str) -> bool:
     """Return True if `ns` lies in the reserved range [RES_MIN, RES_MAX]."""
     n = _coerce_to_int(ns)
@@ -208,6 +224,8 @@ __all__ = [
     "NamespaceId",
     "NamespaceRange",
     "validate",
+    "validate_namespace_id",
+    "normalize_namespace",
     "is_reserved",
     "is_user",
     "clamp_to_user",
