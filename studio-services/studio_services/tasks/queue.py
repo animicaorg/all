@@ -164,7 +164,12 @@ class SQLiteTaskQueue:
     async def connect(self) -> None:
         if self._conn:
             return
-        conn = await aiosqlite.connect(self._db_path)
+        # Use autocommit mode so we can manage transactions manually (e.g. the
+        # explicit BEGIN/COMMIT around poll()). SQLite's default implicitly
+        # opens a transaction on the first write, which causes "cannot start a
+        # transaction within a transaction" when we issue BEGIN IMMEDIATE
+        # ourselves.
+        conn = await aiosqlite.connect(self._db_path, isolation_level=None)
         conn.row_factory = aiosqlite.Row
         # Pragmas tuned for small, safe queues. Adjust if necessary at app level.
         await conn.execute("PRAGMA journal_mode=WAL;")
