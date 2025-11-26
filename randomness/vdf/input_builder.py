@@ -180,7 +180,14 @@ def derive_vdf_input(
     )
 
 
+# Backwards-compat alias ------------------------------------------------------
+# Older callers and tests import `build_input`; keep it pointing at the seeded
+# constructor for clarity.
+build_input = build_input_seed
+
+
 __all__ = [
     "build_input_seed",
+    "build_input",
     "derive_vdf_input",
 ]
