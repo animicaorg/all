@@ -48,8 +48,13 @@ class GasMeter:
 
     __slots__ = ("_limit", "_used", "_refunded")
 
-    def __init__(self, limit: int | Gas) -> None:
-        lim = int(limit)
+    def __init__(self, limit: int | Gas | None = None, *, gas_limit: int | Gas | None = None) -> None:
+        # Accept both positional `limit` and keyword `gas_limit` for compatibility
+        # with tests and legacy callers.
+        chosen = gas_limit if gas_limit is not None else limit
+        if chosen is None:
+            raise TypeError("gas limit is required")
+        lim = int(chosen)
         if lim < 0 or not is_u256(lim):
             raise ValueError("gas limit must be a non-negative u256")
         self._limit: int = lim

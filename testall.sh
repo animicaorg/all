@@ -1,200 +1,210 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ============================================================================
-# testall.sh — Run Animica monorepo tests (unit + e2e) excluding the Flutter wallet
-#
-# What it covers (auto-skips if a folder is missing):
-#   • Python pkgs: aicf, capabilities, consensus, da, execution, mempool,
-#                  mining, p2p, pq, proofs, randomness, chains, governance
-#   • Rust crate:  native/
-#   • Web app:     explorer-web (Vitest unit + Playwright e2e)
-#
-# Defaults:
-#   E2E=1          # run e2e (Playwright) for explorer-web; set NO_E2E=1 to skip
-#   FAST=0         # FAST=1 adds -k "not slow" to pytest
-#   TIMEOUT=1800   # per test-suite timeout seconds
-#   INSTALL=0      # INSTALL=1 will run package installs where sensible
-#   NO_RUST=0      # set to 1 to skip Rust tests
-#   NO_JS=0        # set to 1 to skip JS/TS tests
-#   NO_PY=0        # set to 1 to skip Python tests
-#
-# Examples:
-#   chmod +x testall.sh
-#   ./testall.sh
-#   FAST=1 ./testall.sh
-#   NO_E2E=1 ./testall.sh
-#   INSTALL=1 ./testall.sh
-# ============================================================================
+# Animica monorepo test orchestrator
+# Modes:
+#   ./testall.sh        -> run unit + e2e/integration tests
+#   ./testall.sh unit   -> unit tests only
+#   ./testall.sh e2e    -> e2e/integration flows only
 
-ROOT="$(pwd)"
-TIMEOUT="${TIMEOUT:-1800}"
-FAST="${FAST:-0}"
-INSTALL="${INSTALL:-0}"
+ROOT_DIR="$(pwd)"
 
-NO_PY="${NO_PY:-0}"
-NO_RUST="${NO_RUST:-0}"
-NO_JS="${NO_JS:-0}"
-NO_E2E="${NO_E2E:-0}"
-
-# Enable e2e by default unless explicitly disabled
-if [[ "${E2E:-1}" = "0" ]]; then NO_E2E=1; fi
-
-# Pretty logs
-c_gray='\033[90m'; c_red='\033[31m'; c_green='\033[32m'; c_yellow='\033[33m'; c_blue='\033[34m'; c_reset='\033[0m'
+c_blue='\033[34m'; c_green='\033[32m'; c_yellow='\033[33m'; c_red='\033[31m'; c_reset='\033[0m'
 log()   { echo -e "${c_blue}[testall]${c_reset} $*"; }
 warn()  { echo -e "${c_yellow}[warn]${c_reset} $*"; }
 fail()  { echo -e "${c_red}[fail]${c_reset} $*"; }
-ok()    { echo -e "${c_green}[ok]${c_reset} $*"; }
 
-PASSED=()
-FAILED=()
-
-record_result() {
-  local name="$1" code="$2"
-  if [[ "$code" -eq 0 ]]; then PASSED+=("$name"); ok "$name"
-  else FAILED+=("$name"); fail "$name (exit $code)"
+activate_venv() {
+  if [[ -d "$ROOT_DIR/.venv" ]]; then
+    # shellcheck disable=SC1091
+    source "$ROOT_DIR/.venv/bin/activate" || warn "Could not activate .venv"
   fi
 }
 
-run_cmd() {
-  # usage: run_cmd "<suite-name>" timeout_secs cmd...
-  local name="$1"; shift
-  local to="$1"; shift
-  set +e
-  timeout "$to" "$@"
-  local code=$?
-  set -e
-  record_result "$name" "$code"
-  return "$code"
-}
-
-maybe_install_python() {
-  # Try lightweight install for each pkg if INSTALL=1 and requirements present
-  if [[ "$INSTALL" = "1" ]]; then
-    if [[ -f "requirements.txt" ]]; then
-      python3 -m pip -q install -r requirements.txt || warn "pip install failed in $(pwd)"
-    elif [[ -f "pyproject.toml" ]]; then
-      # Best effort: build deps via pip if PEP 621/PEP 517
-      python3 -m pip -q install . || warn "pip install . failed in $(pwd)"
-    fi
-  fi
-}
-
-run_py_pkg() {
-  local pkg="$1"
-  [[ "$NO_PY" = "1" ]] && { warn "Skipping Python ($pkg) by NO_PY=1"; return 0; }
-  [[ ! -d "$pkg" ]] && { warn "No $pkg/ dir; skipping"; return 0; }
-  [[ ! -d "$pkg/tests" ]] && { warn "$pkg has no tests/; skipping"; return 0; }
-
+ensure_pytest() {
   if ! command -v pytest >/dev/null 2>&1; then
-    warn "pytest not found; attempting to install (python3 -m pip install -U pytest)"
-    python3 -m pip -q install -U pytest || { fail "Could not install pytest"; return 1; }
+    warn "pytest not found; attempting install via python3 -m pip install -U pytest"
+    python3 -m pip install -U pytest || fail "Unable to install pytest"
   fi
-
-  pushd "$pkg" >/dev/null
-    maybe_install_python
-    local addopts=("-q")
-    [[ "$FAST" = "1" ]] && addopts+=(-k "not slow")
-    run_cmd "py::$pkg" "$TIMEOUT" python3 -m pytest "${addopts[@]}"
-  popd >/dev/null
 }
 
-run_rust() {
-  [[ "$NO_RUST" = "1" ]] && { warn "Skipping Rust by NO_RUST=1"; return 0; }
-  [[ ! -d native ]] && { warn "No native/ dir; skipping"; return 0; }
+ensure_node_pkg() {
+  local dir="$1"
+  if [[ ! -d "$dir" ]]; then
+    warn "$dir missing; skipping"
+    return 1
+  fi
+  return 0
+}
+
+run_py_unit() {
+  log "[PY] Running unit tests"
+  activate_venv
+  ensure_pytest
+  local targets=(core execution consensus mempool p2p da randomness aicf mining pq governance templates python/animica)
+  local existing=()
+  for t in "${targets[@]}"; do
+    [[ -d "$ROOT_DIR/$t" ]] && existing+=("$t") || warn "[PY] $t not present; skipping"
+  done
+  if ((${#existing[@]}==0)); then
+    warn "[PY] no python targets found"
+    return
+  fi
+  (cd "$ROOT_DIR" && pytest "${existing[@]}")
+}
+
+run_py_e2e() {
+  log "[PY] Running integration/e2e tests"
+  activate_venv
+  ensure_pytest
+  local e2e_paths=(
+    "p2p/tests/test_end_to_end_two_nodes.py"
+    "da/tests/test_integration_post_get_verify.py"
+    "python/animica/da/tests/test_da_api_contract.py"
+    "mining/tests/test_orchestrator_single_node.py"
+    "randomness/tests/test_rpc_cli_roundtrip.py"
+    "aicf/tests/test_integration_proof_to_payout.py"
+    "aicf/tests/test_cli_provider_flow.py"
+  )
+  local existing=()
+  for p in "${e2e_paths[@]}"; do
+    [[ -f "$ROOT_DIR/$p" ]] && existing+=("$p") || warn "[PY] $p not present; skipping"
+  done
+  if ((${#existing[@]}==0)); then
+    warn "[PY] no e2e test files found"
+    return
+  fi
+  (cd "$ROOT_DIR" && pytest "${existing[@]}")
+}
+
+npm_runner() {
+  if command -v pnpm >/dev/null 2>&1; then echo pnpm; return; fi
+  if command -v npm >/dev/null 2>&1; then echo npm; return; fi
+  warn "No Node package manager (pnpm/npm) found"; echo ""; return 1
+}
+
+run_sdk_py_e2e() {
+  log "[SDK] Python e2e harness"
+  activate_venv
+  if [[ -f "$ROOT_DIR/sdk/test-harness/run_e2e_py.py" ]]; then
+    (cd "$ROOT_DIR" && python sdk/test-harness/run_e2e_py.py)
+  else
+    warn "[SDK] run_e2e_py.py not found; skipping"
+  fi
+}
+
+run_sdk_ts_unit() {
+  log "[SDK] TypeScript unit tests"
+  ensure_node_pkg "$ROOT_DIR/sdk/typescript" || return
+  local mgr; mgr=$(npm_runner) || return
+  (cd "$ROOT_DIR/sdk/typescript" && $mgr install && $mgr test)
+}
+
+run_sdk_ts_e2e() {
+  log "[SDK] TypeScript e2e harness"
+  ensure_node_pkg "$ROOT_DIR/sdk" || return
+  local mgr; mgr=$(npm_runner) || return
+  if [[ -f "$ROOT_DIR/sdk/test-harness/run_e2e_ts.mjs" ]]; then
+    (cd "$ROOT_DIR/sdk" && $mgr install && node test-harness/run_e2e_ts.mjs)
+  else
+    warn "[SDK] run_e2e_ts.mjs not found; skipping"
+  fi
+}
+
+run_sdk_rs_tests() {
+  log "[SDK] Rust tests and e2e"
   if ! command -v cargo >/dev/null 2>&1; then
-    warn "cargo not found; skipping Rust tests"
-    return 0
+    warn "cargo not found; skipping Rust"
+    return
   fi
-  pushd native >/dev/null
-    [[ "$INSTALL" = "1" && -f Cargo.lock ]] && cargo fetch || true
-    run_cmd "rust::native" "$TIMEOUT" cargo test --all --locked
-  popd >/dev/null
-}
-
-detect_pkg_manager() {
-  if command -v pnpm >/dev/null 2>&1; then echo "pnpm"
-  elif command -v yarn >/dev/null 2>&1; then echo "yarn"
-  else echo "npm"
+  if [[ -d "$ROOT_DIR/sdk/rust" ]]; then
+    (cd "$ROOT_DIR/sdk/rust" && cargo test)
+  else
+    warn "sdk/rust missing; skipping cargo tests"
+  fi
+  if [[ -x "$ROOT_DIR/sdk/test-harness/run_e2e_rs.sh" ]]; then
+    (cd "$ROOT_DIR/sdk/test-harness" && ./run_e2e_rs.sh)
+  else
+    warn "run_e2e_rs.sh not found; skipping"
   fi
 }
 
-js_install() {
-  local mgr="$1"
-  if [[ "$INSTALL" != "1" ]]; then return 0; fi
-  case "$mgr" in
-    pnpm) pnpm install --frozen-lockfile || pnpm install ;;
-    yarn) yarn install --frozen-lockfile || yarn install ;;
-    npm)  npm ci || npm install ;;
-  esac
+run_wallet_extension_unit() {
+  log "[Wallet-Ext] Unit tests"
+  ensure_node_pkg "$ROOT_DIR/wallet-extension" || return
+  local mgr; mgr=$(npm_runner) || return
+  (cd "$ROOT_DIR/wallet-extension" && $mgr install && $mgr test)
 }
 
-run_explorer_web_unit() {
-  [[ "$NO_JS" = "1" ]] && { warn "Skipping JS/TS by NO_JS=1"; return 0; }
-  [[ ! -d explorer-web ]] && { warn "No explorer-web/ dir; skipping"; return 0; }
-
-  pushd explorer-web >/dev/null
-    local mgr; mgr="$(detect_pkg_manager)"
-    js_install "$mgr"
-    case "$mgr" in
-      pnpm) run_cmd "js::explorer-web::unit" "$TIMEOUT" pnpm test ;;
-      yarn) run_cmd "js::explorer-web::unit" "$TIMEOUT" yarn test ;;
-      npm)  run_cmd "js::explorer-web::unit" "$TIMEOUT" npm test ;;
-    esac
-  popd >/dev/null
+run_wallet_extension_e2e() {
+  log "[Wallet-Ext] E2E tests"
+  ensure_node_pkg "$ROOT_DIR/wallet-extension" || return
+  local mgr; mgr=$(npm_runner) || return
+  if [[ -f "$ROOT_DIR/wallet-extension/playwright.config.ts" ]]; then
+    (cd "$ROOT_DIR/wallet-extension" && $mgr install && $mgr exec playwright install --with-deps || true && $mgr exec playwright test)
+  else
+    warn "playwright.config.ts missing; skipping wallet-extension e2e"
+  fi
 }
 
-run_explorer_web_e2e() {
-  [[ "$NO_JS" = "1" ]] && { warn "Skipping JS/TS by NO_JS=1"; return 0; }
-  [[ "$NO_E2E" = "1" ]] && { warn "Skipping e2e by NO_E2E=1"; return 0; }
-  [[ ! -d explorer-web/test/e2e ]] && { warn "No explorer-web/test/e2e; skipping"; return 0; }
-
-  pushd explorer-web >/dev/null
-    local mgr; mgr="$(detect_pkg_manager)"
-    # Ensure Playwright browsers present
-    case "$mgr" in
-      pnpm)
-        pnpm exec playwright install --with-deps || true
-        run_cmd "e2e::explorer-web" "$TIMEOUT" pnpm exec playwright test
-        ;;
-      yarn)
-        npx playwright install --with-deps || true
-        run_cmd "e2e::explorer-web" "$TIMEOUT" npx playwright test
-        ;;
-      npm)
-        npx playwright install --with-deps || true
-        run_cmd "e2e::explorer-web" "$TIMEOUT" npx playwright test
-        ;;
-    esac
-  popd >/dev/null
+run_studio_wasm_unit() {
+  log "[Studio-WASM] Unit tests"
+  ensure_node_pkg "$ROOT_DIR/studio-wasm" || return
+  local mgr; mgr=$(npm_runner) || return
+  (cd "$ROOT_DIR/studio-wasm" && $mgr install && $mgr test)
 }
 
-# ---------------- Main ----------------
+run_studio_wasm_e2e() {
+  log "[Studio-WASM] E2E tests"
+  ensure_node_pkg "$ROOT_DIR/studio-wasm" || return
+  local mgr; mgr=$(npm_runner) || return
+  if [[ -f "$ROOT_DIR/studio-wasm/playwright.config.ts" ]]; then
+    (cd "$ROOT_DIR/studio-wasm" && $mgr install && $mgr exec playwright install --with-deps || true && $mgr exec playwright test)
+  else
+    warn "playwright.config.ts missing; skipping studio-wasm e2e"
+  fi
+}
 
-log "Animica test runner — starting in $ROOT"
-log "FAST=$FAST  INSTALL=$INSTALL  TIMEOUT=$TIMEOUT  NO_PY=$NO_PY  NO_RUST=$NO_RUST  NO_JS=$NO_JS  NO_E2E=$NO_E2E"
+run_wallet_checks() {
+  log "[Wallet] Flutter checks"
+  if ! command -v flutter >/dev/null 2>&1; then
+    warn "Flutter not installed; skipping wallet checks"
+    return
+  fi
+  if [[ -d "$ROOT_DIR/wallet" ]]; then
+    (cd "$ROOT_DIR/wallet" && flutter test)
+  else
+    warn "wallet directory missing; skipping"
+  fi
+}
 
-# 1) Python test suites (per-package)
-PY_PKGS=(aicf capabilities consensus da execution mempool mining p2p pq proofs randomness chains governance)
-for pkg in "${PY_PKGS[@]}"; do
-  run_py_pkg "$pkg"
-done
-
-# 2) Rust crate(s)
-run_rust
-
-# 3) Web app tests (unit + e2e)
-run_explorer_web_unit
-run_explorer_web_e2e
-
-# 4) Summary
-echo
-log "====================== SUMMARY ======================"
-echo -e "${c_green}PASSED (${#PASSED[@]}):${c_reset} ${PASSED[*]:-<none>}"
-if [[ "${#FAILED[@]}" -gt 0 ]]; then
-  echo -e "${c_red}FAILED (${#FAILED[@]}):${c_reset} ${FAILED[*]}"
-  exit 1
-else
-  ok "All selected test suites passed."
-fi
+cmd="${1:-all}"
+case "$cmd" in
+  unit)
+    run_py_unit
+    run_sdk_ts_unit
+    run_sdk_rs_tests
+    run_wallet_extension_unit
+    run_studio_wasm_unit
+    ;;
+  e2e)
+    run_py_e2e
+    run_sdk_py_e2e
+    run_sdk_ts_e2e
+    run_wallet_extension_e2e
+    run_studio_wasm_e2e
+    ;;
+  all|*)
+    run_py_unit
+    run_sdk_ts_unit
+    run_sdk_rs_tests
+    run_wallet_extension_unit
+    run_studio_wasm_unit
+    run_wallet_checks
+    run_py_e2e
+    run_sdk_py_e2e
+    run_sdk_ts_e2e
+    run_wallet_extension_e2e
+    run_studio_wasm_e2e
+    ;;
+ esac
