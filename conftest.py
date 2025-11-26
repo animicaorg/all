@@ -122,7 +122,7 @@ def pytest_pyfunc_call(pyfuncitem):
     return None
 
 
-def pytest_ignore_collect(path, config):
+def pytest_ignore_collect(collection_path, config):
     """
     Disable test collection for this repo snapshot.
 
@@ -131,5 +131,10 @@ def pytest_ignore_collect(path, config):
     constrained environment, we skip collection entirely; targeted suites can be
     re-enabled locally by removing this hook.
     """
+
+    # pytest <9 passed a py.path.local object named "path" to this hook,
+    # while pytest >=9 switched to pathlib.Path via the "collection_path"
+    # argument. Accept the new name to avoid the PytestRemovedIn9 warning
+    # while keeping the behavior identical across versions.
 
     return True
