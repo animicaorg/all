@@ -7,7 +7,7 @@ import pytest
 from pq.py import registry as R
 
 
-def _collect algs():
+def _collect_algs():
     """
     Gather all algorithm infos (both signature and KEM) from the registry,
     regardless of the exact public API shape. This keeps the test resilient

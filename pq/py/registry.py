@@ -46,12 +46,41 @@ class SigAlgInfo(AlgInfoBase):
     seckey_size: int
     signature_size: int
 
+    # Friendly aliases expected by tests/SDKs
+    @property
+    def pk_len(self) -> int:  # pragma: no cover - trivial alias
+        return self.pubkey_size
+
+    @property
+    def sk_len(self) -> int:  # pragma: no cover
+        return self.seckey_size
+
+    @property
+    def sig_len(self) -> int:  # pragma: no cover
+        return self.signature_size
+
 @dataclass(frozen=True)
 class KemAlgInfo(AlgInfoBase):
     pubkey_size: int
     seckey_size: int
     ciphertext_size: int
     shared_secret_size: int
+
+    @property
+    def pk_len(self) -> int:  # pragma: no cover
+        return self.pubkey_size
+
+    @property
+    def sk_len(self) -> int:  # pragma: no cover
+        return self.seckey_size
+
+    @property
+    def ct_len(self) -> int:  # pragma: no cover
+        return self.ciphertext_size
+
+    @property
+    def ss_len(self) -> int:  # pragma: no cover
+        return self.shared_secret_size
 
 
 # ---------------------------
@@ -222,6 +251,12 @@ _KEMS: Dict[str, KemAlgInfo] = {
 # Maps by numeric id too (filled using ALG_IDS)
 _SIGS_BY_ID: Dict[int, SigAlgInfo] = {ALG_IDS[k]: v for k, v in _SIGS.items() if k in ALG_IDS}
 _KEMS_BY_ID: Dict[int, KemAlgInfo] = {ALG_IDS[k]: v for k, v in _KEMS.items() if k in ALG_IDS}
+
+# Public registries consumed by tests/SDKs
+SIGNATURES = _SIGS
+KEMS = _KEMS
+BY_NAME: Dict[str, AlgInfo] = {**SIGNATURES, **KEMS}
+BY_ID: Dict[int, AlgInfo] = {**_SIGS_BY_ID, **_KEMS_BY_ID}
 
 
 # ---------------------------
