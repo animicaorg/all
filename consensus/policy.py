@@ -63,7 +63,19 @@ from typing import Dict, Mapping, Optional, Set, Any, Tuple
 import json
 import hashlib
 
-import yaml  # PyYAML
+try:
+    import yaml  # PyYAML
+except Exception:  # pragma: no cover - lightweight fallback for test environments
+    import types
+
+    def _jsonish_safe_load(data: Any) -> Any:
+        """Minimal loader that accepts JSON as a subset of YAML for tests."""
+
+        if isinstance(data, (bytes, bytearray)):
+            data = data.decode("utf-8")
+        return json.loads(data)
+
+    yaml = types.SimpleNamespace(safe_load=_jsonish_safe_load)
 
 from .errors import PolicyError
 from .types import ProofType, ThetaMicro, GammaMicro, MicroNat

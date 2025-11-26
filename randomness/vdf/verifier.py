@@ -208,7 +208,13 @@ def verify_consensus(x: IntOrBytes, y: int, pi: int, l: Optional[int] = None) ->
     return Verifier.from_env().verify(x, y, pi, l)
 
 
+# Legacy alias expected by tests/importers.
+def verify(x: IntOrBytes, y: int, pi: int, l: Optional[int] = None) -> bool:  # pragma: no cover - thin wrapper
+    return verify_consensus(x, y, pi, l)
+
+
 __all__ = [
     "Verifier",
     "verify_consensus",
+    "verify",
 ]

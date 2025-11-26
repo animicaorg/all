@@ -46,6 +46,43 @@ DEFAULT_REVEAL_GRACE_BLOCKS = 2
 
 
 @dataclass(frozen=True, slots=True)
+class WindowParams:
+    """
+    Lightweight wall-clock window parameters used by tests.
+
+    This mirrors :class:`CommitRevealParams` but uses second-based durations and
+    an explicit anchor timestamp. Properties expose the names expected by
+    :class:`randomness.commit_reveal.round_manager.RoundManager` so the class can
+    be passed directly without further adaptation.
+    """
+
+    commit_secs: int
+    reveal_secs: int
+    reveal_grace_secs: int = 0
+    round0_start_ts: int = 0
+
+    @property
+    def commit_phase_s(self) -> int:  # pragma: no cover - trivial
+        return int(self.commit_secs)
+
+    @property
+    def reveal_phase_s(self) -> int:  # pragma: no cover - trivial
+        return int(self.reveal_secs)
+
+    @property
+    def vdf_phase_s(self) -> int:  # pragma: no cover - trivial
+        return 0
+
+    @property
+    def reveal_grace_s(self) -> int:  # pragma: no cover - trivial
+        return int(self.reveal_grace_secs)
+
+    @property
+    def round_anchor_s(self) -> int:  # pragma: no cover - trivial
+        return int(self.round0_start_ts)
+
+
+@dataclass(frozen=True, slots=True)
 class CommitRevealParams:
     """
     Parameters controlling commit/reveal windows and optional bonding/slashing.
