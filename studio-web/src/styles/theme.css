@@ -5,64 +5,89 @@
 
 /* ========== Light theme (default) ========== */
 :root {
+  color-scheme: dark;
+
   /* Backgrounds & surfaces */
-  --bg: #ffffff;
-  --surface: #f6f7f9;
-  --surface-2: #eef0f4;
-  --surface-3: #e5e8ef;
+  --bg: #050914;
+  --surface: #0b1222;
+  --surface-2: #0f162a;
+  --surface-3: #14203a;
 
   /* Layered surfaces (used by inline component styles) */
   --surface-1: var(--surface);
   --surface-2: var(--surface-2);
   --surface-3: var(--surface-3);
-  --surface-elev-1: color-mix(in srgb, var(--surface) 92%, white 8%);
-  --surface-elev-2: color-mix(in srgb, var(--surface-2) 90%, white 10%);
-  --surface-elev-3: color-mix(in srgb, var(--surface-3) 88%, white 12%);
+  --surface-elev-1: color-mix(in srgb, var(--surface) 86%, #0f172a);
+  --surface-elev-2: color-mix(in srgb, var(--surface-2) 82%, #111827);
+  --surface-elev-3: color-mix(in srgb, var(--surface-3) 76%, #0b1222);
 
   /* Text */
-  --text: #0f172a;          /* slate-900 */
-  --text-muted: #475569;    /* slate-600 */
-  --text-inverse: #ffffff;
+  --text: #e7ecf5;
+  --text-muted: #9fb2cc;
+  --text-inverse: #04060b;
   --fg: var(--text);
-  --fg-strong: color-mix(in srgb, var(--text) 94%, black 6%);
+  --fg-strong: color-mix(in srgb, var(--text) 96%, white 4%);
   --fg-muted: var(--text-muted);
-  --fg-dim: color-mix(in srgb, var(--text-muted) 80%, transparent);
+  --fg-dim: color-mix(in srgb, var(--text-muted) 70%, transparent);
 
   /* Borders & outlines */
-  --border: #d7dbe3;
-  --border-muted: color-mix(in srgb, var(--border) 80%, transparent);
-  --focus-ring-color: #2563eb; /* primary-600 */
-  --focus-ring-alpha: 0.55;
+  --border: #1f2b3f;
+  --border-muted: color-mix(in srgb, var(--border) 65%, transparent);
+  --divider: color-mix(in srgb, var(--border) 80%, transparent);
+  --focus-ring-color: #7aa2ff;
+  --focus-ring-alpha: 0.75;
 
   /* Brand & statuses */
-  --primary: #3b82f6;         /* blue-500 */
-  --primary-600: #2563eb;
-  --primary-700: #1d4ed8;
-  --primary-contrast: #ffffff;
+  --primary: #7aa2ff;
+  --primary-600: #5c7cfa;
+  --primary-700: #4c6fff;
+  --primary-contrast: #050914;
 
-  --accent: #8b5cf6;          /* violet-500 */
-  --success: #16a34a;         /* green-600 */
-  --warning: #d97706;         /* amber-600 */
-  --danger: #ef4444;          /* red-500 */
+  --accent: #c084fc;
+  --success: #34d399;
+  --warning: #f59e0b;
+  --danger: #fb7185;
   --ok: var(--success);
 
-  --accent-weak: color-mix(in srgb, var(--accent) 12%, var(--surface));
-  --accent-strong: color-mix(in srgb, var(--accent) 88%, black 12%);
+  --accent-weak: color-mix(in srgb, var(--accent) 20%, var(--surface));
+  --accent-strong: color-mix(in srgb, var(--accent) 86%, #0b1222);
   --on-accent: var(--primary-contrast);
 
   /* Subtle tints (for badges/pills) */
-  --primary-tint: color-mix(in srgb, var(--primary) 12%, white);
-  --success-tint: color-mix(in srgb, var(--success) 12%, white);
-  --warning-tint: color-mix(in srgb, var(--warning) 12%, white);
-  --danger-tint:  color-mix(in srgb, var(--danger)  12%, white);
+  --primary-tint: color-mix(in srgb, var(--primary) 16%, #0d1324);
+  --success-tint: color-mix(in srgb, var(--success) 16%, #0d1324);
+  --warning-tint: color-mix(in srgb, var(--warning) 16%, #0d1324);
+  --danger-tint:  color-mix(in srgb, var(--danger)  16%, #0d1324);
+
+  /* Component layer helpers */
+  --panel-bg: color-mix(in srgb, var(--surface) 92%, #070b14);
+  --panel-strong: color-mix(in srgb, var(--surface-2) 90%, #050914);
+  --toolbar-bg: color-mix(in srgb, var(--surface-2) 88%, #0a0f1c);
+  --muted-bg: color-mix(in srgb, var(--surface-2) 75%, #0a101e);
+  --hover-bg: color-mix(in srgb, var(--surface-3) 88%, #0a0f1c);
+  --btn-bg: linear-gradient(135deg, color-mix(in srgb, var(--surface-2) 86%, #111827), color-mix(in srgb, var(--surface-3) 78%, #0f172a));
+  --btn-bg-h: linear-gradient(135deg, color-mix(in srgb, var(--surface-2) 82%, #1b2842), color-mix(in srgb, var(--surface-3) 76%, #10203a));
+  --accent-bg: linear-gradient(135deg, color-mix(in srgb, var(--primary) 30%, #1b2a45), color-mix(in srgb, var(--primary) 58%, #0f172a));
+  --accent-bg-h: linear-gradient(135deg, color-mix(in srgb, var(--primary) 36%, #23355c), color-mix(in srgb, var(--primary) 68%, #111c33));
+  --accent-fg: #dbeafe;
+  --warn-bg: color-mix(in srgb, var(--warning) 22%, #1f1202);
+  --warn-fg: color-mix(in srgb, var(--warning) 80%, #fef3c7);
+  --danger-bg: color-mix(in srgb, var(--danger) 20%, #1f0d12);
+  --danger-fg: color-mix(in srgb, var(--danger) 82%, #ffe4e6);
+
+  /* Code editor variables */
+  --code-bg: #0b1020;
+  --code-fg: #e2e8f0;
+  --code-selection: rgba(122, 162, 255, 0.22);
+  --code-guide: #1f2937;
 
   /* Shadows / elevations */
-  --shadow-1: 0 1px 2px rgba(15, 23, 42, 0.05), 0 1px 1px rgba(15, 23, 42, 0.04);
-  --shadow-2: 0 8px 24px rgba(15, 23, 42, 0.10), 0 2px 8px rgba(15, 23, 42, 0.06);
-  --shadow-3: 0 18px 40px rgba(15, 23, 42, 0.14), 0 6px 16px rgba(15, 23, 42, 0.08);
+  --shadow-1: 0 10px 40px rgba(3, 7, 18, 0.28), 0 2px 10px rgba(12, 18, 31, 0.35);
+  --shadow-2: 0 20px 50px rgba(3, 7, 18, 0.38), 0 10px 24px rgba(12, 18, 31, 0.3);
+  --shadow-3: 0 28px 70px rgba(3, 7, 18, 0.46), 0 12px 28px rgba(12, 18, 31, 0.32);
 
   /* Backdrop */
-  --backdrop: rgba(15, 23, 42, 0.3);
+  --backdrop: rgba(3, 7, 18, 0.48);
 
   /* Component radii (inherit base from tokens.css when not overridden) */
   --radius-card: var(--radius-lg);
@@ -70,105 +95,139 @@
   --radius-control: 10px;
 }
 
-/* ========== Dark theme ========== */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0b0f17;
-    --surface: #0f172a;     /* slate-900 */
-    --surface-2: #111827;   /* gray-900 */
-    --surface-3: #1f2937;   /* gray-800 */
-
-    --surface-1: var(--surface);
-    --surface-2: var(--surface-2);
-    --surface-3: var(--surface-3);
-    --surface-elev-1: color-mix(in srgb, var(--surface) 84%, white 16%);
-    --surface-elev-2: color-mix(in srgb, var(--surface-2) 82%, white 18%);
-    --surface-elev-3: color-mix(in srgb, var(--surface-3) 80%, white 20%);
-
-    --text: #e5e7eb;        /* gray-200 */
-    --text-muted: #9ca3af;  /* gray-400 */
-    --text-inverse: #0b0f17;
-    --fg: var(--text);
-    --fg-strong: color-mix(in srgb, var(--text) 92%, white 8%);
-    --fg-muted: var(--text-muted);
-    --fg-dim: color-mix(in srgb, var(--text-muted) 75%, transparent);
-
-    --border: #233044;
-    --border-muted: color-mix(in srgb, var(--border) 70%, transparent);
-
-    --primary: #60a5fa;     /* blue-400 */
-    --primary-600: #3b82f6;
-    --primary-700: #2563eb;
-    --primary-contrast: #0b0f17;
-
-    --accent: #a78bfa;      /* violet-400 */
-    --success: #22c55e;
-    --warning: #f59e0b;
-    --danger: #f87171;
-    --ok: var(--success);
-
-    --accent-weak: color-mix(in srgb, var(--accent) 18%, var(--surface));
-    --accent-strong: color-mix(in srgb, var(--accent) 90%, white 10%);
-    --on-accent: var(--primary-contrast);
-
-    --primary-tint: color-mix(in srgb, var(--primary) 18%, black);
-    --success-tint: color-mix(in srgb, var(--success) 18%, black);
-    --warning-tint: color-mix(in srgb, var(--warning) 18%, black);
-    --danger-tint:  color-mix(in srgb, var(--danger)  18%, black);
-
-    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.28), 0 1px 1px rgba(0, 0, 0, 0.24);
-    --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.36), 0 2px 8px rgba(0, 0, 0, 0.28);
-    --shadow-3: 0 18px 40px rgba(0, 0, 0, 0.45), 0 6px 16px rgba(0, 0, 0, 0.32);
-
-    --backdrop: rgba(0, 0, 0, 0.45);
-    --focus-ring-color: #60a5fa;
-    --focus-ring-alpha: 0.7;
-  }
-}
-
 /* Manual theme override via data attribute (wins over media query) */
 [data-theme="light"] {
   color-scheme: light;
-}
-[data-theme="dark"] {
-  color-scheme: dark;
-  --bg: #0b0f17;
-  --surface: #0f172a;
-  --surface-2: #111827;
-  --surface-3: #1f2937;
+  --bg: #f6f7fb;
+  --surface: #f8fafc;
+  --surface-2: #eef2f7;
+  --surface-3: #e3e8f0;
   --surface-1: var(--surface);
   --surface-2: var(--surface-2);
   --surface-3: var(--surface-3);
-  --surface-elev-1: color-mix(in srgb, var(--surface) 84%, white 16%);
-  --surface-elev-2: color-mix(in srgb, var(--surface-2) 82%, white 18%);
-  --surface-elev-3: color-mix(in srgb, var(--surface-3) 80%, white 20%);
-  --text: #e5e7eb;
-  --text-muted: #9ca3af;
-  --text-inverse: #0b0f17;
+  --surface-elev-1: color-mix(in srgb, var(--surface) 88%, white 12%);
+  --surface-elev-2: color-mix(in srgb, var(--surface-2) 86%, white 14%);
+  --surface-elev-3: color-mix(in srgb, var(--surface-3) 84%, white 16%);
+  --text: #0f172a;
+  --text-muted: #4b5563;
+  --text-inverse: #ffffff;
   --fg: var(--text);
-  --fg-strong: color-mix(in srgb, var(--text) 92%, white 8%);
+  --fg-strong: color-mix(in srgb, var(--text) 94%, black 6%);
   --fg-muted: var(--text-muted);
-  --fg-dim: color-mix(in srgb, var(--text-muted) 75%, transparent);
-  --border: #233044;
+  --fg-dim: color-mix(in srgb, var(--text-muted) 78%, transparent);
+  --border: #d6dce8;
   --border-muted: color-mix(in srgb, var(--border) 70%, transparent);
-  --primary: #60a5fa;
-  --primary-600: #3b82f6;
-  --primary-700: #2563eb;
-  --primary-contrast: #0b0f17;
-  --accent: #a78bfa;
-  --success: #22c55e;
-  --warning: #f59e0b;
-  --danger: #f87171;
+  --divider: color-mix(in srgb, var(--border) 80%, transparent);
+  --focus-ring-color: #2563eb;
+  --focus-ring-alpha: 0.6;
+  --primary: #2563eb;
+  --primary-600: #1d4ed8;
+  --primary-700: #1e40af;
+  --primary-contrast: #ffffff;
+  --accent: #7c3aed;
+  --success: #16a34a;
+  --warning: #d97706;
+  --danger: #ef4444;
   --ok: var(--success);
-  --accent-weak: color-mix(in srgb, var(--accent) 18%, var(--surface));
-  --accent-strong: color-mix(in srgb, var(--accent) 90%, white 10%);
+  --accent-weak: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  --accent-strong: color-mix(in srgb, var(--accent) 88%, black 12%);
   --on-accent: var(--primary-contrast);
-  --primary-tint: color-mix(in srgb, var(--primary) 18%, black);
-  --success-tint: color-mix(in srgb, var(--success) 18%, black);
-  --warning-tint: color-mix(in srgb, var(--warning) 18%, black);
-  --danger-tint:  color-mix(in srgb, var(--danger)  18%, black);
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.28), 0 1px 1px rgba(0, 0, 0, 0.24);
-  --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.36), 0 2px 8px rgba(0, 0, 0, 0.28);
+  --primary-tint: color-mix(in srgb, var(--primary) 12%, white);
+  --success-tint: color-mix(in srgb, var(--success) 12%, white);
+  --warning-tint: color-mix(in srgb, var(--warning) 12%, white);
+  --danger-tint:  color-mix(in srgb, var(--danger)  12%, white);
+  --panel-bg: color-mix(in srgb, var(--surface) 92%, white 8%);
+  --panel-strong: color-mix(in srgb, var(--surface-2) 90%, white 10%);
+  --toolbar-bg: color-mix(in srgb, var(--surface-2) 88%, white 12%);
+  --muted-bg: color-mix(in srgb, var(--surface-2) 80%, white 20%);
+  --hover-bg: color-mix(in srgb, var(--surface-3) 86%, white 14%);
+  --btn-bg: linear-gradient(135deg, color-mix(in srgb, var(--surface-2) 88%, white 12%), color-mix(in srgb, var(--surface-3) 82%, white 18%));
+  --btn-bg-h: linear-gradient(135deg, color-mix(in srgb, var(--surface-2) 86%, white 14%), color-mix(in srgb, var(--surface-3) 80%, white 20%));
+  --accent-bg: linear-gradient(135deg, color-mix(in srgb, var(--primary) 40%, white 15%), color-mix(in srgb, var(--primary) 70%, #0b1222));
+  --accent-bg-h: linear-gradient(135deg, color-mix(in srgb, var(--primary) 46%, white 10%), color-mix(in srgb, var(--primary) 76%, #0b1222));
+  --accent-fg: #0b1222;
+  --warn-bg: color-mix(in srgb, var(--warning) 16%, #fff8eb);
+  --warn-fg: color-mix(in srgb, var(--warning) 86%, #92400e);
+  --danger-bg: color-mix(in srgb, var(--danger) 16%, #fff1f2);
+  --danger-fg: color-mix(in srgb, var(--danger) 88%, #7f1d1d);
+  --code-bg: #0f172a;
+  --code-fg: #0b1222;
+  --code-selection: rgba(37, 99, 235, 0.18);
+  --code-guide: #d8dee9;
+  --shadow-1: 0 10px 30px rgba(15, 23, 42, 0.14), 0 3px 12px rgba(15, 23, 42, 0.12);
+  --shadow-2: 0 16px 46px rgba(15, 23, 42, 0.16), 0 6px 18px rgba(15, 23, 42, 0.1);
+  --shadow-3: 0 24px 70px rgba(15, 23, 42, 0.18), 0 8px 26px rgba(15, 23, 42, 0.12);
+  --backdrop: rgba(15, 23, 42, 0.35);
+  --radius-card: var(--radius-lg);
+  --radius-panel: var(--radius-md);
+  --radius-control: 10px;
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #050914;
+  --surface: #0b1222;
+  --surface-2: #0f162a;
+  --surface-3: #14203a;
+  --surface-1: var(--surface);
+  --surface-2: var(--surface-2);
+  --surface-3: var(--surface-3);
+  --surface-elev-1: color-mix(in srgb, var(--surface) 86%, #0f172a);
+  --surface-elev-2: color-mix(in srgb, var(--surface-2) 82%, #111827);
+  --surface-elev-3: color-mix(in srgb, var(--surface-3) 76%, #0b1222);
+  --text: #e7ecf5;
+  --text-muted: #9fb2cc;
+  --text-inverse: #04060b;
+  --fg: var(--text);
+  --fg-strong: color-mix(in srgb, var(--text) 96%, white 4%);
+  --fg-muted: var(--text-muted);
+  --fg-dim: color-mix(in srgb, var(--text-muted) 70%, transparent);
+  --border: #1f2b3f;
+  --border-muted: color-mix(in srgb, var(--border) 65%, transparent);
+  --divider: color-mix(in srgb, var(--border) 80%, transparent);
+  --focus-ring-color: #7aa2ff;
+  --focus-ring-alpha: 0.75;
+  --primary: #7aa2ff;
+  --primary-600: #5c7cfa;
+  --primary-700: #4c6fff;
+  --primary-contrast: #050914;
+  --accent: #c084fc;
+  --success: #34d399;
+  --warning: #f59e0b;
+  --danger: #fb7185;
+  --ok: var(--success);
+  --accent-weak: color-mix(in srgb, var(--accent) 20%, var(--surface));
+  --accent-strong: color-mix(in srgb, var(--accent) 86%, #0b1222);
+  --on-accent: var(--primary-contrast);
+  --primary-tint: color-mix(in srgb, var(--primary) 16%, #0d1324);
+  --success-tint: color-mix(in srgb, var(--success) 16%, #0d1324);
+  --warning-tint: color-mix(in srgb, var(--warning) 16%, #0d1324);
+  --danger-tint:  color-mix(in srgb, var(--danger)  16%, #0d1324);
+  --panel-bg: color-mix(in srgb, var(--surface) 92%, #070b14);
+  --panel-strong: color-mix(in srgb, var(--surface-2) 90%, #050914);
+  --toolbar-bg: color-mix(in srgb, var(--surface-2) 88%, #0a0f1c);
+  --muted-bg: color-mix(in srgb, var(--surface-2) 75%, #0a101e);
+  --hover-bg: color-mix(in srgb, var(--surface-3) 88%, #0a0f1c);
+  --btn-bg: linear-gradient(135deg, color-mix(in srgb, var(--surface-2) 86%, #111827), color-mix(in srgb, var(--surface-3) 78%, #0f172a));
+  --btn-bg-h: linear-gradient(135deg, color-mix(in srgb, var(--surface-2) 82%, #1b2842), color-mix(in srgb, var(--surface-3) 76%, #10203a));
+  --accent-bg: linear-gradient(135deg, color-mix(in srgb, var(--primary) 30%, #1b2a45), color-mix(in srgb, var(--primary) 58%, #0f172a));
+  --accent-bg-h: linear-gradient(135deg, color-mix(in srgb, var(--primary) 36%, #23355c), color-mix(in srgb, var(--primary) 68%, #111c33));
+  --accent-fg: #dbeafe;
+  --warn-bg: color-mix(in srgb, var(--warning) 22%, #1f1202);
+  --warn-fg: color-mix(in srgb, var(--warning) 80%, #fef3c7);
+  --danger-bg: color-mix(in srgb, var(--danger) 20%, #1f0d12);
+  --danger-fg: color-mix(in srgb, var(--danger) 82%, #ffe4e6);
+  --code-bg: #0b1020;
+  --code-fg: #e2e8f0;
+  --code-selection: rgba(122, 162, 255, 0.22);
+  --code-guide: #1f2937;
+  --shadow-1: 0 10px 40px rgba(3, 7, 18, 0.28), 0 2px 10px rgba(12, 18, 31, 0.35);
+  --shadow-2: 0 20px 50px rgba(3, 7, 18, 0.38), 0 10px 24px rgba(12, 18, 31, 0.3);
+  --shadow-3: 0 28px 70px rgba(3, 7, 18, 0.46), 0 12px 28px rgba(12, 18, 31, 0.32);
+  --backdrop: rgba(3, 7, 18, 0.48);
+  --radius-card: var(--radius-lg);
+  --radius-panel: var(--radius-md);
+  --radius-control: 10px;
+}
   --shadow-3: 0 18px 40px rgba(0, 0, 0, 0.45), 0 6px 16px rgba(0, 0, 0, 0.32);
   --backdrop: rgba(0, 0, 0, 0.45);
   --focus-ring-color: #60a5fa;
@@ -250,32 +309,45 @@ hr {
   gap: var(--space-2);
   padding: calc(var(--space-2) + 2px) var(--space-4);
   border-radius: var(--radius-control);
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text);
-  font-weight: var(--weight-medium);
+  border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+  background: var(--btn-bg);
+  color: var(--fg);
+  font-weight: var(--weight-semibold);
   line-height: 1;
-  transition: background var(--transition-medium), border-color var(--transition-medium), transform var(--transition-fast), box-shadow var(--transition-fast);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--bg) 55%, transparent) inset, var(--shadow-1);
+  transition:
+    background var(--transition-medium),
+    border-color var(--transition-medium),
+    transform var(--transition-fast),
+    box-shadow var(--transition-fast),
+    color var(--transition-medium);
 }
-.btn:hover { background: var(--surface-2); }
-.btn:active { transform: translateY(1px); }
+.btn:hover {
+  background: var(--btn-bg-h);
+  box-shadow: 0 2px 0 color-mix(in srgb, var(--bg) 60%, transparent) inset, var(--shadow-2);
+  transform: translateY(-1px);
+}
+.btn:active {
+  transform: translateY(0);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 20%, transparent) inset, var(--shadow-1);
+}
 .btn[disabled], .btn:disabled { opacity: 0.6; pointer-events: none; }
 
 .btn-primary {
-  background: var(--primary);
-  border-color: color-mix(in srgb, var(--primary) 70%, black);
-  color: var(--primary-contrast);
-  box-shadow: 0 1px 0 color-mix(in srgb, var(--primary) 50%, black) inset;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--primary) 48%, #1b2a45), color-mix(in srgb, var(--primary-600) 78%, #0b1222));
+  border-color: color-mix(in srgb, var(--primary) 68%, #0b1222);
+  color: var(--on-accent);
+  box-shadow: 0 2px 0 color-mix(in srgb, var(--primary-700) 35%, transparent) inset, var(--shadow-2);
 }
-.btn-primary:hover { background: var(--primary-600); }
-.btn-primary:active { background: var(--primary-700); }
+.btn-primary:hover { background: linear-gradient(135deg, color-mix(in srgb, var(--primary) 56%, #24375a), color-mix(in srgb, var(--primary-700) 84%, #0c1424)); }
+.btn-primary:active { background: linear-gradient(135deg, color-mix(in srgb, var(--primary-700) 88%, #0c1424), color-mix(in srgb, var(--primary-700) 94%, #0b1222)); }
 
 .btn-ghost {
   background: transparent;
   border-color: transparent;
   color: var(--text);
 }
-.btn-ghost:hover { background: var(--surface); border-color: var(--border); }
+.btn-ghost:hover { background: var(--surface-elev-1); border-color: color-mix(in srgb, var(--border) 70%, transparent); }
 
 /* Inputs */
 .input, .select, .textarea {
