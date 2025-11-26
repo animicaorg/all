@@ -262,6 +262,11 @@ def compute_share_micro(theta_micro: MicroNat, shares_per_block: float) -> Micro
     return max(0, min(int(theta_micro) - 1, int(val)))
 
 
+# Compatibility alias expected by legacy callers/tests.
+def share_microtarget(theta_micro: MicroNat, shares_per_block: float) -> MicroNat:
+    return compute_share_micro(theta_micro, shares_per_block)
+
+
 def compute_share_tiers(
     theta_micro: MicroNat,
     factors: Sequence[int] = (2, 4, 8, 16, 32, 64, 128, 256),

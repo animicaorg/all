@@ -63,7 +63,7 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, MutableMapping,
 
 from .types import ProofType, MicroNat
 from .policy import PoiesPolicy
-from .caps import Contribution, apply_all_caps
+from .caps import Contribution, apply_all_caps, clip_per_type, clip_total_gamma
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +74,12 @@ from .caps import Contribution, apply_all_caps
 ScoreHook = Callable[[Mapping[str, Any], PoiesPolicy], MicroNat]
 
 
+@dataclass(frozen=True)
+class AggregateResult:
+    sum_psi: float
+    breakdown: Mapping[Any, float]
+
+
 def _to_micro(x: float) -> MicroNat:
     """Convert a non-negative real 'nats' weight to integer micro-nats deterministically."""
     if not math.isfinite(x) or x <= 0.0:
@@ -82,6 +88,20 @@ def _to_micro(x: float) -> MicroNat:
     # prefer conventional round; downstream caps keep determinism). Use +1e-12 to avoid
     # pathological float errors near .5 boundaries.
     return int(round(x * 1_000_000 + 1e-12))
+
+
+# ---------------------------------------------------------------------------
+# Lightweight aggregate helper (float domain; test-only)
+# ---------------------------------------------------------------------------
+
+def aggregate(psi_by_kind: Mapping[Any, float], policy: Any) -> AggregateResult:
+    """Aggregate ψ by proof kind applying per-type and Γ caps (float domain)."""
+
+    clipped = clip_per_type(psi_by_kind, policy)
+    total = sum(clipped.values())
+    scale = clip_total_gamma(total, policy)
+    scaled = {k: v * scale for k, v in clipped.items()}
+    return AggregateResult(sum_psi=sum(scaled.values()), breakdown=scaled)
 
 
 def _clamp01(x: float) -> float:

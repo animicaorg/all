@@ -38,10 +38,54 @@ c_out, stats = apply_all_caps(c_in, pol)
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Mapping, MutableSequence, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, MutableSequence, Sequence, Tuple
 
 from .types import ProofType, MicroNat, GammaMicro
 from .policy import PoiesPolicy, TypeCap
+
+
+# ---------------------------------------------------------------------------
+# Lightweight float-based helpers for tests/legacy callers
+# ---------------------------------------------------------------------------
+
+def _policy_lookup(mapping: Mapping[Any, Any], key: Any) -> Any:
+    if key in mapping:
+        return mapping[key]
+    if hasattr(key, "name") and key.name.lower() in mapping:
+        return mapping[key.name.lower()]
+    if isinstance(key, str) and key.lower() in mapping:
+        return mapping[key.lower()]
+    raise KeyError(key)
+
+
+def clip_per_proof(value: float, kind: Any, policy: Any) -> float:
+    """Clip a single ψ value against per-proof cap for its kind."""
+
+    cap_map = getattr(policy, "per_proof_caps", {}) or getattr(policy, "proof_caps", {})
+    cap = _policy_lookup(cap_map, kind)
+    return min(float(value), float(cap))
+
+
+def clip_per_type(values: Mapping[Any, float], policy: Any) -> dict[Any, float]:
+    """Clip per-type aggregate ψ values against per-type caps."""
+
+    caps_map = getattr(policy, "per_type_caps", {}) or getattr(policy, "type_caps", {})
+    out: dict[Any, float] = {}
+    for k, v in values.items():
+        cap = _policy_lookup(caps_map, k)
+        out[k] = min(float(v), float(cap))
+    return out
+
+
+def clip_total_gamma(total: float, policy: Any) -> float:
+    """Return scaling factor s such that total * s <= Γ."""
+
+    gamma = float(getattr(policy, "gamma_cap", getattr(policy, "total_gamma_cap", total)))
+    if total <= 0:
+        return 0.0
+    if total <= gamma:
+        return 1.0
+    return gamma / float(total)
 
 
 # -----------------------------

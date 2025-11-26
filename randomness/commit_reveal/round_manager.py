@@ -191,6 +191,16 @@ class RoundManager:
         grace_end = b.reveal_end_s + int(getattr(self.cfg, "reveal_grace_s", 0))
         return b.commit_end_s <= now_s < max(grace_end, b.commit_end_s)
 
+    # Backwards-compatible aliases used in unit tests.
+    def can_commit(self, round_id: RoundId, now_s: int) -> bool:  # pragma: no cover - thin wrapper
+        return self.can_accept_commit(now_s, round_id)
+
+    def can_reveal(self, round_id: RoundId, now_s: int, *, include_grace: bool = True) -> bool:  # pragma: no cover - thin wrapper
+        if include_grace:
+            return self.can_accept_reveal(now_s, round_id)
+        b = self.boundaries(round_id)
+        return b.commit_end_s <= now_s < b.reveal_end_s
+
     # ---- Enforcement helpers (raise project errors on violation) ----
 
     def enforce_commit_timing(self, now_s: int, round_id: RoundId) -> None:
@@ -228,6 +238,18 @@ class RoundManager:
                 f"reveal too late at t={now_s} for round={round_id} "
                 f"(window [{b.commit_end_s},{b.reveal_end_s}), grace until {grace_end})"
             )
+
+    # Optional strict validators for compatibility with external callers/tests.
+    def ensure_can_commit(self, round_id: RoundId, now_s: int) -> None:  # pragma: no cover - delegates
+        self.enforce_commit_timing(now_s, round_id)
+
+    def ensure_can_reveal(self, round_id: RoundId, now_s: int, *, include_grace: bool = True) -> None:  # pragma: no cover - delegates
+        if include_grace:
+            self.enforce_reveal_timing(now_s, round_id)
+        else:
+            b = self.boundaries(round_id)
+            if not (b.commit_end_s <= now_s < b.reveal_end_s):
+                raise BadReveal("reveal outside nominal window")
 
     # ---- Convenience ----
 

@@ -97,6 +97,22 @@ def _finalize(tag: bytes, folded: bytes) -> bytes:
     return sha3_256(tag + b"\xFF" + folded)
 
 
+# Compatibility helpers used by legacy tests expecting simple digest folds.
+def combine_pair(a: bytes, b: bytes) -> bytes:  # pragma: no cover - thin wrapper
+    return _xor32(_as_bytes(a), _as_bytes(b))
+
+
+def aggregate_digests(digests: list[bytes]) -> bytes:
+    """Aggregate a list of 32-byte digests using XOR folding with a final hash."""
+
+    if not digests:
+        return b"\x00" * 32
+    acc = _as_bytes(digests[0])
+    for d in digests[1:]:
+        acc = combine_pair(acc, d)
+    return _finalize(b"ANIMICA/RAND/AGG/DIGESTS", acc)
+
+
 # -------- combiners --------
 
 
