@@ -37,7 +37,8 @@ from typing import Any, Dict, Iterable, Iterator, Mapping, Optional, Sequence
 
 # Canonical paths
 TESTS_DIR: Path = Path(__file__).resolve().parent
-REPO_ROOT: Path = TESTS_DIR.parent
+# Two levels up from templates/tests -> repo root
+REPO_ROOT: Path = TESTS_DIR.parent.parent
 ASSETS_DIR: Path = TESTS_DIR / "assets"
 
 

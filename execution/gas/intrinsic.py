@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Literal, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterable, Literal, Mapping, Optional, Tuple
 
 import json
 
@@ -74,6 +74,14 @@ class IntrinsicGasParams:
     base_blob: int = 5_000
 
     # Linear components
+    # Distinguish zero vs non-zero byte costs so we can assert the EVM-like rule
+    # that non-zero calldata bytes cost more than zeros. If only a single cost
+    # is desired, set both fields equal or provide `calldata_per_byte` overrides
+    # (legacy name kept for compatibility).
+    calldata_zero_byte: int = 4
+    calldata_nonzero_byte: int = 16
+    # Back-compat: a single uniform price (used only when explicit lengths are
+    # provided without payload bytes).
     calldata_per_byte: int = 16
     access_list_address: int = 2_400
     access_list_storage_key: int = 1_900
@@ -260,7 +268,18 @@ def intrinsic_gas(
         raise ValueError(f"unknown tx kind: {kind!r}")
 
     # Calldata
-    calldata_cost = _mul(cd_len, p.calldata_per_byte, p.cap)
+    if calldata is not None:
+        # honour the zero/non-zero split
+        zero_bytes = int(calldata.count(b"\x00"))
+        nonzero_bytes = cd_len - zero_bytes
+        calldata_cost = saturating_add(
+            _mul(zero_bytes, p.calldata_zero_byte, p.cap),
+            _mul(nonzero_bytes, p.calldata_nonzero_byte, p.cap),
+            cap=p.cap,
+        )
+    else:
+        # Legacy path when only a length is provided
+        calldata_cost = _mul(cd_len, p.calldata_per_byte, p.cap)
 
     # Access list
     al_addr = _mul(access_list_addrs, p.access_list_address, p.cap)
@@ -280,5 +299,37 @@ def intrinsic_gas(
         blob=blob_cost,
     )
 
+def calc_intrinsic_gas(
+    *,
+    kind: Literal["transfer", "deploy", "call", "blob"],
+    payload: bytes = b"",
+    access_list: Optional[Iterable[tuple[bytes, Iterable[bytes]]]] = None,
+    blob_bytes: int = 0,
+    params: Optional[IntrinsicGasParams] = None,
+) -> int:
+    """
+    Compatibility wrapper used by tests and admission code.
 
-__all__ = ["IntrinsicGasParams", "IntrinsicGas", "resolve_params", "intrinsic_gas"]
+    Parameters mirror the expectations in execution/tests/test_intrinsic_gas.py.
+    Returns the *integer* intrinsic gas value (not the IntrinsicGas dataclass).
+    """
+
+    al_addrs = 0
+    al_keys = 0
+    if access_list:
+        for _addr, keys in access_list:
+            al_addrs += 1
+            al_keys += len(keys)
+
+    res = intrinsic_gas(
+        kind,
+        calldata=payload,
+        access_list_addrs=al_addrs,
+        access_list_keys=al_keys,
+        blob_bytes=blob_bytes,
+        params=params,
+    )
+    return int(res.total)
+
+
+__all__ = ["IntrinsicGasParams", "IntrinsicGas", "resolve_params", "intrinsic_gas", "calc_intrinsic_gas"]

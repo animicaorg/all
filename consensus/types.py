@@ -69,6 +69,8 @@ class ProofType(IntEnum):
     Do not renumber. Only append at the end when introducing new kinds.
     """
     HASHSHARE = 1      # Useful PoW-like hash share (u-draw) bound to header template
+    HASH       = 1      # Alias expected by legacy callers/tests
+    HASH_SHARE = 1      # Alias with underscore for parity with proofs module
     AI        = 2      # AI work proof (TEE attestation + redundancy + traps)
     QUANTUM   = 3      # Quantum work proof (provider attest + trap-circuit outcomes)
     STORAGE   = 4      # Storage heartbeat / PoSt-style availability proof
@@ -77,6 +79,8 @@ class ProofType(IntEnum):
 # Bidirectional name ↔ id helpers (stable, lowercase keys)
 _PT_BY_NAME: Dict[str, ProofType] = {
     "hashshare": ProofType.HASHSHARE,
+    "hash_share": ProofType.HASH_SHARE,
+    "hash": ProofType.HASH,
     "ai":        ProofType.AI,
     "quantum":   ProofType.QUANTUM,
     "storage":   ProofType.STORAGE,
