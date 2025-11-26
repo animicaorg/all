@@ -54,7 +54,13 @@ function getEnv<T = string>(key: string, fallback?: T): T {
   // Vite injects import.meta.env.* at build-time
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const env = (import.meta as any)?.env ?? {};
-  return (env[key] ?? fallback) as T;
+  // Also consider runtime-provided env (e.g., injected globals or process.env) to avoid
+  // falling back to localhost when a deployment supplies a real RPC URL.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const procEnv = typeof process !== 'undefined' ? ((process as any)?.env ?? {}) : {};
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const winEnv = typeof window !== 'undefined' ? ((window as any)?.__env ?? window) : {};
+  return (env[key] ?? procEnv[key] ?? winEnv[key] ?? fallback) as T;
 }
 
 function safeParseInt(v: unknown, fallback: number): number {
