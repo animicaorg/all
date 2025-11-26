@@ -37,7 +37,11 @@ body {
   font-family: var(--font-sans, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, Apple Color Emoji, Segoe UI Emoji);
   font-size: var(--text-base, 16px);
   line-height: var(--leading-relaxed, 1.6);
-  background: var(--bg);
+  background:
+    radial-gradient(circle at 15% 20%, color-mix(in srgb, var(--primary) 10%, transparent), transparent 28%),
+    radial-gradient(circle at 82% 10%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 26%),
+    linear-gradient(140deg, color-mix(in srgb, var(--surface-3) 30%, transparent), color-mix(in srgb, var(--bg) 80%, transparent)),
+    var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -177,13 +181,19 @@ hr {
 /* App shell */
 .app-root {
   min-height: 100vh;
-  background: var(--bg);
+  background: transparent;
   color: var(--fg, var(--text));
+  position: relative;
 }
 .app-body {
   display: flex;
   align-items: stretch;
-  min-height: calc(100vh - 64px);
+  min-height: calc(100vh - 64px - 36px);
+  height: calc(100vh - 64px - 36px);
+  backdrop-filter: blur(6px);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 92%, transparent), color-mix(in srgb, var(--surface) 86%, transparent));
+  border-top: 1px solid var(--border-muted);
+  overflow: hidden;
 }
 .app-main {
   flex: 1 1 auto;
@@ -192,9 +202,23 @@ hr {
   padding: var(--space-5, 1.25rem) var(--space-6, 1.5rem)
     calc(var(--space-6, 1.5rem) + 48px);
   margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4, 1rem);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--panel-bg, var(--surface)) 96%, transparent), color-mix(in srgb, var(--panel-strong, var(--surface-2)) 94%, transparent));
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: var(--radius-lg, 14px);
+  box-shadow: var(--shadow-1);
+  min-height: 100%;
+  height: 100%;
+  overflow: auto;
 }
 .app-main > *:first-child {
   margin-top: 0;
+}
+.app-main > * {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 @media (max-width: 900px) {
   .app-main {
