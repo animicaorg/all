@@ -212,12 +212,18 @@ class JsonlSink(Sink):
         self.dir = _ensure_dir(dir_path)
         self.blocks_path = self.dir / "blocks.jsonl"
         self.txs_path = self.dir / "txs.jsonl"
+        self._last_block: Optional[int] = self._load_last_block_number()
         # Open for append
         self._blocks = open(self.blocks_path, "a", encoding="utf-8")
         self._txs = open(self.txs_path, "a", encoding="utf-8")
 
     def record_block(self, block: Json) -> None:
         self._blocks.write(json.dumps(block, separators=(",", ":"), sort_keys=True) + "\n")
+        try:
+            self._last_block = _hex_to_int(block.get("number", 0))
+        except Exception:
+            # Do not block ingest on bad metadata; resume logic will fall back to config
+            pass
 
     def record_txs(self, block_number: int, txs: Iterable[Json]) -> None:
         for tx in txs:
@@ -238,6 +244,54 @@ class JsonlSink(Sink):
         with contextlib.suppress(Exception):
             self._blocks.close()
             self._txs.close()
+
+    def last_indexed_block(self) -> Optional[int]:
+        return self._last_block
+
+    def _load_last_block_number(self) -> Optional[int]:
+        """
+        Read the final JSONL block entry (if any) to resume from the last height.
+
+        We only inspect ``blocks.jsonl`` because it is guaranteed to contain a
+        ``number`` field for each recorded block. The method is intentionally
+        lightweight and defensive to avoid interfering with ingest if prior
+        data is missing or malformed.
+        """
+
+        if not self.blocks_path.exists():
+            return None
+
+        try:
+            with open(self.blocks_path, "rb") as fh:
+                fh.seek(0, os.SEEK_END)
+                end = fh.tell()
+                if end == 0:
+                    return None
+
+                # Read backwards in small chunks until we find a newline to
+                # isolate the last complete line.
+                buf = b""
+                pos = end
+                while pos > 0:
+                    step = min(1024, pos)
+                    pos -= step
+                    fh.seek(pos)
+                    chunk = fh.read(step)
+                    buf = chunk + buf
+                    if b"\n" in chunk:
+                        break
+
+                lines = buf.strip().split(b"\n")
+                if not lines:
+                    return None
+
+                rec = json.loads(lines[-1].decode("utf-8"))
+                num = rec.get("number") or rec.get("blockNumber") or rec.get("block_number")
+                if num is None:
+                    return None
+                return _hex_to_int(num)
+        except Exception:
+            return None
 
 
 # ------------------------------- ingestor ---------------------------------- #
