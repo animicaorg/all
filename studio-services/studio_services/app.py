@@ -27,7 +27,7 @@ from .routers.openapi import mount_openapi
 
 # Storage & background tasks (best-effort imports; components may be optional)
 from .storage import sqlite as storage_sqlite
-from .tasks.scheduler import Scheduler
+from .tasks.scheduler import Scheduler, create_default_scheduler
 
 
 @asynccontextmanager
@@ -49,8 +49,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Start background scheduler (for verification queue, faucet pacing, etc.)
     scheduler: Optional[Scheduler] = None
-    if hasattr(Scheduler, "__call__") or hasattr(Scheduler, "start"):
-        scheduler = Scheduler(app)
+    if create_default_scheduler:
+        scheduler = create_default_scheduler(app)
         await scheduler.start()
     app.state.scheduler = scheduler
 
