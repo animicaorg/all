@@ -24,6 +24,7 @@ import 'pages/onboarding/verify_mnemonic_page.dart';
 import 'pages/onboarding/import_wallet_page.dart';
 import 'pages/onboarding/set_pin_page.dart';
 import 'pages/onboarding/success_page.dart';
+import 'keyring/keyring.dart';
 
 /// Route names (centralized to avoid typos)
 abstract class Routes {
@@ -62,22 +63,29 @@ final _shellNavigatorKey = GlobalKey<NavigatorState>();
 // and implement redirect logic based on the provider values.
 class _GuardState {
   // TODO: replace with providers (hasWalletProvider, isUnlockedProvider)
-  bool get hasWallet => true;   // default: let the app open without onboarding
-  bool get isUnlocked => true;  // default: no lock gate
+  Future<bool> hasWallet() => keyring.hasWallet();
+  bool get isUnlocked => true; // default: no lock gate
 }
 
-String? _guardRedirect(_GuardState g, GoRouterState state) {
+Future<String?> _guardRedirect(_GuardState g, GoRouterState state) async {
   final loc = state.matchedLocation;
   final inOnboarding = loc.startsWith(Routes.onboardingRoot);
   final inSecurity = loc == Routes.security;
 
+  final hasWallet = await g.hasWallet();
+
   // If no wallet created/imported, force onboarding except when already there.
-  if (!g.hasWallet && !inOnboarding) {
+  if (!hasWallet && !inOnboarding) {
     return Routes.onboardingWelcome;
   }
 
+  // If a wallet already exists, skip the welcome screen.
+  if (hasWallet && inOnboarding && loc == Routes.onboardingWelcome) {
+    return Routes.home;
+  }
+
   // If wallet exists but is locked, send to security settings (PIN/biometrics)
-  if (g.hasWallet && !g.isUnlocked && !inSecurity && !inOnboarding) {
+  if (hasWallet && !g.isUnlocked && !inSecurity && !inOnboarding) {
     return Routes.security;
   }
 
