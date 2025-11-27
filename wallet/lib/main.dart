@@ -9,7 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'app.dart'; // Will host AnimicaApp
 // To be added shortly in this repo plan:
 import 'services/env.dart' show Env;            // Env.bootstrap(String flavor)
-import '../tool/env_loader.dart' as env_loader; // loadDotEnvIfPresent()
+import 'tool/env_loader.dart' as env_loader; // loadDotEnvIfPresent()
 
 /// Compile-time flavor: pass with
 ///   flutter run  --dart-define=FLAVOR=dev

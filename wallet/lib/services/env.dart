@@ -22,7 +22,12 @@ import 'package:flutter/foundation.dart' show kReleaseMode;
 
 enum AppFlavor { dev, test, prod }
 
-class AppEnv {
+/// Runtime configuration describing RPC endpoints, chain, and feature flags.
+///
+/// Historically this file shipped with a placeholder `AppEnv` type. The app
+/// now expects `Env.bootstrap(...)` and `Env.fallback(...)` (see `main.dart`),
+/// so we provide those static helpers here.
+class Env {
   final AppFlavor flavor;
   final Uri rpcHttp;
   final Uri? rpcWs;
@@ -30,7 +35,7 @@ class AppEnv {
   final Map<String, bool> featureFlags; // e.g. {"devtools": true, "experimental_pq": true}
   final String userAgent;
 
-  const AppEnv({
+  const Env({
     required this.flavor,
     required this.rpcHttp,
     required this.rpcWs,
@@ -50,8 +55,8 @@ class AppEnv {
       'Env(flavor=$flavor rpcHttp=$rpcHttp rpcWs=$rpcWs chainId=$chainId flags=${featureFlags.keys.toList()})';
 
   /// Construct from --dart-define values with sensible fallbacks.
-  factory AppEnv.fromDartDefine() {
-    final flavor = _readFlavor();
+  factory Env.fromDartDefine({String? flavorOverride}) {
+    final flavor = _readFlavor(flavorOverride);
     final defaults = _defaultsByFlavor(flavor);
 
     final rpcHttpStr =
@@ -69,14 +74,15 @@ class AppEnv {
       rpcHttpStr.isNotEmpty ? rpcHttpStr : defaults.http,
     );
 
-    final Uri? rpcWs =
-        rpcWsStr.isNotEmpty ? Uri.parse(rpcWsStr) : (defaults.ws?.isNotEmpty == true ? Uri.parse(defaults.ws!) : null);
+    final Uri? rpcWs = rpcWsStr.isNotEmpty
+        ? Uri.parse(rpcWsStr)
+        : (defaults.ws?.isNotEmpty == true ? Uri.parse(defaults.ws!) : null);
 
     final featureFlags = _parseFlags(flagsStr);
 
     final ua = _buildUserAgent(flavor);
 
-    return AppEnv(
+    return Env(
       flavor: flavor,
       rpcHttp: rpcHttp,
       rpcWs: rpcWs,
@@ -85,14 +91,34 @@ class AppEnv {
       userAgent: ua,
     );
   }
+
+  /// Used by `main.dart` to pull values from dart-defines.
+  static Future<Env> bootstrap(String flavor) async {
+    return Env.fromDartDefine(flavorOverride: flavor);
+  }
+
+  /// Resilient fallback to keep the app bootable even if bootstrap fails.
+  static Env fallback({String flavor = 'dev'}) {
+    final parsed = _readFlavor(flavor);
+    final defaults = _defaultsByFlavor(parsed);
+
+    return Env(
+      flavor: parsed,
+      rpcHttp: Uri.parse(defaults.http),
+      rpcWs: defaults.ws != null ? Uri.parse(defaults.ws!) : null,
+      chainId: 2,
+      featureFlags: const {},
+      userAgent: _buildUserAgent(parsed),
+    );
+  }
 }
 
 /// Global singleton, initialize once at app boot (see main.dart).
-late final AppEnv env;
+late final Env env;
 
 /// Initialize [env] with optional override (useful for tests).
-void initEnv([AppEnv? override]) {
-  env = override ?? AppEnv.fromDartDefine();
+void initEnv([Env? override]) {
+  env = override ?? Env.fromDartDefine();
 }
 
 // ---------------- Internals ----------------
@@ -117,8 +143,10 @@ _FlavorDefaults _defaultsByFlavor(AppFlavor f) {
   }
 }
 
-AppFlavor _readFlavor() {
-  final raw = const String.fromEnvironment('FLAVOR', defaultValue: '');
+AppFlavor _readFlavor([String? override]) {
+  final raw = (override ?? '').isNotEmpty
+      ? override!
+      : const String.fromEnvironment('FLAVOR', defaultValue: '');
   switch (raw.toLowerCase()) {
     case 'dev':
       return AppFlavor.dev;
