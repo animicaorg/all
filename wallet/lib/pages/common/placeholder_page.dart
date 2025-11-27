@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 
 class PlaceholderPage extends StatelessWidget {
   final String title;
+  final String? message;
   final IconData icon;
 
-  const PlaceholderPage({super.key, required this.title, this.icon = Icons.pending});
+  const PlaceholderPage({super.key, required this.title, this.message, this.icon = Icons.pending});
 
   @override
   Widget build(BuildContext context) {
@@ -17,7 +18,7 @@ class PlaceholderPage extends StatelessWidget {
             Icon(icon, size: 48),
             const SizedBox(height: 12),
             Text(
-              '$title screen coming soon',
+              message ?? '$title screen coming soon',
               style: Theme.of(context).textTheme.titleMedium,
               textAlign: TextAlign.center,
             ),

@@ -86,16 +86,11 @@ class SecureStore {
 
   LinuxOptions _linux() {
     // Uses SecretService if available.
-    return const LinuxOptions(
-      collection: 'default',
-    );
+    return const LinuxOptions();
   }
 
   WindowsOptions _windows() {
-    return const WindowsOptions(
-      // DataProtection API; no extra flags needed.
-      usePrompt: false,
-    );
+    return const WindowsOptions();
   }
 
   WebOptions _web() {

@@ -123,12 +123,13 @@ class _Encoder {
 
   void _encodeBigInt(BigInt b) {
     // fit into uint64?
-    if (b >= BigInt.zero && b <= BigInt.from(0xffffffffffffffff)) {
+    final maxUint64 = BigInt.parse('0xffffffffffffffff');
+    if (b >= BigInt.zero && b <= maxUint64) {
       return _writeTypeAndLength(0, _asUint64(b)); // encode as unsigned int
     }
     if (b < BigInt.zero &&
         (-b - BigInt.one) >= BigInt.zero &&
-        (-b - BigInt.one) <= BigInt.from(0xffffffffffffffff)) {
+        (-b - BigInt.one) <= maxUint64) {
       final m = (-b - BigInt.one);
       return _writeTypeAndLength(1, _asUint64(m)); // encode as negative int
     }
@@ -508,8 +509,7 @@ Uint8List _bigIntToBytes(BigInt v) {
     n = n >> 8;
   }
   if (bytes.isEmpty) bytes.add(0);
-  bytes.reverse();
-  return Uint8List.fromList(bytes);
+  return Uint8List.fromList(bytes.reversed.toList());
 }
 
 BigInt _bytesToBigInt(Uint8List bs) {

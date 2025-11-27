@@ -37,6 +37,7 @@ dependencies:
 
   # Crypto & codecs
   crypto: ^3.0.3
+  hashlib: ^1.17.1
 
   # QR
   qr_flutter: ^4.1.0
