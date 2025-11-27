@@ -54,7 +54,7 @@ dev_dependencies:
   # Optional helpers (icons/splash/flavors) — run their CLIs when needed
   flutter_launcher_icons: ^0.13.1
   flutter_native_splash: ^2.4.0
-  flutter_flavorizr: ^2.9.3
+  flutter_flavorizr: ^2.4.1
 
 flutter:
   uses-material-design: true
