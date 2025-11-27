@@ -21,6 +21,8 @@
  * If your deployment uses different names, wrap/extend BeaconClient#call().
  */
 
+import { inferChainId, inferRpcUrl } from './env';
+
 /* ---------------------------------- Types ----------------------------------- */
 
 export type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
@@ -368,11 +370,11 @@ export function beaconClientFromEnv(env?: {
   VITE_RPC_KEY?: string;
 }): BeaconClient {
   const e = env ?? ((typeof import.meta !== 'undefined' ? (import.meta as any).env : {}) as any);
-  const baseUrl = e?.VITE_RPC_URL;
-  if (!baseUrl) throw new Error('VITE_RPC_URL is required to initialize BeaconClient');
+  const baseUrl = inferRpcUrl(e);
 
   const headers: Record<string, string> = {};
-  if (e?.VITE_CHAIN_ID) headers['X-Chain-Id'] = String(e.VITE_CHAIN_ID);
+  const chainId = inferChainId(e);
+  if (chainId) headers['X-Chain-Id'] = chainId;
   if (e?.VITE_RPC_KEY) headers['Authorization'] = `Bearer ${e.VITE_RPC_KEY}`;
 
   return new BeaconClient({ baseUrl, headers });

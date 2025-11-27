@@ -16,6 +16,8 @@
  * If your node uses different method names or shapes, configure via WsClientOptions.
  */
 
+import { inferWsUrl } from './env';
+
 export type JsonValue =
   | null
   | boolean
@@ -519,6 +521,6 @@ export function createWs(opts: WsClientOptions): WsClient {
  *   await ws.connect();
  */
 export function wsFromEnv(url?: string, token?: string): WsClient {
-  if (!url) throw new Error('wsFromEnv: url is required');
-  return new WsClient({ url, token });
+  const wsUrl = url ?? inferWsUrl();
+  return new WsClient({ url: wsUrl, token });
 }

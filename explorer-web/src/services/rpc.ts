@@ -9,6 +9,8 @@
  * - Works in modern browsers and Node (via global fetch or polyfill)
  */
 
+import { inferRpcUrl } from './env';
+
 export type JsonValue =
   | null
   | boolean
@@ -401,8 +403,8 @@ export function createRpc(opts: RpcClientOptions): RpcClient {
  *   const rpc = rpcFromEnv(import.meta.env.VITE_RPC_URL, import.meta.env.VITE_API_KEY);
  */
 export function rpcFromEnv(url?: string, apiKey?: string): RpcClient {
-  if (!url) throw new Error('rpcFromEnv: url is required');
-  const client = new RpcClient({ url });
+  const baseUrl = url ?? inferRpcUrl();
+  const client = new RpcClient({ url: baseUrl });
   if (apiKey) client.setAuthToken(apiKey);
   return client;
 }
