@@ -63,7 +63,15 @@ final _shellNavigatorKey = GlobalKey<NavigatorState>();
 // and implement redirect logic based on the provider values.
 class _GuardState {
   // TODO: replace with providers (hasWalletProvider, isUnlockedProvider)
-  Future<bool> hasWallet() => keyring.hasWallet();
+  Future<bool> hasWallet() async {
+    try {
+      return await keyring.hasWallet();
+    } catch (e, st) {
+      debugPrint('keyring.hasWallet failed, assuming no wallet: $e\n$st');
+      return false; // Safe fallback so routing can proceed instead of stalling.
+    }
+  }
+
   bool get isUnlocked => true; // default: no lock gate
 }
 
