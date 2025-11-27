@@ -33,7 +33,7 @@
 
 import 'dart:typed_data';
 import '../codec/cbor.dart' show Cbor;
-import '../crypto/sha3.dart' as hash;
+import '../crypto/sha3.dart' as sha3;
 import '../crypto/bech32m.dart' show AnimicaAddr;
 import 'tx_types.dart';
 
@@ -84,7 +84,7 @@ class TxSignBytes {
   }
 
   /// keccak256(sign-bytes)
-  static Uint8List hash(Uint8List signBytes) => hash.keccak256(signBytes);
+  static Uint8List hash(Uint8List signBytes) => sha3.keccak256(signBytes);
 
   /// Convenience: compute keccak256(sign-bytes) directly from [tx].
   static Uint8List hashTx(Tx tx) => hash(encode(tx));
