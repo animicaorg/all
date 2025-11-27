@@ -24,22 +24,22 @@ import 'tx_types.dart';
 
 class TxBuilder {
   // Reasonable defaults; callers should override with real estimates.
-  static final BigInt defaultTransferGas = BigInt.from(21_000);
-  static final BigInt defaultCallGas = BigInt.from(200_000);
-  static final BigInt defaultDeployGas = BigInt.from(800_000);
+  static final BigInt defaultTransferGas = BigInt.from(21000);
+  static final BigInt defaultCallGas = BigInt.from(200000);
+  static final BigInt defaultDeployGas = BigInt.from(800000);
 
   /// Simple helper for a legacy-fee default (e.g., 1 gwei-equivalent).
-  static FeeParams defaultLegacyFee({BigInt gasPrice = const BigInt.from(1_000_000_000)}) =>
-      FeeParams.legacy(gasPrice: gasPrice);
+  static FeeParams defaultLegacyFee({BigInt? gasPrice}) =>
+      FeeParams.legacy(gasPrice: gasPrice ?? BigInt.from(1000000000));
 
   /// Simple helper for an EIP-1559 style default.
   static FeeParams defaultEip1559({
-    BigInt maxFeePerGas = const BigInt.from(2_000_000_000),
-    BigInt maxPriorityFeePerGas = const BigInt.from(250_000_000),
+    BigInt? maxFeePerGas,
+    BigInt? maxPriorityFeePerGas,
   }) =>
       FeeParams.eip1559(
-        maxFeePerGas: maxFeePerGas,
-        maxPriorityFeePerGas: maxPriorityFeePerGas,
+        maxFeePerGas: maxFeePerGas ?? BigInt.from(2000000000),
+        maxPriorityFeePerGas: maxPriorityFeePerGas ?? BigInt.from(250000000),
       );
 
   /// Build a native-value transfer.
@@ -70,7 +70,7 @@ class TxBuilder {
     required BigInt nonce,
     required String to,
     Uint8List? data,
-    BigInt value = BigInt.zero,
+    BigInt? value,
     BigInt? gasLimit,
     FeeParams? fee,
   }) {
@@ -79,7 +79,7 @@ class TxBuilder {
       chainId: chainId,
       nonce: nonce,
       to: to,
-      value: value,
+      value: value ?? BigInt.zero,
       data: data ?? Uint8List(0),
       gasLimit: gasLimit ?? defaultCallGas,
       fee: fee ?? defaultLegacyFee(),
@@ -97,7 +97,7 @@ class TxBuilder {
     required String to,
     required FunctionAbi fn,
     required List<Object?> args,
-    BigInt value = BigInt.zero,
+    BigInt? value,
     BigInt? gasLimit,
     FeeParams? fee,
   }) {
@@ -110,7 +110,7 @@ class TxBuilder {
       chainId: chainId,
       nonce: nonce,
       to: to,
-      value: value,
+      value: value ?? BigInt.zero,
       data: data,
       gasLimit: gasLimit ?? defaultCallGas,
       fee: fee ?? defaultLegacyFee(),
@@ -123,7 +123,7 @@ class TxBuilder {
     required int chainId,
     required BigInt nonce,
     required Uint8List bytecode,
-    BigInt value = BigInt.zero,
+    BigInt? value,
     BigInt? gasLimit,
     FeeParams? fee,
   }) {
@@ -131,7 +131,7 @@ class TxBuilder {
       chainId: chainId,
       nonce: nonce,
       to: null, // deploy
-      value: value,
+      value: value ?? BigInt.zero,
       data: bytecode,
       gasLimit: gasLimit ?? defaultDeployGas,
       fee: fee ?? defaultLegacyFee(),
@@ -150,7 +150,7 @@ class TxBuilder {
     required Uint8List bytecode,
     required List<AbiParam> constructorInputs,
     required List<Object?> args,
-    BigInt value = BigInt.zero,
+    BigInt? value,
     BigInt? gasLimit,
     FeeParams? fee,
   }) {
@@ -161,7 +161,7 @@ class TxBuilder {
       chainId: chainId,
       nonce: nonce,
       bytecode: init,
-      value: value,
+      value: value ?? BigInt.zero,
       gasLimit: gasLimit ?? defaultDeployGas,
       fee: fee ?? defaultLegacyFee(),
     );

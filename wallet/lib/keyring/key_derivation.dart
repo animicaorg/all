@@ -72,7 +72,7 @@ class PqKeyPair {
 }
 
 /// Stub interface for the native/FFI side. Implement this in a platform-
-—specific package (Android/iOS/macOS/Linux/Windows) and inject it.
+/// specific package (Android/iOS/macOS/Linux/Windows) and inject it.
 abstract class PqNativeBridge {
   PqKeyPair makeDilithium3Keypair(Uint8List seed);
   PqKeyPair makeSphincsPlusKeypair(Uint8List seed);
