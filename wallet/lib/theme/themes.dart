@@ -58,7 +58,7 @@ ThemeData buildLightTheme() {
           .titleMedium
           ?.copyWith(fontWeight: FontWeight.w600),
     ),
-    cardTheme: CardTheme(
+    cardTheme: CardThemeData(
       color: colorScheme.surface,
       surfaceTintColor: colorScheme.surface,
       elevation: 1,
@@ -73,38 +73,38 @@ ThemeData buildLightTheme() {
     inputDecorationTheme: _inputTheme(colorScheme, isDark: false),
     filledButtonTheme: FilledButtonThemeData(
       style: ButtonStyle(
-        minimumSize: WidgetStateProperty.all(const Size(48, 48)),
-        shape: WidgetStateProperty.all(
+        minimumSize: MaterialStateProperty.all(const Size(48, 48)),
+        shape: MaterialStateProperty.all(
           RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         ),
-        padding: WidgetStateProperty.all(
+        padding: MaterialStateProperty.all(
           const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         ),
       ),
     ),
     elevatedButtonTheme: ElevatedButtonThemeData(
       style: ButtonStyle(
-        backgroundColor: WidgetStateProperty.all(colorScheme.primary),
-        foregroundColor: WidgetStateProperty.all(colorScheme.onPrimary),
-        minimumSize: WidgetStateProperty.all(const Size(48, 48)),
-        shape: WidgetStateProperty.all(
+        backgroundColor: MaterialStateProperty.all(colorScheme.primary),
+        foregroundColor: MaterialStateProperty.all(colorScheme.onPrimary),
+        minimumSize: MaterialStateProperty.all(const Size(48, 48)),
+        shape: MaterialStateProperty.all(
           RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         ),
-        elevation: WidgetStateProperty.all(0),
+        elevation: MaterialStateProperty.all(0),
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: ButtonStyle(
-        side: WidgetStatePropertyAll(BorderSide(color: colorScheme.outline)),
-        foregroundColor: WidgetStateProperty.all(colorScheme.onSurface),
-        minimumSize: WidgetStateProperty.all(const Size(48, 48)),
-        shape: WidgetStateProperty.all(
+        side: MaterialStatePropertyAll(BorderSide(color: colorScheme.outline)),
+        foregroundColor: MaterialStateProperty.all(colorScheme.onSurface),
+        minimumSize: MaterialStateProperty.all(const Size(48, 48)),
+        shape: MaterialStateProperty.all(
           RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         ),
       ),
     ),
     chipTheme: _chipTheme(colorScheme, isDark: false),
-    dialogTheme: DialogTheme(
+    dialogTheme: DialogThemeData(
       backgroundColor: colorScheme.surface,
       surfaceTintColor: colorScheme.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -130,25 +130,25 @@ ThemeData buildLightTheme() {
       surfaceTintColor: colorScheme.surface,
       indicatorColor: AppColors.brand.withAlpha(32),
       elevation: 0,
-      labelTextStyle: WidgetStateProperty.all(
+      labelTextStyle: MaterialStateProperty.all(
         base.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600),
       ),
     ),
     switchTheme: SwitchThemeData(
-      thumbColor: WidgetStateProperty.resolveWith((states) {
-        return states.contains(WidgetState.selected)
+      thumbColor: MaterialStateProperty.resolveWith((states) {
+        return states.contains(MaterialState.selected)
             ? colorScheme.primary
             : LightColors.surfaceMuted;
       }),
-      trackColor: WidgetStateProperty.resolveWith((states) {
-        return states.contains(WidgetState.selected)
+      trackColor: MaterialStateProperty.resolveWith((states) {
+        return states.contains(MaterialState.selected)
             ? AppColors.brand.withAlpha(80)
             : LightColors.surfaceAlt;
       }),
     ),
     checkboxTheme: CheckboxThemeData(
-      fillColor: WidgetStateProperty.resolveWith((states) {
-        return states.contains(WidgetState.selected)
+      fillColor: MaterialStateProperty.resolveWith((states) {
+        return states.contains(MaterialState.selected)
             ? colorScheme.primary
             : LightColors.surfaceMuted;
       }),
@@ -228,7 +228,7 @@ ThemeData buildDarkTheme() {
           .titleMedium
           ?.copyWith(fontWeight: FontWeight.w600),
     ),
-    cardTheme: CardTheme(
+    cardTheme: CardThemeData(
       color: colorScheme.surface,
       surfaceTintColor: colorScheme.surface,
       elevation: 0,
@@ -243,38 +243,38 @@ ThemeData buildDarkTheme() {
     inputDecorationTheme: _inputTheme(colorScheme, isDark: true),
     filledButtonTheme: FilledButtonThemeData(
       style: ButtonStyle(
-        minimumSize: WidgetStateProperty.all(const Size(48, 48)),
-        shape: WidgetStateProperty.all(
+        minimumSize: MaterialStateProperty.all(const Size(48, 48)),
+        shape: MaterialStateProperty.all(
           RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         ),
-        padding: WidgetStateProperty.all(
+        padding: MaterialStateProperty.all(
           const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         ),
       ),
     ),
     elevatedButtonTheme: ElevatedButtonThemeData(
       style: ButtonStyle(
-        backgroundColor: WidgetStateProperty.all(colorScheme.primary),
-        foregroundColor: WidgetStateProperty.all(colorScheme.onPrimary),
-        minimumSize: WidgetStateProperty.all(const Size(48, 48)),
-        shape: WidgetStateProperty.all(
+        backgroundColor: MaterialStateProperty.all(colorScheme.primary),
+        foregroundColor: MaterialStateProperty.all(colorScheme.onPrimary),
+        minimumSize: MaterialStateProperty.all(const Size(48, 48)),
+        shape: MaterialStateProperty.all(
           RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         ),
-        elevation: WidgetStateProperty.all(0),
+        elevation: MaterialStateProperty.all(0),
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: ButtonStyle(
-        side: WidgetStatePropertyAll(BorderSide(color: colorScheme.outline)),
-        foregroundColor: WidgetStateProperty.all(colorScheme.onSurface),
-        minimumSize: WidgetStateProperty.all(const Size(48, 48)),
-        shape: WidgetStateProperty.all(
+        side: MaterialStatePropertyAll(BorderSide(color: colorScheme.outline)),
+        foregroundColor: MaterialStateProperty.all(colorScheme.onSurface),
+        minimumSize: MaterialStateProperty.all(const Size(48, 48)),
+        shape: MaterialStateProperty.all(
           RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         ),
       ),
     ),
     chipTheme: _chipTheme(colorScheme, isDark: true),
-    dialogTheme: DialogTheme(
+    dialogTheme: DialogThemeData(
       backgroundColor: colorScheme.surface,
       surfaceTintColor: colorScheme.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -300,7 +300,7 @@ ThemeData buildDarkTheme() {
       surfaceTintColor: colorScheme.surface,
       indicatorColor: AppColors.brand.withAlpha(48),
       elevation: 0,
-      labelTextStyle: WidgetStateProperty.all(
+      labelTextStyle: MaterialStateProperty.all(
         base.textTheme.labelMedium?.copyWith(
           fontWeight: FontWeight.w600,
           color: colorScheme.onSurface,
@@ -308,20 +308,20 @@ ThemeData buildDarkTheme() {
       ),
     ),
     switchTheme: SwitchThemeData(
-      thumbColor: WidgetStateProperty.resolveWith((states) {
-        return states.contains(WidgetState.selected)
+      thumbColor: MaterialStateProperty.resolveWith((states) {
+        return states.contains(MaterialState.selected)
             ? colorScheme.primary
             : DarkColors.surfaceMuted;
       }),
-      trackColor: WidgetStateProperty.resolveWith((states) {
-        return states.contains(WidgetState.selected)
+      trackColor: MaterialStateProperty.resolveWith((states) {
+        return states.contains(MaterialState.selected)
             ? AppColors.brand.withAlpha(120)
             : DarkColors.surfaceAlt;
       }),
     ),
     checkboxTheme: CheckboxThemeData(
-      fillColor: WidgetStateProperty.resolveWith((states) {
-        return states.contains(WidgetState.selected)
+      fillColor: MaterialStateProperty.resolveWith((states) {
+        return states.contains(MaterialState.selected)
             ? colorScheme.primary
             : DarkColors.surfaceMuted;
       }),
