@@ -255,6 +255,14 @@ int _asInt(dynamic v) {
   return int.tryParse(s) ?? 0;
 }
 
+String? _maybeHex(dynamic v) {
+  if (v == null) return null;
+  final s = v.toString();
+  if (s.isEmpty) return null;
+  final core = _strip0x(s).toLowerCase();
+  return '0x$core';
+}
+
 Uint8List _sha256(Uint8List data) {
   final d = sha256.convert(data).bytes;
   return Uint8List.fromList(d);

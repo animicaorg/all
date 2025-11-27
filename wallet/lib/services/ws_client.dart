@@ -139,7 +139,6 @@ class WsClient {
     final chan = WebSocketChannel.connect(
       config.url,
       protocols: config.protocols.isEmpty ? null : config.protocols,
-      headers: config.headers.isEmpty ? null : config.headers,
     );
     // pingInterval is not portable across platforms via the abstract type.
     // (On IO you could cast to IOWebSocketChannel and set pingInterval.)
@@ -382,6 +381,9 @@ class WsClient {
   }
 
   // -------- Dispose --------
+
+  /// Convenience alias to mirror other clients.
+  Future<void> close() => dispose();
 
   Future<void> dispose() async {
     await stop();
