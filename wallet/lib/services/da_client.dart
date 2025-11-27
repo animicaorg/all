@@ -29,6 +29,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart' show sha256;
 import 'package:http/http.dart' as http;
 import 'rpc_client.dart';
 import 'env.dart';
@@ -377,6 +378,3 @@ int? _asIntOrNull(dynamic v) {
   final n = _asInt(v);
   return n;
 }
-
-// NOTE: Import for sha256
-import 'package:crypto/crypto.dart' show sha256;
