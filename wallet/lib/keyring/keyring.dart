@@ -22,6 +22,7 @@ import 'mnemonic.dart' show Mnemonic;
 import 'secure_store.dart' show secureStore, SecretKeys, SecureStore;
 import 'key_derivation.dart' show KeyDerivation, PqKeyPair;
 import 'pq_sign.dart' show PqSigner, PqAlgs, PqSignature;
+import '../utils/wallet_backup.dart';
 
 /// Status of the keyring with respect to in-memory cache.
 enum KeyringStatus { empty, locked, unlocked }
@@ -107,6 +108,15 @@ class Keyring {
     _emit();
   }
 
+  /// Import a wallet from a structured backup file.
+  Future<void> importWalletFile(WalletBackupFile file, {bool biometric = false}) async {
+    await importWallet(
+      mnemonic: file.mnemonic,
+      biometric: biometric,
+      passphrase: file.passphrase,
+    );
+  }
+
   // ---------------- Locking ----------------
 
   /// Clear any in-memory secrets. Data remains in SecureStore.
@@ -137,6 +147,12 @@ class Keyring {
       throw KeyringError('No mnemonic found (or biometric/auth failed).');
     }
     return m;
+  }
+
+  /// Export the wallet as a portable backup file.
+  Future<WalletBackupFile> exportWalletFile({bool biometric = true}) async {
+    final mnemonic = await exportMnemonic(biometric: biometric);
+    return WalletBackupFile.create(mnemonic: mnemonic, passphrase: _passphrase);
   }
 
   /// DANGER: Delete mnemonic and all secrets for this app namespace.

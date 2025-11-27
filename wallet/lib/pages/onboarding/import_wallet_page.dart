@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -9,6 +13,7 @@ import '../../keyring/keyring.dart';
 import '../../keyring/pq_sign.dart';
 import '../../router.dart';
 import '../../state/account_state.dart';
+import '../../utils/wallet_backup.dart';
 
 class ImportWalletPage extends ConsumerStatefulWidget {
   const ImportWalletPage({super.key});
@@ -18,17 +23,10 @@ class ImportWalletPage extends ConsumerStatefulWidget {
 }
 
 class _ImportWalletPageState extends ConsumerState<ImportWalletPage> {
-  final _mnemonicCtrl = TextEditingController();
-  final _passphraseCtrl = TextEditingController();
+  PlatformFile? _selectedFile;
+  WalletBackupFile? _parsed;
   String? _error;
   bool _busy = false;
-
-  @override
-  void dispose() {
-    _mnemonicCtrl.dispose();
-    _passphraseCtrl.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -39,34 +37,33 @@ class _ImportWalletPageState extends ConsumerState<ImportWalletPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Recovery phrase', style: Theme.of(context).textTheme.titleLarge),
+            Text('Wallet backup file', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 8),
-            TextField(
-              controller: _mnemonicCtrl,
-              decoration: InputDecoration(
-                hintText: 'twelve or twenty-four words',
-                suffixIcon: IconButton(
-                  tooltip: 'Paste',
-                  icon: const Icon(Icons.paste),
-                  onPressed: () async {
-                    final clip = await Clipboard.getData('text/plain');
-                    final text = clip?.text;
-                    if (text != null && text.isNotEmpty) {
-                      _mnemonicCtrl.text = text.trim();
-                    }
-                  },
-                ),
-              ),
-              minLines: 2,
-              maxLines: 4,
+            Text(
+              'Choose the Animica wallet backup file (.json) that contains your encrypted keys.',
+              style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: 12),
-            TextField(
-              controller: _passphraseCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Passphrase (optional)',
-              ),
+            OutlinedButton.icon(
+              onPressed: _busy ? null : _pickFile,
+              icon: const Icon(Icons.file_open_outlined),
+              label: Text(_selectedFile?.name ?? 'Select backup file'),
             ),
+            if (_parsed != null) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.green),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Wallet file loaded (exported ${_parsed!.exportedAt.toLocal()})',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  ),
+                ],
+              ),
+            ],
             if (_error != null) ...[
               const SizedBox(height: 12),
               Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
@@ -89,10 +86,41 @@ class _ImportWalletPageState extends ConsumerState<ImportWalletPage> {
     );
   }
 
+  Future<void> _pickFile() async {
+    try {
+      final res = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['json'],
+        withData: true,
+      );
+      if (res == null || res.files.isEmpty) return;
+      final file = res.files.single;
+      Uint8List? bytes = file.bytes;
+      if (bytes == null) {
+        final path = file.path;
+        if (path == null) {
+          throw const FormatException('Selected file is unreadable');
+        }
+        bytes = await File(path).readAsBytes();
+      }
+      final parsed = WalletBackupFile.parse(utf8.decode(bytes));
+      setState(() {
+        _selectedFile = file;
+        _parsed = parsed;
+        _error = null;
+      });
+    } catch (e) {
+      setState(() {
+        _selectedFile = null;
+        _parsed = null;
+        _error = 'Failed to read wallet file: $e';
+      });
+    }
+  }
+
   Future<void> _submit() async {
-    final phrase = _mnemonicCtrl.text.trim().toLowerCase();
-    if (phrase.split(RegExp(r'\s+')).length < 12) {
-      setState(() => _error = 'Enter a valid 12/24-word phrase');
+    if (_parsed == null) {
+      setState(() => _error = 'Select a valid wallet backup file first');
       return;
     }
 
@@ -102,10 +130,7 @@ class _ImportWalletPageState extends ConsumerState<ImportWalletPage> {
     });
 
     try {
-      await keyring.importWallet(
-        mnemonic: phrase,
-        passphrase: _passphraseCtrl.text.trim(),
-      );
+      await keyring.importWalletFile(_parsed!);
 
       final signer = PqSigner.dev();
       final kp = await keyring.deriveDilithium3(signer: signer, account: 0);
