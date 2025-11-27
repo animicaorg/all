@@ -4,6 +4,7 @@ import { BrowserRouter, NavLink } from "react-router-dom";
 // Router (will be provided in explorer-web/src/router.tsx)
 import AppRouter from "./router";
 import { ExplorerStoreProvider } from "./state/store";
+import { inferRpcUrl } from "./services/env";
 
 // ────────────────────────────────────────────────────────────────────────────────
 // Global event channels so other modules can toggle loader / push toasts without
@@ -64,7 +65,7 @@ export default function App() {
 function TopBar() {
   const [theme, setTheme] = useTheme();
   const chainId = import.meta.env.VITE_CHAIN_ID ?? "unknown";
-  const rpcUrl = import.meta.env.VITE_RPC_URL ?? "http://localhost:8545";
+  const rpcUrl = inferRpcUrl(import.meta.env);
 
   const toggle = useCallback(() => setTheme(theme === "dark" ? "light" : "dark"), [theme, setTheme]);
 

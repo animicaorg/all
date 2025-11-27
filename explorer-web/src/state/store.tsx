@@ -22,6 +22,7 @@ import { useStore as useZustandStore } from 'zustand';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 import { devtools, persist, subscribeWithSelector, createJSONStorage } from 'zustand/middleware';
 import shallow from 'zustand/shallow';
+import { inferChainId, inferRpcUrl } from '../services/env';
 
 // ----------------------------- Types ----------------------------------------
 
@@ -73,8 +74,8 @@ export interface ExplorerState {
 
 // --------------------------- Defaults ---------------------------------------
 
-const envRpc = (import.meta as any)?.env?.VITE_RPC_URL ?? '';
-const envChainId = (import.meta as any)?.env?.VITE_CHAIN_ID ?? '';
+const envRpc = inferRpcUrl((import.meta as any)?.env);
+const envChainId = inferChainId((import.meta as any)?.env);
 
 const defaults = (): ExplorerState => ({
   network: {
