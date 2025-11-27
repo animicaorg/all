@@ -95,21 +95,21 @@ class ExplorerDefaults {
 /// Gas schedule & fee knobs (keep in sync with chain/vm where possible)
 class Gas {
   /// Simple transfer gas limit default.
-  static const int defaultTransferLimit = 50_000;
+  static const int defaultTransferLimit = 50000;
 
   /// Safe UI default gas limit for generic contract calls (adjustable in UI).
-  static const int defaultContractLimit = 250_000;
+  static const int defaultContractLimit = 250000;
 
   /// Minimum gas price (in atto-ANM per unit) the wallet will attempt by default.
   /// Matches sample payloads used in dev flows.
-  static const int defaultPrice = 1_000_000; // 1e6
+  static const int defaultPrice = 1000000; // 1e6
 
   /// Bump policy for resubmits (linear)
-  static const int bumpDelta = 250_000;
+  static const int bumpDelta = 250000;
 
   /// Hard caps to prevent user errors
-  static const int maxLimitUI = 5_000_000; // 5M units
-  static const int maxPriceUI = 50_000_000; // 5e7
+  static const int maxLimitUI = 5000000; // 5M units
+  static const int maxPriceUI = 50000000; // 5e7
 }
 
 /// Transaction & memo limits
@@ -118,7 +118,7 @@ class TxLimits {
   static const int memoMaxUtf8Bytes = 140;
 
   /// Minimum/maximum sendable amount in the UI layer (safety rails only).
-  static const BigInt minAmount = BigInt.from(1);                // 1 wei (atto-ANM)
+  static final BigInt minAmount = BigInt.one;                    // 1 wei (atto-ANM)
   static final BigInt maxAmount = BigInt.parse('999999999000000000000000'); // ~1e24
 }
 

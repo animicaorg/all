@@ -39,7 +39,9 @@ final rpcClientProvider = Provider<RpcClient>((ref) {
 /// WebSocket client (auto-reconnect). Auto-closes on provider dispose.
 final wsClientProvider = Provider<WsClient>((ref) {
   final c = WsClient.fromEnv();
-  ref.onDispose(c.close);
+  ref.onDispose(() {
+    c.close();
+  });
   return c;
 });
 
@@ -139,11 +141,11 @@ class MyOverrides {
           randomnessClientProvider.overrideWithValue(randomness!),
         if (light != null) lightClientProvider.overrideWithValue(light!),
         if (chainId != null)
-          chainIdProvider.overrideWith((ref) => StateController(chainId!)),
+          chainIdProvider.overrideWith((ref) => chainId!),
         if (rpcUrl != null)
-          rpcUrlProvider.overrideWith((ref) => StateController(rpcUrl!)),
+          rpcUrlProvider.overrideWith((ref) => rpcUrl!),
         if (wsUrl != null)
-          wsUrlProvider.overrideWith((ref) => StateController(wsUrl!)),
+          wsUrlProvider.overrideWith((ref) => wsUrl!),
       ];
 }
 
