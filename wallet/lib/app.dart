@@ -3,7 +3,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_gen/gen_l10n/app_localizations.dart';
+import 'l10n/app_localizations.dart';
 
 import 'theme/themes.dart';          // buildLightTheme(), buildDarkTheme()
 import 'router.dart';                // createRouter(Env env, {String flavor})
@@ -31,7 +31,7 @@ class AnimicaApp extends ConsumerWidget {
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       // Titles
-      onGenerateTitle: (ctx) => AppLocalizations.of(ctx)?.appTitle ?? 'Animica Wallet',
+      onGenerateTitle: (ctx) => AppLocalizations.of(ctx).appTitle,
       // Themes
       theme: buildLightTheme(),
       darkTheme: buildDarkTheme(),
