@@ -65,13 +65,16 @@ flutter:
     - assets/images/hero.png
     - assets/json/sample_tx.json
 
-  # Inter font family (regular + semibold)
+  # Inter font family (variable font w/ regular + semibold + italic)
   fonts:
     - family: Inter
       fonts:
-        - asset: assets/fonts/Inter-Regular.ttf
-        - asset: assets/fonts/Inter-SemiBold.ttf
+        - asset: assets/fonts/InterVariable.ttf
+          weight: 400
+        - asset: assets/fonts/InterVariable.ttf
           weight: 600
+        - asset: assets/fonts/InterVariable-Italic.ttf
+          style: italic
 
   # Enable built-in localization codegen (flutter gen-l10n)
   generate: true
