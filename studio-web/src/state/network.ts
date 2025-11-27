@@ -77,15 +77,56 @@ function isLoopback(url: string): boolean {
   }
 }
 
-function deriveWsUrl(httpUrl: string): string {
+/** Ensure RPC URLs always hit the /rpc path. */
+function normalizeRpcUrl(url: string): string {
   try {
-    const u = new URL(httpUrl);
-    if (u.protocol === 'http:') u.protocol = 'ws:';
-    if (u.protocol === 'https:') u.protocol = 'wss:';
+    const u = new URL(url);
+    if (!u.pathname || u.pathname === '/') {
+      u.pathname = '/rpc';
+    } else if (!u.pathname.endsWith('/rpc')) {
+      u.pathname = `${u.pathname.replace(/\/+$/, '')}/rpc`;
+    }
     return u.toString();
   } catch {
-    // As a last resort, naive replace
-    return httpUrl.replace(/^http/i, 'ws');
+    const trimmed = url.replace(/\/+$/, '');
+    return trimmed.endsWith('/rpc') ? trimmed : `${trimmed}/rpc`;
+  }
+}
+
+/** Derive a WS URL that mirrors the RPC host + /ws path. */
+function deriveWsUrl(httpUrl: string): string {
+  const normalized = normalizeRpcUrl(httpUrl);
+  try {
+    const u = new URL(normalized);
+    if (u.protocol === 'http:') u.protocol = 'ws:';
+    if (u.protocol === 'https:') u.protocol = 'wss:';
+    if (u.pathname.endsWith('/rpc')) {
+      u.pathname = u.pathname.replace(/\/rpc\/?$/, '/ws');
+    }
+    return u.toString();
+  } catch {
+    // As a last resort, naive replace and adjust the path
+    const swapped = normalized.replace(/^http/i, 'ws');
+    return swapped.replace(/\/rpc\/?$/, '/ws');
+  }
+}
+
+function normalizeWsUrl(url: string, fallbackRpc?: string): string {
+  try {
+    const u = new URL(url);
+    if (u.protocol === 'http:') u.protocol = 'ws:';
+    if (u.protocol === 'https:') u.protocol = 'wss:';
+    if (!u.pathname || u.pathname === '/') {
+      if (fallbackRpc) return deriveWsUrl(fallbackRpc);
+      u.pathname = '/ws';
+    } else if (!u.pathname.endsWith('/ws')) {
+      u.pathname = `${u.pathname.replace(/\/+$/, '')}/ws`;
+    }
+    return u.toString();
+  } catch {
+    if (fallbackRpc) return deriveWsUrl(fallbackRpc);
+    const trimmed = url.replace(/\/+$/, '');
+    return trimmed.endsWith('/ws') ? trimmed : `${trimmed}/ws`;
   }
 }
 
@@ -113,23 +154,27 @@ function rehydrateSelection(): NetworkConfig | null {
 }
 
 function sanitizeConfig(cfg: NetworkConfig): NetworkConfig {
+  const rpcUrl = normalizeRpcUrl(cfg.rpcUrl);
+  const wsUrl = cfg.wsUrl ? normalizeWsUrl(cfg.wsUrl, rpcUrl) : deriveWsUrl(rpcUrl);
+
   // Force env RPC when a loopback address sneaks in
-  if (isLoopback(cfg.rpcUrl) && ENV_RPC && !isLoopback(ENV_RPC)) {
+  if (isLoopback(rpcUrl) && ENV_RPC && !isLoopback(ENV_RPC)) {
+    const envWs = deriveWsUrl(ENV_RPC);
     return {
       ...cfg,
       label: cfg.label ?? 'Env Config',
       rpcUrl: ENV_RPC,
-      wsUrl: deriveWsUrl(ENV_RPC),
+      wsUrl: envWs,
       servicesUrl: ENV_SERVICES,
     };
   }
 
-  return { ...cfg, wsUrl: cfg.wsUrl ?? deriveWsUrl(cfg.rpcUrl) };
+  return { ...cfg, rpcUrl, wsUrl };
 }
 
 /* -------------------------------- defaults ------------------------------- */
 
-const ENV_RPC = getEnv<string>('VITE_RPC_URL', 'http://127.0.0.1:8545');
+const ENV_RPC = normalizeRpcUrl(getEnv<string>('VITE_RPC_URL', 'http://127.0.0.1:8545/rpc'));
 const ENV_CHAIN = safeParseInt(getEnv<string>('VITE_CHAIN_ID', '1337'), 1337);
 const ENV_SERVICES = getEnv<string | undefined>('VITE_SERVICES_URL', undefined);
 
@@ -137,8 +182,8 @@ const DEFAULT_LOCAL: NetworkConfig = {
   id: 'local',
   label: 'Local Dev',
   chainId: 1337,
-  rpcUrl: 'http://127.0.0.1:8545',
-  wsUrl: 'ws://127.0.0.1:8546',
+  rpcUrl: 'http://127.0.0.1:8545/rpc',
+  wsUrl: 'ws://127.0.0.1:8546/ws',
   servicesUrl: 'http://127.0.0.1:8787',
 };
 
@@ -146,17 +191,17 @@ const DEFAULT_DEVNET: NetworkConfig = {
   id: 'devnet',
   label: 'Animica Devnet',
   chainId: 1337,
-  rpcUrl: 'http://localhost:8545',
-  wsUrl: 'ws://localhost:8546',
-  servicesUrl: 'http://localhost:8787',
+  rpcUrl: 'https://rpc.devnet.animica.org/rpc',
+  wsUrl: 'wss://rpc.devnet.animica.org/ws',
+  servicesUrl: 'https://api.devnet.animica.org',
 };
 
 const DEFAULT_TESTNET: NetworkConfig = {
   id: 'testnet',
   label: 'Animica Testnet',
   chainId: 2,
-  rpcUrl: 'https://rpc.testnet.animica.org',
-  wsUrl: 'wss://ws.testnet.animica.org',
+  rpcUrl: 'https://rpc.testnet.animica.org/rpc',
+  wsUrl: 'wss://rpc.testnet.animica.org/ws',
   servicesUrl: 'https://services.testnet.animica.org',
 };
 
@@ -164,8 +209,8 @@ const DEFAULT_MAINNET: NetworkConfig = {
   id: 'mainnet',
   label: 'Animica Mainnet',
   chainId: 1,
-  rpcUrl: 'https://rpc.animica.org',
-  wsUrl: 'wss://ws.animica.org',
+  rpcUrl: 'https://rpc.animica.org/rpc',
+  wsUrl: 'wss://rpc.animica.org/ws',
   servicesUrl: 'https://services.animica.org',
 };
 
