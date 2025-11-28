@@ -47,8 +47,9 @@ RUN set -eux; \
       rich \
       typer \
       pyyaml \
-      prometheus-client \
-      python-rocksdb || echo "python-rocksdb build failed (optional)"; \
+      prometheus-client; \
+    python -m pip wheel --wheel-dir=/wheels python-rocksdb \
+      || echo "python-rocksdb build failed (optional)"; \
     ls -l /wheels
 
 # ----- runtime: minimal system libs + Python deps ------------------------------
@@ -85,8 +86,9 @@ RUN set -eux; \
       rich \
       typer \
       pyyaml \
-      prometheus-client \
-      python-rocksdb || echo "python-rocksdb not installed (optional)"; \
+      prometheus-client; \
+    python -m pip install --no-index --find-links=/wheels python-rocksdb \
+      || echo "python-rocksdb not installed (optional)"; \
     rm -rf /wheels
 
 # Create non-root user & runtime dirs
