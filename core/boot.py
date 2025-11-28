@@ -63,13 +63,17 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument(
         "--genesis",
         type=str,
+        nargs="?",
         default=DEFAULT_GENESIS,
+        const=DEFAULT_GENESIS,
         help=f"Path to genesis file (default: {DEFAULT_GENESIS})",
     )
     ap.add_argument(
         "--db",
         type=str,
+        nargs="?",
         default=DEFAULT_DB,
+        const=DEFAULT_DB,
         help=f"Database URI (default: {DEFAULT_DB})",
     )
     ap.add_argument(
