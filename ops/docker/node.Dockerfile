@@ -46,6 +46,7 @@ RUN set -eux; \
       requests \
       rich \
       typer \
+      pyyaml \
       prometheus-client \
       python-rocksdb || echo "python-rocksdb build failed (optional)"; \
     ls -l /wheels
@@ -83,6 +84,7 @@ RUN set -eux; \
       requests \
       rich \
       typer \
+      pyyaml \
       prometheus-client \
       python-rocksdb || echo "python-rocksdb not installed (optional)"; \
     rm -rf /wheels
