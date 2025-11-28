@@ -34,6 +34,9 @@ from typing import Iterable, List, Tuple
 
 from .bytes import b as _b, BytesLike
 
+# Common constants
+ZERO32 = b"\x00" * 32
+
 # -----------------------
 # Optional accelerated algs
 # -----------------------
