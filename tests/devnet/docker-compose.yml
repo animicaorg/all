@@ -57,14 +57,17 @@ services:
     command: >
       bash -lc "
       set -euo pipefail;
+      GENESIS_PATH=${GENESIS_PATH:-core/genesis/genesis.json}
+      DB_URL=${CORE_DB_URL:-sqlite:////data/animica.db}
+
       if [ ! -f /data/animica.db ]; then
         echo '[node1] initializing genesis DB…'
-        python -m core.boot --genesis ${GENESIS_PATH} --db ${CORE_DB_URL}
+        python -m core.boot --genesis ${GENESIS_PATH} --db ${DB_URL}
       else
         echo '[node1] DB exists, skipping genesis init'
       fi;
       # Start RPC/WS server
-      exec python -m rpc.server --host ${RPC_HOST} --port ${RPC_PORT} --db ${CORE_DB_URL} --chain-id ${CHAIN_ID}
+      exec python -m rpc.server --host ${RPC_HOST} --port ${RPC_PORT} --db ${DB_URL} --chain-id ${CHAIN_ID}
       "
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8545/healthz || exit 1"]
@@ -101,13 +104,16 @@ services:
     command: >
       bash -lc "
       set -euo pipefail;
+      GENESIS_PATH=${GENESIS_PATH:-core/genesis/genesis.json}
+      DB_URL=${CORE_DB_URL:-sqlite:////data/animica.db}
+
       if [ ! -f /data/animica.db ]; then
         echo '[node2] initializing genesis DB…'
-        python -m core.boot --genesis ${GENESIS_PATH} --db ${CORE_DB_URL}
+        python -m core.boot --genesis ${GENESIS_PATH} --db ${DB_URL}
       else
         echo '[node2] DB exists, skipping genesis init'
       fi;
-      exec python -m rpc.server --host ${RPC_HOST} --port ${RPC_PORT} --db ${CORE_DB_URL} --chain-id ${CHAIN_ID}
+      exec python -m rpc.server --host ${RPC_HOST} --port ${RPC_PORT} --db ${DB_URL} --chain-id ${CHAIN_ID}
       "
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:9545/readyz || exit 1"]
