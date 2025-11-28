@@ -62,6 +62,11 @@ def list_merkle_root(leaves: Iterable[BytesLike]) -> bytes:
     return _merkle_root(leaves, leaf_hash=sha3_256, node_hash=sha3_256, duplicate_odd=True)
 
 
+def merkle_root(leaves: Iterable[BytesLike]) -> bytes:
+    """Compatibility alias for list_merkle_root."""
+    return list_merkle_root(leaves)
+
+
 def kv_merkle_root(items: Mapping[BytesLike, BytesLike] | Iterable[Tuple[BytesLike, BytesLike]]) -> bytes:
     """
     Root over a set of key→value bindings.
@@ -150,6 +155,7 @@ def kv_merkle_verify(
 
 
 __all__ = [
+    "merkle_root",
     "list_merkle_root",
     "kv_merkle_root",
     "kv_merkle_proof",
