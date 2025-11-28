@@ -39,8 +39,9 @@ import argparse
 import datetime as dt
 import json
 import os
-from dataclasses import asdict
-from typing import Any, Dict, Iterable, List, Tuple
+from dataclasses import asdict, replace
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 # --- Core imports (stable surfaces) ---
 from core.utils import hash as uhash
@@ -58,6 +59,7 @@ from core.db.state_db import StateDB
 from core.db.block_db import BlockDB
 from core.types.header import Header
 from core.types.block import Block
+from core.types.params import ChainParams, default_params_path
 
 
 # -------------------------
@@ -267,6 +269,77 @@ def _build_genesis_block(h: Header) -> Block:
 # -------------------------
 # Public API
 # -------------------------
+
+
+def _load_chain_params(genesis: Dict[str, Any], params_override: Optional[Mapping[str, Any]]) -> ChainParams:
+    """
+    Resolve and load ChainParams referenced by the genesis file.
+
+    The genesis JSON may include a paramsRef.path field; if missing we fall back
+    to the repository default params.yaml. Optional overrides are applied
+    shallowly using dataclasses.replace for convenience (best-effort).
+    """
+
+    params_path = None
+    params_ref = genesis.get("paramsRef") or {}
+    if isinstance(params_ref, dict) and "path" in params_ref:
+        params_path = Path(str(params_ref["path"])).expanduser()
+    if params_path is None:
+        params_path = default_params_path()
+
+    params = ChainParams.load_yaml(params_path)
+
+    if params_override:
+        # Only override fields that exist on the dataclass; ignore extras.
+        overrides = {k: v for k, v in params_override.items() if hasattr(params, k)}
+        if overrides:
+            params = replace(params, **overrides)
+
+    return params
+
+
+def load_genesis(
+    genesis_path: str | os.PathLike[str] | None,
+    kv: KV | None = None,
+    block_db: BlockDB | None = None,
+    *,
+    params_override: Optional[Mapping[str, Any]] = None,
+    log: bool = False,
+) -> Tuple[ChainParams, Header]:
+    """
+    Compatibility wrapper that loads a genesis JSON and returns (ChainParams, Header).
+
+    If a KV is provided, the state DB is pre-seeded with alloc accounts for
+    convenience. If a BlockDB is provided, it will be used for any optional
+    persistence helpers (current implementation is state-only; head setup is
+    handled by core.chain.head.finalize_genesis).
+    """
+
+    if genesis_path is None:
+        # Default to the bundled genesis.json next to this file.
+        here = Path(__file__).resolve().parent
+        genesis_path = here / "genesis.json"
+
+    with open(genesis_path, "r", encoding="utf-8") as f:
+        genesis = json.load(f)
+
+    params = _load_chain_params(genesis, params_override)
+
+    # Compute state root and header.
+    state_root = compute_state_root_from_alloc(genesis["alloc"])
+    header = _build_genesis_header(genesis, state_root)
+
+    # Optionally seed state DB for callers that pass a KV handle.
+    if kv is not None:
+        state = StateDB(kv)
+        _init_state_from_alloc(state, genesis["alloc"])
+
+    if log:
+        print(
+            "[genesis] chainId=%s stateRoot=%s", genesis["chainId"], state_root.hex()
+        )
+
+    return params, header
 
 def load_and_init_genesis(
     genesis_path: str,
