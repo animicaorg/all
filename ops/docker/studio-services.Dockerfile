@@ -19,27 +19,20 @@
 # ------------------------------------------------------------------------------
 
 ARG PYTHON_VERSION=3.11
-FROM python:${PYTHON_VERSION}-slim
-
 ARG DEBIAN_FRONTEND=noninteractive
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    SERVICES_PORT=8090 \
-    RPC_URL=http://node:8545/rpc \
-    CHAIN_ID=1 \
-    CORS_ALLOW_ORIGINS="*" \
-    RATE_LIMITS=default \
-    STORAGE_DIR=/data/artifacts
 
-# System utilities & tini for signal handling
+# ----- builder: compile/download wheels (uvicorn[standard] pulls httptools/uvloop)
+FROM python:${PYTHON_VERSION}-slim AS builder
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl tini \
+      ca-certificates curl build-essential \
   && rm -rf /var/lib/apt/lists/*
 
-# Python dependencies (binary wheels preferred)
-RUN python -m pip install --upgrade pip setuptools wheel \
- && python -m pip install \
+RUN python -m pip install --upgrade pip setuptools wheel
+
+RUN set -eux; \
+    mkdir -p /wheels; \
+    python -m pip wheel --wheel-dir=/wheels \
       fastapi \
       "uvicorn[standard]" \
       "pydantic>=2" \
@@ -50,7 +43,40 @@ RUN python -m pip install --upgrade pip setuptools wheel \
       itsdangerous \
       prometheus-client \
       cachetools \
-      orjson
+      orjson; \
+    ls -l /wheels
+
+# ----- runtime: slim image consuming pre-built wheels only
+FROM python:${PYTHON_VERSION}-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    SERVICES_PORT=8090 \
+    RPC_URL=http://node:8545/rpc \
+    CHAIN_ID=1 \
+    CORS_ALLOW_ORIGINS="*" \
+    RATE_LIMITS=default \
+    STORAGE_DIR=/data/artifacts
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl tini \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /wheels /wheels
+RUN python -m pip install --no-index --find-links=/wheels \
+      fastapi \
+      "uvicorn[standard]" \
+      "pydantic>=2" \
+      msgspec \
+      httpx \
+      requests \
+      python-multipart \
+      itsdangerous \
+      prometheus-client \
+      cachetools \
+      orjson \
+  && rm -rf /wheels
 
 # Create non-root user and dirs
 ARG USER=animica
