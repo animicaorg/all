@@ -19,13 +19,13 @@ RUN useradd --create-home --shell /bin/bash app
 WORKDIR /app
 
 # Install Python dependencies first (max layer cache)
-COPY studio-services/requirements.txt /app/requirements.txt
+COPY requirements.txt /app/requirements.txt
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir -r /app/requirements.txt && \
     pip install --no-cache-dir gunicorn==22.0.0
 
 # Copy application code
-COPY studio-services /app
+COPY . /app
 # If the repo includes local SDKs/VM packages and you want them installed in image,
 # uncomment the following lines and ensure relative paths are correct.
 # COPY sdk/python /build/sdk_python
