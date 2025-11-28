@@ -400,7 +400,7 @@ def attach_lifecycle(app, cfg: _ConfigView | None = None) -> None:
             if cfg is None:
                 cfg = _load_rpc_config()
             global _CTX
-            _CTX = build_context()
+            _CTX = build_context(cfg)
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:
