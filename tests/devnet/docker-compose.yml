@@ -61,20 +61,21 @@ services:
       python -m pip install
         fastapi uvicorn[standard] pydantic msgspec websockets
         prometheus-client cbor2 msgpack blake3 pycryptodomex anyio httpx typer rich &&
-      # Initialize DB/genesis if empty
-      python - <<'PY'
-import os,sys,subprocess
-db='${CORE_DB_URL}'
-if not os.path.exists('/data/animica.db'):
-    print('[node1] initializing genesis DB…', flush=True)
-    subprocess.check_call([
-        sys.executable,'-m','core.boot',
-        '--genesis','${GENESIS_PATH}',
-        '--db',db
-    ])
-else:
-    print('[node1] DB exists, skipping genesis init', flush=True)
-PY
+        # Initialize DB/genesis if empty
+        python - <<'PY'
+        import os, sys, subprocess
+
+        db = '${CORE_DB_URL}'
+        if not os.path.exists('/data/animica.db'):
+            print('[node1] initializing genesis DB…', flush=True)
+            subprocess.check_call([
+                sys.executable, '-m', 'core.boot',
+                '--genesis', '${GENESIS_PATH}',
+                '--db', db
+            ])
+        else:
+            print('[node1] DB exists, skipping genesis init', flush=True)
+        PY
       ;
       # Start RPC/WS server
       python -m rpc.server --host ${RPC_HOST} --port ${RPC_PORT} --db ${CORE_DB_URL} --chain-id ${CHAIN_ID}
