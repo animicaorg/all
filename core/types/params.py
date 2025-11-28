@@ -203,7 +203,136 @@ class ChainParams:
         )
 
     @classmethod
-    def load_yaml(cls, path: os.PathLike[str] | str) -> "ChainParams":
+    def _from_networks_mapping(
+        cls,
+        m: Mapping[str, Any],
+        *,
+        chain_id_hint: int | None = None,
+        network_name: str | None = None,
+    ) -> "ChainParams":
+        """
+        Compatibility loader for the newer `spec/params.yaml` layout which
+        nests network configs under a top-level `networks:` map.
+
+        We select a network based on (in order):
+          1) explicit ``network_name`` if provided,
+          2) ``chain_id_hint`` matching the ``<name>:<id>`` suffix,
+          3) the first entry in the map (deterministic insertion order in Py3.7+).
+        Missing optional fields fall back to safe defaults so the core boot
+        process can proceed even if the broader spec has additional knobs.
+        """
+
+        def _pick_network() -> tuple[str, Mapping[str, Any]]:
+            networks = m.get("networks")
+            if not isinstance(networks, Mapping) or not networks:
+                raise KeyError("networks")
+
+            if network_name:
+                for k, v in networks.items():
+                    if k.lower() == network_name.lower():
+                        return k, v
+
+            if chain_id_hint is not None:
+                for k, v in networks.items():
+                    if ":" in k:
+                        try:
+                            cid = int(k.split(":")[-1])
+                        except ValueError:
+                            continue
+                        if cid == chain_id_hint:
+                            return k, v
+
+            # Fallback: first entry (insertion order is deterministic)
+            k, v = next(iter(networks.items()))
+            return k, v
+
+        def _bytes32_or_zero(val: str | None, field: str) -> Bytes32:
+            if val is None:
+                return b"\x00" * 32
+            try:
+                return _hex_to_bytes32(val, field=field)
+            except Exception:
+                return b"\x00" * 32
+
+        network_key, net = _pick_network()
+        chain_id = chain_id_hint
+        if chain_id is None and ":" in network_key:
+            try:
+                chain_id = int(network_key.split(":")[-1])
+            except ValueError:
+                chain_id = None
+        chain_id = int(chain_id if chain_id is not None else net.get("chain_id", 0) or 0)
+        if chain_id <= 0:
+            raise ValueError("chain.id must be positive")
+
+        chain_name = str(net.get("name") or network_key).strip()
+        if not chain_name:
+            raise ValueError("chain.name must be non-empty")
+
+        genesis = net.get("genesis") or {}
+        genesis_time = str(genesis.get("time") or net.get("genesis_time_utc") or "1970-01-01T00:00:00Z")
+        genesis_hash = _bytes32_or_zero(genesis.get("hash") or net.get("genesis_hash"), field="genesis.hash")
+
+        roots = net.get("policy_roots") or {}
+        alg_root = _bytes32_or_zero(roots.get("alg_policy_root"), field="policy_roots.alg_policy_root")
+        poies_root = _bytes32_or_zero(roots.get("poies_policy_root"), field="policy_roots.poies_policy_root")
+
+        cons = (net.get("consensus") or {}).get("poies", {})
+        theta_initial = int(cons.get("theta_initial_munats", 1_000_000))
+        if theta_initial <= 0:
+            raise ValueError("consensus.theta_initial must be > 0")
+        gamma_cfg = cons.get("gamma") or {}
+        gamma_total_cap = int(gamma_cfg.get("total_cap_munats", 1_000_000))
+        if gamma_total_cap <= 0:
+            raise ValueError("consensus.gamma_total_cap must be > 0")
+
+        rt_cfg = cons.get("retarget") or {}
+        bounds_cfg = rt_cfg.get("clamp_ratio_per_window") or {}
+        retarget = RetargetParams(
+            window=int(rt_cfg.get("window_blocks", 2048)),
+            ema_alpha=float(rt_cfg.get("ema_beta", 0.1)),
+            bounds=RetargetBounds(
+                min=float(bounds_cfg.get("min", 0.5)),
+                max=float(bounds_cfg.get("max", 2.0)),
+            ),
+        )
+
+        blocks_cfg = net.get("blocks") or {}
+        issuance_cfg = net.get("issuance") or {}
+        target_ms = issuance_cfg.get("target_block_interval_ms", 2000)
+        try:
+            target_seconds = float(target_ms) / 1000.0
+        except Exception:
+            target_seconds = 2.0
+        block_limits = BlockLimits(
+            target_seconds=target_seconds,
+            max_bytes=int(blocks_cfg.get("max_bytes", 1_500_000)),
+            max_gas=int(blocks_cfg.get("max_gas", 20_000_000)),
+            tx_max_bytes=int(blocks_cfg.get("tx_max_bytes", blocks_cfg.get("max_bytes", 1_500_000))),
+            min_gas_price=int(blocks_cfg.get("min_gas_price", 0)),
+        )
+
+        return cls(
+            chain_id=chain_id,
+            chain_name=chain_name,
+            genesis_time=genesis_time,
+            genesis_hash=genesis_hash,
+            alg_policy_root=alg_root,
+            poies_policy_root=poies_root,
+            theta_initial=theta_initial,
+            gamma_total_cap=gamma_total_cap,
+            retarget=retarget,
+            block=block_limits,
+        )
+
+    @classmethod
+    def load_yaml(
+        cls,
+        path: os.PathLike[str] | str,
+        *,
+        chain_id_hint: int | None = None,
+        network_name: str | None = None,
+    ) -> "ChainParams":
         """
         Load from YAML file on disk. Requires PyYAML at runtime.
         """
@@ -221,7 +350,13 @@ class ChainParams:
             data = yaml.safe_load(f)
         if not isinstance(data, Mapping):
             raise TypeError("YAML root must be a mapping")
-        return cls.from_mapping(data)
+        if "chain" in data:
+            return cls.from_mapping(data)
+        if "networks" in data:
+            return cls._from_networks_mapping(
+                data, chain_id_hint=chain_id_hint, network_name=network_name
+            )
+        raise KeyError("chain")
 
     def to_public_dict(self) -> Mapping[str, Any]:
         """
@@ -272,12 +407,17 @@ def default_params_path(env_var: str = "ANIMICA_PARAMS") -> Path:
     return repo_root / "spec" / "params.yaml"
 
 
-def load_default_params(path: Optional[os.PathLike[str] | str] = None) -> ChainParams:
+def load_default_params(
+    path: Optional[os.PathLike[str] | str] = None,
+    *,
+    chain_id_hint: int | None = None,
+    network_name: str | None = None,
+) -> ChainParams:
     """
     Load params from the default location (or provided path).
     """
     p = Path(path) if path is not None else default_params_path()
-    return ChainParams.load_yaml(p)
+    return ChainParams.load_yaml(p, chain_id_hint=chain_id_hint, network_name=network_name)
 
 
 # -------- tiny CLI for sanity --------
