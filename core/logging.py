@@ -348,6 +348,43 @@ def configure(
     for noisy in ("urllib3", "asyncio", "websockets"):
         logging.getLogger(noisy).setLevel(max(_coerce_level(level), logging.WARNING))
 
+
+def setup_logging(
+    *,
+    level: str | int = "INFO",
+    fmt: str = "json",
+    file: Optional[Path | str] = None,
+    stream: io.TextIOBase = sys.stderr,
+    propagate_existing: bool = False,
+) -> None:
+    """
+    Backwards-compatible wrapper for configuring logging.
+
+    Parameters
+    ----------
+    level : str | int
+        Minimum log level (default: "INFO").
+    fmt : "json" | "text"
+        Output format. Environment variable ANIMICA_LOG_FORMAT takes precedence.
+    file : Path | str | None
+        Optional path to tee machine-readable JSON logs to a file.
+    stream : TextIO
+        Stream for console handler (default: stderr).
+    propagate_existing : bool
+        If True, leave existing handlers in place.
+    """
+    override = _env_json_override()
+    fmt_lower = fmt.strip().lower()
+    chosen_json = override if override is not None else fmt_lower == "json"
+
+    configure(
+        json=chosen_json,
+        level=level,
+        stream=stream,
+        file_path=file,
+        propagate_existing=propagate_existing,
+    )
+
 def configure_from_core_config(cfg: Any) -> None:
     """
     Convenience wrapper to configure logging based on `core.config.Config`.
