@@ -63,10 +63,6 @@ RUN groupadd -g "${GID}" "${USER}" \
  && mkdir -p /app /data /var/log/animica \
  && chown -R "${USER}:${USER}" /app /data /var/log/animica
 
-WORKDIR /app
-COPY . /app
-USER ${USER}
-
 # Optional service ports:
 # - Stratum (when enabled via MINER_STRATUM_LISTEN)
 EXPOSE 3333
@@ -90,6 +86,10 @@ RUN printf '%s\n' '#!/usr/bin/env sh' \
   'exec python -m mining.cli.miner '"'"'--rpc-http'"'"' "${MINER_RPC_HTTP}" '"'"'--rpc-ws'"'"' "${MINER_RPC_WS}" '"'"'--chain-id'"'"' "${MINER_CHAIN_ID}" ${ARGS}' \
   > /usr/local/bin/start-miner && \
   chmod +x /usr/local/bin/start-miner
+
+WORKDIR /app
+COPY . /app
+USER ${USER}
 
 # Healthcheck (best-effort): ensure process is alive; if stratum is enabled,
 # you can switch this to TCP check on ${MINER_STRATUM_LISTEN}.
