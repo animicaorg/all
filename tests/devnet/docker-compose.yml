@@ -57,6 +57,9 @@ services:
     command: >
       bash -lc "
       set -euo pipefail;
+      # Ensure PyYAML is available even if the base image was built without it
+      # (older cached images might miss the dependency).
+      pip show pyyaml >/dev/null 2>&1 || python -m pip install --user pyyaml;
       GENESIS_PATH=${GENESIS_PATH:-core/genesis/genesis.json}
       DB_URL=${CORE_DB_URL:-sqlite:////data/animica.db}
 
@@ -104,6 +107,7 @@ services:
     command: >
       bash -lc "
       set -euo pipefail;
+      pip show pyyaml >/dev/null 2>&1 || python -m pip install --user pyyaml;
       GENESIS_PATH=${GENESIS_PATH:-core/genesis/genesis.json}
       DB_URL=${CORE_DB_URL:-sqlite:////data/animica.db}
 
