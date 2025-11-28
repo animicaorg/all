@@ -21,7 +21,7 @@ from typing import Any, Optional
 
 from core.logging import setup_logging
 from core.errors import AnimicaError
-from core.db.kv import open_kv
+from core.db import open_kv
 from core.db.block_db import BlockDB
 from core.genesis.loader import load_genesis
 from core.chain.head import read_head
