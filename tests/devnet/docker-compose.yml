@@ -83,7 +83,7 @@ services:
       timeout: 3s
       retries: 20
     ports:
-      - "8545:8545"
+      - "${HOST_NODE1_RPC:-8545}:8545"
     networks: [devnet]
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -138,7 +138,7 @@ services:
       timeout: 3s
       retries: 20
     ports:
-      - "9545:9545"
+      - "${HOST_NODE2_RPC:-9545}:9545"
     networks: [devnet]
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -193,7 +193,7 @@ services:
     volumes:
       - services_data:/var/lib/services
     ports:
-      - "8787:8787"
+      - "${HOST_STUDIO_SERVICES:-8787}:8787"
     command: >
       bash -lc "
       set -euo pipefail;
@@ -219,14 +219,14 @@ services:
     container_name: animica-explorer
     working_dir: /app
     environment:
-      VITE_RPC_URL: "http://localhost:8545"       # browser hits your host → forwarded to node1
+      VITE_RPC_URL: "http://localhost:${HOST_NODE1_RPC:-8545}"       # browser hits your host → forwarded to node1
       VITE_CHAIN_ID: "1337"
       # Optional studio-services integration
-      VITE_SERVICES_URL: "http://localhost:8787"
+      VITE_SERVICES_URL: "http://localhost:${HOST_STUDIO_SERVICES:-8787}"
     volumes:
       - ../../explorer-web:/app:rw
     ports:
-      - "5173:5173"
+      - "${HOST_EXPLORER:-5173}:5173"
     command: >
       sh -lc "
       set -eu;
