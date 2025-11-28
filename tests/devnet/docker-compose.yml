@@ -64,17 +64,17 @@ services:
       # (older cached images might miss the dependency).
       su -s /bin/bash animica -c "set -euo pipefail;
         pip show pyyaml >/dev/null 2>&1 || python -m pip install --user pyyaml;
-        GENESIS_PATH=${GENESIS_PATH:-core/genesis/genesis.json};
-        DB_URL=${CORE_DB_URL:-sqlite:////data/animica.db};
+        GENESIS_PATH=$${GENESIS_PATH:-core/genesis/genesis.json};
+        DB_URL=$${CORE_DB_URL:-sqlite:////data/animica.db};
 
         if [ ! -f /data/animica.db ]; then
           echo '[node1] initializing genesis DB…';
-          python -m core.boot --genesis ${GENESIS_PATH} --db ${DB_URL};
+          python -m core.boot --genesis $${GENESIS_PATH} --db $${DB_URL};
         else
           echo '[node1] DB exists, skipping genesis init';
         fi;
         # Start RPC/WS server
-        exec python -m rpc.server --host ${RPC_HOST} --port ${RPC_PORT} --db ${DB_URL} --chain-id ${CHAIN_ID}
+        exec python -m rpc.server --host $${RPC_HOST} --port $${RPC_PORT} --db $${DB_URL} --chain-id $${CHAIN_ID}
       "
       "
     healthcheck:
@@ -119,16 +119,16 @@ services:
       # (older cached images might miss the dependency).
       su -s /bin/bash animica -c "set -euo pipefail;
         pip show pyyaml >/dev/null 2>&1 || python -m pip install --user pyyaml;
-        GENESIS_PATH=${GENESIS_PATH:-core/genesis/genesis.json};
-        DB_URL=${CORE_DB_URL:-sqlite:////data/animica.db};
+        GENESIS_PATH=$${GENESIS_PATH:-core/genesis/genesis.json};
+        DB_URL=$${CORE_DB_URL:-sqlite:////data/animica.db};
 
         if [ ! -f /data/animica.db ]; then
           echo '[node2] initializing genesis DB…';
-          python -m core.boot --genesis ${GENESIS_PATH} --db ${DB_URL};
+          python -m core.boot --genesis $${GENESIS_PATH} --db $${DB_URL};
         else
           echo '[node2] DB exists, skipping genesis init';
         fi;
-        exec python -m rpc.server --host ${RPC_HOST} --port ${RPC_PORT} --db ${DB_URL} --chain-id ${CHAIN_ID}
+        exec python -m rpc.server --host $${RPC_HOST} --port $${RPC_PORT} --db $${DB_URL} --chain-id $${CHAIN_ID}
       "
       "
     healthcheck:
@@ -165,7 +165,7 @@ services:
     command: >
       bash -lc "
       set -euo pipefail;
-      exec python -m mining.cli.miner --threads ${THREADS} --device ${DEVICE} --rpc ${RPC_URL}
+      exec python -m mining.cli.miner --threads $${THREADS} --device $${DEVICE} --rpc $${RPC_URL}
       "
     depends_on:
       node1:
