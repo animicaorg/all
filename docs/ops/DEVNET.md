@@ -26,6 +26,14 @@ Spin up a **single-node Animica devnet** with HTTP JSON-RPC, WebSocket subscript
 - Studio Services: `8787`
 - Prometheus metrics: co-hosted on each service (same port), path `/metrics`
 
+> **Port already in use?** If Docker reports `failed to bind host port 0.0.0.0:8545`, free it with the repo helper:
+>
+> ```bash
+> python scripts/kill_port.py 8545
+> ```
+>
+> Add `--signal SIGKILL` if the process ignores SIGTERM.
+
 ---
 
 ## 0) Prerequisites
