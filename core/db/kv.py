@@ -252,6 +252,20 @@ def delete_many(kv: KV, keys: Iterable[bytes]) -> None:
             b.delete(k)
 
 
+# Backwards-compatible shim
+def open_kv(uri: str, create: bool = True) -> KV:
+    """Import-time-light proxy to core.db.open_kv.
+
+    Historically callers imported open_kv from core.db.kv; retain that path to
+    avoid breaking older modules while keeping the real implementation in
+    core.db.
+    """
+
+    from core.db import open_kv as _open_kv
+
+    return _open_kv(uri, create=create)
+
+
 # ---------------------------------------------------------------------------
 # Common sub-prefixes (documented patterns)
 # ---------------------------------------------------------------------------
@@ -301,6 +315,7 @@ __all__ = [
     "get_or_raise",
     "put_many",
     "delete_many",
+    "open_kv",
     # Encoders
     "be_u32",
     "be_u64",
