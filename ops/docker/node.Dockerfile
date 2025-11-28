@@ -42,7 +42,6 @@ RUN set -eux; \
       cbor2 \
       msgpack \
       pycryptodomex \
-      pysha3 \
       httpx \
       requests \
       rich \
@@ -80,7 +79,6 @@ RUN set -eux; \
       cbor2 \
       msgpack \
       pycryptodomex \
-      pysha3 \
       httpx \
       requests \
       rich \

@@ -30,7 +30,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     NUMEXPR_NUM_THREADS=1
 
 # Minimal system libs for numpy wheels and sane runtime; tini for PID 1.
-# build-essential is required to compile pysha3 when a wheel isn't available.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl tini libgomp1 procps build-essential \
   && rm -rf /var/lib/apt/lists/*
@@ -50,7 +49,7 @@ RUN python -m pip install --upgrade pip setuptools wheel \
       cbor2 \
       msgpack \
       blake3 \
-      pysha3 \
+      pycryptodomex \
       prometheus-client \
       psutil \
       rich
