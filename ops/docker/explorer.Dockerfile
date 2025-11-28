@@ -40,7 +40,7 @@ RUN python -m pip install --upgrade pip setuptools wheel \
       httpx \
       websockets \
       blake3 \
-      pysha3 \
+      pycryptodomex \
       prometheus-client \
       cachetools
 
