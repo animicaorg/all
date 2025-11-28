@@ -20,9 +20,6 @@ version: "3.9"
 
 name: animica-devnet
 
-profiles:
-  - dev
-
 networks:
   devnet:
     driver: bridge
