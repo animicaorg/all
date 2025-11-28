@@ -84,15 +84,27 @@ def _header_hash(hdr: Header) -> bytes:
 def read_head(block_db) -> Optional[Tuple[int, bytes]]:
     """
     Return the canonical head (height, hash) if present, else None.
+    Supports both the legacy get_canonical_head() API and the newer get_head().
     """
-    return block_db.get_canonical_head()
+    if hasattr(block_db, "get_canonical_head"):
+        return block_db.get_canonical_head()
+    if hasattr(block_db, "get_head"):
+        return block_db.get_head()
+    raise GenesisError("block_db missing head getter")
 
 
 def write_head(block_db, height: int, h: bytes) -> None:
     """
-    Update the canonical head pointer.
+    Update the canonical head pointer. Supports both set_canonical_head(height, h)
+    and set_head(height, h) naming variants.
     """
-    block_db.set_canonical_head(height, h)
+    if hasattr(block_db, "set_canonical_head"):
+        block_db.set_canonical_head(height, h)
+        return
+    if hasattr(block_db, "set_head"):
+        block_db.set_head(height, h)
+        return
+    raise GenesisError("block_db missing head setter")
 
 
 # --- Genesis finalization ---------------------------------------------------
@@ -126,12 +138,29 @@ def finalize_genesis(block_db, params: ChainParams, genesis_header: Header) -> T
     h0 = _header_hash(genesis_header)
 
     # (3) If no head, write genesis and set head
-    head = read_head(block_db)
+    head = None
+    try:
+        head = read_head(block_db)
+    except Exception:
+        head = None
     if head is None:
         # Persist header(0) if not present
         existing = block_db.get_header_by_hash(h0)
         if existing is None:
-            block_db.put_header(0, h0, genesis_header)
+            if hasattr(block_db, "write_header"):
+                try:
+                    block_db.write_header(0, genesis_header)  # type: ignore[attr-defined]
+                except TypeError:
+                    block_db.write_header(0, h0, genesis_header)  # type: ignore[arg-type]
+            elif hasattr(block_db, "put_header"):
+                try:
+                    block_db.put_header(0, h0, genesis_header)  # type: ignore[arg-type]
+                except TypeError:
+                    block_db.put_header(genesis_header)  # type: ignore[call-arg]
+            else:
+                raise GenesisError("block_db missing header writer")
+        if hasattr(block_db, "set_canonical"):
+            block_db.set_canonical(0, h0)  # type: ignore[attr-defined]
         write_head(block_db, 0, h0)
         return (0, h0)
 
@@ -171,7 +200,16 @@ def _ensure_genesis_header_persisted(block_db, h0: bytes, hdr: Header) -> None:
     try:
         existing = block_db.get_header_by_hash(h0)
         if existing is None:
-            block_db.put_header(0, h0, hdr)
+            if hasattr(block_db, "write_header"):
+                try:
+                    block_db.write_header(0, hdr)  # type: ignore[attr-defined]
+                except TypeError:
+                    block_db.write_header(0, h0, hdr)  # type: ignore[arg-type]
+            elif hasattr(block_db, "put_header"):
+                try:
+                    block_db.put_header(0, h0, hdr)  # type: ignore[arg-type]
+                except TypeError:
+                    block_db.put_header(hdr)  # type: ignore[call-arg]
     except Exception:
         # Be conservative: if the backend doesn't allow inserting retroactively
         # (some exotic impl), we just skip; finalize_genesis will still succeed
