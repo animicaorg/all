@@ -332,9 +332,20 @@ def cbor_loads(b: bytes) -> Any:
     return loads(b)
 
 
+# Backwards-compatible aliases used by some callers/tests
+def encode(obj: Any) -> bytes:  # pragma: no cover - thin shim
+    return dumps(obj)
+
+
+def decode(b: bytes) -> Any:  # pragma: no cover - thin shim
+    return loads(b)
+
+
 __all__ = [
     "dumps",
     "loads",
+    "encode",
+    "decode",
     "cbor_dumps",
     "cbor_loads",
     "EncodeError",

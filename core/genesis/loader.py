@@ -243,22 +243,31 @@ def _build_genesis_header(
     if len(mix_seed) != 32:
         mix_seed = ZERO32
 
-    h = Header(
+    def _hex32_or_zero(val: str | None) -> bytes:
+        if not val:
+            return ZERO32
+        try:
+            b = bytes.fromhex(val.removeprefix("0x"))
+            if len(b) == 32:
+                return b
+        except Exception:
+            pass
+        return ZERO32
+
+    return Header.genesis(
         chain_id=int(genesis["chainId"]),
-        height=0,
-        time=_parse_time(genesis["genesisTime"]),
-        parent_hash=parent_hash,
+        timestamp=_parse_time(genesis["genesisTime"]),
         state_root=state_root,
         txs_root=txs_root,
         receipts_root=receipts_root,
         proofs_root=proofs_root,
         da_root=da_root,
-        theta_micro=theta_micro,
         mix_seed=mix_seed,
-        nonce=0,
-        extra={}
+        poies_policy_root=_hex32_or_zero(genesis.get("algPolicyRoot")),
+        pq_alg_policy_root=ZERO32,
+        theta_micro=theta_micro,
+        extra=b"",
     )
-    return h
 
 
 def _build_genesis_block(h: Header) -> Block:
@@ -287,7 +296,9 @@ def _load_chain_params(genesis: Dict[str, Any], params_override: Optional[Mappin
     if params_path is None:
         params_path = default_params_path()
 
-    params = ChainParams.load_yaml(params_path)
+    params = ChainParams.load_yaml(
+        params_path, chain_id_hint=int(genesis.get("chainId", 0) or 0)
+    )
 
     if params_override:
         # Only override fields that exist on the dataclass; ignore extras.
