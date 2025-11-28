@@ -29,6 +29,7 @@ This module only *encodes* sign-bytes. Key management & signature logic lives
 in pq/ (Dilithium3, SPHINCS+), which must be fed the output of these functions.
 """
 
+from dataclasses import asdict, is_dataclass
 from typing import Any, Mapping, Iterable, Union, Optional, Tuple
 
 from core.encoding.cbor import dumps as cbor_dumps, EncodeError
@@ -133,6 +134,38 @@ def signbytes_header(header_payload: Structured, chain_id: int, *, extra: Option
     """
     return signbytes(DOM_HEADER_SIGN_V1, header_payload, chain_id, extra=extra)
 
+
+def _as_mapping(x: Any) -> Mapping[str, Any]:
+    """Best-effort conversion of dataclasses/objects to a Mapping for SignBytes."""
+    if isinstance(x, Mapping):
+        return dict(x)
+    if hasattr(x, "to_obj"):
+        return x.to_obj()  # type: ignore[no-any-return]
+    if is_dataclass(x):
+        return asdict(x)
+    raise TypeError("expected mapping or dataclass-compatible object")
+
+
+def _chain_id_from(obj: Any, mapping: Mapping[str, Any]) -> int:
+    if hasattr(obj, "chain_id"):
+        return int(getattr(obj, "chain_id"))
+    if hasattr(obj, "chainId"):
+        return int(getattr(obj, "chainId"))
+    if "chain_id" in mapping:
+        return int(mapping["chain_id"])
+    if "chainId" in mapping:
+        return int(mapping["chainId"])
+    raise ValueError("header/tx missing chain id for signing")
+
+
+def header_signing_bytes(header: Any) -> bytes:
+    """
+    Convenience: produce canonical SignBytes for a Header-like object or mapping.
+    """
+    payload = _as_mapping(header)
+    chain_id = _chain_id_from(header, payload)
+    return signbytes_header(payload, chain_id)
+
 # --------------------------
 # Hash helpers
 # --------------------------
@@ -163,12 +196,27 @@ def header_hash(domain: str, header_payload: Structured, chain_id: int) -> bytes
     """
     return hash_signbytes(domain, header_payload, chain_id, digest="sha3_256")
 
+
+def tx_signing_bytes(tx: Any) -> bytes:
+    """
+    Convenience: produce canonical SignBytes for an UnsignedTx or Tx-like object.
+    """
+    # If a signed Tx is provided, sign the unsigned portion.
+    if hasattr(tx, "unsigned"):
+        tx = getattr(tx, "unsigned")
+
+    payload = _as_mapping(tx)
+    chain_id = _chain_id_from(tx, payload)
+    return signbytes_tx(payload, chain_id)
+
 __all__ = [
     "DOM_TX_SIGN_V1",
     "DOM_HEADER_SIGN_V1",
     "signbytes",
     "signbytes_tx",
     "signbytes_header",
+    "header_signing_bytes",
+    "tx_signing_bytes",
     "hash_signbytes",
     "tx_hash",
     "header_hash",
