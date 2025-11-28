@@ -11,8 +11,9 @@
 #   docker compose -f tests/devnet/docker-compose.yml --profile dev down -v
 #
 # Notes:
-# - This is a developer-friendly stack. It installs Python/Node deps at
-#   container start and runs directly from your local checkout.
+# - This is a developer-friendly stack. Python deps are baked into the
+#   node/miner images; your local repo is mounted read-only for code access.
+#   explorer still installs Node deps at container start.
 # - SQLite is used for persistence; volumes keep data across restarts.
 # - If your modules expose different CLIs, adjust commands/env below.
 # -------------------------------------------------------------------
@@ -35,11 +36,13 @@ services:
   # ---------------------------------------------------------------
   node1:
     profiles: [dev]
-    image: python:3.11-slim
+    build:
+      context: ../..
+      dockerfile: ops/docker/node.Dockerfile
     container_name: animica-node1
-    working_dir: /workspace
+    working_dir: /app
     volumes:
-      - ../..:/workspace:rw
+      - ../..:/app:ro
       - node1_data:/data
     environment:
       # DB & chain config
@@ -54,28 +57,14 @@ services:
     command: >
       bash -lc "
       set -euo pipefail;
-      python -m pip install -U pip wheel &&
-      python -m pip install
-        fastapi uvicorn[standard] pydantic msgspec websockets
-        prometheus-client cbor2 msgpack blake3 pycryptodomex anyio httpx typer rich &&
-        # Initialize DB/genesis if empty
-        python - <<'PY'
-        import os, sys, subprocess
-
-        db = '${CORE_DB_URL}'
-        if not os.path.exists('/data/animica.db'):
-            print('[node1] initializing genesis DB…', flush=True)
-            subprocess.check_call([
-                sys.executable, '-m', 'core.boot',
-                '--genesis', '${GENESIS_PATH}',
-                '--db', db
-            ])
-        else:
-            print('[node1] DB exists, skipping genesis init', flush=True)
-        PY
-      ;
+      if [ ! -f /data/animica.db ]; then
+        echo '[node1] initializing genesis DB…'
+        python -m core.boot --genesis ${GENESIS_PATH} --db ${CORE_DB_URL}
+      else
+        echo '[node1] DB exists, skipping genesis init'
+      fi;
       # Start RPC/WS server
-      python -m rpc.server --host ${RPC_HOST} --port ${RPC_PORT} --db ${CORE_DB_URL} --chain-id ${CHAIN_ID}
+      exec python -m rpc.server --host ${RPC_HOST} --port ${RPC_PORT} --db ${CORE_DB_URL} --chain-id ${CHAIN_ID}
       "
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8545/healthz || exit 1"]
@@ -93,11 +82,13 @@ services:
   # ---------------------------------------------------------------
   node2:
     profiles: [dev]
-    image: python:3.11-slim
+    build:
+      context: ../..
+      dockerfile: ops/docker/node.Dockerfile
     container_name: animica-node2
-    working_dir: /workspace
+    working_dir: /app
     volumes:
-      - ../..:/workspace:rw
+      - ../..:/app:ro
       - node2_data:/data
     environment:
       CHAIN_ID: "1337"
@@ -110,27 +101,13 @@ services:
     command: >
       bash -lc "
       set -euo pipefail;
-      python -m pip install -U pip wheel &&
-      python -m pip install
-        fastapi uvicorn[standard] pydantic msgspec websockets
-        prometheus-client cbor2 msgpack blake3 pycryptodomex anyio httpx typer rich &&
-        # Initialize DB/genesis if empty
-        python - <<'PY'
-        import os, sys, subprocess
-
-        db = '${CORE_DB_URL}'
-        if not os.path.exists('/data/animica.db'):
-            print('[node2] initializing genesis DB…', flush=True)
-            subprocess.check_call([
-                sys.executable, '-m', 'core.boot',
-                '--genesis', '${GENESIS_PATH}',
-                '--db', db
-            ])
-        else:
-            print('[node2] DB exists, skipping genesis init', flush=True)
-        PY
-      ;
-      python -m rpc.server --host ${RPC_HOST} --port ${RPC_PORT} --db ${CORE_DB_URL} --chain-id ${CHAIN_ID}
+      if [ ! -f /data/animica.db ]; then
+        echo '[node2] initializing genesis DB…'
+        python -m core.boot --genesis ${GENESIS_PATH} --db ${CORE_DB_URL}
+      else
+        echo '[node2] DB exists, skipping genesis init'
+      fi;
+      exec python -m rpc.server --host ${RPC_HOST} --port ${RPC_PORT} --db ${CORE_DB_URL} --chain-id ${CHAIN_ID}
       "
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:9545/readyz || exit 1"]
@@ -151,11 +128,13 @@ services:
   # ---------------------------------------------------------------
   miner:
     profiles: [dev]
-    image: python:3.11-slim
+    build:
+      context: ../..
+      dockerfile: ops/docker/miner.Dockerfile
     container_name: animica-miner
-    working_dir: /workspace
+    working_dir: /app
     volumes:
-      - ../..:/workspace:rw
+      - ../..:/app:ro
     environment:
       RPC_URL: "http://node1:8545"
       DEVICE: "cpu"
@@ -164,10 +143,7 @@ services:
     command: >
       bash -lc "
       set -euo pipefail;
-      python -m pip install -U pip wheel &&
-      python -m pip install anyio httpx msgspec websockets cbor2 blake3 rich &&
-      # Start miner (adjust flags to match mining/cli/miner.py)
-      python -m mining.cli.miner --threads ${THREADS} --device ${DEVICE} --rpc ${RPC_URL}
+      exec python -m mining.cli.miner --threads ${THREADS} --device ${DEVICE} --rpc ${RPC_URL}
       "
     depends_on:
       node1:
