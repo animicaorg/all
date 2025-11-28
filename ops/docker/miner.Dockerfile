@@ -43,12 +43,16 @@ RUN python -m pip install --upgrade pip setuptools wheel \
       "numba>=0.59; platform_machine!='s390x'" \
       uvloop \
       msgspec \
+      anyio \
       httpx \
       websockets \
+      cbor2 \
+      msgpack \
       blake3 \
       pysha3 \
       prometheus-client \
-      psutil
+      psutil \
+      rich
 
 # App user & dirs
 ARG USER=animica

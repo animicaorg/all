@@ -37,10 +37,16 @@ RUN set -eux; \
       "uvicorn[standard]" \
       "pydantic>=2" \
       websockets \
+      anyio \
       blake3 \
+      cbor2 \
+      msgpack \
+      pycryptodomex \
       pysha3 \
       httpx \
       requests \
+      rich \
+      typer \
       prometheus-client \
       python-rocksdb || echo "python-rocksdb build failed (optional)"; \
     ls -l /wheels
@@ -69,10 +75,16 @@ RUN set -eux; \
       "uvicorn[standard]" \
       "pydantic>=2" \
       websockets \
+      anyio \
       blake3 \
+      cbor2 \
+      msgpack \
+      pycryptodomex \
       pysha3 \
       httpx \
       requests \
+      rich \
+      typer \
       prometheus-client \
       python-rocksdb || echo "python-rocksdb not installed (optional)"; \
     rm -rf /wheels
