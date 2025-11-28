@@ -32,12 +32,11 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 from core.utils.hash import sha3_256
 from core.utils.bytes import expect_len, to_hex
 from core.encoding.cbor import cbor_dumps, cbor_loads
-from core.encoding.canonical import sign_bytes as canonical_sign_bytes
+from core.encoding.canonical import signbytes_tx as canonical_sign_bytes
 
 
 # ---- constants (keep in sync with spec/domains.yaml) ----
 
-TX_SIGN_DOMAIN: bytes = b"animica/tx.sign:v1"    # domain string for SignBytes
 ADDRESS_LEN = 32                                  # raw address length
 PUBKEY_MAX = 2048                                 # enough for Dilithium3/Sphincs variants
 SIG_MAX = 4096                                    # safety cap for PQ signatures
@@ -229,7 +228,7 @@ class UnsignedTx:
         """
         Domain-separated canonical bytes for PQ signing.
         """
-        return canonical_sign_bytes(TX_SIGN_DOMAIN, self.to_obj())
+        return canonical_sign_bytes(self.to_obj(), self.chain_id)
 
     @staticmethod
     def from_obj(o: Mapping[str, Any]) -> "UnsignedTx":
