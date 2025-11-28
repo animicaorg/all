@@ -320,3 +320,23 @@ def loads(b: bytes) -> Any:
     if buf.i != buf.n:
         raise DecodeError("trailing bytes")
     return obj
+
+
+# Compatibility aliases expected by callers importing from core.encoding.cbor
+# rather than the package root (core.encoding).
+def cbor_dumps(obj: Any) -> bytes:
+    return dumps(obj)
+
+
+def cbor_loads(b: bytes) -> Any:
+    return loads(b)
+
+
+__all__ = [
+    "dumps",
+    "loads",
+    "cbor_dumps",
+    "cbor_loads",
+    "EncodeError",
+    "DecodeError",
+]
