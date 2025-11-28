@@ -128,6 +128,14 @@ def ensure_max_len(data: BytesLike, n: int, *, name: str = "bytes") -> bytes:
     return data_b
 
 
+def expect_len(data: BytesLike, n: int, *, name: str = "bytes") -> bytes:
+    """Return ``data`` as immutable bytes after validating exact length ``n``."""
+    data_b = b(data)
+    if len(data_b) != n:
+        raise ValueError(f"{name} must be length {n}, got {len(data_b)}")
+    return data_b
+
+
 # -------------------------
 # Integer ↔ big-endian bytes
 # -------------------------
@@ -321,6 +329,7 @@ __all__ = [
     "ensure_len",
     "ensure_min_len",
     "ensure_max_len",
+    "expect_len",
     "int_to_be",
     "be_to_int",
     "bech32m_encode",
