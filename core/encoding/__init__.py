@@ -5,7 +5,7 @@ core.encoding
 Public, stable encoding surface for the Animica core:
 
 - Canonical CBOR (matching spec/*.cddl)
-- "SignBytes" domain encoders for transactions, headers, blocks, and proofs
+- "SignBytes" domain encoders for transactions and headers
 - Convenience helpers for hashing CBOR-encoded objects
 
 Modules
@@ -28,8 +28,6 @@ from .cbor import dumps as cbor_dumps, loads as cbor_loads
 from .canonical import (
     signbytes_tx,
     signbytes_header,
-    signbytes_block,
-    signbytes_proof_envelope,
 )
 
 # Hash helpers over canonical CBOR encodings
@@ -57,8 +55,6 @@ __all__ = [
     # SignBytes
     "signbytes_tx",
     "signbytes_header",
-    "signbytes_block",
-    "signbytes_proof_envelope",
     # Hash conveniences
     "cbor_sha3_256",
     "cbor_sha3_512",
