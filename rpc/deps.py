@@ -104,21 +104,36 @@ class _ConfigView:
     genesis_path: Path | None
     log_level: str
 
+
+def _coerce_config(cfg: t.Any) -> _ConfigView:
+    """Normalize various rpc.config structures into a lightweight view.
+
+    Accepts rpc.config.Config, rpc.config.RpcConfig, or any object exposing
+    db_uri/chain_id/genesis_path/log_level attributes (case-insensitive). This
+    keeps the RPC server resilient to config refactors.
+    """
+
+    def _get(name: str, default: t.Any = None) -> t.Any:
+        return getattr(cfg, name, getattr(cfg, name.upper(), default))
+
+    genesis = _get("genesis_path", None)
+    if isinstance(genesis, str):
+        genesis = Path(genesis)
+
+    return _ConfigView(
+        db_uri=str(_get("db_uri", "sqlite:///animica.db")),
+        chain_id=int(_get("chain_id", 1)),
+        genesis_path=genesis,
+        log_level=str(_get("log_level", "INFO")),
+    )
+
+
 def _load_rpc_config() -> _ConfigView:
     # rpc.config.load_config() → object with db_uri/chain_id/genesis/logging
     cfg_mod = _import("rpc.config")
     load_config = getattr(cfg_mod, "load_config")
     cfg = load_config()
-
-    # Accept a variety of attribute spellings
-    db_uri = getattr(cfg, "db_uri", getattr(cfg, "DB_URI", "sqlite:///animica.db"))
-    chain_id = int(getattr(cfg, "chain_id", getattr(cfg, "CHAIN_ID", 1)))
-    genesis = getattr(cfg, "genesis_path", getattr(cfg, "GENESIS_PATH", None))
-    if isinstance(genesis, str):
-        genesis = Path(genesis)
-    log_level = str(getattr(cfg, "log_level", getattr(cfg, "LOG_LEVEL", "INFO")))
-
-    return _ConfigView(db_uri=db_uri, chain_id=chain_id, genesis_path=genesis, log_level=log_level)
+    return _coerce_config(cfg)
 
 
 # ---- KV open helpers --------------------------------------------------------
@@ -140,16 +155,29 @@ def _open_kv(db_uri: str):
     configured in the future, you can extend this function to route by scheme.
     """
     path = _parse_sqlite_uri(db_uri)
+    if path != ":memory":
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     db_sqlite = _import("core.db.sqlite")
 
-    # Prefer a helper called `open_kv(path)` if present; else instantiate SQLiteKV(path)
+    # Prefer a helper called `open_kv(path)` if present; else use the canonical
+    # open_sqlite_kv() factory. Fall back to constructing the KV with a fresh
+    # sqlite3 connection if no helpers exist.
     if hasattr(db_sqlite, "open_kv"):
         return db_sqlite.open_kv(path)  # type: ignore[attr-defined]
+    if hasattr(db_sqlite, "open_sqlite_kv"):
+        return db_sqlite.open_sqlite_kv(path)  # type: ignore[attr-defined]
     if hasattr(db_sqlite, "SQLiteKV"):
-        return db_sqlite.SQLiteKV(path)  # type: ignore[attr-defined]
+        import sqlite3
+
+        conn = sqlite3.connect(
+            path,
+            isolation_level=None,
+            check_same_thread=False,
+        )
+        return db_sqlite.SQLiteKV(conn)  # type: ignore[arg-type]
     if hasattr(db_sqlite, "SqliteKV"):
         return db_sqlite.SqliteKV(path)  # type: ignore[attr-defined]
-    raise RuntimeError("core.db.sqlite does not export open_kv/SQLiteKV/SqliteKV")
+    raise RuntimeError("core.db.sqlite does not export open_kv/open_sqlite_kv/SQLiteKV/SqliteKV")
 
 
 # ---- DB facades & head access ----------------------------------------------
@@ -206,7 +234,7 @@ class _HeadAccessor:
         with self._lock:
             # Try the canonical helper path first
             if hasattr(self._head_mod, "read_head"):
-                head = self._head_mod.read_head(self._bundle.kv)  # type: ignore
+                head = self._head_mod.read_head(self._bundle.block_db)  # type: ignore[arg-type]
                 if not head:
                     return {"height": None, "hash": None, "header": None}
                 # Common header shape: {'height': int, 'hash': '0x..', 'obj': header}
@@ -215,7 +243,7 @@ class _HeadAccessor:
                 # Fallback: try to decode via BlockDB if head is a hash/height
             # Fallback path via block_db facade:
             if hasattr(self._block_db_mod, "get_canonical_head"):
-                h = self._block_db_mod.get_canonical_head(self._bundle.kv)  # type: ignore
+                h = self._block_db_mod.get_canonical_head(self._bundle.block_db)  # type: ignore[arg-type]
                 if not h:
                     return {"height": None, "hash": None, "header": None}
                 return {"height": h.get("height"), "hash": h.get("hash"), "header": h}
@@ -244,7 +272,7 @@ def _maybe_bootstrap_genesis(bundle: _DbBundle, chain_id: int, genesis_path: Pat
         head_mod = _import("core.chain.head")
         need_boot = True
         if hasattr(head_mod, "read_head"):
-            h = head_mod.read_head(bundle.kv)  # type: ignore
+            h = head_mod.read_head(bundle.block_db)  # type: ignore[arg-type]
             need_boot = not bool(h)
 
         if not need_boot:
@@ -299,15 +327,15 @@ _CTX: RpcContext | None = None
 _CTX_LOCK = threading.RLock()
 
 
-def build_context() -> RpcContext:
-    cfg = _load_rpc_config()
+def build_context(cfg: t.Any | None = None) -> RpcContext:
+    cfg_view = _coerce_config(cfg) if cfg is not None else _load_rpc_config()
     params = _params_from_spec()
-    kv = _open_kv(cfg.db_uri)
+    kv = _open_kv(cfg_view.db_uri)
     bundle = _build_db_facades(kv)
-    _maybe_bootstrap_genesis(bundle, cfg.chain_id, cfg.genesis_path)
+    _maybe_bootstrap_genesis(bundle, cfg_view.chain_id, cfg_view.genesis_path)
     head = _HeadAccessor(bundle)
     return RpcContext(
-        cfg=cfg,
+        cfg=cfg_view,
         params=params,
         kv=bundle.kv,
         state_db=bundle.state_db,
@@ -322,6 +350,37 @@ def get_ctx() -> RpcContext:
         if _CTX is None:
             raise RuntimeError("RPC context not initialized. Call attach_lifecycle(...), or build_context() first.")
         return _CTX
+
+
+async def startup(cfg: t.Any | None = None) -> RpcContext:
+    """Idempotently build and cache the RPC context for the server lifecycle."""
+    with _CTX_LOCK:
+        global _CTX
+        if _CTX is None:
+            _CTX = build_context(cfg)
+        return _CTX
+
+
+async def shutdown() -> None:
+    """Release process-wide resources held by the cached RpcContext."""
+    with _CTX_LOCK:
+        global _CTX
+        if _CTX is not None:
+            try:
+                _CTX.close()
+            finally:
+                _CTX = None
+
+
+async def ready() -> tuple[bool, dict[str, t.Any]]:
+    """Return a readiness tuple consumed by /readyz."""
+    try:
+        ctx = get_ctx()
+    except Exception as e:  # pragma: no cover - defensive path
+        return False, {"error": str(e)}
+
+    head = ctx.get_head()
+    return True, {"height": head.get("height"), "hash": head.get("hash"), "db": ctx.cfg.db_uri}
 
 
 # ---- FastAPI lifecycle wiring ----------------------------------------------
@@ -398,6 +457,9 @@ __all__ = [
     "attach_lifecycle",
     "build_context",
     "get_ctx",
+    "ready",
+    "shutdown",
+    "startup",
     "RpcContext",
     "cbor_dumps",
     "cbor_loads",

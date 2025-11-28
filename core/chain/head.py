@@ -42,11 +42,7 @@ from core.types.params import ChainParams
 from core.types.header import Header
 from core.encoding.canonical import header_signing_bytes
 from core.utils.hash import sha3_256
-from core.errors import AnimicaError
-
-
-class GenesisError(AnimicaError):
-    """Raised when genesis invariants are violated (e.g. chainId mismatch)."""
+from core.errors import GenesisError
 
 
 # --- Small field helpers (tolerate snake/camel) -----------------------------
