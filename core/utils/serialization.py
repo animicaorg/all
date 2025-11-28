@@ -220,6 +220,18 @@ def canonical_dumpstr(obj: Any, **kw: Any) -> str:
     return canonical_dumps(obj, **kw).decode("utf-8")
 
 
+def to_canonical_json(obj: Any, **kw: Any) -> bytes:
+    """
+    Backwards-compatible alias for ``canonical_dumps``.
+
+    Older codepaths expect a ``to_canonical_json`` helper that returns bytes;
+    keep the behavior identical to ``canonical_dumps`` so callers receive the
+    same canonical, UTF-8 encoded JSON representation.
+    """
+
+    return canonical_dumps(obj, **kw)
+
+
 def canonical_hash_equal(a: Any, b: Any, **kw: Any) -> bool:
     """
     Compare canonical encodings for equality without allocating Python objects.
