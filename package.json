@@ -2,6 +2,6 @@
   "name": "animica-monorepo",
   "private": true,
   "packageManager": "pnpm@9.0.0",
-  "workspaces": ["sdk","website","explorer-web","studio-web","wallet"],
+  "workspaces": ["sdk","website","explorer-web","studio-web","wallet","apps/miner-dashboard"],
   "pnpm": { "overrides": { "@animica/sdk": "workspace:*" } }
 }

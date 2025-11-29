@@ -76,3 +76,13 @@ class StratumPoolServer:
     async def wait_closed(self) -> None:
         while True:
             await asyncio.sleep(1)
+
+    @property
+    def stratum(self) -> StratumServer:
+        return self._server
+
+    def stats(self) -> dict:
+        return self._server.stats()
+
+    def session_snapshots(self):
+        return self._server.session_snapshots()
