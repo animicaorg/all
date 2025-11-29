@@ -47,6 +47,8 @@ from .constants import (
     PROTOCOL_ID,
 )
 
+DEFAULT_SEEDS: Final[tuple[str, ...]] = ("/ip4/144.126.133.21/tcp/9000",)
+
 
 # ---------- parsing helpers ----------------------------------------------------
 
@@ -80,6 +82,14 @@ def _csv(value: str | None) -> list[str]:
     # split on commas, also accept whitespace around
     parts = [p.strip() for p in value.split(",")]
     return [p for p in parts if p]
+
+
+def _load_seeds_from_env() -> tuple[str, ...]:
+    raw = os.getenv("ANIMICA_P2P_SEEDS")
+    if raw is None:
+        return DEFAULT_SEEDS
+    parsed = _csv(raw)
+    return tuple(_validate_advertised_addrs(parsed))
 
 
 def _expanduser(path: str | None) -> str | None:
@@ -222,7 +232,7 @@ def load_config() -> P2PConfig:
     listen_ws = _parse_host_port(_getenv("ANIMICA_P2P_LISTEN_WS"), DEFAULT_WS_PORT)
 
     advertised_addrs = tuple(_validate_advertised_addrs(_csv(_getenv("ANIMICA_P2P_ADVERTISED_ADDRS"))))
-    seeds = tuple(_validate_advertised_addrs(_csv(_getenv("ANIMICA_P2P_SEEDS"))))
+    seeds = _load_seeds_from_env()
 
     max_peers = _getenv_int("ANIMICA_P2P_MAX_PEERS", CONST_MAX_PEERS)
     max_outbound = _getenv_int("ANIMICA_P2P_MAX_OUTBOUND", CONST_MAX_OUTBOUND)

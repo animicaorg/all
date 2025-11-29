@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import logging
 import signal
+import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Tuple
 
@@ -323,10 +324,31 @@ class NodeService:
 
         for addr in seed_addrs:
             with contextlib.suppress(Exception):
+                log.info("[bootstrap] dialing seed %s", addr)
                 await self._dial(addr)
 
         # Run ongoing discovery backends
         tasks = []
+        backoff: Dict[str, float] = {}
+
+        async def _periodic_dials() -> None:
+            try:
+                while not self.stopping:
+                    await asyncio.sleep(10.0)
+                    try:
+                        candidates = [addr for _, addr, _ in self.peerstore.list_addresses(limit=64)]
+                    except Exception:
+                        candidates = []
+                    now = time.time()
+                    for addr in list(dict.fromkeys(seed_addrs + candidates)):
+                        if backoff.get(addr, 0.0) > now:
+                            continue
+                        backoff[addr] = now + 30.0
+                        self.loop.create_task(self._dial(addr), name=f"dial@{addr}")
+            except asyncio.CancelledError:
+                return
+
+        tasks.append(asyncio.create_task(_periodic_dials(), name="seed-loop"))
         if self.cfg.discovery.enable_kademlia:
             tasks.append(asyncio.create_task(kad.run(self.cfg, self.peerstore, self.connmgr), name="kad"))
         if self.cfg.discovery.enable_mdns:
