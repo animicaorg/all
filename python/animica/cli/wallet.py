@@ -1,7 +1,7 @@
 """Developer wallet management CLI for Animica.
 
 This tool is intended for **local development only**. Keys are stored in a
-plain JSON file and addresses are derived using a simplified devnet-friendly
+plain JSON file and addresses are derived using a simplified profile-friendly
 scheme (keccak256 of the uncompressed public key, last 20 bytes). Do **not**
 use this for production funds.
 """
@@ -21,7 +21,7 @@ import typer
 DEFAULT_WALLET_PATH = Path.home() / ".animica" / "wallets.json"
 WALLET_FILE_ENV = "ANIMICA_WALLETS_FILE"
 
-app = typer.Typer(help="Developer wallet helper for Animica (devnet only).")
+app = typer.Typer(help="Developer wallet helper for Animica profiles.")
 
 
 @dataclass

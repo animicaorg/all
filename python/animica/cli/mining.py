@@ -7,6 +7,7 @@ from typing import Optional
 
 import typer
 
+from animica.config import load_network_config
 from animica.cli.wallet import WalletEntry, create_wallet, _wallet_file_path
 from animica.stratum_pool import cli as pool_cli
 from animica.stratum_pool.config import PoolConfig, load_config_from_env
@@ -20,6 +21,12 @@ STRATUM_BIND_ENV = "ANIMICA_STRATUM_BIND"
 API_BIND_ENV = "ANIMICA_POOL_API_BIND"
 
 
+def _ensure_network_env() -> None:
+    cfg = load_network_config()
+    os.environ.setdefault("ANIMICA_NETWORK", cfg.name)
+    os.environ.setdefault(RPC_ENV, cfg.rpc_url)
+
+
 @app.command("run-pool")
 def run_pool(
     rpc_url: Optional[str] = typer.Option(None, "--rpc-url", help="Animica node RPC URL", envvar=RPC_ENV),
@@ -29,6 +36,7 @@ def run_pool(
     log_level: Optional[str] = typer.Option(None, "--log-level", help="Log level", envvar=LOG_LEVEL_ENV),
 ) -> None:
     """Start the Animica Stratum mining pool."""
+    _ensure_network_env()
     env_overrides = {
         RPC_ENV: rpc_url,
         DB_ENV: db_url,
@@ -45,6 +53,7 @@ def run_pool(
 @app.command("show-config")
 def show_config() -> None:
     """Display the effective pool configuration."""
+    _ensure_network_env()
     cfg: PoolConfig = load_config_from_env()
     typer.echo(
         f"RPC URL: {cfg.rpc_url}\n"

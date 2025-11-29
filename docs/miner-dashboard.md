@@ -4,15 +4,18 @@ This dashboard ships with a lightweight FastAPI metrics surface inside the Strat
 
 ## Running the Stratum backend with metrics
 
+Profile-aware defaults live under `ops/profiles/`. Use `ops/run.sh` to wire the
+selected profile into the pool:
+
 ```
-python -m animica.stratum_pool.cli \
-  --rpc-url http://127.0.0.1:8545/rpc \
-  --pool-address <your_pool_address> \
-  --port 3333 \
-  --api-port 8550
+# devnet (default)
+ops/run.sh pool
+
+# pick a profile explicitly
+ops/run.sh --profile testnet pool
 ```
 
-The HTTP API will be available on `http://localhost:8550` with:
+The HTTP API will be available at `http://<ANIMICA_POOL_API_BIND>` with:
 - `GET /healthz` — health check
 - `GET /api/pool/summary`
 - `GET /api/miners`
@@ -21,14 +24,16 @@ The HTTP API will be available on `http://localhost:8550` with:
 
 ## Running the miner dashboard
 
-Install dependencies and start the app:
+Install dependencies and start the app through the orchestrator so the profile
+base URL is exported automatically:
 
 ```
-pnpm install
-pnpm --filter miner-dashboard dev
+ops/run.sh dashboard
+ops/run.sh --profile mainnet dashboard
 ```
 
-The dashboard runs at http://localhost:5173 and reads `VITE_STRATUM_API_URL` (defaults to `http://127.0.0.1:8550`).
+The dashboard runs at http://localhost:5173 and reads `VITE_STRATUM_API_URL`
+from the selected profile (default `http://127.0.0.1:8550`).
 
 ## Connecting a miner
 
