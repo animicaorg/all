@@ -214,6 +214,20 @@ def create_app(cfg: rpc_config.Config | None = None) -> FastAPI:
                 {
                     "error": "Method not allowed",
                     "hint": "Send JSON-RPC requests as POST with application/json to /rpc.",
+                    "examples": {
+                        "single": {"jsonrpc": "2.0", "method": "chain.getChainId", "id": 1},
+                        "withParams": {
+                            "jsonrpc": "2.0",
+                            "method": "account.getBalance",
+                            "params": ["0x1234..."],
+                            "id": "balance",
+                        },
+                        "notification": {"jsonrpc": "2.0", "method": "chain.getHead"},
+                        "batch": [
+                            {"jsonrpc": "2.0", "method": "chain.getChainId", "id": "a"},
+                            {"jsonrpc": "2.0", "method": "chain.getHead", "id": "b"},
+                        ],
+                    },
                 },
                 status_code=405,
                 headers={"Allow": "POST"},
@@ -228,6 +242,20 @@ def create_app(cfg: rpc_config.Config | None = None) -> FastAPI:
                 {
                     "error": "Method not allowed",
                     "hint": "Send JSON-RPC requests as POST with application/json to /rpc.",
+                    "examples": {
+                        "single": {"jsonrpc": "2.0", "method": "chain.getChainId", "id": 1},
+                        "withParams": {
+                            "jsonrpc": "2.0",
+                            "method": "account.getBalance",
+                            "params": ["0x1234..."],
+                            "id": "balance",
+                        },
+                        "notification": {"jsonrpc": "2.0", "method": "chain.getHead"},
+                        "batch": [
+                            {"jsonrpc": "2.0", "method": "chain.getChainId", "id": "a"},
+                            {"jsonrpc": "2.0", "method": "chain.getHead", "id": "b"},
+                        ],
+                    },
                 },
                 status_code=exc.status_code,
                 headers=exc.headers,

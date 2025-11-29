@@ -37,6 +37,20 @@ def test_get_rpc_is_rejected_with_hint():
     assert r.json() == {
         "error": "Method not allowed",
         "hint": "Send JSON-RPC requests as POST with application/json to /rpc.",
+        "examples": {
+            "single": {"jsonrpc": "2.0", "method": "chain.getChainId", "id": 1},
+            "withParams": {
+                "jsonrpc": "2.0",
+                "method": "account.getBalance",
+                "params": ["0x1234..."],
+                "id": "balance",
+            },
+            "notification": {"jsonrpc": "2.0", "method": "chain.getHead"},
+            "batch": [
+                {"jsonrpc": "2.0", "method": "chain.getChainId", "id": "a"},
+                {"jsonrpc": "2.0", "method": "chain.getHead", "id": "b"},
+            ],
+        },
     }
 
 
