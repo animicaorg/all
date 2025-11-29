@@ -13,7 +13,7 @@ This guide walks through a full local mining setup: install dependencies, start 
 Clone the repo and enter it:
 
 ```bash
-git clone https://example.com/animica/animica.git
+git clone https://example.com/animica/all.git
 cd animica
 ```
 
