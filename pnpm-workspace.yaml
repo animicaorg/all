@@ -5,3 +5,4 @@ packages:
   - explorer-web
   - studio-web
   - wallet
+  - apps/miner-dashboard
