@@ -94,3 +94,14 @@ Administrative Typer app with shared `--config/-c` option. Commands:
 ### `python -m core.cli_demo`
 Lightweight helper to print chain parameters and the current head pointer. Flags: `--db` (database URI), `--genesis` (path to genesis JSON), and `--log` level.
 【F:core/cli_demo.py†L4-L64】
+
+## Node pipeline shim
+
+### `python -m aicf.cli.node_pipeline`
+Bitcoin-style control surface for the lightweight `aicf.node` RPC shim. Commands share a common `--rpc-url/-r` endpoint flag, support JSON output via `--json`, and accept `--datadir/-d` to operate directly on a local state directory without RPC calls.
+- `status [--json]` prints chain ID, head height, and whether auto-mining is enabled.
+- `mine --count/-n <blocks>` bumps the chain height by the requested number of blocks (RPC or local datadir).
+- `block <tag|number> [--json]` fetches a block by number or tag (`latest`, `earliest`, or hex tags) using RPC or local state.
+- `auto <true|false>` toggles the miner start/stop RPCs (or flips the local `auto_mine` flag when `--datadir` is used) and prints `on`/`off`.
+- `pipeline [--mine/-m <blocks>] [--wait <seconds>] [--json]` runs a scripted workflow of status → mining → head fetch to validate the node surface in one go against either backend.
+【F:aicf/cli/node_pipeline.py†L1-L170】
