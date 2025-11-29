@@ -26,6 +26,8 @@ class PoolConfig:
     api_host: str = "0.0.0.0"
     api_port: int = 8550
     network: str = "devnet"
+    profile: str = "hashshare"
+    extranonce2_size: int = 4
 
 
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -70,6 +72,9 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         api_host = overrides.get("api_host") or _env("ANIMICA_STRATUM_API_HOST", host)
         api_port = int(overrides.get("api_port") or _env("ANIMICA_STRATUM_API_PORT", "8550"))
 
+    profile = overrides.get("profile") or _env("ANIMICA_POOL_PROFILE", "hashshare")
+    extranonce2_size = int(overrides.get("extranonce2_size") or _env("ANIMICA_STRATUM_EXTRANONCE2_SIZE", "4"))
+
     if min_difficulty <= 0:
         raise ValueError("min_difficulty must be positive")
     if max_difficulty < min_difficulty:
@@ -89,4 +94,6 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         api_host=api_host,
         api_port=api_port,
         network=network,
+        profile=profile,
+        extranonce2_size=extranonce2_size,
     )

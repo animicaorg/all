@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 import uuid
 from dataclasses import asdict
 from typing import Any, Dict, Tuple
@@ -23,6 +24,7 @@ except Exception:  # pragma: no cover
 # Fallback Θ (µ-nats) if nothing else is available
 _DEFAULT_THETA_MICRO = int(os.getenv("ANIMICA_DEFAULT_THETA_MICRO", "3000000"))
 _DEFAULT_SHARE_TARGET = float(os.getenv("ANIMICA_DEFAULT_SHARE_TARGET", "0.01"))
+_DEFAULT_SHA256_BITS = os.getenv("ANIMICA_SHA256_NBITS", "1d00ffff")
 
 
 def _to_hex(b: bytes | None) -> str | None:
@@ -93,6 +95,13 @@ def _beacon() -> bytes:
         return b""
 
 
+def _bits_to_target(bits_hex: str) -> int:
+    bits = int(bits_hex, 16)
+    exponent = bits >> 24
+    mantissa = bits & 0xFFFFFF
+    return mantissa * (1 << (8 * (exponent - 3)))
+
+
 @method("miner.getWork", desc="Return a mining work template for Stratum/CPU miners")
 def miner_get_work(params: Dict[str, Any] | None = None) -> Dict[str, Any]:
     from mining.templates import TemplateBuilder
@@ -144,3 +153,56 @@ def miner_submit_share(**payload: Any) -> Dict[str, Any]:
     # TODO: wire into real PoW validation once available. For now accept and echo.
     share = payload.get("payload") if len(payload) == 1 and "payload" in payload else payload
     return {"accepted": True, "reason": None, "share": share}
+
+
+@method("miner.get_sha256_job", desc="Return a Bitcoin-style Stratum v1 job template")
+def miner_get_sha256_job(params: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    """Provide a lightweight SHA-256 template for ASIC-oriented Stratum clients."""
+
+    params = params or {}
+    address = params.get("address") or params.get("poolAddress") or ""
+    parent_hash, height, _mix_seed, chain_id, _state_root = _head_info()
+
+    prevhash = parent_hash[::-1].hex()  # Stratum v1 expects little-endian hex
+    coinb1 = (
+        "01000000"  # version
+        + f"{height:08x}"  # fake height marker
+        + f"{chain_id:08x}"  # chain id marker
+    )
+    coinb2 = (address or "").replace("0x", "") + "00"
+    merkle_branch: list[str] = []
+
+    bits = _DEFAULT_SHA256_BITS
+    nbits = bits if isinstance(bits, str) else str(bits)
+    ntime = f"{int(time.time()):08x}"
+    version = "20000000"
+
+    block_target = _bits_to_target(nbits)
+    share_target = _DEFAULT_SHARE_TARGET
+    if share_microtarget is not None:
+        try:
+            share_target = float(share_microtarget(_resolve_theta(), shares_per_block=1)) / float(_resolve_theta() or 1)
+        except Exception:
+            share_target = _DEFAULT_SHARE_TARGET
+
+    return {
+        "jobId": uuid.uuid4().hex,
+        "prevhash": prevhash,
+        "coinb1": coinb1,
+        "coinb2": coinb2,
+        "merkle_branch": merkle_branch,
+        "version": version,
+        "nbits": nbits,
+        "ntime": ntime,
+        "clean_jobs": True,
+        "target": hex(block_target),
+        "difficulty": share_target,
+        "height": height,
+    }
+
+
+@method("miner.submit_sha256_block", desc="Accept a candidate SHA-256 block from the pool")
+def miner_submit_sha256_block(**payload: Any) -> Dict[str, Any]:
+    # Stub for integration with the Animica orchestrator. For now we simply echo success.
+    block = payload.get("payload") if len(payload) == 1 and "payload" in payload else payload
+    return {"accepted": True, "payload": block}
