@@ -8,18 +8,6 @@
 
 set -euo pipefail
 
-run_as_animica() {
-  # If we’re already the animica user, just run the command
-  if [ "$(id -un 2>/dev/null)" = "animica" ] || [ "$(id -u)" -eq 10001 ]; then
-    "$@"
-    return
-  fi
-
-  # Otherwise, drop to the animica user using su
-  # (gosu is not installed in this image, so don’t rely on it)
-  su -s /bin/sh animica -c "$*"
-}
-
 timestamp() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
 }
@@ -31,6 +19,21 @@ log() {
 fatal() {
   log "ERROR: $*" >&2
   exit 1
+}
+
+run_as_animica() {
+  # If we’re already the animica user (UID 10001) just exec the command
+  if [ "$(id -u)" -eq 10001 ] || [ "$(id -un 2>/dev/null)" = "animica" ]; then
+    exec "$@"
+  fi
+
+  # If running as root and the animica user exists, drop privileges
+  if [ "$(id -u)" -eq 0 ] && id animica >/dev/null 2>&1; then
+    exec su -s /bin/sh animica -c "$*"
+  fi
+
+  # Fallback: just exec the command as-is
+  exec "$@"
 }
 
 ROLE="${1:-node}"
@@ -61,14 +64,16 @@ chown -R animica:animica /data
 # Initialize the DB once if it doesn't exist
 if [[ ! -f /data/animica.db ]]; then
   log "Initializing genesis DB at /data/animica.db"
-  run_as_animica "python -m core.boot --genesis '${GENESIS_PATH_RESOLVED}' --db '${ANIMICA_RPC_DB_URI}'"
+  (
+    run_as_animica python -m core.boot --genesis "${GENESIS_PATH_RESOLVED}" --db "${ANIMICA_RPC_DB_URI}"
+  )
 else
   log "Existing DB detected at /data/animica.db; skipping genesis init"
 fi
 
 # Start the RPC/WS server (never return)
 log "Launching rpc.server"
-exec run_as_animica python -m animica.rpc.server \
+run_as_animica python -m animica.rpc.server \
   --db "${ANIMICA_RPC_DB_URI}" \
   --genesis "${GENESIS_PATH_RESOLVED}" \
   --chain-id "${ANIMICA_CHAIN_ID}" \
