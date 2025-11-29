@@ -140,7 +140,11 @@ def compile_via_lower_pipeline(src: str, filename: str = "<stdin>") -> Tuple[byt
     mod_ast = ast.parse(src, filename=filename)
 
     lower = import_module("vm_py.compiler.ast_lower")
-    ir_mod = _call_first(lower, ("lower", "lower_module", "lower_from_ast", "lower_from_source"), mod_ast, filename)
+    ir_mod = _call_first(
+        lower,
+        ("lower", "lower_module", "lower_from_ast", "lower_from_source", "lower_to_ir"),
+        mod_ast,
+    )
 
     # Optional typecheck step
     try:

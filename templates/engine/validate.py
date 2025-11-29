@@ -129,7 +129,12 @@ class ValidationReport:
         notes = sum(1 for i in self.issues if i.level == "note")
         return f"{errs} errors, {warns} warnings, {notes} notes"
 
-    def __bool.explain__(self) -> str:  # not used; reserved for debug
+    def __bool__(self) -> bool:
+        """Truthiness: report is ok when no errors are present."""
+        return self.ok
+
+    def explain(self) -> str:
+        """Human-readable summary of errors/warnings/notes."""
         return self.summarize()
 
     def dump_to_stderr(self) -> None:
