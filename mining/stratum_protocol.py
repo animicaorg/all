@@ -413,6 +413,25 @@ def res_subscribe(id: Union[int, str, None], session_id: str, extranonce1: Hex, 
     return make_result(id, {"sessionId": session_id, "extranonce1": extranonce1, "extranonce2Size": int(extranonce2_size), "framing": framing})
 
 
+def res_subscribe_v1(id: Union[int, str, None], extranonce1: Hex, extranonce2_size: int) -> JSON:
+    """Standard Stratum v1 subscribe reply.
+
+    Format:
+      [
+        [["mining.set_difficulty", "<subid1>"], ["mining.notify", "<subid2>"]],
+        "extranonce1",
+        extranonce2_size
+      ]
+    """
+    sub1 = "subscription-id-1"
+    sub2 = "subscription-id-2"
+    return {
+        "id": id,
+        "result": [[["mining.set_difficulty", sub1], ["mining.notify", sub2]], extranonce1, int(extranonce2_size)],
+        "error": None,
+    }
+
+
 def req_authorize(worker: str, address: str, signature: Optional[Hex] = None, id: Union[int, str, None] = 2) -> JSON:
     p: JSON = {"worker": worker, "address": address}
     if signature is not None:
@@ -427,8 +446,16 @@ def res_authorize(id: Union[int, str, None], ok: bool, reason: Optional[str] = N
     return make_result(id, r)
 
 
+def res_authorize_v1(id: Union[int, str, None], ok: bool = True, reason: Optional[str] = None) -> JSON:
+    return {"id": id, "result": bool(ok), "error": None if ok else {"code": RpcErrorCodes.UNAUTHORIZED, "message": reason or "unauthorized"}}
+
+
 def push_set_difficulty(share_target: float, theta_micro: int) -> JSON:
     return make_request(Method.SET_DIFFICULTY, {"shareTarget": float(share_target), "thetaMicro": int(theta_micro)}, id=None)
+
+
+def push_set_difficulty_v1(difficulty: float) -> JSON:
+    return {"id": None, "method": Method.SET_DIFFICULTY.value, "params": [float(difficulty)]}
 
 
 def push_notify(job_id: str, header: JSON, share_target: float, clean_jobs: bool = True, hints: Optional[JSON] = None) -> JSON:
@@ -436,6 +463,31 @@ def push_notify(job_id: str, header: JSON, share_target: float, clean_jobs: bool
     if hints is not None:
         p["hints"] = hints
     return make_request(Method.NOTIFY, p, id=None)
+
+
+def push_notify_v1(
+    job_id: str,
+    prevhash: Hex,
+    coinb1: Hex,
+    coinb2: Hex,
+    merkle_branch: List[Hex],
+    version: Hex,
+    nbits: Hex,
+    ntime: Hex,
+    clean_jobs: bool,
+) -> JSON:
+    params: List[Any] = [
+        job_id,
+        prevhash,
+        coinb1,
+        coinb2,
+        merkle_branch,
+        version,
+        nbits,
+        ntime,
+        bool(clean_jobs),
+    ]
+    return {"id": None, "method": Method.NOTIFY.value, "params": params}
 
 
 def req_submit(worker: str, job_id: str, extranonce2: Hex, hashshare_body: JSON, nonce: Hex, mix: Optional[Hex] = None, attachments: Optional[JSON] = None, id: Union[int, str, None] = 3) -> JSON:
@@ -457,6 +509,11 @@ def res_submit(id: Union[int, str, None], accepted: bool, reason: Optional[str] 
     if tx_count is not None:
         r["txCount"] = int(tx_count)
     return make_result(id, r)
+
+
+def res_submit_v1(id: Union[int, str, None], accepted: bool, reason: Optional[str] = None) -> JSON:
+    err = None if accepted else {"code": RpcErrorCodes.INVALID_SHARE, "message": reason or "rejected"}
+    return {"id": id, "result": bool(accepted), "error": err}
 
 
 # ---------------------- Tiny self-test (manual) ----------------------
