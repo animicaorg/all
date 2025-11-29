@@ -8,6 +8,14 @@
 
 set -euo pipefail
 
+run_as_animica() {
+  if command -v gosu >/dev/null 2>&1; then
+    gosu animica "$@"
+  else
+    su -s /bin/sh animica -c "$*"
+  fi
+}
+
 timestamp() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
 }
@@ -46,10 +54,6 @@ log "Starting ${ROLE} with chainId=${ANIMICA_CHAIN_ID}, host=${ANIMICA_RPC_HOST}
 mkdir -p /data
 chown -R animica:animica /data
 
-run_as_animica() {
-  su -s /bin/bash -p animica -c "$*"
-}
-
 # Initialize the DB once if it doesn't exist
 if [[ ! -f /data/animica.db ]]; then
   log "Initializing genesis DB at /data/animica.db"
@@ -60,6 +64,11 @@ fi
 
 # Start the RPC/WS server (never return)
 log "Launching rpc.server"
-exec run_as_animica "PYTHONUNBUFFERED=1 ANIMICA_CHAIN_ID='${ANIMICA_CHAIN_ID}' ANIMICA_RPC_HOST='${ANIMICA_RPC_HOST}' \
-ANIMICA_RPC_PORT='${ANIMICA_RPC_PORT}' ANIMICA_RPC_DB_URI='${ANIMICA_RPC_DB_URI}' GENESIS_PATH='${GENESIS_PATH_RESOLVED}' \
-ANIMICA_RPC_CORS_ORIGINS='${ANIMICA_RPC_CORS_ORIGINS}' ANIMICA_LOG_LEVEL='${ANIMICA_LOG_LEVEL}' python -m rpc.server"
+exec run_as_animica python -m animica.rpc.server \
+  --db "${ANIMICA_RPC_DB_URI}" \
+  --genesis "${GENESIS_PATH_RESOLVED}" \
+  --chain-id "${ANIMICA_CHAIN_ID}" \
+  --host "${ANIMICA_RPC_HOST}" \
+  --port "${ANIMICA_RPC_PORT}" \
+  --cors "${ANIMICA_RPC_CORS_ORIGINS}" \
+  --log-level "${ANIMICA_LOG_LEVEL}"
