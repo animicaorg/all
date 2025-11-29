@@ -211,8 +211,11 @@ def _sign_bytes(body: Dict[str, object]) -> bytes:
         return msgspec.dumps(body, enc_hook=_enc_hook_msgspec)
     except Exception:  # pragma: no cover
         import json
-        # Deterministic JSON (keys sorted, no spaces)
-        return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+        # Deterministic JSON (keys sorted, no spaces) with bytes→hex coercion so
+        # the fallback path remains serializable even without msgspec installed.
+        norm = {k: (v.hex() if isinstance(v, (bytes, bytearray)) else v) for k, v in body.items()}
+        return json.dumps(norm, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
 def _enc_hook_msgspec(obj):  # pragma: no cover
