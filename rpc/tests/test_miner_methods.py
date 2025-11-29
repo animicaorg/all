@@ -36,3 +36,23 @@ def test_dispatch_without_ctx_still_returns_work():
     result = resp["result"]
     assert result["height"] >= 1
     assert "header" in result
+
+
+def test_get_sha256_job_shape():
+    client, _, _ = new_test_client()
+    res = rpc_call(client, "miner.get_sha256_job")
+    job = res["result"]
+    assert "prevhash" in job and len(job["prevhash"]) == 64
+    assert "coinb1" in job and "coinb2" in job
+    assert job["version"].startswith("2")
+    assert job["nbits"]
+    assert job["ntime"]
+    assert job["clean_jobs"] is True
+
+
+def test_submit_sha256_block_stub_accepts_payload():
+    client, _, _ = new_test_client()
+    payload = {"header": "deadbeef", "nonce": "01"}
+    res = rpc_call(client, "miner.submit_sha256_block", payload)
+    assert res["result"]["accepted"] is True
+    assert res["result"]["payload"] == payload
