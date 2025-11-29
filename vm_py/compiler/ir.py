@@ -127,7 +127,7 @@ class Function:
 @dataclass(frozen=True)
 class Module:
     filename: str = "<memory>"
-    functions: \1 = field(default_factory=list)
+    functions: List[Function] = field(default_factory=list)
 
 
 # =============================================================================
