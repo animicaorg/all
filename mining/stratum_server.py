@@ -72,7 +72,13 @@ class Session:
     share_target: float = 0.01
     theta_micro: int = 800_000
     last_seen: float = field(default_factory=lambda: time.time())
+    connected_since: float = field(default_factory=lambda: time.time())
     jobs_seen: List[str] = field(default_factory=list)
+    shares_accepted: int = 0
+    shares_rejected: int = 0
+    last_share_at: Optional[float] = None
+    last_share_status: Optional[str] = None
+    current_difficulty: float = 0.0
 
     def touch(self) -> None:
         self.last_seen = time.time()
@@ -145,6 +151,9 @@ class StratumServer:
         default_share_target: float = 0.01,
         default_theta_micro: int = 800_000,
         validator: Optional[ShareValidator] = None,
+        submit_hook: Optional[
+            Callable[[Session, StratumJob, JSON, bool, Optional[str], bool, int], Awaitable[None]]
+        ] = None,
     ) -> None:
         self._host = host
         self._port = port
@@ -157,6 +166,7 @@ class StratumServer:
         self._default_share_target = float(default_share_target)
         self._default_theta_micro = int(default_theta_micro)
         self._validator = validator or ShareValidator()
+        self._submit_hook = submit_hook
 
         # Stats
         self._accepted = 0
@@ -344,11 +354,18 @@ class StratumServer:
             ok, reason, is_block, tx_count = await self._validator.validate(job, params)
             if ok:
                 self._accepted += 1
+                session.shares_accepted += 1
             else:
                 self._rejected += 1
+                session.shares_rejected += 1
+            session.last_share_at = time.time()
+            session.last_share_status = "accepted" if ok else "rejected"
+            session.current_difficulty = float(params.get("d_ratio") or params.get("shareTarget") or job.share_target)
             await self._send(session, res_submit(id_val, ok, reason=reason, is_block=is_block, tx_count=tx_count))
             level = logging.INFO if ok else logging.WARNING
             log.log(level, f"[Stratum] submit worker={session.worker} job={job_id} ok={ok} reason={reason}")
+            if self._submit_hook is not None:
+                await self._submit_hook(session, job, params, ok, reason, is_block, tx_count)
 
         elif method == Method.GET_VERSION:
             await self._send(session, make_result(id_val, {"name": "animica-stratum", "version": "0.1.0"}))
@@ -366,6 +383,34 @@ class StratumServer:
             "uptime_sec": int(time.time() - self._started_ts),
             "currentJob": self._current_job_id,
         }
+
+    def session_snapshots(self) -> List[JSON]:
+        return [
+            {
+                "session_id": s.session_id,
+                "worker": s.worker,
+                "address": s.address,
+                "authorized": s.authorized,
+                "share_target": s.share_target,
+                "theta_micro": s.theta_micro,
+                "last_seen": s.last_seen,
+                "connected_since": s.connected_since,
+                "last_share_at": s.last_share_at,
+                "last_share_status": s.last_share_status,
+                "shares_accepted": s.shares_accepted,
+                "shares_rejected": s.shares_rejected,
+                "current_difficulty": s.current_difficulty,
+            }
+            for s in self._sessions.values()
+        ]
+
+    def set_submit_hook(
+        self,
+        hook: Optional[
+            Callable[[Session, StratumJob, JSON, bool, Optional[str], bool, int], Awaitable[None]]
+        ],
+    ) -> None:
+        self._submit_hook = hook
 
 
 # --------------------------------------------------------------------------------------

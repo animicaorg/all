@@ -5,9 +5,13 @@ import asyncio
 import logging
 from typing import Optional
 
+import uvicorn
+
 from .config import PoolConfig, load_config_from_env
 from .core import MiningCoreAdapter
 from .job_manager import JobManager
+from .api import create_app
+from .metrics import PoolMetrics
 from .stratum_server import StratumPoolServer
 
 
@@ -22,6 +26,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-difficulty", dest="max_difficulty", type=float, default=None, help="Maximum share target")
     parser.add_argument("--poll-interval", dest="poll_interval", type=float, default=None, help="Polling interval for new work")
     parser.add_argument("--log-level", dest="log_level", default=None, help="Log level")
+    parser.add_argument("--api-host", dest="api_host", default=None, help="Host for the metrics API server")
+    parser.add_argument("--api-port", dest="api_port", type=int, default=None, help="Port for the metrics API server")
     return parser
 
 
@@ -41,15 +47,34 @@ async def run_pool(config: PoolConfig, logger: Optional[logging.Logger] = None) 
     adapter = MiningCoreAdapter(config.rpc_url, config.chain_id, config.pool_address, logger=logger)
     job_manager = JobManager(adapter, config, logger=logger)
     server = StratumPoolServer(adapter, config, job_manager, logger=logger)
+    metrics = PoolMetrics(config, job_manager, server.stratum)
+    server.stratum.set_submit_hook(metrics.record_share)
+    api_app = create_app(metrics)
+    api_server = uvicorn.Server(
+        uvicorn.Config(
+            api_app,
+            host=config.api_host,
+            port=config.api_port,
+            loop="asyncio",
+            log_level=config.log_level.lower(),
+        )
+    )
+
+    api_task = asyncio.create_task(api_server.serve())
     await server.start()
     logger = logger or logging.getLogger("animica.stratum_pool.cli")
-    logger.info("Stratum pool listening", extra={"host": config.host, "port": config.port, "rpc": config.rpc_url})
+    logger.info(
+        "Stratum pool listening",
+        extra={"host": config.host, "port": config.port, "rpc": config.rpc_url, "api_port": config.api_port},
+    )
     try:
         await server.wait_closed()
     except asyncio.CancelledError:  # noqa: BLE001
         pass
     finally:
         await server.stop()
+        api_server.should_exit = True
+        await api_task
 
 
 def main(argv: Optional[list[str]] = None) -> None:
