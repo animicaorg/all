@@ -66,7 +66,11 @@ class MiningCoreAdapter:
     async def get_new_job(self) -> MiningJob:
         last_exc: Optional[Exception] = None
         work: Optional[Json] = None
-        params_with_metadata = [{"chainId": self._chain_id, "address": self._pool_address}]
+        metadata = {"chainId": self._chain_id}
+        if self._pool_address:
+            metadata["address"] = self._pool_address
+
+        params_with_metadata = [metadata]
         for method in ("miner.getWork", "mining.getWork", "getWork", "miner.requestWork"):
             for params in (params_with_metadata, []):
                 try:
