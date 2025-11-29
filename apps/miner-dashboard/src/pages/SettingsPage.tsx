@@ -22,7 +22,7 @@ const SettingsPage = () => {
         <div className="pt-2 text-white/60">
           <p>
             The dashboard polls the Stratum metrics API every few seconds for near real-time updates. Use this page to confirm your
-            miner endpoints and devnet configuration.
+            miner endpoints and active network profile.
           </p>
         </div>
       </div>
