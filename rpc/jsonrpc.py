@@ -299,7 +299,20 @@ def _validate_request_obj(obj: Json) -> Tuple[str, Optional[Params], Any]:
 _NO_ID = object()  # sentinel for notification
 
 
-async def dispatch_one(obj: Json, ctx: Context) -> Optional[Json]:
+def _default_ctx() -> Context:
+    """Return a minimal Context when callers don't provide one.
+
+    Some integration points historically invoked ``dispatch(payload)`` without
+    passing the Context object, which caused ``TypeError: dispatch() missing 1
+    required positional argument: 'ctx'``. To remain tolerant of those callers
+    (and to keep /rpc from surfacing -32603 Internal error), we synthesize a
+    lightweight Context with no request information.
+    """
+
+    return Context(request=None, received_at_ms=_now_ms(), client=None, headers={})
+
+
+async def dispatch_one(obj: Json, ctx: Optional[Context]) -> Optional[Json]:
     """
     Dispatch a single JSON-RPC request object.
     Returns a response object or None (for notifications).
@@ -322,11 +335,15 @@ async def dispatch_one(obj: Json, ctx: Context) -> Optional[Json]:
         return {"jsonrpc": "2.0", "id": req_id, "error": _error_obj(exc)}
 
 
-async def dispatch(payload: Union[Json, List[Any]], ctx: Context) -> Union[Json, List[Json]]:
+async def dispatch(payload: Union[Json, List[Any]], ctx: Optional[Context] = None) -> Union[Json, List[Json]]:
     """
     Dispatch a parsed JSON payload (already json.loads'ed).
     Handles single objects and batches.
     """
+    # Backwards-compat: allow callers to omit ctx and fall back to a minimal one
+    if ctx is None:
+        ctx = _default_ctx()
+
     if isinstance(payload, list):
         if len(payload) == 0:
             # Empty batch is invalid
