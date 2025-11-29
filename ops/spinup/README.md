@@ -18,6 +18,7 @@ Logs are timestamped and appended to `logs/spinup/<script>.log`. Pass `LOG_DIR=/
 From the repo root:
 
 ```bash
+cp tests/devnet/env.devnet.example tests/devnet/.env  # once, to customize ports/keys
 ./ops/spinup/spin_nodes.sh          # nodes only
 ./ops/spinup/spin_miner.sh          # miner + node1
 ./ops/spinup/spin_web.sh            # services + explorer (and dependencies)

@@ -40,41 +40,22 @@ services:
     container_name: animica-node1
     user: "root"
     working_dir: /app
+    env_file:
+      - ./env.devnet.example
     volumes:
       - ../..:/app:ro
       - node1_data:/data
     environment:
       # DB & chain config (matches rpc.config expectations)
-      ANIMICA_CHAIN_ID: "1337"
-      ANIMICA_RPC_DB_URI: "sqlite:////data/animica.db"
-      GENESIS_PATH: "core/genesis/genesis.json"
+      ANIMICA_CHAIN_ID: "${ANIMICA_CHAIN_ID:-1337}"
+      ANIMICA_RPC_DB_URI: "${ANIMICA_RPC_DB_URI:-sqlite:////data/animica.db}"
+      GENESIS_PATH: "${GENESIS_PATH:-core/genesis/genesis.json}"
       # RPC server config (FastAPI)
-      ANIMICA_RPC_HOST: "0.0.0.0"
-      ANIMICA_RPC_PORT: "8545"
-      ANIMICA_RPC_CORS_ORIGINS: "[*]"
-      ANIMICA_LOG_LEVEL: "INFO"
-    command: >
-      bash -lc "
-      set -euo pipefail;
-      mkdir -p /data;
-      chown -R animica:animica /data;
-      # Ensure PyYAML is available even if the base image was built without it
-      # (older cached images might miss the dependency).
-      su -s /bin/bash animica -c "set -euo pipefail;
-        pip show pyyaml >/dev/null 2>&1 || python -m pip install --user pyyaml;
-        GENESIS_PATH=$${GENESIS_PATH:-core/genesis/genesis.json};
-        DB_URL=$${ANIMICA_RPC_DB_URI:-sqlite:////data/animica.db};
-
-        if [ ! -f /data/animica.db ]; then
-          echo '[node1] initializing genesis DB…';
-          python -m core.boot --genesis $${GENESIS_PATH} --db $${DB_URL};
-        else
-          echo '[node1] DB exists, skipping genesis init';
-        fi;
-        # Start RPC/WS server
-        exec python -m rpc.server
-      "
-      "
+      ANIMICA_RPC_HOST: "${ANIMICA_RPC_HOST:-0.0.0.0}"
+      ANIMICA_RPC_PORT: "${ANIMICA_RPC_PORT:-8545}"
+      ANIMICA_RPC_CORS_ORIGINS: "${ANIMICA_RPC_CORS_ORIGINS:-[*]}"
+      ANIMICA_LOG_LEVEL: "${ANIMICA_LOG_LEVEL:-INFO}"
+    command: ["/bin/bash", "/app/tests/devnet/node-entry.sh", "node1"]
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8545/healthz || exit 1"]
       interval: 5s
@@ -97,38 +78,20 @@ services:
     container_name: animica-node2
     user: "root"
     working_dir: /app
+    env_file:
+      - ./env.devnet.example
     volumes:
       - ../..:/app:ro
       - node2_data:/data
     environment:
-      ANIMICA_CHAIN_ID: "1337"
-      ANIMICA_RPC_DB_URI: "sqlite:////data/animica.db"
-      GENESIS_PATH: "core/genesis/genesis.json"
-      ANIMICA_RPC_HOST: "0.0.0.0"
-      ANIMICA_RPC_PORT: "9545"
-      ANIMICA_RPC_CORS_ORIGINS: "[*]"
-      ANIMICA_LOG_LEVEL: "INFO"
-    command: >
-      bash -lc "
-      set -euo pipefail;
-      mkdir -p /data;
-      chown -R animica:animica /data;
-      # Ensure PyYAML is available even if the base image was built without it
-      # (older cached images might miss the dependency).
-      su -s /bin/bash animica -c "set -euo pipefail;
-        pip show pyyaml >/dev/null 2>&1 || python -m pip install --user pyyaml;
-        GENESIS_PATH=$${GENESIS_PATH:-core/genesis/genesis.json};
-        DB_URL=$${ANIMICA_RPC_DB_URI:-sqlite:////data/animica.db};
-
-        if [ ! -f /data/animica.db ]; then
-          echo '[node2] initializing genesis DB…';
-          python -m core.boot --genesis $${GENESIS_PATH} --db $${DB_URL};
-        else
-          echo '[node2] DB exists, skipping genesis init';
-        fi;
-        exec python -m rpc.server
-      "
-      "
+      ANIMICA_CHAIN_ID: "${ANIMICA_CHAIN_ID:-1337}"
+      ANIMICA_RPC_DB_URI: "${ANIMICA_NODE2_RPC_DB_URI:-sqlite:////data/animica.db}"
+      GENESIS_PATH: "${GENESIS_PATH:-core/genesis/genesis.json}"
+      ANIMICA_RPC_HOST: "${ANIMICA_RPC_HOST:-0.0.0.0}"
+      ANIMICA_RPC_PORT: "${ANIMICA_NODE2_RPC_PORT:-9545}"
+      ANIMICA_RPC_CORS_ORIGINS: "${ANIMICA_RPC_CORS_ORIGINS:-[*]}"
+      ANIMICA_LOG_LEVEL: "${ANIMICA_LOG_LEVEL:-INFO}"
+    command: ["/bin/bash", "/app/tests/devnet/node-entry.sh", "node2"]
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:9545/readyz || exit 1"]
       interval: 5s
@@ -156,10 +119,10 @@ services:
     volumes:
       - ../..:/app:ro
     environment:
-      RPC_URL: "http://node1:8545"
-      DEVICE: "cpu"
-      THREADS: "2"
-      LOG_LEVEL: "INFO"
+      RPC_URL: "${DEVNET_RPC_URL:-http://node1:8545}"
+      DEVICE: "${MINER_DEVICE:-cpu}"
+      THREADS: "${MINER_THREADS:-2}"
+      LOG_LEVEL: "${MINER_LOG_LEVEL:-INFO}"
     command: >
       bash -lc "
       set -euo pipefail;
@@ -180,12 +143,12 @@ services:
       dockerfile: Dockerfile
     container_name: animica-studio-services
     environment:
-      RPC_URL: "http://node1:8545"
-      CHAIN_ID: "1337"
+      RPC_URL: "${DEVNET_RPC_URL:-http://node1:8545}"
+      CHAIN_ID: "${ANIMICA_CHAIN_ID:-1337}"
       STORAGE_DIR: "/var/lib/services/storage"
       RATE_LIMITS: "burst=20,per_min=120"
-      LOG_LEVEL: "INFO"
-      # FAUCET_KEY: ""   # optional hot key for dev faucets
+      LOG_LEVEL: "${STUDIO_LOG_LEVEL:-INFO}"
+      FAUCET_KEY: "${FAUCET_KEY:-}"
     volumes:
       - services_data:/var/lib/services
     ports:
@@ -216,7 +179,7 @@ services:
     working_dir: /app
     environment:
       VITE_RPC_URL: "http://localhost:${HOST_NODE1_RPC:-8545}"       # browser hits your host → forwarded to node1
-      VITE_CHAIN_ID: "1337"
+      VITE_CHAIN_ID: "${ANIMICA_CHAIN_ID:-1337}"
       # Optional studio-services integration
       VITE_SERVICES_URL: "http://localhost:${HOST_STUDIO_SERVICES:-8787}"
     volumes:
