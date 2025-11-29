@@ -155,6 +155,16 @@ class JsonPeerStore:
         self._save()
         return existed
 
+    def mark_seen(self, peer_id: str, addr: Optional[str] = None) -> None:
+        p = self._peers.get(peer_id)
+        if not p:
+            p = JPeer(peer_id=peer_id, addrs=[])
+        p.last_seen = _now()
+        if addr and addr not in p.addrs:
+            p.addrs.append(addr)
+        self._peers[peer_id] = p
+        self._save()
+
     def list(self) -> List[JPeer]:
         return list(self._peers.values())
 
@@ -262,6 +272,13 @@ class StoreFacade:
             return
         self._impl.ensure_addr(peer_id=peer_id, addr=addr)  # type: ignore[attr-defined]
 
+    def mark_seen(self, peer_id: str, addr: Optional[str] = None) -> None:
+        if isinstance(self._impl, JsonPeerStore):
+            self._impl.mark_seen(peer_id, addr)
+            return
+        if hasattr(self._impl, "record_seen"):
+            self._impl.record_seen(peer_id=peer_id, address=addr)  # type: ignore[attr-defined]
+
     def remove(self, peer_id: str) -> bool:
         if isinstance(self._impl, JsonPeerStore):
             return self._impl.remove(peer_id)
@@ -329,8 +346,17 @@ def _fallback_parse_multiaddr(s: str) -> Tuple[str, int]:
 
 def parse_addr(s: str) -> Tuple[str, int]:
     if _parse_multiaddr is not None:
-        host, port = _parse_multiaddr(s)  # type: ignore[misc]
-        return host, int(port)
+        parsed = _parse_multiaddr(s)  # type: ignore[misc]
+        # Newer transport.multiaddr.parse_multiaddr returns a Multiaddr object; tolerate tuple legacy
+        if hasattr(parsed, "host"):
+            host = getattr(parsed, "host")
+            port = getattr(parsed, "port")
+        else:
+            # Legacy tuple behaviour
+            host, port = parsed  # type: ignore[misc]
+        if port is None:
+            raise ValueError(f"missing port in multiaddr: {s}")
+        return str(host), int(port)
     return _fallback_parse_multiaddr(s)
 
 
@@ -412,9 +438,9 @@ def cmd_add(args: argparse.Namespace) -> int:
         ok, rtt, err = tcp_probe(addr, timeout=args.timeout)
         if ok:
             print(f"[probe] TCP connect OK in {_fmt_dur(rtt)}")
+            store.mark_seen(peer_id, addr)
         else:
             print(f"[probe] FAILED: {err}")
-            return 2
     return 0
 
 

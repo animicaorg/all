@@ -77,6 +77,8 @@ All commands accept the common `--store` flag from `add_common_store_arg` (defau
 Start a standalone P2P node wired to the local database. Key flags: `--db` (SQLite URI), `--chain-id`, repeatable `--listen`/`--seed` multiaddrs, `--enable-quic`, `--enable-ws`, `--nat`, and `--log-level`.
 【F:p2p/cli/listen.py†L196-L210】
 
+Bootstrap seeds: by default the node will attempt to dial `/ip4/144.126.133.21/tcp/9000` unless overridden via `ANIMICA_P2P_SEEDS` (comma-separated multiaddrs). Setting `ANIMICA_P2P_SEEDS=""` disables the default; providing a list replaces it. The same seed list is used by other P2P tooling.
+
 ### `animica-p2p publish`
 Publish a single payload to a gossip topic using a lightweight P2P node. Required topic/payload flags include `--topic` plus one of `--hex`, `--file`, or `--json`. Connectivity flags mirror the listener (`--chain-id`, `--seed`, `--listen`, `--enable-quic`, `--enable-ws`, `--log-level`). Payload handling extras: `--encode {raw,cbor,json}`, `--dry-run`, and `--linger` to wait after publish.
 【F:p2p/cli/publish.py†L64-L83】
