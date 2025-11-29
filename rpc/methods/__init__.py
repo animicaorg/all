@@ -117,6 +117,7 @@ _BUILTIN_MODULES = (
     "rpc.methods.tx",
     "rpc.methods.state",
     "rpc.methods.receipt",
+    "rpc.methods.miner",
 )
 
 

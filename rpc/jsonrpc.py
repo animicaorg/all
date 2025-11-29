@@ -138,6 +138,37 @@ class MethodRegistry:
 registry = MethodRegistry()
 
 
+def _sync_with_methods_registry() -> None:
+    """Register handlers from rpc.methods into the local registry.
+
+    The rpc.methods registry is the canonical source for namespaced JSON-RPC
+    handlers (chain.*, tx.*, state.*, …). The lightweight dispatcher in this
+    module keeps its own registry, so we mirror the entries at import time to
+    avoid "Method not found" errors and to keep a single source of truth for
+    method bindings.
+    """
+
+    try:
+        from rpc import methods as method_registry
+
+        method_registry.ensure_loaded()
+        for name, spec in method_registry.get_registry().items():
+            try:
+                registry.register(name, spec.func)
+                for alias in getattr(spec, "aliases", ()):
+                    registry.register(alias, spec.func)
+            except Exception:
+                # Avoid hard-failing import if a method is already present or
+                # missing; the dispatcher will surface a MethodNotFound at call
+                # time if nothing is registered.
+                continue
+    except Exception:
+        log.exception("Failed to sync rpc.methods registry into jsonrpc dispatcher")
+
+
+_sync_with_methods_registry()
+
+
 # --------------------------------------------------------------------------------------
 # Error shaping
 # --------------------------------------------------------------------------------------
