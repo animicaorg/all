@@ -1,7 +1,7 @@
 # Devnet spinup: node1 container exits immediately with code 0, causing spin_all.sh to fail
 
 ## Summary
-When running the Animica devnet spin script, all images build successfully (node1, node2, miner, services), but the `node1` container immediately exits with code 0. Because node1 is a dependency for the rest of the stack, docker compose fails and the devnet never comes up.
+The devnet stack now ships with an explicit node entrypoint and a documented env file. Copy the example env, then run the spin scripts; `node1` remains running (or surfaces a clear error) instead of exiting immediately with code 0.
 
 ## Environment
 - Host: Ubuntu 24.04 (root on a VPS)
@@ -24,101 +24,32 @@ cd /root/animica
   - `animica-explorer`
 - `node1` stays running as a long-lived node process (listening on the configured RPC / P2P ports), so the miner, explorer, and services all remain healthy.
 
-## Actual behavior
-1. Images build fine, including `animica-devnet-node1`:
+## Fix
+- `tests/devnet/node-entry.sh` now handles devnet node startup: it validates `GENESIS_PATH`, initializes the SQLite DB from genesis when missing, and execs `python -m rpc.server` as the `animica` user. Any missing/invalid config causes a clear, non-zero exit.
+- `tests/devnet/env.devnet.example` documents all required variables (chain ID, ports, DB URIs, genesis path, miner defaults, logging). Copy it to `.env` to override defaults.
+- `tests/devnet/docker-compose.yml` wires the env defaults and uses the new entrypoint for both nodes, so `node1` stays running (or surfaces a useful error).
+- `ops/spinup/common.sh` now passes the env files to compose automatically, making `./ops/spinup/spin_all.sh` and `spin_nodes.sh` work from a fresh clone.
 
-```
-animica-devnet-node1  Built
-animica-devnet-node2  Built
-animica-devnet-miner  Built
-animica-devnet-services  Built
-```
+## How to run the devnet now
 
-2. Then when docker compose attaches:
-
-```
-Attaching to animica-explorer, animica-miner, animica-node1, animica-node2, animica-studio-services
-animica-node1 exited with code 0
-dependency failed to start: container animica-node1 exited (0)
-[2025-11-28T23:41:59Z] docker compose failed with exit code 1.
-```
-
-3. The spinup script prints the tip:
-
-```
-Tip: if a dependency (e.g., node1) exited early, inspect its logs with:
-  docker compose -f /root/animica/tests/devnet/docker-compose.yml --profile dev logs --tail=200 <service>
-```
-
-So the core issue is: `animica-node1` exits cleanly and immediately after start, instead of running as a daemon / server.
-
-## Relevant docker compose output
-(abridged, but this is the pattern every time):
-
-```
-...
- animica-devnet-node2  Built
- animica-devnet-miner  Built
- animica-devnet-services  Built
- animica-devnet-node1  Built
- Container animica-node1  Recreate
- Container animica-node1  Recreated
- Container animica-studio-services  Recreate
- Container animica-miner  Recreate
- Container animica-node2  Recreate
- Container animica-miner  Recreated
- Container animica-studio-services  Recreated
- Container animica-node2  Recreated
-Attaching to animica-explorer, animica-miner, animica-node1, animica-node2, animica-studio-services
-animica-node1 exited with code 0
-dependency failed to start: container animica-node1 exited (0)
-[2025-11-28T23:41:59Z] docker compose failed with exit code 1.
-...
-NAME            IMAGE                  COMMAND                  SERVICE   CREATED          STATUS                              PORTS
-animica-node1   animica-devnet-node1   "/usr/bin/tini -g --…"   node1     14 seconds ago   Exited (0) Less than a second ago
-```
-
-Earlier runs also showed warnings like these (before the last changes to `docker-compose.yml`), which may or may not still be relevant:
-
-```
-time="2025-11-29T00:31:00+01:00" level=warning msg="The \"GENESIS_PATH\" variable is not set. Defaulting to a blank string."
-time="2025-11-29T00:31:00+01:00" level=warning msg="The \"DB_URL\" variable is not set. Defaulting to a blank string."
-time="2025-11-29T00:31:00+01:00" level=warning msg="The \"RPC_HOST\" variable is not set. Defaulting to a blank string."
-time="2025-11-29T00:31:00+01:00" level=warning msg="The \"CHAIN_ID\" variable is not set. Defaulting to a blank string."
-...
-```
-
-After the latest git pull those env warnings appear to have been reduced, but `node1` still exits immediately.
-
-## What I suspect / what would help
-From the outside, it looks like:
-- The `node1` container’s CMD / entrypoint is either:
-  - Running a one-shot init (e.g., genesis generation or some CLI command) and then exiting cleanly, or
-  - Printing a help/usage message due to missing args/env and then exiting with status 0.
-
-## What is needed
-1. Make sure the `node1` container runs a long-lived node process in devnet mode by default, e.g. something like:
-
-```yaml
-# tests/devnet/docker-compose.yml (pseudo)
-services:
-  node1:
-    image: animica-devnet-node1
-    command: ["python", "-m", "animica.node", "--config", "/config/devnet-node1.yaml"]
-    # or whatever the correct node entrypoint is
-```
-
-2. Confirm and document the expected environment variables for devnet (`GENESIS_PATH`, `DB_URL`, `CHAIN_ID`, `RPC_HOST`, `RPC_PORT`, etc.), and ensure they’re properly set via:
-   - `tests/devnet/.env`
-   - or inline environment in `tests/devnet/docker-compose.yml`
-   - and wired into the node startup command.
-
-3. Optionally, update `./ops/spinup/spin_all.sh` to automatically run:
+1) From a fresh clone, copy and adjust the env file:
 
 ```bash
-docker compose -f tests/devnet/docker-compose.yml --profile dev logs --tail=200 node1
+cd /root/animica
+cp tests/devnet/env.devnet.example tests/devnet/.env   # optional edits: ports, faucet key, miner threads
 ```
 
-when `node1` exits early, so devs immediately see the underlying node error instead of just “exited with code 0”.
+2) Start the full stack (nodes + miner + studio-services + explorer) with logs streamed to `logs/spinup/spin_all.log`:
 
-Once `node1` is wired to actually start the devnet node and keep running, `./ops/spinup/spin_all.sh` should complete successfully and expose the RPC / explorer endpoints as described in the docs.
+```bash
+./ops/spinup/spin_all.sh
+```
+
+3) Expected endpoints once health checks pass:
+
+- RPC (HTTP): http://localhost:8545
+- RPC (WS):   ws://localhost:8545/ws
+- Explorer:   http://localhost:5173
+- Studio-services API: http://localhost:8787
+
+If `node1` is misconfigured, `spin_all.sh` prints the last 200 lines of its logs and exits non-zero so the failure is visible.
