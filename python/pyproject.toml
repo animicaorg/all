@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=65"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "animica"
+version = "0.1.0"
+description = "Animica Python toolbox."
+readme = "README.md"
+authors = [{ name = "Animica contributors" }]
+requires-python = ">=3.10"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: Other/Proprietary License",
+  "Operating System :: OS Independent",
+]
+
+[project.optional-dependencies]
+stratum = [
+  "fastapi>=0.115.0",
+  "uvicorn>=0.30.0",
+]
+dev = [
+  "pytest>=7.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["animica*"]
