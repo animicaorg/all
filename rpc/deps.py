@@ -64,7 +64,7 @@ def _load_yaml(path: Path) -> t.Dict[str, t.Any]:
         return t.cast(dict, yaml.safe_load(fh) or {})
 
 
-def _params_from_spec() -> t.Dict[str, t.Any]:
+def _params_from_spec(chain_id: int | None = None) -> t.Dict[str, t.Any]:
     """
     Load canonical params from spec/params.yaml and return a dict view that is
     stable for RPC responses. We do not force a specific dataclass here to keep
@@ -77,10 +77,26 @@ def _params_from_spec() -> t.Dict[str, t.Any]:
 
     # Normalize a few fields commonly referenced by RPC:
     out: dict[str, t.Any] = {}
+
+    # Chain identity/name fallbacks
+    cid = raw.get("chainId")
+    if cid is None and chain_id is not None:
+        cid = chain_id
+    if cid is not None:
+        out["chainId"] = cid
+
+    name = raw.get("name") or raw.get("chainName")
+    if name is not None:
+        out["name"] = name
+
     # Copy selected top-level keys if present:
-    for k in ("chainName", "chainId", "targetBlockTimeMs", "gas", "pow", "economics", "limits"):
+    for k in ("targetBlockTimeMs", "economics", "limits"):
         if k in raw:
             out[k] = raw[k]
+
+    # Provide structured sections with safe defaults
+    out["gas"] = raw.get("gas", {})
+    out["block"] = raw.get("block", {})
 
     # Provide a compact "consensus" summary if available:
     if "pow" in raw:
@@ -92,6 +108,15 @@ def _params_from_spec() -> t.Dict[str, t.Any]:
             "shareTarget": pow_.get("shareTarget"),
             "gammaCap": pow_.get("gammaCap"),
         }
+    else:
+        out["consensus"] = raw.get("consensus", {})
+
+    # Ensure required keys exist even if params.yaml is skeletal
+    out.setdefault("chainId", chain_id)
+    out.setdefault("name", "Animica")
+    out.setdefault("gas", {})
+    out.setdefault("block", {})
+    out.setdefault("consensus", {})
     return out
 
 
@@ -329,7 +354,7 @@ _CTX_LOCK = threading.RLock()
 
 def build_context(cfg: t.Any | None = None) -> RpcContext:
     cfg_view = _coerce_config(cfg) if cfg is not None else _load_rpc_config()
-    params = _params_from_spec()
+    params = _params_from_spec(cfg_view.chain_id)
     kv = _open_kv(cfg_view.db_uri)
     bundle = _build_db_facades(kv)
     _maybe_bootstrap_genesis(bundle, cfg_view.chain_id, cfg_view.genesis_path)
@@ -349,6 +374,16 @@ def get_ctx() -> RpcContext:
     with _CTX_LOCK:
         if _CTX is None:
             raise RuntimeError("RPC context not initialized. Call attach_lifecycle(...), or build_context() first.")
+        return _CTX
+
+
+def ensure_started(cfg: t.Any | None = None) -> RpcContext:
+    """Synchronously initialize the RPC context if it is not already set."""
+
+    with _CTX_LOCK:
+        global _CTX
+        if _CTX is None:
+            _CTX = build_context(cfg)
         return _CTX
 
 
@@ -433,6 +468,24 @@ def attach_lifecycle(app, cfg: _ConfigView | None = None) -> None:
 
 # ---- Convenience helpers for handlers --------------------------------------
 
+
+def get_params() -> dict[str, t.Any]:
+    """Return the chain params loaded during startup (possibly empty)."""
+
+    return ensure_started().params
+
+
+def get_chain_id() -> int:
+    """Return the configured chainId for this node."""
+
+    return int(ensure_started().cfg.chain_id)
+
+
+def get_head() -> dict[str, t.Any]:
+    """Return the current head snapshot (height/hash/header view)."""
+
+    return ensure_started().get_head()
+
 def cbor_dumps(obj: t.Any) -> bytes:
     """Expose core.encoding.cbor.dumps for handlers (with a safe fallback)."""
     try:
@@ -456,7 +509,11 @@ def cbor_loads(data: bytes) -> t.Any:
 __all__ = [
     "attach_lifecycle",
     "build_context",
+    "ensure_started",
     "get_ctx",
+    "get_chain_id",
+    "get_head",
+    "get_params",
     "ready",
     "shutdown",
     "startup",
