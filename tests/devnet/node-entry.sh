@@ -9,11 +9,15 @@
 set -euo pipefail
 
 run_as_animica() {
-  if command -v gosu >/dev/null 2>&1; then
-    gosu animica "$@"
-  else
-    su -s /bin/sh animica -c "$*"
+  # If we’re already the animica user, just run the command
+  if [ "$(id -un 2>/dev/null)" = "animica" ] || [ "$(id -u)" -eq 10001 ]; then
+    "$@"
+    return
   fi
+
+  # Otherwise, drop to the animica user using su
+  # (gosu is not installed in this image, so don’t rely on it)
+  su -s /bin/sh animica -c "$*"
 }
 
 timestamp() {
