@@ -245,6 +245,7 @@ class Sha256StratumServer:
                 job.clean_jobs,
             ],
         })
+        self._log.info("[ASIC] notify job=%s difficulty=%s", job.job_id, job.difficulty)
 
     async def set_difficulty(self, session: Sha256Session, difficulty: float) -> None:
         session.difficulty = difficulty
@@ -272,6 +273,8 @@ class Sha256StratumServer:
 
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         session = self._alloc_session(writer)
+        peer = writer.get_extra_info("peername")
+        self._log.info("[ASIC] client connected peer=%s ex1=%s", peer, session.extranonce1)
         try:
             while True:
                 line = await reader.readline()
@@ -282,7 +285,10 @@ class Sha256StratumServer:
                 except json.JSONDecodeError:
                     await self._send(writer, {"id": None, "error": "invalid json"})
                     continue
-                await self._process_message(session, msg)
+                try:
+                    await self._process_message(session, msg)
+                except Exception as exc:  # noqa: BLE001
+                    self._log.warning("[ASIC] error processing message from %s: %s", peer, exc, exc_info=True)
         finally:
             writer.close()
             try:
@@ -290,6 +296,7 @@ class Sha256StratumServer:
             except Exception:
                 pass
             self._sessions.pop(writer, None)
+            self._log.info("[ASIC] client disconnected peer=%s", peer)
 
     async def _process_message(self, session: Sha256Session, msg: Dict[str, Any]) -> None:
         method = msg.get("method")
@@ -306,17 +313,20 @@ class Sha256StratumServer:
             await self.set_difficulty(session, session.difficulty)
             if self._current_job:
                 await self.publish_job(self._current_job)
+            self._log.info("[ASIC] subscribe peer=%s ex1=%s diff=%s", session.writer.get_extra_info("peername"), session.extranonce1, session.difficulty)
 
         elif method == "mining.authorize":
             session.worker = params[0] if params else None
             session.authorized = True
             await self._send(session.writer, {"id": msg_id, "result": True, "error": None})
+            self._log.info("[ASIC] authorize worker=%s peer=%s", session.worker, session.writer.get_extra_info("peername"))
 
         elif method == "mining.submit":
             job_id = params[1] if len(params) > 1 else None
             job = self._jobs.get(job_id or "")
             if not job:
                 await self._send(session.writer, {"id": msg_id, "result": False, "error": "stale job"})
+                self._log.warning("[ASIC] submit stale job worker=%s job=%s", session.worker, job_id)
                 return
 
             accepted, reason, is_block = self._validator.validate(job, session, params)
@@ -330,6 +340,8 @@ class Sha256StratumServer:
 
             resp = {"id": msg_id, "result": accepted, "error": reason}
             await self._send(session.writer, resp)
+            level = logging.INFO if accepted else logging.WARNING
+            self._log.log(level, "[ASIC] submit worker=%s job=%s accepted=%s reason=%s", session.worker, job_id, accepted, reason)
 
             submit_payload = {
                 "job_id": job.job_id,
