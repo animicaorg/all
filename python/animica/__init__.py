@@ -6,4 +6,4 @@ This package hosts Python-side utilities for the Animica stack
 """
 from __future__ import annotations
 
-__all__ = ["da", "mining", "stratum_pool"]
+__all__ = ["da", "mining", "stratum_pool", "wallet_cli"]

@@ -15,6 +15,9 @@ classifiers = [
   "Operating System :: OS Independent",
 ]
 
+[project.scripts]
+animica-wallet = "animica.wallet_cli:main"
+
 [project.optional-dependencies]
 stratum = [
   "fastapi>=0.115.0",
