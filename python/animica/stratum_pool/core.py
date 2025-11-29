@@ -33,7 +33,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
 
-from mining.share_submitter import JsonRpcClient, ShareResult, ShareSubmitter, SubmitterConfig
+from mining.share_submitter import JsonRpcClient, RpcError, ShareResult, ShareSubmitter, SubmitterConfig
 from mining.stratum_server import ShareValidator, StratumJob
 
 
@@ -66,13 +66,21 @@ class MiningCoreAdapter:
     async def get_new_job(self) -> MiningJob:
         last_exc: Optional[Exception] = None
         work: Optional[Json] = None
+        params_with_metadata = [{"chainId": self._chain_id, "address": self._pool_address}]
         for method in ("miner.getWork", "mining.getWork", "getWork", "miner.requestWork"):
-            try:
-                work = await self._rpc_call(method, [{"chainId": self._chain_id, "address": self._pool_address}])
-                if work:
-                    break
-            except Exception as exc:  # noqa: BLE001
-                last_exc = exc
+            for params in (params_with_metadata, []):
+                try:
+                    work = await self._rpc_call(method, params)
+                    if work:
+                        break
+                except RpcError as exc:
+                    last_exc = exc
+                    if exc.code == -32601:  # Method not found; try next name
+                        break
+                except Exception as exc:  # noqa: BLE001
+                    last_exc = exc
+            if work:
+                break
         if work is None:
             raise RuntimeError(f"unable to fetch work: {last_exc}")
 
