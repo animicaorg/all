@@ -65,6 +65,9 @@ def new_test_client(tmpdir: str | None = None) -> tuple[TestClient, rpc_config.C
     """
     cfg, tmp = make_test_config(tmpdir)
     app = rpc_server.create_app(cfg)
+    # Ensure the RPC context is initialized with the temp config even if the
+    # TestClient does not trigger FastAPI startup events in this environment.
+    rpc_server.deps.ensure_started(cfg)
     client = TestClient(app)
     return client, cfg, tmp
 
