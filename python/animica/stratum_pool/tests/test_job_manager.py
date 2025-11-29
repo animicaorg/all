@@ -55,3 +55,17 @@ async def test_job_manager_publishes_updates():
 
     assert seen, "expected callbacks to run"
     assert seen[0] == "1"
+
+
+def test_job_manager_backoff_resets_after_success():
+    cfg = PoolConfig(poll_interval=0.1)
+    manager = JobManager(DummyAdapter(), cfg)
+
+    first = manager._next_wait(success=False)
+    second = manager._next_wait(success=False)
+    reset = manager._next_wait(success=True)
+
+    assert first == pytest.approx(0.2)
+    assert second == pytest.approx(0.4)
+    assert reset == pytest.approx(cfg.poll_interval)
+    assert manager._failure_streak == 0
