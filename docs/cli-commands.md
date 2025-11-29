@@ -2,6 +2,25 @@
 
 This guide collects the main command-line tools shipped in the repository and summarizes how to invoke them plus their key flags.
 
+## Network profiles & orchestration
+
+Profile defaults for devnet/testnet/mainnet live under `ops/profiles/`. Use
+`ops/run.sh` to source a profile and start common services:
+
+```
+# default devnet
+ops/run.sh all
+
+# profile aware
+ops/run.sh --profile testnet node
+ops/run.sh --profile mainnet pool
+ops/run.sh dashboard
+```
+
+Each profile sets `ANIMICA_NETWORK`, `ANIMICA_RPC_URL`, Stratum binds, and pool
+database defaults so the Python CLIs (node, mining, wallet) inherit consistent
+settings.
+
 ## VM(Py) tooling
 
 ### Running commands
