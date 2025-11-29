@@ -1,0 +1,4 @@
+# Core Python dependencies for running the Animica RPC server locally.
+fastapi>=0.115.0,<0.116.0
+uvicorn[standard]>=0.30.0,<1.0.0
+prometheus-client>=0.20.0,<1.0.0
