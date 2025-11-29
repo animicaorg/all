@@ -405,6 +405,10 @@ class Sha256PoolServer:
     async def _on_new_job(self, job: Sha256Job) -> None:
         await self._server.publish_job(job)
 
+    async def wait_closed(self) -> None:
+        while True:
+            await asyncio.sleep(1)
+
     def stats(self) -> Dict[str, Any]:
         return self._server.stats()
 
