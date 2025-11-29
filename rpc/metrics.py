@@ -269,7 +269,12 @@ rpc_metrics = _RpcMetrics()
 def _metrics_handler() -> PlainTextResponse:
     # generate_latest selects the global/default REGISTRY or our custom one.
     data = generate_latest(REG)  # bytes
-    return PlainTextResponse(content=data, media_type=CONTENT_TYPE_LATEST.decode())
+    media_type = (
+        CONTENT_TYPE_LATEST.decode()
+        if isinstance(CONTENT_TYPE_LATEST, (bytes, bytearray))
+        else CONTENT_TYPE_LATEST
+    )
+    return Response(content=data, media_type=media_type)
 
 
 def mount_metrics(app: FastAPI) -> None:
