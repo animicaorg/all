@@ -9,6 +9,11 @@ description = "Animica Python toolbox."
 readme = "README.md"
 authors = [{ name = "Animica contributors" }]
 requires-python = ">=3.10"
+dependencies = [
+  "typer>=0.12.3",
+  "httpx>=0.27.0",
+  "respx>=0.21.0",
+]
 classifiers = [
   "Programming Language :: Python :: 3",
   "License :: Other/Proprietary License",
@@ -16,7 +21,9 @@ classifiers = [
 ]
 
 [project.scripts]
-animica-wallet = "animica.wallet_cli:main"
+animica-wallet = "animica.cli.wallet:app"
+animica-node = "animica.cli.node:app"
+animica-mining = "animica.cli.mining:app"
 
 [project.optional-dependencies]
 stratum = [
