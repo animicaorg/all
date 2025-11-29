@@ -440,7 +440,7 @@ def req_authorize(worker: str, address: str, signature: Optional[Hex] = None, id
 
 
 def res_authorize(id: Union[int, str, None], ok: bool, reason: Optional[str] = None) -> JSON:
-    r: JSON = {"ok": bool(ok)}
+    r: JSON = {"ok": bool(ok), "authorized": bool(ok)}
     if reason:
         r["reason"] = reason
     return make_result(id, r)
