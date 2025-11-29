@@ -524,7 +524,6 @@ def build_parser() -> argparse.ArgumentParser:
     add_common_store_arg(sp)
     sp.add_argument("peer_id", help="Peer ID (e.g., peer12abc...)")
     sp.add_argument("addr", help="Multiaddr or host:port (e.g., /ip4/1.2.3.4/tcp/42069)")
-    sp.add_argument("--probe", action="bloom_false", help=argparse.SUPPRESS)  # keep help tidy
     sp.add_argument("--probe", dest="probe", action="store_true", help="TCP connect() probe after add")
     sp.add_argument("--timeout", type=float, default=2.5, help="Probe timeout (seconds)")
     sp.set_defaults(func=cmd_add)
