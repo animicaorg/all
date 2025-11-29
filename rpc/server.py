@@ -56,11 +56,41 @@ for name in ("dispatch", "handle", "handle_request"):
         break
 
 
-async def _call_dispatch(payload: t.Any) -> t.Any:
-    """Call the jsonrpc dispatcher which may be sync or async."""
+async def _call_dispatch(payload: t.Any, request: Request | None = None) -> t.Any:
+    """Call the jsonrpc dispatcher which may be sync or async.
+
+    The dispatcher in rpc.jsonrpc expects a Context object; when only a payload
+    is provided we synthesize a minimal one so calls do not explode with a
+    missing positional argument error (the root cause of the observed -32603
+    Internal error when hitting /rpc).
+    """
     if JSONRPC_DISPATCH is None:
         raise RuntimeError("JSON-RPC dispatcher not available")
-    res = JSONRPC_DISPATCH(payload)
+
+    # Build a best-effort Context if the dispatcher signature requires it
+    ctx = None
+    try:
+        from rpc.jsonrpc import Context, _now_ms
+
+        if request is None:
+            ctx = Context(request=None, received_at_ms=_now_ms(), client=None, headers={})
+        else:
+            client = request.client
+            ctx = Context(
+                request=request,
+                received_at_ms=_now_ms(),
+                client=(client.host, client.port) if client else None,  # type: ignore[arg-type]
+                headers={k.lower(): v for k, v in request.headers.items()},
+            )
+    except Exception:
+        ctx = None
+
+    try:
+        res = JSONRPC_DISPATCH(payload, ctx) if ctx is not None else JSONRPC_DISPATCH(payload)
+    except TypeError:
+        # Older dispatcher variants may not accept ctx
+        res = JSONRPC_DISPATCH(payload)
+
     if asyncio.iscoroutine(res):
         return await t.cast(t.Awaitable[t.Any], res)
     return res
@@ -223,7 +253,7 @@ def create_app(cfg: rpc_config.Config | None = None) -> FastAPI:
                 raise rpc_errors.ParseError(f"Invalid JSON body: {e}")  # type: ignore[misc]
 
             try:
-                result = await _call_dispatch(payload)
+                result = await _call_dispatch(payload, request)
             except rpc_errors.RpcError as re:  # type: ignore[attr-defined]
                 # Structured RPC error already; return as-is
                 return JSONResponse(re.to_dict(), status_code=200)  # type: ignore[attr-defined]
