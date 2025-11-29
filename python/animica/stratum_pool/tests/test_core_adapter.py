@@ -77,8 +77,9 @@ async def test_get_new_job_retries_without_params(monkeypatch):
 
     assert job.job_id == "abc"
     assert job.height == 7
-    assert rpc.calls[0][1]  # first attempt uses params
-    assert rpc.calls[1][1] == []  # fallback drops params
+    assert rpc.calls[0][1]  # first attempt uses params with address
+    assert rpc.calls[1][1]  # retries with metadata but without address
+    assert rpc.calls[2][1] == []  # final fallback drops params entirely
 
 
 @pytest.mark.asyncio
@@ -114,3 +115,40 @@ async def test_get_new_job_omits_empty_pool_address(monkeypatch):
     assert job.job_id == "abc"
     assert job.height == 7
     assert "address" not in rpc.calls[0][1][0]
+
+
+@pytest.mark.asyncio
+async def test_get_new_job_fallbacks_without_pool_address(monkeypatch):
+    payload = {
+        "jobId": "abc",
+        "header": {"number": 7},
+        "thetaMicro": 123,
+        "shareTarget": 0.5,
+        "height": 7,
+    }
+
+    class DummyRpc:
+        def __init__(self):
+            self.calls = []
+
+        def call(self, method, params):
+            self.calls.append((method, params))
+            if params and isinstance(params[0], dict) and "address" in params[0]:
+                raise RpcError(-32602, "unexpected address field")
+            return payload
+
+    async def _to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    adapter = MiningCoreAdapter("http://example", 7, "0xpool")
+    rpc = DummyRpc()
+    monkeypatch.setattr(adapter, "_rpc", rpc)
+    monkeypatch.setattr(asyncio, "to_thread", _to_thread)
+
+    job = await adapter.get_new_job()
+
+    assert job.job_id == "abc"
+    assert job.height == 7
+    # First attempt includes pool address, then retries without it but keeps chainId
+    assert rpc.calls[0][1][0]["address"] == "0xpool"
+    assert rpc.calls[1][1][0] == {"chainId": 7}
