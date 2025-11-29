@@ -21,10 +21,14 @@ from .stratum_protocol import (
     req_subscribe,
     res_subscribe,
     res_authorize,
+    res_authorize_v1,
     push_set_difficulty,
+    push_set_difficulty_v1,
     push_notify,
+    push_notify_v1,
     req_submit,
     res_submit,
+    res_submit_v1,
     encode_lines,
     decode_lines,
     encode_lenpref,
@@ -79,6 +83,8 @@ class Session:
     last_share_at: Optional[float] = None
     last_share_status: Optional[str] = None
     current_difficulty: float = 0.0
+    is_v1: bool = False
+    subscription_ids: Tuple[str, str] = ("subscription-id-1", "subscription-id-2")
 
     def touch(self) -> None:
         self.last_seen = time.time()
@@ -141,6 +147,13 @@ class StratumServer:
       server = StratumServer(host="0.0.0.0", port=23454)
       await server.start()
       await server.publish_job(template_builder())    # from mining.templates
+
+    NOTE: The implementation below still targets Animica's draft protocol.  A
+    complete SHA-256 Stratum v1 surface (for ASIC dashboards) is expected to
+    adapt the handshake and submit path so miners see per-connection
+    extranonces, explicit difficulty pushes, and canonical `mining.notify`
+    payloads.  Those adaptations are tracked in the surrounding tasks and this
+    docstring callout is a breadcrumb to keep future edits discoverable.
     """
 
     def __init__(
@@ -197,14 +210,7 @@ class StratumServer:
         """
         self._jobs[job.job_id] = job
         self._current_job_id = job.job_id
-        msg = push_notify(
-            job_id=job.job_id,
-            header=job.header,
-            share_target=job.share_target,
-            clean_jobs=True,
-            hints=job.hints or {},
-        )
-        await self._broadcast(msg)
+        await self._broadcast_job(job, clean_jobs=True)
         log.info(f"[Stratum] notify job={job.job_id} θμ={job.theta_micro} shareTarget={job.share_target}")
 
     async def set_global_difficulty(self, share_target: float, theta_micro: Optional[int] = None) -> None:
@@ -214,8 +220,60 @@ class StratumServer:
         for s in self._sessions.values():
             s.share_target = share_target
             s.theta_micro = theta_micro
-        await self._broadcast(msg)
+            if s.is_v1:
+                await self._send(s, push_set_difficulty_v1(share_target))
+            else:
+                await self._send(s, msg)
         log.info(f"[Stratum] set difficulty shareTarget={share_target} θμ={theta_micro}")
+
+    async def _broadcast_job(self, job: StratumJob, clean_jobs: bool) -> None:
+        """Send a job to each session in the format it expects."""
+        dead: List[str] = []
+        for sid, s in self._sessions.items():
+            try:
+                if s.is_v1:
+                    msg = self._build_v1_notify(job, clean_jobs=clean_jobs)
+                else:
+                    msg = push_notify(
+                        job_id=job.job_id,
+                        header=job.header,
+                        share_target=job.share_target,
+                        clean_jobs=clean_jobs,
+                        hints=job.hints or {},
+                    )
+                await self._send(s, msg)
+            except Exception as e:  # pragma: no cover
+                log.warning(f"[Stratum] broadcast job to {sid} failed: {e}")
+                dead.append(sid)
+        for sid in dead:
+            self._sessions.pop(sid, None)
+
+    def _build_v1_notify(self, job: StratumJob, *, clean_jobs: bool) -> JSON:
+        header = job.header or {}
+        prevhash = header.get("parentHash") or header.get("prevhash") or "0" * 64
+        if isinstance(prevhash, str) and prevhash.startswith("0x"):
+            prevhash = prevhash[2:]
+        coinb1 = header.get("coinb1") or ""
+        coinb2 = header.get("coinb2") or ""
+        merkle_branch = header.get("merkleBranch") or header.get("merkle_branch") or []
+        version = header.get("version") or header.get("versionHex") or 0
+        if isinstance(version, int):
+            version = f"{version:08x}"
+        nbits = header.get("nbits") or header.get("bits") or ""
+        ntime = header.get("timestamp") or header.get("ntime") or header.get("time") or int(time.time())
+        if isinstance(ntime, int):
+            ntime = f"{ntime:08x}"
+        return push_notify_v1(
+            job_id=job.job_id,
+            prevhash=str(prevhash),
+            coinb1=str(coinb1),
+            coinb2=str(coinb2),
+            merkle_branch=list(merkle_branch),
+            version=str(version),
+            nbits=str(nbits),
+            ntime=str(ntime),
+            clean_jobs=clean_jobs,
+        )
 
     # ---------------- internal helpers ----------------
 
@@ -297,6 +355,53 @@ class StratumServer:
     # ---------------- JSON-RPC routing ----------------
 
     async def _process_message(self, session: Session, obj: JSON) -> None:
+        # Detect classic Stratum v1 list-style params and normalize into our
+        # object-based handlers. This keeps ASIC dashboards happy without
+        # breaking existing structured clients.
+        raw_params = obj.get("params")
+        method_name = obj.get("method")
+        if isinstance(raw_params, list):
+            if method_name == Method.SUBSCRIBE.value:
+                session.is_v1 = True
+                id_val = obj.get("id")
+                extranonce1 = session.extranonce1
+                if extranonce1.startswith("0x"):
+                    extranonce1 = extranonce1[2:]
+                reply = res_subscribe_v1(id_val, extranonce1=extranonce1, extranonce2_size=session.extranonce2_size)
+                await self._send(session, reply)
+                await self._send(session, push_set_difficulty_v1(session.share_target))
+                if self._current_job_id:
+                    job = self._jobs[self._current_job_id]
+                    await self._send(session, self._build_v1_notify(job, clean_jobs=True))
+                return
+            if method_name == Method.AUTHORIZE.value:
+                session.is_v1 = True
+                session.worker = raw_params[0] if raw_params else None
+                session.authorized = True
+                await self._send(session, res_authorize_v1(obj.get("id"), True))
+                return
+            if method_name == Method.SUBMIT.value:
+                mapped = {
+                    "worker": raw_params[0] if len(raw_params) > 0 else None,
+                    "jobId": raw_params[1] if len(raw_params) > 1 else None,
+                    "extranonce2": raw_params[2] if len(raw_params) > 2 else None,
+                    "ntime": raw_params[3] if len(raw_params) > 3 else None,
+                    "nonce": raw_params[4] if len(raw_params) > 4 else None,
+                }
+                # Build a hashshare-shaped payload to reuse validators
+                nonce_hex = mapped.get("nonce") or ""
+                if isinstance(nonce_hex, str) and not nonce_hex.startswith("0x"):
+                    nonce_hex = "0x" + nonce_hex
+                mapped_params: JSON = {
+                    "worker": mapped.get("worker") or "",
+                    "jobId": mapped.get("jobId") or "",
+                    "extranonce2": mapped.get("extranonce2") or "",
+                    "hashshare": {"nonce": nonce_hex, "body": {"ntime": mapped.get("ntime")}},
+                    "ntime": mapped.get("ntime"),
+                    "nonce": mapped.get("nonce"),
+                }
+                obj = {"jsonrpc": "2.0", "id": obj.get("id"), "method": method_name, "params": mapped_params}
+
         try:
             method, id_val, params = validate_request(obj)
         except (InvalidRequest, InvalidParams, MethodNotFound) as e:
@@ -361,7 +466,10 @@ class StratumServer:
             session.last_share_at = time.time()
             session.last_share_status = "accepted" if ok else "rejected"
             session.current_difficulty = float(params.get("d_ratio") or params.get("shareTarget") or job.share_target)
-            await self._send(session, res_submit(id_val, ok, reason=reason, is_block=is_block, tx_count=tx_count))
+            if session.is_v1:
+                await self._send(session, res_submit_v1(id_val, ok, reason=reason))
+            else:
+                await self._send(session, res_submit(id_val, ok, reason=reason, is_block=is_block, tx_count=tx_count))
             level = logging.INFO if ok else logging.WARNING
             log.log(level, f"[Stratum] submit worker={session.worker} job={job_id} ok={ok} reason={reason}")
             if self._submit_hook is not None:
