@@ -43,6 +43,9 @@ run_compose() {
     log_step "Full container status (including healthy dependencies):"
     docker compose --no-ansi -f "${COMPOSE_FILE}" --profile "${COMPOSE_PROFILE}" ps \
       2>&1 | tee -a "${LOG_FILE}" || true
+    log_step "Node1 logs (last 200 lines, if present):"
+    docker compose --no-ansi -f "${COMPOSE_FILE}" --profile "${COMPOSE_PROFILE}" logs --tail=200 node1 \
+      2>&1 | tee -a "${LOG_FILE}" || true
     log_step "Tip: if a dependency (e.g., node1) exited early, inspect its logs with:"
     log_step "  docker compose -f ${COMPOSE_FILE} --profile ${COMPOSE_PROFILE} logs --tail=200 <service>"
     exit "${status}"
