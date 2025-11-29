@@ -4,6 +4,12 @@ This guide collects the main command-line tools shipped in the repository and su
 
 ## VM(Py) tooling
 
+### Running commands
+All examples below assume the repository root as the working directory. Use the project-managed virtual environment and scripts when available:
+- Prefer `pnpm` for Node-based tools (e.g., `pnpm cli <command>` where applicable) and `python -m` for Python entrypoints to ensure dependencies resolve correctly.
+- Export any required environment variables (such as `PYTHONPATH` additions) via `source ./scripts/dev/env.sh` before running the commands if your setup depends on repository-local modules.
+- If a command is also shipped as a console script (for example, `omni-vm-compile`), you can run it directly or via `python -m` to guarantee the module path is correct.
+
 ### `omni-vm-compile`
 Compile a deterministic Python contract to Animica VM IR bytes. Works via `python -m vm_py.cli.compile` or the console script alias. Key flags:
 - `path/to/contract.py --out out.ir` (required output path)
