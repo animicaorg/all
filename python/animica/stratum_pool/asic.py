@@ -305,7 +305,7 @@ class Sha256StratumServer:
 
         if method == "mining.subscribe":
             result = [
-                [["mining.notify", uuid.uuid4().hex], ["mining.set_difficulty", uuid.uuid4().hex]],
+                [["mining.set_difficulty", uuid.uuid4().hex], ["mining.notify", uuid.uuid4().hex]],
                 session.extranonce1,
                 session.extranonce2_size,
             ]
@@ -325,7 +325,7 @@ class Sha256StratumServer:
             job_id = params[1] if len(params) > 1 else None
             job = self._jobs.get(job_id or "")
             if not job:
-                await self._send(session.writer, {"id": msg_id, "result": False, "error": "stale job"})
+                await self._send(session.writer, {"id": msg_id, "result": None, "error": [21, "stale job", None]})
                 self._log.warning("[ASIC] submit stale job worker=%s job=%s", session.worker, job_id)
                 return
 
@@ -338,7 +338,8 @@ class Sha256StratumServer:
                 session.shares_rejected += 1
             session.last_share_at = time.time()
 
-            resp = {"id": msg_id, "result": accepted, "error": reason}
+            error = None if accepted else [23, reason or "invalid share", None]
+            resp = {"id": msg_id, "result": accepted, "error": error}
             await self._send(session.writer, resp)
             level = logging.INFO if accepted else logging.WARNING
             self._log.log(level, "[ASIC] submit worker=%s job=%s accepted=%s reason=%s", session.worker, job_id, accepted, reason)
