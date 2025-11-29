@@ -25,7 +25,7 @@ Backed by `core/` (DB, types, genesis), `pq/` (post-quantum sigs), `mempool/`, `
 ## Requirements
 
 - Python 3.11+
-- Repo root deps installed:  
+- Repo root deps installed (FastAPI, Uvicorn, Prometheus client):
   ```bash
   cd ~/animica
   python -m venv .venv && source .venv/bin/activate

@@ -23,6 +23,8 @@ This guide gets you from **zero → a local devnet** with:
 python -m venv .venv
 source .venv/bin/activate           # Windows: .venv\Scripts\activate
 pip install --upgrade pip wheel
+# RPC server deps (FastAPI, Uvicorn, Prometheus client)
+pip install -r requirements.txt
 # All modules live side-by-side; add repo root to PYTHONPATH for -m usage:
 export PYTHONPATH="$PWD"
 
