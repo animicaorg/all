@@ -29,6 +29,31 @@ def test_method_not_found_error():
     assert data["error"]["code"] == -32601
 
 
+def test_get_rpc_is_rejected_with_hint():
+    client, _, _ = new_test_client()
+    r = client.get("/rpc")
+    assert r.status_code == 405
+    assert r.headers.get("allow") == "POST"
+    assert r.json() == {
+        "error": "Method not allowed",
+        "hint": "Send JSON-RPC requests as POST with application/json to /rpc.",
+        "examples": {
+            "single": {"jsonrpc": "2.0", "method": "chain.getChainId", "id": 1},
+            "withParams": {
+                "jsonrpc": "2.0",
+                "method": "account.getBalance",
+                "params": ["0x1234..."],
+                "id": "balance",
+            },
+            "notification": {"jsonrpc": "2.0", "method": "chain.getHead"},
+            "batch": [
+                {"jsonrpc": "2.0", "method": "chain.getChainId", "id": "a"},
+                {"jsonrpc": "2.0", "method": "chain.getHead", "id": "b"},
+            ],
+        },
+    }
+
+
 def test_invalid_params_type_rejected():
     """
     Pass a params value of the wrong type (string) to a no-param method.
