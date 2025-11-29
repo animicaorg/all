@@ -20,6 +20,8 @@ class PoolConfig:
     max_difficulty: float = 1.0
     poll_interval: float = 1.0
     log_level: str = "INFO"
+    api_host: str = "0.0.0.0"
+    api_port: int = 8550
 
 
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -46,6 +48,8 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
     max_difficulty = float(overrides.get("max_difficulty") or _env("ANIMICA_STRATUM_MAX_DIFFICULTY", "1.0"))
     poll_interval = float(overrides.get("poll_interval") or _env("ANIMICA_STRATUM_POLL_INTERVAL", "1.0"))
     log_level = (overrides.get("log_level") or _env("ANIMICA_STRATUM_LOG_LEVEL", "INFO")).upper()
+    api_host = overrides.get("api_host") or _env("ANIMICA_STRATUM_API_HOST", host)
+    api_port = int(overrides.get("api_port") or _env("ANIMICA_STRATUM_API_PORT", "8550"))
 
     if min_difficulty <= 0:
         raise ValueError("min_difficulty must be positive")
@@ -62,4 +66,6 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         max_difficulty=max_difficulty,
         poll_interval=poll_interval,
         log_level=log_level,
+        api_host=api_host,
+        api_port=api_port,
     )
