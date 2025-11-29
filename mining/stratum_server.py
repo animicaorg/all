@@ -4,8 +4,10 @@ import asyncio
 import json
 import logging
 import secrets
+import socket
 import time
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Callable, Awaitable, Tuple, List
 
@@ -20,6 +22,7 @@ from .stratum_protocol import (
     make_error,
     req_subscribe,
     res_subscribe,
+    res_subscribe_v1,
     res_authorize,
     res_authorize_v1,
     push_set_difficulty,
@@ -163,6 +166,7 @@ class StratumServer:
         extranonce2_size: int = 8,
         default_share_target: float = 0.01,
         default_theta_micro: int = 800_000,
+        keepalive_secs: float = 45.0,
         validator: Optional[ShareValidator] = None,
         submit_hook: Optional[
             Callable[[Session, StratumJob, JSON, bool, Optional[str], bool, int], Awaitable[None]]
@@ -178,6 +182,7 @@ class StratumServer:
         self._extranonce2_size = int(extranonce2_size)
         self._default_share_target = float(default_share_target)
         self._default_theta_micro = int(default_theta_micro)
+        self._keepalive_secs = float(keepalive_secs)
         self._validator = validator or ShareValidator()
         self._submit_hook = submit_hook
 
@@ -185,6 +190,9 @@ class StratumServer:
         self._accepted = 0
         self._rejected = 0
         self._started_ts = time.time()
+
+        # Background heartbeat tasks per session
+        self._heartbeats: Dict[str, asyncio.Task] = {}
 
     # ---------------- lifecycle ----------------
 
@@ -196,6 +204,11 @@ class StratumServer:
     async def stop(self) -> None:
         for task in list(self._conn_tasks.keys()):
             task.cancel()
+        for hb in list(self._heartbeats.values()):
+            hb.cancel()
+            with suppress(asyncio.CancelledError):
+                await hb
+        self._heartbeats.clear()
         if self._server:
             self._server.close()
             await self._server.wait_closed()
@@ -220,6 +233,7 @@ class StratumServer:
         for s in self._sessions.values():
             s.share_target = share_target
             s.theta_micro = theta_micro
+            s.current_difficulty = share_target
             if s.is_v1:
                 await self._send(s, push_set_difficulty_v1(share_target))
             else:
@@ -232,8 +246,12 @@ class StratumServer:
         for sid, s in self._sessions.items():
             try:
                 if s.is_v1:
+                    if job.job_id in s.jobs_seen and not clean_jobs:
+                        continue
                     msg = self._build_v1_notify(job, clean_jobs=clean_jobs)
                 else:
+                    if job.job_id in s.jobs_seen and not clean_jobs:
+                        continue
                     msg = push_notify(
                         job_id=job.job_id,
                         header=job.header,
@@ -242,11 +260,16 @@ class StratumServer:
                         hints=job.hints or {},
                     )
                 await self._send(s, msg)
+                s.jobs_seen.append(job.job_id)
+                s.jobs_seen = s.jobs_seen[-16:]
             except Exception as e:  # pragma: no cover
                 log.warning(f"[Stratum] broadcast job to {sid} failed: {e}")
                 dead.append(sid)
         for sid in dead:
             self._sessions.pop(sid, None)
+            task = self._heartbeats.pop(sid, None)
+            if task:
+                task.cancel()
 
     def _build_v1_notify(self, job: StratumJob, *, clean_jobs: bool) -> JSON:
         header = job.header or {}
@@ -312,10 +335,49 @@ class StratumServer:
         session.writer.write(payload)
         await session.writer.drain()
 
+    async def _push_difficulty(
+        self, session: Session, share_target: float, theta_micro: int, *, log_level: int = logging.INFO
+    ) -> None:
+        """Send a set_difficulty notification for the given session."""
+        session.share_target = share_target
+        session.theta_micro = theta_micro
+        session.current_difficulty = share_target
+        session.touch()
+        msg = push_set_difficulty_v1(share_target) if session.is_v1 else push_set_difficulty(share_target, theta_micro)
+        await self._send(session, msg)
+        log.log(
+            log_level,
+            f"[Stratum] set_difficulty push worker={session.worker} session={session.session_id} shareTarget={share_target} θμ={theta_micro}",
+        )
+
+    async def _session_heartbeat(self, session: Session) -> None:
+        """Periodically push a difficulty keepalive to reassure ASIC dashboards."""
+        interval = max(self._keepalive_secs, 1.0)
+        while True:
+            await asyncio.sleep(interval)
+            if session.session_id not in self._sessions or session.writer.is_closing():
+                return
+            idle = time.time() - session.last_seen
+            if idle >= interval:
+                try:
+                    await self._push_difficulty(session, session.share_target, session.theta_micro, log_level=logging.DEBUG)
+                except Exception as e:  # pragma: no cover - best-effort keepalive
+                    log.warning(
+                        f"[Stratum] keepalive failed for session={session.session_id} worker={session.worker}: {e}"
+                    )
+                    return
+
     # ---------------- connection handler ----------------
 
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         peer = writer.get_extra_info("peername")
+        sock = writer.get_extra_info("socket")
+        try:
+            if sock:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        except Exception:
+            # Keepalive is best-effort; do not fail if platform does not support tweaks
+            pass
         task = asyncio.current_task()
         assert task is not None
         self._conn_tasks[task] = None
@@ -324,19 +386,36 @@ class StratumServer:
         # Before subscribe, assume line framing; can be changed after subscribe
         session = self._alloc_session(writer, framing="lines")
         buf = bytearray()
+        hb_task: Optional[asyncio.Task] = None
 
         try:
+            if self._keepalive_secs > 0:
+                hb_task = asyncio.create_task(self._session_heartbeat(session))
+                self._heartbeats[session.session_id] = hb_task
+
             while True:
                 chunk = await reader.read(65536)
                 if not chunk:
                     break
 
                 if session.framing == "lenpref":
-                    for obj in decode_lenpref(bytearray(chunk)):
+                    try:
+                        decoded = decode_lenpref(bytearray(chunk))
+                    except Exception as e:
+                        log.warning(f"[Stratum] decode lenpref error from {peer}: {e}")
+                        await self._send(session, make_error(None, RpcErrorCodes.INVALID_REQUEST, str(e)))
+                        continue
+                    for obj in decoded:
                         await self._process_message(session, obj)
                 else:
                     buf.extend(chunk)
-                    for obj in decode_lines(buf):
+                    try:
+                        decoded = decode_lines(buf)
+                    except Exception as e:
+                        log.warning(f"[Stratum] decode line error from {peer}: {e}")
+                        await self._send(session, make_error(None, RpcErrorCodes.PARSE_ERROR, str(e)))
+                        continue
+                    for obj in decoded:
                         await self._process_message(session, obj)
         except asyncio.CancelledError:  # pragma: no cover
             pass
@@ -349,6 +428,11 @@ class StratumServer:
             except Exception:
                 pass
             self._sessions.pop(session.session_id, None)
+            if hb_task:
+                hb_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await hb_task
+            self._heartbeats.pop(session.session_id, None)
             self._conn_tasks.pop(task, None)
             log.info(f"[Stratum] client disconnected {peer} session={session.session_id}")
 
@@ -369,7 +453,7 @@ class StratumServer:
                     extranonce1 = extranonce1[2:]
                 reply = res_subscribe_v1(id_val, extranonce1=extranonce1, extranonce2_size=session.extranonce2_size)
                 await self._send(session, reply)
-                await self._send(session, push_set_difficulty_v1(session.share_target))
+                await self._push_difficulty(session, session.share_target, session.theta_micro)
                 if self._current_job_id:
                     job = self._jobs[self._current_job_id]
                     await self._send(session, self._build_v1_notify(job, clean_jobs=True))
@@ -429,7 +513,7 @@ class StratumServer:
             await self._send(session, reply)
 
             # Push current difficulty & job if any
-            await self._send(session, push_set_difficulty(session.share_target, session.theta_micro))
+            await self._push_difficulty(session, session.share_target, session.theta_micro)
             if self._current_job_id:
                 job = self._jobs[self._current_job_id]
                 await self._send(session, push_notify(job.job_id, job.header, job.share_target, True, job.hints or {}))
