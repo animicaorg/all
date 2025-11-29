@@ -261,6 +261,26 @@ def load() -> RpcConfig:
 # Singleton-style accessor for frameworks that prefer module-level config.
 CONFIG: RpcConfig = load()
 
+
+def resolve_chain_id(cfg: RpcConfig | Config | None = None) -> int:
+    """Best-effort accessor for chainId used by lightweight server banners.
+
+    Some call sites pass the legacy ``Config`` shim while others rely on the
+    newer ``RpcConfig``. This helper normalizes both shapes (and tolerates
+    ``chainId``/``CHAIN_ID`` attribute variants) to avoid attribute errors when
+    rendering metadata endpoints.
+    """
+
+    cfg = cfg or CONFIG
+    for attr in ("chain_id", "chainId", "CHAIN_ID"):
+        if hasattr(cfg, attr):
+            try:
+                return int(getattr(cfg, attr))
+            except Exception:
+                break
+    # Fallback to default mainnet id if all else fails.
+    return 1
+
 @dataclass
 class Config:
     """
@@ -298,6 +318,7 @@ __all__ = [
     "RateLimitConfig",
     "RpcConfig",
     "CONFIG",
+    "resolve_chain_id",
     "load",
     "Config",
     "load_config",
