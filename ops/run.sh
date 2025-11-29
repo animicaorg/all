@@ -76,6 +76,44 @@ print(parsed.path or "/rpc")
 PY
 }
 
+detect_pool_profile() {
+  if [[ -n "${ANIMICA_POOL_PROFILE:-}" ]]; then
+    echo "[animica] Using pool profile from environment: ${ANIMICA_POOL_PROFILE}"
+    return
+  fi
+
+  local rpc_url
+  rpc_url="${ANIMICA_RPC_URL:-http://127.0.0.1:8545/rpc}"
+  local inferred
+  inferred=$(python - "${rpc_url}" <<'PY' || true
+import json
+import sys
+import urllib.request
+
+rpc_url = sys.argv[1]
+payload = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "miner.get_sha256_job", "params": [{"address": ""}]}).encode()
+try:
+    req = urllib.request.Request(rpc_url, data=payload, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=2) as resp:
+        data = json.load(resp)
+    if isinstance(data, dict) and "result" in data:
+        print("asic_sha256")
+        sys.exit(0)
+except Exception:
+    pass
+
+print("hashshare")
+PY
+)
+
+  if [[ -z "${inferred}" ]]; then
+    inferred="hashshare"
+  fi
+
+  export ANIMICA_POOL_PROFILE="${inferred}"
+  echo "[animica] Auto-selected pool profile: ${ANIMICA_POOL_PROFILE}"
+}
+
 start_node() {
   echo "[animica] Starting node (profile=${PROFILE})"
   read -r rpc_host rpc_port rpc_path < <(parse_rpc_from_url)
@@ -99,6 +137,7 @@ start_pool() {
   else
     echo "Warning: .venv not found; ensure dependencies are installed" >&2
   fi
+  detect_pool_profile
   export ANIMICA_MINING_POOL_LOG_LEVEL="${ANIMICA_MINING_POOL_LOG_LEVEL:-info}"
   python -m animica.stratum_pool
 }
