@@ -7,7 +7,8 @@ import logging
 import os
 import typing as t
 
-from fastapi import FastAPI, APIRouter, Request, WebSocket, WebSocketDisconnect, Response
+from fastapi import HTTPException, APIRouter, FastAPI, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse, PlainTextResponse
 from starlette.middleware.cors import CORSMiddleware
 
@@ -205,6 +206,34 @@ def create_app(cfg: rpc_config.Config | None = None) -> FastAPI:
         redoc_url=None,
         openapi_url=None,
     )
+
+    @app.middleware("http")
+    async def _method_not_allowed_hint(request: Request, call_next: t.Callable[[Request], t.Awaitable[Response]]):
+        if request.url.path.rstrip("/") == "/rpc" and request.method not in {"POST", "OPTIONS"}:
+            return JSONResponse(
+                {
+                    "error": "Method not allowed",
+                    "hint": "Send JSON-RPC requests as POST with application/json to /rpc.",
+                },
+                status_code=405,
+                headers={"Allow": "POST"},
+            )
+
+        return await call_next(request)
+
+    @app.exception_handler(HTTPException)
+    async def _http_exception_handler(request: Request, exc: HTTPException):
+        if exc.status_code == 405 and request.url.path.rstrip("/") == "/rpc":
+            return JSONResponse(
+                {
+                    "error": "Method not allowed",
+                    "hint": "Send JSON-RPC requests as POST with application/json to /rpc.",
+                },
+                status_code=exc.status_code,
+                headers=exc.headers,
+            )
+
+        return await http_exception_handler(request, exc)
 
     # CORS (strict allowlist)
     app.add_middleware(
