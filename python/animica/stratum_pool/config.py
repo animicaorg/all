@@ -14,6 +14,7 @@ class PoolConfig:
     host: str = "0.0.0.0"
     port: int = 3333
     rpc_url: str = "http://127.0.0.1:8545/rpc"
+    db_url: str = "sqlite:///animica_pool.db"
     chain_id: int = 1
     pool_address: str = ""
     min_difficulty: float = 0.01
@@ -38,18 +39,30 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
 
     overrides = overrides or {}
 
-    host = overrides.get("host") or _env("ANIMICA_STRATUM_HOST", "0.0.0.0")
-    port = int(overrides.get("port") or _env("ANIMICA_STRATUM_PORT", "3333"))
+    stratum_bind = overrides.get("stratum_bind") or _env("ANIMICA_STRATUM_BIND")
+    if stratum_bind:
+        host, port_str = stratum_bind.split(":")
+        port = int(port_str)
+    else:
+        host = overrides.get("host") or _env("ANIMICA_STRATUM_HOST", "0.0.0.0")
+        port = int(overrides.get("port") or _env("ANIMICA_STRATUM_PORT", "3333"))
+
     rpc_url = overrides.get("rpc_url") or _env("ANIMICA_RPC_URL", "http://127.0.0.1:8545/rpc")
+    db_url = overrides.get("db_url") or _env("ANIMICA_MINING_POOL_DB_URL", "sqlite:///animica_pool.db")
     chain_id = int(overrides.get("chain_id") or _env("ANIMICA_CHAIN_ID", "1"))
     pool_address = overrides.get("pool_address") or _env("ANIMICA_POOL_ADDRESS", "")
 
     min_difficulty = float(overrides.get("min_difficulty") or _env("ANIMICA_STRATUM_MIN_DIFFICULTY", "0.01"))
     max_difficulty = float(overrides.get("max_difficulty") or _env("ANIMICA_STRATUM_MAX_DIFFICULTY", "1.0"))
     poll_interval = float(overrides.get("poll_interval") or _env("ANIMICA_STRATUM_POLL_INTERVAL", "1.0"))
-    log_level = (overrides.get("log_level") or _env("ANIMICA_STRATUM_LOG_LEVEL", "INFO")).upper()
-    api_host = overrides.get("api_host") or _env("ANIMICA_STRATUM_API_HOST", host)
-    api_port = int(overrides.get("api_port") or _env("ANIMICA_STRATUM_API_PORT", "8550"))
+    log_level = (overrides.get("log_level") or _env("ANIMICA_MINING_POOL_LOG_LEVEL", _env("ANIMICA_STRATUM_LOG_LEVEL", "INFO"))).upper()
+    api_bind = overrides.get("api_bind") or _env("ANIMICA_POOL_API_BIND")
+    if api_bind:
+        api_host, api_port_str = api_bind.split(":")
+        api_port = int(api_port_str)
+    else:
+        api_host = overrides.get("api_host") or _env("ANIMICA_STRATUM_API_HOST", host)
+        api_port = int(overrides.get("api_port") or _env("ANIMICA_STRATUM_API_PORT", "8550"))
 
     if min_difficulty <= 0:
         raise ValueError("min_difficulty must be positive")
@@ -60,6 +73,7 @@ def load_config_from_env(*, overrides: Optional[dict] = None) -> PoolConfig:
         host=host,
         port=port,
         rpc_url=rpc_url,
+        db_url=db_url,
         chain_id=chain_id,
         pool_address=pool_address,
         min_difficulty=min_difficulty,
