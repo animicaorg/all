@@ -77,14 +77,24 @@ class ListenConfig:
 
 def _load_default_listen_config(args: argparse.Namespace) -> ListenConfig:
     # Attempt to import richer config (optional)
+    seeds: List[str] = list(args.seed or [])
+    try:  # Prefer env/default seeds helper if available
+        if not seeds:
+            from p2p.config import _load_seeds_from_env  # type: ignore
+
+            seeds = list(_load_seeds_from_env())
+    except Exception:
+        pass
+
     try:
-        from p2p.config import P2PConfig  # type: ignore
-        cfg = P2PConfig.load()  # type: ignore[attr-defined]
+        from p2p.config import load_config  # type: ignore
+
+        cfg = load_config()
         return ListenConfig(
             db_uri=args.db or getattr(cfg, "db_uri", DEFAULT_DB_URI),
             chain_id=int(args.chain_id or getattr(cfg, "chain_id", 1)),
             listen_addrs=list(args.listen or getattr(cfg, "listen_addrs", [])),
-            seeds=list(args.seed or getattr(cfg, "seeds", [])),
+            seeds=seeds or list(getattr(cfg, "seeds", [])),
             enable_quic=bool(args.enable_quic if args.enable_quic is not None else getattr(cfg, "enable_quic", False)),
             enable_ws=bool(args.enable_ws if args.enable_ws is not None else getattr(cfg, "enable_ws", False)),
             nat=bool(args.nat if args.nat is not None else getattr(cfg, "nat", False)),
@@ -95,7 +105,7 @@ def _load_default_listen_config(args: argparse.Namespace) -> ListenConfig:
             db_uri=args.db or DEFAULT_DB_URI,
             chain_id=int(args.chain_id or 1),
             listen_addrs=list(args.listen or []),
-            seeds=list(args.seed or []),
+            seeds=seeds,
             enable_quic=bool(args.enable_quic),
             enable_ws=bool(args.enable_ws),
             nat=bool(args.nat),
