@@ -199,6 +199,20 @@
 
 ---
 
+## 11) Tutorials & how-tos
+
+- **AI agent starter:** [`docs/tutorials/AI_AGENT.md`](./tutorials/AI_AGENT.md)
+- **DA oracle sample:** [`docs/tutorials/DA_ORACLE.md`](./tutorials/DA_ORACLE.md)
+- **Escrow contract:** [`docs/tutorials/ESCROW.md`](./tutorials/ESCROW.md)
+- **Hello, Counter (deploy & call):** [`docs/tutorials/HELLO_COUNTER.md`](./tutorials/HELLO_COUNTER.md)
+- **Indexer lite:** [`docs/tutorials/INDEXER_LITE.md`](./tutorials/INDEXER_LITE.md)
+- **Mine Animica locally (devnet or pool):** [`docs/tutorials/MINING_GUIDE.md`](./tutorials/MINING_GUIDE.md)
+- **Provider GPU setup:** [`docs/tutorials/PROVIDER_GPU.md`](./tutorials/PROVIDER_GPU.md)
+- **Quantum RNG flow:** [`docs/tutorials/QUANTUM_RNG.md`](./tutorials/QUANTUM_RNG.md)
+- **Token example (mint/transfer):** [`docs/tutorials/TOKEN.md`](./tutorials/TOKEN.md)
+
+---
+
 ### Updating This TOC
 
 - Keep items **stable and alphabetized within sections** where possible.
