@@ -67,12 +67,13 @@ class MiningCoreAdapter:
         last_exc: Optional[Exception] = None
         work: Optional[Json] = None
         metadata = {"chainId": self._chain_id}
+        params_variants = []
         if self._pool_address:
-            metadata["address"] = self._pool_address
-
-        params_with_metadata = [metadata]
+            params_variants.append([{**metadata, "address": self._pool_address}])
+        params_variants.append([metadata])
+        params_variants.append([])
         for method in ("miner.getWork", "mining.getWork", "getWork", "miner.requestWork"):
-            for params in (params_with_metadata, []):
+            for params in params_variants:
                 try:
                     work = await self._rpc_call(method, params)
                     if work:
