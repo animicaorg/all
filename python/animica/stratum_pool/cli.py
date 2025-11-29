@@ -7,6 +7,7 @@ from typing import Optional
 
 import uvicorn
 
+from .asic import Sha256PoolServer, Sha256RpcAdapter
 from .config import PoolConfig, load_config_from_env
 from .core import MiningCoreAdapter
 from .job_manager import JobManager
@@ -28,6 +29,14 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--log-level", dest="log_level", default=None, help="Log level")
     parser.add_argument("--api-host", dest="api_host", default=None, help="Host for the metrics API server")
     parser.add_argument("--api-port", dest="api_port", type=int, default=None, help="Port for the metrics API server")
+    parser.add_argument("--profile", dest="profile", default=None, help="Profile to run (hashshare|asic_sha256)")
+    parser.add_argument(
+        "--extranonce2-size",
+        dest="extranonce2_size",
+        type=int,
+        default=None,
+        help="Size of extranonce2 for ASIC profile",
+    )
     return parser
 
 
@@ -44,10 +53,22 @@ def build_config(args: argparse.Namespace) -> PoolConfig:
 
 
 async def run_pool(config: PoolConfig, logger: Optional[logging.Logger] = None) -> None:
-    adapter = MiningCoreAdapter(config.rpc_url, config.chain_id, config.pool_address, logger=logger)
-    job_manager = JobManager(adapter, config, logger=logger)
-    server = StratumPoolServer(adapter, config, job_manager, logger=logger)
-    metrics = PoolMetrics(config, job_manager, server.stratum)
+    if config.profile.startswith("asic"):
+        adapter = Sha256RpcAdapter(config.rpc_url, config.pool_address, logger=logger)
+        server = Sha256PoolServer(
+            adapter,
+            host=config.host,
+            port=config.port,
+            extranonce2_size=config.extranonce2_size,
+            default_difficulty=config.min_difficulty,
+            logger=logger,
+        )
+        metrics = PoolMetrics(config, server.job_manager, server.stratum)
+    else:
+        adapter = MiningCoreAdapter(config.rpc_url, config.chain_id, config.pool_address, logger=logger)
+        job_manager = JobManager(adapter, config, logger=logger)
+        server = StratumPoolServer(adapter, config, job_manager, logger=logger)
+        metrics = PoolMetrics(config, job_manager, server.stratum)
     server.stratum.set_submit_hook(metrics.record_share)
     api_app = create_app(metrics)
     api_server = uvicorn.Server(
