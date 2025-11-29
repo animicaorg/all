@@ -1,3 +1,5 @@
+import pytest
+
 from rpc.tests import new_test_client, rpc_call
 
 
@@ -21,3 +23,16 @@ def test_submit_share_accepts_dummy_share():
     res = rpc_call(client, "miner.submitShare", payload)
     assert res["result"]["accepted"] is True
     assert res["result"]["share"]["nonce"] == "0x01"
+
+
+def test_dispatch_without_ctx_still_returns_work():
+    import asyncio
+    from rpc import jsonrpc
+
+    payload = {"jsonrpc": "2.0", "id": 99, "method": "miner.getWork"}
+
+    resp = asyncio.run(jsonrpc.dispatch(payload))
+    assert resp["id"] == 99
+    result = resp["result"]
+    assert result["height"] >= 1
+    assert "header" in result
