@@ -70,7 +70,7 @@ async def _call_dispatch(payload: t.Any, request: Request | None = None) -> t.An
     # Build a best-effort Context if the dispatcher signature requires it
     ctx = None
     try:
-        from rpc.jsonrpc import Context, _now_ms
+        from rpc.jsonrpc import Context, _now_ms, _default_ctx
 
         if request is None:
             ctx = Context(request=None, received_at_ms=_now_ms(), client=None, headers={})
@@ -85,11 +85,17 @@ async def _call_dispatch(payload: t.Any, request: Request | None = None) -> t.An
     except Exception:
         ctx = None
 
-    try:
-        res = JSONRPC_DISPATCH(payload, ctx) if ctx is not None else JSONRPC_DISPATCH(payload)
-    except TypeError:
-        # Older dispatcher variants may not accept ctx
-        res = JSONRPC_DISPATCH(payload)
+    # Always provide some context to the dispatcher so integration points that
+    # skip it do not trigger missing-argument errors.
+    if ctx is None:
+        try:
+            from rpc.jsonrpc import _default_ctx
+
+            ctx = _default_ctx()
+        except Exception:
+            ctx = None
+
+    res = JSONRPC_DISPATCH(payload, ctx) if ctx is not None else JSONRPC_DISPATCH(payload)
 
     if asyncio.iscoroutine(res):
         return await t.cast(t.Awaitable[t.Any], res)
