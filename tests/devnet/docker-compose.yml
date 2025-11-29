@@ -44,15 +44,15 @@ services:
       - ../..:/app:ro
       - node1_data:/data
     environment:
-      # DB & chain config
-      CHAIN_ID: "1337"
-      CORE_DB_URL: "sqlite:////data/animica.db"
+      # DB & chain config (matches rpc.config expectations)
+      ANIMICA_CHAIN_ID: "1337"
+      ANIMICA_RPC_DB_URI: "sqlite:////data/animica.db"
       GENESIS_PATH: "core/genesis/genesis.json"
       # RPC server config (FastAPI)
-      RPC_HOST: "0.0.0.0"
-      RPC_PORT: "8545"
-      CORS_ALLOW_ORIGINS: "*"
-      LOG_LEVEL: "INFO"
+      ANIMICA_RPC_HOST: "0.0.0.0"
+      ANIMICA_RPC_PORT: "8545"
+      ANIMICA_RPC_CORS_ORIGINS: "[*]"
+      ANIMICA_LOG_LEVEL: "INFO"
     command: >
       bash -lc "
       set -euo pipefail;
@@ -63,7 +63,7 @@ services:
       su -s /bin/bash animica -c "set -euo pipefail;
         pip show pyyaml >/dev/null 2>&1 || python -m pip install --user pyyaml;
         GENESIS_PATH=$${GENESIS_PATH:-core/genesis/genesis.json};
-        DB_URL=$${CORE_DB_URL:-sqlite:////data/animica.db};
+        DB_URL=$${ANIMICA_RPC_DB_URI:-sqlite:////data/animica.db};
 
         if [ ! -f /data/animica.db ]; then
           echo '[node1] initializing genesis DB…';
@@ -72,7 +72,7 @@ services:
           echo '[node1] DB exists, skipping genesis init';
         fi;
         # Start RPC/WS server
-        exec python -m rpc.server --host $${RPC_HOST} --port $${RPC_PORT} --db $${DB_URL} --chain-id $${CHAIN_ID}
+        exec python -m rpc.server
       "
       "
     healthcheck:
@@ -101,13 +101,13 @@ services:
       - ../..:/app:ro
       - node2_data:/data
     environment:
-      CHAIN_ID: "1337"
-      CORE_DB_URL: "sqlite:////data/animica.db"
+      ANIMICA_CHAIN_ID: "1337"
+      ANIMICA_RPC_DB_URI: "sqlite:////data/animica.db"
       GENESIS_PATH: "core/genesis/genesis.json"
-      RPC_HOST: "0.0.0.0"
-      RPC_PORT: "9545"
-      CORS_ALLOW_ORIGINS: "*"
-      LOG_LEVEL: "INFO"
+      ANIMICA_RPC_HOST: "0.0.0.0"
+      ANIMICA_RPC_PORT: "9545"
+      ANIMICA_RPC_CORS_ORIGINS: "[*]"
+      ANIMICA_LOG_LEVEL: "INFO"
     command: >
       bash -lc "
       set -euo pipefail;
@@ -118,7 +118,7 @@ services:
       su -s /bin/bash animica -c "set -euo pipefail;
         pip show pyyaml >/dev/null 2>&1 || python -m pip install --user pyyaml;
         GENESIS_PATH=$${GENESIS_PATH:-core/genesis/genesis.json};
-        DB_URL=$${CORE_DB_URL:-sqlite:////data/animica.db};
+        DB_URL=$${ANIMICA_RPC_DB_URI:-sqlite:////data/animica.db};
 
         if [ ! -f /data/animica.db ]; then
           echo '[node2] initializing genesis DB…';
@@ -126,7 +126,7 @@ services:
         else
           echo '[node2] DB exists, skipping genesis init';
         fi;
-        exec python -m rpc.server --host $${RPC_HOST} --port $${RPC_PORT} --db $${DB_URL} --chain-id $${CHAIN_ID}
+        exec python -m rpc.server
       "
       "
     healthcheck:
