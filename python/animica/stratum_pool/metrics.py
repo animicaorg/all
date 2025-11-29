@@ -75,7 +75,7 @@ class PoolMetrics:
         share_events = list(self._share_events)
         return {
             "pool_name": "Animica Stratum Pool",
-            "network": f"chain-{self._config.chain_id}",
+            "network": self._config.network or f"chain-{self._config.chain_id}",
             "height": (job.height if job else None) or 0,
             "last_block_hash": (job.header.get("hash") if job and job.header else None) or "0x0",
             "pool_hashrate": self._hashrate_from_events(share_events, 600),

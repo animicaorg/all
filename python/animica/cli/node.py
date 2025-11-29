@@ -9,7 +9,9 @@ from typing import Any, Dict, Optional
 import httpx
 import typer
 
-DEFAULT_RPC_URL = "http://127.0.0.1:8545/rpc"
+from animica.config import load_network_config
+
+DEFAULT_RPC_URL = load_network_config().rpc_url
 RPC_ENV = "ANIMICA_RPC_URL"
 
 app = typer.Typer(help="Query Animica node JSON-RPC endpoints.")
@@ -26,7 +28,7 @@ async def rpc_call(method: str, params: Optional[list[Any]] = None, *, rpc_url: 
 
 
 def _resolve_rpc_url(rpc_url: Optional[str]) -> str:
-    return rpc_url or os.environ.get(RPC_ENV, DEFAULT_RPC_URL)
+    return rpc_url or os.environ.get(RPC_ENV) or load_network_config().rpc_url
 
 
 def _pretty(obj: Any) -> str:
