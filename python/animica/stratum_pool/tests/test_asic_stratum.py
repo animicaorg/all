@@ -103,3 +103,42 @@ async def test_stratum_subscribe_notify_and_submit(tmp_path):
     writer.close()
     await writer.wait_closed()
     await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_stratum_subscribe_order_and_rejects(tmp_path):
+    adapter = DummyAdapter()
+    server = Sha256StratumServer(
+        host="127.0.0.1",
+        port=0,
+        adapter=adapter,
+        extranonce2_size=4,
+        default_difficulty=1.0,
+    )
+
+    await server.start()
+    port = server._server.sockets[0].getsockname()[1]
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+
+    subscribe = {"id": 1, "method": "mining.subscribe", "params": ["tester"]}
+    writer.write((json.dumps(subscribe) + "\n").encode())
+    await writer.drain()
+
+    sub_res = await _read_json(reader)
+    assert sub_res["result"][0][0][0] == "mining.set_difficulty"
+    assert sub_res["result"][0][1][0] == "mining.notify"
+
+    # Drain the difficulty push
+    await asyncio.wait_for(_read_json(reader), timeout=1.0)
+
+    submit = {"id": 2, "method": "mining.submit", "params": ["worker", "missing", "00" * 4, "00000000", "00000000"]}
+    writer.write((json.dumps(submit) + "\n").encode())
+    await writer.drain()
+
+    submit_res = await _read_json(reader)
+    assert submit_res["error"][0] == 21
+    assert submit_res["result"] is None
+
+    writer.close()
+    await writer.wait_closed()
+    await server.stop()
