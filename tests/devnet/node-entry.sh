@@ -73,7 +73,7 @@ fi
 
 # Start the RPC/WS server (never return)
 log "Launching rpc.server"
-run_as_animica python -m animica.rpc.server \
+run_as_animica python -m rpc.server \
   --db "${ANIMICA_RPC_DB_URI}" \
   --genesis "${GENESIS_PATH_RESOLVED}" \
   --chain-id "${ANIMICA_CHAIN_ID}" \
