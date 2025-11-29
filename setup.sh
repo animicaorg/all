@@ -37,6 +37,12 @@ setup_python() {
   # shellcheck disable=SC1091
   source "$ROOT_DIR/.venv/bin/activate"
   python -m pip install --upgrade pip
+  if [[ -f "$ROOT_DIR/requirements.txt" ]]; then
+    log "Installing shared Python dependencies (requirements.txt)"
+    python -m pip install -r "$ROOT_DIR/requirements.txt"
+  else
+    warn "requirements.txt not found; skipping shared Python dependencies"
+  fi
   log "Installing Animica Python package in editable mode"
   python -m pip install -e "$ROOT_DIR/python[dev]"
   log "Installing SDK Python package in editable mode"
