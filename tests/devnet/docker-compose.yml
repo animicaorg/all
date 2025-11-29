@@ -17,8 +17,6 @@
 # - SQLite is used for persistence; volumes keep data across restarts.
 # - If your modules expose different CLIs, adjust commands/env below.
 # -------------------------------------------------------------------
-version: "3.9"
-
 name: animica-devnet
 
 networks:
