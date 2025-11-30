@@ -24,6 +24,8 @@ classifiers = [
 animica-wallet = "animica.cli.wallet:app"
 animica-node = "animica.cli.node:app"
 animica-mining = "animica.cli.mining:app"
+animica-pool = "animica.cli.mining:app"
+animica-p2p = "p2p.cli:main"
 
 [project.optional-dependencies]
 stratum = [
@@ -34,6 +36,9 @@ dev = [
   "pytest>=7.0",
 ]
 
+[tool.setuptools]
+package-dir = {"" = ".."}
+
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["animica*"]
+where = [".."]
+include = ["animica*", "p2p*"]

@@ -9,7 +9,7 @@ Subcommands:
   node        Start the Animica node RPC server for the selected profile.
   pool        Run the Stratum mining pool backend.
   dashboard   Launch the miner dashboard (Vite dev server).
-  all         Print instructions to run all services together.
+  all         Start node + pool in the background, then launch the dashboard.
 
 Options:
   --profile PROFILE   Choose devnet, testnet, or mainnet (default: devnet).
@@ -63,6 +63,35 @@ set -a
 # shellcheck disable=SC1090
 source "${PROFILE_PATH}"
 set +a
+
+# Normalize well-known environment variables so downstream CLIs see the same
+# values whether they came from the profile file or ad-hoc overrides.
+export ANIMICA_NETWORK="${ANIMICA_NETWORK:-${PROFILE}}"
+export ANIMICA_RPC_URL="${ANIMICA_RPC_URL:-http://127.0.0.1:8545/rpc}"
+export ANIMICA_RPC_DB_URI="${ANIMICA_RPC_DB_URI:-sqlite:///~/animica/${PROFILE}/chain.db}"
+export ANIMICA_MINING_POOL_DB_URL="${ANIMICA_MINING_POOL_DB_URL:-sqlite:///~/animica/${PROFILE}/pool.db}"
+export ANIMICA_STRATUM_BIND="${ANIMICA_STRATUM_BIND:-0.0.0.0:3333}"
+export ANIMICA_POOL_API_BIND="${ANIMICA_POOL_API_BIND:-0.0.0.0:8550}"
+
+split_bind() {
+  local bind host port
+  bind="$1"
+  host="${bind%%:*}"
+  port="${bind##*:}"
+  echo "${host}" "${port}"
+}
+
+set_bind_env() {
+  read -r stratum_host stratum_port < <(split_bind "${ANIMICA_STRATUM_BIND}")
+  export ANIMICA_STRATUM_HOST="${ANIMICA_STRATUM_HOST:-${stratum_host}}"
+  export ANIMICA_STRATUM_PORT="${ANIMICA_STRATUM_PORT:-${stratum_port}}"
+
+  read -r api_host api_port < <(split_bind "${ANIMICA_POOL_API_BIND}")
+  export ANIMICA_POOL_API_HOST="${ANIMICA_POOL_API_HOST:-${api_host}}"
+  export ANIMICA_POOL_API_PORT="${ANIMICA_POOL_API_PORT:-${api_port}}"
+}
+
+set_bind_env
 
 load_p2p_seeds() {
   if [[ -n "${ANIMICA_P2P_SEEDS:-}" ]]; then
@@ -156,6 +185,12 @@ start_pool() {
   fi
   detect_pool_profile
   export ANIMICA_MINING_POOL_LOG_LEVEL="${ANIMICA_MINING_POOL_LOG_LEVEL:-info}"
+  read -r stratum_host stratum_port < <(split_bind "${ANIMICA_STRATUM_BIND}")
+  export ANIMICA_STRATUM_HOST="${ANIMICA_STRATUM_HOST:-${stratum_host}}"
+  export ANIMICA_STRATUM_PORT="${ANIMICA_STRATUM_PORT:-${stratum_port}}"
+  read -r api_host api_port < <(split_bind "${ANIMICA_POOL_API_BIND}")
+  export ANIMICA_POOL_API_HOST="${ANIMICA_POOL_API_HOST:-${api_host}}"
+  export ANIMICA_POOL_API_PORT="${ANIMICA_POOL_API_PORT:-${api_port}}"
   python -m animica.stratum_pool
 }
 
@@ -169,9 +204,8 @@ start_dashboard() {
   if [[ ! -d node_modules ]]; then
     pnpm install
   fi
-  api_bind="${ANIMICA_POOL_API_BIND:-127.0.0.1:8550}"
-  api_host="${api_bind%%:*}"
-  api_port="${api_bind##*:}"
+  api_host="${ANIMICA_POOL_API_HOST:-127.0.0.1}"
+  api_port="${ANIMICA_POOL_API_PORT:-8550}"
   if [[ "${api_host}" == "0.0.0.0" ]]; then
     api_host="127.0.0.1"
   fi
@@ -179,13 +213,22 @@ start_dashboard() {
   pnpm dev -- --host
 }
 
-print_all() {
-  cat <<INSTRUCTIONS
-[animica] Launch all services for profile=${PROFILE}
-1) Terminal A: ops/run.sh --profile ${PROFILE} node
-2) Terminal B: ops/run.sh --profile ${PROFILE} pool
-3) Terminal C: ops/run.sh --profile ${PROFILE} dashboard
-INSTRUCTIONS
+start_all() {
+  echo "[animica] Launching node + pool in background for profile=${PROFILE}"
+  start_node &
+  NODE_PID=$!
+  start_pool &
+  POOL_PID=$!
+
+  cleanup() {
+    echo "[animica] Shutting down background services"
+    kill "${NODE_PID}" "${POOL_PID}" 2>/dev/null || true
+  }
+  trap cleanup EXIT INT TERM
+
+  start_dashboard
+
+  wait "${NODE_PID}" "${POOL_PID}" || true
 }
 
 case "$COMMAND" in
@@ -199,7 +242,7 @@ case "$COMMAND" in
     start_dashboard
     ;;
   all)
-    print_all
+    start_all
     ;;
   *)
     print_usage
