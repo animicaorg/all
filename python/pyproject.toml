@@ -35,6 +35,10 @@ stratum = [
 dev = [
   "pytest>=7.0",
 ]
+quantum = [
+  "qiskit>=1.1",
+  "pennylane>=0.36",
+]
 
 [tool.setuptools]
 package-dir = {"" = ".."}
