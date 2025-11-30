@@ -15,16 +15,12 @@ Discovered mining APIs in this repository
   available, delegates to ``mining.adapters.proofs_view.verify_hashshare_envelope``
   so that HashShare envelopes are verified using the real proofs logic rather
   than custom hashing.
-- ``mining.share_submitter.ShareSubmitter`` wraps JSON-RPC calls to the node
-  (``miner.submitShare`` / ``miner.submitBlock``) with retries and the
-  ``_default_share_encoder`` that turns a FoundShare-like object into RPC
-  payloads. It uses ``JsonRpcClient.call(method, params)`` synchronously over
-  HTTP.
 
 This module reuses those components directly: we build ``StratumJob`` objects
 from templates delivered by the node's ``miner.getWork`` RPC, validate shares
-with ``ShareValidator`` and forward accepted shares to the node using
-``ShareSubmitter`` so PoW validation stays inside the existing mining code.
+with ``ShareValidator`` and forward accepted shares to the node using the
+``miner.submitWork`` RPC so PoW validation stays inside the existing mining
+code.
 """
 
 import asyncio
@@ -33,7 +29,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
 
-from mining.share_submitter import JsonRpcClient, RpcError, ShareResult, ShareSubmitter, SubmitterConfig
+from mining.share_submitter import JsonRpcClient, RpcError
 from mining.stratum_server import ShareValidator, StratumJob
 
 
@@ -47,6 +43,8 @@ class MiningJob:
     theta_micro: int
     share_target: float
     height: int
+    target: Optional[str] = None
+    sign_bytes: Optional[str] = None
     hints: Optional[Json] = None
     raw: Json = field(default_factory=dict)
 
@@ -54,7 +52,6 @@ class MiningJob:
 class MiningCoreAdapter:
     def __init__(self, rpc_url: str, chain_id: int, pool_address: str, *, logger: Optional[logging.Logger] = None) -> None:
         self._rpc = JsonRpcClient(rpc_url)
-        self._submitter = ShareSubmitter(SubmitterConfig(rpc_url=rpc_url), logger=logger)
         self._validator = ShareValidator()
         self._chain_id = chain_id
         self._pool_address = pool_address
@@ -66,13 +63,15 @@ class MiningCoreAdapter:
     async def get_new_job(self) -> MiningJob:
         last_exc: Optional[Exception] = None
         work: Optional[Json] = None
+
         metadata = {"chainId": self._chain_id}
-        params_variants = []
         if self._pool_address:
-            params_variants.append([{**metadata, "address": self._pool_address}])
-        params_variants.append([metadata])
-        params_variants.append([])
-        for method in ("miner.getWork", "mining.getWork", "getWork", "miner.requestWork"):
+            metadata["address"] = self._pool_address
+
+        params_variants = [[metadata], []]
+        method_variants = ("miner.getWork", "miner_getWork")
+
+        for method in method_variants:
             for params in params_variants:
                 try:
                     work = await self._rpc_call(method, params)
@@ -80,12 +79,13 @@ class MiningCoreAdapter:
                         break
                 except RpcError as exc:
                     last_exc = exc
-                    if exc.code == -32601:  # Method not found; try next name
+                    if exc.code == -32601:
                         break
                 except Exception as exc:  # noqa: BLE001
                     last_exc = exc
             if work:
                 break
+
         if work is None:
             raise RuntimeError(f"unable to fetch work: {last_exc}")
 
@@ -100,6 +100,8 @@ class MiningCoreAdapter:
         theta_micro = int(work.get("thetaMicro") or work.get("theta_target_micro") or work.get("thetaTargetMicro") or 0)
         share_target = float(work.get("shareTarget") or work.get("share_target") or work.get("share_target_fraction") or 0.0)
         height = int(work.get("height") or header.get("number") or header.get("height") or 0)
+        target = work.get("target")
+        sign_bytes = work.get("signBytes")
         hints = work.get("hints") or {}
 
         return MiningJob(
@@ -108,6 +110,8 @@ class MiningCoreAdapter:
             theta_micro=theta_micro,
             share_target=share_target,
             height=height,
+            target=target,
+            sign_bytes=sign_bytes,
             hints=hints,
             raw=work,
         )
@@ -119,6 +123,7 @@ class MiningCoreAdapter:
             raise ValueError("hashshare.nonce is required")
         proof = params.get("proof") or hs or {}
         payload: Json = {
+            "jobId": job.job_id,
             "header": job.header,
             "nonce": nonce,
             "mixSeed": (job.hints or {}).get("mixSeed") or hs.get("mix") or hs.get("mixSeed"),
@@ -144,7 +149,18 @@ class MiningCoreAdapter:
             return ok, reason, is_block, tx_count
 
         payload = self._encode_share_payload(job, submit_params)
-        result: ShareResult = await asyncio.to_thread(self._submitter.submit_share_once, payload)
-        accepted = bool(result.get("accepted", False))
-        updated_reason = result.get("reason") or reason
+        try:
+            result: Json = await self._rpc_call("miner.submitWork", payload)
+        except RpcError as exc:
+            return False, f"rpc:{exc.code}:{exc}", is_block, tx_count
+
+        accepted = False
+        updated_reason: Optional[str] = None
+        if isinstance(result, dict):
+            accepted = bool(result.get("accepted", False))
+            updated_reason = result.get("reason") or reason
+        elif isinstance(result, bool):
+            accepted = result
+            updated_reason = reason
+
         return accepted, updated_reason, is_block, tx_count
