@@ -6,7 +6,7 @@ address.py — Animica bech32m addresses
 Format
 ------
 Address = bech32m( HRP="anim", data = convertbits(payload, 8->5) )
-payload = alg_id(1 byte) || sha3_256(pubkey)(32 bytes)
+payload = alg_id(2 bytes, big-endian) || sha3_256(pubkey)(32 bytes)
 
 - `alg_id` identifies the signing algorithm of the account key (see pq/alg_ids.yaml).
 - `sha3_256(pubkey)` binds the long public key down to a fixed 32-byte digest.
@@ -33,13 +33,13 @@ from typing import Optional, Tuple
 
 from pq.py.utils.hash import sha3_256
 # We depend on the utility bech32 module you added earlier.
-# It should export: bech32m_encode(hrp: str, data: bytes-like) -> str
-#                   bech32m_decode(addr: str) -> Tuple[str, bytes]
+# It should export: bech32_encode(hrp: str, data: bytes-like, spec="bech32m") -> str
+#                   bech32_decode(addr: str) -> Tuple[str, bytes, str]
 #                   convertbits(data: bytes, from_bits: int, to_bits: int, pad: bool) -> bytes
 from pq.py.utils import bech32 as _b32
 
 HRP_DEFAULT = "anim"
-_PAYLOAD_LEN = 1 + 32  # alg_id (1) + digest (32)
+_PAYLOAD_LEN = 2 + 32  # alg_id (2) + digest (32)
 _BECH32_MAX_LEN = 90
 
 
@@ -56,9 +56,9 @@ class AddressRecord:
     def to_string(self, hrp_override: Optional[str] = None) -> str:
         """Re-encode this record as a bech32m string."""
         hrp = hrp_override or self.hrp
-        payload = bytes([self.alg_id]) + self.digest
+        payload = self.alg_id.to_bytes(2, "big") + self.digest
         data5 = _b32.convertbits(payload, 8, 5, True)
-        return _b32.bech32m_encode(hrp, data5)
+        return _b32.bech32_encode(hrp, data5, spec="bech32m")
 
 
 # ---------------------------------------------------------------------------
@@ -67,14 +67,14 @@ class AddressRecord:
 
 def payload_from_pubkey(pubkey: bytes, alg_id: int) -> bytes:
     """
-    Compute the 33-byte payload (alg_id || sha3_256(pubkey)).
+    Compute the 34-byte payload (alg_id_be16 || sha3_256(pubkey)).
     """
     if not isinstance(pubkey, (bytes, bytearray, memoryview)):
         raise TypeError("pubkey must be bytes-like")
-    if not (0 <= alg_id <= 255):
-        raise ValueError("alg_id must fit in one byte (0..255)")
+    if not (0 <= alg_id <= 0xFFFF):
+        raise ValueError("alg_id must fit in two bytes (0..65535)")
     digest = sha3_256(bytes(pubkey))
-    return bytes([alg_id]) + digest
+    return alg_id.to_bytes(2, "big") + digest
 
 
 def address_from_pubkey(pubkey: bytes, alg_id: int, *, hrp: str = HRP_DEFAULT) -> str:
@@ -83,7 +83,7 @@ def address_from_pubkey(pubkey: bytes, alg_id: int, *, hrp: str = HRP_DEFAULT) -
     """
     payload = payload_from_pubkey(pubkey, alg_id)
     data5 = _b32.convertbits(payload, 8, 5, True)
-    addr = _b32.bech32m_encode(hrp, data5)
+    addr = _b32.bech32_encode(hrp, data5, spec="bech32m")
     if len(addr) > _BECH32_MAX_LEN:
         # Should not happen for our payload size; defensive check.
         raise AddressError("encoded address exceeds bech32 length limits")
@@ -103,9 +103,12 @@ def decode_address(addr: str, *, expect_hrp: Optional[str] = None) -> AddressRec
       expect_hrp: if provided, must match the address HRP.
     """
     try:
-        hrp, data5 = _b32.bech32m_decode(addr)
+        hrp, data5, spec = _b32.bech32_decode(addr)
     except Exception as e:
         raise AddressError(f"bech32m decode failed: {e}") from e
+
+    if spec != "bech32m":
+        raise AddressError("Animica addresses must use bech32m")
 
     if expect_hrp is not None and hrp != expect_hrp:
         raise AddressError(f"HRP mismatch: expected {expect_hrp!r}, got {hrp!r}")
@@ -116,10 +119,10 @@ def decode_address(addr: str, *, expect_hrp: Optional[str] = None) -> AddressRec
         raise AddressError(f"5-bit to 8-bit conversion failed: {e}") from e
 
     if len(payload) != _PAYLOAD_LEN:
-        raise AddressError(f"payload length invalid: {len(payload)} != 33")
+        raise AddressError(f"payload length invalid: {len(payload)} != {_PAYLOAD_LEN}")
 
-    alg_id = payload[0]
-    digest = payload[1:]
+    alg_id = int.from_bytes(payload[0:2], "big")
+    digest = payload[2:]
 
     # Optional: ensure alg_id is recognized by our registry
     try:
