@@ -125,10 +125,19 @@ Lightweight helper to print chain parameters and the current head pointer. Flags
 ## Node pipeline shim
 
 ### `python -m aicf.cli.node_pipeline`
-Bitcoin-style control surface for the lightweight `aicf.node` RPC shim. Commands share a common `--rpc-url/-r` endpoint flag, support JSON output via `--json`, and accept `--datadir/-d` to operate directly on a local state directory without RPC calls.
+Bitcoin-style control surface for the lightweight `aicf.node` RPC shim. Commands share a common `--rpc-url/-r` endpoint flag (defaults to `http://127.0.0.1:8545` and automatically POSTs to `/rpc`), support JSON output via `--json`, and accept `--datadir/-d` to operate directly on a local state directory without RPC calls. Examples:
+
+```sh
+python -m aicf.cli.node_pipeline status --json
+python -m aicf.cli.node_pipeline mine --count 1 --rpc-url http://127.0.0.1:8545
+python -m aicf.cli.node_pipeline block latest --json
+python -m aicf.cli.node_pipeline auto true --datadir /tmp/node
+python -m aicf.cli.node_pipeline pipeline -m 2 --rpc-url http://127.0.0.1:8545
+```
+
 - `status [--json]` prints chain ID, head height, and whether auto-mining is enabled.
-- `mine --count/-n <blocks>` bumps the chain height by the requested number of blocks (RPC or local datadir).
+- `mine --count/-n <blocks>` bumps the chain height by the requested number of blocks (RPC via miner endpoints or local datadir).
 - `block <tag|number> [--json]` fetches a block by number or tag (`latest`, `earliest`, or hex tags) using RPC or local state.
 - `auto <true|false>` toggles the miner start/stop RPCs (or flips the local `auto_mine` flag when `--datadir` is used) and prints `on`/`off`.
 - `pipeline [--mine/-m <blocks>] [--wait <seconds>] [--json]` runs a scripted workflow of status → mining → head fetch to validate the node surface in one go against either backend.
-【F:aicf/cli/node_pipeline.py†L1-L170】
+【F:aicf/cli/node_pipeline.py†L1-L210】
