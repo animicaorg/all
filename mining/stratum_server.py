@@ -38,6 +38,7 @@ from .stratum_protocol import (
     encode_lenpref,
     decode_lenpref,
 )
+from .templates import share_target_to_difficulty
 from .hash_search import digest_to_int256, h_micro_from_digest, micro_threshold_to_target256
 
 try:
@@ -268,21 +269,28 @@ class StratumServer:
         self._jobs[job.job_id] = job
         self._current_job_id = job.job_id
         await self._broadcast_job(job, clean_jobs=True)
-        log.info(f"[Stratum] notify job={job.job_id} θμ={job.theta_micro} shareTarget={job.share_target}")
+        log.info(
+            "[Stratum] notify job=%s θμ=%s shareTarget=%s sessions=%s",
+            job.job_id,
+            job.theta_micro,
+            job.share_target,
+            len(self._sessions),
+        )
 
     async def set_global_difficulty(self, share_target: float, theta_micro: Optional[int] = None) -> None:
         if theta_micro is None:
             theta_micro = self._default_theta_micro
+        difficulty = share_target_to_difficulty(theta_micro, share_target)
         msg = push_set_difficulty(share_target=share_target, theta_micro=theta_micro)
         for s in self._sessions.values():
             s.share_target = share_target
             s.theta_micro = theta_micro
-            s.current_difficulty = share_target
+            s.current_difficulty = difficulty if s.is_v1 else share_target
             if s.is_v1:
-                await self._send(s, push_set_difficulty_v1(share_target))
+                await self._send(s, push_set_difficulty_v1(difficulty))
             else:
                 await self._send(s, msg)
-        log.info(f"[Stratum] set difficulty shareTarget={share_target} θμ={theta_micro}")
+        log.info(f"[Stratum] set difficulty shareTarget={share_target} θμ={theta_micro} diff={difficulty}")
 
     async def _broadcast_job(self, job: StratumJob, clean_jobs: bool) -> None:
         """Send a job to each session in the format it expects."""
@@ -306,6 +314,14 @@ class StratumServer:
                 await self._send(s, msg)
                 s.jobs_seen.append(job.job_id)
                 s.jobs_seen = s.jobs_seen[-16:]
+                log.debug(
+                    "[Stratum] sent job=%s to worker=%s session=%s clean=%s diff=%s",
+                    job.job_id,
+                    s.worker,
+                    sid,
+                    clean_jobs,
+                    s.current_difficulty,
+                )
             except Exception as e:  # pragma: no cover
                 log.warning(f"[Stratum] broadcast job to {sid} failed: {e}")
                 dead.append(sid)
@@ -356,6 +372,7 @@ class StratumServer:
             extranonce2_size=self._extranonce2_size,
             share_target=self._default_share_target,
             theta_micro=self._default_theta_micro,
+            current_difficulty=share_target_to_difficulty(self._default_theta_micro, self._default_share_target),
         )
         self._sessions[sid] = s
         return s
@@ -385,13 +402,14 @@ class StratumServer:
         """Send a set_difficulty notification for the given session."""
         session.share_target = share_target
         session.theta_micro = theta_micro
-        session.current_difficulty = share_target
+        difficulty = share_target_to_difficulty(theta_micro, share_target)
+        session.current_difficulty = difficulty if session.is_v1 else share_target
         session.touch()
-        msg = push_set_difficulty_v1(share_target) if session.is_v1 else push_set_difficulty(share_target, theta_micro)
+        msg = push_set_difficulty_v1(difficulty) if session.is_v1 else push_set_difficulty(share_target, theta_micro)
         await self._send(session, msg)
         log.log(
             log_level,
-            f"[Stratum] set_difficulty push worker={session.worker} session={session.session_id} shareTarget={share_target} θμ={theta_micro}",
+            f"[Stratum] set_difficulty push worker={session.worker} session={session.session_id} shareTarget={share_target} θμ={theta_micro} diff={difficulty}",
         )
 
     async def _session_heartbeat(self, session: Session) -> None:
@@ -593,13 +611,25 @@ class StratumServer:
                 session.shares_rejected += 1
             session.last_share_at = time.time()
             session.last_share_status = "accepted" if ok else "rejected"
-            session.current_difficulty = float(params.get("d_ratio") or params.get("shareTarget") or job.share_target)
+            share_ratio = float(params.get("d_ratio") or params.get("shareTarget") or job.share_target)
+            session.current_difficulty = (
+                share_target_to_difficulty(session.theta_micro, share_ratio) if session.is_v1 else share_ratio
+            )
             if session.is_v1:
                 await self._send(session, res_submit_v1(id_val, ok, reason=reason))
             else:
                 await self._send(session, res_submit(id_val, ok, reason=reason, is_block=is_block, tx_count=tx_count))
             level = logging.INFO if ok else logging.WARNING
-            log.log(level, f"[Stratum] submit worker={session.worker} job={job_id} ok={ok} reason={reason}")
+            log.log(
+                level,
+                "[Stratum] submit worker=%s job=%s ok=%s block=%s reason=%s diff=%s",
+                session.worker,
+                job_id,
+                ok,
+                is_block,
+                reason,
+                session.current_difficulty,
+            )
             if self._submit_hook is not None:
                 await self._submit_hook(session, job, params, ok, reason, is_block, tx_count)
 
