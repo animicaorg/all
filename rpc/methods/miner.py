@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import os
 import time
 import uuid
@@ -31,6 +32,8 @@ except Exception:  # pragma: no cover
 _DEFAULT_THETA_MICRO = int(os.getenv("ANIMICA_DEFAULT_THETA_MICRO", "3000000"))
 _DEFAULT_SHARE_TARGET = float(os.getenv("ANIMICA_DEFAULT_SHARE_TARGET", "0.01"))
 _DEFAULT_SHA256_BITS = os.getenv("ANIMICA_SHA256_NBITS", "1d00ffff")
+
+log = logging.getLogger("animica.rpc.miner")
 
 
 # In-memory job cache for miner.getWork / miner.submitWork flows
@@ -401,6 +404,21 @@ def miner_submit_work(**payload: Any) -> Dict[str, Any]:
 
 @method("miner.mine", desc="Mine up to N blocks locally")
 def miner_mine(count: int | None = None) -> dict[str, int]:
+    ctx = _ctx()
+    try:
+        head_before = ctx.get_head()
+    except Exception:
+        head_before = {"height": None, "hash": None}
+    log.info(
+        "miner.mine request",
+        extra={
+            "db_uri": getattr(ctx, "cfg", None) and getattr(ctx.cfg, "db_uri", None),
+            "chain_id": getattr(ctx, "cfg", None) and getattr(ctx.cfg, "chain_id", None),
+            "count": count,
+            "head_height": head_before.get("height"),
+            "head_hash": head_before.get("hash"),
+        },
+    )
     target = max(1, int(count or 1))
     mined = 0
     for _ in range(target):
@@ -408,8 +426,12 @@ def miner_mine(count: int | None = None) -> dict[str, int]:
             mined += 1
         else:
             break
-    head = _ctx().get_head()
+    head = ctx.get_head()
     height = int(head.get("height") or 0) if isinstance(head, dict) else 0
+    log.info(
+        "miner.mine completed",
+        extra={"mined": mined, "height": height, "head_hash": head.get("hash") if isinstance(head, dict) else None},
+    )
     return {"mined": mined, "height": height}
 
 
