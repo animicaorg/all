@@ -137,6 +137,8 @@ def _mine(rpc_url: str, count: int, datadir: Optional[Path]) -> int:
         return state["height"]
     if count <= 0:
         return _status(rpc_url, None)["height"]
+    start_height = _status(rpc_url, None)["height"]
+    current_height = start_height
     try:
         for _ in range(count):
             work = _rpc_call(rpc_url, "miner.getWork")
@@ -145,16 +147,27 @@ def _mine(rpc_url: str, count: int, datadir: Optional[Path]) -> int:
                 payload["header"] = work["header"]
             payload.setdefault("nonce", hex(int(time.time() * 1000) & 0xFFFFFFFF))
             _rpc_call(rpc_url, "miner.submit_sha256_block", payload)
-        return _status(rpc_url, None)["height"]
+        current_height = _status(rpc_url, None)["height"]
+        if current_height > start_height:
+            return current_height
     except RuntimeError:
         pass
     try:
         result = _rpc_call(rpc_url, "animica_generate", [count])
         if isinstance(result, dict) and "height" in result:
             return int(result["height"])
+        current_height = _status(rpc_url, None)["height"]
+        if current_height > start_height:
+            return current_height
     except RuntimeError:
         pass
-    return _parse_height(_rpc_call(rpc_url, "evm_mine", [count]))
+    evm_height = _parse_height(_rpc_call(rpc_url, "evm_mine", [count]))
+    if evm_height > start_height:
+        return evm_height
+    try:
+        return _status(rpc_url, None)["height"]
+    except RuntimeError:
+        return evm_height
 
 
 def _block(rpc_url: str, tag: str, datadir: Optional[Path]) -> Dict[str, Any]:
