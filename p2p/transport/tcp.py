@@ -168,8 +168,8 @@ class TcpConn(Conn):
         self._writer = writer
         self._tx_aead = tx_aead
         self._rx_aead = rx_aead
-        self._stream = TcpStream(self, stream_id=0)
         self._max_frame = max_frame
+        self._stream = TcpStream(self, stream_id=0)
 
     async def open_stream(self) -> Stream:
         if self.closed:
