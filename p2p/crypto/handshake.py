@@ -302,6 +302,17 @@ async def perform_handshake_tcp(
         def _make_msg(seed: bytes) -> bytes:
             return magic + bytes([len(pro)]) + pro + seed
 
+        async def _read_peer_msg():
+            header = await reader.readexactly(len(magic) + 1)
+            if header[: len(magic)] != magic:
+                raise HandshakeError("invalid handshake magic")
+
+            peer_pro_len = header[len(magic)]
+            body = await reader.readexactly(peer_pro_len + 32)
+            peer_prologue = body[:peer_pro_len]
+            peer_seed = body[-32:]
+            return peer_prologue, peer_seed
+
         # local seed
         seed_local = os.urandom(32)
 
@@ -309,19 +320,15 @@ async def perform_handshake_tcp(
         if is_outbound:
             writer.write(_make_msg(seed_local))
             await writer.drain()
-            their = await reader.readexactly(len(magic) + 1 + len(pro) + 32)
+            peer_prologue, peer_seed = await _read_peer_msg()
         else:
-            their = await reader.readexactly(len(magic) + 1 + len(pro) + 32)
+            peer_prologue, peer_seed = await _read_peer_msg()
             writer.write(_make_msg(seed_local))
             await writer.drain()
 
-        if their[: len(magic)] != magic:
-            raise HandshakeError("invalid handshake magic")
-        pro_len = their[len(magic)]
-        peer_prologue = their[len(magic) + 1 : len(magic) + 1 + pro_len]
         if peer_prologue != pro:
             raise HandshakeError("prologue/chain-id mismatch")
-        seed_remote = their[-32:]
+        seed_remote = peer_seed
 
         role = Role.INITIATOR if is_outbound else Role.RESPONDER
         seed_i = seed_local if role is Role.INITIATOR else seed_remote
