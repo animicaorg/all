@@ -30,6 +30,15 @@ def test_get_work_returns_template():
     assert "jobId" in job and job["jobId"] in miner_methods._JOB_CACHE
 
 
+def test_get_work_accepts_explicit_empty_params():
+    client, _, _ = new_test_client()
+
+    res = rpc_call(client, "miner.getWork", [])
+    job = res["result"]
+
+    assert job["jobId"] in miner_methods._JOB_CACHE
+
+
 def test_submit_work_accepts_valid_solution_and_updates_head():
     client, _, _ = new_test_client()
     job = rpc_call(client, "miner.getWork")["result"]

@@ -286,19 +286,27 @@ def _start_auto_task() -> bool:
 def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
     from mining.templates import TemplateBuilder
 
+    def _safe_len(obj: Any) -> int | None:
+        try:
+            return len(obj)  # type: ignore[arg-type]
+        except TypeError:
+            return None
+
     algo_hint: str | None = None
     if params is None:
         payload: dict[str, Any] | None = None
     elif isinstance(params, dict):
-        payload = params.get("payload") if len(params) == 1 and "payload" in params else params
+        p_len = _safe_len(params)
+        payload = params.get("payload") if p_len == 1 and "payload" in params else params
     elif isinstance(params, (list, tuple)):
-        if len(params) == 0:
+        params_list = list(params)
+        if len(params_list) == 0:
             payload = None
-        elif len(params) == 1 and isinstance(params[0], dict):
-            payload = params[0]
-        elif len(params) == 1:
+        elif len(params_list) == 1 and isinstance(params_list[0], dict):
+            payload = params_list[0]
+        elif len(params_list) == 1:
             payload = None
-            algo_hint = str(params[0])
+            algo_hint = str(params_list[0])
         else:
             raise ValueError("expected at most one param: optional algo hint")
     else:
