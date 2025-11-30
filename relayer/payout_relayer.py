@@ -45,8 +45,8 @@ class PayoutRelayer:
         head_block = head.get("result", {}).get("height", self.last_block)
         if head_block <= self.last_block:
             return
-        # Get logs
-        logs = self.rpc.get_logs(self.last_block + 1, head_block)
+        # Get logs (use RPC post for compatibility with test mocks)
+        logs = self.rpc.post("rpc_getLogs", {"from_block": self.last_block + 1, "to_block": head_block})
         # Expect logs in logs['result'] list with entries containing 'event' name and data
         for ev in logs.get("result", []):
             if ev.get("event") == "PayoutRequested":
