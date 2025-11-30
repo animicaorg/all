@@ -1,0 +1,13 @@
+{
+  "chain_id": "animica:2",
+  "generated_at": "2025-12-01T00:00:00Z",
+  "seeds": [
+    {
+      "peer_id": "testnet-static-1",
+      "multiaddrs": [
+        "/ip4/144.126.133.21/tcp/9000"
+      ],
+      "comment": "Static bootstrap seed for public testnet"
+    }
+  ]
+}

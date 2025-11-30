@@ -20,12 +20,17 @@ Seeds are typically long-lived, well-monitored nodes with open firewall to inbou
 
 ## Files & flow
 
-- **Generated list (authoritative for ops)**  
-  `ops/seeds/bootstrap_nodes.json` – populated by ops when rotating.  
+- **Generated list (authoritative for ops)**
+  `ops/seeds/bootstrap_nodes.json` – populated by ops when rotating.
   Format (see schema below) is consumed by:
   - `ops/k8s/configmaps/seeds.yaml`
   - Helm chart: `ops/helm/animica-devnet/templates/configmap-seeds.yaml`
   - Docker compose: `ops/docker/docker-compose.devnet.yml` (via env/volume)
+
+- **Profile defaults (used by local runners)**
+  `ops/seeds/devnet.json`, `ops/seeds/testnet.json`, `ops/seeds/mainnet.json` – light
+  seed lists loaded by `ops/run.sh` to set `ANIMICA_P2P_SEEDS` and pre-populate the
+  local peer store (`~/.animica/p2p/peers.json`).
 
 - **Scripts** (already in `ops/scripts/`):
   - `gen_bootstrap_list.py` – scrape live nodes (RPC/metrics), score, emit JSON  
@@ -205,6 +210,14 @@ Open a PR that edits ops/seeds/bootstrap_nodes.json with:
 	•	Contact for incident response.
 
 CI will run the liveness suite; maintainers decide admission per policy above.
+
+Local profile defaults (devnet/testnet/mainnet)
+----------------------------------------------
+- Edit the corresponding `ops/seeds/<profile>.json` file to add or remove a seed.
+- Keep the schema aligned with `bootstrap_nodes.json` (peer_id + multiaddrs).
+- Run `python -m ops.seeds.profile_loader --profile <profile> --write-peerstore` to
+  preview the comma-separated seed list and pre-fill `~/.animica/p2p/peers.json`.
+- `ops/run.sh --profile <profile> node` automatically wires these defaults on startup.
 
 ⸻
 

@@ -347,13 +347,24 @@ def _fallback_parse_multiaddr(s: str) -> Tuple[str, int]:
 def parse_addr(s: str) -> Tuple[str, int]:
     if _parse_multiaddr is not None:
         parsed = _parse_multiaddr(s)  # type: ignore[misc]
-        # Newer transport.multiaddr.parse_multiaddr returns a Multiaddr object; tolerate tuple legacy
-        if hasattr(parsed, "host"):
-            host = getattr(parsed, "host")
-            port = getattr(parsed, "port")
-        else:
-            # Legacy tuple behaviour
-            host, port = parsed  # type: ignore[misc]
+        host = getattr(parsed, "host", None)
+        port = getattr(parsed, "port", None)
+
+        # Legacy tuple behaviour
+        if host is None or port is None:
+            try:
+                host, port = parsed  # type: ignore[misc]
+            except Exception:
+                host = None
+                port = None
+
+        # Fallback: tolerate Multiaddr types without host/port by reparsing str(parsed)
+        if host is None or port is None:
+            try:
+                host, port = _fallback_parse_multiaddr(str(parsed))
+            except Exception as exc:
+                raise ValueError(f"missing host/port in multiaddr: {s}") from exc
+
         if port is None:
             raise ValueError(f"missing port in multiaddr: {s}")
         return str(host), int(port)
