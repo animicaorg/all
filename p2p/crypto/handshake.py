@@ -44,9 +44,12 @@ Security notes
   precisely for that purpose.
 """
 
+import asyncio
+import hashlib
+import os
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Tuple
+from typing import Optional, Tuple
 
 # PQ primitives & helpers (from the pq package)
 from pq.py.utils.hash import sha3_256
@@ -66,6 +69,8 @@ except Exception:  # pragma: no cover - fallback to algs.kyber768
 
 # Local helpers for AEAD defaults & peer-id (lazy from __init__)
 from . import get_default_aead_name
+from .aead import AEAD_DOMAIN_TAG, derive_nonce
+from ..transport.base import ConnInfo, HandshakeError
 
 # ---------------------------------------------------------------------------
 
@@ -228,3 +233,124 @@ def simulate_two_flight(hello_i_bytes: bytes, hello_r_bytes: bytes, *, aead: str
     assert keys_i.send_key == keys_r.recv_key and keys_i.recv_key == keys_r.send_key, "key mismatch"
     assert keys_i.send_nonce_base == keys_r.recv_nonce_base and keys_i.recv_nonce_base == keys_r.send_nonce_base, "nonce base mismatch"
     return ct_r, keys_r, keys_i
+
+
+# ---------------------------------------------------------------------------
+# Minimal TCP handshake adapter (devnet-friendly)
+# ---------------------------------------------------------------------------
+
+class _TcpAead:
+    """
+    Tiny adapter with the seal/open interface expected by transports.
+    """
+
+    def __init__(self, alg: str, key: bytes, nonce_base: bytes):
+        try:
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305
+        except Exception as exc:  # pragma: no cover - optional dependency
+            raise HandshakeError(f"cryptography AEAD unavailable: {exc}") from exc
+
+        self.alg = alg
+        self.key = key
+        self.nonce_base = nonce_base
+        if alg == "aes-256-gcm":
+            self.impl = AESGCM(key)
+        else:
+            self.impl = ChaCha20Poly1305(key)
+
+    def seal(self, plaintext: bytes, *, aad: bytes, nonce: int) -> bytes:
+        nonce_bytes = derive_nonce(self.nonce_base, nonce)
+        aad_eff = AEAD_DOMAIN_TAG + (aad or b"")
+        return self.impl.encrypt(nonce_bytes, plaintext, aad_eff)
+
+    def open(self, ciphertext: bytes, *, aad: bytes, nonce: int) -> bytes:
+        nonce_bytes = derive_nonce(self.nonce_base, nonce)
+        aad_eff = AEAD_DOMAIN_TAG + (aad or b"")
+        return self.impl.decrypt(nonce_bytes, ciphertext, aad_eff)
+
+
+async def perform_handshake_tcp(
+    reader,
+    writer,
+    *,
+    is_outbound: bool,
+    prologue: bytes = b"animica/tcp/1",
+    timeout: Optional[float] = None,
+):
+    """
+    Minimal, symmetric TCP handshake for devnet.
+
+    The goal here is to provide a deterministic AEAD key schedule so the TCP
+    transport can seal/open frames. Security is intentionally lightweight: we
+    exchange one random seed per side, bind it to a transcript hash that
+    includes a small prologue, and HKDF-derive opposing send/recv keys using
+    the existing Kyber handshake helper.
+
+    Returns (tx_aead, rx_aead, ConnInfo)
+    where tx_aead/rx_aead expose seal/open(plaintext|ciphertext, aad=..., nonce=int).
+    """
+
+    async def _do_handshake():
+        magic = b"ANIMICA/TCP/HS/V0"
+        pro = prologue or b""
+        if len(pro) > 255:
+            pro = pro[:255]
+
+        def _make_msg(seed: bytes) -> bytes:
+            return magic + bytes([len(pro)]) + pro + seed
+
+        # local seed
+        seed_local = os.urandom(32)
+
+        # Send/recv order depends on role for deterministic transcript
+        if is_outbound:
+            writer.write(_make_msg(seed_local))
+            await writer.drain()
+            their = await reader.readexactly(len(magic) + 1 + len(pro) + 32)
+        else:
+            their = await reader.readexactly(len(magic) + 1 + len(pro) + 32)
+            writer.write(_make_msg(seed_local))
+            await writer.drain()
+
+        if their[: len(magic)] != magic:
+            raise HandshakeError("invalid handshake magic")
+        pro_len = their[len(magic)]
+        peer_prologue = their[len(magic) + 1 : len(magic) + 1 + pro_len]
+        seed_remote = their[-32:]
+
+        role = Role.INITIATOR if is_outbound else Role.RESPONDER
+        seed_i = seed_local if role is Role.INITIATOR else seed_remote
+        seed_r = seed_remote if role is Role.INITIATOR else seed_local
+
+        th = sha3_256()
+        th.update(magic)
+        th.update(bytes([len(pro)]))
+        th.update(pro)
+        th.update(bytes([len(peer_prologue)]))
+        th.update(peer_prologue)
+        th.update(seed_i)
+        th.update(seed_r)
+        transcript_hash = th.digest()
+
+        shared_secret = sha3_256(seed_i + seed_r).digest()
+        aead_name = get_default_aead_name()
+        keys = _derive_keys(role, shared_secret, transcript_hash, aead_name)
+
+        tx_aead = _TcpAead(keys.aead, keys.send_key, keys.send_nonce_base)
+        rx_aead = _TcpAead(keys.aead, keys.recv_key, keys.recv_nonce_base)
+
+        info = ConnInfo()
+        info.tx_key_sha256 = hashlib.sha256(keys.send_key).digest()
+        info.rx_key_sha256 = hashlib.sha256(keys.recv_key).digest()
+        info.alpn = "animica/tcp"
+
+        return tx_aead, rx_aead, info
+
+    try:
+        if timeout is not None:
+            return await asyncio.wait_for(_do_handshake(), timeout)
+        return await _do_handshake()
+    except asyncio.TimeoutError as exc:  # pragma: no cover - network dependent
+        raise HandshakeError("tcp handshake timeout") from exc
+    except Exception as exc:
+        raise HandshakeError(f"tcp handshake failed: {exc}") from exc

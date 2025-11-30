@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional, Tuple
@@ -89,6 +90,85 @@ class IdentifyResponse:
 
 class IdentifyError(Exception):
     pass
+
+
+class IdentifyService:
+    """
+    Minimal IDENTIFY background service.
+
+    The full node service wires this into the connection manager to keep a
+    cache of peer metadata fresh. For devnet we only need a stub that:
+      - Exposes a `run()` loop so callers can schedule it as a task.
+      - Provides helpers to describe the local node and to actively identify
+        a peer connection when needed.
+    """
+
+    def __init__(
+        self,
+        connmgr: Any,
+        peer_id: bytes | str,
+        version: str = "0.0.0",
+        *,
+        head_reader: Any = None,
+        alg_policy_root: Optional[str] = None,
+        caps: Optional[List[str]] = None,
+        agent: Optional[str] = None,
+    ) -> None:
+        self.connmgr = connmgr
+        self.peer_id = peer_id.hex() if isinstance(peer_id, (bytes, bytearray)) else str(peer_id)
+        self.version = version
+        self.head_reader = head_reader
+        self.alg_policy_root = alg_policy_root
+        self.caps = _normalize_caps(caps)
+        self.agent = agent or _default_agent()
+        self._running = False
+
+    async def run(self) -> None:
+        """Background noop loop (kept for interface compatibility)."""
+
+        self._running = True
+        while self._running:
+            await asyncio.sleep(1.0)
+
+    async def stop(self) -> None:
+        self._running = False
+
+    def describe_local(self, *, addr: Optional[str] = None, rtt_ms: Optional[float] = None) -> Dict[str, Any]:
+        """
+        Return an IdentifyResponse-like dict for this node. This is used by
+        servers when answering IDENTIFY requests.
+        """
+
+        height = 0
+        if self.head_reader:
+            with contextlib.suppress(Exception):
+                height = int(getattr(self.head_reader, "height", 0))
+
+        network_id = self.alg_policy_root
+        return asdict(
+            IdentifyResponse(
+                peer_id=self.peer_id,
+                versions={"p2p": _VERSIONS.get("p2p", "0.0.0")},
+                caps=self.caps,
+                agent=self.agent,
+                height=height,
+                timestamp=time.time(),
+                network_id=network_id,
+                addr=addr,
+                rtt_ms=rtt_ms,
+            )
+        )
+
+    async def identify_peer(self, conn: Any, timeout: float = 5.0) -> Dict[str, Any]:
+        """Thin wrapper around ``perform_identify`` for convenience."""
+
+        return await perform_identify(
+            conn,
+            timeout=timeout,
+            local_caps=self.caps,
+            network_id=self.alg_policy_root,
+            agent=self.agent,
+        )
 
 # ---- public API --------------------------------------------------------------------------------
 
