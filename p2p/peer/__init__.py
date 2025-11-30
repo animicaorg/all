@@ -20,7 +20,7 @@ from .address_book import AddressBook
 from .connection_manager import ConnectionManager
 from .identify import IdentifyService
 from .ping import PingService
-from .ratelimit import RateLimiter, RateBucket
+from .ratelimit import RateLimiter, RateBucket, PeerRateLimiter
 
 __all__ = [
     "Peer",
@@ -32,4 +32,5 @@ __all__ = [
     "PingService",
     "RateLimiter",
     "RateBucket",
+    "PeerRateLimiter",
 ]
