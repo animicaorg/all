@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import secrets
@@ -37,6 +38,7 @@ from .stratum_protocol import (
     encode_lenpref,
     decode_lenpref,
 )
+from .hash_search import digest_to_int256, h_micro_from_digest, micro_threshold_to_target256
 
 try:
     # Prefer our shared logger if present
@@ -60,9 +62,12 @@ log = get_logger("mining.stratum_server")
 class StratumJob:
     job_id: str
     header: JSON           # header template (deterministic, sign-bytes ready)
-    share_target: float    # micro-target difficulty for shares
+    share_target: float    # micro-target difficulty for shares (ratio vs Θ)
     theta_micro: int       # current Θ in µ-nats
     hints: Optional[JSON] = None
+    target: Optional[str] = None      # optional full block target (hex int)
+    sign_bytes: Optional[str] = None  # optional explicit signBytes prefix (0x…)
+    height: Optional[int] = None
     created_ts: float = field(default_factory=lambda: time.time())
 
 
@@ -118,20 +123,59 @@ class ShareValidator:
             return ok, reason, is_block, tx_count
         except Exception as e:
             # Fallback to lightweight sanity checks
-            pass
+            log.debug("[Stratum] deep validator unavailable; using fallback: %s", e)
 
-        # Lightweight checks (structural only). Full security comes from adapters.
+        # Lightweight checks with basic PoW predicate using provided signBytes.
         hs = submit_params.get("hashshare") or {}
-        nonce = hs.get("nonce")
+        nonce_hex = hs.get("nonce")
         body = hs.get("body")
-        if not isinstance(nonce, str) or not nonce.startswith("0x"):
+        if not isinstance(nonce_hex, str) or not nonce_hex.startswith("0x"):
             return False, "nonce must be hex", False, 0
         if not isinstance(body, dict):
             return False, "hashshare.body must be object", False, 0
 
-        # Basic jobId check performed by server; here ensure header hash matches template if provided
-        # (We accept in fallback mode; target enforcement delegated to server difficulty heuristics.)
-        return True, None, False, 0
+        # Ensure we have signBytes to recompute the digest; if absent, fall back to
+        # accepting shares (legacy behavior) so SHA-256 style templates remain usable.
+        sign_hex = job.sign_bytes or job.header.get("signBytes") if isinstance(job.header, dict) else None
+        if not isinstance(sign_hex, str) or not sign_hex.startswith("0x"):
+            return True, None, False, 0
+
+        try:
+            prefix = bytes.fromhex(sign_hex[2:])
+        except Exception:
+            return False, "invalid signBytes", False, 0
+
+        try:
+            nonce_int = int(nonce_hex, 16)
+        except Exception:
+            return False, "bad nonce", False, 0
+
+        # Compute digest(prefix || nonce_le8) and check against the share/block targets.
+        h = hashlib.sha3_256()
+        h.update(prefix)
+        h.update(nonce_int.to_bytes(8, "little", signed=False))
+        digest = h.digest()
+        digest_int = digest_to_int256(digest)
+        h_micro = h_micro_from_digest(digest)
+
+        theta_micro = int(job.theta_micro)
+        share_ratio = float(submit_params.get("shareTarget") or job.share_target or 0.0)
+        t_share_micro = max(0, int(theta_micro * share_ratio)) if theta_micro > 0 else 0
+        share_target256 = micro_threshold_to_target256(t_share_micro)
+        if digest_int > share_target256:
+            return False, "low difficulty share", False, 0
+
+        # Block predicate if a full block target is provided with the job
+        block_target_hex = job.target or job.header.get("target") if isinstance(job.header, dict) else None
+        is_block = False
+        if isinstance(block_target_hex, str) and block_target_hex.startswith("0x"):
+            try:
+                block_target_int = int(block_target_hex, 16)
+                is_block = digest_int <= block_target_int
+            except Exception:
+                pass
+
+        return True, None, is_block, 0
 
 
 # --------------------------------------------------------------------------------------

@@ -133,7 +133,7 @@ class StratumClient:
     # ------------- protocol -------------
 
     async def subscribe(self) -> SubscribeReply:
-        req = req_subscribe(agent=self.agent, framing=self.framing)  # uses Method.SUBSCRIBE
+        req = req_subscribe(agent=self.agent, features={"framing": self.framing})  # uses Method.SUBSCRIBE
         req["id"] = self._next_id()
         fut: asyncio.Future = self.loop.create_future()
         self._pending[req["id"]] = fut
@@ -164,12 +164,14 @@ class StratumClient:
         res = await self._call(str(Method.GET_VERSION.value), {})
         return res.get("result") or {}
 
-    async def submit_share(self, job_id: str, hashshare: JSON, proofs: Optional[List[JSON]] = None, txs: Optional[List[str]] = None) -> JSON:
+    async def submit_share(self, job_id: str, hashshare: JSON, proofs: Optional[List[JSON]] = None, txs: Optional[List[str]] = None, extranonce2: str = "0x00") -> JSON:
         """
         Submit a share for a given job. `hashshare` is the HashShare envelope/body.
         """
         params: JSON = {
+            "worker": self.session.session_id if self.session else "",
             "jobId": job_id,
+            "extranonce2": extranonce2,
             "hashshare": hashshare,
         }
         if proofs:
@@ -177,9 +179,7 @@ class StratumClient:
         if txs:
             params["txs"] = txs
 
-        # Use req_submit builder to ensure canonical shape
-        req = req_submit(**params)
-        req["id"] = self._next_id()
+        req = {"jsonrpc": "2.0", "id": self._next_id(), "method": Method.SUBMIT.value, "params": params}
         fut: asyncio.Future = self.loop.create_future()
         self._pending[req["id"]] = fut
         await self._send_obj(req)
