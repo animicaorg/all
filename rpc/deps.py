@@ -411,6 +411,24 @@ _CTX: RpcContext | None = None
 _CTX_LOCK = threading.RLock()
 
 
+def _needs_rebuild(cfg: t.Any | None) -> bool:
+    if _CTX is None:
+        return True
+    if cfg is None:
+        return False
+    try:
+        cfg_view = _coerce_config(cfg)
+    except Exception:
+        return False
+    current = getattr(_CTX, "cfg", None)
+    if current is None:
+        return True
+    for attr in ("db_uri", "chain_id", "genesis_path"):
+        if getattr(current, attr, None) != getattr(cfg_view, attr, None):
+            return True
+    return False
+
+
 def build_context(cfg: t.Any | None = None) -> RpcContext:
     cfg_view = _coerce_config(cfg) if cfg is not None else _load_rpc_config()
     params = _params_from_spec(cfg_view.chain_id)
@@ -441,7 +459,12 @@ def ensure_started(cfg: t.Any | None = None) -> RpcContext:
 
     with _CTX_LOCK:
         global _CTX
-        if _CTX is None:
+        if _needs_rebuild(cfg):
+            if _CTX is not None:
+                try:
+                    _CTX.close()
+                finally:
+                    _CTX = None
             _CTX = build_context(cfg)
         return _CTX
 
@@ -450,7 +473,12 @@ async def startup(cfg: t.Any | None = None) -> RpcContext:
     """Idempotently build and cache the RPC context for the server lifecycle."""
     with _CTX_LOCK:
         global _CTX
-        if _CTX is None:
+        if _needs_rebuild(cfg):
+            if _CTX is not None:
+                try:
+                    _CTX.close()
+                finally:
+                    _CTX = None
             _CTX = build_context(cfg)
         return _CTX
 

@@ -142,7 +142,13 @@ def _mine(rpc_url: str, count: int, datadir: Optional[Path]) -> int:
     try:
         res = _rpc_call(rpc_url, "miner.mine", [count])
         if isinstance(res, dict) and "height" in res:
-            return int(res.get("height", start_height))
+            height = int(res.get("height", start_height))
+            if height == start_height:
+                print(
+                    "warning: miner.mine reported no height change; check RPC logs and DB path",
+                    file=sys.stderr,
+                )
+            return height
     except RuntimeError:
         pass
     try:
