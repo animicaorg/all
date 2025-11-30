@@ -285,6 +285,11 @@ class _ServiceBridge:
                 deps=self.deps,
             )
             await self.impl.start()
+            import logging
+
+            logging.getLogger("p2p.cli.listen").info(
+                "Started full P2P service", extra={"addrs": self.cfg.listen_addrs}
+            )
             return
         except Exception as e:
             # Fallback to a minimal TCP-only server if full service unavailable
