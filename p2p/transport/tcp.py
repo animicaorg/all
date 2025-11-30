@@ -348,3 +348,7 @@ class TcpTransport(Transport):
             except Exception:
                 continue
         return addrs
+
+
+# Compatibility alias for callers expecting the older name
+TCPTransport = TcpTransport
