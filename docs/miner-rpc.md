@@ -5,6 +5,10 @@ These helper RPCs expose lightweight work templates and a submission endpoint su
 ## miner.getWork
 Request fresh work (header sign bytes, mixSeed, and targets).
 
+* No params → default algo `asic_sha256`.
+* Single string param → treated as an algo hint (e.g., `"asic_sha256"`).
+* Object param → may include `algo`/`algorithm` to request a specific profile.
+
 ```bash
 curl -X POST http://127.0.0.1:8545/rpc \
   -H 'Content-Type: application/json' \
@@ -48,4 +52,17 @@ curl -X POST http://127.0.0.1:8545/rpc \
       }'
 ```
 
-Successful submissions return a `hash`, the accepted `height`, and a `newHead` view. Invalid parameters or stale jobs surface as JSON-RPC errors with `code` -32602.
+Positional calls are also accepted for pool-style clients:
+
+```bash
+curl -X POST http://127.0.0.1:8545/rpc \
+  -H 'Content-Type: application/json' \
+  -d '{
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "miner.submitWork",
+        "params": ["af...", "0x0000000000000001"]
+      }'
+```
+
+Successful submissions return a `hash`, the accepted `height`, and a `newHead` view. Invalid parameters or stale jobs surface as JSON-RPC errors with code `-32602`.
