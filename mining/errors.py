@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from enum import Enum, IntEnum
 from typing import Any, Dict, Optional
 
 
 class MiningErrorCode(IntEnum):
     """Stable, machine-consumable error codes for miner & pool flows."""
+
     MINER_ERROR = 1000
     WORK_EXPIRED = 1001
     SUBMIT_REJECTED = 1002
@@ -15,12 +16,13 @@ class MiningErrorCode(IntEnum):
 
 class SubmitRejectReason(str, Enum):
     """Why a pool/node rejected a submitted share or block."""
-    STALE = "stale"                # arrived after new head/template
-    DUPLICATE = "duplicate"        # already seen nullifier/nonce
+
+    STALE = "stale"  # arrived after new head/template
+    DUPLICATE = "duplicate"  # already seen nullifier/nonce
     LOW_DIFFICULTY = "low_difficulty"  # below micro-target/Θ
-    INVALID = "invalid"            # header/proof failed verification
-    POLICY = "policy"              # caps/Γ/fairness or fee/policy violation
-    OTHER = "other"                # catch-all
+    INVALID = "invalid"  # header/proof failed verification
+    POLICY = "policy"  # caps/Γ/fairness or fee/policy violation
+    OTHER = "other"  # catch-all
 
 
 @dataclass
@@ -42,6 +44,7 @@ class MinerError(Exception):
     action : Optional[str]
         One-word hint for orchestrators (e.g., "refresh_template", "backoff").
     """
+
     message: str
     code: MiningErrorCode = MiningErrorCode.MINER_ERROR
     retryable: bool = False
@@ -68,6 +71,7 @@ class WorkExpired(MinerError):
     The work/template used to build a share/block is no longer valid
     (e.g., new head observed, template epoch rolled, Θ updated).
     """
+
     message: str = "work/template expired; refresh and rebuild candidate"
     code: MiningErrorCode = MiningErrorCode.WORK_EXPIRED
     # Retry is meaningful if we *change inputs* (i.e., fetch new template).
@@ -83,6 +87,7 @@ class SubmitRejected(MinerError):
       - stale: retry *with new work* (not the same payload)
       - duplicate/low_difficulty/invalid/policy: not retryable as-is
     """
+
     reason: SubmitRejectReason = SubmitRejectReason.OTHER
     details: Optional[str] = None
 
@@ -122,6 +127,7 @@ class DeviceUnavailable(MinerError):
     The selected device backend is not available (driver/library missing,
     out of memory, device busy, or feature not supported).
     """
+
     device: str = "cpu"
     message: str = "mining device unavailable"
     code: MiningErrorCode = MiningErrorCode.DEVICE_UNAVAILABLE
@@ -137,7 +143,12 @@ def normalize_exc(exc: BaseException) -> MinerError:
     if isinstance(exc, MinerError):
         return exc
     # Fallback generic wrapper
-    return MinerError(message=str(exc), code=MiningErrorCode.MINER_ERROR, retryable=False, context={"type": type(exc).__name__})
+    return MinerError(
+        message=str(exc),
+        code=MiningErrorCode.MINER_ERROR,
+        retryable=False,
+        context={"type": type(exc).__name__},
+    )
 
 
 __all__ = [

@@ -1,14 +1,17 @@
-import os
 import itertools
+import os
+
 import pytest
 
+from execution.errors import OOG  # type: ignore
 # The intrinsic-gas helpers live here
 from execution.gas.intrinsic import calc_intrinsic_gas  # type: ignore
 from execution.gas.meter import GasMeter  # type: ignore
-from execution.errors import OOG  # type: ignore
 
 
-@pytest.mark.parametrize("payload", [b"", b"\x00" * 1, b"\x00" * 32, b"\x11" * 1, b"\x11" * 32])
+@pytest.mark.parametrize(
+    "payload", [b"", b"\x00" * 1, b"\x00" * 32, b"\x11" * 1, b"\x11" * 32]
+)
 def test_transfer_intrinsic_monotonic(payload: bytes) -> None:
     """
     Sanity: intrinsic gas for a transfer is >= empty-payload base and grows with payload length.
@@ -87,7 +90,9 @@ def test_access_list_additivity() -> None:
     delta_keys_2 = g_a2 - g_a
     delta_keys_4 = g_a4 - g_a2
     assert delta_keys_2 > 0
-    assert delta_keys_4 == delta_keys_2  # adding +2 keys again should add the same amount
+    assert (
+        delta_keys_4 == delta_keys_2
+    )  # adding +2 keys again should add the same amount
 
 
 @pytest.mark.parametrize(

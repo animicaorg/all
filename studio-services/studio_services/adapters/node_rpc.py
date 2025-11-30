@@ -152,7 +152,12 @@ class NodeRpc:
         assert self._client is not None  # for type-checkers
 
         self._id += 1
-        payload = {"jsonrpc": "2.0", "id": self._id, "method": method, "params": params or []}
+        payload = {
+            "jsonrpc": "2.0",
+            "id": self._id,
+            "method": method,
+            "params": params or [],
+        }
 
         attempt = 0
         while True:
@@ -166,16 +171,26 @@ class NodeRpc:
                     data = json.loads(text)
                     if "error" in data and data["error"] is not None:
                         err = data["error"]
-                        raise RpcResponseError(err.get("code", -32000), err.get("message", "Unknown error"), err.get("data"))
+                        raise RpcResponseError(
+                            err.get("code", -32000),
+                            err.get("message", "Unknown error"),
+                            err.get("data"),
+                        )
                     return data.get("result")
                 # Non-200: check retry policy
                 if _should_retry(Exception("http_status"), status):
                     raise RpcTransportError(f"HTTP {status}: {text[:256]!r}")
                 # Non-retriable
                 raise RpcTransportError(f"HTTP {status}: {text[:256]!r}")
-            except (httpx.TimeoutException, httpx.TransportError, RpcTransportError) as exc:
+            except (
+                httpx.TimeoutException,
+                httpx.TransportError,
+                RpcTransportError,
+            ) as exc:
                 if attempt > self._cfg.max_retries:
-                    raise RpcTransportError(f"RPC call failed after {attempt} attempts: {exc}") from exc
+                    raise RpcTransportError(
+                        f"RPC call failed after {attempt} attempts: {exc}"
+                    ) from exc
                 delay = self._cfg.backoff_base_s * (2 ** (attempt - 1))
                 await asyncio.sleep(delay)
 
@@ -199,7 +214,13 @@ class NodeRpc:
     ) -> Optional[Dict[str, Any]]:
         return await self._call(
             "chain.getBlockByNumber",
-            [number, {"includeTransactions": include_transactions, "includeReceipts": include_receipts}],
+            [
+                number,
+                {
+                    "includeTransactions": include_transactions,
+                    "includeReceipts": include_receipts,
+                },
+            ],
         )
 
     async def get_block_by_hash(
@@ -210,11 +231,19 @@ class NodeRpc:
     ) -> Optional[Dict[str, Any]]:
         return await self._call(
             "chain.getBlockByHash",
-            [block_hash, {"includeTransactions": include_transactions, "includeReceipts": include_receipts}],
+            [
+                block_hash,
+                {
+                    "includeTransactions": include_transactions,
+                    "includeReceipts": include_receipts,
+                },
+            ],
         )
 
     # Transactions
-    async def send_raw_transaction(self, raw_tx: Union[bytes, bytearray, memoryview, str]) -> HexStr:
+    async def send_raw_transaction(
+        self, raw_tx: Union[bytes, bytearray, memoryview, str]
+    ) -> HexStr:
         """
         Submit a signed CBOR-encoded transaction (raw bytes or hex str).
         Returns the transaction hash (0x…).
@@ -222,10 +251,14 @@ class NodeRpc:
         tx_hex = _as_hex_payload(raw_tx)
         return await self._call("tx.sendRawTransaction", [tx_hex])
 
-    async def get_transaction_by_hash(self, tx_hash: HexStr) -> Optional[Dict[str, Any]]:
+    async def get_transaction_by_hash(
+        self, tx_hash: HexStr
+    ) -> Optional[Dict[str, Any]]:
         return await self._call("tx.getTransactionByHash", [tx_hash])
 
-    async def get_transaction_receipt(self, tx_hash: HexStr) -> Optional[Dict[str, Any]]:
+    async def get_transaction_receipt(
+        self, tx_hash: HexStr
+    ) -> Optional[Dict[str, Any]]:
         return await self._call("tx.getTransactionReceipt", [tx_hash])
 
     # State

@@ -23,26 +23,29 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Tuple, Union
+from typing import (Any, Awaitable, Callable, Dict, Iterable, List, Optional,
+                    Tuple, Union)
 
 from fastapi import APIRouter, Request, Response
 
 try:
     # Prefer our shared error types if available
-    from .errors import (
-        JsonRpcError,
-        InvalidRequest,
-        MethodNotFound,
-        InvalidParams,
-        InternalError,
-    )
+    from .errors import (InternalError, InvalidParams, InvalidRequest,
+                         JsonRpcError, MethodNotFound)
 except Exception:  # pragma: no cover - fallback if errors module not ready
+
     class JsonRpcError(Exception):  # type: ignore
         code: int = -32000
         message: str = "Server error"
         data: Any = None
 
-        def __init__(self, message: Optional[str] = None, *, code: Optional[int] = None, data: Any = None):
+        def __init__(
+            self,
+            message: Optional[str] = None,
+            *,
+            code: Optional[int] = None,
+            data: Any = None,
+        ):
             if message is not None:
                 self.message = message
             if code is not None:
@@ -80,6 +83,7 @@ CallableLike = Union[Callable[..., Any], Callable[..., Awaitable[Any]]]
 # Context
 # --------------------------------------------------------------------------------------
 
+
 @dataclass
 class Context:
     """
@@ -88,6 +92,7 @@ class Context:
 
     Extend this as needed (e.g., auth/session, rate limits).
     """
+
     request: Optional[Request]
     received_at_ms: int
     client: Optional[Tuple[str, int]]
@@ -101,6 +106,7 @@ def _now_ms() -> int:
 # --------------------------------------------------------------------------------------
 # Method registry
 # --------------------------------------------------------------------------------------
+
 
 class MethodRegistry:
     """
@@ -122,6 +128,7 @@ class MethodRegistry:
             self._methods[name] = fn
             log.debug("JSON-RPC register %s → %s.%s", name, fn.__module__, fn.__name__)
             return fn
+
         return deco
 
     def register(self, name: str, fn: CallableLike) -> None:
@@ -254,6 +261,7 @@ def _load_openrpc_document() -> Dict[str, Any]:
 # Error shaping
 # --------------------------------------------------------------------------------------
 
+
 def _error_obj(exc: Exception) -> Json:
     """
     Convert any exception into a JSON-RPC error object.
@@ -264,7 +272,10 @@ def _error_obj(exc: Exception) -> Json:
       • Otherwise → Server error (-32000) with message
     """
     if isinstance(exc, JsonRpcError):
-        err = {"code": getattr(exc, "code", -32000), "message": getattr(exc, "message", str(exc))}
+        err = {
+            "code": getattr(exc, "code", -32000),
+            "message": getattr(exc, "message", str(exc)),
+        }
         data = getattr(exc, "data", None)
         if data is not None:
             err["data"] = data
@@ -281,7 +292,10 @@ def _error_obj(exc: Exception) -> Json:
 # Arg binding & execution
 # --------------------------------------------------------------------------------------
 
-def _bind_call_args(fn: CallableLike, params: Optional[Params], ctx: Context) -> Tuple[List[Any], Dict[str, Any]]:
+
+def _bind_call_args(
+    fn: CallableLike, params: Optional[Params], ctx: Context
+) -> Tuple[List[Any], Dict[str, Any]]:
     """
     Bind positional/named params to `fn` using its signature. Injects context into
     parameters named 'ctx'/'context'/'request' if not provided by caller.
@@ -328,6 +342,7 @@ async def _maybe_await(x: Any) -> Any:
 # --------------------------------------------------------------------------------------
 # Core dispatch
 # --------------------------------------------------------------------------------------
+
 
 def _validate_id(id_val: Any) -> Any:
     # Spec allows string, number, or null for id
@@ -403,7 +418,9 @@ async def dispatch_one(obj: Json, ctx: Optional[Context]) -> Optional[Json]:
         return {"jsonrpc": "2.0", "id": req_id, "error": _error_obj(exc)}
 
 
-async def dispatch(payload: Union[Json, List[Any]], ctx: Optional[Context] = None) -> Union[Json, List[Json], None]:
+async def dispatch(
+    payload: Union[Json, List[Any]], ctx: Optional[Context] = None
+) -> Union[Json, List[Json], None]:
     """
     Dispatch a parsed JSON payload (already json.loads'ed).
     Handles single objects and batches.
@@ -415,14 +432,22 @@ async def dispatch(payload: Union[Json, List[Any]], ctx: Optional[Context] = Non
     if isinstance(payload, list):
         if len(payload) == 0:
             # Empty batch is invalid
-            return {"jsonrpc": "2.0", "id": None, "error": _error_obj(InvalidRequest("empty batch"))}
+            return {
+                "jsonrpc": "2.0",
+                "id": None,
+                "error": _error_obj(InvalidRequest("empty batch")),
+            }
 
         results: List[Optional[Json]] = []
         for obj in payload:
             if isinstance(obj, dict):
                 r = await dispatch_one(obj, ctx)
             else:
-                r = {"jsonrpc": "2.0", "id": None, "error": _error_obj(InvalidRequest("Request must be an object"))}
+                r = {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": _error_obj(InvalidRequest("Request must be an object")),
+                }
             results.append(r)
 
         out = [r for r in results if r is not None]
@@ -434,7 +459,11 @@ async def dispatch(payload: Union[Json, List[Any]], ctx: Optional[Context] = Non
 
     else:
         # Entire payload invalid
-        return {"jsonrpc": "2.0", "id": None, "error": _error_obj(InvalidRequest("payload must be object or array"))}
+        return {
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": _error_obj(InvalidRequest("payload must be object or array")),
+        }
 
 
 # --------------------------------------------------------------------------------------
@@ -442,6 +471,7 @@ async def dispatch(payload: Union[Json, List[Any]], ctx: Optional[Context] = Non
 # --------------------------------------------------------------------------------------
 
 router = APIRouter()
+
 
 @router.post("/")
 async def jsonrpc_endpoint(request: Request) -> Response:
@@ -465,14 +495,25 @@ async def jsonrpc_endpoint(request: Request) -> Response:
         result = await dispatch(payload, ctx)
         if result is None:
             return Response(status_code=204)
-        return Response(content=json.dumps(result, separators=(",", ":")), media_type="application/json")
+        return Response(
+            content=json.dumps(result, separators=(",", ":")),
+            media_type="application/json",
+        )
     except JsonRpcError as e:
         # Top-level structural errors
         err = {"jsonrpc": "2.0", "id": None, "error": _error_obj(e)}
-        return Response(content=json.dumps(err, separators=(",", ":")), status_code=400, media_type="application/json")
+        return Response(
+            content=json.dumps(err, separators=(",", ":")),
+            status_code=400,
+            media_type="application/json",
+        )
     except Exception as e:  # pragma: no cover
         err = {"jsonrpc": "2.0", "id": None, "error": _error_obj(InternalError(str(e)))}
-        return Response(content=json.dumps(err, separators=(",", ":")), status_code=500, media_type="application/json")
+        return Response(
+            content=json.dumps(err, separators=(",", ":")),
+            status_code=500,
+            media_type="application/json",
+        )
 
 
 # --------------------------------------------------------------------------------------

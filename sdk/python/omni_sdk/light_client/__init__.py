@@ -36,8 +36,10 @@ __all__ = ["LightClient", "verify_light_proof", "__version__"]
 if TYPE_CHECKING:
     from .verify import LightClient, verify_light_proof  # type: ignore
 else:
+
     def __getattr__(name: str):
         if name in ("LightClient", "verify_light_proof"):
             from . import verify as _verify  # type: ignore
+
             return getattr(_verify, name)
         raise AttributeError(name)

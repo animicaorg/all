@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 Deterministic job-id derivation (mirrors capabilities/jobs/id.py).
 
@@ -25,9 +26,9 @@ If you update the domain tag or layout here, you MUST make the same change in
 capabilities/jobs/id.py to keep cross-module ids identical.
 """
 
-from typing import Union
 import hashlib
 import struct
+from typing import Union
 
 BytesLike = Union[bytes, bytearray, memoryview, str]
 

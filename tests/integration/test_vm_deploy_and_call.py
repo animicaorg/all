@@ -59,8 +59,8 @@ import pytest
 
 from tests.integration import env  # package-level gate & env helper
 
-
 # ------------------------------- RPC helpers ---------------------------------
+
 
 def _http_timeout() -> float:
     try:
@@ -69,13 +69,24 @@ def _http_timeout() -> float:
         return 5.0
 
 
-def _rpc_call(rpc_url: str, method: str, params: Optional[Sequence[Any] | Dict[str, Any]] = None, *, req_id: int = 1) -> Any:
+def _rpc_call(
+    rpc_url: str,
+    method: str,
+    params: Optional[Sequence[Any] | Dict[str, Any]] = None,
+    *,
+    req_id: int = 1,
+) -> Any:
     if params is None:
         params = []
     if isinstance(params, dict):
         payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
     else:
-        payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": list(params)}
+        payload = {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "method": method,
+            "params": list(params),
+        }
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         rpc_url, data=data, headers={"Content-Type": "application/json"}, method="POST"
@@ -90,7 +101,11 @@ def _rpc_call(rpc_url: str, method: str, params: Optional[Sequence[Any] | Dict[s
     return msg["result"]
 
 
-def _rpc_try(rpc_url: str, methods: Sequence[str], params: Optional[Sequence[Any] | Dict[str, Any]] = None) -> Tuple[str, Any]:
+def _rpc_try(
+    rpc_url: str,
+    methods: Sequence[str],
+    params: Optional[Sequence[Any] | Dict[str, Any]] = None,
+) -> Tuple[str, Any]:
     last_exc: Optional[Exception] = None
     for i, m in enumerate(methods, start=1):
         try:
@@ -98,16 +113,21 @@ def _rpc_try(rpc_url: str, methods: Sequence[str], params: Optional[Sequence[Any
         except Exception as exc:
             last_exc = exc
             continue
-    raise AssertionError(f"All RPC spellings failed ({methods}). Last error: {last_exc}")
+    raise AssertionError(
+        f"All RPC spellings failed ({methods}). Last error: {last_exc}"
+    )
 
 
 # ------------------------------ File helpers ---------------------------------
+
 
 def _load_bytes_from_candidates(name: str, candidates: Sequence[Path]) -> bytes:
     for p in candidates:
         if p.is_file():
             return p.read_bytes()
-    pytest.skip(f"{name} not provided and no fallback fixture found: {', '.join(map(str, candidates))}")
+    pytest.skip(
+        f"{name} not provided and no fallback fixture found: {', '.join(map(str, candidates))}"
+    )
     raise AssertionError("unreachable")
 
 
@@ -150,6 +170,7 @@ def _load_counter_abi_opt() -> Optional[dict]:
 
 
 # ---------------------------- Call / decode utils ----------------------------
+
 
 def _as_hex(b: bytes) -> str:
     return "0x" + b.hex()
@@ -263,6 +284,7 @@ def _decode_get_result(res: Any) -> Optional[int]:
 
 # ----------------------------------- Test ------------------------------------
 
+
 @pytest.mark.timeout(300)
 def test_deploy_counter_then_inc_get():
     rpc_url = env("ANIMICA_RPC_URL", "http://127.0.0.1:8545")
@@ -272,7 +294,11 @@ def test_deploy_counter_then_inc_get():
     raw_hex = _as_hex(deploy_cbor)
     send_method, send_res = _rpc_try(
         rpc_url,
-        methods=("tx.sendRawTransaction", "sendRawTransaction", "eth_sendRawTransaction"),
+        methods=(
+            "tx.sendRawTransaction",
+            "sendRawTransaction",
+            "eth_sendRawTransaction",
+        ),
         params=[raw_hex],
     )
     # Extract tx hash
@@ -296,7 +322,11 @@ def test_deploy_counter_then_inc_get():
         try:
             _, rcpt = _rpc_try(
                 rpc_url,
-                methods=("tx.getTransactionReceipt", "getTransactionReceipt", "eth_getTransactionReceipt"),
+                methods=(
+                    "tx.getTransactionReceipt",
+                    "getTransactionReceipt",
+                    "eth_getTransactionReceipt",
+                ),
                 params=[tx_hash],
             )
             if isinstance(rcpt, dict) and rcpt.get("blockHash"):
@@ -305,16 +335,22 @@ def test_deploy_counter_then_inc_get():
         except Exception:
             pass
         time.sleep(poll)
-    assert receipt is not None, f"Deploy tx {tx_hash} not included within {include_timeout:.1f}s"
+    assert (
+        receipt is not None
+    ), f"Deploy tx {tx_hash} not included within {include_timeout:.1f}s"
 
     # Extract created contract address
     addr = _extract_contract_address_from_receipt(receipt)
-    assert addr, f"Could not determine deployed contract address from receipt: {receipt!r}"
+    assert (
+        addr
+    ), f"Could not determine deployed contract address from receipt: {receipt!r}"
 
     # 2) Read initial value (best-effort; if not supported we still pass the deploy step)
     initial = _call_get_best_effort(rpc_url, addr)
     if initial is not None:
-        assert isinstance(initial, int) and initial >= 0, f"Unexpected initial counter value: {initial}"
+        assert (
+            isinstance(initial, int) and initial >= 0
+        ), f"Unexpected initial counter value: {initial}"
 
     # 3) Optionally submit an 'inc' tx if provided
     inc_cbor = _load_signed_inc_cbor_opt()
@@ -322,7 +358,11 @@ def test_deploy_counter_then_inc_get():
         inc_hex = _as_hex(inc_cbor)
         _, inc_res = _rpc_try(
             rpc_url,
-            methods=("tx.sendRawTransaction", "sendRawTransaction", "eth_sendRawTransaction"),
+            methods=(
+                "tx.sendRawTransaction",
+                "sendRawTransaction",
+                "eth_sendRawTransaction",
+            ),
             params=[inc_hex],
         )
         inc_hash: Optional[str] = None
@@ -343,7 +383,11 @@ def test_deploy_counter_then_inc_get():
             try:
                 _, rcpt2 = _rpc_try(
                     rpc_url,
-                    methods=("tx.getTransactionReceipt", "getTransactionReceipt", "eth_getTransactionReceipt"),
+                    methods=(
+                        "tx.getTransactionReceipt",
+                        "getTransactionReceipt",
+                        "eth_getTransactionReceipt",
+                    ),
                     params=[inc_hash],
                 )
                 if isinstance(rcpt2, dict) and rcpt2.get("blockHash"):
@@ -365,12 +409,17 @@ def test_deploy_counter_then_inc_get():
         # 4) Read again and expect value increased (if call is available)
         after = _call_get_best_effort(rpc_url, addr)
         if initial is not None and after is not None:
-            assert after >= initial + 1, f"Counter did not increase as expected: initial={initial}, after_inc={after}"
+            assert (
+                after >= initial + 1
+            ), f"Counter did not increase as expected: initial={initial}, after_inc={after}"
         else:
             # No call surface available — we still consider deploy+inc successful.
-            pytest.skip("Node does not expose a contract call surface; deploy+inc succeeded, skipping value check")
+            pytest.skip(
+                "Node does not expose a contract call surface; deploy+inc succeeded, skipping value check"
+            )
     else:
         # No inc tx provided; assert we at least could read the initial value if the node supports it.
         if initial is None:
-            pytest.skip("Deployed successfully but node does not expose a call surface and no inc tx provided")
-
+            pytest.skip(
+                "Deployed successfully but node does not expose a call surface and no inc tx provided"
+            )

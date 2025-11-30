@@ -36,7 +36,9 @@ from typing import Any, Dict, Iterable, Optional, Sequence
 try:
     from fastapi import APIRouter, FastAPI
 except Exception as e:  # pragma: no cover
-    raise RuntimeError("da.adapters.rpc_mount requires FastAPI (pip install fastapi).") from e
+    raise RuntimeError(
+        "da.adapters.rpc_mount requires FastAPI (pip install fastapi)."
+    ) from e
 
 
 def _get_da_router_via_api_module(**router_kwargs: Any) -> Optional[APIRouter]:
@@ -74,13 +76,11 @@ def _build_fallback_router(**router_kwargs: Any) -> APIRouter:
     Build a minimal DA router directly from handlers if the API module
     doesn't expose a factory. The handlers are expected to be framework-agnostic.
     """
-    from da.retrieval.handlers import (
-        post_blob_handler,
-        get_blob_handler,
-        get_proof_handler,
-    )
     from da.retrieval.auth import get_auth_dependency  # may return a no-op dep
-    from da.retrieval.rate_limit import get_rate_limiter  # may return a no-op dep
+    from da.retrieval.handlers import (get_blob_handler, get_proof_handler,
+                                       post_blob_handler)
+    from da.retrieval.rate_limit import \
+        get_rate_limiter  # may return a no-op dep
 
     # Optional dependencies (auth / rate limit) are provided by helper factories.
     auth_dep = get_auth_dependency(**router_kwargs)  # type: ignore[arg-type]
@@ -93,9 +93,9 @@ def _build_fallback_router(**router_kwargs: Any) -> APIRouter:
     async def _post_blob(
         ns: int,
         filename: Optional[str] = None,
-        _auth: Any = auth_dep,          # noqa: B008 (FastAPI dep injection)
-        _rl: Any = rate_limit_dep,      # noqa: B008
-        body: bytes = b"",              # FastAPI will pass raw body via request.stream in handler
+        _auth: Any = auth_dep,  # noqa: B008 (FastAPI dep injection)
+        _rl: Any = rate_limit_dep,  # noqa: B008
+        body: bytes = b"",  # FastAPI will pass raw body via request.stream in handler
     ):
         # Delegate to handler (expects bytes body and query params)
         return await post_blob_handler(ns=ns, filename=filename, body=body)
@@ -105,8 +105,8 @@ def _build_fallback_router(**router_kwargs: Any) -> APIRouter:
     async def _get_blob(
         commitment: str,
         range_header: Optional[str] = None,
-        _auth: Any = auth_dep,          # noqa: B008
-        _rl: Any = rate_limit_dep,      # noqa: B008
+        _auth: Any = auth_dep,  # noqa: B008
+        _rl: Any = rate_limit_dep,  # noqa: B008
     ):
         return await get_blob_handler(commitment=commitment, range_header=range_header)
 
@@ -115,8 +115,8 @@ def _build_fallback_router(**router_kwargs: Any) -> APIRouter:
     async def _get_proof(
         commitment: str,
         samples: str,
-        _auth: Any = auth_dep,          # noqa: B008
-        _rl: Any = rate_limit_dep,      # noqa: B008
+        _auth: Any = auth_dep,  # noqa: B008
+        _rl: Any = rate_limit_dep,  # noqa: B008
     ):
         # samples="1,5,9"
         return await get_proof_handler(commitment=commitment, samples=samples)
@@ -141,7 +141,11 @@ def mount_da(
         router = _build_fallback_router(**router_kwargs)
 
     # Ensure tags if caller wants to override (when using canonical router).
-    if tags and hasattr(router, "tags") and not set(tags).issubset(set(router.tags or [])):
+    if (
+        tags
+        and hasattr(router, "tags")
+        and not set(tags).issubset(set(router.tags or []))
+    ):
         # This is a benign difference in OpenAPI tagging and doesn't affect routing;
         # we won't mutate router.tags to avoid surprising side-effects. Users can
         # set tags via the canonical get_router if they need stricter control.

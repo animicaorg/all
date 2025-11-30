@@ -77,55 +77,64 @@ try:
     from proofs.utils.hash import sha3_256  # type: ignore
 except Exception:  # pragma: no cover
     import hashlib
+
     def sha3_256(data: bytes) -> bytes:
         return hashlib.sha3_256(data).digest()
+
 
 # --- try to import trap math & units; provide fallbacks if missing ---
 try:
     from proofs.quantum_attest.traps import wilson_interval  # type: ignore
 except Exception:
+
     def wilson_interval(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
         """Wilson score interval (fallback)."""
         if n <= 0:
             return (0.0, 0.0)
         p_hat = k / n
-        denom = 1 + z*z/n
-        centre = p_hat + z*z/(2*n)
-        rad = z * math.sqrt((p_hat*(1-p_hat) + z*z/(4*n)) / n)
-        lo = max(0.0, (centre - rad)/denom)
-        hi = min(1.0, (centre + rad)/denom)
+        denom = 1 + z * z / n
+        centre = p_hat + z * z / (2 * n)
+        rad = z * math.sqrt((p_hat * (1 - p_hat) + z * z / (4 * n)) / n)
+        lo = max(0.0, (centre - rad) / denom)
+        hi = min(1.0, (centre + rad) / denom)
         return (lo, hi)
+
 
 try:
     from proofs.quantum_attest.benchmarks import units_for  # type: ignore
 except Exception:
+
     def units_for(width: int, depth: int, shots: int) -> int:
         # Rough fallback scaling; tuned to devnet demos.
         return max(1, (width * max(1, depth) * max(1, shots)) // 128)
 
+
 # ---------- Types ----------
+
 
 @dataclass(frozen=True)
 class QuantumJobSpec:
     width: int
     depth: int
     shots: int
-    trap_fraction: float      # e.g., 0.05 .. 0.25
-    circuit_json: bytes       # canonical JSON bytes
-    trap_seed: bytes = b""    # deterministic simulation & trap layout salt
+    trap_fraction: float  # e.g., 0.05 .. 0.25
+    circuit_json: bytes  # canonical JSON bytes
+    trap_seed: bytes = b""  # deterministic simulation & trap layout salt
     qos_hint: t.Optional[str] = None
+
 
 @dataclass
 class QPUTicket:
     task_id: str
     submitted_at: float
-    status: str = "queued"    # queued|running|completed|failed|unknown
+    status: str = "queued"  # queued|running|completed|failed|unknown
     provider_id: t.Optional[str] = None
     error: t.Optional[str] = None
 
+
 @dataclass
 class ResultRecord:
-    kind: str                 # "QUANTUM"
+    kind: str  # "QUANTUM"
     task_id: str
     provider_id: t.Optional[str]
     output_digest: bytes
@@ -136,6 +145,7 @@ class ResultRecord:
 
 # ---------- Backend protocol ----------
 
+
 class AICFBackend(t.Protocol):
     async def enqueue(self, spec: QuantumJobSpec) -> QPUTicket: ...
     async def status(self, task_id: str) -> QPUTicket: ...
@@ -143,6 +153,7 @@ class AICFBackend(t.Protocol):
 
 
 # ---------- Dev simulator backend ----------
+
 
 class DevSimBackend:
     """
@@ -155,6 +166,7 @@ class DevSimBackend:
 
     Latency controlled via QPU_SIM_LAT_MS (default 600ms).
     """
+
     def __init__(self) -> None:
         self._lat_ms = int(os.getenv("QPU_SIM_LAT_MS", "600"))
         self._store: dict[str, tuple[QuantumJobSpec, float, float]] = {}
@@ -166,15 +178,24 @@ class DevSimBackend:
         if task_id not in self._store:
             done_at = now + (self._lat_ms / 1000.0)
             self._store[task_id] = (spec, now, done_at)
-        return QPUTicket(task_id=task_id, submitted_at=now, status="queued", provider_id="devsim-qpu")
+        return QPUTicket(
+            task_id=task_id, submitted_at=now, status="queued", provider_id="devsim-qpu"
+        )
 
     async def status(self, task_id: str) -> QPUTicket:
         rec = self._store.get(task_id)
         if not rec:
-            return QPUTicket(task_id=task_id, submitted_at=time.time(), status="unknown", provider_id="devsim-qpu")
+            return QPUTicket(
+                task_id=task_id,
+                submitted_at=time.time(),
+                status="unknown",
+                provider_id="devsim-qpu",
+            )
         _, sub, done_at = rec
         st = "completed" if time.time() >= done_at else "running"
-        return QPUTicket(task_id=task_id, submitted_at=sub, status=st, provider_id="devsim-qpu")
+        return QPUTicket(
+            task_id=task_id, submitted_at=sub, status=st, provider_id="devsim-qpu"
+        )
 
     async def fetch_result(self, task_id: str) -> ResultRecord:
         rec = self._store.get(task_id)
@@ -185,8 +206,9 @@ class DevSimBackend:
             await asyncio.sleep(max(0.0, done_at - time.time()))
         # simulate traps
         traps_total = max(1, int(spec.shots * max(0.0, min(1.0, spec.trap_fraction))))
-        traps_pass = self._simulate_traps(seed=spec.trap_seed or self._seed_from_spec(spec),
-                                          n=traps_total)
+        traps_pass = self._simulate_traps(
+            seed=spec.trap_seed or self._seed_from_spec(spec), n=traps_total
+        )
         lo, hi = wilson_interval(traps_pass, traps_total)
         t_ratio = traps_pass / traps_total
         q_units = units_for(spec.width, spec.depth, spec.shots)
@@ -198,7 +220,9 @@ class DevSimBackend:
             "conf_high": float(hi),
             "qos": 0.99 if self._lat_ms <= 800 else 0.95,
             "latency_ms": int((time.time() - sub) * 1000),
-            "width": spec.width, "depth": spec.depth, "shots": spec.shots,
+            "width": spec.width,
+            "depth": spec.depth,
+            "shots": spec.shots,
         }
         att = {
             "provider": "devsim-qpu",
@@ -221,30 +245,44 @@ class DevSimBackend:
 
     def _derive_task_id(self, spec: QuantumJobSpec) -> str:
         h = sha3_256(
-            b"animica.task.qpu" + b"\x00" +
-            spec.circuit_json + b"\x00" +
-            spec.trap_seed + b"\x00" +
-            spec.width.to_bytes(4, "big") +
-            spec.depth.to_bytes(4, "big") +
-            spec.shots.to_bytes(4, "big") +
-            struct_pack_f64(spec.trap_fraction)
+            b"animica.task.qpu"
+            + b"\x00"
+            + spec.circuit_json
+            + b"\x00"
+            + spec.trap_seed
+            + b"\x00"
+            + spec.width.to_bytes(4, "big")
+            + spec.depth.to_bytes(4, "big")
+            + spec.shots.to_bytes(4, "big")
+            + struct_pack_f64(spec.trap_fraction)
         )
         return "qpu-" + h.hex()[:32]
 
     def _output_digest(self, spec: QuantumJobSpec) -> bytes:
-        return sha3_256(b"qpu-output" + b"\x00" + spec.circuit_json + b"\x00" + spec.trap_seed +
-                        spec.width.to_bytes(4, "big") + spec.depth.to_bytes(4, "big") +
-                        spec.shots.to_bytes(4, "big"))
+        return sha3_256(
+            b"qpu-output"
+            + b"\x00"
+            + spec.circuit_json
+            + b"\x00"
+            + spec.trap_seed
+            + spec.width.to_bytes(4, "big")
+            + spec.depth.to_bytes(4, "big")
+            + spec.shots.to_bytes(4, "big")
+        )
 
     def _seed_from_spec(self, spec: QuantumJobSpec) -> bytes:
-        return sha3_256(b"trap-seed" + spec.circuit_json +
-                        spec.width.to_bytes(4,"big") + spec.depth.to_bytes(4,"big") +
-                        spec.shots.to_bytes(4,"big"))
+        return sha3_256(
+            b"trap-seed"
+            + spec.circuit_json
+            + spec.width.to_bytes(4, "big")
+            + spec.depth.to_bytes(4, "big")
+            + spec.shots.to_bytes(4, "big")
+        )
 
     def _simulate_traps(self, *, seed: bytes, n: int) -> int:
         """Deterministic pseudo-random trap pass/fail using seed → stream."""
         # Choose a target pass prob around 0.985 for devnet, but vary with seed for entropy.
-        bias = int.from_bytes(sha3_256(b"bias"+seed)[:2], "big") / 65535.0  # 0..1
+        bias = int.from_bytes(sha3_256(b"bias" + seed)[:2], "big") / 65535.0  # 0..1
         p_pass = 0.97 + 0.02 * (bias - 0.5)  # ~[0.96, 0.98]
         # Produce Bernoulli(n, p_pass) via a hash stream.
         passed = 0
@@ -262,7 +300,11 @@ class DevSimBackend:
         return min(passed, n)
 
     def _validate(self, spec: QuantumJobSpec) -> None:
-        if not (1 <= spec.width <= 128 and 1 <= spec.depth <= 10_000 and 1 <= spec.shots <= 1_000_000):
+        if not (
+            1 <= spec.width <= 128
+            and 1 <= spec.depth <= 10_000
+            and 1 <= spec.shots <= 1_000_000
+        ):
             raise ValueError("spec out of bounds")
         if not (0.0 <= spec.trap_fraction <= 0.5):
             raise ValueError("trap_fraction must be within [0, 0.5]")
@@ -271,6 +313,7 @@ class DevSimBackend:
 
 
 # ---------- HTTP backend (AICF-like) ----------
+
 
 class HttpAICFBackend:
     """
@@ -295,7 +338,10 @@ class HttpAICFBackend:
               completed_at
            }
     """
-    def __init__(self, base_url: str, api_key: str | None = None, timeout_s: float = 15.0) -> None:
+
+    def __init__(
+        self, base_url: str, api_key: str | None = None, timeout_s: float = 15.0
+    ) -> None:
         self.base = base_url.rstrip("/")
         self.key = api_key
         self.timeout = timeout_s
@@ -316,20 +362,38 @@ class HttpAICFBackend:
             "trap_seed_b64": _b64(spec.trap_seed),
             "qos": spec.qos_hint,
         }
-        data = await _http_json("POST", f"{self.base}/jobs/quantum", headers=self._headers(), json_body=body, timeout=self.timeout)
+        data = await _http_json(
+            "POST",
+            f"{self.base}/jobs/quantum",
+            headers=self._headers(),
+            json_body=body,
+            timeout=self.timeout,
+        )
         task_id = t.cast(str, data.get("task_id", ""))
         if not task_id:
             raise RuntimeError("AICF enqueue: missing task_id")
         return QPUTicket(task_id=task_id, submitted_at=time.time(), status="queued")
 
     async def status(self, task_id: str) -> QPUTicket:
-        data = await _http_json("GET", f"{self.base}/jobs/{task_id}", headers=self._headers(), timeout=self.timeout)
+        data = await _http_json(
+            "GET",
+            f"{self.base}/jobs/{task_id}",
+            headers=self._headers(),
+            timeout=self.timeout,
+        )
         st = t.cast(str, data.get("status", "unknown"))
         prov = t.cast(t.Optional[str], data.get("provider_id"))
-        return QPUTicket(task_id=task_id, submitted_at=time.time(), status=st, provider_id=prov)
+        return QPUTicket(
+            task_id=task_id, submitted_at=time.time(), status=st, provider_id=prov
+        )
 
     async def fetch_result(self, task_id: str) -> ResultRecord:
-        data = await _http_json("GET", f"{self.base}/jobs/{task_id}/result", headers=self._headers(), timeout=self.timeout)
+        data = await _http_json(
+            "GET",
+            f"{self.base}/jobs/{task_id}/result",
+            headers=self._headers(),
+            timeout=self.timeout,
+        )
         out_hex = t.cast(str, data.get("output_digest_hex", ""))
         if len(out_hex) != 64:
             raise RuntimeError("AICF result: bad output_digest_hex")
@@ -346,11 +410,13 @@ class HttpAICFBackend:
 
 # ---------- Worker orchestrator ----------
 
+
 @dataclass
 class _Pending:
     spec: QuantumJobSpec
     ticket: QPUTicket
     last_polled: float = field(default_factory=lambda: 0.0)
+
 
 class QuantumWorker:
     """
@@ -358,7 +424,10 @@ class QuantumWorker:
     - background poller updates tickets and retrieves results
     - pop_ready(max_n) -> completed ResultRecord items
     """
-    def __init__(self, backend: AICFBackend, poll_interval_s: float = 0.5, queue_limit: int = 128) -> None:
+
+    def __init__(
+        self, backend: AICFBackend, poll_interval_s: float = 0.5, queue_limit: int = 128
+    ) -> None:
         self._backend = backend
         self._poll_interval = float(poll_interval_s)
         self._queue_limit = int(queue_limit)
@@ -394,18 +463,25 @@ class QuantumWorker:
         self._pending.clear()
 
     async def enqueue(
-        self, *,
-        width: int, depth: int, shots: int,
+        self,
+        *,
+        width: int,
+        depth: int,
+        shots: int,
         trap_fraction: float,
         circuit_json: bytes,
         trap_seed: bytes = b"",
         qos_hint: str | None = None,
     ) -> QPUTicket:
-        spec = QuantumJobSpec(width=width, depth=depth, shots=shots,
-                              trap_fraction=float(trap_fraction),
-                              circuit_json=bytes(circuit_json),
-                              trap_seed=bytes(trap_seed),
-                              qos_hint=qos_hint)
+        spec = QuantumJobSpec(
+            width=width,
+            depth=depth,
+            shots=shots,
+            trap_fraction=float(trap_fraction),
+            circuit_json=bytes(circuit_json),
+            trap_seed=bytes(trap_seed),
+            qos_hint=qos_hint,
+        )
         async with self._lock:
             if len(self._pending) >= self._queue_limit:
                 raise RuntimeError("quantum_worker queue full")
@@ -477,16 +553,21 @@ class QuantumWorker:
 
 # ---------- helpers ----------
 
+
 def _b64(b: bytes) -> str:
     import base64
+
     return base64.b64encode(b).decode()
+
 
 def struct_pack_f64(x: float) -> bytes:
     import struct
+
     return struct.pack("!d", float(x))
 
 
 # ---------- tiny HTTP helper (stdlib) ----------
+
 
 async def _http_json(
     method: str,
@@ -496,13 +577,15 @@ async def _http_json(
     json_body: dict[str, t.Any] | None = None,
     timeout: float = 15.0,
 ) -> dict[str, t.Any]:
-    import urllib.request
     import urllib.error
+    import urllib.request
 
     data = None
     if json_body is not None:
         data = json.dumps(json_body).encode()
-    req = urllib.request.Request(url=url, method=method.upper(), data=data, headers=headers or {})
+    req = urllib.request.Request(
+        url=url, method=method.upper(), data=data, headers=headers or {}
+    )
     if data is not None and "content-type" not in req.headers:
         req.add_header("content-type", "application/json")
     loop = asyncio.get_running_loop()
@@ -515,7 +598,9 @@ async def _http_json(
                     return {}
                 return t.cast(dict[str, t.Any], json.loads(raw.decode()))
         except urllib.error.HTTPError as e:
-            raise RuntimeError(f"http {e.code}: {e.read().decode(errors='ignore')[:256]}") from None
+            raise RuntimeError(
+                f"http {e.code}: {e.read().decode(errors='ignore')[:256]}"
+            ) from None
         except urllib.error.URLError as e:
             raise RuntimeError(f"http error: {e.reason}") from None
 
@@ -524,14 +609,21 @@ async def _http_json(
 
 # ---------- CLI (dev) ----------
 
+
 async def _demo() -> None:  # pragma: no cover
     print("[quantum_worker] demo starting…")
     w = QuantumWorker.create_from_env()
     await w.start()
     circuits = [b'{"name":"bell"}', b'{"name":"qft","n":5}', b'{"name":"random"}']
     for i, c in enumerate(circuits):
-        tkt = await w.enqueue(width=5+i, depth=10+2*i, shots=256, trap_fraction=0.1,
-                              circuit_json=c, trap_seed=sha3_256(b"seed"+bytes([i])))
+        tkt = await w.enqueue(
+            width=5 + i,
+            depth=10 + 2 * i,
+            shots=256,
+            trap_fraction=0.1,
+            circuit_json=c,
+            trap_seed=sha3_256(b"seed" + bytes([i])),
+        )
         print(" enqueued:", tkt.task_id)
     t_end = time.time() + 4.0
     got: list[ResultRecord] = []
@@ -539,10 +631,19 @@ async def _demo() -> None:  # pragma: no cover
         got.extend(w.pop_ready())
         await asyncio.sleep(0.1)
     for r in got:
-        print(" completed:", r.task_id, "digest=", r.output_digest.hex()[:16],
-              "traps=", f"{r.metrics['traps_ratio']:.4f}", "units=", r.metrics["quantum_units"])
+        print(
+            " completed:",
+            r.task_id,
+            "digest=",
+            r.output_digest.hex()[:16],
+            "traps=",
+            f"{r.metrics['traps_ratio']:.4f}",
+            "units=",
+            r.metrics["quantum_units"],
+        )
     await w.stop()
     print("[quantum_worker] demo done.")
+
 
 if __name__ == "__main__":  # pragma: no cover
     asyncio.run(_demo())

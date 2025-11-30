@@ -44,7 +44,8 @@ import sys
 import types
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, MutableMapping, Optional, Tuple
+from typing import (Any, Callable, Dict, List, Mapping, MutableMapping,
+                    Optional, Tuple)
 
 import pytest
 
@@ -64,6 +65,7 @@ PROJECT_TEST_SEED = 1337
 
 
 # --- tiny deterministic helpers ----------------------------------------------
+
 
 def _drbg(label: bytes, n: int) -> bytes:
     """
@@ -293,11 +295,13 @@ def _install_test_stdlib() -> None:
 
 # --- Local contract instance wrapper -----------------------------------------
 
+
 @dataclass
 class ContractInstance:
     """
     A tiny in-memory "contract instance" bound to a module.
     """
+
     module: types.ModuleType
     address: str
     ctx: _Context
@@ -340,6 +344,7 @@ class ContractInstance:
 
 # --- fixtures ----------------------------------------------------------------
 
+
 @pytest.fixture(scope="session")
 def funded_accounts() -> Dict[str, Dict[str, Any]]:
     """
@@ -365,7 +370,9 @@ def local_vm(funded_accounts: Mapping[str, Mapping[str, Any]]):
     _install_test_stdlib()
 
     class _Factory:
-        def compile(self, source_path: str | Path, address: Optional[str] = None) -> ContractInstance:
+        def compile(
+            self, source_path: str | Path, address: Optional[str] = None
+        ) -> ContractInstance:
             sp = Path(source_path)
             if not sp.is_file():
                 raise FileNotFoundError(f"Contract not found: {sp}")
@@ -382,9 +389,15 @@ def local_vm(funded_accounts: Mapping[str, Mapping[str, Any]]):
             # Fresh context with balances seeded for this contract address as well.
             addr = address or _det_address(sp.as_posix())
             balances: Dict[str, int] = {
-                funded_accounts["deployer"]["address"]: int(funded_accounts["deployer"]["balance"]),
-                funded_accounts["alice"]["address"]: int(funded_accounts["alice"]["balance"]),
-                funded_accounts["bob"]["address"]: int(funded_accounts["bob"]["balance"]),
+                funded_accounts["deployer"]["address"]: int(
+                    funded_accounts["deployer"]["balance"]
+                ),
+                funded_accounts["alice"]["address"]: int(
+                    funded_accounts["alice"]["balance"]
+                ),
+                funded_accounts["bob"]["address"]: int(
+                    funded_accounts["bob"]["balance"]
+                ),
                 addr: 0,
             }
             ctx = _Context(address=addr, balances=balances)
@@ -404,6 +417,7 @@ def compile_contract(local_vm):
 
 # --- optional monkeypatch hooks ----------------------------------------------
 
+
 @pytest.fixture(scope="function")
 def patch_syscalls(monkeypatch):
     """
@@ -419,6 +433,7 @@ def patch_syscalls(monkeypatch):
             res = c.call("request_ai", b"llama2", b"hello")
             # ... next call sees read_result return the object above
     """
+
     def _apply(**kwargs):
         _install_test_stdlib()
         for name, fn in kwargs.items():
@@ -431,10 +446,17 @@ def patch_syscalls(monkeypatch):
 
 # --- pretty assertion diffs for bytes & small dicts --------------------------
 
+
 def pytest_assertrepr_compare(op: str, left: Any, right: Any) -> Optional[List[str]]:
-    if isinstance(left, (bytes, bytearray)) and isinstance(right, (bytes, bytearray)) and op == "==":
+    if (
+        isinstance(left, (bytes, bytearray))
+        and isinstance(right, (bytes, bytearray))
+        and op == "=="
+    ):
+
         def hexdump(b: bytes) -> str:
             return " ".join(f"{x:02x}" for x in b)
+
         return [
             "bytes differ:",
             f" left: {hexdump(bytes(left))}",

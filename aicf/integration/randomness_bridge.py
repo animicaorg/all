@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 aicf.integration.randomness_bridge
 ----------------------------------
@@ -38,7 +39,8 @@ occur, the fallback tie-breaker is the provider key bytes lexicographically.
 
 
 from hashlib import sha3_256
-from typing import Any, Callable, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple, Union, overload
+from typing import (Any, Callable, Iterable, List, Mapping, MutableMapping,
+                    Optional, Sequence, Tuple, Union, overload)
 
 # ----- Domain separation & helpers ------------------------------------------------
 
@@ -156,7 +158,9 @@ def shuffle_with_seed(
     base = _stable_unique(candidates) if dedup else list(candidates)
 
     decorated = [(_score(seed, salt_b, _to_bytes(p)), _to_bytes(p), p) for p in base]
-    decorated.sort(key=lambda t: (t[0], t[1]))  # score asc, then key bytes asc (tie-break)
+    decorated.sort(
+        key=lambda t: (t[0], t[1])
+    )  # score asc, then key bytes asc (tie-break)
     return [p for _, __, p in decorated]
 
 
@@ -171,6 +175,7 @@ def sample_topk(permuted: Sequence[ProviderLike], k: int) -> List[ProviderLike]:
 
 # ----- Beacon integration ---------------------------------------------------------
 
+
 # We lazily import an optional beacon adapter if available.
 # Expected callable names (first match wins):
 #   - get_beacon_seed(height: int) -> bytes
@@ -179,6 +184,7 @@ def sample_topk(permuted: Sequence[ProviderLike], k: int) -> List[ProviderLike]:
 def _default_beacon_getter(height: int) -> bytes:
     try:  # pragma: no cover - exercised in integration tests
         from capabilities.adapters import randomness as _rnd  # type: ignore
+
         for name in ("get_beacon_seed", "read_beacon", "get_seed_for_height"):
             if hasattr(_rnd, name):
                 return getattr(_rnd, name)(height)  # type: ignore[misc]
@@ -220,7 +226,9 @@ def shuffle_via_beacon(
     beacon_seed = getter(height)
     ep = epoch_from_height(height, epoch_blocks)
     ep_seed = derive_epoch_seed(beacon_seed, ep)
-    return shuffle_with_seed(candidates=candidates, seed=ep_seed, salt=salt, dedup=dedup)
+    return shuffle_with_seed(
+        candidates=candidates, seed=ep_seed, salt=salt, dedup=dedup
+    )
 
 
 __all__ = [

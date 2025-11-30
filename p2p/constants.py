@@ -5,11 +5,11 @@ These values are intentionally centralized so transport, gossip, sync, and
 adapters can share coherent defaults. Most values may be overridden via
 environment variables (e.g., ANIMICA_P2P_MAX_PEERS=128).
 """
+
 from __future__ import annotations
 
 import os
 from typing import Final, Iterable
-
 
 __all__ = [
     # Identity / protocol versioning
@@ -62,6 +62,7 @@ __all__ = [
 
 
 # ---- helpers -----------------------------------------------------------------
+
 
 def _env_int(name: str, default: int) -> int:
     try:
@@ -132,12 +133,16 @@ DEFAULT_WS_PORT: Final[int] = _env_int("ANIMICA_P2P_WS_PORT", 30335)
 MAX_FRAME_BYTES: Final[int] = _env_int("ANIMICA_P2P_MAX_FRAME_BYTES", 1 << 20)  # 1 MiB
 
 # Logical message size (after deframe/AEAD). Some messages (blocks) stream in parts.
-MAX_MESSAGE_BYTES: Final[int] = _env_int("ANIMICA_P2P_MAX_MESSAGE_BYTES", 2 << 20)  # 2 MiB
+MAX_MESSAGE_BYTES: Final[int] = _env_int(
+    "ANIMICA_P2P_MAX_MESSAGE_BYTES", 2 << 20
+)  # 2 MiB
 
 # Soft ceilings for common payload classes used by validators:
-MAX_TX_BYTES: Final[int] = _env_int("ANIMICA_P2P_MAX_TX_BYTES", 512 * 1024)     # 512 KiB
+MAX_TX_BYTES: Final[int] = _env_int("ANIMICA_P2P_MAX_TX_BYTES", 512 * 1024)  # 512 KiB
 MAX_BLOCK_BYTES: Final[int] = _env_int("ANIMICA_P2P_MAX_BLOCK_BYTES", 8 << 20)  # 8 MiB
-MAX_SHARE_BYTES: Final[int] = _env_int("ANIMICA_P2P_MAX_SHARE_BYTES", 256 * 1024)  # 256 KiB
+MAX_SHARE_BYTES: Final[int] = _env_int(
+    "ANIMICA_P2P_MAX_SHARE_BYTES", 256 * 1024
+)  # 256 KiB
 
 
 # ---- peer & gossip limits -----------------------------------------------------
@@ -145,7 +150,9 @@ MAX_SHARE_BYTES: Final[int] = _env_int("ANIMICA_P2P_MAX_SHARE_BYTES", 256 * 1024
 # Connection counts
 MAX_PEERS: Final[int] = _env_int("ANIMICA_P2P_MAX_PEERS", 64)
 MAX_OUTBOUND_PEERS: Final[int] = _env_int("ANIMICA_P2P_MAX_OUTBOUND", 16)
-MAX_INBOUND_PEERS: Final[int] = _env_int("ANIMICA_P2P_MAX_INBOUND", MAX_PEERS - MAX_OUTBOUND_PEERS)
+MAX_INBOUND_PEERS: Final[int] = _env_int(
+    "ANIMICA_P2P_MAX_INBOUND", MAX_PEERS - MAX_OUTBOUND_PEERS
+)
 
 # Gossip mesh parameters (GossipSub-like)
 GOSSIP_D: Final[int] = _env_int("ANIMICA_P2P_GOSSIP_D", 8)
@@ -182,8 +189,10 @@ RECONNECT_BACKOFF_MAX: Final[float] = _env_float("ANIMICA_P2P_BACKOFF_MAX", 60.0
 TOPIC_BLOCKS: Final[str] = "animica/blocks/v1"
 TOPIC_HEADERS: Final[str] = "animica/headers/v1"
 TOPIC_TXS: Final[str] = "animica/txs/v1"
-TOPIC_SHARES: Final[str] = "animica/shares/v1"   # useful-work shares (Hash/AI/Quantum/Storage/VDF)
-TOPIC_BLOBS: Final[str] = "animica/blobs/v1"     # DA commitments & requests
+TOPIC_SHARES: Final[str] = (
+    "animica/shares/v1"  # useful-work shares (Hash/AI/Quantum/Storage/VDF)
+)
+TOPIC_BLOBS: Final[str] = "animica/blobs/v1"  # DA commitments & requests
 
 ALL_TOPICS: Final[tuple[str, ...]] = (
     TOPIC_BLOCKS,

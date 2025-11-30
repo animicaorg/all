@@ -60,15 +60,16 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
 
-from .errors import ProofError, AttestationError, SchemaError
-from .types import ProofType, ProofEnvelope
-from .metrics import ProofMetrics
+# TEE verifiers
+from .attestations.tee.common import \
+    verify_tee_attestation  # runtime-dispatches to sgx/sev/cca
 from .cbor import validate_body
+from .errors import AttestationError, ProofError, SchemaError
+from .metrics import ProofMetrics
+from .types import ProofEnvelope, ProofType
 from .utils.hash import sha3_256
 from .utils.math import clamp01
 
-# TEE verifiers
-from .attestations.tee.common import verify_tee_attestation  # runtime-dispatches to sgx/sev/cca
 # If individual imports are needed by tooling, they can be used in common.verify_tee_attestation:
 # from .attestations.tee import sgx, sev_snp, cca
 
@@ -182,7 +183,9 @@ def _qos_score(qos: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
     # Latency → [0,1] using a soft logarithmic squashing.
     import math
 
-    lat_norm = 1.0 - (math.log1p(p95 / 1000.0) / math.log1p(4.0))  # 0ms→1, 1000ms→~0.5, 4s→0
+    lat_norm = 1.0 - (
+        math.log1p(p95 / 1000.0) / math.log1p(4.0)
+    )  # 0ms→1, 1000ms→~0.5, 4s→0
     lat_norm = clamp01(lat_norm)
 
     succ_norm = success / 1000.0
@@ -216,6 +219,7 @@ def _derive_ai_units(job: Dict[str, Any]) -> int:
 
 
 # ─────────────────────────────── main API ───────────────────────────────
+
 
 def verify_ai_body(body: Dict[str, Any]) -> Tuple[ProofMetrics, Dict[str, Any]]:
     """
@@ -261,7 +265,7 @@ def verify_ai_body(body: Dict[str, Any]) -> Tuple[ProofMetrics, Dict[str, Any]]:
         "inputDigest": bytes(job["inputDigest"]).hex(),
         "outputDigest": bytes(job["outputDigest"]).hex(),
         "runtimeSec": int(job.get("runtimeSec", 0)),
-        "tee": tee_info,                 # dict with vendor, measurement, policy flags, timestamp, etc.
+        "tee": tee_info,  # dict with vendor, measurement, policy flags, timestamp, etc.
         "traps": trap_details,
         "redundancy": red_details,
         "qos": qos_details,

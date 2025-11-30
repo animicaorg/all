@@ -24,11 +24,11 @@ Notes:
 """
 
 from __future__ import annotations
-from dataclasses import asdict
-from typing import Any, Dict, List, Optional, Tuple, Union
 
 import binascii
 import hashlib
+from dataclasses import asdict
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 # --- Optional CBOR backends ---------------------------------------------------
 _CBOR_ERR = None
@@ -38,36 +38,43 @@ except Exception as e:  # pragma: no cover
     _CBOR_ERR = e
     try:
         import msgspec as _msgspec  # type: ignore
+
         def _cbor_dumps(x: Any) -> bytes:
             return _msgspec.cbor.encode(x)
+
         def _cbor_loads(b: bytes) -> Any:
             return _msgspec.cbor.decode(b)
+
     except Exception as e2:  # pragma: no cover
         _CBOR_ERR = (e, e2)
         _cbor = None
 
 if "_cbor" in globals() and _cbor is not None:
+
     def _cbor_dumps(x: Any) -> bytes:
         return _cbor.dumps(x)
+
     def _cbor_loads(b: bytes) -> Any:
         return _cbor.loads(b)
+
 
 # --- Optional crypto backend ---------------------------------------------------
 try:
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec, ed25519, utils
+
     _HAS_CRYPTO = True
 except Exception:  # pragma: no cover
     _HAS_CRYPTO = False
 
 from ..errors import AttestationError
-from .common import TEEKind, TEEEvidence, TCBStatus
+from .common import TCBStatus, TEEEvidence, TEEKind
 
 # COSE header labels we care about
-COSE_HEADER_ALG   = 1      # 'alg'
-COSE_HEADER_KID   = 4      # 'kid' (optional)
-COSE_HEADER_X5C   = 33     # 'x5chain' (RFC 9360): array of DER certs (leaf first)
+COSE_HEADER_ALG = 1  # 'alg'
+COSE_HEADER_KID = 4  # 'kid' (optional)
+COSE_HEADER_X5C = 33  # 'x5chain' (RFC 9360): array of DER certs (leaf first)
 
 # COSE alg values we handle (per IANA COSE Algorithms)
 ALG_ES256 = -7
@@ -77,12 +84,17 @@ ALG_EDDSA = -8  # Ed25519 or Ed448 (we support Ed25519 here)
 
 # ---------------------------- Parsing helpers --------------------------------
 
+
 def _require_cbor():
     if _cbor_dumps is None or _cbor_loads is None:
-        raise AttestationError("CBOR backend not available; install 'cbor2' or 'msgspec'")
+        raise AttestationError(
+            "CBOR backend not available; install 'cbor2' or 'msgspec'"
+        )
+
 
 def _hex(b: Optional[bytes]) -> Optional[str]:
     return None if b is None else binascii.hexlify(b).decode()
+
 
 def parse_cose_sign1(buf: Union[bytes, bytearray, memoryview]) -> Dict[str, Any]:
     """
@@ -133,7 +145,9 @@ def parse_cose_sign1(buf: Union[bytes, bytearray, memoryview]) -> Dict[str, Any]
     x5chain_der: List[bytes] = []
     if COSE_HEADER_X5C in unprotected_map:
         v = unprotected_map[COSE_HEADER_X5C]
-        if not isinstance(v, (list, tuple)) or not all(isinstance(c, (bytes, bytearray)) for c in v):
+        if not isinstance(v, (list, tuple)) or not all(
+            isinstance(c, (bytes, bytearray)) for c in v
+        ):
             raise AttestationError("x5chain must be an array of DER certificates")
         x5chain_der = [bytes(c) for c in v]
 
@@ -148,14 +162,15 @@ def parse_cose_sign1(buf: Union[bytes, bytearray, memoryview]) -> Dict[str, Any]
         "kid": kid if isinstance(kid, (bytes, bytearray)) else None,
     }
 
+
 # ---------------------------- Claim extraction --------------------------------
 
 # Common CCA/EAT keys seen in realm tokens (string keys in practice).
 CLAIM_KEYS = {
     "measurement": [
-        "cca-realm-measurement",        # preferred
-        "cca-realm-hash",               # alternative naming
-        "realm_measurement",            # fallback
+        "cca-realm-measurement",  # preferred
+        "cca-realm-hash",  # alternative naming
+        "realm_measurement",  # fallback
     ],
     "nonce": [
         "cca-realm-challenge",
@@ -186,6 +201,7 @@ CLAIM_KEYS = {
     ],
 }
 
+
 def _first_claim(claims: Dict[Any, Any], keys: List[str]) -> Optional[bytes]:
     for k in keys:
         if k in claims:
@@ -199,6 +215,7 @@ def _first_claim(claims: Dict[Any, Any], keys: List[str]) -> Optional[bytes]:
                 except Exception:
                     return v.encode()
     return None
+
 
 def parse_cca_payload(payload: bytes) -> Dict[str, Any]:
     """
@@ -214,12 +231,12 @@ def parse_cca_payload(payload: bytes) -> Dict[str, Any]:
         raise AttestationError("CCA payload (decoded) must be a map of claims")
 
     # Extract common fields
-    measurement   = _first_claim(claims, CLAIM_KEYS["measurement"])
-    nonce         = _first_claim(claims, CLAIM_KEYS["nonce"])
-    pubkey_hash   = _first_claim(claims, CLAIM_KEYS["pubkey_hash"])
+    measurement = _first_claim(claims, CLAIM_KEYS["measurement"])
+    nonce = _first_claim(claims, CLAIM_KEYS["nonce"])
+    pubkey_hash = _first_claim(claims, CLAIM_KEYS["pubkey_hash"])
     platform_hash = _first_claim(claims, CLAIM_KEYS["platform_hash"])
     personalization = _first_claim(claims, CLAIM_KEYS["personalization"])
-    signer_id     = _first_claim(claims, CLAIM_KEYS["signer_id"])
+    signer_id = _first_claim(claims, CLAIM_KEYS["signer_id"])
 
     sw_components = None
     for k in CLAIM_KEYS["sw_components"]:
@@ -238,9 +255,13 @@ def parse_cca_payload(payload: bytes) -> Dict[str, Any]:
         "sw_components": sw_components,
     }
 
+
 # -------------------------- Signature verification ----------------------------
 
-def _ecdsa_verify_raw(pubkey: ec.EllipticCurvePublicKey, msg: bytes, sig_raw: bytes, hash_alg) -> bool:
+
+def _ecdsa_verify_raw(
+    pubkey: ec.EllipticCurvePublicKey, msg: bytes, sig_raw: bytes, hash_alg
+) -> bool:
     """
     COSE uses raw r||s for ECDSA signatures. Convert to DER for 'cryptography'.
     """
@@ -256,12 +277,18 @@ def _ecdsa_verify_raw(pubkey: ec.EllipticCurvePublicKey, msg: bytes, sig_raw: by
     except Exception:
         return False
 
-def _sig_structure(protected_bstr: bytes, payload_bstr: bytes, external_aad: bytes = b"") -> bytes:
+
+def _sig_structure(
+    protected_bstr: bytes, payload_bstr: bytes, external_aad: bytes = b""
+) -> bytes:
     # Sig_structure = ["Signature1", protected_bstr, external_aad, payload_bstr]
     _require_cbor()
     return _cbor_dumps(["Signature1", protected_bstr, external_aad, payload_bstr])
 
-def _verify_with_leaf(cert_pem: bytes, alg: int, to_be_signed: bytes, sig: bytes) -> bool:
+
+def _verify_with_leaf(
+    cert_pem: bytes, alg: int, to_be_signed: bytes, sig: bytes
+) -> bool:
     if not _HAS_CRYPTO:
         return False
     try:
@@ -279,14 +306,18 @@ def _verify_with_leaf(cert_pem: bytes, alg: int, to_be_signed: bytes, sig: bytes
         elif alg in (ALG_ES256, ALG_ES384, ALG_ES512):
             if not isinstance(pub, ec.EllipticCurvePublicKey):
                 return False
-            if   alg == ALG_ES256: h = hashes.SHA256()
-            elif alg == ALG_ES384: h = hashes.SHA384()
-            else:                  h = hashes.SHA512()
+            if alg == ALG_ES256:
+                h = hashes.SHA256()
+            elif alg == ALG_ES384:
+                h = hashes.SHA384()
+            else:
+                h = hashes.SHA512()
             return _ecdsa_verify_raw(pub, to_be_signed, sig, h)
         else:
             return False
     except Exception:
         return False
+
 
 def _der_to_pem_chain(der_list: List[bytes]) -> List[bytes]:
     if not _HAS_CRYPTO:
@@ -300,11 +331,15 @@ def _der_to_pem_chain(der_list: List[bytes]) -> List[bytes]:
             # keep as-is in PEM-ish wrapper if needed
             out.append(
                 b"-----BEGIN CERTIFICATE-----\n"
-                + binascii.b2a_base64(der).replace(b"\n", b"") + b"\n-----END CERTIFICATE-----\n"
+                + binascii.b2a_base64(der).replace(b"\n", b"")
+                + b"\n-----END CERTIFICATE-----\n"
             )
     return out
 
-def verify_chain_simple(leaf_pem: bytes, chain_pems: List[bytes], root_pem: Optional[bytes]) -> bool:
+
+def verify_chain_simple(
+    leaf_pem: bytes, chain_pems: List[bytes], root_pem: Optional[bytes]
+) -> bool:
     """
     Simple issuer->subject chain walk up to provided root (if given).
     This mirrors the helper used in other attesters (not a full PKI engine).
@@ -330,11 +365,16 @@ def verify_chain_simple(leaf_pem: bytes, chain_pems: List[bytes], root_pem: Opti
             ssub = curr.subject.rfc4514_string()
             if isub == ssub:
                 # self-signed (root)
-                if root and curr.fingerprint(hashes.SHA256()) != root.fingerprint(hashes.SHA256()):
+                if root and curr.fingerprint(hashes.SHA256()) != root.fingerprint(
+                    hashes.SHA256()
+                ):
                     return False
                 try:
-                    curr.public_key().verify(curr.signature, curr.tbs_certificate_bytes,
-                                             ec.ECDSA(curr.signature_hash_algorithm))
+                    curr.public_key().verify(
+                        curr.signature,
+                        curr.tbs_certificate_bytes,
+                        ec.ECDSA(curr.signature_hash_algorithm),
+                    )
                 except Exception:
                     return False
                 return True
@@ -343,15 +383,20 @@ def verify_chain_simple(leaf_pem: bytes, chain_pems: List[bytes], root_pem: Opti
                 # If a root is required but not reached -> fail; else pass leniently
                 return root is None
             try:
-                parent.public_key().verify(curr.signature, curr.tbs_certificate_bytes,
-                                           ec.ECDSA(curr.signature_hash_algorithm))
+                parent.public_key().verify(
+                    curr.signature,
+                    curr.tbs_certificate_bytes,
+                    ec.ECDSA(curr.signature_hash_algorithm),
+                )
             except Exception:
                 return False
             curr = parent
     except Exception:
         return False
 
+
 # ---------------------------- High-level verify -------------------------------
+
 
 def verify_cca_realm_token(
     token: Union[bytes, bytearray, memoryview],
@@ -380,7 +425,9 @@ def verify_cca_realm_token(
     payload_info = parse_cca_payload(parts["payload"])
 
     # Build Sig_structure for COSE_Sign1
-    to_be_signed = _sig_structure(parts["protected_bstr"], parts["payload"], external_aad)
+    to_be_signed = _sig_structure(
+        parts["protected_bstr"], parts["payload"], external_aad
+    )
 
     # Extract x5chain (PEM) and pick leaf
     chain_pems = _der_to_pem_chain(parts["x5chain_der"])
@@ -388,7 +435,9 @@ def verify_cca_realm_token(
 
     signature_ok = False
     if leaf_pem:
-        signature_ok = _verify_with_leaf(leaf_pem, parts["alg"], to_be_signed, parts["signature"])
+        signature_ok = _verify_with_leaf(
+            leaf_pem, parts["alg"], to_be_signed, parts["signature"]
+        )
 
     chain_ok = True
     if leaf_pem and cca_root_pem:
@@ -415,19 +464,35 @@ def verify_cca_realm_token(
             "kid": _hex(parts["kid"]) if parts["kid"] else None,
             "alg": parts["alg"],
             "x5chain_len": len(chain_pems),
-            "pubkey_hash": _hex(payload_info["pubkey_hash"]) if payload_info["pubkey_hash"] else None,
-            "platform_hash": _hex(payload_info["platform_hash"]) if payload_info["platform_hash"] else None,
-            "personalization": _hex(payload_info["personalization"]) if payload_info["personalization"] else None,
-            "signer_id": _hex(payload_info["signer_id"]) if payload_info["signer_id"] else None,
+            "pubkey_hash": (
+                _hex(payload_info["pubkey_hash"])
+                if payload_info["pubkey_hash"]
+                else None
+            ),
+            "platform_hash": (
+                _hex(payload_info["platform_hash"])
+                if payload_info["platform_hash"]
+                else None
+            ),
+            "personalization": (
+                _hex(payload_info["personalization"])
+                if payload_info["personalization"]
+                else None
+            ),
+            "signer_id": (
+                _hex(payload_info["signer_id"]) if payload_info["signer_id"] else None
+            ),
             "claims": payload_info["claims"],
         },
     )
     return evidence
 
+
 # Convenience helper (non-standard): hash of protected||payload for transcripts.
 def transcript_hash(token: Union[bytes, bytearray, memoryview]) -> str:
     parts = parse_cose_sign1(token)
     return hashlib.sha3_256(parts["protected_bstr"] + parts["payload"]).hexdigest()
+
 
 __all__ = [
     "verify_cca_realm_token",

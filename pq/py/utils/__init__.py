@@ -28,19 +28,26 @@ from typing import Callable, Optional
 
 __all__ = [
     # hashing
-    "sha3_256", "sha3_512", "blake3_256", "keccak_256",
-    "to_hex", "from_hex",
+    "sha3_256",
+    "sha3_512",
+    "blake3_256",
+    "keccak_256",
+    "to_hex",
+    "from_hex",
     # hkdf
     "hkdf_sha3_256",
     # bech32
-    "bech32m_encode", "bech32m_decode",
+    "bech32m_encode",
+    "bech32m_decode",
     # rng
-    "rng_bytes", "rng_u32",
+    "rng_bytes",
+    "rng_u32",
 ]
 
 # ---------------------------------------------------------------------------
 # Guarded import helpers
 # ---------------------------------------------------------------------------
+
 
 def _missing_factory(module: str, symbol: str) -> Callable[..., "NoReturn"]:
     def _missing(*_args, **_kwargs):
@@ -48,20 +55,17 @@ def _missing_factory(module: str, symbol: str) -> Callable[..., "NoReturn"]:
             f"Required utility '{symbol}' from '{module}' is unavailable. "
             f"Ensure file '{module.replace('.', '/')}.py' exists and imports correctly."
         )
+
     return _missing  # type: ignore[return-value]
 
 
 # ------------------ Hashing ------------------
 
 try:
-    from .hash import (
-        sha3_256,
-        sha3_512,
-        blake3_256,   # optional; falls back internally if blake3 is missing
-        keccak_256,   # optional; present for tooling/tests
-        to_hex,
-        from_hex,
-    )
+    from .hash import \
+        blake3_256  # optional; falls back internally if blake3 is missing
+    from .hash import keccak_256  # optional; present for tooling/tests
+    from .hash import from_hex, sha3_256, sha3_512, to_hex
 except Exception:
     sha3_256 = _missing_factory("pq.py.utils.hash", "sha3_256")  # type: ignore[assignment]
     sha3_512 = _missing_factory("pq.py.utils.hash", "sha3_512")  # type: ignore[assignment]
@@ -82,7 +86,7 @@ except Exception:
 # ------------------ Bech32m ------------------
 
 try:
-    from .bech32 import bech32m_encode, bech32m_decode
+    from .bech32 import bech32m_decode, bech32m_encode
 except Exception:
     bech32m_encode = _missing_factory("pq.py.utils.bech32", "bech32m_encode")  # type: ignore[assignment]
     bech32m_decode = _missing_factory("pq.py.utils.bech32", "bech32m_decode")  # type: ignore[assignment]
@@ -94,4 +98,4 @@ try:
     from .rng import rng_bytes, rng_u32
 except Exception:
     rng_bytes = _missing_factory("pq.py.utils.rng", "rng_bytes")  # type: ignore[assignment]
-    rng_u32 = _missing_factory("pq.py.utils.rng", "rng_u32")      # type: ignore[assignment]
+    rng_u32 = _missing_factory("pq.py.utils.rng", "rng_u32")  # type: ignore[assignment]

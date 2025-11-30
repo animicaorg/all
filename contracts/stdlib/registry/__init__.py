@@ -82,28 +82,30 @@ from __future__ import annotations
 
 from typing import Final, List, Tuple
 
+from stdlib import storage  # type: ignore
 from stdlib import abi, events  # type: ignore
 from stdlib import hash as _hash  # type: ignore
-from stdlib import storage  # type: ignore
 
 _U256_MAX: Final[int] = (1 << 256) - 1
 
 # -------- Storage prefixes --------
-_P_EX:   Final[bytes] = b"rg:ex:"
-_P_OWN:  Final[bytes] = b"rg:own:"
+_P_EX: Final[bytes] = b"rg:ex:"
+_P_OWN: Final[bytes] = b"rg:own:"
 _P_META: Final[bytes] = b"rg:meta:"
-_P_NI:   Final[bytes] = b"rg:ni:"
-_P_CNT:  Final[bytes] = b"rg:cnt:"
-_P_K:    Final[bytes] = b"rg:k:"
-_P_IX:   Final[bytes] = b"rg:ix:"
-_P_OK:   Final[bytes] = b"rg:ok:"
-_P_VAL:  Final[bytes] = b"rg:val:"
+_P_NI: Final[bytes] = b"rg:ni:"
+_P_CNT: Final[bytes] = b"rg:cnt:"
+_P_K: Final[bytes] = b"rg:k:"
+_P_IX: Final[bytes] = b"rg:ix:"
+_P_OK: Final[bytes] = b"rg:ok:"
+_P_VAL: Final[bytes] = b"rg:val:"
+
 
 # -------- Helpers: bytes/u256, keys --------
 def _u256_to_bytes(x: int) -> bytes:
     if x < 0 or x > _U256_MAX:
         abi.revert(b"REG:BAD_INPUT")
     return int(x).to_bytes(32, "big")
+
 
 def _bytes_to_u256(b: bytes) -> int:
     if len(b) == 0:
@@ -112,23 +114,30 @@ def _bytes_to_u256(b: bytes) -> int:
         abi.revert(b"REG:NOT_FOUND")
     return int.from_bytes(b, "big")
 
+
 def _get_u256(k: bytes) -> int:
     return _bytes_to_u256(storage.get(k))
+
 
 def _set_u256(k: bytes, v: int) -> None:
     storage.set(k, _u256_to_bytes(int(v)))
 
+
 def _setb(k: bytes, v: bytes) -> None:
     storage.set(k, bytes(v))
+
 
 def _getb(k: bytes) -> bytes:
     return storage.get(k)
 
+
 def _k(prefix: bytes, id_: bytes) -> bytes:
     return prefix + id_
 
+
 def _kname(prefix: bytes, id_: bytes, name: bytes) -> bytes:
     return prefix + id_ + name
+
 
 def _ki(prefix: bytes, id_: bytes, i: int) -> bytes:
     if i < 0:
@@ -140,12 +149,15 @@ def _ki(prefix: bytes, id_: bytes, i: int) -> bytes:
         idx = i.to_bytes(sz, "big")
     return prefix + id_ + idx
 
+
 def _ensure_name(name: bytes) -> None:
     if not isinstance(name, (bytes, bytearray)) or len(name) == 0:
         abi.revert(b"REG:ZERO_NAME")
 
+
 def _exists(id_: bytes) -> bool:
     return storage.get(_k(_P_EX, id_)) == b"\x01"
+
 
 # -------- ID & creation --------
 def id_from(namespace: bytes, owner: bytes, nonce: bytes) -> bytes:
@@ -153,6 +165,7 @@ def id_from(namespace: bytes, owner: bytes, nonce: bytes) -> bytes:
     Deterministic registry id = keccak256(namespace | owner | nonce).
     """
     return _hash.keccak256(bytes(namespace) + bytes(owner) + bytes(nonce))
+
 
 def create(namespace: bytes, owner_: bytes, nonce: bytes, meta: bytes = b"") -> bytes:
     """
@@ -164,22 +177,27 @@ def create(namespace: bytes, owner_: bytes, nonce: bytes, meta: bytes = b"") -> 
 
     _setb(_k(_P_OWN, id_), bytes(owner_))
     _setb(_k(_P_META, id_), bytes(meta))
-    _set_u256(_k(_P_NI, id_), 0)   # next index
+    _set_u256(_k(_P_NI, id_), 0)  # next index
     _set_u256(_k(_P_CNT, id_), 0)  # present count
     _setb(_k(_P_EX, id_), b"\x01")
 
-    events.emit(b"RegistryCreated", {
-        b"id": id_,
-        b"owner": bytes(owner_),
-        b"meta": bytes(meta),
-    })
+    events.emit(
+        b"RegistryCreated",
+        {
+            b"id": id_,
+            b"owner": bytes(owner_),
+            b"meta": bytes(meta),
+        },
+    )
     return id_
+
 
 # -------- Owner & metadata --------
 def owner(id_: bytes) -> bytes:
     if not _exists(id_):
         abi.revert(b"REG:NOT_FOUND")
     return _getb(_k(_P_OWN, id_))
+
 
 def set_owner(id_: bytes, new_owner: bytes) -> None:
     """
@@ -189,16 +207,21 @@ def set_owner(id_: bytes, new_owner: bytes) -> None:
         abi.revert(b"REG:NOT_FOUND")
     old = _getb(_k(_P_OWN, id_))
     _setb(_k(_P_OWN, id_), bytes(new_owner))
-    events.emit(b"RegistryOwnerSet", {
-        b"id": id_,
-        b"old": old,
-        b"new": bytes(new_owner),
-    })
+    events.emit(
+        b"RegistryOwnerSet",
+        {
+            b"id": id_,
+            b"old": old,
+            b"new": bytes(new_owner),
+        },
+    )
+
 
 def get_meta(id_: bytes) -> bytes:
     if not _exists(id_):
         abi.revert(b"REG:NOT_FOUND")
     return _getb(_k(_P_META, id_))
+
 
 def set_meta(id_: bytes, meta: bytes) -> None:
     """
@@ -207,16 +230,21 @@ def set_meta(id_: bytes, meta: bytes) -> None:
     if not _exists(id_):
         abi.revert(b"REG:NOT_FOUND")
     _setb(_k(_P_META, id_), bytes(meta))
-    events.emit(b"RegistryMetaSet", {
-        b"id": id_,
-        b"len": _u256_to_bytes(len(meta)),
-    })
+    events.emit(
+        b"RegistryMetaSet",
+        {
+            b"id": id_,
+            b"len": _u256_to_bytes(len(meta)),
+        },
+    )
+
 
 # -------- Basic KV --------
 def has(id_: bytes, name: bytes) -> bool:
     if not _exists(id_):
         abi.revert(b"REG:NOT_FOUND")
     return storage.get(_kname(_P_OK, id_, name)) == b"\x01"
+
 
 def get(id_: bytes, name: bytes) -> bytes:
     if not _exists(id_):
@@ -225,10 +253,12 @@ def get(id_: bytes, name: bytes) -> bytes:
         abi.revert(b"REG:NOT_FOUND")
     return _getb(_kname(_P_VAL, id_, name))
 
+
 def size(id_: bytes) -> int:
     if not _exists(id_):
         abi.revert(b"REG:NOT_FOUND")
     return _get_u256(_k(_P_CNT, id_))
+
 
 def put(id_: bytes, name: bytes, value: bytes) -> int:
     """
@@ -264,13 +294,17 @@ def put(id_: bytes, name: bytes, value: bytes) -> int:
     # Set/replace value
     _setb(_kname(_P_VAL, id_, name), bytes(value))
 
-    events.emit(b"RegistrySet", {
-        b"id": id_,
-        b"name": bytes(name),
-        b"valueLen": _u256_to_bytes(len(value)),
-        b"created": _u256_to_bytes(created),
-    })
+    events.emit(
+        b"RegistrySet",
+        {
+            b"id": id_,
+            b"name": bytes(name),
+            b"valueLen": _u256_to_bytes(len(value)),
+            b"created": _u256_to_bytes(created),
+        },
+    )
     return created
+
 
 def delete(id_: bytes, name: bytes) -> int:
     """
@@ -282,16 +316,22 @@ def delete(id_: bytes, name: bytes) -> int:
     if not has(id_, name):
         return 0
     # mark absent
-    _setb(_kname(_P_OK, id_, name), b"")       # presence flag cleared
-    _setb(_kname(_P_VAL, id_, name), b"")      # clear value (keeps storage key deterministic)
+    _setb(_kname(_P_OK, id_, name), b"")  # presence flag cleared
+    _setb(
+        _kname(_P_VAL, id_, name), b""
+    )  # clear value (keeps storage key deterministic)
     cnt = _get_u256(_k(_P_CNT, id_))
     _set_u256(_k(_P_CNT, id_), cnt - 1 if cnt > 0 else 0)
 
-    events.emit(b"RegistryDeleted", {
-        b"id": id_,
-        b"name": bytes(name),
-    })
+    events.emit(
+        b"RegistryDeleted",
+        {
+            b"id": id_,
+            b"name": bytes(name),
+        },
+    )
     return 1
+
 
 # -------- Enumeration (chunkable) --------
 def next_index(id_: bytes) -> int:
@@ -303,6 +343,7 @@ def next_index(id_: bytes) -> int:
         abi.revert(b"REG:NOT_FOUND")
     return _get_u256(_k(_P_NI, id_))
 
+
 def name_at_index(id_: bytes, i: int) -> bytes:
     """
     Returns the key name at write-index `i` (may be empty if index never written).
@@ -312,7 +353,10 @@ def name_at_index(id_: bytes, i: int) -> bytes:
         abi.revert(b"REG:NOT_FOUND")
     return _getb(_ki(_P_K, id_, i))
 
-def list_present_names(id_: bytes, start_index: int, limit: int) -> Tuple[List[bytes], int]:
+
+def list_present_names(
+    id_: bytes, start_index: int, limit: int
+) -> Tuple[List[bytes], int]:
     """
     Scan forward from `start_index` over write-indices, collecting up to `limit`
     **present** (non-tombstoned) names. Returns (names, next_index_cursor).
@@ -340,6 +384,7 @@ def list_present_names(id_: bytes, start_index: int, limit: int) -> Tuple[List[b
         i += 1
     return out, i
 
+
 # Convenience: get value for a batch of names (e.g., result of list_present_names).
 def get_many(id_: bytes, names: List[bytes]) -> List[bytes]:
     if not _exists(id_):
@@ -352,13 +397,25 @@ def get_many(id_: bytes, names: List[bytes]) -> List[bytes]:
             out.append(b"")
     return out
 
+
 __all__ = [
     # id & create
-    "id_from", "create",
+    "id_from",
+    "create",
     # owner/meta
-    "owner", "set_owner", "get_meta", "set_meta",
+    "owner",
+    "set_owner",
+    "get_meta",
+    "set_meta",
     # kv
-    "has", "get", "put", "delete", "size",
+    "has",
+    "get",
+    "put",
+    "delete",
+    "size",
     # enumeration
-    "next_index", "name_at_index", "list_present_names", "get_many",
+    "next_index",
+    "name_at_index",
+    "list_present_names",
+    "get_many",
 ]

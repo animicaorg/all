@@ -6,12 +6,15 @@ from typing import Any, Callable, Optional
 
 import pytest
 
-fm = pytest.importorskip("mempool.fee_market", reason="mempool.fee_market module not found")
+fm = pytest.importorskip(
+    "mempool.fee_market", reason="mempool.fee_market module not found"
+)
 
 
 # -------------------------
 # Small helpers
 # -------------------------
+
 
 def _get_attr_any(obj: Any, names: list[str]) -> Optional[Callable[..., Any] | Any]:
     for n in names:
@@ -54,7 +57,16 @@ def _observe_block_fee(market: Any, fee: int) -> None:
     """
     Feed one block's reference fee into the market (median/paid/base as defined by impl).
     """
-    fn = _get_attr_any(market, ["observe_block", "update_with_block", "apply_block", "record_block", "add_sample"])
+    fn = _get_attr_any(
+        market,
+        [
+            "observe_block",
+            "update_with_block",
+            "apply_block",
+            "record_block",
+            "add_sample",
+        ],
+    )
     if callable(fn):
         try:
             fn(fee)  # type: ignore[misc]
@@ -65,7 +77,16 @@ def _observe_block_fee(market: Any, fee: int) -> None:
             return
 
     # Function-style module?
-    fn_mod = _get_attr_any(fm, ["observe_block", "update_with_block", "apply_block", "record_block", "add_sample"])
+    fn_mod = _get_attr_any(
+        fm,
+        [
+            "observe_block",
+            "update_with_block",
+            "apply_block",
+            "record_block",
+            "add_sample",
+        ],
+    )
     if callable(fn_mod):
         try:
             fn_mod(fee)  # type: ignore[misc]
@@ -96,7 +117,9 @@ def _current_floor(market: Any) -> Optional[float]:
     return None
 
 
-def _compute_floor_from_list(values: list[int], alpha: float, base_floor: int) -> Optional[float]:
+def _compute_floor_from_list(
+    values: list[int], alpha: float, base_floor: int
+) -> Optional[float]:
     """
     Prefer a single-shot API if available, else emulate by constructing a market and observing.
     """
@@ -154,6 +177,7 @@ def _surge_multiplier(load: float) -> Optional[float]:
 # Tests
 # -------------------------
 
+
 def test_floor_ema_tracks_recent_blocks():
     """
     The dynamic floor should approximate an EMA of recent realized fees,
@@ -168,7 +192,9 @@ def test_floor_ema_tracks_recent_blocks():
 
     expect = max(base_floor, _ema_series(samples, alpha))
     # Allow small rounding differences (int vs float, round vs floor)
-    assert math.isclose(got, expect, rel_tol=0.0, abs_tol=2.0), f"got {got}, expected ~{expect}"
+    assert math.isclose(
+        got, expect, rel_tol=0.0, abs_tol=2.0
+    ), f"got {got}, expected ~{expect}"
 
 
 def test_floor_respects_base_minimum():
@@ -199,7 +225,9 @@ def test_surge_multiplier_monotone_above_one_when_congested():
 
     assert m095 is not None and m095 <= 1.0 + 1e-9
     assert m1 is not None and 0.95 <= m1 <= 1.05, "at capacity multiplier should be ~1"
-    assert m12 is not None and m12 > 1.0, "multiplier should increase when load exceeds capacity"
+    assert (
+        m12 is not None and m12 > 1.0
+    ), "multiplier should increase when load exceeds capacity"
     assert m20 is not None and m20 > m12, "multiplier should be monotone in load"
 
 
@@ -208,7 +236,9 @@ def test_watermark_rises_under_pressure_and_decays():
     Watermark should climb when incoming tx min-fees are consistently above it,
     and decay (by some factor) when pressure subsides.
     """
-    wm_mod = pytest.importorskip("mempool.watermark", reason="mempool.watermark module not found")
+    wm_mod = pytest.importorskip(
+        "mempool.watermark", reason="mempool.watermark module not found"
+    )
 
     # Construct watermark
     wm = None
@@ -254,10 +284,14 @@ def test_watermark_rises_under_pressure_and_decays():
     for _ in range(5):
         update_rise(500)
     high = get_w()
-    assert high > low + 10, f"watermark did not rise under pressure: low={low}, high={high}"
+    assert (
+        high > low + 10
+    ), f"watermark did not rise under pressure: low={low}, high={high}"
 
     # Now let it decay
     for _ in range(5):
         decay_step()
     after_decay = get_w()
-    assert after_decay < high - 5, f"watermark did not decay: high={high}, after={after_decay}"
+    assert (
+        after_decay < high - 5
+    ), f"watermark did not decay: high={high}, after={after_decay}"

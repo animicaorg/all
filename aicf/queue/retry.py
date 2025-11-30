@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 aicf.queue.retry
 ================
@@ -29,22 +30,21 @@ Design notes
 
 """
 
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
 import logging
 import math
 import random
-from typing import Protocol, Optional, Tuple, Dict, Any
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Optional, Protocol, Tuple
 
 log = logging.getLogger(__name__)
 
 # ────────────────────────────── Optional metrics ──────────────────────────────
 try:
-    from aicf.metrics import (  # type: ignore
-        COUNTER_RETRY_SCHEDULED as _C_RETRY_SCHED,
-        COUNTER_RETRY_TOMBSTONED as _C_RETRY_TOMB,
-        HISTOGRAM_RETRY_DELAY_SECONDS as _H_RETRY_DELAY,
-    )
+    from aicf.metrics import \
+        COUNTER_RETRY_SCHEDULED as _C_RETRY_SCHED  # type: ignore
+    from aicf.metrics import COUNTER_RETRY_TOMBSTONED as _C_RETRY_TOMB
+    from aicf.metrics import HISTOGRAM_RETRY_DELAY_SECONDS as _H_RETRY_DELAY
 except Exception:  # pragma: no cover - fallback no-ops
 
     class _Noop:
@@ -81,7 +81,14 @@ class _StorageProtocol(Protocol):
 
     # Signatures are for type checking/documentation only.
     def get_job(self, job_id: str) -> Dict[str, Any]: ...
-    def schedule_retry(self, job_id: str, available_at: datetime, last_error: str, attempts: int, now: datetime) -> None: ...
+    def schedule_retry(
+        self,
+        job_id: str,
+        available_at: datetime,
+        last_error: str,
+        attempts: int,
+        now: datetime,
+    ) -> None: ...
     def tombstone_job(self, job_id: str, reason: str, now: datetime) -> None: ...
     def release_lease(self, lease_id: str, now: datetime) -> None: ...
 
@@ -111,6 +118,7 @@ class RetryPolicy:
         - "proof_invalid", "attestation_invalid", "job_too_large",
           "schema_invalid", "unsupported_algorithm"
     """
+
     attempts_cap: int = 6
     base_delay: float = 2.0
     multiplier: float = 1.8
@@ -146,7 +154,9 @@ class RetryPolicy:
     def classify(self, error_code: str) -> str:
         ec = (error_code or "").strip().lower()
         # Heuristic prefixes for permanence
-        if ec in self.permanent_errors or ec.startswith(("validation/", "proof/", "attestation/")):
+        if ec in self.permanent_errors or ec.startswith(
+            ("validation/", "proof/", "attestation/")
+        ):
             return "permanent"
         if ec in self.transient_errors:
             return "transient"
@@ -177,20 +187,33 @@ class RetryEngine:
     Implements timeout/failure handling according to a RetryPolicy.
     """
 
-    def __init__(self, storage: _StorageProtocol, policy: Optional[RetryPolicy] = None) -> None:
+    def __init__(
+        self, storage: _StorageProtocol, policy: Optional[RetryPolicy] = None
+    ) -> None:
         self.storage = storage
         self.policy = policy or RetryPolicy()
 
     # Public API ---------------------------------------------------------------
 
-    def on_timeout(self, job_id: str, lease_id: Optional[str] = None, now: Optional[datetime] = None) -> Tuple[bool, Optional[float]]:
+    def on_timeout(
+        self,
+        job_id: str,
+        lease_id: Optional[str] = None,
+        now: Optional[datetime] = None,
+    ) -> Tuple[bool, Optional[float]]:
         """
         Handle a lease timeout (no proof before deadline). We treat this as
         a transient "deadline_exceeded" error and schedule a retry with backoff.
 
         Returns (requeued, delay_seconds)
         """
-        return self._retry(job_id, error_code="deadline_exceeded", message="lease expired without proof", lease_id=lease_id, now=now)
+        return self._retry(
+            job_id,
+            error_code="deadline_exceeded",
+            message="lease expired without proof",
+            lease_id=lease_id,
+            now=now,
+        )
 
     def on_failure(
         self,
@@ -214,7 +237,9 @@ class RetryEngine:
             return (False, None, True)
 
         # Otherwise retry as transient
-        requeued, delay = self._retry(job_id, error_code=error_code, message=message, lease_id=lease_id, now=now)
+        requeued, delay = self._retry(
+            job_id, error_code=error_code, message=message, lease_id=lease_id, now=now
+        )
         return (requeued, delay, False)
 
     # Internal -----------------------------------------------------------------
@@ -232,7 +257,11 @@ class RetryEngine:
         attempts = int(job.get("attempts", 0)) + 1
 
         if attempts > self.policy.attempts_cap:
-            log.warning("retry: attempts cap exceeded (job_id=%s attempts=%d) → tombstone", job_id, attempts)
+            log.warning(
+                "retry: attempts cap exceeded (job_id=%s attempts=%d) → tombstone",
+                job_id,
+                attempts,
+            )
             self._release_lease_safe(lease_id, ts)
             self._tombstone(job_id, reason=f"attempts_cap:{error_code}", now=ts)
             _C_RETRY_TOMB.inc(1)  # type: ignore
@@ -269,13 +298,19 @@ class RetryEngine:
         self.storage.tombstone_job(job_id=job_id, reason=reason, now=ts)
         log.error("retry: tombstoned (job_id=%s reason=%s)", job_id, reason)
 
-    def _release_lease_safe(self, lease_id: Optional[str], now: Optional[datetime]) -> None:
+    def _release_lease_safe(
+        self, lease_id: Optional[str], now: Optional[datetime]
+    ) -> None:
         if not lease_id:
             return
         try:
             self.storage.release_lease(lease_id=lease_id, now=_utc(now))
         except Exception as e:  # pragma: no cover - defensive
-            log.debug("retry: release_lease failed (lease_id=%s err=%r) — ignoring", lease_id, e)
+            log.debug(
+                "retry: release_lease failed (lease_id=%s err=%r) — ignoring",
+                lease_id,
+                e,
+            )
 
 
 # ──────────────────────────────── Utilities ───────────────────────────────────

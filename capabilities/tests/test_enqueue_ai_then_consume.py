@@ -1,10 +1,11 @@
+import dataclasses
 import importlib
 import types
-import dataclasses
+
 import pytest
 
-
 # ---------- Helpers to find symbols with flexible names ----------
+
 
 def _import(modname: str) -> types.ModuleType | None:
     try:
@@ -23,20 +24,31 @@ def _get_attr(obj, names):
 
 def _load_errors():
     mod = _import("capabilities.errors")
+
     class _FallbackNoResultYet(Exception): ...
-    NoResultYet = getattr(mod, "NoResultYet", _FallbackNoResultYet if mod else _FallbackNoResultYet)
+
+    NoResultYet = getattr(
+        mod, "NoResultYet", _FallbackNoResultYet if mod else _FallbackNoResultYet
+    )
     return NoResultYet
 
 
 NoResultYet = _load_errors()
 
 
-def _mk_ctx(chain_id=1, height=100, tx_hash=bytes.fromhex("11"*32), caller=bytes.fromhex("22"*32)):
+def _mk_ctx(
+    chain_id=1,
+    height=100,
+    tx_hash=bytes.fromhex("11" * 32),
+    caller=bytes.fromhex("22" * 32),
+):
     """
     Many host APIs expect a simple context with these attributes.
     Use a tiny object so attribute access works regardless of implementation.
     """
-    return types.SimpleNamespace(chain_id=chain_id, height=height, tx_hash=tx_hash, caller=caller)
+    return types.SimpleNamespace(
+        chain_id=chain_id, height=height, tx_hash=tx_hash, caller=caller
+    )
 
 
 def _task_id_from(receipt):
@@ -52,6 +64,7 @@ def _task_id_from(receipt):
 
 # ---------- Enqueue via host.compute.* or host.provider.* ----------
 
+
 def _enqueue_ai(ctx, model: str, prompt: bytes):
     # Preferred: capabilities.host.compute.ai_enqueue(ctx, model=..., prompt=...)
     mod = _import("capabilities.host.compute")
@@ -61,7 +74,11 @@ def _enqueue_ai(ctx, model: str, prompt: bytes):
 
     # Fallback: capabilities.host.provider.Provider().ai_enqueue(...)
     prov_mod = _import("capabilities.host.provider")
-    Provider = _get_attr(prov_mod, ["Provider", "HostProvider", "SyscallProvider"]) if prov_mod else None
+    Provider = (
+        _get_attr(prov_mod, ["Provider", "HostProvider", "SyscallProvider"])
+        if prov_mod
+        else None
+    )
     if Provider:
         try:
             prov = Provider()  # type: ignore[call-arg]
@@ -81,6 +98,7 @@ def _enqueue_ai(ctx, model: str, prompt: bytes):
 
 # ---------- Read result via host.result_read or provider ----------
 
+
 def _read_result(task_id):
     mod = _import("capabilities.host.result_read")
     fn = _get_attr(mod, ["read_result", "get_result"]) if mod else None
@@ -89,7 +107,11 @@ def _read_result(task_id):
 
     # Fallback via Provider
     prov_mod = _import("capabilities.host.provider")
-    Provider = _get_attr(prov_mod, ["Provider", "HostProvider", "SyscallProvider"]) if prov_mod else None
+    Provider = (
+        _get_attr(prov_mod, ["Provider", "HostProvider", "SyscallProvider"])
+        if prov_mod
+        else None
+    )
     if Provider:
         try:
             prov = Provider()  # type: ignore[call-arg]
@@ -104,6 +126,7 @@ def _read_result(task_id):
 
 # ---------- Resolver / Result injection for next block ----------
 
+
 def _write_result_next_block(height_next: int, task_id, result_bytes: bytes):
     """
     Try the official resolver first; otherwise write directly into result_store.
@@ -112,7 +135,12 @@ def _write_result_next_block(height_next: int, task_id, result_bytes: bytes):
     res_mod = _import("capabilities.jobs.resolver")
     if res_mod:
         # Common function name variants
-        for name in ["apply_proofs", "resolve_block", "ingest_block_results", "populate_results"]:
+        for name in [
+            "apply_proofs",
+            "resolve_block",
+            "ingest_block_results",
+            "populate_results",
+        ]:
             fn = getattr(res_mod, name, None)
             if callable(fn):
                 try:
@@ -141,7 +169,12 @@ def _write_result_next_block(height_next: int, task_id, result_bytes: bytes):
             # Try with minimal fields
             record = ResultRecord(task_id=task_id, result=result_bytes, height=height_next)  # type: ignore[misc]
     else:
-        record = {"task_id": task_id, "kind": kind_val, "height": height_next, "result": result_bytes}
+        record = {
+            "task_id": task_id,
+            "kind": kind_val,
+            "height": height_next,
+            "result": result_bytes,
+        }
 
     # Choose a put-like function
     put_fn = _get_attr(store_mod, ["put", "store", "write", "save", "insert"])
@@ -155,6 +188,7 @@ def _write_result_next_block(height_next: int, task_id, result_bytes: bytes):
 
 
 # ======================== TESTS ========================
+
 
 def test_enqueue_then_consume_next_block():
     """

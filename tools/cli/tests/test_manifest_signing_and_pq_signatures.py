@@ -5,7 +5,8 @@ from dataclasses import replace
 
 import pytest
 
-from vm_py.runtime.manifest_provenance import compute_manifest_hash_for_provenance
+from vm_py.runtime.manifest_provenance import \
+    compute_manifest_hash_for_provenance
 
 
 def _enable_fake_dilithium(monkeypatch: pytest.MonkeyPatch):
@@ -20,7 +21,9 @@ def _enable_fake_dilithium(monkeypatch: pytest.MonkeyPatch):
     return dilithium3, pq_sign, pq_verify
 
 
-def test_manifest_signature_roundtrip_and_domain_enforcement(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_manifest_signature_roundtrip_and_domain_enforcement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     dilithium3, pq_sign, pq_verify = _enable_fake_dilithium(monkeypatch)
 
     sk, pk = dilithium3.keypair(seed=b"manifest-signer")
@@ -40,7 +43,9 @@ def test_manifest_signature_roundtrip_and_domain_enforcement(monkeypatch: pytest
     assert pq_verify.verify_detached(manifest_hash, sig, pk)
 
     with pytest.raises(ValueError):
-        pq_verify.verify_detached(manifest_hash, sig, pk, domain="generic", strict_domain=True)
+        pq_verify.verify_detached(
+            manifest_hash, sig, pk, domain="generic", strict_domain=True
+        )
 
     bad_alg_sig = replace(sig, alg_id=0x42)
     with pytest.raises(ValueError):

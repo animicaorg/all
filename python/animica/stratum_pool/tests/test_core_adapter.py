@@ -1,12 +1,13 @@
 import asyncio
+import sys
 from pathlib import Path
 
 import pytest
 
-import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from animica.stratum_pool.core import MiningCoreAdapter, MiningJob
+
 from mining.share_submitter import RpcError
 
 

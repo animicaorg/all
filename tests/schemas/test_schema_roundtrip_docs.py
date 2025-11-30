@@ -107,7 +107,7 @@ def _discover_schema_refs_in_docs() -> Set[Path]:
             if normalized.startswith("schemas/"):
                 normalized = "docs/" + normalized
 
-            ref_path = (root / normalized)
+            ref_path = root / normalized
 
             try:
                 # Store as repo-relative for nicer test output
@@ -296,6 +296,5 @@ def test_all_schemas_referenced_somewhere() -> None:
     if unused:
         pytest.xfail(
             "Some schema files are not referenced in docs (could be OK but "
-            "worth reviewing):\n"
-            + "\n".join(f"  - {p}" for p in unused)
+            "worth reviewing):\n" + "\n".join(f"  - {p}" for p in unused)
         )

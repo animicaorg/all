@@ -11,12 +11,12 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import pytest
 
-
 # ------------------------------- CLI Adapters ---------------------------------
 # We try to exercise the real CLIs if available (Typer/Click/argparse/main()).
 # If they aren't present (or their signature is unknown), we fall back to an
 # in-memory stub that validates the intended flow semantics so this test remains
 # useful during scaffolding and refactors.
+
 
 class CliRunResult(Tuple[bool, str]):
     ok: bool
@@ -30,7 +30,9 @@ def _import_or_none(modname: str) -> Optional[types.ModuleType]:
         return None
 
 
-def _typer_runner(mod: types.ModuleType) -> Optional[Callable[[List[str]], CliRunResult]]:
+def _typer_runner(
+    mod: types.ModuleType,
+) -> Optional[Callable[[List[str]], CliRunResult]]:
     try:
         import typer  # noqa: F401
         from typer.testing import CliRunner  # type: ignore
@@ -50,7 +52,9 @@ def _typer_runner(mod: types.ModuleType) -> Optional[Callable[[List[str]], CliRu
     return run
 
 
-def _click_runner(mod: types.ModuleType) -> Optional[Callable[[List[str]], CliRunResult]]:
+def _click_runner(
+    mod: types.ModuleType,
+) -> Optional[Callable[[List[str]], CliRunResult]]:
     try:
         import click  # noqa: F401
         from click.testing import CliRunner  # type: ignore
@@ -72,7 +76,9 @@ def _click_runner(mod: types.ModuleType) -> Optional[Callable[[List[str]], CliRu
     return None
 
 
-def _main_runner(mod: types.ModuleType) -> Optional[Callable[[List[str]], CliRunResult]]:
+def _main_runner(
+    mod: types.ModuleType,
+) -> Optional[Callable[[List[str]], CliRunResult]]:
     fn = getattr(mod, "main", None) or getattr(mod, "run", None)
     if not callable(fn):
         return None
@@ -90,7 +96,7 @@ def _main_runner(mod: types.ModuleType) -> Optional[Callable[[List[str]], CliRun
             if isinstance(rv, int) and rv != 0:
                 ok = False
         except SystemExit as se:
-            ok = (int(getattr(se, "code", 0) or 0) == 0)
+            ok = int(getattr(se, "code", 0) or 0) == 0
         except Exception as e:  # pragma: no cover - defensive
             ok = False
             print(f"Exception: {e}", file=buf)
@@ -111,6 +117,7 @@ def _build_cli_runner(modname: str) -> Optional[Callable[[List[str]], CliRunResu
 
 
 # ------------------------------- Fallback stub --------------------------------
+
 
 class _RegistryStub:
     def __init__(self) -> None:
@@ -145,6 +152,7 @@ class _RegistryStub:
 
 # --------------------------------- Fixtures -----------------------------------
 
+
 @pytest.fixture(scope="module")
 def tmp_env(tmp_path_factory: pytest.TempPathFactory) -> Dict[str, str]:
     d = tmp_path_factory.mktemp("aicf_cli_flow")
@@ -163,11 +171,15 @@ def tmp_env(tmp_path_factory: pytest.TempPathFactory) -> Dict[str, str]:
 @pytest.fixture(scope="module")
 def attestation_file(tmp_env: Dict[str, str]) -> Path:
     p = Path(tmp_env["AICF_CONFIG_DIR"]) / "attestation.json"
-    p.write_text(json.dumps({
-        "vendor": "TEST",
-        "evidence": {"quote": "0xdeadbeef"},
-        "capabilities": ["AI"],
-    }))
+    p.write_text(
+        json.dumps(
+            {
+                "vendor": "TEST",
+                "evidence": {"quote": "0xdeadbeef"},
+                "capabilities": ["AI"],
+            }
+        )
+    )
     return p
 
 
@@ -178,7 +190,10 @@ def stub() -> _RegistryStub:
 
 # --------------------------------- Helpers ------------------------------------
 
-def _try_invocations(runner: Callable[[List[str]], CliRunResult], variants: List[List[str]]) -> CliRunResult:
+
+def _try_invocations(
+    runner: Callable[[List[str]], CliRunResult], variants: List[List[str]]
+) -> CliRunResult:
     last_out = ""
     for args in variants:
         ok, out = runner(args)
@@ -189,6 +204,7 @@ def _try_invocations(runner: Callable[[List[str]], CliRunResult], variants: List
 
 
 # ---------------------------------- The Test ----------------------------------
+
 
 def test_cli_provider_flow_register_stake_heartbeat_complete_withdraw(
     tmp_env: Dict[str, str],
@@ -205,7 +221,14 @@ def test_cli_provider_flow_register_stake_heartbeat_complete_withdraw(
             reg_runner,
             [
                 ["--id", pid, "--cap", "AI", "--attestation", str(attestation_file)],
-                ["--provider-id", pid, "--capability", "AI", "--attest", str(attestation_file)],
+                [
+                    "--provider-id",
+                    pid,
+                    "--capability",
+                    "AI",
+                    "--attest",
+                    str(attestation_file),
+                ],
                 [pid, str(attestation_file), "--cap", "AI"],
             ],
         )
@@ -295,7 +318,9 @@ def test_cli_provider_flow_register_stake_heartbeat_complete_withdraw(
     bal = None
     # Some projects expose a balance query in provider_stake CLI
     if stake_runner:
-        got, out = _try_invocations(stake_runner, [["balance", "--id", pid], ["balance", pid]])
+        got, out = _try_invocations(
+            stake_runner, [["balance", "--id", pid], ["balance", pid]]
+        )
         if got:
             # Try to parse an integer from output
             try:
@@ -347,7 +372,9 @@ def test_cli_provider_flow_register_stake_heartbeat_complete_withdraw(
     # ------------------------------ Assertions --------------------------------
 
     # Basic sanity: we should have either used real CLIs or the fallback path.
-    assert reg_ok or used_fallback, "register step neither succeeded via CLI nor fallback"
+    assert (
+        reg_ok or used_fallback
+    ), "register step neither succeeded via CLI nor fallback"
 
     # Stake must be recorded (real CLI may not expose readback easily; tolerate).
     if used_fallback:
@@ -365,4 +392,7 @@ def test_cli_provider_flow_register_stake_heartbeat_complete_withdraw(
     if before_withdraw is not None and used_fallback:
         after = stub.balances.get(pid, 0)
         assert after <= before_withdraw, "withdraw should not increase balance"
-        assert (before_withdraw - after) in (amount_withdraw, 0), "withdraw may be delayed; allow no-op"
+        assert (before_withdraw - after) in (
+            amount_withdraw,
+            0,
+        ), "withdraw may be delayed; allow no-op"

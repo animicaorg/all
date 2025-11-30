@@ -34,9 +34,8 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from typing import Tuple, Optional
-
 from hashlib import scrypt as _scrypt
+from typing import Optional, Tuple
 
 try:
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -50,8 +49,8 @@ else:
 
 # We depend on the previously provided pq package.
 # The registry helps resolve algorithm names/ids and sizes.
-from pq.py import registry as pq_registry
 from pq.py import keygen as pq_keygen
+from pq.py import registry as pq_registry
 from pq.py import sign as pq_sign
 from pq.py import verify as pq_verify
 
@@ -163,15 +162,17 @@ P2P_ID_SIGN_DOMAIN = b"animica/p2p/id-sign/v1"
 
 @dataclass
 class NodeIdentity:
-    alg: str              # canonical name (e.g., 'dilithium3', 'sphincs_shake_128s')
+    alg: str  # canonical name (e.g., 'dilithium3', 'sphincs_shake_128s')
     pubkey: bytes
-    seckey: bytes         # decrypted in-memory
+    seckey: bytes  # decrypted in-memory
 
     def sign(self, msg: bytes, *, domain: bytes = P2P_ID_SIGN_DOMAIN) -> bytes:
         """Sign bytes with domain separation."""
         return _sign(self.alg, self.seckey, msg, domain)
 
-    def verify(self, msg: bytes, sig: bytes, *, domain: bytes = P2P_ID_SIGN_DOMAIN) -> bool:
+    def verify(
+        self, msg: bytes, sig: bytes, *, domain: bytes = P2P_ID_SIGN_DOMAIN
+    ) -> bool:
         """Verify a signature against our public key."""
         return _verify(self.alg, self.pubkey, msg, sig, domain)
 
@@ -186,17 +187,24 @@ class NodeIdentity:
 
 # --- Keystore I/O ------------------------------------------------------------
 
+
 def _kdf_scrypt(passphrase: str, salt: bytes, n: int, r: int, p: int) -> bytes:
-    return _scrypt(password=passphrase.encode("utf-8"), salt=salt, n=n, r=r, p=p, dklen=32)
+    return _scrypt(
+        password=passphrase.encode("utf-8"), salt=salt, n=n, r=r, p=p, dklen=32
+    )
 
 
-def _aead_encrypt(key: bytes, nonce: bytes, plaintext: bytes, aad: Optional[bytes] = None) -> bytes:
+def _aead_encrypt(
+    key: bytes, nonce: bytes, plaintext: bytes, aad: Optional[bytes] = None
+) -> bytes:
     if AESGCM is None:  # pragma: no cover
         raise RuntimeError(f"cryptography AESGCM unavailable: {_aead_err}")
     return AESGCM(key).encrypt(nonce, plaintext, aad)
 
 
-def _aead_decrypt(key: bytes, nonce: bytes, ciphertext: bytes, aad: Optional[bytes] = None) -> bytes:
+def _aead_decrypt(
+    key: bytes, nonce: bytes, ciphertext: bytes, aad: Optional[bytes] = None
+) -> bytes:
     if AESGCM is None:  # pragma: no cover
         raise RuntimeError(f"cryptography AESGCM unavailable: {_aead_err}")
     return AESGCM(key).decrypt(nonce, ciphertext, aad)
@@ -272,6 +280,7 @@ def load_keystore(path: str, passphrase: str) -> NodeIdentity:
 
 # --- High-level helpers ------------------------------------------------------
 
+
 def generate(alg: str = "dilithium3") -> NodeIdentity:
     """
     Generate a fresh identity for the given signature algorithm.
@@ -282,7 +291,9 @@ def generate(alg: str = "dilithium3") -> NodeIdentity:
     return NodeIdentity(alg=alg_name, pubkey=pk, seckey=sk)
 
 
-def load_or_create(path: str, passphrase: str, *, alg: str = "dilithium3") -> NodeIdentity:
+def load_or_create(
+    path: str, passphrase: str, *, alg: str = "dilithium3"
+) -> NodeIdentity:
     """
     Load a keystore if present; otherwise generate & save a new identity.
     """
@@ -297,16 +308,21 @@ def load_or_create(path: str, passphrase: str, *, alg: str = "dilithium3") -> No
 
 if __name__ == "__main__":  # pragma: no cover
     import argparse
+
     ap = argparse.ArgumentParser(description="Animica P2P identity keystore tool")
     ap.add_argument("--file", required=True, help="path to keystore.json")
     ap.add_argument("--pass", dest="pw", required=True, help="passphrase")
     ap.add_argument("--alg", default="dilithium3", help="dilithium3|sphincs_shake_128s")
-    ap.add_argument("--make", action="store_true", help="generate new keystore if missing")
+    ap.add_argument(
+        "--make", action="store_true", help="generate new keystore if missing"
+    )
     args = ap.parse_args()
 
     if args.make:
         ident = load_or_create(args.file, args.pw, alg=args.alg)
-        print(f"[+] keystore ready: {args.file} alg={ident.alg} pub={ident.pubkey.hex()[:16]}…")
+        print(
+            f"[+] keystore ready: {args.file} alg={ident.alg} pub={ident.pubkey.hex()[:16]}…"
+        )
     else:
         ident = load_keystore(args.file, args.pw)
         print(f"[+] loaded: alg={ident.alg} pub={ident.pubkey.hex()[:16]}…")

@@ -46,21 +46,23 @@ Lightly synchronized via per-kind token buckets and one in-memory inflight set.
 This is sufficient for the default miner orchestrator (single process).
 """
 
-from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Tuple, Callable
-import os
-import time
-import json
 import hashlib
+import json
+import os
 import threading
+import time
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, Optional, Tuple
 
 # -----------------------------------------------------------------------------
 # Optional logging
 try:
     from core.logging import get_logger
+
     log = get_logger("mining.adapters.aicf_queue")
 except Exception:  # noqa: BLE001
     import logging
+
     logging.basicConfig(level=logging.INFO)
     log = logging.getLogger("mining.adapters.aicf_queue")
 
@@ -81,23 +83,29 @@ try:
     def _http_post(url: str, body: bytes, headers: Dict[str, str]) -> Tuple[int, bytes]:  # type: ignore[no-redef]
         r = requests.post(url, data=body, headers=headers, timeout=5)
         return r.status_code, r.content
+
 except Exception:  # noqa: BLE001
     try:
         import urllib.request  # type: ignore
 
         def _http_post(url: str, body: bytes, headers: Dict[str, str]) -> Tuple[int, bytes]:  # type: ignore[no-redef]
             req = urllib.request.Request(url, data=body, headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=5) as resp:  # nosec B310 (local dev)
+            with urllib.request.urlopen(
+                req, timeout=5
+            ) as resp:  # nosec B310 (local dev)
                 return resp.getcode(), resp.read()
+
     except Exception:  # noqa: BLE001
         _http_post = None
 
 # -----------------------------------------------------------------------------
 # Types
 
+
 @dataclass
 class TokenBucket:
     """Simple token-bucket rate limiter (thread-safe)."""
+
     capacity: float
     refill_per_sec: float
     tokens: float = field(default=0.0)
@@ -108,7 +116,9 @@ class TokenBucket:
         now = time.monotonic()
         with self.lock:
             elapsed = now - self.last
-            self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_per_sec)
+            self.tokens = min(
+                self.capacity, self.tokens + elapsed * self.refill_per_sec
+            )
             self.last = now
             if self.tokens >= cost:
                 self.tokens -= cost
@@ -131,7 +141,9 @@ class EnqueueResult:
 @dataclass
 class JobStatus:
     job_id: JobId
-    status: str               # "QUEUED" | "ASSIGNED" | "RUNNING" | "COMPLETED" | "FAILED" | "EXPIRED"
+    status: (
+        str  # "QUEUED" | "ASSIGNED" | "RUNNING" | "COMPLETED" | "FAILED" | "EXPIRED"
+    )
     provider_id: Optional[str] = None
     result_digest: Optional[str] = None
     error: Optional[str] = None
@@ -143,6 +155,7 @@ class JobStatus:
 
 # -----------------------------------------------------------------------------
 # Adapter
+
 
 class AICFQueueAdapter:
     """
@@ -182,15 +195,19 @@ class AICFQueueAdapter:
 
         # Simple in-memory SLA tracker (EMA)
         self._ema_alpha = 0.2
-        self._provider_ok: Dict[str, float] = {}   # provider_id → success-rate EMA
+        self._provider_ok: Dict[str, float] = {}  # provider_id → success-rate EMA
         self._provider_rtt: Dict[str, float] = {}  # provider_id → latency EMA (ms)
 
         if _cap_aicf is not None:
             log.info("AICFQueueAdapter: using local capabilities.adapters.aicf")
         elif self._use_rpc:
-            log.info("AICFQueueAdapter: JSON-RPC fallback enabled for read-only methods")
+            log.info(
+                "AICFQueueAdapter: JSON-RPC fallback enabled for read-only methods"
+            )
         else:
-            log.warning("AICFQueueAdapter: no AICF backend available; using noop DEV queue")
+            log.warning(
+                "AICFQueueAdapter: no AICF backend available; using noop DEV queue"
+            )
 
     # ---------------------- Public API ----------------------
 
@@ -253,7 +270,8 @@ class AICFQueueAdapter:
             "shots": int(shots),
             "max_cost_units": int(max_cost_units),
             "priority": int(priority),
-            "prefer_providers": prefer_providers or self._ranked_providers(kind="QUANTUM"),
+            "prefer_providers": prefer_providers
+            or self._ranked_providers(kind="QUANTUM"),
             "metadata": metadata or {},
         }
         try:
@@ -297,7 +315,9 @@ class AICFQueueAdapter:
 
     # -------------------- Internals: submission --------------------
 
-    def _submit_via_local_or_noop(self, spec: Dict[str, Any], *, prefer: Tuple[str, ...]) -> Optional[str]:
+    def _submit_via_local_or_noop(
+        self, spec: Dict[str, Any], *, prefer: Tuple[str, ...]
+    ) -> Optional[str]:
         """
         Try local adapter first. If not present, fall back to noop dev submission.
         """
@@ -354,14 +374,20 @@ class AICFQueueAdapter:
             return
         pid = st.provider_id
         # success-rate EMA
-        ok = 1.0 if st.status == "COMPLETED" else (0.0 if st.status in ("FAILED", "EXPIRED") else None)
+        ok = (
+            1.0
+            if st.status == "COMPLETED"
+            else (0.0 if st.status in ("FAILED", "EXPIRED") else None)
+        )
         if ok is not None:
             prev = self._provider_ok.get(pid, 0.8)
             self._provider_ok[pid] = prev * (1 - self._ema_alpha) + ok * self._ema_alpha
         # latency EMA
         if st.latency_ms is not None:
             prev = self._provider_rtt.get(pid, float(st.latency_ms))
-            self._provider_rtt[pid] = prev * (1 - self._ema_alpha) + float(st.latency_ms) * self._ema_alpha
+            self._provider_rtt[pid] = (
+                prev * (1 - self._ema_alpha) + float(st.latency_ms) * self._ema_alpha
+            )
 
     def _maybe_release_inflight(self, st: JobStatus) -> None:
         if st.status in ("COMPLETED", "FAILED", "EXPIRED"):
@@ -465,13 +491,16 @@ class AICFQueueAdapter:
     def _make_noop_job_id(self, spec: Dict[str, Any]) -> str:
         h = hashlib.sha3_256()
         h.update(b"NOOP-AICF-JOB|")
-        h.update(json.dumps(spec, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+        h.update(
+            json.dumps(spec, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        )
         h.update(str(time.time_ns()).encode("ascii"))
         return "noop_" + h.hexdigest()[:24]
 
 
 # -----------------------------------------------------------------------------
 # Helpers
+
 
 def _to_float(x: Any) -> Optional[float]:
     try:

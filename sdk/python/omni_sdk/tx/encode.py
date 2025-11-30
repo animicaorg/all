@@ -37,13 +37,16 @@ with the same keys. We read via attribute access with mapping fallback.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Tuple, Mapping, Union
+from typing import Any, Dict, Mapping, Tuple, Union
 
 # Deterministic CBOR helpers (required)
 try:
-    from omni_sdk.utils.cbor import dumps as cbor_dumps, loads as cbor_loads  # type: ignore
+    from omni_sdk.utils.cbor import dumps as cbor_dumps  # type: ignore
+    from omni_sdk.utils.cbor import loads as cbor_loads
 except Exception as _e:  # pragma: no cover
-    raise RuntimeError("omni_sdk.utils.cbor is required for deterministic CBOR encoding") from _e
+    raise RuntimeError(
+        "omni_sdk.utils.cbor is required for deterministic CBOR encoding"
+    ) from _e
 
 # Hash helpers (for tx_hash)
 try:
@@ -53,8 +56,11 @@ except Exception:
 
     def _sha3_256(b: bytes) -> bytes:  # type: ignore
         if not hasattr(hashlib, "sha3_256"):
-            raise RuntimeError("Python hashlib lacks sha3_256; install pysha3 or upgrade Python.")
+            raise RuntimeError(
+                "Python hashlib lacks sha3_256; install pysha3 or upgrade Python."
+            )
         return hashlib.sha3_256(b).digest()
+
 
 # Small hex helper (for debugging)
 try:
@@ -82,6 +88,7 @@ _BODY_KEY_ORDER = (
     "maxFee",
     "data",
 )
+
 
 def _get(tx: TxLike, key: str) -> Any:
     if hasattr(tx, key):
@@ -117,8 +124,12 @@ def canonical_body_dict(tx: TxLike) -> Dict[str, Any]:
         "to": _get(tx, "to"),
         "nonce": int(_get(tx, "nonce")),
         "value": int(_get(tx, "value")),
-        "gasLimit": int(_get(tx, "gas_limit") if hasattr(tx, "gas_limit") else _get(tx, "gasLimit")),
-        "maxFee": int(_get(tx, "max_fee") if hasattr(tx, "max_fee") else _get(tx, "maxFee")),
+        "gasLimit": int(
+            _get(tx, "gas_limit") if hasattr(tx, "gas_limit") else _get(tx, "gasLimit")
+        ),
+        "maxFee": int(
+            _get(tx, "max_fee") if hasattr(tx, "max_fee") else _get(tx, "maxFee")
+        ),
         "data": bytes(_get(tx, "data") or b""),
     }
 
@@ -143,6 +154,7 @@ def sign_bytes(tx: TxLike) -> bytes:
 # -----------------------------------------------------------------------------
 # Signed envelope (wire format)
 # -----------------------------------------------------------------------------
+
 
 def pack_signed(
     tx: TxLike,
@@ -207,6 +219,7 @@ def unpack_signed(raw: bytes) -> Dict[str, Any]:
 # -----------------------------------------------------------------------------
 # Hash helpers
 # -----------------------------------------------------------------------------
+
 
 def tx_hash(data: Union[bytes, Dict[str, Any]]) -> bytes:
     """

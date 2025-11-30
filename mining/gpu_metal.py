@@ -33,8 +33,10 @@ from typing import Any, Dict, List, Optional
 # ---------- Optional imports (guarded) ----------
 try:  # Only present on macOS with PyObjC installed
     import platform
+
     if platform.system() == "Darwin":
         import Metal  # type: ignore
+
         _HAS_METAL = True
     else:
         Metal = None  # type: ignore
@@ -47,12 +49,15 @@ except Exception:  # pragma: no cover
 try:
     from .errors import DeviceUnavailable  # type: ignore
 except Exception:  # pragma: no cover
+
     class DeviceUnavailable(RuntimeError):
         pass
+
 
 try:
     from .device import DeviceInfo, DeviceType  # type: ignore
 except Exception:  # pragma: no cover
+
     @dataclass(frozen=True)
     class DeviceInfo:
         type: str
@@ -69,9 +74,11 @@ except Exception:  # pragma: no cover
         GPU = "gpu"
         CPU = "cpu"
 
+
 # Reuse canonical math if available (for CPU fallback equivalence)
 try:
     from . import nonce_domain as nd  # type: ignore
+
     _HAS_ND = True
 except Exception:  # pragma: no cover
     _HAS_ND = False
@@ -99,7 +106,9 @@ def _uniform_from_digest(d: bytes) -> float:
     # Use first 16 bytes as big-endian 128-bit integer; map to (0,1]
     hi = int.from_bytes(d[0:8], "big")
     lo = int.from_bytes(d[8:16], "big")
-    u = (hi / 18446744073709551616.0) + ((lo + 1.0) / 340282366920938463463374607431768211456.0)
+    u = (hi / 18446744073709551616.0) + (
+        (lo + 1.0) / 340282366920938463463374607431768211456.0
+    )
     return u
 
 
@@ -281,6 +290,7 @@ kernel void find_hashshares(
 # Backend object
 # ────────────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class _Prepared:
     header: bytes
@@ -291,7 +301,9 @@ class _Prepared:
 class MetalBackend:
     def __init__(self, device_index: int | None = None) -> None:
         if not _HAS_METAL:
-            raise DeviceUnavailable("Metal backend requires macOS + pyobjc-framework-Metal.")
+            raise DeviceUnavailable(
+                "Metal backend requires macOS + pyobjc-framework-Metal."
+            )
         # Device
         dev = Metal.MTLCreateSystemDefaultDevice()
         if dev is None:
@@ -332,7 +344,9 @@ class MetalBackend:
 
     def prepare_header(self, header_bytes: bytes, mix_seed: bytes) -> _Prepared:
         use_gpu = (len(header_bytes) + 32 + 8) <= 136
-        return _Prepared(header=bytes(header_bytes), mix_seed=bytes(mix_seed), use_gpu=use_gpu)
+        return _Prepared(
+            header=bytes(header_bytes), mix_seed=bytes(mix_seed), use_gpu=use_gpu
+        )
 
     def scan(
         self,
@@ -346,8 +360,13 @@ class MetalBackend:
     ) -> List[Dict[str, Any]]:
         # Fallback if message would exceed one SHA3 rate block
         if not prepared.use_gpu:
-            return self._scan_cpu(prepared, theta_micro=theta_micro, start_nonce=start_nonce,
-                                  iterations=iterations, max_found=max_found)
+            return self._scan_cpu(
+                prepared,
+                theta_micro=theta_micro,
+                start_nonce=start_nonce,
+                iterations=iterations,
+                max_found=max_found,
+            )
         try:
             cutoff = float(_exp_neg_theta(theta_micro))
             dev = self._dev
@@ -406,14 +425,28 @@ class MetalBackend:
                     (nonce,) = struct.unpack_from("<Q", out_nonces, i * 8)
                     (u_f32,) = struct.unpack_from("<f", out_u, i * 4)
                     digest = out_hashes[i * 32 : (i + 1) * 32]
-                    d_ratio = (-math.log(max(u_f32, 1e-38))) / max(theta_micro / 1e6, 1e-12)
-                    res.append({"nonce": int(nonce), "u": float(u_f32), "d_ratio": float(d_ratio), "hash": digest})
+                    d_ratio = (-math.log(max(u_f32, 1e-38))) / max(
+                        theta_micro / 1e6, 1e-12
+                    )
+                    res.append(
+                        {
+                            "nonce": int(nonce),
+                            "u": float(u_f32),
+                            "d_ratio": float(d_ratio),
+                            "hash": digest,
+                        }
+                    )
             res.sort(key=lambda x: x["nonce"])
             return res[:max_found]
         except Exception:
             # Any Metal error ⇒ CPU fallback for the call
-            return self._scan_cpu(prepared, theta_micro=theta_micro, start_nonce=start_nonce,
-                                  iterations=iterations, max_found=max_found)
+            return self._scan_cpu(
+                prepared,
+                theta_micro=theta_micro,
+                start_nonce=start_nonce,
+                iterations=iterations,
+                max_found=max_found,
+            )
 
     # ---- CPU fallback ----
     def _scan_cpu(
@@ -435,7 +468,14 @@ class MetalBackend:
             u = _uniform_from_digest(d)
             if u <= cutoff:
                 d_ratio = (-math.log(u)) / max(theta_micro / 1e6, 1e-12)
-                out.append({"nonce": nonce, "u": float(u), "d_ratio": float(d_ratio), "hash": d})
+                out.append(
+                    {
+                        "nonce": nonce,
+                        "u": float(u),
+                        "d_ratio": float(d_ratio),
+                        "hash": d,
+                    }
+                )
         return out
 
 
@@ -443,23 +483,29 @@ class MetalBackend:
 # Metal buffer helpers (PyObjC)
 # ────────────────────────────────────────────────────────────────────────
 
+
 def _mkbuf(dev, data: bytes):
     return dev.newBufferWithBytes_length_options_(data, len(data), 0)
+
 
 def _mkbuf_u32(dev, v: int):
     b = struct.pack("<I", v & 0xFFFFFFFF)
     return dev.newBufferWithBytes_length_options_(b, len(b), 0)
 
+
 def _mkbuf_u64(dev, v: int):
     b = struct.pack("<Q", v & 0xFFFFFFFFFFFFFFFF)
     return dev.newBufferWithBytes_length_options_(b, len(b), 0)
+
 
 def _mkbuf_f32(dev, f: float):
     b = struct.pack("<f", float(f))
     return dev.newBufferWithBytes_length_options_(b, len(b), 0)
 
+
 def _read_bytes(buf, n: int) -> memoryview:
     return memoryview(buf.contents()).cast("B")[:n]
+
 
 def _read_u32(buf) -> int:
     mv = memoryview(buf.contents()).cast("B")
@@ -469,6 +515,7 @@ def _read_u32(buf) -> int:
 # ────────────────────────────────────────────────────────────────────────
 # Public API
 # ────────────────────────────────────────────────────────────────────────
+
 
 def list_devices() -> List[DeviceInfo]:
     infos: List[DeviceInfo] = []
@@ -509,7 +556,9 @@ if __name__ == "__main__":  # pragma: no cover
         hdr = b"\x00" * 80
         mix = b"\x22" * 32
         prep = dev.prepare_header(hdr, mix)
-        res = dev.scan(prep, theta_micro=200000.0, start_nonce=0, iterations=200000, max_found=3)
+        res = dev.scan(
+            prep, theta_micro=200000.0, start_nonce=0, iterations=200000, max_found=3
+        )
         for r in res:
             print("  nonce=", r["nonce"], "u=", r["u"], "d_ratio=", r["d_ratio"])
     except Exception as e:

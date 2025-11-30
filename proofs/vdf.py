@@ -37,19 +37,20 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, List, Tuple
 
-from .errors import ProofError, SchemaError
-from .types import ProofEnvelope, ProofType
-from .metrics import ProofMetrics
 from .cbor import validate_body
+from .errors import ProofError, SchemaError
+from .metrics import ProofMetrics
+from .types import ProofEnvelope, ProofType
 from .utils.hash import sha3_256
 
-
 # ─────────────────────────────── utilities ───────────────────────────────
+
 
 def _int_from_bytes(b: bytes) -> int:
     if not isinstance(b, (bytes, bytearray)):
         raise SchemaError("expected bytes")
     return int.from_bytes(b, "big", signed=False)
+
 
 def _int_to_bytes(x: int, size: int | None = None) -> bytes:
     if x < 0:
@@ -62,6 +63,7 @@ def _int_to_bytes(x: int, size: int | None = None) -> bytes:
 # ───────────────────── hash-to-prime (deterministic) ─────────────────────
 
 _CHAL_DOMAIN = b"Animica/VDF/Wesolowski/challenge/v1"
+
 
 def _hash_to_prime(seed: bytes, bits: int = 128, max_iter: int = 10_000) -> int:
     """
@@ -79,8 +81,8 @@ def _hash_to_prime(seed: bytes, bits: int = 128, max_iter: int = 10_000) -> int:
         # Mask to requested bit width and force top/low bits to ensure size & odd.
         m = int.from_bytes(h, "big")
         cand = m & ((1 << bits) - 1)
-        cand |= (1 << (bits - 1))  # set MSB
-        cand |= 1                  # force odd
+        cand |= 1 << (bits - 1)  # set MSB
+        cand |= 1  # force odd
         # Increment by 2 k times to explore nearby candidates deterministically.
         for k in range(0, 257):  # small stride before moving ctr
             c = cand + 2 * k
@@ -88,6 +90,7 @@ def _hash_to_prime(seed: bytes, bits: int = 128, max_iter: int = 10_000) -> int:
                 return c
         ctr += 1
     raise ProofError("failed to derive a challenge prime within iteration budget")
+
 
 def _is_probable_prime(n: int) -> bool:
     """Deterministic MR for 64..256-bit candidates with fixed bases."""
@@ -110,6 +113,7 @@ def _is_probable_prime(n: int) -> bool:
             return False
     return True
 
+
 def _mr_check(a: int, s: int, d: int, n: int) -> bool:
     x = pow(a % n, d, n)
     if x == 1 or x == n - 1:
@@ -123,6 +127,7 @@ def _mr_check(a: int, s: int, d: int, n: int) -> bool:
 
 # ─────────────────────────── verification core ───────────────────────────
 
+
 def _validate_group_rsa(group: Dict[str, Any]) -> int:
     if group.get("kind") != "RSA":
         raise SchemaError("only RSA group is supported in v1 verifier")
@@ -134,14 +139,17 @@ def _validate_group_rsa(group: Dict[str, Any]) -> int:
         raise SchemaError("RSA modulus must be an odd integer ≥ 3")
     return N
 
+
 def _gcd(a: int, b: int) -> int:
     while b:
         a, b = b, a % b
     return abs(a)
 
+
 def _derive_challenge_prime(N: int, g: int, y: int, bits: int = 128) -> int:
     seed = _int_to_bytes(N) + _int_to_bytes(g) + _int_to_bytes(y)
     return _hash_to_prime(seed, bits=bits)
+
 
 def _estimate_seconds(T: int, mod_bits: int, hint_iters_per_sec: float | None) -> float:
     """

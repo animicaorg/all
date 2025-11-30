@@ -4,6 +4,7 @@ import pytest
 
 try:
     from vm_py.precompiles import native_loader
+
     _HAS_NATIVE = True
 except Exception:
     native_loader = None
@@ -11,13 +12,16 @@ except Exception:
 
 try:
     import oqs
+
     _HAS_OQS = True
 except Exception:
     oqs = None
     _HAS_OQS = False
 
 
-@pytest.mark.skipif(not (_HAS_NATIVE or _HAS_OQS), reason="No native precompile or python-oqs available")
+@pytest.mark.skipif(
+    not (_HAS_NATIVE or _HAS_OQS), reason="No native precompile or python-oqs available"
+)
 def test_native_verify_dilithium():
     scheme = "Dilithium3"
 

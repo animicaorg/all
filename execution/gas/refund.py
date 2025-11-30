@@ -16,11 +16,10 @@ The default policy mirrors common practice (max 50% refund of used gas).
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, Mapping, Optional, Tuple
-
-import json
 
 # Optional YAML (graceful if unavailable)
 try:
@@ -28,12 +27,7 @@ try:
 except Exception:  # pragma: no cover
     yaml = None  # type: ignore
 
-from execution.types.gas import (
-    U256_MAX,
-    is_u256,
-    saturating_add,
-)
-
+from execution.types.gas import U256_MAX, is_u256, saturating_add
 
 # ------------------------------- Policy --------------------------------------
 
@@ -51,11 +45,16 @@ class RefundPolicy:
         Optional floor on the final charge (in gas). If > 0, ensures that some
         gas is always charged even if refundable amounts are large. Default 0.
     """
+
     cap_ratio: float = 0.50
     min_charge: int = 0
 
     def validate(self) -> "RefundPolicy":
-        cr = 0.0 if self.cap_ratio < 0.0 else (1.0 if self.cap_ratio > 1.0 else self.cap_ratio)
+        cr = (
+            0.0
+            if self.cap_ratio < 0.0
+            else (1.0 if self.cap_ratio > 1.0 else self.cap_ratio)
+        )
         mc = int(self.min_charge)
         if mc < 0:
             raise ValueError("min_charge must be non-negative")
@@ -65,7 +64,11 @@ class RefundPolicy:
         return RefundPolicy(cap_ratio=cr, min_charge=mc)
 
 
-def load_policy(path: Optional[str | Path] = None, *, overrides: Optional[Mapping[str, object]] = None) -> RefundPolicy:
+def load_policy(
+    path: Optional[str | Path] = None,
+    *,
+    overrides: Optional[Mapping[str, object]] = None,
+) -> RefundPolicy:
     """
     Build a RefundPolicy from defaults, optional file, and overrides.
 
@@ -123,13 +126,16 @@ class RefundTracker:
 
     All arithmetic is capped to u256.
     """
+
     _by_cat: Dict[str, int] = field(default_factory=dict)
 
     def add(self, category: str, amount: int) -> None:
         if amount < 0:
             raise ValueError("refund amount must be non-negative")
         prev = int(self._by_cat.get(category, 0))
-        self._by_cat[category] = min(U256_MAX, saturating_add(prev, amount, cap=U256_MAX))
+        self._by_cat[category] = min(
+            U256_MAX, saturating_add(prev, amount, cap=U256_MAX)
+        )
 
     def extend(self, items: Iterable[Tuple[str, int]]) -> None:
         for cat, amt in items:
@@ -151,7 +157,9 @@ class RefundTracker:
 # ------------------------------ Finalization ---------------------------------
 
 
-def finalize_refund(used: int, tracker: RefundTracker, policy: Optional[RefundPolicy] = None) -> tuple[int, int]:
+def finalize_refund(
+    used: int, tracker: RefundTracker, policy: Optional[RefundPolicy] = None
+) -> tuple[int, int]:
     """
     Apply policy to compute `(refund_applied, charged)` given `used` and tracker.
 

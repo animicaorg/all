@@ -26,24 +26,30 @@ Compatible with the node components described in:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
+from typing import (Any, Dict, Iterable, List, Mapping, MutableMapping,
+                    Optional, Sequence, Tuple, Union)
 
 # --- Utilities ---------------------------------------------------------------
 
 # Bytes & hash helpers (fall back to stdlib if omni_sdk.utils isn't available at import time)
 try:
-    from omni_sdk.utils.bytes import from_hex as _from_hex, to_hex as _to_hex  # type: ignore
+    from omni_sdk.utils.bytes import from_hex as _from_hex  # type: ignore
+    from omni_sdk.utils.bytes import to_hex as _to_hex
 except Exception:  # pragma: no cover
+
     def _from_hex(s: str) -> bytes:
         s = s[2:] if isinstance(s, str) and s.startswith("0x") else s
         return bytes.fromhex(s)
+
     def _to_hex(b: bytes) -> str:
         return "0x" + bytes(b).hex()
+
 
 try:
     from omni_sdk.utils.hash import sha3_256  # type: ignore
 except Exception:  # pragma: no cover
     import hashlib as _hashlib
+
     def sha3_256(data: bytes) -> bytes:
         return _hashlib.sha3_256(data).digest()
 
@@ -76,7 +82,9 @@ def _extract_header_hash(header: Mapping[str, Any]) -> bytes:
     raw = header.get("raw")
     if isinstance(raw, str) and raw.startswith("0x"):
         return sha3_256(_from_hex(raw))
-    raise LightVerifyError("Header missing 'hash'/'headerHash' and 'raw' CBOR; cannot verify linkage")
+    raise LightVerifyError(
+        "Header missing 'hash'/'headerHash' and 'raw' CBOR; cannot verify linkage"
+    )
 
 
 def _get(header: Mapping[str, Any], *keys: str) -> Any:
@@ -137,7 +145,9 @@ def _merkle_from_branch(leaf_hash: bytes, branch: Sequence[Any], index: int) -> 
             if isinstance(pos_val, str) and pos_val:
                 pos = pos_val.upper()[0]  # 'L' or 'R'
         else:
-            raise LightVerifyError(f"branch[{depth}] has unsupported type: {type(node).__name__}")
+            raise LightVerifyError(
+                f"branch[{depth}] has unsupported type: {type(node).__name__}"
+            )
 
         sibling = _from_hex(sib_hex)  # type: ignore[arg-type]
 
@@ -159,9 +169,11 @@ def _merkle_from_branch(leaf_hash: bytes, branch: Sequence[Any], index: int) -> 
 
 # --- Public API --------------------------------------------------------------
 
+
 @dataclass
 class VerifyOptions:
     """Optional knobs for verification."""
+
     enforce_chain_id: bool = True
     enforce_height_step: bool = True  # require new.height == prev.height + 1
     header_hash_required: bool = False  # if True, 'raw' fallback is disallowed
@@ -210,16 +222,28 @@ class LightClient:
         """
         # Chain ID consistency
         cid = _get(header, "chainId", "chain_id", "chainID")
-        if self._opts.enforce_chain_id and self._chain_id is not None and cid is not None:
+        if (
+            self._opts.enforce_chain_id
+            and self._chain_id is not None
+            and cid is not None
+        ):
             if cid != self._chain_id:
-                raise LightVerifyError(f"chainId mismatch: expected {self._chain_id}, got {cid}")
+                raise LightVerifyError(
+                    f"chainId mismatch: expected {self._chain_id}, got {cid}"
+                )
 
         # Heights
         prev_h = _get(self._last, "number", "height")
         curr_h = _get(header, "number", "height")
-        if self._opts.enforce_height_step and isinstance(prev_h, int) and isinstance(curr_h, int):
+        if (
+            self._opts.enforce_height_step
+            and isinstance(prev_h, int)
+            and isinstance(curr_h, int)
+        ):
             if curr_h != prev_h + 1:
-                raise LightVerifyError(f"height step mismatch: prev={prev_h}, got={curr_h}")
+                raise LightVerifyError(
+                    f"height step mismatch: prev={prev_h}, got={curr_h}"
+                )
 
         # Parent hash linkage
         parent_hex = _get(header, "parentHash", "parent_hash", "prevHash")
@@ -228,7 +252,9 @@ class LightClient:
             raise LightVerifyError("parentHash does not link to last verified header")
 
         # Current hash presence (or raw→hash)
-        if self._opts.header_hash_required and not isinstance(_get(header, "hash", "headerHash"), str):
+        if self._opts.header_hash_required and not isinstance(
+            _get(header, "hash", "headerHash"), str
+        ):
             raise LightVerifyError("header hash required but not present")
 
         current_hash = _extract_header_hash(header)  # also validates presence
@@ -242,7 +268,9 @@ class LightClient:
 
     # --- DA proof verification ------------------------------------------------
 
-    def verify_da_proof(self, header: Mapping[str, Any], proof: Mapping[str, Any]) -> bool:
+    def verify_da_proof(
+        self, header: Mapping[str, Any], proof: Mapping[str, Any]
+    ) -> bool:
         """
         Verify a DA (Data Availability) light proof against a header.
 
@@ -289,7 +317,9 @@ class LightClient:
             # Leaf hash – accept prehashed ('leafHash') or hash('leaf')
             leaf_hash_b: bytes
             if "leafHash" in s:
-                leaf_hash_b = _from_hex(_require_hex_str(s["leafHash"], f"samples[{i}].leafHash"))
+                leaf_hash_b = _from_hex(
+                    _require_hex_str(s["leafHash"], f"samples[{i}].leafHash")
+                )
             else:
                 leaf_hex = _require_hex_str(s.get("leaf"), f"samples[{i}].leaf")
                 leaf_hash_b = sha3_256(_from_hex(leaf_hex))
@@ -304,7 +334,9 @@ class LightClient:
 
             root_calc = _merkle_from_branch(leaf_hash_b, branch, index)
             if root_calc != expected_root:
-                raise LightVerifyError(f"samples[{i}] branch does not lead to header.daRoot")
+                raise LightVerifyError(
+                    f"samples[{i}] branch does not lead to header.daRoot"
+                )
 
         return True
 

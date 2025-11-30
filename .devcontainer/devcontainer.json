@@ -1,0 +1,17 @@
+{
+  "name": "Animica Dev Container",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "features": {},
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "rust-lang.rust-analyzer",
+        "dart-code.flutter",
+        "esbenp.prettier-vscode"
+      ]
+    }
+  },
+  "postCreateCommand": "./.devcontainer/post-create.sh",
+  "workspaceFolder": "/workspace"
+}

@@ -78,6 +78,7 @@ def _choose_cbor() -> Tuple[DecodeFn, EncodeFn, str]:
     for prov in (_get_project_cbor(), _get_cbor2(), _get_msgspec()):
         if prov:
             return prov
+
     # Tiny fallback so the file still imports; only understands {} and [].
     def _loads_stub(b: bytes) -> Any:
         if b == b"\xa0":
@@ -168,9 +169,10 @@ def _is_header_like(x: Any) -> bool:
         return False
     keys = {str(k) for k in x.keys()}
     # must have at least two common header-ish keys, including some hash/parent + height-ish
-    return (("parent" in keys or "parentHash" in keys) and ("height" in keys or "number" in keys)) or (
-        len(_HDR_HINT_KEYS & keys) >= 3
-    )
+    return (
+        ("parent" in keys or "parentHash" in keys)
+        and ("height" in keys or "number" in keys)
+    ) or (len(_HDR_HINT_KEYS & keys) >= 3)
 
 
 def _is_block_like(x: Any) -> bool:
@@ -274,11 +276,14 @@ def fuzz(data: bytes) -> None:
 
 # -------------------- Direct execution (optional) --------------------
 
+
 def _run_direct(argv: list[str]) -> int:  # pragma: no cover
     try:
         import atheris  # type: ignore
     except Exception:
-        sys.stderr.write("[fuzz_block_decode] atheris not installed. pip install atheris\n")
+        sys.stderr.write(
+            "[fuzz_block_decode] atheris not installed. pip install atheris\n"
+        )
         return 2
     atheris.instrument_all()
     corpus = [p for p in argv if not p.startswith("-")] or ["tests/fuzz/corpus_blocks"]

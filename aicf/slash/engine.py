@@ -1,7 +1,11 @@
 from __future__ import annotations
-from typing import Optional, Mapping
 
-def process_window(provider, height: int, stats: Mapping[str, int], thresholds=None, penalties=None):
+from typing import Mapping, Optional
+
+
+def process_window(
+    provider, height: int, stats: Mapping[str, int], thresholds=None, penalties=None
+):
     """
     Minimal engine:
       - Before cooldown end: do nothing (return None)

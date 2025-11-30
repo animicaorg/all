@@ -8,9 +8,10 @@ Test package for animica.mining
 """
 
 from __future__ import annotations
+
+import logging
 import os
 import random
-import logging
 from typing import Iterator
 
 # Keep test logs sane by default (individual tests can raise levels)
@@ -18,8 +19,10 @@ logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(mes
 
 # Fast paths / deterministic knobs used by tests
 os.environ.setdefault("ANIMICA_TESTING", "1")
-os.environ.setdefault("ANIMICA_MINING_TEST_FAST", "1")   # inner loops use tiny bounds
-os.environ.setdefault("ANIMICA_DISABLE_NUMBA", "1")      # avoid JIT warmup in CI unless explicitly enabled
+os.environ.setdefault("ANIMICA_MINING_TEST_FAST", "1")  # inner loops use tiny bounds
+os.environ.setdefault(
+    "ANIMICA_DISABLE_NUMBA", "1"
+)  # avoid JIT warmup in CI unless explicitly enabled
 
 try:
     import pytest  # type: ignore
@@ -28,6 +31,7 @@ except Exception:  # pragma: no cover
 
 
 if pytest:
+
     @pytest.fixture(scope="session", autouse=True)
     def _deterministic_rng_session() -> Iterator[None]:
         """
@@ -37,6 +41,7 @@ if pytest:
         random.seed(0xA11CE)  # consistent across runs
         try:
             import numpy as _np  # type: ignore
+
             _np.random.seed(1337)
         except Exception:
             pass
@@ -48,7 +53,10 @@ if pytest:
         """
         if os.getenv("ANIMICA_GPU_TESTS") not in ("1", "true", "TRUE", "yes", "YES"):
             import pytest as _pytest  # lazy import for hook
-            skip_gpu = _pytest.mark.skip(reason="GPU tests disabled (set ANIMICA_GPU_TESTS=1 to enable)")
+
+            skip_gpu = _pytest.mark.skip(
+                reason="GPU tests disabled (set ANIMICA_GPU_TESTS=1 to enable)"
+            )
             for item in items:
                 if "gpu" in item.keywords:
                     item.add_marker(skip_gpu)

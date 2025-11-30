@@ -98,7 +98,9 @@ def _mk_candidate() -> Dict[str, Any]:
     }
 
 
-@pytest.mark.skipif(_import_orchestrator() is None, reason="mining.orchestrator module not available")
+@pytest.mark.skipif(
+    _import_orchestrator() is None, reason="mining.orchestrator module not available"
+)
 def test_end_to_end_mine_one_block_with_ai_and_quantum(monkeypatch):
     """
     End-to-end (single node, fast-path mock):
@@ -139,7 +141,9 @@ def test_end_to_end_mine_one_block_with_ai_and_quantum(monkeypatch):
             for want in ("ai", "quantum", "hash"):
                 best = max(
                     (c for c in candidates if (c.get("type") or c.get("kind")) == want),
-                    key=lambda x: float(x.get("psi") or x.get("metrics", {}).get("psi", 0.0)),
+                    key=lambda x: float(
+                        x.get("psi") or x.get("metrics", {}).get("psi", 0.0)
+                    ),
                     default=None,
                 )
                 if best:
@@ -192,8 +196,16 @@ def test_end_to_end_mine_one_block_with_ai_and_quantum(monkeypatch):
     # Some orchestrators route through adapters; provide simple shells
     for adapter_name, symbol, fn in [
         ("adapters.core_chain", "submit_block", fake_submit_block),
-        ("adapters.core_chain", "get_head", lambda *a, **k: {"height": 0, "hash": "0xgenesis"}),
-        ("adapters.consensus_view", "get_live_thresholds", lambda *a, **k: {"Theta": 1.0, "Gamma_cap": 2.0}),
+        (
+            "adapters.core_chain",
+            "get_head",
+            lambda *a, **k: {"height": 0, "hash": "0xgenesis"},
+        ),
+        (
+            "adapters.consensus_view",
+            "get_live_thresholds",
+            lambda *a, **k: {"Theta": 1.0, "Gamma_cap": 2.0},
+        ),
         ("adapters.proofs_view", "verify_and_score", lambda proofs, *a, **k: proofs),
         ("adapters.aicf_queue", "poll_ready", lambda *a, **k: []),
     ]:
@@ -228,6 +240,7 @@ def test_end_to_end_mine_one_block_with_ai_and_quantum(monkeypatch):
         # Construct with best-effort kwargs
         ctor_sig = inspect.signature(cls)
         ctor_kwargs = {}
+
         # Provide minimal duck-typed dependencies if required
         async def _stub_template():
             return fake_build_template()
@@ -251,7 +264,11 @@ def test_end_to_end_mine_one_block_with_ai_and_quantum(monkeypatch):
                 if isinstance(ConfigCls, type):
                     ctor_kwargs[p.name] = ConfigCls(device_kind="cpu", threads=1)
                 else:
-                    ctor_kwargs[p.name] = {"device": "cpu", "threads": 1, "devnet": True}
+                    ctor_kwargs[p.name] = {
+                        "device": "cpu",
+                        "threads": 1,
+                        "devnet": True,
+                    }
             if p.name in ("template_provider", "template", "provider"):
                 ctor_kwargs[p.name] = template_provider
             if p.name in ("submitter", "submit"):
@@ -300,4 +317,3 @@ def test_end_to_end_mine_one_block_with_ai_and_quantum(monkeypatch):
     for p in proofs:
         total_psi += float(p.get("psi") or p.get("metrics", {}).get("psi", 0.0))
     assert total_psi > 0.0
-

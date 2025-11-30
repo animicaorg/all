@@ -42,6 +42,7 @@ class ExecError(Exception):
         code:    Stable machine code string (e.g., 'OUT_OF_GAS', 'REVERT').
         data:    Optional structured details (kept JSON-serializable).
     """
+
     message: str = "execution error"
     code: str = "EXEC_ERROR"
     data: Optional[Dict[str, Any]] = field(default=None)
@@ -67,7 +68,10 @@ class OOG(ExecError):
       - GasMeter debit would underflow
       - Static gas exceeds provided limit (intrinsic + call)
     """
-    def __init__(self, message: str = "out of gas", *, data: Optional[Dict[str, Any]] = None):
+
+    def __init__(
+        self, message: str = "out of gas", *, data: Optional[Dict[str, Any]] = None
+    ):
         super().__init__(message=message, code="OUT_OF_GAS", data=data)
 
 
@@ -83,6 +87,7 @@ class Revert(ExecError):
     Usage:
         raise Revert("require failed", data={"reason": "insufficient balance"})
     """
+
     def __init__(
         self,
         message: str = "reverted",
@@ -111,6 +116,7 @@ class InvalidAccess(ExecError):
       - Storage/code size limits exceeded
       - Cross-account access not permitted by context/access list
     """
+
     def __init__(
         self,
         message: str = "invalid access",
@@ -139,6 +145,7 @@ class StateConflict(ExecError):
     Indicates that observed read/write sets conflict with another concurrent execution,
     requiring a rerun (usually serially) to preserve determinism.
     """
+
     def __init__(
         self,
         message: str = "state conflict",

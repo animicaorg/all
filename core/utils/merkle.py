@@ -22,17 +22,23 @@ Design notes
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Mapping, MutableMapping, Sequence, Tuple
+from typing import (Dict, Iterable, List, Mapping, MutableMapping, Sequence,
+                    Tuple)
 
-from .bytes import b as _b, BytesLike
-from .hash import sha3_256, merkle_root as _merkle_root, merkle_proof as _merkle_proof, merkle_verify as _merkle_verify
-
+from .bytes import BytesLike
+from .bytes import b as _b
+from .hash import merkle_proof as _merkle_proof
+from .hash import merkle_root as _merkle_root
+from .hash import merkle_verify as _merkle_verify
+from .hash import sha3_256
 
 # -----------------
 # Leaf encodings
 # -----------------
 
-_KV_PAYLOAD_TAG = b"\x02"  # internal discriminator for KV payloads (in addition to outer LEAF tag)
+_KV_PAYLOAD_TAG = (
+    b"\x02"  # internal discriminator for KV payloads (in addition to outer LEAF tag)
+)
 
 
 def _u32be(n: int) -> bytes:
@@ -55,11 +61,14 @@ def kv_leaf_bytes(key: BytesLike, value: BytesLike) -> bytes:
 # Public helpers
 # -----------------
 
+
 def list_merkle_root(leaves: Iterable[BytesLike]) -> bytes:
     """
     Root over arbitrary leaves (each leaf is raw bytes).
     """
-    return _merkle_root(leaves, leaf_hash=sha3_256, node_hash=sha3_256, duplicate_odd=True)
+    return _merkle_root(
+        leaves, leaf_hash=sha3_256, node_hash=sha3_256, duplicate_odd=True
+    )
 
 
 def merkle_root(leaves: Iterable[BytesLike]) -> bytes:
@@ -67,7 +76,9 @@ def merkle_root(leaves: Iterable[BytesLike]) -> bytes:
     return list_merkle_root(leaves)
 
 
-def kv_merkle_root(items: Mapping[BytesLike, BytesLike] | Iterable[Tuple[BytesLike, BytesLike]]) -> bytes:
+def kv_merkle_root(
+    items: Mapping[BytesLike, BytesLike] | Iterable[Tuple[BytesLike, BytesLike]],
+) -> bytes:
     """
     Root over a set of key→value bindings.
 
@@ -76,14 +87,14 @@ def kv_merkle_root(items: Mapping[BytesLike, BytesLike] | Iterable[Tuple[BytesLi
     Raises on duplicate keys (for Iterable input).
     """
     if isinstance(items, Mapping):
-        pairs: List[Tuple[bytes, bytes]] = [( _b(k), _b(v) ) for k, v in items.items()]
+        pairs: List[Tuple[bytes, bytes]] = [(_b(k), _b(v)) for k, v in items.items()]
     else:
-        pairs = [( _b(k), _b(v) ) for k, v in items]
+        pairs = [(_b(k), _b(v)) for k, v in items]
 
     # Sort & dedupe
     pairs.sort(key=lambda kv: kv[0])
     for i in range(1, len(pairs)):
-        if pairs[i-1][0] == pairs[i][0]:
+        if pairs[i - 1][0] == pairs[i][0]:
             raise ValueError("duplicate key in KV set")
 
     leaves = (kv_leaf_bytes(k, v) for (k, v) in pairs)
@@ -107,11 +118,11 @@ def kv_merkle_proof(
         # If value not supplied, fetch from mapping (raises KeyError if missing)
         if value is None:
             value = items[_b(key)]
-        pairs: List[Tuple[bytes, bytes]] = [( _b(k), _b(v) ) for k, v in items.items()]
+        pairs: List[Tuple[bytes, bytes]] = [(_b(k), _b(v)) for k, v in items.items()]
     else:
         if value is None:
             raise ValueError("value must be provided when items is an Iterable")
-        pairs = [( _b(k), _b(v) ) for k, v in items]
+        pairs = [(_b(k), _b(v)) for k, v in items]
 
     pairs.sort(key=lambda kv: kv[0])
     # Locate index of the target key
@@ -133,7 +144,9 @@ def kv_merkle_proof(
             # but this will verify to a *different* root than the set's root. Most callers want strict match:
             raise ValueError("supplied value does not match items' value for key")
 
-    root, proof, dirs = _merkle_proof(leaves, idx, leaf_hash=sha3_256, node_hash=sha3_256, duplicate_odd=True)
+    root, proof, dirs = _merkle_proof(
+        leaves, idx, leaf_hash=sha3_256, node_hash=sha3_256, duplicate_odd=True
+    )
     return root, proof, dirs
 
 
@@ -151,7 +164,9 @@ def kv_merkle_verify(
     # The index is not required by the verifier for our domain-separated construction,
     # but we keep the API aligned with the low-level verify (it ignores shifting aside).
     # A caller may pass any non-negative placeholder; we use 0.
-    return _merkle_verify(root, leaf, 0, proof, directions, leaf_hash=sha3_256, node_hash=sha3_256)
+    return _merkle_verify(
+        root, leaf, 0, proof, directions, leaf_hash=sha3_256, node_hash=sha3_256
+    )
 
 
 __all__ = [

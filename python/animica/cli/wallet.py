@@ -9,8 +9,8 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 import typer
-
 from animica.config import load_network_config
+
 from pq.py.address import address_from_pubkey, validate_address
 from pq.py.keygen import keygen_sig
 from pq.py.registry import default_signature_alg, name_of
@@ -19,7 +19,9 @@ DEFAULT_WALLET_PATH = Path.home() / ".animica" / "wallets.json"
 WALLET_FILE_ENV = "ANIMICA_WALLETS_FILE"
 _RPC_ENV = "ANIMICA_RPC_URL"
 
-app = typer.Typer(help="Wallet helper for creating, listing, and inspecting Animica addresses.")
+app = typer.Typer(
+    help="Wallet helper for creating, listing, and inspecting Animica addresses."
+)
 
 
 @dataclass
@@ -130,7 +132,12 @@ def _generate_entry(label: str, *, allow_fallback: bool) -> WalletEntry:
 
 
 def _fetch_balance(address: str, rpc_url: str) -> Optional[int]:
-    payload = {"jsonrpc": "2.0", "id": 1, "method": "state.getBalance", "params": [address]}
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "state.getBalance",
+        "params": [address],
+    }
     try:
         resp = httpx.post(rpc_url, json=payload, timeout=5.0)
         resp.raise_for_status()
@@ -221,7 +228,9 @@ def list_wallets() -> None:  # noqa: A001
     default_addr = store.get("default_address")
 
     typer.echo("Idx Default Label            Address                          Alg")
-    typer.echo("--- ------- ---------------- -------------------------------- ----------------")
+    typer.echo(
+        "--- ------- ---------------- -------------------------------- ----------------"
+    )
     for idx, entry in enumerate(wallets):
         marker = "*" if entry.get("address") == default_addr else " "
         label = (entry.get("label") or "").ljust(16)
@@ -233,7 +242,9 @@ def list_wallets() -> None:  # noqa: A001
 @app.command()
 def show(
     address: str = typer.Option(..., "--address", help="Address to display"),
-    rpc_url: Optional[str] = typer.Option(None, "--rpc-url", help="Animica JSON-RPC endpoint", envvar=_RPC_ENV),
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc-url", help="Animica JSON-RPC endpoint", envvar=_RPC_ENV
+    ),
 ) -> None:
     """Show wallet metadata and current balance."""
     ctx_wallet_file = _current_wallet_file()
@@ -300,7 +311,9 @@ def import_(
 
 
 @app.command(name="set-default")
-def set_default(address: str = typer.Option(..., "--address", help="Address to mark as default")) -> None:
+def set_default(
+    address: str = typer.Option(..., "--address", help="Address to mark as default")
+) -> None:
     """Mark a wallet as the default for other commands."""
     ctx_wallet_file = _current_wallet_file()
     path = _wallet_file_path(ctx_wallet_file)
@@ -319,7 +332,10 @@ def env() -> None:  # noqa: A001
     store = _load_store(path)
     default_address = store.get("default_address")
     if not default_address:
-        typer.echo("No default wallet set; use `animica-wallet set-default --address ...`", err=True)
+        typer.echo(
+            "No default wallet set; use `animica-wallet set-default --address ...`",
+            err=True,
+        )
         raise typer.Exit(code=1)
     typer.echo(f"export ANIMICA_DEFAULT_ADDRESS={default_address}")
 

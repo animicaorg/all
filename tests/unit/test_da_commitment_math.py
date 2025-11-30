@@ -28,15 +28,14 @@ from typing import Iterable, List, Sequence, Tuple
 
 import pytest
 
-
 # ------------------------------- NMT primitives -------------------------------
 
-HASH_FN = hashlib.sha256          # Swap here if network mandates a different hash
+HASH_FN = hashlib.sha256  # Swap here if network mandates a different hash
 LEAF_DOMAIN = b"NMT:leaf:v1\x00"  # domain separation tags
 NODE_DOMAIN = b"NMT:node:v1\x00"
 
 U64_MAX = (1 << 64) - 1
-PADDING_NAMESPACE = U64_MAX       # padding uses max-namespace sentinel
+PADDING_NAMESPACE = U64_MAX  # padding uses max-namespace sentinel
 
 
 def _u64be(x: int) -> bytes:
@@ -150,6 +149,7 @@ class NmtStreamingBuilder:
 
 # -------------------------- Erasure (replication) -----------------------------
 
+
 def repeat_2x(leaves: Sequence[Tuple[int, bytes]]) -> List[Tuple[int, bytes]]:
     """
     Trivial (n,k)=(2,1) repetition code: duplicate each leaf in-place.
@@ -163,6 +163,7 @@ def repeat_2x(leaves: Sequence[Tuple[int, bytes]]) -> List[Tuple[int, bytes]]:
 
 
 # ---------------------------------- Tests -------------------------------------
+
 
 def _mk_leaves() -> List[Tuple[int, bytes]]:
     # 6 leaves across 3 namespaces
@@ -268,5 +269,3 @@ def test_leaf_hash_domain_separation(ns: int, data: bytes):
     # Spot check: parent domain differs from leaf domain
     p = nmt_parent(a, b)
     assert p.digest != a.digest
-
-

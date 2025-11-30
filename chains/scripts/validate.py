@@ -72,15 +72,30 @@ def glob_chain_files() -> List[Path]:
 
 
 def main(argv: List[str]) -> int:
-    ap = argparse.ArgumentParser(description="Validate Animica chains JSON files against schemas.")
-    ap.add_argument("--registry", default=str(ROOT / "chains" / "registry.json"),
-                    help="Path to registry.json (default: chains/registry.json)")
-    ap.add_argument("--chains", nargs="*", default=[],
-                    help="Specific chain JSON files to validate. If omitted, uses registry entries or --all glob.")
-    ap.add_argument("--all", action="store_true",
-                    help="Validate all chains/*.json found on disk (in addition to the registry).")
-    ap.add_argument("--fail-on-warn", action="store_true",
-                    help="(Reserved) Treat warnings as errors (currently no warnings emitted).")
+    ap = argparse.ArgumentParser(
+        description="Validate Animica chains JSON files against schemas."
+    )
+    ap.add_argument(
+        "--registry",
+        default=str(ROOT / "chains" / "registry.json"),
+        help="Path to registry.json (default: chains/registry.json)",
+    )
+    ap.add_argument(
+        "--chains",
+        nargs="*",
+        default=[],
+        help="Specific chain JSON files to validate. If omitted, uses registry entries or --all glob.",
+    )
+    ap.add_argument(
+        "--all",
+        action="store_true",
+        help="Validate all chains/*.json found on disk (in addition to the registry).",
+    )
+    ap.add_argument(
+        "--fail-on-warn",
+        action="store_true",
+        help="(Reserved) Treat warnings as errors (currently no warnings emitted).",
+    )
     args = ap.parse_args(argv)
 
     errors: List[str] = []
@@ -146,10 +161,17 @@ def main(argv: List[str]) -> int:
         # 1) embedded checksum looks like a 64-hex or placeholder
         checksum = data.get("checksum")
         if isinstance(checksum, str):
-            if checksum != "0000000000000000000000000000000000000000000000000000000000000000" and not (
-                len(checksum) == 64 and all(c in "0123456789abcdef" for c in checksum.lower())
+            if (
+                checksum
+                != "0000000000000000000000000000000000000000000000000000000000000000"
+                and not (
+                    len(checksum) == 64
+                    and all(c in "0123456789abcdef" for c in checksum.lower())
+                )
             ):
-                warnings.append(f"{p}: checksum is not a 64-hex string (got: {checksum!r})")
+                warnings.append(
+                    f"{p}: checksum is not a 64-hex string (got: {checksum!r})"
+                )
         else:
             warnings.append(f"{p}: checksum field missing or not a string")
 

@@ -25,44 +25,49 @@ Environment
 - ANIMICA_CHAIN_ID      (overrides params.chainId if set)
 - ANIMICA_GENESIS_PATH  (optional; if db empty, used to finalize genesis)
 """
+
 from __future__ import annotations
 
-import os
-import json
-import time
 import asyncio
+import json
+import os
+import time
 from dataclasses import dataclass
-from typing import Callable, Iterable, Optional, Sequence, Tuple, List, Any, TYPE_CHECKING
+from typing import (TYPE_CHECKING, Any, Callable, Iterable, List, Optional,
+                    Sequence, Tuple)
 
+from .constants import \
+    DEFAULT_TCP_PORT  # only to ensure constants import works
 from .errors import P2PError
-from .constants import DEFAULT_TCP_PORT  # only to ensure constants import works
+
 # Type hints (no heavy imports at module import time)
 if TYPE_CHECKING:  # pragma: no cover
     from core.types.block import Block
     from core.types.header import Header
-    from core.types.tx import Tx
     from core.types.params import ChainParams
+    from core.types.tx import Tx
 
 
 # --------------------------------------------------------------------------- #
 # Helper: lazy imports for core components
 # --------------------------------------------------------------------------- #
 
+
 def _lazy_core() -> dict[str, Any]:
     """
     Import core components lazily to avoid import-time cost/cycles.
     """
     # DBs
-    from core.db.sqlite import SQLiteKV
-    from core.db.rocksdb import RocksDBKV  # guarded import internally
+    from core.chain.block_import import import_block as core_import_block
+    from core.chain.head import finalize_genesis_if_needed
+    from core.chain.head import get_head as core_get_head
     from core.db.block_db import BlockDB
+    from core.db.rocksdb import RocksDBKV  # guarded import internally
+    from core.db.sqlite import SQLiteKV
     from core.db.state_db import StateDB
     from core.db.tx_index import TxIndex
-
     # Types & helpers
     from core.types.params import ChainParams
-    from core.chain.head import get_head as core_get_head, finalize_genesis_if_needed
-    from core.chain.block_import import import_block as core_import_block
 
     return dict(
         SQLiteKV=SQLiteKV,
@@ -92,6 +97,7 @@ def _open_kv(db_uri: str):
 # --------------------------------------------------------------------------- #
 # Locators & small helpers
 # --------------------------------------------------------------------------- #
+
 
 def _build_header_locator(
     head_height: int,
@@ -127,6 +133,7 @@ def _build_header_locator(
 # --------------------------------------------------------------------------- #
 # Core glue (sync)
 # --------------------------------------------------------------------------- #
+
 
 @dataclass(slots=True)
 class P2PDeps:
@@ -199,7 +206,11 @@ class P2PDeps:
 
     def header_locator(self, max_entries: int = 32) -> list[bytes]:
         height, _ = self.head()
-        return _build_header_locator(height, lambda n: self._block_db.get_hash_by_height(n), max_entries=max_entries)
+        return _build_header_locator(
+            height,
+            lambda n: self._block_db.get_hash_by_height(n),
+            max_entries=max_entries,
+        )
 
     # ---- Blocks -------------------------------------------------------------
 
@@ -218,7 +229,9 @@ class P2PDeps:
         Returns (accepted, reason). On acceptance, canonical head may advance.
         """
         try:
-            res = self._core_import_block(self._block_db, self._state_db, self._tx_index, block)
+            res = self._core_import_block(
+                self._block_db, self._state_db, self._tx_index, block
+            )
             # res is expected to be a small object/tuple; support both shapes:
             if isinstance(res, tuple) and len(res) == 2:
                 return bool(res[0]), res[1]
@@ -265,7 +278,10 @@ class P2PDeps:
         """
         try:
             if getattr(header, "chainId", None) not in (None, self.chain_id):
-                return False, f"chain_mismatch:{getattr(header, 'chainId', None)}!= {self.chain_id}"
+                return (
+                    False,
+                    f"chain_mismatch:{getattr(header, 'chainId', None)}!= {self.chain_id}",
+                )
             if header.height == 0:
                 # genesis hash must match stored genesis
                 g = self._block_db.get_hash_by_height(0)
@@ -292,12 +308,15 @@ class P2PDeps:
 # Async wrapper
 # --------------------------------------------------------------------------- #
 
+
 class AsyncP2PDeps:
     """
     Async wrapper around P2PDeps using a shared threadpool.
     """
 
-    def __init__(self, sync: P2PDeps, executor: Optional[asyncio.AbstractEventLoop] = None):
+    def __init__(
+        self, sync: P2PDeps, executor: Optional[asyncio.AbstractEventLoop] = None
+    ):
         self._sync = sync
         self._loop = asyncio.get_event_loop()
 
@@ -309,19 +328,25 @@ class AsyncP2PDeps:
         return await self._loop.run_in_executor(None, self._sync.head)
 
     async def header_locator(self, max_entries: int = 32) -> list[bytes]:
-        return await self._loop.run_in_executor(None, self._sync.header_locator, max_entries)
+        return await self._loop.run_in_executor(
+            None, self._sync.header_locator, max_entries
+        )
 
     async def header_by_hash(self, h: bytes) -> Optional["Header"]:
         return await self._loop.run_in_executor(None, self._sync.header_by_hash, h)
 
     async def header_by_number(self, height: int) -> Optional["Header"]:
-        return await self._loop.run_in_executor(None, self._sync.header_by_number, height)
+        return await self._loop.run_in_executor(
+            None, self._sync.header_by_number, height
+        )
 
     async def block_by_hash(self, h: bytes) -> Optional["Block"]:
         return await self._loop.run_in_executor(None, self._sync.block_by_hash, h)
 
     async def block_by_number(self, height: int) -> Optional["Block"]:
-        return await self._loop.run_in_executor(None, self._sync.block_by_number, height)
+        return await self._loop.run_in_executor(
+            None, self._sync.block_by_number, height
+        )
 
     async def import_block(self, block: "Block") -> Tuple[bool, Optional[str]]:
         return await self._loop.run_in_executor(None, self._sync.import_block, block)
@@ -330,12 +355,15 @@ class AsyncP2PDeps:
         return await self._loop.run_in_executor(None, self._sync.tx_by_hash, tx_hash)
 
     async def cheap_header_sanity(self, header: "Header") -> Tuple[bool, Optional[str]]:
-        return await self._loop.run_in_executor(None, self._sync.cheap_header_sanity, header)
+        return await self._loop.run_in_executor(
+            None, self._sync.cheap_header_sanity, header
+        )
 
 
 # --------------------------------------------------------------------------- #
 # Utilities
 # --------------------------------------------------------------------------- #
+
 
 def _read_chain_id(block_db: Any, state_db: Any) -> int:
     """
@@ -378,7 +406,9 @@ if __name__ == "__main__":
         "db_uri": deps.db_uri,
         "chain_id": deps.chain_id,
         "head_height": h,
-        "head_hash": getattr(hdr, "hash", None).hex() if getattr(hdr, "hash", None) else None,
+        "head_hash": (
+            getattr(hdr, "hash", None).hex() if getattr(hdr, "hash", None) else None
+        ),
         "locator_len_16": len(deps.header_locator(16)),
     }
     print(json.dumps(info, indent=2))

@@ -38,7 +38,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
-
 # Sensible defaults for devnets/smoke-tests.
 DEFAULT_COMMIT_WINDOW_BLOCKS = 16
 DEFAULT_REVEAL_WINDOW_BLOCKS = 16
@@ -162,13 +161,21 @@ class CommitRevealParams:
             return d.get(key, default)
 
         obj = CommitRevealParams(
-            commit_window_blocks=int(get("commit_window_blocks", base.commit_window_blocks)),
-            reveal_window_blocks=int(get("reveal_window_blocks", base.reveal_window_blocks)),
-            reveal_grace_blocks=int(get("reveal_grace_blocks", base.reveal_grace_blocks)),
+            commit_window_blocks=int(
+                get("commit_window_blocks", base.commit_window_blocks)
+            ),
+            reveal_window_blocks=int(
+                get("reveal_window_blocks", base.reveal_window_blocks)
+            ),
+            reveal_grace_blocks=int(
+                get("reveal_grace_blocks", base.reveal_grace_blocks)
+            ),
             require_bond=bool(get("require_bond", base.require_bond)),
             min_bond_units=int(get("min_bond_units", base.min_bond_units)),
             slash_on_miss=bool(get("slash_on_miss", base.slash_on_miss)),
-            slash_on_bad_reveal=bool(get("slash_on_bad_reveal", base.slash_on_bad_reveal)),
+            slash_on_bad_reveal=bool(
+                get("slash_on_bad_reveal", base.slash_on_bad_reveal)
+            ),
             slash_ratio_miss=float(get("slash_ratio_miss", base.slash_ratio_miss)),
             slash_ratio_bad=float(get("slash_ratio_bad", base.slash_ratio_bad)),
             allow_late_commit=bool(get("allow_late_commit", base.allow_late_commit)),
@@ -205,13 +212,21 @@ class CommitRevealParams:
             return getattr(cfg, attr, default)
 
         obj = CommitRevealParams(
-            commit_window_blocks=int(pick("COMMIT_WINDOW_BLOCKS", base.commit_window_blocks)),
-            reveal_window_blocks=int(pick("REVEAL_WINDOW_BLOCKS", base.reveal_window_blocks)),
-            reveal_grace_blocks=int(pick("REVEAL_GRACE_BLOCKS", base.reveal_grace_blocks)),
+            commit_window_blocks=int(
+                pick("COMMIT_WINDOW_BLOCKS", base.commit_window_blocks)
+            ),
+            reveal_window_blocks=int(
+                pick("REVEAL_WINDOW_BLOCKS", base.reveal_window_blocks)
+            ),
+            reveal_grace_blocks=int(
+                pick("REVEAL_GRACE_BLOCKS", base.reveal_grace_blocks)
+            ),
             require_bond=bool(pick("REQUIRE_BOND", base.require_bond)),
             min_bond_units=int(pick("MIN_BOND_UNITS", base.min_bond_units)),
             slash_on_miss=bool(pick("SLASH_ON_MISS", base.slash_on_miss)),
-            slash_on_bad_reveal=bool(pick("SLASH_ON_BAD_REVEAL", base.slash_on_bad_reveal)),
+            slash_on_bad_reveal=bool(
+                pick("SLASH_ON_BAD_REVEAL", base.slash_on_bad_reveal)
+            ),
             slash_ratio_miss=float(pick("SLASH_RATIO_MISS", base.slash_ratio_miss)),
             slash_ratio_bad=float(pick("SLASH_RATIO_BAD", base.slash_ratio_bad)),
             allow_late_commit=bool(pick("ALLOW_LATE_COMMIT", base.allow_late_commit)),
@@ -252,8 +267,10 @@ class CommitRevealParams:
             raise ValueError("min_bond_units must be >= 0")
 
         # Slashing fractions must live in [0, 1].
-        for name, val in (("slash_ratio_miss", self.slash_ratio_miss),
-                          ("slash_ratio_bad", self.slash_ratio_bad)):
+        for name, val in (
+            ("slash_ratio_miss", self.slash_ratio_miss),
+            ("slash_ratio_bad", self.slash_ratio_bad),
+        ):
             if not (0.0 <= val <= 1.0):
                 raise ValueError(f"{name} must be in [0.0, 1.0]")
 
@@ -281,7 +298,9 @@ class CommitRevealParams:
         }
 
 
-__all__ = ["CommitRevealParams",
-           "DEFAULT_COMMIT_WINDOW_BLOCKS",
-           "DEFAULT_REVEAL_WINDOW_BLOCKS",
-           "DEFAULT_REVEAL_GRACE_BLOCKS"]
+__all__ = [
+    "CommitRevealParams",
+    "DEFAULT_COMMIT_WINDOW_BLOCKS",
+    "DEFAULT_REVEAL_WINDOW_BLOCKS",
+    "DEFAULT_REVEAL_GRACE_BLOCKS",
+]

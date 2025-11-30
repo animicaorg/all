@@ -41,6 +41,7 @@ from tests.integration import env  # gate + env helper
 # RPC helpers
 # -----------------------------------------------------------------------------
 
+
 def _http_timeout() -> float:
     try:
         return float(env("ANIMICA_HTTP_TIMEOUT", "5"))
@@ -48,7 +49,13 @@ def _http_timeout() -> float:
         return 5.0
 
 
-def _rpc_call(rpc_url: str, method: str, params: Optional[Sequence[Any] | Dict[str, Any]] = None, *, req_id: int = 1) -> Any:
+def _rpc_call(
+    rpc_url: str,
+    method: str,
+    params: Optional[Sequence[Any] | Dict[str, Any]] = None,
+    *,
+    req_id: int = 1,
+) -> Any:
     if params is None:
         params = []
     payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
@@ -66,7 +73,11 @@ def _rpc_call(rpc_url: str, method: str, params: Optional[Sequence[Any] | Dict[s
     return msg["result"]
 
 
-def _rpc_try(rpc_url: str, methods: Sequence[str], params: Optional[Sequence[Any] | Dict[str, Any]] = None) -> Tuple[str, Any]:
+def _rpc_try(
+    rpc_url: str,
+    methods: Sequence[str],
+    params: Optional[Sequence[Any] | Dict[str, Any]] = None,
+) -> Tuple[str, Any]:
     last_exc: Optional[Exception] = None
     for i, m in enumerate(methods, start=1):
         try:
@@ -79,6 +90,7 @@ def _rpc_try(rpc_url: str, methods: Sequence[str], params: Optional[Sequence[Any
 # -----------------------------------------------------------------------------
 # AICF discovery helpers
 # -----------------------------------------------------------------------------
+
 
 def _list_providers(rpc_url: str) -> List[Dict[str, Any]]:
     methods = ("aicf.listProviders", "aicf_providers", "aicf/providers/list")
@@ -128,7 +140,15 @@ def _extract_balance_numbers(bal: Dict[str, Any]) -> Dict[str, int]:
     Accept {available, locked, pending, total, withdrawable} (any subset).
     """
     out: Dict[str, int] = {}
-    for k in ("available", "locked", "pending", "total", "withdrawable", "escrow", "rewards"):
+    for k in (
+        "available",
+        "locked",
+        "pending",
+        "total",
+        "withdrawable",
+        "escrow",
+        "rewards",
+    ):
         v = bal.get(k)
         if isinstance(v, (int, float)):
             out[k] = int(v)
@@ -156,7 +176,10 @@ def _balance_score(bal: Dict[str, Any]) -> int:
 # Job helpers
 # -----------------------------------------------------------------------------
 
-def _list_jobs_any(rpc_url: str, provider_id: Optional[str] = None) -> List[Dict[str, Any]]:
+
+def _list_jobs_any(
+    rpc_url: str, provider_id: Optional[str] = None
+) -> List[Dict[str, Any]]:
     """
     Try to list jobs via aicf.listJobs; accept optional provider filter (shape may vary).
     """
@@ -263,6 +286,7 @@ def _claim_payout(rpc_url: str, job_id: str) -> Any:
 # Best-effort enqueue path (if no claimable job is present)
 # -----------------------------------------------------------------------------
 
+
 def _enqueue_ai_job_cli(rpc_url: str) -> Optional[str]:
     """
     Try CLI: python -m capabilities.cli.enqueue_ai --rpc <url> --model tiny --prompt "hi"
@@ -270,13 +294,20 @@ def _enqueue_ai_job_cli(rpc_url: str) -> Optional[str]:
     """
     py = env("ANIMICA_CLI_PYTHON", sys.executable)
     cmd = [
-        py, "-m", "capabilities.cli.enqueue_ai",
-        "--rpc", rpc_url,
-        "--model", "tiny",
-        "--prompt", "ping",
+        py,
+        "-m",
+        "capabilities.cli.enqueue_ai",
+        "--rpc",
+        rpc_url,
+        "--model",
+        "tiny",
+        "--prompt",
+        "ping",
     ]
     try:
-        proc = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=60)
+        proc = subprocess.run(
+            cmd, check=True, capture_output=True, text=True, timeout=60
+        )
         out = (proc.stdout or "") + "\n" + (proc.stderr or "")
         # Try to parse a hex id
         for tok in out.replace("\n", " ").split():
@@ -337,6 +368,7 @@ def _ensure_completed_job(rpc_url: str, wait_secs: float) -> Optional[str]:
 # The test
 # -----------------------------------------------------------------------------
 
+
 @pytest.mark.timeout(540)
 def test_aicf_provider_payout_balance_reflects():
     rpc_url = env("ANIMICA_RPC_URL", "http://127.0.0.1:8545")
@@ -363,7 +395,9 @@ def test_aicf_provider_payout_balance_reflects():
 
     # Try to find a claimable job for this provider; else any provider; else try to enqueue.
     jobs = _list_jobs_any(rpc_url, provider_id=provider_id)
-    claimable_ids: List[str] = [jid for j in jobs if _claimable(j) and (jid := _job_id(j))]
+    claimable_ids: List[str] = [
+        jid for j in jobs if _claimable(j) and (jid := _job_id(j))
+    ]
     job_id: Optional[str] = claimable_ids[0] if claimable_ids else None
 
     if not job_id:
@@ -383,7 +417,9 @@ def test_aicf_provider_payout_balance_reflects():
         )
 
     if not job_id:
-        pytest.skip("No claimable/complete AICF job found (and enqueue path not available).")
+        pytest.skip(
+            "No claimable/complete AICF job found (and enqueue path not available)."
+        )
 
     # Attempt to claim payout
     _claim_payout(rpc_url, job_id)
@@ -414,4 +450,3 @@ def test_aicf_provider_payout_balance_reflects():
     assert (
         bal_after_score > score_before or settled
     ), f"Payout not reflected: before={bal_before} after={last_bal} job={j_final}"
-

@@ -29,25 +29,25 @@ from dataclasses import dataclass, field, replace
 from enum import IntEnum
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
-from core.utils.hash import sha3_256
-from core.utils.bytes import expect_len, to_hex
-from core.encoding.cbor import cbor_dumps, cbor_loads
 from core.encoding.canonical import signbytes_tx as canonical_sign_bytes
-
+from core.encoding.cbor import cbor_dumps, cbor_loads
+from core.utils.bytes import expect_len, to_hex
+from core.utils.hash import sha3_256
 
 # ---- constants (keep in sync with spec/domains.yaml) ----
 
-ADDRESS_LEN = 32                                  # raw address length
-PUBKEY_MAX = 2048                                 # enough for Dilithium3/Sphincs variants
-SIG_MAX = 4096                                    # safety cap for PQ signatures
+ADDRESS_LEN = 32  # raw address length
+PUBKEY_MAX = 2048  # enough for Dilithium3/Sphincs variants
+SIG_MAX = 4096  # safety cap for PQ signatures
 
 
 # ---- enums & small types ----
 
+
 class TxKind(IntEnum):
     TRANSFER = 0
-    DEPLOY   = 1
-    CALL     = 2
+    DEPLOY = 1
+    CALL = 2
 
 
 @dataclass(frozen=True)
@@ -56,7 +56,9 @@ class AccessEntry:
     storage_keys: Tuple[bytes, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "addr", expect_len(self.addr, ADDRESS_LEN, name="AccessEntry.addr"))
+        object.__setattr__(
+            self, "addr", expect_len(self.addr, ADDRESS_LEN, name="AccessEntry.addr")
+        )
         for k in self.storage_keys:
             if not isinstance(k, (bytes, bytearray)):
                 raise TypeError("AccessEntry.storage_keys must be bytes[]")
@@ -89,7 +91,11 @@ class PqSignature:
             raise ValueError("PqSignature.{pubkey,sig} exceed safety caps")
 
     def to_obj(self) -> Mapping[str, Any]:
-        return {"alg": self.alg_id, "pubkey": bytes(self.pubkey), "sig": bytes(self.sig)}
+        return {
+            "alg": self.alg_id,
+            "pubkey": bytes(self.pubkey),
+            "sig": bytes(self.sig),
+        }
 
     @staticmethod
     def from_obj(o: Mapping[str, Any]) -> "PqSignature":
@@ -102,6 +108,7 @@ class PqSignature:
 
 # ---- payloads ----
 
+
 @dataclass(frozen=True)
 class TxTransfer:
     to: bytes
@@ -109,7 +116,9 @@ class TxTransfer:
     data: bytes = b""
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "to", expect_len(self.to, ADDRESS_LEN, name="TxTransfer.to"))
+        object.__setattr__(
+            self, "to", expect_len(self.to, ADDRESS_LEN, name="TxTransfer.to")
+        )
         if self.amount < 0:
             raise ValueError("TxTransfer.amount must be ≥ 0")
         if not isinstance(self.data, (bytes, bytearray)):
@@ -120,7 +129,9 @@ class TxTransfer:
 
     @staticmethod
     def from_obj(o: Mapping[str, Any]) -> "TxTransfer":
-        return TxTransfer(to=bytes(o["to"]), amount=int(o["amount"]), data=bytes(o.get("data", b"")))
+        return TxTransfer(
+            to=bytes(o["to"]), amount=int(o["amount"]), data=bytes(o.get("data", b""))
+        )
 
 
 @dataclass(frozen=True)
@@ -129,8 +140,9 @@ class TxDeploy:
     Deploy Python-VM contract code with a manifest. Core treats them as opaque bytes here.
     Tools (studio/services) recompile & verify code hashes separately.
     """
-    code: bytes               # source or bytecode (per spec/manifest)
-    manifest: bytes           # canonical JSON bytes of manifest (ABI, caps, metadata)
+
+    code: bytes  # source or bytecode (per spec/manifest)
+    manifest: bytes  # canonical JSON bytes of manifest (ABI, caps, metadata)
 
     def __post_init__(self) -> None:
         if not isinstance(self.code, (bytes, bytearray)):
@@ -154,7 +166,9 @@ class TxCall:
     data: bytes  # ABI-encoded call payload (function selector + args)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "to", expect_len(self.to, ADDRESS_LEN, name="TxCall.to"))
+        object.__setattr__(
+            self, "to", expect_len(self.to, ADDRESS_LEN, name="TxCall.to")
+        )
         if not isinstance(self.data, (bytes, bytearray)):
             raise TypeError("TxCall.data must be bytes")
         if len(self.data) == 0:
@@ -172,6 +186,7 @@ TxPayload = TxTransfer | TxDeploy | TxCall
 
 
 # ---- unsigned + signed tx model ----
+
 
 @dataclass(frozen=True)
 class UnsignedTx:
@@ -191,7 +206,11 @@ class UnsignedTx:
             raise ValueError("UnsignedTx.nonce must be ≥ 0")
         if self.gas_price < 0 or self.gas_limit <= 0:
             raise ValueError("UnsignedTx.gas_price must be ≥ 0 and gas_limit > 0")
-        object.__setattr__(self, "sender", expect_len(self.sender, ADDRESS_LEN, name="UnsignedTx.sender"))
+        object.__setattr__(
+            self,
+            "sender",
+            expect_len(self.sender, ADDRESS_LEN, name="UnsignedTx.sender"),
+        )
         if not isinstance(self.kind, TxKind):
             raise TypeError("UnsignedTx.kind must be TxKind")
         for ae in self.access_list:
@@ -205,9 +224,9 @@ class UnsignedTx:
         if self.kind is TxKind.TRANSFER:
             payload_obj = {"t": int(TxKind.TRANSFER), "v": self.payload.to_obj()}  # type: ignore[union-attr]
         elif self.kind is TxKind.DEPLOY:
-            payload_obj = {"t": int(TxKind.DEPLOY), "v": self.payload.to_obj()}    # type: ignore[union-attr]
+            payload_obj = {"t": int(TxKind.DEPLOY), "v": self.payload.to_obj()}  # type: ignore[union-attr]
         elif self.kind is TxKind.CALL:
-            payload_obj = {"t": int(TxKind.CALL), "v": self.payload.to_obj()}      # type: ignore[union-attr]
+            payload_obj = {"t": int(TxKind.CALL), "v": self.payload.to_obj()}  # type: ignore[union-attr]
         else:  # pragma: no cover
             raise ValueError("unknown tx kind")
 
@@ -275,8 +294,16 @@ class UnsignedTx:
     # convenience builders
     @staticmethod
     def build_transfer(
-        *, chain_id: int, sender: bytes, nonce: int, gas_price: int, gas_limit: int,
-        to: bytes, amount: int, data: bytes = b"", access_list: Optional[List[AccessEntry]] = None
+        *,
+        chain_id: int,
+        sender: bytes,
+        nonce: int,
+        gas_price: int,
+        gas_limit: int,
+        to: bytes,
+        amount: int,
+        data: bytes = b"",
+        access_list: Optional[List[AccessEntry]] = None,
     ) -> "UnsignedTx":
         return UnsignedTx(
             chain_id=chain_id,
@@ -291,8 +318,15 @@ class UnsignedTx:
 
     @staticmethod
     def build_deploy(
-        *, chain_id: int, sender: bytes, nonce: int, gas_price: int, gas_limit: int,
-        code: bytes, manifest: bytes, access_list: Optional[List[AccessEntry]] = None
+        *,
+        chain_id: int,
+        sender: bytes,
+        nonce: int,
+        gas_price: int,
+        gas_limit: int,
+        code: bytes,
+        manifest: bytes,
+        access_list: Optional[List[AccessEntry]] = None,
     ) -> "UnsignedTx":
         return UnsignedTx(
             chain_id=chain_id,
@@ -307,8 +341,15 @@ class UnsignedTx:
 
     @staticmethod
     def build_call(
-        *, chain_id: int, sender: bytes, nonce: int, gas_price: int, gas_limit: int,
-        to: bytes, data: bytes, access_list: Optional[List[AccessEntry]] = None
+        *,
+        chain_id: int,
+        sender: bytes,
+        nonce: int,
+        gas_price: int,
+        gas_limit: int,
+        to: bytes,
+        data: bytes,
+        access_list: Optional[List[AccessEntry]] = None,
     ) -> "UnsignedTx":
         return UnsignedTx(
             chain_id=chain_id,
@@ -327,6 +368,7 @@ class Tx:
     """
     Signed transaction.
     """
+
     unsigned: UnsignedTx
     sigs: Tuple[PqSignature, ...] = field(default_factory=tuple)
 
@@ -414,8 +456,8 @@ class Tx:
 
 # ---- simple unit-testable self-check (optional) ----
 if __name__ == "__main__":  # pragma: no cover
-    import os
     import json
+    import os
     import secrets
 
     def rand_addr() -> bytes:

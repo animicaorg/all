@@ -12,15 +12,16 @@ READY = "/readyz"
 
 # Routes that exercise CORS (preflight against POST endpoints)
 CORS_PROBE_PATHS = (
-    "/deploy",      # POST
-    "/simulate",    # POST
-    "/artifacts",   # POST
+    "/deploy",  # POST
+    "/simulate",  # POST
+    "/artifacts",  # POST
 )
 
 
 # ---------------------------
 # Helpers
 # ---------------------------
+
 
 async def _burst(
     client: AsyncClient,
@@ -69,6 +70,7 @@ def _is_present(resp: Response) -> bool:
 # Rate limiting (per-route buckets)
 # ---------------------------
 
+
 @pytest.mark.asyncio
 async def test_per_route_bucket_isolated(aclient: AsyncClient):
     """
@@ -92,9 +94,9 @@ async def test_per_route_bucket_isolated(aclient: AsyncClient):
 
     # Immediately probe /readyz — should not be rate-limited if buckets are per-route
     r_ready = await aclient.get(READY)
-    assert 200 <= r_ready.status_code < 300, (
-        f"/readyz should not share /healthz bucket; got {r_ready.status_code}: {r_ready.text}"
-    )
+    assert (
+        200 <= r_ready.status_code < 300
+    ), f"/readyz should not share /healthz bucket; got {r_ready.status_code}: {r_ready.text}"
 
 
 @pytest.mark.asyncio
@@ -120,12 +122,15 @@ async def test_per_route_bucket_independent_post_route(aclient: AsyncClient):
 
     # GET on /healthz should still pass
     ok = await aclient.get(HEALTH)
-    assert 200 <= ok.status_code < 300, f"/healthz should not be limited by {chosen} bucket"
+    assert (
+        200 <= ok.status_code < 300
+    ), f"/healthz should not be limited by {chosen} bucket"
 
 
 # ---------------------------
 # CORS (allowed origins)
 # ---------------------------
+
 
 @pytest.mark.asyncio
 async def test_cors_allows_configured_origin(aclient: AsyncClient):
@@ -151,13 +156,18 @@ async def test_cors_allows_configured_origin(aclient: AsyncClient):
     if not acao:
         pytest.skip("CORS not enabled in this environment (no ACAO header)")
 
-    assert resp.status_code in (200, 204), f"Unexpected preflight status: {resp.status_code}"
+    assert resp.status_code in (
+        200,
+        204,
+    ), f"Unexpected preflight status: {resp.status_code}"
     assert acao in ("*", origin), f"ACAO should be '*' or echo origin; got {acao!r}"
 
     # Also check ACAM (methods) looks sane when present
     acam = resp.headers.get("access-control-allow-methods")
     if acam:
-        assert "POST" in acam or "post" in acam.lower(), f"ACAM should allow POST; got {acam!r}"
+        assert (
+            "POST" in acam or "post" in acam.lower()
+        ), f"ACAM should allow POST; got {acam!r}"
 
 
 @pytest.mark.asyncio
@@ -188,6 +198,6 @@ async def test_cors_blocks_disallowed_origin(aclient: AsyncClient):
     blocked_status = resp.status_code in (401, 403)
     missing_header = acao is None
 
-    assert blocked_status or missing_header, (
-        f"Expected CORS to block {bad_origin}. Got status={resp.status_code}, ACAO={acao!r}"
-    )
+    assert (
+        blocked_status or missing_header
+    ), f"Expected CORS to block {bad_origin}. Got status={resp.status_code}, ACAO={acao!r}"

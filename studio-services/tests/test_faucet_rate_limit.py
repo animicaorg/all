@@ -6,7 +6,6 @@ import typing as t
 import pytest
 from httpx import AsyncClient, Response
 
-
 FAUCET_PATH = "/faucet/drip"
 
 
@@ -39,7 +38,11 @@ async def _post_drip(
     if amount is not None:
         body["amount"] = amount
 
-    return await client.post(FAUCET_PATH, json=body or {"address": "anim1testaddressplaceholder"} , headers=headers)
+    return await client.post(
+        FAUCET_PATH,
+        json=body or {"address": "anim1testaddressplaceholder"},
+        headers=headers,
+    )
 
 
 def _get_fixture(request: pytest.FixtureRequest, name: str) -> t.Any | None:
@@ -58,11 +61,16 @@ async def test_faucet_requires_api_key(aclient: AsyncClient):
 
     # Without API key we should be rejected up front
     resp = await _post_drip(aclient)
-    assert resp.status_code in (401, 403), f"Expected 401/403 without API key, got {resp.status_code}: {resp.text}"
+    assert resp.status_code in (
+        401,
+        403,
+    ), f"Expected 401/403 without API key, got {resp.status_code}: {resp.text}"
 
 
 @pytest.mark.asyncio
-async def test_faucet_rate_limited_per_key(request: pytest.FixtureRequest, aclient: AsyncClient):
+async def test_faucet_rate_limited_per_key(
+    request: pytest.FixtureRequest, aclient: AsyncClient
+):
     # Skip gracefully if faucet is not enabled
     probe = await aclient.post(FAUCET_PATH, json={})
     if not _has_faucet(probe):
@@ -84,7 +92,9 @@ async def test_faucet_rate_limited_per_key(request: pytest.FixtureRequest, aclie
         await asyncio.sleep(0.01)
 
     if all(s in (401, 403) for s in statuses):
-        pytest.skip("API key not accepted in this test environment; cannot validate rate limiting")
+        pytest.skip(
+            "API key not accepted in this test environment; cannot validate rate limiting"
+        )
 
     # We accept a variety of success codes (200, 201, 202); rate limiter should eventually emit 429 (or 403 in strict modes).
     got_2xx = any(200 <= s < 300 for s in statuses)
@@ -98,12 +108,18 @@ async def test_faucet_rate_limited_per_key(request: pytest.FixtureRequest, aclie
             await asyncio.sleep(0.005)
         got_limited = any(s in (429, 403) for s in statuses)
 
-    assert got_2xx, f"Expected at least one successful faucet response, got statuses={statuses}"
-    assert got_limited, f"Expected rate limiting (429/403) after a burst, got statuses={statuses}"
+    assert (
+        got_2xx
+    ), f"Expected at least one successful faucet response, got statuses={statuses}"
+    assert (
+        got_limited
+    ), f"Expected rate limiting (429/403) after a burst, got statuses={statuses}"
 
 
 @pytest.mark.asyncio
-async def test_faucet_buckets_are_per_key(request: pytest.FixtureRequest, aclient: AsyncClient):
+async def test_faucet_buckets_are_per_key(
+    request: pytest.FixtureRequest, aclient: AsyncClient
+):
     probe = await aclient.post(FAUCET_PATH, json={})
     if not _has_faucet(probe):
         pytest.skip("Faucet route not mounted in this configuration")
@@ -118,6 +134,10 @@ async def test_faucet_buckets_are_per_key(request: pytest.FixtureRequest, aclien
     # Now try with a different key which should have a fresh bucket.
     resp = await _post_drip(aclient, api_key=key2, amount=1)
     if resp.status_code in (401, 403):
-        pytest.skip("Second API key not accepted in this test environment; cannot assert per-key isolation")
+        pytest.skip(
+            "Second API key not accepted in this test environment; cannot assert per-key isolation"
+        )
 
-    assert 200 <= resp.status_code < 300, f"Different API key should not inherit key1's limiter, got {resp.status_code}: {resp.text}"
+    assert (
+        200 <= resp.status_code < 300
+    ), f"Different API key should not inherit key1's limiter, got {resp.status_code}: {resp.text}"

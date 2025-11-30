@@ -74,25 +74,38 @@ class CpuStratumMiner:
         header = job.get("header") or {}
         sign_hex = header.get("signBytes")
         if not isinstance(sign_hex, str) or not sign_hex.startswith("0x"):
-            log.warning("[cpu-miner] missing signBytes; cannot mine job %s", job.get("jobId"))
+            log.warning(
+                "[cpu-miner] missing signBytes; cannot mine job %s", job.get("jobId")
+            )
             return
         prefix = bytes.fromhex(sign_hex[2:])
         theta_micro = self._theta_micro or int(job.get("thetaMicro") or 0)
         share_ratio = float(job.get("shareTarget") or self._share_target or 0.0)
         t_share_micro = max(0, int(theta_micro * share_ratio))
 
-        shares = self._scanner.scan_batch(prefix, t_share_micro, nonce_start=0, nonce_count=self._scan_window, theta_micro=theta_micro)
+        shares = self._scanner.scan_batch(
+            prefix,
+            t_share_micro,
+            nonce_start=0,
+            nonce_count=self._scan_window,
+            theta_micro=theta_micro,
+        )
         if not shares:
-            log.warning("[cpu-miner] no shares found in window for job %s", job.get("jobId"))
+            log.warning(
+                "[cpu-miner] no shares found in window for job %s", job.get("jobId")
+            )
             return
 
         share = shares[0]
         hs_body = {"nonce": hex(share.nonce), "body": {"hMicro": share.h_micro}}
         res = await self._client.submit_share(job["jobId"], hs_body)
-        log.info("[cpu-miner] submitted nonce=%d accepted=%s", share.nonce, res.get("accepted"))
+        log.info(
+            "[cpu-miner] submitted nonce=%d accepted=%s",
+            share.nonce,
+            res.get("accepted"),
+        )
 
     async def run_until_stopped(self) -> None:
         await self.start()
         await self._stop.wait()
         await self.stop()
-

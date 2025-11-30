@@ -36,19 +36,19 @@ Public API
 - ContractBundle: dataclass with .manifest, .abi, .ir, .code, .code_hash_hex
 """
 
-from dataclasses import dataclass
-from typing import Any, Dict, Optional, Union, Tuple, cast
 import base64
-import json
 import hashlib
+import json
+from dataclasses import dataclass
+from typing import Any, Dict, Optional, Tuple, Union, cast
 
 from .compiler import ir as irmod
-from .compiler.encode import encode_ir, decode_ir
+from .compiler.encode import decode_ir, encode_ir
 from .compiler.typecheck import validate_module
 from .errors import ValidationError
 
-
 # ---------------------------- Data model ----------------------------
+
 
 @dataclass(frozen=True)
 class ContractBundle:
@@ -73,6 +73,7 @@ class ContractBundle:
 
 
 # ---------------------------- Manifest ----------------------------
+
 
 def load_manifest(obj_or_json: Union[str, bytes, Dict[str, Any]]) -> Dict[str, Any]:
     """
@@ -117,6 +118,7 @@ def _validate_manifest_shape(m: Dict[str, Any]) -> None:
 
 # ---------------------------- Compiler detection ----------------------------
 
+
 def has_compiler() -> bool:
     """
     Return True if a full Python→IR compiler is available (vm_py).
@@ -124,12 +126,14 @@ def has_compiler() -> bool:
     try:
         import vm_py.compiler.ast_lower as _  # noqa: F401
         import vm_py.compiler.encode as _enc  # noqa: F401
+
         return True
     except Exception:
         return False
 
 
 # ---------------------------- Build helpers ----------------------------
+
 
 def build_from_source(manifest: Dict[str, Any], source: str) -> ContractBundle:
     """
@@ -151,7 +155,9 @@ def build_from_source(manifest: Dict[str, Any], source: str) -> ContractBundle:
 
     # Use vm_py's loader to compile and typecheck, then re-encode via our codec
     try:
-        vm_ir_mod = vm_loader.compile_source_to_ir(source)  # returns vm_py.compiler.ir.Module
+        vm_ir_mod = vm_loader.compile_source_to_ir(
+            source
+        )  # returns vm_py.compiler.ir.Module
     except Exception as e:
         raise ValidationError(f"source compilation failed: {e}") from e
 
@@ -170,10 +176,14 @@ def build_from_source(manifest: Dict[str, Any], source: str) -> ContractBundle:
     code_hash = _sha3_256_hex(code)
 
     abi = cast(Dict[str, Any], manifest["abi"])
-    return ContractBundle(manifest=manifest, abi=abi, ir=ir_module, code=code, code_hash_hex=code_hash)
+    return ContractBundle(
+        manifest=manifest, abi=abi, ir=ir_module, code=code, code_hash_hex=code_hash
+    )
 
 
-def build_from_ir(manifest: Dict[str, Any], ir_input: Union[bytes, bytearray, Dict[str, Any], list]) -> ContractBundle:
+def build_from_ir(
+    manifest: Dict[str, Any], ir_input: Union[bytes, bytearray, Dict[str, Any], list]
+) -> ContractBundle:
     """
     Accept already-built IR as bytes (msgpack/CBOR) or as a Python object
     ([domain, entry, functions] list shape). Validate and produce a bundle.
@@ -194,7 +204,9 @@ def build_from_ir(manifest: Dict[str, Any], ir_input: Union[bytes, bytearray, Di
     code = encode_ir(ir_module)
     code_hash = _sha3_256_hex(code)
     abi = cast(Dict[str, Any], manifest["abi"])
-    return ContractBundle(manifest=manifest, abi=abi, ir=ir_module, code=code, code_hash_hex=code_hash)
+    return ContractBundle(
+        manifest=manifest, abi=abi, ir=ir_module, code=code, code_hash_hex=code_hash
+    )
 
 
 def build_bundle(
@@ -221,6 +233,7 @@ def build_bundle(
 
 
 # ---------------------------- Internals ----------------------------
+
 
 def _resolve_entry_name(manifest: Dict[str, Any], m: irmod.Module) -> str:
     entry = manifest.get("entry")

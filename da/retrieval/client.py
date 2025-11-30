@@ -55,18 +55,21 @@ Note: This client intentionally does not depend on the rest of the repository to
 use in SDK tests; it inlines minimal helpers where convenient.
 """
 
-from dataclasses import dataclass
-from typing import Dict, Iterable, Iterator, List, Optional, Tuple, Union
 import os
 import time
+from dataclasses import dataclass
+from typing import Dict, Iterable, Iterator, List, Optional, Tuple, Union
 
 try:
     import httpx  # type: ignore
 except Exception as e:  # pragma: no cover
-    raise RuntimeError("da.retrieval.client requires 'httpx' (pip install httpx).") from e
+    raise RuntimeError(
+        "da.retrieval.client requires 'httpx' (pip install httpx)."
+    ) from e
 
 
 # ----------------------------- Small helpers --------------------------------
+
 
 def _normalize_hex(s: str) -> str:
     if not isinstance(s, str) or not s:
@@ -77,6 +80,7 @@ def _normalize_hex(s: str) -> str:
     # basic sanity
     int(t or "0", 16)  # raises ValueError on bad hex
     return "0x" + t
+
 
 def _headers_from_env() -> Dict[str, str]:
     # Any env var starting with DA_HTTP_HEADERS_ contributes a header
@@ -91,21 +95,24 @@ def _headers_from_env() -> Dict[str, str]:
 
 # ----------------------------- Result models --------------------------------
 
+
 @dataclass(frozen=True)
 class PostBlobResult:
-    commitment: str          # hex with 0x prefix
+    commitment: str  # hex with 0x prefix
     namespace: int
     size: int
     receipt: Optional[dict] = None
 
+
 @dataclass(frozen=True)
 class BlobBytes:
     data: bytes
-    status_code: int               # 200 or 206
+    status_code: int  # 200 or 206
     etag: Optional[str]
-    content_range: Optional[str]   # e.g. "bytes 0-99/1000"
+    content_range: Optional[str]  # e.g. "bytes 0-99/1000"
     content_length: Optional[int]
     content_type: Optional[str]
+
 
 @dataclass(frozen=True)
 class ProofResult:
@@ -115,6 +122,7 @@ class ProofResult:
 
 
 # ----------------------------- The Client -----------------------------------
+
 
 class DAClient:
     """
@@ -133,9 +141,18 @@ class DAClient:
         client: Optional[httpx.Client] = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
-        self.timeout = float(os.getenv("DA_HTTP_TIMEOUT", timeout if timeout is not None else 30.0))
-        self.retries = int(os.getenv("DA_HTTP_RETRIES", retries if retries is not None else 3))
-        self.backoff_base = float(os.getenv("DA_HTTP_BACKOFF_BASE", backoff_base if backoff_base is not None else 0.25))
+        self.timeout = float(
+            os.getenv("DA_HTTP_TIMEOUT", timeout if timeout is not None else 30.0)
+        )
+        self.retries = int(
+            os.getenv("DA_HTTP_RETRIES", retries if retries is not None else 3)
+        )
+        self.backoff_base = float(
+            os.getenv(
+                "DA_HTTP_BACKOFF_BASE",
+                backoff_base if backoff_base is not None else 0.25,
+            )
+        )
 
         hdrs = {"Accept": "*/*"}
         hdrs.update(_headers_from_env())
@@ -145,7 +162,9 @@ class DAClient:
             hdrs.update(default_headers)
 
         self._own_client = client is None
-        self._client = client or httpx.Client(base_url=self.base_url, headers=hdrs, timeout=self.timeout)
+        self._client = client or httpx.Client(
+            base_url=self.base_url, headers=hdrs, timeout=self.timeout
+        )
 
     # --- context management
 
@@ -198,7 +217,9 @@ class DAClient:
         size = int(payload.get("size"))
         receipt = payload.get("receipt")
 
-        return PostBlobResult(commitment=commitment, namespace=namespace, size=size, receipt=receipt)
+        return PostBlobResult(
+            commitment=commitment, namespace=namespace, size=size, receipt=receipt
+        )
 
     def get_blob(
         self,
@@ -232,7 +253,11 @@ class DAClient:
             status_code=resp.status_code,
             etag=resp.headers.get("ETag"),
             content_range=resp.headers.get("Content-Range"),
-            content_length=int(resp.headers["Content-Length"]) if "Content-Length" in resp.headers else None,
+            content_length=(
+                int(resp.headers["Content-Length"])
+                if "Content-Length" in resp.headers
+                else None
+            ),
             content_type=resp.headers.get("Content-Type"),
         )
 
@@ -286,7 +311,11 @@ class DAClient:
         Download a blob (optionally a range) directly to a file.
         Returns headers metadata like `get_blob`.
         """
-        rst = self.get_blob(commitment, byte_range=byte_range) if chunk_size <= 0 else None
+        rst = (
+            self.get_blob(commitment, byte_range=byte_range)
+            if chunk_size <= 0
+            else None
+        )
         if rst is not None:
             with open(out_path, "wb") as f:
                 f.write(rst.data)
@@ -310,7 +339,11 @@ class DAClient:
                 status_code=resp.status_code,
                 etag=resp.headers.get("ETag"),
                 content_range=resp.headers.get("Content-Range"),
-                content_length=int(resp.headers["Content-Length"]) if "Content-Length" in resp.headers else None,
+                content_length=(
+                    int(resp.headers["Content-Length"])
+                    if "Content-Length" in resp.headers
+                    else None
+                ),
                 content_type=resp.headers.get("Content-Type"),
             )
             with open(out_path, "wb") as f:
@@ -355,7 +388,7 @@ class DAClient:
     def _backoff(self, attempt: int) -> float:
         # attempt: 0,1,2,… -> base * 2^attempt with jitter
         base = self.backoff_base
-        factor = 2 ** attempt
+        factor = 2**attempt
         jitter = 0.1 * base
         return base * factor + (jitter * (os.getpid() % 7) / 7.0)
 
@@ -371,7 +404,9 @@ class DAClient:
                 detail = j.get("detail") or j.get("error") or j
             except Exception:
                 pass
-            msg = f"HTTP {resp.status_code} for {resp.request.method} {resp.request.url}"
+            msg = (
+                f"HTTP {resp.status_code} for {resp.request.method} {resp.request.url}"
+            )
             if detail:
                 msg += f" — {detail}"
             raise httpx.HTTPStatusError(msg, request=resp.request, response=resp) from e

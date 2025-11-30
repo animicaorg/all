@@ -18,7 +18,7 @@ from typing import Any, Dict, Optional
 
 try:
     # Pydantic v2
-    from pydantic import BaseModel, Field, conint, PositiveInt
+    from pydantic import BaseModel, Field, PositiveInt, conint
 except Exception:  # pragma: no cover - v1 fallback
     from pydantic.v1 import BaseModel, Field, PositiveInt  # type: ignore
     from pydantic.v1.types import conint  # type: ignore
@@ -44,7 +44,8 @@ class FaucetRequest(BaseModel):
     chain_id: ChainId = Field(..., description="Target chain id.")
     to: Address = Field(..., description="Recipient address.")
     amount: Optional[conint(ge=1)] = Field(  # type: ignore[misc]
-        default=None, description="Requested amount (base units). Server may clamp to its maximum."
+        default=None,
+        description="Requested amount (base units). Server may clamp to its maximum.",
     )
 
     class Config:  # type: ignore[override]
@@ -58,9 +59,12 @@ class FaucetResponse(BaseModel):
     """
 
     tx_hash: Hash = Field(..., description="Transaction hash of the faucet transfer.")
-    granted: PositiveInt = Field(..., description="Granted amount (base units) actually sent.")
+    granted: PositiveInt = Field(
+        ..., description="Granted amount (base units) actually sent."
+    )
     new_balance: Optional[conint(ge=0)] = Field(  # type: ignore[misc]
-        default=None, description="Best-effort new balance of the recipient after inclusion (if known)."
+        default=None,
+        description="Best-effort new balance of the recipient after inclusion (if known).",
     )
     receipt: Optional[Dict[str, Any]] = Field(
         default=None, description="Optional raw receipt as returned by the node RPC."

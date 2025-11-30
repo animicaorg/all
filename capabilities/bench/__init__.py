@@ -28,7 +28,8 @@ import platform
 import sys
 import time
 from statistics import mean
-from typing import Any, Callable, Dict, Iterable, Mapping, MutableMapping, Optional, Sequence
+from typing import (Any, Callable, Dict, Iterable, Mapping, MutableMapping,
+                    Optional, Sequence)
 
 __all__ = [
     "bench_env",
@@ -59,7 +60,9 @@ def warmup(fn: Callable[[], Any], iters: int = 100) -> None:
         fn()
 
 
-def run_bench(fn: Callable[[], Any], iters: int = 100, repeat: int = 1) -> Dict[str, Any]:
+def run_bench(
+    fn: Callable[[], Any], iters: int = 100, repeat: int = 1
+) -> Dict[str, Any]:
     """
     Time `fn` repeatedly and return simple statistics.
 

@@ -53,9 +53,9 @@ __all__ = [
 
 if TYPE_CHECKING:
     # For type checkers, expose real symbols
-    from . import hashshare, ai, quantum  # type: ignore
-    from .hashshare import build_hashshare, verify_hashshare  # type: ignore
+    from . import ai, hashshare, quantum  # type: ignore
     from .ai import assemble_ai_proof  # type: ignore
+    from .hashshare import build_hashshare, verify_hashshare  # type: ignore
     from .quantum import assemble_quantum_proof  # type: ignore
 else:
     # Lazy attribute loading to keep import-time deps light
@@ -64,12 +64,19 @@ else:
             module = __import__(f"{__name__}.{name}", fromlist=[name])
             return module
         if name in ("build_hashshare", "verify_hashshare"):
-            from .hashshare import build_hashshare, verify_hashshare  # type: ignore
-            return {"build_hashshare": build_hashshare, "verify_hashshare": verify_hashshare}[name]
+            from .hashshare import (build_hashshare,  # type: ignore
+                                    verify_hashshare)
+
+            return {
+                "build_hashshare": build_hashshare,
+                "verify_hashshare": verify_hashshare,
+            }[name]
         if name == "assemble_ai_proof":
             from .ai import assemble_ai_proof  # type: ignore
+
             return assemble_ai_proof
         if name == "assemble_quantum_proof":
             from .quantum import assemble_quantum_proof  # type: ignore
+
             return assemble_quantum_proof
         raise AttributeError(name)

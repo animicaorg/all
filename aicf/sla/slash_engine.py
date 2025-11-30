@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 Slash engine: compute penalties, emit SlashEvent, reduce stake, and jail on repeats.
 
@@ -23,10 +24,10 @@ Notes:
 """
 
 
-from dataclasses import dataclass
-from typing import Deque, Dict, Optional, Protocol, Any
-from collections import deque
 import time
+from collections import deque
+from dataclasses import dataclass
+from typing import Any, Deque, Dict, Optional, Protocol
 
 # Types from AICF
 try:
@@ -37,6 +38,7 @@ except Exception:  # pragma: no cover - fallback for static tools
 try:
     from aicf.aitypes.events import SlashEvent  # expected event type
 except Exception:  # pragma: no cover - minimal fallback to keep module importable
+
     @dataclass(frozen=True)
     class SlashEvent:  # type: ignore[no-redef]
         provider_id: ProviderId
@@ -69,6 +71,7 @@ def _observe(hist: Optional[Any], value: float, **labels: object) -> None:
 class StakingAPI(Protocol):
     def get_stake(self, provider_id: ProviderId) -> int: ...
     def slash(self, provider_id: ProviderId, amount: int, reason: str) -> int: ...
+
     # returns new stake after slashing
 
 
@@ -91,11 +94,12 @@ class SlashPolicy:
         window_s: sliding window (seconds) for repeat offense counting.
         clamp_to_stake: if True, clamp slash to available stake.
     """
-    base_bps: int = 50               # 0.50% baseline
-    min_slash: int = 10_000          # in smallest token units
-    max_slash: int = 1_000_000_000   # cap to avoid catastrophic errors
+
+    base_bps: int = 50  # 0.50% baseline
+    min_slash: int = 10_000  # in smallest token units
+    max_slash: int = 1_000_000_000  # cap to avoid catastrophic errors
     jail_after: int = 3
-    window_s: float = 3_600.0        # 1 hour window
+    window_s: float = 3_600.0  # 1 hour window
     clamp_to_stake: bool = True
 
 
@@ -132,8 +136,12 @@ class SlashEngine:
         self._recent: Dict[ProviderId, Deque[float]] = {}
 
         # Pre-bind metric handles if available
-        self._m_slash_events = getattr(metrics, "slash_events", None) if metrics else None
-        self._m_slash_amounts = getattr(metrics, "slash_amounts", None) if metrics else None
+        self._m_slash_events = (
+            getattr(metrics, "slash_events", None) if metrics else None
+        )
+        self._m_slash_amounts = (
+            getattr(metrics, "slash_amounts", None) if metrics else None
+        )
         self._m_jail_events = getattr(metrics, "jail_events", None) if metrics else None
 
     # ----------------------------
@@ -173,7 +181,9 @@ class SlashEngine:
             amount = min(amount, stake)
 
         # Apply slash (no-op if amount == 0)
-        new_stake = self._staking.slash(provider_id, amount, reason) if amount > 0 else stake
+        new_stake = (
+            self._staking.slash(provider_id, amount, reason) if amount > 0 else stake
+        )
 
         # Update sliding window and check jail threshold
         win = self._recent.setdefault(provider_id, deque())

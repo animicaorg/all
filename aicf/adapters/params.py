@@ -46,7 +46,6 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Dict, Mapping, Optional, Tuple, TypedDict
 
-
 BPS_DENOM = 10_000
 
 
@@ -68,7 +67,11 @@ class Split:
         total = self.provider_bps + self.miner_bps + self.treasury_bps
         if total != BPS_DENOM:
             raise ValueError(f"split must sum to {BPS_DENOM}, got {total}")
-        for name, v in (("provider", self.provider_bps), ("miner", self.miner_bps), ("treasury", self.treasury_bps)):
+        for name, v in (
+            ("provider", self.provider_bps),
+            ("miner", self.miner_bps),
+            ("treasury", self.treasury_bps),
+        ):
             if v < 0:
                 raise ValueError(f"{name} bps must be >= 0")
 
@@ -118,8 +121,8 @@ class AICFEconParams:
 # ---- defaults ----------------------------------------------------------------
 
 _DEFAULTS: Dict[str, Any] = {
-    "epoch_duration_blocks": 3600,              # ~1-day at 24s blocks, tune per network
-    "max_epoch_payout_cap": 10_000_000_000,     # example cap
+    "epoch_duration_blocks": 3600,  # ~1-day at 24s blocks, tune per network
+    "max_epoch_payout_cap": 10_000_000_000,  # example cap
     "treasury_account": "anim1treasury0000000000000000000000000",
     "ai": {
         "base_per_unit": 1_000,
@@ -223,6 +226,7 @@ def _parse_kind(name: str, obj: Mapping[str, Any]) -> EconKind:
 def _coalesce(source: Optional[Mapping[str, Any]]) -> Mapping[str, Any]:
     if not source:
         return _DEFAULTS
+
     # Shallow-merge defaults with provided source for robustness.
     def deep_merge(d: Dict[str, Any], u: Mapping[str, Any]) -> Dict[str, Any]:
         out = dict(d)
@@ -232,11 +236,14 @@ def _coalesce(source: Optional[Mapping[str, Any]]) -> Mapping[str, Any]:
             else:
                 out[k] = v
         return out
+
     return deep_merge(_DEFAULTS, source)  # type: ignore[arg-type]
 
 
 def _build_params(section: Mapping[str, Any]) -> AICFEconParams:
-    epoch_blocks = int(section.get("epoch_duration_blocks", _DEFAULTS["epoch_duration_blocks"]))
+    epoch_blocks = int(
+        section.get("epoch_duration_blocks", _DEFAULTS["epoch_duration_blocks"])
+    )
     cap = int(section.get("max_epoch_payout_cap", _DEFAULTS["max_epoch_payout_cap"]))
     treasury = str(section.get("treasury_account", _DEFAULTS["treasury_account"]))
     ai = _parse_kind("ai", section.get("ai", _DEFAULTS["ai"]))  # type: ignore[arg-type]

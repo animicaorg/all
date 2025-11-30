@@ -45,15 +45,16 @@ Design goals
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from importlib.metadata import PackageNotFoundError, version as _pkg_version
 import logging
+from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 from typing import Final, Mapping, Optional, TypedDict
-
 
 # --------------------------------------------------------------------------------------
 # Version helpers
 # --------------------------------------------------------------------------------------
+
 
 def _detect_version(dist_name: str = "aicf_provider") -> str:
     """
@@ -87,6 +88,7 @@ ProviderId = str
 
 class CapabilitySet(TypedDict, total=False):
     """Feature flags advertised by the provider."""
+
     ai: bool
     quantum: bool
 
@@ -99,6 +101,7 @@ class ProviderInfo:
 
     Avoids importing framework models; can be wrapped by response models upstream.
     """
+
     provider_id: ProviderId
     version: str
     capabilities: CapabilitySet
@@ -107,6 +110,7 @@ class ProviderInfo:
 # --------------------------------------------------------------------------------------
 # Logging utilities (no global configuration; just helpers)
 # --------------------------------------------------------------------------------------
+
 
 def get_logger(name: Optional[str] = None) -> logging.Logger:
     """
@@ -137,6 +141,7 @@ ENV: Final[Mapping[str, str]] = {
 # --------------------------------------------------------------------------------------
 # Friendly about() string for CLIs and /version endpoints
 # --------------------------------------------------------------------------------------
+
 
 def about() -> str:
     """

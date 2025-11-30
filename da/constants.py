@@ -23,6 +23,7 @@ try:
     # Small, dependency-free import; used only for a nicer error type.
     from .errors import NamespaceRangeError  # type: ignore
 except Exception:  # pragma: no cover
+
     class NamespaceRangeError(Exception):  # type: ignore
         pass
 
@@ -83,7 +84,9 @@ def is_in_range(x: int, span: Tuple[int, int]) -> bool:
     return lo <= x <= hi
 
 
-def is_reserved_namespace(ns: int, *, id_bytes: int = NAMESPACE_ID_BYTES_DEFAULT) -> bool:
+def is_reserved_namespace(
+    ns: int, *, id_bytes: int = NAMESPACE_ID_BYTES_DEFAULT
+) -> bool:
     """
     Whether a namespace id falls into the reserved spans for the given width.
 
@@ -96,7 +99,9 @@ def is_reserved_namespace(ns: int, *, id_bytes: int = NAMESPACE_ID_BYTES_DEFAULT
     return False
 
 
-def assert_namespace_allowed(ns: int, *, id_bytes: int = NAMESPACE_ID_BYTES_DEFAULT) -> None:
+def assert_namespace_allowed(
+    ns: int, *, id_bytes: int = NAMESPACE_ID_BYTES_DEFAULT
+) -> None:
     """
     Validate a namespace id against width and reserved ranges.
 
@@ -105,9 +110,13 @@ def assert_namespace_allowed(ns: int, *, id_bytes: int = NAMESPACE_ID_BYTES_DEFA
     """
     max_id = namespace_max_id(id_bytes)
     if not (0 <= ns <= max_id):
-        raise NamespaceRangeError(f"namespace {ns} out of bounds for {id_bytes}-byte ids (max {max_id})")
+        raise NamespaceRangeError(
+            f"namespace {ns} out of bounds for {id_bytes}-byte ids (max {max_id})"
+        )
     if is_reserved_namespace(ns, id_bytes=id_bytes):
-        raise NamespaceRangeError(f"namespace {hex(ns)} is reserved for {id_bytes}-byte ids")
+        raise NamespaceRangeError(
+            f"namespace {hex(ns)} is reserved for {id_bytes}-byte ids"
+        )
 
 
 __all__ = [

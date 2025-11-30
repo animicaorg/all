@@ -16,12 +16,12 @@ locks if used from multiple threads.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
-from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Tuple, Union
 import time
+from dataclasses import asdict, dataclass
+from typing import (Dict, Iterable, Iterator, List, Optional, Sequence, Tuple,
+                    Union)
 
-from .types import Commitment, BlobMeta
-
+from .types import BlobMeta, Commitment
 
 # --------------------------------------------------------------------------- #
 # Helpers
@@ -51,6 +51,7 @@ def root_hex(root: RootLike) -> str:
 # Records & queries
 # --------------------------------------------------------------------------- #
 
+
 @dataclass(frozen=True)
 class BlobIndexRecord:
     """
@@ -65,6 +66,7 @@ class BlobIndexRecord:
       created_at: unix timestamp (seconds) when the record was inserted
       data_shards, total_shards, share_bytes: optional erasure parameters (for inspection)
     """
+
     root: bytes
     namespace: int
     size_bytes: int
@@ -159,9 +161,13 @@ class InMemoryBlobIndex:
         self._add_to_secondary(rec)
         return rec
 
-    def put_from(self, *, storage_key: str, commit: Commitment, meta: BlobMeta) -> BlobIndexRecord:
+    def put_from(
+        self, *, storage_key: str, commit: Commitment, meta: BlobMeta
+    ) -> BlobIndexRecord:
         """Convenience: build a record from Commitment + BlobMeta and insert it."""
-        rec = BlobIndexRecord.from_commit_meta(storage_key=storage_key, commit=commit, meta=meta)
+        rec = BlobIndexRecord.from_commit_meta(
+            storage_key=storage_key, commit=commit, meta=meta
+        )
         return self.put(rec)
 
     def get(self, root: RootLike) -> Optional[BlobIndexRecord]:
@@ -180,10 +186,14 @@ class InMemoryBlobIndex:
 
     # -- secondary ----------------------------------------------------------- #
 
-    def by_namespace(self, ns: int, *, limit: Optional[int] = None, offset: int = 0) -> List[BlobIndexRecord]:
+    def by_namespace(
+        self, ns: int, *, limit: Optional[int] = None, offset: int = 0
+    ) -> List[BlobIndexRecord]:
         roots = self._by_ns.get(int(ns), set())
         # Sort by recency (created_at desc), then by root to stabilize order
-        records = sorted((self._by_root[r] for r in roots), key=lambda r: (-r.created_at, r.root))
+        records = sorted(
+            (self._by_root[r] for r in roots), key=lambda r: (-r.created_at, r.root)
+        )
         if offset:
             records = records[offset:]
         if limit is not None:
@@ -192,7 +202,9 @@ class InMemoryBlobIndex:
 
     def by_storage_key(self, skey: str) -> List[BlobIndexRecord]:
         roots = self._by_skey.get(skey, set())
-        return sorted((self._by_root[r] for r in roots), key=lambda r: (-r.created_at, r.root))
+        return sorted(
+            (self._by_root[r] for r in roots), key=lambda r: (-r.created_at, r.root)
+        )
 
     def recent(self, *, limit: int = 50) -> List[BlobIndexRecord]:
         out: List[BlobIndexRecord] = []
@@ -231,7 +243,9 @@ class InMemoryBlobIndex:
                 return False
             if max_size is not None and rec.size_bytes > max_size:
                 return False
-            if storage_key_prefix is not None and not rec.storage_key.startswith(storage_key_prefix):
+            if storage_key_prefix is not None and not rec.storage_key.startswith(
+                storage_key_prefix
+            ):
                 return False
             return True
 

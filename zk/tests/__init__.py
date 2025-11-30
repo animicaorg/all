@@ -23,26 +23,33 @@ Environment toggles (optional, used by verifiers/adapters if present):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 from pathlib import Path
 from typing import Any, Union
-import hashlib
 
 # --- Paths --------------------------------------------------------------------
 
 TEST_ROOT: Path = Path(__file__).resolve().parent
+
+
 # Try to locate the repository root heuristically: look for top-level "zk" or a VCS marker
 def _find_repo_root(start: Path) -> Path:
     p = start
     for _ in range(10):
-        if (p / ".git").exists() or (p / "pyproject.toml").exists() or (p / "zk").is_dir():
+        if (
+            (p / ".git").exists()
+            or (p / "pyproject.toml").exists()
+            or (p / "zk").is_dir()
+        ):
             return p
         if p.parent == p:
             break
         p = p.parent
     return start
+
 
 REPO_ROOT: Path = _find_repo_root(TEST_ROOT)
 
@@ -57,11 +64,14 @@ def fixture_path(*parts: Union[str, Path]) -> Path:
 
 # --- JSON & hashing ------------------------------------------------------------
 
+
 def canonical_json_bytes(obj: Any) -> bytes:
     """
     Serialize obj to canonical JSON bytes: sorted keys, no extra whitespace, UTF-8.
     """
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(
+        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
 
 
 def read_json(path_or_name: Union[str, Path]) -> Any:
@@ -104,6 +114,7 @@ def sha3_256_hex(b: bytes) -> str:
 
 # --- Env & logging -------------------------------------------------------------
 
+
 def env_flag(name: str, default: bool = False) -> bool:
     """
     Read an environment flag in a truthy/falsey way: "1", "true", "yes" → True.
@@ -118,7 +129,9 @@ def is_ci() -> bool:
     """
     Detect common CI environments.
     """
-    return any(env_flag(k) for k in ("CI", "GITHUB_ACTIONS", "BUILDkite", "TEAMCITY_VERSION"))
+    return any(
+        env_flag(k) for k in ("CI", "GITHUB_ACTIONS", "BUILDkite", "TEAMCITY_VERSION")
+    )
 
 
 def configure_test_logging(level: int | None = None) -> None:

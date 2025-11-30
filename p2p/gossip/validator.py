@@ -52,12 +52,14 @@ def cbor_top_is_indefinite(b0: int) -> bool:
 # Topic validator
 # -----------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class TopicValidator:
     """
     A fast validator configured for a topic "kind". The check function may
     perform additional custom logic but must be O(1) over |raw| (no scanning).
     """
+
     name: str
     min_size: int
     max_size: int
@@ -98,8 +100,8 @@ _DEFAULT_VALIDATORS: Dict[str, TopicValidator] = {
     # Typical signed transaction object encoded as a small CBOR map.
     "txs": TopicValidator(
         name="txs",
-        min_size=64,              # signatures + body
-        max_size=8_192,           # guard against pathological big txs
+        min_size=64,  # signatures + body
+        max_size=8_192,  # guard against pathological big txs
         allowed_major_types={5},  # CBOR map
     ),
     # Canonical header (roots, Θ, nonce, mixSeed, etc.) as a CBOR map.
@@ -114,7 +116,7 @@ _DEFAULT_VALIDATORS: Dict[str, TopicValidator] = {
     "blocks": TopicValidator(
         name="blocks",
         min_size=512,
-        max_size=8_000_000,       # ~8 MB cap for safety
+        max_size=8_000_000,  # ~8 MB cap for safety
         allowed_major_types={5},
     ),
     # HashShare / AI / Quantum / Storage / VDF micro receipts typically encode
@@ -129,8 +131,8 @@ _DEFAULT_VALIDATORS: Dict[str, TopicValidator] = {
     "blobs": TopicValidator(
         name="blobs",
         min_size=32,
-        max_size=16_000_000,       # 16 MB soft cap
-        allowed_major_types={2, 4}, # bytes or array
+        max_size=16_000_000,  # 16 MB soft cap
+        allowed_major_types={2, 4},  # bytes or array
         # For bytes, require additional-info != 31 (no indefinite top).
         extra_check=lambda raw: (
             "blob must be bytes or array-of-bytes"
@@ -143,7 +145,7 @@ _DEFAULT_VALIDATORS: Dict[str, TopicValidator] = {
         name="generic",
         min_size=1,
         max_size=16_000_000,
-        allowed_major_types=set(),   # any
+        allowed_major_types=set(),  # any
         require_definite_top=False,  # be maximally permissive
     ),
 }
@@ -159,7 +161,12 @@ def _guess_kind(topic_path: str) -> str:
     s = topic_path.lower()
     endings = ("blocks", "headers", "txs", "shares", "blobs")
     for k in endings:
-        if s.endswith("/" + k) or s.endswith("." + k) or s.endswith(k) or ("/" + k + "/") in s:
+        if (
+            s.endswith("/" + k)
+            or s.endswith("." + k)
+            or s.endswith(k)
+            or ("/" + k + "/") in s
+        ):
             return k
     return "generic"
 
@@ -167,6 +174,7 @@ def _guess_kind(topic_path: str) -> str:
 # -----------------------------------------------------------------------------
 # Registry and API
 # -----------------------------------------------------------------------------
+
 
 class ValidatorRegistry:
     """

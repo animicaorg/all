@@ -120,7 +120,9 @@ def test_contract_manifest_examples_validate_against_schema(rel_path: Path) -> N
     visible without breaking the suite.
     """
     if not EXAMPLE_PATHS:
-        pytest.skip("No contract manifest example JSON files found for configured globs")
+        pytest.skip(
+            "No contract manifest example JSON files found for configured globs"
+        )
 
     root = _repo_root()
     schema = _load_manifest_schema()

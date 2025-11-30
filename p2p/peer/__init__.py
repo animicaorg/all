@@ -14,13 +14,13 @@ Types and services for peer lifecycle management:
 These are imported here for convenient access as p2p.peer.*.
 """
 
-from .peer import Peer, PeerRole
-from .peerstore import PeerStore
 from .address_book import AddressBook
 from .connection_manager import ConnectionManager
 from .identify import IdentifyService
+from .peer import Peer, PeerRole
+from .peerstore import PeerStore
 from .ping import PingService
-from .ratelimit import RateLimiter, RateBucket, PeerRateLimiter
+from .ratelimit import PeerRateLimiter, RateBucket, RateLimiter
 
 __all__ = [
     "Peer",

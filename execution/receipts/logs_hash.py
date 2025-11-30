@@ -31,8 +31,8 @@ Public API
 
 from __future__ import annotations
 
-from typing import Iterable, List, Mapping, Sequence, Tuple
 import hashlib
+from typing import Iterable, List, Mapping, Sequence, Tuple
 
 try:
     import cbor2  # type: ignore
@@ -43,7 +43,6 @@ except Exception as e:  # pragma: no cover
 
 # Prefer the canonical LogEvent from execution.types
 from execution.types.events import LogEvent
-
 
 # ---------------------------- Byte helpers ----------------------------------
 
@@ -89,7 +88,7 @@ def _h(domain: bytes, *parts: bytes) -> bytes:
 
 def _log_to_canonical_map(ev: LogEvent) -> Mapping[str, bytes | list[bytes]]:
     addr = _to_bytes(ev.address)
-    topics_list = [ _to_bytes(t) for t in list(ev.topics) ]
+    topics_list = [_to_bytes(t) for t in list(ev.topics)]
     data = _to_bytes(ev.data)
     # Canonical field names for wire/leaf encoding
     return {"address": addr, "topics": topics_list, "data": data}
@@ -142,7 +141,7 @@ def compute_logs_root(logs: Iterable[LogEvent]) -> bytes:
 def _set_bit(bitset: bytearray, idx: int) -> None:
     byte_index = idx // 8
     bit_index = idx % 8
-    bitset[byte_index] |= (1 << (7 - bit_index))  # big-endian within byte
+    bitset[byte_index] |= 1 << (7 - bit_index)  # big-endian within byte
 
 
 def _bloom_indices(item: bytes, bits: int, k: int) -> Tuple[int, ...]:

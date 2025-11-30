@@ -6,16 +6,16 @@ from typing import Any, Callable, Optional, Tuple, Union
 
 import pytest
 
-
 # --------------------------------------------------------------------------------------
 # Flexible wrappers over vm_py.abi.encoding / vm_py.abi.decoding so tests tolerate
 # minor API differences (function names, arg order, kw vs positional).
 # --------------------------------------------------------------------------------------
 
+
 def _import_modules():
     try:
-        import vm_py.abi.encoding as enc  # type: ignore
         import vm_py.abi.decoding as dec  # type: ignore
+        import vm_py.abi.encoding as enc  # type: ignore
     except Exception as e:  # pragma: no cover - make failure obvious
         raise AssertionError(f"Failed to import vm_py.abi modules: {e}")
     return enc, dec
@@ -83,7 +83,9 @@ def _mk_encoder(enc_mod) -> Callable[[str, Any], bytes]:
                 last_err = e
             except Exception as e:
                 last_err = e
-        raise AssertionError(f"Unable to encode {type_name} with available functions; last err: {last_err}")
+        raise AssertionError(
+            f"Unable to encode {type_name} with available functions; last err: {last_err}"
+        )
 
     return _encode
 
@@ -144,7 +146,9 @@ def _mk_decoder(dec_mod) -> Callable[[str, bytes], Any]:
                 last_err = e
             except Exception as e:
                 last_err = e
-        raise AssertionError(f"Unable to decode {type_name} with available functions; last err: {last_err}")
+        raise AssertionError(
+            f"Unable to decode {type_name} with available functions; last err: {last_err}"
+        )
 
     return _decode
 
@@ -157,6 +161,7 @@ DECODE = _mk_decoder(DEC)
 # --------------------------------------------------------------------------------------
 # Helpers
 # --------------------------------------------------------------------------------------
+
 
 def _idem_roundtrip(type_name: str, value: Any) -> Tuple[bytes, Any, bytes]:
     """
@@ -187,6 +192,7 @@ def _maybe_make_address_string(payload: bytes) -> Optional[str]:
     # Try pq/py/utils/bech32.py
     try:
         from pq.py.utils import bech32 as b32  # type: ignore
+
         for name in ("encode", "bech32m_encode", "encode_bech32m"):
             fn = getattr(b32, name, None)
             if callable(fn):
@@ -220,6 +226,7 @@ def _maybe_make_address_string(payload: bytes) -> Optional[str]:
 # --------------------------------------------------------------------------------------
 # Tests: ints, bools, bytes, address
 # --------------------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "value",
@@ -265,7 +272,7 @@ def test_bytes_roundtrip(blob: bytes):
 
 def test_address_roundtrip_bytes_payload():
     # Use 32-byte payload; many schemes are alg_id||sha3(pubkey) but ABI can normalize.
-    payloads = [b"\x00" * 32, b"\xAB" * 32, os.urandom(32)]
+    payloads = [b"\x00" * 32, b"\xab" * 32, os.urandom(32)]
     for payload in payloads:
         enc1, dec, enc2 = _idem_roundtrip("address", payload)
         # Decoded value may be bytes or bech32 string; in either case, re-encode matches.
@@ -285,7 +292,9 @@ def test_address_roundtrip_bech32_string_if_available():
     payload = os.urandom(32)
     addr_str = _maybe_make_address_string(payload)
     if not addr_str:
-        pytest.skip("No bech32 address helper available; skipping string-form address round-trip")
+        pytest.skip(
+            "No bech32 address helper available; skipping string-form address round-trip"
+        )
 
     enc1, dec, enc2 = _idem_roundtrip("address", addr_str)
     # Decoder may normalize to bytes or keep string; either is OK as long as canonical re-encode matches.

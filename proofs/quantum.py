@@ -56,31 +56,37 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
 
-from .errors import ProofError, AttestationError, SchemaError
-from .types import ProofType, ProofEnvelope
-from .metrics import ProofMetrics
 from .cbor import validate_body
+from .errors import AttestationError, ProofError, SchemaError
+from .metrics import ProofMetrics
+from .quantum_attest.benchmarks import \
+    units_for  # -> int units from (depth,width,shots)
+# Attestation & benchmarking helpers (implemented in module-local subpackages)
+from .quantum_attest.provider_cert import \
+    verify_provider_cert  # -> (ok: bool, info: dict)
+from .types import ProofEnvelope, ProofType
 from .utils.hash import sha3_256
 from .utils.math import clamp01
 
-# Attestation & benchmarking helpers (implemented in module-local subpackages)
-from .quantum_attest.provider_cert import verify_provider_cert  # -> (ok: bool, info: dict)
-from .quantum_attest.benchmarks import units_for  # -> int units from (depth,width,shots)
-
 # Optional: if traps helpers exist, we use them; else we fall back to a local implementation.
 try:
-    from .quantum_attest.traps import confidence_lower_bound  # Wilson/Clopper-Pearson LB
+    from .quantum_attest.traps import \
+        confidence_lower_bound  # Wilson/Clopper-Pearson LB
 except Exception:  # pragma: no cover
+
     def confidence_lower_bound(ok: int, total: int, alpha: float = 0.05) -> float:
         """Wilson score lower bound for a Bernoulli proportion (fallback)."""
         import math
+
         if total <= 0:
             return 0.0
-        z = 1.959963984540054 if alpha == 0.05 else abs(float(alpha))  # crude; callers may pass z directly
+        z = (
+            1.959963984540054 if alpha == 0.05 else abs(float(alpha))
+        )  # crude; callers may pass z directly
         phat = ok / total
         denom = 1 + z**2 / total
-        center = phat + z*z/(2*total)
-        rad = z * ((phat*(1 - phat) + z*z/(4*total)) / total) ** 0.5
+        center = phat + z * z / (2 * total)
+        rad = z * ((phat * (1 - phat) + z * z / (4 * total)) / total) ** 0.5
         return max(0.0, (center - rad) / denom)
 
 
@@ -120,7 +126,9 @@ def _trap_item_bytes(trap_digest: bytes, count: int, ok: bool) -> bytes:
     return trap_digest + count.to_bytes(8, "big") + (b"\x01" if ok else b"\x00")
 
 
-def _verify_traps_section(traps: Dict[str, Any], alpha: float = 0.05) -> Tuple[float, Dict[str, Any]]:
+def _verify_traps_section(
+    traps: Dict[str, Any], alpha: float = 0.05
+) -> Tuple[float, Dict[str, Any]]:
     """
     Verify seedCommit == H(seedReveal), recompute Merkle root of receipts,
     and compute traps_ratio = ok_count / total_trap_shots.
@@ -188,7 +196,9 @@ def _qos_score(qos: Dict[str, Any]) -> Tuple[float, Dict[str, Any]]:
 
     import math
 
-    lat_norm = 1.0 - (math.log1p(p95 / 1500.0) / math.log1p(4.0))  # 0ms→1, 1.5s→~0.5, 6s→0
+    lat_norm = 1.0 - (
+        math.log1p(p95 / 1500.0) / math.log1p(4.0)
+    )  # 0ms→1, 1.5s→~0.5, 6s→0
     lat_norm = clamp01(lat_norm)
 
     succ_norm = success / 1000.0
@@ -222,6 +232,7 @@ def _derive_quantum_units(job: Dict[str, Any]) -> int:
 
 # ─────────────────────────────── main API ───────────────────────────────
 
+
 def verify_quantum_body(body: Dict[str, Any]) -> Tuple[ProofMetrics, Dict[str, Any]]:
     """
     Verify a Quantum proof body and return (metrics, details).
@@ -239,7 +250,9 @@ def verify_quantum_body(body: Dict[str, Any]) -> Tuple[ProofMetrics, Dict[str, A
     provider_bundle = body["provider"]
     ok, provider_info = verify_provider_cert(provider_bundle)
     if not ok:
-        raise AttestationError("quantum provider certificate/attestation failed policy checks")
+        raise AttestationError(
+            "quantum provider certificate/attestation failed policy checks"
+        )
 
     # 3) Traps
     traps_ratio, trap_details = _verify_traps_section(body["traps"])
@@ -264,7 +277,7 @@ def verify_quantum_body(body: Dict[str, Any]) -> Tuple[ProofMetrics, Dict[str, A
         "depth": int(job["depth"]),
         "width": int(job["width"]),
         "shots": int(job["shots"]),
-        "provider": provider_info,    # vendor/model/endorsements/keys/validity windows
+        "provider": provider_info,  # vendor/model/endorsements/keys/validity windows
         "traps": trap_details,
         "qos": qos_details,
         "quantum_units": quantum_units,

@@ -45,10 +45,12 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 # JSON loader with dup detection
 # ----------------------------
 
+
 @dataclass
 class Dup:
     path: str
     key: str
+
 
 def _obj_pairs_hook(stack: List[str], dups: List[Dup]):
     def hook(pairs: List[Tuple[str, Any]]):
@@ -60,7 +62,9 @@ def _obj_pairs_hook(stack: List[str], dups: List[Dup]):
             seen[k] = seen.get(k, 0) + 1
             obj[k] = v
         return obj
+
     return hook
+
 
 def load_json_with_dups(path: Path) -> Tuple[Any, List[Dup]]:
     text = path.read_text(encoding="utf-8")
@@ -75,6 +79,7 @@ def load_json_with_dups(path: Path) -> Tuple[Any, List[Dup]]:
             s,
             object_pairs_hook=_obj_pairs_hook(stack, dups),  # type: ignore[arg-type]
         )
+
     try:
         data = _parse(text)
     except Exception as e:
@@ -82,17 +87,20 @@ def load_json_with_dups(path: Path) -> Tuple[Any, List[Dup]]:
 
     return data, dups
 
+
 # ----------------------------
 # Bounds support (reuse shape from validate_proposal.py)
 # ----------------------------
+
 
 @dataclass
 class BoundRule:
     min: Optional[float] = None
     max: Optional[float] = None
     step: Optional[float] = None
-    type: Optional[str] = None     # "int" | "float" | "number" | "string" | "bool"
+    type: Optional[str] = None  # "int" | "float" | "number" | "string" | "bool"
     enum: Optional[List[Any]] = None
+
 
 def load_bounds(bounds_path: Path) -> Dict[str, BoundRule]:
     if not bounds_path.exists():
@@ -112,6 +120,7 @@ def load_bounds(bounds_path: Path) -> Dict[str, BoundRule]:
         )
     return rules
 
+
 def _coerce_number(v: Any, typ: Optional[str]) -> Optional[float]:
     if typ in (None, "number", "float"):
         try:
@@ -125,6 +134,7 @@ def _coerce_number(v: Any, typ: Optional[str]) -> Optional[float]:
         except Exception:
             return None
     return None
+
 
 def _extract_params_like(doc: Any) -> Dict[str, Any]:
     """
@@ -140,6 +150,7 @@ def _extract_params_like(doc: Any) -> Dict[str, Any]:
         if all(isinstance(k, str) and "." in k for k in doc.keys()):
             return doc  # type: ignore[return-value]
     return {}
+
 
 def check_bounds(params_map: Dict[str, Any], rules: Dict[str, BoundRule]) -> List[str]:
     msgs: List[str] = []
@@ -160,17 +171,23 @@ def check_bounds(params_map: Dict[str, Any], rules: Dict[str, BoundRule]) -> Lis
         # Type checks
         if rule.type == "bool":
             if not isinstance(value, bool):
-                msgs.append(f"[bounds] {key}: expected boolean, got {type(value).__name__}")
+                msgs.append(
+                    f"[bounds] {key}: expected boolean, got {type(value).__name__}"
+                )
             continue
         if rule.type == "string":
             if not isinstance(value, str):
-                msgs.append(f"[bounds] {key}: expected string, got {type(value).__name__}")
+                msgs.append(
+                    f"[bounds] {key}: expected string, got {type(value).__name__}"
+                )
             continue
 
         # Numeric checks
         num = _coerce_number(value, rule.type)
         if num is None:
-            msgs.append(f"[bounds] {key}: value {value!r} is not a valid {rule.type or 'number'}")
+            msgs.append(
+                f"[bounds] {key}: value {value!r} is not a valid {rule.type or 'number'}"
+            )
             continue
         if rule.min is not None and num < float(rule.min):
             msgs.append(f"[bounds] {key}: {num} < min {rule.min}")
@@ -179,19 +196,25 @@ def check_bounds(params_map: Dict[str, Any], rules: Dict[str, BoundRule]) -> Lis
         if rule.step:
             if rule.type == "int":
                 if int(num) % int(rule.step) != 0:
-                    msgs.append(f"[bounds] {key}: {int(num)} not a multiple of {int(rule.step)}")
+                    msgs.append(
+                        f"[bounds] {key}: {int(num)} not a multiple of {int(rule.step)}"
+                    )
             else:
                 eps = 1e-9
                 rem = (num / float(rule.step)) % 1.0
                 if min(rem, 1.0 - rem) > eps:
-                    msgs.append(f"[bounds] {key}: {num} not aligned to step {rule.step}")
+                    msgs.append(
+                        f"[bounds] {key}: {num} not aligned to step {rule.step}"
+                    )
     return msgs
+
 
 # ----------------------------
 # Light sanity for specific registries
 # ----------------------------
 
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+([\-+][0-9A-Za-z\.-]+)?$")
+
 
 def check_upgrade_paths(doc: Any) -> List[str]:
     """
@@ -226,6 +249,7 @@ def check_upgrade_paths(doc: Any) -> List[str]:
             msgs.append(f"[upgrade_paths] self-edge {a} → {b}")
     return msgs
 
+
 def check_contracts(doc: Any) -> List[str]:
     """
     Expected flexible shapes:
@@ -257,16 +281,21 @@ def check_contracts(doc: Any) -> List[str]:
             msgs.append(f"[contracts] id '{cid}' has empty address")
     return msgs
 
+
 # ----------------------------
 # Walk registries dir
 # ----------------------------
+
 
 def iter_registry_files(root: Path) -> Iterable[Path]:
     for p in sorted(root.glob("*.json")):
         yield p
 
+
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="Lint governance registries for duplicates and bounds.")
+    ap = argparse.ArgumentParser(
+        description="Lint governance registries for duplicates and bounds."
+    )
     ap.add_argument("--registries-dir", default="governance/registries")
     ap.add_argument("--bounds", default="governance/registries/params_bounds.json")
     ap.add_argument("--strict", action="store_true", help="Treat warnings as errors")
@@ -306,7 +335,9 @@ def main(argv=None) -> int:
         if params_map:
             for m in check_bounds(params_map, rules):
                 file_msgs.append(m)
-                if (args.strict and "WARNING" in m) or ("WARNING" not in m and m.startswith("[bounds]")):
+                if (args.strict and "WARNING" in m) or (
+                    "WARNING" not in m and m.startswith("[bounds]")
+                ):
                     bounds_errors += 1
 
         # Targeted sanity by filename
@@ -341,6 +372,7 @@ def main(argv=None) -> int:
     if bounds_errors > 0:
         return 3
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())

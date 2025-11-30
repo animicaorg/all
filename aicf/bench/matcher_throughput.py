@@ -33,7 +33,6 @@ A simple table:
 providers  jobs    capacity  rounds  assigns  elapsed_s  assigns/s  usec/assign
 """
 
-from dataclasses import dataclass
 import argparse
 import heapq
 import math
@@ -41,6 +40,7 @@ import os
 import random
 import sys
 import time
+from dataclasses import dataclass
 from typing import List, Tuple
 
 
@@ -61,7 +61,9 @@ def _build_heap(providers: List[Provider]) -> List[Tuple[int, int]]:
     return heap
 
 
-def assign_jobs(num_jobs: int, num_providers: int, capacity: int, seed: int) -> Tuple[int, float, int]:
+def assign_jobs(
+    num_jobs: int, num_providers: int, capacity: int, seed: int
+) -> Tuple[int, float, int]:
     """
     Assign `num_jobs` jobs across `num_providers` providers with per-round capacity `capacity`.
     Returns: (assignments, elapsed_seconds, rounds_performed)
@@ -70,7 +72,11 @@ def assign_jobs(num_jobs: int, num_providers: int, capacity: int, seed: int) -> 
 
     # Initialize providers with deterministic yet slightly variable capacity (±10%)
     providers = [
-        Provider(pid=i, capacity=max(1, int(round(capacity * (0.9 + 0.2 * rnd.random())))), available=0)
+        Provider(
+            pid=i,
+            capacity=max(1, int(round(capacity * (0.9 + 0.2 * rnd.random())))),
+            available=0,
+        )
         for i in range(num_providers)
     ]
     # First round
@@ -123,15 +129,39 @@ def parse_provider_counts(s: str | None) -> List[int]:
 
 
 def main(argv: List[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Benchmark assignments/sec vs provider count (heap-based matcher).")
-    parser.add_argument("--providers", type=str, default=None,
-                        help="Comma-separated list of provider counts to test (e.g., '8,16,32,64'). "
-                             "Default sweep is 1..256 powers of two.")
-    parser.add_argument("--jobs", type=int, default=200_000, help="Total jobs to assign per run (before multipliers).")
-    parser.add_argument("--capacity", type=int, default=4, help="Per-provider capacity per round.")
-    parser.add_argument("--seed", type=int, default=None, help="PRNG seed (default from env AICF_BENCH_SEED or 42).")
-    parser.add_argument("--no-header", action="store_true", help="Do not print the header row.")
-    parser.add_argument("--json", action="store_true", help="Emit JSON lines for each run (machine-readable).")
+    parser = argparse.ArgumentParser(
+        description="Benchmark assignments/sec vs provider count (heap-based matcher)."
+    )
+    parser.add_argument(
+        "--providers",
+        type=str,
+        default=None,
+        help="Comma-separated list of provider counts to test (e.g., '8,16,32,64'). "
+        "Default sweep is 1..256 powers of two.",
+    )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=200_000,
+        help="Total jobs to assign per run (before multipliers).",
+    )
+    parser.add_argument(
+        "--capacity", type=int, default=4, help="Per-provider capacity per round."
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="PRNG seed (default from env AICF_BENCH_SEED or 42).",
+    )
+    parser.add_argument(
+        "--no-header", action="store_true", help="Do not print the header row."
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit JSON lines for each run (machine-readable).",
+    )
 
     args = parser.parse_args(argv)
 
@@ -150,7 +180,9 @@ def main(argv: List[str] | None = None) -> int:
         assign_jobs(warmup_jobs, median_p, args.capacity, seed)
 
     if not args.no_header and not args.json:
-        print("providers  jobs      capacity  rounds  assigns     elapsed_s  assigns/s   usec/assign")
+        print(
+            "providers  jobs      capacity  rounds  assigns     elapsed_s  assigns/s   usec/assign"
+        )
 
     for pcount in prov_counts:
         assigns, elapsed, rounds = assign_jobs(total_jobs, pcount, args.capacity, seed)
@@ -159,20 +191,27 @@ def main(argv: List[str] | None = None) -> int:
 
         if args.json:
             import json
-            print(json.dumps({
-                "providers": pcount,
-                "jobs": total_jobs,
-                "capacity": args.capacity,
-                "rounds": rounds,
-                "assigns": assigns,
-                "elapsed_s": elapsed,
-                "assigns_per_s": assigns_per_s,
-                "usec_per_assign": usec_per,
-                "seed": seed,
-            }))
+
+            print(
+                json.dumps(
+                    {
+                        "providers": pcount,
+                        "jobs": total_jobs,
+                        "capacity": args.capacity,
+                        "rounds": rounds,
+                        "assigns": assigns,
+                        "elapsed_s": elapsed,
+                        "assigns_per_s": assigns_per_s,
+                        "usec_per_assign": usec_per,
+                        "seed": seed,
+                    }
+                )
+            )
         else:
-            print(f"{pcount:9d}  {total_jobs:9d}  {args.capacity:8d}  {rounds:6d}  "
-                  f"{assigns:8d}  {elapsed:10.6f}  {assigns_per_s:9.0f}  {usec_per:11.2f}")
+            print(
+                f"{pcount:9d}  {total_jobs:9d}  {args.capacity:8d}  {rounds:6d}  "
+                f"{assigns:8d}  {elapsed:10.6f}  {assigns_per_s:9.0f}  {usec_per:11.2f}"
+            )
 
     return 0
 

@@ -51,12 +51,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 # Required module (we rely on this for structure validation & var normalization)
-from .validate import (
-    ValidationReport,
-    find_templates_root,
-    validate_template,
-    validate_and_normalize_variables,
-)
+from .validate import (ValidationReport, find_templates_root,
+                       validate_and_normalize_variables, validate_template)
 
 # Optional helpers
 try:  # rendering module is optional; we can fallback if not present
@@ -216,6 +212,7 @@ def _sub_vars_in_text(s: str, vars_map: Mapping[str, str]) -> str:
     def repl(m: re.Match[str]) -> str:
         k = m.group(1)
         return vars_map.get(k, m.group(0))
+
     return _VAR_PATTERN.sub(repl, s)
 
 
@@ -261,7 +258,8 @@ def _fallback_build_plan(
 
 
 def _fallback_apply_plan(
-    plan: _RenderPlan, *,
+    plan: _RenderPlan,
+    *,
     overwrite: bool = False,
 ) -> List[_CopyAction]:
     executed: List[_CopyAction] = []
@@ -326,7 +324,9 @@ def _load_and_normalize_vars(
     if vars_file:
         data = _read_json(Path(vars_file))
         if not isinstance(data, dict):
-            raise ValueError(f"--vars JSON must be an object, got {type(data).__name__}")
+            raise ValueError(
+                f"--vars JSON must be an object, got {type(data).__name__}"
+            )
         from_file = data
 
     from_kv = _parse_kv_pairs(kv_pairs)
@@ -335,7 +335,9 @@ def _load_and_normalize_vars(
     merged = _merge_dicts(from_file, from_env, from_kv)
 
     # Prefer official normalization routine
-    normalized, report = validate_and_normalize_variables(manifest, merged, where=str(template_dir / "manifest.json"))
+    normalized, report = validate_and_normalize_variables(
+        manifest, merged, where=str(template_dir / "manifest.json")
+    )
     report.dump_to_stderr()
     if not report.ok:
         raise SystemExit(1)
@@ -392,12 +394,20 @@ def _call_renderer(
     """
     if _render_mod is not None:
         # Strategy 1: plan + apply style
-        plan_fn = getattr(_render_mod, "plan_template_dir", None) or getattr(_render_mod, "plan", None)
-        apply_fn = getattr(_render_mod, "apply_plan", None) or getattr(_render_mod, "apply", None)
+        plan_fn = getattr(_render_mod, "plan_template_dir", None) or getattr(
+            _render_mod, "plan", None
+        )
+        apply_fn = getattr(_render_mod, "apply_plan", None) or getattr(
+            _render_mod, "apply", None
+        )
 
         if plan_fn and apply_fn:
-            plan = plan_fn(template_dir=template_dir, out_dir=out_dir, variables=dict(variables),
-                           exclude=exclude or [])
+            plan = plan_fn(
+                template_dir=template_dir,
+                out_dir=out_dir,
+                variables=dict(variables),
+                exclude=exclude or [],
+            )
             if dry_run:
                 # Pretty print plan if it looks like a dataclass or list of changes
                 _print_plan(plan)
@@ -412,8 +422,14 @@ def _call_renderer(
             or getattr(_render_mod, "render_dir", None)
         )
         if render_fn:
-            render_fn(template_dir=template_dir, out_dir=out_dir, variables=dict(variables),
-                      overwrite=overwrite, dry_run=dry_run, exclude=exclude or [])
+            render_fn(
+                template_dir=template_dir,
+                out_dir=out_dir,
+                variables=dict(variables),
+                overwrite=overwrite,
+                dry_run=dry_run,
+                exclude=exclude or [],
+            )
             return 0
 
     # Fallback renderer
@@ -486,7 +502,9 @@ def cmd_render(args: argparse.Namespace) -> int:
 
 def _add_vars_group(p: argparse.ArgumentParser) -> None:
     g = p.add_argument_group("Variables")
-    g.add_argument("--vars", "-v", metavar="FILE", help="Path to a JSON file with variables")
+    g.add_argument(
+        "--vars", "-v", metavar="FILE", help="Path to a JSON file with variables"
+    )
     g.add_argument(
         "--var",
         action="append",
@@ -512,10 +530,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_list)
 
     # validate
-    sp = sub.add_parser("validate", help="Validate a template and (optionally) variables")
+    sp = sub.add_parser(
+        "validate", help="Validate a template and (optionally) variables"
+    )
     sp.add_argument("--template", "-t", required=True, help="Template name or path")
-    sp.add_argument("--print", action="store_true", help="Print normalized variables on success")
-    sp.add_argument("--strict", action="store_true", help="Exit non-zero on warnings too")
+    sp.add_argument(
+        "--print", action="store_true", help="Print normalized variables on success"
+    )
+    sp.add_argument(
+        "--strict", action="store_true", help="Exit non-zero on warnings too"
+    )
     _add_vars_group(sp)
     sp.set_defaults(func=cmd_validate)
 
@@ -523,7 +547,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("render", help="Render a template to an output directory")
     sp.add_argument("--template", "-t", required=True, help="Template name or path")
     sp.add_argument("--out", "-o", required=True, help="Output directory")
-    sp.add_argument("--dry-run", action="store_true", help="Show planned writes without changing the filesystem")
+    sp.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show planned writes without changing the filesystem",
+    )
     sp.add_argument("--force", action="store_true", help="Overwrite existing files")
     sp.add_argument(
         "--exclude",
@@ -531,7 +559,9 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="GLOB",
         help="Exclude relative paths matching glob (can be repeated), e.g. 'README.md' or '*/__pycache__/*'",
     )
-    sp.add_argument("--print", action="store_true", help="Print normalized variables after render")
+    sp.add_argument(
+        "--print", action="store_true", help="Print normalized variables after render"
+    )
     _add_vars_group(sp)
     sp.set_defaults(func=cmd_render)
 

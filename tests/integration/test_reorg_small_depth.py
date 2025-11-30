@@ -41,8 +41,8 @@ import pytest
 
 from tests.integration import env  # gating + env helper
 
-
 # ------------------------------- HTTP helpers --------------------------------
+
 
 def _http_timeout() -> float:
     try:
@@ -51,7 +51,13 @@ def _http_timeout() -> float:
         return 5.0
 
 
-def _rpc_call(rpc_url: str, method: str, params: Optional[Sequence[Any] | Dict[str, Any]] = None, *, req_id: int = 1) -> Any:
+def _rpc_call(
+    rpc_url: str,
+    method: str,
+    params: Optional[Sequence[Any] | Dict[str, Any]] = None,
+    *,
+    req_id: int = 1,
+) -> Any:
     if params is None:
         params = []
     payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
@@ -69,7 +75,11 @@ def _rpc_call(rpc_url: str, method: str, params: Optional[Sequence[Any] | Dict[s
     return msg["result"]
 
 
-def _rpc_try(rpc_url: str, methods: Sequence[str], params: Optional[Sequence[Any] | Dict[str, Any]] = None) -> Tuple[str, Any]:
+def _rpc_try(
+    rpc_url: str,
+    methods: Sequence[str],
+    params: Optional[Sequence[Any] | Dict[str, Any]] = None,
+) -> Tuple[str, Any]:
     last_exc: Optional[Exception] = None
     for i, m in enumerate(methods, start=1):
         try:
@@ -81,6 +91,7 @@ def _rpc_try(rpc_url: str, methods: Sequence[str], params: Optional[Sequence[Any
 
 # ------------------------------ Chain helpers --------------------------------
 
+
 def _get_head(rpc_url: str) -> Dict[str, Any]:
     m, res = _rpc_try(rpc_url, ["chain.getHead", "chain_getHead"])
     assert isinstance(res, dict), f"Unexpected head shape from {m}: {res}"
@@ -88,7 +99,10 @@ def _get_head(rpc_url: str) -> Dict[str, Any]:
 
 
 def _get_block_by_number(rpc_url: str, num: int) -> Optional[Dict[str, Any]]:
-    try_methods = [("chain.getBlockByNumber", [num, False, False]), ("chain_getBlockByNumber", [num])]
+    try_methods = [
+        ("chain.getBlockByNumber", [num, False, False]),
+        ("chain_getBlockByNumber", [num]),
+    ]
     for m, params in try_methods:
         try:
             res = _rpc_call(rpc_url, m, params)
@@ -123,6 +137,7 @@ def _tx_get(rpc_url: str, tx_hash: str) -> Optional[Dict[str, Any]]:
 
 # ------------------------------- Mining helpers -------------------------------
 
+
 def _mine_on_B(rpc_url_b: str, count: int) -> bool:
     """
     Attempt to force node B to mine `count` blocks on its current tip, trying a
@@ -132,20 +147,24 @@ def _mine_on_B(rpc_url_b: str, count: int) -> bool:
     candidates: list[Tuple[str, Sequence[Any]]] = []
     if override:
         # Interpret override as method name; try with common param shapes
-        candidates.extend([(override, [count]), (override, [{"count": count}]), (override, [])])
+        candidates.extend(
+            [(override, [count]), (override, [{"count": count}]), (override, [])]
+        )
 
     # Common dev methods across ecosystems
-    candidates.extend([
-        ("dev.mineBlocks", [count]),
-        ("dev_mineBlocks", [count]),
-        ("dev_mineBlocks", [{"count": count}]),
-        ("miner.mineN", [count]),
-        ("miner_mineN", [count]),
-        ("miner.start", []),
-        ("mining.mine", [{"blocks": count}]),
-        ("mining.mine", [count]),
-        ("mining.start", []),
-    ])
+    candidates.extend(
+        [
+            ("dev.mineBlocks", [count]),
+            ("dev_mineBlocks", [count]),
+            ("dev_mineBlocks", [{"count": count}]),
+            ("miner.mineN", [count]),
+            ("miner_mineN", [count]),
+            ("miner.start", []),
+            ("mining.mine", [{"blocks": count}]),
+            ("mining.mine", [count]),
+            ("mining.start", []),
+        ]
+    )
 
     for method, params in candidates:
         try:
@@ -157,6 +176,7 @@ def _mine_on_B(rpc_url_b: str, count: int) -> bool:
 
 
 # ------------------------------- Tx helpers ----------------------------------
+
 
 def _read_fixture_bytes() -> Optional[bytes]:
     p = env("ANIMICA_TX_FIXTURE", "mempool/fixtures/txs_cbor/tx1.cbor")
@@ -205,12 +225,15 @@ def _resubmit_expect_duplicate(rpc_url: str, raw: bytes) -> bool:
 
 # -------------------------------- The test -----------------------------------
 
+
 @pytest.mark.timeout(900)
 def test_small_reorg_reinjects_orphaned_tx_to_mempool():
     rpc_a = env("ANIMICA_RPC_URL", "http://127.0.0.1:8545")
     rpc_b = env("ANIMICA_PEER_RPC_URL")
     if not rpc_b:
-        pytest.skip("ANIMICA_PEER_RPC_URL is not set — need two nodes to induce a reorg.")
+        pytest.skip(
+            "ANIMICA_PEER_RPC_URL is not set — need two nodes to induce a reorg."
+        )
 
     depth = int(env("ANIMICA_REORG_DEPTH", "1"))
     wait_secs = float(env("ANIMICA_RESULT_WAIT_SECS", "240"))
@@ -218,7 +241,9 @@ def test_small_reorg_reinjects_orphaned_tx_to_mempool():
     # 1) Submit a small tx to A only.
     raw = _read_fixture_bytes()
     if not raw:
-        pytest.skip("Missing CBOR tx fixture (set ANIMICA_TX_FIXTURE or ensure default path exists).")
+        pytest.skip(
+            "Missing CBOR tx fixture (set ANIMICA_TX_FIXTURE or ensure default path exists)."
+        )
     tx_hash = _send_raw_tx(rpc_a, raw)
     assert tx_hash.startswith("0x"), "Failed to submit test transaction to node A"
 
@@ -245,12 +270,16 @@ def test_small_reorg_reinjects_orphaned_tx_to_mempool():
                 break
         time.sleep(1.0)
     if included_height is None:
-        pytest.skip("Tx was not included on node A within the wait window; cannot proceed with reorg test.")
+        pytest.skip(
+            "Tx was not included on node A within the wait window; cannot proceed with reorg test."
+        )
 
     # 3) Ask node B to mine `depth + 1` blocks (to clearly overtake).
     mined = _mine_on_B(rpc_b, max(1, depth + 1))
     if not mined:
-        pytest.skip("Unable to trigger mining on node B via known debug methods; cannot induce reorg.")
+        pytest.skip(
+            "Unable to trigger mining on node B via known debug methods; cannot induce reorg."
+        )
 
     # 4) Wait for A to reorg: the block at `included_height` should change (or tx receipt disappears).
     reorg_deadline = time.time() + wait_secs
@@ -296,4 +325,3 @@ def test_small_reorg_reinjects_orphaned_tx_to_mempool():
         "After reorg, tx was not found pending nor identified as duplicate on resubmit. "
         "This suggests mempool reinjection did not occur."
     )
-

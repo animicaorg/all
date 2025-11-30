@@ -53,6 +53,7 @@ def _lazy(module: str, attr: str) -> Any:
 
 # Public convenience call-throughs (keep import-time side effects minimal)
 
+
 def DataAvailabilitySampler(*args, **kwargs) -> Any:
     """
     Factory: returns an instance of sampling.sampler.DataAvailabilitySampler.
@@ -61,7 +62,9 @@ def DataAvailabilitySampler(*args, **kwargs) -> Any:
     return cls(*args, **kwargs)
 
 
-def plan_uniform(*, population_size: int, sample_count: int, seed: Optional[int] = None) -> Any:
+def plan_uniform(
+    *, population_size: int, sample_count: int, seed: Optional[int] = None
+) -> Any:
     """
     Build a uniform random sampling plan over a population of shares/leaves.
     """
@@ -69,7 +72,12 @@ def plan_uniform(*, population_size: int, sample_count: int, seed: Optional[int]
     return fn(population_size=population_size, sample_count=sample_count, seed=seed)
 
 
-def plan_stratified(*, strata: Mapping[str, int], per_stratum: Mapping[str, int], seed: Optional[int] = None) -> Any:
+def plan_stratified(
+    *,
+    strata: Mapping[str, int],
+    per_stratum: Mapping[str, int],
+    seed: Optional[int] = None,
+) -> Any:
     """
     Build a stratified sampling plan (e.g., by row/column groups).
     """

@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 aicf.queue.receiver
 ===================
@@ -17,23 +18,24 @@ This module purposefully stays storage-agnostic via a minimal protocol that the
 queue backend must implement.
 """
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, Mapping, Optional, Protocol, Sequence, Tuple
 import logging
 import re
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import (Any, Dict, Iterable, Mapping, Optional, Protocol, Sequence,
+                    Tuple)
 
 log = logging.getLogger(__name__)
 
 # ────────────────────────────── Optional metrics ──────────────────────────────
 
 try:
-    from aicf.metrics import (  # type: ignore
-        COUNTER_COMPLETIONS_ACCEPTED as _C_OK,
-        COUNTER_COMPLETIONS_REJECTED as _C_REJ,
-        COUNTER_PROOFS_REFERENCED as _C_PROOFS,  # may not exist; handled below
-        HISTOGRAM_COMPLETION_LATENCY_SECONDS as _H_LAT,
-    )
+    from aicf.metrics import \
+        COUNTER_COMPLETIONS_ACCEPTED as _C_OK  # type: ignore
+    from aicf.metrics import COUNTER_COMPLETIONS_REJECTED as _C_REJ
+    from aicf.metrics import \
+        COUNTER_PROOFS_REFERENCED as _C_PROOFS  # may not exist; handled below
+    from aicf.metrics import HISTOGRAM_COMPLETION_LATENCY_SECONDS as _H_LAT
 except Exception:  # pragma: no cover - metrics are optional
 
     class _Noop:
@@ -50,21 +52,23 @@ except Exception:  # pragma: no cover - metrics are optional
 # ─────────────────────────────── Errors & types ───────────────────────────────
 
 try:
-    from aicf.errors import (  # type: ignore
-        AICFError,
-        LeaseLost,
-        JobExpired,
-        RegistryError,
-    )
+    from aicf.errors import (AICFError, JobExpired, LeaseLost,  # type: ignore
+                             RegistryError)
 except Exception:
+
     class AICFError(RuntimeError): ...
+
     class LeaseLost(AICFError): ...
+
     class JobExpired(AICFError): ...
+
     class RegistryError(AICFError): ...
+
 
 try:
     from aicf.aitypes.job import JobStatus  # type: ignore
 except Exception:
+
     class JobStatus:
         QUEUED = "QUEUED"
         PENDING = "PENDING"
@@ -73,6 +77,7 @@ except Exception:
         FAILED = "FAILED"
         TOMBSTONED = "TOMBSTONED"
         EXPIRED = "EXPIRED"
+
 
 # ─────────────────────────────── Storage protocol ─────────────────────────────
 
@@ -129,6 +134,7 @@ class ReceiverStorage(Protocol):
     ) -> None:
         """Optional: record an internal audit/event entry."""
 
+
 # ─────────────────────────────── Registry protocol ────────────────────────────
 
 
@@ -157,6 +163,7 @@ class CompletionPayload:
       - proof_refs: optional structured references to DA commits / on-chain proofs / attestation bundle digests
       - meta: optional small metadata map (runtime, model info, qos stats)
     """
+
     job_id: str
     provider_id: str
     output_digest: str
@@ -176,13 +183,17 @@ class CompletionReceiver:
         ack = rx.accept(CompletionPayload(...))
     """
 
-    def __init__(self, storage: ReceiverStorage, registry: Optional[ProviderRegistry] = None) -> None:
+    def __init__(
+        self, storage: ReceiverStorage, registry: Optional[ProviderRegistry] = None
+    ) -> None:
         self.storage = storage
         self.registry = registry
 
     # Public API -------------------------------------------------------------
 
-    def accept(self, payload: CompletionPayload, *, now: Optional[datetime] = None) -> Dict[str, Any]:
+    def accept(
+        self, payload: CompletionPayload, *, now: Optional[datetime] = None
+    ) -> Dict[str, Any]:
         """
         Validate the completion and mark the job as COMPLETED. Returns an
         acknowledgement dict. Raises AICFError subclasses on invalid state.
@@ -198,7 +209,9 @@ class CompletionReceiver:
         if self.registry:
             if not self.registry.is_allowed(payload.provider_id):
                 _C_REJ.inc(1)  # type: ignore
-                raise RegistryError(f"provider {payload.provider_id} is not allowlisted")
+                raise RegistryError(
+                    f"provider {payload.provider_id} is not allowlisted"
+                )
             if self.registry.is_jailed(payload.provider_id):
                 _C_REJ.inc(1)  # type: ignore
                 raise RegistryError(f"provider {payload.provider_id} is jailed")
@@ -229,7 +242,9 @@ class CompletionReceiver:
 
         if status not in (JobStatus.LEASED, JobStatus.PENDING):
             _C_REJ.inc(1)  # type: ignore
-            raise AICFError(f"job {payload.job_id} not in a completable state: {status}")
+            raise AICFError(
+                f"job {payload.job_id} not in a completable state: {status}"
+            )
 
         lease = self.storage.get_active_lease(payload.job_id)
         if not lease:
@@ -246,7 +261,9 @@ class CompletionReceiver:
         lease_exp = _dt(lease.get("lease_expires_at"))
         if lease_exp and lease_exp < ts:
             _C_REJ.inc(1)  # type: ignore
-            raise JobExpired(f"lease expired at {lease_exp.isoformat()} for job {payload.job_id}")
+            raise JobExpired(
+                f"lease expired at {lease_exp.isoformat()} for job {payload.job_id}"
+            )
 
         # 4) Persist completion
         self.storage.mark_completed(
@@ -314,14 +331,16 @@ def _validate_digest(h: str) -> None:
 
 
 _ALLOWED_PROOF_KINDS = {
-    "da_commitment",   # Namespaced DA commitment (e.g., NMT root / blob commitment)
-    "onchain_proof",   # reference to chain height+nullifier that will settle
-    "attestation",     # TEE/QPU bundle digest
-    "vdf_proof",       # if applicable
+    "da_commitment",  # Namespaced DA commitment (e.g., NMT root / blob commitment)
+    "onchain_proof",  # reference to chain height+nullifier that will settle
+    "attestation",  # TEE/QPU bundle digest
+    "vdf_proof",  # if applicable
 }
 
 
-def _sanitize_proof_refs(refs: Sequence[Mapping[str, Any]]) -> Tuple[Mapping[str, Any], ...]:
+def _sanitize_proof_refs(
+    refs: Sequence[Mapping[str, Any]],
+) -> Tuple[Mapping[str, Any], ...]:
     out: list[Mapping[str, Any]] = []
     for ref in refs or ():
         kind = str(ref.get("kind") or "").strip()

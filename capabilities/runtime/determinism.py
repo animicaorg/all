@@ -29,13 +29,13 @@ __all__ = [
 # -------- Defaults (can be overridden per-process via `limits`) --------
 
 _DEFAULT_CAPS: dict[str, int] = {
-    "max_prompt_bytes": 64 * 1024,       # AI prompts
-    "max_circuit_bytes": 128 * 1024,     # Quantum circuits (JSON or bytes)
-    "max_blob_bytes": 4 * 1024 * 1024,   # DA blob pin from contracts
-    "max_read_bytes": 2 * 1024 * 1024,   # Generic read bounds (e.g., random())
-    "max_zk_bytes": 512 * 1024,          # zk.verify proof / public input
-    "max_task_id_bytes": 64,             # read_result task id max
-    "max_model_len": 64,                 # model identifier (ai_enqueue)
+    "max_prompt_bytes": 64 * 1024,  # AI prompts
+    "max_circuit_bytes": 128 * 1024,  # Quantum circuits (JSON or bytes)
+    "max_blob_bytes": 4 * 1024 * 1024,  # DA blob pin from contracts
+    "max_read_bytes": 2 * 1024 * 1024,  # Generic read bounds (e.g., random())
+    "max_zk_bytes": 512 * 1024,  # zk.verify proof / public input
+    "max_task_id_bytes": 64,  # read_result task id max
+    "max_model_len": 64,  # model identifier (ai_enqueue)
 }
 
 # ASCII control ranges except tab/newline/carriage-return
@@ -44,6 +44,7 @@ _FORBIDDEN_CTRL = {*range(0x00, 0x09), *range(0x0B, 0x0C), *range(0x0E, 0x20)}
 
 
 # -------- Helpers --------
+
 
 def _caps(limits: Optional[Mapping[str, int]] | None) -> dict[str, int]:
     if not limits:
@@ -103,7 +104,9 @@ def _check_json_payload(obj: Any, *, max_len: int, label: str) -> None:
     _reject_ctrl_bytes(jb, label=label)
 
 
-def sanitize_model_name(model: Any, *, max_len: int = _DEFAULT_CAPS["max_model_len"]) -> str:
+def sanitize_model_name(
+    model: Any, *, max_len: int = _DEFAULT_CAPS["max_model_len"]
+) -> str:
     """
     Normalize model identifiers to NFC, trim surrounding whitespace, and
     reject control characters & overly long names. Returns the sanitized value.
@@ -122,6 +125,7 @@ def sanitize_model_name(model: Any, *, max_len: int = _DEFAULT_CAPS["max_model_l
 
 
 # -------- Main entrypoint used by abi_bindings --------
+
 
 def enforce_limits(
     *,
@@ -157,16 +161,26 @@ def enforce_limits(
         circuit = payloads.get("circuit")
         if isinstance(circuit, (bytes, bytearray, memoryview, str)):
             circ_b = _ensure_bytes(circuit, label="quantum_enqueue.circuit")
-            _bounded(circ_b, max_len=caps["max_circuit_bytes"], label="quantum_enqueue.circuit")
+            _bounded(
+                circ_b,
+                max_len=caps["max_circuit_bytes"],
+                label="quantum_enqueue.circuit",
+            )
             _reject_ctrl_bytes(circ_b, label="quantum_enqueue.circuit")
         else:
             # JSON-like mapping; check canonical size
-            _check_json_payload(circuit, max_len=caps["max_circuit_bytes"], label="quantum_enqueue.circuit")
+            _check_json_payload(
+                circuit,
+                max_len=caps["max_circuit_bytes"],
+                label="quantum_enqueue.circuit",
+            )
 
     elif name == "zk_verify":
         # payloads: {"proof": bytes, "public_input": bytes, (optional) "circuit": mapping|bytes}
         proof = _ensure_bytes(payloads.get("proof"), label="zk_verify.proof")
-        pub = _ensure_bytes(payloads.get("public_input"), label="zk_verify.public_input")
+        pub = _ensure_bytes(
+            payloads.get("public_input"), label="zk_verify.public_input"
+        )
         _bounded(proof, max_len=caps["max_zk_bytes"], label="zk_verify.proof")
         _bounded(pub, max_len=caps["max_zk_bytes"], label="zk_verify.public_input")
         _reject_ctrl_bytes(proof, label="zk_verify.proof")
@@ -175,10 +189,16 @@ def enforce_limits(
             circuit = payloads["circuit"]
             if isinstance(circuit, (bytes, bytearray, memoryview, str)):
                 circ_b = _ensure_bytes(circuit, label="zk_verify.circuit")
-                _bounded(circ_b, max_len=caps["max_circuit_bytes"], label="zk_verify.circuit")
+                _bounded(
+                    circ_b, max_len=caps["max_circuit_bytes"], label="zk_verify.circuit"
+                )
                 _reject_ctrl_bytes(circ_b, label="zk_verify.circuit")
             else:
-                _check_json_payload(circuit, max_len=caps["max_circuit_bytes"], label="zk_verify.circuit")
+                _check_json_payload(
+                    circuit,
+                    max_len=caps["max_circuit_bytes"],
+                    label="zk_verify.circuit",
+                )
 
     elif name == "read_result":
         # payloads: {"task_id": bytes}

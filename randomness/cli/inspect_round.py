@@ -40,13 +40,13 @@ from __future__ import annotations
 import json
 import os
 import sys
-from typing import Any, Dict, List, Optional, Sequence, Tuple
 from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 # Optional deps guard
 try:
-    import typer  # type: ignore
     import requests  # type: ignore
+    import typer  # type: ignore
 except Exception as e:  # pragma: no cover
     raise SystemExit(
         "This command requires optional dependencies.\n"
@@ -54,7 +54,9 @@ except Exception as e:  # pragma: no cover
         f"Import error: {e}"
     )
 
-_DEFAULT_RPC = os.getenv("OMNI_RPC_URL") or os.getenv("ANIMICA_RPC_URL") or "http://127.0.0.1:8545"
+_DEFAULT_RPC = (
+    os.getenv("OMNI_RPC_URL") or os.getenv("ANIMICA_RPC_URL") or "http://127.0.0.1:8545"
+)
 
 app = typer.Typer(
     name="omni-rand-inspect-round",
@@ -67,7 +69,10 @@ app = typer.Typer(
 # RPC helpers
 # -----------------------
 
-def _rpc_call(url: str, method: str, params: Optional[Sequence[Any]] = None, timeout: float = 30.0) -> Dict[str, Any]:
+
+def _rpc_call(
+    url: str, method: str, params: Optional[Sequence[Any]] = None, timeout: float = 30.0
+) -> Dict[str, Any]:
     body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": list(params or [])}
     try:
         r = requests.post(url, json=body, timeout=timeout)
@@ -89,15 +94,18 @@ def _rpc_call(url: str, method: str, params: Optional[Sequence[Any]] = None, tim
         return {"round": result}
     return result
 
+
 # -----------------------
 # Normalization helpers
 # -----------------------
+
 
 def _pick(d: Dict[str, Any], *keys: str) -> Any:
     for k in keys:
         if k in d and d[k] is not None:
             return d[k]
     return None
+
 
 def _norm_ts(v: Any) -> Optional[int]:
     """
@@ -114,6 +122,7 @@ def _norm_ts(v: Any) -> Optional[int]:
         iv //= 1000
     return iv
 
+
 def _normalize_round(result: Dict[str, Any]) -> Dict[str, Any]:
     # Round id/status
     round_id = _pick(result, "round", "id", "roundId")
@@ -121,17 +130,27 @@ def _normalize_round(result: Dict[str, Any]) -> Dict[str, Any]:
 
     # Schedule / window fields
     sched_src = _pick(result, "schedule", "window") or {}
-    commit_open  = _norm_ts(_pick(sched_src, "commitOpen", "commit_open", "commitStart", "commit_start"))
-    commit_close = _norm_ts(_pick(sched_src, "commitClose", "commit_close", "commitEnd", "commit_end"))
-    reveal_open  = _norm_ts(_pick(sched_src, "revealOpen", "reveal_open", "revealStart", "reveal_start"))
-    reveal_close = _norm_ts(_pick(sched_src, "revealClose", "reveal_close", "revealEnd", "reveal_end"))
-    vdf_deadline = _norm_ts(_pick(sched_src, "vdfDeadline", "vdf_deadline", "finalize", "finalize_deadline"))
+    commit_open = _norm_ts(
+        _pick(sched_src, "commitOpen", "commit_open", "commitStart", "commit_start")
+    )
+    commit_close = _norm_ts(
+        _pick(sched_src, "commitClose", "commit_close", "commitEnd", "commit_end")
+    )
+    reveal_open = _norm_ts(
+        _pick(sched_src, "revealOpen", "reveal_open", "revealStart", "reveal_start")
+    )
+    reveal_close = _norm_ts(
+        _pick(sched_src, "revealClose", "reveal_close", "revealEnd", "reveal_end")
+    )
+    vdf_deadline = _norm_ts(
+        _pick(sched_src, "vdfDeadline", "vdf_deadline", "finalize", "finalize_deadline")
+    )
 
     # Counts
     counts_src = _pick(result, "counts", "stats") or {}
     commits = int(_pick(counts_src, "commits") or _pick(result, "commitCount") or 0)
     reveals = int(_pick(counts_src, "reveals") or _pick(result, "revealCount") or 0)
-    proofs  = int(_pick(counts_src, "proofs")  or _pick(result, "vdfProofCount") or 0)
+    proofs = int(_pick(counts_src, "proofs") or _pick(result, "vdfProofCount") or 0)
 
     # Pending proofs
     pending = _pick(result, "pendingProofs", "pending_proofs")
@@ -161,12 +180,15 @@ def _normalize_round(result: Dict[str, Any]) -> Dict[str, Any]:
         "beaconPresent": beacon_present,
     }
 
+
 # -----------------------
 # Time/format helpers
 # -----------------------
 
+
 def _now_ts() -> int:
     return int(datetime.now(timezone.utc).timestamp())
+
 
 def _fmt_dt(ts: Optional[int], tz_local: bool = True) -> str:
     if ts is None:
@@ -175,6 +197,7 @@ def _fmt_dt(ts: Optional[int], tz_local: bool = True) -> str:
     if tz_local:
         dt = dt.astimezone()  # local
     return dt.isoformat(timespec="seconds")
+
 
 def _fmt_delta(secs: int) -> str:
     sign = "in " if secs >= 0 else ""
@@ -190,7 +213,10 @@ def _fmt_delta(secs: int) -> str:
         body = f"{sec}s"
     return f"{sign}{body}" if sign else f"{body} ago"
 
-def _phase(now: int, schedule: Dict[str, Optional[int]], beacon_present: bool) -> Tuple[str, str, Optional[str]]:
+
+def _phase(
+    now: int, schedule: Dict[str, Optional[int]], beacon_present: bool
+) -> Tuple[str, str, Optional[str]]:
     co = schedule.get("commitOpen")
     cc = schedule.get("commitClose")
     ro = schedule.get("revealOpen")
@@ -206,7 +232,12 @@ def _phase(now: int, schedule: Dict[str, Optional[int]], beacon_present: bool) -
         return ("REVEALING", f"closes {_fmt_delta(rc - now)}", "revealClose")
     if vd and now < vd:
         return ("FINALIZING", f"VDF deadline {_fmt_delta(vd - now)}", "vdfDeadline")
-    return ("SEALED" if beacon_present else "WAITING_SEAL", "awaiting beacon or next round", None)
+    return (
+        "SEALED" if beacon_present else "WAITING_SEAL",
+        "awaiting beacon or next round",
+        None,
+    )
+
 
 def _print_text(norm: Dict[str, Any], tz_local: bool, verbose: bool) -> None:
     now = _now_ts()
@@ -223,8 +254,10 @@ def _print_text(norm: Dict[str, Any], tz_local: bool, verbose: bool) -> None:
     typer.echo(f"Status: {status} | Phase: {phase} ({next_hint})")
     typer.echo("")
     typer.echo("Windows:")
-    co = schedule.get("commitOpen");  cc = schedule.get("commitClose")
-    ro = schedule.get("revealOpen");  rc = schedule.get("revealClose")
+    co = schedule.get("commitOpen")
+    cc = schedule.get("commitClose")
+    ro = schedule.get("revealOpen")
+    rc = schedule.get("revealClose")
     vd = schedule.get("vdfDeadline")
     for label, ts in [
         ("Commit Open ", co),
@@ -249,24 +282,40 @@ def _print_text(norm: Dict[str, Any], tz_local: bool, verbose: bool) -> None:
         typer.echo("Pending proofs:")
         for i, p in enumerate(pending, 1):
             who = p.get("provider") or p.get("prover") or p.get("id") or "unknown"
-            ts  = _norm_ts(_pick(p, "submittedTs", "ts", "time"))
+            ts = _norm_ts(_pick(p, "submittedTs", "ts", "time"))
             when = _fmt_dt(ts, tz_local) if ts else "-"
             st = p.get("status") or "-"
             typer.echo(f"  {i:>2}. provider={who}  submitted={when}  status={st}")
+
 
 # -----------------------
 # CLI
 # -----------------------
 
+
 @app.command("inspect-round")
 def cmd_inspect_round(
-    rpc: str = typer.Option(_DEFAULT_RPC, "--rpc", help=f"JSON-RPC endpoint (default: {_DEFAULT_RPC})"),
-    round_id: Optional[int] = typer.Option(None, "--round", "-r", help="Round id to fetch (default: current)"),
-    json_out: bool = typer.Option(False, "--json", help="Print normalized JSON instead of text."),
-    pretty: bool = typer.Option(True, "--pretty/--no-pretty", help="Pretty-print JSON."),
-    tz: str = typer.Option("local", "--tz", help="Time zone for display: local|utc", case_sensitive=False),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed pending proofs list."),
-    out: Optional[str] = typer.Option(None, "--out", help="Write (normalized JSON) to file."),
+    rpc: str = typer.Option(
+        _DEFAULT_RPC, "--rpc", help=f"JSON-RPC endpoint (default: {_DEFAULT_RPC})"
+    ),
+    round_id: Optional[int] = typer.Option(
+        None, "--round", "-r", help="Round id to fetch (default: current)"
+    ),
+    json_out: bool = typer.Option(
+        False, "--json", help="Print normalized JSON instead of text."
+    ),
+    pretty: bool = typer.Option(
+        True, "--pretty/--no-pretty", help="Pretty-print JSON."
+    ),
+    tz: str = typer.Option(
+        "local", "--tz", help="Time zone for display: local|utc", case_sensitive=False
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Show detailed pending proofs list."
+    ),
+    out: Optional[str] = typer.Option(
+        None, "--out", help="Write (normalized JSON) to file."
+    ),
 ) -> None:
     """
     Show window timings (commit/reveal/VDF), aggregate counts, and pending proofs for a round.
@@ -286,7 +335,7 @@ def cmd_inspect_round(
             raise typer.Exit(0)
 
     # Text view
-    tz_local = (tz.lower() != "utc")
+    tz_local = tz.lower() != "utc"
     _print_text(norm, tz_local=tz_local, verbose=verbose)
     raise typer.Exit(0)
 

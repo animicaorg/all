@@ -101,6 +101,7 @@ except Exception:  # pragma: no cover
 # Utilities
 # =============================================================================
 
+
 def _load_json(path: Path) -> Dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
@@ -125,7 +126,9 @@ def _dump_json_atomic(path: Path, obj: Dict[str, Any]) -> None:
 
 def _canonical_json_bytes(obj: Any) -> bytes:
     """Deterministic JSON bytes."""
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(
+        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
 
 
 def _sha3_256_hex(data: bytes) -> str:
@@ -188,6 +191,7 @@ def _bytes_to_hex(b: bytes) -> str:
 # Signatures
 # =============================================================================
 
+
 @dataclass
 class Signature:
     alg: str
@@ -198,8 +202,12 @@ class Signature:
         return {"alg": self.alg, "key_id": self.key_id, "signature": self.signature}
 
 
-def _sign_payload_ed25519(secret_key_hex: str, payload: Dict[str, Any], key_id: str) -> Signature:
-    _require(signing is not None, "PyNaCl is not installed; cannot use Ed25519 signing.")
+def _sign_payload_ed25519(
+    secret_key_hex: str, payload: Dict[str, Any], key_id: str
+) -> Signature:
+    _require(
+        signing is not None, "PyNaCl is not installed; cannot use Ed25519 signing."
+    )
     sk_bytes = _hex_to_bytes(secret_key_hex)
     try:
         sk = signing.SigningKey(sk_bytes)
@@ -210,32 +218,55 @@ def _sign_payload_ed25519(secret_key_hex: str, payload: Dict[str, Any], key_id: 
     return Signature(alg="ed25519", key_id=key_id, signature=_bytes_to_hex(sig))
 
 
-def _verify_payload_ed25519(public_key_hex: str, payload: Dict[str, Any], signature_hex: str) -> bool:
-    _require(signing is not None, "PyNaCl is not installed; cannot use Ed25519 verification.")
+def _verify_payload_ed25519(
+    public_key_hex: str, payload: Dict[str, Any], signature_hex: str
+) -> bool:
+    _require(
+        signing is not None, "PyNaCl is not installed; cannot use Ed25519 verification."
+    )
     pk = signing.VerifyKey(_hex_to_bytes(public_key_hex))
     try:
-        pk.verify(_canonical_json_bytes(payload), _hex_to_bytes(signature_hex), encoder=RawEncoder)
+        pk.verify(
+            _canonical_json_bytes(payload),
+            _hex_to_bytes(signature_hex),
+            encoder=RawEncoder,
+        )
         return True
     except Exception:
         return False
 
 
-def _sign_payload_hmac(secret_hex: str, payload: Dict[str, Any], key_id: str) -> Signature:
+def _sign_payload_hmac(
+    secret_hex: str, payload: Dict[str, Any], key_id: str
+) -> Signature:
     import hmac
+
     key = _hex_to_bytes(secret_hex)
     mac = hmac.new(key, _canonical_json_bytes(payload), digestmod=sha3_256).digest()
     return Signature(alg="hmac-sha3-256", key_id=key_id, signature=_bytes_to_hex(mac))
 
 
-def _verify_payload_hmac(secret_hex: str, payload: Dict[str, Any], signature_hex: str) -> bool:
+def _verify_payload_hmac(
+    secret_hex: str, payload: Dict[str, Any], signature_hex: str
+) -> bool:
     import hmac
+
     key = _hex_to_bytes(secret_hex)
-    expected = hmac.new(key, _canonical_json_bytes(payload), digestmod=sha3_256).digest().hex()
+    expected = (
+        hmac.new(key, _canonical_json_bytes(payload), digestmod=sha3_256).digest().hex()
+    )
     # constant time compare
     return hmac.compare_digest(expected, signature_hex)
 
 
-def _sign_entry(circuit_id: str, entry: Dict[str, Any], *, ed25519_sk: Optional[str], hmac_key: Optional[str], key_id: str) -> Signature:
+def _sign_entry(
+    circuit_id: str,
+    entry: Dict[str, Any],
+    *,
+    ed25519_sk: Optional[str],
+    hmac_key: Optional[str],
+    key_id: str,
+) -> Signature:
     payload = {
         "circuit_id": circuit_id,
         "kind": entry.get("kind"),
@@ -250,7 +281,13 @@ def _sign_entry(circuit_id: str, entry: Dict[str, Any], *, ed25519_sk: Optional[
         raise SystemExit("Provide either --ed25519-secret-key or --hmac-key to sign.")
 
 
-def _verify_entry_signature(circuit_id: str, entry: Dict[str, Any], *, ed25519_pk: Optional[str], hmac_key: Optional[str]) -> bool:
+def _verify_entry_signature(
+    circuit_id: str,
+    entry: Dict[str, Any],
+    *,
+    ed25519_pk: Optional[str],
+    hmac_key: Optional[str],
+) -> bool:
     sig = entry.get("sig")
     if not sig:
         print("No 'sig' present on entry.", file=sys.stderr)
@@ -267,10 +304,15 @@ def _verify_entry_signature(circuit_id: str, entry: Dict[str, Any], *, ed25519_p
         "vk_hash": entry.get("vk_hash"),
     }
     if alg == "ed25519":
-        _require(ed25519_pk is not None, "Provide --ed25519-public-key to verify an ed25519 signature.")
+        _require(
+            ed25519_pk is not None,
+            "Provide --ed25519-public-key to verify an ed25519 signature.",
+        )
         return _verify_payload_ed25519(ed25519_pk, payload, signature_hex)
     elif alg == "hmac-sha3-256":
-        _require(hmac_key is not None, "Provide --hmac-key to verify an HMAC signature.")
+        _require(
+            hmac_key is not None, "Provide --hmac-key to verify an HMAC signature."
+        )
         return _verify_payload_hmac(hmac_key, payload, signature_hex)
     else:
         print(f"Unsupported signature alg: {alg}", file=sys.stderr)
@@ -281,7 +323,10 @@ def _verify_entry_signature(circuit_id: str, entry: Dict[str, Any], *, ed25519_p
 # Registry.yaml sync (optional)
 # =============================================================================
 
-def _sync_registry_yaml(circuit_id: str, new_vk_hash: str, path: Path = REGISTRY_YAML_PATH) -> bool:
+
+def _sync_registry_yaml(
+    circuit_id: str, new_vk_hash: str, path: Path = REGISTRY_YAML_PATH
+) -> bool:
     if yaml is None:
         print("PyYAML not installed; skipping registry.yaml update.", file=sys.stderr)
         return False
@@ -292,7 +337,10 @@ def _sync_registry_yaml(circuit_id: str, new_vk_hash: str, path: Path = REGISTRY
         data = yaml.safe_load(f)
     circuits = (data or {}).get("circuits") or {}
     if circuit_id not in circuits:
-        print(f"circuits.{circuit_id} not found in registry.yaml; skipping.", file=sys.stderr)
+        print(
+            f"circuits.{circuit_id} not found in registry.yaml; skipping.",
+            file=sys.stderr,
+        )
         return False
     circuits[circuit_id]["vk_hash"] = new_vk_hash
     # Atomic write
@@ -314,11 +362,14 @@ def _sync_registry_yaml(circuit_id: str, new_vk_hash: str, path: Path = REGISTRY
 # Commands
 # =============================================================================
 
+
 def cmd_list(args: argparse.Namespace) -> None:
     cache = _load_vk_cache()
     for cid in sorted(cache["entries"].keys()):
         e = cache["entries"][cid]
-        print(f"{cid}: kind={e.get('kind')} format={e.get('vk_format')} vk_hash={e.get('vk_hash')}")
+        print(
+            f"{cid}: kind={e.get('kind')} format={e.get('vk_format')} vk_hash={e.get('vk_hash')}"
+        )
 
 
 def cmd_show(args: argparse.Namespace) -> None:
@@ -333,7 +384,9 @@ def cmd_add(args: argparse.Namespace) -> None:
     entries = cache["entries"]
 
     if args.circuit_id in entries and not args.overwrite:
-        raise SystemExit(f"Entry already exists: {args.circuit_id} (use --overwrite to replace)")
+        raise SystemExit(
+            f"Entry already exists: {args.circuit_id} (use --overwrite to replace)"
+        )
 
     entry: Dict[str, Any] = {
         "kind": args.kind,
@@ -392,7 +445,10 @@ def cmd_sign(args: argparse.Namespace) -> None:
     current = e.get("vk_hash")
     recomputed = _compute_vk_hash(e)
     if current != recomputed:
-        print(f"vk_hash mismatch (cache={current} recomputed={recomputed}); updating to recomputed.", file=sys.stderr)
+        print(
+            f"vk_hash mismatch (cache={current} recomputed={recomputed}); updating to recomputed.",
+            file=sys.stderr,
+        )
         e["vk_hash"] = recomputed
 
     sig = _sign_entry(
@@ -419,12 +475,14 @@ def cmd_verify(args: argparse.Namespace) -> None:
         # Hash check
         expected = e.get("vk_hash")
         recomputed = _compute_vk_hash(e)
-        ok_hash = (expected == recomputed)
+        ok_hash = expected == recomputed
         print(f"[{cid}] hash: {'OK' if ok_hash else 'FAIL'}")
         # Signature (optional)
         ok_sig = True
         if args.ed25519_public_key or args.hmac_key:
-            ok_sig = _verify_entry_signature(cid, e, ed25519_pk=args.ed25519_public_key, hmac_key=args.hmac_key)
+            ok_sig = _verify_entry_signature(
+                cid, e, ed25519_pk=args.ed25519_public_key, hmac_key=args.hmac_key
+            )
             print(f"[{cid}] signature: {'OK' if ok_sig else 'FAIL'}")
         return ok_hash and ok_sig
 
@@ -454,6 +512,7 @@ def cmd_sync_registry(args: argparse.Namespace) -> None:
 # Argparse
 # =============================================================================
 
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Animica VK registry manager")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -470,23 +529,39 @@ def _build_parser() -> argparse.ArgumentParser:
     # add / replace
     sp = sub.add_parser("add", help="Add or replace a VK entry")
     sp.add_argument("--circuit-id", required=True, help="e.g. counter_groth16_bn254@2")
-    sp.add_argument("--kind", required=True, help="e.g. groth16_bn254, plonk_kzg_bn254, stark_fri_merkle")
-    sp.add_argument("--vk-format", required=True, help="e.g. snarkjs, plonkjs, fri_params")
+    sp.add_argument(
+        "--kind",
+        required=True,
+        help="e.g. groth16_bn254, plonk_kzg_bn254, stark_fri_merkle",
+    )
+    sp.add_argument(
+        "--vk-format", required=True, help="e.g. snarkjs, plonkjs, fri_params"
+    )
     sp.add_argument("--vk-file", help="Path to VK JSON (schemes with structured VKs)")
-    sp.add_argument("--fri-params-file", help="Path to FRI params JSON (for STARK toy verifier)")
+    sp.add_argument(
+        "--fri-params-file", help="Path to FRI params JSON (for STARK toy verifier)"
+    )
     sp.add_argument("--meta-file", help="Path to optional metadata JSON")
     sp.add_argument("--overwrite", action="store_true", help="Replace if exists")
     # signing
-    sp.add_argument("--ed25519-secret-key", help="Hex-encoded Ed25519 secret key (requires PyNaCl)")
+    sp.add_argument(
+        "--ed25519-secret-key", help="Hex-encoded Ed25519 secret key (requires PyNaCl)"
+    )
     sp.add_argument("--hmac-key", help="Hex-encoded secret for HMAC-SHA3-256")
     sp.add_argument("--key-id", help="Signer key id label (stored in entry.sig)")
-    sp.add_argument("--sync-registry", action="store_true", help="Also update registry.yaml circuits.<id>.vk_hash")
+    sp.add_argument(
+        "--sync-registry",
+        action="store_true",
+        help="Also update registry.yaml circuits.<id>.vk_hash",
+    )
     sp.set_defaults(func=cmd_add)
 
     # sign
     sp = sub.add_parser("sign", help="Sign an existing entry (stores entry.sig)")
     sp.add_argument("--circuit-id", required=True)
-    sp.add_argument("--ed25519-secret-key", help="Hex-encoded Ed25519 secret key (requires PyNaCl)")
+    sp.add_argument(
+        "--ed25519-secret-key", help="Hex-encoded Ed25519 secret key (requires PyNaCl)"
+    )
     sp.add_argument("--hmac-key", help="Hex-encoded secret for HMAC-SHA3-256")
     sp.add_argument("--key-id", help="Signer key id label")
     sp.set_defaults(func=cmd_sign)
@@ -499,7 +574,9 @@ def _build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_verify)
 
     # sync-registry
-    sp = sub.add_parser("sync-registry", help="Update registry.yaml circuits.<id>.vk_hash from cache")
+    sp = sub.add_parser(
+        "sync-registry", help="Update registry.yaml circuits.<id>.vk_hash from cache"
+    )
     sp.add_argument("--circuit-id", required=True)
     sp.set_defaults(func=cmd_sync_registry)
 

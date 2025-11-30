@@ -9,9 +9,9 @@ Convenience exports for wallet helpers:
 - PQ signers (Dilithium3 / SPHINCS+), unified Signer interface.
 """
 
+from .keystore import EncryptedKey, KeyStore
 from .mnemonic import generate_mnemonic, mnemonic_to_seed, validate_mnemonic
-from .keystore import KeyStore, EncryptedKey
-from .signer import Signer, SignResult, Dilithium3Signer, SphincsPlusSigner
+from .signer import Dilithium3Signer, Signer, SignResult, SphincsPlusSigner
 
 __all__ = [
     # mnemonic

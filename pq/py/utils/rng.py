@@ -33,12 +33,12 @@ Security notes
 - For cryptographic keys, nonces, salts, etc., always use `secure_random`.
 """
 
-from typing import Optional, Union
-import secrets
-import os
 import hashlib
+import os
+import secrets
 import struct
 import threading
+from typing import Optional, Union
 
 BytesLike = Union[bytes, bytearray, memoryview, str]
 
@@ -46,6 +46,7 @@ BytesLike = Union[bytes, bytearray, memoryview, str]
 # ---------------------------------------------------------------------------
 # Secure RNG
 # ---------------------------------------------------------------------------
+
 
 def secure_random(n: int) -> bytes:
     """
@@ -136,8 +137,10 @@ class DeterministicStream:
         #   D || len(label) || label || len(seed) || seed || counter_be64
         frame = (
             _DOMAIN
-            + struct.pack(">I", len(self._label)) + self._label
-            + struct.pack(">I", len(self._seed)) + self._seed
+            + struct.pack(">I", len(self._label))
+            + self._label
+            + struct.pack(">I", len(self._seed))
+            + self._seed
             + struct.pack(">Q", self._counter)
         )
         xof = hashlib.shake_256(frame)
@@ -173,7 +176,9 @@ class DeterministicStream:
                 return x % n
 
 
-def deterministic_rng(seed: BytesLike, *, label: BytesLike = b"rng-v1") -> DeterministicStream:
+def deterministic_rng(
+    seed: BytesLike, *, label: BytesLike = b"rng-v1"
+) -> DeterministicStream:
     """
     Convenience constructor.
     """
@@ -183,6 +188,7 @@ def deterministic_rng(seed: BytesLike, *, label: BytesLike = b"rng-v1") -> Deter
 # ---------------------------------------------------------------------------
 # Helper functions (secure or deterministic)
 # ---------------------------------------------------------------------------
+
 
 def random_u64(stream: Optional[DeterministicStream] = None) -> int:
     """

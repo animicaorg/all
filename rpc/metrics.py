@@ -42,18 +42,11 @@ import time
 import typing as t
 
 from fastapi import APIRouter, FastAPI, Request
+from prometheus_client import (CONTENT_TYPE_LATEST, REGISTRY,
+                               CollectorRegistry, Counter, Gauge, Histogram,
+                               generate_latest)
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import PlainTextResponse, Response
-
-from prometheus_client import (
-    Counter,
-    Histogram,
-    Gauge,
-    CollectorRegistry,
-    generate_latest,
-    CONTENT_TYPE_LATEST,
-    REGISTRY,
-)
 
 
 def _registry() -> CollectorRegistry:
@@ -147,6 +140,7 @@ RPC_SUBSCRIBERS = Gauge(
 
 # ---- HTTP Middleware -------------------------------------------------------
 
+
 def _short_path(path: str) -> str:
     """
     Collapse high-cardinality path segments. We only expose a few stable paths to
@@ -187,6 +181,7 @@ http_metrics_middleware = _HttpMetricsMiddleware
 
 # ---- JSON-RPC helper (explicit instrumentation) ---------------------------
 
+
 class _RpcObservation:
     __slots__ = ("_method", "_transport", "_start", "_ended")
 
@@ -204,9 +199,9 @@ class _RpcObservation:
         JSONRPC_CALLS.labels(
             method=self._method, transport=self._transport, status=status, code=code
         ).inc()
-        JSONRPC_LATENCY.labels(
-            method=self._method, transport=self._transport
-        ).observe(dt)
+        JSONRPC_LATENCY.labels(method=self._method, transport=self._transport).observe(
+            dt
+        )
 
     def ok(self) -> None:
         """Mark successful completion."""
@@ -266,6 +261,7 @@ rpc_metrics = _RpcMetrics()
 
 # ---- /metrics endpoint -----------------------------------------------------
 
+
 def _metrics_handler() -> PlainTextResponse:
     # generate_latest selects the global/default REGISTRY or our custom one.
     data = generate_latest(REG)  # bytes
@@ -282,7 +278,9 @@ def mount_metrics(app: FastAPI) -> None:
     Mount GET /metrics on the provided FastAPI app, ready for Prometheus to scrape.
     """
     router = APIRouter()
-    router.add_api_route("/metrics", _metrics_handler, methods=["GET"], include_in_schema=False)
+    router.add_api_route(
+        "/metrics", _metrics_handler, methods=["GET"], include_in_schema=False
+    )
     app.include_router(router)
 
 

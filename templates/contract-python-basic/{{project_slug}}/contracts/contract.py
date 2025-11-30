@@ -29,7 +29,7 @@ Storage layout (keys)
 """
 from __future__ import annotations
 
-from stdlib import storage, events, abi  # provided by the VM at runtime
+from stdlib import abi, events, storage  # provided by the VM at runtime
 
 VERSION = b"0.1.0"
 
@@ -39,13 +39,14 @@ KEY_OWNER = b"owner"
 KEY_COUNTER = b"counter"
 
 # Bounds for "safe" arithmetic in this template (customize as needed).
-I63_MIN = -(2**62)            # generous negative lower bound for demo
-I63_MAX = (2**62) - 1         # keep large enough while avoiding edge overflow
+I63_MIN = -(2**62)  # generous negative lower bound for demo
+I63_MAX = (2**62) - 1  # keep large enough while avoiding edge overflow
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers (bytes <-> int) with explicit ABI encoding/decoding
 # ---------------------------------------------------------------------------
+
 
 def _load_int(key: bytes, default: int = 0) -> int:
     """Read an integer from storage at `key`. If absent, return `default`."""
@@ -77,6 +78,7 @@ def _require_initialized() -> None:
 # ---------------------------------------------------------------------------
 # Constructor / initialization
 # ---------------------------------------------------------------------------
+
 
 def init(initial: int = 0, owner: bytes | None = None) -> int:
     """
@@ -127,6 +129,7 @@ def init(initial: int = 0, owner: bytes | None = None) -> int:
 # ---------------------------------------------------------------------------
 # Read-only views
 # ---------------------------------------------------------------------------
+
 
 def version() -> bytes:
     """
@@ -179,6 +182,7 @@ def get_owner() -> bytes:
 # ---------------------------------------------------------------------------
 # State-changing operations
 # ---------------------------------------------------------------------------
+
 
 def inc(delta: int = 1) -> int:
     """
@@ -293,6 +297,7 @@ def set_value(value: int, who: bytes) -> int:
 # Optional: tiny metadata helper (useful in tooling & explorers)
 # ---------------------------------------------------------------------------
 
+
 def metadata() -> bytes:
     """
     Return a small JSON blob (bytes) with contract metadata.
@@ -310,8 +315,13 @@ def metadata() -> bytes:
     owner_hex = abi.hex(get_owner())  # e.g. b"0x..."
     value = str(get()).encode("ascii")
     return (
-        b'{"name":"Counter","version":"' + VERSION + b'","owner":"' +
-        owner_hex + b'","value":' + value + b"}"
+        b'{"name":"Counter","version":"'
+        + VERSION
+        + b'","owner":"'
+        + owner_hex
+        + b'","value":'
+        + value
+        + b"}"
     )
 
 

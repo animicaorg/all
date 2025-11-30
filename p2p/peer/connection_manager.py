@@ -9,7 +9,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 try:
     # Preferred typings if present in this repo
-    from p2p.transport.base import Transport, Conn  # type: ignore
+    from p2p.transport.base import Conn, Transport  # type: ignore
 except Exception:  # pragma: no cover
     # Minimal protocol fallbacks for type-checking without importing the full stack.
     class Conn:  # type: ignore
@@ -20,11 +20,14 @@ except Exception:  # pragma: no cover
 
     class Transport:  # type: ignore
         async def dial(self, addr: str, timeout: float | None = None) -> Conn: ...
-        def name(self) -> str: return "transport"
+        def name(self) -> str:
+            return "transport"
+
 
 try:
     from p2p.peer.peer import Peer  # type: ignore
 except Exception:  # pragma: no cover
+
     @dataclass
     class Peer:  # type: ignore
         peer_id: str
@@ -35,21 +38,26 @@ except Exception:  # pragma: no cover
         last_seen: float = field(default_factory=lambda: time.time())
         meta: Dict[str, Any] = field(default_factory=dict)
 
+
 try:
     from p2p.peer.ping import ping_once  # type: ignore
 except Exception:  # pragma: no cover
+
     async def ping_once(conn: Conn, timeout: float = 3.0) -> float:
         # Fallback "ping": just sleep a tiny bit and pretend RTT ~ 20ms.
         await asyncio.sleep(0.02)
         return 20.0
 
+
 try:
     from p2p.peer.identify import perform_identify  # type: ignore
 except Exception:  # pragma: no cover
+
     async def perform_identify(conn: Conn, timeout: float = 5.0) -> Dict[str, Any]:
         # Fallback identify: derive a pseudo id from remote address
         rid = getattr(conn, "remote_addr", "unknown")
         return {"peer_id": f"peer:{rid}", "caps": [], "agent": "unknown", "height": 0}
+
 
 try:
     from p2p.peer.address_book import AddressBook  # type: ignore
@@ -69,7 +77,7 @@ class DialBackoff:
     def mark_failure(self, base: float, jitter: float, max_backoff: float) -> None:
         self.failures += 1
         # Exponential backoff with decorrelated jitter
-        exp = min(max_backoff, (base ** self.failures))
+        exp = min(max_backoff, (base**self.failures))
         delay = min(max_backoff, exp * (1.0 + random.random() * jitter))
         self.next_try_at = time.time() + delay
 
@@ -110,7 +118,12 @@ class ConnectionManager:
       - Simple event bus for join/leave/fail
     """
 
-    def __init__(self, transport: Transport, addr_book: AddressBook, cfg: Optional[CMConfig] = None):
+    def __init__(
+        self,
+        transport: Transport,
+        addr_book: AddressBook,
+        cfg: Optional[CMConfig] = None,
+    ):
         self.t: Transport = transport
         self.ab: AddressBook = addr_book
         self.cfg: CMConfig = cfg or CMConfig()
@@ -168,7 +181,9 @@ class ConnectionManager:
         try:
             entry = self.ab.add(address, tag=tag)
         except Exception as e:
-            await self._push_event("peer_connect_failed", {"address": address, "error": str(e)})
+            await self._push_event(
+                "peer_connect_failed", {"address": address, "error": str(e)}
+            )
             return None
         return await self._dial_one(entry.norm)
 
@@ -212,7 +227,11 @@ class ConnectionManager:
         try:
             while self._running:
                 await asyncio.sleep(0.05)
-                outbound = sum(1 for s in self._peers_by_id.values() if s.direction == "outbound" and s.is_active)
+                outbound = sum(
+                    1
+                    for s in self._peers_by_id.values()
+                    if s.direction == "outbound" and s.is_active
+                )
                 if outbound >= self.cfg.target_outbound:
                     await asyncio.sleep(0.25)
                     continue
@@ -228,7 +247,9 @@ class ConnectionManager:
                     addr = e.norm
                     if addr in self._peers_by_addr:
                         continue
-                    if self._is_banned(addr) or self._is_banned(getattr(e, "peer_id", "") or ""):
+                    if self._is_banned(addr) or self._is_banned(
+                        getattr(e, "peer_id", "") or ""
+                    ):
                         continue
                     bo = self._backoff.get(addr)
                     if bo and now < bo.next_try_at:
@@ -302,10 +323,21 @@ class ConnectionManager:
 
         conn: Optional[Conn] = None
         try:
-            conn = await asyncio.wait_for(self.t.dial(address, timeout=self.cfg.dial_timeout_s), timeout=self.cfg.dial_timeout_s + 0.5)
-            ident = await asyncio.wait_for(perform_identify(conn, timeout=5.0), timeout=6.0)
+            conn = await asyncio.wait_for(
+                self.t.dial(address, timeout=self.cfg.dial_timeout_s),
+                timeout=self.cfg.dial_timeout_s + 0.5,
+            )
+            ident = await asyncio.wait_for(
+                perform_identify(conn, timeout=5.0), timeout=6.0
+            )
             peer_id = ident.get("peer_id") or getattr(conn, "remote_addr", address)
-            peer = Peer(peer_id=peer_id, address=address, conn=conn, direction="outbound", meta=ident)
+            peer = Peer(
+                peer_id=peer_id,
+                address=address,
+                conn=conn,
+                direction="outbound",
+                meta=ident,
+            )
             slot = PeerSlot(peer=peer, addr=address, direction="outbound")
             async with self._lock:
                 # If already connected under this id, drop older
@@ -325,7 +357,15 @@ class ConnectionManager:
                 pass
             # Reset backoff
             self._backoff.setdefault(address, DialBackoff()).mark_success()
-            await self._push_event("peer_connected", {"peer_id": peer_id, "address": address, "direction": "outbound", "meta": ident})
+            await self._push_event(
+                "peer_connected",
+                {
+                    "peer_id": peer_id,
+                    "address": address,
+                    "direction": "outbound",
+                    "meta": ident,
+                },
+            )
             return peer
         except asyncio.TimeoutError as e:
             await self._record_failure(address, "timeout", e)
@@ -342,14 +382,21 @@ class ConnectionManager:
     async def _ping_slot(self, slot: PeerSlot) -> None:
         slot.last_ping_at = time.time()
         try:
-            rtt = await asyncio.wait_for(ping_once(slot.peer.conn, timeout=self.cfg.keepalive_timeout_s), timeout=self.cfg.keepalive_timeout_s + 0.2)
+            rtt = await asyncio.wait_for(
+                ping_once(slot.peer.conn, timeout=self.cfg.keepalive_timeout_s),
+                timeout=self.cfg.keepalive_timeout_s + 0.2,
+            )
             slot.last_rtt_ms = rtt
             slot.peer.last_rtt_ms = rtt
             slot.peer.last_seen = time.time()
-            await self._push_event("peer_ping_ok", {"peer_id": slot.peer.peer_id, "rtt_ms": rtt})
+            await self._push_event(
+                "peer_ping_ok", {"peer_id": slot.peer.peer_id, "rtt_ms": rtt}
+            )
         except Exception as e:
             # Treat as soft failure; if repeated, connection may drop elsewhere
-            await self._push_event("peer_ping_fail", {"peer_id": slot.peer.peer_id, "error": str(e)})
+            await self._push_event(
+                "peer_ping_fail", {"peer_id": slot.peer.peer_id, "error": str(e)}
+            )
 
     async def _on_disconnect(self, peer_id: str, *, reason: str = "unknown") -> None:
         async with self._lock:
@@ -363,18 +410,31 @@ class ConnectionManager:
                 self.ab.mark_seen(slot.addr, good=False, peer_id=peer_id)
             except Exception:
                 pass
-            await self._push_event("peer_disconnected", {"peer_id": peer_id, "address": slot.addr, "reason": reason})
+            await self._push_event(
+                "peer_disconnected",
+                {"peer_id": peer_id, "address": slot.addr, "reason": reason},
+            )
 
     async def _record_failure(self, address: str, kind: str, err: Exception) -> None:
         # Backoff bump
         bo = self._backoff.setdefault(address, DialBackoff())
-        bo.mark_failure(self.cfg.backoff_base, self.cfg.backoff_jitter, self.cfg.backoff_max_s)
+        bo.mark_failure(
+            self.cfg.backoff_base, self.cfg.backoff_jitter, self.cfg.backoff_max_s
+        )
         # Mark bad in addr book
         try:
             self.ab.mark_seen(address, good=False)
         except Exception:
             pass
-        await self._push_event("peer_connect_failed", {"address": address, "kind": kind, "error": str(err), "next_try_at": bo.next_try_at})
+        await self._push_event(
+            "peer_connect_failed",
+            {
+                "address": address,
+                "kind": kind,
+                "error": str(err),
+                "next_try_at": bo.next_try_at,
+            },
+        )
 
     # -------------------- inbound hooks -------------------- #
 
@@ -384,17 +444,26 @@ class ConnectionManager:
         Performs identify and registers the peer if under limits.
         """
         # Inbound limit
-        inbounds = sum(1 for s in self._peers_by_id.values() if s.direction == "inbound" and s.is_active)
+        inbounds = sum(
+            1
+            for s in self._peers_by_id.values()
+            if s.direction == "inbound" and s.is_active
+        )
         if inbounds >= self.cfg.max_inbound:
             try:
                 await conn.close()
             except Exception:
                 pass
-            await self._push_event("peer_reject_inbound_full", {"remote": getattr(conn, "remote_addr", "unknown")})
+            await self._push_event(
+                "peer_reject_inbound_full",
+                {"remote": getattr(conn, "remote_addr", "unknown")},
+            )
             return None
 
         try:
-            ident = await asyncio.wait_for(perform_identify(conn, timeout=5.0), timeout=6.0)
+            ident = await asyncio.wait_for(
+                perform_identify(conn, timeout=5.0), timeout=6.0
+            )
             peer_id = ident.get("peer_id") or getattr(conn, "remote_addr", "unknown")
             # Ban check
             if self._is_banned(peer_id):
@@ -402,9 +471,17 @@ class ConnectionManager:
                     await conn.close()
                 except Exception:
                     pass
-                await self._push_event("peer_reject_inbound_banned", {"peer_id": peer_id})
+                await self._push_event(
+                    "peer_reject_inbound_banned", {"peer_id": peer_id}
+                )
                 return None
-            peer = Peer(peer_id=peer_id, address=getattr(conn, "remote_addr", peer_id), conn=conn, direction="inbound", meta=ident)
+            peer = Peer(
+                peer_id=peer_id,
+                address=getattr(conn, "remote_addr", peer_id),
+                conn=conn,
+                direction="inbound",
+                meta=ident,
+            )
             slot = PeerSlot(peer=peer, addr=peer.address, direction="inbound")
             async with self._lock:
                 self._peers_by_id[peer_id] = slot
@@ -414,14 +491,25 @@ class ConnectionManager:
                 self.ab.mark_seen(slot.addr, good=True, peer_id=peer_id)
             except Exception:
                 pass
-            await self._push_event("peer_connected", {"peer_id": peer_id, "address": slot.addr, "direction": "inbound", "meta": ident})
+            await self._push_event(
+                "peer_connected",
+                {
+                    "peer_id": peer_id,
+                    "address": slot.addr,
+                    "direction": "inbound",
+                    "meta": ident,
+                },
+            )
             return peer
         except Exception as e:
             try:
                 await conn.close()
             except Exception:
                 pass
-            await self._push_event("peer_inbound_identify_fail", {"remote": getattr(conn, "remote_addr", "unknown"), "error": str(e)})
+            await self._push_event(
+                "peer_inbound_identify_fail",
+                {"remote": getattr(conn, "remote_addr", "unknown"), "error": str(e)},
+            )
             return None
 
     # -------------------- utilities -------------------- #
@@ -481,7 +569,10 @@ class ConnectionManager:
     def _make_token_bucket(self, rps: float) -> "ConnectionManager._Bucket":
         return self._Bucket(rate_per_s=rps)
 
+
 # Convenience factory
-def make_default_manager(transport: Transport, addr_book: AddressBook, **overrides: Any) -> ConnectionManager:
+def make_default_manager(
+    transport: Transport, addr_book: AddressBook, **overrides: Any
+) -> ConnectionManager:
     cfg = CMConfig(**overrides) if overrides else CMConfig()
     return ConnectionManager(transport, addr_book, cfg)

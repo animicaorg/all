@@ -1,5 +1,6 @@
 import importlib
 import types
+
 import pytest
 
 
@@ -24,7 +25,7 @@ def test_same_inputs_produce_same_id():
     chain_id = 1
     height = 123456
     tx_hash = bytes.fromhex("11" * 32)  # 32 bytes
-    caller = bytes.fromhex("22" * 32)   # 32 bytes (address payload)
+    caller = bytes.fromhex("22" * 32)  # 32 bytes (address payload)
     payload = b'{"model":"tiny","prompt":"hello"}'
 
     tid1 = task_id_fn(chain_id, height, tx_hash, caller, payload)
@@ -61,7 +62,9 @@ def test_other_fields_affect_id():
     assert tid_tx != tid_base, "Changing tx_hash must change the task ID"
 
     # Change caller
-    tid_caller = task_id_fn(chain_id, height, tx_hash, bytes.fromhex("ef" * 32), payload)
+    tid_caller = task_id_fn(
+        chain_id, height, tx_hash, bytes.fromhex("ef" * 32), payload
+    )
     assert tid_caller != tid_base, "Changing caller must change the task ID"
 
     # Change payload

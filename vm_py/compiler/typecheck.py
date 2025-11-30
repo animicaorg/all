@@ -48,11 +48,13 @@ Usage
 
 The checker stores inferred output types as `instr.out_type` where applicable.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
+from typing import (Any, Dict, Iterable, List, Mapping, MutableMapping,
+                    Optional, Sequence, Tuple, Union)
 
 try:
     # Optional import: if present, we leverage the symbol table for method/function types.
@@ -62,6 +64,7 @@ except Exception:  # pragma: no cover - optional for very small builds
 
 
 # ------------------------------ Type model ---------------------------------- #
+
 
 class BaseType(str, Enum):
     INT = "int"
@@ -95,6 +98,7 @@ def normalize_type(t: Optional[Union[str, BaseType]]) -> BaseType:
 
 # ------------------------------ Errors -------------------------------------- #
 
+
 class TypeCheckError(Exception):
     def __init__(self, message: str, loc: Any = None):
         self.loc = loc
@@ -106,6 +110,7 @@ class TypeCheckError(Exception):
 
 
 # ------------------------------ Helpers ------------------------------------- #
+
 
 def _op_name(instr: Any) -> str:
     return getattr(instr, "op", getattr(instr, "opcode", "")).upper()
@@ -167,45 +172,64 @@ def _same(a: BaseType, b: BaseType) -> bool:
 Signature = Tuple[List[BaseType], BaseType]  # (param_types, return_type)
 
 
-def _sig_from_tuple(sig: Tuple[Sequence[Union[str, BaseType]], Union[str, BaseType]]) -> Signature:
+def _sig_from_tuple(
+    sig: Tuple[Sequence[Union[str, BaseType]], Union[str, BaseType]],
+) -> Signature:
     params, ret = sig
     return ([normalize_type(p) for p in params], normalize_type(ret))
 
 
 # --------------------------- Operation rules -------------------------------- #
 
+
 # Each rule returns the output type (or raises TypeCheckError). It may also
 # validate arity and input types.
 def _rule_unary(expected: BaseType, out: BaseType):
     def f(instr: Any, itypes: List[BaseType]) -> BaseType:
         if len(itypes) != 1:
-            raise TypeCheckError(f"{_op_name(instr)} expects 1 arg, got {len(itypes)}", _loc(instr))
+            raise TypeCheckError(
+                f"{_op_name(instr)} expects 1 arg, got {len(itypes)}", _loc(instr)
+            )
         if itypes[0] != expected:
-            raise TypeCheckError(f"{_op_name(instr)} expects {expected}, got {itypes[0]}", _loc(instr))
+            raise TypeCheckError(
+                f"{_op_name(instr)} expects {expected}, got {itypes[0]}", _loc(instr)
+            )
         return out
+
     return f
 
 
 def _rule_binary(expected_pair: Tuple[BaseType, BaseType], out: BaseType):
     def f(instr: Any, itypes: List[BaseType]) -> BaseType:
         if len(itypes) != 2:
-            raise TypeCheckError(f"{_op_name(instr)} expects 2 args, got {len(itypes)}", _loc(instr))
+            raise TypeCheckError(
+                f"{_op_name(instr)} expects 2 args, got {len(itypes)}", _loc(instr)
+            )
         a, b = itypes
         ea, eb = expected_pair
         if a != ea or b != eb:
-            raise TypeCheckError(f"{_op_name(instr)} expects ({ea},{eb}), got ({a},{b})", _loc(instr))
+            raise TypeCheckError(
+                f"{_op_name(instr)} expects ({ea},{eb}), got ({a},{b})", _loc(instr)
+            )
         return out
+
     return f
 
 
 def _rule_binary_same(out: BaseType, allowed: Tuple[BaseType, ...]):
     def f(instr: Any, itypes: List[BaseType]) -> BaseType:
         if len(itypes) != 2:
-            raise TypeCheckError(f"{_op_name(instr)} expects 2 args, got {len(itypes)}", _loc(instr))
+            raise TypeCheckError(
+                f"{_op_name(instr)} expects 2 args, got {len(itypes)}", _loc(instr)
+            )
         a, b = itypes
         if a != b or a not in allowed:
-            raise TypeCheckError(f"{_op_name(instr)} expects same-type in {allowed}, got ({a},{b})", _loc(instr))
+            raise TypeCheckError(
+                f"{_op_name(instr)} expects same-type in {allowed}, got ({a},{b})",
+                _loc(instr),
+            )
         return out
+
     return f
 
 
@@ -215,27 +239,28 @@ OP_RULES: Dict[str, Any] = {
     "CONST_BYTES": lambda instr, itypes: BaseType.BYTES,
     "CONST_BOOL": lambda instr, itypes: BaseType.BOOL,
     "CONST_ADDRESS": lambda instr, itypes: BaseType.ADDRESS,
-
     # Arithmetic
     "ADD": _rule_binary((BaseType.INT, BaseType.INT), BaseType.INT),
     "SUB": _rule_binary((BaseType.INT, BaseType.INT), BaseType.INT),
     "MUL": _rule_binary((BaseType.INT, BaseType.INT), BaseType.INT),
-
     # Logic
     "AND": _rule_binary((BaseType.BOOL, BaseType.BOOL), BaseType.BOOL),
-    "OR":  _rule_binary((BaseType.BOOL, BaseType.BOOL), BaseType.BOOL),
+    "OR": _rule_binary((BaseType.BOOL, BaseType.BOOL), BaseType.BOOL),
     "NOT": _rule_unary(BaseType.BOOL, BaseType.BOOL),
-
     # Bytes
     "CONCAT": _rule_binary((BaseType.BYTES, BaseType.BYTES), BaseType.BYTES),
-
     # Comparisons
-    "EQ":  _rule_binary_same(BaseType.BOOL, (BaseType.INT, BaseType.BOOL, BaseType.BYTES, BaseType.ADDRESS)),
-    "NEQ": _rule_binary_same(BaseType.BOOL, (BaseType.INT, BaseType.BOOL, BaseType.BYTES, BaseType.ADDRESS)),
+    "EQ": _rule_binary_same(
+        BaseType.BOOL, (BaseType.INT, BaseType.BOOL, BaseType.BYTES, BaseType.ADDRESS)
+    ),
+    "NEQ": _rule_binary_same(
+        BaseType.BOOL, (BaseType.INT, BaseType.BOOL, BaseType.BYTES, BaseType.ADDRESS)
+    ),
 }
 
 
 # ------------------------------ TypeChecker --------------------------------- #
+
 
 @dataclass
 class _FnLike:
@@ -250,7 +275,10 @@ class TypeChecker:
         *,
         symbols: Optional["SymbolTable"] = None,
         extern_signatures: Optional[
-            Mapping[Union[str, Tuple[str, str]], Tuple[Sequence[Union[str, BaseType]], Union[str, BaseType]]]
+            Mapping[
+                Union[str, Tuple[str, str]],
+                Tuple[Sequence[Union[str, BaseType]], Union[str, BaseType]],
+            ]
         ] = None,
     ) -> None:
         """
@@ -283,14 +311,20 @@ class TypeChecker:
         flike = self._fn_like(fn)
         env: Dict[str, BaseType] = {pname: ptype for (pname, ptype) in flike.params}
         # Allow predeclared locals via fn.locals: Dict[name,type]
-        for lname, ltype in getattr(fn, "locals", getattr(fn, "locals_types", {})).items():
+        for lname, ltype in getattr(
+            fn, "locals", getattr(fn, "locals_types", {})
+        ).items():
             env[str(lname)] = normalize_type(ltype)
 
         blocks = getattr(fn, "blocks", None)
         instrs: Iterable[Any]
         if blocks is not None:
             # Flatten blocks in order
-            instrs = (instr for b in blocks for instr in getattr(b, "instrs", getattr(b, "instructions", [])))
+            instrs = (
+                instr
+                for b in blocks
+                for instr in getattr(b, "instrs", getattr(b, "instructions", []))
+            )
         else:
             instrs = getattr(fn, "instrs", getattr(fn, "instructions", []))
 
@@ -301,7 +335,9 @@ class TypeChecker:
                 saw_return = True
 
         if flike.returns != BaseType.VOID and not saw_return:
-            raise TypeCheckError(f"Function '{flike.name}' missing a return of {flike.returns}")
+            raise TypeCheckError(
+                f"Function '{flike.name}' missing a return of {flike.returns}"
+            )
 
     # ---- Internals --------------------------------------------------------- #
 
@@ -317,10 +353,14 @@ class TypeChecker:
                 pname = getattr(p, "name", None) or str(p)
                 ptype = getattr(p, "type", BaseType.INT)
             params.append((str(pname), normalize_type(ptype)))
-        returns = normalize_type(getattr(fn, "returns", getattr(fn, "ret", BaseType.VOID)))
+        returns = normalize_type(
+            getattr(fn, "returns", getattr(fn, "ret", BaseType.VOID))
+        )
         return _FnLike(name=name, params=params, returns=returns)
 
-    def _infer_arg_types(self, args: Sequence[Any], env: Mapping[str, BaseType], instr: Any) -> List[BaseType]:
+    def _infer_arg_types(
+        self, args: Sequence[Any], env: Mapping[str, BaseType], instr: Any
+    ) -> List[BaseType]:
         types: List[BaseType] = []
         for a in args:
             # Variable reference
@@ -334,14 +374,22 @@ class TypeChecker:
                 continue
             # Unknown reference: if it's a tuple that encodes ("Owner","method") for MCALL target,
             # let _check_instr handle it. For regular args it's an error.
-            if isinstance(a, tuple) and len(a) == 2 and all(isinstance(x, str) for x in a):
+            if (
+                isinstance(a, tuple)
+                and len(a) == 2
+                and all(isinstance(x, str) for x in a)
+            ):
                 # caller probably passed ("Owner","method") as the first arg for MCALL
                 types.append(BaseType.VOID)  # placeholder; handled in MCALL logic
                 continue
-            raise TypeCheckError(f"Unbound or untyped value in argument list: {a!r}", _loc(instr))
+            raise TypeCheckError(
+                f"Unbound or untyped value in argument list: {a!r}", _loc(instr)
+            )
         return types
 
-    def _check_instr(self, instr: Any, env: MutableMapping[str, BaseType], *, fn_context: _FnLike) -> None:
+    def _check_instr(
+        self, instr: Any, env: MutableMapping[str, BaseType], *, fn_context: _FnLike
+    ) -> None:
         op = _op_name(instr)
         loc = _loc(instr)
         args = _args(instr)
@@ -380,7 +428,9 @@ class TypeChecker:
             vt = env[name]
             at = self._infer_arg_types([value], env, instr)[0]
             if vt != at:
-                raise TypeCheckError(f"STORE type mismatch for '{name}': {vt} <- {at}", loc)
+                raise TypeCheckError(
+                    f"STORE type mismatch for '{name}': {vt} <- {at}", loc
+                )
             setattr(instr, "out_type", BaseType.VOID)
             return
 
@@ -395,7 +445,10 @@ class TypeChecker:
                 raise TypeCheckError("RETURN expects single value", loc)
             rt = self._infer_arg_types(args, env, instr)[0]
             if rt != fn_context.returns:
-                raise TypeCheckError(f"RETURN type mismatch: expected {fn_context.returns}, got {rt}", loc)
+                raise TypeCheckError(
+                    f"RETURN type mismatch: expected {fn_context.returns}, got {rt}",
+                    loc,
+                )
             setattr(instr, "out_type", rt)
             return
 
@@ -406,9 +459,16 @@ class TypeChecker:
 
             if op == "CALL":
                 # Target as instr.target or first arg (string)
-                target = getattr(instr, "target", None) or (call_args.pop(0) if call_args and isinstance(call_args[0], str) else None)
+                target = getattr(instr, "target", None) or (
+                    call_args.pop(0)
+                    if call_args and isinstance(call_args[0], str)
+                    else None
+                )
                 if not isinstance(target, str):
-                    raise TypeCheckError("CALL requires target function name (str) as .target or args[0]", loc)
+                    raise TypeCheckError(
+                        "CALL requires target function name (str) as .target or args[0]",
+                        loc,
+                    )
                 sig = self._resolve_fn_sig(target)
                 if sig is None:
                     raise TypeCheckError(f"Unknown function: {target}", loc)
@@ -417,10 +477,17 @@ class TypeChecker:
                 mname = getattr(instr, "method_name", None)
                 if owner is None or mname is None:
                     # Allow ("Owner","method") as first arg
-                    if call_args and isinstance(call_args[0], tuple) and len(call_args[0]) == 2:
+                    if (
+                        call_args
+                        and isinstance(call_args[0], tuple)
+                        and len(call_args[0]) == 2
+                    ):
                         owner, mname = call_args.pop(0)
                 if not (isinstance(owner, str) and isinstance(mname, str)):
-                    raise TypeCheckError("MCALL requires owner_type/method_name or args[0]=('Owner','method')", loc)
+                    raise TypeCheckError(
+                        "MCALL requires owner_type/method_name or args[0]=('Owner','method')",
+                        loc,
+                    )
                 sig = self._resolve_method_sig(owner, mname)
                 if sig is None:
                     raise TypeCheckError(f"Unknown method: {owner}.{mname}", loc)
@@ -428,10 +495,15 @@ class TypeChecker:
             param_types, ret_type = sig
             arg_types = self._infer_arg_types(call_args, env, instr)
             if len(arg_types) != len(param_types):
-                raise TypeCheckError(f"Call arity mismatch: expected {len(param_types)} arg(s), got {len(arg_types)}", loc)
+                raise TypeCheckError(
+                    f"Call arity mismatch: expected {len(param_types)} arg(s), got {len(arg_types)}",
+                    loc,
+                )
             for i, (got, exp) in enumerate(zip(arg_types, param_types)):
                 if got != exp:
-                    raise TypeCheckError(f"Call arg {i} type mismatch: expected {exp}, got {got}", loc)
+                    raise TypeCheckError(
+                        f"Call arg {i} type mismatch: expected {exp}, got {got}", loc
+                    )
             setattr(instr, "out_type", ret_type)
             if dest and ret_type != BaseType.VOID:
                 env[dest] = ret_type
@@ -467,10 +539,15 @@ class TypeChecker:
                 if kname in ("FUNC", "METHOD"):
                     params = list(getattr(sym, "params", ()))
                     returns = getattr(sym, "returns", BaseType.VOID)
-                    return ([normalize_type(p) for p in params], normalize_type(returns))
+                    return (
+                        [normalize_type(p) for p in params],
+                        normalize_type(returns),
+                    )
         return None
 
-    def _resolve_method_sig(self, owner_type: str, method_name: str) -> Optional[Signature]:
+    def _resolve_method_sig(
+        self, owner_type: str, method_name: str
+    ) -> Optional[Signature]:
         key = (owner_type, method_name)
         if key in self.extern_sigs:
             return self.extern_sigs[key]
@@ -485,16 +562,24 @@ class TypeChecker:
 
 # ------------------------------ Convenience API ------------------------------ #
 
-def typecheck(module_or_function: Any,
-              *,
-              symbols: Optional["SymbolTable"] = None,
-              extern_signatures: Optional[
-                  Mapping[Union[str, Tuple[str, str]], Tuple[Sequence[Union[str, BaseType]], Union[str, BaseType]]]
-              ] = None) -> None:
+
+def typecheck(
+    module_or_function: Any,
+    *,
+    symbols: Optional["SymbolTable"] = None,
+    extern_signatures: Optional[
+        Mapping[
+            Union[str, Tuple[str, str]],
+            Tuple[Sequence[Union[str, BaseType]], Union[str, BaseType]],
+        ]
+    ] = None,
+) -> None:
     """
     One-shot helper. Raises TypeCheckError on the first mismatch.
     """
-    TypeChecker(symbols=symbols, extern_signatures=extern_signatures).check_module(module_or_function)
+    TypeChecker(symbols=symbols, extern_signatures=extern_signatures).check_module(
+        module_or_function
+    )
 
 
 __all__ = [

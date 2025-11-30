@@ -20,11 +20,11 @@ It uses dynamic imports so that importing `capabilities.*` does not hard-require
 
 from __future__ import annotations
 
-import os
 import binascii
+import os
 from dataclasses import asdict
-from typing import Any, Dict, Optional, Tuple, Union
 from importlib import import_module
+from typing import Any, Dict, Optional, Tuple, Union
 
 HexLike = Union[str, bytes, bytearray, memoryview]
 
@@ -32,11 +32,14 @@ HexLike = Union[str, bytes, bytearray, memoryview]
 # Helpers
 # ----------------------------
 
+
 def _ensure_0x(h: str) -> str:
     return h if h.startswith("0x") else "0x" + h
 
+
 def _to_hex(b: bytes) -> str:
     return "0x" + b.hex()
+
 
 def _from_hex(x: HexLike) -> bytes:
     if isinstance(x, (bytes, bytearray, memoryview)):
@@ -49,11 +52,13 @@ def _from_hex(x: HexLike) -> bytes:
     except binascii.Error as e:
         raise ValueError(f"Invalid hex: {x}") from e
 
+
 def _try_import(path: str) -> Any:
     try:
         return import_module(path)
     except Exception:
         return None
+
 
 # ----------------------------
 # Optional DA modules
@@ -77,7 +82,10 @@ if _da_client_mod:
 # Local store duck-typing
 # ----------------------------
 
-def _store_put_bytes(store: Any, ns: int, data: bytes, mime: Optional[str]) -> Tuple[bytes, Dict[str, Any]]:
+
+def _store_put_bytes(
+    store: Any, ns: int, data: bytes, mime: Optional[str]
+) -> Tuple[bytes, Dict[str, Any]]:
     """
     Try common method names on store to persist bytes, returning (commitment_bytes, receipt_dict).
     """
@@ -102,6 +110,7 @@ def _store_put_bytes(store: Any, ns: int, data: bytes, mime: Optional[str]) -> T
         "Store object does not expose a supported API (tried put_bytes/put/put_blob)."
     )
 
+
 def _store_get_bytes(store: Any, commitment: bytes) -> bytes:
     """
     Try common method names on store to read bytes by commitment.
@@ -123,9 +132,11 @@ def _store_get_bytes(store: Any, commitment: bytes) -> bytes:
         "Store object does not expose a supported read API (tried get_bytes/read/get_blob/open)."
     )
 
+
 # ----------------------------
 # Retrieval client wrapper
 # ----------------------------
+
 
 class _HttpDA:
     """
@@ -166,9 +177,11 @@ class _HttpDA:
                 return out
         raise AttributeError("DA client missing get_blob/fetch_blob/get method")
 
+
 # ----------------------------
 # Public API
 # ----------------------------
+
 
 def pin_blob(
     ns: int,
@@ -244,6 +257,7 @@ def pin_blob(
         "persistence": "none",
     }
 
+
 def get_blob(
     commitment: HexLike,
     *,
@@ -267,9 +281,11 @@ def get_blob(
 
     raise RuntimeError("No DA store or endpoint configured for get_blob()")
 
+
 # ----------------------------
 # Internal: compute-only path
 # ----------------------------
+
 
 def _commitment_only(ns: int, data: bytes) -> Tuple[bytes, Dict[str, Any]]:
     """
@@ -286,5 +302,6 @@ def _commitment_only(ns: int, data: bytes) -> Tuple[bytes, Dict[str, Any]]:
     if hasattr(meta, "__dataclass_fields__"):
         meta = asdict(meta)
     return root, dict(meta)
+
 
 __all__ = ["pin_blob", "get_blob"]

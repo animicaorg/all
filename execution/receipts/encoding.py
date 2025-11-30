@@ -35,7 +35,7 @@ Implementation notes
 
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass, fields
+from dataclasses import asdict, fields, is_dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
 try:
@@ -55,7 +55,6 @@ except Exception:  # pragma: no cover
     from execution.types.receipt import Receipt  # type: ignore
 
 from execution.types.events import LogEvent
-
 
 # ------------------------------ Helpers -------------------------------------
 
@@ -84,7 +83,7 @@ def _log_to_obj(ev: LogEvent) -> Dict[str, Any]:
     if not isinstance(ev, LogEvent):
         raise TypeError(f"LogEvent expected, got {type(ev)!r}")
     addr = _to_bytes(ev.address)
-    topics = [ _to_bytes(t) for t in list(ev.topics) ]
+    topics = [_to_bytes(t) for t in list(ev.topics)]
     data = _to_bytes(ev.data)
     # Canonical key names for wire format
     return {"address": addr, "topics": topics, "data": data}

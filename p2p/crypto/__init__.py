@@ -20,6 +20,7 @@ Utility helpers exported here
 - get_default_aead() -> object providing seal(open) APIs from aead.*
 - make_peer_id(pubkey: bytes, alg_id: int) -> str
 """
+
 from __future__ import annotations
 
 import importlib
@@ -46,6 +47,7 @@ _LAZY: Dict[str, str] = {
     "cert": ".cert",
 }
 
+
 def __getattr__(name: str) -> Any:
     modpath = _LAZY.get(name)
     if not modpath:
@@ -54,9 +56,11 @@ def __getattr__(name: str) -> Any:
     globals()[name] = mod
     return mod
 
+
 # --------------------------------------------------------------------- #
 # Small convenience helpers (lazy-importing internally)
 # --------------------------------------------------------------------- #
+
 
 def get_default_aead_name() -> str:
     """
@@ -69,7 +73,10 @@ def get_default_aead_name() -> str:
     if v in ("chacha20-poly1305", "aes-gcm"):
         return v
     # Be strict: misconfig should not silently change crypto.
-    raise ValueError(f"Unsupported P2P_AEAD={v!r}; expected 'chacha20-poly1305' or 'aes-gcm'")
+    raise ValueError(
+        f"Unsupported P2P_AEAD={v!r}; expected 'chacha20-poly1305' or 'aes-gcm'"
+    )
+
 
 def get_default_aead() -> Any:
     """
@@ -87,6 +94,7 @@ def get_default_aead() -> Any:
         return mod.chacha20_poly1305
     else:
         return mod.aes_gcm
+
 
 def make_peer_id(pubkey: bytes, alg_id: int) -> str:
     """

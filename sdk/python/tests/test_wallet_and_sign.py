@@ -1,7 +1,6 @@
 import pytest
-
-from omni_sdk.wallet.signer import Signer
 from omni_sdk.address import Address
+from omni_sdk.wallet.signer import Signer
 
 
 def _seed(n: int = 32) -> bytes:
@@ -14,7 +13,9 @@ def test_signer_from_seed_and_public_key_bytes():
     assert s.alg_id in ("dilithium3", "sphincs_shake_128s")
     pub = s.public_key_bytes()
     assert isinstance(pub, (bytes, bytearray))
-    assert len(pub) >= 32  # PQ pubkeys are large; fallback stubs should still be non-trivial
+    assert (
+        len(pub) >= 32
+    )  # PQ pubkeys are large; fallback stubs should still be non-trivial
 
     # Recreate with same seed → same pubkey (deterministic)
     s2 = Signer.from_seed(_seed(), alg=s.alg_id)

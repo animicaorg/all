@@ -28,14 +28,16 @@ bindings, use `mining/share_submitter.py` which targets the RPC surface, not thi
 """
 
 from dataclasses import asdict
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, Callable
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 # --- Logging (best-effort) ----------------------------------------------------
 try:
     from core.logging import get_logger
+
     log = get_logger("mining.adapters.core_chain")
 except Exception:  # noqa: BLE001
     import logging
+
     log = logging.getLogger("mining.adapters.core_chain")
     if not log.handlers:
         logging.basicConfig(level=logging.INFO)
@@ -75,7 +77,8 @@ _head_readers: List[Callable[..., Dict[str, Any]]] = []
 
 # Attempt to use the canonical head module if available
 try:
-    from core.chain import head as head_mod  # read/write best head, finalize genesis
+    from core.chain import \
+        head as head_mod  # read/write best head, finalize genesis
 
     def _read_head_via_module(block_db: BlockDBLike) -> Dict[str, Any]:
         hdr = head_mod.read_head(block_db)  # type: ignore[attr-defined]
@@ -90,7 +93,11 @@ try:
             return {
                 "height": height,
                 "hash": hsh,
-                "gas_limit": getattr(header_obj, "gas_limit", None) if header_obj is not None else None,
+                "gas_limit": (
+                    getattr(header_obj, "gas_limit", None)
+                    if header_obj is not None
+                    else None
+                ),
                 "obj": header_obj if header_obj is not None else hdr,
             }
         return {
@@ -105,6 +112,7 @@ try:
 except Exception:  # noqa: BLE001
     pass
 
+
 # Fallback: ask BlockDB for head if it exposes a getter
 def _read_head_via_blockdb(block_db: BlockDBLike) -> Dict[str, Any]:
     if hasattr(block_db, "get_head"):
@@ -116,6 +124,8 @@ def _read_head_via_blockdb(block_db: BlockDBLike) -> Dict[str, Any]:
             "obj": hdr,
         }
     raise RuntimeError("BlockDB does not expose get_head(); cannot read head")
+
+
 _head_readers.append(_read_head_via_blockdb)
 
 # --- Block import wiring (class or function) ----------------------------------
@@ -123,11 +133,14 @@ _BlockImporterCtor: Optional[Callable[..., Any]] = None
 _import_block_fn: Optional[Callable[..., Any]] = None
 try:
     from core.chain.block_import import BlockImporter  # preferred OO API
+
     _BlockImporterCtor = BlockImporter  # type: ignore[assignment]
 except Exception:  # noqa: BLE001
     try:
         # Functional API fallback: import_block(block, block_db, state_db) -> result
-        from core.chain.block_import import import_block as _ib  # type: ignore[no-redef]
+        from core.chain.block_import import \
+            import_block as _ib  # type: ignore[no-redef]
+
         _import_block_fn = _ib
     except Exception:  # noqa: BLE001
         pass
@@ -136,7 +149,8 @@ except Exception:  # noqa: BLE001
 MinerFeedLike = Any
 try:
     # Provides a ready-ordered iterator for block building
-    from mempool.adapters.miner_feed import MinerFeed  # type: ignore[assignment]
+    from mempool.adapters.miner_feed import \
+        MinerFeed  # type: ignore[assignment]
 except Exception:  # noqa: BLE001
     MinerFeed = None  # type: ignore[assignment]
 
@@ -209,7 +223,9 @@ class CoreChainAdapter:
                     return out
             except Exception as e:  # noqa: BLE001
                 last_err = e
-        raise RuntimeError(f"unable to read head (tried {len(_head_readers)} strategies): {last_err}")
+        raise RuntimeError(
+            f"unable to read head (tried {len(_head_readers)} strategies): {last_err}"
+        )
 
     def get_mempool_snapshot(
         self,
@@ -231,7 +247,10 @@ class CoreChainAdapter:
                 log.debug("fetched mempool snapshot", extra={"count": len(txs)})
                 return txs
             except Exception as e:  # noqa: BLE001
-                log.warning("peek_ready failed on miner_feed; falling back to empty", extra={"err": str(e)})
+                log.warning(
+                    "peek_ready failed on miner_feed; falling back to empty",
+                    extra={"err": str(e)},
+                )
                 return []
 
         # Fallback: try a simple attribute that returns an iterable of Tx
@@ -249,7 +268,9 @@ class CoreChainAdapter:
                     txs.append(tx)
                     if len(txs) >= limit:
                         break
-                log.debug("fetched mempool snapshot (iter_ready)", extra={"count": len(txs)})
+                log.debug(
+                    "fetched mempool snapshot (iter_ready)", extra={"count": len(txs)}
+                )
                 return txs
         except Exception as e:  # noqa: BLE001
             log.warning("iter_ready failed on miner_feed", extra={"err": str(e)})
@@ -270,7 +291,14 @@ class CoreChainAdapter:
         if _BlockImporterCtor is not None:
             importer = None
             ctor_attempts = [
-                ((), {"kv": self.kv, "block_db": self.block_db, "state_db": self.state_db}),
+                (
+                    (),
+                    {
+                        "kv": self.kv,
+                        "block_db": self.block_db,
+                        "state_db": self.state_db,
+                    },
+                ),
                 ((self.kv,), {}),
                 ((), {}),
             ]
@@ -283,20 +311,30 @@ class CoreChainAdapter:
             if importer is not None:
                 try:
                     result = importer.import_block(block)  # type: ignore[attr-defined]
-                    accepted = bool(getattr(result, "accepted", True)) if result is not None else True
+                    accepted = (
+                        bool(getattr(result, "accepted", True))
+                        if result is not None
+                        else True
+                    )
                     if accepted:
                         log.info("block accepted by importer (class API)")
                     else:
                         log.info("block rejected by importer (class API)")
                     return accepted
                 except Exception as e:  # noqa: BLE001
-                    log.error("BlockImporter.import_block raised", extra={"err": str(e)})
+                    log.error(
+                        "BlockImporter.import_block raised", extra={"err": str(e)}
+                    )
 
         # Functional fallback
         if _import_block_fn is not None:
             try:
                 res = _import_block_fn(block, self.block_db, self.state_db)  # type: ignore[misc]
-                accepted = bool(res) if not isinstance(res, dict) else bool(res.get("accepted", True))
+                accepted = (
+                    bool(res)
+                    if not isinstance(res, dict)
+                    else bool(res.get("accepted", True))
+                )
                 if accepted:
                     log.info("block accepted by importer (function API)")
                 else:
@@ -313,14 +351,18 @@ class CoreChainAdapter:
                 block_hash = self.block_db.put_block(block)  # type: ignore[attr-defined]
             elif hasattr(self.block_db, "put_header"):
                 block_hash = self.block_db.put_header(block.header)  # type: ignore[attr-defined]
-            setter = getattr(self.block_db, "set_head", None) or getattr(self.block_db, "set_canonical_head", None)
+            setter = getattr(self.block_db, "set_head", None) or getattr(
+                self.block_db, "set_canonical_head", None
+            )
             if callable(setter):
                 setter(int(getattr(block.header, "height", 0)), block_hash or block.header.hash())  # type: ignore[misc]
             return True
         except Exception as e:  # noqa: BLE001
             log.error("manual block persistence failed", extra={"err": str(e)})
 
-        log.error("No block import implementation available (core.chain.block_import missing)")
+        log.error(
+            "No block import implementation available (core.chain.block_import missing)"
+        )
         return False
 
     # --- Utility --------------------------------------------------------------
@@ -351,9 +393,22 @@ def _header_to_view(h: Header) -> Dict[str, Any]:
 
     # Generic attribute extraction
     fields = (
-        "chain_id", "height", "number", "parent_hash", "hash", "hash_hex", "timestamp",
-        "state_root", "txs_root", "receipts_root", "proofs_root", "da_root",
-        "theta", "mix_seed", "nonce", "gas_limit",
+        "chain_id",
+        "height",
+        "number",
+        "parent_hash",
+        "hash",
+        "hash_hex",
+        "timestamp",
+        "state_root",
+        "txs_root",
+        "receipts_root",
+        "proofs_root",
+        "da_root",
+        "theta",
+        "mix_seed",
+        "nonce",
+        "gas_limit",
     )
     out: Dict[str, Any] = {}
     for f in fields:

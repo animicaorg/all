@@ -52,7 +52,8 @@ Typing
 We expose Protocols (PEP 544) so backends can be duck-typed.
 """
 
-from typing import Iterable, Iterator, Optional, Protocol, runtime_checkable, Tuple, List, Union
+from typing import (Iterable, Iterator, List, Optional, Protocol, Tuple, Union,
+                    runtime_checkable)
 
 # ---------------------------------------------------------------------------
 # Prefix helpers
@@ -153,16 +154,17 @@ def be_u256(n: int) -> bytes:
 
 
 # Canonical top-level prefixes (keep small & stable; more can live in submodules)
-STATE = Prefix(b"s")   # accounts, storage, balances, nonces
-HEADERS = Prefix(b"h") # headers by height/hash; roots
+STATE = Prefix(b"s")  # accounts, storage, balances, nonces
+HEADERS = Prefix(b"h")  # headers by height/hash; roots
 BLOCKS = Prefix(b"b")  # blocks by hash; bodies/txs/proofs
-TXIDX = Prefix(b"x")   # tx hash → (height, index)
-META = Prefix(b"m")    # chain meta (best head, params hash, counters)
+TXIDX = Prefix(b"x")  # tx hash → (height, index)
+META = Prefix(b"m")  # chain meta (best head, params hash, counters)
 
 
 # ---------------------------------------------------------------------------
 # KV protocols & Batch
 # ---------------------------------------------------------------------------
+
 
 @runtime_checkable
 class ReadOnlyKV(Protocol):
@@ -225,6 +227,7 @@ class KV(ReadOnlyKV, Protocol):
 # ---------------------------------------------------------------------------
 # Portable helpers built atop the interface
 # ---------------------------------------------------------------------------
+
 
 def iter_prefixed(kv: ReadOnlyKV, prefix: bytes) -> Iterator[Tuple[bytes, bytes]]:
     """Portable helper that defers to kv.iter_prefix."""

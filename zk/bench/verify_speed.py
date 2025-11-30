@@ -35,20 +35,24 @@ from typing import Any, Dict, List, Optional, Tuple
 
 # Optional: light logging when ZK_TEST_LOG=1
 try:
-    from zk.tests import fixture_path, configure_test_logging
+    from zk.tests import configure_test_logging, fixture_path
+
     configure_test_logging()
 except Exception:  # pragma: no cover
+
     def fixture_path(*parts: str) -> Path:
         base = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
         return base.joinpath(*parts)
+
     def configure_test_logging() -> None:
         pass
+
 
 from zk.integration.omni_hooks import zk_verify
 from zk.integration.types import canonical_json_bytes
 
-
 # --------- Helpers: statistics & output ---------------------------------------
+
 
 def _quantile(sorted_vals: List[float], q: float) -> float:
     """
@@ -101,6 +105,7 @@ def _size_bytes(obj: Any) -> int:
 
 def _env_meta() -> Dict[str, Any]:
     import platform
+
     return {
         "python": sys.version.split()[0],
         "python_impl": platform.python_implementation(),
@@ -117,6 +122,7 @@ def _env_meta() -> Dict[str, Any]:
 
 
 # --------- Fixture loaders: build envelopes -----------------------------------
+
 
 def _load_json(path: Path) -> Any:
     with path.open("r", encoding="utf-8") as fh:
@@ -135,7 +141,10 @@ def _groth16_envelope() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     if public is None:
         pub_p = base / "public.json"
         if not pub_p.exists():
-            return None, "no public inputs found (neither proof.publicSignals nor public.json)"
+            return (
+                None,
+                "no public inputs found (neither proof.publicSignals nor public.json)",
+            )
         public = _load_json(pub_p)
     env = {
         "kind": "groth16_bn254",
@@ -160,7 +169,10 @@ def _plonk_envelope() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     if public is None:
         pub_p = base / "public.json"
         if not pub_p.exists():
-            return None, "no public inputs found (neither proof.publicSignals nor public.json)"
+            return (
+                None,
+                "no public inputs found (neither proof.publicSignals nor public.json)",
+            )
         public = _load_json(pub_p)
     env = {
         "kind": "plonk_kzg_bn254",
@@ -200,7 +212,10 @@ def _stark_envelope() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     if public is None:
         pub_p = base / "public.json"
         if not pub_p.exists():
-            return None, "no public inputs found (neither proof.public_inputs nor public.json)"
+            return (
+                None,
+                "no public inputs found (neither proof.public_inputs nor public.json)",
+            )
         public = _load_json(pub_p)
 
     env = {
@@ -216,7 +231,10 @@ def _stark_envelope() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
 
 # --------- Bench runner --------------------------------------------------------
 
-def _bench_env(envelope: Dict[str, Any], iters: int, warmup: int, meter_only: bool) -> Tuple[BenchStats, int]:
+
+def _bench_env(
+    envelope: Dict[str, Any], iters: int, warmup: int, meter_only: bool
+) -> Tuple[BenchStats, int]:
     # Warm-up (unmeasured)
     for _ in range(max(0, warmup)):
         zk_verify(envelope, meter_only=meter_only)
@@ -242,12 +260,18 @@ def _bench_env(envelope: Dict[str, Any], iters: int, warmup: int, meter_only: bo
     return stats, (units_seen or 0)
 
 
-def _report_for(env: Dict[str, Any], stats: BenchStats, units: int, meter_only: bool) -> Dict[str, Any]:
+def _report_for(
+    env: Dict[str, Any], stats: BenchStats, units: int, meter_only: bool
+) -> Dict[str, Any]:
     proof_b = _size_bytes(env["proof"])
     vk_b = _size_bytes(env["vk"]) if env.get("vk") is not None else 0
     env_b = _size_bytes(env)
     proof_hash = hashlib.sha3_256(canonical_json_bytes(env["proof"])).hexdigest()
-    vk_hash = hashlib.sha3_256(canonical_json_bytes(env["vk"])).hexdigest() if env.get("vk") is not None else None
+    vk_hash = (
+        hashlib.sha3_256(canonical_json_bytes(env["vk"])).hexdigest()
+        if env.get("vk") is not None
+        else None
+    )
 
     return {
         "scheme": env["kind"],
@@ -272,7 +296,9 @@ def _report_for(env: Dict[str, Any], stats: BenchStats, units: int, meter_only: 
     }
 
 
-def run_benches(schemes: List[str], iters: int, warmup: int, meter_only: bool) -> Dict[str, Any]:
+def run_benches(
+    schemes: List[str], iters: int, warmup: int, meter_only: bool
+) -> Dict[str, Any]:
     loaders = {
         "groth16": _groth16_envelope,
         "plonk": _plonk_envelope,
@@ -287,18 +313,24 @@ def run_benches(schemes: List[str], iters: int, warmup: int, meter_only: bool) -
     for name in schemes:
         loader = loaders.get(name)
         if loader is None:
-            results.append({"scheme": name, "skipped": True, "reason": "unknown scheme"})
+            results.append(
+                {"scheme": name, "skipped": True, "reason": "unknown scheme"}
+            )
             continue
         env, err = loader()
         if env is None:
             results.append({"scheme": name, "skipped": True, "reason": err})
             continue
 
-        stats, units = _bench_env(env, iters=iters, warmup=warmup, meter_only=meter_only)
-        results.append({
-            **_report_for(env, stats, units, meter_only),
-            "skipped": False,
-        })
+        stats, units = _bench_env(
+            env, iters=iters, warmup=warmup, meter_only=meter_only
+        )
+        results.append(
+            {
+                **_report_for(env, stats, units, meter_only),
+                "skipped": False,
+            }
+        )
 
     return {
         "meta": {
@@ -314,17 +346,31 @@ def run_benches(schemes: List[str], iters: int, warmup: int, meter_only: bool) -
 
 # --------- CLI ----------------------------------------------------------------
 
+
 def main(argv: Optional[List[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description="Per-scheme verifier micro-bench; JSON output")
+    ap = argparse.ArgumentParser(
+        description="Per-scheme verifier micro-bench; JSON output"
+    )
     ap.add_argument(
         "--scheme",
         choices=["all", "groth16", "plonk", "stark"],
         default="all",
         help="which scheme(s) to run (default: all)",
     )
-    ap.add_argument("--iters", type=int, default=30, help="measured iterations (default: 30)")
-    ap.add_argument("--warmup", type=int, default=5, help="unmeasured warmup iterations (default: 5)")
-    ap.add_argument("--meter-only", action="store_true", help="skip crypto; compute metering units only")
+    ap.add_argument(
+        "--iters", type=int, default=30, help="measured iterations (default: 30)"
+    )
+    ap.add_argument(
+        "--warmup",
+        type=int,
+        default=5,
+        help="unmeasured warmup iterations (default: 5)",
+    )
+    ap.add_argument(
+        "--meter-only",
+        action="store_true",
+        help="skip crypto; compute metering units only",
+    )
     ap.add_argument("--pretty", action="store_true", help="pretty-print JSON")
     ap.add_argument("--outfile", type=Path, help="write JSON to file instead of stdout")
     args = ap.parse_args(argv)

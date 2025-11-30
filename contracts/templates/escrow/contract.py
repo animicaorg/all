@@ -27,8 +27,7 @@ from __future__ import annotations
 from typing import Optional, Tuple
 
 # Contract-safe stdlib (deterministic)
-from stdlib import storage, events, abi, treasury
-
+from stdlib import abi, events, storage, treasury
 
 # ---- constants & keys --------------------------------------------------------
 
@@ -37,10 +36,10 @@ _U128_MAX = (1 << 128) - 1
 K_PAYER = b"escrow:payer"
 K_PAYEE = b"escrow:payee"
 K_ARBITER = b"escrow:arbiter"
-K_AMOUNT = b"escrow:amount"          # u128 BE
-K_INIT = b"escrow:initialized"       # b"\x01" when set
-K_DONE = b"escrow:settled"           # b"\x01" when either outcome executed
-K_OUTCOME = b"escrow:outcome"        # b"released" | b"refunded"
+K_AMOUNT = b"escrow:amount"  # u128 BE
+K_INIT = b"escrow:initialized"  # b"\x01" when set
+K_DONE = b"escrow:settled"  # b"\x01" when either outcome executed
+K_OUTCOME = b"escrow:outcome"  # b"released" | b"refunded"
 
 # per-party approvals (release / refund)
 K_APPR_PAYER_REL = b"escrow:appr:rele:payer"
@@ -138,7 +137,9 @@ def _pay(to: bytes, amount: int) -> None:
 # ---- public: setup & views ---------------------------------------------------
 
 
-def setup(payer: bytes, payee: bytes, amount: int, arbiter: Optional[bytes] = None) -> None:
+def setup(
+    payer: bytes, payee: bytes, amount: int, arbiter: Optional[bytes] = None
+) -> None:
     """
     Initialize the escrow.
 
@@ -192,7 +193,11 @@ def status() -> dict:
         b"payer": _get_addr(K_PAYER) or b"\x00" * 32,
         b"payee": _get_addr(K_PAYEE) or b"\x00" * 32,
         b"arbiter": _get_addr(K_ARBITER) or b"\x00" * 32,
-        b"amount": (_get_u128(K_AMOUNT).to_bytes(16, "big") if storage.get(K_AMOUNT) else (0).to_bytes(16, "big")),
+        b"amount": (
+            _get_u128(K_AMOUNT).to_bytes(16, "big")
+            if storage.get(K_AMOUNT)
+            else (0).to_bytes(16, "big")
+        ),
         b"initialized": b"\x01" if storage.get(K_INIT) else b"\x00",
         b"settled": b"\x01" if _get_flag(K_DONE) else b"\x00",
         b"outcome": storage.get(K_OUTCOME) or b"",
@@ -334,7 +339,10 @@ def _do_release(override: bool) -> None:
     _require(payer is not None and payee is not None, b"NOT_INIT")
 
     if not override:
-        _require(_get_flag(K_APPR_PAYER_REL) and _get_flag(K_APPR_PAYEE_REL), b"MISSING_APPROVALS")
+        _require(
+            _get_flag(K_APPR_PAYER_REL) and _get_flag(K_APPR_PAYEE_REL),
+            b"MISSING_APPROVALS",
+        )
 
     amount = _get_u128(K_AMOUNT)
     _pay(payee, amount)
@@ -357,7 +365,10 @@ def _do_refund(override: bool) -> None:
     _require(payer is not None and payee is not None, b"NOT_INIT")
 
     if not override:
-        _require(_get_flag(K_APPR_PAYER_REF) and _get_flag(K_APPR_PAYEE_REF), b"MISSING_APPROVALS")
+        _require(
+            _get_flag(K_APPR_PAYER_REF) and _get_flag(K_APPR_PAYEE_REF),
+            b"MISSING_APPROVALS",
+        )
 
     amount = _get_u128(K_AMOUNT)
     _pay(payer, amount)

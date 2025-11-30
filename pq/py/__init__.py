@@ -29,7 +29,8 @@ sourced from installed metadata when available, otherwise a sensible dev default
 
 from __future__ import annotations
 
-from importlib.metadata import PackageNotFoundError, version as _pkg_version
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 
 try:
     __version__ = _pkg_version("animica-pq")
@@ -39,14 +40,14 @@ except PackageNotFoundError:  # local checkouts / editable installs
 # Submodule re-exports (kept flat for DX)
 # These imports are intentionally at module scope so IDEs and type checkers see them.
 # Implementations live in sibling files per the project layout.
+from . import address  # bech32m anim1… codec (alg_id || sha3_256(pubkey))
+from . import handshake  # Kyber768 + HKDF P2P handshake
+from . import kem  # Kyber768 encaps/decaps wrappers
+from . import keygen  # uniform keygen API for signatures & KEM
 from . import registry  # alg id/name/size tables and feature flags
-from . import utils     # sha3/blake3 (opt), hkdf, rng, bech32 helpers
-from . import address   # bech32m anim1… codec (alg_id || sha3_256(pubkey))
-from . import keygen    # uniform keygen API for signatures & KEM
-from . import sign      # domain-separated sign(msg, alg_id, sk)
-from . import verify    # verify(sig, msg, alg_id, pk)
-from . import kem       # Kyber768 encaps/decaps wrappers
-from . import handshake # Kyber768 + HKDF P2P handshake
+from . import sign  # domain-separated sign(msg, alg_id, sk)
+from . import utils  # sha3/blake3 (opt), hkdf, rng, bech32 helpers
+from . import verify  # verify(sig, msg, alg_id, pk)
 
 __all__ = [
     "__version__",
@@ -62,6 +63,7 @@ __all__ = [
     "features",
 ]
 
+
 def _detect_features() -> dict[str, bool]:
     """
     Detect optional runtime features/backends. Safe and side-effect free.
@@ -70,6 +72,7 @@ def _detect_features() -> dict[str, bool]:
     try:
         # Import is lightweight; module handles its own guarded dlopen.
         from .algs import oqs_backend  # noqa: F401
+
         oqs_ok = oqs_backend.is_available()
     except Exception:
         oqs_ok = False
@@ -78,14 +81,18 @@ def _detect_features() -> dict[str, bool]:
         "blake3": _has_blake3(),
     }
 
+
 def _has_blake3() -> bool:
     try:
         import blake3  # type: ignore  # noqa: F401
+
         return True
     except Exception:
         return False
 
+
 features = _detect_features()
+
 
 def banner() -> str:
     """

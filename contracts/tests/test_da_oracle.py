@@ -18,7 +18,6 @@ from pathlib import Path
 
 import pytest
 
-
 # ----------------------- inline oracle contract -----------------------
 
 ORACLE_SRC = r'''
@@ -96,6 +95,7 @@ def _sha3_256(b: bytes) -> bytes:
 
 
 # -------------------------------- tests --------------------------------
+
 
 def test_update_then_read_back(tmp_path: Path, compile_contract):
     """

@@ -139,7 +139,9 @@ def load_nodes_from_json(path: str, *, verbose: bool) -> List[Node]:
     elif isinstance(doc, list):
         items = doc
     else:
-        raise ValueError("Unrecognized JSON structure (expecting {'nodes': [...]} or a list)")
+        raise ValueError(
+            "Unrecognized JSON structure (expecting {'nodes': [...]} or a list)"
+        )
     out: List[Node] = []
     for it in items:
         if isinstance(it, str):
@@ -151,7 +153,9 @@ def load_nodes_from_json(path: str, *, verbose: bool) -> List[Node]:
             pid = it.get("peer_id") or it.get("peerId") or it.get("id")
             reach = it.get("reachable")
             reach_b = bool(reach) if isinstance(reach, bool) else None
-            out.append(Node(address=addr, peer_id=str(pid) if pid else None, reachable=reach_b))
+            out.append(
+                Node(address=addr, peer_id=str(pid) if pid else None, reachable=reach_b)
+            )
     _log(f"[info] loaded {len(out)} node(s) from {path}", verbose=verbose)
     return out
 
@@ -198,7 +202,13 @@ def merge_dedupe(nodes: Iterable[Node]) -> List[Node]:
     return list(best.values())
 
 
-def prune_and_validate(nodes: Iterable[Node], *, drop_unreachable: bool, reprobe: bool, probe_timeout: float) -> List[Node]:
+def prune_and_validate(
+    nodes: Iterable[Node],
+    *,
+    drop_unreachable: bool,
+    reprobe: bool,
+    probe_timeout: float,
+) -> List[Node]:
     out: List[Node] = []
     for n in nodes:
         # Validate/normalize; skip malformed or disallowed schemes
@@ -231,6 +241,7 @@ def sort_nodes(nodes: Iterable[Node]) -> List[Node]:
         scheme_rank = SCHEME_PRIORITY.get(scheme, 9)
         pid = n.peer_id or ""
         return (reach_rank, scheme_rank, host, port, pid)
+
     return sorted(nodes, key=key)
 
 
@@ -246,16 +257,51 @@ def atomic_write_json(path: str, payload: Dict[str, Any]) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Prune, dedupe, and sort seed nodes.")
-    ap.add_argument("--in", dest="inputs", action="append", help="Input file (repeatable). JSON or plain list.")
-    ap.add_argument("--out", dest="out", type=str, help="Output JSON (default: in-place or seeds/bootstrap_nodes.json)")
-    ap.add_argument("--in-place", action="store_true", help="Write back to the first --in path (atomic).")
-    ap.add_argument("--backup", action="store_true", help="If in-place, write a .bak copy first.")
-    ap.add_argument("--drop-unreachable", action="store_true", help="Drop nodes that are not reachable.")
-    ap.add_argument("--reprobe", action="store_true", help="Re-check reachability with TCP probes.")
-    ap.add_argument("--probe-timeout", type=float, default=1.0, help="Probe timeout seconds (default: 1.0).")
-    ap.add_argument("--keep", type=int, default=None, help="Cap the list to N nodes after sorting.")
-    ap.add_argument("--shuffle-before-sort", action="store_true", help="Shuffle to reduce bias before dedupe/sort.")
-    ap.add_argument("--verbose", "-v", action="true", default=False, help=argparse.SUPPRESS)
+    ap.add_argument(
+        "--in",
+        dest="inputs",
+        action="append",
+        help="Input file (repeatable). JSON or plain list.",
+    )
+    ap.add_argument(
+        "--out",
+        dest="out",
+        type=str,
+        help="Output JSON (default: in-place or seeds/bootstrap_nodes.json)",
+    )
+    ap.add_argument(
+        "--in-place",
+        action="store_true",
+        help="Write back to the first --in path (atomic).",
+    )
+    ap.add_argument(
+        "--backup", action="store_true", help="If in-place, write a .bak copy first."
+    )
+    ap.add_argument(
+        "--drop-unreachable",
+        action="store_true",
+        help="Drop nodes that are not reachable.",
+    )
+    ap.add_argument(
+        "--reprobe", action="store_true", help="Re-check reachability with TCP probes."
+    )
+    ap.add_argument(
+        "--probe-timeout",
+        type=float,
+        default=1.0,
+        help="Probe timeout seconds (default: 1.0).",
+    )
+    ap.add_argument(
+        "--keep", type=int, default=None, help="Cap the list to N nodes after sorting."
+    )
+    ap.add_argument(
+        "--shuffle-before-sort",
+        action="store_true",
+        help="Shuffle to reduce bias before dedupe/sort.",
+    )
+    ap.add_argument(
+        "--verbose", "-v", action="true", default=False, help=argparse.SUPPRESS
+    )
     args = ap.parse_args()
 
     inputs: List[str] = args.inputs or ["seeds/bootstrap_nodes.json"]
@@ -281,8 +327,15 @@ def main() -> int:
         random.shuffle(all_nodes)
 
     # Normalize addresses one more time, drop empties
-    all_nodes = [Node(address=normalize_address(n.address), peer_id=n.peer_id, reachable=n.reachable)
-                 for n in all_nodes if n.address]
+    all_nodes = [
+        Node(
+            address=normalize_address(n.address),
+            peer_id=n.peer_id,
+            reachable=n.reachable,
+        )
+        for n in all_nodes
+        if n.address
+    ]
 
     # Validate/prune and optionally reprobe
     cleaned = prune_and_validate(
@@ -330,7 +383,12 @@ def main() -> int:
     reachable = sum(1 for n in out_doc["nodes"] if n.get("reachable") is True)
     print(
         f"Rotated seeds → {out_path} (nodes={total}"
-        + (f", reachable={reachable}" if args.reprobe or any(n.get('reachable') is not None for n in out_doc["nodes"]) else "")
+        + (
+            f", reachable={reachable}"
+            if args.reprobe
+            or any(n.get("reachable") is not None for n in out_doc["nodes"])
+            else ""
+        )
         + ")"
     )
     return 0

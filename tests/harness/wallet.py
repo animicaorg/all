@@ -12,27 +12,25 @@ tolerant fallbacks so tests remain stable even if SDK APIs shift slightly.
 
 from __future__ import annotations
 
-import os
-import json
-import hmac
-import time
-import struct
 import hashlib
+import hmac
+import json
+import os
+import struct
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
 import httpx  # tests/requirements.txt includes httpx
-
-# Local harness RPC client
-from tests.harness.clients import HttpRpcClient
-# Tx helpers (build/sign/send)
-from tests.harness.tx import send_transfer
-
 # SDK modules (best-effort optional pieces)
 from omni_sdk import address as address_mod
 from omni_sdk.wallet import mnemonic as mnemonic_mod
 from omni_sdk.wallet import signer as signer_mod
 
+# Local harness RPC client
+from tests.harness.clients import HttpRpcClient
+# Tx helpers (build/sign/send)
+from tests.harness.tx import send_transfer
 
 # -----------------------------------------------------------------------------
 # Constants & defaults
@@ -48,17 +46,18 @@ HD_DOMAIN = b"Animica-Test-HD-v1"
 # These do not grant access to any live funds; for CI/devnets only.
 TEST_MNEMONICS: Dict[str, str] = {
     "alice": "saddle produce brain gaze tomato divorce inform pottery fashion lounge pond jealous "
-             "navy glide mantle prefer cricket crater turtle vibrant cozy salmon emotion awkward",
-    "bob":   "buddy onion unlock flee battle tuna absent grid major swallow into amazing "
-             "fragile jelly scare excite sun honest tennis young draft maple drift",
+    "navy glide mantle prefer cricket crater turtle vibrant cozy salmon emotion awkward",
+    "bob": "buddy onion unlock flee battle tuna absent grid major swallow into amazing "
+    "fragile jelly scare excite sun honest tennis young draft maple drift",
     "carol": "mammal minute quiz evolve bid nest recycle lemon rough journey guess motor "
-             "include pipe seek setup river tube magic ensure muffin fire timber",
+    "include pipe seek setup river tube magic ensure muffin fire timber",
 }
 
 
 # -----------------------------------------------------------------------------
 # Data classes
 # -----------------------------------------------------------------------------
+
 
 @dataclass
 class TestAccount:
@@ -73,6 +72,7 @@ class TestAccount:
 # -----------------------------------------------------------------------------
 # Mnemonic and seed handling
 # -----------------------------------------------------------------------------
+
 
 def get_test_mnemonic(name: str = "alice") -> str:
     """
@@ -134,6 +134,7 @@ def _derive_child_seed(master: bytes, scheme: str, path: str) -> bytes:
 # -----------------------------------------------------------------------------
 # Signer factories (tolerant to SDK API names)
 # -----------------------------------------------------------------------------
+
 
 def _new_signer_from_seed(seed: bytes, scheme: str) -> Any:
     """
@@ -208,7 +209,10 @@ def _address_from_pubkey(pubkey: bytes, scheme: str, hrp: str = DEFAULT_HRP) -> 
     # Fallback: keccak(pubkey) -> last 20 bytes -> bech32 with hrp
     try:
         from omni_sdk.utils import hash as sdk_hash
-        keccak = getattr(sdk_hash, "keccak256", None) or getattr(sdk_hash, "keccak", None)
+
+        keccak = getattr(sdk_hash, "keccak256", None) or getattr(
+            sdk_hash, "keccak", None
+        )
         h = keccak(pubkey) if callable(keccak) else hashlib.sha3_256(pubkey).digest()
     except Exception:
         h = hashlib.sha3_256(pubkey).digest()
@@ -276,6 +280,7 @@ def make_test_account(
 # Balance, funding and faucet helpers
 # -----------------------------------------------------------------------------
 
+
 def get_balance(rpc: HttpRpcClient, address: str, tag: str = "latest") -> int:
     """
     Returns the account balance (int) using omni/eth getBalance.
@@ -286,7 +291,9 @@ def get_balance(rpc: HttpRpcClient, address: str, tag: str = "latest") -> int:
     return int(res)
 
 
-def _try_services_faucet(address: str, amount: Optional[int] = None, *, timeout: float = 15.0) -> bool:
+def _try_services_faucet(
+    address: str, amount: Optional[int] = None, *, timeout: float = 15.0
+) -> bool:
     """
     Attempt to drip from studio-services /faucet/drip if configured via env:
       STUDIO_SERVICES_URL (or SERVICES_URL)
@@ -353,7 +360,11 @@ def _try_local_faucet_transfer(
                         faucet_mn = next(iter(data.values()))
                     elif isinstance(data, list) and data:
                         entry = data[0]
-                        faucet_mn = entry.get("mnemonic") or entry.get("seed") or entry.get("phrase")
+                        faucet_mn = (
+                            entry.get("mnemonic")
+                            or entry.get("seed")
+                            or entry.get("phrase")
+                        )
                         faucet_scheme = (entry.get("scheme") or faucet_scheme).lower()
                         faucet_path = entry.get("path") or faucet_path
                 except Exception:
@@ -427,6 +438,7 @@ def ensure_funded(
 # -----------------------------------------------------------------------------
 # Convenience: create + (optionally) fund a named test account
 # -----------------------------------------------------------------------------
+
 
 def make_and_maybe_fund(
     rpc: HttpRpcClient,

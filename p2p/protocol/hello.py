@@ -30,14 +30,9 @@ from typing import Any, Dict, Optional
 
 import msgspec
 
-from p2p.protocol import (
-    PROTOCOL_MAJOR,
-    WIRE_SCHEMA_VERSION,
-    HelloCaps,
-    ProtocolError,
-    build_hello_caps,
-    validate_hello_caps,
-)
+from p2p.protocol import (PROTOCOL_MAJOR, WIRE_SCHEMA_VERSION, HelloCaps,
+                          ProtocolError, build_hello_caps, validate_hello_caps)
+
 # Prefer the canonical peer-id helper; fall back to a local implementation if unavailable.
 try:
     from p2p.crypto.peer_id import derive_peer_id as _derive_peer_id
@@ -53,9 +48,9 @@ except Exception:  # pragma: no cover
     def sha3_256(data: bytes) -> bytes:
         return hashlib.sha3_256(data).digest()
 
+
 from pq.py.sign import sign as pq_sign
 from pq.py.verify import verify as pq_verify
-
 
 HELLO_SIGN_DOMAIN = b"animica/p2p/HELLO/v1"
 
@@ -141,7 +136,9 @@ def build_hello_message(
     - sign_key: an object accepted by pq.py.sign.sign(alg_id, sk, msg) (e.g., secret key bytes)
     - caps: if None, a default capability set is built (tcp+ws, zstd)
     """
-    if not isinstance(alg_policy_root, (bytes, bytearray)) or len(alg_policy_root) not in (32, 48, 64):
+    if not isinstance(alg_policy_root, (bytes, bytearray)) or len(
+        alg_policy_root
+    ) not in (32, 48, 64):
         # SHA3-512 is 64 bytes; allow flexibility for devnets.
         raise ProtocolError("alg_policy_root must be a digest-like bytes object")
 
@@ -186,9 +183,13 @@ def verify_hello_message(
     hello = _decoder.decode(data)
 
     if hello.vmaj != PROTOCOL_MAJOR:
-        raise ProtocolError(f"protocol major mismatch: remote={hello.vmaj} local={PROTOCOL_MAJOR}")
+        raise ProtocolError(
+            f"protocol major mismatch: remote={hello.vmaj} local={PROTOCOL_MAJOR}"
+        )
     if hello.wire != WIRE_SCHEMA_VERSION:
-        raise ProtocolError(f"wire schema mismatch: remote={hello.wire} local={WIRE_SCHEMA_VERSION}")
+        raise ProtocolError(
+            f"wire schema mismatch: remote={hello.wire} local={WIRE_SCHEMA_VERSION}"
+        )
 
     if bytes(hello.th) != bytes(expected_transcript_hash):
         raise ProtocolError("transcript hash mismatch")
@@ -197,7 +198,9 @@ def verify_hello_message(
     validate_hello_caps(hello.caps)
 
     if expected_chain_id is not None and int(hello.cid) != int(expected_chain_id):
-        raise ProtocolError(f"chain_id mismatch: remote={hello.cid} expected={expected_chain_id}")
+        raise ProtocolError(
+            f"chain_id mismatch: remote={hello.cid} expected={expected_chain_id}"
+        )
 
     # Recompute peer-id
     recomputed_pid = _peer_id_from_pubkey(hello.alg, hello.pk)
@@ -205,7 +208,9 @@ def verify_hello_message(
         raise ProtocolError("peer-id does not match pubkey/alg_id")
 
     # Optional APR check
-    if expected_alg_policy_root is not None and bytes(hello.apr) != bytes(expected_alg_policy_root):
+    if expected_alg_policy_root is not None and bytes(hello.apr) != bytes(
+        expected_alg_policy_root
+    ):
         raise ProtocolError("alg-policy root mismatch")
 
     # Verify signature
@@ -230,8 +235,10 @@ def verify_hello_message(
 def pretty_print_hello(data: bytes) -> str:
     """Human-friendly dump for logs/tests."""
     h = _decoder.decode(data)
+
     def hx(b: Optional[bytes]) -> str:
         return "<nil>" if b is None else binascii.hexlify(b).decode()
+
     return (
         f"HELLO[v{h.vmaj}/wire{h.wire}] pid={h.pid[:16]}… alg={h.alg} cid={h.cid} "
         f"apr={hx(h.apr)[:16]}… th={hx(h.th)[:16]}… sig={hx(h.sig)[:16]}… "

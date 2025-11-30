@@ -54,11 +54,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Mapping
 
-from .types import ProofType, ProofEnvelope
 from .metrics import ProofMetrics
-
+from .types import ProofEnvelope, ProofType
 
 # ───────────────────────────── helpers ─────────────────────────────
+
 
 def _clamp01(x: float | None) -> float:
     if x is None:
@@ -71,6 +71,7 @@ def _clamp01(x: float | None) -> float:
         return 1.0
     return float(x)
 
+
 def _floor0(x: float | int | None) -> float:
     if x is None:
         return 0.0
@@ -80,15 +81,18 @@ def _floor0(x: float | int | None) -> float:
         return 0.0
     return v if v >= 0.0 else 0.0
 
+
 def _at_least_one(x: float | int | None) -> float:
     v = _floor0(x)
     return v if v >= 1.0 else 1.0
+
 
 def _bool01(flag: bool | None) -> float:
     return 1.0 if bool(flag) else 0.0
 
 
 # ────────────────────────── public mapping ─────────────────────────
+
 
 def metrics_to_signals(proof_type: ProofType, m: ProofMetrics) -> Dict[str, float]:
     """
@@ -150,6 +154,7 @@ class PsiInput:
       - type_id: ProofType
       - signals: Mapping[str, float] normalized by `metrics_to_signals`
     """
+
     type_id: ProofType
     signals: Mapping[str, float]
 

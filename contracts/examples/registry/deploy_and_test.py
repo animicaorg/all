@@ -43,6 +43,7 @@ if str(SDK_PY) not in sys.path:
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+
 # --- optional .env loader (simple and dependency-free) -----------------------
 def _load_env_file(env_path: Path) -> None:
     if not env_path.is_file():
@@ -58,7 +59,7 @@ def _load_env_file(env_path: Path) -> None:
 
 
 _load_env_file(CONTRACTS_DIR / ".env")  # local overrides if present
-_load_env_file(REPO_ROOT / ".env")      # repo-root overrides if present
+_load_env_file(REPO_ROOT / ".env")  # repo-root overrides if present
 
 
 # --- local helpers -----------------------------------------------------------
@@ -128,7 +129,9 @@ def build_package() -> BuiltPackage:
 
         # Load & compile; ask loader to return code bytes if available
         try:
-            handle = vm_loader.load(manifest_path=str(manifest_path), source_path=str(source_path))
+            handle = vm_loader.load(
+                manifest_path=str(manifest_path), source_path=str(source_path)
+            )
         except TypeError:
             handle = vm_loader.load(str(manifest_path))
 
@@ -143,7 +146,9 @@ def build_package() -> BuiltPackage:
             if hasattr(handle, "encode_ir"):
                 code_bytes = handle.encode_ir()  # type: ignore[attr-defined]
             else:
-                raise RuntimeError("Could not extract compiled IR/code bytes from vm_py handle")
+                raise RuntimeError(
+                    "Could not extract compiled IR/code bytes from vm_py handle"
+                )
 
         manifest = json.loads(manifest_path.read_text())
         code_hash_hex = "0x" + sha3_256(code_bytes).hex()
@@ -180,8 +185,8 @@ def _mk_signer(mnemonic: str, alg: str = "dilithium3"):
         pass
     # Alternate API
     try:
-        from omni_sdk.wallet.signer import Dilithium3Signer  # type: ignore
         from omni_sdk.wallet.mnemonic import derive_seed  # type: ignore
+        from omni_sdk.wallet.signer import Dilithium3Signer  # type: ignore
 
         seed = derive_seed(mnemonic)
         if alg.lower().startswith("dilithium"):
@@ -207,7 +212,9 @@ def _derive_address(signer, alg: str = "dilithium3") -> str:
         return "0x" + sha3_256(pk).hex()
 
 
-def _build_deploy_tx(manifest: Dict[str, Any], code_bytes: bytes, chain_id: int, sender: str):
+def _build_deploy_tx(
+    manifest: Dict[str, Any], code_bytes: bytes, chain_id: int, sender: str
+):
     """
     Build a deploy transaction via SDK helper. Accepts multiple possible APIs.
     Returns a Python dict representing the Tx ready to sign & encode.
@@ -216,7 +223,9 @@ def _build_deploy_tx(manifest: Dict[str, Any], code_bytes: bytes, chain_id: int,
     try:
         from omni_sdk.tx.build import deploy  # type: ignore
 
-        return deploy(manifest=manifest, code=code_bytes, chain_id=chain_id, sender=sender)
+        return deploy(
+            manifest=manifest, code=code_bytes, chain_id=chain_id, sender=sender
+        )
     except Exception:
         pass
 
@@ -234,7 +243,7 @@ def _encode_and_sign(tx: Dict[str, Any], signer) -> Tuple[bytes, str]:
     Encode a Tx to CBOR and sign its SignBytes, returning (raw_cbor, sig_hex).
     """
     try:
-        from omni_sdk.tx.encode import sign_bytes, encode_cbor  # type: ignore
+        from omni_sdk.tx.encode import encode_cbor, sign_bytes  # type: ignore
 
         sb = sign_bytes(tx)
         sig = signer.sign(sb)
@@ -245,7 +254,9 @@ def _encode_and_sign(tx: Dict[str, Any], signer) -> Tuple[bytes, str]:
         try:
             import cbor2  # type: ignore
         except Exception as exc:  # pragma: no cover
-            raise RuntimeError("No CBOR encoder available (need omni_sdk.utils.cbor or cbor2)") from exc
+            raise RuntimeError(
+                "No CBOR encoder available (need omni_sdk.utils.cbor or cbor2)"
+            ) from exc
         sb = json.dumps(tx, sort_keys=True, separators=(",", ":")).encode("utf-8")
         sig = signer.sign(sb)
         tx2 = dict(tx)
@@ -272,7 +283,12 @@ def _rpc_client(rpc_url: str):
 
             def call(self, method: str, params: Any = None) -> Any:
                 self._id += 1
-                body = {"jsonrpc": "2.0", "id": self._id, "method": method, "params": params or []}
+                body = {
+                    "jsonrpc": "2.0",
+                    "id": self._id,
+                    "method": method,
+                    "params": params or [],
+                }
                 r = requests.post(self.url, json=body, timeout=30)
                 r.raise_for_status()
                 data = r.json()
@@ -318,7 +334,9 @@ def deploy_to_network(
 
             tx_hash = send_raw(client, raw_cbor)
         except Exception as exc:
-            raise RuntimeError("Failed to submit transaction via RPC and SDK fallback") from exc
+            raise RuntimeError(
+                "Failed to submit transaction via RPC and SDK fallback"
+            ) from exc
 
     # Poll for receipt
     t0 = time.time()
@@ -340,7 +358,8 @@ def deploy_to_network(
     if not address:
         # As a last resort, attempt to extract from SDK helpers or events
         try:
-            from omni_sdk.contracts.deployer import resolve_address_from_receipt  # type: ignore
+            from omni_sdk.contracts.deployer import \
+                resolve_address_from_receipt  # type: ignore
 
             address = resolve_address_from_receipt(receipt)
         except Exception:
@@ -364,7 +383,10 @@ def local_smoke(package: BuiltPackage) -> None:
         return
 
     try:
-        handle = vm_loader.load(manifest_path=str(package.manifest_path), source_path=str(HERE / "contract.py"))
+        handle = vm_loader.load(
+            manifest_path=str(package.manifest_path),
+            source_path=str(HERE / "contract.py"),
+        )
     except TypeError:
         handle = vm_loader.load(str(package.manifest_path))
 
@@ -399,7 +421,9 @@ def network_smoke(rpc_url: str, chain_id: int, address: str) -> None:
     try:
         from omni_sdk.contracts.client import Contract  # type: ignore
 
-        c = Contract(client=client, address=address, abi=manifest["abi"], chain_id=chain_id)
+        c = Contract(
+            client=client, address=address, abi=manifest["abi"], chain_id=chain_id
+        )
 
         key = name32("service")
         val = addr32("v1")
@@ -433,11 +457,19 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Deploy & test NameRegistry example")
     p.add_argument("--rpc", dest="rpc_url", default=os.environ.get("RPC_URL"))
     p.add_argument("--chain-id", type=int, default=int(os.environ.get("CHAIN_ID", "0")))
-    p.add_argument("--mnemonic", dest="mnemonic", default=os.environ.get("DEPLOYER_MNEMONIC"))
-    p.add_argument("--alg", dest="alg", default=os.environ.get("ALG", "dilithium3"),
-                   help="Signature algorithm: dilithium3 (default) or sphincs_shake_128s")
+    p.add_argument(
+        "--mnemonic", dest="mnemonic", default=os.environ.get("DEPLOYER_MNEMONIC")
+    )
+    p.add_argument(
+        "--alg",
+        dest="alg",
+        default=os.environ.get("ALG", "dilithium3"),
+        help="Signature algorithm: dilithium3 (default) or sphincs_shake_128s",
+    )
     p.add_argument("--no-local", action="store_true", help="Skip local VM smoke test")
-    p.add_argument("--timeout", type=float, default=60.0, help="Receipt wait timeout seconds")
+    p.add_argument(
+        "--timeout", type=float, default=60.0, help="Receipt wait timeout seconds"
+    )
     return p.parse_args()
 
 
@@ -472,8 +504,10 @@ def main() -> None:
             raise
         print("✓ Done.")
     else:
-        print("RPC_URL/CHAIN_ID/MNEMONIC not all provided; skipping network deploy.\n"
-              "You can set them in contracts/.env or pass CLI flags to deploy.")
+        print(
+            "RPC_URL/CHAIN_ID/MNEMONIC not all provided; skipping network deploy.\n"
+            "You can set them in contracts/.env or pass CLI flags to deploy."
+        )
 
 
 if __name__ == "__main__":

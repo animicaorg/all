@@ -30,8 +30,8 @@ from typing import Any, Dict, Optional, Sequence
 
 # Optional deps guard
 try:
-    import typer  # type: ignore
     import requests  # type: ignore
+    import typer  # type: ignore
 except Exception as e:  # pragma: no cover
     raise SystemExit(
         "This command requires optional dependencies.\n"
@@ -39,7 +39,9 @@ except Exception as e:  # pragma: no cover
         f"Import error: {e}"
     )
 
-_DEFAULT_RPC = os.getenv("OMNI_RPC_URL") or os.getenv("ANIMICA_RPC_URL") or "http://127.0.0.1:8545"
+_DEFAULT_RPC = (
+    os.getenv("OMNI_RPC_URL") or os.getenv("ANIMICA_RPC_URL") or "http://127.0.0.1:8545"
+)
 
 app = typer.Typer(
     name="omni-rand-get-beacon",
@@ -52,7 +54,10 @@ app = typer.Typer(
 # Helpers
 # -----------------------
 
-def _rpc_call(url: str, method: str, params: Optional[Sequence[Any]] = None, timeout: float = 30.0) -> Dict[str, Any]:
+
+def _rpc_call(
+    url: str, method: str, params: Optional[Sequence[Any]] = None, timeout: float = 30.0
+) -> Dict[str, Any]:
     body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": list(params or [])}
     try:
         r = requests.post(url, json=body, timeout=timeout)
@@ -92,7 +97,8 @@ def _normalize(result: Dict[str, Any]) -> Dict[str, Any]:
             "output": result.get("output"),
             "prevOutput": result.get("prevOutput") or result.get("previous"),
             "timestamp": result.get("timestamp") or result.get("time"),
-            "vdf": result.get("vdf") or {
+            "vdf": result.get("vdf")
+            or {
                 "modulus": result.get("modulus"),
                 "input": result.get("input"),
                 "iterations": result.get("iterations"),
@@ -108,15 +114,30 @@ def _normalize(result: Dict[str, Any]) -> Dict[str, Any]:
 # CLI
 # -----------------------
 
+
 @app.command("get-beacon")
 def cmd_get_beacon(
-    rpc: str = typer.Option(_DEFAULT_RPC, "--rpc", help=f"JSON-RPC endpoint (default: {_DEFAULT_RPC})"),
-    round_id: Optional[int] = typer.Option(None, "--round", "-r", help="Round id to fetch (default: latest)"),
-    light_only: bool = typer.Option(False, "--light-only", help="Print only the light proof JSON."),
-    output_only: bool = typer.Option(False, "--output-only", help="Print only the beacon output (hex)."),
-    raw: bool = typer.Option(False, "--raw", help="Print raw RPC result without normalization."),
-    out: Optional[str] = typer.Option(None, "--out", help="Write the (normalized) JSON to a file."),
-    pretty: bool = typer.Option(True, "--pretty/--no-pretty", help="Pretty-print JSON output."),
+    rpc: str = typer.Option(
+        _DEFAULT_RPC, "--rpc", help=f"JSON-RPC endpoint (default: {_DEFAULT_RPC})"
+    ),
+    round_id: Optional[int] = typer.Option(
+        None, "--round", "-r", help="Round id to fetch (default: latest)"
+    ),
+    light_only: bool = typer.Option(
+        False, "--light-only", help="Print only the light proof JSON."
+    ),
+    output_only: bool = typer.Option(
+        False, "--output-only", help="Print only the beacon output (hex)."
+    ),
+    raw: bool = typer.Option(
+        False, "--raw", help="Print raw RPC result without normalization."
+    ),
+    out: Optional[str] = typer.Option(
+        None, "--out", help="Write the (normalized) JSON to a file."
+    ),
+    pretty: bool = typer.Option(
+        True, "--pretty/--no-pretty", help="Pretty-print JSON output."
+    ),
 ) -> None:
     """
     Fetch latest (or specific) beacon and print it alongside the compact light proof.
@@ -142,13 +163,18 @@ def cmd_get_beacon(
             raise SystemExit("Beacon output not found in RPC response.")
         if out:
             with open(out, "w", encoding="utf-8") as f:
-                f.write(str(output_hex) + ("\n" if not str(output_hex).endswith("\n") else ""))
+                f.write(
+                    str(output_hex)
+                    + ("\n" if not str(output_hex).endswith("\n") else "")
+                )
         else:
             typer.echo(output_hex)
         raise typer.Exit(0)
 
     if light_only:
-        text = json.dumps(normalized.get("lightProof", {}), indent=2 if pretty else None)
+        text = json.dumps(
+            normalized.get("lightProof", {}), indent=2 if pretty else None
+        )
         if out:
             with open(out, "w", encoding="utf-8") as f:
                 f.write(text)

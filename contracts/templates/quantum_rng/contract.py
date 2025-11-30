@@ -1,21 +1,21 @@
 # Animica Template: Quantum RNG Mixer
 # Deterministic subset only; relies on VM stdlib surface.
-from stdlib import storage, events, abi, hash, syscalls
+from stdlib import abi, events, hash, storage, syscalls
 
 # ---- storage keys (bytes literals to avoid accidental collisions) ------------
 K_INIT = b"\x01init"
-K_CIRCUIT = b"\x02circuit"         # bytes: user-provided circuit (JSON or domain-specific)
-K_SHOTS = b"\x03shots"             # u32 (big-endian) encoded
-K_LAST_TASK = b"\x10last_task"     # bytes: deterministic task_id from enqueue
-K_LAST_RESULT = b"\x11last_result" # bytes: cached recent result (bounded)
-K_LAST_MIX = b"\x12last_mix"       # bytes32: sha3_256(rng|result_prefix)
+K_CIRCUIT = b"\x02circuit"  # bytes: user-provided circuit (JSON or domain-specific)
+K_SHOTS = b"\x03shots"  # u32 (big-endian) encoded
+K_LAST_TASK = b"\x10last_task"  # bytes: deterministic task_id from enqueue
+K_LAST_RESULT = b"\x11last_result"  # bytes: cached recent result (bounded)
+K_LAST_MIX = b"\x12last_mix"  # bytes32: sha3_256(rng|result_prefix)
 
 # ---- constants & caps --------------------------------------------------------
-MAX_CIRCUIT_LEN = 4096     # bytes; template-friendly ceiling
+MAX_CIRCUIT_LEN = 4096  # bytes; template-friendly ceiling
 MIN_SHOTS = 1
 MAX_SHOTS = 8192
-RESULT_CACHE_MAX = 256     # cap how much result we persist (bytes)
-MIX_PREFIX_MAX = 64        # limit result contribution to mix
+RESULT_CACHE_MAX = 256  # cap how much result we persist (bytes)
+MIX_PREFIX_MAX = 64  # limit result contribution to mix
 
 # Errors
 E_ALREADY_INIT = b"ALREADY_INIT"
@@ -24,6 +24,7 @@ E_CIRCUIT_LEN = b"CIRCUIT_LEN"
 E_SHOTS_RANGE = b"SHOTS_RANGE"
 E_NO_TASK = b"NO_TASK"
 E_NO_RESULT_YET = b"NO_RESULT_YET"
+
 
 # ---- helpers ----------------------------------------------------------------
 def _u32_to_be(n: int) -> bytes:
@@ -35,21 +36,26 @@ def _u32_to_be(n: int) -> bytes:
     b3 = n & 0xFF
     return bytes([b0, b1, b2, b3])
 
+
 def _be_to_u32(b: bytes) -> int:
     if len(b) != 4:
         return 0
     return (b[0] << 24) | (b[1] << 16) | (b[2] << 8) | b[3]
 
+
 def _get_bytes(key: bytes) -> bytes:
     v = storage.get(key)
     return v if isinstance(v, bytes) else b""
 
+
 def _set_bytes(key: bytes, v: bytes) -> None:
     storage.set(key, v)
+
 
 def _require_configured() -> None:
     if storage.get(K_INIT) != b"\x01":
         abi.revert(E_NOT_CONFIGURED)
+
 
 # ---- API --------------------------------------------------------------------
 def init(circuit: bytes, shots: int) -> None:
@@ -76,6 +82,7 @@ def init(circuit: bytes, shots: int) -> None:
 
     events.emit(b"Configured", {b"circuit_len": len(circuit), b"shots": int(shots)})
 
+
 def set_config(circuit: bytes, shots: int) -> None:
     """
     Update circuit and shots. Bounded by the same limits as init().
@@ -92,6 +99,7 @@ def set_config(circuit: bytes, shots: int) -> None:
     _set_bytes(K_SHOTS, _u32_to_be(int(shots)))
     events.emit(b"Configured", {b"circuit_len": len(circuit), b"shots": int(shots)})
 
+
 def get_config() -> bytes:
     """
     Return the current circuit (bytes). Call get_shots() for the shot count.
@@ -99,12 +107,14 @@ def get_config() -> bytes:
     _require_configured()
     return _get_bytes(K_CIRCUIT)
 
+
 def get_shots() -> int:
     """
     Return the current shot count (u32).
     """
     _require_configured()
     return _be_to_u32(_get_bytes(K_SHOTS))
+
 
 def enqueue() -> bytes:
     """
@@ -129,6 +139,7 @@ def enqueue() -> bytes:
     _set_bytes(K_LAST_TASK, task_id_b)
     events.emit(b"Enqueued", {b"task_id": task_id_b, b"shots": int(shots)})
     return task_id_b
+
 
 def read_last_result() -> bytes:
     """
@@ -161,7 +172,7 @@ def read_last_result() -> bytes:
     _set_bytes(K_LAST_RESULT, cached)
 
     # Derive the mixed RNG output (bytes32)
-    rng32 = syscalls.random(32)              # deterministic; beacon-mixed when available
+    rng32 = syscalls.random(32)  # deterministic; beacon-mixed when available
     if not isinstance(rng32, (bytes, bytearray)) or len(rng32) != 32:
         # Fallback: ensure we still produce a 32-byte mix deterministically
         rng32 = b"\x00" * 32
@@ -172,17 +183,20 @@ def read_last_result() -> bytes:
     events.emit(b"Completed", {b"task_id": task_id, b"mix": mixed})
     return cached
 
+
 def last_task() -> bytes:
     """
     Return the last task id (or empty bytes).
     """
     return _get_bytes(K_LAST_TASK)
 
+
 def get_last_result() -> bytes:
     """
     Return the cached last result (may be empty if not yet read).
     """
     return _get_bytes(K_LAST_RESULT)
+
 
 def get_mix() -> bytes:
     """

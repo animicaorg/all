@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 Share relay protocol: HashShare / AI / Quantum (and friends) with caps precheck.
 
@@ -34,29 +35,20 @@ This allows peers to reconstruct per-type handling while deduping by nullifier.
 
 """
 
-from dataclasses import dataclass
-from typing import Iterable, List, Optional, Callable, Tuple
-
 import hashlib
 import struct
 import time
+from dataclasses import dataclass
+from typing import Callable, Iterable, List, Optional, Tuple
 
 import msgspec
 
 # ---- Constants (fallbacks; prefer p2p.constants if available) ----------------
 try:
-    from p2p.constants import (
-        MAX_SHARE_INV,
-        MAX_SHARE_BODIES,
-        MAX_SHARE_BYTES,
-        NULLIFIER_LEN,
-        HASH_LEN,
-        TYPE_ID_HASH,
-        TYPE_ID_AI,
-        TYPE_ID_QUANTUM,
-        TYPE_ID_STORAGE,
-        TYPE_ID_VDF,
-    )
+    from p2p.constants import (HASH_LEN, MAX_SHARE_BODIES, MAX_SHARE_BYTES,
+                               MAX_SHARE_INV, NULLIFIER_LEN, TYPE_ID_AI,
+                               TYPE_ID_HASH, TYPE_ID_QUANTUM, TYPE_ID_STORAGE,
+                               TYPE_ID_VDF)
 except Exception:  # pragma: no cover
     MAX_SHARE_INV = 4096
     MAX_SHARE_BODIES = 512
@@ -69,12 +61,19 @@ except Exception:  # pragma: no cover
     TYPE_ID_STORAGE = 3
     TYPE_ID_VDF = 4
 
-ALLOWED_TYPE_IDS = {TYPE_ID_HASH, TYPE_ID_AI, TYPE_ID_QUANTUM, TYPE_ID_STORAGE, TYPE_ID_VDF}
+ALLOWED_TYPE_IDS = {
+    TYPE_ID_HASH,
+    TYPE_ID_AI,
+    TYPE_ID_QUANTUM,
+    TYPE_ID_STORAGE,
+    TYPE_ID_VDF,
+}
 
 # ---- Try to reuse RollingBloom from tx_relay; else fallback ------------------
 try:
     from p2p.protocol.tx_relay import RollingBloom  # type: ignore
 except Exception:  # pragma: no cover
+
     def _mix64(x: int) -> int:
         x = (x + 0x9E3779B97F4A7C15) & 0xFFFFFFFFFFFFFFFF
         x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9 & 0xFFFFFFFFFFFFFFFF
@@ -83,50 +82,66 @@ except Exception:  # pragma: no cover
 
     class Bloom:
         __slots__ = ("m_bits", "k", "_arr")
+
         def __init__(self, m_bits: int, k: int) -> None:
             self.m_bits, self.k = int(m_bits), int(k)
             self._arr = bytearray((m_bits + 7) // 8)
+
         def _indexes(self, h: bytes):
             d = hashlib.sha3_256(h).digest()
             s1 = struct.unpack_from(">Q", d, 0)[0]
             s2 = struct.unpack_from(">Q", d, 8)[0] ^ struct.unpack_from(">Q", d, 16)[0]
             for i in range(self.k):
-                v = _mix64(s1 + i * 0x9E3779B97F4A7C15) ^ _mix64(s2 + i * 0xBF58476D1CE4E5B9)
+                v = _mix64(s1 + i * 0x9E3779B97F4A7C15) ^ _mix64(
+                    s2 + i * 0xBF58476D1CE4E5B9
+                )
                 yield v % self.m_bits
+
         def add(self, h: bytes) -> None:
             for idx in self._indexes(h):
-                self._arr[idx >> 3] |= (1 << (idx & 7))
+                self._arr[idx >> 3] |= 1 << (idx & 7)
+
         def contains(self, h: bytes) -> bool:
-            return all(self._arr[idx >> 3] & (1 << (idx & 7)) for idx in self._indexes(h))
+            return all(
+                self._arr[idx >> 3] & (1 << (idx & 7)) for idx in self._indexes(h)
+            )
 
     class RollingBloom:
         def __init__(self, m_bits: int, k: int, generations: int = 3) -> None:
             self._gens = [Bloom(m_bits, k) for _ in range(max(1, generations))]
             self._head = 0
+
         def add(self, h: bytes) -> None:
             self._gens[self._head].add(h)
+
         def contains(self, h: bytes) -> bool:
             return any(g.contains(h) for g in self._gens)
+
         def rotate(self) -> None:
             self._head = (self._head + 1) % len(self._gens)
             m_bits = self._gens[self._head].m_bits
             k = self._gens[self._head].k
             self._gens[self._head] = Bloom(m_bits, k)
 
+
 # ---- Payload tags (local to this payload codec) ------------------------------
 TAG_SHARE_INV = 40
 TAG_SHARE_GET = 41
 TAG_SHARE_BODIES = 42
 
+
 # ---- Errors ------------------------------------------------------------------
 class ProtocolError(Exception):
     pass
 
+
 class AdmissionError(Exception):
     pass
 
+
 # ---- ID helpers --------------------------------------------------------------
 SHARE_ID_LEN = 1 + NULLIFIER_LEN  # 33 bytes
+
 
 def pack_share_id(type_id: int, nullifier: bytes) -> bytes:
     if type_id not in ALLOWED_TYPE_IDS:
@@ -135,28 +150,34 @@ def pack_share_id(type_id: int, nullifier: bytes) -> bytes:
         raise ProtocolError("pack_share_id: nullifier must be 32 bytes")
     return bytes([type_id]) + bytes(nullifier)
 
+
 def unpack_share_id(share_id: bytes) -> Tuple[int, bytes]:
     if not isinstance(share_id, (bytes, bytearray)) or len(share_id) != SHARE_ID_LEN:
         raise ProtocolError("unpack_share_id: bad id length")
     return share_id[0], bytes(share_id[1:])
+
 
 # ---- Wire payload structs ----------------------------------------------------
 class _ShareInvS(msgspec.Struct, omit_defaults=True):
     t: int
     ids: List[bytes]  # each 33 bytes (type_id||nullifier)
 
+
 class _ShareGetS(msgspec.Struct, omit_defaults=True):
     t: int
     ids: List[bytes]
+
 
 class _ShareBodiesS(msgspec.Struct, omit_defaults=True):
     t: int
     bodies: List[bytes]  # CBOR-encoded proof envelopes
 
+
 ENC = msgspec.msgpack.Encoder()
 DEC_INV = msgspec.msgpack.Decoder(type=_ShareInvS)
 DEC_GET = msgspec.msgpack.Decoder(type=_ShareGetS)
 DEC_BOD = msgspec.msgpack.Decoder(type=_ShareBodiesS)
+
 
 def _check_ids(ids: Iterable[bytes], limit: int, tag: str) -> List[bytes]:
     out: List[bytes] = []
@@ -171,9 +192,13 @@ def _check_ids(ids: Iterable[bytes], limit: int, tag: str) -> List[bytes]:
             raise ProtocolError(f"{tag}: too many ids (>{limit})")
     return out
 
+
 # ---- Builders / Parsers ------------------------------------------------------
 def build_share_inv(ids: Iterable[bytes]) -> bytes:
-    return ENC.encode(_ShareInvS(t=TAG_SHARE_INV, ids=_check_ids(ids, MAX_SHARE_INV, "ShareInv")))
+    return ENC.encode(
+        _ShareInvS(t=TAG_SHARE_INV, ids=_check_ids(ids, MAX_SHARE_INV, "ShareInv"))
+    )
+
 
 def parse_share_inv(data: bytes) -> List[bytes]:
     m = DEC_INV.decode(data)
@@ -181,14 +206,19 @@ def parse_share_inv(data: bytes) -> List[bytes]:
         raise ProtocolError("ShareInv tag mismatch")
     return _check_ids(m.ids, MAX_SHARE_INV, "ShareInv")
 
+
 def build_share_get(ids: Iterable[bytes]) -> bytes:
-    return ENC.encode(_ShareGetS(t=TAG_SHARE_GET, ids=_check_ids(ids, MAX_SHARE_INV, "ShareGetData")))
+    return ENC.encode(
+        _ShareGetS(t=TAG_SHARE_GET, ids=_check_ids(ids, MAX_SHARE_INV, "ShareGetData"))
+    )
+
 
 def parse_share_get(data: bytes) -> List[bytes]:
     m = DEC_GET.decode(data)
     if m.t != TAG_SHARE_GET:
         raise ProtocolError("ShareGetData tag mismatch")
     return _check_ids(m.ids, MAX_SHARE_INV, "ShareGetData")
+
 
 def build_share_bodies(bodies: Iterable[bytes]) -> bytes:
     bs = [bytes(b) for b in bodies]
@@ -198,6 +228,7 @@ def build_share_bodies(bodies: Iterable[bytes]) -> bytes:
         if len(b) == 0 or len(b) > MAX_SHARE_BYTES:
             raise ProtocolError("ShareBodies includes empty/oversized body")
     return ENC.encode(_ShareBodiesS(t=TAG_SHARE_BODIES, bodies=bs))
+
 
 def parse_share_bodies(data: bytes) -> List[bytes]:
     m = DEC_BOD.decode(data)
@@ -212,6 +243,7 @@ def parse_share_bodies(data: bytes) -> List[bytes]:
             raise ProtocolError("ShareBodies item limit exceeded")
     return out
 
+
 # ---- Relay gate --------------------------------------------------------------
 @dataclass
 class SharePrecheckResult:
@@ -221,9 +253,11 @@ class SharePrecheckResult:
       - reason: short machine-readable reason if rejected
       - share_id: 33B id = pack_share_id(type_id, nullifier) (required on accept)
     """
+
     accepted: bool
     reason: Optional[str]
     share_id: Optional[bytes]
+
 
 @dataclass
 class AdmitShareResult:
@@ -231,9 +265,11 @@ class AdmitShareResult:
     reason: Optional[str]
     share_id: Optional[bytes]
 
+
 def body_hash(data: bytes) -> bytes:
     """sha3-256 of the raw body (used for cheap precheck-dedupe)."""
     return hashlib.sha3_256(data).digest()
+
 
 class ShareRelayGate:
     """
@@ -250,12 +286,13 @@ class ShareRelayGate:
       - perform per-type / total-Γ caps *precheck* (approximate is OK)
       - return SharePrecheckResult with share_id if acceptable
     """
+
     def __init__(
         self,
         precheck: Callable[[bytes], SharePrecheckResult],
         *,
-        body_bloom_m_bits: int = 524288,   # 64 KiB
-        id_bloom_m_bits: int = 1048576,    # 128 KiB
+        body_bloom_m_bits: int = 524288,  # 64 KiB
+        id_bloom_m_bits: int = 1048576,  # 128 KiB
         bloom_k: int = 7,
         generations: int = 3,
         rotate_interval_s: float = 60.0,
@@ -268,7 +305,8 @@ class ShareRelayGate:
 
     # maintenance
     def rotate(self) -> None:
-        self.seen_bodies.rotate(); self.seen_ids.rotate()
+        self.seen_bodies.rotate()
+        self.seen_ids.rotate()
         self._last_rotate_at = time.monotonic()
 
     def maybe_rotate(self) -> None:
@@ -326,23 +364,38 @@ class ShareRelayGate:
         self.seen_bodies.add(bh)
         return AdmitShareResult(True, None, sid)
 
+
 # ---- Public exports ----------------------------------------------------------
 __all__ = [
     # tags
-    "TAG_SHARE_INV", "TAG_SHARE_GET", "TAG_SHARE_BODIES",
+    "TAG_SHARE_INV",
+    "TAG_SHARE_GET",
+    "TAG_SHARE_BODIES",
     # id helpers
-    "SHARE_ID_LEN", "pack_share_id", "unpack_share_id",
+    "SHARE_ID_LEN",
+    "pack_share_id",
+    "unpack_share_id",
     "ALLOWED_TYPE_IDS",
     # payload builders/parsers
-    "build_share_inv", "parse_share_inv",
-    "build_share_get", "parse_share_get",
-    "build_share_bodies", "parse_share_bodies",
+    "build_share_inv",
+    "parse_share_inv",
+    "build_share_get",
+    "parse_share_get",
+    "build_share_bodies",
+    "parse_share_bodies",
     # relay gate & results
-    "ShareRelayGate", "SharePrecheckResult", "AdmitShareResult",
+    "ShareRelayGate",
+    "SharePrecheckResult",
+    "AdmitShareResult",
     # errors
-    "ProtocolError", "AdmissionError",
+    "ProtocolError",
+    "AdmissionError",
     # util
     "body_hash",
     # type ids (re-export fallbacks for convenience)
-    "TYPE_ID_HASH", "TYPE_ID_AI", "TYPE_ID_QUANTUM", "TYPE_ID_STORAGE", "TYPE_ID_VDF",
+    "TYPE_ID_HASH",
+    "TYPE_ID_AI",
+    "TYPE_ID_QUANTUM",
+    "TYPE_ID_STORAGE",
+    "TYPE_ID_VDF",
 ]

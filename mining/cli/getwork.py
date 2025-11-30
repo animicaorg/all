@@ -25,13 +25,15 @@ def _env_default(name: str, fallback: Optional[str] = None) -> Optional[str]:
     return v if v is not None and v != "" else fallback
 
 
-def json_rpc_call(url: str, method: str, params: Any | None, timeout: float, retries: int) -> Dict[str, Any]:
+def json_rpc_call(
+    url: str, method: str, params: Any | None, timeout: float, retries: int
+) -> Dict[str, Any]:
     """
     Minimal JSON-RPC HTTP POST using stdlib urllib; returns the parsed envelope.
     Raises on HTTP/network errors or when JSON-RPC 'error' is present.
     """
     import urllib.request
-    from urllib.error import URLError, HTTPError
+    from urllib.error import HTTPError, URLError
 
     url = url.rstrip("/") + "/rpc"
     payload = {
@@ -41,7 +43,9 @@ def json_rpc_call(url: str, method: str, params: Any | None, timeout: float, ret
         "params": params or [],
     }
     data = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-    req = urllib.request.Request(url=url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+    req = urllib.request.Request(
+        url=url, data=data, headers={"Content-Type": "application/json"}, method="POST"
+    )
 
     backoff = 0.25
     attempt = 0
@@ -91,8 +95,12 @@ def main(argv: list[str]) -> int:
         help="HTTP retry attempts on transient errors (default: %(default)s)",
     )
     fmt = p.add_mutually_gradable = p.add_mutually_exclusive_group()
-    fmt.add_argument("--compact", action="store_true", help="Print compact (no whitespace)")
-    fmt.add_argument("--pretty", action="store_true", help="Pretty-print with indentation (default)")
+    fmt.add_argument(
+        "--compact", action="store_true", help="Print compact (no whitespace)"
+    )
+    fmt.add_argument(
+        "--pretty", action="store_true", help="Pretty-print with indentation (default)"
+    )
 
     p.add_argument(
         "--full",

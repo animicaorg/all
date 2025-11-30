@@ -33,6 +33,8 @@ Dependencies
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -42,11 +44,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-import hashlib
-import hmac
-
 try:
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # type: ignore
+    from cryptography.hazmat.primitives.ciphers.aead import \
+        AESGCM  # type: ignore
 except Exception as e:  # pragma: no cover - optional path
     AESGCM = None  # type: ignore
 
@@ -177,7 +177,9 @@ def unlock(path: os.PathLike[str] | str, passphrase: str) -> Tuple[KeystoreInfo,
     try:
         payload = aes.decrypt(nonce, ciphertext, associated_data=None)
     except Exception as e:
-        raise KeystoreCryptoError("Decryption failed (bad passphrase or corrupted file)") from e
+        raise KeystoreCryptoError(
+            "Decryption failed (bad passphrase or corrupted file)"
+        ) from e
 
     info = KeystoreInfo(
         path=Path(path),
@@ -193,7 +195,11 @@ def unlock(path: os.PathLike[str] | str, passphrase: str) -> Tuple[KeystoreInfo,
 
 
 def change_passphrase(
-    path: os.PathLike[str] | str, old_passphrase: str, new_passphrase: str, *, new_iters: Optional[int] = None
+    path: os.PathLike[str] | str,
+    old_passphrase: str,
+    new_passphrase: str,
+    *,
+    new_iters: Optional[int] = None,
 ) -> KeystoreInfo:
     """
     Re-encrypt the payload with a new passphrase (and optionally a new iteration count).
@@ -233,11 +239,18 @@ def _require_crypto() -> None:
 
 
 def _pbkdf2_sha3(passphrase: str, salt: bytes, iters: int, dklen: int) -> bytes:
-    return hashlib.pbkdf2_hmac("sha3_256", passphrase.encode("utf-8"), salt, iters, dklen=dklen)
+    return hashlib.pbkdf2_hmac(
+        "sha3_256", passphrase.encode("utf-8"), salt, iters, dklen=dklen
+    )
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def _hex(b: bytes) -> str:
@@ -255,7 +268,9 @@ def _atomic_write_json(path: os.PathLike[str] | str, obj: Dict[str, Any]) -> Non
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         data = json.dumps(obj, separators=(",", ":"), sort_keys=True).encode("utf-8")
-        with tempfile.NamedTemporaryFile("wb", delete=False, dir=str(path.parent)) as tmp:
+        with tempfile.NamedTemporaryFile(
+            "wb", delete=False, dir=str(path.parent)
+        ) as tmp:
             tmp.write(data)
             tmp.flush()
             os.fsync(tmp.fileno())

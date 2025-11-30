@@ -20,7 +20,7 @@ defensive. More detailed policy/limit checks happen inside the runtime/host.
 
 from __future__ import annotations
 
-from typing import Union, Optional
+from typing import Optional, Union
 
 from vm_py.runtime import syscalls_api as _sys
 

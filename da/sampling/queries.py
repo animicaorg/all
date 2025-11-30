@@ -28,9 +28,11 @@ from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 # ------------------------------ Data types ----------------------------------
 
+
 @dataclass(frozen=True)
 class SampleQuery:
     """A batch of indices to query, optionally scoped to a namespace."""
+
     namespace: Optional[int]
     indices: List[int]
 
@@ -38,6 +40,7 @@ class SampleQuery:
 @dataclass(frozen=True)
 class QueryPlan:
     """A collection of sample batches to request."""
+
     batches: List[SampleQuery]
 
     @property
@@ -70,6 +73,7 @@ __all__ = [
 ]
 
 # ------------------------------ Core builders --------------------------------
+
 
 def uniform_indices(
     population_size: int,
@@ -185,7 +189,9 @@ def stratified_uniform(
     stratified_by_ranges() for sharper control.
     """
     if not namespaces:
-        return uniform_plan(population_size, k_total, seed=seed, without_replacement=without_replacement)
+        return uniform_plan(
+            population_size, k_total, seed=seed, without_replacement=without_replacement
+        )
 
     rng = random.Random(seed)
     k_splits = _allocate_counts(k_total, _normalize_weights(namespaces, weights))
@@ -196,7 +202,9 @@ def stratified_uniform(
         if k <= 0:
             batches.append(SampleQuery(namespace=ns, indices=[]))
             continue
-        exclude = seen_global if (without_replacement and dedupe_across_namespaces) else None
+        exclude = (
+            seen_global if (without_replacement and dedupe_across_namespaces) else None
+        )
         idxs = uniform_indices(
             population_size,
             k,
@@ -261,7 +269,7 @@ def stratified_by_ranges(
             k,
             seed=rng.randrange(1 << 63),
             without_replacement=without_replacement,
-            exclude=( (i - start) for i in exclude_local ) if exclude_local else None,
+            exclude=((i - start) for i in exclude_local) if exclude_local else None,
         )
         # Map back to global
         global_indices = [start + i for i in local_indices]
@@ -279,7 +287,9 @@ def merge_plans(plans: Sequence[QueryPlan]) -> QueryPlan:
         batches.extend(p.batches)
     return QueryPlan(batches=batches)
 
+
 # ------------------------------ Helpers -------------------------------------
+
 
 def _allocate_counts(total: int, weights: Sequence[float]) -> List[int]:
     """
@@ -313,7 +323,9 @@ def _allocate_counts(total: int, weights: Sequence[float]) -> List[int]:
     return floors
 
 
-def _normalize_weights(namespaces: Sequence[int], weights: Optional[Sequence[float]]) -> List[float]:
+def _normalize_weights(
+    namespaces: Sequence[int], weights: Optional[Sequence[float]]
+) -> List[float]:
     if weights is None:
         return [1.0] * len(namespaces)
     if len(weights) != len(namespaces):

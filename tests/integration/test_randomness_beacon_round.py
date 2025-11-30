@@ -46,7 +46,13 @@ def _timeout_http() -> float:
         return 5.0
 
 
-def _rpc_call(rpc_url: str, method: str, params: Optional[Sequence[Any] | Dict[str, Any]] = None, *, req_id: int = 1) -> Any:
+def _rpc_call(
+    rpc_url: str,
+    method: str,
+    params: Optional[Sequence[Any] | Dict[str, Any]] = None,
+    *,
+    req_id: int = 1,
+) -> Any:
     if params is None:
         params = []
     payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
@@ -64,7 +70,11 @@ def _rpc_call(rpc_url: str, method: str, params: Optional[Sequence[Any] | Dict[s
     return msg["result"]
 
 
-def _rpc_try(rpc_url: str, methods: Sequence[str], params: Optional[Sequence[Any] | Dict[str, Any]] = None) -> Tuple[str, Any]:
+def _rpc_try(
+    rpc_url: str,
+    methods: Sequence[str],
+    params: Optional[Sequence[Any] | Dict[str, Any]] = None,
+) -> Tuple[str, Any]:
     last_exc: Optional[Exception] = None
     for i, m in enumerate(methods, start=1):
         try:
@@ -79,6 +89,7 @@ def _hex(b: bytes) -> str:
 
 
 # ------------------------------- Chain helpers --------------------------------
+
 
 def _get_head_height(rpc_url: str) -> int:
     # Prefer chain.getHead
@@ -95,7 +106,9 @@ def _get_head_height(rpc_url: str) -> int:
             continue
     # Fallback: latest block
     try:
-        _, res = _rpc_try(rpc_url, ("chain.getBlockByNumber",), ["latest", False, False])
+        _, res = _rpc_try(
+            rpc_url, ("chain.getBlockByNumber",), ["latest", False, False]
+        )
         if isinstance(res, dict):
             if "number" in res:
                 return int(res["number"])
@@ -107,18 +120,23 @@ def _get_head_height(rpc_url: str) -> int:
     raise AssertionError("unreachable")
 
 
-def _ensure_next_block(rpc_url: str, after_height: int, *, wait_secs: float = 120.0) -> int:
+def _ensure_next_block(
+    rpc_url: str, after_height: int, *, wait_secs: float = 120.0
+) -> int:
     deadline = time.time() + wait_secs
     while time.time() < deadline:
         h = _get_head_height(rpc_url)
         if h > after_height:
             return h
         time.sleep(1.0)
-    pytest.skip(f"No new block observed within timeout; last height={_get_head_height(rpc_url)}")
+    pytest.skip(
+        f"No new block observed within timeout; last height={_get_head_height(rpc_url)}"
+    )
     raise AssertionError("unreachable")
 
 
 # ---------------------------- Randomness helpers ------------------------------
+
 
 def _get_round(rpc_url: str) -> Dict[str, Any]:
     methods = ("rand.getRound", "randomness.getRound", "beacon.getRound")
@@ -167,7 +185,9 @@ def _phase_of(r: Dict[str, Any]) -> str:
     return str(v)
 
 
-def _wait_for_phase(rpc_url: str, wants_prefix: str, *, timeout_secs: float) -> Dict[str, Any]:
+def _wait_for_phase(
+    rpc_url: str, wants_prefix: str, *, timeout_secs: float
+) -> Dict[str, Any]:
     deadline = time.time() + timeout_secs
     while time.time() < deadline:
         rd = _get_round(rpc_url)
@@ -175,11 +195,15 @@ def _wait_for_phase(rpc_url: str, wants_prefix: str, *, timeout_secs: float) -> 
         if ph.startswith(wants_prefix):
             return rd
         time.sleep(1.0)
-    pytest.skip(f"Phase '{wants_prefix}' not observed within {timeout_secs}s (last={_phase_of(_get_round(rpc_url))})")
+    pytest.skip(
+        f"Phase '{wants_prefix}' not observed within {timeout_secs}s (last={_phase_of(_get_round(rpc_url))})"
+    )
     raise AssertionError("unreachable")
 
 
-def _commit(rpc_url: str, salt_hex: str, payload_hex: str, *, address: Optional[str]) -> Any:
+def _commit(
+    rpc_url: str, salt_hex: str, payload_hex: str, *, address: Optional[str]
+) -> Any:
     params_dict = {"salt": salt_hex, "payload": payload_hex}
     if address:
         params_dict["address"] = address
@@ -203,7 +227,9 @@ def _commit(rpc_url: str, salt_hex: str, payload_hex: str, *, address: Optional[
     return _rpc_try(rpc_url, methods, [salt_hex, payload_hex])[1]
 
 
-def _reveal(rpc_url: str, salt_hex: str, payload_hex: str, *, address: Optional[str]) -> Any:
+def _reveal(
+    rpc_url: str, salt_hex: str, payload_hex: str, *, address: Optional[str]
+) -> Any:
     params_dict = {"salt": salt_hex, "payload": payload_hex}
     if address:
         params_dict["address"] = address
@@ -240,6 +266,7 @@ def _maybe_run_vdf_cli(rpc_url: str) -> None:
 
 
 # ------------------------------------ Test ------------------------------------
+
 
 @pytest.mark.timeout(540)
 def test_beacon_round_commit_reveal_vdf_finalize():
@@ -287,13 +314,26 @@ def test_beacon_round_commit_reveal_vdf_finalize():
                     brid = int(v)
                     break
             # Output/proof presence (accept a variety of keys)
-            has_out = any(k in b for k in ("output", "mix", "beacon", "seed", "vdf", "vdf_proof", "light_proof"))
+            has_out = any(
+                k in b
+                for k in (
+                    "output",
+                    "mix",
+                    "beacon",
+                    "seed",
+                    "vdf",
+                    "vdf_proof",
+                    "light_proof",
+                )
+            )
             if brid is not None and brid >= rid0 and has_out:
                 break
         time.sleep(1.0)
 
     if not last_beacon:
-        pytest.skip("Beacon not available within timeout — devnet may lack VDF worker; skipping.")
+        pytest.skip(
+            "Beacon not available within timeout — devnet may lack VDF worker; skipping."
+        )
 
     # Minimal sanity assertions
     #  - Round id advanced to (or past) the round we committed into
@@ -303,11 +343,14 @@ def test_beacon_round_commit_reveal_vdf_finalize():
         if isinstance(v, (int, float)):
             brid = int(v)
             break
-    assert brid is not None and brid >= rid0, f"Beacon round id did not advance (rid0={rid0}, beacon={last_beacon})"
+    assert (
+        brid is not None and brid >= rid0
+    ), f"Beacon round id did not advance (rid0={rid0}, beacon={last_beacon})"
 
     #  - It should carry some recognizable output field(s)
     assert any(
-        k in last_beacon for k in ("output", "mix", "seed", "vdf", "vdf_output", "light_proof")
+        k in last_beacon
+        for k in ("output", "mix", "seed", "vdf", "vdf_output", "light_proof")
     ), f"Beacon lacks output/proof fields: {last_beacon}"
 
     # If present, the light proof or VDF section should be well-formed enough
@@ -315,4 +358,3 @@ def test_beacon_round_commit_reveal_vdf_finalize():
     if isinstance(vdf, dict):
         # Accept a few common shapes
         assert "proof" in vdf or "y" in vdf or "pi" in vdf or "iterations" in vdf
-

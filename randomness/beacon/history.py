@@ -18,11 +18,11 @@ appends into your KV/DB layer and reconstruct the buffer on boot.
 
 from __future__ import annotations
 
+import bisect
+import threading
 from collections import deque
 from dataclasses import asdict
 from typing import Deque, Dict, Iterable, List, Optional, Sequence, Tuple
-import threading
-import bisect
 
 from randomness.types.core import BeaconOut, RoundId
 
@@ -139,7 +139,9 @@ class BeaconHistory:
         with self._lock:
             return self._by_id.get(rid)
 
-    def window(self, start_inclusive: RoundId, end_inclusive: RoundId) -> List[BeaconOut]:
+    def window(
+        self, start_inclusive: RoundId, end_inclusive: RoundId
+    ) -> List[BeaconOut]:
         """
         Return a contiguous window between two round ids (inclusive),
         clipped to what the buffer retains. Returns [] if no overlap.

@@ -30,17 +30,20 @@ import logging
 import os
 import threading
 from dataclasses import dataclass
-from typing import Iterable, List, Optional, Protocol, Sequence, Tuple, Union, runtime_checkable
+from typing import (Iterable, List, Optional, Protocol, Sequence, Tuple, Union,
+                    runtime_checkable)
 
-from ..types.events import LogEvent  # (address: bytes, topics: Sequence[bytes], data: bytes)
-
+from ..types.events import \
+    LogEvent  # (address: bytes, topics: Sequence[bytes], data: bytes)
 
 # =============================================================================
 # Utilities
 # =============================================================================
 
+
 def _b2h(b: bytes) -> str:
     return "0x" + b.hex()
+
 
 def _h2b(h: str) -> bytes:
     if not isinstance(h, str):
@@ -53,6 +56,7 @@ def _h2b(h: str) -> bytes:
 # =============================================================================
 # Public data model
 # =============================================================================
+
 
 @dataclass(frozen=True)
 class EventRecord:
@@ -72,6 +76,7 @@ class EventRecord:
     event : LogEvent
         The event payload (address, topics, data).
     """
+
     block_number: int
     tx_index: int
     log_index: int
@@ -99,6 +104,7 @@ TopicSelector = Optional[Union[bytes, Sequence[bytes]]]
 # =============================================================================
 # Sink interface
 # =============================================================================
+
 
 @runtime_checkable
 class EventSink(Protocol):
@@ -135,6 +141,7 @@ class EventSink(Protocol):
 # Common filter logic
 # =============================================================================
 
+
 def _topic_pos_matches(value: bytes, selector: TopicSelector) -> bool:
     if selector is None:
         return True
@@ -147,7 +154,9 @@ def _topic_pos_matches(value: bytes, selector: TopicSelector) -> bool:
     return False
 
 
-def _topics_match(event_topics: Sequence[bytes], selectors: Sequence[TopicSelector]) -> bool:
+def _topics_match(
+    event_topics: Sequence[bytes], selectors: Sequence[TopicSelector]
+) -> bool:
     # Each selector position constrains the same index in event_topics.
     if len(selectors) > len(event_topics):
         return False
@@ -179,6 +188,7 @@ def _record_matches(
 # In-memory sink
 # =============================================================================
 
+
 class InMemoryEventSink(EventSink):
     """
     A simple, thread-safe in-memory sink.
@@ -188,6 +198,7 @@ class InMemoryEventSink(EventSink):
     - Suitable for unit tests and devnets.
     - Keeps all logs in RAM — do not use unbounded in long-running mainnets.
     """
+
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._records: List[EventRecord] = []
@@ -223,7 +234,8 @@ class InMemoryEventSink(EventSink):
     ) -> Iterable[EventRecord]:
         with self._lock:
             it = (
-                rec for rec in self._records
+                rec
+                for rec in self._records
                 if _record_matches(rec, address, topics, from_block, to_block)
             )
             if limit is None:
@@ -249,6 +261,7 @@ class InMemoryEventSink(EventSink):
 # JSONL sink (durable)
 # =============================================================================
 
+
 class JsonlEventSink(EventSink):
     """
     Append-only JSONL sink. Each line is a single EventRecord in canonical form.
@@ -271,6 +284,7 @@ class JsonlEventSink(EventSink):
       "data": "0x…"
     }
     """
+
     def __init__(self, path: str) -> None:
         self._path = path
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -352,7 +366,9 @@ class JsonlEventSink(EventSink):
                 try:
                     rec = self._decode(line)
                 except Exception as e:  # pragma: no cover - defensive
-                    self._log.warning("Skipping malformed event line: %s (%r)", line[:120], e)
+                    self._log.warning(
+                        "Skipping malformed event line: %s (%r)", line[:120], e
+                    )
                     continue
                 if _record_matches(rec, address, topics, from_block, to_block):
                     yield rec
@@ -380,8 +396,10 @@ class JsonlEventSink(EventSink):
 # Null sink
 # =============================================================================
 
+
 class NullEventSink(EventSink):
     """A sink that drops everything."""
+
     def append(
         self,
         event: LogEvent,

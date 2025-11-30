@@ -23,8 +23,8 @@ they are actually used and the corresponding module is missing.
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional, Dict
 import importlib
+from typing import Any, Dict, Mapping, Optional
 
 try:
     # Prefer a generated/version-controlled value.
@@ -32,11 +32,14 @@ try:
 except Exception:  # pragma: no cover
     __version__ = "0.0.0+dev"
 
+
 def version() -> str:
     """Return the vm_py semantic version string."""
     return __version__
 
+
 # --- Public entrypoints (lazy-delegated to runtime/loader & compiler) ---------
+
 
 def compile_source(source: str, *, optimize: bool = False) -> bytes:
     """
@@ -57,6 +60,7 @@ def compile_source(source: str, *, optimize: bool = False) -> bytes:
     loader = importlib.import_module(".runtime.loader", __name__)
     return loader.compile_source(source, optimize=optimize)  # type: ignore[attr-defined]
 
+
 def inspect_ir(ir: bytes) -> Dict[str, Any]:
     """
     Introspect an IR blob for human/tooling consumption.
@@ -71,6 +75,7 @@ def inspect_ir(ir: bytes) -> Dict[str, Any]:
         "op_counts": getattr(ir_mod, "op_counts", {}),
         "gas_upper_bound": gas_estimator.estimate_upper_bound(ir_mod),  # type: ignore[attr-defined]
     }
+
 
 def run_call(
     manifest: Mapping[str, Any],
@@ -110,6 +115,7 @@ def run_call(
         gas_limit=gas_limit,
     )
 
+
 def simulate_tx(
     manifest: Mapping[str, Any],
     call: str,
@@ -132,6 +138,7 @@ def simulate_tx(
         tx_env=dict(tx_env or {}),
         gas_limit=gas_limit,
     )
+
 
 __all__ = [
     "__version__",

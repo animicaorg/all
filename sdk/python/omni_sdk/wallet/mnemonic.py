@@ -35,12 +35,11 @@ Install tip (optional):
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import secrets
 import unicodedata
 from typing import Optional
-
-import hashlib
-import hmac
 
 # Optional dependency for generating / validating standard BIP-39 word phrases.
 try:
@@ -50,6 +49,7 @@ except Exception:  # pragma: no cover - optional path
 
 
 # ---------- Public API ----------
+
 
 def create_mnemonic(num_words: int = 24) -> str:
     """
@@ -171,6 +171,7 @@ def random_entropy(num_words: int = 24) -> bytes:
 
 
 # ---------- Internal helpers ----------
+
 
 def _normalize(s: str) -> str:
     # Follow BIP-39 normalization for inputs.

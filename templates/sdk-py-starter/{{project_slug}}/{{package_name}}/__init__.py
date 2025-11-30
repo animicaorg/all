@@ -65,8 +65,10 @@ def connect(
     # Lazy imports to keep top-level import time minimal
     from omni_sdk.config import Config
     from omni_sdk.rpc.http import Client as HttpClient
+
     try:
-        from omni_sdk.rpc.ws import Client as WsClient  # optional; only if ws_url provided
+        from omni_sdk.rpc.ws import \
+            Client as WsClient  # optional; only if ws_url provided
     except Exception:  # pragma: no cover - ws is optional in some envs
         WsClient = None  # type: ignore[assignment]
 

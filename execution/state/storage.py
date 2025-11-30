@@ -30,8 +30,8 @@ adapters) can be layered on top without changing this API.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, Iterator, Mapping, MutableMapping, Optional, Tuple
-
+from typing import (Dict, Iterable, Iterator, Mapping, MutableMapping,
+                    Optional, Tuple)
 
 # ------------------------------- helpers -------------------------------------
 

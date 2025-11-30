@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 aicf.config — configuration for the AI Compute Fund (AICF)
 
@@ -44,11 +45,11 @@ File values override defaults; environment overrides the file.
 """
 
 
-from dataclasses import dataclass, asdict
-from typing import Any, Dict, Optional
 import json
 import os
+from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 try:
     import yaml  # type: ignore
@@ -62,8 +63,9 @@ except Exception:  # pragma: no cover - yaml is optional
 @dataclass
 class PayoutRates:
     """Per-unit payout rates in nano-tokens (1 token = 1_000_000_000 nanos)."""
-    ai_unit_rate_nano: int = 1_000_000         # 0.001 token / AI unit
-    quantum_unit_rate_nano: int = 2_000_000    # 0.002 token / Quantum unit
+
+    ai_unit_rate_nano: int = 1_000_000  # 0.001 token / AI unit
+    quantum_unit_rate_nano: int = 2_000_000  # 0.002 token / Quantum unit
 
     def validate(self) -> None:
         if self.ai_unit_rate_nano < 0 or self.quantum_unit_rate_nano < 0:
@@ -73,6 +75,7 @@ class PayoutRates:
 @dataclass
 class RewardSplit:
     """Reward split in basis points (10_000 = 100%). Must sum to 10_000."""
+
     provider_bps: int = 8000
     treasury_bps: int = 1500
     miner_bps: int = 500
@@ -81,21 +84,26 @@ class RewardSplit:
         return self.provider_bps + self.treasury_bps + self.miner_bps
 
     def validate(self) -> None:
-        for name, v in (("provider_bps", self.provider_bps),
-                        ("treasury_bps", self.treasury_bps),
-                        ("miner_bps", self.miner_bps)):
+        for name, v in (
+            ("provider_bps", self.provider_bps),
+            ("treasury_bps", self.treasury_bps),
+            ("miner_bps", self.miner_bps),
+        ):
             if not (0 <= v <= 10_000):
                 raise ValueError(f"{name} must be between 0 and 10000 (got {v}).")
         if self.total_bps() != 10_000:
-            raise ValueError(f"RewardSplit must sum to 10000 bps (got {self.total_bps()}).")
+            raise ValueError(
+                f"RewardSplit must sum to 10000 bps (got {self.total_bps()})."
+            )
 
 
 @dataclass
 class StakeConfig:
     """Minimum stake and lock/unbonding periods."""
-    min_stake_ai_nano: int = 100_000_000_000        # 100 tokens
-    min_stake_quantum_nano: int = 200_000_000_000   # 200 tokens
-    lock_period_blocks: int = 7_200                  # ~1 day at 12s blocks
+
+    min_stake_ai_nano: int = 100_000_000_000  # 100 tokens
+    min_stake_quantum_nano: int = 200_000_000_000  # 200 tokens
+    lock_period_blocks: int = 7_200  # ~1 day at 12s blocks
     unbonding_period_blocks: int = 7_200
 
     def validate(self) -> None:
@@ -108,15 +116,18 @@ class StakeConfig:
 @dataclass
 class SLAThresholds:
     """Provider SLA thresholds used by the evaluator."""
-    traps_ratio_min: float = 0.66         # fraction of trap-circuit passes required
-    qos_min: float = 0.95                 # quality-of-service composite score
-    latency_p95_max_ms: int = 3_000       # 95th percentile latency bound
-    availability_min: float = 0.98        # fraction of up/healthy heartbeats
+
+    traps_ratio_min: float = 0.66  # fraction of trap-circuit passes required
+    qos_min: float = 0.95  # quality-of-service composite score
+    latency_p95_max_ms: int = 3_000  # 95th percentile latency bound
+    availability_min: float = 0.98  # fraction of up/healthy heartbeats
 
     def validate(self) -> None:
-        for name, v in (("traps_ratio_min", self.traps_ratio_min),
-                        ("qos_min", self.qos_min),
-                        ("availability_min", self.availability_min)):
+        for name, v in (
+            ("traps_ratio_min", self.traps_ratio_min),
+            ("qos_min", self.qos_min),
+            ("availability_min", self.availability_min),
+        ):
             if not (0.0 <= v <= 1.0):
                 raise ValueError(f"{name} must be in [0.0, 1.0] (got {v}).")
         if self.latency_p95_max_ms <= 0:
@@ -126,17 +137,20 @@ class SLAThresholds:
 @dataclass
 class SlashingParams:
     """Penalty magnitudes (basis points) and jail duration (blocks)."""
-    traps_fail_bps: int = 1_000         # 10% slash for failing traps
-    qos_fail_bps: int = 500             # 5% slash for QoS failure
-    availability_fail_bps: int = 250    # 2.5% slash for availability failure
-    misbehavior_bps: int = 5_000        # 50% slash for explicit misbehavior
-    jail_blocks: int = 14_400           # ~2 days at 12s blocks
+
+    traps_fail_bps: int = 1_000  # 10% slash for failing traps
+    qos_fail_bps: int = 500  # 5% slash for QoS failure
+    availability_fail_bps: int = 250  # 2.5% slash for availability failure
+    misbehavior_bps: int = 5_000  # 50% slash for explicit misbehavior
+    jail_blocks: int = 14_400  # ~2 days at 12s blocks
 
     def validate(self) -> None:
-        for name, v in (("traps_fail_bps", self.traps_fail_bps),
-                        ("qos_fail_bps", self.qos_fail_bps),
-                        ("availability_fail_bps", self.availability_fail_bps),
-                        ("misbehavior_bps", self.misbehavior_bps)):
+        for name, v in (
+            ("traps_fail_bps", self.traps_fail_bps),
+            ("qos_fail_bps", self.qos_fail_bps),
+            ("availability_fail_bps", self.availability_fail_bps),
+            ("misbehavior_bps", self.misbehavior_bps),
+        ):
             if not (0 <= v <= 10_000):
                 raise ValueError(f"{name} must be between 0 and 10000 (got {v}).")
         if self.jail_blocks <= 0:
@@ -146,6 +160,7 @@ class SlashingParams:
 @dataclass
 class AICFConfig:
     """Top-level configuration container."""
+
     payouts: PayoutRates = PayoutRates()
     split: RewardSplit = RewardSplit()
     stake: StakeConfig = StakeConfig()
@@ -208,7 +223,9 @@ def from_env(base: Optional[AICFConfig] = None, prefix: str = "AICF_") -> AICFCo
 
     # Payouts
     ai_rate = _getenv_int(f"{prefix}AI_UNIT_RATE_NANO", cfg.payouts.ai_unit_rate_nano)
-    q_rate = _getenv_int(f"{prefix}QUANTUM_UNIT_RATE_NANO", cfg.payouts.quantum_unit_rate_nano)
+    q_rate = _getenv_int(
+        f"{prefix}QUANTUM_UNIT_RATE_NANO", cfg.payouts.quantum_unit_rate_nano
+    )
 
     # Split
     prov = _getenv_bps(f"{prefix}SPLIT_PROVIDER_BPS", cfg.split.provider_bps)
@@ -217,9 +234,13 @@ def from_env(base: Optional[AICFConfig] = None, prefix: str = "AICF_") -> AICFCo
 
     # Stake
     stake_ai = _getenv_int(f"{prefix}MIN_STAKE_AI_NANO", cfg.stake.min_stake_ai_nano)
-    stake_q = _getenv_int(f"{prefix}MIN_STAKE_QUANTUM_NANO", cfg.stake.min_stake_quantum_nano)
+    stake_q = _getenv_int(
+        f"{prefix}MIN_STAKE_QUANTUM_NANO", cfg.stake.min_stake_quantum_nano
+    )
     lock = _getenv_int(f"{prefix}LOCK_PERIOD_BLOCKS", cfg.stake.lock_period_blocks)
-    unbond = _getenv_int(f"{prefix}UNBONDING_PERIOD_BLOCKS", cfg.stake.unbonding_period_blocks)
+    unbond = _getenv_int(
+        f"{prefix}UNBONDING_PERIOD_BLOCKS", cfg.stake.unbonding_period_blocks
+    )
 
     # SLA
     traps_min = _getenv_float(f"{prefix}SLA_TRAPS_RATIO_MIN", cfg.sla.traps_ratio_min)
@@ -228,10 +249,16 @@ def from_env(base: Optional[AICFConfig] = None, prefix: str = "AICF_") -> AICFCo
     avail_min = _getenv_float(f"{prefix}SLA_AVAILABILITY_MIN", cfg.sla.availability_min)
 
     # Slashing
-    slash_traps = _getenv_bps(f"{prefix}SLASH_TRAPS_FAIL_BPS", cfg.slashing.traps_fail_bps)
+    slash_traps = _getenv_bps(
+        f"{prefix}SLASH_TRAPS_FAIL_BPS", cfg.slashing.traps_fail_bps
+    )
     slash_qos = _getenv_bps(f"{prefix}SLASH_QOS_FAIL_BPS", cfg.slashing.qos_fail_bps)
-    slash_avail = _getenv_bps(f"{prefix}SLASH_AVAIL_FAIL_BPS", cfg.slashing.availability_fail_bps)
-    slash_mis = _getenv_bps(f"{prefix}SLASH_MISBEHAVIOR_BPS", cfg.slashing.misbehavior_bps)
+    slash_avail = _getenv_bps(
+        f"{prefix}SLASH_AVAIL_FAIL_BPS", cfg.slashing.availability_fail_bps
+    )
+    slash_mis = _getenv_bps(
+        f"{prefix}SLASH_MISBEHAVIOR_BPS", cfg.slashing.misbehavior_bps
+    )
     jail = _getenv_int(f"{prefix}JAIL_BLOCKS", cfg.slashing.jail_blocks)
 
     # Optional chain id
@@ -294,8 +321,12 @@ def from_file(path: str | os.PathLike[str]) -> AICFConfig:
 
     cfg = AICFConfig(
         payouts=PayoutRates(
-            ai_unit_rate_nano=pick(payouts, "ai_unit_rate_nano", PayoutRates().ai_unit_rate_nano),
-            quantum_unit_rate_nano=pick(payouts, "quantum_unit_rate_nano", PayoutRates().quantum_unit_rate_nano),
+            ai_unit_rate_nano=pick(
+                payouts, "ai_unit_rate_nano", PayoutRates().ai_unit_rate_nano
+            ),
+            quantum_unit_rate_nano=pick(
+                payouts, "quantum_unit_rate_nano", PayoutRates().quantum_unit_rate_nano
+            ),
         ),
         split=RewardSplit(
             provider_bps=pick(split, "provider_bps", RewardSplit().provider_bps),
@@ -303,22 +334,44 @@ def from_file(path: str | os.PathLike[str]) -> AICFConfig:
             miner_bps=pick(split, "miner_bps", RewardSplit().miner_bps),
         ),
         stake=StakeConfig(
-            min_stake_ai_nano=pick(stake, "min_stake_ai_nano", StakeConfig().min_stake_ai_nano),
-            min_stake_quantum_nano=pick(stake, "min_stake_quantum_nano", StakeConfig().min_stake_quantum_nano),
-            lock_period_blocks=pick(stake, "lock_period_blocks", StakeConfig().lock_period_blocks),
-            unbonding_period_blocks=pick(stake, "unbonding_period_blocks", StakeConfig().unbonding_period_blocks),
+            min_stake_ai_nano=pick(
+                stake, "min_stake_ai_nano", StakeConfig().min_stake_ai_nano
+            ),
+            min_stake_quantum_nano=pick(
+                stake, "min_stake_quantum_nano", StakeConfig().min_stake_quantum_nano
+            ),
+            lock_period_blocks=pick(
+                stake, "lock_period_blocks", StakeConfig().lock_period_blocks
+            ),
+            unbonding_period_blocks=pick(
+                stake, "unbonding_period_blocks", StakeConfig().unbonding_period_blocks
+            ),
         ),
         sla=SLAThresholds(
-            traps_ratio_min=pick(sla, "traps_ratio_min", SLAThresholds().traps_ratio_min),
+            traps_ratio_min=pick(
+                sla, "traps_ratio_min", SLAThresholds().traps_ratio_min
+            ),
             qos_min=pick(sla, "qos_min", SLAThresholds().qos_min),
-            latency_p95_max_ms=pick(sla, "latency_p95_max_ms", SLAThresholds().latency_p95_max_ms),
-            availability_min=pick(sla, "availability_min", SLAThresholds().availability_min),
+            latency_p95_max_ms=pick(
+                sla, "latency_p95_max_ms", SLAThresholds().latency_p95_max_ms
+            ),
+            availability_min=pick(
+                sla, "availability_min", SLAThresholds().availability_min
+            ),
         ),
         slashing=SlashingParams(
-            traps_fail_bps=pick(slashing, "traps_fail_bps", SlashingParams().traps_fail_bps),
+            traps_fail_bps=pick(
+                slashing, "traps_fail_bps", SlashingParams().traps_fail_bps
+            ),
             qos_fail_bps=pick(slashing, "qos_fail_bps", SlashingParams().qos_fail_bps),
-            availability_fail_bps=pick(slashing, "availability_fail_bps", SlashingParams().availability_fail_bps),
-            misbehavior_bps=pick(slashing, "misbehavior_bps", SlashingParams().misbehavior_bps),
+            availability_fail_bps=pick(
+                slashing,
+                "availability_fail_bps",
+                SlashingParams().availability_fail_bps,
+            ),
+            misbehavior_bps=pick(
+                slashing, "misbehavior_bps", SlashingParams().misbehavior_bps
+            ),
             jail_blocks=pick(slashing, "jail_blocks", SlashingParams().jail_blocks),
         ),
         token_decimals=pick(data, "token_decimals", AICFConfig().token_decimals),

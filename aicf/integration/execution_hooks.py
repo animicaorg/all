@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 aicf.integration.execution_hooks
 --------------------------------
@@ -37,7 +38,8 @@ Determinism & safety:
 
 
 from dataclasses import asdict
-from typing import Any, Callable, Iterable, Mapping, Optional, Protocol, runtime_checkable
+from typing import (Any, Callable, Iterable, Mapping, Optional, Protocol,
+                    runtime_checkable)
 
 # --------- Types from AICF (only for type hints; runtime optional) -----------
 
@@ -81,16 +83,17 @@ except Exception:  # pragma: no cover
 
 # apply-balance helpers (preferred)
 try:  # pragma: no cover
-    from execution.state.apply_balance import (
-        credit_balance as _exec_credit_balance,  # type: ignore
-        debit_balance as _exec_debit_balance,    # type: ignore
-    )
+    from execution.state.apply_balance import \
+        credit_balance as _exec_credit_balance  # type: ignore
+    from execution.state.apply_balance import \
+        debit_balance as _exec_debit_balance  # type: ignore
 except Exception:  # pragma: no cover
     _exec_credit_balance = None
     _exec_debit_balance = None
 
 
 # --------------------------- State duck-typing --------------------------------
+
 
 @runtime_checkable
 class _StateLike(Protocol):
@@ -104,11 +107,16 @@ class _StateLike(Protocol):
     def set_balance(self, address: str | bytes, value: int) -> None: ...
 
     # Optional helpers (if present, we will use them)
-    def credit_balance(self, address: str | bytes, amount: int) -> None: ...  # noqa: D401,E701
-    def debit_balance(self, address: str | bytes, amount: int) -> None: ...   # noqa: D401,E701
+    def credit_balance(
+        self, address: str | bytes, amount: int
+    ) -> None: ...  # noqa: D401,E701
+    def debit_balance(
+        self, address: str | bytes, amount: int
+    ) -> None: ...  # noqa: D401,E701
 
 
 # ------------------------------- Utilities ------------------------------------
+
 
 def _to_int(x: int) -> int:
     if not isinstance(x, int):
@@ -167,6 +175,7 @@ def _event_map(kind: str, name: str, data: Mapping[str, Any]) -> Mapping[str, An
 
 
 # ------------------------------ Main Hook -------------------------------------
+
 
 def record_payouts_in_state(
     *,
@@ -233,6 +242,7 @@ def record_payouts_in_state(
 
 
 # ------------------------------ Pretty helpers --------------------------------
+
 
 def _addr_str(a: str | bytes) -> str:
     if isinstance(a, bytes):

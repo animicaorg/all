@@ -15,17 +15,17 @@ It is dependency-free (standard library only) and provides:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
-from typing import Optional, Dict, Any
-from urllib.parse import urlparse
 import json
 import os
 import time
-
+from dataclasses import asdict, dataclass, field
+from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 # -------------------------
 # Sub-configs
 # -------------------------
+
 
 @dataclass
 class VDFParams:
@@ -38,6 +38,7 @@ class VDFParams:
     iterations: number of squarings (time hardness). Nodes should target a
                 wall-clock delay ~= vdf_window_s using local benchmarks.
     """
+
     algorithm: str = "wesolowski"
     hash_fn: str = "sha3_256"
     modulus_bits: int = 2048
@@ -70,6 +71,7 @@ class QRNGConfig:
     timeout_s: HTTP timeout for QRNG fetch (caller-side, if networking is enabled)
     mix_weight: 0..1 fraction of QRNG strength in the final mix function
     """
+
     enabled: bool = False
     provider: str = "none"
     endpoint: Optional[str] = None
@@ -81,7 +83,9 @@ class QRNGConfig:
         if not self.enabled:
             return
         if self.provider not in {"nist", "cloudflare", "custom"}:
-            raise ValueError("provider must be one of {nist, cloudflare, custom} when enabled")
+            raise ValueError(
+                "provider must be one of {nist, cloudflare, custom} when enabled"
+            )
         if not self.endpoint:
             raise ValueError("endpoint is required when QRNG is enabled")
         u = urlparse(self.endpoint)
@@ -104,6 +108,7 @@ class StorageConfig:
 
     max_history_rounds: how many past rounds to retain (GC policy hint)
     """
+
     commitments_uri: str = "file://./data/randomness/commitments"
     reveals_uri: str = "file://./data/randomness/reveals"
     beacon_uri: str = "file://./data/randomness/beacon"
@@ -122,6 +127,7 @@ class StorageConfig:
 # Top-level config
 # -------------------------
 
+
 @dataclass
 class RandomnessConfig:
     """
@@ -138,6 +144,7 @@ class RandomnessConfig:
 
     VDF / QRNG / Storage: nested sub-configs
     """
+
     round_period_s: int = 30
     commit_window_s: int = 10
     reveal_window_s: int = 10
@@ -159,7 +166,9 @@ class RandomnessConfig:
         """Return the usable VDF window, deriving it if not set."""
         if self.vdf_window_s is not None:
             return self.vdf_window_s
-        rem = self.round_period_s - (self.commit_window_s + self.reveal_window_s + self.reveal_grace_s)
+        rem = self.round_period_s - (
+            self.commit_window_s + self.reveal_window_s + self.reveal_grace_s
+        )
         return max(rem, 0)
 
     def validate(self) -> None:
@@ -176,7 +185,9 @@ class RandomnessConfig:
             raise ValueError("max_clock_skew_s must be >= 0")
 
         vdf_win = self.effective_vdf_window_s()
-        used = self.commit_window_s + self.reveal_window_s + self.reveal_grace_s + vdf_win
+        used = (
+            self.commit_window_s + self.reveal_window_s + self.reveal_grace_s + vdf_win
+        )
         if used > self.round_period_s:
             raise ValueError(
                 f"phase windows exceed round_period_s: commit({self.commit_window_s}) "
@@ -192,7 +203,10 @@ class RandomnessConfig:
         self.storage.validate()
 
         # Sanity for anchors
-        if self.genesis_time_unix is not None and self.genesis_time_unix <= 1_500_000_000:
+        if (
+            self.genesis_time_unix is not None
+            and self.genesis_time_unix <= 1_500_000_000
+        ):
             # Arbitrary lower bound (2017) to catch unset/placeholder values
             raise ValueError("genesis_time_unix looks too old or unset")
         if self.start_height is not None and self.start_height < 0:
@@ -249,6 +263,7 @@ class RandomnessConfig:
           - ANIMICA_RAND_STORE_BEACON=file://./data/randomness/beacon
           - ANIMICA_RAND_STORE_MAX_HISTORY=4096
         """
+
         def _get(name: str, cast: Any, default: Any) -> Any:
             key = prefix + name
             raw = os.getenv(key)
@@ -285,8 +300,12 @@ class RandomnessConfig:
                 mix_weight=_get("QRNG_MIX_WEIGHT", float, 0.25),
             ),
             storage=StorageConfig(
-                commitments_uri=_get("STORE_COMMIT", str, "file://./data/randomness/commitments"),
-                reveals_uri=_get("STORE_REVEAL", str, "file://./data/randomness/reveals"),
+                commitments_uri=_get(
+                    "STORE_COMMIT", str, "file://./data/randomness/commitments"
+                ),
+                reveals_uri=_get(
+                    "STORE_REVEAL", str, "file://./data/randomness/reveals"
+                ),
                 beacon_uri=_get("STORE_BEACON", str, "file://./data/randomness/beacon"),
                 max_history_rounds=_get("STORE_MAX_HISTORY", int, 4096),
             ),
@@ -350,9 +369,15 @@ class RandomnessConfig:
                 mix_weight=_pop(qrng_d, "mix_weight", 0.25),
             ),
             storage=StorageConfig(
-                commitments_uri=_pop(storage_d, "commitments_uri", "file://./data/randomness/commitments"),
-                reveals_uri=_pop(storage_d, "reveals_uri", "file://./data/randomness/reveals"),
-                beacon_uri=_pop(storage_d, "beacon_uri", "file://./data/randomness/beacon"),
+                commitments_uri=_pop(
+                    storage_d, "commitments_uri", "file://./data/randomness/commitments"
+                ),
+                reveals_uri=_pop(
+                    storage_d, "reveals_uri", "file://./data/randomness/reveals"
+                ),
+                beacon_uri=_pop(
+                    storage_d, "beacon_uri", "file://./data/randomness/beacon"
+                ),
                 max_history_rounds=_pop(storage_d, "max_history_rounds", 4096),
             ),
         )
@@ -363,6 +388,7 @@ class RandomnessConfig:
 # -------------------------
 # Utilities
 # -------------------------
+
 
 def _read_text(path: str) -> str:
     with open(path, "r", encoding="utf-8") as f:
@@ -379,6 +405,7 @@ def _parse_json_or_yaml(text: str, path_hint: str) -> Dict[str, Any]:
     # Then try YAML if available
     try:
         import yaml  # type: ignore
+
         return yaml.safe_load(text) or {}
     except Exception as e:
         # Give a helpful error with a tiny JSON/YAML hint

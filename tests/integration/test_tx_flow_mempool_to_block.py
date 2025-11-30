@@ -42,10 +42,11 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 
 import pytest
 
-from tests.integration import env  # RUN_INTEGRATION_TESTS gate in package __init__
-
+from tests.integration import \
+    env  # RUN_INTEGRATION_TESTS gate in package __init__
 
 # -------------------------------- RPC helpers --------------------------------
+
 
 def _http_timeout() -> float:
     try:
@@ -54,13 +55,24 @@ def _http_timeout() -> float:
         return 5.0
 
 
-def _rpc_call(rpc_url: str, method: str, params: Optional[Sequence[Any] | Dict[str, Any]] = None, *, req_id: int = 1) -> Any:
+def _rpc_call(
+    rpc_url: str,
+    method: str,
+    params: Optional[Sequence[Any] | Dict[str, Any]] = None,
+    *,
+    req_id: int = 1,
+) -> Any:
     if params is None:
         params = []
     if isinstance(params, dict):
         payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
     else:
-        payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": list(params)}
+        payload = {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "method": method,
+            "params": list(params),
+        }
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         rpc_url,
@@ -78,7 +90,11 @@ def _rpc_call(rpc_url: str, method: str, params: Optional[Sequence[Any] | Dict[s
     return msg["result"]
 
 
-def _rpc_try(rpc_url: str, methods: Sequence[str], params: Optional[Sequence[Any] | Dict[str, Any]] = None) -> Tuple[str, Any]:
+def _rpc_try(
+    rpc_url: str,
+    methods: Sequence[str],
+    params: Optional[Sequence[Any] | Dict[str, Any]] = None,
+) -> Tuple[str, Any]:
     last_exc: Optional[Exception] = None
     for i, m in enumerate(methods, start=1):
         try:
@@ -86,10 +102,13 @@ def _rpc_try(rpc_url: str, methods: Sequence[str], params: Optional[Sequence[Any
         except Exception as exc:
             last_exc = exc
             continue
-    raise AssertionError(f"All RPC spellings failed ({methods}). Last error: {last_exc}")
+    raise AssertionError(
+        f"All RPC spellings failed ({methods}). Last error: {last_exc}"
+    )
 
 
 # --------------------------------- Helpers -----------------------------------
+
 
 def _as_hex(b: bytes) -> str:
     return "0x" + b.hex()
@@ -135,11 +154,17 @@ def _extract_tx_hash(send_result: Any) -> str:
             v = send_result.get(k)
             if _is_hex_hash(v):
                 return v  # type: ignore[return-value]
-    raise AssertionError(f"Unrecognized sendRawTransaction result shape: {send_result!r}")
+    raise AssertionError(
+        f"Unrecognized sendRawTransaction result shape: {send_result!r}"
+    )
 
 
 def _tx_get(rpc_url: str, tx_hash: str) -> Optional[Dict[str, Any]]:
-    for methods in (("tx.getTransactionByHash",), ("tx.getTransaction",), ("getTransactionByHash",)):
+    for methods in (
+        ("tx.getTransactionByHash",),
+        ("tx.getTransaction",),
+        ("getTransactionByHash",),
+    ):
         try:
             _, res = _rpc_try(rpc_url, methods, [tx_hash])
             if res is None:
@@ -152,7 +177,11 @@ def _tx_get(rpc_url: str, tx_hash: str) -> Optional[Dict[str, Any]]:
 
 
 def _receipt_get(rpc_url: str, tx_hash: str) -> Optional[Dict[str, Any]]:
-    for methods in (("tx.getTransactionReceipt",), ("getTransactionReceipt",), ("eth_getTransactionReceipt",)):
+    for methods in (
+        ("tx.getTransactionReceipt",),
+        ("getTransactionReceipt",),
+        ("eth_getTransactionReceipt",),
+    ):
         try:
             _, res = _rpc_try(rpc_url, methods, [tx_hash])
             if res is None:
@@ -190,6 +219,7 @@ def _is_success_receipt(rcpt: Dict[str, Any]) -> bool:
 
 # ----------------------------------- Test ------------------------------------
 
+
 @pytest.mark.timeout(240)
 def test_submit_pooled_then_included_successfully():
     rpc_url = env("ANIMICA_RPC_URL", "http://127.0.0.1:8545")
@@ -201,7 +231,11 @@ def test_submit_pooled_then_included_successfully():
     # 1) Submit the raw tx (hex-encoded CBOR)
     send_method, send_res = _rpc_try(
         rpc_url,
-        methods=("tx.sendRawTransaction", "sendRawTransaction", "eth_sendRawTransaction"),
+        methods=(
+            "tx.sendRawTransaction",
+            "sendRawTransaction",
+            "eth_sendRawTransaction",
+        ),
         params=[raw_hex],
     )
     tx_hash = _extract_tx_hash(send_res)
@@ -234,9 +268,13 @@ def test_submit_pooled_then_included_successfully():
             break
         time.sleep(poll)
 
-    assert receipt is not None, f"Transaction {tx_hash} was not included within {include_timeout:.1f}s"
+    assert (
+        receipt is not None
+    ), f"Transaction {tx_hash} was not included within {include_timeout:.1f}s"
 
-    assert _is_success_receipt(receipt), f"Transaction {tx_hash} included but not successful: {receipt!r}"
+    assert _is_success_receipt(
+        receipt
+    ), f"Transaction {tx_hash} included but not successful: {receipt!r}"
 
     # 4) If we never saw 'pending', allow fast-inclusion exception:
     #     If the tx was included in < 1 poll interval after submit, it's plausible
@@ -251,4 +289,3 @@ def test_submit_pooled_then_included_successfully():
                 f"fast inclusion allowance (2*poll={2*poll:.2f}s). "
                 "Ensure tx.getTransactionByHash exposes pending entries."
             )
-

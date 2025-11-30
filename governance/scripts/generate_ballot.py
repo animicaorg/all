@@ -37,10 +37,10 @@ import argparse
 import json
 import re
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 from uuid import uuid4
-from datetime import datetime, timedelta, timezone
 
 try:
     import yaml  # PyYAML
@@ -75,13 +75,22 @@ def _load_payload(path: Path) -> Dict[str, Any]:
 def _iso_now(now_override: Optional[str]) -> datetime:
     if now_override:
         # Accept both 'Z' and '+00:00' variants
-        s = now_override.strip().replace("Z", "+00:00") if now_override.endswith("Z") else now_override
+        s = (
+            now_override.strip().replace("Z", "+00:00")
+            if now_override.endswith("Z")
+            else now_override
+        )
         return datetime.fromisoformat(s).astimezone(timezone.utc)
     return datetime.now(tz=timezone.utc)
 
 
 def _to_iso(dt: datetime) -> str:
-    return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return (
+        dt.astimezone(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def build_ballot(
@@ -100,9 +109,15 @@ def build_ballot(
     now_iso: Optional[str],
 ) -> Dict[str, Any]:
     # Extract proposalId (prefer explicit id; fallback to title slug)
-    proposal_id = str(proposal.get("id") or proposal.get("proposal", {}).get("id") or "").strip()
+    proposal_id = str(
+        proposal.get("id") or proposal.get("proposal", {}).get("id") or ""
+    ).strip()
     if not proposal_id:
-        title = str(proposal.get("title") or proposal.get("proposal", {}).get("title") or "UNKNOWN").strip()
+        title = str(
+            proposal.get("title")
+            or proposal.get("proposal", {}).get("title")
+            or "UNKNOWN"
+        ).strip()
         safe = re.sub(r"[^A-Za-z0-9\-]+", "-", title).strip("-")
         proposal_id = f"UNKNOWN-{safe[:32]}"
 
@@ -143,7 +158,8 @@ def build_ballot(
             "value": snapshot_value,
         },
         "voter": {
-            "identity": voter_id or "anim1__________________________________placeholder",
+            "identity": voter_id
+            or "anim1__________________________________placeholder",
             "pubkey": pubkey or "0x" + "00" * 33,
             "pubkeyType": pubkey_type,
         },
@@ -175,22 +191,36 @@ def build_ballot(
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="Generate a ballot JSON from a proposal header/front-matter.")
+    ap = argparse.ArgumentParser(
+        description="Generate a ballot JSON from a proposal header/front-matter."
+    )
     ap.add_argument("proposal", help="Path to proposal file (.json|.yaml|.yml|.md)")
     ap.add_argument("--chain-id", type=int, default=2)
     ap.add_argument("--voter-id", default="")
     ap.add_argument("--pubkey", default="")
-    ap.add_argument("--pubkey-type", default="ed25519", choices=["ed25519", "secp256k1", "dilithium3"])
+    ap.add_argument(
+        "--pubkey-type",
+        default="ed25519",
+        choices=["ed25519", "secp256k1", "dilithium3"],
+    )
     ap.add_argument("--choice", default="yes", choices=["yes", "no", "abstain", "veto"])
     ap.add_argument("--weight", default="1.0")
-    ap.add_argument("--snapshot-type", default="height", choices=["height", "timestamp"])
+    ap.add_argument(
+        "--snapshot-type", default="height", choices=["height", "timestamp"]
+    )
     ap.add_argument("--snapshot-value", default="0")
     ap.add_argument("--client", default="animica-wallet/0.0.0")
-    ap.add_argument("--network", default="testnet", choices=["mainnet", "testnet", "localnet"])
+    ap.add_argument(
+        "--network", default="testnet", choices=["mainnet", "testnet", "localnet"]
+    )
     ap.add_argument("--reason", default="")
     ap.add_argument("--out", default="")
     ap.add_argument("--pretty", action="store_true")
-    ap.add_argument("--now", default=None, help="Override clock (ISO8601). Useful for deterministic CI.")
+    ap.add_argument(
+        "--now",
+        default=None,
+        help="Override clock (ISO8601). Useful for deterministic CI.",
+    )
     args = ap.parse_args(argv)
 
     try:
@@ -219,7 +249,9 @@ def main(argv=None) -> int:
     if args.out:
         out_path = Path(args.out)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(out_text + ("\n" if not out_text.endswith("\n") else ""), encoding="utf-8")
+        out_path.write_text(
+            out_text + ("\n" if not out_text.endswith("\n") else ""), encoding="utf-8"
+        )
         print(f"Wrote {out_path}")
     else:
         print(out_text)

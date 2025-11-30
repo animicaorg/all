@@ -36,10 +36,10 @@ import pytest
 
 from tests.integration import env  # package-level gate & env helper
 
-
 # ------------------------------- Common helpers -------------------------------
 
 HEX_RE = re.compile(r"0x[0-9a-fA-F]{64,128}")
+
 
 def _http_timeout() -> float:
     try:
@@ -48,7 +48,13 @@ def _http_timeout() -> float:
         return 5.0
 
 
-def _rpc_call(rpc_url: str, method: str, params: Optional[Sequence[Any] | Dict[str, Any]] = None, *, req_id: int = 1) -> Any:
+def _rpc_call(
+    rpc_url: str,
+    method: str,
+    params: Optional[Sequence[Any] | Dict[str, Any]] = None,
+    *,
+    req_id: int = 1,
+) -> Any:
     if params is None:
         params = []
     payload = {
@@ -71,7 +77,11 @@ def _rpc_call(rpc_url: str, method: str, params: Optional[Sequence[Any] | Dict[s
     return msg["result"]
 
 
-def _rpc_try(rpc_url: str, methods: Sequence[str], params: Optional[Sequence[Any] | Dict[str, Any]] = None) -> Tuple[str, Any]:
+def _rpc_try(
+    rpc_url: str,
+    methods: Sequence[str],
+    params: Optional[Sequence[Any] | Dict[str, Any]] = None,
+) -> Tuple[str, Any]:
     last_exc: Optional[Exception] = None
     for i, m in enumerate(methods, start=1):
         try:
@@ -95,7 +105,9 @@ def _get_head_height(rpc_url: str) -> int:
             continue
     # Fallback through latest block
     try:
-        _, res = _rpc_try(rpc_url, ("chain.getBlockByNumber",), ["latest", False, False])
+        _, res = _rpc_try(
+            rpc_url, ("chain.getBlockByNumber",), ["latest", False, False]
+        )
         if isinstance(res, dict):
             if "number" in res:
                 return int(res["number"])
@@ -103,7 +115,9 @@ def _get_head_height(rpc_url: str) -> int:
                 return int(res["height"])
     except Exception:
         pass
-    pytest.skip("Could not determine head height (no chain.getHead/eth_blockNumber available)")
+    pytest.skip(
+        "Could not determine head height (no chain.getHead/eth_blockNumber available)"
+    )
     raise AssertionError("unreachable")
 
 
@@ -114,7 +128,9 @@ def _ensure_next_block(rpc_url: str, after_height: int) -> int:
         if h > after_height:
             return h
         time.sleep(1.0)
-    pytest.skip(f"No new block observed within timeout; last height={_get_head_height(rpc_url)}")
+    pytest.skip(
+        f"No new block observed within timeout; last height={_get_head_height(rpc_url)}"
+    )
     raise AssertionError("unreachable")
 
 
@@ -150,6 +166,7 @@ def _parse_task_id_from_text(s: str) -> Optional[str]:
 
 
 # ------------------------------- Fixture loading ------------------------------
+
 
 def _read_circuit_fixture() -> Dict[str, Any]:
     """
@@ -188,6 +205,7 @@ def _quantum_job_spec() -> Dict[str, Any]:
 
 # -------------------------------- Enqueue paths -------------------------------
 
+
 def _enqueue_via_cli(rpc_url: str) -> str:
     """
     Try: python -m capabilities.cli.enqueue_quantum --rpc <url> [--circuit <path> | --circuit-json <json>]
@@ -202,33 +220,51 @@ def _enqueue_via_cli(rpc_url: str) -> str:
     # Prefer file path if fixture exists; else pass JSON inline with a common flag name.
     if circuit_path.is_file():
         cmd = [
-            py_exec, "-m", "capabilities.cli.enqueue_quantum",
-            "--rpc", rpc_url,
-            "--circuit", str(circuit_path),
-            "--shots", shots,
-            "--traps-ratio", traps,
+            py_exec,
+            "-m",
+            "capabilities.cli.enqueue_quantum",
+            "--rpc",
+            rpc_url,
+            "--circuit",
+            str(circuit_path),
+            "--shots",
+            shots,
+            "--traps-ratio",
+            traps,
         ]
     else:
         cmd = [
-            py_exec, "-m", "capabilities.cli.enqueue_quantum",
-            "--rpc", rpc_url,
-            "--circuit-json", json.dumps(_read_circuit_fixture()),
-            "--shots", shots,
-            "--traps-ratio", traps,
+            py_exec,
+            "-m",
+            "capabilities.cli.enqueue_quantum",
+            "--rpc",
+            rpc_url,
+            "--circuit-json",
+            json.dumps(_read_circuit_fixture()),
+            "--shots",
+            shots,
+            "--traps-ratio",
+            traps,
         ]
     try:
-        proc = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=60)
+        proc = subprocess.run(
+            cmd, check=True, capture_output=True, text=True, timeout=60
+        )
     except FileNotFoundError:
         pytest.skip("Python executable not found for CLI path")
     except subprocess.CalledProcessError as exc:
-        raise AssertionError(f"enqueue_quantum CLI failed: {exc.stderr or exc.stdout}") from exc
+        raise AssertionError(
+            f"enqueue_quantum CLI failed: {exc.stderr or exc.stdout}"
+        ) from exc
     except Exception as exc:
         pytest.skip(f"enqueue_quantum CLI not available: {exc}")
 
     out = (proc.stdout or "") + "\n" + (proc.stderr or "")
     task_id = _parse_task_id_from_text(out)
     if not task_id:
-        raise AssertionError(f"Could not parse task_id from enqueue_quantum output:\n{out}")
+        raise AssertionError(
+            f"Could not parse task_id from enqueue_quantum output:\n{out}"
+        )
     return task_id
 
 
@@ -242,7 +278,12 @@ def _enqueue_via_rpc(rpc_url: str) -> str:
     Returns task_id hex.
     """
     req = _quantum_job_spec()
-    methods = ("cap.enqueueQuantum", "cap.enqueue", "capabilities.enqueue", "aicf.enqueueQuantum")
+    methods = (
+        "cap.enqueueQuantum",
+        "cap.enqueue",
+        "capabilities.enqueue",
+        "aicf.enqueueQuantum",
+    )
     last_err: Optional[Exception] = None
     for m in methods:
         try:
@@ -258,7 +299,9 @@ def _enqueue_via_rpc(rpc_url: str) -> str:
             last_err = exc
             continue
     if last_err:
-        raise AssertionError(f"RPC enqueue for quantum failed via {methods}: {last_err}")
+        raise AssertionError(
+            f"RPC enqueue for quantum failed via {methods}: {last_err}"
+        )
     raise AssertionError("Unexpected: quantum enqueue RPC returned no usable task_id")
 
 
@@ -278,6 +321,7 @@ def _enqueue_job(rpc_url: str) -> str:
 
 
 # ------------------------------ Result retrieval ------------------------------
+
 
 def _get_job(rpc_url: str, task_id: str) -> Optional[Dict[str, Any]]:
     for m in ("cap.getJob", "capabilities.getJob", "aicf.getJob"):
@@ -303,6 +347,7 @@ def _get_result(rpc_url: str, task_id: str) -> Optional[Dict[str, Any]]:
 
 # ------------------------------------ Test ------------------------------------
 
+
 @pytest.mark.timeout(480)
 def test_quantum_traps_flow_end_to_end():
     rpc_url = env("ANIMICA_RPC_URL", "http://127.0.0.1:8545")
@@ -312,7 +357,9 @@ def test_quantum_traps_flow_end_to_end():
 
     # Enqueue the quantum job (trap circuit)
     task_id = _enqueue_job(rpc_url)
-    assert isinstance(task_id, str) and task_id.startswith("0x"), f"Bad task_id: {task_id}"
+    assert isinstance(task_id, str) and task_id.startswith(
+        "0x"
+    ), f"Bad task_id: {task_id}"
 
     # Ensure at least one new block after enqueue
     _ensure_next_block(rpc_url, h0)
@@ -330,7 +377,9 @@ def test_quantum_traps_flow_end_to_end():
         if res:
             last_res = res
             status = res.get("status") or res.get("state") or res.get("ok")
-            if _status_ok(status) or any(k in res for k in ("proof", "digest", "metrics", "output")):
+            if _status_ok(status) or any(
+                k in res for k in ("proof", "digest", "metrics", "output")
+            ):
                 break
         time.sleep(1.0)
 
@@ -338,10 +387,14 @@ def test_quantum_traps_flow_end_to_end():
         pytest.skip(f"Quantum result not available within timeout; last_job={last_job}")
 
     # Sanity checks on the result object
-    assert last_res.get("task_id", task_id).lower() == task_id.lower(), f"Result task_id mismatch: {last_res}"
+    assert (
+        last_res.get("task_id", task_id).lower() == task_id.lower()
+    ), f"Result task_id mismatch: {last_res}"
 
     # Expect at least one of these keys: proof (reference), metrics (traps/qos), output/digest
-    assert any(k in last_res for k in ("proof", "metrics", "digest", "output")), f"Incomplete quantum result: {last_res}"
+    assert any(
+        k in last_res for k in ("proof", "metrics", "digest", "output")
+    ), f"Incomplete quantum result: {last_res}"
 
     # If metrics are present, lightly sanity check traps-related fields
     metrics = last_res.get("metrics")
@@ -354,4 +407,3 @@ def test_quantum_traps_flow_end_to_end():
             if key in metrics:
                 v = float(metrics[key])
                 assert 0.0 <= v <= 1.0, f"{key} out of range: {v}"
-

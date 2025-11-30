@@ -13,6 +13,7 @@ limiter_mod = pytest.importorskip(
 # Deterministic fake clock
 # -------------------------
 
+
 class FakeClock:
     def __init__(self, t: float = 0.0):
         self.t = float(t)
@@ -54,6 +55,7 @@ def _patch_clock(monkeypatch: pytest.MonkeyPatch, clk: FakeClock) -> None:
 # Generic constructors/helpers
 # -------------------------
 
+
 def _get_attr_any(obj: Any, names: Iterable[str]) -> Optional[Any]:
     for n in names:
         if hasattr(obj, n):
@@ -61,7 +63,9 @@ def _get_attr_any(obj: Any, names: Iterable[str]) -> Optional[Any]:
     return None
 
 
-def _make_token_bucket(rate_per_s: float, burst: float, clk: FakeClock) -> tuple[Any, callable]:
+def _make_token_bucket(
+    rate_per_s: float, burst: float, clk: FakeClock
+) -> tuple[Any, callable]:
     """
     Try to construct a token-bucket from whatever names the module exposes.
     Returns (bucket, consume_fn) where consume_fn(n_tokens)->bool.
@@ -163,6 +167,7 @@ def _wrap_consume(fn: callable) -> callable:
     """
     Normalize different consume-style signatures/returns into a bool-returning function.
     """
+
     def consume(n: float = 1.0) -> bool:
         try:
             res = fn(n)  # type: ignore[misc]
@@ -185,11 +190,17 @@ def _wrap_consume(fn: callable) -> callable:
                 return head >= 0
         # If method just mutates and returns None, assume success
         return True
+
     return consume
 
 
-def _make_per_peer_limiter(clk: FakeClock, tx_rps: float, tx_burst: int,
-                           byte_rps: Optional[float] = None, byte_burst: Optional[int] = None) -> tuple[Any, callable]:
+def _make_per_peer_limiter(
+    clk: FakeClock,
+    tx_rps: float,
+    tx_burst: int,
+    byte_rps: Optional[float] = None,
+    byte_burst: Optional[int] = None,
+) -> tuple[Any, callable]:
     """
     Construct a per-peer limiter (or combined limiter) if available.
     Returns (limiter, admit(peer, cost_tx, cost_bytes)->bool).
@@ -218,8 +229,20 @@ def _make_per_peer_limiter(clk: FakeClock, tx_rps: float, tx_burst: int,
             continue
         # Try various constructor signatures
         ctor_attempts = [
-            dict(tx_rps=tx_rps, tx_burst=tx_burst, byte_rps=byte_rps, byte_burst=byte_burst, now_fn=clk.now),
-            dict(tx_rate=tx_rps, tx_burst=tx_burst, bytes_rate=byte_rps, bytes_burst=byte_burst, now_fn=clk.now),
+            dict(
+                tx_rps=tx_rps,
+                tx_burst=tx_burst,
+                byte_rps=byte_rps,
+                byte_burst=byte_burst,
+                now_fn=clk.now,
+            ),
+            dict(
+                tx_rate=tx_rps,
+                tx_burst=tx_burst,
+                bytes_rate=byte_rps,
+                bytes_burst=byte_burst,
+                now_fn=clk.now,
+            ),
             dict(rps=tx_rps, burst=tx_burst, now_fn=clk.now),
             dict(per_peer_rps=tx_rps, per_peer_burst=tx_burst, now_fn=clk.now),
             dict(tx_rps=tx_rps, tx_burst=tx_burst, now=clk.now),
@@ -238,6 +261,7 @@ def _make_per_peer_limiter(clk: FakeClock, tx_rps: float, tx_burst: int,
             # find admit-like method
             m = _get_attr_any(inst, method_names)
             if callable(m):
+
                 def admit(peer_id: Any, cost_tx: int = 1, cost_bytes: int = 0) -> bool:
                     # Try common signatures
                     for args2 in (
@@ -245,7 +269,7 @@ def _make_per_peer_limiter(clk: FakeClock, tx_rps: float, tx_burst: int,
                         (peer_id, cost_tx),
                         (peer_id,),
                         (cost_tx, cost_bytes),
-                        ({'peer': peer_id, 'tx': cost_tx, 'bytes': cost_bytes},),
+                        ({"peer": peer_id, "tx": cost_tx, "bytes": cost_bytes},),
                     ):
                         try:
                             res = m(*args2)  # type: ignore[misc]
@@ -274,11 +298,13 @@ def _make_per_peer_limiter(clk: FakeClock, tx_rps: float, tx_burst: int,
                         except Exception:
                             continue
                     return False
+
                 return inst, admit
 
     # Fallback: construct our own per-peer map using the module's bucket
     bucket_rate = tx_rps
     bucket_burst = tx_burst
+
     def new() -> Any:
         return types.SimpleNamespace(buckets={}, rps=bucket_rate, burst=bucket_burst)
 
@@ -301,6 +327,7 @@ def _make_per_peer_limiter(clk: FakeClock, tx_rps: float, tx_burst: int,
 # Tests
 # -------------------------
 
+
 def test_token_bucket_burst_and_refill(monkeypatch: pytest.MonkeyPatch):
     """
     Basic token-bucket behavior: allow up to burst instantly, then block,
@@ -309,8 +336,8 @@ def test_token_bucket_burst_and_refill(monkeypatch: pytest.MonkeyPatch):
     clk = FakeClock(0.0)
     _patch_clock(monkeypatch, clk)
 
-    rate = 5.0   # tokens per second
-    burst = 10.0 # max instant burst
+    rate = 5.0  # tokens per second
+    burst = 10.0  # max instant burst
 
     bucket, consume = _make_token_bucket(rate, burst, clk)
 
@@ -364,7 +391,9 @@ def test_per_peer_limits_are_isolated(monkeypatch: pytest.MonkeyPatch):
     clk.advance(0.5)
     # P1 should get ~1 token, so a single admit should pass and next should fail
     assert admit(P1), "P1 should get a partial refill after 0.5s"
-    assert not admit(P1), "P1 should still be limited after consuming the partial refill"
+    assert not admit(
+        P1
+    ), "P1 should still be limited after consuming the partial refill"
 
 
 def test_global_limit_blocks_all_when_saturated(monkeypatch: pytest.MonkeyPatch):
@@ -401,8 +430,12 @@ def test_global_limit_blocks_all_when_saturated(monkeypatch: pytest.MonkeyPatch)
             m = _get_attr_any(inst, admit_names)
             if callable(m):
                 global_inst = inst
+
                 def _admit_global(cost: int = 1) -> bool:
-                    for args in ((cost,), tuple(), ):
+                    for args in (
+                        (cost,),
+                        tuple(),
+                    ):
                         try:
                             res = m(*args)  # type: ignore[misc]
                         except TypeError:
@@ -425,6 +458,7 @@ def test_global_limit_blocks_all_when_saturated(monkeypatch: pytest.MonkeyPatch)
                         except Exception:
                             continue
                     return False
+
                 admit_fn = _admit_global
                 break
         if admit_fn:
@@ -440,10 +474,10 @@ def test_global_limit_blocks_all_when_saturated(monkeypatch: pytest.MonkeyPatch)
     assert admit_fn()
     assert admit_fn()
     # Next should be blocked (no per-peer escape)
-    assert not admit_fn(), "global limiter should block further admits after burst exhausted"
+    assert (
+        not admit_fn()
+    ), "global limiter should block further admits after burst exhausted"
 
     # Advance time for 1s @ 3 rps ⇒ ~3 tokens back; at least one admit should pass
     clk.advance(1.0)
     assert admit_fn(), "global limiter should allow after refill"
-
-

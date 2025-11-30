@@ -97,14 +97,16 @@ Security & invariants
 """
 from __future__ import annotations
 
-from typing import Final, Tuple, Dict
+from typing import Dict, Final, Tuple
 
+from stdlib import storage  # type: ignore
 from stdlib import abi, events  # type: ignore
 from stdlib import hash as _hash  # type: ignore
-from stdlib import storage  # type: ignore
 
 # Reuse treasury helpers from the sibling module
-from . import balance as _trez_balance, transfer as _trez_transfer, require_min_balance as _trez_require
+from . import balance as _trez_balance
+from . import require_min_balance as _trez_require
+from . import transfer as _trez_transfer
 
 # ---------- Constants & status codes ----------
 
@@ -129,10 +131,12 @@ _P_RESERVED_TOTAL: Final[bytes] = b"esc:reserved_total"
 
 # ---------- Small encode/decode helpers ----------
 
+
 def _u256_to_bytes(x: int) -> bytes:
     if x < 0 or x > _U256_MAX:
         abi.revert(b"ESCROW:NEG_AMOUNT")
     return int(x).to_bytes(32, "big")
+
 
 def _bytes_to_u256(b: bytes) -> int:
     if len(b) == 0:
@@ -142,35 +146,48 @@ def _bytes_to_u256(b: bytes) -> int:
         abi.revert(b"ESCROW:NOT_FOUND")
     return int.from_bytes(b, "big")
 
+
 def _set_u256(k: bytes, x: int) -> None:
     storage.set(k, _u256_to_bytes(x))
+
 
 def _get_u256(k: bytes) -> int:
     return _bytes_to_u256(storage.get(k))
 
+
 def _setb(k: bytes, v: bytes) -> None:
     storage.set(k, bytes(v))
+
 
 def _getb(k: bytes) -> bytes:
     return storage.get(k)
 
+
 def _k(prefix: bytes, id_: bytes) -> bytes:
     return prefix + id_
+
 
 def _exists(id_: bytes) -> bool:
     return storage.get(_k(_P_EX, id_)) == b"\x01"
 
+
 def _set_exists(id_: bytes) -> None:
     storage.set(_k(_P_EX, id_), b"\x01")
 
-def _del_exists(id_: bytes) -> None:  # kept for completeness (not used; we keep audit trails)
+
+def _del_exists(
+    id_: bytes,
+) -> None:  # kept for completeness (not used; we keep audit trails)
     storage.set(_k(_P_EX, id_), b"")
 
+
 # ---------- Public getters ----------
+
 
 def reserved_total() -> int:
     """Current total reserved amount across all OPEN/DISPUTED escrows."""
     return _get_u256(_P_RESERVED_TOTAL)
+
 
 def available_balance() -> int:
     """Treasury balance not reserved by any escrow."""
@@ -179,7 +196,10 @@ def available_balance() -> int:
     # Invariant: res <= bal is expected; if not, available floors at 0
     return bal - res if bal >= res else 0
 
-def compute_id(payer: bytes, payee: bytes, amount: int, deadline: int, nonce: bytes) -> bytes:
+
+def compute_id(
+    payer: bytes, payee: bytes, amount: int, deadline: int, nonce: bytes
+) -> bytes:
     """
     Deterministic escrow id. Contracts should persist/emit this id to reference escrows.
     """
@@ -188,7 +208,10 @@ def compute_id(payer: bytes, payee: bytes, amount: int, deadline: int, nonce: by
     _require_nonnegative(amount)
     _require_u256(deadline)
     # id = keccak256(payer|payee|u256(amount)|u256(deadline)|nonce)
-    return _hash.keccak256(payer + payee + _u256_to_bytes(amount) + _u256_to_bytes(deadline) + bytes(nonce))
+    return _hash.keccak256(
+        payer + payee + _u256_to_bytes(amount) + _u256_to_bytes(deadline) + bytes(nonce)
+    )
+
 
 def info(id_: bytes) -> Dict[bytes, bytes]:
     """
@@ -204,10 +227,19 @@ def info(id_: bytes) -> Dict[bytes, bytes]:
         b"arbiter": _getb(_k(_P_ARBITER, id_)),
         b"amount": _get_u256(_k(_P_AMOUNT, id_)).to_bytes(32, "big"),
         b"deadline": _get_u256(_k(_P_DEADLINE, id_)).to_bytes(32, "big"),
-        b"status": bytes([storage.get(_k(_P_STATUS, id_))[0] if storage.get(_k(_P_STATUS, id_)) else 0]),
+        b"status": bytes(
+            [
+                (
+                    storage.get(_k(_P_STATUS, id_))[0]
+                    if storage.get(_k(_P_STATUS, id_))
+                    else 0
+                )
+            ]
+        ),
         b"meta": _getb(_k(_P_META, id_)),
         b"reason": _getb(_k(_P_REASON, id_)),
     }
+
 
 def status(id_: bytes) -> int:
     if not _exists(id_):
@@ -215,9 +247,19 @@ def status(id_: bytes) -> int:
     sb = storage.get(_k(_P_STATUS, id_))
     return sb[0] if len(sb) == 1 else 0
 
+
 # ---------- Core operations ----------
 
-def open(payer: bytes, payee: bytes, amount: int, deadline: int, nonce: bytes, arbiter: bytes=b"", meta: bytes=b"") -> bytes:
+
+def open(
+    payer: bytes,
+    payee: bytes,
+    amount: int,
+    deadline: int,
+    nonce: bytes,
+    arbiter: bytes = b"",
+    meta: bytes = b"",
+) -> bytes:
     """
     Open a new escrow, reserving `amount` from the contract's treasury balance.
 
@@ -262,18 +304,22 @@ def open(payer: bytes, payee: bytes, amount: int, deadline: int, nonce: bytes, a
     # Increase reserved
     _set_u256(_P_RESERVED_TOTAL, reserved_total() + int(amount))
 
-    events.emit(b"EscrowOpened", {
-        b"id": id_,
-        b"payer": payer,
-        b"payee": payee,
-        b"arbiter": bytes(arbiter),
-        b"amount": _u256_to_bytes(int(amount)),
-        b"deadline": _u256_to_bytes(int(deadline)),
-        b"meta": bytes(meta),
-    })
+    events.emit(
+        b"EscrowOpened",
+        {
+            b"id": id_,
+            b"payer": payer,
+            b"payee": payee,
+            b"arbiter": bytes(arbiter),
+            b"amount": _u256_to_bytes(int(amount)),
+            b"deadline": _u256_to_bytes(int(deadline)),
+            b"meta": bytes(meta),
+        },
+    )
     return id_
 
-def dispute(id_: bytes, actor: bytes, reason: bytes=b"") -> None:
+
+def dispute(id_: bytes, actor: bytes, reason: bytes = b"") -> None:
     """
     Move OPEN → DISPUTED. Only payer or payee may dispute.
     """
@@ -292,6 +338,7 @@ def dispute(id_: bytes, actor: bytes, reason: bytes=b"") -> None:
     _setb(_k(_P_STATUS, id_), bytes([DISPUTED]))
     _setb(_k(_P_REASON, id_), bytes(reason or b""))
     events.emit(b"EscrowDisputed", {b"id": id_, b"reason": bytes(reason or b"")})
+
 
 def release(id_: bytes, actor: bytes) -> None:
     """
@@ -312,6 +359,7 @@ def release(id_: bytes, actor: bytes) -> None:
 
     amt = _get_u256(_k(_P_AMOUNT, id_))
     _finalize_payout(id_, amt, payee, is_refund=False)
+
 
 def refund(id_: bytes, actor: bytes, now_height: int) -> None:
     """
@@ -353,7 +401,10 @@ def refund(id_: bytes, actor: bytes, now_height: int) -> None:
     amt = _get_u256(_k(_P_AMOUNT, id_))
     _finalize_payout(id_, amt, payer, is_refund=True)
 
-def resolve(id_: bytes, actor: bytes, payout_to_payee: bool, reason: bytes=b"") -> None:
+
+def resolve(
+    id_: bytes, actor: bytes, payout_to_payee: bool, reason: bytes = b""
+) -> None:
     """
     DISPUTED → (PAID|REFUNDED) by arbiter only.
     """
@@ -376,14 +427,24 @@ def resolve(id_: bytes, actor: bytes, payout_to_payee: bool, reason: bytes=b"") 
 
     if payout_to_payee:
         _finalize_payout(id_, amt, payee, is_refund=False)
-        events.emit(b"EscrowResolved", {b"id": id_, b"outcome": b"paid", b"reason": bytes(reason or b"")})
+        events.emit(
+            b"EscrowResolved",
+            {b"id": id_, b"outcome": b"paid", b"reason": bytes(reason or b"")},
+        )
     else:
         _finalize_payout(id_, amt, payer, is_refund=True)
-        events.emit(b"EscrowResolved", {b"id": id_, b"outcome": b"refunded", b"reason": bytes(reason or b"")})
+        events.emit(
+            b"EscrowResolved",
+            {b"id": id_, b"outcome": b"refunded", b"reason": bytes(reason or b"")},
+        )
+
 
 # ---------- Internal helpers ----------
 
-def _finalize_payout(id_: bytes, amount: int, to_addr: bytes, *, is_refund: bool) -> None:
+
+def _finalize_payout(
+    id_: bytes, amount: int, to_addr: bytes, *, is_refund: bool
+) -> None:
     """
     Common tail for OPEN/DISPUTED terminal transitions:
       - decrease reserved_total
@@ -413,27 +474,42 @@ def _finalize_payout(id_: bytes, amount: int, to_addr: bytes, *, is_refund: bool
     else:
         events.emit(b"EscrowReleased", {b"id": id_, b"amount": _u256_to_bytes(amount)})
 
+
 # ---------- Validation ----------
+
 
 def _require_addr(addr: bytes) -> None:
     if not isinstance(addr, (bytes, bytearray)) or len(addr) == 0:
         abi.revert(b"ESCROW:ZERO_ADDR")
 
+
 def _require_nonnegative(x: int) -> None:
     if x < 0:
         abi.revert(b"ESCROW:NEG_AMOUNT")
+
 
 def _require_u256(x: int) -> None:
     if x < 0 or x > _U256_MAX:
         abi.revert(b"ESCROW:NEG_AMOUNT")
 
+
 __all__ = [
     # constants
-    "OPEN", "PAID", "REFUNDED", "DISPUTED",
+    "OPEN",
+    "PAID",
+    "REFUNDED",
+    "DISPUTED",
     # balance views
-    "reserved_total", "available_balance",
+    "reserved_total",
+    "available_balance",
     # id & queries
-    "compute_id", "info", "status",
+    "compute_id",
+    "info",
+    "status",
     # operations
-    "open", "dispute", "release", "refund", "resolve",
+    "open",
+    "dispute",
+    "release",
+    "refund",
+    "resolve",
 ]

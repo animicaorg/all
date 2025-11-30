@@ -1,10 +1,10 @@
+import inspect
 import sys
 import types
-import inspect
-import pytest
 
 # The module under test
 import omni_sdk.contracts.codegen as cg
+import pytest
 
 
 def _pick_generator():
@@ -52,13 +52,16 @@ def _install_client_stub():
     so the generated code can import it without talking to a real node.
     """
     pkg = sys.modules.setdefault("omni_sdk", types.ModuleType("omni_sdk"))
-    sub = sys.modules.setdefault("omni_sdk.contracts", types.ModuleType("omni_sdk.contracts"))
+    sub = sys.modules.setdefault(
+        "omni_sdk.contracts", types.ModuleType("omni_sdk.contracts")
+    )
 
     client_mod = types.ModuleType("omni_sdk.contracts.client")
 
     class DummyTx:
         def __init__(self):
             self.sign_bytes = b"\x00"
+
         def attach_signature(self, **kwargs):
             return None
 
@@ -68,17 +71,21 @@ def _install_client_stub():
             self.address = address
             self.abi = abi
             self.chain_id = chain_id
+
         # common read path
         def read(self, fn_name, *args, **kwargs):
             if fn_name == "get":
                 return 42
             return None
+
         # some generators may use "call" for read
         def call(self, fn_name, *args, **kwargs):
             return self.read(fn_name, *args, **kwargs)
+
         # write path — return a dummy tx object
         def build_tx(self, fn_name, *args, **kwargs):
             return DummyTx()
+
         # estimate path (optional)
         def estimate_gas(self, fn_name, *args, **kwargs):
             return 123456
@@ -90,12 +97,26 @@ def _install_client_stub():
 def test_codegen_emits_valid_source_and_compiles():
     gen = _pick_generator()
     if gen is None:
-        pytest.skip("no suitable generator function found in omni_sdk.contracts.codegen")
+        pytest.skip(
+            "no suitable generator function found in omni_sdk.contracts.codegen"
+        )
 
     # Minimal ABI for Counter: get() -> uint64 (view), inc() (nonpayable)
     abi = [
-        {"type": "function", "name": "get", "inputs": [], "outputs": [{"name": "", "type": "uint64"}], "stateMutability": "view"},
-        {"type": "function", "name": "inc", "inputs": [], "outputs": [], "stateMutability": "nonpayable"},
+        {
+            "type": "function",
+            "name": "get",
+            "inputs": [],
+            "outputs": [{"name": "", "type": "uint64"}],
+            "stateMutability": "view",
+        },
+        {
+            "type": "function",
+            "name": "inc",
+            "inputs": [],
+            "outputs": [],
+            "stateMutability": "nonpayable",
+        },
     ]
 
     src = _invoke_generator(gen, abi, class_name="Counter")
@@ -129,5 +150,3 @@ def test_codegen_emits_valid_source_and_compiles():
     tx = c.inc(sender="anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq")
     # Accept either a tx-like object with .sign_bytes or any non-raising return
     assert tx is None or hasattr(tx, "sign_bytes")
-
-

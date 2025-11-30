@@ -23,13 +23,13 @@ Utilities
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Union, Sequence
-
+from typing import Any, Dict, Optional, Sequence, Union
 
 HexLike = Union[str, bytes, bytearray, memoryview]
 
 
 # ------------------------------ hex helpers ---------------------------------
+
 
 def _hex_to_bytes(v: HexLike) -> bytes:
     if isinstance(v, (bytes, bytearray, memoryview)):
@@ -55,6 +55,7 @@ def _bytes_to_hex(b: Optional[bytes]) -> Optional[str]:
 
 # ------------------------------ dataclasses ---------------------------------
 
+
 @dataclass(frozen=True)
 class BlockContext:
     """
@@ -67,6 +68,7 @@ class BlockContext:
         coinbase:  bytes     — miner/validator reward address
         base_fee:  int >= 0  — protocol base fee used in fee accounting (optional; default 0)
     """
+
     height: int
     timestamp: int
     chain_id: int
@@ -137,6 +139,7 @@ class TxContext:
         to:         Optional[bytes] — call/deploy target (None for contract creation)
         tx_hash:    Optional[bytes] — canonical tx hash (if known prior to execution)
     """
+
     sender: bytes
     chain_id: int
     nonce: int
@@ -165,11 +168,19 @@ class TxContext:
         if len(sender_b) < 8:
             raise ValueError(f"sender address too short: {len(sender_b)} bytes")
 
-        to_b = _hex_to_bytes(to) if isinstance(to, (str, bytes, bytearray, memoryview)) else (bytes(to) if to is not None else None)
+        to_b = (
+            _hex_to_bytes(to)
+            if isinstance(to, (str, bytes, bytearray, memoryview))
+            else (bytes(to) if to is not None else None)
+        )
         if to_b is not None and len(to_b) < 8:
             raise ValueError(f"'to' address too short: {len(to_b)} bytes")
 
-        txh_b = _hex_to_bytes(tx_hash) if isinstance(tx_hash, (str, bytes, bytearray, memoryview)) else (bytes(tx_hash) if tx_hash is not None else None)
+        txh_b = (
+            _hex_to_bytes(tx_hash)
+            if isinstance(tx_hash, (str, bytes, bytearray, memoryview))
+            else (bytes(tx_hash) if tx_hash is not None else None)
+        )
 
         object.__setattr__(self, "sender", sender_b)
         object.__setattr__(self, "chain_id", chain_id)

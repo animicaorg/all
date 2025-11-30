@@ -45,16 +45,18 @@ except Exception:
         from vm_py.runtime import storage_api as _storage_api  # type: ignore
 
         storage = SimpleNamespace(  # type: ignore[assignment]
-            get=lambda key: _storage_api.get(  # address-binding handled by higher layer
-                getattr(_storage_api, "ADDRESS", b""), key
-            )
-            if hasattr(_storage_api, "ADDRESS")
-            else _storage_api.get(b"", key),
-            set=lambda key, value: _storage_api.set(
-                getattr(_storage_api, "ADDRESS", b""), key, value
-            )
-            if hasattr(_storage_api, "ADDRESS")
-            else _storage_api.set(b"", key, value),
+            get=lambda key: (
+                _storage_api.get(  # address-binding handled by higher layer
+                    getattr(_storage_api, "ADDRESS", b""), key
+                )
+                if hasattr(_storage_api, "ADDRESS")
+                else _storage_api.get(b"", key)
+            ),
+            set=lambda key, value: (
+                _storage_api.set(getattr(_storage_api, "ADDRESS", b""), key, value)
+                if hasattr(_storage_api, "ADDRESS")
+                else _storage_api.set(b"", key, value)
+            ),
         )
     except Exception:  # pragma: no cover
         storage = SimpleNamespace(  # type: ignore[assignment]
@@ -115,7 +117,9 @@ except Exception:
     except Exception:  # pragma: no cover
         abi = SimpleNamespace(  # type: ignore[assignment]
             revert=lambda msg=b"": (_ for _ in ()).throw(RuntimeError(msg)),
-            require=lambda cond, msg=b"": (_ for _ in ()).throw(RuntimeError(msg)) if not cond else None,
+            require=lambda cond, msg=b"": (
+                (_ for _ in ()).throw(RuntimeError(msg)) if not cond else None
+            ),
         )
 
 # -- treasury ----------------------------------------------------------------
@@ -146,7 +150,9 @@ except Exception:
         syscalls = SimpleNamespace(  # type: ignore[assignment]
             blob_pin=getattr(_syscalls_api, "blob_pin", lambda ns, data: None),
             ai_enqueue=getattr(_syscalls_api, "ai_enqueue", lambda *a, **k: None),
-            quantum_enqueue=getattr(_syscalls_api, "quantum_enqueue", lambda *a, **k: None),
+            quantum_enqueue=getattr(
+                _syscalls_api, "quantum_enqueue", lambda *a, **k: None
+            ),
             read_result=getattr(_syscalls_api, "read_result", lambda task_id: None),
             zk_verify=getattr(_syscalls_api, "zk_verify", lambda *a, **k: False),
             random=getattr(_syscalls_api, "random", lambda n: b""),

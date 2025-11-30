@@ -6,28 +6,31 @@ import logging
 import signal
 import time
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import (Any, Awaitable, Callable, Dict, Iterable, List, Optional,
+                    Tuple)
 
 # Local imports are intentionally late/dynamic in a few places to avoid import cycles.
 from .. import version as p2p_version
-from ..metrics import get_metrics  # light wrapper; no-op metrics if not configured
 from ..config import P2PConfig  # typed config (see p2p/config.py)
-from ..transport import base as tbase
-from ..transport import multiaddr as ma
-from ..peer import peerstore as pstore
+from ..metrics import \
+    get_metrics  # light wrapper; no-op metrics if not configured
 from ..peer import connection_manager as conman
 from ..peer import identify as idsvc
+from ..peer import peerstore as pstore
 from ..peer import ping as pingsvc
 from ..peer import ratelimit as prlimit
+from ..transport import base as tbase
+from ..transport import multiaddr as ma
+
 try:
     from ..gossip import engine as gossip_engine
     from ..gossip import topics as gossip_topics
+    from ..protocol import block_announce as proto_blk
+    from ..protocol import flow_control as proto_flow
     from ..protocol import hello as proto_hello
     from ..protocol import inventory as proto_inv
-    from ..protocol import block_announce as proto_blk
-    from ..protocol import tx_relay as proto_tx
     from ..protocol import share_relay as proto_share
-    from ..protocol import flow_control as proto_flow
+    from ..protocol import tx_relay as proto_tx
     from ..wire import encoding as wire_codec
 except Exception:  # pragma: no cover - optional full stack
     gossip_engine = None  # type: ignore
@@ -35,9 +38,9 @@ except Exception:  # pragma: no cover - optional full stack
     proto_hello = proto_inv = proto_blk = proto_tx = proto_share = proto_flow = wire_codec = None  # type: ignore
 
 # Node router/event-bus (these are small glue modules under p2p/node/)
-from . import router as node_router
 from . import events as node_events
 from . import health as node_health
+from . import router as node_router
 
 log = logging.getLogger("animica.p2p.node")
 
@@ -50,6 +53,7 @@ class NodeDeps:
     Injected glue to core/consensus/proofs so protocol handlers can look up/persist things
     without hard-coding imports. See p2p/deps.py for a ready-made provider.
     """
+
     head_reader: Any
     block_io: Any
     tx_io: Any
@@ -74,6 +78,7 @@ class NodeService:
       • Runs the gossip mesh + discovery + ping/identify services
       • Exposes a tiny event bus & health snapshot
     """
+
     cfg: P2PConfig
     deps: NodeDeps
     loop: asyncio.AbstractEventLoop = field(default_factory=asyncio.get_event_loop)
@@ -107,8 +112,12 @@ class NodeService:
         from ..crypto import keys as node_keys_mod
         from ..crypto import peer_id as peer_id_mod
 
-        self.node_keys = node_keys_mod.load_or_create(self.cfg.keys_path, alg=self.cfg.identity_alg)
-        self.peer_id = peer_id_mod.derive_peer_id(self.node_keys.public_key, self.node_keys.alg_id)
+        self.node_keys = node_keys_mod.load_or_create(
+            self.cfg.keys_path, alg=self.cfg.identity_alg
+        )
+        self.peer_id = peer_id_mod.derive_peer_id(
+            self.node_keys.public_key, self.node_keys.alg_id
+        )
 
         # Core services
         self.peerstore = pstore.PeerStore(self.cfg.data_dir)
@@ -152,27 +161,36 @@ class NodeService:
         if self.started:
             return
         self.started = True
-        log.info("P2P node starting", extra={"peer_id": self.peer_id.hex(), "version": p2p_version.__version__})
+        log.info(
+            "P2P node starting",
+            extra={"peer_id": self.peer_id.hex(), "version": p2p_version.__version__},
+        )
 
         # Bind listeners (TCP/WS/QUIC) per cfg.listen_multiaddrs
         for addr in self.cfg.listen_multiaddrs:
             listener = await self._bind_listener(addr)
-            task = self.loop.create_task(self._accept_loop(listener), name=f"accept@{addr}")
+            task = self.loop.create_task(
+                self._accept_loop(listener), name=f"accept@{addr}"
+            )
             self._listeners.append(_Listener(addr=addr, listener=listener, task=task))
 
         # Start background services
-        self._tasks.extend([
-            self.loop.create_task(self.connmgr.run(), name="connmgr"),
-            self.loop.create_task(self.gossip.run(), name="gossip"),
-            self.loop.create_task(self.ping.run(), name="ping"),
-            self.loop.create_task(self.identify.run(), name="identify"),
-            self.loop.create_task(self._seed_and_discover(), name="discovery"),
-            self.loop.create_task(self.flowctl.run(), name="flowctl"),
-        ])
+        self._tasks.extend(
+            [
+                self.loop.create_task(self.connmgr.run(), name="connmgr"),
+                self.loop.create_task(self.gossip.run(), name="gossip"),
+                self.loop.create_task(self.ping.run(), name="ping"),
+                self.loop.create_task(self.identify.run(), name="identify"),
+                self.loop.create_task(self._seed_and_discover(), name="discovery"),
+                self.loop.create_task(self.flowctl.run(), name="flowctl"),
+            ]
+        )
 
         # Hook OS signals for graceful shutdown (best-effort)
         self._install_signal_handlers()
-        log.info("P2P node started", extra={"listeners": [l.addr for l in self._listeners]})
+        log.info(
+            "P2P node started", extra={"listeners": [l.addr for l in self._listeners]}
+        )
 
     async def stop(self) -> None:
         if self.stopping:
@@ -214,12 +232,17 @@ class NodeService:
 
         if scheme == "tcp":
             from ..transport import tcp as tmod
+
             return await tmod.listen(host, port)
         elif scheme in ("ws", "wss"):
             from ..transport import ws as tmod
-            return await tmod.listen(host, port, secure=(scheme == "wss"), cors=self.cfg.ws_cors)
+
+            return await tmod.listen(
+                host, port, secure=(scheme == "wss"), cors=self.cfg.ws_cors
+            )
         elif scheme == "quic":
             from ..transport import quic as tmod
+
             return await tmod.listen(host, port, alpn=self.cfg.quic_alpn)
         else:
             raise ValueError(f"unsupported listen scheme: {scheme}")
@@ -228,12 +251,17 @@ class NodeService:
         """
         Accept raw connections, run the Kyber+HKDF handshake to derive AEAD keys, then register with ConnectionManager.
         """
-        from ..crypto.handshake import kyber_handshake  # async: (raw_conn, node_keys, hkdf_salt) -> Conn
+        from ..crypto.handshake import \
+            kyber_handshake  # async: (raw_conn, node_keys, hkdf_salt) -> Conn
+
         hkdf_salt = self.cfg.handshake_hkdf_salt
 
         async for raw in listener.accept():
             self.metrics.accepted.inc()
-            self.loop.create_task(self._upgrade_and_register(raw, kyber_handshake, hkdf_salt), name="upgrade+register")
+            self.loop.create_task(
+                self._upgrade_and_register(raw, kyber_handshake, hkdf_salt),
+                name="upgrade+register",
+            )
 
     async def _upgrade_and_register(
         self,
@@ -245,7 +273,9 @@ class NodeService:
             conn = await do_handshake(raw, self.node_keys, hkdf_salt)
             await self.connmgr.register(conn)
             # Once registered, route frames through the router
-            self.loop.create_task(self._read_frames(conn), name=f"read@{conn.remote_addr}")
+            self.loop.create_task(
+                self._read_frames(conn), name=f"read@{conn.remote_addr}"
+            )
         except Exception as e:
             self.metrics.handshake_failures.inc()
             log.warning("Handshake/registration failed", exc_info=e)
@@ -266,7 +296,9 @@ class NodeService:
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            log.debug("conn read error", extra={"peer": str(conn.remote_addr)}, exc_info=e)
+            log.debug(
+                "conn read error", extra={"peer": str(conn.remote_addr)}, exc_info=e
+            )
         finally:
             await self.connmgr.deregister(conn)
             with contextlib.suppress(Exception):
@@ -283,23 +315,44 @@ class NodeService:
         codec = wire_codec.Codec()
 
         # HELLO & identify (version/chain/alg-policy root)
-        self.router.add_handler(proto_hello.HelloHandler(
-            cfg=self.cfg, codec=codec, identify=self.identify, peerstore=self.peerstore
-        ))
+        self.router.add_handler(
+            proto_hello.HelloHandler(
+                cfg=self.cfg,
+                codec=codec,
+                identify=self.identify,
+                peerstore=self.peerstore,
+            )
+        )
 
         # Inventory + data requests (headers/blocks/txs/shares)
-        self.router.add_handler(proto_inv.InventoryHandler(
-            cfg=self.cfg, codec=codec, deps=self.deps, connmgr=self.connmgr
-        ))
-        self.router.add_handler(proto_blk.BlockAnnounceHandler(
-            cfg=self.cfg, codec=codec, deps=self.deps, gossip=self.gossip
-        ))
-        self.router.add_handler(proto_tx.TxRelayHandler(
-            cfg=self.cfg, codec=codec, deps=self.deps, gossip=self.gossip, ratelimiter=self.ratelimiter
-        ))
-        self.router.add_handler(proto_share.ShareRelayHandler(
-            cfg=self.cfg, codec=codec, deps=self.deps, gossip=self.gossip, ratelimiter=self.ratelimiter
-        ))
+        self.router.add_handler(
+            proto_inv.InventoryHandler(
+                cfg=self.cfg, codec=codec, deps=self.deps, connmgr=self.connmgr
+            )
+        )
+        self.router.add_handler(
+            proto_blk.BlockAnnounceHandler(
+                cfg=self.cfg, codec=codec, deps=self.deps, gossip=self.gossip
+            )
+        )
+        self.router.add_handler(
+            proto_tx.TxRelayHandler(
+                cfg=self.cfg,
+                codec=codec,
+                deps=self.deps,
+                gossip=self.gossip,
+                ratelimiter=self.ratelimiter,
+            )
+        )
+        self.router.add_handler(
+            proto_share.ShareRelayHandler(
+                cfg=self.cfg,
+                codec=codec,
+                deps=self.deps,
+                gossip=self.gossip,
+                ratelimiter=self.ratelimiter,
+            )
+        )
 
         # Flow control (credits/window updates)
         self.router.add_handler(self.flowctl.handler(codec))
@@ -318,7 +371,9 @@ class NodeService:
         """
         Dial configured seeds, then keep the discovery loop running (DNS seeds, Kademlia, mDNS).
         """
-        from ..discovery import seeds as seedmod, kademlia as kad, mdns as md
+        from ..discovery import kademlia as kad
+        from ..discovery import mdns as md
+        from ..discovery import seeds as seedmod
 
         # Bootstrap from static seed list (DNS/TXT or JSON)
         try:
@@ -341,7 +396,10 @@ class NodeService:
                 while not self.stopping:
                     await asyncio.sleep(10.0)
                     try:
-                        candidates = [addr for _, addr, _ in self.peerstore.list_addresses(limit=64)]
+                        candidates = [
+                            addr
+                            for _, addr, _ in self.peerstore.list_addresses(limit=64)
+                        ]
                     except Exception:
                         candidates = []
                     now = time.time()
@@ -355,9 +413,17 @@ class NodeService:
 
         tasks.append(asyncio.create_task(_periodic_dials(), name="seed-loop"))
         if self.cfg.discovery.enable_kademlia:
-            tasks.append(asyncio.create_task(kad.run(self.cfg, self.peerstore, self.connmgr), name="kad"))
+            tasks.append(
+                asyncio.create_task(
+                    kad.run(self.cfg, self.peerstore, self.connmgr), name="kad"
+                )
+            )
         if self.cfg.discovery.enable_mdns:
-            tasks.append(asyncio.create_task(md.run(self.cfg, self.peerstore, self.connmgr), name="mdns"))
+            tasks.append(
+                asyncio.create_task(
+                    md.run(self.cfg, self.peerstore, self.connmgr), name="mdns"
+                )
+            )
 
         try:
             await asyncio.gather(*tasks)
@@ -376,17 +442,25 @@ class NodeService:
 
         if scheme == "tcp":
             from ..transport import tcp as tmod
+
             raw = await tmod.dial(host, port, timeout=self.cfg.dial_timeout)
         elif scheme in ("ws", "wss"):
             from ..transport import ws as tmod
-            raw = await tmod.dial(host, port, secure=(scheme == "wss"), timeout=self.cfg.dial_timeout)
+
+            raw = await tmod.dial(
+                host, port, secure=(scheme == "wss"), timeout=self.cfg.dial_timeout
+            )
         elif scheme == "quic":
             from ..transport import quic as tmod
-            raw = await tmod.dial(host, port, alpn=self.cfg.quic_alpn, timeout=self.cfg.dial_timeout)
+
+            raw = await tmod.dial(
+                host, port, alpn=self.cfg.quic_alpn, timeout=self.cfg.dial_timeout
+            )
         else:
             raise ValueError(f"unsupported dial scheme: {scheme}")
 
         from ..crypto.handshake import kyber_handshake
+
         conn = await kyber_handshake(raw, self.node_keys, self.cfg.handshake_hkdf_salt)
         await self.connmgr.register(conn)
         self.loop.create_task(self._read_frames(conn), name=f"read@{conn.remote_addr}")
@@ -405,8 +479,12 @@ class NodeService:
     def _install_signal_handlers(self) -> None:
         # Safe on POSIX; ignored on platforms that don't support it
         try:
-            self.loop.add_signal_handler(signal.SIGTERM, lambda: asyncio.create_task(self.stop()))
-            self.loop.add_signal_handler(signal.SIGINT, lambda: asyncio.create_task(self.stop()))
+            self.loop.add_signal_handler(
+                signal.SIGTERM, lambda: asyncio.create_task(self.stop())
+            )
+            self.loop.add_signal_handler(
+                signal.SIGINT, lambda: asyncio.create_task(self.stop())
+            )
         except NotImplementedError:
             pass
 
@@ -450,9 +528,9 @@ class P2PService:
         nat: bool = False,
         deps: Any = None,
     ) -> None:
-        from ..transport.tcp import TcpTransport  # lazy import
         from ..transport.base import ListenConfig
         from ..transport.multiaddr import parse_multiaddr
+        from ..transport.tcp import TcpTransport  # lazy import
 
         self.listen_addrs = listen_addrs or ["/ip4/0.0.0.0/tcp/42069"]
         self.seeds = seeds or []
@@ -493,7 +571,9 @@ class P2PService:
             port = parsed.port or 0
             cfg = self._listen_config_cls(addr=f"tcp://{host}:{port}")
             await self._transport.listen(cfg)
-        self._accept_task = self.loop.create_task(self._accept_loop(), name="tcp-accept")
+        self._accept_task = self.loop.create_task(
+            self._accept_loop(), name="tcp-accept"
+        )
 
         # Dial seeds (best-effort, fire-and-forget)
         for seed in self.seeds:
@@ -504,9 +584,14 @@ class P2PService:
             if parsed.transport != "tcp":
                 continue
             addr = f"tcp://{parsed.host}:{parsed.port}"
-            self._dial_tasks.append(self.loop.create_task(self._dial(addr), name=f"dial@{addr}"))
+            self._dial_tasks.append(
+                self.loop.create_task(self._dial(addr), name=f"dial@{addr}")
+            )
 
-        self._log.info("Started full P2P service", extra={"listen": self.listen_addrs, "seeds": self.seeds})
+        self._log.info(
+            "Started full P2P service",
+            extra={"listen": self.listen_addrs, "seeds": self.seeds},
+        )
 
     async def stop(self) -> None:
         self._running = False
@@ -548,7 +633,11 @@ class P2PService:
         self._track_peer(conn)
 
     def _track_peer(self, conn: Any) -> None:
-        remote = getattr(conn.info, "remote_addr", None) or getattr(conn, "remote_addr", None) or "unknown"
+        remote = (
+            getattr(conn.info, "remote_addr", None)
+            or getattr(conn, "remote_addr", None)
+            or "unknown"
+        )
         self._peers[remote] = {
             "remote": remote,
             "connected": True,
@@ -569,12 +658,18 @@ class P2PService:
                     agent=f"animica-p2p/{p2p_version.__version__}",
                 )
             except Exception:
-                self._log.debug("identify failed", exc_info=True, extra={"remote": remote})
+                self._log.debug(
+                    "identify failed", exc_info=True, extra={"remote": remote}
+                )
             if info:
                 self._peers[remote].update(info=info, height=info.get("height"))
                 self._log.info(
                     "peer identified",
-                    extra={"remote": remote, "network": info.get("network_id"), "height": info.get("height")},
+                    extra={
+                        "remote": remote,
+                        "network": info.get("network_id"),
+                        "height": info.get("height"),
+                    },
                 )
 
         self.loop.create_task(_do_identify(), name=f"identify@{remote}")
@@ -598,4 +693,7 @@ class P2PService:
     # Exposed for tests/ops
     @property
     def peers(self) -> Dict[str, Dict[str, Any]]:
-        return {k: {kk: vv for kk, vv in v.items() if kk != "conn"} for k, v in self._peers.items()}
+        return {
+            k: {kk: vv for kk, vv in v.items() if kk != "conn"}
+            for k, v in self._peers.items()
+        }

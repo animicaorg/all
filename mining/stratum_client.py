@@ -7,24 +7,22 @@ import signal
 import sys
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Callable, Awaitable, List
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-from .stratum_protocol import (
-    Method,
-    encode_lines,
-    decode_lines,
-    encode_lenpref,
-    decode_lenpref,
-    req_subscribe,
-    req_submit,
-)
+from .stratum_protocol import (Method, decode_lenpref, decode_lines,
+                               encode_lenpref, encode_lines, req_submit,
+                               req_subscribe)
 
 try:
     from core.logging import get_logger  # type: ignore
 except Exception:  # pragma: no cover
+
     def get_logger(name: str) -> logging.Logger:
-        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+        logging.basicConfig(
+            level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
+        )
         return logging.getLogger(name)
+
 
 log = get_logger("mining.stratum_client")
 JSON = Dict[str, Any]
@@ -88,7 +86,9 @@ class StratumClient:
     async def connect(self) -> None:
         self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
         self._rx_task = self.loop.create_task(self._rx_loop())
-        log.info(f"[client] connected to {self.host}:{self.port} framing={self.framing}")
+        log.info(
+            f"[client] connected to {self.host}:{self.port} framing={self.framing}"
+        )
 
     async def close(self) -> None:
         if self._closed:
@@ -133,7 +133,9 @@ class StratumClient:
     # ------------- protocol -------------
 
     async def subscribe(self) -> SubscribeReply:
-        req = req_subscribe(agent=self.agent, features={"framing": self.framing})  # uses Method.SUBSCRIBE
+        req = req_subscribe(
+            agent=self.agent, features={"framing": self.framing}
+        )  # uses Method.SUBSCRIBE
         req["id"] = self._next_id()
         fut: asyncio.Future = self.loop.create_future()
         self._pending[req["id"]] = fut
@@ -155,7 +157,9 @@ class StratumClient:
         return self.session
 
     async def authorize(self, worker: str, address: str) -> bool:
-        res = await self._call(str(Method.AUTHORIZE.value), {"worker": worker, "address": address})
+        res = await self._call(
+            str(Method.AUTHORIZE.value), {"worker": worker, "address": address}
+        )
         ok = bool(res.get("result", {}).get("authorized", False))
         log.info(f"[client] authorize worker={worker} address={address} ok={ok}")
         return ok
@@ -164,7 +168,14 @@ class StratumClient:
         res = await self._call(str(Method.GET_VERSION.value), {})
         return res.get("result") or {}
 
-    async def submit_share(self, job_id: str, hashshare: JSON, proofs: Optional[List[JSON]] = None, txs: Optional[List[str]] = None, extranonce2: str = "0x00") -> JSON:
+    async def submit_share(
+        self,
+        job_id: str,
+        hashshare: JSON,
+        proofs: Optional[List[JSON]] = None,
+        txs: Optional[List[str]] = None,
+        extranonce2: str = "0x00",
+    ) -> JSON:
         """
         Submit a share for a given job. `hashshare` is the HashShare envelope/body.
         """
@@ -179,7 +190,12 @@ class StratumClient:
         if txs:
             params["txs"] = txs
 
-        req = {"jsonrpc": "2.0", "id": self._next_id(), "method": Method.SUBMIT.value, "params": params}
+        req = {
+            "jsonrpc": "2.0",
+            "id": self._next_id(),
+            "method": Method.SUBMIT.value,
+            "params": params,
+        }
         fut: asyncio.Future = self.loop.create_future()
         self._pending[req["id"]] = fut
         await self._send_obj(req)
@@ -188,7 +204,9 @@ class StratumClient:
         ok = result.get("accepted", False)
         is_block = result.get("isBlock", False)
         reason = result.get("reason")
-        log.info(f"[client] submit job={job_id} ok={ok} is_block={is_block} reason={reason}")
+        log.info(
+            f"[client] submit job={job_id} ok={ok} is_block={is_block} reason={reason}"
+        )
         return result
 
     # ------------- RX loop -------------
@@ -220,7 +238,9 @@ class StratumClient:
 
     async def _handle_incoming(self, obj: JSON) -> None:
         # Response
-        if "id" in obj and (obj.get("result") is not None or obj.get("error") is not None):
+        if "id" in obj and (
+            obj.get("result") is not None or obj.get("error") is not None
+        ):
             rid = obj["id"]
             fut = self._pending.pop(rid, None)
             if fut and not fut.done():
@@ -234,14 +254,18 @@ class StratumClient:
         if method == str(Method.SET_DIFFICULTY.value):
             self.share_target = float(params["shareTarget"])
             self.theta_micro = int(params["thetaMicro"])
-            log.info(f"[client] difficulty shareTarget={self.share_target} thetaMicro={self.theta_micro}")
+            log.info(
+                f"[client] difficulty shareTarget={self.share_target} thetaMicro={self.theta_micro}"
+            )
             if self.on_set_difficulty:
                 await self.on_set_difficulty(self.share_target, self.theta_micro)
 
         elif method == str(Method.NOTIFY.value):
             self.last_job = params
             jid = params.get("jobId")
-            log.info(f"[client] notify job={jid} clean={params.get('cleanJobs')} shareTarget={params.get('shareTarget')}")
+            log.info(
+                f"[client] notify job={jid} clean={params.get('cleanJobs')} shareTarget={params.get('shareTarget')}"
+            )
             if self.on_notify:
                 await self.on_notify(params)
 
@@ -257,15 +281,21 @@ class StratumClient:
 
 # ------------------------------- CLI demo ----------------------------------
 
+
 async def _demo_main(argv: List[str]) -> int:
     import argparse
+
     p = argparse.ArgumentParser(description="Animica Stratum Client (demo)")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=23454)
     p.add_argument("--framing", choices=["lines", "lenpref"], default="lines")
     p.add_argument("--worker", default="rig1")
     p.add_argument("--address", default="anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq3j5kq")
-    p.add_argument("--auto-submit", action="store_true", help="Submit a dummy share on each notify (for server-path tests)")
+    p.add_argument(
+        "--auto-submit",
+        action="store_true",
+        help="Submit a dummy share on each notify (for server-path tests)",
+    )
     args = p.parse_args(argv)
 
     client = StratumClient(args.host, args.port, framing=args.framing)
@@ -278,10 +308,10 @@ async def _demo_main(argv: List[str]) -> int:
         fake_hashshare = {
             "nonce": "0x01",
             "body": {
-                "headerHash": job["header"].get("parentHash", "0x" + "00"*32),
-                "uDraw": "0x" + "11"*32,
-                "mix": "0x" + "22"*32,
-            }
+                "headerHash": job["header"].get("parentHash", "0x" + "00" * 32),
+                "uDraw": "0x" + "11" * 32,
+                "mix": "0x" + "22" * 32,
+            },
         }
         await client.submit_share(job["jobId"], fake_hashshare)
 

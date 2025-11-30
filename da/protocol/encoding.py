@@ -44,23 +44,25 @@ from typing import Any, Dict, Tuple, Type
 # Optional dependencies
 try:
     import cbor2  # type: ignore
+
     _HAS_CBOR2 = True
 except Exception:  # pragma: no cover
     _HAS_CBOR2 = False
 
 try:
     import msgspec  # type: ignore
+
     _HAS_MSGSPEC = True
 except Exception:  # pragma: no cover
     _HAS_MSGSPEC = False
 
-from .messages import MESSAGE_REGISTRY, ProtocolMessage
 from . import PROTOCOL_VERSION
-
+from .messages import MESSAGE_REGISTRY, ProtocolMessage
 
 # =============================================================================
 # Low-level serializer selection
 # =============================================================================
+
 
 def _dumps(obj: Any, *, canonical: bool = False) -> bytes:
     if _HAS_CBOR2:
@@ -68,19 +70,25 @@ def _dumps(obj: Any, *, canonical: bool = False) -> bytes:
         return cbor2.dumps(obj, canonical=canonical)
     if _HAS_MSGSPEC:
         return msgspec.msgpack.encode(obj)
-    raise RuntimeError("No serializer available: install 'cbor2' (preferred) or 'msgspec'")
+    raise RuntimeError(
+        "No serializer available: install 'cbor2' (preferred) or 'msgspec'"
+    )
+
 
 def _loads(buf: bytes) -> Any:
     if _HAS_CBOR2:
         return cbor2.loads(buf)
     if _HAS_MSGSPEC:
         return msgspec.msgpack.decode(buf)
-    raise RuntimeError("No serializer available: install 'cbor2' (preferred) or 'msgspec'")
+    raise RuntimeError(
+        "No serializer available: install 'cbor2' (preferred) or 'msgspec'"
+    )
 
 
 # =============================================================================
 # Payload <-> dataclass conversion
 # =============================================================================
+
 
 def _to_payload(msg: ProtocolMessage) -> Dict[str, Any]:
     if not is_dataclass(msg):
@@ -89,6 +97,7 @@ def _to_payload(msg: ProtocolMessage) -> Dict[str, Any]:
     # remove the class variable `type_id` if present in dict (it shouldn't be)
     d.pop("type_id", None)
     return d
+
 
 def _from_payload(type_id: int, payload: Dict[str, Any]) -> ProtocolMessage:
     cls: Type[ProtocolMessage] = MESSAGE_REGISTRY.get(type_id)  # type: ignore[assignment]
@@ -100,6 +109,7 @@ def _from_payload(type_id: int, payload: Dict[str, Any]) -> ProtocolMessage:
 # =============================================================================
 # Checksums
 # =============================================================================
+
 
 def _checksum_core(v: int, t: int, p: Dict[str, Any]) -> bytes:
     """
@@ -116,6 +126,7 @@ def _checksum_core(v: int, t: int, p: Dict[str, Any]) -> bytes:
 # =============================================================================
 # Public API
 # =============================================================================
+
 
 def encode_frame(msg: ProtocolMessage, *, include_checksum: bool = True) -> bytes:
     """
@@ -168,7 +179,9 @@ def decode_frame(buf: bytes, *, verify_checksum: bool = True) -> ProtocolMessage
         raise ValueError(f"invalid DA frame fields: {e}") from e
 
     if v != int(PROTOCOL_VERSION):
-        raise ValueError(f"unsupported DA protocol version: {v}, expected {PROTOCOL_VERSION}")
+        raise ValueError(
+            f"unsupported DA protocol version: {v}, expected {PROTOCOL_VERSION}"
+        )
 
     if not isinstance(p, dict):
         raise ValueError("invalid DA frame: payload 'p' must be a map")

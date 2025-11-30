@@ -54,7 +54,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-
 # -------------------------------
 # Configuration
 # -------------------------------
@@ -84,7 +83,9 @@ def read_json(p: Path):
         return json.load(f)
 
 
-def write_json_canonical(p: Path, obj, *, dry_run: bool, rewrite: bool, verbose: bool) -> Tuple[bool, str]:
+def write_json_canonical(
+    p: Path, obj, *, dry_run: bool, rewrite: bool, verbose: bool
+) -> Tuple[bool, str]:
     """
     Write compact, sorted-key JSON with trailing newline. Returns (changed, new_hash_hex).
     Honors dry-run and rewrite flags. If file exists and content identical, no rewrite.
@@ -98,7 +99,10 @@ def write_json_canonical(p: Path, obj, *, dry_run: bool, rewrite: bool, verbose:
             log(f"    = up-to-date {p.name} (sha256:{new_hash[:10]}…)", verbose=verbose)
             return (False, new_hash)
         if dry_run and not rewrite:
-            log(f"    ~ would update {p.name} (sha256:{new_hash[:10]}…)", verbose=verbose)
+            log(
+                f"    ~ would update {p.name} (sha256:{new_hash[:10]}…)",
+                verbose=verbose,
+            )
             return (True, new_hash)
     if dry_run and not rewrite:
         log(f"    + would write {p.name} (sha256:{new_hash[:10]}…)", verbose=verbose)
@@ -112,7 +116,9 @@ def ensure_exe(cmd: str) -> None:
     from shutil import which
 
     if which(cmd) is None:
-        sys.exit(f"✖ Missing executable: {cmd}. Please install it and ensure it's in PATH.")
+        sys.exit(
+            f"✖ Missing executable: {cmd}. Please install it and ensure it's in PATH."
+        )
 
 
 # -------------------------------
@@ -120,18 +126,18 @@ def ensure_exe(cmd: str) -> None:
 # -------------------------------
 @dataclass
 class Circuit:
-    system: str          # "groth16" | "plonk_kzg"
-    name: str            # directory name under system/
-    circom: Path         # path to .circom
-    outdir: Path         # system/name
-    builddir: Path       # system/name/build
-    base: str            # basename of .circom (e.g., "embedding", "circuit")
-    wasm: Path           # build/<base>.wasm
-    zkey: Path           # build/<base>.zkey
+    system: str  # "groth16" | "plonk_kzg"
+    name: str  # directory name under system/
+    circom: Path  # path to .circom
+    outdir: Path  # system/name
+    builddir: Path  # system/name/build
+    base: str  # basename of .circom (e.g., "embedding", "circuit")
+    wasm: Path  # build/<base>.wasm
+    zkey: Path  # build/<base>.zkey
     input_example: Path  # outdir/input_example.json (optional)
-    vk_json: Path        # outdir/vk.json
-    proof_json: Path     # outdir/proof.json
-    public_json: Path    # outdir/public.json
+    vk_json: Path  # outdir/vk.json
+    proof_json: Path  # outdir/proof.json
+    public_json: Path  # outdir/public.json
 
 
 def discover_circuits(root: Path, only: Optional[str]) -> List[Circuit]:
@@ -302,6 +308,7 @@ main().catch(e => {
 });
 """
 
+
 def ensure_js_driver(tmpdir: Path) -> Path:
     driver = tmpdir / "snarkjs_driver.js"
     driver.write_text(JS_DRIVER, encoding="utf-8")
@@ -311,7 +318,9 @@ def ensure_js_driver(tmpdir: Path) -> Path:
 def node_exec(driver: Path, args_obj: Dict, *, verbose: bool) -> None:
     args_json = json.dumps(args_obj, separators=(",", ":"))
     cmd = ["node", str(driver), args_json]
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    proc = subprocess.run(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+    )
     if proc.returncode != 0:
         sys.stdout.write(proc.stdout)
         raise SystemExit(proc.returncode)
@@ -334,7 +343,11 @@ def compute_seed_hex(c: Circuit) -> str:
     if c.zkey.exists():
         h.update(read_bytes(c.zkey))
     if c.input_example.exists():
-        h.update(json.dumps(read_json(c.input_example), sort_keys=True, separators=(",", ":")).encode())
+        h.update(
+            json.dumps(
+                read_json(c.input_example), sort_keys=True, separators=(",", ":")
+            ).encode()
+        )
     return h.hexdigest()
 
 
@@ -347,8 +360,10 @@ def ensure_built_if_needed(c: Circuit, ensure_built: bool, verbose: bool) -> Non
     if not missing:
         return
     if not ensure_built:
-        sys.exit(f"✖ Missing artifacts for {c.system}/{c.name}: {', '.join(map(str, missing))}\n"
-                 f"  Hint: run: bash {BUILD_SCRIPT} --only {c.system}/{c.name}")
+        sys.exit(
+            f"✖ Missing artifacts for {c.system}/{c.name}: {', '.join(map(str, missing))}\n"
+            f"  Hint: run: bash {BUILD_SCRIPT} --only {c.system}/{c.name}"
+        )
     # Try building
     ensure_exe("bash")
     cmd = ["bash", str(BUILD_SCRIPT), "--only", f"{c.system}/{c.name}"]
@@ -359,7 +374,9 @@ def ensure_built_if_needed(c: Circuit, ensure_built: bool, verbose: bool) -> Non
         sys.exit(f"✖ Build did not produce required artifacts for {c.system}/{c.name}.")
 
 
-def export_vk(c: Circuit, driver: Path, *, dry_run: bool, rewrite: bool, verbose: bool) -> Tuple[bool, str]:
+def export_vk(
+    c: Circuit, driver: Path, *, dry_run: bool, rewrite: bool, verbose: bool
+) -> Tuple[bool, str]:
     # Run driver to get vk.json as pretty JSON, then canonicalize locally
     with tempfile.TemporaryDirectory() as td:
         tmp_vk = Path(td) / "vk.json"
@@ -373,10 +390,14 @@ def export_vk(c: Circuit, driver: Path, *, dry_run: bool, rewrite: bool, verbose
             verbose=verbose,
         )
         vk_obj = read_json(tmp_vk)
-        return write_json_canonical(c.vk_json, vk_obj, dry_run=dry_run, rewrite=rewrite, verbose=verbose)
+        return write_json_canonical(
+            c.vk_json, vk_obj, dry_run=dry_run, rewrite=rewrite, verbose=verbose
+        )
 
 
-def prove_and_write(c: Circuit, driver: Path, *, dry_run: bool, rewrite: bool, verbose: bool) -> Tuple[bool, bool]:
+def prove_and_write(
+    c: Circuit, driver: Path, *, dry_run: bool, rewrite: bool, verbose: bool
+) -> Tuple[bool, bool]:
     """
     Generate proof.json + public.json deterministically (where possible),
     then verify, then write canonical JSON.
@@ -437,8 +458,12 @@ def prove_and_write(c: Circuit, driver: Path, *, dry_run: bool, rewrite: bool, v
         # Canonicalize & write
         proof_obj = read_json(tmp_proof)
         public_obj = read_json(tmp_public)
-        ch1, _ = write_json_canonical(c.proof_json, proof_obj, dry_run=dry_run, rewrite=rewrite, verbose=verbose)
-        ch2, _ = write_json_canonical(c.public_json, public_obj, dry_run=dry_run, rewrite=rewrite, verbose=verbose)
+        ch1, _ = write_json_canonical(
+            c.proof_json, proof_obj, dry_run=dry_run, rewrite=rewrite, verbose=verbose
+        )
+        ch2, _ = write_json_canonical(
+            c.public_json, public_obj, dry_run=dry_run, rewrite=rewrite, verbose=verbose
+        )
         return (ch1 or ch2, True)
 
 
@@ -461,12 +486,16 @@ def process_circuit(
 
     if do_vk:
         log("  • exporting verification key", verbose=verbose)
-        ch_vk, _ = export_vk(c, driver, dry_run=dry_run, rewrite=rewrite, verbose=verbose)
+        ch_vk, _ = export_vk(
+            c, driver, dry_run=dry_run, rewrite=rewrite, verbose=verbose
+        )
         changed = changed or ch_vk
 
     if do_proof:
         log("  • generating proof/public (deterministic)", verbose=verbose)
-        ch_pf, ok = prove_and_write(c, driver, dry_run=dry_run, rewrite=rewrite, verbose=verbose)
+        ch_pf, ok = prove_and_write(
+            c, driver, dry_run=dry_run, rewrite=rewrite, verbose=verbose
+        )
         changed = changed or ch_pf
         verified = verified and ok
 
@@ -477,13 +506,36 @@ def process_circuit(
 # Main CLI
 # -------------------------------
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Deterministically regenerate zk vectors (vk/proof/public).")
-    ap.add_argument("--root", type=Path, default=DEFAULT_ROOT, help="Circuits root directory (default: zk/circuits)")
-    ap.add_argument("--only", type=str, default="", help='Substring filter over "system/name"')
-    ap.add_argument("--ensure-built", action="store_true", help="Run build_circom.sh if artifacts are missing")
-    ap.add_argument("--rewrite", action="store_true", help="Always rewrite outputs (even if unchanged)")
-    ap.add_argument("--check", action="store_true", help="Exit non-zero if outputs would change")
-    ap.add_argument("--no-proof", action="store_true", help="Skip proof/public generation (refresh VK only)")
+    ap = argparse.ArgumentParser(
+        description="Deterministically regenerate zk vectors (vk/proof/public)."
+    )
+    ap.add_argument(
+        "--root",
+        type=Path,
+        default=DEFAULT_ROOT,
+        help="Circuits root directory (default: zk/circuits)",
+    )
+    ap.add_argument(
+        "--only", type=str, default="", help='Substring filter over "system/name"'
+    )
+    ap.add_argument(
+        "--ensure-built",
+        action="store_true",
+        help="Run build_circom.sh if artifacts are missing",
+    )
+    ap.add_argument(
+        "--rewrite",
+        action="store_true",
+        help="Always rewrite outputs (even if unchanged)",
+    )
+    ap.add_argument(
+        "--check", action="store_true", help="Exit non-zero if outputs would change"
+    )
+    ap.add_argument(
+        "--no-proof",
+        action="store_true",
+        help="Skip proof/public generation (refresh VK only)",
+    )
     ap.add_argument("--no-vk", action="store_true", help="Skip verification key export")
     ap.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     args = ap.parse_args()

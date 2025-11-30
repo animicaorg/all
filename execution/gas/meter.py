@@ -16,15 +16,12 @@ from __future__ import annotations
 from typing import NamedTuple, Optional
 
 from execution.errors import OOG
-from execution.types.gas import (
-    Gas,
-    U256_MAX,
-    is_u256,
-    saturating_add,
-)
+from execution.types.gas import U256_MAX, Gas, is_u256, saturating_add
+
 
 class GasSnapshot(NamedTuple):
     """Lightweight snapshot for scoped execution blocks."""
+
     used: int
     refunded: int
 
@@ -48,7 +45,9 @@ class GasMeter:
 
     __slots__ = ("_limit", "_used", "_refunded")
 
-    def __init__(self, limit: int | Gas | None = None, *, gas_limit: int | Gas | None = None) -> None:
+    def __init__(
+        self, limit: int | Gas | None = None, *, gas_limit: int | Gas | None = None
+    ) -> None:
         # Accept both positional `limit` and keyword `gas_limit` for compatibility
         # with tests and legacy callers.
         chosen = gas_limit if gas_limit is not None else limit

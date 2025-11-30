@@ -27,10 +27,10 @@ capabilities/cli/__init__.py.
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import sys
-import inspect
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -49,7 +49,9 @@ app = typer.Typer(
 COMMAND_NAME = "enqueue-quantum"  # allows mount by name if register() not used
 
 
-def _load_circuit(circuit: Optional[str], circuit_file: Optional[Path]) -> Dict[str, Any]:
+def _load_circuit(
+    circuit: Optional[str], circuit_file: Optional[Path]
+) -> Dict[str, Any]:
     if circuit_file is not None:
         try:
             return json.loads(circuit_file.read_text(encoding="utf-8"))
@@ -73,7 +75,8 @@ def _call_with_supported_kwargs(fn, **kwargs):
         accepted = {
             k: v
             for k, v in kwargs.items()
-            if k in sig.parameters or any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values())
+            if k in sig.parameters
+            or any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values())
         }
         return fn(**accepted)
     except Exception:
@@ -189,7 +192,9 @@ def _enqueue_via_queue(
         open_q = getattr(queue_mod, "open_queue", None)
         enqueue_quantum = getattr(queue_mod, "enqueue_quantum", None)
         if not callable(open_q) or not callable(enqueue_quantum):
-            raise RuntimeError("Queue backend not available (JobQueue/open_queue missing)")
+            raise RuntimeError(
+                "Queue backend not available (JobQueue/open_queue missing)"
+            )
         q = open_q(str(db_path))
         receipt = _call_with_supported_kwargs(
             enqueue_quantum,
@@ -212,7 +217,10 @@ def _enqueue_via_queue(
 @app.command("enqueue-quantum")
 def enqueue_quantum_cmd(
     circuit: Optional[str] = typer.Option(
-        None, "--circuit", "-c", help="Circuit JSON string (mutually exclusive with --circuit-file)."
+        None,
+        "--circuit",
+        "-c",
+        help="Circuit JSON string (mutually exclusive with --circuit-file).",
     ),
     circuit_file: Optional[Path] = typer.Option(
         None,
@@ -224,12 +232,19 @@ def enqueue_quantum_cmd(
         readable=True,
         help="Path to circuit JSON file.",
     ),
-    shots: int = typer.Option(256, "--shots", "-s", min=1, help="Number of shots/samples to run."),
+    shots: int = typer.Option(
+        256, "--shots", "-s", min=1, help="Number of shots/samples to run."
+    ),
     model: Optional[str] = typer.Option(
-        None, "--model", "-m", help="Optional device/model id (e.g., qpu-sim, provider:device)."
+        None,
+        "--model",
+        "-m",
+        help="Optional device/model id (e.g., qpu-sim, provider:device).",
     ),
     caller: Optional[str] = typer.Option(
-        None, "--caller", help="Optional caller address (anim1…). Used for attribution/policies if backend supports it."
+        None,
+        "--caller",
+        help="Optional caller address (anim1…). Used for attribution/policies if backend supports it.",
     ),
     trap_ratio: Optional[float] = typer.Option(
         None,
@@ -242,14 +257,18 @@ def enqueue_quantum_cmd(
         help="Optional deterministic seed for simulators (if supported).",
     ),
     backend: Optional[str] = typer.Option(
-        None, "--backend", help="Force backend: host | aicf | queue (default: auto-detect)."
+        None,
+        "--backend",
+        help="Force backend: host | aicf | queue (default: auto-detect).",
     ),
     queue_db: Path = typer.Option(
         Path(os.getenv("CAP_QUEUE_DB", "./capabilities_jobs.db")),
         "--queue-db",
         help="Queue DB path for 'queue' backend.",
     ),
-    json_out: bool = typer.Option(False, "--json", help="Emit machine-readable JSON only."),
+    json_out: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON only."
+    ),
 ) -> None:
     """
     Enqueue a Quantum job and print the receipt (task id, status, etc.).
@@ -267,7 +286,9 @@ def enqueue_quantum_cmd(
             if name == "aicf":
                 return _enqueue_via_aicf(circ, shots, model, caller, trap_ratio, seed)
             if name == "queue":
-                return _enqueue_via_queue(circ, shots, model, caller, trap_ratio, seed, queue_db)
+                return _enqueue_via_queue(
+                    circ, shots, model, caller, trap_ratio, seed, queue_db
+                )
             raise ValueError(f"Unknown backend {name}")
         except Exception as e:
             error_last = e
@@ -280,23 +301,37 @@ def enqueue_quantum_cmd(
         if res is None:
             msg = f"enqueue failed using backend '{backend}': {error_last}"
             if json_out:
-                _pretty_print({"ok": False, "error": str(error_last), "tried": tried}, as_json=True)
+                _pretty_print(
+                    {"ok": False, "error": str(error_last), "tried": tried},
+                    as_json=True,
+                )
             else:
                 typer.echo(msg)
             raise typer.Exit(1)
-        _pretty_print({"ok": True, "backend": backend, "receipt": res}, as_json=json_out)
+        _pretty_print(
+            {"ok": True, "backend": backend, "receipt": res}, as_json=json_out
+        )
         return
 
     # Auto-detect path
     for name in ("host", "aicf", "queue"):
         res = try_backend(name)
         if res is not None:
-            _pretty_print({"ok": True, "backend": name, "receipt": res}, as_json=json_out)
+            _pretty_print(
+                {"ok": True, "backend": name, "receipt": res}, as_json=json_out
+            )
             return
 
     # None succeeded
     if json_out:
-        _pretty_print({"ok": False, "error": str(error_last or 'no backends available'), "tried": tried}, as_json=True)
+        _pretty_print(
+            {
+                "ok": False,
+                "error": str(error_last or "no backends available"),
+                "tried": tried,
+            },
+            as_json=True,
+        )
     else:
         typer.echo("enqueue failed; tried backends:\n  - " + "\n  - ".join(tried))
     raise typer.Exit(2)

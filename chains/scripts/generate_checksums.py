@@ -28,7 +28,6 @@ import os
 from pathlib import Path
 from typing import Iterable, List, Tuple
 
-
 ROOT = Path(__file__).resolve().parents[2]  # repo root
 CHAINS_DIR = ROOT / "chains"
 OUTFILE = CHAINS_DIR / "checksums.txt"
@@ -77,7 +76,9 @@ def update_embedded_checksum(path: Path, digest: str) -> bool:
 
     obj["checksum"] = digest
     # Write compact but stable formatting (indent=2 keeps diffs readable)
-    path.write_text(json.dumps(obj, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(obj, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
     return True
 
 
@@ -98,12 +99,26 @@ def write_checksums(pairs: List[Tuple[str, str]], dest: Path, dry_run: bool) -> 
 
 
 def main(argv: List[str]) -> int:
-    ap = argparse.ArgumentParser(description="Generate chains/checksums.txt for Animica chain metadata.")
-    ap.add_argument("--update-embedded", action="store_true",
-                    help="Also update each JSON's 'checksum' field to match computed digest (in-place).")
-    ap.add_argument("--dry-run", action="store_true", help="Show actions without writing files.")
-    ap.add_argument("--include", nargs="*", default=[], help="Extra file paths to include (relative to repo root).")
-    ap.add_argument("--only", nargs="*", default=[], help="Only hash these paths (skip discovery).")
+    ap = argparse.ArgumentParser(
+        description="Generate chains/checksums.txt for Animica chain metadata."
+    )
+    ap.add_argument(
+        "--update-embedded",
+        action="store_true",
+        help="Also update each JSON's 'checksum' field to match computed digest (in-place).",
+    )
+    ap.add_argument(
+        "--dry-run", action="store_true", help="Show actions without writing files."
+    )
+    ap.add_argument(
+        "--include",
+        nargs="*",
+        default=[],
+        help="Extra file paths to include (relative to repo root).",
+    )
+    ap.add_argument(
+        "--only", nargs="*", default=[], help="Only hash these paths (skip discovery)."
+    )
     args = ap.parse_args(argv)
 
     # Collect targets
@@ -142,7 +157,7 @@ def main(argv: List[str]) -> int:
     # Optionally update embedded checksums now
     if args.update_embedded:
         changed = 0
-        for (digest, _rp, p) in records:
+        for digest, _rp, p in records:
             if p.suffix.lower() == ".json":
                 if update_embedded_checksum(p, digest):
                     changed += 1
@@ -152,7 +167,9 @@ def main(argv: List[str]) -> int:
             print("No embedded checksum updates were necessary.")
 
         # After touching files, remind the user to re-run to refresh checksums.txt
-        print("NOTE: Re-run this script to refresh chains/checksums.txt after embedded updates.")
+        print(
+            "NOTE: Re-run this script to refresh chains/checksums.txt after embedded updates."
+        )
 
     return 0
 

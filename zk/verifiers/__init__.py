@@ -67,7 +67,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib import import_module
-from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Tuple, Union, TypedDict, Literal, Final
+from typing import (Any, Dict, Final, Iterable, List, Literal, Mapping,
+                    MutableMapping, Optional, Tuple, TypedDict, Union)
 
 # ---- Public types ---------------------------------------------------------------------------
 
@@ -82,6 +83,7 @@ class Scheme(TypedDict, total=False):
 @dataclass(slots=True, frozen=True)
 class VerificationResult:
     """Result of a verification attempt."""
+
     ok: bool
     protocol: Optional[ProtocolName] = None
     message: Optional[str] = None
@@ -108,6 +110,7 @@ _ADAPTER_MODULE: Final[Mapping[ProtocolName, str]] = {
 
 # ---- Helpers --------------------------------------------------------------------------------
 
+
 def _normalize_protocol(p: str | ProtocolName) -> ProtocolName:
     """Accept common aliases, return canonical `ProtocolName`."""
     if not isinstance(p, str):
@@ -119,7 +122,9 @@ def _normalize_protocol(p: str | ProtocolName) -> ProtocolName:
         return "plonk_kzg"
     if key in ("stark", "fri", "air"):
         return "stark"
-    raise ZKError(f"Unsupported protocol '{p}'. Supported: {', '.join(SUPPORTED_PROTOCOLS)}")
+    raise ZKError(
+        f"Unsupported protocol '{p}'. Supported: {', '.join(SUPPORTED_PROTOCOLS)}"
+    )
 
 
 def _import_adapter(protocol: ProtocolName):
@@ -134,7 +139,9 @@ def _import_adapter(protocol: ProtocolName):
         ) from e
 
 
-def _shape_check_envelope(envelope: Mapping[str, Any]) -> tuple[ProtocolName, Mapping[str, Any], Any, Mapping[str, Any]]:
+def _shape_check_envelope(
+    envelope: Mapping[str, Any],
+) -> tuple[ProtocolName, Mapping[str, Any], Any, Mapping[str, Any]]:
     """Perform minimal shape checks and extract fields from an envelope."""
     if not isinstance(envelope, Mapping):
         raise ZKError("Envelope must be a mapping/dict.")
@@ -161,7 +168,9 @@ def _shape_check_envelope(envelope: Mapping[str, Any]) -> tuple[ProtocolName, Ma
     return protocol, proof, public, vk
 
 
-def _shape_check_tuple(protocol: str | ProtocolName, proof: Any, public: Any, vk: Any) -> ProtocolName:
+def _shape_check_tuple(
+    protocol: str | ProtocolName, proof: Any, public: Any, vk: Any
+) -> ProtocolName:
     p = _normalize_protocol(protocol)
     if not isinstance(proof, Mapping):
         raise ZKError("`proof` must be a JSON object (mapping).")
@@ -173,6 +182,7 @@ def _shape_check_tuple(protocol: str | ProtocolName, proof: Any, public: Any, vk
 
 
 # ---- Public API -----------------------------------------------------------------------------
+
 
 def verify_envelope(envelope: Mapping[str, Any]) -> VerificationResult:
     """
@@ -241,7 +251,9 @@ def verify(
             proof, public, vk = adapter.normalize_inputs(proof, public, vk)  # type: ignore[attr-defined]
 
         ok = bool(adapter.verify(proof, public, vk))  # type: ignore[attr-defined]
-        return VerificationResult(ok=ok, protocol=p, message=None if ok else "verification failed")
+        return VerificationResult(
+            ok=ok, protocol=p, message=None if ok else "verification failed"
+        )
     except Exception as e:  # noqa: BLE001 — surface adapter errors as messages
         return VerificationResult(ok=False, protocol=p, message=str(e))
 

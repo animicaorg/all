@@ -63,12 +63,15 @@ def _select_hash(algo: str) -> _Hasher:
         return _sha3_512
     if a == "blake3":
         return _blake3
-    raise ValueError(f"Unsupported hash algo: {algo!r} (expected sha3-256|sha3-512|blake3)")
+    raise ValueError(
+        f"Unsupported hash algo: {algo!r} (expected sha3-256|sha3-512|blake3)"
+    )
 
 
 # ------------------------------------------------------------
 # Directory helpers
 # ------------------------------------------------------------
+
 
 def ensure_dir(path: Union[str, Path], *, mode: int = 0o755) -> Path:
     """
@@ -96,6 +99,7 @@ class TempDir:
     ...     # use td.path
     >>> # directory removed unless keep=True
     """
+
     prefix: str = "omni_sdk_"
     suffix: str = ""
     dir: Optional[Union[str, Path]] = None
@@ -113,7 +117,9 @@ class TempDir:
         base = Path(self.dir).expanduser().resolve() if self.dir else None
         if base:
             ensure_dir(base)
-        d = tempfile.mkdtemp(prefix=self.prefix, suffix=self.suffix, dir=str(base) if base else None)
+        d = tempfile.mkdtemp(
+            prefix=self.prefix, suffix=self.suffix, dir=str(base) if base else None
+        )
         self._path = Path(d)
         return self
 
@@ -126,12 +132,14 @@ class TempDir:
             return
         if self.keep:
             return
+
         # Robust rmtree: ignore errors, handle readonly files, Windows quirks
         def _onerror(fn, path, exc_info):  # pragma: no cover
             # Try to make file writable then remove
             with contextlib.suppress(Exception):
                 os.chmod(path, 0o700)
                 fn(path)
+
         with contextlib.suppress(Exception):
             shutil.rmtree(p, onerror=_onerror)
         self._path = None
@@ -139,7 +147,11 @@ class TempDir:
 
 @contextlib.contextmanager
 def temp_dir(
-    *, prefix: str = "omni_sdk_", suffix: str = "", dir: Optional[Union[str, Path]] = None, keep: bool = False
+    *,
+    prefix: str = "omni_sdk_",
+    suffix: str = "",
+    dir: Optional[Union[str, Path]] = None,
+    keep: bool = False,
 ) -> Iterator[Path]:
     """
     Convenience context manager that yields the `Path` of a temporary directory.
@@ -157,11 +169,18 @@ def temp_dir(
 # File helpers
 # ------------------------------------------------------------
 
+
 def _fsync_dir(dirpath: Path) -> None:
     # Best-effort directory fsync for durability; harmless if fails on some FS
     try:
         fd = os.open(str(dirpath), os.O_DIRECTORY)  # type: ignore[attr-defined]
-    except (AttributeError, FileNotFoundError, NotADirectoryError, PermissionError, OSError):  # pragma: no cover
+    except (
+        AttributeError,
+        FileNotFoundError,
+        NotADirectoryError,
+        PermissionError,
+        OSError,
+    ):  # pragma: no cover
         return
     try:
         os.fsync(fd)
@@ -171,7 +190,12 @@ def _fsync_dir(dirpath: Path) -> None:
         os.close(fd)
 
 
-def atomic_write(path: Union[str, Path], data: Union[bytes, bytearray, memoryview], *, mode: int = 0o644) -> Path:
+def atomic_write(
+    path: Union[str, Path],
+    data: Union[bytes, bytearray, memoryview],
+    *,
+    mode: int = 0o644,
+) -> Path:
     """
     Atomically write `data` to `path` with a temp file + replace.
 
@@ -207,9 +231,11 @@ def atomic_write(path: Union[str, Path], data: Union[bytes, bytearray, memoryvie
 # Content-addressed storage
 # ------------------------------------------------------------
 
+
 def _digest_bytes(data: Union[bytes, bytearray, memoryview], *, algo: str) -> bytes:
     hasher = _select_hash(algo)
     return hasher(memoryview(data))
+
 
 def _hex(b: bytes) -> str:
     return "0x" + b.hex()
@@ -253,6 +279,7 @@ def content_addressed_path(
 @dataclass(frozen=True)
 class CAWriteResult:
     """Result of `write_blob_ca` for convenience."""
+
     path: Path
     digest_hex: str
     algo: str
@@ -288,7 +315,9 @@ def write_blob_ca(
         # Ensure parent exists (content_addressed_path already did)
         atomic_write(target, data)
         created = True
-    return CAWriteResult(path=target, digest_hex=hex_digest, algo=algo, created=created, size=size)
+    return CAWriteResult(
+        path=target, digest_hex=hex_digest, algo=algo, created=created, size=size
+    )
 
 
 __all__ = [

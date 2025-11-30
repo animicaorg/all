@@ -28,7 +28,8 @@ import math
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Mapping, MutableMapping, Optional, Tuple
+from typing import (Dict, Iterable, List, Mapping, MutableMapping, Optional,
+                    Tuple)
 
 try:
     import httpx
@@ -46,6 +47,7 @@ LabelTuple = Tuple[Tuple[str, str], ...]
 @dataclass(frozen=True)
 class SampleKey:
     """Unique series identifier: metric name + normalized (sorted) labels."""
+
     name: str
     labels: LabelTuple = field(default_factory=tuple)
 
@@ -76,6 +78,7 @@ class MetricsSnapshot:
 @dataclass
 class HistogramFamily:
     """Reconstructed histogram family (for a single base + label set)."""
+
     base_name: str
     labels: LabelTuple
     buckets: Dict[float, float]  # le -> cumulative count
@@ -110,6 +113,7 @@ class HistogramDelta:
 # --------------------------------------------------------------------------------------
 # Public API
 # --------------------------------------------------------------------------------------
+
 
 def scrape_metrics(
     url: str,
@@ -176,7 +180,7 @@ def parse_prometheus_text(text: str) -> Tuple[Dict[str, str], Dict[SampleKey, fl
                 break
             # parse key
             j = i
-            while j < n and re.match(r"[a-zA-Z_][a-zA-Z0-9_]*", blob[j:j+1]):
+            while j < n and re.match(r"[a-zA-Z_][a-zA-Z0-9_]*", blob[j : j + 1]):
                 j += 1
             key = blob[i:j]
             i = j
@@ -261,7 +265,11 @@ def parse_prometheus_text(text: str) -> Tuple[Dict[str, str], Dict[SampleKey, fl
         # If TYPE for this exact base wasn't provided, try to infer:
         base = base_name(name)
         if base not in types:
-            if name.endswith("_bucket") or name.endswith("_sum") or name.endswith("_count"):
+            if (
+                name.endswith("_bucket")
+                or name.endswith("_sum")
+                or name.endswith("_count")
+            ):
                 types[base] = "histogram"
             elif name.endswith("_created"):
                 # leave unknown unless seen with bucket/sum/count
@@ -282,6 +290,7 @@ def parse_prometheus_text(text: str) -> Tuple[Dict[str, str], Dict[SampleKey, fl
 # --------------------------------------------------------------------------------------
 # Delta/rate computations
 # --------------------------------------------------------------------------------------
+
 
 def compute_deltas(
     prev: MetricsSnapshot,
@@ -329,13 +338,17 @@ def rates_from_counters(
     Compute per-second rates for counter series.
     """
     dt = max(curr.ts - prev.ts, 0.0)
-    deltas = compute_deltas(prev, curr, allow_reset=allow_reset, name_filter=name_filter)["counters"]
+    deltas = compute_deltas(
+        prev, curr, allow_reset=allow_reset, name_filter=name_filter
+    )["counters"]
     if dt <= 0:
         return {k: math.nan for k in deltas}
     return {k: v / dt for k, v in deltas.items()}
 
 
-def reconstruct_histograms(snapshot: MetricsSnapshot) -> Dict[Tuple[str, LabelTuple], HistogramFamily]:
+def reconstruct_histograms(
+    snapshot: MetricsSnapshot,
+) -> Dict[Tuple[str, LabelTuple], HistogramFamily]:
     """
     Reconstruct logical histograms from *_bucket/_sum/_count series.
 
@@ -365,7 +378,13 @@ def reconstruct_histograms(snapshot: MetricsSnapshot) -> Dict[Tuple[str, LabelTu
             fam_key = (base, fam_labels)
             fam = families.get(fam_key)
             if not fam:
-                fam = HistogramFamily(base_name=base, labels=fam_labels, buckets={}, count=math.nan, sum=math.nan)
+                fam = HistogramFamily(
+                    base_name=base,
+                    labels=fam_labels,
+                    buckets={},
+                    count=math.nan,
+                    sum=math.nan,
+                )
                 families[fam_key] = fam
             fam.buckets[le] = val
 
@@ -374,7 +393,13 @@ def reconstruct_histograms(snapshot: MetricsSnapshot) -> Dict[Tuple[str, LabelTu
             fam_key = (base, fam_labels)
             fam = families.get(fam_key)
             if not fam:
-                families[fam_key] = HistogramFamily(base_name=base, labels=fam_labels, buckets={}, count=val, sum=math.nan)
+                families[fam_key] = HistogramFamily(
+                    base_name=base,
+                    labels=fam_labels,
+                    buckets={},
+                    count=val,
+                    sum=math.nan,
+                )
             else:
                 fam.count = val
 
@@ -383,7 +408,13 @@ def reconstruct_histograms(snapshot: MetricsSnapshot) -> Dict[Tuple[str, LabelTu
             fam_key = (base, fam_labels)
             fam = families.get(fam_key)
             if not fam:
-                families[fam_key] = HistogramFamily(base_name=base, labels=fam_labels, buckets={}, count=math.nan, sum=val)
+                families[fam_key] = HistogramFamily(
+                    base_name=base,
+                    labels=fam_labels,
+                    buckets={},
+                    count=math.nan,
+                    sum=val,
+                )
             else:
                 fam.sum = val
 
@@ -430,14 +461,16 @@ def delta_histograms(
         count_incr = _delta_nonneg(p.count, c.count, allow_reset=allow_reset)
         sum_incr = _delta_nonneg(p.sum, c.sum, allow_reset=allow_reset)
 
-        results.append(HistogramDelta(
-            dt=dt,
-            base_name=base,
-            labels=labels,
-            bucket_incr=bucket_incr,
-            count_incr=count_incr,
-            sum_incr=sum_incr,
-        ))
+        results.append(
+            HistogramDelta(
+                dt=dt,
+                base_name=base,
+                labels=labels,
+                bucket_incr=bucket_incr,
+                count_incr=count_incr,
+                sum_incr=sum_incr,
+            )
+        )
     return results
 
 
@@ -445,7 +478,10 @@ def delta_histograms(
 # Helpers
 # --------------------------------------------------------------------------------------
 
-def normalize_labels(labels: Mapping[str, str] | Iterable[Tuple[str, str]]) -> LabelTuple:
+
+def normalize_labels(
+    labels: Mapping[str, str] | Iterable[Tuple[str, str]],
+) -> LabelTuple:
     if isinstance(labels, Mapping):
         items = list(labels.items())
     else:
@@ -487,6 +523,7 @@ def _delta_nonneg(prev: float, curr: float, allow_reset: bool = False) -> float:
 # Convenience: scrape-and-compare
 # --------------------------------------------------------------------------------------
 
+
 def scrape_and_compare(
     url: str,
     prev: Optional[MetricsSnapshot],
@@ -501,14 +538,25 @@ def scrape_and_compare(
     Returns: (curr_snapshot, deltas_map, histogram_deltas)
     """
     curr = scrape_metrics(url, timeout=timeout, headers=headers)
-    deltas = compute_deltas(prev, curr, allow_reset=allow_reset, name_filter=counter_filter) if prev else {"counters": {}, "gauges": {}}
-    h_deltas = delta_histograms(prev, curr, name_filter=histogram_filter, allow_reset=allow_reset) if prev else []
+    deltas = (
+        compute_deltas(prev, curr, allow_reset=allow_reset, name_filter=counter_filter)
+        if prev
+        else {"counters": {}, "gauges": {}}
+    )
+    h_deltas = (
+        delta_histograms(
+            prev, curr, name_filter=histogram_filter, allow_reset=allow_reset
+        )
+        if prev
+        else []
+    )
     return curr, deltas, h_deltas
 
 
 # --------------------------------------------------------------------------------------
 # Pretty-printing (useful for debugging in failing tests)
 # --------------------------------------------------------------------------------------
+
 
 def format_rates(rates: Mapping[SampleKey, float], precision: int = 3) -> str:
     lines = []
@@ -519,7 +567,9 @@ def format_rates(rates: Mapping[SampleKey, float], precision: int = 3) -> str:
 
 def format_histogram_delta(h: HistogramDelta, precision: int = 3) -> str:
     parts = [f"{h.base_name}{_labels_str(h.labels)} dt={h.dt:.3f}s"]
-    parts.append(f"count+={h.count_incr:.{precision}f} ({h.count_rate():.{precision}f}/s)")
+    parts.append(
+        f"count+={h.count_incr:.{precision}f} ({h.count_rate():.{precision}f}/s)"
+    )
     parts.append(f"sum+={h.sum_incr:.{precision}f} ({h.sum_rate():.{precision}f}/s)")
     for le in sorted(h.bucket_incr.keys()):
         inc = h.bucket_incr[le]
@@ -558,7 +608,7 @@ request_duration_seconds_count{route="/"} 6
     t1, s1 = parse_prometheus_text(demo)
     snap1 = MetricsSnapshot(ts=time.time(), raw=demo, types=t1, series=s1)
     time.sleep(0.2)
-    demo2 = demo.replace(' 10', ' 13').replace(' 2', ' 2', 1).replace(' 6\n', ' 7\n')
+    demo2 = demo.replace(" 10", " 13").replace(" 2", " 2", 1).replace(" 6\n", " 7\n")
     t2, s2 = parse_prometheus_text(demo2)
     snap2 = MetricsSnapshot(ts=time.time(), raw=demo2, types=t2, series=s2)
 

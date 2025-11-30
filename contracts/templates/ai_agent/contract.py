@@ -21,20 +21,22 @@
 # Errors (short, bytes):
 #   MODEL_LEN, NOT_CONFIGURED, PROMPT_LEN, NO_TASK, NO_RESULT_YET
 
-from stdlib.storage import get as sget, set as sset
-from stdlib.events import emit
 from stdlib.abi import require, revert
+from stdlib.events import emit
+from stdlib.storage import get as sget
+from stdlib.storage import set as sset
 from stdlib.syscalls import ai_enqueue, read_result
 
 # ---- storage keys -----------------------------------------------------------
 
-K_MODEL       = b"ai:model"         # -> bytes (model id/name)
-K_LAST_TASK   = b"ai:last_task"     # -> bytes (task id)
-K_LAST_PROMPT = b"ai:last_prompt"   # -> bytes
-K_LAST_RESULT = b"ai:last_result"   # -> bytes (cached latest result)
+K_MODEL = b"ai:model"  # -> bytes (model id/name)
+K_LAST_TASK = b"ai:last_task"  # -> bytes (task id)
+K_LAST_PROMPT = b"ai:last_prompt"  # -> bytes
+K_LAST_RESULT = b"ai:last_result"  # -> bytes (cached latest result)
 
 
 # ---- helpers ----------------------------------------------------------------
+
 
 def _has_model() -> bool:
     m = sget(K_MODEL)
@@ -51,6 +53,7 @@ def _bounded(b: bytes, lo: int, hi: int) -> bool:
 
 
 # ---- API --------------------------------------------------------------------
+
 
 def init(model: bytes) -> None:
     """

@@ -36,27 +36,35 @@ except Exception as _e:  # pragma: no cover
 
 # Hex/bytes helpers (fall back if omni_sdk.utils isn't present yet)
 try:
-    from omni_sdk.utils.bytes import to_hex as _to_hex, from_hex as _from_hex  # type: ignore
+    from omni_sdk.utils.bytes import from_hex as _from_hex
+    from omni_sdk.utils.bytes import to_hex as _to_hex  # type: ignore
 except Exception:  # pragma: no cover
+
     def _to_hex(b: bytes) -> str:
         return "0x" + bytes(b).hex()
+
     def _from_hex(s: str) -> bytes:
         s = s[2:] if isinstance(s, str) and s.startswith("0x") else s
         return bytes.fromhex(s)
+
 
 # Hash helper (for local commitment preview)
 try:
     from omni_sdk.utils.hash import sha3_256  # type: ignore
 except Exception:  # pragma: no cover
     import hashlib as _hashlib
+
     def sha3_256(data: bytes) -> bytes:
         return _hashlib.sha3_256(data).digest()
+
 
 # Errors
 try:
     from omni_sdk.errors import RpcError  # type: ignore
 except Exception:  # pragma: no cover
+
     class RpcError(RuntimeError): ...
+
 
 Json = Dict[str, Any]
 
@@ -92,9 +100,13 @@ def _wrap_rpc(
             session=session or requests.Session(),
         )
 
-    base = _detect_base_url(rpc_or_url) if not isinstance(rpc_or_url, str) else rpc_or_url
+    base = (
+        _detect_base_url(rpc_or_url) if not isinstance(rpc_or_url, str) else rpc_or_url
+    )
     if not isinstance(base, str) or not base:
-        raise ValueError("RandomnessClient needs an RPC object with .call(...) or a base URL string")
+        raise ValueError(
+            "RandomnessClient needs an RPC object with .call(...) or a base URL string"
+        )
 
     rpc_url = urljoin(base.rstrip("/") + "/", "rpc")
     sess = session or requests.Session()
@@ -108,7 +120,9 @@ def _wrap_rpc(
         try:
             data = resp.json()
         except Exception as e:
-            raise RpcError(f"Invalid JSON-RPC response from {rpc_url}: {resp.text[:256]}") from e
+            raise RpcError(
+                f"Invalid JSON-RPC response from {rpc_url}: {resp.text[:256]}"
+            ) from e
         if "error" in data and data["error"]:
             raise RpcError(f"RPC {method} failed: {data['error']}")
         return data.get("result")
@@ -117,6 +131,7 @@ def _wrap_rpc(
 
 
 # --- Client ------------------------------------------------------------------
+
 
 class RandomnessClient:
     """
@@ -174,7 +189,9 @@ class RandomnessClient:
             raise RpcError("rand.getBeacon: invalid response")
         return dict(res)
 
-    def get_history(self, *, start: Optional[int] = None, limit: int = 10) -> Sequence[Json]:
+    def get_history(
+        self, *, start: Optional[int] = None, limit: int = 10
+    ) -> Sequence[Json]:
         """Return recent beacons (descending or server-defined order)."""
         params: Json = {"limit": int(limit)}
         if start is not None:
@@ -266,8 +283,16 @@ class RandomnessClient:
         hex string (0x…)
         """
         dom = bytes(domain_tag or self._DOMAIN_COMMIT)
-        s = salt if isinstance(salt, (bytes, bytearray, memoryview)) else _from_hex(str(salt))
-        p = payload if isinstance(payload, (bytes, bytearray, memoryview)) else _from_hex(str(payload))
+        s = (
+            salt
+            if isinstance(salt, (bytes, bytearray, memoryview))
+            else _from_hex(str(salt))
+        )
+        p = (
+            payload
+            if isinstance(payload, (bytes, bytearray, memoryview))
+            else _from_hex(str(payload))
+        )
         parts = [dom]
         if account:
             # Bind textual address bytes as-is (already normalized upstream)
@@ -299,9 +324,9 @@ class RandomnessClient:
         while True:
             bea = self.get_beacon()
             r = int(bea.get("round", 0))
-            if (target_round is None and start_round is not None and r > start_round) or (
-                target_round is not None and r >= int(target_round)
-            ):
+            if (
+                target_round is None and start_round is not None and r > start_round
+            ) or (target_round is not None and r >= int(target_round)):
                 return bea
             if time.monotonic() >= deadline:
                 raise TimeoutError("Timed out waiting for beacon")

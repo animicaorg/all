@@ -19,15 +19,17 @@ script. Extend or patch the upstream `vm_py/` package instead.
 
 from __future__ import annotations
 
-from importlib import resources
 import json
+from importlib import resources
 from typing import Any, Dict
 
 # Re-exports for convenience
-from . import runtime as runtime  # engine, gasmeter, context, storage/events/hash/abi/random
-from . import stdlib as stdlib    # contract-facing stdlib surface (browser-safe)
 from . import compiler as compiler  # IR types/encode/typecheck/gas_estimator
-from . import errors as errors    # VmError, ValidationError, OOG, Revert
+from . import errors as errors  # VmError, ValidationError, OOG, Revert
+from . import \
+    runtime as \
+    runtime  # engine, gasmeter, context, storage/events/hash/abi/random
+from . import stdlib as stdlib  # contract-facing stdlib surface (browser-safe)
 
 __all__ = ["runtime", "stdlib", "compiler", "errors", "get_version", "__version__"]
 
@@ -39,7 +41,9 @@ def _read_manifest_version() -> str:
     """
     try:
         # The sync script writes a text file into this package namespace
-        with resources.files(__package__).joinpath("_sync_manifest.json").open("rb") as f:
+        with resources.files(__package__).joinpath("_sync_manifest.json").open(
+            "rb"
+        ) as f:
             data: Dict[str, Any] = json.load(f)
             v = data.get("vmVersion")
             return str(v) if v else "0.0.0"

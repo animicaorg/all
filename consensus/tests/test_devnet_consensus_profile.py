@@ -3,7 +3,8 @@ import secrets
 
 import pytest
 
-from consensus.state import InMemoryConsensusState, PolicyRoots, RetargetParams, WindowSpec
+from consensus.state import (InMemoryConsensusState, PolicyRoots,
+                             RetargetParams, WindowSpec)
 
 DEVNET_CHAIN_ID = 1337
 DEVNET_THETA_INIT = 2_000_000
@@ -23,7 +24,9 @@ DEVNET_SPLIT = {"miner": 60, "aicf": 30, "treasury": 10}
 
 @pytest.fixture()
 def devnet_state() -> InMemoryConsensusState:
-    roots = PolicyRoots(alg_policy_root=os.urandom(32), poies_policy_root=os.urandom(32))
+    roots = PolicyRoots(
+        alg_policy_root=os.urandom(32), poies_policy_root=os.urandom(32)
+    )
     st = InMemoryConsensusState(
         chain_id=DEVNET_CHAIN_ID,
         theta_micro=DEVNET_THETA_INIT,
@@ -34,7 +37,9 @@ def devnet_state() -> InMemoryConsensusState:
     return st
 
 
-def _mine_blocks(state: InMemoryConsensusState, count: int, *, spacing: int) -> list[int]:
+def _mine_blocks(
+    state: InMemoryConsensusState, count: int, *, spacing: int
+) -> list[int]:
     ts = state.head.timestamp
     thetas = []
     for i in range(count):
@@ -45,13 +50,17 @@ def _mine_blocks(state: InMemoryConsensusState, count: int, *, spacing: int) -> 
     return thetas
 
 
-def test_single_miner_progresses_and_theta_stays_bounded(devnet_state: InMemoryConsensusState) -> None:
+def test_single_miner_progresses_and_theta_stays_bounded(
+    devnet_state: InMemoryConsensusState,
+) -> None:
     thetas = _mine_blocks(devnet_state, 12, spacing=DEVNET_TARGET_SEC)
 
     assert devnet_state.head.height == 12
     assert min(thetas) >= DEVNET_THETA_MIN
     assert max(thetas) <= DEVNET_THETA_MAX
-    assert max(thetas) / min(thetas) < 1.25, "Θ should not oscillate wildly at target cadence"
+    assert (
+        max(thetas) / min(thetas) < 1.25
+    ), "Θ should not oscillate wildly at target cadence"
 
 
 def test_retarget_recovers_after_pause(devnet_state: InMemoryConsensusState) -> None:

@@ -3,9 +3,9 @@ from __future__ import annotations
 import asyncio
 import random
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Deque, Dict, Optional, Tuple
-from collections import deque
 
 # --- Wire IDs (best effort) ---------------------------------------------------------------------
 
@@ -16,11 +16,12 @@ except Exception:  # pragma: no cover
     MSG_PONG = 0x04
 
 try:
-    from p2p.wire.encoding import encode, decode  # type: ignore
+    from p2p.wire.encoding import decode, encode  # type: ignore
 except Exception:  # pragma: no cover
     encode = decode = None  # type: ignore
 
 # --- Helpers ------------------------------------------------------------------------------------
+
 
 def _mono_ms() -> float:
     return time.monotonic() * 1000.0
@@ -214,7 +215,11 @@ class PingService:
             return t1 - t0
 
         # 3) Wire frames with encode/decode and send_frame/recv_frame
-        if encode and hasattr(self._conn, "send_frame") and hasattr(self._conn, "recv_frame"):
+        if (
+            encode
+            and hasattr(self._conn, "send_frame")
+            and hasattr(self._conn, "recv_frame")
+        ):
             seq = self._next_seq()
             body = encode({"seq": seq, "t_ms": _mono_ms()})  # type: ignore
             await self._conn.send_frame(MSG_PING, body)
@@ -223,7 +228,9 @@ class PingService:
             end = time.monotonic() + self._timeout
             while time.monotonic() < end:
                 remaining = max(0.0, end - time.monotonic())
-                msg_id, payload = await asyncio.wait_for(self._conn.recv_frame(), timeout=remaining)
+                msg_id, payload = await asyncio.wait_for(
+                    self._conn.recv_frame(), timeout=remaining
+                )
                 if msg_id != MSG_PONG:
                     # Not ours — return it back if the conn has a router/putback hook.
                     putback = getattr(self._conn, "putback_frame", None)
@@ -246,9 +253,7 @@ class PingService:
         if hasattr(self._conn, "write") and hasattr(self._conn, "readuntil"):
             seq = self._next_seq()
             t0 = _mono_ms()
-            line = (
-                '{"op":"PING","seq":%d,"t_ms":%.3f}\n' % (seq, t0)
-            ).encode("utf-8")
+            line = ('{"op":"PING","seq":%d,"t_ms":%.3f}\n' % (seq, t0)).encode("utf-8")
             self._conn.write(line)  # type: ignore[attr-defined]
             await self._conn.drain()  # type: ignore[attr-defined]
             end = time.monotonic() + self._timeout
@@ -276,6 +281,7 @@ class PingService:
 
 
 # --- Server-side helpers ------------------------------------------------------------------------
+
 
 async def handle_ping_request(req: Dict[str, Any]) -> Dict[str, Any]:
     """

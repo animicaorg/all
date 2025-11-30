@@ -43,12 +43,12 @@ Throughput gains depend on the underlying state's ability to fork cheaply.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Iterable, Optional, Sequence, Tuple, List, Set
 import concurrent.futures as _futures
+from dataclasses import dataclass
+from typing import Any, Iterable, List, Optional, Sequence, Set, Tuple
 
 try:
-    from .serial import SerialScheduler, BlockApplyReport  # type: ignore
+    from .serial import BlockApplyReport, SerialScheduler  # type: ignore
 except Exception:  # pragma: no cover - minimal shells for isolated use
     from dataclasses import dataclass as _dc  # type: ignore
 
@@ -65,9 +65,11 @@ except Exception:  # pragma: no cover - minimal shells for isolated use
         failure_count: int
         post_state_root: Optional[bytes]
 
+
 try:
     from ..types.result import ApplyResult  # type: ignore
 except Exception:  # pragma: no cover
+
     @dataclass
     class ApplyResult:  # type: ignore
         status: int
@@ -76,9 +78,11 @@ except Exception:  # pragma: no cover
         stateRoot: Optional[bytes] = None
         receipt: Optional[dict] = None
 
+
 try:
     from ..types.status import TxStatus  # type: ignore
 except Exception:  # pragma: no cover
+
     class TxStatus:  # type: ignore
         SUCCESS = 1
         REVERT = 2
@@ -90,6 +94,7 @@ except Exception:  # pragma: no cover
 Key = Tuple[bytes, Optional[bytes]]
 # Convention: Key = (address, storage_key_or_None). For balance/nonce/code-level
 # writes, storage_key_or_None can be None.
+
 
 @dataclass(frozen=True)
 class LockSet:
@@ -111,10 +116,13 @@ class LockSet:
         return False
 
     def union(self, other: "LockSet") -> "LockSet":
-        return LockSet(reads=self.reads | other.reads, writes=self.writes | other.writes)
+        return LockSet(
+            reads=self.reads | other.reads, writes=self.writes | other.writes
+        )
 
 
 # ------------------------------ Proposals -----------------------------------
+
 
 @dataclass
 class Proposal:
@@ -129,6 +137,7 @@ class Proposal:
 
 # --------------------------- Helper predicates ------------------------------
 
+
 def _is_success(res: ApplyResult) -> bool:
     try:
         return res.status == TxStatus.SUCCESS  # type: ignore[attr-defined]
@@ -138,8 +147,10 @@ def _is_success(res: ApplyResult) -> bool:
 
 # ---------------------------- Dynamic imports -------------------------------
 
+
 def _apply_tx_fn():
     from ..runtime.executor import apply_tx  # type: ignore
+
     return apply_tx
 
 
@@ -147,12 +158,14 @@ def _apply_tx_fn():
 def _get_access_tracker():
     try:
         from ..state.access_tracker import track_accesses  # type: ignore
+
         return track_accesses
     except Exception:
         return None
 
 
 # ---------------------------- State capabilities ----------------------------
+
 
 def _fork_state(state: Any) -> Optional[Any]:
     for name in ("fork", "clone", "copy", "snapshot_view"):
@@ -218,7 +231,15 @@ def _extract_lockset_from_receipt(res: ApplyResult) -> Optional[LockSet]:
         for ent in acc:
             addr = ent["address"] if isinstance(ent, dict) else ent[0]
             slots = ent["storageKeys"] if isinstance(ent, dict) else ent[1]
-            a = addr if isinstance(addr, (bytes, bytearray)) else bytes.fromhex(addr[2:]) if isinstance(addr, str) and addr.startswith("0x") else bytes(addr)
+            a = (
+                addr
+                if isinstance(addr, (bytes, bytearray))
+                else (
+                    bytes.fromhex(addr[2:])
+                    if isinstance(addr, str) and addr.startswith("0x")
+                    else bytes(addr)
+                )
+            )
             if not slots:
                 writes.add((a, None))
             else:
@@ -235,7 +256,9 @@ def _extract_lockset_from_receipt(res: ApplyResult) -> Optional[LockSet]:
         return None
 
 
-def _extract_lockset_with_tracker(view: Any, track_accesses, fn, **kwargs) -> Tuple[Optional[ApplyResult], Optional[LockSet], Optional[BaseException]]:
+def _extract_lockset_with_tracker(
+    view: Any, track_accesses, fn, **kwargs
+) -> Tuple[Optional[ApplyResult], Optional[LockSet], Optional[BaseException]]:
     try:
         with track_accesses(view) as tr:  # type: ignore[misc]
             res = fn(**kwargs)
@@ -246,6 +269,7 @@ def _extract_lockset_with_tracker(view: Any, track_accesses, fn, **kwargs) -> Tu
 
 
 # ---------------------------- OptimisticScheduler ---------------------------
+
 
 class OptimisticScheduler:
     """
@@ -273,6 +297,7 @@ class OptimisticScheduler:
         logger: Optional[Any] = None,
     ) -> None:
         import os
+
         self._workers = max_workers or min(8, max(2, os.cpu_count() or 4))
         self._wave = max(1, wave_size)
         self._stop_on_error = stop_on_error
@@ -293,9 +318,17 @@ class OptimisticScheduler:
     ) -> BlockApplyReport:
         # If we cannot fork AND we cannot diff/apply, fall back to serial safely.
         if not self._can_speculate_on(state):
-            self._warn("[optimistic] state does not support fork+diff; falling back to serial")
-            return SerialScheduler(stop_on_error=self._stop_on_error, logger=self._log).apply_block(
-                txs=txs, state=state, block_env=block_env, gas_table=gas_table, params=params
+            self._warn(
+                "[optimistic] state does not support fork+diff; falling back to serial"
+            )
+            return SerialScheduler(
+                stop_on_error=self._stop_on_error, logger=self._log
+            ).apply_block(
+                txs=txs,
+                state=state,
+                block_env=block_env,
+                gas_table=gas_table,
+                params=params,
             )
 
         # Results are accumulated per original index.
@@ -315,7 +348,9 @@ class OptimisticScheduler:
         for start in range(0, len(txs), self._wave):
             end = min(len(txs), start + self._wave)
             wave_items = list(enumerate(txs[start:end], start))
-            proposals = self._speculate_wave(wave_items, state, block_env, gas_table, params)
+            proposals = self._speculate_wave(
+                wave_items, state, block_env, gas_table, params
+            )
 
             # Deterministically accept non-conflicting proposals in input order
             accept: List[Proposal] = []
@@ -336,7 +371,9 @@ class OptimisticScheduler:
                     # Defer to later (next wave or serial); keep order by retrying serially
                     retry_serial.append((prop.idx, prop.tx))
                     continue
-                accept.append(Proposal(prop.idx, prop.tx, prop.result, ls, prop.diff, True))
+                accept.append(
+                    Proposal(prop.idx, prop.tx, prop.result, ls, prop.diff, True)
+                )
 
                 # Extend wave lockset for subsequent checks
                 wave_ls = wave_ls.union(ls)
@@ -359,7 +396,9 @@ class OptimisticScheduler:
                 else:
                     fail += 1
                     if self._stop_on_error:
-                        self._warn(f"[optimistic] stop_on_error=True; halting after tx#{prop.idx}")
+                        self._warn(
+                            f"[optimistic] stop_on_error=True; halting after tx#{prop.idx}"
+                        )
                         # Fill still-empty slots with a benign failure result
                         for i, r in enumerate(final_results):
                             if r is None:
@@ -377,10 +416,18 @@ class OptimisticScheduler:
             self._dbg(f"[optimistic] serial fallback for {len(retry_serial)} txs")
             # Sort by original index to preserve determinism
             retry_serial.sort(key=lambda t: t[0])
-            serial = SerialScheduler(stop_on_error=self._stop_on_error, logger=self._log)
+            serial = SerialScheduler(
+                stop_on_error=self._stop_on_error, logger=self._log
+            )
             # Build a small adapter: run only these txs (in order) and patch into final_results
             sub_txs = [tx for _, tx in retry_serial]
-            report = serial.apply_block(txs=sub_txs, state=state, block_env=block_env, gas_table=gas_table, params=params)
+            report = serial.apply_block(
+                txs=sub_txs,
+                state=state,
+                block_env=block_env,
+                gas_table=gas_table,
+                params=params,
+            )
             # Stitch back results
             for (idx, _), res in zip(retry_serial, report.results):
                 final_results[idx] = res
@@ -421,12 +468,17 @@ class OptimisticScheduler:
         Run a wave of speculative executions on forked state views.
         Returns proposals in the same order as wave_items.
         """
-        proposals: List[Proposal] = [Proposal(idx=i, tx=tx, result=None, lockset=None, diff=None, ok=False) for i, tx in wave_items]
+        proposals: List[Proposal] = [
+            Proposal(idx=i, tx=tx, result=None, lockset=None, diff=None, ok=False)
+            for i, tx in wave_items
+        ]
 
         def job(i: int, tx: Any) -> Proposal:
             view = _fork_state(state)
             if view is None:
-                return Proposal(idx=i, tx=tx, result=None, lockset=None, diff=None, ok=False)
+                return Proposal(
+                    idx=i, tx=tx, result=None, lockset=None, diff=None, ok=False
+                )
 
             # Prefer access-tracker if available to capture a precise lockset.
             track_accesses = self._track_accesses
@@ -444,15 +496,39 @@ class OptimisticScheduler:
                     params=params,
                 )
                 if err is not None:
-                    return Proposal(idx=i, tx=tx, result=None, lockset=None, diff=None, ok=False, error=err)
+                    return Proposal(
+                        idx=i,
+                        tx=tx,
+                        result=None,
+                        lockset=None,
+                        diff=None,
+                        ok=False,
+                        error=err,
+                    )
                 diff = _get_diff(view)
-                return Proposal(idx=i, tx=tx, result=res, lockset=ls, diff=diff, ok=res is not None)
+                return Proposal(
+                    idx=i, tx=tx, result=res, lockset=ls, diff=diff, ok=res is not None
+                )
 
             # Else run normally and try to infer lockset from the view or receipt
             try:
-                res = apply_tx(tx=tx, state=view, block_env=block_env, gas_table=gas_table, params=params)
+                res = apply_tx(
+                    tx=tx,
+                    state=view,
+                    block_env=block_env,
+                    gas_table=gas_table,
+                    params=params,
+                )
             except BaseException as e:
-                return Proposal(idx=i, tx=tx, result=None, lockset=None, diff=None, ok=False, error=e)
+                return Proposal(
+                    idx=i,
+                    tx=tx,
+                    result=None,
+                    lockset=None,
+                    diff=None,
+                    ok=False,
+                    error=e,
+                )
 
             ls = _extract_lockset_from_view(view) or _extract_lockset_from_receipt(res)
             diff = _get_diff(view)

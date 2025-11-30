@@ -58,6 +58,7 @@ class BuildMeta:
     - git: output of `git describe` (or env override) if available
     - root: resolved repo root used for the git call
     """
+
     base_version: str
     git: Optional[str]
     root: Optional[Path]
@@ -120,7 +121,9 @@ def version_with_git() -> str:
 def build_meta() -> BuildMeta:
     """Return structured build metadata for logs/metrics UIs."""
     root = _repo_root()
-    return BuildMeta(base_version=__version__, git=git_describe(default=None) or None, root=root)
+    return BuildMeta(
+        base_version=__version__, git=git_describe(default=None) or None, root=root
+    )
 
 
 # CLI helper: `python -m p2p.version`

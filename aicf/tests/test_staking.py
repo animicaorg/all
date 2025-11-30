@@ -1,10 +1,10 @@
 import pytest
 
-from aicf.errors import InsufficientStake, RegistryError
-from aicf.registry.staking import Staking
-from aicf.registry.registry import Registry
-from aicf.registry.allowlist import Allowlist
 from aicf.aitypes.provider import Capability, ProviderStatus
+from aicf.errors import InsufficientStake, RegistryError
+from aicf.registry.allowlist import Allowlist
+from aicf.registry.registry import Registry
+from aicf.registry.staking import Staking
 
 
 def _mk_registry() -> Registry:
@@ -32,7 +32,9 @@ def _mk_staking() -> Staking:
 @pytest.fixture(autouse=True)
 def stub_attestation(monkeypatch):
     # Make attestation verification always succeed for these tests.
-    monkeypatch.setattr("aicf.registry.verify_attest.verify_attestation", lambda _: True)
+    monkeypatch.setattr(
+        "aicf.registry.verify_attest.verify_attestation", lambda _: True
+    )
 
 
 def test_stake_increase_and_minimums():

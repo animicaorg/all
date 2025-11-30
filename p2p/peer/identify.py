@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 # ---- best-effort version discovery -------------------------------------------------------------
+
 
 def _try_import_version(mod: str, attr: str = "__version__") -> str:
     try:
@@ -18,6 +19,7 @@ def _try_import_version(mod: str, attr: str = "__version__") -> str:
         pass
     return "0.0.0"
 
+
 _VERSIONS = {
     "p2p": _try_import_version("p2p.version"),
     "core": _try_import_version("core.version"),
@@ -25,8 +27,10 @@ _VERSIONS = {
     "rpc": _try_import_version("rpc.version"),
 }
 
+
 def _default_agent() -> str:
     return f"animica-core/{_VERSIONS['core']} p2p/{_VERSIONS['p2p']}"
+
 
 # ---- caps --------------------------------------------------------------------------------------
 
@@ -38,9 +42,10 @@ _DEFAULT_CAPS = [
     "poies/v1",
 ]
 
+
 def _normalize_caps(caps: Optional[List[str]]) -> List[str]:
     out: List[str] = []
-    for c in (caps or _DEFAULT_CAPS):
+    for c in caps or _DEFAULT_CAPS:
         c = (c or "").strip().lower()
         if not c:
             continue
@@ -48,21 +53,24 @@ def _normalize_caps(caps: Optional[List[str]]) -> List[str]:
             out.append(c)
     return out
 
+
 # ---- wire (optional) ---------------------------------------------------------------------------
 
 # We try to use the canonical wire encoding if available; otherwise fall back to a tiny JSON line.
 try:
-    from p2p.wire.message_ids import MSG_IDENTIFY, MSG_IDENTIFY_RESP  # type: ignore
+    from p2p.wire.message_ids import (MSG_IDENTIFY,  # type: ignore
+                                      MSG_IDENTIFY_RESP)
 except Exception:  # pragma: no cover
     MSG_IDENTIFY = 0x01
     MSG_IDENTIFY_RESP = 0x02
 
 try:
-    from p2p.wire.encoding import encode, decode  # type: ignore
+    from p2p.wire.encoding import decode, encode  # type: ignore
 except Exception:  # pragma: no cover
     encode = decode = None  # type: ignore
 
 # ---- data model --------------------------------------------------------------------------------
+
 
 @dataclass
 class IdentifyRequest:
@@ -72,6 +80,7 @@ class IdentifyRequest:
     height: int
     timestamp: float
     network_id: Optional[str] = None  # e.g., "animica:1"
+
 
 @dataclass
 class IdentifyResponse:
@@ -86,7 +95,9 @@ class IdentifyResponse:
     addr: Optional[str] = None
     rtt_ms: Optional[float] = None
 
+
 # ---- exceptions --------------------------------------------------------------------------------
+
 
 class IdentifyError(Exception):
     pass
@@ -115,7 +126,9 @@ class IdentifyService:
         agent: Optional[str] = None,
     ) -> None:
         self.connmgr = connmgr
-        self.peer_id = peer_id.hex() if isinstance(peer_id, (bytes, bytearray)) else str(peer_id)
+        self.peer_id = (
+            peer_id.hex() if isinstance(peer_id, (bytes, bytearray)) else str(peer_id)
+        )
         self.version = version
         self.head_reader = head_reader
         self.alg_policy_root = alg_policy_root
@@ -133,7 +146,9 @@ class IdentifyService:
     async def stop(self) -> None:
         self._running = False
 
-    def describe_local(self, *, addr: Optional[str] = None, rtt_ms: Optional[float] = None) -> Dict[str, Any]:
+    def describe_local(
+        self, *, addr: Optional[str] = None, rtt_ms: Optional[float] = None
+    ) -> Dict[str, Any]:
         """
         Return an IdentifyResponse-like dict for this node. This is used by
         servers when answering IDENTIFY requests.
@@ -170,7 +185,9 @@ class IdentifyService:
             agent=self.agent,
         )
 
+
 # ---- public API --------------------------------------------------------------------------------
+
 
 async def perform_identify(
     conn: Any,
@@ -237,7 +254,9 @@ async def perform_identify(
     # 5) Last resort: synthesize from connection metadata
     peer_id = getattr(conn, "peer_id", None) or getattr(conn, "remote_addr", "unknown")
     if not peer_id:
-        raise IdentifyError("Cannot determine peer identity; unsupported connection type")
+        raise IdentifyError(
+            "Cannot determine peer identity; unsupported connection type"
+        )
     return {
         "peer_id": str(peer_id),
         "versions": dict(_VERSIONS),
@@ -247,15 +266,19 @@ async def perform_identify(
         "network_id": network_id,
     }
 
+
 # ---- strategy implementations ------------------------------------------------------------------
+
 
 async def _via_direct(conn: Any, req: IdentifyRequest) -> Dict[str, Any]:
     resp = await conn.identify(asdict(req))
     return _validate_response(resp, conn)
 
+
 async def _via_request(conn: Any, req: IdentifyRequest) -> Dict[str, Any]:
     resp = await conn.request("IDENTIFY", asdict(req))
     return _validate_response(resp, conn)
+
 
 async def _via_wire_frames(conn: Any, req: IdentifyRequest) -> Dict[str, Any]:
     # Expect send_frame(msg_id: int, payload: bytes) / recv_frame() -> (msg_id:int, payload:bytes)
@@ -263,9 +286,12 @@ async def _via_wire_frames(conn: Any, req: IdentifyRequest) -> Dict[str, Any]:
     await conn.send_frame(MSG_IDENTIFY, payload)
     msg_id, body = await conn.recv_frame()
     if msg_id != MSG_IDENTIFY_RESP:
-        raise IdentifyError(f"unexpected msg_id {msg_id:#x} (wanted {MSG_IDENTIFY_RESP:#x})")
+        raise IdentifyError(
+            f"unexpected msg_id {msg_id:#x} (wanted {MSG_IDENTIFY_RESP:#x})"
+        )
     resp = decode(body)  # type: ignore
     return _validate_response(resp, conn)
+
 
 async def _via_json_line(conn: Any, req: IdentifyRequest) -> Dict[str, Any]:
     """
@@ -277,22 +303,36 @@ async def _via_json_line(conn: Any, req: IdentifyRequest) -> Dict[str, Any]:
     """
     import json
 
-    line = json.dumps({"op": "IDENTIFY", "data": asdict(req)}, separators=(",", ":")).encode("utf-8") + b"\n"
-    conn.write(line)            # type: ignore[attr-defined]
-    await conn.drain()          # type: ignore[attr-defined]
+    line = (
+        json.dumps(
+            {"op": "IDENTIFY", "data": asdict(req)}, separators=(",", ":")
+        ).encode("utf-8")
+        + b"\n"
+    )
+    conn.write(line)  # type: ignore[attr-defined]
+    await conn.drain()  # type: ignore[attr-defined]
     raw = await conn.readuntil(b"\n")  # type: ignore[attr-defined]
     obj = json.loads(raw.decode("utf-8", "strict"))
-    if not isinstance(obj, dict) or obj.get("op") not in ("IDENTIFY/RESP", "IDENTIFY_RESP"):
+    if not isinstance(obj, dict) or obj.get("op") not in (
+        "IDENTIFY/RESP",
+        "IDENTIFY_RESP",
+    ):
         raise IdentifyError("invalid identify line response")
     return _validate_response(obj.get("data", {}), conn)
 
+
 # ---- validation / normalization ----------------------------------------------------------------
+
 
 def _validate_response(resp: Any, conn: Any) -> Dict[str, Any]:
     if not isinstance(resp, dict):
         raise IdentifyError("malformed identify response")
 
-    peer_id = str(resp.get("peer_id") or getattr(conn, "peer_id", "") or getattr(conn, "remote_addr", ""))
+    peer_id = str(
+        resp.get("peer_id")
+        or getattr(conn, "peer_id", "")
+        or getattr(conn, "remote_addr", "")
+    )
     if not peer_id:
         raise IdentifyError("identify response lacks peer_id")
 
@@ -347,7 +387,9 @@ def _validate_response(resp: Any, conn: Any) -> Dict[str, Any]:
         out["addr"] = addr
     return out
 
+
 # ---- server-side helper (optional) --------------------------------------------------------------
+
 
 async def handle_identify_request(
     req: Dict[str, Any],

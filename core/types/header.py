@@ -35,9 +35,9 @@ Notes:
 from dataclasses import dataclass, replace
 from typing import Any, Mapping, Optional
 
+from core.encoding.cbor import cbor_dumps, cbor_loads
 from core.utils.bytes import expect_len
 from core.utils.hash import sha3_256
-from core.encoding.cbor import cbor_dumps, cbor_loads
 
 HASH32_LEN = 32
 HEADER_VERSION = 1
@@ -140,8 +140,16 @@ class Header:
             proofsRoot=proofs_root,
             daRoot=da_root,
             mixSeed=mix_seed if mix_seed is not None else self.mixSeed,
-            poiesPolicyRoot=poies_policy_root if poies_policy_root is not None else self.poiesPolicyRoot,
-            pqAlgPolicyRoot=pq_alg_policy_root if pq_alg_policy_root is not None else self.pqAlgPolicyRoot,
+            poiesPolicyRoot=(
+                poies_policy_root
+                if poies_policy_root is not None
+                else self.poiesPolicyRoot
+            ),
+            pqAlgPolicyRoot=(
+                pq_alg_policy_root
+                if pq_alg_policy_root is not None
+                else self.pqAlgPolicyRoot
+            ),
             thetaMicro=theta_micro if theta_micro is not None else self.thetaMicro,
             nonce=nonce,
             extra=extra,
@@ -212,7 +220,9 @@ class Header:
         h._validate_sizes()
         if h.v != HEADER_VERSION:
             # Allow forward-compat readers to decide; here we enforce equality for now.
-            raise ValueError(f"Unsupported header version {h.v}, expected {HEADER_VERSION}")
+            raise ValueError(
+                f"Unsupported header version {h.v}, expected {HEADER_VERSION}"
+            )
         return h
 
     def to_cbor(self) -> bytes:
@@ -269,8 +279,10 @@ class Header:
 
     def pretty(self) -> str:
         """Human-oriented single-line summary (non-consensus)."""
+
         def h(x: bytes) -> str:
             return x.hex()[:8]
+
         return (
             f"Header(v={self.v} cid={self.chainId} h={self.height} t={self.timestamp} "
             f"parent={h(self.parentHash)} state={h(self.stateRoot)} txs={h(self.txsRoot)} "

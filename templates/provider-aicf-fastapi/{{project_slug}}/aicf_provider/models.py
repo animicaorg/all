@@ -19,12 +19,13 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field, HttpUrl, ValidationError, field_validator
-
+from pydantic import (BaseModel, Field, HttpUrl, ValidationError,
+                      field_validator)
 
 # -----------------------------------------------------------------------------
 # Common / meta models
 # -----------------------------------------------------------------------------
+
 
 class Problem(BaseModel):
     """
@@ -38,6 +39,7 @@ class Problem(BaseModel):
           "code": "bad_request"
         }
     """
+
     type: Optional[HttpUrl] = None
     title: str
     status: int
@@ -47,7 +49,9 @@ class Problem(BaseModel):
     data: Optional[Dict[str, Any]] = None
 
     @classmethod
-    def from_exc(cls, exc: Exception, *, status: int = 400, code: Optional[str] = None) -> "Problem":
+    def from_exc(
+        cls, exc: Exception, *, status: int = 400, code: Optional[str] = None
+    ) -> "Problem":
         if isinstance(exc, ValidationError):
             return cls(
                 title="Validation error",
@@ -56,7 +60,9 @@ class Problem(BaseModel):
                 detail=str(exc),
                 data={"errors": exc.errors()},
             )
-        return cls(title=exc.__class__.__name__, status=status, code=code, detail=str(exc))
+        return cls(
+            title=exc.__class__.__name__, status=status, code=code, detail=str(exc)
+        )
 
 
 class HealthStatus(str, Enum):
@@ -67,9 +73,12 @@ class HealthStatus(str, Enum):
 
 class Health(BaseModel):
     """Simple health payload used by /health."""
+
     status: HealthStatus = HealthStatus.ok
     uptime_s: float = 0.0
-    checks: Dict[str, str] = Field(default_factory=dict)  # e.g. {"rpc": "ok", "queue": "ok"}
+    checks: Dict[str, str] = Field(
+        default_factory=dict
+    )  # e.g. {"rpc": "ok", "queue": "ok"}
 
 
 class Version(BaseModel):
@@ -80,6 +89,7 @@ class Version(BaseModel):
     - "ai": supports AI jobs
     - "quantum": supports Quantum jobs
     """
+
     provider_id: str
     version: str = "0.1.0"
     capabilities: Dict[str, bool] = Field(default_factory=dict)
@@ -91,6 +101,7 @@ class Version(BaseModel):
 
 # ---- Base job ----
 
+
 class BaseJobIn(BaseModel):
     """
     Base fields for a new job submitted to the provider.
@@ -99,6 +110,7 @@ class BaseJobIn(BaseModel):
     - `priority`: higher numbers are treated as higher priority (implementation-specific).
     - `timeout_s`: hard processing timeout hint (enforced by your worker).
     """
+
     kind: Literal["ai", "quantum"]
     client_job_id: Optional[str] = None
     priority: int = Field(0, ge=0, le=100)
@@ -106,6 +118,7 @@ class BaseJobIn(BaseModel):
 
 
 # ---- AI job ----
+
 
 class AIJobIn(BaseJobIn):
     kind: Literal["ai"] = "ai"
@@ -119,6 +132,7 @@ class AIJobIn(BaseJobIn):
 
 
 # ---- Quantum job ----
+
 
 class QuantumJobIn(BaseJobIn):
     kind: Literal["quantum"] = "quantum"
@@ -146,6 +160,7 @@ JobIn = Annotated[Union[AIJobIn, QuantumJobIn], Field(discriminator="kind")]
 # Queueing / status / results
 # -----------------------------------------------------------------------------
 
+
 class JobState(str, Enum):
     queued = "queued"
     running = "running"
@@ -158,6 +173,7 @@ class JobEnqueued(BaseModel):
     """
     Response returned when a job is accepted by the provider.
     """
+
     job_id: str
     queued_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     position: Optional[int] = None
@@ -168,6 +184,7 @@ class JobStatus(BaseModel):
     """
     Poll-able status document for any job.
     """
+
     job_id: str
     state: JobState
     submitted_at: datetime
@@ -181,6 +198,7 @@ class JobStatus(BaseModel):
 
 
 # ---- Results (discriminated) ----
+
 
 class BaseResult(BaseModel):
     job_id: str
@@ -240,6 +258,7 @@ JobResult = Annotated[Union[AIResult, QuantumResult], Field(discriminator="kind"
 # Listing helpers (simple pagination envelope)
 # -----------------------------------------------------------------------------
 
+
 class JobListResponse(BaseModel):
     items: List[JobStatus]
     next_page_token: Optional[str] = None
@@ -249,7 +268,10 @@ class JobListResponse(BaseModel):
 # Convenience factories
 # -----------------------------------------------------------------------------
 
-def new_job_status_queued(job_id: str, *, kind: Literal["ai", "quantum"], priority: int = 0) -> JobStatus:
+
+def new_job_status_queued(
+    job_id: str, *, kind: Literal["ai", "quantum"], priority: int = 0
+) -> JobStatus:
     return JobStatus(
         job_id=job_id,
         state=JobState.queued,
@@ -262,13 +284,22 @@ def new_job_status_queued(job_id: str, *, kind: Literal["ai", "quantum"], priori
 __all__ = [
     # meta
     "Problem",
-    "Health", "HealthStatus",
+    "Health",
+    "HealthStatus",
     "Version",
     # jobs
-    "BaseJobIn", "AIJobIn", "QuantumJobIn", "JobIn",
+    "BaseJobIn",
+    "AIJobIn",
+    "QuantumJobIn",
+    "JobIn",
     # queue/status/results
-    "JobState", "JobEnqueued", "JobStatus",
-    "BaseResult", "AIResult", "QuantumResult", "JobResult",
+    "JobState",
+    "JobEnqueued",
+    "JobStatus",
+    "BaseResult",
+    "AIResult",
+    "QuantumResult",
+    "JobResult",
     # listing
     "JobListResponse",
     # helpers

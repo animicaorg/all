@@ -24,7 +24,6 @@ from pathlib import Path
 
 import pytest
 
-
 # ----------------------- inline proxy contract -----------------------
 
 PROXY_SRC = r'''
@@ -75,6 +74,7 @@ def _sha3_256(data: bytes) -> bytes:
 
 
 # -------------------------------- tests --------------------------------
+
 
 def test_set_impl_requires_matching_pin(tmp_path: Path, compile_contract):
     """

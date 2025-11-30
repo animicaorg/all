@@ -48,6 +48,7 @@ app = typer.Typer(
 
 # -------------------- utils --------------------
 
+
 def _now_ms() -> int:
     return int(time.time() * 1000)
 
@@ -154,6 +155,7 @@ def _import_backend(db_uri: Optional[str]) -> Any:
     # 1) payouts
     try:
         from aicf.economics import payouts as pout_mod  # type: ignore
+
         for cls_name in ("PayoutStore", "Payouts", "PayoutStorage", "Store"):
             cls = getattr(pout_mod, cls_name, None)
             if cls is None:
@@ -177,6 +179,7 @@ def _import_backend(db_uri: Optional[str]) -> Any:
     # 2) settlement
     try:
         from aicf.economics import settlement as set_mod  # type: ignore
+
         for cls_name in ("SettlementStore", "Settlement", "Store"):
             cls = getattr(set_mod, cls_name, None)
             if cls is None:
@@ -199,6 +202,7 @@ def _import_backend(db_uri: Optional[str]) -> Any:
     # 3) treasury rewards (settled-only fallback)
     try:
         from aicf.treasury import rewards as rew_mod  # type: ignore
+
         return rew_mod
     except ModuleNotFoundError:
         pass
@@ -209,6 +213,7 @@ def _import_backend(db_uri: Optional[str]) -> Any:
 
 
 # -------------------- normalization --------------------
+
 
 def _normalize_payout(d: Dict[str, Any]) -> Dict[str, Any]:
     n: Dict[str, Any] = {}
@@ -228,9 +233,13 @@ def _normalize_payout(d: Dict[str, Any]) -> Dict[str, Any]:
     status = d.get("status") or d.get("state")
     if isinstance(status, str):
         status = status.upper()
-    n["status"] = status or ("SETTLED" if d.get("settled") or d.get("settled_height") else "PENDING")
+    n["status"] = status or (
+        "SETTLED" if d.get("settled") or d.get("settled_height") else "PENDING"
+    )
     n["batch_id"] = d.get("batch_id") or d.get("settlement_id") or d.get("sid") or None
-    n["created_ms"] = d.get("created_ms") or d.get("ts_ms") or d.get("created_at_ms") or 0
+    n["created_ms"] = (
+        d.get("created_ms") or d.get("ts_ms") or d.get("created_at_ms") or 0
+    )
     n["settled_ms"] = d.get("settled_ms") or d.get("confirmed_ms") or 0
     n["settled_height"] = d.get("settled_height") or None
     return n
@@ -249,13 +258,28 @@ def _normalize_batch(d: Dict[str, Any]) -> Dict[str, Any]:
 
 # -------------------- fetchers --------------------
 
-def _fetch_pending(backend: Any, limit: int, provider: Optional[str], epoch: Optional[int], min_amount: Optional[float]) -> List[Dict[str, Any]]:
+
+def _fetch_pending(
+    backend: Any,
+    limit: int,
+    provider: Optional[str],
+    epoch: Optional[int],
+    min_amount: Optional[float],
+) -> List[Dict[str, Any]]:
     """
     Try a sequence of methods to retrieve pending payouts.
     """
     methods: Tuple[Tuple[str, Dict[str, Any]], ...] = (
         ("list_pending", {"limit": limit, "provider_id": provider, "epoch": epoch}),
-        ("list_payouts", {"limit": limit, "status": "pending", "provider_id": provider, "epoch": epoch}),
+        (
+            "list_payouts",
+            {
+                "limit": limit,
+                "status": "pending",
+                "provider_id": provider,
+                "epoch": epoch,
+            },
+        ),
         ("pending_payouts", {"limit": limit, "provider_id": provider, "epoch": epoch}),
         ("get_pending", {"limit": limit}),
         ("query", {"status": "pending", "limit": limit}),
@@ -271,7 +295,9 @@ def _fetch_pending(backend: Any, limit: int, provider: Optional[str], epoch: Opt
                 elif isinstance(res, (list, tuple)):
                     items = list(res)
                 else:
-                    items_attr = getattr(res, "items", None) or getattr(res, "records", None)
+                    items_attr = getattr(res, "items", None) or getattr(
+                        res, "records", None
+                    )
                     if items_attr is not None:
                         items = list(items_attr)
                     else:
@@ -286,7 +312,9 @@ def _fetch_pending(backend: Any, limit: int, provider: Optional[str], epoch: Opt
             r["status"] = "PENDING"
     # filters
     if min_amount is not None:
-        rows = [r for r in rows if float(r.get("amount_total") or 0) >= float(min_amount)]
+        rows = [
+            r for r in rows if float(r.get("amount_total") or 0) >= float(min_amount)
+        ]
     if provider:
         rows = [r for r in rows if str(r.get("provider_id") or "") == provider]
     if epoch is not None:
@@ -296,14 +324,28 @@ def _fetch_pending(backend: Any, limit: int, provider: Optional[str], epoch: Opt
     return rows[:limit]
 
 
-def _fetch_settled(backend: Any, limit: int, provider: Optional[str], epoch: Optional[int], min_amount: Optional[float]) -> List[Dict[str, Any]]:
+def _fetch_settled(
+    backend: Any,
+    limit: int,
+    provider: Optional[str],
+    epoch: Optional[int],
+    min_amount: Optional[float],
+) -> List[Dict[str, Any]]:
     """
     Try methods to retrieve settled payouts. If only batches are available, flatten.
     """
     # First, direct settled payouts
     methods_direct: Tuple[Tuple[str, Dict[str, Any]], ...] = (
         ("list_settled", {"limit": limit, "provider_id": provider, "epoch": epoch}),
-        ("list_payouts", {"limit": limit, "status": "settled", "provider_id": provider, "epoch": epoch}),
+        (
+            "list_payouts",
+            {
+                "limit": limit,
+                "status": "settled",
+                "provider_id": provider,
+                "epoch": epoch,
+            },
+        ),
         ("settled_payouts", {"limit": limit}),
         ("get_settled", {"limit": limit}),
         ("query", {"status": "settled", "limit": limit}),
@@ -319,7 +361,9 @@ def _fetch_settled(backend: Any, limit: int, provider: Optional[str], epoch: Opt
                 elif isinstance(res, (list, tuple)):
                     items = list(res)
                 else:
-                    items_attr = getattr(res, "items", None) or getattr(res, "records", None)
+                    items_attr = getattr(res, "items", None) or getattr(
+                        res, "records", None
+                    )
                     if items_attr is not None:
                         items = list(items_attr)
                     else:
@@ -346,7 +390,9 @@ def _fetch_settled(backend: Any, limit: int, provider: Optional[str], epoch: Opt
                     elif isinstance(res, (list, tuple)):
                         batches = list(res)
                     else:
-                        items_attr = getattr(res, "items", None) or getattr(res, "records", None)
+                        items_attr = getattr(res, "items", None) or getattr(
+                            res, "records", None
+                        )
                         if items_attr is not None:
                             batches = list(items_attr)
                         else:
@@ -371,7 +417,9 @@ def _fetch_settled(backend: Any, limit: int, provider: Optional[str], epoch: Opt
             r["status"] = "SETTLED"
     # filters
     if min_amount is not None:
-        rows = [r for r in rows if float(r.get("amount_total") or 0) >= float(min_amount)]
+        rows = [
+            r for r in rows if float(r.get("amount_total") or 0) >= float(min_amount)
+        ]
     if provider:
         rows = [r for r in rows if str(r.get("provider_id") or "") == provider]
     if epoch is not None:
@@ -389,6 +437,7 @@ def _fetch_settled(backend: Any, limit: int, provider: Optional[str], epoch: Opt
 
 # -------------------- printing --------------------
 
+
 def _print_pending_table(rows: List[Dict[str, Any]]) -> None:
     if not rows:
         typer.echo("No pending payouts.")
@@ -402,7 +451,11 @@ def _print_pending_table(rows: List[Dict[str, Any]]) -> None:
         ("JOB", 12, lambda r: _pad(_short(str(r.get("job_id")), 12), 12)),
         ("EPOCH", 7, lambda r: _pad(str(r.get("epoch") or "-"), 7)),
         ("HEIGHT", 8, lambda r: _pad(str(r.get("height") or "-"), 8)),
-        ("AGE", 6, lambda r: _pad(_fmt_ms(_now_ms() - int(r.get("created_ms") or 0)), 6)),
+        (
+            "AGE",
+            6,
+            lambda r: _pad(_fmt_ms(_now_ms() - int(r.get("created_ms") or 0)), 6),
+        ),
         ("STATUS", 10, lambda r: _pad(str(r.get("status") or "PENDING"), 10)),
     ]
     used = sum(w for _, w, _ in cols)
@@ -428,8 +481,16 @@ def _print_settled_table(rows: List[Dict[str, Any]]) -> None:
         ("PAYOUT", 12, lambda r: _pad(_short(str(r.get("payout_id")), 12), 12)),
         ("PROVIDER", 12, lambda r: _pad(_short(str(r.get("provider_id")), 12), 12)),
         ("EPOCH", 7, lambda r: _pad(str(r.get("epoch") or "-"), 7)),
-        ("HGT", 6, lambda r: _pad(str(r.get("settled_height") or r.get("height") or "-"), 6)),
-        ("WHEN", 6, lambda r: _pad(_fmt_ms(_now_ms() - int(r.get("settled_ms") or 0)), 6)),
+        (
+            "HGT",
+            6,
+            lambda r: _pad(str(r.get("settled_height") or r.get("height") or "-"), 6),
+        ),
+        (
+            "WHEN",
+            6,
+            lambda r: _pad(_fmt_ms(_now_ms() - int(r.get("settled_ms") or 0)), 6),
+        ),
     ]
     used = sum(w for _, w, _ in cols)
     if used + 2 < width:
@@ -464,6 +525,7 @@ def _print_totals(rows: List[Dict[str, Any]], by: Optional[str]) -> None:
 
 # -------------------- commands --------------------
 
+
 def _ensure_backend_or_exit(db: Optional[str]) -> Any:
     backend = _import_backend(db)
     if backend is None:
@@ -477,16 +539,28 @@ def _ensure_backend_or_exit(db: Optional[str]) -> Any:
 
 @app.command("pending")
 def cmd_pending(
-    db: Optional[str] = typer.Option(None, "--db", help="Economics/Treasury DB URI (e.g., sqlite:///aicf_dev.db)."),
-    limit: int = typer.Option(100, min=1, max=10000, help="Max number of payouts to show."),
-    provider: Optional[str] = typer.Option(None, "--provider", help="Filter by provider id."),
+    db: Optional[str] = typer.Option(
+        None, "--db", help="Economics/Treasury DB URI (e.g., sqlite:///aicf_dev.db)."
+    ),
+    limit: int = typer.Option(
+        100, min=1, max=10000, help="Max number of payouts to show."
+    ),
+    provider: Optional[str] = typer.Option(
+        None, "--provider", help="Filter by provider id."
+    ),
     epoch: Optional[int] = typer.Option(None, "--epoch", help="Filter by epoch."),
-    min_amount: Optional[float] = typer.Option(None, "--min-amount", help="Filter payouts >= this amount."),
+    min_amount: Optional[float] = typer.Option(
+        None, "--min-amount", help="Filter payouts >= this amount."
+    ),
     json_out: bool = typer.Option(False, "--json", help="Output as JSON."),
-    sum_by: Optional[str] = typer.Option(None, "--sum-by", help="Aggregate totals by field (provider|epoch|kind)."),
+    sum_by: Optional[str] = typer.Option(
+        None, "--sum-by", help="Aggregate totals by field (provider|epoch|kind)."
+    ),
 ) -> None:
     backend = _ensure_backend_or_exit(db)
-    rows = _fetch_pending(backend, limit=limit, provider=provider, epoch=epoch, min_amount=min_amount)
+    rows = _fetch_pending(
+        backend, limit=limit, provider=provider, epoch=epoch, min_amount=min_amount
+    )
     if json_out:
         typer.echo(json.dumps(rows, indent=2, sort_keys=True))
         return
@@ -497,16 +571,30 @@ def cmd_pending(
 
 @app.command("settled")
 def cmd_settled(
-    db: Optional[str] = typer.Option(None, "--db", help="Economics/Treasury DB URI (e.g., sqlite:///aicf_dev.db)."),
-    limit: int = typer.Option(100, min=1, max=10000, help="Max number of payouts to show."),
-    provider: Optional[str] = typer.Option(None, "--provider", help="Filter by provider id."),
+    db: Optional[str] = typer.Option(
+        None, "--db", help="Economics/Treasury DB URI (e.g., sqlite:///aicf_dev.db)."
+    ),
+    limit: int = typer.Option(
+        100, min=1, max=10000, help="Max number of payouts to show."
+    ),
+    provider: Optional[str] = typer.Option(
+        None, "--provider", help="Filter by provider id."
+    ),
     epoch: Optional[int] = typer.Option(None, "--epoch", help="Filter by epoch."),
-    min_amount: Optional[float] = typer.Option(None, "--min-amount", help="Filter payouts >= this amount."),
+    min_amount: Optional[float] = typer.Option(
+        None, "--min-amount", help="Filter payouts >= this amount."
+    ),
     json_out: bool = typer.Option(False, "--json", help="Output as JSON."),
-    sum_by: Optional[str] = typer.Option(None, "--sum-by", help="Aggregate totals by field (provider|epoch|kind|batch_id)."),
+    sum_by: Optional[str] = typer.Option(
+        None,
+        "--sum-by",
+        help="Aggregate totals by field (provider|epoch|kind|batch_id).",
+    ),
 ) -> None:
     backend = _ensure_backend_or_exit(db)
-    rows = _fetch_settled(backend, limit=limit, provider=provider, epoch=epoch, min_amount=min_amount)
+    rows = _fetch_settled(
+        backend, limit=limit, provider=provider, epoch=epoch, min_amount=min_amount
+    )
     if json_out:
         typer.echo(json.dumps(rows, indent=2, sort_keys=True))
         return
@@ -518,8 +606,15 @@ def cmd_settled(
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
-    db: Optional[str] = typer.Option(None, "--db", help="Economics/Treasury DB URI (e.g., sqlite:///aicf_dev.db)."),
-    limit: int = typer.Option(50, min=1, max=10000, help="Max rows for each section when no subcommand is given."),
+    db: Optional[str] = typer.Option(
+        None, "--db", help="Economics/Treasury DB URI (e.g., sqlite:///aicf_dev.db)."
+    ),
+    limit: int = typer.Option(
+        50,
+        min=1,
+        max=10000,
+        help="Max rows for each section when no subcommand is given.",
+    ),
     json_out: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     """
@@ -528,10 +623,18 @@ def main(
     if ctx.invoked_subcommand is not None:
         return
     backend = _ensure_backend_or_exit(db)
-    pending = _fetch_pending(backend, limit=limit, provider=None, epoch=None, min_amount=None)
-    settled = _fetch_settled(backend, limit=limit, provider=None, epoch=None, min_amount=None)
+    pending = _fetch_pending(
+        backend, limit=limit, provider=None, epoch=None, min_amount=None
+    )
+    settled = _fetch_settled(
+        backend, limit=limit, provider=None, epoch=None, min_amount=None
+    )
     if json_out:
-        typer.echo(json.dumps({"pending": pending, "settled": settled}, indent=2, sort_keys=True))
+        typer.echo(
+            json.dumps(
+                {"pending": pending, "settled": settled}, indent=2, sort_keys=True
+            )
+        )
         return
     typer.secho("Pending payouts:", bold=True)
     _print_pending_table(pending)

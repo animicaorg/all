@@ -40,7 +40,8 @@ import struct
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Deque, Dict, Iterable, List, Optional, Set, Tuple
+from typing import (Any, AsyncIterator, Deque, Dict, Iterable, List, Optional,
+                    Set, Tuple)
 
 _LOG = logging.getLogger("p2p.discovery.kademlia")
 
@@ -72,10 +73,10 @@ def _decode(data: bytes) -> Dict[str, Any]:
 
 # --- Id / distance helpers ----------------------------------------------------
 ID_BYTES = 32
-K = 20        # bucket size
-ALPHA = 3     # parallelism for lookups
+K = 20  # bucket size
+ALPHA = 3  # parallelism for lookups
 MAX_DATAGRAM = 1200  # bytes
-RESP_TIMEOUT = 0.9   # seconds per query
+RESP_TIMEOUT = 0.9  # seconds per query
 LOOKUP_ROUNDS_MAX = 8
 
 
@@ -147,6 +148,7 @@ class RoutingTable:
     256-bit space routing table with 256 buckets by shared-prefix length with self id.
     Each bucket is an LRU of size K (Kademlia-like behavior).
     """
+
     def __init__(self, self_id: bytes, k: int = K) -> None:
         self.self_id = self_id
         self.k = k
@@ -250,8 +252,10 @@ class KademliaService:
         self._proto: Optional[_DiscoveryProto] = None
 
         self._pending: Dict[int, asyncio.Future] = {}
-        self._topics_local: Dict[str, float] = {}           # topic -> lastAnnounceTs
-        self._topics_seen: Dict[str, Dict[Node, float]] = {}  # topic -> {node: expires_at}
+        self._topics_local: Dict[str, float] = {}  # topic -> lastAnnounceTs
+        self._topics_seen: Dict[str, Dict[Node, float]] = (
+            {}
+        )  # topic -> {node: expires_at}
         self._tasks: Set[asyncio.Task] = set()
 
     # -- lifecycle
@@ -262,7 +266,12 @@ class KademliaService:
             local_addr=(self.host, self.port),
             allow_broadcast=True,
         )
-        _LOG.info("Discovery UDP listening on %s:%d (peer_id=%s…)", self.host, self.port, self.self_hex[:8])
+        _LOG.info(
+            "Discovery UDP listening on %s:%d (peer_id=%s…)",
+            self.host,
+            self.port,
+            self.self_hex[:8],
+        )
         # periodic cleanup
         self._tasks.add(self._loop.create_task(self._janitor()))
 
@@ -283,7 +292,7 @@ class KademliaService:
             return
         _LOG.info("Bootstrapping via %d seeds…", len(self.seeds))
         # Ping & learn table
-        for (h, p) in self.seeds:
+        for h, p in self.seeds:
             try:
                 await self._ping((h, p))
             except asyncio.TimeoutError:
@@ -298,13 +307,17 @@ class KademliaService:
     async def find_node(self, target_hex: str, limit: int = K) -> List[Node]:
         """Iterative lookup for the closest nodes to `target_hex`."""
         target = bytes.fromhex(target_hex)
-        shortlist: Dict[str, Node] = {n.id_hex: n for n in self.router.closest(target, limit=self.k)}
+        shortlist: Dict[str, Node] = {
+            n.id_hex: n for n in self.router.closest(target, limit=self.k)
+        }
         queried: Set[str] = set()
         best_before = None
 
         for _ in range(LOOKUP_ROUNDS_MAX):
             # select α closest not yet queried
-            ordered = sorted(shortlist.values(), key=lambda n: xor_distance(n.id_bytes(), target))
+            ordered = sorted(
+                shortlist.values(), key=lambda n: xor_distance(n.id_bytes(), target)
+            )
             to_query = [n for n in ordered if n.id_hex not in queried][: self.alpha]
             if not to_query:
                 break
@@ -312,7 +325,10 @@ class KademliaService:
             tasks = [self._find_node_rpc(n.endpoint(), target_hex) for n in to_query]
             queried.update(n.id_hex for n in to_query)
             try:
-                results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=RESP_TIMEOUT * 1.5)
+                results = await asyncio.wait_for(
+                    asyncio.gather(*tasks, return_exceptions=True),
+                    timeout=RESP_TIMEOUT * 1.5,
+                )
             except asyncio.TimeoutError:
                 results = []
             changed = False
@@ -327,12 +343,21 @@ class KademliaService:
                             # touch into routing table
                             self.router.touch(nn)
             # convergence check
-            best_after = tuple(n.id_hex for n in sorted(shortlist.values(), key=lambda n: xor_distance(n.id_bytes(), target))[:limit])
+            best_after = tuple(
+                n.id_hex
+                for n in sorted(
+                    shortlist.values(), key=lambda n: xor_distance(n.id_bytes(), target)
+                )[:limit]
+            )
             if best_after == best_before:
                 break
             best_before = best_after
 
-        return list(sorted(shortlist.values(), key=lambda n: xor_distance(n.id_bytes(), target))[:limit])
+        return list(
+            sorted(
+                shortlist.values(), key=lambda n: xor_distance(n.id_bytes(), target)
+            )[:limit]
+        )
 
     async def advertise_peer(self, topic: str, ttl_s: int = 900) -> None:
         """
@@ -344,7 +369,7 @@ class KademliaService:
         closest = await self.find_node(target.hex(), limit=self.k)
         if not closest and self.seeds:
             # no table yet: try seeds directly
-            closest = [Node(id_hex="0"*64, host=h, port=p) for (h, p) in self.seeds]
+            closest = [Node(id_hex="0" * 64, host=h, port=p) for (h, p) in self.seeds]
         # best-effort announce to α closest nodes
         tasks = [self._announce_rpc(n.endpoint(), topic) for n in closest[: self.alpha]]
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -354,7 +379,9 @@ class KademliaService:
         Iterative topic lookup. Returns up to `limit` peers that have announced `topic`.
         """
         target = topic_to_id(topic)
-        shortlist_nodes = await self.find_node(target.hex(), limit=max(self.k, self.alpha * 2))
+        shortlist_nodes = await self.find_node(
+            target.hex(), limit=max(self.k, self.alpha * 2)
+        )
         found: Dict[str, Node] = {}
 
         to_query = shortlist_nodes[: self.alpha]
@@ -362,11 +389,18 @@ class KademliaService:
         rounds = 0
         while to_query and rounds < LOOKUP_ROUNDS_MAX and len(found) < limit:
             rounds += 1
-            tasks = [self._find_peers_rpc(n.endpoint(), topic) for n in to_query if n.endpoint() not in queried]
+            tasks = [
+                self._find_peers_rpc(n.endpoint(), topic)
+                for n in to_query
+                if n.endpoint() not in queried
+            ]
             for n in to_query:
                 queried.add(n.endpoint())
             try:
-                results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=RESP_TIMEOUT * 1.5)
+                results = await asyncio.wait_for(
+                    asyncio.gather(*tasks, return_exceptions=True),
+                    timeout=RESP_TIMEOUT * 1.5,
+                )
             except asyncio.TimeoutError:
                 results = []
 
@@ -382,7 +416,9 @@ class KademliaService:
             # Next wave: pick α closest new nodes we haven't queried
             all_known = shortlist_nodes + new_nodes
             all_known.sort(key=lambda n: xor_distance(n.id_bytes(), target))
-            to_query = [n for n in all_known if n.endpoint() not in queried][: self.alpha]
+            to_query = [n for n in all_known if n.endpoint() not in queried][
+                : self.alpha
+            ]
 
         return list(found.values())[:limit]
 
@@ -400,7 +436,9 @@ class KademliaService:
                         del self._topics_seen[topic]
                 # refresh local announcements (half-life reannounce)
                 for topic, exp in list(self._topics_local.items()):
-                    if (exp - now) < 450:  # reannounce if less than 7.5 minutes left of a 15-minute default
+                    if (
+                        exp - now
+                    ) < 450:  # reannounce if less than 7.5 minutes left of a 15-minute default
                         try:
                             await self.advertise_peer(topic)
                         except Exception:
@@ -415,12 +453,16 @@ class KademliaService:
     async def _ping(self, endpoint: Tuple[str, int]) -> None:
         await self._rpc(endpoint, "PING", {})
 
-    async def _find_node_rpc(self, endpoint: Tuple[str, int], target_hex: str) -> List[Node]:
+    async def _find_node_rpc(
+        self, endpoint: Tuple[str, int], target_hex: str
+    ) -> List[Node]:
         resp = await self._rpc(endpoint, "FIND_NODE", {"target": target_hex})
         nodes = []
         for it in resp.get("nodes", []):
             try:
-                nodes.append(Node(id_hex=str(it["id"]), host=str(it["h"]), port=int(it["p"])))
+                nodes.append(
+                    Node(id_hex=str(it["id"]), host=str(it["h"]), port=int(it["p"]))
+                )
             except Exception:
                 continue
         return nodes
@@ -428,23 +470,31 @@ class KademliaService:
     async def _announce_rpc(self, endpoint: Tuple[str, int], topic: str) -> None:
         await self._rpc(endpoint, "ANNOUNCE", {"topic": topic})
 
-    async def _find_peers_rpc(self, endpoint: Tuple[str, int], topic: str) -> Dict[str, List[Node]]:
+    async def _find_peers_rpc(
+        self, endpoint: Tuple[str, int], topic: str
+    ) -> Dict[str, List[Node]]:
         resp = await self._rpc(endpoint, "FIND_PEERS", {"topic": topic})
         peers = []
         for it in resp.get("peers", []):
             try:
-                peers.append(Node(id_hex=str(it["id"]), host=str(it["h"]), port=int(it["p"])))
+                peers.append(
+                    Node(id_hex=str(it["id"]), host=str(it["h"]), port=int(it["p"]))
+                )
             except Exception:
                 continue
         closer = []
         for it in resp.get("closer", []):
             try:
-                closer.append(Node(id_hex=str(it["id"]), host=str(it["h"]), port=int(it["p"])))
+                closer.append(
+                    Node(id_hex=str(it["id"]), host=str(it["h"]), port=int(it["p"]))
+                )
             except Exception:
                 continue
         return {"peers": peers, "closer": closer}
 
-    async def _rpc(self, endpoint: Tuple[str, int], typ: str, q: Dict[str, Any]) -> Dict[str, Any]:
+    async def _rpc(
+        self, endpoint: Tuple[str, int], typ: str, q: Dict[str, Any]
+    ) -> Dict[str, Any]:
         if not self._transport:
             raise RuntimeError("Service not started")
         req = secrets.randbits(63)
@@ -489,7 +539,9 @@ class KademliaService:
                 elif typ == "NODES":
                     fut.set_result({"nodes": msg.get("nodes", [])})
                 elif typ == "PEERS":
-                    fut.set_result({"peers": msg.get("peers", []), "closer": msg.get("closer", [])})
+                    fut.set_result(
+                        {"peers": msg.get("peers", []), "closer": msg.get("closer", [])}
+                    )
             return
 
         # Handle requests
@@ -523,11 +575,17 @@ class KademliaService:
             # Return known local peers + suggest closer nodes for continued lookup
             peers = []
             now = time.time()
-            for (n, exp) in (self._topics_seen.get(topic, {}) or {}).items():
+            for n, exp in (self._topics_seen.get(topic, {}) or {}).items():
                 if exp >= now:
-                    peers.append({"id": n.node.id_hex if isinstance(n, NodeMeta) else n.id_hex,  # type: ignore[union-attr]
-                                  "h": (n.node.host if isinstance(n, NodeMeta) else n.host),    # type: ignore[union-attr]
-                                  "p": int(n.node.port if isinstance(n, NodeMeta) else n.port)})  # type: ignore[union-attr]
+                    peers.append(
+                        {
+                            "id": n.node.id_hex if isinstance(n, NodeMeta) else n.id_hex,  # type: ignore[union-attr]
+                            "h": (n.node.host if isinstance(n, NodeMeta) else n.host),  # type: ignore[union-attr]
+                            "p": int(
+                                n.node.port if isinstance(n, NodeMeta) else n.port
+                            ),
+                        }
+                    )  # type: ignore[union-attr]
             target = topic_to_id(topic)
             closer = [
                 {"id": n.id_hex, "h": n.host, "p": n.port}
@@ -538,7 +596,13 @@ class KademliaService:
 
         # Unknown type: ignore silently
 
-    async def _reply(self, addr: Tuple[str, int], typ: str, req: Optional[int], payload: Dict[str, Any]) -> None:
+    async def _reply(
+        self,
+        addr: Tuple[str, int],
+        typ: str,
+        req: Optional[int],
+        payload: Dict[str, Any],
+    ) -> None:
         if not self._transport:
             return
         msg = {"v": 1, "t": typ, "id": self.self_hex, "req": req, **payload}

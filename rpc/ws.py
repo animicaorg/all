@@ -42,7 +42,7 @@ import time
 from dataclasses import asdict, is_dataclass
 from typing import Any, Dict, Iterable, List, Literal, Optional, Set, Tuple
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
 # Pydantic models used for serialization
 from .models import Head, TxView  # type: ignore
@@ -57,8 +57,10 @@ ALLOWED_TOPICS: Set[str] = {"newHeads", "pendingTxs"}
 # Utilities
 # --------------------------------------------------------------------------------------
 
+
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
 
 def _model_to_dict(obj: Any) -> Dict[str, Any]:
     """
@@ -81,17 +83,22 @@ def _model_to_dict(obj: Any) -> Dict[str, Any]:
         return obj
     raise TypeError(f"Cannot serialize object of type {type(obj)}")
 
+
 # --------------------------------------------------------------------------------------
 # Client & Hub
 # --------------------------------------------------------------------------------------
+
 
 class _Client:
     """
     Per-connection state. Each client owns a bounded queue and a sender task.
     """
+
     __slots__ = ("ws", "topics", "queue", "sender_task", "peer")
 
-    def __init__(self, ws: WebSocket, topics: Iterable[Topic], queue_size: int = 256) -> None:
+    def __init__(
+        self, ws: WebSocket, topics: Iterable[Topic], queue_size: int = 256
+    ) -> None:
         self.ws: WebSocket = ws
         self.topics: Set[Topic] = set(topics)
         self.queue: "asyncio.Queue[Dict[str, Any]]" = asyncio.Queue(maxsize=queue_size)
@@ -104,7 +111,9 @@ class _Client:
             self.peer = "unknown"
 
     async def start(self) -> None:
-        self.sender_task = asyncio.create_task(self._sender_loop(), name=f"ws-sender-{self.peer}")
+        self.sender_task = asyncio.create_task(
+            self._sender_loop(), name=f"ws-sender-{self.peer}"
+        )
 
     async def stop(self) -> None:
         if self.sender_task and not self.sender_task.done():
@@ -155,7 +164,9 @@ class WebSocketHub:
     # Connection handling
     # --------------------------
 
-    async def handle_connection(self, websocket: WebSocket, topics_qs: Optional[str] = None) -> None:
+    async def handle_connection(
+        self, websocket: WebSocket, topics_qs: Optional[str] = None
+    ) -> None:
         """
         Accept a client and process control frames until disconnect.
         """
@@ -166,7 +177,9 @@ class WebSocketHub:
         await self._register(client)
 
         # Send hello
-        await client.enqueue({"op": "hello", "topics": list(client.topics), "serverTime": _now_ms()})
+        await client.enqueue(
+            {"op": "hello", "topics": list(client.topics), "serverTime": _now_ms()}
+        )
 
         try:
             await client.start()
@@ -209,7 +222,9 @@ class WebSocketHub:
             self._clients.add(c)
             for t in c.topics:
                 self._subs[t].add(c)
-        log.debug("WS connected %s; topics=%s; total=%d", c.peer, c.topics, len(self._clients))
+        log.debug(
+            "WS connected %s; topics=%s; total=%d", c.peer, c.topics, len(self._clients)
+        )
 
     async def _unregister(self, c: _Client) -> None:
         async with self._lock:
@@ -223,7 +238,9 @@ class WebSocketHub:
             pass
         log.debug("WS disconnected %s; total=%d", c.peer, len(self._clients))
 
-    async def _update_topics(self, c: _Client, topics: Iterable[str], add: bool) -> None:
+    async def _update_topics(
+        self, c: _Client, topics: Iterable[str], add: bool
+    ) -> None:
         valid = [t for t in topics if t in ALLOWED_TOPICS]
         async with self._lock:
             if add:
@@ -235,7 +252,9 @@ class WebSocketHub:
                     self._subs[t].discard(c)
                     c.topics.discard(t)  # type: ignore[arg-type]
         # Acknowledge with current topic set
-        await c.enqueue({"op": "hello", "topics": list(c.topics), "serverTime": _now_ms()})
+        await c.enqueue(
+            {"op": "hello", "topics": list(c.topics), "serverTime": _now_ms()}
+        )
 
     # --------------------------
     # Broadcast API
@@ -283,8 +302,14 @@ class WebSocketHub:
 hub = WebSocketHub()
 router = APIRouter()
 
+
 @router.websocket("/")
-async def ws_route(websocket: WebSocket, topics: Optional[str] = Query(default=None, description="Comma-separated topics: newHeads,pendingTxs")):
+async def ws_route(
+    websocket: WebSocket,
+    topics: Optional[str] = Query(
+        default=None, description="Comma-separated topics: newHeads,pendingTxs"
+    ),
+):
     """
     WebSocket endpoint. Mount this router at prefix /ws in rpc/server.py:
 

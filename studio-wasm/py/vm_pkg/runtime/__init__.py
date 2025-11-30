@@ -24,14 +24,14 @@ Note: These files are auto-synced from the upstream `vm_py/` tree by
 from __future__ import annotations
 
 # Re-export submodules for ergonomic imports: `from vm_pkg.runtime import engine`
-from . import engine as engine
-from . import gasmeter as gasmeter
-from . import context as context
-from . import storage_api as storage_api
-from . import events_api as events_api
-from . import hash_api as hash_api
 from . import abi as abi
+from . import context as context
+from . import engine as engine
+from . import events_api as events_api
+from . import gasmeter as gasmeter
+from . import hash_api as hash_api
 from . import random_api as random_api
+from . import storage_api as storage_api
 
 __all__ = [
     "engine",

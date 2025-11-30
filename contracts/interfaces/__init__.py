@@ -68,7 +68,8 @@ Notes
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple, Union, cast
+from typing import (Any, Dict, Iterable, List, Mapping, MutableMapping,
+                    Optional, Sequence, Tuple, Union, cast)
 
 __all__ = [
     "__version__",
@@ -115,6 +116,7 @@ class InterfaceSpec:
     description : Optional[str]
         Short human-readable description.
     """
+
     name: str
     abi: AbiLike
     version: Optional[str] = None
@@ -131,6 +133,7 @@ _REGISTRY: Dict[str, InterfaceSpec] = {}
 # ---------------------------------------------------------------------------
 # Validation (lightweight, non-exhaustive)
 # ---------------------------------------------------------------------------
+
 
 def _is_abi_list(obj: Any) -> bool:
     if not isinstance(obj, list):
@@ -163,12 +166,18 @@ def _coerce_abi_to_list(abi: AbiLike) -> AbiList:
                 raise InterfacesError(f"ABI '{key}' entries must be objects")
             if "type" not in entry:
                 # infer if user forgot; be forgiving:
-                inferred = "function" if key == "functions" else ("event" if key == "events" else "error")
+                inferred = (
+                    "function"
+                    if key == "functions"
+                    else ("event" if key == "events" else "error")
+                )
                 entry = dict(entry)
                 entry.setdefault("type", inferred)
             parts.append(cast(AbiEntry, entry))
     if not parts:
-        raise InterfacesError("ABI dict must contain at least one of functions/events/errors")
+        raise InterfacesError(
+            "ABI dict must contain at least one of functions/events/errors"
+        )
     return parts
 
 
@@ -179,7 +188,14 @@ def _validate_minimal(abi_list: AbiList) -> None:
     """
     for i, ent in enumerate(abi_list):
         t = ent.get("type")
-        if t not in ("function", "event", "error", "constructor", "fallback", "receive"):
+        if t not in (
+            "function",
+            "event",
+            "error",
+            "constructor",
+            "fallback",
+            "receive",
+        ):
             raise InterfacesError(f"ABI entry #{i}: invalid 'type' {t!r}")
         if t == "function":
             if "name" not in ent or not isinstance(ent["name"], str):
@@ -198,6 +214,7 @@ def _validate_minimal(abi_list: AbiList) -> None:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def register_interface(spec: InterfaceSpec, *, overwrite: bool = False) -> None:
     """

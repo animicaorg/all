@@ -26,8 +26,8 @@ from typing import Dict, Optional
 from ..errors import ValidationError
 from . import ir
 
-
 # ---------- Configuration ----------
+
 
 @dataclass(frozen=True)
 class ExtcallSurcharges:
@@ -35,6 +35,7 @@ class ExtcallSurcharges:
     Additional cost by symbol for EXTCALL (on top of OP_SPECS["EXTCALL"]["gas"]).
     The keys are simple string prefixes or exact names used by the stdlib bridge.
     """
+
     default: int = 10
     storage_get: int = 30
     storage_set: int = 50
@@ -66,6 +67,7 @@ class ExtcallSurcharges:
 
 # ---------- Estimator ----------
 
+
 @dataclass(frozen=True)
 class GasEstimate:
     per_function: Dict[str, int]
@@ -76,7 +78,9 @@ class GasEstimate:
         return self.per_function[self.entry]
 
 
-def estimate_module(m: ir.Module, *, extcall_surcharges: Optional[ExtcallSurcharges] = None) -> GasEstimate:
+def estimate_module(
+    m: ir.Module, *, extcall_surcharges: Optional[ExtcallSurcharges] = None
+) -> GasEstimate:
     """
     Compute a conservative upper-bound gas estimate for each function in `m`,
     including transitive `CALL`s and `IF` branches.
@@ -85,7 +89,9 @@ def estimate_module(m: ir.Module, *, extcall_surcharges: Optional[ExtcallSurchar
         extcall_surcharges = ExtcallSurcharges()
 
     # Prepare base costs from OP_SPECS once.
-    base_cost: Dict[str, int] = {op: int(spec["gas"]) for op, spec in ir.OP_SPECS.items()}
+    base_cost: Dict[str, int] = {
+        op: int(spec["gas"]) for op, spec in ir.OP_SPECS.items()
+    }
 
     visiting: set[str] = set()
     memo: Dict[str, int] = {}
@@ -95,7 +101,9 @@ def estimate_module(m: ir.Module, *, extcall_surcharges: Optional[ExtcallSurchar
             return memo[fn_name]
         if fn_name in visiting:
             # Direct or mutual recursion detected.
-            raise ValidationError(f"recursive call detected at {fn_name!r}; static bound not supported")
+            raise ValidationError(
+                f"recursive call detected at {fn_name!r}; static bound not supported"
+            )
         if fn_name not in m.functions:
             raise ValidationError(f"unknown function referenced: {fn_name!r}")
 
@@ -115,7 +123,11 @@ def estimate_module(m: ir.Module, *, extcall_surcharges: Optional[ExtcallSurchar
 
             elif op == "IF":
                 then_fn = str(ins.args[0]) if len(ins.args) >= 1 else None
-                else_fn = str(ins.args[1]) if len(ins.args) >= 2 and ins.args[1] is not None else None
+                else_fn = (
+                    str(ins.args[1])
+                    if len(ins.args) >= 2 and ins.args[1] is not None
+                    else None
+                )
                 then_cost = cost_of(then_fn) if then_fn else 0
                 else_cost = cost_of(else_fn) if else_fn else 0
                 total += max(then_cost, else_cost)
@@ -134,14 +146,21 @@ def estimate_module(m: ir.Module, *, extcall_surcharges: Optional[ExtcallSurchar
     return GasEstimate(per_function=per_fn, entry=m.entry)
 
 
-def estimate_entry(m: ir.Module, *, extcall_surcharges: Optional[ExtcallSurcharges] = None) -> int:
+def estimate_entry(
+    m: ir.Module, *, extcall_surcharges: Optional[ExtcallSurcharges] = None
+) -> int:
     """
     Convenience: estimate only the module entry function.
     """
     return estimate_module(m, extcall_surcharges=extcall_surcharges).entry_cost
 
 
-def estimate_function(m: ir.Module, fn_name: str, *, extcall_surcharges: Optional[ExtcallSurcharges] = None) -> int:
+def estimate_function(
+    m: ir.Module,
+    fn_name: str,
+    *,
+    extcall_surcharges: Optional[ExtcallSurcharges] = None,
+) -> int:
     """
     Convenience: estimate a single named function.
     """

@@ -50,7 +50,7 @@ from io import BytesIO
 from typing import Any, Dict, Iterable, Optional, Tuple, Union
 
 # Local types/errors
-from .errors import SchemaError, ProofError
+from .errors import ProofError, SchemaError
 from .types import ProofEnvelope, ProofType
 
 # Try CBOR backends
@@ -77,13 +77,16 @@ if _CBOR_BACKEND is None:  # pragma: no cover
 # Canonicalization helpers
 # --------------------------------------------------------------------------------------
 
+
 def _utf8(b: Union[str, bytes]) -> bytes:
     if isinstance(b, str):
         return b.encode("utf-8")
     return b
 
+
 def _is_text_key(k: Any) -> bool:
     return isinstance(k, str)
+
 
 def _canon_sort_items(items: Iterable[Tuple[Any, Any]]) -> Iterable[Tuple[Any, Any]]:
     """
@@ -94,6 +97,7 @@ def _canon_sort_items(items: Iterable[Tuple[Any, Any]]) -> Iterable[Tuple[Any, A
         return sorted(items, key=lambda kv: (len(_utf8(kv[0])), _utf8(kv[0])))
     except Exception as e:
         raise SchemaError(f"map contains non-text key; keys must be str: {e}")
+
 
 def _canon_obj(obj: Any) -> Any:
     """
@@ -109,16 +113,19 @@ def _canon_obj(obj: Any) -> Any:
     if isinstance(obj, dict):
         for k in obj.keys():
             if not _is_text_key(k):
-                raise SchemaError(f"non-text map key encountered (type={type(k).__name__}); keys must be str")
+                raise SchemaError(
+                    f"non-text map key encountered (type={type(k).__name__}); keys must be str"
+                )
         canon_items = [(k, _canon_obj(v)) for k, v in _canon_sort_items(obj.items())]
         return OrderedDict(canon_items)
 
     # list/tuple → list with canonicalized elements
     if isinstance(obj, (list, tuple)):
-        return [ _canon_obj(x) for x in obj ]
+        return [_canon_obj(x) for x in obj]
 
     # bytes/str/int/bool/None → as-is
     return obj
+
 
 def dumps_canonical(obj: Any) -> bytes:
     """
@@ -142,18 +149,22 @@ def dumps_canonical(obj: Any) -> bytes:
     # Legacy 'cbor' backend (no explicit canonical flag; OrderedDict suffices).
     return _cbor_legacy.dumps(canon)  # type: ignore[name-defined]
 
+
 def loads(data: bytes) -> Any:
     if _CBOR_BACKEND == "cbor2":
         return cbor2.loads(data)  # type: ignore[attr-defined]
     return _cbor_legacy.loads(data)  # type: ignore[name-defined]
 
+
 # --------------------------------------------------------------------------------------
 # Surface schemas (specialized, minimal)
 # --------------------------------------------------------------------------------------
 
+
 # Utility tiny type predicates
 def _is_uint(x: Any) -> bool:
     return isinstance(x, int) and x >= 0
+
 
 def _is_bstr(x: Any, n: Optional[int] = None) -> bool:
     ok = isinstance(x, (bytes, bytearray))
@@ -163,15 +174,19 @@ def _is_bstr(x: Any, n: Optional[int] = None) -> bool:
         return True
     return len(x) == n
 
+
 def _is_text(x: Any) -> bool:
     return isinstance(x, str)
+
 
 def _is_array(x: Any) -> bool:
     return isinstance(x, list)
 
+
 def _require(cond: bool, msg: str) -> None:
     if not cond:
         raise SchemaError(msg)
+
 
 # Per-proof body field rules (lightweight; keep in sync with verifiers)
 # Keys are intentionally short & stable to minimize CBOR.
@@ -180,33 +195,39 @@ _BODY_RULES: Dict[ProofType, Dict[str, Any]] = {
     ProofType.HASH_SHARE: {
         "required": {
             "headerHash": ("bstr", 32),
-            "u": ("bstr", None),          # raw u-draw bytes (domain-separated)
+            "u": ("bstr", None),  # raw u-draw bytes (domain-separated)
             "nonce": ("uint", None),
         },
         "optional": {
             "mixSeed": ("bstr", 32),
-            "target": ("bstr", None),     # packed target or micro-target (future-proof)
-            "dRatio": ("uint", None),     # difficulty ratio * 1e6 (optional hint)
+            "target": ("bstr", None),  # packed target or micro-target (future-proof)
+            "dRatio": ("uint", None),  # difficulty ratio * 1e6 (optional hint)
         },
     },
     # AI v1: TEE attestation + traps receipts + output digest. See proofs/ai.py
     ProofType.AI: {
         "required": {
-            "attestation": ("bstr", None),   # COSE/JWS or vendor quote bytes (envelope)
-            "traps": ("array", None),        # array of small receipts (opaque here)
-            "outputDigest": ("bstr", 32),    # SHA3-256 of model output
+            "attestation": ("bstr", None),  # COSE/JWS or vendor quote bytes (envelope)
+            "traps": ("array", None),  # array of small receipts (opaque here)
+            "outputDigest": ("bstr", 32),  # SHA3-256 of model output
         },
         "optional": {
-            "qos": ("uint", None),           # millis or abstract units
-            "redundancy": ("uint", None),    # how many replicas ran (for metrics)
+            "qos": ("uint", None),  # millis or abstract units
+            "redundancy": ("uint", None),  # how many replicas ran (for metrics)
         },
     },
     # Quantum v1: provider cert + trap circuit results + circuit digest. See proofs/quantum.py
     ProofType.QUANTUM: {
         "required": {
-            "providerCert": ("bstr", None),  # X.509/EdDSA/PQ-hybrid bundle (opaque here)
-            "trapResults": ("array", None),  # array of small (trap_id, ok?) pairs (opaque)
-            "circuitDigest": ("bstr", 32),   # SHA3-256 of circuit JSON
+            "providerCert": (
+                "bstr",
+                None,
+            ),  # X.509/EdDSA/PQ-hybrid bundle (opaque here)
+            "trapResults": (
+                "array",
+                None,
+            ),  # array of small (trap_id, ok?) pairs (opaque)
+            "circuitDigest": ("bstr", 32),  # SHA3-256 of circuit JSON
             "shots": ("uint", None),
         },
         "optional": {
@@ -219,10 +240,13 @@ _BODY_RULES: Dict[ProofType, Dict[str, Any]] = {
         "required": {
             "sector": ("uint", None),
             "timestamp": ("uint", None),
-            "ticket": ("bstr", None),        # digest for retrieval ticket (optional bonus in verifiers)
+            "ticket": (
+                "bstr",
+                None,
+            ),  # digest for retrieval ticket (optional bonus in verifiers)
         },
         "optional": {
-            "size": ("uint", None),          # bytes pledged
+            "size": ("uint", None),  # bytes pledged
         },
     },
     # VDF Wesolowski
@@ -241,18 +265,23 @@ _BODY_RULES: Dict[ProofType, Dict[str, Any]] = {
 # Validation
 # --------------------------------------------------------------------------------------
 
+
 def _check_field(name: str, val: Any, kind: Tuple[str, Optional[int]]) -> None:
     t, n = kind
     if t == "uint":
         _require(_is_uint(val), f"field {name!r} must be unsigned int")
     elif t == "bstr":
-        _require(_is_bstr(val, n), f"field {name!r} must be bytes{'' if n is None else f' of len {n}'}")
+        _require(
+            _is_bstr(val, n),
+            f"field {name!r} must be bytes{'' if n is None else f' of len {n}'}",
+        )
     elif t == "text":
         _require(_is_text(val), f"field {name!r} must be text")
     elif t == "array":
         _require(_is_array(val), f"field {name!r} must be array")
     else:
         raise SchemaError(f"unknown rule kind {t!r} for field {name!r}")
+
 
 def validate_body(pt: ProofType, body: Dict[str, Any]) -> None:
     """
@@ -281,6 +310,7 @@ def validate_body(pt: ProofType, body: Dict[str, Any]) -> None:
     for k in body.keys():
         _require(_is_text_key(k), "non-text key in proof body not allowed")
 
+
 def validate_envelope_dict(d: Dict[str, Any]) -> None:
     """
     Envelope must be a map with:
@@ -307,9 +337,11 @@ def validate_envelope_dict(d: Dict[str, Any]) -> None:
     _require(_is_bstr(n) and len(n) > 0, "nullifier must be bytes (non-empty)")
     validate_body(pt, b)
 
+
 # --------------------------------------------------------------------------------------
 # Envelope encode/decode
 # --------------------------------------------------------------------------------------
+
 
 def encode_envelope(env: ProofEnvelope) -> bytes:
     """
@@ -325,6 +357,7 @@ def encode_envelope(env: ProofEnvelope) -> bytes:
     }
     validate_envelope_dict(d)
     return dumps_canonical(d)
+
 
 def decode_envelope(data: bytes) -> ProofEnvelope:
     """
@@ -346,16 +379,20 @@ def decode_envelope(data: bytes) -> ProofEnvelope:
         body=obj["body"],
     )
 
+
 # --------------------------------------------------------------------------------------
 # Debug/introspection helpers
 # --------------------------------------------------------------------------------------
+
 
 def canonical_hex(obj: Any) -> str:
     """Convenience: canonical CBOR hex string of an object (for tests/tools)."""
     return encode_bytes_hex(dumps_canonical(obj))
 
+
 def encode_bytes_hex(b: bytes) -> str:
     return "0x" + b.hex()
+
 
 __all__ = [
     "dumps_canonical",

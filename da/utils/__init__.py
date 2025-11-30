@@ -16,6 +16,7 @@ It uses lazy submodule loading so importing `da.utils` is cheap:
 
 Version is inherited from the parent `da` package.
 """
+
 from __future__ import annotations
 
 from importlib import import_module
@@ -29,6 +30,7 @@ except Exception:  # pragma: no cover - only hit during partial tree setups
 
 # Submodules exposed via lazy loading.
 _SUBMODULES = ("bytes", "hash", "merkle")
+
 
 def __getattr__(name: str) -> Any:
     """
@@ -47,8 +49,10 @@ def __getattr__(name: str) -> Any:
             ) from e
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
+
 def __dir__() -> list[str]:
     """Advertise lazy members in dir()."""
     return sorted(list(globals().keys()) + list(_SUBMODULES))
+
 
 __all__ = list(_SUBMODULES)

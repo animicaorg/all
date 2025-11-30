@@ -18,12 +18,12 @@ and the adapter will attempt to import vm_py lazily and route deploy/call.
 from __future__ import annotations
 
 import os
-from typing import Any, Mapping, Optional, Tuple, List, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, List, Mapping, Optional, Tuple
 
 from ..errors import ExecError
-from ..types.status import TxStatus
-from ..types.result import ApplyResult
 from ..types.events import LogEvent
+from ..types.result import ApplyResult
+from ..types.status import TxStatus
 
 if TYPE_CHECKING:
     from .env import BlockEnv, TxEnv
@@ -148,10 +148,12 @@ def _set_balance(state: Any, addr: bytes, value: int) -> None:
     if isinstance(accounts, dict):
         acc = accounts.get(addr)
         if acc is None:
+
             class _Acc:
                 nonce: int = 0
                 balance: int = 0
                 code_hash: bytes = b""
+
             accounts[addr] = _Acc()  # type: ignore[call-arg]
             setattr(accounts[addr], "balance", int(value))
         else:
@@ -225,11 +227,13 @@ def _split_fee(base_price: int, gas_price: int, gas_used: int) -> Tuple[int, int
 def _resolve_intrinsic_call(tx: Any, params: Optional[Any]) -> int:
     try:
         from ..gas.intrinsic import intrinsic_for_call  # type: ignore
+
         return int(intrinsic_for_call(tx, params))
     except Exception:
         pass
     try:
         from ..gas.table import get_gas_cost  # type: ignore
+
         v = get_gas_cost("call")
         if isinstance(v, int):
             return v
@@ -243,11 +247,13 @@ def _resolve_intrinsic_call(tx: Any, params: Optional[Any]) -> int:
 def _resolve_intrinsic_deploy(tx: Any, params: Optional[Any]) -> int:
     try:
         from ..gas.intrinsic import intrinsic_for_deploy  # type: ignore
+
         return int(intrinsic_for_deploy(tx, params))
     except Exception:
         pass
     try:
         from ..gas.table import get_gas_cost  # type: ignore
+
         v = get_gas_cost("deploy")
         if isinstance(v, int):
             return v
@@ -283,6 +289,7 @@ def _burn_and_tip(
 # --------------------------------------------------------------------------------------
 # Public API — Deploy & Call
 # --------------------------------------------------------------------------------------
+
 
 def apply_deploy(
     tx: Any,
@@ -336,7 +343,9 @@ def apply_deploy(
     _set_nonce(state, sender, _get_nonce(state, sender) + 1)
 
     # Feature-gated path (future)
-    if (enable_vm_py is True) or (enable_vm_py is None and os.getenv("ANIMICA_ENABLE_VM_PY") == "1"):
+    if (enable_vm_py is True) or (
+        enable_vm_py is None and os.getenv("ANIMICA_ENABLE_VM_PY") == "1"
+    ):
         try:
             # Placeholder hook — intentionally not imported at module import time.
             # from vm_py.runtime.loader import deploy_package
@@ -416,7 +425,9 @@ def apply_call(
     _set_nonce(state, sender, _get_nonce(state, sender) + 1)
 
     # Future: route to vm_py if enabled & available
-    if (enable_vm_py is True) or (enable_vm_py is None and os.getenv("ANIMICA_ENABLE_VM_PY") == "1"):
+    if (enable_vm_py is True) or (
+        enable_vm_py is None and os.getenv("ANIMICA_ENABLE_VM_PY") == "1"
+    ):
         try:
             # Example sketch (intentionally not executed):
             # from vm_py.runtime.abi import dispatch_call

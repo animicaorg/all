@@ -2,6 +2,7 @@ import asyncio
 import os
 import sys
 import types
+
 import pytest
 
 # Ensure local package is importable when running tests from repo root
@@ -47,12 +48,19 @@ def _call_handshake():
                 fn = f
                 break
     if fn is None:
-        raise AssertionError("No callable handshake entry found in p2p.crypto.handshake")
+        raise AssertionError(
+            "No callable handshake entry found in p2p.crypto.handshake"
+        )
 
     # Try deterministic seeds if supported (nice to have for reproducibility).
     kw = {}
     for param in ("seed_initiator", "seed_responder"):
-        if param in getattr(fn, "__code__", types.SimpleNamespace(co_varnames=())).co_varnames:
+        if (
+            param
+            in getattr(
+                fn, "__code__", types.SimpleNamespace(co_varnames=())
+            ).co_varnames
+        ):
             kw["seed_initiator"] = b"\x01" * 32
             kw["seed_responder"] = b"\x02" * 32
             break
@@ -136,7 +144,8 @@ def _make_aead(key: bytes):
 
     # Final fallback via cryptography (optional dep)
     try:  # pragma: no cover
-        from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305, AESGCM
+        from cryptography.hazmat.primitives.ciphers.aead import (
+            AESGCM, ChaCha20Poly1305)
 
         class AEADWrapper:
             def __init__(self, k: bytes, kind="chacha"):

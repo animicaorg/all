@@ -1,20 +1,21 @@
 import os
-import pytest
 from typing import Any, Callable, Optional, Tuple
 
-# Uniform APIs
-from pq.py import keygen as PKG
-from pq.py import kem as KEM
-from pq.py import handshake as HS
-from pq.py.utils import hkdf as HK
+import pytest
 
+# Uniform APIs
+from pq.py import handshake as HS
+from pq.py import kem as KEM
+from pq.py import keygen as PKG
+from pq.py.utils import hkdf as HK
 
 ALG = "kyber768"
 INFO = b"animica/p2p/v1"  # HKDF info label used across tests
-SALT = b"\x00" * 32       # benign salt; real system will use transcript hash
+SALT = b"\x00" * 32  # benign salt; real system will use transcript hash
 
 
 # ---- helpers -----------------------------------------------------------------
+
 
 def kem_keypair() -> Tuple[bytes, bytes]:
     """
@@ -98,24 +99,39 @@ def interpret_keys(obj: Any) -> Tuple[bytes, bytes, Optional[bytes]]:
         tx = obj.get("tx_key") or obj.get("aead_tx") or obj.get("k_tx") or obj.get("k1")
         rx = obj.get("rx_key") or obj.get("aead_rx") or obj.get("k_rx") or obj.get("k2")
         th = obj.get("transcript") or obj.get("th") or obj.get("hash")
-        assert isinstance(tx, (bytes, bytearray)) and isinstance(rx, (bytes, bytearray)), "bad key shapes"
-        return bytes(tx), bytes(rx), (bytes(th) if isinstance(th, (bytes, bytearray)) else None)
+        assert isinstance(tx, (bytes, bytearray)) and isinstance(
+            rx, (bytes, bytearray)
+        ), "bad key shapes"
+        return (
+            bytes(tx),
+            bytes(rx),
+            (bytes(th) if isinstance(th, (bytes, bytearray)) else None),
+        )
 
     # tuple-like: (tx, rx, [th]) or (k1, k2) or ((tx,rx), th)
     if isinstance(obj, tuple):
         if len(obj) == 2 and all(isinstance(x, (bytes, bytearray)) for x in obj):
             return bytes(obj[0]), bytes(obj[1]), None
         if len(obj) == 3 and all(isinstance(x, (bytes, bytearray)) for x in obj[:2]):
-            return bytes(obj[0]), bytes(obj[1]), (bytes(obj[2]) if obj[2] is not None else None)
+            return (
+                bytes(obj[0]),
+                bytes(obj[1]),
+                (bytes(obj[2]) if obj[2] is not None else None),
+            )
         if len(obj) == 2 and isinstance(obj[0], (tuple, list)):
             a, th = obj
             assert len(a) == 2
-            return bytes(a[0]), bytes(a[1]), (bytes(th) if isinstance(th, (bytes, bytearray)) else None)
+            return (
+                bytes(a[0]),
+                bytes(a[1]),
+                (bytes(th) if isinstance(th, (bytes, bytearray)) else None),
+            )
 
     raise AssertionError("Unrecognized key return shape from handshake function")
 
 
 # ---- tests -------------------------------------------------------------------
+
 
 def test_kem_roundtrip_and_randomness():
     pk, sk = kem_keypair()
@@ -209,7 +225,9 @@ def test_bad_decaps_fails():
     ss_wrong = kem_decaps(skB, ct)
     # Almost surely different; allow equality only if backend is stubbed (skip).
     if ss_wrong == ssA:
-        pytest.skip("Backend appears to be a stub or deterministic for testing; cannot assert inequality here")
+        pytest.skip(
+            "Backend appears to be a stub or deterministic for testing; cannot assert inequality here"
+        )
     else:
         assert ss_wrong != ssA
 
@@ -219,7 +237,9 @@ def test_vectors_files_exist():
     Ensure KEM vectors exist and are parseable JSON. The cryptographic validity is
     covered by lower-level tests or upstream libs; here we enforce presence/shape.
     """
-    base = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "test_vectors"))
+    base = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "test_vectors")
+    )
     p = os.path.join(base, "kyber768.json")
     assert os.path.exists(p), f"missing vector file: {p}"
     data = open(p, "rb").read()

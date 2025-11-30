@@ -53,8 +53,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from omni_sdk.rpc.http import RpcClient
 from omni_sdk.aicf.client import AICFClient
+from omni_sdk.rpc.http import RpcClient
 
 
 def _print_json(obj: Any) -> None:
@@ -83,7 +83,9 @@ def _load_circuit_from_file(path: Path) -> Dict[str, Any]:
         sys.exit(f"error: invalid circuit JSON at {path}: {e}")
 
 
-def _enqueue_quantum(aicf: AICFClient, circuit: Dict[str, Any], shots: int, **kwargs: Any) -> Dict[str, Any]:
+def _enqueue_quantum(
+    aicf: AICFClient, circuit: Dict[str, Any], shots: int, **kwargs: Any
+) -> Dict[str, Any]:
     """
     Enqueue a Quantum job via AICFClient. The AICFClient abstracts over possible
     RPC differences; if your node exposes a specific enqueue method, make sure
@@ -105,7 +107,9 @@ def _enqueue_quantum(aicf: AICFClient, circuit: Dict[str, Any], shots: int, **kw
         raise RuntimeError(f"Failed to enqueue Quantum job: {e}") from e
 
 
-def _wait_for_result(aicf: AICFClient, job_id: str, timeout_s: float = 180.0, poll_s: float = 2.0) -> Dict[str, Any]:
+def _wait_for_result(
+    aicf: AICFClient, job_id: str, timeout_s: float = 180.0, poll_s: float = 2.0
+) -> Dict[str, Any]:
     """
     Poll AICF for job completion, then fetch the result via AICF or capabilities.
     """
@@ -125,12 +129,21 @@ def _wait_for_result(aicf: AICFClient, job_id: str, timeout_s: float = 180.0, po
         try:
             res = aicf.get_result(job_id)
             if res:
-                return {"job": job if 'job' in locals() else {"id": job_id, "status": "Completed"}, "result": res}
+                return {
+                    "job": (
+                        job
+                        if "job" in locals()
+                        else {"id": job_id, "status": "Completed"}
+                    ),
+                    "result": res,
+                }
         except Exception:
             pass
 
         if time.time() > deadline:
-            raise TimeoutError(f"Timed out waiting for job {job_id} (last status: {last_status})")
+            raise TimeoutError(
+                f"Timed out waiting for job {job_id} (last status: {last_status})"
+            )
         time.sleep(poll_s)
 
     # Completed/terminal. Fetch result (may raise if job failed).
@@ -138,7 +151,9 @@ def _wait_for_result(aicf: AICFClient, job_id: str, timeout_s: float = 180.0, po
     return {"job": job, "result": result}  # type: ignore[name-defined]
 
 
-def _counts_and_probs(result: Dict[str, Any]) -> Tuple[Dict[str, int], Dict[str, float]]:
+def _counts_and_probs(
+    result: Dict[str, Any],
+) -> Tuple[Dict[str, int], Dict[str, float]]:
     """
     Extract measurement counts from a variety of common result shapes and compute probabilities.
     Expected shapes (examples):
@@ -189,15 +204,35 @@ def _format_probs(probs: Dict[str, float]) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="AICF Quantum enqueue → result demo")
-    ap.add_argument("--rpc", default=os.getenv("OMNI_SDK_RPC_URL", "http://127.0.0.1:8545"), help="RPC HTTP URL")
-    ap.add_argument("--timeout", type=float, default=float(os.getenv("OMNI_SDK_HTTP_TIMEOUT", "30")), help="HTTP timeout (s)")
+    ap.add_argument(
+        "--rpc",
+        default=os.getenv("OMNI_SDK_RPC_URL", "http://127.0.0.1:8545"),
+        help="RPC HTTP URL",
+    )
+    ap.add_argument(
+        "--timeout",
+        type=float,
+        default=float(os.getenv("OMNI_SDK_HTTP_TIMEOUT", "30")),
+        help="HTTP timeout (s)",
+    )
     group = ap.add_mutually_exclusive_group()
-    group.add_argument("--preset", choices=["bell"], default="bell", help="Built-in circuit preset")
+    group.add_argument(
+        "--preset", choices=["bell"], default="bell", help="Built-in circuit preset"
+    )
     group.add_argument("--circuit-file", type=Path, help="Path to circuit JSON file")
     ap.add_argument("--shots", type=int, default=512, help="Number of shots/samples")
-    ap.add_argument("--max-wait", type=float, default=180.0, help="Max seconds to wait for completion")
-    ap.add_argument("--poll", type=float, default=2.0, help="Polling interval in seconds")
-    ap.add_argument("--units", type=int, default=None, help="Optional quantum units/budget")
+    ap.add_argument(
+        "--max-wait",
+        type=float,
+        default=180.0,
+        help="Max seconds to wait for completion",
+    )
+    ap.add_argument(
+        "--poll", type=float, default=2.0, help="Polling interval in seconds"
+    )
+    ap.add_argument(
+        "--units", type=int, default=None, help="Optional quantum units/budget"
+    )
     args = ap.parse_args()
 
     # Circuit
@@ -250,7 +285,13 @@ def main() -> None:
         "totalCounts": total,
         "latencyMs": latency,
         "cost": cost,
-        "topOutcomes": sorted([{ "bitstring": k, "count": v, "p": probs.get(k, 0.0)} for k, v in counts.items()], key=lambda x: -x["count"])[:8],
+        "topOutcomes": sorted(
+            [
+                {"bitstring": k, "count": v, "p": probs.get(k, 0.0)}
+                for k, v in counts.items()
+            ],
+            key=lambda x: -x["count"],
+        )[:8],
     }
     print("== summary ==")
     _print_json(summary)

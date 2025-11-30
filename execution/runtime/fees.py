@@ -28,6 +28,7 @@ BPS_DENOM = 10_000  # basis-points denominator (100% = 10_000)
 # Config & Result Types
 # --------------------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class FeeConfig:
     """
@@ -43,7 +44,8 @@ class FeeConfig:
         no account receives it). If False, base fee is treated like a tip and
         split via treasury_tip_bps (rare; default stays True).
     """
-    treasury_tip_bps: int = 0        # e.g. 1000 = 10% of priority fee to treasury
+
+    treasury_tip_bps: int = 0  # e.g. 1000 = 10% of priority fee to treasury
     burn_base_fee: bool = True
 
 
@@ -53,25 +55,29 @@ class FeeOutcome:
     Computed fees for a single transaction after refund caps are applied.
     All values are integers in the chain's native currency unit.
     """
-    gas_used_raw: int                 # gas consumed before refunds
-    gas_refund_applied: int           # refund units actually honored (after cap)
-    gas_used_final: int               # chargeable gas = gas_used_raw - gas_refund_applied
 
-    base_fee_per_gas: int             # from block env (>=0)
-    priority_fee_per_gas: int         # min(max_priority, maxFee - base); or gas_price if legacy
-    effective_gas_price: int          # base + priority
+    gas_used_raw: int  # gas consumed before refunds
+    gas_refund_applied: int  # refund units actually honored (after cap)
+    gas_used_final: int  # chargeable gas = gas_used_raw - gas_refund_applied
 
-    burn_amount: int                  # base burn (if enabled)
-    tip_to_coinbase: int              # miner share of priority fee
-    tip_to_treasury: int              # treasury share of priority fee
+    base_fee_per_gas: int  # from block env (>=0)
+    priority_fee_per_gas: (
+        int  # min(max_priority, maxFee - base); or gas_price if legacy
+    )
+    effective_gas_price: int  # base + priority
 
-    total_fee: int                    # total amount debited from payer
+    burn_amount: int  # base burn (if enabled)
+    tip_to_coinbase: int  # miner share of priority fee
+    tip_to_treasury: int  # treasury share of priority fee
+
+    total_fee: int  # total amount debited from payer
     # Note: total_fee == burn_amount + tip_to_coinbase + tip_to_treasury when burn_base_fee=True
 
 
 # --------------------------------------------------------------------------------------
 # Internals: refund & pricing helpers
 # --------------------------------------------------------------------------------------
+
 
 def _finalize_refund(gas_used_raw: int, refund_counter: int) -> Tuple[int, int]:
     """
@@ -82,6 +88,7 @@ def _finalize_refund(gas_used_raw: int, refund_counter: int) -> Tuple[int, int]:
     """
     try:
         from ..gas.refund import finalize_refund  # type: ignore
+
         refund_applied = int(finalize_refund(gas_used_raw, refund_counter))
     except Exception:
         cap = gas_used_raw // 5  # 20%
@@ -127,6 +134,7 @@ def _derive_prices(tx_env: Any, block_env: Any) -> Tuple[int, int, int]:
 # Public API
 # --------------------------------------------------------------------------------------
 
+
 def finalize_accounting(
     *,
     gas_used_raw: int,
@@ -168,7 +176,9 @@ def finalize_accounting(
         burn_amount = 0
         prio_for_split = base_component + prio_component
 
-    tip_to_treasury = (prio_for_split * max(min(cfg.treasury_tip_bps, BPS_DENOM), 0)) // BPS_DENOM
+    tip_to_treasury = (
+        prio_for_split * max(min(cfg.treasury_tip_bps, BPS_DENOM), 0)
+    ) // BPS_DENOM
     tip_to_coinbase = prio_for_split - tip_to_treasury
 
     total = burn_amount + tip_to_coinbase + tip_to_treasury
@@ -206,7 +216,7 @@ def settle_fees(
     perform settlement with their own state adapter.
     """
     # Lazy import to avoid hard dependency at import time
-    from ..state.apply_balance import debit, credit  # type: ignore
+    from ..state.apply_balance import credit, debit  # type: ignore
 
     # 1) Debit payer for the entire fee (burn + tips)
     if outcome.total_fee:

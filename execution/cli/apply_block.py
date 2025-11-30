@@ -23,14 +23,17 @@ import sys
 from pathlib import Path
 from typing import Any, Mapping
 
+
 # --- Logging (simple & deterministic) ------------------------------------------------------------
 def eprint(*args: object) -> None:
     print(*args, file=sys.stderr)
+
 
 # --- Imports from Animica codebase ---------------------------------------------------------------
 def _import_fail(msg: str) -> None:
     eprint(f"[apply_block] {msg}")
     sys.exit(2)
+
 
 # CBOR codec (deterministic)
 try:
@@ -41,8 +44,8 @@ except Exception as ex:  # pragma: no cover
 
 # DBs & genesis loader
 try:
-    from core.db.sqlite import open_sqlite_kv  # type: ignore
     from core.db.block_db import BlockDB  # type: ignore
+    from core.db.sqlite import open_sqlite_kv  # type: ignore
     from core.db.state_db import StateDB  # type: ignore
     from core.genesis.loader import ensure_db_with_genesis  # type: ignore
 except Exception as ex:  # pragma: no cover
@@ -56,14 +59,16 @@ except Exception:
 
 # Execution adapters & executor
 try:
-    from execution.adapters.block_db import persist_block_with_receipts  # type: ignore
-    from execution.adapters.state_db import StateAdapter  # type: ignore
+    from execution.adapters.block_db import \
+        persist_block_with_receipts  # type: ignore
     from execution.adapters.params import load_chain_params  # type: ignore
+    from execution.adapters.state_db import StateAdapter  # type: ignore
 except Exception as ex:  # pragma: no cover
     _import_fail(f"Cannot import execution adapters: {ex}")
 
 try:
-    from execution.runtime.executor import apply_block as exec_apply_block  # type: ignore
+    from execution.runtime.executor import \
+        apply_block as exec_apply_block  # type: ignore
 except Exception as ex:  # pragma: no cover
     _import_fail(f"Cannot import execution.runtime.executor.apply_block: {ex}")
 
@@ -76,7 +81,9 @@ def _cbor_load_file(path: Path) -> Any:
         fn = getattr(core_cbor, fn_name, None)
         if fn:
             return fn(data)
-    raise RuntimeError("core.encoding.cbor does not provide decode/loads/decode_canonical")
+    raise RuntimeError(
+        "core.encoding.cbor does not provide decode/loads/decode_canonical"
+    )
 
 
 def _coerce_block(obj: Any) -> Block:
@@ -96,13 +103,29 @@ def _coerce_block(obj: Any) -> Block:
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Apply a CBOR-encoded block to the local DB.")
-    p.add_argument("--block", required=True, type=Path, help="Path to CBOR-encoded block file")
-    p.add_argument("--db", default="sqlite:///animica.db", help="KV DB URI (e.g., sqlite:///animica.db)")
-    p.add_argument("--genesis", type=Path, default=None, help="Genesis JSON (used if DB is empty)")
-    p.add_argument("--chain-id", type=int, default=1, help="Expected chainId for sanity checks")
-    p.add_argument("--print-receipts", action="store_true", help="Print receipts JSON to stdout")
-    p.add_argument("--quiet", action="store_true", help="Only print the final head line")
+    p = argparse.ArgumentParser(
+        description="Apply a CBOR-encoded block to the local DB."
+    )
+    p.add_argument(
+        "--block", required=True, type=Path, help="Path to CBOR-encoded block file"
+    )
+    p.add_argument(
+        "--db",
+        default="sqlite:///animica.db",
+        help="KV DB URI (e.g., sqlite:///animica.db)",
+    )
+    p.add_argument(
+        "--genesis", type=Path, default=None, help="Genesis JSON (used if DB is empty)"
+    )
+    p.add_argument(
+        "--chain-id", type=int, default=1, help="Expected chainId for sanity checks"
+    )
+    p.add_argument(
+        "--print-receipts", action="store_true", help="Print receipts JSON to stdout"
+    )
+    p.add_argument(
+        "--quiet", action="store_true", help="Only print the final head line"
+    )
     return p.parse_args(argv)
 
 
@@ -141,8 +164,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     # Expect exec_result to have: receipts (list), state_root (bytes|hex), gas_used (int)
     receipts = getattr(exec_result, "receipts", None) or exec_result.get("receipts", [])
-    state_root = getattr(exec_result, "state_root", None) or exec_result.get("state_root")
-    gas_used = int(getattr(exec_result, "gas_used", None) or exec_result.get("gas_used", 0))
+    state_root = getattr(exec_result, "state_root", None) or exec_result.get(
+        "state_root"
+    )
+    gas_used = int(
+        getattr(exec_result, "gas_used", None) or exec_result.get("gas_used", 0)
+    )
 
     # 5) Persist block + receipts and update head
     if not ns.quiet:

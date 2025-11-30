@@ -20,6 +20,7 @@ Defaults (when `da.constants` is unavailable)
 These defaults are conservative and match typical "small reserved header space"
 designs. Networks may override via `da/constants.py`.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -29,12 +30,11 @@ from typing import Iterable, Optional
 
 # Try importing canonical limits from da.constants; fall back to defaults.
 try:  # pragma: no cover - exercised in integration
-    from ..constants import (  # type: ignore
-        NAMESPACE_BITS as _NAMESPACE_BITS,
-        NAMESPACE_RESERVED_MIN as _RES_MIN,
-        NAMESPACE_RESERVED_MAX as _RES_MAX,
-        NAMESPACE_USER_MIN as _USER_MIN,
-    )
+    from ..constants import NAMESPACE_BITS as _NAMESPACE_BITS  # type: ignore
+    from ..constants import NAMESPACE_RESERVED_MAX as _RES_MAX
+    from ..constants import NAMESPACE_RESERVED_MIN as _RES_MIN
+    from ..constants import NAMESPACE_USER_MIN as _USER_MIN
+
     _HAVE_LIMITS = True
 except Exception:  # pragma: no cover
     _HAVE_LIMITS = False
@@ -47,6 +47,7 @@ _NAMESPACE_MAX = (1 << _NAMESPACE_BITS) - 1
 
 
 # ------------------------------- Core types -----------------------------------
+
 
 class NamespaceError(ValueError):
     """Raised when a namespace id or range is invalid."""
@@ -65,6 +66,7 @@ class NamespaceId(int):
         .is_reserved  -> bool
         .is_user      -> bool
     """
+
     __slots__ = ()
 
     def __new__(cls, value: int | str) -> "NamespaceId":
@@ -89,6 +91,7 @@ class NamespaceRange:
     Invariants:
       • 0 <= min <= max <= NAMESPACE_MAX
     """
+
     min: NamespaceId
     max: NamespaceId
 
@@ -115,6 +118,7 @@ class NamespaceRange:
 
 
 # ------------------------------- Public API -----------------------------------
+
 
 def validate(ns: int | str) -> None:
     """Raise NamespaceError if `ns` is invalid."""
@@ -193,6 +197,7 @@ def next_user_namespace(prev: Optional[int | str]) -> NamespaceId:
 
 
 # ------------------------------ Internal utils --------------------------------
+
 
 def _coerce_to_int(v: int | str) -> int:
     if isinstance(v, int):

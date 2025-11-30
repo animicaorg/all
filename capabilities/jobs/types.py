@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any, Dict, Optional
-import time
 
 
 class JobKind(IntEnum):
@@ -13,6 +13,7 @@ class JobKind(IntEnum):
     - AI:     TEE-attested AI compute (model + prompt, etc.)
     - QUANTUM: Trap-circuit based quantum job (circuit, shots, params)
     """
+
     AI = 1
     QUANTUM = 2
 
@@ -33,6 +34,7 @@ class JobRequest:
         payload:        Kind-specific payload (e.g., {"model": "...", "prompt": "..."}).
         created_at:     Unix time when the request object was formed (seconds).
     """
+
     kind: JobKind
     caller: bytes
     chain_id: int
@@ -112,6 +114,7 @@ class JobReceipt:
         created_at:     Unix time when enqueued.
         note:           Optional human/diagnostic note (non-consensus).
     """
+
     task_id: bytes
     kind: JobKind
     caller: bytes
@@ -145,6 +148,7 @@ class ResultRecord:
         error:              Optional textual reason on failure (non-consensus).
         completed_at:       Unix time when the record was finalized.
     """
+
     task_id: bytes
     kind: JobKind
     success: bool

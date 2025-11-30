@@ -40,12 +40,12 @@ import pytest
 
 from tests.integration import env  # RUN_INTEGRATION_TESTS gate + env helper
 
-
 # -----------------------------------------------------------------------------
 # Small helpers
 # -----------------------------------------------------------------------------
 
 HEX_RE = re.compile(r"0x[0-9a-fA-F]{64,128}")
+
 
 def _http_timeout() -> float:
     try:
@@ -54,7 +54,13 @@ def _http_timeout() -> float:
         return 5.0
 
 
-def _rpc_call(rpc_url: str, method: str, params: Optional[Sequence[Any] | Dict[str, Any]] = None, *, req_id: int = 1) -> Any:
+def _rpc_call(
+    rpc_url: str,
+    method: str,
+    params: Optional[Sequence[Any] | Dict[str, Any]] = None,
+    *,
+    req_id: int = 1,
+) -> Any:
     if params is None:
         params = []
     payload = {
@@ -77,7 +83,11 @@ def _rpc_call(rpc_url: str, method: str, params: Optional[Sequence[Any] | Dict[s
     return msg["result"]
 
 
-def _rpc_try(rpc_url: str, methods: Sequence[str], params: Optional[Sequence[Any] | Dict[str, Any]] = None) -> Tuple[str, Any]:
+def _rpc_try(
+    rpc_url: str,
+    methods: Sequence[str],
+    params: Optional[Sequence[Any] | Dict[str, Any]] = None,
+) -> Tuple[str, Any]:
     last_exc: Optional[Exception] = None
     for i, m in enumerate(methods, start=1):
         try:
@@ -102,7 +112,9 @@ def _get_head_height(rpc_url: str) -> int:
             continue
     # Very minimal fallback: chain.getBlockByNumber "latest"
     try:
-        _, res = _rpc_try(rpc_url, ("chain.getBlockByNumber",), ["latest", False, False])
+        _, res = _rpc_try(
+            rpc_url, ("chain.getBlockByNumber",), ["latest", False, False]
+        )
         if isinstance(res, dict):
             if "number" in res:
                 return int(res["number"])
@@ -110,7 +122,9 @@ def _get_head_height(rpc_url: str) -> int:
                 return int(res["height"])
     except Exception:
         pass
-    pytest.skip("Could not determine head height (no chain.getHead/eth_blockNumber available)")
+    pytest.skip(
+        "Could not determine head height (no chain.getHead/eth_blockNumber available)"
+    )
     raise AssertionError("unreachable")
 
 
@@ -135,7 +149,9 @@ def _ensure_next_block(rpc_url: str, after_height: int) -> int:
         if h > after_height:
             return h
         time.sleep(1.0)
-    pytest.skip(f"No new block observed within timeout; last height={_get_head_height(rpc_url)}")
+    pytest.skip(
+        f"No new block observed within timeout; last height={_get_head_height(rpc_url)}"
+    )
     raise AssertionError("unreachable")
 
 
@@ -164,6 +180,7 @@ def _parse_task_id_from_text(s: str) -> Optional[str]:
 # Enqueue strategies
 # -----------------------------------------------------------------------------
 
+
 def _enqueue_via_cli(rpc_url: str) -> str:
     """
     Try `python -m capabilities.cli.enqueue_ai --rpc <url> --model X --prompt 'Y'`
@@ -176,17 +193,26 @@ def _enqueue_via_cli(rpc_url: str) -> str:
     prompt = prompt_obj.get("prompt") or env("ANIMICA_AI_PROMPT", "ping")
 
     cmd = [
-        py, "-m", "capabilities.cli.enqueue_ai",
-        "--rpc", rpc_url,
-        "--model", str(model),
-        "--prompt", str(prompt),
+        py,
+        "-m",
+        "capabilities.cli.enqueue_ai",
+        "--rpc",
+        rpc_url,
+        "--model",
+        str(model),
+        "--prompt",
+        str(prompt),
     ]
     try:
-        proc = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=60)
+        proc = subprocess.run(
+            cmd, check=True, capture_output=True, text=True, timeout=60
+        )
     except FileNotFoundError:
         pytest.skip("Python executable not found for CLI path")
     except subprocess.CalledProcessError as exc:
-        raise AssertionError(f"enqueue_ai CLI failed: {exc.stderr or exc.stdout}") from exc
+        raise AssertionError(
+            f"enqueue_ai CLI failed: {exc.stderr or exc.stdout}"
+        ) from exc
     except Exception as exc:
         pytest.skip(f"enqueue_ai CLI not available: {exc}")
 
@@ -207,7 +233,11 @@ def _enqueue_via_rpc(rpc_url: str) -> str:
     """
     payload = _read_fixture_prompt()
     # Normalize to a minimal shape commonly accepted by dev helpers
-    req = {"kind": "AI", "model": payload.get("model", "test/echo"), "prompt": payload.get("prompt", "ping")}
+    req = {
+        "kind": "AI",
+        "model": payload.get("model", "test/echo"),
+        "prompt": payload.get("prompt", "ping"),
+    }
     methods = ("cap.enqueueAI", "cap.enqueue", "capabilities.enqueue", "aicf.enqueueAI")
     last_err: Optional[Exception] = None
     for m in methods:
@@ -225,7 +255,9 @@ def _enqueue_via_rpc(rpc_url: str) -> str:
             last_err = exc
             continue
     if last_err:
-        raise AssertionError(f"Could not enqueue via RPC spellings {methods}: {last_err}")
+        raise AssertionError(
+            f"Could not enqueue via RPC spellings {methods}: {last_err}"
+        )
     raise AssertionError("Unexpected: enqueue RPC returned no usable task_id")
 
 
@@ -249,6 +281,7 @@ def _enqueue_job(rpc_url: str) -> str:
 # -----------------------------------------------------------------------------
 # Result polling
 # -----------------------------------------------------------------------------
+
 
 def _get_job(rpc_url: str, task_id: str) -> Optional[Dict[str, Any]]:
     for m in ("cap.getJob", "capabilities.getJob", "aicf.getJob"):
@@ -285,6 +318,7 @@ def _status_ok(v: Any) -> bool:
 # Test
 # -----------------------------------------------------------------------------
 
+
 @pytest.mark.timeout(420)
 def test_ai_enqueue_then_consume_next_block():
     rpc_url = env("ANIMICA_RPC_URL", "http://127.0.0.1:8545")
@@ -294,7 +328,9 @@ def test_ai_enqueue_then_consume_next_block():
 
     # Enqueue job — obtain task_id
     task_id = _enqueue_job(rpc_url)
-    assert isinstance(task_id, str) and task_id.startswith("0x"), f"Bad task_id: {task_id}"
+    assert isinstance(task_id, str) and task_id.startswith(
+        "0x"
+    ), f"Bad task_id: {task_id}"
 
     # Ensure at least one new block after enqueue (next-block consumption rule)
     h1 = _ensure_next_block(rpc_url, h0)
@@ -313,7 +349,12 @@ def test_ai_enqueue_then_consume_next_block():
             last_res = res
             # Common shapes: {"status": "completed", "ok": true, "output": {...}, "proof": {...}}
             status = res.get("status") or res.get("state") or res.get("ok")
-            if _status_ok(status) or res.get("output") or res.get("digest") or res.get("proof"):
+            if (
+                _status_ok(status)
+                or res.get("output")
+                or res.get("digest")
+                or res.get("proof")
+            ):
                 break
         time.sleep(1.0)
 
@@ -322,13 +363,22 @@ def test_ai_enqueue_then_consume_next_block():
         pytest.skip(f"Result not available within timeout; last_job={last_job}")
 
     # Sanity checks on the result object
-    assert last_res.get("task_id", task_id).lower() == task_id.lower(), f"Result task_id mismatch: {last_res}"
+    assert (
+        last_res.get("task_id", task_id).lower() == task_id.lower()
+    ), f"Result task_id mismatch: {last_res}"
     # We accept either a direct output (e.g., echo) or a proof reference/digest recorded.
-    assert any(k in last_res for k in ("output", "digest", "proof", "metrics")), f"Incomplete result payload: {last_res}"
+    assert any(
+        k in last_res for k in ("output", "digest", "proof", "metrics")
+    ), f"Incomplete result payload: {last_res}"
 
     # If the result carries a short echo output, make a light sanity assertion
     out = last_res.get("output")
     if isinstance(out, (str, bytes)):
         # We used a 'ping' default prompt in fixtures — many dev helpers echo it back.
-        assert "ping" in (out.decode("utf-8", "ignore") if isinstance(out, bytes) else out).lower() or len(out) > 0
-
+        assert (
+            "ping"
+            in (
+                out.decode("utf-8", "ignore") if isinstance(out, bytes) else out
+            ).lower()
+            or len(out) > 0
+        )

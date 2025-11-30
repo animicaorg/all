@@ -7,16 +7,17 @@ import logging
 import os
 import typing as t
 
-from fastapi import HTTPException, APIRouter, FastAPI, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import (APIRouter, FastAPI, HTTPException, Request, Response,
+                     WebSocket, WebSocketDisconnect)
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse, PlainTextResponse
 from starlette.middleware.cors import CORSMiddleware
 
 # Local modules
-from rpc import version as rpc_version
+from rpc import config as rpc_config
 from rpc import deps
 from rpc import errors as rpc_errors
-from rpc import config as rpc_config
+from rpc import version as rpc_version
 
 # Optional helpers (feature-detected)
 _jsonrpc_mod = importlib.import_module("rpc.jsonrpc")
@@ -71,10 +72,12 @@ async def _call_dispatch(payload: t.Any, request: Request | None = None) -> t.An
     # Build a best-effort Context if the dispatcher signature requires it
     ctx = None
     try:
-        from rpc.jsonrpc import Context, _now_ms, _default_ctx
+        from rpc.jsonrpc import Context, _default_ctx, _now_ms
 
         if request is None:
-            ctx = Context(request=None, received_at_ms=_now_ms(), client=None, headers={})
+            ctx = Context(
+                request=None, received_at_ms=_now_ms(), client=None, headers={}
+            )
         else:
             client = request.client
             ctx = Context(
@@ -96,7 +99,9 @@ async def _call_dispatch(payload: t.Any, request: Request | None = None) -> t.An
         except Exception:
             ctx = None
 
-    res = JSONRPC_DISPATCH(payload, ctx) if ctx is not None else JSONRPC_DISPATCH(payload)
+    res = (
+        JSONRPC_DISPATCH(payload, ctx) if ctx is not None else JSONRPC_DISPATCH(payload)
+    )
 
     if asyncio.iscoroutine(res):
         return await t.cast(t.Awaitable[t.Any], res)
@@ -154,11 +159,16 @@ def _mount_openrpc(app: FastAPI) -> None:
         r = _openrpc_mod.get_router()  # type: ignore[call-arg]
         app.include_router(r)
         return
+
     # Fallback: serve a tiny placeholder (should not happen in this repo)
     @app.get("/openrpc.json")
     def _openrpc_placeholder() -> JSONResponse:
         return JSONResponse(
-            {"openrpc": "1.2.6", "info": {"title": "Animica RPC", "version": rpc_version.__version__}, "methods": []}
+            {
+                "openrpc": "1.2.6",
+                "info": {"title": "Animica RPC", "version": rpc_version.__version__},
+                "methods": [],
+            }
         )
 
 
@@ -171,10 +181,14 @@ def _mount_metrics(app: FastAPI) -> None:
         r = _metrics_mod.get_router()  # type: ignore[call-arg]
         app.include_router(r)
         return
+
     # Fallback handler if prometheus is unavailable
     @app.get("/metrics")
     def _metrics_placeholder() -> PlainTextResponse:
-        return PlainTextResponse("# metrics temporarily unavailable\n", media_type="text/plain; version=0.0.4")
+        return PlainTextResponse(
+            "# metrics temporarily unavailable\n",
+            media_type="text/plain; version=0.0.4",
+        )
 
 
 # -----------------------------------------------------------------------------
@@ -208,14 +222,23 @@ def create_app(cfg: rpc_config.Config | None = None) -> FastAPI:
     )
 
     @app.middleware("http")
-    async def _method_not_allowed_hint(request: Request, call_next: t.Callable[[Request], t.Awaitable[Response]]):
-        if request.url.path.rstrip("/") == "/rpc" and request.method not in {"POST", "OPTIONS"}:
+    async def _method_not_allowed_hint(
+        request: Request, call_next: t.Callable[[Request], t.Awaitable[Response]]
+    ):
+        if request.url.path.rstrip("/") == "/rpc" and request.method not in {
+            "POST",
+            "OPTIONS",
+        }:
             return JSONResponse(
                 {
                     "error": "Method not allowed",
                     "hint": "Send JSON-RPC requests as POST with application/json to /rpc.",
                     "examples": {
-                        "single": {"jsonrpc": "2.0", "method": "chain.getChainId", "id": 1},
+                        "single": {
+                            "jsonrpc": "2.0",
+                            "method": "chain.getChainId",
+                            "id": 1,
+                        },
                         "withParams": {
                             "jsonrpc": "2.0",
                             "method": "account.getBalance",
@@ -243,7 +266,11 @@ def create_app(cfg: rpc_config.Config | None = None) -> FastAPI:
                     "error": "Method not allowed",
                     "hint": "Send JSON-RPC requests as POST with application/json to /rpc.",
                     "examples": {
-                        "single": {"jsonrpc": "2.0", "method": "chain.getChainId", "id": 1},
+                        "single": {
+                            "jsonrpc": "2.0",
+                            "method": "chain.getChainId",
+                            "id": 1,
+                        },
                         "withParams": {
                             "jsonrpc": "2.0",
                             "method": "account.getBalance",
@@ -276,7 +303,15 @@ def create_app(cfg: rpc_config.Config | None = None) -> FastAPI:
     # --- Lifecycle wiring (DBs, heads, pools) ---
     @app.on_event("startup")
     async def _on_startup() -> None:
-        log.info("RPC server starting", extra={"chainId": cfg.chain_id, "db": cfg.db_uri, "host": cfg.host, "port": cfg.port})
+        log.info(
+            "RPC server starting",
+            extra={
+                "chainId": cfg.chain_id,
+                "db": cfg.db_uri,
+                "host": cfg.host,
+                "port": cfg.port,
+            },
+        )
         # Initialize deps (idempotent if already set)
         await deps.startup(cfg)
 
@@ -334,7 +369,11 @@ def create_app(cfg: rpc_config.Config | None = None) -> FastAPI:
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
-                        "error": {"code": -32603, "message": "Internal error", "data": str(e)},
+                        "error": {
+                            "code": -32603,
+                            "message": "Internal error",
+                            "data": str(e),
+                        },
                         "id": payload.get("id") if isinstance(payload, dict) else None,
                     },
                     status_code=200,
@@ -378,7 +417,14 @@ def create_app(cfg: rpc_config.Config | None = None) -> FastAPI:
             {
                 "name": "Animica RPC",
                 "version": rpc_version.__version__,
-                "endpoints": ["/rpc", "/ws", "/openrpc.json", "/metrics", "/healthz", "/readyz"],
+                "endpoints": [
+                    "/rpc",
+                    "/ws",
+                    "/openrpc.json",
+                    "/metrics",
+                    "/healthz",
+                    "/readyz",
+                ],
                 "chainId": rpc_config.resolve_chain_id(cfg),
             }
         )
@@ -401,7 +447,7 @@ def main() -> None:
         port=cfg.port,
         log_level=cfg.logging.lower(),
         workers=1,
-      # http='h11',  # keep default
+        # http='h11',  # keep default
     )
 
 

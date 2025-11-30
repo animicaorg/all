@@ -20,6 +20,7 @@ from typing import Any, Callable, Iterable, List, Optional, Sequence, Tuple
 try:
     from ..types.result import ApplyResult  # type: ignore
 except Exception:  # pragma: no cover - fallback typing shell for isolated tests
+
     @dataclass
     class ApplyResult:  # type: ignore
         status: int
@@ -28,9 +29,11 @@ except Exception:  # pragma: no cover - fallback typing shell for isolated tests
         stateRoot: Optional[bytes] = None
         receipt: Optional[dict] = None
 
+
 try:
     from ..types.status import TxStatus  # type: ignore
 except Exception:  # pragma: no cover
+
     class TxStatus:  # type: ignore
         SUCCESS = 1
         REVERT = 2
@@ -41,9 +44,11 @@ except Exception:  # pragma: no cover
 # Aggregated report
 # ------------------------------------------------------------------------------------
 
+
 @dataclass
 class BlockApplyReport:
     """Summary returned by SerialScheduler.apply_block."""
+
     results: List[ApplyResult]
     gas_used_total: int
     success_count: int
@@ -57,11 +62,13 @@ class BlockApplyReport:
 # Utility helpers
 # ------------------------------------------------------------------------------------
 
+
 def _default_apply_tx() -> Callable[..., ApplyResult]:
     """
     Import on demand to avoid import-time cycles.
     """
     from ..runtime.executor import apply_tx  # type: ignore
+
     return apply_tx
 
 
@@ -79,6 +86,7 @@ def _is_success(status: int) -> bool:
 # ------------------------------------------------------------------------------------
 # SerialScheduler
 # ------------------------------------------------------------------------------------
+
 
 class SerialScheduler:
     """
@@ -174,7 +182,9 @@ class SerialScheduler:
                 # Revert checkpoint if we opened one.
                 if use_journal and cp_id is not None:
                     state.revert(cp_id)  # type: ignore[attr-defined]
-                    self._warn(f"[serial] tx#{idx} raised {type(exc).__name__}; reverted checkpoint")
+                    self._warn(
+                        f"[serial] tx#{idx} raised {type(exc).__name__}; reverted checkpoint"
+                    )
                 results.append(ApplyResult(status=TxStatus.REVERT, gasUsed=0, logs=[]))  # type: ignore[attr-defined]
                 fail += 1
                 if self._stop_on_error:

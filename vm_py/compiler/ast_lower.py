@@ -34,16 +34,16 @@ Top-level:
 
 If your IR evolves, adjust the constructors in `_IR` adapter below to match.
 """
+
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass
 from typing import Any, Sequence
 
-import ast
-
 from ..errors import CompileError
-from . import ir as _ir  # The target IR module (created elsewhere in vm_py.compiler)
-
+from . import \
+    ir as _ir  # The target IR module (created elsewhere in vm_py.compiler)
 
 # ---- Op tables ----------------------------------------------------------------
 
@@ -112,7 +112,10 @@ def _is_const_literal(n: ast.AST) -> bool:
     if isinstance(n, (ast.Tuple, ast.List)):
         return all(_is_const_literal(elt) for elt in n.elts)
     if isinstance(n, ast.Dict):
-        return all(_is_const_literal(k) and _is_const_literal(v) for k, v in zip(n.keys, n.values))
+        return all(
+            _is_const_literal(k) and _is_const_literal(v)
+            for k, v in zip(n.keys, n.values)
+        )
     return False
 
 
@@ -141,13 +144,19 @@ class NodeLowerer:
                 # Skip module docstring.
                 continue
             else:
-                raise _fail(node, self.filename, f"unsupported top-level statement: {type(node).__name__}")
+                raise _fail(
+                    node,
+                    self.filename,
+                    f"unsupported top-level statement: {type(node).__name__}",
+                )
         return _ir.Module(filename=self.filename, functions=functions)
 
     def lower_function(self, fn: ast.FunctionDef) -> _ir.Function:
         # Parameters: only simple args, no varargs/kwargs-only/posonly
-        if (fn.args.vararg or fn.args.kwarg or fn.args.kwonlyargs or fn.args.posonlyargs):
-            raise _fail(fn, self.filename, "only simple positional parameters are allowed")
+        if fn.args.vararg or fn.args.kwarg or fn.args.kwonlyargs or fn.args.posonlyargs:
+            raise _fail(
+                fn, self.filename, "only simple positional parameters are allowed"
+            )
         params = [a.arg for a in fn.args.args]
         body_stmts = self._lower_block(fn.body)
         return _ir.Function(name=fn.name, params=params, body=body_stmts)
@@ -175,7 +184,9 @@ class NodeLowerer:
                 assigns: list[_ir.Stmt] = []
                 val = self.lower_expr(st.value)
                 for t in st.targets:
-                    assigns.append(_ir.Assign(targets=self._lower_assign_target(t), value=val))
+                    assigns.append(
+                        _ir.Assign(targets=self._lower_assign_target(t), value=val)
+                    )
                 return assigns
             targets = self._lower_assign_target(st.targets[0])
             value = self.lower_expr(st.value)
@@ -184,12 +195,20 @@ class NodeLowerer:
         if isinstance(st, ast.AugAssign):
             target_names = self._lower_assign_target(st.target)
             if len(target_names) != 1 or not isinstance(target_names[0], str):
-                raise _fail(st, self.filename, "augmented assignment requires a single simple name target")
+                raise _fail(
+                    st,
+                    self.filename,
+                    "augmented assignment requires a single simple name target",
+                )
             left = self.lower_expr(st.target)
             right = self.lower_expr(st.value)
             op = _BIN_OP.get(type(st.op))
             if op is None:
-                raise _fail(st, self.filename, f"unsupported augmented operator: {type(st.op).__name__}")
+                raise _fail(
+                    st,
+                    self.filename,
+                    f"unsupported augmented operator: {type(st.op).__name__}",
+                )
             return _ir.Assign(
                 targets=[target_names[0]],
                 value=_ir.BinOp(op=op, left=left, right=right),
@@ -229,17 +248,29 @@ class NodeLowerer:
             names: list[str] = []
             for elt in t.elts:
                 if not isinstance(elt, ast.Name):
-                    raise _fail(elt, self.filename, "only simple names allowed in tuple/list assignment targets")
+                    raise _fail(
+                        elt,
+                        self.filename,
+                        "only simple names allowed in tuple/list assignment targets",
+                    )
                 names.append(elt.id)
             return [names]
-        raise _fail(t, self.filename, "only simple names or tuple/list of names can be assignment targets")
+        raise _fail(
+            t,
+            self.filename,
+            "only simple names or tuple/list of names can be assignment targets",
+        )
 
     # -- Expressions --
 
     def lower_expr(self, e: ast.expr) -> _ir.Expr:
         if isinstance(e, ast.Constant):
             if not isinstance(e.value, (int, bool, bytes, str, type(None))):
-                raise _fail(e, self.filename, f"unsupported constant type: {type(e.value).__name__}")
+                raise _fail(
+                    e,
+                    self.filename,
+                    f"unsupported constant type: {type(e.value).__name__}",
+                )
             return _ir.Const(e.value)
 
         if isinstance(e, ast.Name):
@@ -250,41 +281,83 @@ class NodeLowerer:
             return _ir.Name(e.id)
 
         if isinstance(e, ast.Tuple):
-            return _ir.Const(tuple(self.lower_expr(elt) if not _is_const_literal(elt) else _const_from_ast(elt)
-                                  for elt in e.elts))
+            return _ir.Const(
+                tuple(
+                    (
+                        self.lower_expr(elt)
+                        if not _is_const_literal(elt)
+                        else _const_from_ast(elt)
+                    )
+                    for elt in e.elts
+                )
+            )
 
         if isinstance(e, ast.List):
-            return _ir.Const([self.lower_expr(elt) if not _is_const_literal(elt) else _const_from_ast(elt)
-                              for elt in e.elts])
+            return _ir.Const(
+                [
+                    (
+                        self.lower_expr(elt)
+                        if not _is_const_literal(elt)
+                        else _const_from_ast(elt)
+                    )
+                    for elt in e.elts
+                ]
+            )
 
         if isinstance(e, ast.Dict):
             items: list[tuple[Any, Any]] = []
             for k, v in zip(e.keys, e.values):
                 if k is None:
-                    raise _fail(e, self.filename, "**kwargs style dict unpack not supported")
-                k_val = self.lower_expr(k) if not _is_const_literal(k) else _const_from_ast(k)
-                v_val = self.lower_expr(v) if not _is_const_literal(v) else _const_from_ast(v)
+                    raise _fail(
+                        e, self.filename, "**kwargs style dict unpack not supported"
+                    )
+                k_val = (
+                    self.lower_expr(k)
+                    if not _is_const_literal(k)
+                    else _const_from_ast(k)
+                )
+                v_val = (
+                    self.lower_expr(v)
+                    if not _is_const_literal(v)
+                    else _const_from_ast(v)
+                )
                 items.append((k_val, v_val))
             return _ir.Const(dict(items))
 
         if isinstance(e, ast.BinOp):
             op = _BIN_OP.get(type(e.op))
             if op is None:
-                raise _fail(e, self.filename, f"unsupported binary operator: {type(e.op).__name__}")
-            return _ir.BinOp(op=op, left=self.lower_expr(e.left), right=self.lower_expr(e.right))
+                raise _fail(
+                    e,
+                    self.filename,
+                    f"unsupported binary operator: {type(e.op).__name__}",
+                )
+            return _ir.BinOp(
+                op=op, left=self.lower_expr(e.left), right=self.lower_expr(e.right)
+            )
 
         if isinstance(e, ast.BoolOp):
             op = _BOOL_OP.get(type(e.op))
             if op is None:
-                raise _fail(e, self.filename, f"unsupported boolean operator: {type(e.op).__name__}")
+                raise _fail(
+                    e,
+                    self.filename,
+                    f"unsupported boolean operator: {type(e.op).__name__}",
+                )
             if len(e.values) < 2:
-                raise _fail(e, self.filename, "boolean op requires at least two operands")
+                raise _fail(
+                    e, self.filename, "boolean op requires at least two operands"
+                )
             return _ir.BoolOp(op=op, values=[self.lower_expr(v) for v in e.values])
 
         if isinstance(e, ast.UnaryOp):
             op = _UNARY_OP.get(type(e.op))
             if op is None:
-                raise _fail(e, self.filename, f"unsupported unary operator: {type(e.op).__name__}")
+                raise _fail(
+                    e,
+                    self.filename,
+                    f"unsupported unary operator: {type(e.op).__name__}",
+                )
             return _ir.UnaryOp(op=op, operand=self.lower_expr(e.operand))
 
         if isinstance(e, ast.Compare):
@@ -294,8 +367,16 @@ class NodeLowerer:
                 raise _fail(e, self.filename, "chained comparisons are not supported")
             op = _CMP_OP.get(type(e.ops[0]))
             if op is None:
-                raise _fail(e, self.filename, f"unsupported comparison operator: {type(e.ops[0]).__name__}")
-            return _ir.Compare(op=op, left=self.lower_expr(e.left), right=self.lower_expr(e.comparators[0]))
+                raise _fail(
+                    e,
+                    self.filename,
+                    f"unsupported comparison operator: {type(e.ops[0]).__name__}",
+                )
+            return _ir.Compare(
+                op=op,
+                left=self.lower_expr(e.left),
+                right=self.lower_expr(e.comparators[0]),
+            )
 
         if isinstance(e, ast.Call):
             func_expr = self._lower_callee(e.func)
@@ -304,7 +385,9 @@ class NodeLowerer:
             for kw in e.keywords:
                 if kw.arg is None:
                     # No **kwargs unpacking in deterministic subset
-                    raise _fail(e, self.filename, "dict unpack (**kwargs) not supported")
+                    raise _fail(
+                        e, self.filename, "dict unpack (**kwargs) not supported"
+                    )
                 kwargs.append((kw.arg, self.lower_expr(kw.value)))
             return _ir.Call(func=func_expr, args=args, kwargs=kwargs)
 
@@ -316,7 +399,9 @@ class NodeLowerer:
             val = self.lower_expr(e.value)
             # Python 3.9+: slice can be ast.Slice, ast.ExtSlice, ast.Tuple; we only allow simple index
             if isinstance(e.slice, ast.Slice):
-                raise _fail(e, self.filename, "slicing not supported; only simple index")
+                raise _fail(
+                    e, self.filename, "slicing not supported; only simple index"
+                )
             index = self.lower_expr(e.slice)
             return _ir.Subscript(value=val, index=index)
 
@@ -326,7 +411,9 @@ class NodeLowerer:
             cond = self.lower_expr(e.test)
             then_v = self.lower_expr(e.body)
             else_v = self.lower_expr(e.orelse)
-            return _ir.Call(func=_ir.Name("__ternary__"), args=[cond, then_v, else_v], kwargs=[])
+            return _ir.Call(
+                func=_ir.Name("__ternary__"), args=[cond, then_v, else_v], kwargs=[]
+            )
 
         raise _fail(e, self.filename, f"unsupported expression: {type(e).__name__}")
 
@@ -338,6 +425,7 @@ class NodeLowerer:
             return _ir.Attribute(value=self._lower_callee(f.value), attr=f.attr)
         # Disallow lambdas and other dynamic callables in deterministic subset
         raise _fail(f, self.filename, "callable must be a name or attribute")
+
 
 # ---- Public API ---------------------------------------------------------------
 
@@ -362,7 +450,9 @@ def lower_to_ir(tree: ast.AST, *, filename: str = "<contract>") -> _ir.Module:
 
 
 def _is_docstring_node(expr_stmt: ast.Expr) -> bool:
-    return isinstance(expr_stmt.value, ast.Constant) and isinstance(expr_stmt.value.value, str)
+    return isinstance(expr_stmt.value, ast.Constant) and isinstance(
+        expr_stmt.value.value, str
+    )
 
 
 def _const_from_ast(n: ast.AST) -> Any:
@@ -370,10 +460,14 @@ def _const_from_ast(n: ast.AST) -> Any:
     if isinstance(n, ast.Constant):
         return n.value
     if isinstance(n, (ast.Tuple, ast.List)):
-        return tuple(_const_from_ast(elt) for elt in n.elts) if isinstance(n, ast.Tuple) else [
-            _const_from_ast(elt) for elt in n.elts
-        ]
+        return (
+            tuple(_const_from_ast(elt) for elt in n.elts)
+            if isinstance(n, ast.Tuple)
+            else [_const_from_ast(elt) for elt in n.elts]
+        )
     if isinstance(n, ast.Dict):
-        return { _const_from_ast(k): _const_from_ast(v) for k, v in zip(n.keys, n.values) }
+        return {
+            _const_from_ast(k): _const_from_ast(v) for k, v in zip(n.keys, n.values)
+        }
     # Should not reach here if caller guarded with _is_const_literal
     raise TypeError(f"not a constant literal: {ast.dump(n, include_attributes=False)}")

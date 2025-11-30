@@ -13,6 +13,7 @@ import pytest
 fastapi = pytest.importorskip("fastapi")
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+
 try:
     from fastapi.testclient import TestClient
 except Exception:
@@ -22,18 +23,39 @@ except Exception:
 
 # -------------------------- Fallback in-memory app --------------------------
 
+
 def _build_fallback_app() -> FastAPI:
     app = FastAPI(title="AICF RPC Fallback")
     app.state._ref_rpc = True  # mark for tests
 
     # Minimal in-memory fixtures
     app.state.providers: Dict[str, Dict[str, Any]] = {
-        "provAI": {"id": "provAI", "capabilities": ["AI"], "stake": 1_000_000, "status": "ACTIVE"},
-        "provQ": {"id": "provQ", "capabilities": ["QUANTUM"], "stake": 800_000, "status": "ACTIVE"},
+        "provAI": {
+            "id": "provAI",
+            "capabilities": ["AI"],
+            "stake": 1_000_000,
+            "status": "ACTIVE",
+        },
+        "provQ": {
+            "id": "provQ",
+            "capabilities": ["QUANTUM"],
+            "stake": 800_000,
+            "status": "ACTIVE",
+        },
     }
     app.state.jobs: Dict[str, Dict[str, Any]] = {
-        "jobAI1": {"id": "jobAI1", "kind": "AI", "status": "COMPLETED", "provider": "provAI"},
-        "jobQ1": {"id": "jobQ1", "kind": "QUANTUM", "status": "ASSIGNED", "provider": "provQ"},
+        "jobAI1": {
+            "id": "jobAI1",
+            "kind": "AI",
+            "status": "COMPLETED",
+            "provider": "provAI",
+        },
+        "jobQ1": {
+            "id": "jobQ1",
+            "kind": "QUANTUM",
+            "status": "ASSIGNED",
+            "provider": "provQ",
+        },
     }
     app.state.balances: Dict[str, int] = {pid: 0 for pid in app.state.providers.keys()}
 
@@ -49,7 +71,13 @@ def _build_fallback_app() -> FastAPI:
             return JSONResponse({"jsonrpc": "2.0", "id": rid, "result": result})
 
         def err(code: int, message: str) -> JSONResponse:
-            return JSONResponse({"jsonrpc": "2.0", "id": rid, "error": {"code": code, "message": message}})
+            return JSONResponse(
+                {
+                    "jsonrpc": "2.0",
+                    "id": rid,
+                    "error": {"code": code, "message": message},
+                }
+            )
 
         try:
             if method == "aicf.listProviders":
@@ -99,7 +127,10 @@ def _build_fallback_app() -> FastAPI:
 
     @app.get("/aicf/balance/{provider_id}")
     def rest_get_balance(provider_id: str) -> Dict[str, Any]:
-        return {"providerId": provider_id, "balance": app.state.balances.get(provider_id, 0)}
+        return {
+            "providerId": provider_id,
+            "balance": app.state.balances.get(provider_id, 0),
+        }
 
     @app.post("/aicf/payouts/claim")
     async def rest_claim_payout(req: Request) -> Dict[str, Any]:
@@ -114,6 +145,7 @@ def _build_fallback_app() -> FastAPI:
 
 
 # -------------------------- Project mount (if available) --------------------------
+
 
 def _build_project_app_or_none() -> Optional[FastAPI]:
     try:
@@ -146,6 +178,7 @@ def _build_project_app_or_none() -> Optional[FastAPI]:
 
 # -------------------------- Pytest fixtures & helpers --------------------------
 
+
 @pytest.fixture(scope="module")
 def app() -> FastAPI:
     proj = _build_project_app_or_none()
@@ -157,7 +190,9 @@ def client(app: FastAPI) -> TestClient:
     return TestClient(app)
 
 
-def _rpc_call(client: TestClient, method: str, params: Dict[str, Any]) -> Tuple[bool, Dict[str, Any]]:
+def _rpc_call(
+    client: TestClient, method: str, params: Dict[str, Any]
+) -> Tuple[bool, Dict[str, Any]]:
     payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
     for path in ("/rpc", "/json-rpc", "/"):
         try:
@@ -177,7 +212,12 @@ def _rpc_call(client: TestClient, method: str, params: Dict[str, Any]) -> Tuple[
     return False, {"code": -1, "message": "no rpc endpoint"}
 
 
-def _rest_call(client: TestClient, method: str, path: str, json_body: Optional[Dict[str, Any]] = None) -> Tuple[bool, Any]:
+def _rest_call(
+    client: TestClient,
+    method: str,
+    path: str,
+    json_body: Optional[Dict[str, Any]] = None,
+) -> Tuple[bool, Any]:
     meth = getattr(client, method.lower())
     r = meth(path, json=json_body) if json_body is not None else meth(path)
     if r.status_code == 200:
@@ -186,6 +226,7 @@ def _rest_call(client: TestClient, method: str, path: str, json_body: Optional[D
 
 
 # -------------------------- Tests --------------------------
+
 
 def test_list_and_get_provider(client: TestClient, app: FastAPI) -> None:
     # Prefer JSON-RPC, fall back to REST.
@@ -260,7 +301,9 @@ def test_claim_payout_and_balance(client: TestClient, app: FastAPI) -> None:
     ok, claim = _rpc_call(client, "aicf.claimPayout", claim_params)
     if not ok:
         # If project JSON-RPC isn't there, try REST fallback.
-        ok, claim = _rest_call(client, "POST", "/aicf/payouts/claim", json_body=claim_params)
+        ok, claim = _rest_call(
+            client, "POST", "/aicf/payouts/claim", json_body=claim_params
+        )
         assert ok, f"claimPayout unavailable: {claim}"
 
     # Balance (after)

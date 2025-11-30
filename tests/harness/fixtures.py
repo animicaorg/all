@@ -32,13 +32,14 @@ Typical usage
 
 from __future__ import annotations
 
-import os
-import json
 import hashlib
+import json
+import os
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
+from typing import (Any, Dict, Iterable, Iterator, List, Optional, Sequence,
+                    Tuple)
 
 # Optional decoders
 _msgspec_cbor_decode = None
@@ -63,8 +64,8 @@ except Exception:
 @dataclass(frozen=True)
 class TestVector:
     path: Path
-    fmt: str       # "json" or "cbor"
-    name: str      # basename without extension (for quick lookups)
+    fmt: str  # "json" or "cbor"
+    name: str  # basename without extension (for quick lookups)
 
     def __str__(self) -> str:
         return f"{self.name} ({self.fmt}) @ {self.path}"
@@ -73,6 +74,7 @@ class TestVector:
 # ------------------------------------------------------------------------------
 # Roots & discovery
 # ------------------------------------------------------------------------------
+
 
 def _resolve_vectors_root() -> Path:
     """Resolve the directory containing test vectors."""
@@ -85,7 +87,7 @@ def _resolve_vectors_root() -> Path:
     start = Path.cwd()
     target_rel = Path("spec") / "test_vectors"
     for base in (start, *start.parents):
-        cand = (base / target_rel)
+        cand = base / target_rel
         if cand.is_dir():
             return cand.resolve()
 
@@ -117,7 +119,7 @@ def find_vectors(
     Discover vectors under `root` matching glob patterns.
     Returns a stable-sorted list of TestVector.
     """
-    r = (root or vectors_root())
+    r = root or vectors_root()
     if not r.exists():
         return []
 
@@ -145,6 +147,7 @@ def iter_vectors(**kwargs) -> Iterator[TestVector]:
 # Loading helpers
 # ------------------------------------------------------------------------------
 
+
 def _require_cbor_decoder() -> None:
     if _msgspec_cbor_decode or _cbor2_loads:
         return
@@ -158,7 +161,7 @@ def _load_cbor_bytes(data: bytes) -> Any:
     if _msgspec_cbor_decode:
         return _msgspec_cbor_decode(data)  # type: ignore[misc]
     if _cbor2_loads:
-        return _cbor2_loads(data)          # type: ignore[misc]
+        return _cbor2_loads(data)  # type: ignore[misc]
     _require_cbor_decoder()
     raise AssertionError("Unreachable")  # for type-checkers
 
@@ -206,7 +209,9 @@ def load_by_basename(
     for tv in find_vectors(root=root):
         if tv.name == name:
             return load_vector(tv)
-    raise FileNotFoundError(f"No test vector named '{name}' under {root or vectors_root()}")
+    raise FileNotFoundError(
+        f"No test vector named '{name}' under {root or vectors_root()}"
+    )
 
 
 def load_all(
@@ -241,6 +246,7 @@ def list_files(
 # Convenience: metadata snapshot (filename, sha256)
 # ------------------------------------------------------------------------------
 
+
 def snapshot_metadata(
     *,
     root: Optional[Path] = None,
@@ -271,6 +277,7 @@ def snapshot_metadata(
 # ------------------------------------------------------------------------------
 # CLI (optional)
 # ------------------------------------------------------------------------------
+
 
 def _main(argv: Optional[Sequence[str]] = None) -> int:
     """

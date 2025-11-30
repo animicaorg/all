@@ -3,18 +3,18 @@ from __future__ import annotations
 import dataclasses as _dc
 import typing as t
 
-from rpc.methods import method
 from rpc import deps
+from rpc.methods import method
 
 # Prefer canonical encoders from core; fall back to CBOR if needed.
 try:
-    from core.encoding.canonical import (
-        header_sign_bytes as _header_sign_bytes,  # type: ignore
-        tx_sign_bytes as _tx_sign_bytes,          # type: ignore
-    )
+    from core.encoding.canonical import \
+        header_sign_bytes as _header_sign_bytes  # type: ignore
+    from core.encoding.canonical import \
+        tx_sign_bytes as _tx_sign_bytes  # type: ignore
 except Exception:  # pragma: no cover
     _header_sign_bytes = None  # type: ignore
-    _tx_sign_bytes = None      # type: ignore
+    _tx_sign_bytes = None  # type: ignore
     try:
         from core.encoding.cbor import dumps as _cbor_dumps  # type: ignore
     except Exception:  # pragma: no cover
@@ -32,6 +32,7 @@ except Exception:  # pragma: no cover
 # -----------------------
 # Helpers
 # -----------------------
+
 
 def _dcd(obj: t.Any) -> t.Any:
     """Dataclass → dict (deep)."""
@@ -148,7 +149,10 @@ def _log_view(log: t.Any) -> dict[str, t.Any]:
     data = getattr(log, "data", None)
     return {
         "address": addr,
-        "topics": [(_hex(t) if isinstance(t, (bytes, bytearray)) else t) for t in (topics or [])],
+        "topics": [
+            (_hex(t) if isinstance(t, (bytes, bytearray)) else t)
+            for t in (topics or [])
+        ],
         "data": _hex(data) if isinstance(data, (bytes, bytearray)) else data,
     }
 
@@ -186,7 +190,9 @@ def _block_view(
     chain_id_fallback: int | None = None,
 ) -> dict[str, t.Any]:
     """Block view with toggles for tx objects & receipts."""
-    header = getattr(block, "header", None) or getattr(block, "Header", None) or block  # tolerate shapes
+    header = (
+        getattr(block, "header", None) or getattr(block, "Header", None) or block
+    )  # tolerate shapes
     txs = getattr(block, "txs", getattr(block, "transactions", [])) or []
     receipts = getattr(block, "receipts", []) or []
 
@@ -219,11 +225,17 @@ def _block_view(
     v: dict[str, t.Any] = {
         "number": int(height) if height is not None else None,
         "hash": computed_hash,
-        "parentHash": _hex(parent_hash) if isinstance(parent_hash, (bytes, bytearray)) else parent_hash,
+        "parentHash": (
+            _hex(parent_hash)
+            if isinstance(parent_hash, (bytes, bytearray))
+            else parent_hash
+        ),
         "timestamp": int(timestamp) if timestamp is not None else None,
         "chainId": int(chain_id) if chain_id is not None else None,
         "thetaMicro": int(theta_micro) if theta_micro is not None else None,
-        "mixSeed": _hex(mix_seed) if isinstance(mix_seed, (bytes, bytearray)) else mix_seed,
+        "mixSeed": (
+            _hex(mix_seed) if isinstance(mix_seed, (bytes, bytearray)) else mix_seed
+        ),
         "nonce": _hex(nonce) if isinstance(nonce, (bytes, bytearray)) else nonce,
         "roots": _header_roots_view(roots),
     }
@@ -267,7 +279,12 @@ def _normalize_block_number(n: t.Any) -> int:
         return n
     if isinstance(n, str):
         s = n.strip().lower()
-        if s in ("latest", "head", "safe", "finalized"):  # all map to current best for now
+        if s in (
+            "latest",
+            "head",
+            "safe",
+            "finalized",
+        ):  # all map to current best for now
             h, _hdr = deps.get_head()[0], deps.get_head()[1]  # type: ignore
             return int(h)
         if s in ("earliest", "genesis"):
@@ -292,7 +309,9 @@ def _resolve_block_by_number(height: int) -> tuple[int | None, t.Any | None]:
         return height, blk
 
     # Or via a state service
-    if hasattr(deps, "state_service") and hasattr(deps.state_service, "get_block_by_height"):
+    if hasattr(deps, "state_service") and hasattr(
+        deps.state_service, "get_block_by_height"
+    ):
         blk = deps.state_service.get_block_by_height(height)  # type: ignore
         if blk is None:
             return None, None
@@ -326,7 +345,9 @@ def _resolve_block_by_hash(h: str) -> tuple[int | None, t.Any | None]:
         return (int(height) if height is not None else None), blk
 
     # Via state service
-    if hasattr(deps, "state_service") and hasattr(deps.state_service, "get_block_by_hash"):
+    if hasattr(deps, "state_service") and hasattr(
+        deps.state_service, "get_block_by_hash"
+    ):
         blk = deps.state_service.get_block_by_hash(hb)  # type: ignore
         if blk is None:
             return None, None
@@ -341,6 +362,7 @@ def _resolve_block_by_hash(h: str) -> tuple[int | None, t.Any | None]:
 # -----------------------
 # Methods
 # -----------------------
+
 
 @method(
     "chain.getBlockByNumber",
@@ -398,10 +420,18 @@ def chain_get_block_by_hash(
     h, blk = _resolve_block_by_hash(bh)
     fallback_blk = _fallback_block(chain_id_val)
     fallback_view = _block_view(
-        fallback_blk, 0, include_txs=False, include_receipts=False, chain_id_fallback=chain_id_val
+        fallback_blk,
+        0,
+        include_txs=False,
+        include_receipts=False,
+        chain_id_fallback=chain_id_val,
     )
     fallback_hash = fallback_view.get("hash")
-    if blk is None and bh.lower().strip() in {"0x", _ZERO_HASH.lower(), (fallback_hash or "").lower()}:
+    if blk is None and bh.lower().strip() in {
+        "0x",
+        _ZERO_HASH.lower(),
+        (fallback_hash or "").lower(),
+    }:
         blk = fallback_blk
         h = 0 if h is None else h
     if blk is None:

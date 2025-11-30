@@ -46,13 +46,16 @@ try:
     # Prefer project domain-separated SHA3 helpers if available.
     from randomness.utils.hash import sha3_256 as _sha3_256  # type: ignore
 except Exception:  # pragma: no cover - fallback for isolated usage
+
     def _sha3_256(data: bytes) -> bytes:
         return hashlib.sha3_256(data).digest()
+
 
 # Try to import BeaconOut type for convenience; remain duck-typed if absent.
 try:  # pragma: no cover - import convenience
     from randomness.types.core import BeaconOut  # type: ignore
 except Exception:  # pragma: no cover
+
     class BeaconOut:  # type: ignore
         pass
 
@@ -67,11 +70,13 @@ _FINAL_LABEL = b"final|sha3-256"
 
 # ------------------------------- Data types -----------------------------------
 
+
 @dataclasses.dataclass(frozen=True)
 class MixReport:
     """
     Diagnostic information about a mix operation (non-security-critical).
     """
+
     out_len: int
     method: str
     transcript_sha3_256: str
@@ -85,6 +90,7 @@ class MixReport:
 
 
 # ------------------------------- Utilities ------------------------------------
+
 
 def _ensure_bytes_beacon(beacon: Union[bytes, "BeaconOut"]) -> bytes:
     """
@@ -132,7 +138,7 @@ def build_transcript(
       - "label": str      (free-form)
     """
     ctx = context or {}
-    parts = [ _MIX_DOMAIN, b"|v1" ]
+    parts = [_MIX_DOMAIN, b"|v1"]
     # Stable key ordering
     for k in sorted(ctx.keys()):
         v = ctx[k]
@@ -143,10 +149,14 @@ def build_transcript(
             v_bytes = str(v).encode("utf-8", errors="replace")
         parts.extend([b"|", k.encode("utf-8"), b"=", v_bytes])
     # Include stable digests of the inputs (not raw inputs) to avoid large transcripts
-    parts.extend([
-        b"|beacon.sha256=", hashlib.sha256(beacon_bytes).digest(),
-        b"|qrng.sha256=", hashlib.sha256(qrng_bytes).digest(),
-    ])
+    parts.extend(
+        [
+            b"|beacon.sha256=",
+            hashlib.sha256(beacon_bytes).digest(),
+            b"|qrng.sha256=",
+            hashlib.sha256(qrng_bytes).digest(),
+        ]
+    )
     return _sha3_256(b"".join(parts))
 
 
@@ -164,6 +174,7 @@ def _xor(a: bytes, b: bytes) -> bytes:
 
 
 # --------------------------------- API ----------------------------------------
+
 
 def mix(
     beacon: Union[bytes, "BeaconOut"],

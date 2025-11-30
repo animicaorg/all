@@ -59,12 +59,12 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple
+from typing import (Any, Callable, Dict, Iterable, List, Mapping,
+                    MutableMapping, Optional, Sequence, Tuple)
 
-from .types import ProofType, MicroNat
-from .policy import PoiesPolicy
 from .caps import Contribution, apply_all_caps, clip_per_type, clip_total_gamma
-
+from .policy import PoiesPolicy
+from .types import MicroNat, ProofType
 
 # ---------------------------------------------------------------------------
 # Hook interface & defaults
@@ -93,6 +93,7 @@ def _to_micro(x: float) -> MicroNat:
 # ---------------------------------------------------------------------------
 # Lightweight aggregate helper (float domain; test-only)
 # ---------------------------------------------------------------------------
+
 
 def aggregate(psi_by_kind: Mapping[Any, float], policy: Any) -> AggregateResult:
     """Aggregate ψ by proof kind applying per-type and Γ caps (float domain)."""
@@ -177,7 +178,7 @@ def default_score_hooks(policy: PoiesPolicy) -> Dict[ProofType, ScoreHook]:
         # Redundancy penalty exponent
         rho = _W(ProofType.AI, "redundancy_exp", 1.0)
         k_units = _W(ProofType.AI, "k_units", 1.0)
-        score = k_units * units * qos * q_traps / (redundancy ** rho)
+        score = k_units * units * qos * q_traps / (redundancy**rho)
         return _to_micro(score)
 
     # QUANTUM — similar form, with optional unit synthesis from depth×width×log1p(shots)
@@ -214,10 +215,12 @@ def default_score_hooks(policy: PoiesPolicy) -> Dict[ProofType, ScoreHook]:
         size_gib = max(0.0, float(metrics.get("size_gib", 0.0)))
         avail = _clamp01(float(metrics.get("availability", 0.0)))
         retrieval_bonus = _clamp01(float(metrics.get("retrieval_bonus", 0.0)))
-        k_size = _W(ProofType.STORAGE, "k_size", 0.02)  # µ-nats per GiB @ full availability (pre-micro scale)
+        k_size = _W(
+            ProofType.STORAGE, "k_size", 0.02
+        )  # µ-nats per GiB @ full availability (pre-micro scale)
         # Small convexity in availability to reward near-perfect uptime
         alpha = _W(ProofType.STORAGE, "availability_exp", 1.2)
-        score = k_size * size_gib * (avail ** alpha) * (1.0 + 0.25 * retrieval_bonus)
+        score = k_size * size_gib * (avail**alpha) * (1.0 + 0.25 * retrieval_bonus)
         return _to_micro(score)
 
     # VDF — proportional to verified time/iterations
@@ -246,6 +249,7 @@ def default_score_hooks(policy: PoiesPolicy) -> Dict[ProofType, ScoreHook]:
 # Scoring, aggregation, acceptance
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class ProofInput:
     proof_id: bytes
@@ -264,11 +268,11 @@ class PerProofOut:
 @dataclass(frozen=True)
 class ScoreOutcome:
     accepted: bool
-    score_micro: MicroNat           # S = base_entropy + Σψ_capped
+    score_micro: MicroNat  # S = base_entropy + Σψ_capped
     theta_micro: MicroNat
     base_entropy_micro: MicroNat
     per_proof: List[PerProofOut]
-    breakdown: Dict[str, Any]       # sums by stage, per-type tables, caps diagnostics
+    breakdown: Dict[str, Any]  # sums by stage, per-type tables, caps diagnostics
 
 
 def score_vector(
@@ -380,9 +384,18 @@ def aggregate_and_accept(
         "sum_after_per_type": int(cap_stats.sum_after_per_type),
         "sum_after_gamma": int(cap_stats.sum_after_gamma),
         "per_type_raw": diag["per_type_raw"],
-        "per_type_after_per_proof": {k.name if hasattr(k, "name") else str(k): v for k, v in cap_stats.per_type_after_per_proof.items()},
-        "per_type_after_per_type": {k.name if hasattr(k, "name") else str(k): v for k, v in cap_stats.per_type_after_per_type.items()},
-        "per_type_after_gamma": {k.name if hasattr(k, "name") else str(k): v for k, v in cap_stats.per_type_after_gamma.items()},
+        "per_type_after_per_proof": {
+            k.name if hasattr(k, "name") else str(k): v
+            for k, v in cap_stats.per_type_after_per_proof.items()
+        },
+        "per_type_after_per_type": {
+            k.name if hasattr(k, "name") else str(k): v
+            for k, v in cap_stats.per_type_after_per_type.items()
+        },
+        "per_type_after_gamma": {
+            k.name if hasattr(k, "name") else str(k): v
+            for k, v in cap_stats.per_type_after_gamma.items()
+        },
         "gamma_cap_micro": int(getattr(policy, "gamma_cap", 0)),
         "distance_micro": int(S - int(theta_micro)),
     }
@@ -400,6 +413,7 @@ def aggregate_and_accept(
 # ---------------------------------------------------------------------------
 # Convenience: sum ψ only (no acceptance)
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class SumOutcome:
@@ -419,7 +433,10 @@ def sum_psi(
     hooks: Optional[Mapping[ProofType, ScoreHook]] = None,
 ) -> SumOutcome:
     contribs, diag = score_vector(
-        [ProofInput(bytes(p["proof_id"]), p["proof_type"], p.get("metrics", {})) for p in proofs],
+        [
+            ProofInput(bytes(p["proof_id"]), p["proof_type"], p.get("metrics", {}))
+            for p in proofs
+        ],
         policy,
         hooks=hooks,
     )
@@ -434,7 +451,10 @@ def sum_psi(
         sum_after_per_type_micro=int(cap_stats.sum_after_per_type),
         sum_after_gamma_micro=int(cap_stats.sum_after_gamma),
         per_type_raw=dict(diag["per_type_raw"]),
-        per_type_after_gamma={k.name if hasattr(k, "name") else str(k): v for k, v in cap_stats.per_type_after_gamma.items()},
+        per_type_after_gamma={
+            k.name if hasattr(k, "name") else str(k): v
+            for k, v in cap_stats.per_type_after_gamma.items()
+        },
         per_proof=per_proof_out,
     )
 
@@ -450,6 +470,7 @@ if __name__ == "__main__":
         def __init__(self):
             # Mimic the policy fields used by caps & weights
             from collections import namedtuple
+
             Cap = namedtuple("Cap", "per_type_micro per_proof_micro_max")
             self.caps = {
                 ProofType.HASH: Cap(5_000_000, 3_000_000),
@@ -459,7 +480,10 @@ if __name__ == "__main__":
                 ProofType.VDF: Cap(6_000_000, 4_000_000),
             }
             self.gamma_cap = 12_000_000
-            self.weights = {ProofType.AI: {"k_units": 1.2}, ProofType.QUANTUM: {"k_units": 1.8}}
+            self.weights = {
+                ProofType.AI: {"k_units": 1.2},
+                ProofType.QUANTUM: {"k_units": 1.8},
+            }
 
     policy = _Pol()
     hooks = default_score_hooks(policy)
@@ -467,11 +491,30 @@ if __name__ == "__main__":
     base = 500_000
 
     proofs = [
-        {"proof_id": b"\x01"*32, "proof_type": ProofType.HASH, "metrics": {"d_ratio": 0.3}},
-        {"proof_id": b"\x02"*32, "proof_type": ProofType.AI, "metrics": {"ai_units": 3.0, "qos": 0.9, "traps_ratio": 0.88, "redundancy": 1.0}},
-        {"proof_id": b"\x03"*32, "proof_type": ProofType.QUANTUM, "metrics": {"quantum_units": 1.0, "traps_ratio": 0.83, "qos": 0.95}},
+        {
+            "proof_id": b"\x01" * 32,
+            "proof_type": ProofType.HASH,
+            "metrics": {"d_ratio": 0.3},
+        },
+        {
+            "proof_id": b"\x02" * 32,
+            "proof_type": ProofType.AI,
+            "metrics": {
+                "ai_units": 3.0,
+                "qos": 0.9,
+                "traps_ratio": 0.88,
+                "redundancy": 1.0,
+            },
+        },
+        {
+            "proof_id": b"\x03" * 32,
+            "proof_type": ProofType.QUANTUM,
+            "metrics": {"quantum_units": 1.0, "traps_ratio": 0.83, "qos": 0.95},
+        },
     ]
 
-    out = aggregate_and_accept(proofs, policy, theta_micro=theta, base_entropy_micro=base, hooks=hooks)
+    out = aggregate_and_accept(
+        proofs, policy, theta_micro=theta, base_entropy_micro=base, hooks=hooks
+    )
     print("ACCEPTED:", out.accepted, "S=", out.score_micro, "Θ=", out.theta_micro)
     print("per_type_after_gamma:", out.breakdown["per_type_after_gamma"])

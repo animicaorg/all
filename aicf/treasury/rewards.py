@@ -33,14 +33,14 @@ Integration
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Tuple
 from hashlib import sha3_256
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from aicf.treasury.state import TreasuryState
 from aicf.aitypes.provider import ProviderId
-
+from aicf.treasury.state import TreasuryState
 
 # ---------- Errors ----------
+
 
 class RewardsError(Exception):
     """Base class for rewards errors."""
@@ -55,6 +55,7 @@ class InvalidPayout(RewardsError):
 
 
 # ---------- Records & Audit ----------
+
 
 @dataclass(frozen=True)
 class CreditRecord:
@@ -71,6 +72,7 @@ class CreditRecord:
       • height: chain height when the credit was recorded
       • note: optional free-form text for external systems
     """
+
     credit_id: str
     payout_id: str
     settlement_id: str
@@ -115,6 +117,7 @@ class RewardsAudit:
       • provider_totals: provider -> cumulative credited amount
       • last_height_processed: watermark for readers (optional)
     """
+
     credits: Dict[str, Dict[str, Any]]
     payout_index: Dict[str, str]
     provider_totals: Dict[str, int]
@@ -138,13 +141,18 @@ class RewardsAudit:
     def load(data: Dict[str, Any]) -> "RewardsAudit":
         r = RewardsAudit()
         r.credits = {str(k): dict(v) for k, v in (data.get("credits") or {}).items()}
-        r.payout_index = {str(k): str(v) for k, v in (data.get("payout_index") or {}).items()}
-        r.provider_totals = {str(k): int(v) for k, v in (data.get("provider_totals") or {}).items()}
+        r.payout_index = {
+            str(k): str(v) for k, v in (data.get("payout_index") or {}).items()
+        }
+        r.provider_totals = {
+            str(k): int(v) for k, v in (data.get("provider_totals") or {}).items()
+        }
         r.last_height_processed = data.get("last_height_processed")
         return r
 
 
 # ---------- Manager ----------
+
 
 class RewardsManager:
     """
@@ -153,7 +161,9 @@ class RewardsManager:
 
     __slots__ = ("treasury", "audit")
 
-    def __init__(self, treasury: TreasuryState, audit: Optional[RewardsAudit] = None) -> None:
+    def __init__(
+        self, treasury: TreasuryState, audit: Optional[RewardsAudit] = None
+    ) -> None:
         self.treasury = treasury
         self.audit = audit or RewardsAudit()
 
@@ -234,7 +244,12 @@ class RewardsManager:
             credit_id = _make_credit_id(settlement_id, payout_id)
 
             # Credit treasury
-            self.treasury.credit(provider, amount, height=height, reason=f"settlement:{settlement_id} payout:{payout_id}")
+            self.treasury.credit(
+                provider,
+                amount,
+                height=height,
+                reason=f"settlement:{settlement_id} payout:{payout_id}",
+            )
 
             # Update audit indexes
             record = CreditRecord(
@@ -250,7 +265,9 @@ class RewardsManager:
             self.audit.credits[credit_id] = record.to_dict()
             self.audit.payout_index[payout_id] = credit_id
             key = str(provider)
-            self.audit.provider_totals[key] = self.audit.provider_totals.get(key, 0) + amount
+            self.audit.provider_totals[key] = (
+                self.audit.provider_totals.get(key, 0) + amount
+            )
 
             created.append(record)
 
@@ -259,6 +276,7 @@ class RewardsManager:
 
 
 # ---------- helpers ----------
+
 
 def _coerce_payout(p: Any) -> Tuple[str, ProviderId, int, Optional[int]]:
     """

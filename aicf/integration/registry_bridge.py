@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 aicf.integration.registry_bridge
 --------------------------------
@@ -35,12 +36,14 @@ capabilities.runtime.abi_bindings). Here we only return plain Python types.
 """
 
 
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
+from typing import (Any, Callable, Dict, Iterable, Iterator, List, Mapping,
+                    MutableMapping, Optional, Sequence, Tuple, Union)
 
 # -------- Provider id helpers -----------------------------------------------------
 
 ProviderLike = Any
 ProviderIdLike = Union[str, bytes]
+
 
 def _norm_id_bytes(pid: ProviderIdLike) -> bytes:
     if isinstance(pid, bytes):
@@ -56,6 +59,7 @@ def _norm_id_bytes(pid: ProviderIdLike) -> bytes:
         return s.encode("utf-8")
     raise TypeError(f"Unsupported provider id type: {type(pid)}")
 
+
 def _extract_provider_id(obj: ProviderLike) -> bytes:
     if isinstance(obj, (bytes, str)):
         return _norm_id_bytes(obj)
@@ -66,8 +70,10 @@ def _extract_provider_id(obj: ProviderLike) -> bytes:
     # last resort: deterministic repr
     return repr(obj).encode("utf-8")
 
+
 def _hex0(b: bytes) -> str:
     return "0x" + b.hex()
+
 
 # -------- Capability & status normalization --------------------------------------
 
@@ -78,6 +84,7 @@ _CAP_BITS = {  # bitmask fallback: 1=AI, 2=QPU
     0: "AI",
     1: "QPU",
 }
+
 
 def _caps_from_bitmask(mask: int) -> List[str]:
     out: List[str] = []
@@ -90,6 +97,7 @@ def _caps_from_bitmask(mask: int) -> List[str]:
         mask >>= 1
         i += 1
     return out
+
 
 def _caps_to_list(caps: Any) -> List[str]:
     """
@@ -104,8 +112,11 @@ def _caps_to_list(caps: Any) -> List[str]:
         return _caps_from_bitmask(caps)
     # mapping of flags
     if isinstance(caps, Mapping):
-        out = [str(k).upper().replace("QUANTUM", "QPU").replace("AI", "AI")
-               for k, v in caps.items() if v]
+        out = [
+            str(k).upper().replace("QUANTUM", "QPU").replace("AI", "AI")
+            for k, v in caps.items()
+            if v
+        ]
         out.sort()
         return out
     # iterable of names/enums
@@ -133,6 +144,7 @@ def _caps_to_list(caps: Any) -> List[str]:
     # fallback
     return [str(caps)]
 
+
 def _status_to_str(status: Any) -> str:
     # Try enum-like .name, else str()
     name = getattr(status, "name", None)
@@ -144,7 +156,9 @@ def _status_to_str(status: Any) -> str:
         s = s.split(".")[-1]
     return s.upper()
 
+
 # -------- Sanitization ------------------------------------------------------------
+
 
 def build_provider_view(provider: ProviderLike) -> Dict[str, Any]:
     """
@@ -165,7 +179,11 @@ def build_provider_view(provider: ProviderLike) -> Dict[str, Any]:
 
     # Pull common attributes defensively
     caps = getattr(provider, "caps", None) or getattr(provider, "capabilities", None)
-    stake = getattr(provider, "stake", None) or getattr(provider, "effective_stake", None) or 0
+    stake = (
+        getattr(provider, "stake", None)
+        or getattr(provider, "effective_stake", None)
+        or 0
+    )
     status = getattr(provider, "status", None) or "UNKNOWN"
     region = getattr(provider, "region", None)
     endpoints = getattr(provider, "endpoints", None) or {}
@@ -208,7 +226,9 @@ def build_provider_view(provider: ProviderLike) -> Dict[str, Any]:
         "metadata": meta_out,
     }
 
+
 # -------- Registry discovery & wrappers ------------------------------------------
+
 
 def resolve_registry() -> Any:
     """
@@ -248,9 +268,12 @@ def resolve_registry() -> Any:
             try:
                 return cls()  # type: ignore[call-arg]
             except Exception as e:
-                raise RuntimeError(f"Failed to construct {_reg.__name__}.{cls_name}") from e
+                raise RuntimeError(
+                    f"Failed to construct {_reg.__name__}.{cls_name}"
+                ) from e
 
     raise RuntimeError("Could not resolve a provider registry instance")
+
 
 def _call_maybe(obj: Any, names: Sequence[str], *args: Any, **kwargs: Any) -> Any:
     for n in names:
@@ -258,9 +281,13 @@ def _call_maybe(obj: Any, names: Sequence[str], *args: Any, **kwargs: Any) -> An
             return getattr(obj, n)(*args, **kwargs)
     raise AttributeError(f"{obj!r} does not implement any of {names}")
 
+
 # Public, deterministic views
 
-def get_provider_view(registry: Any, provider_id: ProviderIdLike) -> Optional[Dict[str, Any]]:
+
+def get_provider_view(
+    registry: Any, provider_id: ProviderIdLike
+) -> Optional[Dict[str, Any]]:
     """
     Fetch and sanitize a single provider record by id. Returns None if unknown.
     """
@@ -270,15 +297,16 @@ def get_provider_view(registry: Any, provider_id: ProviderIdLike) -> Optional[Di
         return None
     return build_provider_view(prov)
 
+
 def list_providers_view(
     registry: Any,
     *,
-    capability: Optional[str] = None,   # "AI" or "QPU"
-    status: Optional[str] = None,       # e.g. "ACTIVE"
+    capability: Optional[str] = None,  # "AI" or "QPU"
+    status: Optional[str] = None,  # e.g. "ACTIVE"
     region: Optional[str] = None,
     limit: int = 256,
     offset: int = 0,
-    sort_key: str = "id",               # deterministic: "id" | "stake" | "region"
+    sort_key: str = "id",  # deterministic: "id" | "stake" | "region"
 ) -> List[Dict[str, Any]]:
     """
     List (a sanitized view of) providers matching simple filters.
@@ -301,13 +329,23 @@ def list_providers_view(
     except AttributeError:
         # Try a generic "all" then filter locally
         iterable = _call_maybe(registry, ("all", "all_providers", "iter_providers"))
+
         def _matches(p: Any) -> bool:
-            if capability and "AI" in _caps_to_list(getattr(p, "caps", None)) and capability == "QPU":
+            if (
+                capability
+                and "AI" in _caps_to_list(getattr(p, "caps", None))
+                and capability == "QPU"
+            ):
                 pass  # covered below
-            caps_ok = (capability is None) or (capability in _caps_to_list(getattr(p, "caps", None)))
-            st_ok = (status is None) or (_status_to_str(getattr(p, "status", None)) == status)
+            caps_ok = (capability is None) or (
+                capability in _caps_to_list(getattr(p, "caps", None))
+            )
+            st_ok = (status is None) or (
+                _status_to_str(getattr(p, "status", None)) == status
+            )
             reg_ok = (region is None) or (str(getattr(p, "region", None)) == region)
             return caps_ok and st_ok and reg_ok
+
         iterable = (p for p in iterable if _matches(p))  # type: ignore[assignment]
 
     views = [build_provider_view(p) for p in iterable]
@@ -324,12 +362,20 @@ def list_providers_view(
         views.sort(key=lambda v: v["id"])
 
     # Pagination (deterministic slicing)
-    if offset < 0: offset = 0
-    if limit <= 0: return []
-    return views[offset: offset + limit]
+    if offset < 0:
+        offset = 0
+    if limit <= 0:
+        return []
+    return views[offset : offset + limit]
 
-def count_providers(registry: Any, *, capability: Optional[str] = None,
-                    status: Optional[str] = None, region: Optional[str] = None) -> int:
+
+def count_providers(
+    registry: Any,
+    *,
+    capability: Optional[str] = None,
+    status: Optional[str] = None,
+    region: Optional[str] = None,
+) -> int:
     """
     Count providers that match the same filters used by list_providers_view.
     """
@@ -345,7 +391,16 @@ def count_providers(registry: Any, *, capability: Optional[str] = None,
         return int(_call_maybe(registry, ("count_providers", "count"), **filters))
     except AttributeError:
         # Fall back to listing and counting
-        return len(list_providers_view(registry, capability=capability, status=status, region=region, limit=10_000_000))
+        return len(
+            list_providers_view(
+                registry,
+                capability=capability,
+                status=status,
+                region=region,
+                limit=10_000_000,
+            )
+        )
+
 
 __all__ = [
     "build_provider_view",

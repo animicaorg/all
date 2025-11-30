@@ -40,8 +40,14 @@ sys.path.insert(0, str(REPO))
 try:
     from tests.ci import env_snapshot  # type: ignore
 except Exception:  # pragma: no cover
+
     def env_snapshot():
-        return {"python": sys.version.split()[0], "implementation": sys.implementation.name, "platform": sys.platform, "ci": "unknown"}
+        return {
+            "python": sys.version.split()[0],
+            "implementation": sys.implementation.name,
+            "platform": sys.platform,
+            "ci": "unknown",
+        }
 
 
 def discover_test_roots(include_property: bool) -> List[str]:
@@ -100,7 +106,9 @@ def discover_cov_packages() -> List[str]:
     found: List[str] = []
     for name in pkgs:
         # Resolve dash-name to folder for studio-services
-        folder = name if name != "studio_services" else "studio-services/studio_services"
+        folder = (
+            name if name != "studio_services" else "studio-services/studio_services"
+        )
         if (REPO / folder).exists():
             found.append(name)
     return found
@@ -116,11 +124,29 @@ def have_plugin(mod: str) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run fast test suite (unit + light).")
-    parser.add_argument("--include-property", action="store_true", help="Also run property tests (tests/property).")
-    parser.add_argument("--report-dir", default="tests/reports", help="Directory to write reports into.")
-    parser.add_argument("--junit-name", default="junit-fast.xml", help="JUnit XML file name in report dir.")
-    parser.add_argument("--cov-html-dir", default="coverage-fast-html", help="Coverage HTML subdir in report dir.")
-    parser.add_argument("--cov-xml-name", default="coverage-fast.xml", help="Coverage XML file name in report dir.")
+    parser.add_argument(
+        "--include-property",
+        action="store_true",
+        help="Also run property tests (tests/property).",
+    )
+    parser.add_argument(
+        "--report-dir", default="tests/reports", help="Directory to write reports into."
+    )
+    parser.add_argument(
+        "--junit-name",
+        default="junit-fast.xml",
+        help="JUnit XML file name in report dir.",
+    )
+    parser.add_argument(
+        "--cov-html-dir",
+        default="coverage-fast-html",
+        help="Coverage HTML subdir in report dir.",
+    )
+    parser.add_argument(
+        "--cov-xml-name",
+        default="coverage-fast.xml",
+        help="Coverage XML file name in report dir.",
+    )
     parser.add_argument("--extra", default="", help="Extra pytest args (quoted).")
     args = parser.parse_args()
 
@@ -131,7 +157,14 @@ def main() -> int:
     pytest_cmd: List[str] = [sys.executable, "-m", "pytest"]
 
     # Quiet and friendly failure summary
-    pytest_cmd += ["-q", "-ra", "--maxfail=1", "--durations=10", "--strict-config", "--strict-markers"]
+    pytest_cmd += [
+        "-q",
+        "-ra",
+        "--maxfail=1",
+        "--durations=10",
+        "--strict-config",
+        "--strict-markers",
+    ]
 
     # Exclude slow/e2e-ish by keyword (defensive even if we don't pass those dirs)
     pytest_cmd += [
@@ -175,10 +208,19 @@ def main() -> int:
     snap = env_snapshot()
     print("== Animica Fast Test Suite ==")
     print(f"repo: {REPO}")
-    print(f"python: {snap.get('python')} ({snap.get('implementation')}) on {snap.get('platform')}, CI={snap.get('ci')}")
+    print(
+        f"python: {snap.get('python')} ({snap.get('implementation')}) on {snap.get('platform')}, CI={snap.get('ci')}"
+    )
     print("test roots:", ", ".join(roots))
     print("coverage:", ", ".join(discover_cov_packages()) or "(none)")
-    print("reports:", junit_path, " | ", (report_dir / args.cov_html_dir), " | ", (report_dir / args.cov_xml_name))
+    print(
+        "reports:",
+        junit_path,
+        " | ",
+        (report_dir / args.cov_html_dir),
+        " | ",
+        (report_dir / args.cov_xml_name),
+    )
     print("pytest cmd:", " ".join(shlex.quote(x) for x in pytest_cmd))
     print("================================\n")
 
@@ -187,7 +229,9 @@ def main() -> int:
     # Friendly defaults for reproducibility
     env.setdefault("PYTHONHASHSEED", "0")
     env.setdefault("HYPOTHESIS_PROFILE", "default")  # if property tests run
-    env.setdefault("NUMBA_DISABLE_JIT", "1")  # in case optional numba exists, keep deterministic
+    env.setdefault(
+        "NUMBA_DISABLE_JIT", "1"
+    )  # in case optional numba exists, keep deterministic
 
     proc = subprocess.run(pytest_cmd, cwd=str(REPO), env=env)
     return proc.returncode

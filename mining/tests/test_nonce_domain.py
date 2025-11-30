@@ -1,8 +1,9 @@
-import math
-import os
 import binascii
 import importlib
+import math
+import os
 import types
+
 import pytest
 
 # Import the module under test
@@ -43,7 +44,7 @@ u_from_fields = _get_callable(
 
 @pytest.mark.parametrize(
     "u",
-    [1e-12, 1e-6, 1e-3, 0.1, 0.25, 0.5, 0.75, 0.9, 1 - 2 ** -40],
+    [1e-12, 1e-6, 1e-3, 0.1, 0.25, 0.5, 0.75, 0.9, 1 - 2**-40],
 )
 def test_neg_log_matches_math(u):
     if H_func is None:
@@ -87,7 +88,7 @@ def test_bytes_to_u_interval_and_order(hexbytes):
     assert 0.0 < u < 1.0, "u must lie in the open interval (0,1)"
     # Deterministic and equals reference within tight tolerance
     ref = _expected_bytes_to_u(b)
-    assert math.isclose(u, ref, rel_tol=0, abs_tol=2 ** -200)
+    assert math.isclose(u, ref, rel_tol=0, abs_tol=2**-200)
 
 
 def test_bytes_to_u_determinism_distinct_inputs():
@@ -115,7 +116,7 @@ def test_monotonicity_of_H():
     H_big = H_func(u_big)
     assert H_small > H_big
     # And H(1 - eps) ~ eps for tiny eps
-    eps = 2 ** -40
+    eps = 2**-40
     near_one = 1.0 - eps
     assert math.isclose(H_func(near_one), -math.log(near_one), rel_tol=0, abs_tol=1e-10)
 
@@ -138,4 +139,3 @@ def test_u_from_fields_optional_paths():
     assert 0.0 < u0 < 1.0
     assert u0 == u0_again, "same inputs must be deterministic"
     assert u0 != u1, "changing nonce should change the draw (overwhelmingly likely)"
-

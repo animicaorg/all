@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import httpx
 from functools import wraps
 from typing import Any, Callable, List, Optional
+
+import httpx
 
 _active_router: Optional["MockRouter"] = None
 
@@ -14,7 +15,9 @@ class Route:
         self._responses: List[Any] = []
         self.called = False
 
-    def mock(self, return_value: Any | None = None, side_effect: Any | None = None) -> "Route":
+    def mock(
+        self, return_value: Any | None = None, side_effect: Any | None = None
+    ) -> "Route":
         if side_effect is not None:
             if callable(side_effect):
                 self._responses.append(side_effect)
@@ -91,5 +94,6 @@ def mock(func: Callable[..., Any]) -> Callable[..., Any]:
             return func(*args, **kwargs)
 
     return wrapper
+
 
 __all__ = ["mock", "post", "MockRouter", "Route"]

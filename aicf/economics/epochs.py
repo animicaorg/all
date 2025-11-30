@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 Epoch accounting for the AI Compute Fund (AICF).
 
@@ -23,12 +24,13 @@ Terminology / symbols
 """
 
 
-from dataclasses import dataclass, asdict, replace
+from dataclasses import asdict, dataclass, replace
 from math import floor
-from typing import Dict, Iterable, List, Mapping, MutableMapping, Optional, Tuple
-
+from typing import (Dict, Iterable, List, Mapping, MutableMapping, Optional,
+                    Tuple)
 
 # ------------------------------ Params & State ------------------------------ #
+
 
 @dataclass(frozen=True)
 class EpochParams:
@@ -42,6 +44,7 @@ class EpochParams:
         rollover_rate: fraction of unused budget carried into the next epoch.
                        Must be between 0.0 and 1.0 inclusive.
     """
+
     start_height: int = 0
     length: int = 720
     base_budget: int = 0
@@ -63,6 +66,7 @@ class EpochIndex:
     """
     0-indexed epoch identifier + its [start, end) height bounds.
     """
+
     idx: int
     start_height: int
     end_height_exclusive: int
@@ -79,6 +83,7 @@ class EpochAccounting:
         budget_spent: amount reserved/spent so far in this epoch.
         payouts_count: number of payouts recorded (for stats/audits).
     """
+
     epoch: EpochIndex
     budget_total: int
     budget_spent: int = 0
@@ -101,6 +106,7 @@ class EpochAccounting:
 
 # ---------------------------------- Helpers --------------------------------- #
 
+
 def epoch_index_for_height(h: int, params: EpochParams) -> EpochIndex:
     """
     Compute the 0-indexed epoch index and its bounds for a given block height.
@@ -109,7 +115,9 @@ def epoch_index_for_height(h: int, params: EpochParams) -> EpochIndex:
     if h < 0:
         raise ValueError("height must be >= 0")
     if h < params.start_height:
-        return EpochIndex(idx=-1, start_height=0, end_height_exclusive=params.start_height)
+        return EpochIndex(
+            idx=-1, start_height=0, end_height_exclusive=params.start_height
+        )
 
     offset = h - params.start_height
     idx = offset // params.length
@@ -136,7 +144,9 @@ def compute_next_budget(prev: Optional[EpochAccounting], params: EpochParams) ->
     return params.base_budget + carry
 
 
-def start_epoch_for_height(h: int, params: EpochParams, prev: Optional[EpochAccounting]) -> EpochAccounting:
+def start_epoch_for_height(
+    h: int, params: EpochParams, prev: Optional[EpochAccounting]
+) -> EpochAccounting:
     """
     Start (or re-compute) the accounting record for the epoch containing height `h`.
     If `prev` refers to the immediately preceding epoch, rollover is applied.
@@ -144,15 +154,22 @@ def start_epoch_for_height(h: int, params: EpochParams, prev: Optional[EpochAcco
     eidx = epoch_index_for_height(h, params)
     if eidx.idx < 0:
         # We're before accounting starts; return a zero-budget placeholder
-        return EpochAccounting(epoch=eidx, budget_total=0, budget_spent=0, payouts_count=0)
+        return EpochAccounting(
+            epoch=eidx, budget_total=0, budget_spent=0, payouts_count=0
+        )
 
     expected_prev_idx = eidx.idx - 1
-    prev_for_roll = prev if (prev is not None and prev.epoch.idx == expected_prev_idx) else None
+    prev_for_roll = (
+        prev if (prev is not None and prev.epoch.idx == expected_prev_idx) else None
+    )
     budget = compute_next_budget(prev_for_roll, params)
-    return EpochAccounting(epoch=eidx, budget_total=budget, budget_spent=0, payouts_count=0)
+    return EpochAccounting(
+        epoch=eidx, budget_total=budget, budget_spent=0, payouts_count=0
+    )
 
 
 # ---------------------------- Reservation Interface ------------------------- #
+
 
 def try_reserve(state: EpochAccounting, amount: int) -> Tuple[bool, EpochAccounting]:
     """
@@ -185,7 +202,9 @@ def apply_refund(state: EpochAccounting, amount: int) -> EpochAccounting:
     return replace(state, budget_spent=new_spent)
 
 
-def cap_batch_spend(state: EpochAccounting, amounts: Iterable[int]) -> Tuple[EpochAccounting, List[int], List[int]]:
+def cap_batch_spend(
+    state: EpochAccounting, amounts: Iterable[int]
+) -> Tuple[EpochAccounting, List[int], List[int]]:
     """
     Consume a batch of spend amounts in the given order until the epoch budget is exhausted.
 
@@ -206,6 +225,7 @@ def cap_batch_spend(state: EpochAccounting, amounts: Iterable[int]) -> Tuple[Epo
 
 
 # ----------------------------- Serialization Utils -------------------------- #
+
 
 def encode_state(state: EpochAccounting) -> Mapping[str, int]:
     """

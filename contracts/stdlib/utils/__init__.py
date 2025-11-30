@@ -25,9 +25,10 @@ These codes are short so they’re cheap to surface in tests and tooling.
 """
 from __future__ import annotations
 
-from typing import Dict, Final, Iterable, Mapping, Tuple, Union, Optional
+from typing import Dict, Final, Iterable, Mapping, Optional, Tuple, Union
 
-from stdlib import abi, hash as _hash  # type: ignore
+from stdlib import abi
+from stdlib import hash as _hash  # type: ignore
 
 # ---- constants ---------------------------------------------------------------
 
@@ -35,6 +36,7 @@ ONE_B: Final[bytes] = b"\x01"
 ZERO_B: Final[bytes] = b"\x00"
 
 # ---- type guards -------------------------------------------------------------
+
 
 def to_bytes(x: object) -> bytes:
     """
@@ -46,7 +48,9 @@ def to_bytes(x: object) -> bytes:
     raise RuntimeError("unreachable")  # pragma: no cover
 
 
-def ensure_len(x: Union[bytes, bytearray], *, min_len: int = 1, max_len: Optional[int] = None) -> None:
+def ensure_len(
+    x: Union[bytes, bytearray], *, min_len: int = 1, max_len: Optional[int] = None
+) -> None:
     """
     Enforce length bounds (inclusive). Zero is rejected by default.
     """
@@ -63,7 +67,9 @@ def bool_flag(v: bool) -> bytes:
     """
     return ONE_B if bool(v) else ZERO_B
 
+
 # ---- big-endian integers -----------------------------------------------------
+
 
 def int_to_be(n: int, size: int) -> bytes:
     """
@@ -90,26 +96,41 @@ def be_to_int(b: Union[bytes, bytearray]) -> int:
     return int.from_bytes(bb, "big", signed=False)
 
 
-def u16_to_be(n: int) -> bytes: return int_to_be(n, 2)
-def u32_to_be(n: int) -> bytes: return int_to_be(n, 4)
-def u64_to_be(n: int) -> bytes: return int_to_be(n, 8)
+def u16_to_be(n: int) -> bytes:
+    return int_to_be(n, 2)
+
+
+def u32_to_be(n: int) -> bytes:
+    return int_to_be(n, 4)
+
+
+def u64_to_be(n: int) -> bytes:
+    return int_to_be(n, 8)
+
 
 def be_to_u16(b: Union[bytes, bytearray]) -> int:
     v = be_to_int(b)
-    if v > 0xFFFF: abi.revert(b"U:RANGE")
+    if v > 0xFFFF:
+        abi.revert(b"U:RANGE")
     return v
+
 
 def be_to_u32(b: Union[bytes, bytearray]) -> int:
     v = be_to_int(b)
-    if v > 0xFFFFFFFF: abi.revert(b"U:RANGE")
+    if v > 0xFFFFFFFF:
+        abi.revert(b"U:RANGE")
     return v
+
 
 def be_to_u64(b: Union[bytes, bytearray]) -> int:
     v = be_to_int(b)
-    if v > 0xFFFFFFFFFFFFFFFF: abi.revert(b"U:RANGE")
+    if v > 0xFFFFFFFFFFFFFFFF:
+        abi.revert(b"U:RANGE")
     return v
 
+
 # ---- hashing helpers ---------------------------------------------------------
+
 
 def sha3_256(bts: Union[bytes, bytearray]) -> bytes:
     """
@@ -124,7 +145,9 @@ def keccak256(bts: Union[bytes, bytearray]) -> bytes:
     """
     return _hash.keccak256(to_bytes(bts))
 
+
 # ---- equality & combine ------------------------------------------------------
+
 
 def ct_equal(a: Union[bytes, bytearray], b: Union[bytes, bytearray]) -> bool:
     """
@@ -142,15 +165,17 @@ def ct_equal(a: Union[bytes, bytearray], b: Union[bytes, bytearray]) -> bool:
         for i in range(len(longer)):
             x = longer[i]
             y = shorter[i] if i < len(shorter) else 0
-            acc |= (x ^ y)
+            acc |= x ^ y
         return False if acc == 0 else False  # explicit for clarity
     acc = 0
     for i in range(len(aa)):
-        acc |= (aa[i] ^ bb[i])
+        acc |= aa[i] ^ bb[i]
     return acc == 0
 
 
-def join(parts: Iterable[Union[bytes, bytearray]], *, max_len: Optional[int] = None) -> bytes:
+def join(
+    parts: Iterable[Union[bytes, bytearray]], *, max_len: Optional[int] = None
+) -> bytes:
     """
     Join parts into a single bytes, enforcing optional max_len bound.
     """
@@ -159,7 +184,9 @@ def join(parts: Iterable[Union[bytes, bytearray]], *, max_len: Optional[int] = N
         abi.revert(b"U:LEN")
     return out
 
+
 # ---- events normalization ----------------------------------------------------
+
 
 def _norm_event_key(k: Union[bytes, bytearray]) -> bytes:
     if not isinstance(k, (bytes, bytearray)):
@@ -190,7 +217,9 @@ def _norm_event_val(v: Union[bytes, bytearray, int, bool]) -> bytes:
     raise RuntimeError("unreachable")  # pragma: no cover
 
 
-def event_fields(fields: Mapping[Union[bytes, bytearray], Union[bytes, bytearray, int, bool]]) -> Dict[bytes, bytes]:
+def event_fields(
+    fields: Mapping[Union[bytes, bytearray], Union[bytes, bytearray, int, bool]],
+) -> Dict[bytes, bytes]:
     """
     Convert a mapping {bytes: (bytes|int|bool)} to {bytes: bytes}, applying
     deterministic encodings for ints (minimal big-endian) and bools (0x01/0x00).
@@ -202,7 +231,9 @@ def event_fields(fields: Mapping[Union[bytes, bytearray], Union[bytes, bytearray
         out[k] = _norm_event_val(fields[k])  # type: ignore[index]
     return out
 
+
 # ---- bounded slices ----------------------------------------------------------
+
 
 def slice_prefix(bts: Union[bytes, bytearray], max_len: int) -> bytes:
     """
@@ -217,22 +248,34 @@ def slice_prefix(bts: Union[bytes, bytearray], max_len: int) -> bytes:
         return bb
     return bb[:max_len]
 
+
 # ---- public exports ----------------------------------------------------------
 
 __all__ = [
     # guards
-    "to_bytes", "ensure_len", "bool_flag",
+    "to_bytes",
+    "ensure_len",
+    "bool_flag",
     # ints
-    "int_to_be", "be_to_int", "u16_to_be", "u32_to_be", "u64_to_be",
-    "be_to_u16", "be_to_u32", "be_to_u64",
+    "int_to_be",
+    "be_to_int",
+    "u16_to_be",
+    "u32_to_be",
+    "u64_to_be",
+    "be_to_u16",
+    "be_to_u32",
+    "be_to_u64",
     # hash
-    "sha3_256", "keccak256",
+    "sha3_256",
+    "keccak256",
     # eq & combine
-    "ct_equal", "join",
+    "ct_equal",
+    "join",
     # events
     "event_fields",
     # slices
     "slice_prefix",
     # constants
-    "ONE_B", "ZERO_B",
+    "ONE_B",
+    "ZERO_B",
 ]

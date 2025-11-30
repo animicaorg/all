@@ -12,7 +12,9 @@ from .job_manager import JobManager
 
 
 class PoolShareValidator:
-    def __init__(self, adapter: MiningCoreAdapter, *, logger: Optional[logging.Logger] = None) -> None:
+    def __init__(
+        self, adapter: MiningCoreAdapter, *, logger: Optional[logging.Logger] = None
+    ) -> None:
         self._adapter = adapter
         self._log = logger or logging.getLogger("animica.stratum_pool.validator")
 
@@ -28,7 +30,9 @@ class PoolShareValidator:
             sign_bytes=job.sign_bytes,
         )
         try:
-            return await self._adapter.validate_and_submit_share(mining_job, submit_params)
+            return await self._adapter.validate_and_submit_share(
+                mining_job, submit_params
+            )
         except Exception as exc:  # noqa: BLE001
             self._log.warning("share validation failed", exc_info=True)
             return False, str(exc), False, 0

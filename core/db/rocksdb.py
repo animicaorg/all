@@ -30,12 +30,13 @@ from typing import Iterator, Optional, Tuple, Union
 
 try:
     import rocksdb  # type: ignore
+
     _ROCKS_OK = True
 except Exception:
     rocksdb = None  # type: ignore
     _ROCKS_OK = False
 
-from .kv import KV, ReadOnlyKV, Batch
+from .kv import KV, Batch, ReadOnlyKV
 from .sqlite import open_sqlite_kv  # for graceful fallback
 
 

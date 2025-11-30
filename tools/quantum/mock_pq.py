@@ -10,11 +10,12 @@ API:
 
 Note: this is intentionally simple and *not* cryptographically equivalent to PQ.
 """
+
 from __future__ import annotations
 
-import os
-import hmac
 import hashlib
+import hmac
+import os
 
 
 def gen_key() -> str:

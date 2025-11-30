@@ -76,14 +76,20 @@ def _find_json_sanitizer() -> Optional[Callable[..., object]]:
     if det is None:  # pragma: no cover
         return None
 
-    for name in ("sanitize_json", "ensure_deterministic_json", "validate_json_determinism"):
+    for name in (
+        "sanitize_json",
+        "ensure_deterministic_json",
+        "validate_json_determinism",
+    ):
         fn = getattr(det, name, None)
         if callable(fn):
             return fn
     return None
 
 
-@pytest.mark.skipif(det is None, reason=lambda: f"determinism module not importable: {DET_IMPORT_ERR}")
+@pytest.mark.skipif(
+    det is None, reason=lambda: f"determinism module not importable: {DET_IMPORT_ERR}"
+)
 def test_bytes_enforcer_raises_over_cap():
     fn = _find_enforcer_bytes()
     if fn is None:
@@ -95,11 +101,15 @@ def test_bytes_enforcer_raises_over_cap():
         fn(data, 32, "prompt")  # type: ignore[misc]
 
 
-@pytest.mark.skipif(det is None, reason=lambda: f"determinism module not importable: {DET_IMPORT_ERR}")
+@pytest.mark.skipif(
+    det is None, reason=lambda: f"determinism module not importable: {DET_IMPORT_ERR}"
+)
 def test_text_enforcer_under_and_over_limits():
     fn = _find_enforcer_text()
     if fn is None:
-        pytest.skip("No text-size enforcer/clamp found in capabilities.runtime.determinism")
+        pytest.skip(
+            "No text-size enforcer/clamp found in capabilities.runtime.determinism"
+        )
 
     # Exactly at the limit (in bytes) should pass.
     text_at = "a" * 32
@@ -110,7 +120,9 @@ def test_text_enforcer_under_and_over_limits():
             assert out == text_at
             assert len(out.encode("utf-8")) == 32
     except LimitExceeded:
-        pytest.fail("Text enforcer raised at limit boundary (should allow exactly-on-cap inputs)")
+        pytest.fail(
+            "Text enforcer raised at limit boundary (should allow exactly-on-cap inputs)"
+        )
 
     # Over the limit should either raise or clamp strictly within the budget.
     text_over = "a" * 40
@@ -124,7 +136,9 @@ def test_text_enforcer_under_and_over_limits():
         pass
 
 
-@pytest.mark.skipif(det is None, reason=lambda: f"determinism module not importable: {DET_IMPORT_ERR}")
+@pytest.mark.skipif(
+    det is None, reason=lambda: f"determinism module not importable: {DET_IMPORT_ERR}"
+)
 def test_json_sanitizer_rejects_nondeterministic_numbers():
     sanitizer = _find_json_sanitizer()
     if sanitizer is None:
@@ -153,7 +167,10 @@ def test_json_sanitizer_rejects_nondeterministic_numbers():
 
 # ------- Optional integration: ensure host.compute integrates the enforcers -------
 
-@pytest.mark.skipif(det is None, reason=lambda: f"determinism module not importable: {DET_IMPORT_ERR}")
+
+@pytest.mark.skipif(
+    det is None, reason=lambda: f"determinism module not importable: {DET_IMPORT_ERR}"
+)
 def test_ai_enqueue_respects_prompt_cap(monkeypatch):
     """
     If capabilities.host.compute.ai_enqueue exists and uses the determinism
@@ -175,7 +192,9 @@ def test_ai_enqueue_respects_prompt_cap(monkeypatch):
     if enforcer is None:
         pytest.skip("No byte-size enforcer to hook; cannot validate integration")
 
-    def strict_enforcer(data: bytes, max_bytes: int = 1 << 30, label: str = "prompt", **_: object) -> None:
+    def strict_enforcer(
+        data: bytes, max_bytes: int = 1 << 30, label: str = "prompt", **_: object
+    ) -> None:
         # Ignore provided max_bytes and enforce 16 for this test.
         if len(data) > 16:
             raise LimitExceeded(f"{label} exceeds 16 bytes in test-hook")
@@ -197,7 +216,9 @@ def test_ai_enqueue_respects_prompt_cap(monkeypatch):
         assert hasattr(ok, "task_id") or hasattr(ok, "receipt")
 
 
-@pytest.mark.skipif(det is None, reason=lambda: f"determinism module not importable: {DET_IMPORT_ERR}")
+@pytest.mark.skipif(
+    det is None, reason=lambda: f"determinism module not importable: {DET_IMPORT_ERR}"
+)
 def test_quantum_enqueue_respects_circuit_cap(monkeypatch):
     """
     Same idea as the AI prompt, but for a quantum circuit payload.
@@ -215,7 +236,9 @@ def test_quantum_enqueue_respects_circuit_cap(monkeypatch):
     if enforcer is None:
         pytest.skip("No byte-size enforcer to hook; cannot validate integration")
 
-    def strict_enforcer(data: bytes, max_bytes: int = 1 << 30, label: str = "circuit", **_: object) -> None:
+    def strict_enforcer(
+        data: bytes, max_bytes: int = 1 << 30, label: str = "circuit", **_: object
+    ) -> None:
         if len(data) > 64:
             raise LimitExceeded(f"{label} exceeds 64 bytes in test-hook")
 

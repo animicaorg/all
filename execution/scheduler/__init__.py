@@ -70,6 +70,7 @@ def __dir__() -> list[str]:  # pragma: no cover - trivial
 
 # ------------------------------ Convenience --------------------------------
 
+
 def get_default_scheduler(mode: str = "serial", **kwargs: Any) -> Any:
     """
     Construct a scheduler by mode name.
@@ -99,4 +100,6 @@ def get_default_scheduler(mode: str = "serial", **kwargs: Any) -> Any:
     if m in ("optimistic", "parallel", "opt"):
         OptimisticScheduler = importlib.import_module(f"{__name__}.optimistic").OptimisticScheduler  # type: ignore[attr-defined]
         return OptimisticScheduler(**kwargs)
-    raise ValueError(f"unknown scheduler mode {mode!r}; expected 'serial' or 'optimistic'")
+    raise ValueError(
+        f"unknown scheduler mode {mode!r}; expected 'serial' or 'optimistic'"
+    )

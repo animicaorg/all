@@ -43,17 +43,17 @@ License: MIT
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Optional
 
 # Local helpers/types
 from zk.integration.types import ProofEnvelope, canonical_json_bytes
 
-
 # =============================================================================
 # Errors
 # =============================================================================
+
 
 class PolicyError(Exception):
     """Base class for policy violations."""
@@ -71,9 +71,11 @@ class LimitExceeded(PolicyError):
 # Data structures
 # =============================================================================
 
+
 @dataclass(frozen=True)
 class SizeLimits:
     """Per-kind hard limits."""
+
     max_proof_bytes: int
     max_vk_bytes: int
     max_public_inputs: int
@@ -91,6 +93,7 @@ class GasRule:
              + per_vk_byte      * vk_bytes
              + per_opening      * kzg_openings   (if applicable)
     """
+
     base: int = 0
     per_public_input: int = 0
     per_proof_byte: int = 0
@@ -109,51 +112,60 @@ class Policy:
       limits: map of verifier kind → SizeLimits
       gas:    map of verifier kind → GasRule
     """
-    allowlist: frozenset[str] = field(default_factory=lambda: frozenset({
-        "counter_groth16_bn254@1",
-        "poseidon2_arity3_plonk_kzg_bn254@1",
-        "merkle_membership_air_stark_fri@0",
-    }))
-    limits: Mapping[str, SizeLimits] = field(default_factory=lambda: {
-        # Conservative ceilings; adjust with real benchmarks
-        "groth16_bn254": SizeLimits(
-            max_proof_bytes=128_000,   # snarkjs proof json is small; ceiling is generous
-            max_vk_bytes=256_000,      # Groth16 VKs are small; allow cushion
-            max_public_inputs=64,
-        ),
-        "plonk_kzg_bn254": SizeLimits(
-            max_proof_bytes=256_000,   # PLONK proofs typically few KB; ceiling generous
-            max_vk_bytes=1_048_576,    # 1 MiB; VK may include commitments, selector data, etc.
-            max_public_inputs=128,
-        ),
-        "stark_fri_merkle": SizeLimits(
-            max_proof_bytes=512_000,   # toy STARK/Merkle proof (demo)
-            max_vk_bytes=256_000,      # FRI params or AIR metadata
-            max_public_inputs=16,
-        ),
-    })
-    gas: Mapping[str, GasRule] = field(default_factory=lambda: {
-        # Numbers are chain-local "units" (not EVM gas). Tune with real benches.
-        "groth16_bn254": GasRule(
-            base=250_000,
-            per_public_input=12_000,
-            per_proof_byte=2,
-            per_vk_byte=0,
-        ),
-        "plonk_kzg_bn254": GasRule(
-            base=420_000,
-            per_public_input=14_000,
-            per_proof_byte=2,
-            per_vk_byte=0,
-            per_opening=95_000,  # single-opening KZG demo; set openings=1 unless hinted
-        ),
-        "stark_fri_merkle": GasRule(
-            base=300_000,
-            per_public_input=2_000,
-            per_proof_byte=1,
-            per_vk_byte=0,
-        ),
-    })
+
+    allowlist: frozenset[str] = field(
+        default_factory=lambda: frozenset(
+            {
+                "counter_groth16_bn254@1",
+                "poseidon2_arity3_plonk_kzg_bn254@1",
+                "merkle_membership_air_stark_fri@0",
+            }
+        )
+    )
+    limits: Mapping[str, SizeLimits] = field(
+        default_factory=lambda: {
+            # Conservative ceilings; adjust with real benchmarks
+            "groth16_bn254": SizeLimits(
+                max_proof_bytes=128_000,  # snarkjs proof json is small; ceiling is generous
+                max_vk_bytes=256_000,  # Groth16 VKs are small; allow cushion
+                max_public_inputs=64,
+            ),
+            "plonk_kzg_bn254": SizeLimits(
+                max_proof_bytes=256_000,  # PLONK proofs typically few KB; ceiling generous
+                max_vk_bytes=1_048_576,  # 1 MiB; VK may include commitments, selector data, etc.
+                max_public_inputs=128,
+            ),
+            "stark_fri_merkle": SizeLimits(
+                max_proof_bytes=512_000,  # toy STARK/Merkle proof (demo)
+                max_vk_bytes=256_000,  # FRI params or AIR metadata
+                max_public_inputs=16,
+            ),
+        }
+    )
+    gas: Mapping[str, GasRule] = field(
+        default_factory=lambda: {
+            # Numbers are chain-local "units" (not EVM gas). Tune with real benches.
+            "groth16_bn254": GasRule(
+                base=250_000,
+                per_public_input=12_000,
+                per_proof_byte=2,
+                per_vk_byte=0,
+            ),
+            "plonk_kzg_bn254": GasRule(
+                base=420_000,
+                per_public_input=14_000,
+                per_proof_byte=2,
+                per_vk_byte=0,
+                per_opening=95_000,  # single-opening KZG demo; set openings=1 unless hinted
+            ),
+            "stark_fri_merkle": GasRule(
+                base=300_000,
+                per_public_input=2_000,
+                per_proof_byte=1,
+                per_vk_byte=0,
+            ),
+        }
+    )
 
     # ---- helpers ----
 
@@ -161,12 +173,8 @@ class Policy:
         """Serialize to a plain dict for JSON/YAML."""
         return {
             "allowlist": sorted(self.allowlist),
-            "limits": {
-                k: asdict(v) for k, v in self.limits.items()
-            },
-            "gas": {
-                k: asdict(v) for k, v in self.gas.items()
-            },
+            "limits": {k: asdict(v) for k, v in self.limits.items()},
+            "gas": {k: asdict(v) for k, v in self.gas.items()},
         }
 
     @staticmethod
@@ -205,7 +213,10 @@ DEFAULT_POLICY = Policy()
 # Loading / overrides
 # =============================================================================
 
-def load_policy(path: Optional[Path] = None, *, fallback: Policy = DEFAULT_POLICY) -> Policy:
+
+def load_policy(
+    path: Optional[Path] = None, *, fallback: Policy = DEFAULT_POLICY
+) -> Policy:
     """
     Load a Policy from a JSON or YAML file. If `path` is None or missing,
     returns the provided `fallback` (DEFAULT_POLICY).
@@ -219,6 +230,7 @@ def load_policy(path: Optional[Path] = None, *, fallback: Policy = DEFAULT_POLIC
     text = p.read_text(encoding="utf-8")
     if text.lstrip().startswith("{"):
         import json
+
         data = json.loads(text)
     else:
         try:
@@ -235,6 +247,7 @@ def load_policy(path: Optional[Path] = None, *, fallback: Policy = DEFAULT_POLIC
 # =============================================================================
 # Enforcement & metering
 # =============================================================================
+
 
 def _len_bytes(obj: Any) -> int:
     """Length of canonical JSON representation in bytes."""
@@ -301,7 +314,9 @@ def check_limits(
     lim = policy.limits.get(kind)
     if lim is None:
         # For unknown kinds, apply a strict but generic limit.
-        lim = SizeLimits(max_proof_bytes=1_000_000, max_vk_bytes=2_000_000, max_public_inputs=256)
+        lim = SizeLimits(
+            max_proof_bytes=1_000_000, max_vk_bytes=2_000_000, max_public_inputs=256
+        )
 
     if proof_bytes > lim.max_proof_bytes:
         raise LimitExceeded(
@@ -353,7 +368,13 @@ def check_and_meter(
     n_pub = len(env.public_inputs or [])
 
     # Enforce per-kind limits
-    check_limits(policy, kind=env.kind, proof_bytes=proof_bytes, vk_bytes=vk_bytes, num_public_inputs=n_pub)
+    check_limits(
+        policy,
+        kind=env.kind,
+        proof_bytes=proof_bytes,
+        vk_bytes=vk_bytes,
+        num_public_inputs=n_pub,
+    )
 
     # Estimate cost
     openings = kzg_openings_hint or (1 if env.kind == "plonk_kzg_bn254" else 0)
@@ -371,15 +392,19 @@ def check_and_meter(
 # (Optional) tiny CLI for ops/docs
 # =============================================================================
 
+
 def _build_argparser():
     import argparse
+
     ap = argparse.ArgumentParser(description="ZK policy inspector")
     ap.add_argument("--policy", type=Path, help="Path to JSON/YAML policy file")
     ap.add_argument("--format", choices=("json", "yaml"), default="json")
     return ap
 
+
 def _main(argv=None):
     import json
+
     try:
         import yaml  # type: ignore
     except Exception:
@@ -397,6 +422,7 @@ def _main(argv=None):
         if yaml is None:
             raise SystemExit("PyYAML not installed; use --format json")
         print(yaml.safe_dump(data, sort_keys=True))
+
 
 if __name__ == "__main__":
     _main()

@@ -2,7 +2,6 @@ import hashlib
 from typing import Any, Dict, List, Optional
 
 import pytest
-
 from omni_sdk.contracts.events import EventDecoder
 
 
@@ -107,5 +106,3 @@ def test_decoder_ignores_non_matching_topic0():
     out = dec.decode_logs([raw_log])
     assert isinstance(out, list)
     assert len(out) == 0
-
-

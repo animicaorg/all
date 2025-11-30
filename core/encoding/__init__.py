@@ -21,17 +21,13 @@ from __future__ import annotations
 
 from typing import Any
 
-# Canonical CBOR API
-from .cbor import dumps as cbor_dumps, loads as cbor_loads
-
-# Domain-separated SignBytes (used for PQ signing / verification)
-from .canonical import (
-    signbytes_tx,
-    signbytes_header,
-)
-
 # Hash helpers over canonical CBOR encodings
 from ..utils.hash import sha3_256, sha3_512
+# Domain-separated SignBytes (used for PQ signing / verification)
+from .canonical import signbytes_header, signbytes_tx
+# Canonical CBOR API
+from .cbor import dumps as cbor_dumps
+from .cbor import loads as cbor_loads
 
 
 def cbor_sha3_256(obj: Any) -> bytes:

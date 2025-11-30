@@ -12,7 +12,7 @@ Public ABI:
 - inc(by: int = 1) -> int
 """
 
-from stdlib import storage, events, abi
+from stdlib import abi, events, storage
 
 # --- Storage keys (bytes for determinism) ---
 KEY_COUNT = b"counter:value"

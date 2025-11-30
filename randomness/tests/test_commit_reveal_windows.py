@@ -1,9 +1,9 @@
 import pytest
 
+from randomness.commit_reveal.params import WindowParams
 # These imports reflect the intended API surface of the randomness module.
 # If names shift slightly during implementation, update the imports/uses here.
 from randomness.commit_reveal.round_manager import RoundManager
-from randomness.commit_reveal.params import WindowParams
 
 
 def mk_mgr(
@@ -44,7 +44,9 @@ def window_numbers(params: WindowParams, round_id: int) -> dict[str, int]:
 
 
 def test_window_boundaries_match_spec():
-    mgr, params, _ = mk_mgr(commit_secs=10, reveal_secs=7, grace_secs=3, round0_start=1_000)
+    mgr, params, _ = mk_mgr(
+        commit_secs=10, reveal_secs=7, grace_secs=3, round0_start=1_000
+    )
 
     # Check a few rounds
     for rid in (0, 1, 5):
@@ -56,18 +58,29 @@ def test_window_boundaries_match_spec():
         assert win.reveal_end == exp["reveal_end"]
         assert win.grace_end == exp["grace_end"]
         # Non-overlap & contiguity
-        assert win.commit_start < win.commit_end <= win.reveal_start < win.reveal_end <= win.grace_end
+        assert (
+            win.commit_start
+            < win.commit_end
+            <= win.reveal_start
+            < win.reveal_end
+            <= win.grace_end
+        )
 
 
-@pytest.mark.parametrize("offset,expected", [
-    (0, True),            # exactly at commit_start → allowed
-    (5, True),            # strictly inside commit window
-    (9, True),            # last second inside commit window (commit_secs=10)
-    (10, False),          # exactly at commit_end → NOT allowed (end-exclusive)
-    (-1, False),          # one second before window opens → NOT allowed
-])
+@pytest.mark.parametrize(
+    "offset,expected",
+    [
+        (0, True),  # exactly at commit_start → allowed
+        (5, True),  # strictly inside commit window
+        (9, True),  # last second inside commit window (commit_secs=10)
+        (10, False),  # exactly at commit_end → NOT allowed (end-exclusive)
+        (-1, False),  # one second before window opens → NOT allowed
+    ],
+)
 def test_can_commit_boundaries(offset: int, expected: bool):
-    mgr, params, _ = mk_mgr(commit_secs=10, reveal_secs=7, grace_secs=0, round0_start=2_000)
+    mgr, params, _ = mk_mgr(
+        commit_secs=10, reveal_secs=7, grace_secs=0, round0_start=2_000
+    )
     rid = 0
     win = window_numbers(params, rid)
     ts = win["commit_start"] + offset
@@ -78,30 +91,40 @@ def test_can_commit_boundaries(offset: int, expected: bool):
         assert mgr.can_reveal(rid, ts, include_grace=False) is False
 
 
-@pytest.mark.parametrize("offset,expected", [
-    (0, True),            # exactly at reveal_start → allowed
-    (3, True),            # inside reveal window
-    (6, True),            # last second inside reveal window (reveal_secs=7)
-    (7, False),           # exactly at reveal_end → NOT allowed unless grace
-    (-1, False),          # one second before reveal opens → NOT allowed
-])
+@pytest.mark.parametrize(
+    "offset,expected",
+    [
+        (0, True),  # exactly at reveal_start → allowed
+        (3, True),  # inside reveal window
+        (6, True),  # last second inside reveal window (reveal_secs=7)
+        (7, False),  # exactly at reveal_end → NOT allowed unless grace
+        (-1, False),  # one second before reveal opens → NOT allowed
+    ],
+)
 def test_can_reveal_without_grace(offset: int, expected: bool):
-    mgr, params, _ = mk_mgr(commit_secs=10, reveal_secs=7, grace_secs=0, round0_start=3_000)
+    mgr, params, _ = mk_mgr(
+        commit_secs=10, reveal_secs=7, grace_secs=0, round0_start=3_000
+    )
     rid = 1
     win = window_numbers(params, rid)
     ts = win["reveal_start"] + offset
     assert mgr.can_reveal(rid, ts, include_grace=False) is expected
 
 
-@pytest.mark.parametrize("offset,expected", [
-    (0, True),            # reveal_start
-    (6, True),            # just before reveal_end
-    (7, True),            # exactly at reveal_end → allowed due to grace
-    (9, True),            # within grace
-    (10, False),          # exactly at grace end → NOT allowed (end-exclusive)
-])
+@pytest.mark.parametrize(
+    "offset,expected",
+    [
+        (0, True),  # reveal_start
+        (6, True),  # just before reveal_end
+        (7, True),  # exactly at reveal_end → allowed due to grace
+        (9, True),  # within grace
+        (10, False),  # exactly at grace end → NOT allowed (end-exclusive)
+    ],
+)
 def test_can_reveal_with_grace(offset: int, expected: bool):
-    mgr, params, _ = mk_mgr(commit_secs=10, reveal_secs=7, grace_secs=3, round0_start=4_000)
+    mgr, params, _ = mk_mgr(
+        commit_secs=10, reveal_secs=7, grace_secs=3, round0_start=4_000
+    )
     rid = 2
     win = window_numbers(params, rid)
     ts = win["reveal_start"] + offset
@@ -110,7 +133,9 @@ def test_can_reveal_with_grace(offset: int, expected: bool):
 
 def test_cross_round_edges_commit_of_next_round_not_allowed_until_prev_reveal_done():
     # Contiguous windows, no gap. Commit(n+1) must not start until reveal(n) closes.
-    mgr, params, _ = mk_mgr(commit_secs=8, reveal_secs=5, grace_secs=0, round0_start=10_000)
+    mgr, params, _ = mk_mgr(
+        commit_secs=8, reveal_secs=5, grace_secs=0, round0_start=10_000
+    )
     r0 = 0
     r1 = 1
     w0 = window_numbers(params, r0)
@@ -126,7 +151,9 @@ def test_cross_round_edges_commit_of_next_round_not_allowed_until_prev_reveal_do
 
 
 def test_reveal_for_wrong_round_rejected_even_if_in_some_window():
-    mgr, params, _ = mk_mgr(commit_secs=6, reveal_secs=6, grace_secs=2, round0_start=20_000)
+    mgr, params, _ = mk_mgr(
+        commit_secs=6, reveal_secs=6, grace_secs=2, round0_start=20_000
+    )
     r_target = 3
     r_wrong = 2
     w_target = window_numbers(params, r_target)
@@ -145,7 +172,9 @@ def test_validation_helpers_raise_meaningful_errors_when_available():
     that raise domain errors, check a couple of representative cases. If not available,
     silently skip.
     """
-    mgr, params, _ = mk_mgr(commit_secs=10, reveal_secs=7, grace_secs=0, round0_start=30_000)
+    mgr, params, _ = mk_mgr(
+        commit_secs=10, reveal_secs=7, grace_secs=0, round0_start=30_000
+    )
     rid = 0
     wins = window_numbers(params, rid)
 
@@ -155,7 +184,9 @@ def test_validation_helpers_raise_meaningful_errors_when_available():
     if ensure_commit is None:
         pytest.skip("ensure_can_commit not exposed")
     else:
-        with pytest.raises(Exception):  # CommitTooEarly not standardized; any domain error is fine
+        with pytest.raises(
+            Exception
+        ):  # CommitTooEarly not standardized; any domain error is fine
             ensure_commit(rid, ts)
 
     # Too late commit
@@ -173,7 +204,9 @@ def test_validation_helpers_raise_meaningful_errors_when_available():
 
 
 def test_current_round_computation_monotonic():
-    mgr, params, start = mk_mgr(commit_secs=4, reveal_secs=4, grace_secs=0, round0_start=50_000)
+    mgr, params, start = mk_mgr(
+        commit_secs=4, reveal_secs=4, grace_secs=0, round0_start=50_000
+    )
     # Walk through several seconds and ensure current_round is non-decreasing.
     now = start - 1
     r_prev = mgr.current_round(now)
@@ -185,7 +218,9 @@ def test_current_round_computation_monotonic():
 
 
 def test_can_methods_are_pure_boolean_and_side_effect_free():
-    mgr, params, _ = mk_mgr(commit_secs=5, reveal_secs=5, grace_secs=2, round0_start=60_000)
+    mgr, params, _ = mk_mgr(
+        commit_secs=5, reveal_secs=5, grace_secs=2, round0_start=60_000
+    )
     rid = 4
     w = window_numbers(params, rid)
 

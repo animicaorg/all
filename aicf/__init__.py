@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 AICF - AI Compute Fund package.
 
@@ -42,7 +43,6 @@ __all__: List[str] = [
 # This avoids ImportError while the repo is being brought up incrementally.
 import importlib
 import types
-
 
 _lazy_modules = set(__all__) - {"__version__"}
 

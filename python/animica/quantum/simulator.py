@@ -5,6 +5,7 @@ optional dependencies into the Animica core. A Qiskit-based execution
 path is available when the ``quantum`` extra is installed, but the
 built-in statevector path is sufficient for CI and local testing.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -38,7 +39,9 @@ def run_statevector(theta: float) -> SimulationOutcome:
     state = hadamard(state)
     state = rz(state, theta)
     probability_one = abs(state[1]) ** 2
-    return SimulationOutcome(state=state, probability_one=probability_one, angle=theta, backend="builtin")
+    return SimulationOutcome(
+        state=state, probability_one=probability_one, angle=theta, backend="builtin"
+    )
 
 
 def run_qiskit(theta: float) -> Optional[SimulationOutcome]:
@@ -53,7 +56,12 @@ def run_qiskit(theta: float) -> Optional[SimulationOutcome]:
     circuit.rz(theta, 0)
     sv = Statevector.from_instruction(circuit)
     probability_one = abs(sv.data[1]) ** 2
-    return SimulationOutcome(state=list(sv.data), probability_one=probability_one, angle=theta, backend="qiskit")
+    return SimulationOutcome(
+        state=list(sv.data),
+        probability_one=probability_one,
+        angle=theta,
+        backend="qiskit",
+    )
 
 
 def simulate(theta: float, prefer_qiskit: bool = False) -> SimulationOutcome:

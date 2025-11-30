@@ -4,9 +4,11 @@ These tests operate on the in-repo in-memory indexer in `rpc.methods.quantum` an
 mock PQ signer. They do not execute VM contracts; they validate the explorer RPC
 shapes and indexing pipeline.
 """
+
 from __future__ import annotations
 
 import json
+
 import pytest
 
 import rpc.methods.quantum as qmod
@@ -35,7 +37,10 @@ def test_index_job_and_result_cycle(tmp_path):
     # Create a mock worker key and sign a simple canonical payload
     sk = mock_pq.gen_key()
     from tools.quantum.canonical import canonical_bytes
-    payload = canonical_bytes({"job_id": job["job_id"], "result_summary": {"best": "0101"}})
+
+    payload = canonical_bytes(
+        {"job_id": job["job_id"], "result_summary": {"best": "0101"}}
+    )
     sig = mock_pq.sign(payload, sk)
 
     result = {
@@ -50,14 +55,18 @@ def test_index_job_and_result_cycle(tmp_path):
     # Index result
     qmod._index_result(job["job_id"], result)
 
-    results = qmod.explorer_list_job_results(job["job_id"]) 
+    results = qmod.explorer_list_job_results(job["job_id"])
     assert len(results) == 1
     r = results[0]
     assert r["worker_id"] == "worker1"
     assert r["result_data"]["best"] == "0101"
 
     # Verify signature with the same sk (mock verification)
-    ok = mock_pq.verify(canonical_bytes({"job_id": job["job_id"], "result_summary": {"best": "0101"}}), sk, r["worker_signature"])
+    ok = mock_pq.verify(
+        canonical_bytes({"job_id": job["job_id"], "result_summary": {"best": "0101"}}),
+        sk,
+        r["worker_signature"],
+    )
     assert ok
 
 

@@ -3,9 +3,8 @@ from pathlib import Path
 
 import pytest
 import respx
-from typer.testing import CliRunner
-
 from animica.cli import wallet
+from typer.testing import CliRunner
 
 runner = CliRunner()
 
@@ -24,7 +23,9 @@ def allow_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_wallet_create_and_list(tmp_path: Path) -> None:
     wallet_file = tmp_path / "wallets.json"
-    output = run_cli(["create", "--label", "dev1", "--allow-insecure-fallback"], wallet_file)
+    output = run_cli(
+        ["create", "--label", "dev1", "--allow-insecure-fallback"], wallet_file
+    )
     assert "Wallet created" in output
 
     store = json.loads(wallet_file.read_text())
@@ -46,7 +47,9 @@ def test_wallet_show_with_balance(tmp_path: Path) -> None:
     rpc_url = "http://localhost:9999/rpc"
     respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "result": "0x05"})
 
-    show_output = run_cli(["show", "--address", address, "--rpc-url", rpc_url], wallet_file)
+    show_output = run_cli(
+        ["show", "--address", address, "--rpc-url", rpc_url], wallet_file
+    )
     data = json.loads(show_output)
     assert data["address"] == address
     assert data["balance"] == 5
@@ -59,17 +62,22 @@ def test_wallet_export_and_import(tmp_path: Path) -> None:
     address = store["wallets"][0]["address"]
 
     export_path = tmp_path / "export.json"
-    export_output = run_cli(["export", "--address", address, "--out", str(export_path)], wallet_file)
+    export_output = run_cli(
+        ["export", "--address", address, "--out", str(export_path)], wallet_file
+    )
     assert "Exported" in export_output
 
-    import_output = run_cli([
-        "import",
-        "--file",
-        str(export_path),
-        "--label",
-        "dev2",
-        "--force",
-    ], wallet_file)
+    import_output = run_cli(
+        [
+            "import",
+            "--file",
+            str(export_path),
+            "--label",
+            "dev2",
+            "--force",
+        ],
+        wallet_file,
+    )
     assert "dev2" in import_output
 
     store = json.loads(wallet_file.read_text())

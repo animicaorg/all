@@ -32,37 +32,23 @@ A tiny in-memory `LocalBusTransport` is provided for tests and demos.
 
 """
 
-from dataclasses import dataclass, asdict
-from typing import (
-    Awaitable,
-    Callable,
-    Coroutine,
-    Dict,
-    List,
-    Literal,
-    Optional,
-    Protocol,
-    Tuple,
-    Union,
-)
 import asyncio
 import json
+from dataclasses import asdict, dataclass
+from typing import (Awaitable, Callable, Coroutine, Dict, List, Literal,
+                    Optional, Protocol, Tuple, Union)
 
+from da.adapters.p2p_topics import VERSION as TOPIC_VERSION
+from da.adapters.p2p_topics import commitment_topic, parse_topic, samples_topic
 from da.errors import DAError
 from da.utils.bytes import bytes_to_hex, hex_to_bytes
-from da.adapters.p2p_topics import (
-    VERSION as TOPIC_VERSION,
-    commitment_topic,
-    samples_topic,
-    parse_topic,
-)
-
 
 # =============================================================================
 # Message shapes
 # =============================================================================
 
 MsgKind = Literal["commitment", "samples"]
+
 
 @dataclass(frozen=True)
 class CommitmentMsg:
@@ -71,10 +57,12 @@ class CommitmentMsg:
     chain_id: int
     namespace: int
     commitment: str  # 0x-hex (32 bytes)
-    size: int        # original blob size in bytes
+    size: int  # original blob size in bytes
 
     @staticmethod
-    def build(chain_id: int, namespace: int, commitment: bytes, size: int) -> "CommitmentMsg":
+    def build(
+        chain_id: int, namespace: int, commitment: bytes, size: int
+    ) -> "CommitmentMsg":
         if not isinstance(commitment, (bytes, bytearray)) or len(commitment) != 32:
             raise DAError("commitment must be 32 bytes")
         if not (0 <= namespace <= 0xFFFFFFFF):
@@ -97,7 +85,7 @@ class SamplesMsg:
     version: str
     chain_id: int
     namespace: int
-    commitment: str   # 0x-hex (32 bytes) the blob commitment samples refer to
+    commitment: str  # 0x-hex (32 bytes) the blob commitment samples refer to
     indices: List[int]
     # Proof branches serialized as 0x-hex for transport (format is DA-implementation specific).
     branches: List[str]
@@ -134,11 +122,14 @@ Message = Union[CommitmentMsg, SamplesMsg]
 # Encoding (transport payloads)
 # =============================================================================
 
+
 def encode_msg(msg: Message) -> bytes:
     """
     Serialize a message to bytes for transport. Defaults to JSON (UTF-8).
     """
-    return json.dumps(asdict(msg), separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return json.dumps(asdict(msg), separators=(",", ":"), sort_keys=True).encode(
+        "utf-8"
+    )
 
 
 def decode_msg(payload: bytes) -> Message:
@@ -176,6 +167,7 @@ def decode_msg(payload: bytes) -> Message:
 # Transport protocol
 # =============================================================================
 
+
 class P2PTransport(Protocol):
     """
     Minimal async pub/sub transport. Concrete P2P layers should implement this.
@@ -187,7 +179,9 @@ class P2PTransport(Protocol):
     """
 
     async def publish(self, topic: str, payload: bytes) -> None: ...
-    def subscribe(self, topic: str, handler: Callable[[bytes], Awaitable[None]]) -> Callable[[], None]: ...
+    def subscribe(
+        self, topic: str, handler: Callable[[bytes], Awaitable[None]]
+    ) -> Callable[[], None]: ...
 
 
 class LocalBusTransport(P2PTransport):
@@ -199,19 +193,24 @@ class LocalBusTransport(P2PTransport):
         self._subs: Dict[str, List[Callable[[bytes], Awaitable[None]]]] = {}
         self._lock = asyncio.Lock()
 
-    def subscribe(self, topic: str, handler: Callable[[bytes], Awaitable[None]]) -> Callable[[], None]:
+    def subscribe(
+        self, topic: str, handler: Callable[[bytes], Awaitable[None]]
+    ) -> Callable[[], None]:
         self._subs.setdefault(topic, []).append(handler)
+
         def _unsub() -> None:
             handlers = self._subs.get(topic, [])
             try:
                 handlers.remove(handler)
             except ValueError:
                 pass
+
         return _unsub
 
     async def publish(self, topic: str, payload: bytes) -> None:
         async with self._lock:
             handlers = list(self._subs.get(topic, []))
+
         # Fanout without holding the lock; deliver concurrently but don't fail on one handler error.
         async def _deliver(h: Callable[[bytes], Awaitable[None]]) -> None:
             try:
@@ -219,12 +218,14 @@ class LocalBusTransport(P2PTransport):
             except Exception:
                 # Swallow to avoid breaking other subscribers in tests; real transports should log.
                 pass
+
         await asyncio.gather(*(_deliver(h) for h in handlers), return_exceptions=True)
 
 
 # =============================================================================
 # High-level publish helpers
 # =============================================================================
+
 
 async def publish_commitment(
     transport: P2PTransport,
@@ -239,7 +240,9 @@ async def publish_commitment(
     Returns the topic used.
     """
     topic = commitment_topic(chain_id=chain_id)
-    msg = CommitmentMsg.build(chain_id=chain_id, namespace=namespace, commitment=commitment, size=size)
+    msg = CommitmentMsg.build(
+        chain_id=chain_id, namespace=namespace, commitment=commitment, size=size
+    )
     await transport.publish(topic, encode_msg(msg))
     return topic
 
@@ -272,6 +275,7 @@ async def publish_samples(
 # =============================================================================
 # High-level subscribe helpers
 # =============================================================================
+
 
 def subscribe_commitments(
     transport: P2PTransport,

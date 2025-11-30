@@ -21,13 +21,14 @@ from dataclasses import dataclass, field
 from enum import Enum, IntEnum
 from typing import Any, Dict, Mapping, Optional, Type, TypeVar
 
-
 # ---------------------------------------------------------------------------
 # Error codes & classes
 # ---------------------------------------------------------------------------
 
+
 class Severity(IntEnum):
     """Optional severity hint for operators/metrics."""
+
     INFO = 20
     WARNING = 30
     ERROR = 40
@@ -36,45 +37,45 @@ class Severity(IntEnum):
 
 class CoreErrorCode(str, Enum):
     # Generic
-    INTERNAL            = "CORE/INTERNAL"
-    NOT_IMPLEMENTED     = "CORE/NOT_IMPLEMENTED"
-    DEP_MISSING         = "CORE/DEPENDENCY_MISSING"
-    FEATURE_DISABLED    = "CORE/FEATURE_DISABLED"
-    RESOURCE_EXHAUSTED  = "CORE/RESOURCE_EXHAUSTED"
-    TIMEOUT             = "CORE/TIMEOUT"
+    INTERNAL = "CORE/INTERNAL"
+    NOT_IMPLEMENTED = "CORE/NOT_IMPLEMENTED"
+    DEP_MISSING = "CORE/DEPENDENCY_MISSING"
+    FEATURE_DISABLED = "CORE/FEATURE_DISABLED"
+    RESOURCE_EXHAUSTED = "CORE/RESOURCE_EXHAUSTED"
+    TIMEOUT = "CORE/TIMEOUT"
 
     # Config / environment / startup
-    CONFIG              = "CORE/CONFIG"
-    ENVIRONMENT         = "CORE/ENVIRONMENT"
+    CONFIG = "CORE/CONFIG"
+    ENVIRONMENT = "CORE/ENVIRONMENT"
 
     # Encoding / decoding / schema
-    SERIALIZATION       = "CORE/SERIALIZATION"
-    DESERIALIZATION     = "CORE/DESERIALIZATION"
-    CDDL_VALIDATION     = "CORE/CDDL_VALIDATION"
-    SCHEMA_VALIDATION   = "CORE/SCHEMA_VALIDATION"
-    HASH_MISMATCH       = "CORE/HASH_MISMATCH"
+    SERIALIZATION = "CORE/SERIALIZATION"
+    DESERIALIZATION = "CORE/DESERIALIZATION"
+    CDDL_VALIDATION = "CORE/CDDL_VALIDATION"
+    SCHEMA_VALIDATION = "CORE/SCHEMA_VALIDATION"
+    HASH_MISMATCH = "CORE/HASH_MISMATCH"
 
     # DB / storage
-    DB                  = "CORE/DB"
-    DB_NOT_FOUND        = "CORE/DB_NOT_FOUND"
-    DB_CONFLICT         = "CORE/DB_CONFLICT"
+    DB = "CORE/DB"
+    DB_NOT_FOUND = "CORE/DB_NOT_FOUND"
+    DB_CONFLICT = "CORE/DB_CONFLICT"
 
     # Chain / genesis / headers / blocks
-    GENESIS             = "CORE/GENESIS"
-    CHAIN_ID_MISMATCH   = "CORE/CHAIN_ID_MISMATCH"
-    HEADER_INVALID      = "CORE/HEADER_INVALID"
-    BLOCK_INVALID       = "CORE/BLOCK_INVALID"
-    STATE_INVARIANT     = "CORE/STATE_INVARIANT"
+    GENESIS = "CORE/GENESIS"
+    CHAIN_ID_MISMATCH = "CORE/CHAIN_ID_MISMATCH"
+    HEADER_INVALID = "CORE/HEADER_INVALID"
+    BLOCK_INVALID = "CORE/BLOCK_INVALID"
+    STATE_INVARIANT = "CORE/STATE_INVARIANT"
 
     # Transactions (stateless/stateful)
-    TX_INVALID          = "CORE/TX_INVALID"
-    TX_NONCE_GAP        = "CORE/TX_NONCE_GAP"
+    TX_INVALID = "CORE/TX_INVALID"
+    TX_NONCE_GAP = "CORE/TX_NONCE_GAP"
     TX_INSUFFICIENT_BAL = "CORE/TX_INSUFFICIENT_BALANCE"
-    TX_OOG              = "CORE/TX_OUT_OF_GAS"
+    TX_OOG = "CORE/TX_OUT_OF_GAS"
 
     # Networking / IO
-    IO                  = "CORE/IO"
-    NETWORK             = "CORE/NETWORK"
+    IO = "CORE/IO"
+    NETWORK = "CORE/NETWORK"
 
 
 @dataclass(eq=False)
@@ -97,6 +98,7 @@ class AnimicaError(Exception):
     cause: Optional[BaseException]
         Wrapped original exception; not included in equality comparison.
     """
+
     code: str
     message: str
     data: Dict[str, Any] = field(default_factory=dict)
@@ -162,12 +164,16 @@ class AnimicaError(Exception):
 # Concrete subclasses (thin wrappers for ergonomics)
 class InternalError(AnimicaError):
     def __init__(self, message="internal error", **data: Any) -> None:
-        super().__init__(code=CoreErrorCode.INTERNAL, message=message, data=_jsonmap(data))
+        super().__init__(
+            code=CoreErrorCode.INTERNAL, message=message, data=_jsonmap(data)
+        )
 
 
 class NotImplementedFeature(AnimicaError):
     def __init__(self, message="feature not implemented", **data: Any) -> None:
-        super().__init__(code=CoreErrorCode.NOT_IMPLEMENTED, message=message, data=_jsonmap(data))
+        super().__init__(
+            code=CoreErrorCode.NOT_IMPLEMENTED, message=message, data=_jsonmap(data)
+        )
 
 
 class DependencyMissing(AnimicaError):
@@ -175,52 +181,97 @@ class DependencyMissing(AnimicaError):
         msg = f"missing dependency: {package}"
         if hint:
             msg += f" ({hint})"
-        super().__init__(code=CoreErrorCode.DEP_MISSING, message=msg, data={"package": package, "hint": hint}, retryable=False)
+        super().__init__(
+            code=CoreErrorCode.DEP_MISSING,
+            message=msg,
+            data={"package": package, "hint": hint},
+            retryable=False,
+        )
 
 
 class FeatureDisabled(AnimicaError):
     def __init__(self, feature: str, reason: str = "") -> None:
-        super().__init__(code=CoreErrorCode.FEATURE_DISABLED, message=f"feature disabled: {feature}", data={"feature": feature, "reason": reason})
+        super().__init__(
+            code=CoreErrorCode.FEATURE_DISABLED,
+            message=f"feature disabled: {feature}",
+            data={"feature": feature, "reason": reason},
+        )
 
 
 class ConfigError(AnimicaError):
     def __init__(self, message="invalid configuration", **data: Any) -> None:
-        super().__init__(code=CoreErrorCode.CONFIG, message=message, data=_jsonmap(data), retryable=False)
+        super().__init__(
+            code=CoreErrorCode.CONFIG,
+            message=message,
+            data=_jsonmap(data),
+            retryable=False,
+        )
 
 
 class EnvironmentErrorA(AnimicaError):
     def __init__(self, message="bad environment", **data: Any) -> None:
-        super().__init__(code=CoreErrorCode.ENVIRONMENT, message=message, data=_jsonmap(data), retryable=False)
+        super().__init__(
+            code=CoreErrorCode.ENVIRONMENT,
+            message=message,
+            data=_jsonmap(data),
+            retryable=False,
+        )
 
 
 class SerializationError(AnimicaError):
     def __init__(self, message="serialization failed", **data: Any) -> None:
-        super().__init__(code=CoreErrorCode.SERIALIZATION, message=message, data=_jsonmap(data))
+        super().__init__(
+            code=CoreErrorCode.SERIALIZATION, message=message, data=_jsonmap(data)
+        )
 
 
 class DeserializationError(AnimicaError):
     def __init__(self, message="deserialization failed", **data: Any) -> None:
-        super().__init__(code=CoreErrorCode.DESERIALIZATION, message=message, data=_jsonmap(data))
+        super().__init__(
+            code=CoreErrorCode.DESERIALIZATION, message=message, data=_jsonmap(data)
+        )
 
 
 class CDDLValidationError(AnimicaError):
     def __init__(self, message="CDDL validation error", **data: Any) -> None:
-        super().__init__(code=CoreErrorCode.CDDL_VALIDATION, message=message, data=_jsonmap(data), retryable=False)
+        super().__init__(
+            code=CoreErrorCode.CDDL_VALIDATION,
+            message=message,
+            data=_jsonmap(data),
+            retryable=False,
+        )
 
 
 class SchemaValidationError(AnimicaError):
     def __init__(self, message="schema validation error", **data: Any) -> None:
-        super().__init__(code=CoreErrorCode.SCHEMA_VALIDATION, message=message, data=_jsonmap(data), retryable=False)
+        super().__init__(
+            code=CoreErrorCode.SCHEMA_VALIDATION,
+            message=message,
+            data=_jsonmap(data),
+            retryable=False,
+        )
 
 
 class HashMismatch(AnimicaError):
     def __init__(self, expected: str, got: str, subject: str = "payload") -> None:
-        super().__init__(code=CoreErrorCode.HASH_MISMATCH, message=f"hash mismatch for {subject}", data={"expected": expected, "got": got, "subject": subject}, retryable=False)
+        super().__init__(
+            code=CoreErrorCode.HASH_MISMATCH,
+            message=f"hash mismatch for {subject}",
+            data={"expected": expected, "got": got, "subject": subject},
+            retryable=False,
+        )
 
 
 class DatabaseError(AnimicaError):
-    def __init__(self, message="database error", retryable: bool = True, **data: Any) -> None:
-        super().__init__(code=CoreErrorCode.DB, message=message, data=_jsonmap(data), retryable=retryable)
+    def __init__(
+        self, message="database error", retryable: bool = True, **data: Any
+    ) -> None:
+        super().__init__(
+            code=CoreErrorCode.DB,
+            message=message,
+            data=_jsonmap(data),
+            retryable=retryable,
+        )
 
 
 class NotFound(DatabaseError):
@@ -231,38 +282,70 @@ class NotFound(DatabaseError):
 
 class AlreadyExists(DatabaseError):
     def __init__(self, key: str, space: str = "kv") -> None:
-        super().__init__(message="already exists", retryable=False, key=key, space=space)
+        super().__init__(
+            message="already exists", retryable=False, key=key, space=space
+        )
         self.code = CoreErrorCode.DB_CONFLICT
 
 
 class GenesisError(AnimicaError):
     def __init__(self, message="invalid genesis", **data: Any) -> None:
-        super().__init__(code=CoreErrorCode.GENESIS, message=message, data=_jsonmap(data), retryable=False)
+        super().__init__(
+            code=CoreErrorCode.GENESIS,
+            message=message,
+            data=_jsonmap(data),
+            retryable=False,
+        )
 
 
 class ChainIdMismatch(AnimicaError):
     def __init__(self, expected: int | str, got: int | str) -> None:
-        super().__init__(code=CoreErrorCode.CHAIN_ID_MISMATCH, message="chain id mismatch", data={"expected": expected, "got": got}, retryable=False)
+        super().__init__(
+            code=CoreErrorCode.CHAIN_ID_MISMATCH,
+            message="chain id mismatch",
+            data={"expected": expected, "got": got},
+            retryable=False,
+        )
 
 
 class HeaderInvalid(AnimicaError):
     def __init__(self, message="invalid header", **data: Any) -> None:
-        super().__init__(code=CoreErrorCode.HEADER_INVALID, message=message, data=_jsonmap(data), retryable=False)
+        super().__init__(
+            code=CoreErrorCode.HEADER_INVALID,
+            message=message,
+            data=_jsonmap(data),
+            retryable=False,
+        )
 
 
 class BlockInvalid(AnimicaError):
     def __init__(self, message="invalid block", **data: Any) -> None:
-        super().__init__(code=CoreErrorCode.BLOCK_INVALID, message=message, data=_jsonmap(data), retryable=False)
+        super().__init__(
+            code=CoreErrorCode.BLOCK_INVALID,
+            message=message,
+            data=_jsonmap(data),
+            retryable=False,
+        )
 
 
 class StateInvariant(AnimicaError):
     def __init__(self, message="state invariant broken", **data: Any) -> None:
-        super().__init__(code=CoreErrorCode.STATE_INVARIANT, message=message, data=_jsonmap(data), retryable=False)
+        super().__init__(
+            code=CoreErrorCode.STATE_INVARIANT,
+            message=message,
+            data=_jsonmap(data),
+            retryable=False,
+        )
 
 
 class TxInvalid(AnimicaError):
     def __init__(self, message="invalid transaction", **data: Any) -> None:
-        super().__init__(code=CoreErrorCode.TX_INVALID, message=message, data=_jsonmap(data), retryable=False)
+        super().__init__(
+            code=CoreErrorCode.TX_INVALID,
+            message=message,
+            data=_jsonmap(data),
+            retryable=False,
+        )
 
 
 class TxNonceGap(TxInvalid):
@@ -273,7 +356,12 @@ class TxNonceGap(TxInvalid):
 
 class TxInsufficientBalance(TxInvalid):
     def __init__(self, sender: str, needed: int, balance: int) -> None:
-        super().__init__(message="insufficient balance", sender=sender, needed=needed, balance=balance)
+        super().__init__(
+            message="insufficient balance",
+            sender=sender,
+            needed=needed,
+            balance=balance,
+        )
         self.code = CoreErrorCode.TX_INSUFFICIENT_BAL
 
 
@@ -284,13 +372,27 @@ class TxOutOfGas(TxInvalid):
 
 
 class IOErrorA(AnimicaError):
-    def __init__(self, message="I/O error", retryable: bool = True, **data: Any) -> None:
-        super().__init__(code=CoreErrorCode.IO, message=message, data=_jsonmap(data), retryable=retryable)
+    def __init__(
+        self, message="I/O error", retryable: bool = True, **data: Any
+    ) -> None:
+        super().__init__(
+            code=CoreErrorCode.IO,
+            message=message,
+            data=_jsonmap(data),
+            retryable=retryable,
+        )
 
 
 class NetworkError(AnimicaError):
-    def __init__(self, message="network error", retryable: bool = True, **data: Any) -> None:
-        super().__init__(code=CoreErrorCode.NETWORK, message=message, data=_jsonmap(data), retryable=retryable)
+    def __init__(
+        self, message="network error", retryable: bool = True, **data: Any
+    ) -> None:
+        super().__init__(
+            code=CoreErrorCode.NETWORK,
+            message=message,
+            data=_jsonmap(data),
+            retryable=retryable,
+        )
 
 
 class ResourceExhausted(AnimicaError):
@@ -298,12 +400,22 @@ class ResourceExhausted(AnimicaError):
         d = {"resource": resource, **data}
         if limit is not None:
             d["limit"] = limit
-        super().__init__(code=CoreErrorCode.RESOURCE_EXHAUSTED, message=f"resource exhausted: {resource}", data=_jsonmap(d), retryable=True)
+        super().__init__(
+            code=CoreErrorCode.RESOURCE_EXHAUSTED,
+            message=f"resource exhausted: {resource}",
+            data=_jsonmap(d),
+            retryable=True,
+        )
 
 
 class TimeoutErrorA(AnimicaError):
     def __init__(self, message="operation timed out", **data: Any) -> None:
-        super().__init__(code=CoreErrorCode.TIMEOUT, message=message, data=_jsonmap(data), retryable=True)
+        super().__init__(
+            code=CoreErrorCode.TIMEOUT,
+            message=message,
+            data=_jsonmap(data),
+            retryable=True,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -311,6 +423,7 @@ class TimeoutErrorA(AnimicaError):
 # ---------------------------------------------------------------------------
 
 T = TypeVar("T", bound=AnimicaError)
+
 
 def wrap(exc: BaseException, *, as_: Type[T] = InternalError, **ctx: Any) -> T:
     """
@@ -322,12 +435,15 @@ def wrap(exc: BaseException, *, as_: Type[T] = InternalError, **ctx: Any) -> T:
     err = as_("wrapped exception", **ctx)  # type: ignore[call-arg]
     return err.with_cause(exc)
 
+
 def ensure_animica_error(exc: BaseException) -> AnimicaError:
     """Coerce unknown exceptions to InternalError with cause attached."""
     return exc if isinstance(exc, AnimicaError) else InternalError().with_cause(exc)
 
+
 def _jsonmap(data: Mapping[str, Any]) -> Dict[str, Any]:
     return {k: _coerce_json(v) for k, v in data.items()}
+
 
 def _coerce_json(v: Any) -> Any:
     # Keep JSON primitives; stringify the rest; hex-encode bytes.
@@ -339,6 +455,7 @@ def _coerce_json(v: Any) -> Any:
         return str(v)
     except Exception:
         return "<unprintable>"
+
 
 def _preview(v: Any, limit: int = 96) -> str:
     s = _coerce_json(v)
@@ -380,7 +497,7 @@ HTTP_MAP = {
     CoreErrorCode.NETWORK: 502,
 }
 
+
 def http_status_for(err: AnimicaError) -> int:
     """Best-effort HTTP status mapping for bridges (RPC/REST)."""
     return HTTP_MAP.get(CoreErrorCode(err.code), 500) if err.code in CoreErrorCode.__members__.values() else 500  # type: ignore[arg-type]
-

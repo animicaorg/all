@@ -35,8 +35,9 @@ API
 Inputs must be `bytes`; this function raises `TypeError` otherwise.
 """
 
-from typing import Iterable, Iterator, Mapping, Sequence, Tuple, Union, List, Any
 from dataclasses import dataclass
+from typing import (Any, Iterable, Iterator, List, Mapping, Sequence, Tuple,
+                    Union)
 
 # Local hash wrapper (uses core.utils.hash if available)
 try:  # prefer shared utils if present
@@ -78,7 +79,7 @@ def _hash_empty() -> bytes:
 
 
 def _iter_items_normalized(
-    kv: Union[Iterable[Tuple[bytes, bytes]], Mapping[bytes, bytes], Any]
+    kv: Union[Iterable[Tuple[bytes, bytes]], Mapping[bytes, bytes], Any],
 ) -> Iterator[Tuple[bytes, bytes]]:
     """
     Yield (key,value) pairs as bytes. Accepts a variety of kv-like inputs.
@@ -104,7 +105,9 @@ def _iter_items_normalized(
             yield _ensure_bytes_pair(k, v)
         return
 
-    raise TypeError("unsupported kv input; expected Mapping, iterable of pairs, or object with .iter_kv()")
+    raise TypeError(
+        "unsupported kv input; expected Mapping, iterable of pairs, or object with .iter_kv()"
+    )
 
 
 def _ensure_bytes_pair(k: Any, v: Any) -> Tuple[bytes, bytes]:
@@ -172,7 +175,7 @@ def compute_state_root_from_items(items: Iterable[Tuple[bytes, bytes]]) -> bytes
 
 
 def compute_state_root(
-    kv: Union[Iterable[Tuple[bytes, bytes]], Mapping[bytes, bytes], Any]
+    kv: Union[Iterable[Tuple[bytes, bytes]], Mapping[bytes, bytes], Any],
 ) -> bytes:
     """
     Top-level entrypoint. Accepts a kv-like object (Mapping, iterable of pairs,
@@ -194,7 +197,7 @@ class StateRootDebug:
 
 
 def compute_state_root_with_debug(
-    kv: Union[Iterable[Tuple[bytes, bytes]], Mapping[bytes, bytes], Any]
+    kv: Union[Iterable[Tuple[bytes, bytes]], Mapping[bytes, bytes], Any],
 ) -> StateRootDebug:
     """
     Same as `compute_state_root` but returns a small debug struct with count and edge keys.

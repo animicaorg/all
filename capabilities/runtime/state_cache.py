@@ -29,7 +29,8 @@ from __future__ import annotations
 from collections import OrderedDict
 from dataclasses import dataclass
 from threading import RLock
-from typing import Any, Dict, MutableMapping, Optional, Set, Tuple, TYPE_CHECKING
+from typing import (TYPE_CHECKING, Any, Dict, MutableMapping, Optional, Set,
+                    Tuple)
 
 if TYPE_CHECKING:
     try:
@@ -189,7 +190,9 @@ class ResultStateCache:
             # Enforce item cap
             self._enforce_item_cap_locked()
 
-    def get(self, task_id: bytes | bytearray | memoryview | str) -> Optional[ResultRecord]:
+    def get(
+        self, task_id: bytes | bytearray | memoryview | str
+    ) -> Optional[ResultRecord]:
         """
         Fetch a ResultRecord by task_id. Returns None if absent.
         Touches the entry to keep LRU ordering fresh.

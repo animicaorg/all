@@ -1,8 +1,8 @@
-import math
 import importlib
+import math
 import types
-import pytest
 
+import pytest
 
 # Import module under test
 st = importlib.import_module("mining.share_target")
@@ -20,7 +20,7 @@ def _get_callable(mod: types.ModuleType, candidates):
 ratio_fn = _get_callable(
     st,
     (
-        "d_ratio",              # preferred
+        "d_ratio",  # preferred
         "difficulty_ratio",
         "share_ratio",
         "ratio_vs_theta",
@@ -31,7 +31,7 @@ ratio_fn = _get_callable(
 accept_fn = _get_callable(
     st,
     (
-        "accepts",              # preferred
+        "accepts",  # preferred
         "meets_theta",
         "is_accepted",
         "passes_threshold",
@@ -42,7 +42,7 @@ accept_fn = _get_callable(
 micro_fn = _get_callable(
     st,
     (
-        "micro_threshold",      # preferred
+        "micro_threshold",  # preferred
         "share_micro_threshold",
         "theta_to_micro",
         "compute_micro_threshold",
@@ -134,14 +134,16 @@ def test_micro_threshold_monotone_and_below_theta(Theta):
 
     # Ask for many micro-shares → threshold must be below Theta,
     # and more desired shares → smaller threshold.
-    m32  = _micro(Theta, target_shares=32)
+    m32 = _micro(Theta, target_shares=32)
     m128 = _micro(Theta, target_shares=128)
     m512 = _micro(Theta, target_shares=512)
 
     for m in (m32, m128, m512):
         assert 0.0 < m < Theta, "micro threshold must be in (0, Theta)"
 
-    assert m512 <= m128 <= m32, "more target shares should lower (or equal) the threshold"
+    assert (
+        m512 <= m128 <= m32
+    ), "more target shares should lower (or equal) the threshold"
 
     # Ratios at micro-thresholds should be < 1 (since micro < Theta)
     assert _ratio(m32, Theta) < 1.0

@@ -1,13 +1,13 @@
+import binascii
 import importlib
 import sys
 import types
-import binascii
 from typing import Any, Optional
 
 import pytest
 
-
 # ---------------- helpers: import + bytes coercion ----------------
+
 
 def _import(name: str):
     try:
@@ -36,12 +36,15 @@ def _as_bytes(x: Any) -> bytes:
         if len(hx) % 2:
             hx = "0" + hx
         return binascii.unhexlify(hx)
-    if isinstance(x, (list, tuple)) and all(isinstance(i, int) and 0 <= i <= 255 for i in x):
+    if isinstance(x, (list, tuple)) and all(
+        isinstance(i, int) and 0 <= i <= 255 for i in x
+    ):
         return bytes(x)  # type: ignore[arg-type]
     raise TypeError(f"cannot coerce to bytes: {type(x)}")
 
 
 # ---------------- call into random provider in flexible ways ----------------
+
 
 def _resolve_random_fn():
     """
@@ -55,6 +58,7 @@ def _resolve_random_fn():
     for name in ["random_bytes", "random", "get_random", "rand_bytes", "rand"]:
         fn = _get_attr(hmod, [name])
         if callable(fn):
+
             def _call_len_seed(length: int, seed: Optional[bytes]):
                 # Try common signatures
                 for attempt in (
@@ -73,6 +77,7 @@ def _resolve_random_fn():
                     except TypeError:
                         continue
                 raise AssertionError("random fn signature not supported")
+
             return _call_len_seed
 
     # provider
@@ -83,6 +88,7 @@ def _resolve_random_fn():
         for name in ["random_bytes", "random", "get_random", "rand_bytes"]:
             meth = getattr(prov, name, None)
             if callable(meth):
+
                 def _call_len_seed(length: int, seed: Optional[bytes]):
                     for attempt in (
                         lambda: meth(length, seed),
@@ -100,12 +106,14 @@ def _resolve_random_fn():
                         except TypeError:
                             continue
                     raise AssertionError("provider random signature not supported")
+
                 return _call_len_seed
 
     pytest.skip("No random() implementation available")
 
 
 # ---------------- tests ----------------
+
 
 def test_random_deterministic_same_seed():
     rand = _resolve_random_fn()
@@ -154,6 +162,10 @@ def test_random_beacon_mix_once_available(monkeypatch):
     rand2 = _resolve_random_fn()
     with_beacon = rand2(32, seed)
 
-    assert isinstance(without, (bytes, bytearray)) and isinstance(with_beacon, (bytes, bytearray))
+    assert isinstance(without, (bytes, bytearray)) and isinstance(
+        with_beacon, (bytes, bytearray)
+    )
     if bytes(without) == bytes(with_beacon):
-        pytest.xfail("random stub did not mix beacon bytes (acceptable for minimal stub)")
+        pytest.xfail(
+            "random stub did not mix beacon bytes (acceptable for minimal stub)"
+        )

@@ -17,8 +17,8 @@ from typing import Any, Dict, Optional
 
 # ----- Paths -----
 HERE = Path(__file__).resolve()
-PKG_ROOT = HERE.parents[1]          # ~/animica/consensus
-ROOT = PKG_ROOT.parents[0]          # ~/animica
+PKG_ROOT = HERE.parents[1]  # ~/animica/consensus
+ROOT = PKG_ROOT.parents[0]  # ~/animica
 FIXTURES = PKG_ROOT / "fixtures"
 
 # ----- Determinism knobs -----
@@ -46,10 +46,13 @@ try:  # pragma: no cover - optional dependency
     # CI: more coverage
     settings.register_profile("ci", settings(max_examples=200, deadline=None))
     # Pick profile by env, default to local unless CI is set
-    _profile = os.environ.get("HYPOTHESIS_PROFILE") or ("ci" if os.environ.get("CI") else "local")
+    _profile = os.environ.get("HYPOTHESIS_PROFILE") or (
+        "ci" if os.environ.get("CI") else "local"
+    )
     settings.load_profile(_profile)
 except Exception:
     pass
+
 
 # ----- Fixture helpers -----
 def _load_yaml(path: Path) -> Dict[str, Any]:
@@ -60,9 +63,11 @@ def _load_yaml(path: Path) -> Dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
+
 def _load_json(path: Path) -> Dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
+
 
 def policy_example_path() -> Path:
     """Path to consensus/fixtures/poies_policy.example.yaml."""
@@ -71,6 +76,7 @@ def policy_example_path() -> Path:
         raise FileNotFoundError(f"Fixture missing: {p}")
     return p
 
+
 def genesis_header_path() -> Path:
     """Path to consensus/fixtures/genesis_header.json."""
     p = FIXTURES / "genesis_header.json"
@@ -78,13 +84,16 @@ def genesis_header_path() -> Path:
         raise FileNotFoundError(f"Fixture missing: {p}")
     return p
 
+
 def load_policy_example() -> Dict[str, Any]:
     """Load the small test policy used across consensus unit tests."""
     return _load_yaml(policy_example_path())
 
+
 def load_genesis_header() -> Dict[str, Any]:
     """Load the tiny deterministic genesis header sample."""
     return _load_json(genesis_header_path())
+
 
 # Export a small, typed surface for tests to import
 __all__ = [

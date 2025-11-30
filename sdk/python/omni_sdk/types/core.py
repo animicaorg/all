@@ -16,14 +16,16 @@ Nothing here performs network I/O; these are just types and converters.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Sequence, TypedDict, Union, Dict, Any
+from typing import Any, Dict, List, Optional, Sequence, TypedDict, Union
 
 # --- Hex helpers -------------------------------------------------------------
 
 try:
     # Prefer the shared SDK helpers if available.
-    from omni_sdk.utils.bytes import hex_to_bytes as _hex_to_bytes, bytes_to_hex as _bytes_to_hex
+    from omni_sdk.utils.bytes import bytes_to_hex as _bytes_to_hex
+    from omni_sdk.utils.bytes import hex_to_bytes as _hex_to_bytes
 except Exception:  # pragma: no cover - fallback is tiny and safe
+
     def _bytes_to_hex(data: bytes) -> str:
         return "0x" + data.hex()
 
@@ -37,12 +39,13 @@ except Exception:  # pragma: no cover - fallback is tiny and safe
 # --- Common aliases ----------------------------------------------------------
 
 Address = str  # bech32m (anim1...) or hex-addr depending on network rules
-Hash = str     # 0x-prefixed hex string
-Hex = str      # 0x-prefixed hex string
+Hash = str  # 0x-prefixed hex string
+Hex = str  # 0x-prefixed hex string
 ChainId = int
 
 
 # --- JSON-RPC TypedDict shapes ----------------------------------------------
+
 
 class LogDict(TypedDict, total=False):
     address: Address
@@ -59,7 +62,7 @@ class ReceiptDict(TypedDict, total=False):
     index: int
     blockHash: Hash
     blockNumber: int
-    status: int              # 1 = success, 0 = revert/failure
+    status: int  # 1 = success, 0 = revert/failure
     gasUsed: int
     cumulativeGasUsed: int
     logs: List[LogDict]
@@ -78,7 +81,7 @@ class TxDict(TypedDict, total=False):
     # Signed-only (present when fetched by RPC or sending already-signed)
     hash: Hash
     signature: Hex  # PQ signature blob (scheme-specific, hex-encoded)
-    pubkey: Hex     # optional explicit pubkey
+    pubkey: Hex  # optional explicit pubkey
 
 
 class BlockDict(TypedDict, total=False):
@@ -102,6 +105,7 @@ class HeadDict(TypedDict):
 
 
 # --- Dataclasses (bytes-friendly) -------------------------------------------
+
 
 @dataclass(slots=True, frozen=True)
 class Log:
@@ -158,7 +162,7 @@ class Tx:
 
     def to_rpc_dict(self, include_signature: bool = True) -> TxDict:
         d: TxDict = {
-            "from_": self.from_addr,   # note: adapter maps to "from" on the wire
+            "from_": self.from_addr,  # note: adapter maps to "from" on the wire
             "to": self.to,
             "nonce": self.nonce,
             "value": self.value,
@@ -227,7 +231,9 @@ class Receipt:
             block_number=int(d["blockNumber"]),
             status=int(d.get("status", 0)),
             gas_used=int(d.get("gasUsed", 0)),
-            cumulative_gas_used=int(d["cumulativeGasUsed"]) if "cumulativeGasUsed" in d else None,
+            cumulative_gas_used=(
+                int(d["cumulativeGasUsed"]) if "cumulativeGasUsed" in d else None
+            ),
             logs=tuple(Log.from_rpc_dict(ld) for ld in d.get("logs", [])),
         )
 

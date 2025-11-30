@@ -3,17 +3,12 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import Iterable, List, Optional, Protocol, Sequence, Tuple, runtime_checkable
+from typing import (Iterable, List, Optional, Protocol, Sequence, Tuple,
+                    runtime_checkable)
 
 # Local shared knobs/types
-from . import (
-    DEFAULT_MAX_IN_FLIGHT,
-    DEFAULT_MAX_REORG_DEPTH,
-    DEFAULT_REQUEST_TIMEOUT_SEC,
-    Hash,
-    Height,
-    SyncStats,
-)
+from . import (DEFAULT_MAX_IN_FLIGHT, DEFAULT_MAX_REORG_DEPTH,
+               DEFAULT_REQUEST_TIMEOUT_SEC, Hash, Height, SyncStats)
 
 
 @runtime_checkable
@@ -27,6 +22,7 @@ class HeaderLike(Protocol):
     Optional (used for logs/metrics if present):
       - number or height: int  (monotonic height)
     """
+
     hash: bytes
     parent_hash: bytes
 
@@ -42,17 +38,13 @@ class ChainAdapter(Protocol):
     and consensus/fork_choice if available.
     """
 
-    async def get_head(self) -> Tuple[Hash, Height]:
-        ...
+    async def get_head(self) -> Tuple[Hash, Height]: ...
 
-    async def has_header(self, h: Hash) -> bool:
-        ...
+    async def has_header(self, h: Hash) -> bool: ...
 
-    async def get_header(self, h: Hash) -> Optional[HeaderLike]:
-        ...
+    async def get_header(self, h: Hash) -> Optional[HeaderLike]: ...
 
-    async def get_height(self, h: Hash) -> Optional[Height]:
-        ...
+    async def get_height(self, h: Hash) -> Optional[Height]: ...
 
     async def put_headers(self, headers: Sequence[HeaderLike]) -> None:
         """Persist a *contiguous* sequence of headers whose parents are already present (or in the sequence)."""
@@ -66,7 +58,9 @@ class ChainAdapter(Protocol):
         """Find a & b's common ancestor within max_back steps; None if not found."""
         ...
 
-    async def is_better_tip(self, candidate: HeaderLike, current_head: HeaderLike) -> bool:
+    async def is_better_tip(
+        self, candidate: HeaderLike, current_head: HeaderLike
+    ) -> bool:
         """Return True if candidate should become the canonical tip over current_head."""
         ...
 
@@ -77,8 +71,8 @@ class ConsensusView(Protocol):
     Lightweight consensus checks for headers during sync (cheap stateless+schedule validation).
     Keep it fast; full validation happens on block import.
     """
-    async def precheck_header(self, header: HeaderLike) -> bool:
-        ...
+
+    async def precheck_header(self, header: HeaderLike) -> bool: ...
 
 
 @runtime_checkable
@@ -89,14 +83,14 @@ class HeaderFetcher(Protocol):
       - send a GETHEADERS-like request with (locator, stop, limit),
       - return a contiguous list of headers (newest last).
     """
+
     async def getheaders(
         self,
         locator: Sequence[Hash],
         stop: Optional[Hash],
         limit: int,
         timeout_sec: float,
-    ) -> List[HeaderLike]:
-        ...
+    ) -> List[HeaderLike]: ...
 
 
 @dataclass(slots=True)
@@ -106,7 +100,7 @@ class HeaderSyncConfig:
     request_timeout_sec: float = DEFAULT_REQUEST_TIMEOUT_SEC
     max_reorg_depth: int = DEFAULT_MAX_REORG_DEPTH
     idle_backoff_sec: float = 1.0  # when no headers received
-    locator_max_steps: int = 32    # number of entries in the locator (exp backoff)
+    locator_max_steps: int = 32  # number of entries in the locator (exp backoff)
     sanity_parent_required: bool = True  # require first header's parent to be known
 
 
@@ -161,7 +155,9 @@ class HeaderSync:
                     await asyncio.sleep(self.cfg.idle_backoff_sec)
             except asyncio.CancelledError:
                 raise
-            except Exception as e:  # noqa: BLE001 - we want to keep syncing unless fatal
+            except (
+                Exception
+            ) as e:  # noqa: BLE001 - we want to keep syncing unless fatal
                 # In production, prefer a structured logger (wired in deps).
                 print(f"[headers] sync step error: {e!r}")
                 self.stats.errors += 1
@@ -174,7 +170,9 @@ class HeaderSync:
     async def _sync_step(self) -> bool:
         head_hash, head_height = await self.chain.get_head()
 
-        locator = await self._build_locator(head_hash, max_steps=self.cfg.locator_max_steps)
+        locator = await self._build_locator(
+            head_hash, max_steps=self.cfg.locator_max_steps
+        )
         headers = await self.fetcher.getheaders(
             locator=locator,
             stop=None,
@@ -201,12 +199,17 @@ class HeaderSync:
             # Validate basic parent linkage
             if idx == 0:
                 # Parent is either known locally or appears later in the batch — allow batch-internal linkage.
-                if not await self.chain.has_header(h.parent_hash) and h.parent_hash not in known_or_batched:
+                if (
+                    not await self.chain.has_header(h.parent_hash)
+                    and h.parent_hash not in known_or_batched
+                ):
                     break
             else:
                 # Enforce contiguous linkage inside the batch
                 prev = headers[idx - 1]
-                if h.parent_hash != prev.hash and not await self.chain.has_header(h.parent_hash):
+                if h.parent_hash != prev.hash and not await self.chain.has_header(
+                    h.parent_hash
+                ):
                     break
 
             # Lightweight consensus schedule/policy precheck (fast)
@@ -224,7 +227,9 @@ class HeaderSync:
         # If parent is unknown, find common ancestor with current head (bounded).
         if not await self.chain.has_header(new_tail_first.parent_hash):
             # Try to locate a fork point quickly; if not found, delay adoption.
-            ancestor = await self.chain.common_ancestor(head_hash, new_tail_first.hash, self.cfg.max_reorg_depth)
+            ancestor = await self.chain.common_ancestor(
+                head_hash, new_tail_first.hash, self.cfg.max_reorg_depth
+            )
             if ancestor is None:
                 # Can't find a shallow common ancestor → wait for more headers / peers.
                 return False
@@ -303,6 +308,7 @@ class HeaderSync:
 # ---------------------------
 # Tiny utility (optional)
 # ---------------------------
+
 
 def height_of(h: HeaderLike) -> Optional[int]:
     """Best-effort read of header height for logging/metrics."""

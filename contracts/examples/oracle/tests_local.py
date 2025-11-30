@@ -11,10 +11,9 @@ from __future__ import annotations
 import os
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, Callable
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import pytest
-
 
 # ---- helpers: tolerant VM loader & invoker ----------------------------------
 
@@ -64,7 +63,9 @@ def _first_working_loader() -> Optional[Callable[..., Any]]:
     return None
 
 
-def _invoke(handle: Any, fn_name: str, *, sender: Optional[bytes] = None, **kwargs) -> Any:
+def _invoke(
+    handle: Any, fn_name: str, *, sender: Optional[bytes] = None, **kwargs
+) -> Any:
     """
     Try multiple invocation conventions to call a contract function.
     """
@@ -110,7 +111,9 @@ def _invoke(handle: Any, fn_name: str, *, sender: Optional[bytes] = None, **kwar
     except Exception as exc:
         last_exc = exc
 
-    raise RuntimeError(f"Unable to invoke contract function '{fn_name}' via known strategies: {last_exc}")
+    raise RuntimeError(
+        f"Unable to invoke contract function '{fn_name}' via known strategies: {last_exc}"
+    )
 
 
 def _addr(byte: int) -> bytes:
@@ -325,5 +328,3 @@ def test_input_validation(vm_handle):
     # Decimals must be a small integer (contract should enforce; expect failure)
     with pytest.raises(Exception):
         _invoke(vm_handle, "set_pair_decimals", sender=owner_b, pair=pair, decimals=255)
-
-

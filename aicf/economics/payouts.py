@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 from aicf.queue.jobkind import JobKind
+
 """
 Payout builders: derive Payout entries from proof claims.
 
@@ -15,21 +17,19 @@ It only turns finalized work-claims into deterministic accounting outputs.
 from dataclasses import asdict
 from typing import Any, Dict, Iterable, Mapping, Tuple
 
-from .split import (
-    DEFAULT_SPLIT_POLICY,
-    SplitPolicy,
-    split_for_kind,
-)
+from .split import DEFAULT_SPLIT_POLICY, SplitPolicy, split_for_kind
 
 # Pricing adapter: we try a few canonical names so this works even if the pricing
 # module exposes a slightly different function in early iterations.
 try:  # pragma: no cover - exercised indirectly in higher-level tests
-    from .pricing import base_reward as _base_reward  # type: ignore[attr-defined]
+    from .pricing import \
+        base_reward as _base_reward  # type: ignore[attr-defined]
 except Exception:  # pragma: no cover
     _base_reward = None  # type: ignore[assignment]
 
 try:  # pragma: no cover
-    from .pricing import reward_for_units as _reward_for_units  # type: ignore[attr-defined]
+    from .pricing import \
+        reward_for_units as _reward_for_units  # type: ignore[attr-defined]
 except Exception:  # pragma: no cover
     _reward_for_units = None  # type: ignore[assignment]
 

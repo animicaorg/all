@@ -1,5 +1,6 @@
-import pytest
 from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple, Union
+
+import pytest
 
 # This test suite validates that the access-list builder:
 #  - Deduplicates touches per (address, storage key)
@@ -11,6 +12,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple, Union
 # -------------------------------
 # Helpers for flexible introspection
 # -------------------------------
+
 
 def _find_builder():
     """
@@ -115,6 +117,7 @@ def _coerce_output_to_map(out: Any) -> Dict[str, List[str]]:
 # Sample synthetic trace
 # -------------------------------
 
+
 def _trace_events() -> List[Dict[str, Any]]:
     # Two addresses with mixed slot encodings and duplicates.
     A = "0x" + "11" * 20
@@ -126,7 +129,7 @@ def _trace_events() -> List[Dict[str, Any]]:
         {"op": "sload", "address": A, "slot": slot1},
         {"op": "sload", "address": A, "slot": slot1},  # duplicate
         {"op": "sstore", "address": A, "slot": slot2_bytes},
-        {"op": "call", "address": B},                   # no storage key
+        {"op": "call", "address": B},  # no storage key
         {"op": "sload", "address": B, "slot": slot3_upper},
         {"op": "sload", "address": B, "slot": slot3_upper},  # duplicate
     ]
@@ -141,6 +144,7 @@ def _shuffle(seq):
 # Tests
 # -------------------------------
 
+
 def test_dedup_normalize_and_include_empty_entries():
     builder = _find_builder()
     trace = _trace_events()
@@ -152,10 +156,12 @@ def test_dedup_normalize_and_include_empty_entries():
     B = _addr_hex("0x" + "22" * 20)
     assert A in amap and B in amap, "both addresses must be present"
     # A has two distinct slots (01, 02)
-    assert amap[A] == sorted([
-        _slot_hex("0x" + "00" * 31 + "01"),
-        _slot_hex("0x" + "00" * 31 + "02"),
-    ])
+    assert amap[A] == sorted(
+        [
+            _slot_hex("0x" + "00" * 31 + "01"),
+            _slot_hex("0x" + "00" * 31 + "02"),
+        ]
+    )
     # B has one slot (0a0f), and must be included even if it had only 'call' (empty) before
     assert amap[B] == sorted([_slot_hex("0x" + "00" * 30 + "0a" + "0f")])
 
@@ -205,8 +211,8 @@ def test_accepts_varied_event_shapes():
     slot = "0x" + "00" * 31 + "55"
     events = [
         (A, slot),
-        (A, slot),           # dup
-        (B, None),           # address only
+        (A, slot),  # dup
+        (B, None),  # address only
     ]
     out = _coerce_output_to_map(builder(events))
     assert _addr_hex(A) in out and _addr_hex(B) in out

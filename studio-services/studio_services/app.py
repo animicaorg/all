@@ -6,28 +6,26 @@ from typing import AsyncIterator, Optional
 
 from fastapi import FastAPI
 
-# Local modules
-from .version import __version__
 from .config import Config, load_config
 from .metrics import setup_metrics
-from .middleware.request_id import RequestIdMiddleware
-from .middleware.logging import install_access_log_middleware
 from .middleware.errors import install_error_handlers
-from .security.cors import setup_cors
-from .security.rate_limit import RateLimitMiddleware, RateLimiter
-
+from .middleware.logging import install_access_log_middleware
+from .middleware.request_id import RequestIdMiddleware
+from .routers.artifacts import router as artifacts_router
+from .routers.deploy import router as deploy_router
+from .routers.faucet import router as faucet_router
 # Routers
 from .routers.health import router as health_router
-from .routers.deploy import router as deploy_router
-from .routers.verify import router as verify_router
-from .routers.faucet import router as faucet_router
-from .routers.artifacts import router as artifacts_router
-from .routers.simulate import router as simulate_router
 from .routers.openapi import mount_openapi
-
+from .routers.simulate import router as simulate_router
+from .routers.verify import router as verify_router
+from .security.cors import setup_cors
+from .security.rate_limit import RateLimiter, RateLimitMiddleware
 # Storage & background tasks (best-effort imports; components may be optional)
 from .storage import sqlite as storage_sqlite
 from .tasks.scheduler import Scheduler, create_default_scheduler
+# Local modules
+from .version import __version__
 
 
 @asynccontextmanager
@@ -38,7 +36,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     cfg: Config = app.state.config
 
     # Initialize/migrate DB (idempotent)
-    db = await storage_sqlite.init_db(cfg) if hasattr(storage_sqlite, "init_db") else None
+    db = (
+        await storage_sqlite.init_db(cfg)
+        if hasattr(storage_sqlite, "init_db")
+        else None
+    )
     if db is None and hasattr(storage_sqlite, "open_db"):
         # older helper name
         open_db = getattr(storage_sqlite, "open_db")
@@ -83,9 +85,9 @@ def create_app(config: Optional[Config] = None) -> FastAPI:
     app = FastAPI(
         title="Animica Studio Services",
         version=__version__,
-        docs_url=None,      # served via custom OpenAPI mount
+        docs_url=None,  # served via custom OpenAPI mount
         redoc_url=None,
-        openapi_url=None,   # hidden; mount at /openapi.json via router
+        openapi_url=None,  # hidden; mount at /openapi.json via router
         lifespan=_lifespan,
     )
     app.state.config = cfg

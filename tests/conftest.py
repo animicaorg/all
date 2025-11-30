@@ -17,12 +17,12 @@ import time
 import typing as t
 from pathlib import Path
 from urllib import request
-from urllib.error import URLError, HTTPError
+from urllib.error import HTTPError, URLError
 
 import pytest
 
-
 # ---------- CLI OPTIONS ----------
+
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     # Ensure pytest accepts the asyncio configuration even when pytest-asyncio
@@ -62,6 +62,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 # ---------- TEMP WORKSPACES ----------
 
+
 @pytest.fixture(scope="session")
 def session_tmp(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """A single temp directory for the whole test session."""
@@ -87,6 +88,7 @@ def workdir(session_tmp: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 # ---------- JSON-RPC CLIENT ----------
 
+
 class JsonRpcError(RuntimeError):
     def __init__(self, code: int, message: str, data: t.Any | None = None):
         super().__init__(f"JSON-RPC error {code}: {message}")
@@ -99,7 +101,9 @@ class JsonRpcClient:
     Tiny, dependency-free JSON-RPC client with basic retries and timeouts.
     """
 
-    def __init__(self, url: str, timeout: float = 10.0, retries: int = 2, backoff: float = 0.25):
+    def __init__(
+        self, url: str, timeout: float = 10.0, retries: int = 2, backoff: float = 0.25
+    ):
         self.url = url
         self.timeout = timeout
         self.retries = retries
@@ -108,7 +112,14 @@ class JsonRpcClient:
 
     def call(self, method: str, params: t.Any = None) -> t.Any:
         self._counter += 1
-        body = json.dumps({"jsonrpc": "2.0", "id": self._counter, "method": method, "params": params or []}).encode()
+        body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": self._counter,
+                "method": method,
+                "params": params or [],
+            }
+        ).encode()
         req = request.Request(
             self.url,
             data=body,
@@ -125,13 +136,17 @@ class JsonRpcClient:
                 payload = json.loads(raw.decode("utf-8"))
                 if "error" in payload and payload["error"] is not None:
                     err = payload["error"]
-                    raise JsonRpcError(err.get("code", -32000), err.get("message", "Unknown error"), err.get("data"))
+                    raise JsonRpcError(
+                        err.get("code", -32000),
+                        err.get("message", "Unknown error"),
+                        err.get("data"),
+                    )
                 return payload.get("result")
             except (URLError, HTTPError, TimeoutError) as e:
                 last_err = e
                 if attempt == self.retries:
                     break
-                time.sleep(self.backoff * (2 ** attempt))
+                time.sleep(self.backoff * (2**attempt))
                 attempt += 1
         assert last_err is not None
         raise last_err
@@ -159,12 +174,14 @@ def rpc(rpc_url: str) -> JsonRpcClient:
 
 # ---------- KEYPAIRS / FUNDED ACCOUNTS ----------
 
+
 @dataclasses.dataclass(frozen=True)
 class Keypair:
     """
     Generic key container used by tests. 'scheme' is informational and may
     reflect 'pq-dilithium3', 'pq-sphincs+', 'ed25519', etc.
     """
+
     address: str
     private_key: bytes | None = None
     public_key: bytes | None = None
@@ -211,7 +228,9 @@ def _normalize_account(obj: dict[str, t.Any]) -> Keypair | None:
     - {"addr":"...","sk":"0x...","pk":"0x..."}
     - {"address":"..."}  # no keys (RPC-only tests)
     """
-    address = obj.get("address") or obj.get("addr") or obj.get("bech32") or obj.get("hex")
+    address = (
+        obj.get("address") or obj.get("addr") or obj.get("bech32") or obj.get("hex")
+    )
     if not address:
         return None
     scheme = obj.get("scheme") or obj.get("type") or "unknown"
@@ -254,7 +273,7 @@ TOTAL_PREMINE = 18_000_000  # constant
 
 
 def to_base_units(amount_whole: int | float) -> int:
-    return int(round(float(amount_whole) * (10 ** DECIMALS)))
+    return int(round(float(amount_whole) * (10**DECIMALS)))
 
 
 def premine_distribution() -> dict[str, int]:
@@ -295,17 +314,22 @@ try:
     # Best-effort import; tests that don't need it won't fail if unavailable.
     from omni_sdk.address import validate_address  # type: ignore
 except Exception:  # pragma: no cover
+
     def validate_address(addr: str) -> bool:  # fallback
         # Basic check: bech32-ish or 0x-hex; real validation lives in omni_sdk.address
         if not isinstance(addr, str) or len(addr) < 8:
             return False
-        if addr.startswith(("0x", "0X")) and all(c in "0123456789abcdefABCDEF" for c in addr[2:]):
+        if addr.startswith(("0x", "0X")) and all(
+            c in "0123456789abcdefABCDEF" for c in addr[2:]
+        ):
             return True
         return any(addr.startswith(hrp + "1") for hrp in ("an", "animica", "am"))
 
 
 @pytest.fixture(autouse=True)
-def _env_defaults(monkeypatch: pytest.MonkeyPatch, rpc_url: str, ws_url: str, chain_id: str) -> None:
+def _env_defaults(
+    monkeypatch: pytest.MonkeyPatch, rpc_url: str, ws_url: str, chain_id: str
+) -> None:
     """
     Autouse: ensure well-known environment variables exist for tests.
     """
@@ -316,12 +340,14 @@ def _env_defaults(monkeypatch: pytest.MonkeyPatch, rpc_url: str, ws_url: str, ch
 
 # ---------- HEALTH CHECK UTILS ----------
 
+
 @pytest.fixture
 def rpc_health(rpc: JsonRpcClient) -> t.Callable[[], bool]:
     """
     Returns a callable that tries a lightweight health probe.
     Your node may expose different methods; we try a few common ones.
     """
+
     def _probe() -> bool:
         candidates = [
             ("animica_health", []),
@@ -338,4 +364,5 @@ def rpc_health(rpc: JsonRpcClient) -> t.Callable[[], bool]:
             except Exception:
                 continue
         return False
+
     return _probe

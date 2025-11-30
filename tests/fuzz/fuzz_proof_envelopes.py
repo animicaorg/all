@@ -25,6 +25,7 @@ from typing import Any, Callable, Optional, Tuple
 
 # ---------------- optional imports ----------------
 
+
 def _import_optional(modname: str):
     try:
         __import__(modname)
@@ -78,6 +79,7 @@ def _choose_cbor() -> Tuple[DecodeFn, EncodeFn, str]:
     for prov in (_get_project_cbor(), _get_cbor2(), _get_msgspec()):
         if prov:
             return prov
+
     # Minimal stub so the target still imports
     def _loads_stub(b: bytes) -> Any:
         if b == b"\xa0":
@@ -100,6 +102,7 @@ CBOR_LOADS, CBOR_DUMPS, CBOR_BACKEND = _choose_cbor()
 
 # ---------------- hashing & project helpers ----------------
 
+
 def _sha3_256(data: bytes) -> Optional[bytes]:
     h = _import_optional("core.utils.hash")
     if h and hasattr(h, "sha3_256"):
@@ -109,6 +112,7 @@ def _sha3_256(data: bytes) -> Optional[bytes]:
             pass
     try:
         import hashlib
+
         return hashlib.sha3_256(data).digest()
     except Exception:
         return None
@@ -121,7 +125,13 @@ def _decode_envelope_via_project(raw: bytes) -> Optional[dict]:
     m = _import_optional("proofs.cbor")
     if not m:
         return None
-    for name in ("decode_envelope", "envelope_decode", "loads_envelope", "loads", "decode"):
+    for name in (
+        "decode_envelope",
+        "envelope_decode",
+        "loads_envelope",
+        "loads",
+        "decode",
+    ):
         fn = getattr(m, name, None)
         if callable(fn):
             try:
@@ -222,6 +232,7 @@ def _validate_envelope(envelope: dict) -> None:
 
 # ---------------- heuristics & normalization ----------------
 
+
 def _is_envelope_like(x: Any) -> bool:
     if not isinstance(x, dict):
         return False
@@ -271,6 +282,7 @@ def _canonicalize_envelope_shape(env: dict) -> dict:
 
 
 # ---------------- fuzz entry ----------------
+
 
 def fuzz(data: bytes) -> None:
     if len(data) > (1 << 20):  # 1 MiB cap
@@ -340,11 +352,14 @@ def fuzz(data: bytes) -> None:
 
 # ---------------- direct execution ----------------
 
+
 def _run_direct(argv: list[str]) -> int:  # pragma: no cover
     try:
         import atheris  # type: ignore
     except Exception:
-        sys.stderr.write("[fuzz_proof_envelopes] atheris not installed. pip install atheris\n")
+        sys.stderr.write(
+            "[fuzz_proof_envelopes] atheris not installed. pip install atheris\n"
+        )
         return 2
     atheris.instrument_all()
     corpus = [p for p in argv if not p.startswith("-")] or ["tests/fuzz/corpus_proofs"]

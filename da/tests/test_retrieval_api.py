@@ -28,6 +28,7 @@ DATA = bytes(random.getrandbits(8) for _ in range(32 * 1024))  # 32 KiB sample b
 # App/bootstrap helpers (tolerant to different wiring patterns)
 # ---------------------------------------------------------------------------
 
+
 def _import(name: str):
     return importlib.import_module(name)
 
@@ -92,7 +93,11 @@ def _try_make_app(tmpdir) -> Optional[Any]:
                     except Exception:
                         svc = None
                 if svc:
-                    for helper in ("app_from_service", "mount_app", "create_app_for_service"):
+                    for helper in (
+                        "app_from_service",
+                        "mount_app",
+                        "create_app_for_service",
+                    ):
                         if hasattr(api, helper):
                             fn = getattr(api, helper)
                             try:
@@ -118,6 +123,7 @@ def _try_make_app(tmpdir) -> Optional[Any]:
 # Client request helpers (accept multiple API shapes)
 # ---------------------------------------------------------------------------
 
+
 def _post_blob(client: TestClient, ns: int, data: bytes) -> Tuple[str, Dict[str, Any]]:
     """
     Try several payload/endpoint variants for POSTing a blob.
@@ -130,11 +136,26 @@ def _post_blob(client: TestClient, ns: int, data: bytes) -> Tuple[str, Dict[str,
         ("application/json", {"namespace": ns, "data_hex": _hex(data)}),
         ("application/json", {"ns": ns, "data": _hex(data)}),
         # Variant B: JSON base64
-        ("application/json", {"namespace": ns, "data_b64": base64.b64encode(data).decode()}),
+        (
+            "application/json",
+            {"namespace": ns, "data_b64": base64.b64encode(data).decode()},
+        ),
         ("application/json", {"ns": ns, "data_b64": base64.b64encode(data).decode()}),
         # Variant C: multipart (file + ns)
-        ("multipart/form-data", {"file": ("blob.bin", io.BytesIO(data), "application/octet-stream"), "ns": str(ns)}),
-        ("multipart/form-data", {"file": ("blob.bin", io.BytesIO(data), "application/octet-stream"), "namespace": str(ns)}),
+        (
+            "multipart/form-data",
+            {
+                "file": ("blob.bin", io.BytesIO(data), "application/octet-stream"),
+                "ns": str(ns),
+            },
+        ),
+        (
+            "multipart/form-data",
+            {
+                "file": ("blob.bin", io.BytesIO(data), "application/octet-stream"),
+                "namespace": str(ns),
+            },
+        ),
     ]
 
     for ep in endpoints:
@@ -161,13 +182,21 @@ def _post_blob(client: TestClient, ns: int, data: bytes) -> Tuple[str, Dict[str,
                     # Heuristics: find hex-commitment in common fields or scan values
                     cand = None
                     for key in ("commitment", "root", "nmt_root", "da_root", "id"):
-                        if key in js and isinstance(js[key], str) and js[key].startswith("0x"):
+                        if (
+                            key in js
+                            and isinstance(js[key], str)
+                            and js[key].startswith("0x")
+                        ):
                             cand = js[key]
                             break
                     if not cand:
                         # scan string values for 0x-prefixed 64+ hex chars
                         for v in js.values():
-                            if isinstance(v, str) and v.startswith("0x") and len(v) >= 66:
+                            if (
+                                isinstance(v, str)
+                                and v.startswith("0x")
+                                and len(v) >= 66
+                            ):
                                 cand = v
                                 break
                     if not cand:
@@ -175,19 +204,27 @@ def _post_blob(client: TestClient, ns: int, data: bytes) -> Tuple[str, Dict[str,
                         for v in js.values():
                             if isinstance(v, dict):
                                 for vv in v.values():
-                                    if isinstance(vv, str) and vv.startswith("0x") and len(vv) >= 66:
+                                    if (
+                                        isinstance(vv, str)
+                                        and vv.startswith("0x")
+                                        and len(vv) >= 66
+                                    ):
                                         cand = vv
                                         break
                             if cand:
                                 break
                     if not cand:
-                        raise AssertionError(f"POST {ep} succeeded but no commitment found in response: {js}")
+                        raise AssertionError(
+                            f"POST {ep} succeeded but no commitment found in response: {js}"
+                        )
                     return cand, js
             except Exception:
                 # try next variant
                 pass
 
-    raise pytest.skip.Exception("Could not POST blob with any supported payload/endpoint variant")
+    raise pytest.skip.Exception(
+        "Could not POST blob with any supported payload/endpoint variant"
+    )
 
 
 def _get_blob(client: TestClient, commitment_hex: str) -> bytes:
@@ -202,7 +239,12 @@ def _get_blob(client: TestClient, commitment_hex: str) -> bytes:
             if r.status_code == 200:
                 # Prefer raw bytes; if JSON, accept {data: "..."} hex or base64
                 ct = r.headers.get("content-type", "")
-                if "application/octet-stream" in ct or "binary" in ct or not ct or r.content:
+                if (
+                    "application/octet-stream" in ct
+                    or "binary" in ct
+                    or not ct
+                    or r.content
+                ):
                     return r.content
                 try:
                     js = r.json()
@@ -221,7 +263,9 @@ def _get_blob(client: TestClient, commitment_hex: str) -> bytes:
     raise pytest.skip.Exception("Could not GET blob bytes from any supported endpoint")
 
 
-def _get_proof(client: TestClient, commitment_hex: str, samples: int = 16) -> Dict[str, Any]:
+def _get_proof(
+    client: TestClient, commitment_hex: str, samples: int = 16
+) -> Dict[str, Any]:
     endpoints = [
         (f"/da/blob/{commitment_hex}/proof", {}),
         (f"/da/proof/{commitment_hex}", {}),
@@ -247,6 +291,7 @@ def _get_proof(client: TestClient, commitment_hex: str, samples: int = 16) -> Di
 # Tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.skipif(TestClient is None, reason="fastapi.testclient not available")
 def test_post_get_proof_roundtrip(tmp_path):
     app = _try_make_app(tmp_path)
@@ -257,7 +302,9 @@ def test_post_get_proof_roundtrip(tmp_path):
 
     # 1) POST the blob
     commitment, post_js = _post_blob(client, NS, DATA)
-    assert commitment.startswith("0x"), f"commitment must be hex string, got: {commitment}"
+    assert commitment.startswith(
+        "0x"
+    ), f"commitment must be hex string, got: {commitment}"
     # Keep response fields around in case we want to assert metadata presence
     # (namespace, size, receipt, etc.) but don't be strict on schema shape.
 
@@ -275,7 +322,10 @@ def test_post_get_proof_roundtrip(tmp_path):
         assert isinstance(proof, dict) and len(proof) > 0
         # If 'samples' present, it should be a non-empty list
         if "samples" in proof:
-            assert isinstance(proof["samples"], (list, tuple)) and len(proof["samples"]) > 0
+            assert (
+                isinstance(proof["samples"], (list, tuple))
+                and len(proof["samples"]) > 0
+            )
 
     # Optional: if a light-client verify function exists, try a tiny verification smoke test
     try:
@@ -299,5 +349,3 @@ def test_post_get_proof_roundtrip(tmp_path):
                         break
     except ModuleNotFoundError:
         pass
-
-

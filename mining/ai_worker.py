@@ -75,7 +75,9 @@ except Exception:  # pragma: no cover
     def sha3_256(data: bytes) -> bytes:
         return hashlib.sha3_256(data).digest()
 
+
 # ---------- Types ----------
+
 
 @dataclass(frozen=True)
 class AIJobSpec:
@@ -86,6 +88,7 @@ class AIJobSpec:
     qos_hint: t.Optional[str] = None  # e.g., "low-latency" | "best-effort"
     salt: bytes = b""  # optional extra for determinism or separation
 
+
 @dataclass
 class AITicket:
     task_id: str
@@ -93,6 +96,7 @@ class AITicket:
     status: str = "queued"  # queued|running|completed|failed|unknown
     provider_id: t.Optional[str] = None
     error: t.Optional[str] = None
+
 
 @dataclass
 class ResultRecord:
@@ -107,6 +111,7 @@ class ResultRecord:
 
 # ---------- Backend interface ----------
 
+
 class AICFBackend(t.Protocol):
     async def enqueue(self, spec: AIJobSpec) -> AITicket: ...
     async def status(self, task_id: str) -> AITicket: ...
@@ -114,6 +119,7 @@ class AICFBackend(t.Protocol):
 
 
 # ---------- Dev simulator backend (always available) ----------
+
 
 class DevSimBackend:
     """
@@ -123,6 +129,7 @@ class DevSimBackend:
       - latency ~ 0.4s (configurable via env AI_SIM_LAT_MS)
       - ai_units proportional to len(prompt) and max_tokens
     """
+
     def __init__(self) -> None:
         self._store: dict[str, tuple[AIJobSpec, float, float]] = {}
         self._lat_ms = int(os.getenv("AI_SIM_LAT_MS", "400"))
@@ -134,15 +141,24 @@ class DevSimBackend:
         if task_id not in self._store:
             done_at = now + (self._lat_ms / 1000.0)
             self._store[task_id] = (spec, now, done_at)
-        return AITicket(task_id=task_id, submitted_at=now, status="queued", provider_id="devsim")
+        return AITicket(
+            task_id=task_id, submitted_at=now, status="queued", provider_id="devsim"
+        )
 
     async def status(self, task_id: str) -> AITicket:
         rec = self._store.get(task_id)
         if not rec:
-            return AITicket(task_id=task_id, submitted_at=time.time(), status="unknown", provider_id="devsim")
+            return AITicket(
+                task_id=task_id,
+                submitted_at=time.time(),
+                status="unknown",
+                provider_id="devsim",
+            )
         spec, sub, done_at = rec
         st = "completed" if time.time() >= done_at else "running"
-        return AITicket(task_id=task_id, submitted_at=sub, status=st, provider_id="devsim")
+        return AITicket(
+            task_id=task_id, submitted_at=sub, status=st, provider_id="devsim"
+        )
 
     async def fetch_result(self, task_id: str) -> ResultRecord:
         rec = self._store.get(task_id)
@@ -152,7 +168,9 @@ class DevSimBackend:
         if time.time() < done_at:
             # simulate race (caller should only fetch after "completed")
             await asyncio.sleep(max(0.0, done_at - time.time()))
-        output_digest = sha3_256(spec.model.encode() + b"\x00" + spec.prompt + b"\x00" + spec.salt)
+        output_digest = sha3_256(
+            spec.model.encode() + b"\x00" + spec.prompt + b"\x00" + spec.salt
+        )
         ai_units = max(8, int(0.05 * (len(spec.prompt) + spec.max_tokens)))
         qos = 0.99 if self._lat_ms <= 500 else 0.95
         metrics = {
@@ -180,11 +198,20 @@ class DevSimBackend:
 
     def _derive_task_id(self, spec: AIJobSpec) -> str:
         # Deterministic, content-addressy ID (suitable for idempotency)
-        h = sha3_256(b"animica.task.ai" + b"\x00" + spec.model.encode() + b"\x00" + spec.prompt + b"\x00" + spec.salt)
+        h = sha3_256(
+            b"animica.task.ai"
+            + b"\x00"
+            + spec.model.encode()
+            + b"\x00"
+            + spec.prompt
+            + b"\x00"
+            + spec.salt
+        )
         return "ai-" + h.hex()[:32]
 
 
 # ---------- Optional HTTP backend (best-effort, minimal) ----------
+
 
 class HttpAICFBackend:
     """
@@ -199,7 +226,10 @@ class HttpAICFBackend:
     Authentication:
       - If AICF_API_KEY is set, adds Authorization: Bearer <key>
     """
-    def __init__(self, base_url: str, api_key: str | None = None, timeout_s: float = 10.0) -> None:
+
+    def __init__(
+        self, base_url: str, api_key: str | None = None, timeout_s: float = 10.0
+    ) -> None:
         self.base = base_url.rstrip("/")
         self.key = api_key
         self.timeout = timeout_s
@@ -219,20 +249,38 @@ class HttpAICFBackend:
             "qos": spec.qos_hint,
             "salt_b64": _b64(spec.salt),
         }
-        data = await _http_json("POST", f"{self.base}/jobs/ai", headers=self._headers(), json_body=body, timeout=self.timeout)
+        data = await _http_json(
+            "POST",
+            f"{self.base}/jobs/ai",
+            headers=self._headers(),
+            json_body=body,
+            timeout=self.timeout,
+        )
         task_id = t.cast(str, data.get("task_id", ""))
         if not task_id:
             raise RuntimeError("AICF enqueue: missing task_id")
         return AITicket(task_id=task_id, submitted_at=time.time(), status="queued")
 
     async def status(self, task_id: str) -> AITicket:
-        data = await _http_json("GET", f"{self.base}/jobs/{task_id}", headers=self._headers(), timeout=self.timeout)
+        data = await _http_json(
+            "GET",
+            f"{self.base}/jobs/{task_id}",
+            headers=self._headers(),
+            timeout=self.timeout,
+        )
         st = t.cast(str, data.get("status", "unknown"))
         prov = t.cast(t.Optional[str], data.get("provider_id"))
-        return AITicket(task_id=task_id, submitted_at=time.time(), status=st, provider_id=prov)
+        return AITicket(
+            task_id=task_id, submitted_at=time.time(), status=st, provider_id=prov
+        )
 
     async def fetch_result(self, task_id: str) -> ResultRecord:
-        data = await _http_json("GET", f"{self.base}/jobs/{task_id}/result", headers=self._headers(), timeout=self.timeout)
+        data = await _http_json(
+            "GET",
+            f"{self.base}/jobs/{task_id}/result",
+            headers=self._headers(),
+            timeout=self.timeout,
+        )
         out_hex = t.cast(str, data.get("output_digest_hex", ""))
         if len(out_hex) != 64:
             raise RuntimeError("AICF result: bad output_digest_hex")
@@ -249,11 +297,13 @@ class HttpAICFBackend:
 
 # ---------- Worker ----------
 
+
 @dataclass
 class _Pending:
     spec: AIJobSpec
     ticket: AITicket
     last_polled: float = field(default_factory=lambda: 0.0)
+
 
 class AiWorker:
     """
@@ -263,6 +313,7 @@ class AiWorker:
     - background poller updates tickets and pulls finished results
     - pop_ready(max_n) -> returns completed ResultRecord items (FIFO)
     """
+
     def __init__(
         self,
         backend: AICFBackend,
@@ -304,11 +355,24 @@ class AiWorker:
         # drain (best effort)
         self._pending.clear()
 
-    async def enqueue(self, *, model: str, prompt: bytes, max_tokens: int = 64,
-                      temperature: float = 0.0, qos_hint: str | None = None,
-                      salt: bytes = b"") -> AITicket:
-        spec = AIJobSpec(model=model, prompt=bytes(prompt), max_tokens=max_tokens,
-                         temperature=temperature, qos_hint=qos_hint, salt=salt)
+    async def enqueue(
+        self,
+        *,
+        model: str,
+        prompt: bytes,
+        max_tokens: int = 64,
+        temperature: float = 0.0,
+        qos_hint: str | None = None,
+        salt: bytes = b"",
+    ) -> AITicket:
+        spec = AIJobSpec(
+            model=model,
+            prompt=bytes(prompt),
+            max_tokens=max_tokens,
+            temperature=temperature,
+            qos_hint=qos_hint,
+            salt=salt,
+        )
         async with self._lock:
             if len(self._pending) >= self._queue_limit:
                 raise RuntimeError("ai_worker queue full")
@@ -388,6 +452,7 @@ class AiWorker:
 
 # ---------- tiny HTTP helper (stdlib only) ----------
 
+
 async def _http_json(
     method: str,
     url: str,
@@ -396,13 +461,15 @@ async def _http_json(
     json_body: dict[str, t.Any] | None = None,
     timeout: float = 10.0,
 ) -> dict[str, t.Any]:
-    import urllib.request
     import urllib.error
+    import urllib.request
 
     data = None
     if json_body is not None:
         data = json.dumps(json_body).encode()
-    req = urllib.request.Request(url=url, method=method.upper(), data=data, headers=headers or {})
+    req = urllib.request.Request(
+        url=url, method=method.upper(), data=data, headers=headers or {}
+    )
     if data is not None and "content-type" not in req.headers:
         req.add_header("content-type", "application/json")
     loop = asyncio.get_running_loop()
@@ -415,7 +482,9 @@ async def _http_json(
                     return {}
                 return t.cast(dict[str, t.Any], json.loads(raw.decode()))
         except urllib.error.HTTPError as e:
-            raise RuntimeError(f"http {e.code}: {e.read().decode(errors='ignore')[:256]}") from None
+            raise RuntimeError(
+                f"http {e.code}: {e.read().decode(errors='ignore')[:256]}"
+            ) from None
         except urllib.error.URLError as e:
             raise RuntimeError(f"http error: {e.reason}") from None
 
@@ -424,12 +493,15 @@ async def _http_json(
 
 # ---------- misc utils ----------
 
+
 def _b64(b: bytes) -> str:
     import base64
+
     return base64.b64encode(b).decode()
 
 
 # ---------- CLI (dev) ----------
+
 
 async def _demo() -> None:  # pragma: no cover
     print("[ai_worker] demo starting…")
@@ -448,9 +520,17 @@ async def _demo() -> None:  # pragma: no cover
         ready.extend(w.pop_ready(10))
         await asyncio.sleep(0.1)
     for r in ready:
-        print(" completed:", r.task_id, "digest=", r.output_digest.hex()[:16], "units=", r.metrics.get("ai_units"))
+        print(
+            " completed:",
+            r.task_id,
+            "digest=",
+            r.output_digest.hex()[:16],
+            "units=",
+            r.metrics.get("ai_units"),
+        )
     await w.stop()
     print("[ai_worker] demo done.")
+
 
 if __name__ == "__main__":  # pragma: no cover
     asyncio.run(_demo())

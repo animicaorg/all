@@ -1,6 +1,9 @@
 from __future__ import annotations
+
 from aicf.queue.jobkind import JobKind
+
 from .jobkind import JobKind
+
 """
 Persistent job queue storage for AICF.
 
@@ -46,43 +49,50 @@ Useful indexes:
   (requester) for per-requester queries
 """
 
-from dataclasses import asdict, is_dataclass
-from typing import Any, Dict, Iterable, List, Optional, Protocol, Sequence, Tuple
-
 import json
 import os
 import sqlite3
 import time
 import uuid
+from dataclasses import asdict, is_dataclass
+from typing import (Any, Dict, Iterable, List, Optional, Protocol, Sequence,
+                    Tuple)
 
-from aicf.errors import AICFError
-from aicf.aitypes.job import (
-    JobKind,
-    JobRecord,
-    JobStatus,
-    Lease,
-)
+from aicf.aitypes.job import JobKind, JobRecord, JobStatus, Lease
 from aicf.aitypes.provider import ProviderId
-
+from aicf.errors import AICFError
 
 # ---------------------------
 # Interface
 # ---------------------------
 
+
 class JobQueueStorage(Protocol):
     def enqueue(self, job: JobRecord) -> None: ...
     def get(self, job_id: str) -> Optional[JobRecord]: ...
-    def list_ready(self, *, kind: Optional[JobKind] = None, limit: int = 100) -> List[JobRecord]: ...
+    def list_ready(
+        self, *, kind: Optional[JobKind] = None, limit: int = 100
+    ) -> List[JobRecord]: ...
     def assign(self, job_id: str, provider: ProviderId, lease_secs: int) -> Lease: ...
     def renew_lease(self, job_id: str, lease_secs: int) -> Lease: ...
-    def complete(self, job_id: str, result: Optional[Dict[str, Any]] = None) -> None: ...
+    def complete(
+        self, job_id: str, result: Optional[Dict[str, Any]] = None
+    ) -> None: ...
     def fail(self, job_id: str, *, error: str, retryable: bool) -> None: ...
-    def requeue(self, job_id: str, *, priority: Optional[float] = None, not_before: Optional[int] = None) -> None: ...
+    def requeue(
+        self,
+        job_id: str,
+        *,
+        priority: Optional[float] = None,
+        not_before: Optional[int] = None,
+    ) -> None: ...
     def cancel(self, job_id: str) -> None: ...
     def tombstone(self, job_id: str) -> None: ...
     def expire(self, *, now: Optional[int] = None) -> int: ...
     def count_by_status(self) -> Dict[str, int]: ...
-    def list_assigned_to(self, provider: ProviderId, limit: int = 100) -> List[JobRecord]: ...
+    def list_assigned_to(
+        self, provider: ProviderId, limit: int = 100
+    ) -> List[JobRecord]: ...
     def close(self) -> None: ...
 
 
@@ -90,18 +100,22 @@ class JobQueueStorage(Protocol):
 # Helpers
 # ---------------------------
 
+
 def _json_dumps(obj: Any) -> str:
     if is_dataclass(obj):
         obj = asdict(obj)
     return json.dumps(obj, separators=(",", ":"), sort_keys=True, ensure_ascii=False)
+
 
 def _json_loads(s: Optional[str]) -> Any:
     if not s:
         return None
     return json.loads(s)
 
+
 def _utcnow() -> int:
     return int(time.time())
+
 
 def _row_to_job(row: sqlite3.Row) -> JobRecord:
     spec = _json_loads(row["spec_json"]) or {}
@@ -139,6 +153,7 @@ def _row_to_job(row: sqlite3.Row) -> JobRecord:
 # SQLite implementation
 # ---------------------------
 
+
 class SQLiteJobQueueStorage:
     """
     SQLite-backed implementation.
@@ -150,7 +165,10 @@ class SQLiteJobQueueStorage:
     pragmas : Sequence[Tuple[str, Any]]
         Extra PRAGMAs. WAL and sensible defaults are applied automatically.
     """
-    def __init__(self, path: str, pragmas: Optional[Sequence[Tuple[str, Any]]] = None) -> None:
+
+    def __init__(
+        self, path: str, pragmas: Optional[Sequence[Tuple[str, Any]]] = None
+    ) -> None:
         self.path = path
         self._conn = sqlite3.connect(
             path,
@@ -214,9 +232,7 @@ class SQLiteJobQueueStorage:
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_jobs_lease_expires ON jobs(lease_expires_at)"
         )
-        cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_jobs_requester ON jobs(requester)"
-        )
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_jobs_requester ON jobs(requester)")
 
     # ---- transaction helper
     def _begin(self) -> sqlite3.Cursor:
@@ -231,7 +247,9 @@ class SQLiteJobQueueStorage:
         row = {
             "job_id": job.job_id,
             "kind": job.kind.value if hasattr(job.kind, "value") else str(job.kind),
-            "status": job.status.value if hasattr(job.status, "value") else str(job.status),
+            "status": (
+                job.status.value if hasattr(job.status, "value") else str(job.status)
+            ),
             "priority": job.priority,
             "created_at": job.created_at or now,
             "updated_at": now,
@@ -244,7 +262,9 @@ class SQLiteJobQueueStorage:
             "lease_expires_at": job.lease.expires_at if job.lease else None,
             "lease_id": job.lease.lease_id if job.lease else None,
             "spec_json": _json_dumps(job.spec),
-            "metadata_json": _json_dumps(job.metadata) if job.metadata is not None else None,
+            "metadata_json": (
+                _json_dumps(job.metadata) if job.metadata is not None else None
+            ),
             "result_json": _json_dumps(job.result) if job.result is not None else None,
             "error": job.error,
         }
@@ -263,8 +283,9 @@ class SQLiteJobQueueStorage:
                   :assigned_to, :lease_expires_at, :lease_id,
                   :spec_json, :metadata_json, :result_json, :error
                 )
-                """
-            , row)
+                """,
+                row,
+            )
             cur.execute("COMMIT")
         except sqlite3.IntegrityError:
             cur.execute("ROLLBACK")
@@ -280,7 +301,9 @@ class SQLiteJobQueueStorage:
         row = cur.fetchone()
         return _row_to_job(row) if row else None
 
-    def list_ready(self, *, kind: Optional[JobKind] = None, limit: int = 100) -> List[JobRecord]:
+    def list_ready(
+        self, *, kind: Optional[JobKind] = None, limit: int = 100
+    ) -> List[JobRecord]:
         now = _utcnow()
         cur = self._conn.cursor()
         if kind is None:
@@ -352,10 +375,16 @@ class SQLiteJobQueueStorage:
                 cur.execute("ROLLBACK")
                 raise AICFError(f"cannot renew lease: job {job_id} not ASSIGNED")
             # fetch provider & lease_id for return
-            cur.execute("SELECT assigned_to, lease_id FROM jobs WHERE job_id = ?", (job_id,))
+            cur.execute(
+                "SELECT assigned_to, lease_id FROM jobs WHERE job_id = ?", (job_id,)
+            )
             r = cur.fetchone()
             cur.execute("COMMIT")
-            return Lease(lease_id=r["lease_id"], provider_id=ProviderId(r["assigned_to"]), expires_at=lease_exp)
+            return Lease(
+                lease_id=r["lease_id"],
+                provider_id=ProviderId(r["assigned_to"]),
+                expires_at=lease_exp,
+            )
         except Exception:
             cur.execute("ROLLBACK")
             raise
@@ -426,9 +455,21 @@ class SQLiteJobQueueStorage:
             cur.execute("ROLLBACK")
             raise
 
-    def requeue(self, job_id: str, *, priority: Optional[float] = None, not_before: Optional[int] = None) -> None:
+    def requeue(
+        self,
+        job_id: str,
+        *,
+        priority: Optional[float] = None,
+        not_before: Optional[int] = None,
+    ) -> None:
         now = _utcnow()
-        fields = ["status = 'QUEUED'", "assigned_to = NULL", "lease_expires_at = NULL", "lease_id = NULL", "updated_at = ?"]
+        fields = [
+            "status = 'QUEUED'",
+            "assigned_to = NULL",
+            "lease_expires_at = NULL",
+            "lease_id = NULL",
+            "updated_at = ?",
+        ]
         values: List[Any] = [now]
         if priority is not None:
             fields.append("priority = ?")
@@ -534,7 +575,9 @@ class SQLiteJobQueueStorage:
         cur.execute("SELECT status, COUNT(*) as c FROM jobs GROUP BY status")
         return {row["status"]: int(row["c"]) for row in cur.fetchall()}
 
-    def list_assigned_to(self, provider: ProviderId, limit: int = 100) -> List[JobRecord]:
+    def list_assigned_to(
+        self, provider: ProviderId, limit: int = 100
+    ) -> List[JobRecord]:
         cur = self._conn.cursor()
         cur.execute(
             """
@@ -558,6 +601,7 @@ class SQLiteJobQueueStorage:
 # Optional RocksDB (KV) implementation
 # ---------------------------
 
+
 class RocksJobQueueStorage:
     """
     Minimal RocksDB-backed storage.
@@ -567,6 +611,7 @@ class RocksJobQueueStorage:
       - Maintains secondary sets (by status/kind) as prefix lists b"ix:<field>:<value>:<id>".
       - Only recommended if python-rocksdb is available and range scans are acceptable.
     """
+
     def __init__(self, path: str) -> None:
         try:
             import rocksdb  # type: ignore
@@ -602,7 +647,9 @@ class RocksJobQueueStorage:
         j = {
             "job_id": job.job_id,
             "kind": job.kind.value if hasattr(job.kind, "value") else str(job.kind),
-            "status": job.status.value if hasattr(job.status, "value") else str(job.status),
+            "status": (
+                job.status.value if hasattr(job.status, "value") else str(job.status)
+            ),
             "priority": float(job.priority),
             "created_at": int(job.created_at or _utcnow()),
             "updated_at": int(_utcnow()),
@@ -662,7 +709,9 @@ class RocksJobQueueStorage:
     # Advanced scheduling (ready/assign/expire) is handled in-memory by the
     # scheduler that reads/writes jobs via get/enqueue/complete/fail/requeue.
 
-    def list_ready(self, *, kind: Optional[JobKind] = None, limit: int = 100) -> List[JobRecord]:
+    def list_ready(
+        self, *, kind: Optional[JobKind] = None, limit: int = 100
+    ) -> List[JobRecord]:
         # Inefficient scan, acceptable for small dev deployments
         it = self._db.iterkeys()
         it.seek(b"job:")
@@ -673,7 +722,9 @@ class RocksJobQueueStorage:
                 break
             j = _json_loads(self._db.get(k).decode())
             if j["status"] == "QUEUED" and j["not_before"] <= now:
-                if kind is None or j["kind"] == (kind.value if hasattr(kind, "value") else str(kind)):
+                if kind is None or j["kind"] == (
+                    kind.value if hasattr(kind, "value") else str(kind)
+                ):
                     out.append(self.get(j["job_id"]))  # type: ignore
             if len(out) >= limit:
                 break
@@ -699,7 +750,9 @@ class RocksJobQueueStorage:
         j = {
             "job_id": job.job_id,
             "kind": job.kind.value if hasattr(job.kind, "value") else str(job.kind),
-            "status": job.status.value if hasattr(job.status, "value") else str(job.status),
+            "status": (
+                job.status.value if hasattr(job.status, "value") else str(job.status)
+            ),
             "priority": float(job.priority),
             "created_at": int(job.created_at),
             "updated_at": int(job.updated_at),
@@ -732,7 +785,11 @@ class RocksJobQueueStorage:
         j = self.get(job_id)
         if not j or j.status != JobStatus.ASSIGNED or not j.lease:
             raise AICFError(f"cannot renew lease for {job_id}")
-        j.lease = Lease(lease_id=j.lease.lease_id, provider_id=j.lease.provider_id, expires_at=_utcnow() + int(lease_secs))
+        j.lease = Lease(
+            lease_id=j.lease.lease_id,
+            provider_id=j.lease.provider_id,
+            expires_at=_utcnow() + int(lease_secs),
+        )
         j.updated_at = _utcnow()
         self._overwrite(j)
         return j.lease
@@ -758,7 +815,13 @@ class RocksJobQueueStorage:
         j.updated_at = _utcnow()
         self._overwrite(j)
 
-    def requeue(self, job_id: str, *, priority: Optional[float] = None, not_before: Optional[int] = None) -> None:
+    def requeue(
+        self,
+        job_id: str,
+        *,
+        priority: Optional[float] = None,
+        not_before: Optional[int] = None,
+    ) -> None:
         j = self.get(job_id)
         if not j:
             raise AICFError(f"unknown job {job_id}")
@@ -799,14 +862,20 @@ class RocksJobQueueStorage:
                 break
             j = _json_loads(self._db.get(k).decode())
             changed = False
-            if j["status"] in ("QUEUED", "ASSIGNED") and (j["created_at"] + j["ttl_seconds"] < ts):
+            if j["status"] in ("QUEUED", "ASSIGNED") and (
+                j["created_at"] + j["ttl_seconds"] < ts
+            ):
                 j["status"] = "EXPIRED"
                 j["assigned_to"] = None
                 j["lease_expires_at"] = None
                 j["lease_id"] = None
                 j["updated_at"] = ts
                 changed = True
-            if j["status"] == "ASSIGNED" and j.get("lease_expires_at") and j["lease_expires_at"] < ts:
+            if (
+                j["status"] == "ASSIGNED"
+                and j.get("lease_expires_at")
+                and j["lease_expires_at"] < ts
+            ):
                 j["status"] = "QUEUED"
                 j["assigned_to"] = None
                 j["lease_expires_at"] = None
@@ -829,7 +898,9 @@ class RocksJobQueueStorage:
             counts[j["status"]] = counts.get(j["status"], 0) + 1
         return counts
 
-    def list_assigned_to(self, provider: ProviderId, limit: int = 100) -> List[JobRecord]:
+    def list_assigned_to(
+        self, provider: ProviderId, limit: int = 100
+    ) -> List[JobRecord]:
         out: List[JobRecord] = []
         it = self._db.iterkeys()
         it.seek(b"job:")
@@ -852,6 +923,7 @@ class RocksJobQueueStorage:
 # ---------------------------
 # Factory
 # ---------------------------
+
 
 def open_storage(url: str) -> JobQueueStorage:
     """

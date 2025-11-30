@@ -49,16 +49,18 @@ def _choose_working_sig_alg():
     pytest.skip(f"No working PQ signature backend available (last error: {last_err})")
 
 
-def _build_signed_transfer_cbor(chain_id: int, from_nonce: int = 0) -> tuple[bytes, str, str]:
+def _build_signed_transfer_cbor(
+    chain_id: int, from_nonce: int = 0
+) -> tuple[bytes, str, str]:
     """
     Construct a minimal transfer tx object, sign it (PQ), and CBOR-encode it using core encoders.
 
     Returns: (cbor_bytes, tx_hash_hex, sender_address)
     """
     # Deferred imports
-    from core.types.tx import Tx, Sig
     from core.encoding.canonical import tx_sign_bytes
     from core.encoding.cbor import dumps as cbor_dumps
+    from core.types.tx import Sig, Tx
     from pq.py.utils.hash import sha3_256
 
     alg, kp, sign_fn, verify_fn, addr_from_pubkey = _choose_working_sig_alg()
@@ -67,7 +69,9 @@ def _build_signed_transfer_cbor(chain_id: int, from_nonce: int = 0) -> tuple[byt
     # A deterministic "to" address derived from the string "recipient"
     to_pub_digest = sha3_256(b"recipient")  # 32 bytes
     # alg id will be inferred inside address encoder; to keep it simple we just reuse sender's alg for a valid bech32m
-    to_addr = addr_from_pubkey(alg, to_pub_digest + b"\x00" * max(0, len(kp.public_key) - len(to_pub_digest)))
+    to_addr = addr_from_pubkey(
+        alg, to_pub_digest + b"\x00" * max(0, len(kp.public_key) - len(to_pub_digest))
+    )
 
     # Construct the transaction (aligns with spec/tx_format.cddl and core.types.tx.Tx)
     tx = Tx.transfer(
@@ -75,11 +79,11 @@ def _build_signed_transfer_cbor(chain_id: int, from_nonce: int = 0) -> tuple[byt
         nonce=from_nonce,
         from_addr=symbolic_or_bech32(sender=sender),
         to_addr=to_addr,
-        value=123456789,      # small nonzero amount
-        gas_limit=21000,      # baseline intrinsic
-        gas_price=1,          # tiny price for tests
-        data=b"",             # no payload for transfer
-        access_list=[],       # empty list by default
+        value=123456789,  # small nonzero amount
+        gas_limit=21000,  # baseline intrinsic
+        gas_price=1,  # tiny price for tests
+        data=b"",  # no payload for transfer
+        access_list=[],  # empty list by default
     )
 
     # Domain-separated sign-bytes
@@ -115,7 +119,9 @@ def client_and_cfg():
 async def test_send_raw_transaction_roundtrip(client_and_cfg):
     client, cfg = client_and_cfg
     # Build a valid signed CBOR transfer
-    cbor_tx, exp_tx_hash, sender = _build_signed_transfer_cbor(cfg.chain_id, from_nonce=0)
+    cbor_tx, exp_tx_hash, sender = _build_signed_transfer_cbor(
+        cfg.chain_id, from_nonce=0
+    )
     raw_hex = "0x" + cbor_tx.hex()
 
     # 1) Submit
@@ -133,7 +139,10 @@ async def test_send_raw_transaction_roundtrip(client_and_cfg):
     assert txv["hash"] == got_hash
     assert txv["from"] == sender
     assert txv["to"] is not None
-    assert txv.get("blockNumber") in (None, "pending"), "tx should not be mined in this unit test"
+    assert txv.get("blockNumber") in (
+        None,
+        "pending",
+    ), "tx should not be mined in this unit test"
 
     # 3) Basic state introspection doesn't reflect pending yet (nonce remains 0)
     n = rpc_call(client, "state.getNonce", params={"address": sender})
@@ -142,11 +151,11 @@ async def test_send_raw_transaction_roundtrip(client_and_cfg):
 
 async def test_rejects_bad_signature(client_and_cfg):
     client, cfg = client_and_cfg
-    from core.types.tx import Tx
     from core.encoding.cbor import dumps as cbor_dumps
-
+    from core.types.tx import Tx
     # Build an unsigned transfer and attach a bogus signature envelope
     from pq.py.registry import normalize_alg_name
+
     bad_alg = normalize_alg_name("dilithium3")
     tx = Tx.transfer(
         chain_id=cfg.chain_id,
@@ -171,7 +180,9 @@ async def test_rejects_bad_signature(client_and_cfg):
     err = res["error"]
     assert isinstance(err.get("code"), int)
     # A helpful message mentioning signature/verify
-    assert any(s in (err.get("message") or "").lower() for s in ("sig", "verify", "invalid"))
+    assert any(
+        s in (err.get("message") or "").lower() for s in ("sig", "verify", "invalid")
+    )
 
 
 async def test_duplicate_submit_returns_same_hash(client_and_cfg):
@@ -198,9 +209,10 @@ async def test_pending_pool_eviction_policy_smoke(client_and_cfg):
     """
     client, cfg = client_and_cfg
     for i in range(3):
-        cbor_tx, tx_hash, _ = _build_signed_transfer_cbor(cfg.chain_id, from_nonce=i + 2)
+        cbor_tx, tx_hash, _ = _build_signed_transfer_cbor(
+            cfg.chain_id, from_nonce=i + 2
+        )
         raw_hex = "0x" + cbor_tx.hex()
         rpc_call(client, "tx.sendRawTransaction", params={"rawTx": raw_hex})
         got = rpc_call(client, "tx.getTransactionByHash", params={"hash": tx_hash})
         assert got["result"] is not None
-

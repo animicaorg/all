@@ -54,24 +54,28 @@ endpoint via a tiny adapter that implements the callable above.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Protocol, Sequence, Tuple, Union
-
-# --- SDK imports (typed where available) --------------------------------------
+from typing import (Any, Callable, Dict, Iterable, List, Mapping, Optional,
+                    Protocol, Sequence, Tuple, Union)
 
 # Tx lifecycle
 from omni_sdk.tx import build as tx_build
 from omni_sdk.tx import encode as tx_encode
 from omni_sdk.tx import send as tx_send
-
 # PQ signer
 from omni_sdk.wallet.signer import PQSigner  # type: ignore
+
+# --- SDK imports (typed where available) --------------------------------------
+
+
 
 # Address helpers (validation/normalization)
 try:
     from omni_sdk.address import is_valid as _addr_is_valid  # type: ignore
 except Exception:  # pragma: no cover
+
     def _addr_is_valid(a: str) -> bool:
         return isinstance(a, str) and a.startswith("anim1") and len(a) > 10
+
 
 # ABI helpers
 try:
@@ -79,20 +83,25 @@ try:
     #  - normalize_abi(abi_obj) -> dict
     #  - encode_call(abi, fn_name, args) -> bytes
     #  - decode_return(abi, fn_name, data) -> Any
-    from omni_sdk.types.abi import normalize_abi, encode_call, decode_return  # type: ignore
+    from omni_sdk.types.abi import (decode_return, encode_call,  # type: ignore
+                                    normalize_abi)
 except Exception as _e:  # pragma: no cover
     raise RuntimeError("omni_sdk.types.abi is required by ContractClient") from _e
 
 # Errors
 try:
-    from omni_sdk.errors import RpcError, TxError, AbiError  # type: ignore
+    from omni_sdk.errors import AbiError, RpcError, TxError  # type: ignore
 except Exception:  # pragma: no cover
+
     class RpcError(RuntimeError): ...
+
     class TxError(RuntimeError): ...
+
     class AbiError(RuntimeError): ...
 
 
 # --- Minimal RPC client protocol ---------------------------------------------
+
 
 class _RpcClient(Protocol):
     def call(self, method: str, params: Optional[dict | list] = None) -> Any: ...
@@ -111,6 +120,7 @@ class FeeHints:
     """
     Optional fee policy hints for convenience.
     """
+
     base_fee: Optional[int] = None
     tip: int = 0
     surge_multiplier: float = 1.0
@@ -119,6 +129,7 @@ class FeeHints:
 
 
 # --- Client ------------------------------------------------------------------
+
 
 class ContractClient:
     """
@@ -139,7 +150,14 @@ class ContractClient:
       - a `max_fee` and optional `gas_limit` (or let the client suggest)
     """
 
-    def __init__(self, *, rpc: _RpcClient, address: str, abi: Mapping[str, Any] | Sequence[Mapping[str, Any]], chain_id: int):
+    def __init__(
+        self,
+        *,
+        rpc: _RpcClient,
+        address: str,
+        abi: Mapping[str, Any] | Sequence[Mapping[str, Any]],
+        chain_id: int,
+    ):
         if not _addr_is_valid(address):
             raise ValueError(f"Invalid contract address: {address!r}")
         self._rpc: _RpcClient = rpc
@@ -209,18 +227,38 @@ class ContractClient:
 
     # ------------------------------------------------------------------ Gas & fees
 
-    def suggest_gas_limit(self, calldata: bytes, *, kind: str = "call", safety_multiplier: float = 1.10) -> int:
+    def suggest_gas_limit(
+        self, calldata: bytes, *, kind: str = "call", safety_multiplier: float = 1.10
+    ) -> int:
         """
         Suggest a gasLimit using intrinsic gas + safety factor.
         """
         kind_lit = "call" if kind not in ("call", "deploy", "transfer") else kind
-        return tx_build.suggest_gas_limit(kind_lit, calldata_len=len(calldata), safety_multiplier=float(safety_multiplier))
+        return tx_build.suggest_gas_limit(
+            kind_lit,
+            calldata_len=len(calldata),
+            safety_multiplier=float(safety_multiplier),
+        )
 
-    def suggest_max_fee(self, *, base_fee: int, tip: int = 0, surge_multiplier: float = 1.0, floor: Optional[int] = None, cap: Optional[int] = None) -> int:
+    def suggest_max_fee(
+        self,
+        *,
+        base_fee: int,
+        tip: int = 0,
+        surge_multiplier: float = 1.0,
+        floor: Optional[int] = None,
+        cap: Optional[int] = None,
+    ) -> int:
         """
         Suggest a maxFee using the `tx.build.suggest_max_fee` helper.
         """
-        return tx_build.suggest_max_fee(base_fee=base_fee, tip=tip, surge_multiplier=surge_multiplier, floor=floor, cap=cap)
+        return tx_build.suggest_max_fee(
+            base_fee=base_fee,
+            tip=tip,
+            surge_multiplier=surge_multiplier,
+            floor=floor,
+            cap=cap,
+        )
 
     # ------------------------------------------------------------------ Read-only call
 
@@ -285,7 +323,11 @@ class ContractClient:
             raise ValueError(f"Invalid sender address: {sender!r}")
 
         calldata = self.encode_call_data(fn, list(args or []))
-        gl = gas_limit if gas_limit is not None else self.suggest_gas_limit(calldata, kind="call")
+        gl = (
+            gas_limit
+            if gas_limit is not None
+            else self.suggest_gas_limit(calldata, kind="call")
+        )
 
         return tx_build.call(
             from_addr=sender,
@@ -331,7 +373,8 @@ class ContractClient:
         """
         # 1) Build tx (dataclass)
         tx = self.build_tx(
-            fn, args,
+            fn,
+            args,
             sender=signer.address,  # property of PQSigner
             nonce=nonce,
             max_fee=max_fee,

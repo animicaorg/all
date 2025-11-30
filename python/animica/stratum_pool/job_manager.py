@@ -4,12 +4,18 @@ import asyncio
 import logging
 from typing import Awaitable, Callable, List, Optional
 
-from .core import MiningCoreAdapter, MiningJob
 from .config import PoolConfig
+from .core import MiningCoreAdapter, MiningJob
 
 
 class JobManager:
-    def __init__(self, adapter: MiningCoreAdapter, config: PoolConfig, *, logger: Optional[logging.Logger] = None) -> None:
+    def __init__(
+        self,
+        adapter: MiningCoreAdapter,
+        config: PoolConfig,
+        *,
+        logger: Optional[logging.Logger] = None,
+    ) -> None:
         self._adapter = adapter
         self._config = config
         self._callbacks: List[Callable[[MiningJob], Awaitable[None]]] = []
@@ -49,7 +55,9 @@ class JobManager:
                 self._log.warning("job poll failed", exc_info=True)
                 success = False
             try:
-                await asyncio.wait_for(self._stop.wait(), timeout=self._next_wait(success=success))
+                await asyncio.wait_for(
+                    self._stop.wait(), timeout=self._next_wait(success=success)
+                )
             except asyncio.TimeoutError:
                 continue
 

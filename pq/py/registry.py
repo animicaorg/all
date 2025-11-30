@@ -15,11 +15,11 @@ This module is **non-consensus** (it does not do any crypto itself). Consensus-
 critical encodings and hash domains live in spec/ and lower-level packages.
 """
 
+import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Union, Iterable
-import re
-import json
+from typing import Dict, Iterable, Optional, Union
 
 try:
     import yaml  # type: ignore
@@ -30,15 +30,17 @@ except Exception as _e:
 # Typed metadata structures
 # ---------------------------
 
+
 @dataclass(frozen=True)
 class AlgInfoBase:
-    alg_id: int                 # canonical numeric ID loaded from alg_ids.yaml
-    name: str                   # canonical snake-case name
-    display: str                # human label
-    kind: str                   # "sig" or "kem"
-    provider_hint: str          # "liboqs", "pure", "wasm", "system"
-    security_bits: int          # claimed classical security bits (approx)
-    notes: str                  # short notes (variant, hash family, etc.)
+    alg_id: int  # canonical numeric ID loaded from alg_ids.yaml
+    name: str  # canonical snake-case name
+    display: str  # human label
+    kind: str  # "sig" or "kem"
+    provider_hint: str  # "liboqs", "pure", "wasm", "system"
+    security_bits: int  # claimed classical security bits (approx)
+    notes: str  # short notes (variant, hash family, etc.)
+
 
 @dataclass(frozen=True)
 class SigAlgInfo(AlgInfoBase):
@@ -58,6 +60,7 @@ class SigAlgInfo(AlgInfoBase):
     @property
     def sig_len(self) -> int:  # pragma: no cover
         return self.signature_size
+
 
 @dataclass(frozen=True)
 class KemAlgInfo(AlgInfoBase):
@@ -87,13 +90,16 @@ class KemAlgInfo(AlgInfoBase):
 # Backend feature detection
 # ---------------------------
 
+
 def _has_liboqs() -> bool:
     try:
         # Local optional binding loader (guards its own dlopen)
         from .algs import oqs_backend  # type: ignore
+
         return oqs_backend.is_available()
     except Exception:
         return False
+
 
 def _has_wasm() -> bool:
     # Placeholder flag for browser/wasm contexts (extension/SDK may flip this).
@@ -110,6 +116,7 @@ FEATURES = {
 # ---------------------------
 # Load canonical alg IDs
 # ---------------------------
+
 
 def _load_alg_ids_yaml() -> Dict[str, int]:
     """
@@ -141,7 +148,11 @@ def _load_alg_ids_yaml() -> Dict[str, int]:
                     continue
                 if isinstance(raw_id, str):
                     raw_id = raw_id.strip().lower()
-                    num = int(raw_id, 16) if raw_id.startswith("0x") else int(re.sub(r"_", "", raw_id), 10)
+                    num = (
+                        int(raw_id, 16)
+                        if raw_id.startswith("0x")
+                        else int(re.sub(r"_", "", raw_id), 10)
+                    )
                 elif isinstance(raw_id, int):
                     num = raw_id
                 else:
@@ -184,12 +195,17 @@ ALG_NAME = ALG_NAMES_BY_ID
 # SPHINCS+-SHAKE-128s: pk=32, sk=64, sig=7856
 # Kyber-768 (ML-KEM-768): pk=1184, sk=2400, ct=1088, ss=32
 
-def _mk_sig_info(name: str,
-                 display: str,
-                 sec_bits: int,
-                 pk: int, sk: int, sig: int,
-                 notes: str = "",
-                 provider: str = "liboqs") -> SigAlgInfo:
+
+def _mk_sig_info(
+    name: str,
+    display: str,
+    sec_bits: int,
+    pk: int,
+    sk: int,
+    sig: int,
+    notes: str = "",
+    provider: str = "liboqs",
+) -> SigAlgInfo:
     return SigAlgInfo(
         alg_id=ALG_IDS.get(name, -1),
         name=name,
@@ -203,12 +219,18 @@ def _mk_sig_info(name: str,
         notes=notes,
     )
 
-def _mk_kem_info(name: str,
-                 display: str,
-                 sec_bits: int,
-                 pk: int, sk: int, ct: int, ss: int = 32,
-                 notes: str = "",
-                 provider: str = "liboqs") -> KemAlgInfo:
+
+def _mk_kem_info(
+    name: str,
+    display: str,
+    sec_bits: int,
+    pk: int,
+    sk: int,
+    ct: int,
+    ss: int = 32,
+    notes: str = "",
+    provider: str = "liboqs",
+) -> KemAlgInfo:
     return KemAlgInfo(
         alg_id=ALG_IDS.get(name, -1),
         name=name,
@@ -226,31 +248,50 @@ def _mk_kem_info(name: str,
 
 _SIGS: Dict[str, SigAlgInfo] = {
     "dilithium3": _mk_sig_info(
-        "dilithium3", "CRYSTALS-Dilithium3", 128,
-        pk=1952, sk=4000, sig=3293,
+        "dilithium3",
+        "CRYSTALS-Dilithium3",
+        128,
+        pk=1952,
+        sk=4000,
+        sig=3293,
         notes="L3; lattice (MLWE); NIST PQC standard",
         provider="liboqs" if FEATURES["liboqs"] else "pure",
     ),
     "sphincs_shake_128s": _mk_sig_info(
-        "sphincs_shake_128s", "SPHINCS+ SHAKE-128s", 128,
-        pk=32, sk=64, sig=7856,
+        "sphincs_shake_128s",
+        "SPHINCS+ SHAKE-128s",
+        128,
+        pk=32,
+        sk=64,
+        sig=7856,
         notes="L1; stateless hash-based; SHAKE variant",
-        provider="liboqs" if FEATURES["liboqs"] else ("wasm" if FEATURES["wasm"] else "pure"),
+        provider=(
+            "liboqs" if FEATURES["liboqs"] else ("wasm" if FEATURES["wasm"] else "pure")
+        ),
     ),
 }
 
 _KEMS: Dict[str, KemAlgInfo] = {
     "kyber768": _mk_kem_info(
-        "kyber768", "ML-KEM / Kyber-768", 128,
-        pk=1184, sk=2400, ct=1088, ss=32,
+        "kyber768",
+        "ML-KEM / Kyber-768",
+        128,
+        pk=1184,
+        sk=2400,
+        ct=1088,
+        ss=32,
         notes="L3; IND-CCA2 KEM; NIST PQC standard",
         provider="liboqs" if FEATURES["liboqs"] else "pure",
     ),
 }
 
 # Maps by numeric id too (filled using ALG_IDS)
-_SIGS_BY_ID: Dict[int, SigAlgInfo] = {ALG_IDS[k]: v for k, v in _SIGS.items() if k in ALG_IDS}
-_KEMS_BY_ID: Dict[int, KemAlgInfo] = {ALG_IDS[k]: v for k, v in _KEMS.items() if k in ALG_IDS}
+_SIGS_BY_ID: Dict[int, SigAlgInfo] = {
+    ALG_IDS[k]: v for k, v in _SIGS.items() if k in ALG_IDS
+}
+_KEMS_BY_ID: Dict[int, KemAlgInfo] = {
+    ALG_IDS[k]: v for k, v in _KEMS.items() if k in ALG_IDS
+}
 
 # Public registries consumed by tests/SDKs
 SIGNATURES = _SIGS
@@ -266,10 +307,12 @@ BY_ID: Dict[int, AlgInfo] = {**_SIGS_BY_ID, **_KEMS_BY_ID}
 AlgNameOrId = Union[str, int]
 AlgInfo = Union[SigAlgInfo, KemAlgInfo]
 
+
 def is_signature_alg(name_or_id: AlgNameOrId) -> bool:
     if isinstance(name_or_id, str):
         return name_or_id in _SIGS
     return name_or_id in _SIGS_BY_ID
+
 
 def is_kem_alg(name_or_id: AlgNameOrId) -> bool:
     if isinstance(name_or_id, str):
@@ -288,20 +331,24 @@ def is_sig_alg_id(alg_id: int) -> bool:
 def is_kem_alg_id(alg_id: int) -> bool:
     return alg_id in _KEMS_BY_ID
 
+
 def get(name_or_id: AlgNameOrId) -> Optional[AlgInfo]:
     if isinstance(name_or_id, str):
         return _SIGS.get(name_or_id) or _KEMS.get(name_or_id)
     return _SIGS_BY_ID.get(name_or_id) or _KEMS_BY_ID.get(name_or_id)
+
 
 def get_sig(name_or_id: AlgNameOrId) -> Optional[SigAlgInfo]:
     if isinstance(name_or_id, str):
         return _SIGS.get(name_or_id)
     return _SIGS_BY_ID.get(name_or_id)
 
+
 def get_kem(name_or_id: AlgNameOrId) -> Optional[KemAlgInfo]:
     if isinstance(name_or_id, str):
         return _KEMS.get(name_or_id)
     return _KEMS_BY_ID.get(name_or_id)
+
 
 def require_sig(name_or_id: AlgNameOrId) -> SigAlgInfo:
     out = get_sig(name_or_id)
@@ -311,6 +358,7 @@ def require_sig(name_or_id: AlgNameOrId) -> SigAlgInfo:
         raise RuntimeError(f"Signature algorithm {out.name} has no canonical ID loaded")
     return out
 
+
 def require_kem(name_or_id: AlgNameOrId) -> KemAlgInfo:
     out = get_kem(name_or_id)
     if out is None:
@@ -319,15 +367,19 @@ def require_kem(name_or_id: AlgNameOrId) -> KemAlgInfo:
         raise RuntimeError(f"KEM algorithm {out.name} has no canonical ID loaded")
     return out
 
+
 def list_signature_algs() -> Iterable[SigAlgInfo]:
     return _SIGS.values()
+
 
 def list_kem_algs() -> Iterable[KemAlgInfo]:
     return _KEMS.values()
 
+
 def list_all() -> Iterable[AlgInfo]:
     yield from _SIGS.values()
     yield from _KEMS.values()
+
 
 def default_signature_alg() -> SigAlgInfo:
     """
@@ -341,11 +393,13 @@ def default_signature_alg() -> SigAlgInfo:
         return require_sig("dilithium3")
     return require_sig("sphincs_shake_128s")
 
+
 def default_kem_alg() -> KemAlgInfo:
     """
     Default KEM for P2P handshakes and session key establishment.
     """
     return require_kem("kyber768")
+
 
 def id_of(name: str) -> int:
     info = get(name)
@@ -353,11 +407,13 @@ def id_of(name: str) -> int:
         raise KeyError(f"Unknown algorithm name {name!r}")
     return info.alg_id
 
+
 def name_of(alg_id: int) -> str:
     n = ALG_NAMES_BY_ID.get(alg_id)
     if n is None:
         raise KeyError(f"Unknown algorithm id 0x{alg_id:04x}")
     return n
+
 
 def describe(name_or_id: AlgNameOrId) -> str:
     info = get(name_or_id)
@@ -365,23 +421,30 @@ def describe(name_or_id: AlgNameOrId) -> str:
         return f"<unknown:{name_or_id}>"
     if info.kind == "sig":
         s = info  # type: ignore
-        return (f"{s.display} [{s.name}] id=0x{s.alg_id:04x} kind=sig "
-                f"pk={s.pubkey_size}B sk={s.seckey_size}B sig={s.signature_size}B "
-                f"sec≈{s.security_bits}b provider={s.provider_hint}")
+        return (
+            f"{s.display} [{s.name}] id=0x{s.alg_id:04x} kind=sig "
+            f"pk={s.pubkey_size}B sk={s.seckey_size}B sig={s.signature_size}B "
+            f"sec≈{s.security_bits}b provider={s.provider_hint}"
+        )
     else:
         k = info  # type: ignore
-        return (f"{k.display} [{k.name}] id=0x{k.alg_id:04x} kind=kem "
-                f"pk={k.pubkey_size}B sk={k.seckey_size}B ct={k.ciphertext_size}B ss={k.shared_secret_size}B "
-                f"sec≈{k.security_bits}b provider={k.provider_hint}")
+        return (
+            f"{k.display} [{k.name}] id=0x{k.alg_id:04x} kind=kem "
+            f"pk={k.pubkey_size}B sk={k.seckey_size}B ct={k.ciphertext_size}B ss={k.shared_secret_size}B "
+            f"sec≈{k.security_bits}b provider={k.provider_hint}"
+        )
+
 
 def dump_registry_json() -> str:
     """
     Debug helper: JSON dump of all algs with sizes and ids.
     """
+
     def asdict(a: AlgInfoBase) -> dict:
         d = a.__dict__.copy()
         d["alg_id_hex"] = f"0x{a.alg_id:04x}" if a.alg_id >= 0 else None
         return d
+
     all_objs = [asdict(x) for x in list_all()]
     return json.dumps(all_objs, indent=2, sort_keys=True)
 

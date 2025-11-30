@@ -20,8 +20,8 @@ from typing import Any, Dict, Optional
 
 import pytest
 
-
 # --- Discovery ---------------------------------------------------------------
+
 
 def _candidate_paths() -> list[Path]:
     """Potential locations for chain params / genesis-like JSON."""
@@ -78,7 +78,9 @@ def _find_params_blob(obj: Dict[str, Any]) -> Optional[Params]:
     from collections import deque
 
     def is_params(d: Dict[str, Any]) -> bool:
-        return isinstance(d.get("premine"), (int, float)) and isinstance(d.get("distribution"), dict)
+        return isinstance(d.get("premine"), (int, float)) and isinstance(
+            d.get("distribution"), dict
+        )
 
     # Quick checks for common keys
     for key in ("params", "chain_params", "chain", "genesis", "config"):
@@ -114,6 +116,7 @@ def _normalize_distribution(dist: Dict[str, Any]) -> Dict[str, int]:
     Normalize distribution keys and coerce to ints.
     Accepts either 'dev_fund' or 'dev_reserve' (aliases).
     """
+
     def to_int(x: Any) -> int:
         if isinstance(x, bool):
             raise TypeError("boolean is not a valid numeric amount")
@@ -142,10 +145,12 @@ def _normalize_distribution(dist: Dict[str, Any]) -> Dict[str, int]:
 
 # --- Minimal schema checks ---------------------------------------------------
 
+
 def _assert_schema(params: Params) -> None:
     assert "premine" in params, "params must contain 'premine'"
-    assert "distribution" in params and isinstance(params["distribution"], dict), \
-        "params must contain object 'distribution'"
+    assert "distribution" in params and isinstance(
+        params["distribution"], dict
+    ), "params must contain object 'distribution'"
 
     premine = params["premine"]
     assert isinstance(premine, (int, float)), "'premine' must be a number"
@@ -154,29 +159,39 @@ def _assert_schema(params: Params) -> None:
     dist = _normalize_distribution(params["distribution"])
     for req in ("treasury", "aicf", "foundation", "faucet"):
         assert req in dist, f"distribution missing required key '{req}'"
-        assert isinstance(dist[req], int) and dist[req] >= 0, f"'{req}' must be a non-negative integer"
+        assert (
+            isinstance(dist[req], int) and dist[req] >= 0
+        ), f"'{req}' must be a non-negative integer"
 
     # At least one dev key present
-    assert ("dev_fund" in dist) or ("dev_reserve" in dist), \
-        "distribution must include 'dev_fund' (or legacy 'dev_reserve')"
+    assert ("dev_fund" in dist) or (
+        "dev_reserve" in dist
+    ), "distribution must include 'dev_fund' (or legacy 'dev_reserve')"
     if "dev_fund" in dist:
-        assert isinstance(dist["dev_fund"], int) and dist["dev_fund"] >= 0, "'dev_fund' must be a non-negative integer"
+        assert (
+            isinstance(dist["dev_fund"], int) and dist["dev_fund"] >= 0
+        ), "'dev_fund' must be a non-negative integer"
 
 
 # --- Tests -------------------------------------------------------------------
 
+
 def test_params_schema_and_sum():
     path, root = _load_first_existing()
     params = _find_params_blob(root)
-    assert params is not None, f"Could not locate 'premine'+'distribution' object in {path}"
+    assert (
+        params is not None
+    ), f"Could not locate 'premine'+'distribution' object in {path}"
     _assert_schema(params)
 
     premine = int(round(float(params["premine"])))
     dist_norm = _normalize_distribution(params["distribution"])
 
-    total = sum(v for k, v in dist_norm.items() if k in {
-        "treasury", "aicf", "foundation", "faucet", "dev_fund"
-    })
+    total = sum(
+        v
+        for k, v in dist_norm.items()
+        if k in {"treasury", "aicf", "foundation", "faucet", "dev_fund"}
+    )
     assert total == premine, (
         f"Distribution sum ({total:,}) must equal premine ({premine:,}). "
         f"Got: {dist_norm}"
@@ -207,9 +222,13 @@ def test_updated_amounts_treasury_and_devfund():
     dist = _normalize_distribution(params["distribution"])
 
     assert premine == 18_000_000, f"premine must be 18,000,000; got {premine:,}"
-    assert dist.get("treasury") == 8_800_000, f"treasury must be 8,800,000; got {dist.get('treasury'):,}"
+    assert (
+        dist.get("treasury") == 8_800_000
+    ), f"treasury must be 8,800,000; got {dist.get('treasury'):,}"
     # Accept either 'dev_fund' or 'dev_reserve' source; normalized to dev_fund.
-    assert dist.get("dev_fund") == 2_180_000, f"dev_fund must be 2,180,000; got {dist.get('dev_fund'):,}"
+    assert (
+        dist.get("dev_fund") == 2_180_000
+    ), f"dev_fund must be 2,180,000; got {dist.get('dev_fund'):,}"
 
 
 def test_percentages_reasonable_monotone():
@@ -227,4 +246,3 @@ def test_percentages_reasonable_monotone():
         assert v <= premine, f"{k} allocation exceeds premine"
     for k in ("treasury", "aicf", "foundation", "faucet", "dev_fund"):
         assert dist.get(k, 0) > 0, f"{k} should be positive"
-

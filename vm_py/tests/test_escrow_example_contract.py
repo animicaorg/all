@@ -5,8 +5,8 @@ from typing import Any, Dict, List, Tuple
 
 import pytest
 
-from vm_py.examples.escrow import contract as escrow
 from vm_py.errors import VmError
+from vm_py.examples.escrow import contract as escrow
 
 
 @dataclass

@@ -102,6 +102,7 @@ def _choose_cbor() -> Tuple[DecodeFn, EncodeFn, str]:
     for prov in (_get_project_cbor(), _get_cbor2(), _get_msgspec()):
         if prov:
             return prov
+
     # Super-minimal fallback: accept only bytes that look like empty map/array
     def _loads_stub(b: bytes) -> Any:
         if b == b"\xa0":
@@ -117,6 +118,7 @@ def _choose_cbor() -> Tuple[DecodeFn, EncodeFn, str]:
             return b"\x80"
         # This is a stub; raise to surface missing backend
         raise ValueError("no CBOR backend available")
+
     return _loads_stub, _dumps_stub, "stub"
 
 
@@ -132,7 +134,11 @@ def _project_sign_bytes(obj: Any) -> Optional[bytes]:
     m = _import_optional("core.encoding.canonical")
     if not m:
         return None
-    enc = getattr(m, "tx_sign_bytes", None) or getattr(m, "sign_bytes_tx", None) or getattr(m, "sign_bytes", None)
+    enc = (
+        getattr(m, "tx_sign_bytes", None)
+        or getattr(m, "sign_bytes_tx", None)
+        or getattr(m, "sign_bytes", None)
+    )
     if not callable(enc):
         return None
     try:
@@ -246,6 +252,7 @@ def fuzz(data: bytes) -> None:
 
 
 # -------------------- Direct execution (optional) --------------------
+
 
 def _run_direct(argv: list[str]) -> int:  # pragma: no cover
     try:

@@ -14,9 +14,11 @@ Pass extra args to pytest like:
 """
 
 from __future__ import annotations
+
 import os
 import sys
 from pathlib import Path
+
 import nox
 
 # Reuse envs to speed up local iteration
@@ -49,7 +51,9 @@ def _common_env(session: nox.Session) -> None:
         str(REPO_ROOT / "studio-services"),
     ]
     existing = session.env.get("PYTHONPATH", "")
-    joined = os.pathsep.join(p for p in ([existing] if existing else []) + extra_paths if p)
+    joined = os.pathsep.join(
+        p for p in ([existing] if existing else []) + extra_paths if p
+    )
     session.env["PYTHONPATH"] = joined
 
     # Propagate useful CI toggles if present
@@ -72,7 +76,13 @@ def lint(session: nox.Session) -> None:
     """Static analysis: ruff, black (check), mypy."""
     _common_env(session)
     session.run("python", "-m", "pip", "install", "--upgrade", "pip", silent=True)
-    session.install("ruff>=0.6.0", "black>=24.3.0", "mypy>=1.10.0", "types-requests", "types-setuptools")
+    session.install(
+        "ruff>=0.6.0",
+        "black>=24.3.0",
+        "mypy>=1.10.0",
+        "types-requests",
+        "types-setuptools",
+    )
     # mypy needs runtime deps to import modules; install light editable installs
     session.install("-e", str(REPO_ROOT / "sdk" / "python"))
     session.install("-e", str(REPO_ROOT / "studio-services"))
@@ -188,7 +198,9 @@ def cov(session: nox.Session) -> None:
         session.run("coverage", "combine")
         session.run("coverage", "report", "-m", "-c", COVERAGE_RC)
         session.run("coverage", "html", "-c", COVERAGE_RC)
-        session.log(f"HTML report: {REPO_ROOT / 'tests' / '.coverage_html' / 'index.html'}")
+        session.log(
+            f"HTML report: {REPO_ROOT / 'tests' / '.coverage_html' / 'index.html'}"
+        )
 
 
 # Convenience: `nox -s all` to run lint + unit on default python + integ quick pass

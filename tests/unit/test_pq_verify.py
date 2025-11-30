@@ -2,10 +2,11 @@
 
 These tests validate the mock HMAC-based verification behaves as expected.
 """
+
 from __future__ import annotations
 
-from vm_py.stdlib import pq_verify
 from tools.quantum import mock_pq
+from vm_py.stdlib import pq_verify
 
 
 def test_pq_verify_accepts_valid_signature():
@@ -24,4 +25,5 @@ def test_pq_verify_rejects_bad_signature():
 
 if __name__ == "__main__":
     import pytest
+
     pytest.main([__file__])

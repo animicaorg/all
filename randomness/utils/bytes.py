@@ -97,6 +97,7 @@ def to_hex(b: BytesLike, *, prefix: str = "0x") -> str:
 # Bytes utilities
 # --------------
 
+
 def as_bytes(x: BytesLike) -> bytes:
     """Normalize bytes-like to immutable :class:`bytes`."""
     if isinstance(x, bytes):
@@ -109,6 +110,7 @@ def as_bytes(x: BytesLike) -> bytes:
 # ----------------
 # Length validators
 # ----------------
+
 
 def ensure_len(b: BytesLike, expected: int, *, name: str = "value") -> bytes:
     """
@@ -159,6 +161,7 @@ def ensure_len_range(
 # Padding
 # -------
 
+
 def left_pad(b: BytesLike, size: int, fill: int = 0) -> bytes:
     """
     Left-pad to *size* bytes with *fill* (0..255). If already >= size, returns original bytes.
@@ -186,6 +189,7 @@ def right_pad(b: BytesLike, size: int, fill: int = 0) -> bytes:
 # ---------------
 # Constant-time eq
 # ---------------
+
 
 def consteq(a: BytesLike, b: BytesLike) -> bool:
     """Timing-safe equality for two bytes-like values."""

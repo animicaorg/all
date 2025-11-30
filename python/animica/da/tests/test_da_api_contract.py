@@ -83,7 +83,9 @@ async def test_da_blob_unknown_commitment_returns_404_and_json() -> None:
     commitment_hex = "f" * 64  # 32-byte hex string (no 0x prefix)
 
     transport = httpx.ASGITransport(app=APP)
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
         resp = await client.get(f"/da/blob/{commitment_hex}")
 
     assert resp.status_code == 404
@@ -110,7 +112,9 @@ async def test_da_proof_unknown_commitment_returns_404_and_json() -> None:
     commitment_hex = "0" * 64  # different fake commitment
 
     transport = httpx.ASGITransport(app=APP)
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
         resp = await client.get(f"/da/proof/{commitment_hex}")
 
     assert resp.status_code == 404

@@ -24,13 +24,13 @@ Given identical seed and the same sequence of method calls, all outputs
 are byte-for-byte identical across runs and environments.
 """
 
-from typing import Iterable, List, Sequence, Tuple, Any, Optional
+from typing import Any, Iterable, List, Optional, Sequence, Tuple
 
 from ..errors import ValidationError
 from . import hash_api
 
-
 # ---------------- Utilities ----------------
+
 
 def _ensure_bytes(name: str, v: Any) -> bytes:
     if not isinstance(v, (bytes, bytearray)):
@@ -45,6 +45,7 @@ def _u32be(n: int) -> bytes:
 
 
 # ---------------- Seed Derivation ----------------
+
 
 def derive_seed(*parts: bytes) -> bytes:
     """
@@ -63,6 +64,7 @@ def derive_seed(*parts: bytes) -> bytes:
 
 
 # ---------------- PRNG ----------------
+
 
 class DeterministicRandom:
     """
@@ -137,7 +139,7 @@ class DeterministicRandom:
         # Mask extraneous high bits
         excess = (8 * nbytes) - k
         if excess:
-            raw[0] &= (0xFF >> excess)
+            raw[0] &= 0xFF >> excess
         out = 0
         for b in raw:
             out = (out << 8) | b
@@ -173,7 +175,10 @@ class DeterministicRandom:
 
 # ---------------- Convenience wrapper ----------------
 
-def random(n: int, *, seed: Optional[bytes] = None, rng: Optional[DeterministicRandom] = None) -> bytes:
+
+def random(
+    n: int, *, seed: Optional[bytes] = None, rng: Optional[DeterministicRandom] = None
+) -> bytes:
     """
     One-shot helper to get n bytes:
       - if rng is provided, use it

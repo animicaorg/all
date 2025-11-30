@@ -17,6 +17,7 @@ from typing import Optional, Union
 
 class RandError(Exception):
     """Base class for all randomness pipeline errors."""
+
     pass
 
 
@@ -33,6 +34,7 @@ class CommitTooLate(RandError):
         commit_ts: The timestamp (seconds since epoch) when the commit was observed.
         cutoff_ts: The commit cutoff timestamp for the round.
     """
+
     round_id: int
     commit_ts: Number
     cutoff_ts: Number
@@ -54,6 +56,7 @@ class RevealTooEarly(RandError):
         now_ts: The timestamp when the reveal was attempted.
         reveal_open_ts: The timestamp when reveals become valid for the round.
     """
+
     round_id: int
     now_ts: Number
     reveal_open_ts: Number
@@ -76,6 +79,7 @@ class BadReveal(RandError):
         got_commitment_hex: Hex string of the commitment derived from the provided reveal.
         reason: Optional human-readable explanation (e.g., 'domain-mismatch', 'length', 'hash-mismatch').
     """
+
     round_id: int
     expected_commitment_hex: str
     got_commitment_hex: str
@@ -98,13 +102,13 @@ class VDFInvalid(RandError):
         round_id: The beacon round identifier.
         reason: Optional explanation (e.g., 'invalid-proof', 'mismatch-y', 'wrong-iterations').
     """
+
     round_id: int
     reason: Optional[str] = None
 
     def __str__(self) -> str:  # pragma: no cover - trivial formatting
-        return (
-            f"VDFInvalid: round={self.round_id}"
-            + (f" reason={self.reason}" if self.reason else "")
+        return f"VDFInvalid: round={self.round_id}" + (
+            f" reason={self.reason}" if self.reason else ""
         )
 
 

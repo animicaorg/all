@@ -31,12 +31,12 @@ This module is self-contained and only relies on:
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-from pq.py.utils.hash import sha3_256
 # We depend on the utility bech32 module you added earlier.
 # It should export: bech32_encode(hrp: str, data: bytes-like, spec="bech32m") -> str
 #                   bech32_decode(addr: str) -> Tuple[str, bytes, str]
 #                   convertbits(data: bytes, from_bits: int, to_bits: int, pad: bool) -> bytes
 from pq.py.utils import bech32 as _b32
+from pq.py.utils.hash import sha3_256
 
 HRP_DEFAULT = "anim"
 _PAYLOAD_LEN = 2 + 32  # alg_id (2) + digest (32)
@@ -64,6 +64,7 @@ class AddressRecord:
 # ---------------------------------------------------------------------------
 # Encoding
 # ---------------------------------------------------------------------------
+
 
 def payload_from_pubkey(pubkey: bytes, alg_id: int) -> bytes:
     """
@@ -93,6 +94,7 @@ def address_from_pubkey(pubkey: bytes, alg_id: int, *, hrp: str = HRP_DEFAULT) -
 # ---------------------------------------------------------------------------
 # Decoding / Validation
 # ---------------------------------------------------------------------------
+
 
 def decode_address(addr: str, *, expect_hrp: Optional[str] = None) -> AddressRecord:
     """
@@ -127,6 +129,7 @@ def decode_address(addr: str, *, expect_hrp: Optional[str] = None) -> AddressRec
     # Optional: ensure alg_id is recognized by our registry
     try:
         from pq.py.registry import is_known_alg_id
+
         if not is_known_alg_id(alg_id):
             raise AddressError(f"unknown alg_id: 0x{alg_id:02x}")
     except Exception:
@@ -137,8 +140,12 @@ def decode_address(addr: str, *, expect_hrp: Optional[str] = None) -> AddressRec
     return AddressRecord(hrp=hrp, alg_id=alg_id, digest=digest)
 
 
-def validate_address(addr: str, *, expect_hrp: Optional[str] = None,
-                     allowed_alg_ids: Optional[set[int]] = None) -> bool:
+def validate_address(
+    addr: str,
+    *,
+    expect_hrp: Optional[str] = None,
+    allowed_alg_ids: Optional[set[int]] = None,
+) -> bool:
     """
     Lightweight validator. Returns True if valid; otherwise raises AddressError.
 
@@ -154,6 +161,7 @@ def validate_address(addr: str, *, expect_hrp: Optional[str] = None,
 # ---------------------------------------------------------------------------
 # Pretty helpers
 # ---------------------------------------------------------------------------
+
 
 def short(addr: str, *, keep: int = 6) -> str:
     """
@@ -173,6 +181,7 @@ if __name__ == "__main__":
     pubkey_demo = b"\x01" * 48  # dummy bytes; real pubkeys come from the PQ libs
     try:
         from pq.py.registry import ALG_ID
+
         alg = ALG_ID.get("dilithium3", 0x30)
     except Exception:
         alg = 0x30  # fallback default
@@ -185,4 +194,7 @@ if __name__ == "__main__":
     # Re-encode and compare
     addr2 = rec.to_string()
     assert addr2 == addr, "address re-encode mismatch"
-    print("[address] decode/encode OK; alg_id=0x%02x digest=%s" % (rec.alg_id, rec.digest.hex()[:16]))
+    print(
+        "[address] decode/encode OK; alg_id=0x%02x digest=%s"
+        % (rec.alg_id, rec.digest.hex()[:16])
+    )

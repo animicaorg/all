@@ -1,9 +1,10 @@
-import os
-import sys
 import hashlib
+import os
 import random
+import sys
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
+
 import pytest
 
 # Make project importable if tests want to peek at real modules
@@ -19,18 +20,22 @@ except Exception:
 # Minimal header/chain primitives
 # ------------------------------
 
+
 @dataclass(frozen=True)
 class FakeHeader:
     """
     Ultra-minimal header model sufficient for header-sync tests.
     Only (hash, parent, height) are used, and hash binds parent+height deterministically.
     """
+
     hash: str
     parent: Optional[str]
     height: int
 
     @staticmethod
-    def make(parent: Optional["FakeHeader"], height: Optional[int] = None) -> "FakeHeader":
+    def make(
+        parent: Optional["FakeHeader"], height: Optional[int] = None
+    ) -> "FakeHeader":
         if parent is None:
             # Deterministic genesis
             parent_hash = b"\x00" * 32
@@ -42,13 +47,16 @@ class FakeHeader:
         hasher.update(parent_hash)
         hasher.update(h.to_bytes(8, "big"))
         digest = "0x" + hasher.hexdigest()
-        return FakeHeader(hash=digest, parent=None if parent is None else parent.hash, height=h)
+        return FakeHeader(
+            hash=digest, parent=None if parent is None else parent.hash, height=h
+        )
 
 
 class InMemoryHeaderDB:
     """
     Simple header DB tracking best tip by (height, then hash-lexicographic) as tie-breaker.
     """
+
     def __init__(self) -> None:
         self.headers: Dict[str, FakeHeader] = {}
         self.children: Dict[str, List[str]] = {}
@@ -95,7 +103,9 @@ class InMemoryHeaderDB:
         """
         for h in headers:
             # Basic parent check
-            if h.parent is not None and not (h.parent in self.headers or any(ph.hash == h.parent for ph in headers)):
+            if h.parent is not None and not (
+                h.parent in self.headers or any(ph.hash == h.parent for ph in headers)
+            ):
                 raise AssertionError("non-contiguous import: parent unknown")
             self.put(h)
 
@@ -108,7 +118,10 @@ def _lex(h: str) -> bytes:
 # Locators & getheaders helpers
 # ------------------------------
 
-def build_locator(db: InMemoryHeaderDB, tip_hash: Optional[str], max_entries: int = 32) -> List[str]:
+
+def build_locator(
+    db: InMemoryHeaderDB, tip_hash: Optional[str], max_entries: int = 32
+) -> List[str]:
     """
     Build a Bitcoin-like locator: hashes with exponentially increasing back-off + genesis.
     """
@@ -141,7 +154,9 @@ def build_locator(db: InMemoryHeaderDB, tip_hash: Optional[str], max_entries: in
     return loc
 
 
-def getheaders(source: InMemoryHeaderDB, locator: List[str], limit: int = 32) -> List[FakeHeader]:
+def getheaders(
+    source: InMemoryHeaderDB, locator: List[str], limit: int = 32
+) -> List[FakeHeader]:
     """
     Return up to 'limit' headers after the highest common ancestor with the given locator,
     following the source's current best chain.
@@ -160,7 +175,7 @@ def getheaders(source: InMemoryHeaderDB, locator: List[str], limit: int = 32) ->
         path = source.ancestor_chain_to_genesis(tip)  # tip..genesis
         path = list(reversed(path))  # genesis..tip
         # skip genesis (path[0]) because peers typically ask for headers *after* common
-        seq = [source.get(h) for h in path[1:limit+1]]
+        seq = [source.get(h) for h in path[1 : limit + 1]]
         return seq
 
     # Build best-chain path genesis..tip
@@ -176,11 +191,13 @@ def getheaders(source: InMemoryHeaderDB, locator: List[str], limit: int = 32) ->
         # Fallback: restart from genesis as above.
         return getheaders(source, [path[0]], limit)
 
-    next_hashes = path[idx+1 : idx+1+limit]
+    next_hashes = path[idx + 1 : idx + 1 + limit]
     return [source.get(h) for h in next_hashes]
 
 
-def extend(db: InMemoryHeaderDB, parent: Optional[FakeHeader], n: int) -> List[FakeHeader]:
+def extend(
+    db: InMemoryHeaderDB, parent: Optional[FakeHeader], n: int
+) -> List[FakeHeader]:
     out = []
     cur = parent
     for _ in range(n):
@@ -195,7 +212,13 @@ def extend(db: InMemoryHeaderDB, parent: Optional[FakeHeader], n: int) -> List[F
 # Mini sync driver (no network)
 # ------------------------------
 
-def run_header_sync(source: InMemoryHeaderDB, target: InMemoryHeaderDB, batch: int = 16, max_rounds: int = 1024) -> int:
+
+def run_header_sync(
+    source: InMemoryHeaderDB,
+    target: InMemoryHeaderDB,
+    batch: int = 16,
+    max_rounds: int = 1024,
+) -> int:
     """
     Pull-based header sync: build locator from target, request from source, import, repeat.
     Returns number of headers imported.
@@ -217,6 +240,7 @@ def run_header_sync(source: InMemoryHeaderDB, target: InMemoryHeaderDB, batch: i
 # ------------------------------
 # Tests
 # ------------------------------
+
 
 def test_sync_from_genesis_linear_chain():
     """
@@ -270,7 +294,7 @@ def test_fork_handling_reorg_to_longer_chain():
     srcB = InMemoryHeaderDB()
     for h in common.headers.values():
         srcB.put(h)
-    b_path = extend(srcB, common_tip, 6)   # heights 9..14
+    b_path = extend(srcB, common_tip, 6)  # heights 9..14
 
     # Target starts with only genesis
     dst = InMemoryHeaderDB()
@@ -310,8 +334,8 @@ def test_tie_break_on_equal_height_by_hash():
     # Create two children of the same parent with controlled hash ordering.
     # We'll "forge" their digest by tweaking their height integers to flip hash ordering.
     # (Since the hash = H(parent||height), different heights give different hashes.)
-    child1 = FakeHeader.make(tip, height=5)   # hash depends on height=5
-    child2 = FakeHeader.make(tip, height=6)   # hash depends on height=6
+    child1 = FakeHeader.make(tip, height=5)  # hash depends on height=5
+    child2 = FakeHeader.make(tip, height=6)  # hash depends on height=6
 
     # Sort their hash bytes and store the expected "winner" according to our DB rule:
     # (height equal? here not equal yet; so enforce equal-height by adjusting)
@@ -338,6 +362,8 @@ def test_real_sync_module_present_or_skip():
     if _sync_mod is None:
         pytest.skip("p2p.sync.headers not present; core sync tested via local harness")
     # If present, at least ensure it has some expected symbols
-    has_symbol = any(hasattr(_sync_mod, name) for name in ("HeaderSync", "build_locator", "HeadersSync"))
+    has_symbol = any(
+        hasattr(_sync_mod, name)
+        for name in ("HeaderSync", "build_locator", "HeadersSync")
+    )
     assert has_symbol, "p2p.sync.headers module does not expose expected entry points"
-

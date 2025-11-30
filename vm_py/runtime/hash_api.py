@@ -35,8 +35,10 @@ from typing import Iterable, Optional, Protocol, runtime_checkable
 try:
     from vm_py.errors import VmError
 except Exception:  # pragma: no cover - bootstrap path
+
     class VmError(Exception):  # type: ignore
         """Fallback error used when vm_py.errors isn't available yet."""
+
         pass
 
 
@@ -64,6 +66,7 @@ _has_pysha3 = False
 _has_pycryptodome = False
 try:  # pysha3 (a.k.a. "sha3" package) provides keccak_256 compatible with Ethereum.
     import sha3  # type: ignore
+
     _has_pysha3 = True
 except Exception:
     # Try PyCryptodome (`pip install pycryptodome`) which may expose either
@@ -71,10 +74,12 @@ except Exception:
     # installed (pycryptodome vs pycryptodomex). Try both import paths.
     try:
         from Crypto.Hash import keccak as _keccak  # type: ignore
+
         _has_pycryptodome = True
     except Exception:
         try:
             from Cryptodome.Hash import keccak as _keccak  # type: ignore
+
             _has_pycryptodome = True
         except Exception:
             pass
@@ -91,6 +96,7 @@ def _new_keccak256():
 
 
 # ------------------------------- Hash Functions ------------------------------ #
+
 
 def sha3_256(data: bytes | bytearray | memoryview, *, domain: bytes = b"") -> bytes:
     d = _ensure_bytes(data, "data")
@@ -126,6 +132,7 @@ def keccak256(data: bytes | bytearray | memoryview, *, domain: bytes = b"") -> b
 
 # Hex helpers (small convenience for tooling/tests)
 
+
 def sha3_256_hex(data: bytes | bytearray | memoryview, *, domain: bytes = b"") -> str:
     return sha3_256(data, domain=domain).hex()
 
@@ -140,27 +147,37 @@ def keccak256_hex(data: bytes | bytearray | memoryview, *, domain: bytes = b"") 
 
 # Concatenate multiple chunks deterministically (no copies beyond API normalization)
 
-def _hash_concat(chunks: Iterable[bytes | bytearray | memoryview], h, domain: bytes) -> bytes:
+
+def _hash_concat(
+    chunks: Iterable[bytes | bytearray | memoryview], h, domain: bytes
+) -> bytes:
     _apply_domain(h, domain)
     for i, c in enumerate(chunks):
         h.update(_ensure_bytes(c, f"chunk[{i}]"))
     return h.digest()
 
 
-def hash_concat_sha3_256(*chunks: bytes | bytearray | memoryview, domain: bytes = b"") -> bytes:
+def hash_concat_sha3_256(
+    *chunks: bytes | bytearray | memoryview, domain: bytes = b""
+) -> bytes:
     return _hash_concat(chunks, hashlib.sha3_256(), _ensure_bytes(domain, "domain"))
 
 
-def hash_concat_sha3_512(*chunks: bytes | bytearray | memoryview, domain: bytes = b"") -> bytes:
+def hash_concat_sha3_512(
+    *chunks: bytes | bytearray | memoryview, domain: bytes = b""
+) -> bytes:
     return _hash_concat(chunks, hashlib.sha3_512(), _ensure_bytes(domain, "domain"))
 
 
-def hash_concat_keccak256(*chunks: bytes | bytearray | memoryview, domain: bytes = b"") -> bytes:
+def hash_concat_keccak256(
+    *chunks: bytes | bytearray | memoryview, domain: bytes = b""
+) -> bytes:
     h = _new_keccak256()
     return _hash_concat(chunks, h, _ensure_bytes(domain, "domain"))
 
 
 # ----------------------------- Streaming Interface --------------------------- #
+
 
 @runtime_checkable
 class _HasherLike(Protocol):

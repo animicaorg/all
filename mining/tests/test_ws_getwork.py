@@ -1,8 +1,8 @@
-import json
-import inspect
 import importlib
+import inspect
+import json
 import time
-from typing import Any, Dict, Optional, Tuple, List
+from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
 
@@ -16,11 +16,13 @@ except Exception:  # pragma: no cover - starlette missing
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _maybe(mod: Any, names: Tuple[str, ...]) -> Optional[Any]:
     for n in names:
         if hasattr(mod, n):
             return getattr(mod, n)
     return None
+
 
 def _load_asgi_app(ws_mod: Any):
     """
@@ -159,22 +161,43 @@ def test_ws_subscribe_and_get_work_roundtrip():
     # Connect and perform subscribe + getWork
     with client.websocket_connect(path) as ws:
         # Optional subscribe
-        _ws_send_json(ws, {"jsonrpc": "2.0", "id": 1, "method": "miner.subscribe", "params": {"agent": "pytest/animica"}})
+        _ws_send_json(
+            ws,
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "miner.subscribe",
+                "params": {"agent": "pytest/animica"},
+            },
+        )
         try:
             _ws_recv_json(ws, timeout_s=0.5)  # ignore the response if any
         except Exception:
             pass
 
         # Optional authorize
-        _ws_send_json(ws, {"jsonrpc": "2.0", "id": 2, "method": "miner.authorize", "params": {"user": "test", "password": "x"}})
+        _ws_send_json(
+            ws,
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "miner.authorize",
+                "params": {"user": "test", "password": "x"},
+            },
+        )
         try:
             _ws_recv_json(ws, timeout_s=0.5)
         except Exception:
             pass
 
         # Ask for work (method names vary a bit)
-        for mid, name in enumerate(("miner.getWork", "mining.getWork", "getWork", "miner.requestWork"), start=10):
-            _ws_send_json(ws, {"jsonrpc": "2.0", "id": mid, "method": name, "params": {}})
+        for mid, name in enumerate(
+            ("miner.getWork", "mining.getWork", "getWork", "miner.requestWork"),
+            start=10,
+        ):
+            _ws_send_json(
+                ws, {"jsonrpc": "2.0", "id": mid, "method": name, "params": {}}
+            )
             try:
                 msg = _ws_recv_json(ws, timeout_s=1.0)
                 work = _extract_work(msg)
@@ -210,7 +233,15 @@ def test_ws_submit_share_acknowledged():
 
     with client.websocket_connect(path) as ws:
         # Subscribe (best effort)
-        _ws_send_json(ws, {"jsonrpc": "2.0", "id": 1, "method": "miner.subscribe", "params": {"agent": "pytest/animica"}})
+        _ws_send_json(
+            ws,
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "miner.subscribe",
+                "params": {"agent": "pytest/animica"},
+            },
+        )
         try:
             _ws_recv_json(ws, timeout_s=0.5)
         except Exception:
@@ -218,8 +249,13 @@ def test_ws_submit_share_acknowledged():
 
         # Get some work first
         work = None
-        for mid, name in enumerate(("miner.getWork", "mining.getWork", "getWork", "miner.requestWork"), start=10):
-            _ws_send_json(ws, {"jsonrpc": "2.0", "id": mid, "method": name, "params": {}})
+        for mid, name in enumerate(
+            ("miner.getWork", "mining.getWork", "getWork", "miner.requestWork"),
+            start=10,
+        ):
+            _ws_send_json(
+                ws, {"jsonrpc": "2.0", "id": mid, "method": name, "params": {}}
+            )
             try:
                 msg = _ws_recv_json(ws, timeout_s=1.0)
                 work = _extract_work(msg)
@@ -233,27 +269,50 @@ def test_ws_submit_share_acknowledged():
         share = _build_fake_share(work)
 
         # Submit share (accept various method names & shapes)
-        for mid, name in enumerate(("miner.submitShare", "mining.submitShare", "submitShare", "miner.submit"), start=100):
+        for mid, name in enumerate(
+            ("miner.submitShare", "mining.submitShare", "submitShare", "miner.submit"),
+            start=100,
+        ):
             # Try named params first
-            _ws_send_json(ws, {"jsonrpc": "2.0", "id": mid, "method": name, "params": {"share": share}})
+            _ws_send_json(
+                ws,
+                {
+                    "jsonrpc": "2.0",
+                    "id": mid,
+                    "method": name,
+                    "params": {"share": share},
+                },
+            )
             try:
                 ack = _ws_recv_json(ws, timeout_s=1.0)
                 # Accept either result or boolean
                 result = ack.get("result", ack)
                 if isinstance(result, dict):
-                    ok = result.get("accepted") or (result.get("status") in ("OK", "accepted"))
+                    ok = result.get("accepted") or (
+                        result.get("status") in ("OK", "accepted")
+                    )
                     if ok:
                         break
                 elif isinstance(result, bool) and result:
                     break
             except Exception:
                 # Try positional form
-                _ws_send_json(ws, {"jsonrpc": "2.0", "id": mid + 1, "method": name, "params": [share]})
+                _ws_send_json(
+                    ws,
+                    {
+                        "jsonrpc": "2.0",
+                        "id": mid + 1,
+                        "method": name,
+                        "params": [share],
+                    },
+                )
                 try:
                     ack = _ws_recv_json(ws, timeout_s=1.0)
                     result = ack.get("result", ack)
                     if isinstance(result, dict):
-                        ok = result.get("accepted") or (result.get("status") in ("OK", "accepted"))
+                        ok = result.get("accepted") or (
+                            result.get("status") in ("OK", "accepted")
+                        )
                         if ok:
                             break
                     elif isinstance(result, bool) and result:
@@ -262,4 +321,3 @@ def test_ws_submit_share_acknowledged():
                     continue
         else:
             pytest.fail("No submitShare variant returned an acceptance")
-

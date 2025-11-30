@@ -47,11 +47,11 @@ from __future__ import annotations
 from dataclasses import asdict, is_dataclass
 from typing import Any, Dict, Optional
 
-from .errors import SchemaError
-from .types import ProofType, ProofEnvelope
 from .cbor import dumps_canonical, validate_body
-from .utils.hash import sha3_256  # wraps core.utils.hash, adds domain tags elsewhere if needed
-
+from .errors import SchemaError
+from .types import ProofEnvelope, ProofType
+from .utils.hash import \
+    sha3_256  # wraps core.utils.hash, adds domain tags elsewhere if needed
 
 # ---------------------------------------------------------------------------
 # Domain separation tags (ASCII prefixes, then hashed once)
@@ -60,10 +60,10 @@ from .utils.hash import sha3_256  # wraps core.utils.hash, adds domain tags else
 _DOMAIN_PREFIX = b"Animica/ProofNullifier/"
 DOMAIN_TAGS: Dict[ProofType, bytes] = {
     ProofType.HASH_SHARE: _DOMAIN_PREFIX + b"HashShare/v1",
-    ProofType.AI:         _DOMAIN_PREFIX + b"AI/v1",
-    ProofType.QUANTUM:    _DOMAIN_PREFIX + b"Quantum/v1",
-    ProofType.STORAGE:    _DOMAIN_PREFIX + b"Storage/v1",
-    ProofType.VDF:        _DOMAIN_PREFIX + b"VDF/v1",
+    ProofType.AI: _DOMAIN_PREFIX + b"AI/v1",
+    ProofType.QUANTUM: _DOMAIN_PREFIX + b"Quantum/v1",
+    ProofType.STORAGE: _DOMAIN_PREFIX + b"Storage/v1",
+    ProofType.VDF: _DOMAIN_PREFIX + b"VDF/v1",
 }
 
 
@@ -223,7 +223,9 @@ def compute_envelope_nullifier(
     Convenience wrapper: compute nullifier from a ProofEnvelope. The envelope's
     existing nullifier (if any) is ignored; we recompute from the body.
     """
-    return compute_nullifier(env.type_id, env.body, chain_id=chain_id, policy_root=policy_root)
+    return compute_nullifier(
+        env.type_id, env.body, chain_id=chain_id, policy_root=policy_root
+    )
 
 
 __all__ = [

@@ -4,11 +4,12 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Tuple
 
-from .core import RoundId, BeaconOut
+from .core import BeaconOut, RoundId
 
 
 class Phase(str, Enum):
     """Lifecycle phases of a beacon round."""
+
     COMMIT = "commit"
     REVEAL = "reveal"
     VDF = "vdf"
@@ -34,6 +35,7 @@ class BeaconParams:
       vdf_enabled      — whether the VDF phase is expected/used
       qrng_enabled     — whether QRNG is mixed in (handled elsewhere; tracked for visibility)
     """
+
     t0: int
     round_length: int
     commit_duration: int
@@ -59,7 +61,11 @@ class BeaconParams:
                 raise TypeError(f"{name} must be int")
             if v < 0:
                 raise ValueError(f"{name} must be non-negative")
-        active = self.commit_duration + self.reveal_duration + (self.vdf_duration if self.vdf_enabled else 0)
+        active = (
+            self.commit_duration
+            + self.reveal_duration
+            + (self.vdf_duration if self.vdf_enabled else 0)
+        )
         if active > self.round_length:
             raise ValueError(
                 "commit_duration + reveal_duration + vdf_duration must be <= round_length"
@@ -79,6 +85,7 @@ class BeaconState:
 
     Helper methods provide phase/round calculations and timing windows.
     """
+
     params: BeaconParams
     current_round: RoundId
     current_out: Optional[BeaconOut] = None

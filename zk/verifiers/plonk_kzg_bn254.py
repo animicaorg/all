@@ -75,31 +75,38 @@ License: MIT
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
+from typing import (Any, Dict, Iterable, List, Mapping, MutableMapping,
+                    Optional, Sequence, Tuple, Union)
 
 # KZG verify + VK type
-from .kzg_bn254 import VerifyingKey as KZGVK, kzg_verify
+from .kzg_bn254 import VerifyingKey as KZGVK
+from .kzg_bn254 import kzg_verify
+# Curve helpers (generators, curve order, on-curve)
+from .pairing_bn254 import (curve_order, g1_generator, g2_generator,
+                            is_on_curve_g1, is_on_curve_g2)
 # Fiat–Shamir transcript (Poseidon-based)
 from .transcript_fs import Transcript
-# Curve helpers (generators, curve order, on-curve)
-from .pairing_bn254 import (
-    g1_generator,
-    g2_generator,
-    is_on_curve_g1,
-    is_on_curve_g2,
-    curve_order,
-)
 
 # py_ecc (optimized preferred)
 try:
-    from py_ecc.optimized_bn128 import (  # type: ignore
-        FQ, FQ2, add as _add, neg as _neg, multiply as _mul, is_on_curve as _is_on_curve, b as _B, b2 as _B2
-    )
+    from py_ecc.optimized_bn128 import FQ, FQ2
+    from py_ecc.optimized_bn128 import add as _add  # type: ignore
+    from py_ecc.optimized_bn128 import b as _B
+    from py_ecc.optimized_bn128 import b2 as _B2
+    from py_ecc.optimized_bn128 import is_on_curve as _is_on_curve
+    from py_ecc.optimized_bn128 import multiply as _mul
+    from py_ecc.optimized_bn128 import neg as _neg
+
     _BACKEND = "py_ecc.optimized_bn128"
 except Exception:  # pragma: no cover
-    from py_ecc.bn128 import (  # type: ignore
-        FQ, FQ2, add as _add, neg as _neg, multiply as _mul, is_on_curve as _is_on_curve, b as _B, b2 as _B2
-    )
+    from py_ecc.bn128 import FQ, FQ2
+    from py_ecc.bn128 import add as _add  # type: ignore
+    from py_ecc.bn128 import b as _B
+    from py_ecc.bn128 import b2 as _B2
+    from py_ecc.bn128 import is_on_curve as _is_on_curve
+    from py_ecc.bn128 import multiply as _mul
+    from py_ecc.bn128 import neg as _neg
+
     _BACKEND = "py_ecc.bn128"
 
 # Types
@@ -114,6 +121,7 @@ _FR = int(curve_order())
 # Parsing helpers
 # ---------------------------
 
+
 def _to_int(z: Union[int, str]) -> int:
     if isinstance(z, int):
         return z
@@ -122,14 +130,17 @@ def _to_int(z: Union[int, str]) -> int:
         return int(s, 16)
     return int(s)
 
+
 def _fr(z: Union[int, str]) -> int:
     return _to_int(z) % _FR
+
 
 def _g1(x: Union[int, str], y: Union[int, str]) -> G1Point:
     xi, yi = _to_int(x), _to_int(y)
     if xi == 0 and yi == 0:
         return (FQ(1), FQ(1), FQ(0))  # infinity (z=0)
     return (FQ(xi), FQ(yi), FQ(1))
+
 
 def _g2(xx: Sequence[Union[int, str]], yy: Sequence[Union[int, str]]) -> G2Point:
     x0, x1 = _to_int(xx[0]), _to_int(xx[1])
@@ -143,11 +154,13 @@ def _g2(xx: Sequence[Union[int, str]], yy: Sequence[Union[int, str]]) -> G2Point
 # VK / Proof containers
 # ---------------------------
 
+
 @dataclass(frozen=True)
 class VerifyingKey:
     g1: G1Point
     g2: G2Point
     s_g2: G2Point
+
 
 def load_vk(vk_json: Mapping[str, object]) -> VerifyingKey:
     """
@@ -180,6 +193,7 @@ class ProofDemo:
     z: int
     opening_proof: G1Point
 
+
 def load_proof(proof_json: Mapping[str, object]) -> ProofDemo:
     """
     Parse proof JSON in either aggregated or expand-and-aggregate form.
@@ -190,11 +204,13 @@ def load_proof(proof_json: Mapping[str, object]) -> ProofDemo:
         raise ValueError("proof JSON missing 'z' (evaluation point)")
     z = _fr(z_raw)
 
-    op = (proof_json.get("opening_proof")
-          or proof_json.get("proof")
-          or proof_json.get("w")
-          or proof_json.get("W")
-          or proof_json.get("Wz"))
+    op = (
+        proof_json.get("opening_proof")
+        or proof_json.get("proof")
+        or proof_json.get("w")
+        or proof_json.get("W")
+        or proof_json.get("Wz")
+    )
     if not isinstance(op, (list, tuple)) or len(op) != 2:
         raise ValueError("proof JSON missing 'opening_proof' as [px, py]")
     opening_proof = _g1(op[0], op[1])
@@ -257,6 +273,7 @@ def load_proof(proof_json: Mapping[str, object]) -> ProofDemo:
 # Aggregation (ρ-powers)
 # ---------------------------
 
+
 def _powers(base: int, n: int) -> List[int]:
     out = [1]
     for _ in range(1, n):
@@ -264,9 +281,9 @@ def _powers(base: int, n: int) -> List[int]:
     return out
 
 
-def _aggregate_with_rho(commitments: Mapping[str, G1Point],
-                        evaluations: Mapping[str, int],
-                        rho: int) -> Tuple[G1Point, int]:
+def _aggregate_with_rho(
+    commitments: Mapping[str, G1Point], evaluations: Mapping[str, int], rho: int
+) -> Tuple[G1Point, int]:
     """
     Deterministic aggregation: order by name (ASCII), coefficients = [1, ρ, ρ^2, ...].
     Returns (C_agg, v_agg).
@@ -293,6 +310,7 @@ def _aggregate_with_rho(commitments: Mapping[str, G1Point],
 # ---------------------------
 # Verify (single-opening)
 # ---------------------------
+
 
 def verify_plonk_kzg(
     vk_json: Mapping[str, object],
@@ -360,12 +378,14 @@ if __name__ == "__main__":  # pragma: no cover
     # Small deterministic smoke that exercises the code path by crafting a
     # linear polynomial f(t)=a0+a1*t and "pretending" it is already aggregated.
     from random import Random
+
     rnd = Random(7)
     q = _FR
 
     # Build a local KZG VK using toxic s (dev only)
     from .kzg_bn254 import make_verifying_key
-    s = rnd.randrange(2, q-1)
+
+    s = rnd.randrange(2, q - 1)
     kzg_vk = make_verifying_key(s)
     vk_json = {
         "s_g2": [

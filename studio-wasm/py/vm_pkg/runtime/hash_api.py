@@ -20,11 +20,11 @@ API
 All functions validate byte inputs and return raw bytes (no hex strings).
 """
 
-from typing import Optional
 import hashlib
-
+from typing import Optional
 
 # ---------------- Validation ----------------
+
 
 def _ensure_bytes(name: str, v: bytes) -> bytes:
     if not isinstance(v, (bytes, bytearray)):
@@ -33,6 +33,7 @@ def _ensure_bytes(name: str, v: bytes) -> bytes:
 
 
 # ---------------- SHA3 (stdlib) ----------------
+
 
 def sha3_256(data: bytes) -> bytes:
     """One-shot SHA3-256; returns raw digest bytes."""
@@ -82,8 +83,10 @@ def keccak256(data: bytes) -> bytes:
 
 # ---------------- Incremental helpers (optional) ----------------
 
+
 class Sha3_256:
     """Incremental SHA3-256 helper (deterministic, Pyodide-safe)."""
+
     __slots__ = ("_h",)
 
     def __init__(self) -> None:
@@ -101,6 +104,7 @@ class Sha3_256:
 
 class Sha3_512:
     """Incremental SHA3-512 helper (deterministic, Pyodide-safe)."""
+
     __slots__ = ("_h",)
 
     def __init__(self) -> None:
@@ -121,6 +125,7 @@ class Keccak256:
     Incremental Keccak-256. Falls back to SHA3-256 if `pysha3` is not present.
     Check `KECCAK_FALLBACK_TO_SHA3` if you need to assert true Keccak usage.
     """
+
     __slots__ = ("_impl",)
 
     def __init__(self) -> None:

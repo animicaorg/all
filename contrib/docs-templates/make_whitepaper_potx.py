@@ -1,7 +1,7 @@
 from pptx import Presentation
-from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
+from pptx.util import Inches, Pt
 
 # Brand colors
 MINT = RGBColor(94, 234, 212)
@@ -78,7 +78,9 @@ p.font.color.rgb = SLATE
 
 body = slide.shapes.add_textbox(Inches(1.5), Inches(2), Inches(10.5), Inches(3))
 tf = body.text_frame
-tf.text = "• Background and motivation\n• Design goals & constraints\n• Threat model overview"
+tf.text = (
+    "• Background and motivation\n• Design goals & constraints\n• Threat model overview"
+)
 p = tf.paragraphs[0]
 p.font.size = Pt(28)
 p.font.color.rgb = SLATE

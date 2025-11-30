@@ -45,6 +45,7 @@ GasPrice = NewType("GasPrice", int)
 
 # --------------------------------- utils -------------------------------------
 
+
 def is_u256(n: int) -> bool:
     """Return True iff 0 <= n <= U256_MAX."""
     return isinstance(n, int) and 0 <= n <= U256_MAX
@@ -67,6 +68,7 @@ def _ensure_nonneg_int(n: int) -> int:
 
 # ----------------------------- constructors ----------------------------------
 
+
 def to_gas(n: int) -> Gas:
     """Validate and coerce an int into `Gas` (0 <= n <= GAS_MAX)."""
     n = _ensure_nonneg_int(n)
@@ -84,6 +86,7 @@ def to_gas_price(n: int) -> GasPrice:
 
 
 # ------------------------------ arithmetic -----------------------------------
+
 
 def safe_add(a: int, b: int, *, cap: int = U256_MAX) -> int:
     """

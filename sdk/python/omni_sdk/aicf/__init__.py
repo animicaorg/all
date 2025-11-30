@@ -38,8 +38,10 @@ __all__ = ["AICFClient", "__version__"]
 if TYPE_CHECKING:
     from .client import AICFClient  # type: ignore
 else:
+
     def __getattr__(name: str):
         if name == "AICFClient":
             from .client import AICFClient  # type: ignore
+
             return AICFClient
         raise AttributeError(name)

@@ -7,7 +7,6 @@ from aicf.aitypes.job import JobKind, JobRecord
 from aicf.queue import retry as qretry
 from aicf.queue import ttl as qttl
 
-
 # --------------------------------------------------------------------------------------
 # Assumed Retry & TTL API (behavioral contract)
 #
@@ -39,11 +38,18 @@ from aicf.queue import ttl as qttl
 
 # ---------- helpers to smooth over minor API diffs ----------
 
+
 def _now_ts() -> float:
     return datetime.now(tz=timezone.utc).timestamp()
 
 
-def _mk_job(job_id: str, *, created_at: float | None = None, fee: int = 1000, size_bytes: int = 1024) -> JobRecord:
+def _mk_job(
+    job_id: str,
+    *,
+    created_at: float | None = None,
+    fee: int = 1000,
+    size_bytes: int = 1024,
+) -> JobRecord:
     if created_at is None:
         created_at = time.time()
     return JobRecord(
@@ -64,7 +70,9 @@ def _compute_delay(attempt: int, reason: str = "timeout") -> float:
     policy = getattr(qretry, "policy", None)
     if policy and hasattr(policy, "compute_delay"):
         return policy.compute_delay(attempt, reason=reason)
-    pytest.skip("No retry delay function found (compute_delay/backoff/policy.compute_delay).")
+    pytest.skip(
+        "No retry delay function found (compute_delay/backoff/policy.compute_delay)."
+    )
 
 
 def _schedule_retry(job_id: str, attempt: int, reason: str, now: float) -> float:
@@ -131,11 +139,14 @@ def _ttl_is_expired(job: JobRecord, now: float, max_age_s: int) -> bool:
 
 # ---------- tests ----------
 
+
 def test_retry_backoff_monotonic_non_decreasing():
     # Typical behavior is exponential-ish backoff with caps. We only assert sane monotonicity.
     delays = [_compute_delay(a, "timeout") for a in (1, 2, 3, 4)]
     assert delays[0] > 0
-    assert all(d2 >= d1 for d1, d2 in zip(delays, delays[1:])), f"Non-decreasing delays expected, got {delays}"
+    assert all(
+        d2 >= d1 for d1, d2 in zip(delays, delays[1:])
+    ), f"Non-decreasing delays expected, got {delays}"
 
     # For a different reason (e.g., 'failed-proof'), policy may differ but should still be positive.
     d_fail = _compute_delay(1, "failed-proof")
@@ -152,7 +163,9 @@ def test_requeue_ready_after_delay_and_ack_clears():
 
     # Before deadline: should not be due
     early_due = _due(ready_at - 0.001)
-    assert job.job_id not in set(early_due), "Job should not appear before its backoff elapses"
+    assert job.job_id not in set(
+        early_due
+    ), "Job should not appear before its backoff elapses"
 
     # At/after deadline: should be due
     due = _due(ready_at + 0.001)
@@ -161,7 +174,9 @@ def test_requeue_ready_after_delay_and_ack_clears():
     # Ack/clear (if applicable); subsequent due should not re-emit unless rescheduled
     _ack(job.job_id)
     later = _due(ready_at + 5.0)
-    assert job.job_id not in set(later), "Ack/clear should remove job from retry queue until rescheduled"
+    assert job.job_id not in set(
+        later
+    ), "Ack/clear should remove job from retry queue until rescheduled"
 
 
 def test_ttl_expiration_marks_stale_and_prevents_requeueing():
@@ -169,7 +184,9 @@ def test_ttl_expiration_marks_stale_and_prevents_requeueing():
     ttl_s = 30
     stale_job = _mk_job("job-stale-1", created_at=now - (ttl_s + 5))
 
-    assert _ttl_is_expired(stale_job, now, ttl_s) is True, "Stale job should be marked expired by TTL policy"
+    assert (
+        _ttl_is_expired(stale_job, now, ttl_s) is True
+    ), "Stale job should be marked expired by TTL policy"
 
     # Try to schedule a retry for a stale job: acceptable behaviors:
     #  - Refuse to schedule (return None/False/raise)

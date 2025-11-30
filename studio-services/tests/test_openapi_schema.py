@@ -49,8 +49,12 @@ async def test_openapi_available_and_well_formed(aclient: AsyncClient):
     assert isinstance(spec, dict)
     assert spec.get("openapi"), "missing 'openapi' version string"
     info = spec.get("info") or {}
-    assert "title" in info and isinstance(info["title"], str) and info["title"], "missing info.title"
-    assert "version" in info and isinstance(info["version"], str) and info["version"], "missing info.version"
+    assert (
+        "title" in info and isinstance(info["title"], str) and info["title"]
+    ), "missing info.title"
+    assert (
+        "version" in info and isinstance(info["version"], str) and info["version"]
+    ), "missing info.version"
     paths = spec.get("paths") or {}
     assert isinstance(paths, dict), "paths must be a dict"
 
@@ -71,30 +75,43 @@ async def test_known_paths_and_schemas_present(aclient: AsyncClient):
         entry = paths.get(path)
         if not entry:
             pytest.skip(f"{path} not present in OpenAPI (route may be disabled)")
-        op = (entry.get("post") or {})
-        rb = (op.get("requestBody") or {}).get("content", {}).get("application/json", {})
+        op = entry.get("post") or {}
+        rb = (
+            (op.get("requestBody") or {}).get("content", {}).get("application/json", {})
+        )
         schema = rb.get("schema") or {}
         ref = schema.get("$ref") or ""
-        assert ref.endswith(ref_suffix), f"{path} requestBody should $ref {ref_suffix}, got {ref!r}"
+        assert ref.endswith(
+            ref_suffix
+        ), f"{path} requestBody should $ref {ref_suffix}, got {ref!r}"
 
     def _assert_get_has_response_ref(path: str, status: str, ref_suffix: str):
         entry = paths.get(path)
         if not entry:
             pytest.skip(f"{path} not present in OpenAPI (route may be disabled)")
-        op = (entry.get("get") or {})
+        op = entry.get("get") or {}
         content = (
-            (op.get("responses") or {}).get(status, {}).get("content", {}).get("application/json", {})
+            (op.get("responses") or {})
+            .get(status, {})
+            .get("content", {})
+            .get("application/json", {})
         )
         schema = content.get("schema") or {}
         # Support either direct $ref or an array of $ref
         if "$ref" in schema:
             ref = schema["$ref"]
-            assert ref.endswith(ref_suffix), f"{path} response should $ref {ref_suffix}, got {ref!r}"
+            assert ref.endswith(
+                ref_suffix
+            ), f"{path} response should $ref {ref_suffix}, got {ref!r}"
         elif (schema.get("items") or {}).get("$ref"):
             ref = schema["items"]["$ref"]
-            assert ref.endswith(ref_suffix), f"{path} response items should $ref {ref_suffix}, got {ref!r}"
+            assert ref.endswith(
+                ref_suffix
+            ), f"{path} response items should $ref {ref_suffix}, got {ref!r}"
         else:
-            pytest.skip(f"{path} response schema does not expose a simple $ref in this build")
+            pytest.skip(
+                f"{path} response schema does not expose a simple $ref in this build"
+            )
 
     # Deploy
     _assert_post_has_request_ref("/deploy", "#/components/schemas/DeployRequest")
@@ -118,7 +135,9 @@ async def test_examples_are_present_somewhere(aclient: AsyncClient):
         pytest.skip("/openapi.json not mounted")
 
     if not _has_examples(spec):
-        pytest.skip("No 'example(s)' found in OpenAPI (examples likely disabled in this environment)")
+        pytest.skip(
+            "No 'example(s)' found in OpenAPI (examples likely disabled in this environment)"
+        )
 
     # Spot-check that if /deploy exists, it carries examples on the request body or component
     paths: dict[str, t.Any] = spec.get("paths") or {}
@@ -131,7 +150,9 @@ async def test_examples_are_present_somewhere(aclient: AsyncClient):
         schemas = components.get("schemas") or {}
         dr = schemas.get("DeployRequest") or {}
         if not _has_examples(dr):
-            pytest.skip("No examples attached to /deploy or DeployRequest in this build")
+            pytest.skip(
+                "No examples attached to /deploy or DeployRequest in this build"
+            )
 
 
 @pytest.mark.asyncio
@@ -145,4 +166,6 @@ async def test_docs_ui_present_when_enabled(aclient: AsyncClient):
         pytest.skip("/docs not mounted in this environment")
     assert r.status_code == 200
     ct = r.headers.get("content-type", "")
-    assert "text/html" in ct or "text/plain" in ct, f"unexpected content-type for /docs: {ct}"
+    assert (
+        "text/html" in ct or "text/plain" in ct
+    ), f"unexpected content-type for /docs: {ct}"

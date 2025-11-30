@@ -1,10 +1,11 @@
-import os
-import sys
-import random
 import hashlib
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple, Iterable, DefaultDict
+import os
+import random
+import sys
 from collections import defaultdict
+from dataclasses import dataclass
+from typing import DefaultDict, Dict, Iterable, List, Optional, Tuple
+
 import pytest
 
 # Make project importable if tests want to peek at real modules (optional)
@@ -15,8 +16,10 @@ sys.path.insert(0, os.path.expanduser("~/animica"))
 # Minimal primitives for blocks
 # ------------------------------
 
+
 def sha3_256(b: bytes) -> bytes:
     return hashlib.sha3_256(b).digest()
+
 
 def merkle_root(leaves: List[bytes]) -> bytes:
     """
@@ -33,12 +36,14 @@ def merkle_root(leaves: List[bytes]) -> bytes:
             lvl.append(lvl[-1])
         nxt = []
         for i in range(0, len(lvl), 2):
-            nxt.append(sha3_256(b"\x01" + lvl[i] + lvl[i+1]))
+            nxt.append(sha3_256(b"\x01" + lvl[i] + lvl[i + 1]))
         lvl = nxt
     return lvl[0]
 
+
 def _h2b(h: str) -> bytes:
     return bytes.fromhex(h[2:] if h.startswith("0x") else h)
+
 
 def _b2h(b: bytes) -> str:
     return "0x" + b.hex()
@@ -49,20 +54,28 @@ class FakeHeader:
     """
     Header binds (parent_hash, height, body_root) → header.hash
     """
+
     hash: str
     parent: Optional[str]
     height: int
     body_root: str  # hex
 
     @staticmethod
-    def make(parent: Optional["FakeHeader"], height: int, body_root: bytes) -> "FakeHeader":
+    def make(
+        parent: Optional["FakeHeader"], height: int, body_root: bytes
+    ) -> "FakeHeader":
         parent_hash = b"\x00" * 32 if parent is None else _h2b(parent.hash)
         hasher = hashlib.sha3_256()
         hasher.update(parent_hash)
         hasher.update(height.to_bytes(8, "big"))
         hasher.update(body_root)
         digest = _b2h(hasher.digest())
-        return FakeHeader(hash=digest, parent=None if parent is None else parent.hash, height=height, body_root=_b2h(body_root))
+        return FakeHeader(
+            hash=digest,
+            parent=None if parent is None else parent.hash,
+            height=height,
+            body_root=_b2h(body_root),
+        )
 
 
 @dataclass(frozen=True)
@@ -74,6 +87,7 @@ class FakeBlock:
       - header.hash == H(parent_hash || height || body_root)
       - height == parent.height + 1 (except genesis)
     """
+
     header: FakeHeader
     txs: List[bytes]
 
@@ -82,9 +96,15 @@ class FakeBlock:
 # In-memory block DB & importer
 # ------------------------------
 
+
 class IntegrityError(Exception): ...
+
+
 class TemporaryError(Exception): ...
+
+
 class NotFound(Exception): ...
+
 
 class InMemoryBlockDB:
     def __init__(self) -> None:
@@ -108,8 +128,16 @@ class InMemoryBlockDB:
         if calc_root != blk.header.body_root:
             raise IntegrityError("body_root mismatch")
         # Recompute header.hash
-        parent_hash = b"\x00"*32 if blk.header.parent is None else _h2b(blk.header.parent)
-        hcalc = _b2h(sha3_256(parent_hash + blk.header.height.to_bytes(8, "big") + _h2b(blk.header.body_root)))
+        parent_hash = (
+            b"\x00" * 32 if blk.header.parent is None else _h2b(blk.header.parent)
+        )
+        hcalc = _b2h(
+            sha3_256(
+                parent_hash
+                + blk.header.height.to_bytes(8, "big")
+                + _h2b(blk.header.body_root)
+            )
+        )
         if hcalc != blk.header.hash:
             raise IntegrityError("header hash mismatch")
         # Height rule
@@ -143,6 +171,7 @@ class BlockImporter:
     """
     Accepts blocks in arbitrary order; buffers until parents arrive.
     """
+
     def __init__(self, db: InMemoryBlockDB) -> None:
         self.db = db
         self._pending_by_parent: DefaultDict[str, List[FakeBlock]] = defaultdict(list)
@@ -188,14 +217,22 @@ class BlockImporter:
 # Utilities to build fake chains
 # ------------------------------
 
-def make_block(parent: Optional[FakeBlock], height: int, tx_count: int, seed: int) -> FakeBlock:
+
+def make_block(
+    parent: Optional[FakeBlock], height: int, tx_count: int, seed: int
+) -> FakeBlock:
     rnd = random.Random(seed)
     txs = [f"tx-{height}-{i}-{rnd.randint(0, 1<<30)}".encode() for i in range(tx_count)]
     root = merkle_root(txs)
-    hdr = FakeHeader.make(None if parent is None else parent.header, height=height, body_root=root)
+    hdr = FakeHeader.make(
+        None if parent is None else parent.header, height=height, body_root=root
+    )
     return FakeBlock(header=hdr, txs=txs)
 
-def build_chain(length: int, txs_per_block: int = 3, seed: int = 1337) -> List[FakeBlock]:
+
+def build_chain(
+    length: int, txs_per_block: int = 3, seed: int = 1337
+) -> List[FakeBlock]:
     random.seed(seed)
     chain: List[FakeBlock] = []
     # genesis
@@ -212,6 +249,7 @@ def build_chain(length: int, txs_per_block: int = 3, seed: int = 1337) -> List[F
 # ------------------------------
 # Fake peers & fetch routines
 # ------------------------------
+
 
 class FakePeer:
     def __init__(self, blocks: Dict[str, FakeBlock]) -> None:
@@ -236,7 +274,9 @@ class FakePeer:
         return self.blocks[h]
 
 
-def fetch_blocks_with_retries(peer: FakePeer, hashes: List[str], max_attempts: int = 3, shuffle: bool = True) -> List[FakeBlock]:
+def fetch_blocks_with_retries(
+    peer: FakePeer, hashes: List[str], max_attempts: int = 3, shuffle: bool = True
+) -> List[FakeBlock]:
     """
     Simple loop that retries transient failures. Returns blocks in arbitrary order if shuffle=True.
     """
@@ -266,6 +306,7 @@ def fetch_blocks_with_retries(peer: FakePeer, hashes: List[str], max_attempts: i
 # Tests
 # ------------------------------
 
+
 def test_parallel_block_fetch_and_import_ordering():
     """
     Fetch 40 blocks in parallel-ish (random order), ensure importer buffers children until parents
@@ -286,7 +327,9 @@ def test_parallel_block_fetch_and_import_ordering():
     fetched = fetch_blocks_with_retries(peer, want, shuffle=True)
 
     imported = importer.import_many(fetched)
-    assert imported == 40  # including genesis we inserted earlier? No, importer counted only fetched
+    assert (
+        imported == 40
+    )  # including genesis we inserted earlier? No, importer counted only fetched
     # Wait — imported counts only those returned; length of fetched is 40, so match:
     assert len(fetched) == 40
     # Verify head
@@ -360,7 +403,9 @@ def test_buffering_does_not_spin_on_invalid_parent():
 
     # Tamper block at height 3
     bad = chain[3]
-    peer.set_tamper(bad.header.hash, FakeBlock(header=bad.header, txs=[b"not-the-same"]))
+    peer.set_tamper(
+        bad.header.hash, FakeBlock(header=bad.header, txs=[b"not-the-same"])
+    )
 
     db = InMemoryBlockDB()
     importer = BlockImporter(db)
@@ -373,4 +418,3 @@ def test_buffering_does_not_spin_on_invalid_parent():
     # Head should be height 2, and importer should not deadlock
     assert db.head().height == 2
     assert imported < len(fetched)
-

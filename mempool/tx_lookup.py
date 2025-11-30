@@ -17,15 +17,16 @@ Thread-safety: guarded by a re-entrant lock for multi-producer mempools.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple, Iterable
 import threading
 import time
+from dataclasses import dataclass
+from typing import Dict, Iterable, List, Optional, Tuple
 
 # Optional import to avoid cycles in isolated tests.
 try:
     from mempool.types import PoolTx, TxMeta  # type: ignore
 except Exception:  # pragma: no cover
+
     @dataclass
     class TxMeta:  # type: ignore
         sender: str
@@ -54,6 +55,7 @@ class AdmissionProbe:
     - duplicate_hash: same tx_hash already present
     - occupant: an existing transaction occupying (sender, nonce), if any
     """
+
     duplicate_hash: bool
     occupant: Optional[PoolTx]
 
@@ -64,6 +66,7 @@ class InsertResult:
     Outcome of an insertion attempt.
     action ∈ {"added", "duplicate_hash", "conflict_nonce", "replaced"}
     """
+
     ok: bool
     action: str
     replaced_hash: Optional[str] = None
@@ -155,7 +158,9 @@ class TxLookupIndex:
             bucket[nonce] = tx.tx_hash
             self._ctr_added += 1
 
-            return InsertResult(True, "replaced" if replaced_hash else "added", replaced_hash)
+            return InsertResult(
+                True, "replaced" if replaced_hash else "added", replaced_hash
+            )
 
     def replace(self, tx: PoolTx) -> InsertResult:
         """
@@ -269,10 +274,13 @@ class TxLookupIndex:
 # Manual smoke-test when run standalone
 # ---------------------------------------
 if __name__ == "__main__":  # pragma: no cover
+
     def mk(sender: str, nonce: int, h: Optional[str] = None) -> PoolTx:
         ts = time.time()
         meta = TxMeta(sender=sender, nonce=nonce, first_seen=ts, last_seen=ts)
-        return PoolTx(tx_hash=h or f"{sender}:{nonce}:{ts}", meta=meta, fee=object(), raw=b"x")
+        return PoolTx(
+            tx_hash=h or f"{sender}:{nonce}:{ts}", meta=meta, fee=object(), raw=b"x"
+        )
 
     idx = TxLookupIndex()
 

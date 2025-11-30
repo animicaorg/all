@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from aicf.queue.jobkind import JobKind
 
 """
@@ -50,18 +51,21 @@ Notes
 """
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Protocol
+from typing import (Any, Callable, Dict, Iterable, List, Optional, Protocol,
+                    Sequence, Set, Tuple)
 
 # Optional import of JobKind (AI/QUANTUM). We keep things flexible if not present.
 try:  # pragma: no cover - optional import for ergonomics
     from aicf.aitypes.job import JobKind
 except Exception:  # pragma: no cover
+
     class JobKind:  # type: ignore[no-redef]
         AI = "AI"
         QUANTUM = "QUANTUM"
 
 
 # ---- Duck-typed provider protocol -------------------------------------------
+
 
 class ProviderLike(Protocol):
     provider_id: str  # unique id
@@ -85,6 +89,7 @@ class ProviderLike(Protocol):
 
 # ---- Criteria & results ------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class FilterCriteria:
     require_caps: Set[Any] = frozenset()
@@ -92,8 +97,8 @@ class FilterCriteria:
 
     # Region gating
     allowed_regions: Optional[Set[str]] = None  # if set, provider must overlap
-    denied_regions: Optional[Set[str]] = None   # if set, provider must NOT overlap
-    prefer_regions: Set[str] = frozenset()      # small tie-breaker / boost
+    denied_regions: Optional[Set[str]] = None  # if set, provider must NOT overlap
+    prefer_regions: Set[str] = frozenset()  # small tie-breaker / boost
 
     # Health & status gating
     min_health: float = 0.0
@@ -130,10 +135,13 @@ class FilteredOut:
     reasons: List[str]
 
 
-HealthFn = Callable[[str], Tuple[str, float, float]]  # returns (status, score, last_seen_ts)
+HealthFn = Callable[
+    [str], Tuple[str, float, float]
+]  # returns (status, score, last_seen_ts)
 
 
 # ---- Public API --------------------------------------------------------------
+
 
 def eligible_providers(
     providers: Iterable[Any],
@@ -183,7 +191,9 @@ def eligible_providers(
         # --- Stake
         stake = float(_read_stake(p))
         if stake < criteria.min_stake_total:
-            reasons.append(f"stake below minimum ({stake:.0f} < {criteria.min_stake_total:.0f})")
+            reasons.append(
+                f"stake below minimum ({stake:.0f} < {criteria.min_stake_total:.0f})"
+            )
         stake_norm = min(1.0, stake / max_stake) if max_stake > 0 else 0.0
 
         # --- Regions
@@ -194,7 +204,10 @@ def eligible_providers(
         if criteria.denied_regions is not None:
             if prov_regions.intersection(criteria.denied_regions):
                 reasons.append("matches denied regions")
-        region_hit = bool(criteria.prefer_regions and prov_regions.intersection(criteria.prefer_regions))
+        region_hit = bool(
+            criteria.prefer_regions
+            and prov_regions.intersection(criteria.prefer_regions)
+        )
 
         # --- Algorithm/model support
         if criteria.require_alg_superset:
@@ -203,14 +216,18 @@ def eligible_providers(
                 req = set(required_set)
                 have = set(alg_support.get(key, set()))
                 if not req.issubset(have):
-                    reasons.append(f"alg_support[{key}] missing: need {sorted(req - have)}")
+                    reasons.append(
+                        f"alg_support[{key}] missing: need {sorted(req - have)}"
+                    )
 
         # --- Health & status
         status, health, _last = health_fn(pid)
         if criteria.require_status_any and status not in criteria.require_status_any:
             reasons.append(f"status not allowed ({status})")
         if health < criteria.min_health:
-            reasons.append(f"health below minimum ({health:.2f} < {criteria.min_health:.2f})")
+            reasons.append(
+                f"health below minimum ({health:.2f} < {criteria.min_health:.2f})"
+            )
 
         if reasons:
             if collect_filtered is not None:
@@ -259,6 +276,7 @@ def explain_ineligible(
 
 # ---- Internal helpers --------------------------------------------------------
 
+
 def _read_provider_id(p: Any) -> str:
     return getattr(p, "provider_id", getattr(p, "id", str(p)))
 
@@ -294,9 +312,11 @@ def _has_all_caps(p: Any, required_caps: Set[Any]) -> bool:
     caps = getattr(p, "capabilities", None)
     if not caps:
         return False
+
     # Normalize to a set of strings for comparison
     def _norm(x: Any) -> str:
         return getattr(x, "name", None) or getattr(x, "value", None) or str(x)
+
     have = {_norm(c).upper() for c in caps}
     need = {_norm(c).upper() for c in required_caps}
     return need.issubset(have)

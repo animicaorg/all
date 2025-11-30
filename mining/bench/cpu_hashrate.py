@@ -45,11 +45,11 @@ import time
 from dataclasses import dataclass
 from typing import Iterable, List, Optional
 
-
 # Try to use core.utils.hash.sha3_256 if available, otherwise fall back to hashlib
 try:
     from core.utils.hash import sha3_256 as _sha3_256  # type: ignore
 except Exception:
+
     def _sha3_256(data: bytes) -> bytes:
         return hashlib.sha3_256(data).digest()
 
@@ -57,7 +57,7 @@ except Exception:
 @dataclass
 class BenchConfig:
     seconds: float = 3.0
-    max_hashes: int = 50_000_000        # hard cap for very fast machines
+    max_hashes: int = 50_000_000  # hard cap for very fast machines
     seed: Optional[int] = None
     # Θ values in natural log (nats). p(share) = exp(-Θ).
     thetas: List[float] = None  # type: ignore
@@ -70,7 +70,9 @@ class BenchConfig:
         if self.header_prefix is None:
             # 64 bytes of deterministic-ish header material
             s = self.seed if self.seed is not None else 0xA1B2C3D4
-            self.header_prefix = b"ANIMICA-BENCH-HEADER\x00" + s.to_bytes(8, "big") + b"\x00" * 32
+            self.header_prefix = (
+                b"ANIMICA-BENCH-HEADER\x00" + s.to_bytes(8, "big") + b"\x00" * 32
+            )
 
 
 @dataclass
@@ -96,7 +98,7 @@ def _digest_to_u(d: bytes) -> float:
     with x = big-endian integer value of the digest.
     """
     x = int.from_bytes(d, "big")
-    return (x + 1) * (2.0 ** -256)  # float is fine for thresholding at modest Θ
+    return (x + 1) * (2.0**-256)  # float is fine for thresholding at modest Θ
 
 
 def _run_inner(cfg: BenchConfig) -> dict:
@@ -233,16 +235,23 @@ def _main(argv: List[str]) -> int:
         try:
             thetas = [float(t.strip()) for t in thetas_env.split(",") if t.strip()]
         except Exception:
-            print("Invalid ANIMICA_BENCH_THETAS; expected comma-separated floats (nats).", file=sys.stderr)
+            print(
+                "Invalid ANIMICA_BENCH_THETAS; expected comma-separated floats (nats).",
+                file=sys.stderr,
+            )
             return 2
 
     out = run(seconds=seconds, thetas=thetas, seed=seed)
     hps = out["hashes_per_sec"]
     print(f"Animica CPU Hash micro-bench")
-    print(f"  duration: {out['seconds']:.3f}s   total hashes: {out['total_hashes']:,}   throughput: {_fmt_rate(hps)}")
+    print(
+        f"  duration: {out['seconds']:.3f}s   total hashes: {out['total_hashes']:,}   throughput: {_fmt_rate(hps)}"
+    )
     print(f"  python: {out['env']['python']}   platform: {out['env']['platform']}")
     print()
-    print(f"{'Θ (nats)':>8}  {'p(exp)':>10}  {'obs':>10}  {'exp':>10}  {'obs/s':>12}  {'exp/s':>12}")
+    print(
+        f"{'Θ (nats)':>8}  {'p(exp)':>10}  {'obs':>10}  {'exp':>10}  {'obs/s':>12}  {'exp/s':>12}"
+    )
     for r in out["results"]:
         print(
             f"{r['theta']:8.2f}  "

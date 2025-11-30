@@ -35,6 +35,7 @@ from typing import Callable, List, Optional, Sequence, Tuple
 
 # ------------------------------ Utilities -------------------------------------
 
+
 def _rng(seed: Optional[int]) -> random.Random:
     if seed is None:
         seed = int(os.environ.get("PYTHONHASHSEED", "0") or "1337")
@@ -60,6 +61,7 @@ def _xor_many(shards: Sequence[bytes]) -> bytes:
 
 
 # --------------------------- Real RS adapters ---------------------------------
+
 
 class RSAdapter:
     """
@@ -104,14 +106,18 @@ class RSAdapterFallback(RSAdapter):
         data = [shards_with_gaps[i] for i in range(self.k)]
         parity_present = [s for s in shards_with_gaps[self.k :] if s is not None]
         # Parity to use (if missing parity, recompute from available data)
-        parity = parity_present[0] if parity_present else _xor_many([d for d in data if d is not None])
+        parity = (
+            parity_present[0]
+            if parity_present
+            else _xor_many([d for d in data if d is not None])
+        )
 
         if j < self.k:
             # Missing a data shard → reconstruct using parity and remaining data
             present = [d for i, d in enumerate(data) if i != j and d is not None]
             rec = _xor_many(present + [parity])
             data[j] = rec
-            rebuilt_parities = [ _xor_many(data) ] * (self.n - self.k)
+            rebuilt_parities = [_xor_many(data)] * (self.n - self.k)
             return [d for d in data] + rebuilt_parities
         else:
             # Missing a parity shard → recompute parity
@@ -145,6 +151,7 @@ def _maybe_real_adapter(k: int, n: int, shard_size: int) -> Optional[RSAdapter]:
             enc = getattr(mod, "encode", None)
             dec = getattr(mod, "decode", None)
             if callable(enc) and callable(dec):
+
                 class _FF(RSAdapter):
                     def encode(self, data_shards: List[bytes]) -> List[bytes]:
                         try:
@@ -153,10 +160,17 @@ def _maybe_real_adapter(k: int, n: int, shard_size: int) -> Optional[RSAdapter]:
                             out = enc(data_shards, self.k, self.n)  # type: ignore[misc]
                         return list(out)
 
-                    def decode(self, shards_with_gaps: List[Optional[bytes]]) -> List[bytes]:
+                    def decode(
+                        self, shards_with_gaps: List[Optional[bytes]]
+                    ) -> List[bytes]:
                         # Replace None with b"" per some APIs, pass erasures list if supported
-                        erasures = [i for i, s in enumerate(shards_with_gaps) if s is None]
-                        shards = [s if s is not None else b"\x00" * self.shard_size for s in shards_with_gaps]
+                        erasures = [
+                            i for i, s in enumerate(shards_with_gaps) if s is None
+                        ]
+                        shards = [
+                            s if s is not None else b"\x00" * self.shard_size
+                            for s in shards_with_gaps
+                        ]
                         try:
                             out = dec(shards, k=self.k, n=self.n, erasures=erasures)  # type: ignore[misc]
                         except TypeError:
@@ -165,6 +179,7 @@ def _maybe_real_adapter(k: int, n: int, shard_size: int) -> Optional[RSAdapter]:
                             except Exception:
                                 out = dec(shards, self.k, self.n)  # type: ignore[misc]
                         return list(out)
+
                 return _FF(k, n, shard_size)
 
             # Case 2: class with encode/decode
@@ -173,6 +188,7 @@ def _maybe_real_adapter(k: int, n: int, shard_size: int) -> Optional[RSAdapter]:
                 try:
                     inst = cls(k, n)  # type: ignore
                     if hasattr(inst, "encode") and hasattr(inst, "decode"):
+
                         class _CLS(RSAdapter):
                             def __init__(self):
                                 super().__init__(k, n, shard_size)
@@ -181,8 +197,11 @@ def _maybe_real_adapter(k: int, n: int, shard_size: int) -> Optional[RSAdapter]:
                             def encode(self, data_shards: List[bytes]) -> List[bytes]:
                                 return list(self._inst.encode(data_shards))
 
-                            def decode(self, shards_with_gaps: List[Optional[bytes]]) -> List[bytes]:
+                            def decode(
+                                self, shards_with_gaps: List[Optional[bytes]]
+                            ) -> List[bytes]:
                                 return list(self._inst.decode(shards_with_gaps))
+
                         return _CLS()
                 except Exception:
                     pass
@@ -192,6 +211,7 @@ def _maybe_real_adapter(k: int, n: int, shard_size: int) -> Optional[RSAdapter]:
 
 
 # ------------------------------ Benchmark Core --------------------------------
+
 
 def _timeit(fn: Callable[[], None], repeats: int) -> Tuple[List[float], None]:
     timings: List[float] = []
@@ -263,13 +283,25 @@ def run_bench(
 
     # Stats
     enc_median = statistics.median(enc_timings)
-    enc_p90 = statistics.quantiles(enc_timings, n=10)[8] if len(enc_timings) >= 10 else max(enc_timings)
+    enc_p90 = (
+        statistics.quantiles(enc_timings, n=10)[8]
+        if len(enc_timings) >= 10
+        else max(enc_timings)
+    )
     dec_median = statistics.median(dec_timings)
-    dec_p90 = statistics.quantiles(dec_timings, n=10)[8] if len(dec_timings) >= 10 else max(dec_timings)
+    dec_p90 = (
+        statistics.quantiles(dec_timings, n=10)[8]
+        if len(dec_timings) >= 10
+        else max(dec_timings)
+    )
 
     total_bytes = rounds * k * shard  # bytes processed per iteration (encode & decode)
-    enc_MBps = (total_bytes / enc_median) / 1_000_000 if enc_median > 0 else float("inf")
-    dec_MBps = (total_bytes / dec_median) / 1_000_000 if dec_median > 0 else float("inf")
+    enc_MBps = (
+        (total_bytes / enc_median) / 1_000_000 if enc_median > 0 else float("inf")
+    )
+    dec_MBps = (
+        (total_bytes / dec_median) / 1_000_000 if dec_median > 0 else float("inf")
+    )
 
     return {
         "case": f"da.rs_encode_decode(k={k},n={n},shard={shard})",
@@ -281,7 +313,11 @@ def run_bench(
             "repeat": repeat,
             "warmup": warmup,
             "mode": label,
-            "seed": seed if seed is not None else int(os.environ.get("PYTHONHASHSEED", "0") or "1337"),
+            "seed": (
+                seed
+                if seed is not None
+                else int(os.environ.get("PYTHONHASHSEED", "0") or "1337")
+            ),
         },
         "result": {
             "encode_MBps": enc_MBps,
@@ -289,22 +325,48 @@ def run_bench(
             "encode_median_s": enc_median,
             "encode_p90_s": enc_p90,
             "decode_median_s": dec_median,
-            "decode_p90_s": dec_p90
-        }
+            "decode_p90_s": dec_p90,
+        },
     }
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description="Reed–Solomon encode/decode throughput benchmark (MB/s).")
-    ap.add_argument("--k", type=int, default=128, help="Number of data shards (default: 128)")
-    ap.add_argument("--n", type=int, default=256, help="Total shards (data + parity) (default: 256)")
-    ap.add_argument("--shard", type=int, default=4096, help="Shard size in bytes (default: 4096)")
-    ap.add_argument("--rounds", type=int, default=200, help="Encode/decode rounds per iteration (default: 200)")
-    ap.add_argument("--warmup", type=int, default=1, help="Warmup iterations (default: 1)")
-    ap.add_argument("--repeat", type=int, default=5, help="Measured iterations (default: 5)")
-    ap.add_argument("--mode", choices=("auto", "da", "fallback"), default="auto",
-                    help="Use real da.erasure codec if available, else fallback (default: auto)")
-    ap.add_argument("--seed", type=int, default=None, help="PRNG seed (default: from PYTHONHASHSEED or 1337)")
+    ap = argparse.ArgumentParser(
+        description="Reed–Solomon encode/decode throughput benchmark (MB/s)."
+    )
+    ap.add_argument(
+        "--k", type=int, default=128, help="Number of data shards (default: 128)"
+    )
+    ap.add_argument(
+        "--n", type=int, default=256, help="Total shards (data + parity) (default: 256)"
+    )
+    ap.add_argument(
+        "--shard", type=int, default=4096, help="Shard size in bytes (default: 4096)"
+    )
+    ap.add_argument(
+        "--rounds",
+        type=int,
+        default=200,
+        help="Encode/decode rounds per iteration (default: 200)",
+    )
+    ap.add_argument(
+        "--warmup", type=int, default=1, help="Warmup iterations (default: 1)"
+    )
+    ap.add_argument(
+        "--repeat", type=int, default=5, help="Measured iterations (default: 5)"
+    )
+    ap.add_argument(
+        "--mode",
+        choices=("auto", "da", "fallback"),
+        default="auto",
+        help="Use real da.erasure codec if available, else fallback (default: auto)",
+    )
+    ap.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="PRNG seed (default: from PYTHONHASHSEED or 1337)",
+    )
     args = ap.parse_args(argv)
 
     payload = run_bench(

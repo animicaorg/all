@@ -37,13 +37,16 @@ except Exception:  # pragma: no cover
 PROTOCOL_FAMILY = "animica/da"
 PROTOCOL_VERSION = 1
 
+
 def encode(obj: Any) -> bytes:
     """
     Encode a DA protocol message into bytes (frame).
     Lazily imports the codec to keep package import light.
     """
     from .encoding import encode_frame  # local import by design
+
     return encode_frame(obj)
+
 
 def decode(buf: bytes) -> Any:
     """
@@ -51,7 +54,9 @@ def decode(buf: bytes) -> Any:
     Lazily imports the codec to keep package import light.
     """
     from .encoding import decode_frame  # local import by design
+
     return decode_frame(buf)
+
 
 __all__ = [
     "__version__",

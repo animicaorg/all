@@ -29,7 +29,7 @@ Notes
 
 from __future__ import annotations
 
-from typing import Iterable, List, Sequence, Tuple, Optional
+from typing import Iterable, List, Optional, Sequence, Tuple
 
 __all__ = [
     "encode",
@@ -57,7 +57,7 @@ class Bech32Error(ValueError):
 
 def _polymod(values: Sequence[int]) -> int:
     """Internal bech32 polymod checksum."""
-    GENERATORS = (0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3)
+    GENERATORS = (0x3B6A57B2, 0x26508E6D, 0x1EA119FA, 0x3D4233DD, 0x2A1462B3)
     chk = 1
     for v in values:
         b = (chk >> 25) & 0xFF
@@ -132,7 +132,9 @@ def decode(addr: str) -> Tuple[str, List[int], str]:
     return hrp, data[:-6], spec
 
 
-def convertbits(data: Iterable[int], from_bits: int, to_bits: int, *, pad: bool = True) -> List[int]:
+def convertbits(
+    data: Iterable[int], from_bits: int, to_bits: int, *, pad: bool = True
+) -> List[int]:
     """
     General power-of-two base conversion (e.g., 8→5 or 5→8).
     Returns list of integers in the target base.
@@ -167,7 +169,9 @@ def encode_bytes(hrp: str, payload: bytes, *, spec: str = "bech32m") -> str:
     return encode(hrp, data5, spec=spec)
 
 
-def decode_bytes(addr: str, *, expected_hrp: Optional[str] = None) -> Tuple[str, bytes, str]:
+def decode_bytes(
+    addr: str, *, expected_hrp: Optional[str] = None
+) -> Tuple[str, bytes, str]:
     """
     Decode an address produced by `encode_bytes`. Validates checksum and (optionally) HRP.
     Returns (hrp, payload_bytes, spec).

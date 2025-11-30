@@ -19,12 +19,14 @@ __all__: list[str] = []
 
 try:
     from .build import build_access_list  # type: ignore
+
     __all__.append("build_access_list")
 except Exception:
     pass
 
 try:
-    from .merge import merge_union, merge_intersection  # type: ignore
+    from .merge import merge_intersection, merge_union  # type: ignore
+
     __all__ += ["merge_union", "merge_intersection"]
 except Exception:
     pass

@@ -58,21 +58,22 @@ except Exception:  # pragma: no cover
 @dataclass(frozen=True)
 class FaucetPacerConfig:
     # Token-bucket rate (tokens per second) and burst
-    qps: float = 2.0            # average 2 drips/sec
-    burst: int = 5              # allow short bursts up to 5
+    qps: float = 2.0  # average 2 drips/sec
+    burst: int = 5  # allow short bursts up to 5
     # Per-address minimal interval (seconds). 0 disables per-address pacing.
     per_address_min_interval: float = 2.0
     # Retry/backoff
     max_attempts: int = 5
-    base_backoff: float = 0.5   # seconds
-    max_backoff: float = 8.0    # seconds
-    jitter: float = 0.2         # +/- 20% jitter on the computed backoff
+    base_backoff: float = 0.5  # seconds
+    max_backoff: float = 8.0  # seconds
+    jitter: float = 0.2  # +/- 20% jitter on the computed backoff
 
 
 class _TokenBucket:
     """
     Simple token-bucket with monotonic-time refills.
     """
+
     def __init__(self, rate_per_sec: float, burst: int) -> None:
         self._rate = float(rate_per_sec)
         self._capacity = max(1.0, float(burst))
@@ -107,6 +108,7 @@ class FaucetPacer:
     - Enforces an optional per-address minimal interval.
     - Provides a helper to run ops with retries/backoff.
     """
+
     def __init__(self, app, *, config: FaucetPacerConfig | None = None) -> None:
         self.app = app
         self.config = config or FaucetPacerConfig()
@@ -131,7 +133,9 @@ class FaucetPacer:
         if address and min_iv > 0:
             await self._enforce_per_address_interval(address, min_iv)
 
-    async def _enforce_per_address_interval(self, address: str, min_interval: float) -> None:
+    async def _enforce_per_address_interval(
+        self, address: str, min_interval: float
+    ) -> None:
         now = time.monotonic()
         async with self._addr_lock:
             last = self._addr_last_ts.get(address)
@@ -178,7 +182,9 @@ class FaucetPacer:
         ------
         The last exception after exhausting attempts.
         """
-        attempts = int(max_attempts if max_attempts is not None else self.config.max_attempts)
+        attempts = int(
+            max_attempts if max_attempts is not None else self.config.max_attempts
+        )
         assert attempts >= 1
 
         for i in range(1, attempts + 1):
@@ -198,7 +204,9 @@ class FaucetPacer:
                     self.log.info("pacer.success", op=op_name, attempt=i)
                 return result
             except asyncio.CancelledError:
-                self.log.warning("pacer.cancelled", op=op_name, attempt=i, address=address)
+                self.log.warning(
+                    "pacer.cancelled", op=op_name, attempt=i, address=address
+                )
                 raise
             except Exception as e:  # noqa: BLE001
                 if i >= attempts:
@@ -239,6 +247,7 @@ class FaucetPacer:
 
 
 # --- Accessor --------------------------------------------------------------
+
 
 def get_pacer(app) -> FaucetPacer:
     """

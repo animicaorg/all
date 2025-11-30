@@ -70,35 +70,45 @@ except Exception:  # pragma: no cover
 try:
     from da.config import DAConfig  # type: ignore
 except Exception:  # pragma: no cover
+
     @dataclass
     class DAConfig:  # minimal stand-in
         storage_dir: str = ".da_store"
         shard_bytes: int = DEFAULT_SHARD_BYTES
 
+
 try:
-    from da.errors import DAError, NotFound, InvalidProof  # type: ignore
+    from da.errors import DAError, InvalidProof, NotFound  # type: ignore
 except Exception:  # pragma: no cover
+
     class DAError(Exception):
         """Base DA error"""
+
     class NotFound(DAError):
         """Blob not found"""
+
     class InvalidProof(DAError):
         """Proof request invalid or cannot be satisfied"""
+
 
 # Hashing helpers
 try:
     from da.utils.hash import sha3_256  # type: ignore
 except Exception:  # pragma: no cover
     import hashlib
+
     def sha3_256(data: bytes) -> bytes:
         return hashlib.sha3_256(data).digest()
+
 
 # Bytes helpers
 try:
     from da.utils.bytes import chunk_bytes, uvarint_encode  # type: ignore
 except Exception:  # pragma: no cover
+
     def chunk_bytes(b: bytes, size: int) -> List[bytes]:
         return [b[i : i + size] for i in range(0, len(b), size)]
+
     def uvarint_encode(n: int) -> bytes:
         """LEB128-like unsigned varint (little loops, big value)"""
         if n < 0:
@@ -114,7 +124,9 @@ except Exception:  # pragma: no cover
                 break
         return bytes(out)
 
+
 # --- Internal FS store -------------------------------------------------------
+
 
 class _FSBlobStore:
     """
@@ -133,6 +145,7 @@ class _FSBlobStore:
         "total_leaves": <int>
       }
     """
+
     def __init__(self, root: Path):
         self.root = Path(root)
         (self.root / "blobs").mkdir(parents=True, exist_ok=True)
@@ -148,7 +161,14 @@ class _FSBlobStore:
             s = "0" + s
         return bytes.fromhex(s)
 
-    def put(self, commitment: bytes, namespace: int, shard_bytes: int, total_leaves: int, data: bytes) -> None:
+    def put(
+        self,
+        commitment: bytes,
+        namespace: int,
+        shard_bytes: int,
+        total_leaves: int,
+        data: bytes,
+    ) -> None:
         h = self._hex(commitment)
         base = self.root / "blobs" / h
         base.mkdir(parents=True, exist_ok=True)
@@ -187,15 +207,21 @@ class _FSBlobStore:
         with open(meta_path, "r", encoding="utf-8") as f:
             return json.load(f)
 
+
 # --- Merkle over namespaced chunks ------------------------------------------
+
 
 def _leaf_hash(ns: int, chunk: bytes) -> bytes:
     # LEAF domain = 0x00
-    return sha3_256(b"\x00" + int(ns).to_bytes(4, "big") + uvarint_encode(len(chunk)) + chunk)
+    return sha3_256(
+        b"\x00" + int(ns).to_bytes(4, "big") + uvarint_encode(len(chunk)) + chunk
+    )
+
 
 def _inner_hash(left: bytes, right: bytes) -> bytes:
     # INNER domain = 0x01
     return sha3_256(b"\x01" + left + right)
+
 
 def _merkle_root(leaf_hashes: List[bytes]) -> bytes:
     if not leaf_hashes:
@@ -214,6 +240,7 @@ def _merkle_root(leaf_hashes: List[bytes]) -> bytes:
             nxt.append(_inner_hash(a, b))
         level = nxt
     return level[0]
+
 
 def _merkle_branch(leaf_hashes: List[bytes], index: int) -> List[bytes]:
     """Return sibling hashes bottom-up."""
@@ -237,12 +264,17 @@ def _merkle_branch(leaf_hashes: List[bytes], index: int) -> List[bytes]:
         level = nxt
     return branch
 
-def _chunk_and_leafhash(ns: int, data: bytes, shard_bytes: int) -> Tuple[List[bytes], int]:
+
+def _chunk_and_leafhash(
+    ns: int, data: bytes, shard_bytes: int
+) -> Tuple[List[bytes], int]:
     chunks = chunk_bytes(data, shard_bytes) if data else [b""]
     leaves = [_leaf_hash(ns, c) for c in chunks]
     return leaves, len(chunks)
 
+
 # --- Service ----------------------------------------------------------------
+
 
 class RetrievalService:
     """
@@ -251,12 +283,23 @@ class RetrievalService:
     Methods are 'awaitable-aware' to play nicely with both sync and async callers.
     """
 
-    def __init__(self, *, config: Optional[DAConfig] = None, store_root: Optional[str | Path] = None):
+    def __init__(
+        self,
+        *,
+        config: Optional[DAConfig] = None,
+        store_root: Optional[str | Path] = None,
+    ):
         self.config = config or DAConfig()
-        root = Path(store_root) if store_root is not None else Path(self.config.storage_dir)
+        root = (
+            Path(store_root)
+            if store_root is not None
+            else Path(self.config.storage_dir)
+        )
         self._store = _FSBlobStore(root)
         self.version = DA_VERSION
-        self._shard_bytes = int(getattr(self.config, "shard_bytes", DEFAULT_SHARD_BYTES))
+        self._shard_bytes = int(
+            getattr(self.config, "shard_bytes", DEFAULT_SHARD_BYTES)
+        )
 
     # -- API used by da.retrieval.api ----------------------------------------
 
@@ -269,7 +312,9 @@ class RetrievalService:
         if not isinstance(data, (bytes, bytearray)):
             raise DAError("Body must be bytes")
 
-        leaf_hashes, total = _chunk_and_leafhash(namespace, bytes(data), self._shard_bytes)
+        leaf_hashes, total = _chunk_and_leafhash(
+            namespace, bytes(data), self._shard_bytes
+        )
         root = _merkle_root(leaf_hashes)
         self._store.put(root, namespace, self._shard_bytes, total, bytes(data))
 
@@ -296,7 +341,13 @@ class RetrievalService:
             raise DAError("Commitment must be bytes")
         return self._store.get(bytes(commitment))
 
-    def get_proof(self, *, commitment: bytes, indices: Iterable[int], namespace: Optional[int] = None) -> Dict:
+    def get_proof(
+        self,
+        *,
+        commitment: bytes,
+        indices: Iterable[int],
+        namespace: Optional[int] = None,
+    ) -> Dict:
         """
         Rebuild chunks from stored blob, check the recomputed root equals the
         requested commitment, and return branches for the selected indices.
@@ -312,7 +363,9 @@ class RetrievalService:
         shard_bytes = int(meta.get("shard_bytes", self._shard_bytes))
 
         if namespace is not None and int(namespace) != ns_meta:
-            raise InvalidProof(f"Namespace mismatch: requested {namespace}, stored {ns_meta}")
+            raise InvalidProof(
+                f"Namespace mismatch: requested {namespace}, stored {ns_meta}"
+            )
 
         # Recompute leaf hashes and root deterministically
         leaf_hashes, total = _chunk_and_leafhash(ns_meta, blob, shard_bytes)
@@ -348,7 +401,9 @@ class RetrievalService:
             "queries": queries,
         }
 
+
 # Convenience for optional async usage ----------------------------------------
+
 
 async def _maybe_await(x):
     return await x if hasattr(x, "__await__") else x

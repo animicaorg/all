@@ -65,6 +65,7 @@ Json = Union[None, bool, int, float, str, List["Json"], Dict[str, "Json"]]
 # Errors & result models
 # ======================================================================================
 
+
 class TxClientError(RuntimeError):
     """Raised for transaction submission or polling errors."""
 
@@ -82,6 +83,7 @@ class TxSubmitResult:
         response:   Parsed JSON response body if available.
         elapsed_ms: Milliseconds elapsed for the submit request.
     """
+
     ok: bool
     tx_hash: Optional[str]
     endpoint: str
@@ -104,6 +106,7 @@ class TxReceipt:
         logs:         list of log/event objects (impl-specific)
         raw:          original receipt (unmodified)
     """
+
     tx_hash: str
     block_hash: Optional[str]
     block_height: Optional[int]
@@ -117,7 +120,10 @@ class TxReceipt:
 # HTTP / JSON helpers (stdlib)
 # ======================================================================================
 
-def _json_request(url: str, *, method: str, json_body: Optional[Dict[str, Any]], timeout: int) -> Tuple[int, Dict[str, Any]]:
+
+def _json_request(
+    url: str, *, method: str, json_body: Optional[Dict[str, Any]], timeout: int
+) -> Tuple[int, Dict[str, Any]]:
     body_bytes: Optional[bytes] = None
     headers = {"Content-Type": "application/json"}
     if json_body is not None:
@@ -130,7 +136,9 @@ def _json_request(url: str, *, method: str, json_body: Optional[Dict[str, Any]],
             try:
                 parsed = json.loads(raw) if raw else {}
             except json.JSONDecodeError as e:
-                raise TxClientError(f"Non-JSON response from {url} (status {status}): {raw[:256]!r}") from e
+                raise TxClientError(
+                    f"Non-JSON response from {url} (status {status}): {raw[:256]!r}"
+                ) from e
             return int(status), parsed
     except HTTPError as e:
         raw = e.read().decode("utf-8", errors="replace")
@@ -139,14 +147,18 @@ def _json_request(url: str, *, method: str, json_body: Optional[Dict[str, Any]],
         raise TxClientError(f"URLError for {url}: {e}") from e
 
 
-def _jsonrpc(url: str, *, method: str, params: Dict[str, Any], timeout: int) -> Dict[str, Any]:
+def _jsonrpc(
+    url: str, *, method: str, params: Dict[str, Any], timeout: int
+) -> Dict[str, Any]:
     payload = {
         "jsonrpc": "2.0",
         "id": int(time.time() * 1000) & 0x7FFFFFFF,
         "method": method,
         "params": params,
     }
-    status, parsed = _json_request(url, method="POST", json_body=payload, timeout=timeout)
+    status, parsed = _json_request(
+        url, method="POST", json_body=payload, timeout=timeout
+    )
     if "error" in parsed:
         raise TxClientError(f"JSON-RPC error on {method}: {parsed['error']}")
     if "result" not in parsed:
@@ -157,6 +169,7 @@ def _jsonrpc(url: str, *, method: str, params: Dict[str, Any], timeout: int) -> 
 # ======================================================================================
 # Client
 # ======================================================================================
+
 
 class TxClient:
     """
@@ -192,11 +205,15 @@ class TxClient:
         # Paths & method names
         self.tx_path_contract = getattr(cfg, "tx_path_contract", "/tx/contractCall")
         self.tx_path_receipt = getattr(cfg, "tx_path_receipt", "/tx/receipt")
-        self.rpc_method_contract = getattr(cfg, "rpc_method_contract", "tx_sendContract")
+        self.rpc_method_contract = getattr(
+            cfg, "rpc_method_contract", "tx_sendContract"
+        )
         self.rpc_method_receipt = getattr(cfg, "rpc_method_receipt", "tx_getReceipt")
 
         # Signer configuration
-        self.signer_mode = (getattr(cfg, "signer_mode", None) or "services").strip().lower()
+        self.signer_mode = (
+            (getattr(cfg, "signer_mode", None) or "services").strip().lower()
+        )
         self.signer_label = getattr(cfg, "signer_label", None)
         self.signer_private_key = getattr(cfg, "signer_private_key", None)
         self.signer_mnemonic = getattr(cfg, "signer_mnemonic", None)
@@ -259,7 +276,9 @@ class TxClient:
                 body["signer"] = signer
 
             _LOG.debug("POST %s (to=%s method=%s)", endpoint, to, method)
-            status, parsed = _json_request(endpoint, method="POST", json_body=body, timeout=self.timeout)
+            status, parsed = _json_request(
+                endpoint, method="POST", json_body=body, timeout=self.timeout
+            )
             tx_hash = _extract_tx_hash(parsed)
             elapsed_ms = int((time.time() - submit_start) * 1000)
             ok = bool(parsed.get("ok", status == 200)) and bool(tx_hash)
@@ -293,8 +312,19 @@ class TxClient:
             if signer:
                 params["signer"] = signer
 
-            _LOG.debug("JSON-RPC %s -> %s (to=%s method=%s)", self.rpc_method_contract, rpc_url, to, method)
-            result = _jsonrpc(rpc_url, method=self.rpc_method_contract, params=params, timeout=self.timeout)
+            _LOG.debug(
+                "JSON-RPC %s -> %s (to=%s method=%s)",
+                self.rpc_method_contract,
+                rpc_url,
+                to,
+                method,
+            )
+            result = _jsonrpc(
+                rpc_url,
+                method=self.rpc_method_contract,
+                params=params,
+                timeout=self.timeout,
+            )
             tx_hash = _extract_tx_hash(result)
             elapsed_ms = int((time.time() - submit_start) * 1000)
             submit = TxSubmitResult(
@@ -339,7 +369,9 @@ class TxClient:
         if self.mode == "services":
             endpoint = f"{self.services_url}{self.tx_path_receipt}"
             body = {"tx_hash": tx_hash}
-            status, parsed = _json_request(endpoint, method="POST", json_body=body, timeout=self.timeout)
+            status, parsed = _json_request(
+                endpoint, method="POST", json_body=body, timeout=self.timeout
+            )
             if status != 200:
                 raise TxClientError(f"Receipt endpoint error {status}: {parsed}")
             if not parsed or not parsed.get("found", False):
@@ -348,7 +380,12 @@ class TxClient:
 
         # RPC mode
         rpc_url = self.rpc_url or ""
-        result = _jsonrpc(rpc_url, method=self.rpc_method_receipt, params={"tx_hash": tx_hash}, timeout=self.timeout)
+        result = _jsonrpc(
+            rpc_url,
+            method=self.rpc_method_receipt,
+            params={"tx_hash": tx_hash},
+            timeout=self.timeout,
+        )
         # Conventions: result may be null/None when not found
         if result in (None, {}, []):
             return None
@@ -364,7 +401,9 @@ class TxClient:
         mode = self.signer_mode
         if mode == "services":
             if not self.signer_label:
-                _LOG.debug("signer_mode=services but no signer_label provided; assuming server default")
+                _LOG.debug(
+                    "signer_mode=services but no signer_label provided; assuming server default"
+                )
                 return {"mode": "label"}
             return {"mode": "label", "label": self.signer_label}
 
@@ -390,6 +429,7 @@ class TxClient:
 # Mappers
 # ======================================================================================
 
+
 def _extract_tx_hash(obj: Any) -> Optional[str]:
     """
     Normalize how we find tx hash in various responses.
@@ -411,12 +451,7 @@ def _to_receipt(raw: Dict[str, Any]) -> TxReceipt:
     """
     Map heterogeneous receipt shapes to our minimal TxReceipt.
     """
-    txh = (
-        raw.get("tx_hash")
-        or raw.get("transactionHash")
-        or raw.get("hash")
-        or ""
-    )
+    txh = raw.get("tx_hash") or raw.get("transactionHash") or raw.get("hash") or ""
     bh = raw.get("block_hash") or raw.get("blockHash")
     height = raw.get("block_height") or raw.get("blockNumber") or raw.get("height")
     success = raw.get("success")
@@ -424,17 +459,27 @@ def _to_receipt(raw: Dict[str, Any]) -> TxReceipt:
         # Some stacks use status 1/0
         status = raw.get("status")
         if isinstance(status, int):
-            success = (status == 1)
+            success = status == 1
         elif isinstance(status, str) and status.isdigit():
-            success = (int(status) == 1)
+            success = int(status) == 1
     gas_used = raw.get("gas_used") or raw.get("gasUsed")
     logs = raw.get("logs") or raw.get("events")
     return TxReceipt(
         tx_hash=str(txh),
         block_hash=str(bh) if bh is not None else None,
-        block_height=int(height) if isinstance(height, (int,)) or (isinstance(height, str) and height.isdigit()) else None,
+        block_height=(
+            int(height)
+            if isinstance(height, (int,))
+            or (isinstance(height, str) and height.isdigit())
+            else None
+        ),
         success=bool(success) if success is not None else None,
-        gas_used=int(gas_used) if isinstance(gas_used, (int,)) or (isinstance(gas_used, str) and gas_used.isdigit()) else None,
+        gas_used=(
+            int(gas_used)
+            if isinstance(gas_used, (int,))
+            or (isinstance(gas_used, str) and gas_used.isdigit())
+            else None
+        ),
         logs=logs if isinstance(logs, list) else None,
         raw=raw,
     )
@@ -465,4 +510,3 @@ def _to_receipt(raw: Dict[str, Any]) -> TxReceipt:
 #  2) Implement a deterministic demo signer for your devnet format if it's intentionally
 #     simple, then pass the resulting pre-signed fields under signer_mode="external".
 #
-

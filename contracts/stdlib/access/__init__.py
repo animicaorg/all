@@ -98,30 +98,41 @@ PAUSED_KEY: bytes = b"access:paused"
 # Convention: the default admin role id (32 bytes recommended, but any bytes accepted).
 DEFAULT_ADMIN_ROLE: bytes = b"ACCESS:DEFAULT_ADMIN_ROLE"
 
+
 def _role_member_key(role: bytes, account: bytes) -> bytes:
     # key = "access:role:" 0x00 role 0x00 account
     return b"access:role:\x00" + role + b"\x00" + account
+
 
 def _role_admin_key(role: bytes) -> bytes:
     # key = "access:role_admin:" 0x00 role
     return b"access:role_admin:\x00" + role
 
+
 # ---- Safe stdlib import wrappers (lazy) --------------------------------------
+
 
 def _std_storage():
     # Imported lazily to play nicely with the VM import guard.
     from stdlib import storage  # type: ignore
+
     return storage
+
 
 def _std_events():
     from stdlib import events  # type: ignore
+
     return events
+
 
 def _std_abi():
     from stdlib import abi  # type: ignore
+
     return abi
 
+
 # ---- Owner helpers -----------------------------------------------------------
+
 
 def get_owner() -> Optional[bytes]:
     """
@@ -130,6 +141,7 @@ def get_owner() -> Optional[bytes]:
     s = _std_storage()
     v = s.get(OWNER_KEY)
     return v if v is not None and len(v) > 0 else None
+
 
 def init_owner(owner: bytes) -> None:
     """
@@ -141,6 +153,7 @@ def init_owner(owner: bytes) -> None:
     if cur is None or len(cur) == 0:
         s.set(OWNER_KEY, owner)
 
+
 def require_owner(caller: bytes) -> None:
     """
     Revert if `caller` is not the current owner.
@@ -149,6 +162,7 @@ def require_owner(caller: bytes) -> None:
     owner = get_owner()
     if owner is None or owner != caller:
         abi.revert(b"ACCESS:NOT_OWNER")
+
 
 def transfer_ownership(caller: bytes, new_owner: bytes) -> None:
     """
@@ -162,6 +176,7 @@ def transfer_ownership(caller: bytes, new_owner: bytes) -> None:
     s.set(OWNER_KEY, new_owner)
     ev.emit(b"OwnershipTransferred", {"previous": prev, "new": new_owner})
 
+
 def renounce_ownership(caller: bytes) -> None:
     """
     Owner-only: clear ownership (leaves contract without an owner).
@@ -173,7 +188,9 @@ def renounce_ownership(caller: bytes) -> None:
     s.set(OWNER_KEY, b"")
     ev.emit(b"OwnershipTransferred", {"previous": prev, "new": b""})
 
+
 # ---- Pausable helpers --------------------------------------------------------
+
 
 def is_paused() -> bool:
     """
@@ -183,6 +200,7 @@ def is_paused() -> bool:
     v = s.get(PAUSED_KEY)
     return v == b"\x01"
 
+
 def require_not_paused() -> None:
     """
     Revert if paused.
@@ -190,6 +208,7 @@ def require_not_paused() -> None:
     abi = _std_abi()
     if is_paused():
         abi.revert(b"ACCESS:PAUSED")
+
 
 def set_paused(caller: bytes, paused: bool) -> None:
     """
@@ -203,14 +222,18 @@ def set_paused(caller: bytes, paused: bool) -> None:
 
     # Authorization: owner or admin role
     owner = get_owner()
-    if not (owner is not None and owner == caller) and not has_role(DEFAULT_ADMIN_ROLE, caller):
+    if not (owner is not None and owner == caller) and not has_role(
+        DEFAULT_ADMIN_ROLE, caller
+    ):
         abi.revert(b"ACCESS:PAUSE_FORBIDDEN")
 
     target = b"\x01" if paused else b""
     s.set(PAUSED_KEY, target)
     ev.emit(b"Paused" if paused else b"Unpaused", {"account": caller})
 
+
 # ---- Role helpers ------------------------------------------------------------
+
 
 def has_role(role: bytes, account: bytes) -> bool:
     """
@@ -220,6 +243,7 @@ def has_role(role: bytes, account: bytes) -> bool:
     k = _role_member_key(role, account)
     return s.get(k) == b"\x01"
 
+
 def require_role(account: bytes, role: bytes) -> None:
     """
     Revert unless `account` is a member of `role`.
@@ -227,6 +251,7 @@ def require_role(account: bytes, role: bytes) -> None:
     abi = _std_abi()
     if not has_role(role, account):
         abi.revert(b"ACCESS:MISSING_ROLE")
+
 
 def get_role_admin(role: bytes) -> bytes:
     """
@@ -236,6 +261,7 @@ def get_role_admin(role: bytes) -> bytes:
     s = _std_storage()
     v = s.get(_role_admin_key(role))
     return v if v is not None and len(v) > 0 else DEFAULT_ADMIN_ROLE
+
 
 def set_role_admin(caller: bytes, role: bytes, admin_role: bytes) -> None:
     """
@@ -247,6 +273,7 @@ def set_role_admin(caller: bytes, role: bytes, admin_role: bytes) -> None:
     if not has_role(current_admin, caller):
         abi.revert(b"ACCESS:NOT_ROLE_ADMIN")
     s.set(_role_admin_key(role), admin_role)
+
 
 def grant_role(caller: bytes, role: bytes, account: bytes) -> None:
     """
@@ -265,6 +292,7 @@ def grant_role(caller: bytes, role: bytes, account: bytes) -> None:
     if s.get(k) != b"\x01":
         s.set(k, b"\x01")
         ev.emit(b"RoleGranted", {"role": role, "account": account, "sender": caller})
+
 
 def revoke_role(caller: bytes, role: bytes, account: bytes) -> None:
     """

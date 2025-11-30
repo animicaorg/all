@@ -29,7 +29,6 @@ from __future__ import annotations
 from enum import IntEnum
 from typing import Dict, Optional
 
-
 # Bump when adding/removing/renaming message ids.
 WIRE_SCHEMA_VERSION: int = 1
 
@@ -38,72 +37,72 @@ class MsgID(IntEnum):
     # ---------------------------
     # 0x00xx — Core control
     # ---------------------------
-    HELLO = 0x0001            # handshake: versions, chainId, alg-policy root, peer-id
-    HELLO_ACK = 0x0002        # optional ack with negotiated params
-    PING = 0x0003             # keepalive
-    PONG = 0x0004             # keepalive reply
-    DISCONNECT = 0x0005       # reason code, optional text
-    ERROR = 0x0006            # structured protocol error
+    HELLO = 0x0001  # handshake: versions, chainId, alg-policy root, peer-id
+    HELLO_ACK = 0x0002  # optional ack with negotiated params
+    PING = 0x0003  # keepalive
+    PONG = 0x0004  # keepalive reply
+    DISCONNECT = 0x0005  # reason code, optional text
+    ERROR = 0x0006  # structured protocol error
 
     # ---------------------------
     # 0x01xx — Peer management
     # ---------------------------
-    IDENTIFY = 0x0100         # request peer's meta (caps, head, addrs)
+    IDENTIFY = 0x0100  # request peer's meta (caps, head, addrs)
     IDENTIFY_RESP = 0x0101
-    GET_PEERS = 0x0102        # ask for known peers (scored)
-    PEERS = 0x0103            # list of peer addresses/ids
-    ADDRESS_ANNOUNCE = 0x0104 # this node's reachable addresses
+    GET_PEERS = 0x0102  # ask for known peers (scored)
+    PEERS = 0x0103  # list of peer addresses/ids
+    ADDRESS_ANNOUNCE = 0x0104  # this node's reachable addresses
 
     # ---------------------------
     # 0x02xx — Inventory (generic)
     # ---------------------------
-    INV = 0x0200              # generic inventory (typed hashes: tx/block/share/blob)
-    GETDATA = 0x0201          # request objects by (type, hash)
-    NOTFOUND = 0x0202         # objects not found for request
+    INV = 0x0200  # generic inventory (typed hashes: tx/block/share/blob)
+    GETDATA = 0x0201  # request objects by (type, hash)
+    NOTFOUND = 0x0202  # objects not found for request
 
     # ---------------------------
     # 0x03xx — Headers & Blocks sync
     # ---------------------------
-    GET_HEADERS = 0x0300      # header locator → sequence of headers
+    GET_HEADERS = 0x0300  # header locator → sequence of headers
     HEADERS = 0x0301
-    GET_BLOCKS = 0x0302       # ask for blocks by hash/height range
+    GET_BLOCKS = 0x0302  # ask for blocks by hash/height range
     BLOCKS = 0x0303
-    BLOCK_ANNOUNCE = 0x0304   # compact announce (hash, height, hints)
+    BLOCK_ANNOUNCE = 0x0304  # compact announce (hash, height, hints)
 
     # ---------------------------
     # 0x04xx — Transactions
     # ---------------------------
-    TX = 0x0400               # full tx (CBOR) relay
+    TX = 0x0400  # full tx (CBOR) relay
     GET_TX = 0x0401
     TX_NOTFOUND = 0x0402
 
     # ---------------------------
     # 0x05xx — Useful-work Shares
     # ---------------------------
-    SHARE = 0x0500            # HashShare / AI / Quantum / Storage / VDF envelopes
+    SHARE = 0x0500  # HashShare / AI / Quantum / Storage / VDF envelopes
     GET_SHARE = 0x0501
-    SHARE_SUMMARY = 0x0502    # compact metrics summary (for preview/scoring)
+    SHARE_SUMMARY = 0x0502  # compact metrics summary (for preview/scoring)
 
     # ---------------------------
     # 0x06xx — Data Availability
     # ---------------------------
-    DA_INV = 0x0600           # announce blob commitments / namespaces
-    DA_GET = 0x0601           # request proof/shards by commitment
-    DA_PROOF = 0x0602         # NMT proof + indices
-    DA_CHUNK = 0x0603         # optional chunk transfer for retrieval
+    DA_INV = 0x0600  # announce blob commitments / namespaces
+    DA_GET = 0x0601  # request proof/shards by commitment
+    DA_PROOF = 0x0602  # NMT proof + indices
+    DA_CHUNK = 0x0603  # optional chunk transfer for retrieval
 
     # ---------------------------
     # 0x07xx — Randomness (beacon)
     # ---------------------------
-    RAND_COMMIT = 0x0700      # commit payloads
-    RAND_REVEAL = 0x0701      # reveals
-    RAND_VDF_PROOF = 0x0702   # VDF proofs for the round
-    RAND_BEACON = 0x0703      # finalized beacon broadcast
+    RAND_COMMIT = 0x0700  # commit payloads
+    RAND_REVEAL = 0x0701  # reveals
+    RAND_VDF_PROOF = 0x0702  # VDF proofs for the round
+    RAND_BEACON = 0x0703  # finalized beacon broadcast
 
     # ---------------------------
     # 0x08xx — Execution hints (optional)
     # ---------------------------
-    RECEIPT_HINT = 0x0800     # compact receipt bloom/logs root announce (optional)
+    RECEIPT_HINT = 0x0800  # compact receipt bloom/logs root announce (optional)
 
     # ---------------------------
     # 0x0Exx — Experimental
@@ -117,7 +116,7 @@ _REQUEST_RESPONSE: Dict[MsgID, MsgID] = {
     MsgID.PING: MsgID.PONG,
     MsgID.IDENTIFY: MsgID.IDENTIFY_RESP,
     MsgID.GET_PEERS: MsgID.PEERS,
-    MsgID.GETDATA: MsgID.NOTFOUND,       # may also be answered by TX/BLOCKS/SHARE/DA_* depending on type
+    MsgID.GETDATA: MsgID.NOTFOUND,  # may also be answered by TX/BLOCKS/SHARE/DA_* depending on type
     MsgID.GET_HEADERS: MsgID.HEADERS,
     MsgID.GET_BLOCKS: MsgID.BLOCKS,
     MsgID.GET_TX: MsgID.TX,

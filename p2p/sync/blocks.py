@@ -5,15 +5,12 @@ import math
 import random
 import time
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional, Protocol, Sequence, Tuple, runtime_checkable
+from typing import (Dict, Iterable, List, Optional, Protocol, Sequence, Tuple,
+                    runtime_checkable)
 
 # Shared knobs & types expected to be exported by p2p/sync/__init__.py (or similar).
 # We import symbol names used in headers.py for consistency.
-from . import (
-    DEFAULT_MAX_IN_FLIGHT,
-    DEFAULT_REQUEST_TIMEOUT_SEC,
-    Hash,
-)
+from . import DEFAULT_MAX_IN_FLIGHT, DEFAULT_REQUEST_TIMEOUT_SEC, Hash
 
 
 @runtime_checkable
@@ -25,6 +22,7 @@ class BlockLike(Protocol):
     Optional (for logs/metrics):
       - number or height: int
     """
+
     hash: bytes
     parent_hash: bytes
 
@@ -35,8 +33,8 @@ class ConsensusView(Protocol):
     Lightweight, fast block checks suitable for the sync hot-path (e.g., schedule/policy roots).
     Full validation (state transition) is out-of-scope for the P2P sync stage.
     """
-    async def precheck_block(self, block: BlockLike) -> bool:
-        ...
+
+    async def precheck_block(self, block: BlockLike) -> bool: ...
 
 
 @runtime_checkable
@@ -45,12 +43,14 @@ class ChainAdapter(Protocol):
     Adapter to the node's persistent storage and fork-choice for block bodies.
     A concrete implementation is provided in p2p/deps.py bridging to core/.
     """
+
     async def has_block(self, h: Hash) -> bool: ...
     async def has_header(self, h: Hash) -> bool: ...
     async def get_head(self) -> Tuple[Hash, int]: ...
     async def put_blocks(self, blocks: Sequence[BlockLike]) -> None:
         """Persist a *contiguous* sequence whose parents are present or included."""
         ...
+
     async def get_block(self, h: Hash) -> Optional[BlockLike]: ...
 
 
@@ -60,18 +60,22 @@ class BlockFetcher(Protocol):
     Transport-agnostic fetcher. Implementations choose peers, perform GETDATA/blocks,
     handle censorship/timeouts, and return the full block.
     """
-    async def get_block(self, h: Hash, timeout_sec: float) -> Optional[BlockLike]:
-        ...
+
+    async def get_block(self, h: Hash, timeout_sec: float) -> Optional[BlockLike]: ...
 
 
 @dataclass(slots=True)
 class BlocksSyncConfig:
-    max_parallel: int = min(16, DEFAULT_MAX_IN_FLIGHT)   # worker concurrency
+    max_parallel: int = min(16, DEFAULT_MAX_IN_FLIGHT)  # worker concurrency
     request_timeout_sec: float = DEFAULT_REQUEST_TIMEOUT_SEC
     max_retries: int = 3
     jitter_frac: float = 0.15
-    idle_backoff_sec: float = 0.25  # sleep if nothing to do (used by run_forever variant)
-    sanity_parent_required: bool = True  # reassembly requires known parent for the first commit
+    idle_backoff_sec: float = (
+        0.25  # sleep if nothing to do (used by run_forever variant)
+    )
+    sanity_parent_required: bool = (
+        True  # reassembly requires known parent for the first commit
+    )
 
 
 @dataclass(slots=True)
@@ -157,7 +161,9 @@ class BlocksDownloader:
                     self.stats.retries += 1
                     # Exponential backoff with jitter, but keep bounded.
                     base = min(6.0, timeout * 1.6)
-                    timeout = base * (1.0 + (random.random() - 0.5) * 2 * self.cfg.jitter_frac)
+                    timeout = base * (
+                        1.0 + (random.random() - 0.5) * 2 * self.cfg.jitter_frac
+                    )
                 except Exception:
                     self.stats.errors += 1
                     self.stats.retries += 1
@@ -317,12 +323,14 @@ class BlocksDownloader:
 
 # Optional utility: a simple "run_forever" consumer that downloads whatever a planner yields.
 
+
 @runtime_checkable
 class BlocksPlanner(Protocol):
     """
     Provides ordered segments of block hashes to download.
     For example, a planner might read the best header chain and emit missing bodies in chunks.
     """
+
     async def next_segment(self) -> Optional[Sequence[Hash]]:
         """
         Returns an *ordered* sequence (oldest→newest) of block hashes to fetch and commit,
@@ -363,7 +371,9 @@ class BlocksSyncService:
                 committed = await self.downloader.download_and_apply(seg)
                 # In a real app, we'd log with structured logger.
                 if committed:
-                    print(f"[blocks] committed {committed} from a segment of {len(seg)}")
+                    print(
+                        f"[blocks] committed {committed} from a segment of {len(seg)}"
+                    )
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001

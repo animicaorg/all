@@ -8,11 +8,11 @@ Version helpers for Animica Studio Services.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
 import os
 import subprocess
 import time
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 # Bump this when making a release; use semver (MAJOR.MINOR.PATCH)
@@ -53,7 +53,16 @@ def git_describe(match: Optional[str] = None) -> Optional[str]:
         Description string or None if git is unavailable or not a repo.
     """
     root = _repo_root()
-    cmd = ["git", "-C", str(root), "describe", "--tags", "--long", "--dirty", "--always"]
+    cmd = [
+        "git",
+        "-C",
+        str(root),
+        "describe",
+        "--tags",
+        "--long",
+        "--dirty",
+        "--always",
+    ]
     if match:
         cmd.extend(["--match", match])
     try:
@@ -132,4 +141,11 @@ def version() -> str:
     return build_version()
 
 
-__all__ = ["__version__", "git_describe", "build_version", "build_meta", "version", "BuildMeta"]
+__all__ = [
+    "__version__",
+    "git_describe",
+    "build_version",
+    "build_meta",
+    "version",
+    "BuildMeta",
+]

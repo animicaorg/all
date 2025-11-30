@@ -50,28 +50,36 @@ except Exception as _e:  # pragma: no cover
 
 # Hex/bytes helpers
 try:
-    from omni_sdk.utils.bytes import to_hex as _to_hex, from_hex as _from_hex  # type: ignore
+    from omni_sdk.utils.bytes import from_hex as _from_hex
+    from omni_sdk.utils.bytes import to_hex as _to_hex  # type: ignore
 except Exception:
+
     def _to_hex(b: bytes) -> str:
         return "0x" + bytes(b).hex()
+
     def _from_hex(s: str) -> bytes:
         s = s[2:] if isinstance(s, str) and s.startswith("0x") else s
         return bytes.fromhex(s)
+
 
 # Errors surface
 try:
     from omni_sdk.errors import RpcError  # type: ignore
 except Exception:  # pragma: no cover
+
     class RpcError(RuntimeError): ...
+
+
 JsonDict = Dict[str, Any]
 
 
 @dataclass(frozen=True)
 class DAEndpoints:
     """Resolved endpoint paths."""
+
     post_blob: str
-    get_blob: str           # format: f"/da/blob/{commitment}"
-    get_proof: str          # format: f"/da/blob/{commitment}/proof"
+    get_blob: str  # format: f"/da/blob/{commitment}"
+    get_proof: str  # format: f"/da/blob/{commitment}/proof"
 
 
 def _detect_base_url(rpc_or_url: Union[str, Any]) -> str:
@@ -90,7 +98,9 @@ def _detect_base_url(rpc_or_url: Union[str, Any]) -> str:
         s = str(rpc_or_url)
         if s.startswith("http://") or s.startswith("https://"):
             return s
-    raise ValueError("DAClient needs a base URL string or an RPC client exposing .base_url")
+    raise ValueError(
+        "DAClient needs a base URL string or an RPC client exposing .base_url"
+    )
 
 
 class DAClient:
@@ -201,7 +211,9 @@ class DAClient:
         except Exception as e:
             raise RpcError("DA post: expected JSON response") from e
 
-        commit = payload.get("commitment") or payload.get("commit") or payload.get("root")
+        commit = (
+            payload.get("commitment") or payload.get("commit") or payload.get("root")
+        )
         receipt = payload.get("receipt") or {}
         if not isinstance(commit, str):
             raise RpcError("DA post: server did not return a commitment string")
@@ -226,7 +238,9 @@ class DAClient:
         url = self._abs(self._ep.get_blob.format(commitment=commit_hex))
         headers = {"Accept": "application/octet-stream"}
         try:
-            resp = self._http.get(url, headers=headers, timeout=self._timeout, stream=True)
+            resp = self._http.get(
+                url, headers=headers, timeout=self._timeout, stream=True
+            )
         except requests.RequestException as e:  # pragma: no cover
             raise RpcError(f"GET {url} failed: {e}") from e
 
@@ -262,7 +276,9 @@ class DAClient:
         commit_hex = commitment if isinstance(commitment, str) else _to_hex(commitment)
         url = self._abs(self._ep.get_proof.format(commitment=commit_hex))
         try:
-            resp = self._http.get(url, headers={"Accept": "application/json"}, timeout=self._timeout)
+            resp = self._http.get(
+                url, headers={"Accept": "application/json"}, timeout=self._timeout
+            )
         except requests.RequestException as e:  # pragma: no cover
             raise RpcError(f"GET {url} failed: {e}") from e
         if resp.status_code // 100 != 2:

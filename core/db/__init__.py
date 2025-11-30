@@ -43,23 +43,18 @@ b'hello'
 
 from typing import Optional, Tuple
 
+from . import sqlite as _sqlite_backend  # noqa: F401
 # Re-exports of common types/aliases
-from .kv import (
-    KV,
-    ReadOnlyKV,
-    Batch,
-    Prefix,
-    iter_prefixed,
-)
+from .kv import KV, Batch, Prefix, ReadOnlyKV, iter_prefixed
 
 # --- Required backend: SQLite -------------------------------------------------
 
-from . import sqlite as _sqlite_backend  # noqa: F401
 
 # --- Optional backend: RocksDB ------------------------------------------------
 
 try:
     from . import rocksdb as _rocks_backend  # type: ignore  # noqa: F401
+
     _HAS_ROCKS = True
 except Exception:
     _HAS_ROCKS = False
@@ -117,7 +112,9 @@ def open_kv(uri: str, create: bool = True) -> KV:
 
     if backend == "rocksdb":
         if not prefer_rocks():
-            raise RuntimeError("RocksDB backend requested but python-rocksdb is not installed.")
+            raise RuntimeError(
+                "RocksDB backend requested but python-rocksdb is not installed."
+            )
         path = spec or "./animica.rocks"
         return _rocks_backend.open_rocks_kv(path, create=create)  # type: ignore
 

@@ -13,7 +13,7 @@
 # - Stores the value under a single key as fixed-length big-endian bytes for
 #   stable hashing and repeatability across executions.
 
-from stdlib import storage, events  # provided by the VM at runtime
+from stdlib import events, storage  # provided by the VM at runtime
 
 _KEY_VALUE = b"counter:value"
 _INT_BYTES = 32  # fixed width for deterministic storage layout

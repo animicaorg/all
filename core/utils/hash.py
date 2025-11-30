@@ -32,7 +32,8 @@ from __future__ import annotations
 import hashlib
 from typing import Iterable, List, Tuple
 
-from .bytes import b as _b, BytesLike
+from .bytes import BytesLike
+from .bytes import b as _b
 
 # Common constants
 ZERO32 = b"\x00" * 32
@@ -44,6 +45,7 @@ ZERO32 = b"\x00" * 32
 # BLAKE3 is optional (pip install blake3). We expose a nice error if missing.
 try:
     import blake3 as _blake3  # type: ignore
+
     _HAS_BLAKE3 = True
 except Exception:  # pragma: no cover - environment-dependent
     _blake3 = None  # type: ignore
@@ -54,6 +56,7 @@ except Exception:  # pragma: no cover - environment-dependent
 _HAS_KECCAK = False
 try:  # pragma: no cover - environment-dependent
     import sha3 as _sha3  # type: ignore  # noqa: F401
+
     _HAS_KECCAK = hasattr(hashlib, "keccak_256")
 except Exception:  # pragma: no cover - environment-dependent
     _HAS_KECCAK = hasattr(hashlib, "keccak_256")
@@ -62,6 +65,7 @@ except Exception:  # pragma: no cover - environment-dependent
 # ------------
 # Hashes (bytes in → bytes out)
 # ------------
+
 
 def sha3_256(data: BytesLike) -> bytes:
     """SHA3-256 digest."""
@@ -76,7 +80,9 @@ def sha3_512(data: BytesLike) -> bytes:
 def blake3(data: BytesLike, *, digest_size: int = 32) -> bytes:
     """BLAKE3 digest (variable output). Requires the `blake3` package."""
     if not _HAS_BLAKE3:
-        raise RuntimeError("blake3() requires the 'blake3' package (pip install blake3)")
+        raise RuntimeError(
+            "blake3() requires the 'blake3' package (pip install blake3)"
+        )
     h = _blake3.blake3(_b(data), digest_size=digest_size)  # type: ignore[attr-defined]
     return h.digest()
 
@@ -84,7 +90,9 @@ def blake3(data: BytesLike, *, digest_size: int = 32) -> bytes:
 def keccak256(data: BytesLike) -> bytes:
     """Keccak-256 digest (Ethereum-style). Requires hashlib.keccak_256 support or pysha3."""
     if not _HAS_KECCAK:
-        raise RuntimeError("keccak256() requires hashlib.keccak_256 (install `pysha3` if missing)")
+        raise RuntimeError(
+            "keccak256() requires hashlib.keccak_256 (install `pysha3` if missing)"
+        )
     return hashlib.keccak_256(_b(data)).digest()  # type: ignore[attr-defined]
 
 
@@ -200,7 +208,7 @@ def merkle_proof(
                     left, right = layer[i], layer[i]
                     nxt.append(_node_hash(left, right, node_hash))
                     if idx == i:
-                        proof.append(right)     # which equals left
+                        proof.append(right)  # which equals left
                         dirs.append(0)
                         idx = len(nxt) - 1
                 else:
@@ -236,7 +244,7 @@ def merkle_verify(
             return False
         if d == 1:  # sibling on LEFT
             h = _node_hash(sib, h, node_hash)
-        else:       # sibling on RIGHT
+        else:  # sibling on RIGHT
             h = _node_hash(h, sib, node_hash)
         idx >>= 1  # for completeness; not needed for computation
     return h == root

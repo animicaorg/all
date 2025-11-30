@@ -25,15 +25,17 @@ from typing import Any, Tuple
 # ---- Optional, defensive re-exports ------------------------------------------------
 
 try:  # types, dataclasses
-    from .types import JobKind, JobRequest, JobReceipt, ResultRecord
+    from .types import JobKind, JobReceipt, JobRequest, ResultRecord
 except Exception:  # pragma: no cover
     JobKind = JobRequest = JobReceipt = ResultRecord = None  # type: ignore[assignment]
 
 try:  # deterministic id
     from .id import derive_task_id
 except Exception:  # pragma: no cover
+
     def derive_task_id(*_a: Any, **_k: Any) -> bytes:  # type: ignore[override]
         raise NotImplementedError("capabilities.jobs.id is not available in this build")
+
 
 try:  # queue
     from .queue import JobQueue, QueueConfig, QueueItem
@@ -43,8 +45,12 @@ except Exception:  # pragma: no cover
 try:  # receipts
     from .receipts import build_receipt
 except Exception:  # pragma: no cover
+
     def build_receipt(*_a: Any, **_k: Any) -> dict:  # type: ignore[override]
-        raise NotImplementedError("capabilities.jobs.receipts is not available in this build")
+        raise NotImplementedError(
+            "capabilities.jobs.receipts is not available in this build"
+        )
+
 
 try:  # results store
     from .result_store import ResultStore
@@ -64,11 +70,15 @@ except Exception:  # pragma: no cover
 try:  # attestation normalization bridge
     from .attest_bridge import normalize_attestation_bundle
 except Exception:  # pragma: no cover
+
     def normalize_attestation_bundle(*_a: Any, **_k: Any) -> dict:  # type: ignore[override]
-        raise NotImplementedError("capabilities.jobs.attest_bridge is not available in this build")
+        raise NotImplementedError(
+            "capabilities.jobs.attest_bridge is not available in this build"
+        )
 
 
 # ---- Convenience bootstrap ----------------------------------------------------------
+
 
 def bootstrap_sqlite(path: str = "capabilities_jobs.db") -> Tuple[Any, Any, Any]:
     """
@@ -82,30 +92,41 @@ def bootstrap_sqlite(path: str = "capabilities_jobs.db") -> Tuple[Any, Any, Any]
         - If a component is not available yet, a clear NotImplementedError is raised.
     """
     if JobQueue is None or ResultStore is None or JobIndex is None:
-        missing = [name for name, ref in [
-            ("JobQueue", JobQueue),
-            ("ResultStore", ResultStore),
-            ("JobIndex", JobIndex),
-        ] if ref is None]
+        missing = [
+            name
+            for name, ref in [
+                ("JobQueue", JobQueue),
+                ("ResultStore", ResultStore),
+                ("JobIndex", JobIndex),
+            ]
+            if ref is None
+        ]
         raise NotImplementedError(f"Missing components: {', '.join(missing)}")
 
-    q = JobQueue.open_sqlite(path)       # type: ignore[attr-defined]
-    rs = ResultStore.open_sqlite(path)   # type: ignore[attr-defined]
-    ix = JobIndex.open_sqlite(path)      # type: ignore[attr-defined]
+    q = JobQueue.open_sqlite(path)  # type: ignore[attr-defined]
+    rs = ResultStore.open_sqlite(path)  # type: ignore[attr-defined]
+    ix = JobIndex.open_sqlite(path)  # type: ignore[attr-defined]
     return q, rs, ix
 
 
 __all__ = [
     # types
-    "JobKind", "JobRequest", "JobReceipt", "ResultRecord",
+    "JobKind",
+    "JobRequest",
+    "JobReceipt",
+    "ResultRecord",
     # id
     "derive_task_id",
     # queue
-    "JobQueue", "QueueConfig", "QueueItem",
+    "JobQueue",
+    "QueueConfig",
+    "QueueItem",
     # receipts
     "build_receipt",
     # stores / indexes / resolver
-    "ResultStore", "JobIndex", "ResultResolver",
+    "ResultStore",
+    "JobIndex",
+    "ResultResolver",
     # attest bridge
     "normalize_attestation_bundle",
     # helpers

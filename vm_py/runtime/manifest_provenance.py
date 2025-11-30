@@ -71,11 +71,7 @@ def is_provenance_hash_valid(manifest: Mapping[str, Any]) -> bool:
     if not isinstance(prov, Mapping):
         return False
 
-    algo = (
-        prov.get("hashAlgo")
-        or prov.get("algo")
-        or _DEFAULT_ALGO
-    )
+    algo = prov.get("hashAlgo") or prov.get("algo") or _DEFAULT_ALGO
     expected = prov.get("hash")
     if not isinstance(expected, str):
         return False

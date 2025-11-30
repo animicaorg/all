@@ -1,17 +1,23 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
+from aicf.errors import (  # InsufficientStake requires kw: required_nano, actual_nano
+    InsufficientStake, RegistryError)
 from aicf.registry.provider import Capability
-from aicf.errors import InsufficientStake, RegistryError  # InsufficientStake requires kw: required_nano, actual_nano
+
 
 @dataclass(frozen=True)
 class _UnstakeReq:
     amount: int
     release_height: int
 
+
 class Staking:
-    def __init__(self, *, min_stake_ai: int, min_stake_quantum: int, unlock_delay_blocks: int) -> None:
+    def __init__(
+        self, *, min_stake_ai: int, min_stake_quantum: int, unlock_delay_blocks: int
+    ) -> None:
         self._min_ai = int(min_stake_ai)
         self._min_q = int(min_stake_quantum)
         self._delay = int(unlock_delay_blocks)
@@ -36,7 +42,9 @@ class Staking:
             return sum(r.amount for r in reqs)
         return sum(r.amount for r in reqs if r.release_height > current_height)
 
-    def effective_stake(self, provider_id: str, *, current_height: int | None = None) -> int:
+    def effective_stake(
+        self, provider_id: str, *, current_height: int | None = None
+    ) -> int:
         total = self.total_stake(provider_id)
         pend = self._pending_sum(provider_id, current_height=current_height)
         eff = max(0, total - pend)
@@ -50,7 +58,13 @@ class Staking:
             return self._min_ai
         return 0
 
-    def ensure_minimum(self, provider_id: str, capability: Capability, *, current_height: int | None = None) -> None:
+    def ensure_minimum(
+        self,
+        provider_id: str,
+        capability: Capability,
+        *,
+        current_height: int | None = None,
+    ) -> None:
         need = self._min_for_cap(capability)
         eff = self.effective_stake(provider_id, current_height=current_height)
         if eff < need:
@@ -58,12 +72,16 @@ class Staking:
             raise InsufficientStake(required_nano=need, actual_nano=eff)
 
     # --- unstake lifecycle ---
-    def request_unstake(self, provider_id: str, *, amount: int, current_height: int) -> dict:
+    def request_unstake(
+        self, provider_id: str, *, amount: int, current_height: int
+    ) -> dict:
         amount = int(amount)
         if amount <= 0 or amount > self.total_stake(provider_id):
             raise RegistryError("invalid unstake amount")
         rel = int(current_height) + self._delay
-        self._pending.setdefault(provider_id, []).append(_UnstakeReq(amount=amount, release_height=rel))
+        self._pending.setdefault(provider_id, []).append(
+            _UnstakeReq(amount=amount, release_height=rel)
+        )
         return {"release_height": rel}
 
     def process_unlocks(self, current_height: int) -> List[_UnstakeReq]:

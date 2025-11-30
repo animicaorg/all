@@ -10,43 +10,30 @@ import time
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Callable, Awaitable, Tuple, List
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
-from .stratum_protocol import (
-    Method,
-    RpcErrorCodes,
-    InvalidRequest,
-    InvalidParams,
-    MethodNotFound,
-    validate_request,
-    make_result,
-    make_error,
-    req_subscribe,
-    res_subscribe,
-    res_subscribe_v1,
-    res_authorize,
-    res_authorize_v1,
-    push_set_difficulty,
-    push_set_difficulty_v1,
-    push_notify,
-    push_notify_v1,
-    req_submit,
-    res_submit,
-    res_submit_v1,
-    encode_lines,
-    decode_lines,
-    encode_lenpref,
-    decode_lenpref,
-)
+from .hash_search import (digest_to_int256, h_micro_from_digest,
+                          micro_threshold_to_target256)
+from .stratum_protocol import (InvalidParams, InvalidRequest, Method,
+                               MethodNotFound, RpcErrorCodes, decode_lenpref,
+                               decode_lines, encode_lenpref, encode_lines,
+                               make_error, make_result, push_notify,
+                               push_notify_v1, push_set_difficulty,
+                               push_set_difficulty_v1, req_submit,
+                               req_subscribe, res_authorize, res_authorize_v1,
+                               res_submit, res_submit_v1, res_subscribe,
+                               res_subscribe_v1, validate_request)
 from .templates import share_target_to_difficulty
-from .hash_search import digest_to_int256, h_micro_from_digest, micro_threshold_to_target256
 
 try:
     # Prefer our shared logger if present
     from core.logging import get_logger  # type: ignore
 except Exception:  # pragma: no cover
+
     def get_logger(name: str) -> logging.Logger:
-        logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+        logging.basicConfig(
+            level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
+        )
         return logging.getLogger(name)
 
 
@@ -59,14 +46,15 @@ log = get_logger("mining.stratum_server")
 # Job & session models
 # --------------------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class StratumJob:
     job_id: str
-    header: JSON           # header template (deterministic, sign-bytes ready)
-    share_target: float    # micro-target difficulty for shares (ratio vs Θ)
-    theta_micro: int       # current Θ in µ-nats
+    header: JSON  # header template (deterministic, sign-bytes ready)
+    share_target: float  # micro-target difficulty for shares (ratio vs Θ)
+    theta_micro: int  # current Θ in µ-nats
     hints: Optional[JSON] = None
-    target: Optional[str] = None      # optional full block target (hex int)
+    target: Optional[str] = None  # optional full block target (hex int)
     sign_bytes: Optional[str] = None  # optional explicit signBytes prefix (0x…)
     height: Optional[int] = None
     created_ts: float = field(default_factory=lambda: time.time())
@@ -103,12 +91,16 @@ class Session:
 # Validator interface (pluggable)
 # --------------------------------------------------------------------------------------
 
+
 class ShareValidator:
     """
     Pluggable share validator. The default implementation performs structural
     checks and defers to optional adapters if available.
     """
-    async def validate(self, job: StratumJob, submit_params: JSON) -> Tuple[bool, Optional[str], bool, int]:
+
+    async def validate(
+        self, job: StratumJob, submit_params: JSON
+    ) -> Tuple[bool, Optional[str], bool, int]:
         """
         Returns: (accepted, reason, is_block, tx_count)
         - accepted: whether the share passes target and sanity checks
@@ -119,8 +111,12 @@ class ShareValidator:
         # Attempt to use deep verifiers if adapters exist
         try:
             # Late import to avoid hard-dep before those files land
-            from mining.adapters.proofs_view import verify_hashshare_envelope  # type: ignore
-            ok, reason, is_block, tx_count = await verify_hashshare_envelope(job.header, submit_params)
+            from mining.adapters.proofs_view import \
+                verify_hashshare_envelope  # type: ignore
+
+            ok, reason, is_block, tx_count = await verify_hashshare_envelope(
+                job.header, submit_params
+            )
             return ok, reason, is_block, tx_count
         except Exception as e:
             # Fallback to lightweight sanity checks
@@ -137,7 +133,11 @@ class ShareValidator:
 
         # Ensure we have signBytes to recompute the digest; if absent, fall back to
         # accepting shares (legacy behavior) so SHA-256 style templates remain usable.
-        sign_hex = job.sign_bytes or job.header.get("signBytes") if isinstance(job.header, dict) else None
+        sign_hex = (
+            job.sign_bytes or job.header.get("signBytes")
+            if isinstance(job.header, dict)
+            else None
+        )
         if not isinstance(sign_hex, str) or not sign_hex.startswith("0x"):
             return True, None, False, 0
 
@@ -167,7 +167,11 @@ class ShareValidator:
             return False, "low difficulty share", False, 0
 
         # Block predicate if a full block target is provided with the job
-        block_target_hex = job.target or job.header.get("target") if isinstance(job.header, dict) else None
+        block_target_hex = (
+            job.target or job.header.get("target")
+            if isinstance(job.header, dict)
+            else None
+        )
         is_block = False
         if isinstance(block_target_hex, str) and block_target_hex.startswith("0x"):
             try:
@@ -182,6 +186,7 @@ class ShareValidator:
 # --------------------------------------------------------------------------------------
 # Stratum Server
 # --------------------------------------------------------------------------------------
+
 
 class StratumServer:
     """
@@ -214,7 +219,10 @@ class StratumServer:
         keepalive_secs: float = 45.0,
         validator: Optional[ShareValidator] = None,
         submit_hook: Optional[
-            Callable[[Session, StratumJob, JSON, bool, Optional[str], bool, int], Awaitable[None]]
+            Callable[
+                [Session, StratumJob, JSON, bool, Optional[str], bool, int],
+                Awaitable[None],
+            ]
         ] = None,
     ) -> None:
         self._host = host
@@ -242,7 +250,9 @@ class StratumServer:
     # ---------------- lifecycle ----------------
 
     async def start(self) -> None:
-        self._server = await asyncio.start_server(self._handle_client, self._host, self._port)
+        self._server = await asyncio.start_server(
+            self._handle_client, self._host, self._port
+        )
         sockets = ", ".join(str(s.getsockname()) for s in self._server.sockets or [])
         log.info(f"[Stratum] listening on {sockets}")
 
@@ -277,7 +287,9 @@ class StratumServer:
             len(self._sessions),
         )
 
-    async def set_global_difficulty(self, share_target: float, theta_micro: Optional[int] = None) -> None:
+    async def set_global_difficulty(
+        self, share_target: float, theta_micro: Optional[int] = None
+    ) -> None:
         if theta_micro is None:
             theta_micro = self._default_theta_micro
         difficulty = share_target_to_difficulty(theta_micro, share_target)
@@ -290,7 +302,9 @@ class StratumServer:
                 await self._send(s, push_set_difficulty_v1(difficulty))
             else:
                 await self._send(s, msg)
-        log.info(f"[Stratum] set difficulty shareTarget={share_target} θμ={theta_micro} diff={difficulty}")
+        log.info(
+            f"[Stratum] set difficulty shareTarget={share_target} θμ={theta_micro} diff={difficulty}"
+        )
 
     async def _broadcast_job(self, job: StratumJob, clean_jobs: bool) -> None:
         """Send a job to each session in the format it expects."""
@@ -343,7 +357,12 @@ class StratumServer:
         if isinstance(version, int):
             version = f"{version:08x}"
         nbits = header.get("nbits") or header.get("bits") or ""
-        ntime = header.get("timestamp") or header.get("ntime") or header.get("time") or int(time.time())
+        ntime = (
+            header.get("timestamp")
+            or header.get("ntime")
+            or header.get("time")
+            or int(time.time())
+        )
         if isinstance(ntime, int):
             ntime = f"{ntime:08x}"
         return push_notify_v1(
@@ -360,7 +379,9 @@ class StratumServer:
 
     # ---------------- internal helpers ----------------
 
-    def _alloc_session(self, writer: asyncio.StreamWriter, framing: str = "lines") -> Session:
+    def _alloc_session(
+        self, writer: asyncio.StreamWriter, framing: str = "lines"
+    ) -> Session:
         sid = uuid.uuid4().hex
         # 4 bytes of extranonce1 is common; we allow 8 hex chars (4 bytes)
         extranonce1 = "0x" + secrets.token_hex(4)
@@ -372,7 +393,9 @@ class StratumServer:
             extranonce2_size=self._extranonce2_size,
             share_target=self._default_share_target,
             theta_micro=self._default_theta_micro,
-            current_difficulty=share_target_to_difficulty(self._default_theta_micro, self._default_share_target),
+            current_difficulty=share_target_to_difficulty(
+                self._default_theta_micro, self._default_share_target
+            ),
         )
         self._sessions[sid] = s
         return s
@@ -397,7 +420,12 @@ class StratumServer:
         await session.writer.drain()
 
     async def _push_difficulty(
-        self, session: Session, share_target: float, theta_micro: int, *, log_level: int = logging.INFO
+        self,
+        session: Session,
+        share_target: float,
+        theta_micro: int,
+        *,
+        log_level: int = logging.INFO,
     ) -> None:
         """Send a set_difficulty notification for the given session."""
         session.share_target = share_target
@@ -405,7 +433,11 @@ class StratumServer:
         difficulty = share_target_to_difficulty(theta_micro, share_target)
         session.current_difficulty = difficulty if session.is_v1 else share_target
         session.touch()
-        msg = push_set_difficulty_v1(difficulty) if session.is_v1 else push_set_difficulty(share_target, theta_micro)
+        msg = (
+            push_set_difficulty_v1(difficulty)
+            if session.is_v1
+            else push_set_difficulty(share_target, theta_micro)
+        )
         await self._send(session, msg)
         log.log(
             log_level,
@@ -422,7 +454,12 @@ class StratumServer:
             idle = time.time() - session.last_seen
             if idle >= interval:
                 try:
-                    await self._push_difficulty(session, session.share_target, session.theta_micro, log_level=logging.DEBUG)
+                    await self._push_difficulty(
+                        session,
+                        session.share_target,
+                        session.theta_micro,
+                        log_level=logging.DEBUG,
+                    )
                 except Exception as e:  # pragma: no cover - best-effort keepalive
                     log.warning(
                         f"[Stratum] keepalive failed for session={session.session_id} worker={session.worker}: {e}"
@@ -431,7 +468,9 @@ class StratumServer:
 
     # ---------------- connection handler ----------------
 
-    async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def _handle_client(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         peer = writer.get_extra_info("peername")
         sock = writer.get_extra_info("socket")
         try:
@@ -465,7 +504,10 @@ class StratumServer:
                         decoded = decode_lenpref(bytearray(chunk))
                     except Exception as e:
                         log.warning(f"[Stratum] decode lenpref error from {peer}: {e}")
-                        await self._send(session, make_error(None, RpcErrorCodes.INVALID_REQUEST, str(e)))
+                        await self._send(
+                            session,
+                            make_error(None, RpcErrorCodes.INVALID_REQUEST, str(e)),
+                        )
                         continue
                     for obj in decoded:
                         await self._process_message(session, obj)
@@ -475,7 +517,9 @@ class StratumServer:
                         decoded = decode_lines(buf)
                     except Exception as e:
                         log.warning(f"[Stratum] decode line error from {peer}: {e}")
-                        await self._send(session, make_error(None, RpcErrorCodes.PARSE_ERROR, str(e)))
+                        await self._send(
+                            session, make_error(None, RpcErrorCodes.PARSE_ERROR, str(e))
+                        )
                         continue
                     for obj in decoded:
                         await self._process_message(session, obj)
@@ -496,7 +540,9 @@ class StratumServer:
                     await hb_task
             self._heartbeats.pop(session.session_id, None)
             self._conn_tasks.pop(task, None)
-            log.info(f"[Stratum] client disconnected {peer} session={session.session_id}")
+            log.info(
+                f"[Stratum] client disconnected {peer} session={session.session_id}"
+            )
 
     # ---------------- JSON-RPC routing ----------------
 
@@ -513,12 +559,20 @@ class StratumServer:
                 extranonce1 = session.extranonce1
                 if extranonce1.startswith("0x"):
                     extranonce1 = extranonce1[2:]
-                reply = res_subscribe_v1(id_val, extranonce1=extranonce1, extranonce2_size=session.extranonce2_size)
+                reply = res_subscribe_v1(
+                    id_val,
+                    extranonce1=extranonce1,
+                    extranonce2_size=session.extranonce2_size,
+                )
                 await self._send(session, reply)
-                await self._push_difficulty(session, session.share_target, session.theta_micro)
+                await self._push_difficulty(
+                    session, session.share_target, session.theta_micro
+                )
                 if self._current_job_id:
                     job = self._jobs[self._current_job_id]
-                    await self._send(session, self._build_v1_notify(job, clean_jobs=True))
+                    await self._send(
+                        session, self._build_v1_notify(job, clean_jobs=True)
+                    )
                 return
             if method_name == Method.AUTHORIZE.value:
                 session.is_v1 = True
@@ -542,11 +596,19 @@ class StratumServer:
                     "worker": mapped.get("worker") or "",
                     "jobId": mapped.get("jobId") or "",
                     "extranonce2": mapped.get("extranonce2") or "",
-                    "hashshare": {"nonce": nonce_hex, "body": {"ntime": mapped.get("ntime")}},
+                    "hashshare": {
+                        "nonce": nonce_hex,
+                        "body": {"ntime": mapped.get("ntime")},
+                    },
                     "ntime": mapped.get("ntime"),
                     "nonce": mapped.get("nonce"),
                 }
-                obj = {"jsonrpc": "2.0", "id": obj.get("id"), "method": method_name, "params": mapped_params}
+                obj = {
+                    "jsonrpc": "2.0",
+                    "id": obj.get("id"),
+                    "method": method_name,
+                    "params": mapped_params,
+                }
 
         try:
             method, id_val, params = validate_request(obj)
@@ -564,7 +626,9 @@ class StratumServer:
                 framing = "lines"
             session.framing = framing
             agent = params.get("agent", "unknown")
-            log.info(f"[Stratum] subscribe agent={agent} framing={framing} session={session.session_id}")
+            log.info(
+                f"[Stratum] subscribe agent={agent} framing={framing} session={session.session_id}"
+            )
             reply = res_subscribe(
                 id_val,
                 session_id=session.session_id,
@@ -575,31 +639,59 @@ class StratumServer:
             await self._send(session, reply)
 
             # Push current difficulty & job if any
-            await self._push_difficulty(session, session.share_target, session.theta_micro)
+            await self._push_difficulty(
+                session, session.share_target, session.theta_micro
+            )
             if self._current_job_id:
                 job = self._jobs[self._current_job_id]
-                await self._send(session, push_notify(job.job_id, job.header, job.share_target, True, job.hints or {}))
+                await self._send(
+                    session,
+                    push_notify(
+                        job.job_id, job.header, job.share_target, True, job.hints or {}
+                    ),
+                )
 
         elif method == Method.AUTHORIZE:
             session.worker = params.get("worker")
             session.address = params.get("address")
-            session.authorized = True  # Add real checks here if desired (e.g., bech32 format)
+            session.authorized = (
+                True  # Add real checks here if desired (e.g., bech32 format)
+            )
             await self._send(session, res_authorize(id_val, True))
-            log.info(f"[Stratum] authorize worker={session.worker} address={session.address} session={session.session_id}")
+            log.info(
+                f"[Stratum] authorize worker={session.worker} address={session.address} session={session.session_id}"
+            )
 
         elif method == Method.SET_DIFFICULTY:
             # Clients should not be sending this; treat as request to fetch current settings
-            await self._send(session, make_result(id_val, {"shareTarget": session.share_target, "thetaMicro": session.theta_micro}))
+            await self._send(
+                session,
+                make_result(
+                    id_val,
+                    {
+                        "shareTarget": session.share_target,
+                        "thetaMicro": session.theta_micro,
+                    },
+                ),
+            )
 
         elif method == Method.NOTIFY:
             # Server-only method; ignore
-            await self._send(session, make_error(id_val, RpcErrorCodes.INVALID_REQUEST, "notify is server-push only"))
+            await self._send(
+                session,
+                make_error(
+                    id_val, RpcErrorCodes.INVALID_REQUEST, "notify is server-push only"
+                ),
+            )
 
         elif method == Method.SUBMIT:
             # Validate job and share via validator
             job_id = params.get("jobId")
             if job_id not in self._jobs:
-                await self._send(session, make_error(id_val, RpcErrorCodes.STALE_JOB, "unknown or stale job"))
+                await self._send(
+                    session,
+                    make_error(id_val, RpcErrorCodes.STALE_JOB, "unknown or stale job"),
+                )
                 return
             job = self._jobs[job_id]
             ok, reason, is_block, tx_count = await self._validator.validate(job, params)
@@ -611,14 +703,23 @@ class StratumServer:
                 session.shares_rejected += 1
             session.last_share_at = time.time()
             session.last_share_status = "accepted" if ok else "rejected"
-            share_ratio = float(params.get("d_ratio") or params.get("shareTarget") or job.share_target)
+            share_ratio = float(
+                params.get("d_ratio") or params.get("shareTarget") or job.share_target
+            )
             session.current_difficulty = (
-                share_target_to_difficulty(session.theta_micro, share_ratio) if session.is_v1 else share_ratio
+                share_target_to_difficulty(session.theta_micro, share_ratio)
+                if session.is_v1
+                else share_ratio
             )
             if session.is_v1:
                 await self._send(session, res_submit_v1(id_val, ok, reason=reason))
             else:
-                await self._send(session, res_submit(id_val, ok, reason=reason, is_block=is_block, tx_count=tx_count))
+                await self._send(
+                    session,
+                    res_submit(
+                        id_val, ok, reason=reason, is_block=is_block, tx_count=tx_count
+                    ),
+                )
             level = logging.INFO if ok else logging.WARNING
             log.log(
                 level,
@@ -631,13 +732,21 @@ class StratumServer:
                 session.current_difficulty,
             )
             if self._submit_hook is not None:
-                await self._submit_hook(session, job, params, ok, reason, is_block, tx_count)
+                await self._submit_hook(
+                    session, job, params, ok, reason, is_block, tx_count
+                )
 
         elif method == Method.GET_VERSION:
-            await self._send(session, make_result(id_val, {"name": "animica-stratum", "version": "0.1.0"}))
+            await self._send(
+                session,
+                make_result(id_val, {"name": "animica-stratum", "version": "0.1.0"}),
+            )
 
         else:  # pragma: no cover - exhaustive enum
-            await self._send(session, make_error(id_val, RpcErrorCodes.METHOD_NOT_FOUND, "unknown method"))
+            await self._send(
+                session,
+                make_error(id_val, RpcErrorCodes.METHOD_NOT_FOUND, "unknown method"),
+            )
 
     # ---------------- diagnostics ----------------
 
@@ -673,7 +782,10 @@ class StratumServer:
     def set_submit_hook(
         self,
         hook: Optional[
-            Callable[[Session, StratumJob, JSON, bool, Optional[str], bool, int], Awaitable[None]]
+            Callable[
+                [Session, StratumJob, JSON, bool, Optional[str], bool, int],
+                Awaitable[None],
+            ]
         ],
     ) -> None:
         self._submit_hook = hook
@@ -683,21 +795,22 @@ class StratumServer:
 # Small demo runner (manual testing)
 # --------------------------------------------------------------------------------------
 
+
 async def _demo() -> None:  # pragma: no cover
     server = StratumServer()
     await server.start()
 
     # Build a toy job if a template helper exists
     header = {
-        "parentHash": "0x" + "00"*32,
+        "parentHash": "0x" + "00" * 32,
         "number": 1,
         "thetaMicro": 800000,
-        "mixSeed": "0x" + "11"*32,
+        "mixSeed": "0x" + "11" * 32,
         "roots": {
-            "stateRoot": "0x" + "22"*32,
-            "txsRoot": "0x" + "33"*32,
-            "proofsRoot": "0x" + "44"*32,
-            "daRoot": "0x" + "55"*32,
+            "stateRoot": "0x" + "22" * 32,
+            "txsRoot": "0x" + "33" * 32,
+            "proofsRoot": "0x" + "44" * 32,
+            "daRoot": "0x" + "55" * 32,
         },
         "chainId": 1,
         "nonceDomain": "animica.hashshare.v1",
@@ -707,7 +820,10 @@ async def _demo() -> None:  # pragma: no cover
         header=header,
         share_target=0.02,
         theta_micro=800_000,
-        hints={"mixSeed": header["mixSeed"], "proofCaps": {"ai": True, "quantum": True, "storage": True, "vdf": True}},
+        hints={
+            "mixSeed": header["mixSeed"],
+            "proofCaps": {"ai": True, "quantum": True, "storage": True, "vdf": True},
+        },
     )
     await server.publish_job(job)
 

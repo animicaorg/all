@@ -21,11 +21,11 @@ try:
 except Exception:  # pragma: no cover
     __version__ = "0.0.0+unknown"
 
+from .decoding import *  # noqa: F401,F403
+from .encoding import *  # noqa: F401,F403
 # Re-export the primary public API of submodules.
 # (Submodules should define their own __all__.)
-from .types import *        # noqa: F401,F403
-from .encoding import *     # noqa: F401,F403
-from .decoding import *     # noqa: F401,F403
+from .types import *  # noqa: F401,F403
 
 # Compose a stable __all__ from submodule exports if present.
 _all_types: tuple[str, ...]
@@ -47,6 +47,8 @@ try:
 except Exception:  # pragma: no cover
     _all_decoding = tuple()
 
-__all__ = tuple(dict.fromkeys(  # preserve order, dedupe
-    (*_all_types, *_all_encoding, *_all_decoding, "__version__")
-))
+__all__ = tuple(
+    dict.fromkeys(  # preserve order, dedupe
+        (*_all_types, *_all_encoding, *_all_decoding, "__version__")
+    )
+)

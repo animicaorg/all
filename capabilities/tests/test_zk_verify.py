@@ -1,11 +1,12 @@
+import binascii
 import importlib
 import json
 from typing import Any, Optional, Tuple
-import binascii
+
 import pytest
 
-
 # ---------- tiny import/attr helpers ----------
+
 
 def _import(name: str):
     try:
@@ -25,6 +26,7 @@ def _get_attr(obj: Any, names: list[str]):
 
 
 # ---------- zk.verify dispatcher with flexible inputs ----------
+
 
 def _encode_hex(b: bytes) -> str:
     return "0x" + binascii.hexlify(b).decode("ascii")
@@ -75,7 +77,9 @@ def _coerce_result(res: Any) -> Tuple[bool, Optional[int]]:
         units = int(units_val) if units_val is not None else None
         return ok, units
     ok = bool(getattr(res, "ok", getattr(res, "valid", False)))
-    units_attr = getattr(res, "units", getattr(res, "cost_units", getattr(res, "cost", None)))
+    units_attr = getattr(
+        res, "units", getattr(res, "cost_units", getattr(res, "cost", None))
+    )
     units = int(units_attr) if units_attr is not None else None
     return ok, units
 
@@ -131,11 +135,12 @@ def _zk_verify(circuit: Any, proof: Any, public: Any) -> Tuple[bool, Optional[in
 
 # ---------- sample "fixtures" (backend-agnostic & stub-friendly) ----------
 
+
 def _sample_inputs():
     # Keep these intentionally tiny and generic so stub verifiers can accept them.
     circuit = {
         "name": "trivial_and",
-        "vk_hash": "deadbeef",     # many stubs just check presence of keys
+        "vk_hash": "deadbeef",  # many stubs just check presence of keys
         "n_constraints": 2,
     }
     public = b"public-inputs-\x00"
@@ -147,12 +152,15 @@ def _sample_inputs():
 
 # ========================= TESTS =========================
 
+
 def test_zk_verify_returns_bool_and_units():
     circuit, public, proof_good, _ = _sample_inputs()
     ok, units = _zk_verify(circuit, proof_good, public)
     assert isinstance(ok, bool), "zk.verify did not return a boolean flag"
     if units is not None:
-        assert isinstance(units, int) and units >= 0, "units should be a non-negative integer"
+        assert (
+            isinstance(units, int) and units >= 0
+        ), "units should be a non-negative integer"
 
 
 def test_zk_verify_detects_mutation_or_rejects():
@@ -171,7 +179,9 @@ def test_zk_verify_detects_mutation_or_rejects():
     assert isinstance(ok1, bool) and isinstance(ok2, bool)
     # Mutated proof should not be strictly "better"
     if ok1 is True and ok2 is True:
-        pytest.xfail("zk verifier accepted both original and mutated proof (stub too permissive)")
+        pytest.xfail(
+            "zk verifier accepted both original and mutated proof (stub too permissive)"
+        )
     if ok2 and not ok1:
         pytest.fail("Mutated proof unexpectedly accepted while original was rejected")
 

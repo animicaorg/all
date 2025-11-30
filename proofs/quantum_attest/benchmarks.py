@@ -20,32 +20,33 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, asdict
-from typing import Dict, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Tuple
-
+from dataclasses import asdict, dataclass
+from typing import (Dict, Iterable, List, Mapping, NamedTuple, Optional,
+                    Sequence, Tuple)
 
 # ---------- Device & pricing models ----------
+
 
 @dataclass(frozen=True)
 class DeviceProfile:
     # Error rates (per gate / per qubit):
-    eps_1q: float              # 1-qubit gate error (stochastic)
-    eps_2q: float              # 2-qubit gate error
-    eps_readout: float         # per-qubit readout error
+    eps_1q: float  # 1-qubit gate error (stochastic)
+    eps_2q: float  # 2-qubit gate error
+    eps_readout: float  # per-qubit readout error
 
     # Characteristic times (seconds):
-    t_1q: float                # 1-qubit gate duration
-    t_2q: float                # 2-qubit gate duration
-    t_readout: float           # readout duration (per shot, amortized)
+    t_1q: float  # 1-qubit gate duration
+    t_2q: float  # 2-qubit gate duration
+    t_readout: float  # readout duration (per shot, amortized)
 
     # Coherence (seconds):
-    T2: float                  # effective dephasing time (worst-case across qubits)
+    T2: float  # effective dephasing time (worst-case across qubits)
 
     # Parallelism:
-    parallel_shots: int        # shots that can be pipelined/parallelized effectively
+    parallel_shots: int  # shots that can be pipelined/parallelized effectively
 
     # Metadata:
-    qpu_class: str             # e.g., "superconducting_nisq_v1", "ion_trap_v1", "neutral_atom_v1"
+    qpu_class: str  # e.g., "superconducting_nisq_v1", "ion_trap_v1", "neutral_atom_v1"
 
 
 @dataclass(frozen=True)
@@ -57,12 +58,14 @@ class UnitPricing:
     u_per_second: float = 1.0e-3
 
     # Quality shaping:
-    quality_gamma: float = 1.0          # multiply units by quality^gamma (quality in [q_floor,1])
-    quality_floor: float = 0.05         # never below this multiplicative floor
+    quality_gamma: float = (
+        1.0  # multiply units by quality^gamma (quality in [q_floor,1])
+    )
+    quality_floor: float = 0.05  # never below this multiplicative floor
 
     # Caps / bounds for safety:
-    max_units_per_job: float = 1e6      # hard cap to prevent pathological inputs
-    max_runtime_seconds: float = 1e6    # sanity guard
+    max_units_per_job: float = 1e6  # hard cap to prevent pathological inputs
+    max_runtime_seconds: float = 1e6  # sanity guard
 
 
 class GateCounts(NamedTuple):
@@ -75,16 +78,16 @@ class BenchmarkInput:
     width: int
     depth: int
     shots: int
-    density_1q: float = 1.0          # ~ #1q gates per qubit per depth layer
-    density_2q: float = 0.5          # ~ fraction of (width-1) entangling pairs per layer
+    density_1q: float = 1.0  # ~ #1q gates per qubit per depth layer
+    density_2q: float = 0.5  # ~ fraction of (width-1) entangling pairs per layer
 
 
 @dataclass(frozen=True)
 class QualityBreakdown:
-    p_gates: float        # product of (1-eps) across 1q & 2q gates
-    p_readout: float      # (1-e_ro)^width
-    p_coherence: float    # exp(-t_circuit / T2)
-    p_shot: float         # per-shot correctness = p_gates * p_readout * p_coherence
+    p_gates: float  # product of (1-eps) across 1q & 2q gates
+    p_readout: float  # (1-e_ro)^width
+    p_coherence: float  # exp(-t_circuit / T2)
+    p_shot: float  # per-shot correctness = p_gates * p_readout * p_coherence
 
 
 @dataclass(frozen=True)
@@ -125,6 +128,7 @@ class BenchmarkResult:
 
 # ---------- Reference device profiles (illustrative) ----------
 
+
 def reference_profiles() -> Mapping[str, DeviceProfile]:
     """
     Nominal reference profiles. Numbers are illustrative & conservative.
@@ -144,24 +148,43 @@ def reference_profiles() -> Mapping[str, DeviceProfile]:
     """
     return {
         "superconducting_nisq_v1": DeviceProfile(
-            eps_1q=1.0e-4, eps_2q=1.2e-3, eps_readout=2.0e-2,
-            t_1q=2.0e-8, t_2q=2.0e-7, t_readout=4.0e-7,
-            T2=5.0e-5, parallel_shots=64, qpu_class="superconducting_nisq_v1",
+            eps_1q=1.0e-4,
+            eps_2q=1.2e-3,
+            eps_readout=2.0e-2,
+            t_1q=2.0e-8,
+            t_2q=2.0e-7,
+            t_readout=4.0e-7,
+            T2=5.0e-5,
+            parallel_shots=64,
+            qpu_class="superconducting_nisq_v1",
         ),
         "ion_trap_v1": DeviceProfile(
-            eps_1q=5.0e-5, eps_2q=2.0e-3, eps_readout=5.0e-3,
-            t_1q=1.0e-5, t_2q=2.0e-4, t_readout=4.0e-4,
-            T2=1.0, parallel_shots=8, qpu_class="ion_trap_v1",
+            eps_1q=5.0e-5,
+            eps_2q=2.0e-3,
+            eps_readout=5.0e-3,
+            t_1q=1.0e-5,
+            t_2q=2.0e-4,
+            t_readout=4.0e-4,
+            T2=1.0,
+            parallel_shots=8,
+            qpu_class="ion_trap_v1",
         ),
         "neutral_atom_v1": DeviceProfile(
-            eps_1q=3.0e-4, eps_2q=3.0e-3, eps_readout=3.0e-2,
-            t_1q=1.0e-6, t_2q=5.0e-6, t_readout=2.0e-4,
-            T2=1.0e-4, parallel_shots=16, qpu_class="neutral_atom_v1",
+            eps_1q=3.0e-4,
+            eps_2q=3.0e-3,
+            eps_readout=3.0e-2,
+            t_1q=1.0e-6,
+            t_2q=5.0e-6,
+            t_readout=2.0e-4,
+            T2=1.0e-4,
+            parallel_shots=16,
+            qpu_class="neutral_atom_v1",
         ),
     }
 
 
 # ---------- Counting, quality, runtime ----------
+
 
 def count_gates(inp: BenchmarkInput) -> GateCounts:
     """Heuristic gate counts for a generic circuit layerization."""
@@ -170,11 +193,15 @@ def count_gates(inp: BenchmarkInput) -> GateCounts:
 
     n_1q = int(math.ceil(inp.width * inp.depth * max(0.0, float(inp.density_1q))))
     # 2q: approximate (width-1) possible pairwise interactions per layer, scaled by density.
-    n_2q = int(math.ceil(max(0, inp.width - 1) * inp.depth * max(0.0, float(inp.density_2q))))
+    n_2q = int(
+        math.ceil(max(0, inp.width - 1) * inp.depth * max(0.0, float(inp.density_2q)))
+    )
     return GateCounts(n_1q=n_1q, n_2q=n_2q)
 
 
-def quality_breakdown(counts: GateCounts, inp: BenchmarkInput, dev: DeviceProfile) -> QualityBreakdown:
+def quality_breakdown(
+    counts: GateCounts, inp: BenchmarkInput, dev: DeviceProfile
+) -> QualityBreakdown:
     # Independent-error model (upper bound on correctness)
     p_1q = (1.0 - dev.eps_1q) ** counts.n_1q
     p_2q = (1.0 - dev.eps_2q) ** counts.n_2q
@@ -186,7 +213,9 @@ def quality_breakdown(counts: GateCounts, inp: BenchmarkInput, dev: DeviceProfil
     p_coh = math.exp(-t_circ / max(1e-15, dev.T2))  # survival factor
 
     p_shot = max(0.0, min(1.0, p_1q * p_2q * p_readout * p_coh))
-    return QualityBreakdown(p_gates=p_1q * p_2q, p_readout=p_readout, p_coherence=p_coh, p_shot=p_shot)
+    return QualityBreakdown(
+        p_gates=p_1q * p_2q, p_readout=p_readout, p_coherence=p_coh, p_shot=p_shot
+    )
 
 
 def runtime_breakdown(inp: BenchmarkInput, dev: DeviceProfile) -> RuntimeBreakdown:
@@ -194,17 +223,22 @@ def runtime_breakdown(inp: BenchmarkInput, dev: DeviceProfile) -> RuntimeBreakdo
     sec_per_shot = inp.depth * t_layer + dev.t_readout
     batches = int(math.ceil(inp.shots / max(1, dev.parallel_shots)))
     total = sec_per_shot * batches
-    total = min(total, dev.T2 * 0.0 + total)  # just to keep structure; no extra T2 constraint here
-    return RuntimeBreakdown(seconds_per_shot=sec_per_shot, total_seconds=total, parallel_batches=batches)
+    total = min(
+        total, dev.T2 * 0.0 + total
+    )  # just to keep structure; no extra T2 constraint here
+    return RuntimeBreakdown(
+        seconds_per_shot=sec_per_shot, total_seconds=total, parallel_batches=batches
+    )
 
 
 # ---------- Units ----------
+
 
 def _shape_quality(q: float, pricing: UnitPricing) -> float:
     q = max(pricing.quality_floor, min(1.0, q))
     if pricing.quality_gamma == 1.0:
         return q
-    return q ** pricing.quality_gamma
+    return q**pricing.quality_gamma
 
 
 def estimate_units(
@@ -234,10 +268,13 @@ def estimate_units(
         adjusted_units=adj,
     )
 
-    return BenchmarkResult(profile=dev, inp=inp, counts=counts, quality=qual, runtime=run, units=units)
+    return BenchmarkResult(
+        profile=dev, inp=inp, counts=counts, quality=qual, runtime=run, units=units
+    )
 
 
 # ---------- Convenience presets ----------
+
 
 def estimate_with_profile(
     width: int,
@@ -251,12 +288,18 @@ def estimate_with_profile(
     dev = reference_profiles().get(profile_key)
     if dev is None:
         raise KeyError(f"unknown profile: {profile_key}")
-    inp = BenchmarkInput(width=width, depth=depth, shots=shots,
-                         density_1q=density_1q, density_2q=density_2q)
+    inp = BenchmarkInput(
+        width=width,
+        depth=depth,
+        shots=shots,
+        density_1q=density_1q,
+        density_2q=density_2q,
+    )
     return estimate_units(inp, dev, pricing)
 
 
 # ---------- Tiny ridge-regression calibrator (optional) ----------
+
 
 @dataclass(frozen=True)
 class CalibSample:
@@ -264,8 +307,8 @@ class CalibSample:
     width: int
     depth: int
     shots: int
-    measured_seconds: float     # observed wall-clock (or vendor-reported)
-    measured_units: float       # desired target units for this job (e.g., payouts baseline)
+    measured_seconds: float  # observed wall-clock (or vendor-reported)
+    measured_units: float  # desired target units for this job (e.g., payouts baseline)
 
 
 def _gate_counts_from_scalar(w: int, d: int) -> GateCounts:
@@ -287,12 +330,17 @@ def fit_pricing_from_samples(
 
     # Build normal equations X^T X β = X^T y
     # β = [u1, u2, us, ut]
-    XtX = [[0.0]*4 for _ in range(4)]
-    Xty = [0.0]*4
+    XtX = [[0.0] * 4 for _ in range(4)]
+    Xty = [0.0] * 4
 
     for s in samples:
         counts = _gate_counts_from_scalar(s.width, s.depth)
-        x = [float(counts.n_1q), float(counts.n_2q), float(s.shots), float(max(0.0, s.measured_seconds))]
+        x = [
+            float(counts.n_1q),
+            float(counts.n_2q),
+            float(s.shots),
+            float(max(0.0, s.measured_seconds)),
+        ]
         y = float(max(0.0, s.measured_units))
         # XtX += x x^T ; Xty += x*y
         for i in range(4):
@@ -328,7 +376,7 @@ def _solve_4x4(A: List[List[float]], b: List[float]) -> List[float]:
         # Find pivot
         piv = col
         piv_val = abs(M[piv][col])
-        for r in range(col+1, n):
+        for r in range(col + 1, n):
             v = abs(M[r][col])
             if v > piv_val:
                 piv, piv_val = r, v
@@ -341,7 +389,7 @@ def _solve_4x4(A: List[List[float]], b: List[float]) -> List[float]:
         # Normalize pivot row
         pv = M[col][col]
         inv = 1.0 / pv
-        for c in range(col, n+1):
+        for c in range(col, n + 1):
             M[col][c] *= inv
         # Eliminate other rows
         for r in range(n):
@@ -350,13 +398,14 @@ def _solve_4x4(A: List[List[float]], b: List[float]) -> List[float]:
             factor = M[r][col]
             if factor == 0.0:
                 continue
-            for c in range(col, n+1):
+            for c in range(col, n + 1):
                 M[r][c] -= factor * M[col][c]
     # Extract solution
     return [M[i][n] for i in range(n)]
 
 
 # ---------- Pretty summary ----------
+
 
 def format_result(res: BenchmarkResult) -> str:
     c = res.counts

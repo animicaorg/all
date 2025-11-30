@@ -58,10 +58,10 @@ weights:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Dict, Mapping, Optional, Set, Any, Tuple
-import json
 import hashlib
+import json
+from dataclasses import dataclass, field
+from typing import Any, Dict, Mapping, Optional, Set, Tuple
 
 try:
     import yaml  # PyYAML
@@ -78,18 +78,19 @@ except Exception:  # pragma: no cover - lightweight fallback for test environmen
     yaml = types.SimpleNamespace(safe_load=_jsonish_safe_load)
 
 from .errors import PolicyError
-from .types import ProofType, ThetaMicro, GammaMicro, MicroNat
-
+from .types import GammaMicro, MicroNat, ProofType, ThetaMicro
 
 # ---------------------------
 # Dataclasses (policy shapes)
 # ---------------------------
 
+
 @dataclass(frozen=True)
 class TypeCap:
     """Per-proof-type caps (in µ-nats)."""
-    per_type_micro: MicroNat           # Max Σψ for this type within a block
-    per_proof_micro_max: MicroNat      # Max ψ contribution from a single proof of this type
+
+    per_type_micro: MicroNat  # Max Σψ for this type within a block
+    per_proof_micro_max: MicroNat  # Max ψ contribution from a single proof of this type
 
 
 @dataclass(frozen=True)
@@ -98,9 +99,10 @@ class EscortRule:
     Diversity/escort rule: enforce that at least `min_useful_ratio_bp` basis
     points of the final accepted Σψ comes from a set of "useful" types.
     """
+
     enabled: bool
-    min_useful_ratio_bp: int           # 0..10_000
-    useful_types: Set[ProofType]       # e.g. {AI, QUANTUM, STORAGE, VDF}
+    min_useful_ratio_bp: int  # 0..10_000
+    useful_types: Set[ProofType]  # e.g. {AI, QUANTUM, STORAGE, VDF}
 
 
 @dataclass(frozen=True)
@@ -113,13 +115,14 @@ class Weights:
     Fields ending with `_per_unit` multiply a dimensionless "units" metric.
     Fields ending with `_per_bp` multiply basis points (0..10_000).
     """
+
     # HASH
-    d_ratio_weight_micro_per_unit: int = 0        # ψ ≈ w * d_ratio
+    d_ratio_weight_micro_per_unit: int = 0  # ψ ≈ w * d_ratio
 
     # AI
-    ai_units_weight_micro_per_unit: int = 0       # ψ += w * ai_units
-    traps_ratio_weight_micro_per_bp: int = 0      # ψ += w * traps_bp
-    qos_weight_micro_per_bp: int = 0              # ψ += w * qos_bp
+    ai_units_weight_micro_per_unit: int = 0  # ψ += w * ai_units
+    traps_ratio_weight_micro_per_bp: int = 0  # ψ += w * traps_bp
+    qos_weight_micro_per_bp: int = 0  # ψ += w * qos_bp
 
     # QUANTUM
     quantum_units_weight_micro_per_unit: int = 0  # ψ += w * quantum_units
@@ -128,7 +131,7 @@ class Weights:
     storage_units_weight_micro_per_unit: int = 0  # optional hook for storage units
 
     # VDF
-    seconds_weight_micro_per_sec: int = 0         # ψ += w * seconds_equiv
+    seconds_weight_micro_per_sec: int = 0  # ψ += w * seconds_equiv
 
 
 @dataclass(frozen=True)
@@ -143,6 +146,7 @@ class PoiesPolicy:
     - weights: per-type Weights
     - policy_root: stable hash (sha3-256 over canonical JSON) used in headers
     """
+
     version: int
     gamma_cap: GammaMicro
     caps: Mapping[ProofType, TypeCap]
@@ -158,6 +162,7 @@ class PoiesPolicy:
         Canonical JSON for hashing: sorted keys, integers only, enums → names.
         This excludes `policy_root` itself to avoid self-reference.
         """
+
         def cap_to_dict(tp: TypeCap) -> dict:
             return {
                 "per_type_micro": int(tp.per_type_micro),
@@ -180,21 +185,28 @@ class PoiesPolicy:
             escort_dict = {
                 "enabled": self.escort.enabled,
                 "min_useful_ratio_bp": self.escort.min_useful_ratio_bp,
-                "useful_types": [pt.name for pt in sorted(self.escort.useful_types, key=lambda x: x.value)],
+                "useful_types": [
+                    pt.name
+                    for pt in sorted(self.escort.useful_types, key=lambda x: x.value)
+                ],
             }
 
         payload = {
             "version": self.version,
             "gamma_cap_micro": int(self.gamma_cap),
             "caps": {
-                pt.name: cap_to_dict(cap) for pt, cap in sorted(self.caps.items(), key=lambda kv: kv[0].value)
+                pt.name: cap_to_dict(cap)
+                for pt, cap in sorted(self.caps.items(), key=lambda kv: kv[0].value)
             },
             "escort": escort_dict,
             "weights": {
-                pt.name: w_to_dict(w) for pt, w in sorted(self.weights.items(), key=lambda kv: kv[0].value)
+                pt.name: w_to_dict(w)
+                for pt, w in sorted(self.weights.items(), key=lambda kv: kv[0].value)
             },
         }
-        return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
 
     def hex_policy_root(self) -> str:
         return "0x" + self.policy_root.hex()
@@ -203,6 +215,7 @@ class PoiesPolicy:
 # ---------------------------
 # YAML → Policy loader
 # ---------------------------
+
 
 def _parse_proof_type(name: str) -> ProofType:
     try:
@@ -229,7 +242,9 @@ def _load_caps(caps_cfg: Mapping[str, Any], gamma_cap: int) -> Dict[ProofType, T
     per_proof = caps_cfg.get("per_proof_micro_max", {})
 
     if not isinstance(per_type, dict) or not isinstance(per_proof, dict):
-        raise PolicyError("caps.per_type_micro and caps.per_proof_micro_max must be maps")
+        raise PolicyError(
+            "caps.per_type_micro and caps.per_proof_micro_max must be maps"
+        )
 
     caps: Dict[ProofType, TypeCap] = {}
     seen_types: Set[ProofType] = set()
@@ -238,7 +253,9 @@ def _load_caps(caps_cfg: Mapping[str, Any], gamma_cap: int) -> Dict[ProofType, T
         pt = _parse_proof_type(k)
         seen_types.add(pt)
         pt_cap = _get_int(per_type, k)
-        pp_cap = _get_int(per_proof, k) if k in per_proof else pt_cap  # default to same as per-type cap
+        pp_cap = (
+            _get_int(per_proof, k) if k in per_proof else pt_cap
+        )  # default to same as per-type cap
         if pt_cap > gamma_cap:
             raise PolicyError(f"Per-type cap for {pt.name} exceeds gamma_cap")
         if pp_cap > pt_cap:
@@ -290,7 +307,9 @@ def _load_weights(weights_cfg: Any) -> Dict[ProofType, Weights]:
             if key in m:
                 v = m[key]
                 if not isinstance(v, int) or v < 0:
-                    raise PolicyError(f"weights.{pt.name}.{key} must be a non-negative integer")
+                    raise PolicyError(
+                        f"weights.{pt.name}.{key} must be a non-negative integer"
+                    )
                 cur[key] = v
         out[pt] = Weights(**cur)
 
@@ -338,7 +357,12 @@ def load_poies_policy(yaml_path: str) -> PoiesPolicy:
 
     # Sanity: per-type cap sum may exceed gamma_cap (that is allowed), but individual caps cannot.
     # Escort useful_types subset sanity
-    if escort and escort.enabled and len(escort.useful_types) == 0 and escort.min_useful_ratio_bp > 0:
+    if (
+        escort
+        and escort.enabled
+        and len(escort.useful_types) == 0
+        and escort.min_useful_ratio_bp > 0
+    ):
         raise PolicyError("escort.enabled is true but useful_types is empty")
 
     # Construct and hash
@@ -366,6 +390,7 @@ def load_poies_policy(yaml_path: str) -> PoiesPolicy:
 # ---------------------------
 # Convenience: from dict (tests)
 # ---------------------------
+
 
 def poies_policy_from_dict(cfg: Mapping[str, Any]) -> PoiesPolicy:
     """
@@ -409,6 +434,7 @@ def poies_policy_from_dict(cfg: Mapping[str, Any]) -> PoiesPolicy:
 
 if __name__ == "__main__":
     import sys
+
     if len(sys.argv) != 2:
         print("usage: python -m consensus.policy path/to/spec/poies_policy.yaml")
         sys.exit(2)
@@ -417,8 +443,12 @@ if __name__ == "__main__":
     print(f"gamma_cap_micro: {int(pol.gamma_cap)}")
     print(f"policy_root: {pol.hex_policy_root()}")
     for pt, cap in pol.caps.items():
-        print(f"  caps[{pt.name}]: per_type={cap.per_type_micro} per_proof_max={cap.per_proof_micro_max}")
+        print(
+            f"  caps[{pt.name}]: per_type={cap.per_type_micro} per_proof_max={cap.per_proof_micro_max}"
+        )
     if pol.escort:
         e = pol.escort
         utypes = ",".join(t.name for t in sorted(e.useful_types, key=lambda x: x.value))
-        print(f"escort: enabled={e.enabled} min_useful_ratio_bp={e.min_useful_ratio_bp} useful=[{utypes}]")
+        print(
+            f"escort: enabled={e.enabled} min_useful_ratio_bp={e.min_useful_ratio_bp} useful=[{utypes}]"
+        )

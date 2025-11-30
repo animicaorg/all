@@ -5,7 +5,6 @@ from typing import Any, Dict, Iterable, Optional, Set
 
 from vm_py.runtime.events_api import VmError
 
-
 _CAP_BLOB_PIN = "blob.pin"
 _CAP_AI_ENQUEUE = "compute.ai.enqueue"
 _CAP_QUANTUM_ENQUEUE = "compute.quantum.enqueue"
@@ -104,7 +103,7 @@ class ResourceGuard:
 
         Omitted fields default to zero / empty.
         """
-        resources = (manifest.get("resources") or {})  # type: ignore[assignment]
+        resources = manifest.get("resources") or {}  # type: ignore[assignment]
 
         caps_raw = resources.get("caps") or []
         if not isinstance(caps_raw, Iterable) or isinstance(caps_raw, (str, bytes)):

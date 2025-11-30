@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from typing import Optional, BinaryIO, Dict
+from typing import BinaryIO, Dict, Optional
 
 # Prefer the typed client if present
 try:
@@ -159,7 +159,9 @@ def _download_with_urllib(
         meta = dict(resp.headers.items())
         content_type = meta.get("Content-Type")
         content_length = meta.get("Content-Length")
-        total_size = int(content_length) if content_length and content_length.isdigit() else None
+        total_size = (
+            int(content_length) if content_length and content_length.isdigit() else None
+        )
 
         bytes_written = 0
         while True:
@@ -214,17 +216,31 @@ def main(argv: Optional[list[str]] = None) -> int:
                 for chunk in it:
                     out_fp.write(chunk)
                     bytes_written += len(chunk)
-                summary = {"status": 200, "bytes": bytes_written, "total_size": None, "content_type": "application/octet-stream"}
+                summary = {
+                    "status": 200,
+                    "bytes": bytes_written,
+                    "total_size": None,
+                    "content_type": "application/octet-stream",
+                }
             elif hasattr(client, "get_blob"):
                 data = client.get_blob(commit_hex, range_start=args.range_start, range_len=args.range_len)  # type: ignore[attr-defined]
                 if isinstance(data, (bytes, bytearray)):
                     out_fp.write(data)
-                    summary = {"status": 200, "bytes": len(data), "total_size": len(data), "content_type": "application/octet-stream"}
+                    summary = {
+                        "status": 200,
+                        "bytes": len(data),
+                        "total_size": len(data),
+                        "content_type": "application/octet-stream",
+                    }
                 else:
                     # Fallback to HTTP path if unexpected type
-                    raise RuntimeError("DAClient.get_blob returned unexpected type; falling back to HTTP")
+                    raise RuntimeError(
+                        "DAClient.get_blob returned unexpected type; falling back to HTTP"
+                    )
             else:
-                raise RuntimeError("DAClient does not provide get_blob[_stream]; falling back to HTTP")
+                raise RuntimeError(
+                    "DAClient does not provide get_blob[_stream]; falling back to HTTP"
+                )
         else:
             raise RuntimeError("DAClient unavailable; using HTTP")
     except Exception:
@@ -247,7 +263,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         meta = {
             "url": url,
             "commitment": commit_hex,
-            "range": {"start": args.range_start, "len": args.range_len} if args.range_start is not None else None,
+            "range": (
+                {"start": args.range_start, "len": args.range_len}
+                if args.range_start is not None
+                else None
+            ),
             **summary,
         }
         _stderr(json.dumps(meta, indent=2))

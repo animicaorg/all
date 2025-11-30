@@ -12,23 +12,26 @@ except Exception:  # pragma: no cover
     PROTOCOL_NAME = "animica"
     PROTOCOL_VERSION = "1"
 
-_CHAIN_RE = re.compile(r"^(?:\d+|[a-z0-9_-]+:\d+)$")  # e.g., 1 or animica:1 (CAIP-2-ish)
+_CHAIN_RE = re.compile(
+    r"^(?:\d+|[a-z0-9_-]+:\d+)$"
+)  # e.g., 1 or animica:1 (CAIP-2-ish)
 
 # Canonical leaf names for topics. Keep this list stable across releases.
 _CANONICAL_LEAVES: Set[str] = {
-    "headers",       # header announcements / requests
-    "blocks",        # compact/full block announcements
-    "txs",           # transaction relay
-    "shares/hash",   # useful-work hash shares
-    "shares/ai",     # AI proof shares
-    "shares/quantum",# Quantum proof shares
-    "blobs",         # DA blob commitments / retrieval notices
+    "headers",  # header announcements / requests
+    "blocks",  # compact/full block announcements
+    "txs",  # transaction relay
+    "shares/hash",  # useful-work hash shares
+    "shares/ai",  # AI proof shares
+    "shares/quantum",  # Quantum proof shares
+    "blobs",  # DA blob commitments / retrieval notices
 }
 
 
 @dataclass(frozen=True)
 class Topic:
     """A fully-qualified P2P topic with a stable numeric id."""
+
     path: str
     id64: int
 
@@ -44,7 +47,9 @@ def _version_str() -> str:
 def _prefix(chain_id: str | int) -> str:
     c = str(chain_id)
     if not _CHAIN_RE.match(c):
-        raise ValueError(f"invalid chain_id '{chain_id}' (expected integer or 'ns:integer')")
+        raise ValueError(
+            f"invalid chain_id '{chain_id}' (expected integer or 'ns:integer')"
+        )
     return f"{PROTOCOL_NAME}/gossip/v{_version_str()}/{c}"
 
 
@@ -70,6 +75,7 @@ def topic(leaf: str, chain_id: str | int) -> Topic:
 
 
 # Convenience builders for the standard topics -------------------------------
+
 
 def headers(chain_id: str | int) -> Topic:
     return topic("headers", chain_id)
@@ -101,6 +107,7 @@ def blobs(chain_id: str | int) -> Topic:
 
 # Validation & utilities -----------------------------------------------------
 
+
 def is_valid_topic(path: str, allowed_leaves: Optional[Iterable[str]] = None) -> bool:
     """
     Check that a given path is a valid animica gossip topic and (optionally)
@@ -131,40 +138,49 @@ def topic_id_from_path(path: str) -> int:
 
 # Introspection --------------------------------------------------------------
 
+
 class Topics:
     """
     Convenience namespace with constructors for all canonical topics.
     Prefer these over hard-coding strings in callers.
     """
-    @staticmethod
-    def headers(chain_id: str | int) -> Topic: return headers(chain_id)
 
     @staticmethod
-    def blocks(chain_id: str | int) -> Topic: return blocks(chain_id)
+    def headers(chain_id: str | int) -> Topic:
+        return headers(chain_id)
 
     @staticmethod
-    def txs(chain_id: str | int) -> Topic: return txs(chain_id)
+    def blocks(chain_id: str | int) -> Topic:
+        return blocks(chain_id)
 
     @staticmethod
-    def shares_hash(chain_id: str | int) -> Topic: return shares_hash(chain_id)
+    def txs(chain_id: str | int) -> Topic:
+        return txs(chain_id)
 
     @staticmethod
-    def shares_ai(chain_id: str | int) -> Topic: return shares_ai(chain_id)
+    def shares_hash(chain_id: str | int) -> Topic:
+        return shares_hash(chain_id)
 
     @staticmethod
-    def shares_quantum(chain_id: str | int) -> Topic: return shares_quantum(chain_id)
+    def shares_ai(chain_id: str | int) -> Topic:
+        return shares_ai(chain_id)
 
     @staticmethod
-    def blobs(chain_id: str | int) -> Topic: return blobs(chain_id)
+    def shares_quantum(chain_id: str | int) -> Topic:
+        return shares_quantum(chain_id)
+
+    @staticmethod
+    def blobs(chain_id: str | int) -> Topic:
+        return blobs(chain_id)
 
     @staticmethod
     def all_paths(chain_id: str | int) -> list[str]:
         """List all canonical topic paths for a chain."""
-        return [ _topic_path(leaf, chain_id) for leaf in sorted(_CANONICAL_LEAVES) ]
+        return [_topic_path(leaf, chain_id) for leaf in sorted(_CANONICAL_LEAVES)]
 
     @staticmethod
     def all(chain_id: str | int) -> list[Topic]:
-        return [ topic(leaf, chain_id) for leaf in sorted(_CANONICAL_LEAVES) ]
+        return [topic(leaf, chain_id) for leaf in sorted(_CANONICAL_LEAVES)]
 
 
 __all__ = [

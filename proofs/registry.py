@@ -31,29 +31,34 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, Optional, Any, Protocol, Iterable
+from typing import Any, Callable, Dict, Iterable, Optional, Protocol
 
-from .errors import ProofError
-from .types import ProofType, ProofEnvelope
 from . import version as proofs_version
-from .utils.hash import sha3_256
+from .errors import ProofError
 from .metrics import ProofMetrics
+from .types import ProofEnvelope, ProofType
+from .utils.hash import sha3_256
 
 # ------------------------------------------------------------------------------
 # Verifier protocol and registry
 # ------------------------------------------------------------------------------
 
+
 class Verifier(Protocol):
-    def __call__(self, env: ProofEnvelope, *, context: Optional[dict] = None) -> ProofMetrics: ...
+    def __call__(
+        self, env: ProofEnvelope, *, context: Optional[dict] = None
+    ) -> ProofMetrics: ...
+
 
 _VERIFIERS: Dict[ProofType, Verifier] = {}
 _LAZY_MODULES: Dict[ProofType, str] = {
     ProofType.HASH_SHARE: "proofs.hashshare",
-    ProofType.AI:         "proofs.ai",
-    ProofType.QUANTUM:    "proofs.quantum",
-    ProofType.STORAGE:    "proofs.storage",
-    ProofType.VDF:        "proofs.vdf",
+    ProofType.AI: "proofs.ai",
+    ProofType.QUANTUM: "proofs.quantum",
+    ProofType.STORAGE: "proofs.storage",
+    ProofType.VDF: "proofs.vdf",
 }
+
 
 def register(pt: ProofType, verifier: Verifier) -> None:
     """
@@ -61,8 +66,10 @@ def register(pt: ProofType, verifier: Verifier) -> None:
     """
     _VERIFIERS[pt] = verifier
 
+
 def is_registered(pt: ProofType) -> bool:
     return pt in _VERIFIERS
+
 
 def _lazy_load(pt: ProofType) -> None:
     """
@@ -74,13 +81,17 @@ def _lazy_load(pt: ProofType) -> None:
         return
     # Local import to avoid import-time cycles while the rest of proofs/ is being created.
     import importlib
+
     try:
         mod = importlib.import_module(mod_name)
     except Exception as e:  # pragma: no cover (import errors are surfaced on use)
-        raise ProofError(f"failed to import verifier module {mod_name!r} for type {int(pt)}: {e}") from e
+        raise ProofError(
+            f"failed to import verifier module {mod_name!r} for type {int(pt)}: {e}"
+        ) from e
     if not hasattr(mod, "verify"):
         raise ProofError(f"module {mod_name!r} has no `verify(env, *, context=...)`")
     register(pt, getattr(mod, "verify"))
+
 
 def get_verifier(pt: ProofType) -> Verifier:
     """
@@ -93,12 +104,14 @@ def get_verifier(pt: ProofType) -> Verifier:
     except KeyError:
         raise ProofError(f"no verifier registered for proof type {int(pt)}")
 
+
 def verify(env: ProofEnvelope, *, context: Optional[dict] = None) -> ProofMetrics:
     """
     Dispatch to the registered verifier for env.type_id and return ProofMetrics.
     """
     vrf = get_verifier(env.type_id)
     return vrf(env, context=context or {}).ensure_bounds()
+
 
 # ------------------------------------------------------------------------------
 # Schema hashing (type → root)
@@ -108,11 +121,14 @@ def verify(env: ProofEnvelope, *, context: Optional[dict] = None) -> ProofMetric
 _THIS_DIR = Path(__file__).resolve().parent
 _SCHEMAS_DIR = _THIS_DIR / "schemas"
 
+
 @dataclass(frozen=True)
 class SchemaEntry:
     """File and its individual digest (sha3-256 over bytes)."""
+
     path: Path
     digest: bytes
+
 
 # Per-type schema file lists. Keep in sync with proofs/schemas/* from the spec.
 # JSON schemas are hashed as raw bytes (no canonicalization beyond file bytes).
@@ -132,9 +148,11 @@ _SCHEMA_ENTRIES_CACHE: Dict[ProofType, tuple[SchemaEntry, ...]] = {}
 _SCHEMA_ROOT_CACHE: Dict[ProofType, bytes] = {}
 _ENVELOPE_DIGEST: Optional[bytes] = None
 
+
 def _read_bytes(p: Path) -> bytes:
     with p.open("rb") as f:
         return f.read()
+
 
 def _entries_for(pt: ProofType) -> tuple[SchemaEntry, ...]:
     """
@@ -155,6 +173,7 @@ def _entries_for(pt: ProofType) -> tuple[SchemaEntry, ...]:
     _SCHEMA_ENTRIES_CACHE[pt] = tuple(entries)
     return _SCHEMA_ENTRIES_CACHE[pt]
 
+
 def _envelope_digest() -> bytes:
     global _ENVELOPE_DIGEST
     if _ENVELOPE_DIGEST is None:
@@ -163,6 +182,7 @@ def _envelope_digest() -> bytes:
             raise ProofError(f"envelope schema file not found: {fp}")
         _ENVELOPE_DIGEST = sha3_256(_read_bytes(fp))
     return _ENVELOPE_DIGEST
+
 
 def get_schema_root(pt: ProofType) -> bytes:
     """
@@ -190,6 +210,7 @@ def get_schema_root(pt: ProofType) -> bytes:
     _SCHEMA_ROOT_CACHE[pt] = root
     return root
 
+
 def get_schema_hex_map() -> Dict[int, str]:
     """
     { type_id(int) : root_hex }
@@ -198,6 +219,7 @@ def get_schema_hex_map() -> Dict[int, str]:
     for pt in _SCHEMA_FILES.keys():
         out[int(pt)] = get_schema_root(pt).hex()
     return out
+
 
 def get_schema_detail() -> Dict[int, Dict[str, Any]]:
     """
@@ -227,19 +249,24 @@ def get_schema_detail() -> Dict[int, Dict[str, Any]]:
         }
     return detail
 
+
 # ------------------------------------------------------------------------------
 # Utilities
 # ------------------------------------------------------------------------------
 
+
 def list_registered_types() -> Iterable[ProofType]:
     return tuple(_VERIFIERS.keys())
+
 
 def list_known_types() -> Iterable[ProofType]:
     return tuple(_SCHEMA_FILES.keys())
 
+
 # ------------------------------------------------------------------------------
 # Optional: eager registration helper (safe to call after all modules exist)
 # ------------------------------------------------------------------------------
+
 
 def register_builtins() -> None:
     """
@@ -248,6 +275,7 @@ def register_builtins() -> None:
     for pt in list_known_types():
         if not is_registered(pt):
             _lazy_load(pt)
+
 
 __all__ = [
     "Verifier",

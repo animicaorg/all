@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+
 class Engine:
-    def __init__(self, traps_min: float = 0.98, qos_min: float = 0.90, jail_after_violations: int = 2, cooldown_blocks: int = 5):
+    def __init__(
+        self,
+        traps_min: float = 0.98,
+        qos_min: float = 0.90,
+        jail_after_violations: int = 2,
+        cooldown_blocks: int = 5,
+    ):
         self.traps_min = traps_min
         self.qos_min = qos_min
         self.jail_after_violations = jail_after_violations
@@ -15,7 +22,9 @@ class Engine:
         qos_ratio = qos_ok / total
 
         # If jailed and cooldown elapsed, allow good window to unjail
-        if getattr(provider, "jailed", False) and height >= getattr(provider, "jail_until_height", 0):
+        if getattr(provider, "jailed", False) and height >= getattr(
+            provider, "jail_until_height", 0
+        ):
             if traps_ratio >= self.traps_min and qos_ratio >= self.qos_min:
                 provider.jailed = False
                 provider.jail_until_height = 0
@@ -31,6 +40,7 @@ class Engine:
                 provider.jail_until_height = height + self.cooldown_blocks
                 return {"event": "jail", "height": height}
         return None
+
 
 # Optional helper used by some harnesses
 def get_engine() -> Engine:

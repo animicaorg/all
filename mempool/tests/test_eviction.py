@@ -6,7 +6,9 @@ from typing import Any, Iterable, Optional
 import pytest
 
 pool_mod = pytest.importorskip("mempool.pool", reason="mempool.pool module not found")
-evict_mod = pytest.importorskip("mempool.evict", reason="mempool.evict module not found")
+evict_mod = pytest.importorskip(
+    "mempool.evict", reason="mempool.evict module not found"
+)
 errors = pytest.importorskip("mempool.errors", reason="mempool.errors module not found")
 
 # Prefer specific error types if the package defines them.
@@ -18,21 +20,23 @@ ERR_EVICTION = getattr(errors, "DoSError", ERR_ADMISSION)
 # Helpers & test scaffolding
 # -------------------------
 
+
 class FakeTx:
     """
     Minimal tx object with sender, nonce, fee, and an encoded size.
     """
+
     def __init__(self, sender: bytes, nonce: int, fee: int, size_bytes: int = 100):
         self.sender = sender
         self.nonce = nonce
         self.fee = fee
         self.size_bytes = size_bytes
         # a stable-ish hash for membership lookups in some pools
-        self.hash = (sender + nonce.to_bytes(8, "big"))[:32] or b"\xCD" * 32
+        self.hash = (sender + nonce.to_bytes(8, "big"))[:32] or b"\xcd" * 32
         self.tx_hash = self.hash  # common alias
 
     def __bytes__(self) -> bytes:  # used for size checks
-        return b"\xEE" * self.size_bytes
+        return b"\xee" * self.size_bytes
 
 
 ALICE = b"A" * 20
@@ -53,15 +57,32 @@ def _monkeypatch_validation_and_priority(monkeypatch: pytest.MonkeyPatch) -> Non
     try:
         validate = pytest.importorskip("mempool.validate")
         for name in (
-            "validate_tx", "fast_stateless_check", "stateless_validate", "validate",
-            "check_size", "check_chain_id", "check_gas_limits",
+            "validate_tx",
+            "fast_stateless_check",
+            "stateless_validate",
+            "validate",
+            "check_size",
+            "check_chain_id",
+            "check_gas_limits",
         ):
             if hasattr(validate, name):
                 monkeypatch.setattr(validate, name, lambda *a, **k: True, raising=True)
-        for name in ("estimate_encoded_size", "encoded_size", "tx_encoded_size", "get_encoded_size"):
+        for name in (
+            "estimate_encoded_size",
+            "encoded_size",
+            "tx_encoded_size",
+            "get_encoded_size",
+        ):
             if hasattr(validate, name):
-                monkeypatch.setattr(validate, name, lambda tx: len(bytes(tx)), raising=True)
-        for name in ("precheck_pq_signature", "pq_precheck_verify", "verify_pq_signature", "pq_verify"):
+                monkeypatch.setattr(
+                    validate, name, lambda tx: len(bytes(tx)), raising=True
+                )
+        for name in (
+            "precheck_pq_signature",
+            "pq_precheck_verify",
+            "verify_pq_signature",
+            "pq_verify",
+        ):
             if hasattr(validate, name):
                 monkeypatch.setattr(validate, name, lambda *a, **k: True, raising=True)
     except Exception:
@@ -71,7 +92,9 @@ def _monkeypatch_validation_and_priority(monkeypatch: pytest.MonkeyPatch) -> Non
         priority = pytest.importorskip("mempool.priority")
         for name in ("effective_priority", "priority_of", "calc_effective_priority"):
             if hasattr(priority, name):
-                monkeypatch.setattr(priority, name, lambda tx: getattr(tx, "fee", 0), raising=True)
+                monkeypatch.setattr(
+                    priority, name, lambda tx: getattr(tx, "fee", 0), raising=True
+                )
     except Exception:
         pass
 
@@ -93,10 +116,18 @@ def _make_config(
         mp_config = None
 
     field_map = {
-        "max_txs": max_txs, "max_pool_txs": max_txs, "max_items": max_txs, "capacity": max_txs,
-        "max_bytes": max_bytes, "max_pool_bytes": max_bytes, "capacity_bytes": max_bytes, "max_mem_bytes": max_bytes,
-        "per_sender_cap": per_sender_cap, "per_sender_limit": per_sender_cap,
-        "max_per_sender": per_sender_cap, "sender_cap": per_sender_cap,
+        "max_txs": max_txs,
+        "max_pool_txs": max_txs,
+        "max_items": max_txs,
+        "capacity": max_txs,
+        "max_bytes": max_bytes,
+        "max_pool_bytes": max_bytes,
+        "capacity_bytes": max_bytes,
+        "max_mem_bytes": max_bytes,
+        "per_sender_cap": per_sender_cap,
+        "per_sender_limit": per_sender_cap,
+        "max_per_sender": per_sender_cap,
+        "sender_cap": per_sender_cap,
     }
 
     # patch module-level constants if present
@@ -181,10 +212,18 @@ def _evict_enforce_limits(pool: Any, config: Any | None) -> None:
     Run eviction using whatever API exists. Repeat a few times to reach a fixed point.
     """
     funcs = [
-        "evict_if_needed", "evict_to_fit", "enforce_limits", "run_eviction", "evict",
+        "evict_if_needed",
+        "evict_to_fit",
+        "enforce_limits",
+        "run_eviction",
+        "evict",
     ]
     meths = [
-        "evict_if_needed", "evict_to_fit", "enforce_limits", "run_eviction", "evict",
+        "evict_if_needed",
+        "evict_to_fit",
+        "enforce_limits",
+        "run_eviction",
+        "evict",
     ]
     for _ in range(5):
         called = False
@@ -297,7 +336,10 @@ def _contains_tx(pool: Any, tx: FakeTx) -> bool:
             except Exception:
                 continue
     # Fallback to enumeration
-    return any(t is tx or (t.sender == tx.sender and t.nonce == tx.nonce) for t in _pool_items(pool))
+    return any(
+        t is tx or (t.sender == tx.sender and t.nonce == tx.nonce)
+        for t in _pool_items(pool)
+    )
 
 
 def _count_by_sender(pool: Any) -> dict[bytes, int]:
@@ -311,13 +353,16 @@ def _count_by_sender(pool: Any) -> dict[bytes, int]:
 # Tests
 # -------------------------
 
+
 def test_memory_pressure_eviction_keeps_high_fee(monkeypatch: pytest.MonkeyPatch):
     """
     When the pool exceeds max_txs, eviction should drop lowest-priority (fee) txs first.
     """
     _monkeypatch_validation_and_priority(monkeypatch)
 
-    config = _make_config(max_txs=5, per_sender_cap=100)  # disable per-sender cap influence
+    config = _make_config(
+        max_txs=5, per_sender_cap=100
+    )  # disable per-sender cap influence
     pool = _new_pool(config)
 
     txs = [
@@ -337,14 +382,20 @@ def test_memory_pressure_eviction_keeps_high_fee(monkeypatch: pytest.MonkeyPatch
 
     present = [tx for tx in txs if _contains_tx(pool, tx)]
     fees_present = sorted([tx.fee for tx in present])
-    assert len(present) <= 5, f"pool still over capacity after eviction (len={len(present)})"
+    assert (
+        len(present) <= 5
+    ), f"pool still over capacity after eviction (len={len(present)})"
 
     # Expect the top-5 fees to remain
     top5 = sorted([tx.fee for tx in txs])[-5:]
     # None of the bottom-3 should remain
     bottom3 = sorted([tx.fee for tx in txs])[:3]
-    assert all(f in top5 for f in fees_present), f"eviction kept non-top fees: kept={fees_present}, top5={top5}"
-    assert all(not _contains_tx(pool, tx) for tx in txs if tx.fee in bottom3), "lowest-fee txs should have been evicted"
+    assert all(
+        f in top5 for f in fees_present
+    ), f"eviction kept non-top fees: kept={fees_present}, top5={top5}"
+    assert all(
+        not _contains_tx(pool, tx) for tx in txs if tx.fee in bottom3
+    ), "lowest-fee txs should have been evicted"
 
 
 def test_per_sender_cap_enforced(monkeypatch: pytest.MonkeyPatch):
@@ -370,10 +421,16 @@ def test_per_sender_cap_enforced(monkeypatch: pytest.MonkeyPatch):
     counts = _count_by_sender(pool)
     assert counts.get(ALICE, 0) <= 2, f"per-sender cap not enforced for ALICE: {counts}"
     # Highest two fees for ALICE should remain
-    assert _contains_tx(pool, a2) and _contains_tx(pool, a3) or _contains_tx(pool, a2) and _contains_tx(pool, a3), \
-        "Expected highest-fee ALICE txs to remain under cap"
+    assert (
+        _contains_tx(pool, a2)
+        and _contains_tx(pool, a3)
+        or _contains_tx(pool, a2)
+        and _contains_tx(pool, a3)
+    ), "Expected highest-fee ALICE txs to remain under cap"
     # The lowest-fee (a1) should be gone if three were present
-    assert not _contains_tx(pool, a1), "Lowest-fee ALICE tx should be evicted under per-sender cap=2"
+    assert not _contains_tx(
+        pool, a1
+    ), "Lowest-fee ALICE tx should be evicted under per-sender cap=2"
 
 
 def test_fairness_under_global_eviction(monkeypatch: pytest.MonkeyPatch):
@@ -397,7 +454,11 @@ def test_fairness_under_global_eviction(monkeypatch: pytest.MonkeyPatch):
     counts = _count_by_sender(pool)
     total = sum(counts.values())
     assert total <= 6, f"pool still over capacity after eviction (len={total})"
-    assert counts.get(ALICE, 0) <= 3 and counts.get(BOB, 0) <= 3, f"per-sender cap not respected: {counts}"
+    assert (
+        counts.get(ALICE, 0) <= 3 and counts.get(BOB, 0) <= 3
+    ), f"per-sender cap not respected: {counts}"
     # With cap=3 and total limit=6, both sides should end up with <=3.
     # Typically this results in exactly 3/3; assert at least one from each remains.
-    assert counts.get(ALICE, 0) >= 1 and counts.get(BOB, 0) >= 1, "eviction fairness should retain both senders"
+    assert (
+        counts.get(ALICE, 0) >= 1 and counts.get(BOB, 0) >= 1
+    ), "eviction fairness should retain both senders"

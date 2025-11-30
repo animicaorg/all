@@ -56,8 +56,8 @@ Implementation notes
 """
 
 import os
-import time
 import threading
+import time
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
@@ -81,6 +81,7 @@ except Exception:  # pragma: no cover
 
 # --------- Helpers to read environment with defaults -------------------------
 
+
 def _env_float(name: str, default: float) -> float:
     raw = os.getenv(name)
     if not raw:
@@ -90,6 +91,7 @@ def _env_float(name: str, default: float) -> float:
         return float(default) if v <= 0 else v
     except Exception:
         return float(default)
+
 
 def _env_int(name: str, default: int) -> int:
     raw = os.getenv(name)
@@ -103,6 +105,7 @@ def _env_int(name: str, default: int) -> int:
 
 
 # --------- Client IP extraction ---------------------------------------------
+
 
 def client_ip(request: Request) -> str:
     """
@@ -118,16 +121,20 @@ def client_ip(request: Request) -> str:
     if real:
         return real.strip()
     # Fallback to client host
-    host, _port = (request.client.host, request.client.port) if request.client else ("0.0.0.0", 0)
+    host, _port = (
+        (request.client.host, request.client.port) if request.client else ("0.0.0.0", 0)
+    )
     return host or "0.0.0.0"
 
 
 # --------- Token Bucket ------------------------------------------------------
 
+
 @dataclass
 class Rate:
-    rps: float     # tokens per second
-    burst: int     # maximum bucket capacity
+    rps: float  # tokens per second
+    burst: int  # maximum bucket capacity
+
 
 class TokenBucket:
     __slots__ = ("rate", "capacity", "tokens", "updated", "lock")
@@ -164,21 +171,22 @@ class TokenBucket:
 
 # --------- Limiter -----------------------------------------------------------
 
+
 class RateLimiter:
     """
     Holds IP- and tier-scoped buckets. Thread-safe per bucket.
     """
 
-    def __init__(self,
-                 ip_rate: Rate,
-                 tier_rates: Dict[str, Rate]):
+    def __init__(self, ip_rate: Rate, tier_rates: Dict[str, Rate]):
         self.ip_rate = ip_rate
         self.tier_rates = tier_rates
         self._ip_buckets: Dict[str, TokenBucket] = {}
         self._tier_buckets: Dict[str, TokenBucket] = {}
         self._lock = threading.Lock()
 
-    def _get_bucket(self, table: Dict[str, TokenBucket], key: str, rate: Rate) -> TokenBucket:
+    def _get_bucket(
+        self, table: Dict[str, TokenBucket], key: str, rate: Rate
+    ) -> TokenBucket:
         b = table.get(key)
         if b is not None:
             return b
@@ -203,23 +211,35 @@ class RateLimiter:
 
 # --------- Defaults + Singleton ---------------------------------------------
 
+
 def _build_default_limiter() -> RateLimiter:
     ip = Rate(
         rps=_env_float("DA_RATE_IP_RPS", 5.0),
         burst=_env_int("DA_RATE_IP_BURST", 20),
     )
     tiers = {
-        "public": Rate(_env_float("DA_RATE_PUBLIC_RPS", 3.0), _env_int("DA_RATE_PUBLIC_BURST", 10)),
-        "test": Rate(_env_float("DA_RATE_TEST_RPS", 5.0), _env_int("DA_RATE_TEST_BURST", 20)),
-        "provider": Rate(_env_float("DA_RATE_PROVIDER_RPS", 20.0), _env_int("DA_RATE_PROVIDER_BURST", 80)),
-        "admin": Rate(_env_float("DA_RATE_ADMIN_RPS", 50.0), _env_int("DA_RATE_ADMIN_BURST", 200)),
+        "public": Rate(
+            _env_float("DA_RATE_PUBLIC_RPS", 3.0), _env_int("DA_RATE_PUBLIC_BURST", 10)
+        ),
+        "test": Rate(
+            _env_float("DA_RATE_TEST_RPS", 5.0), _env_int("DA_RATE_TEST_BURST", 20)
+        ),
+        "provider": Rate(
+            _env_float("DA_RATE_PROVIDER_RPS", 20.0),
+            _env_int("DA_RATE_PROVIDER_BURST", 80),
+        ),
+        "admin": Rate(
+            _env_float("DA_RATE_ADMIN_RPS", 50.0), _env_int("DA_RATE_ADMIN_BURST", 200)
+        ),
     }
     return RateLimiter(ip_rate=ip, tier_rates=tiers)
+
 
 _LIMITER = _build_default_limiter()
 
 
 # --------- FastAPI dependency -----------------------------------------------
+
 
 def rate_limit_dependency(*, cost: float = 1.0):
     """
@@ -231,6 +251,7 @@ def rate_limit_dependency(*, cost: float = 1.0):
         def post_blob(..., _rl = Depends(rate_limit_dependency(cost=5))):
             ...
     """
+
     async def _dep(request: Request, ctx: AuthContext = Depends(auth_dependency)):
         ip = client_ip(request)
 
@@ -243,7 +264,9 @@ def rate_limit_dependency(*, cost: float = 1.0):
             )
 
         tier_key = ctx.token if (ctx and ctx.token) else ip  # anonymous keyed by IP
-        ok_tier, retry_tier = _LIMITER.allow_tier(ctx.tier if ctx else "public", tier_key, cost=cost)
+        ok_tier, retry_tier = _LIMITER.allow_tier(
+            ctx.tier if ctx else "public", tier_key, cost=cost
+        )
         if not ok_tier:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,

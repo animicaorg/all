@@ -14,18 +14,19 @@ All methods are deterministic and safe for consensus-critical operations.
 
 from __future__ import annotations
 
-import typing as t
 import dataclasses as dc
+import typing as t
 from datetime import datetime
 from decimal import Decimal
 
+from rpc import deps
+from rpc import errors as rpc_errors
 from rpc.methods import method
-from rpc import deps, errors as rpc_errors
 
 # Optional imports for treasury state access
 try:
-    from execution.adapters.state_db import StateDB  # type: ignore
     from core.db.state_db import TreasuryAccount  # type: ignore
+    from execution.adapters.state_db import StateDB  # type: ignore
 except Exception:
     StateDB = None  # type: ignore
     TreasuryAccount = None  # type: ignore
@@ -35,9 +36,11 @@ except Exception:
 # Type Definitions
 # ============================================================================
 
+
 @dc.dataclass(frozen=True)
 class TreasurySnapshot:
     """Current treasury state snapshot."""
+
     totalSupply: float  # Total ANM tokens ever created
     soldToDate: float  # ANM tokens sold from treasury
     treasuryBalance: float  # ANM remaining in treasury
@@ -52,6 +55,7 @@ class TreasurySnapshot:
 @dc.dataclass(frozen=True)
 class MarketPriceData:
     """Market price information."""
+
     price: float  # Current ANM price in USD
     marketCap: float  # Total market cap in USD
     volume24h: float  # 24-hour trading volume in USD
@@ -66,6 +70,7 @@ class MarketPriceData:
 @dc.dataclass(frozen=True)
 class PriceHistoryPoint:
     """Single historical price point."""
+
     timestamp: str  # ISO8601 timestamp
     price: float  # Price in USD at this timestamp
     volume: float | None = None  # Optional volume
@@ -74,6 +79,7 @@ class PriceHistoryPoint:
 @dc.dataclass(frozen=True)
 class HistoricalPurchase:
     """User purchase transaction record."""
+
     id: str  # Transaction ID or order ID
     timestamp: str  # ISO8601 timestamp
     anmQuantity: float  # ANM tokens purchased
@@ -90,6 +96,7 @@ class HistoricalPurchase:
 @dc.dataclass(frozen=True)
 class PurchaseHistoryResult:
     """User's full purchase history."""
+
     purchases: list[HistoricalPurchase]
     totalPurchases: int
     totalAnmPurchased: float
@@ -100,6 +107,7 @@ class PurchaseHistoryResult:
 @dc.dataclass(frozen=True)
 class PricingCurveFormula:
     """Pricing formula and parameters."""
+
     basePrice: float = 1.0  # Base minimum price in USD
     markupPercentage: float = 0.15  # 15% exchange markup
     treasuryMultiplierFormula: str = "1.0 + 2.0 * sqrt(percentSold)"
@@ -142,13 +150,14 @@ FALLBACK_PRICING_CURVE = PricingCurveFormula()
 # RPC Methods
 # ============================================================================
 
+
 @method("explorer_getTreasurySnapshot")
 async def explorer_get_treasury_snapshot(
     ctx: deps.RpcContext,
 ) -> dict[str, t.Any]:
     """
     Get current treasury state snapshot.
-    
+
     Returns:
         {
             "totalSupply": 1000000000.0,
@@ -166,7 +175,7 @@ async def explorer_get_treasury_snapshot(
         # TODO: Implement actual treasury state fetch from state DB
         # For now, return fallback data
         snapshot = FALLBACK_TREASURY_SNAPSHOT
-        
+
         return {
             "totalSupply": snapshot.totalSupply,
             "soldToDate": snapshot.soldToDate,
@@ -192,10 +201,10 @@ async def explorer_get_market_data(
 ) -> dict[str, t.Any]:
     """
     Get current market price and metrics for ANM token.
-    
+
     Params:
         token (str): Token symbol, default "ANM"
-    
+
     Returns:
         {
             "price": 1.50,
@@ -213,7 +222,7 @@ async def explorer_get_market_data(
         # TODO: Implement actual market data fetch from external APIs
         # with fallback chain: CoinGecko → CoinMarketCap → internal exchange
         data = FALLBACK_MARKET_PRICE_DATA
-        
+
         return {
             "price": data.price,
             "marketCap": data.marketCap,
@@ -240,11 +249,11 @@ async def explorer_get_price_history(
 ) -> dict[str, t.Any]:
     """
     Get historical price data for ANM token.
-    
+
     Params:
         token (str): Token symbol, default "ANM"
         days (int): Number of days of history (1, 7, 30, 90), default 7
-    
+
     Returns:
         {
             "prices": [1.0, 1.01, 1.02, ..., 1.50],
@@ -255,16 +264,13 @@ async def explorer_get_price_history(
     """
     if days not in (1, 7, 30, 90):
         days = 7  # Default to 7 days
-    
+
     try:
         # TODO: Implement actual price history fetch from database
         # Generate mock history for now
         prices = [1.0 + (i * 0.07) for i in range(days)]
-        timestamps = [
-            datetime.utcnow().isoformat() + "Z"
-            for _ in range(day)
-        ]
-        
+        timestamps = [datetime.utcnow().isoformat() + "Z" for _ in range(day)]
+
         return {
             "prices": prices,
             "timestamps": timestamps,
@@ -287,12 +293,12 @@ async def wallet_get_purchase_history(
 ) -> dict[str, t.Any]:
     """
     Get user's purchase history from marketplace.
-    
+
     Params:
         address (str): User's wallet address
         limit (int): Maximum results to return (default 100, max 1000)
         offset (int): Pagination offset (default 0)
-    
+
     Returns:
         {
             "purchases": [
@@ -322,15 +328,15 @@ async def wallet_get_purchase_history(
             "Invalid address format",
             code=-32602,  # Invalid params
         )
-    
+
     # Validate pagination
     limit = min(max(1, limit), 1000)  # 1-1000
     offset = max(0, offset)
-    
+
     try:
         # TODO: Implement actual purchase history fetch from database
         # For now, return empty result (user has not purchased)
-        
+
         return {
             "purchases": [],
             "totalPurchases": 0,
@@ -351,9 +357,9 @@ async def marketplace_get_pricing_curve(
 ) -> dict[str, t.Any]:
     """
     Get current pricing curve formula and parameters.
-    
+
     Used by wallet and explorer to ensure consistent price calculations.
-    
+
     Returns:
         {
             "basePrice": 1.0,
@@ -366,7 +372,7 @@ async def marketplace_get_pricing_curve(
     """
     try:
         formula = FALLBACK_PRICING_CURVE
-        
+
         return {
             "basePrice": formula.basePrice,
             "markupPercentage": formula.markupPercentage,
@@ -392,17 +398,17 @@ async def marketplace_calculate_price(
 ) -> dict[str, float]:
     """
     Calculate ANM token price given market price and treasury state.
-    
+
     Deterministic price calculation used by all clients for verification.
     Formula: max(basePrice, marketPrice * (1 + markupPercentage)) * treasuryMultiplier
     where treasuryMultiplier = 1.0 + 2.0 * sqrt(percentSold)
-    
+
     Params:
         marketPrice (float): Current market price in USD
         percentSold (float): Percentage of treasury sold (0-100)
         basePrice (float): Minimum base price (default $1.00)
         markupPercentage (float): Markup on market price (default 15%)
-    
+
     Returns:
         {
             "exchangePrice": 1.50,  # market + markup
@@ -418,21 +424,22 @@ async def marketplace_calculate_price(
                 "Invalid market price or percent sold",
                 code=-32602,
             )
-        
+
         # Step 1: Apply markup to market price
         exchange_price = marketPrice * (1.0 + markupPercentage)
-        
+
         # Step 2: Use minimum base price
         effective_exchange_price = max(basePrice, exchange_price)
-        
+
         # Step 3: Calculate treasury multiplier
         # multiplier = 1.0 + 2.0 * sqrt(percentSold / 100)
         import math
+
         treasury_multiplier = 1.0 + 2.0 * math.sqrt(percentSold / 100.0)
-        
+
         # Step 4: Calculate final price
         final_price = effective_exchange_price * treasury_multiplier
-        
+
         return {
             "exchangePrice": round(exchange_price, 8),
             "effectivePrice": round(final_price, 8),
@@ -456,6 +463,7 @@ async def marketplace_calculate_price(
 # ============================================================================
 # Helper Methods (not exposed via RPC, used internally)
 # ============================================================================
+
 
 def get_treasury_snapshot_sync() -> TreasurySnapshot:
     """Synchronous version for non-async code paths."""

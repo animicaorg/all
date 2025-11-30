@@ -61,11 +61,11 @@ import sys
 import time
 from dataclasses import dataclass, field
 from itertools import count
-from queue import Queue, Empty
+from queue import Empty, Queue
 from threading import Event, Lock, Thread
 from typing import Any, Iterable, List, Optional, Sequence, Tuple, Union
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-from urllib.error import URLError, HTTPError
 
 # Optional CBOR reader (for CBOR snapshots)
 try:
@@ -77,17 +77,22 @@ Json = Union[dict, list, str, int, float, bool, None]
 
 # --------- I/O helpers ---------
 
+
 def _load_json(path: str) -> Json:
     if path == "-":
         return json.loads(sys.stdin.read())
     with open(path, "r", encoding="utf-8") as f:
         return json.loads(f.read())
 
+
 def _load_cbor(path: str) -> Any:
     if cbor2 is None:
-        raise SystemExit("CBOR input requested but 'cbor2' is not installed. Install via: pip install cbor2")
+        raise SystemExit(
+            "CBOR input requested but 'cbor2' is not installed. Install via: pip install cbor2"
+        )
     with open(path, "rb") as f:
         return cbor2.load(f)
+
 
 def _normalize_hex(x: Union[str, bytes, bytearray]) -> Optional[str]:
     """
@@ -115,6 +120,7 @@ def _normalize_hex(x: Union[str, bytes, bytearray]) -> Optional[str]:
             return None
     return None
 
+
 def _extract_entries_from_json(blob: Json) -> List[Json]:
     if isinstance(blob, list):
         return list(blob)
@@ -126,6 +132,7 @@ def _extract_entries_from_json(blob: Json) -> List[Json]:
         if vals and isinstance(vals[0], list):
             return list(vals[0])
     return []
+
 
 def _entries_to_hex(entries: Sequence[Json]) -> List[str]:
     """
@@ -172,6 +179,7 @@ def _entries_to_hex(entries: Sequence[Json]) -> List[str]:
         # If we get here, we couldn't parse that entry; skip it.
     return out
 
+
 def _load_inputs(path: str) -> List[str]:
     """
     Load input file (json or cbor) and return a list of 0x-hex strings.
@@ -193,7 +201,9 @@ def _load_inputs(path: str) -> List[str]:
             entries = _extract_entries_from_json(blob)
         return _entries_to_hex(entries)
 
+
 # --------- Rate limiting & stats ---------
+
 
 class TokenBucket:
     def __init__(self, rate_per_sec: float, burst: int):
@@ -213,6 +223,7 @@ class TokenBucket:
                 self.tokens -= n
                 return True
             return False
+
 
 @dataclass
 class Stats:
@@ -244,18 +255,23 @@ class Stats:
         p99 = _percentile(lat, 99.0)
         return s, o, f, p50, p90, p99
 
+
 def _percentile(xs: List[float], p: float) -> float:
     if not xs:
-        return float('nan')
+        return float("nan")
     xs_sorted = sorted(xs)
     k = max(0, min(len(xs_sorted) - 1, int(round((p / 100.0) * (len(xs_sorted) - 1)))))
     return xs_sorted[k]
+
 
 # --------- RPC ---------
 
 _rpc_id = count(1)
 
-def _rpc_submit(url: str, method: str, raw_hex: str, timeout: float = 10.0) -> Tuple[bool, Optional[str]]:
+
+def _rpc_submit(
+    url: str, method: str, raw_hex: str, timeout: float = 10.0
+) -> Tuple[bool, Optional[str]]:
     body = {
         "jsonrpc": "2.0",
         "id": next(_rpc_id),
@@ -281,9 +297,13 @@ def _rpc_submit(url: str, method: str, raw_hex: str, timeout: float = 10.0) -> T
         return False, f"{err.get('code')} {err.get('message')}"
     return True, f"{dt_ms:.2f}ms"
 
+
 # --------- Worker pool ---------
 
-def _worker(url: str, method: str, jobs: Queue, stats: Stats, stop_ev: Event, timeout: float) -> None:
+
+def _worker(
+    url: str, method: str, jobs: Queue, stats: Stats, stop_ev: Event, timeout: float
+) -> None:
     while not stop_ev.is_set():
         try:
             raw_hex = jobs.get(timeout=0.2)
@@ -298,26 +318,100 @@ def _worker(url: str, method: str, jobs: Queue, stats: Stats, stop_ev: Event, ti
         stats.add_result(ok, dt_ms)
         jobs.task_done()
 
+
 # --------- Main replay loop ---------
 
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description="Replay transactions into a node at a controlled rate.")
-    ap.add_argument("--rpc", default="http://127.0.0.1:8645/rpc", help="JSON-RPC endpoint (default: %(default)s)")
-    ap.add_argument("--method", default="tx.sendRawTransaction", help="JSON-RPC method to call (default: %(default)s)")
-    ap.add_argument("--input", required=True, help="Path to input (.json/.cbor) or '-' for stdin JSON")
-    ap.add_argument("--rate", type=float, default=100.0, help="Target rate (tx/s) [token bucket] (default: %(default)s)")
-    ap.add_argument("--burst", type=int, default=200, help="Bucket size (burst) (default: %(default)s)")
-    ap.add_argument("--concurrency", type=int, default=8, help="Worker threads (default: %(default)s)")
-    ap.add_argument("--timeout", type=float, default=10.0, help="Per-request timeout seconds (default: %(default)s)")
-    ap.add_argument("--jitter", type=float, default=0.0, help="Uniform jitter fraction on pacing (0..1). Applied to inter-arrival. (default: %(default)s)")
-    ap.add_argument("--ramp-seconds", type=float, default=0.0, help="Linearly ramp from 0 to --rate over this many seconds")
+    ap = argparse.ArgumentParser(
+        description="Replay transactions into a node at a controlled rate."
+    )
+    ap.add_argument(
+        "--rpc",
+        default="http://127.0.0.1:8645/rpc",
+        help="JSON-RPC endpoint (default: %(default)s)",
+    )
+    ap.add_argument(
+        "--method",
+        default="tx.sendRawTransaction",
+        help="JSON-RPC method to call (default: %(default)s)",
+    )
+    ap.add_argument(
+        "--input",
+        required=True,
+        help="Path to input (.json/.cbor) or '-' for stdin JSON",
+    )
+    ap.add_argument(
+        "--rate",
+        type=float,
+        default=100.0,
+        help="Target rate (tx/s) [token bucket] (default: %(default)s)",
+    )
+    ap.add_argument(
+        "--burst",
+        type=int,
+        default=200,
+        help="Bucket size (burst) (default: %(default)s)",
+    )
+    ap.add_argument(
+        "--concurrency",
+        type=int,
+        default=8,
+        help="Worker threads (default: %(default)s)",
+    )
+    ap.add_argument(
+        "--timeout",
+        type=float,
+        default=10.0,
+        help="Per-request timeout seconds (default: %(default)s)",
+    )
+    ap.add_argument(
+        "--jitter",
+        type=float,
+        default=0.0,
+        help="Uniform jitter fraction on pacing (0..1). Applied to inter-arrival. (default: %(default)s)",
+    )
+    ap.add_argument(
+        "--ramp-seconds",
+        type=float,
+        default=0.0,
+        help="Linearly ramp from 0 to --rate over this many seconds",
+    )
     ap.add_argument("--shuffle", action="store_true", help="Shuffle input order")
-    ap.add_argument("--loop", action="store_true", help="Loop over inputs indefinitely (until --max or --duration)")
-    ap.add_argument("--max", type=int, default=0, help="Stop after sending at most this many txs (0 = unlimited)")
-    ap.add_argument("--duration", type=float, default=0.0, help="Stop after N seconds (0 = unlimited)")
-    ap.add_argument("--progress", type=float, default=5.0, help="Print stats every N seconds (0=off) (default: %(default)s)")
-    ap.add_argument("--dry-run", action="store_true", help="Do not send RPC calls; just pace and count")
-    ap.add_argument("--seed", type=int, default=0, help="Random seed for shuffle/jitter (0 = entropy)")
+    ap.add_argument(
+        "--loop",
+        action="store_true",
+        help="Loop over inputs indefinitely (until --max or --duration)",
+    )
+    ap.add_argument(
+        "--max",
+        type=int,
+        default=0,
+        help="Stop after sending at most this many txs (0 = unlimited)",
+    )
+    ap.add_argument(
+        "--duration",
+        type=float,
+        default=0.0,
+        help="Stop after N seconds (0 = unlimited)",
+    )
+    ap.add_argument(
+        "--progress",
+        type=float,
+        default=5.0,
+        help="Print stats every N seconds (0=off) (default: %(default)s)",
+    )
+    ap.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Do not send RPC calls; just pace and count",
+    )
+    ap.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Random seed for shuffle/jitter (0 = entropy)",
+    )
     args = ap.parse_args(argv)
 
     if args.seed:
@@ -343,7 +437,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     workers: List[Thread] = []
     if not args.dry_run:
         for _ in range(max(1, args.concurrency)):
-            t = Thread(target=_worker, args=(args.rpc, args.method, jobs, stats, stop_ev, args.timeout), daemon=True)
+            t = Thread(
+                target=_worker,
+                args=(args.rpc, args.method, jobs, stats, stop_ev, args.timeout),
+                daemon=True,
+            )
             t.start()
             workers.append(t)
 

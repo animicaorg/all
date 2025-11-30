@@ -3,8 +3,8 @@ import json
 import time
 
 import pytest
-
-from animica.stratum_pool.asic import Sha256Job, Sha256StratumServer, _bits_to_target, _double_sha
+from animica.stratum_pool.asic import (Sha256Job, Sha256StratumServer,
+                                       _bits_to_target, _double_sha)
 
 
 class DummyAdapter:
@@ -24,7 +24,9 @@ async def _read_json(reader):
 class AntminerHarness:
     """Minimal emulator that exercises the Antminer stratum handshake."""
 
-    def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    def __init__(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         self._reader = reader
         self._writer = writer
 
@@ -186,10 +188,14 @@ async def test_antminer_harness_round_trip():
     )
     _double_sha(header)
 
-    submit_res = await harness.submit(["worker.antminer", job.job_id, extranonce2, job.ntime, "00000000"])
+    submit_res = await harness.submit(
+        ["worker.antminer", job.job_id, extranonce2, job.ntime, "00000000"]
+    )
     assert submit_res["result"] is True
 
-    stale_res = await harness.submit(["worker.antminer", "missing", extranonce2, job.ntime, "00000000"])
+    stale_res = await harness.submit(
+        ["worker.antminer", "missing", extranonce2, job.ntime, "00000000"]
+    )
     assert stale_res["error"][0] == 21
 
     writer.close()
@@ -223,7 +229,11 @@ async def test_stratum_subscribe_order_and_rejects(tmp_path):
     # Drain the difficulty push
     await asyncio.wait_for(_read_json(reader), timeout=1.0)
 
-    submit = {"id": 2, "method": "mining.submit", "params": ["worker", "missing", "00" * 4, "00000000", "00000000"]}
+    submit = {
+        "id": 2,
+        "method": "mining.submit",
+        "params": ["worker", "missing", "00" * 4, "00000000", "00000000"],
+    }
     writer.write((json.dumps(submit) + "\n").encode())
     await writer.drain()
 

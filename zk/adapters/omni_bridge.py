@@ -59,36 +59,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib import import_module
-from typing import Any, Dict, Mapping, Optional, Tuple, Union, Callable, List
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
 
-from .snarkjs_loader import (
-    load_groth16,
-    is_groth16_vk,
-    is_groth16_proof,
-)
-from .plonkjs_loader import (
-    load_plonkjs,
-    is_plonkjs_vk,
-    is_plonkjs_proof,
-)
-from .stark_loader import (
-    load_fri,
-    is_fri_proof,
-)
-
+from .plonkjs_loader import is_plonkjs_proof, is_plonkjs_vk, load_plonkjs
+from .snarkjs_loader import is_groth16_proof, is_groth16_vk, load_groth16
+from .stark_loader import is_fri_proof, load_fri
 
 # =============================================================================
 # Error model
 # =============================================================================
 
+
 class ErrorCode:
-    MALFORMED_INPUT         = "MALFORMED_INPUT"
-    UNSUPPORTED_PROOF_KIND  = "UNSUPPORTED_PROOF_KIND"
-    NORMALIZATION_FAILED    = "NORMALIZATION_FAILED"
-    MISSING_FIELDS          = "MISSING_FIELDS"
-    IMPORT_ERROR            = "IMPORT_ERROR"
-    VERIFY_PREP_ERROR       = "VERIFY_PREP_ERROR"
-    VERIFY_RUNTIME_ERROR    = "VERIFY_RUNTIME_ERROR"
+    MALFORMED_INPUT = "MALFORMED_INPUT"
+    UNSUPPORTED_PROOF_KIND = "UNSUPPORTED_PROOF_KIND"
+    NORMALIZATION_FAILED = "NORMALIZATION_FAILED"
+    MISSING_FIELDS = "MISSING_FIELDS"
+    IMPORT_ERROR = "IMPORT_ERROR"
+    VERIFY_PREP_ERROR = "VERIFY_PREP_ERROR"
+    VERIFY_RUNTIME_ERROR = "VERIFY_RUNTIME_ERROR"
 
 
 class OmniError(Exception):
@@ -108,6 +97,7 @@ ProofEnvelope = Dict[str, Any]
 @dataclass
 class VerifierCall:
     """Descriptor for a concrete verifier invocation."""
+
     module: str
     func: str
     args: Dict[str, Any]
@@ -116,17 +106,23 @@ class VerifierCall:
         try:
             mod = import_module(self.module)
         except Exception as e:
-            raise OmniError(ErrorCode.IMPORT_ERROR, f"Failed to import {self.module}: {e}") from e
+            raise OmniError(
+                ErrorCode.IMPORT_ERROR, f"Failed to import {self.module}: {e}"
+            ) from e
         try:
             fn = getattr(mod, self.func)
         except AttributeError as e:
-            raise OmniError(ErrorCode.IMPORT_ERROR, f"Function '{self.func}' not found in {self.module}") from e
+            raise OmniError(
+                ErrorCode.IMPORT_ERROR,
+                f"Function '{self.func}' not found in {self.module}",
+            ) from e
         return fn
 
 
 # =============================================================================
 # Builders: third-party → envelope
 # =============================================================================
+
 
 def envelope_from_snarkjs_groth16(vk_src: Any, proof_src: Any) -> ProofEnvelope:
     """
@@ -135,7 +131,9 @@ def envelope_from_snarkjs_groth16(vk_src: Any, proof_src: Any) -> ProofEnvelope:
     try:
         vk, proof, publics = load_groth16(vk_src, proof_src)
     except Exception as e:
-        raise OmniError(ErrorCode.NORMALIZATION_FAILED, f"SnarkJS Groth16 normalize failed: {e}") from e
+        raise OmniError(
+            ErrorCode.NORMALIZATION_FAILED, f"SnarkJS Groth16 normalize failed: {e}"
+        ) from e
     return {
         "kind": "groth16_bn254",
         "vk": vk,
@@ -152,7 +150,9 @@ def envelope_from_plonkjs(vk_src: Any, proof_src: Any) -> ProofEnvelope:
     try:
         vk, proof, publics = load_plonkjs(vk_src, proof_src)
     except Exception as e:
-        raise OmniError(ErrorCode.NORMALIZATION_FAILED, f"PlonkJS normalize failed: {e}") from e
+        raise OmniError(
+            ErrorCode.NORMALIZATION_FAILED, f"PlonkJS normalize failed: {e}"
+        ) from e
     return {
         "kind": "plonk_kzg_bn254",
         "vk": vk,
@@ -162,14 +162,18 @@ def envelope_from_plonkjs(vk_src: Any, proof_src: Any) -> ProofEnvelope:
     }
 
 
-def envelope_from_stark_fri(proof_src: Any, public_src: Optional[Any] = None) -> ProofEnvelope:
+def envelope_from_stark_fri(
+    proof_src: Any, public_src: Optional[Any] = None
+) -> ProofEnvelope:
     """
     Normalize a STARK FRI bundle (and optional public IO) into a canonical envelope.
     """
     try:
         proof, pub = load_fri(proof_src, public_src)
     except Exception as e:
-        raise OmniError(ErrorCode.NORMALIZATION_FAILED, f"FRI normalize failed: {e}") from e
+        raise OmniError(
+            ErrorCode.NORMALIZATION_FAILED, f"FRI normalize failed: {e}"
+        ) from e
     return {
         "kind": "stark_fri_merkle",
         "vk": None,
@@ -206,16 +210,21 @@ def detect_and_build_envelope(
     vk_json = None
     if vk_src is not None:
         try:
-            from .snarkjs_loader import load_json as _load_json  # local import to avoid cycle note
+            from .snarkjs_loader import \
+                load_json as _load_json  # local import to avoid cycle note
+
             vk_json = _load_json(vk_src)
         except Exception:
             vk_json = None
 
     try:
         from .snarkjs_loader import load_json as _load_json
+
         proof_json = _load_json(proof_src)
     except Exception as e:
-        raise OmniError(ErrorCode.MALFORMED_INPUT, f"Could not parse proof JSON: {e}") from e
+        raise OmniError(
+            ErrorCode.MALFORMED_INPUT, f"Could not parse proof JSON: {e}"
+        ) from e
 
     # Groth16?
     if (vk_json and is_groth16_vk(vk_json)) or is_groth16_proof(proof_json):
@@ -242,15 +251,19 @@ def detect_and_build_envelope(
 
 # Registry of verifier modules and entrypoints (must match zk/verifiers/*)
 _VERIFIER_REGISTRY: Dict[str, Tuple[str, str]] = {
-    "groth16_bn254":    ("zk.verifiers.groth16_bn254",   "verify"),
-    "plonk_kzg_bn254":  ("zk.verifiers.plonk_kzg_bn254", "verify"),
-    "stark_fri_merkle": ("zk.verifiers.stark_fri",       "verify"),
+    "groth16_bn254": ("zk.verifiers.groth16_bn254", "verify"),
+    "plonk_kzg_bn254": ("zk.verifiers.plonk_kzg_bn254", "verify"),
+    "stark_fri_merkle": ("zk.verifiers.stark_fri", "verify"),
 }
+
 
 def _require_fields(env: ProofEnvelope, fields: List[str]) -> None:
     missing = [f for f in fields if env.get(f) is None]
     if missing:
-        raise OmniError(ErrorCode.MISSING_FIELDS, f"Envelope missing required fields: {missing}")
+        raise OmniError(
+            ErrorCode.MISSING_FIELDS, f"Envelope missing required fields: {missing}"
+        )
+
 
 def build_verifier_call(envelope: ProofEnvelope) -> VerifierCall:
     """
@@ -262,7 +275,9 @@ def build_verifier_call(envelope: ProofEnvelope) -> VerifierCall:
         raise OmniError(ErrorCode.MISSING_FIELDS, "Envelope must include 'kind'")
 
     if kind not in _VERIFIER_REGISTRY:
-        raise OmniError(ErrorCode.UNSUPPORTED_PROOF_KIND, f"Unsupported proof kind: {kind}")
+        raise OmniError(
+            ErrorCode.UNSUPPORTED_PROOF_KIND, f"Unsupported proof kind: {kind}"
+        )
 
     module, func = _VERIFIER_REGISTRY[kind]
 
@@ -301,6 +316,7 @@ def build_verifier_call(envelope: ProofEnvelope) -> VerifierCall:
 # Dispatcher
 # =============================================================================
 
+
 def dispatch_verify(envelope: ProofEnvelope) -> bool:
     """
     Resolve and invoke the concrete verifier for the given envelope.
@@ -311,7 +327,9 @@ def dispatch_verify(envelope: ProofEnvelope) -> bool:
     except OmniError:
         raise
     except Exception as e:
-        raise OmniError(ErrorCode.VERIFY_PREP_ERROR, f"Failed to prepare verifier call: {e}") from e
+        raise OmniError(
+            ErrorCode.VERIFY_PREP_ERROR, f"Failed to prepare verifier call: {e}"
+        ) from e
 
     fn = call.resolve()
     try:

@@ -55,48 +55,110 @@ from typing import Optional
 
 # ---------- Robust import with graceful no-op fallback ----------
 try:
-    from prometheus_client import Counter, Gauge, Histogram, CollectorRegistry  # type: ignore
+    from prometheus_client import (CollectorRegistry, Counter,  # type: ignore
+                                   Gauge, Histogram)
+
     _PROM_AVAILABLE = True
 except Exception:  # pragma: no cover - exercised only in minimal envs
     _PROM_AVAILABLE = False
 
     class _Noop:
-        def labels(self, *_, **__): return self
-        def inc(self, *_a, **_kw): pass
-        def set(self, *_a, **_kw): pass
-        def observe(self, *_a, **_kw): pass
+        def labels(self, *_, **__):
+            return self
 
-    class Counter(_Noop): pass  # type: ignore
-    class Gauge(_Noop): pass     # type: ignore
-    class Histogram(_Noop): pass # type: ignore
+        def inc(self, *_a, **_kw):
+            pass
 
-    class CollectorRegistry:     # type: ignore
-        def __init__(self, *_, **__): pass
+        def set(self, *_a, **_kw):
+            pass
+
+        def observe(self, *_a, **_kw):
+            pass
+
+    class Counter(_Noop):
+        pass  # type: ignore
+
+    class Gauge(_Noop):
+        pass  # type: ignore
+
+    class Histogram(_Noop):
+        pass  # type: ignore
+
+    class CollectorRegistry:  # type: ignore
+        def __init__(self, *_, **__):
+            pass
 
 
 # ---------- Buckets (careful to keep bounded and broadly useful) ----------
 # Sizes: powers-of-two-ish up to ~1MB
 _SIZE_BUCKETS = (
-    100, 200, 400, 800, 1200, 1600, 2200, 3000, 4500, 6000,
-    8_000, 12_000, 16_000, 24_000, 32_000, 48_000, 64_000,
-    96_000, 128_000, 256_000, 512_000, 1_000_000
+    100,
+    200,
+    400,
+    800,
+    1200,
+    1600,
+    2200,
+    3000,
+    4500,
+    6000,
+    8_000,
+    12_000,
+    16_000,
+    24_000,
+    32_000,
+    48_000,
+    64_000,
+    96_000,
+    128_000,
+    256_000,
+    512_000,
+    1_000_000,
 )
 
 # Fees in gwei: spans dust up to very high congestion
 _FEE_BUCKETS = (
-    1, 2, 5, 10, 20, 30, 50, 75, 100,
-    150, 200, 300, 400, 600, 800, 1_000,
-    1_500, 2_000, 3_000, 5_000, 8_000, 12_000
+    1,
+    2,
+    5,
+    10,
+    20,
+    30,
+    50,
+    75,
+    100,
+    150,
+    200,
+    300,
+    400,
+    600,
+    800,
+    1_000,
+    1_500,
+    2_000,
+    3_000,
+    5_000,
+    8_000,
+    12_000,
 )
 
 # Latencies (seconds): microseconds to minutes
 _LAT_BUCKETS_FAST = (
-    0.00025, 0.0005, 0.001, 0.002, 0.004, 0.008,
-    0.016, 0.032, 0.064, 0.128, 0.256, 0.512, 1.0
+    0.00025,
+    0.0005,
+    0.001,
+    0.002,
+    0.004,
+    0.008,
+    0.016,
+    0.032,
+    0.064,
+    0.128,
+    0.256,
+    0.512,
+    1.0,
 )
-_LAT_BUCKETS_SLOW = (
-    0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 120, 300, 600
-)
+_LAT_BUCKETS_SLOW = (0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 120, 300, 600)
 
 
 # ---------- Metrics wrapper ----------
@@ -156,7 +218,9 @@ class MempoolMetrics:
         self.evict_total = Counter(
             "animica_mempool_evict_total",
             "Total evictions by reason.",
-            labelnames=("reason",),  # low_fee|sender_cap|memory_pressure|ttl_expire|reorg
+            labelnames=(
+                "reason",
+            ),  # low_fee|sender_cap|memory_pressure|ttl_expire|reorg
             **kw,
         )
         self.ingress_bytes_total = Counter(
@@ -211,7 +275,7 @@ class MempoolMetrics:
     def record_admit(
         self,
         *,
-        source: str,                 # "rpc" | "p2p" | "local"
+        source: str,  # "rpc" | "p2p" | "local"
         size_bytes: int,
         effective_fee_gwei: float,
         latency_s: float,
@@ -227,25 +291,46 @@ class MempoolMetrics:
         r = _sanitize_label(
             reason,
             {
-                "fee_too_low", "nonce_gap", "oversize", "invalid_sig",
-                "chain_id", "ttl", "dup", "policy", "dos", "other",
+                "fee_too_low",
+                "nonce_gap",
+                "oversize",
+                "invalid_sig",
+                "chain_id",
+                "ttl",
+                "dup",
+                "policy",
+                "dos",
+                "other",
             },
             fallback="other",
         )
         self.reject_total.labels(reason=r).inc()
 
-    def record_replace(self, *, outcome: str, delta_fee_ratio: Optional[float] = None) -> None:
-        o = _sanitize_label(outcome, {"accepted", "rejected", "worse_fee"}, fallback="rejected")
+    def record_replace(
+        self, *, outcome: str, delta_fee_ratio: Optional[float] = None
+    ) -> None:
+        o = _sanitize_label(
+            outcome, {"accepted", "rejected", "worse_fee"}, fallback="rejected"
+        )
         self.replace_total.labels(outcome=o).inc()
         if delta_fee_ratio is not None and delta_fee_ratio >= 0:
             # Reuse fee histogram for visibility into replacement pressure.
-            self.effective_fee_gwei.observe(0.0)  # keeps series alive even if no fee provided
+            self.effective_fee_gwei.observe(
+                0.0
+            )  # keeps series alive even if no fee provided
             # We don't add a dedicated metric to avoid cardinality; callers can log delta_fee_ratio.
 
     def record_evict(self, *, reason: str) -> None:
         r = _sanitize_label(
             reason,
-            {"low_fee", "sender_cap", "memory_pressure", "ttl_expire", "reorg", "other"},
+            {
+                "low_fee",
+                "sender_cap",
+                "memory_pressure",
+                "ttl_expire",
+                "reorg",
+                "other",
+            },
             fallback="other",
         )
         self.evict_total.labels(reason=r).inc()
@@ -261,7 +346,9 @@ class MempoolMetrics:
         self.wait_time_seconds.observe(float(seconds))
 
 
-def _sanitize_label(value: str, allowed: set[str], fallback: Optional[str] = None) -> str:
+def _sanitize_label(
+    value: str, allowed: set[str], fallback: Optional[str] = None
+) -> str:
     v = (value or "").strip().lower()
     if v in allowed:
         return v

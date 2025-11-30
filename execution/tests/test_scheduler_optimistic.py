@@ -1,10 +1,9 @@
 import hashlib
+import random
 from dataclasses import dataclass
 from typing import Dict, List, Set, Tuple
 
-import random
 import pytest
-
 
 # ---------------------------------------------------
 # Minimal transfer model shared by tests
@@ -12,6 +11,7 @@ import pytest
 
 Address = str
 Amount = int
+
 
 @dataclass(frozen=True)
 class Tx:
@@ -59,7 +59,9 @@ def _apply_tx(state: Dict[Address, Amount], tx: Tx) -> bool:
     return True
 
 
-def _serial_apply(initial: Dict[Address, Amount], txs: List[Tx]) -> Tuple[Dict[Address, Amount], List[int]]:
+def _serial_apply(
+    initial: Dict[Address, Amount], txs: List[Tx]
+) -> Tuple[Dict[Address, Amount], List[int]]:
     """
     Serial baseline: apply in order. Returns (state, applied_indices).
     """
@@ -74,6 +76,7 @@ def _serial_apply(initial: Dict[Address, Amount], txs: List[Tx]) -> Tuple[Dict[A
 # ---------------------------------------------------
 # Access sets and optimistic "layered" scheduler (model)
 # ---------------------------------------------------
+
 
 def _access_sets(tx: Tx) -> Tuple[Set[str], Set[str]]:
     """
@@ -113,7 +116,9 @@ def _optimistic_layers(txs: List[Tx]) -> List[List[int]]:
     return layers
 
 
-def _optimistic_apply(initial: Dict[Address, Amount], txs: List[Tx]) -> Tuple[Dict[Address, Amount], List[List[int]]]:
+def _optimistic_apply(
+    initial: Dict[Address, Amount], txs: List[Tx]
+) -> Tuple[Dict[Address, Amount], List[List[int]]]:
     """
     Apply txs by conflict-free layers. Within each layer, effects *commute* by construction,
     so we can apply in listed order (deterministic). Returns (final_state, layers).
@@ -130,6 +135,7 @@ def _optimistic_apply(initial: Dict[Address, Amount], txs: List[Tx]) -> Tuple[Di
 # ---------------------------------------------------
 # Fixtures
 # ---------------------------------------------------
+
 
 @pytest.fixture
 def initial_state() -> Dict[Address, Amount]:
@@ -165,6 +171,7 @@ def conflicting_batch_same_sender() -> List[Tx]:
 # Tests against the model scheduler
 # ---------------------------------------------------
 
+
 def test_merge_non_conflicting_equals_serial(initial_state, non_conflicting_batch):
     ser_state, ser_applied = _serial_apply(initial_state, non_conflicting_batch)
     opt_state, layers = _optimistic_apply(initial_state, non_conflicting_batch)
@@ -176,7 +183,9 @@ def test_merge_non_conflicting_equals_serial(initial_state, non_conflicting_batc
     assert ser_applied == [0, 1, 2]
 
 
-def test_conflict_same_sender_partitions_layers_and_matches_serial(initial_state, conflicting_batch_same_sender):
+def test_conflict_same_sender_partitions_layers_and_matches_serial(
+    initial_state, conflicting_batch_same_sender
+):
     ser_state, _ = _serial_apply(initial_state, conflicting_batch_same_sender)
     opt_state, layers = _optimistic_apply(initial_state, conflicting_batch_same_sender)
 
@@ -215,6 +224,7 @@ def test_random_scenarios_match_serial(initial_state):
 # Optional integration: hook into the project's optimistic scheduler
 # ---------------------------------------------------
 
+
 def test_project_optimistic_executor_if_available(initial_state):
     """
     Try to exercise execution.scheduler.optimistic (if present) and assert:
@@ -223,7 +233,10 @@ def test_project_optimistic_executor_if_available(initial_state):
     We keep this permissive and skip if symbols/signatures don't match.
     """
     try:
-        opt_mod = __import__("execution.scheduler.optimistic", fromlist=["OptimisticExecutor", "run", "execute", "apply_layers"])
+        opt_mod = __import__(
+            "execution.scheduler.optimistic",
+            fromlist=["OptimisticExecutor", "run", "execute", "apply_layers"],
+        )
     except Exception:
         pytest.skip("execution.scheduler.optimistic not available")
 
@@ -289,8 +302,14 @@ def test_project_optimistic_executor_if_available(initial_state):
         else:
             pytest.skip("No callable entrypoint found in optimistic scheduler")
     except TypeError:
-        pytest.skip("Project optimistic executor signature incompatible for this smoke test")
+        pytest.skip(
+            "Project optimistic executor signature incompatible for this smoke test"
+        )
 
     # Must be deterministic and match the serial baseline on this workload
-    assert _state_root(s1) == _state_root(s2), "Optimistic executor must be deterministic"
-    assert _state_root(s1) == _state_root(ser_state), "Optimistic executor final state must match serial baseline"
+    assert _state_root(s1) == _state_root(
+        s2
+    ), "Optimistic executor must be deterministic"
+    assert _state_root(s1) == _state_root(
+        ser_state
+    ), "Optimistic executor final state must match serial baseline"

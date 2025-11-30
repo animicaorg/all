@@ -32,12 +32,13 @@ blob := DOM(=b"animica|abi|v1") || u32be(count) || Σ (u32be(len_i) || val_i)
 This matches the simulator's runtime ABI expectations used by the editor/preview.
 """
 
-from typing import Iterable, List, Tuple, Any
+from typing import Any, Iterable, List, Tuple
 
-from ..errors import ValidationError, Revert as _Revert
-
+from ..errors import Revert as _Revert
+from ..errors import ValidationError
 
 # ---------------- Control flow ----------------
+
 
 def revert(msg: bytes | bytearray = b"") -> None:
     """
@@ -60,6 +61,7 @@ def require(cond: bool, msg: bytes | bytearray = b"") -> None:
 
 
 # ---------------- Scalar encoders/decoders ----------------
+
 
 def enc_bool(v: bool) -> bytes:
     if not isinstance(v, bool):
@@ -117,7 +119,7 @@ def _u32be(n: int) -> bytes:
 def _read_u32be(data: bytes, off: int) -> Tuple[int, int]:
     if off + 4 > len(data):
         raise ValidationError("truncated u32 in ABI blob")
-    return int.from_bytes(data[off:off+4], "big"), off + 4
+    return int.from_bytes(data[off : off + 4], "big"), off + 4
 
 
 def _as_bytes(v: Any) -> bytes:
@@ -137,7 +139,7 @@ def encode_args(values: Iterable[Any]) -> bytes:
     Strings are intentionally not supported to avoid implicit UTF-8 choices.
     Convert to bytes explicitly first if needed.
     """
-    parts: List[bytes] = [ _as_bytes(v) for v in values ]
+    parts: List[bytes] = [_as_bytes(v) for v in values]
     out = bytearray(_DOM)
     out += _u32be(len(parts))
     for p in parts:
@@ -162,7 +164,7 @@ def decode_args(blob: bytes | bytearray) -> List[bytes]:
         ln, off = _read_u32be(data, off)
         if off + ln > len(data):
             raise ValidationError("truncated part in ABI blob")
-        parts.append(data[off:off+ln])
+        parts.append(data[off : off + ln])
         off += ln
     if off != len(data):
         raise ValidationError("extra trailing bytes in ABI blob")

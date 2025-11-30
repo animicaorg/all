@@ -7,8 +7,16 @@ def test_load_profile_prefers_profile_file(tmp_path):
     devnet_file = tmp_path / "devnet.json"
     fallback_file = tmp_path / "bootstrap_nodes.json"
 
-    fallback_file.write_text(json.dumps({"seeds": [{"peer_id": "fallback", "multiaddrs": ["/ip4/3.3.3.3/tcp/3"]}]}))
-    devnet_file.write_text(json.dumps({"seeds": [{"peer_id": "primary", "multiaddrs": ["/ip4/2.2.2.2/tcp/2"]}]}))
+    fallback_file.write_text(
+        json.dumps(
+            {"seeds": [{"peer_id": "fallback", "multiaddrs": ["/ip4/3.3.3.3/tcp/3"]}]}
+        )
+    )
+    devnet_file.write_text(
+        json.dumps(
+            {"seeds": [{"peer_id": "primary", "multiaddrs": ["/ip4/2.2.2.2/tcp/2"]}]}
+        )
+    )
 
     seeds = loader.load_profile_file("devnet", seed_dir=tmp_path)
     assert [s.peer_id for s in seeds] == ["primary"]

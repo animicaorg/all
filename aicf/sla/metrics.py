@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 Per-job and per-provider SLA metric helpers.
 
@@ -17,12 +18,12 @@ All values are designed to be deterministic and bounded for stable policy mappin
 """
 
 
-from dataclasses import dataclass, field
-from typing import Deque, Iterable, List, Optional, Tuple
-from collections import deque
 import bisect
 import math
 import statistics
+from collections import deque
+from dataclasses import dataclass, field
+from typing import Deque, Iterable, List, Optional, Tuple
 
 # ---------------------------
 # Utilities
@@ -63,6 +64,7 @@ class JobMeasure:
       - latency_ms: end-to-end latency in milliseconds (non-negative).
       - timestamp_s: UNIX seconds when job completed (float allowed).
     """
+
     success: bool
     traps_ratio: Optional[float]
     qos_score: Optional[float]
@@ -169,15 +171,16 @@ class AvailabilityTracker:
 @dataclass
 class ProviderSnapshot:
     """Point-in-time aggregates for SLA evaluation and dashboards."""
+
     window_s: float
     n_jobs: int
-    success_rate: float              # 0..1
-    traps_ratio_avg: Optional[float] # 0..1 or None if no data
-    qos_avg: Optional[float]         # 0..1 or None if no data
+    success_rate: float  # 0..1
+    traps_ratio_avg: Optional[float]  # 0..1 or None if no data
+    qos_avg: Optional[float]  # 0..1 or None if no data
     latency_p50_ms: Optional[int]
     latency_p95_ms: Optional[int]
     latency_p99_ms: Optional[int]
-    availability: float              # 0..1
+    availability: float  # 0..1
 
 
 class ProviderMetricsWindow:
@@ -191,15 +194,33 @@ class ProviderMetricsWindow:
     """
 
     DEFAULT_LATENCY_BUCKETS_MS: Tuple[int, ...] = (
-        25, 50, 75, 100, 150, 200, 300, 400, 500,
-        750, 1_000, 1_500, 2_000, 3_000, 5_000,
-        7_500, 10_000, 15_000, 20_000, 30_000, 60_000
+        25,
+        50,
+        75,
+        100,
+        150,
+        200,
+        300,
+        400,
+        500,
+        750,
+        1_000,
+        1_500,
+        2_000,
+        3_000,
+        5_000,
+        7_500,
+        10_000,
+        15_000,
+        20_000,
+        30_000,
+        60_000,
     )
 
     def __init__(
         self,
         *,
-        window_s: float = 900.0,           # 15 minutes by default
+        window_s: float = 900.0,  # 15 minutes by default
         ewma_alpha: float = 0.2,
         latency_buckets_ms: Optional[Iterable[int]] = None,
         availability_ttl_s: float = 60.0,
@@ -210,7 +231,11 @@ class ProviderMetricsWindow:
             raise ValueError("ewma_alpha must be in (0,1]")
         self.window_s = float(window_s)
         self.ewma_alpha = float(ewma_alpha)
-        self.latency_edges: Tuple[int, ...] = tuple(sorted(latency_buckets_ms)) if latency_buckets_ms else self.DEFAULT_LATENCY_BUCKETS_MS
+        self.latency_edges: Tuple[int, ...] = (
+            tuple(sorted(latency_buckets_ms))
+            if latency_buckets_ms
+            else self.DEFAULT_LATENCY_BUCKETS_MS
+        )
         self._jobs: Deque[JobMeasure] = deque()
         # EWMAs (derived lazily on snapshot; stored here for continuity across windows)
         self._ewma_traps: Optional[float] = None
@@ -291,7 +316,9 @@ class ProviderMetricsWindow:
                 window_s=self.window_s,
                 n_jobs=0,
                 success_rate=0.0,
-                traps_ratio_avg=self._ewma_traps if self._ewma_traps is not None else None,
+                traps_ratio_avg=(
+                    self._ewma_traps if self._ewma_traps is not None else None
+                ),
                 qos_avg=self._ewma_qos if self._ewma_qos is not None else None,
                 latency_p50_ms=None,
                 latency_p95_ms=None,
@@ -306,8 +333,16 @@ class ProviderMetricsWindow:
         # Averages (simple mean over window; EWMA exposed separately if needed)
         traps_vals = [jm.traps_ratio for jm in jobs if jm.traps_ratio is not None]
         qos_vals = [jm.qos_score for jm in jobs if jm.qos_score is not None]
-        traps_avg = clamp01(sum(traps_vals) / len(traps_vals)) if traps_vals else (self._ewma_traps if self._ewma_traps is not None else None)
-        qos_avg = clamp01(sum(qos_vals) / len(qos_vals)) if qos_vals else (self._ewma_qos if self._ewma_qos is not None else None)
+        traps_avg = (
+            clamp01(sum(traps_vals) / len(traps_vals))
+            if traps_vals
+            else (self._ewma_traps if self._ewma_traps is not None else None)
+        )
+        qos_avg = (
+            clamp01(sum(qos_vals) / len(qos_vals))
+            if qos_vals
+            else (self._ewma_qos if self._ewma_qos is not None else None)
+        )
 
         # Latency
         hist = self._latency_histogram(jobs)
@@ -346,6 +381,23 @@ if __name__ == "__main__":
     t0 = 1_000_000.0
     pm.heartbeat(t0)
     for i in range(50):
-        pm.record_job(JobMeasure(True, traps_ratio=0.9, qos_score=0.85, latency_ms=100 + i, timestamp_s=t0 + i))
+        pm.record_job(
+            JobMeasure(
+                True,
+                traps_ratio=0.9,
+                qos_score=0.85,
+                latency_ms=100 + i,
+                timestamp_s=t0 + i,
+            )
+        )
     snap = pm.snapshot(t0 + 59.0)
-    print("n_jobs", snap.n_jobs, "succ", snap.success_rate, "p99", snap.latency_p99_ms, "avail", snap.availability)
+    print(
+        "n_jobs",
+        snap.n_jobs,
+        "succ",
+        snap.success_rate,
+        "p99",
+        snap.latency_p99_ms,
+        "avail",
+        snap.availability,
+    )

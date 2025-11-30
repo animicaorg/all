@@ -43,6 +43,7 @@ from fastapi import Depends, HTTPException, Request, status
 
 # ----------------------------- Model -----------------------------
 
+
 @dataclass(frozen=True)
 class AuthContext:
     token: Optional[str]
@@ -55,6 +56,7 @@ class AuthContext:
 
 
 # --------------------------- TokenStore --------------------------
+
 
 class TokenStore:
     """
@@ -131,6 +133,7 @@ _TOKEN_STORE = TokenStore.from_environ()
 
 # ------------------------ Request utilities ----------------------
 
+
 def token_from_request(request: Request) -> Optional[str]:
     """
     Extract token from:
@@ -154,6 +157,7 @@ def token_from_request(request: Request) -> Optional[str]:
 
 
 # ------------------------ FastAPI dependency ---------------------
+
 
 def auth_dependency(request: Request) -> AuthContext:
     """

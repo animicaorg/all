@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 Pricing: convert job "units" -> base reward.
 
@@ -30,7 +31,7 @@ Example
 
 from dataclasses import dataclass, replace
 from decimal import Decimal, getcontext
-from typing import Final,Optional
+from typing import Final, Optional
 
 from ..errors import AICFError
 
@@ -91,9 +92,9 @@ class PricingSchedule:
         return replace(
             self,
             ai_per_unit=self.ai_per_unit if ai_per_unit is None else ai_per_unit,
-            quantum_per_unit=self.quantum_per_unit
-            if quantum_per_unit is None
-            else quantum_per_unit,
+            quantum_per_unit=(
+                self.quantum_per_unit if quantum_per_unit is None else quantum_per_unit
+            ),
             min_reward=self.min_reward if min_reward is None else min_reward,
             max_reward=self.max_reward if max_reward is None else max_reward,
             rounding=self.rounding if rounding is None else rounding,
@@ -103,7 +104,7 @@ class PricingSchedule:
 
 # Sensible conservative defaults for devnet/testing.
 DEFAULT_SCHEDULE: Final[PricingSchedule] = PricingSchedule(
-    ai_per_unit=100_000,       # 1e5 base units per AI unit
+    ai_per_unit=100_000,  # 1e5 base units per AI unit
     quantum_per_unit=800_000,  # 8e5 base units per Quantum unit
     min_reward=0,
     max_reward=None,
@@ -142,9 +143,7 @@ def _round_amount(d: Decimal, mode: Literal["floor", "ceil", "nearest"]) -> Amou
     return int(d.to_integral_value(rounding="ROUND_HALF_EVEN"))
 
 
-def _apply_bounds(
-    raw: Amount, schedule: PricingSchedule, units: int
-) -> Amount:
+def _apply_bounds(raw: Amount, schedule: PricingSchedule, units: int) -> Amount:
     if units == 0:
         return 0
     amt = raw

@@ -21,17 +21,9 @@ from __future__ import annotations
 
 from typing import Any, List, Sequence, Tuple, Union
 
-from .types import (
-    ABITypeError,
-    ValidationError,
-    IntType,
-    UIntType,
-    BytesType,
-    BoolType,
-    AddressType,
-    parse_type,
-    coerce_address,  # for HRP validation & bech32m sanity
-)
+from .types import coerce_address  # for HRP validation & bech32m sanity
+from .types import (ABITypeError, AddressType, BoolType, BytesType, IntType,
+                    UIntType, ValidationError, parse_type)
 
 __all__ = [
     "uvarint_decode",
@@ -49,6 +41,7 @@ __all__ = [
 # Varint (unsigned LEB128)
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def uvarint_decode(buf: bytes, offset: int = 0) -> Tuple[int, int]:
     """
     Decode unsigned LEB128 at buf[offset:].
@@ -62,7 +55,7 @@ def uvarint_decode(buf: bytes, offset: int = 0) -> Tuple[int, int]:
     while i < len(buf):
         b = buf[i]
         i += 1
-        n |= ((b & 0x7F) << shift)
+        n |= (b & 0x7F) << shift
         if (b & 0x80) == 0:
             return n, i
         shift += 7
@@ -74,6 +67,7 @@ def uvarint_decode(buf: bytes, offset: int = 0) -> Tuple[int, int]:
 # ──────────────────────────────────────────────────────────────────────────────
 # Primitive decoders
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def _read_exact(buf: bytes, offset: int, n: int) -> Tuple[bytes, int]:
     j = offset + n
@@ -90,7 +84,9 @@ def _enforce_minimal_unsigned(mag: bytes) -> None:
         raise ValueError("non-minimal unsigned magnitude")
 
 
-def decode_bool(buf: bytes, offset: int = 0, *, strict: bool = True) -> Tuple[bool, int]:
+def decode_bool(
+    buf: bytes, offset: int = 0, *, strict: bool = True
+) -> Tuple[bool, int]:
     b, j = _read_exact(buf, offset, 1)
     if b[0] == 0x00:
         return False, j
@@ -102,7 +98,9 @@ def decode_bool(buf: bytes, offset: int = 0, *, strict: bool = True) -> Tuple[bo
     return True, j
 
 
-def decode_uint(buf: bytes, offset: int = 0, *, bits: int = 256, strict: bool = True) -> Tuple[int, int]:
+def decode_uint(
+    buf: bytes, offset: int = 0, *, bits: int = 256, strict: bool = True
+) -> Tuple[int, int]:
     length, i = uvarint_decode(buf, offset)
     mag, j = _read_exact(buf, i, length)
     if strict:
@@ -116,7 +114,9 @@ def decode_uint(buf: bytes, offset: int = 0, *, bits: int = 256, strict: bool = 
     return v, j
 
 
-def decode_int(buf: bytes, offset: int = 0, *, bits: int = 256, strict: bool = True) -> Tuple[int, int]:
+def decode_int(
+    buf: bytes, offset: int = 0, *, bits: int = 256, strict: bool = True
+) -> Tuple[int, int]:
     length, i = uvarint_decode(buf, offset)
     payload, j = _read_exact(buf, i, length)
     if len(payload) < 1:
@@ -181,6 +181,7 @@ def decode_address(
 # High-level dispatch
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def decode_value(
     buf: bytes,
     typ: Union[str, IntType, UIntType, BytesType, BoolType, AddressType],
@@ -234,7 +235,9 @@ def decode_args(
     """
     count, i = uvarint_decode(buf, offset)
     if strict and count != len(types):
-        raise ABITypeError(f"argument count mismatch: encoded={count} expected={len(types)}")
+        raise ABITypeError(
+            f"argument count mismatch: encoded={count} expected={len(types)}"
+        )
     out: List[Any] = []
     # If encoded count is larger than provided types (non-strict), only decode as many as types
     steps = min(count, len(types))

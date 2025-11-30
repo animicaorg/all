@@ -1,12 +1,12 @@
 import importlib
 import inspect
 import time
-from typing import Any, Callable, Dict, Iterable, Optional, Tuple, Union, List
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
 import pytest
 
-
 # --- Helpers -----------------------------------------------------------------
+
 
 def _maybe(mod, names: Iterable[str]) -> Optional[Any]:
     """Return the first attribute found on a module/object from a list of names."""
@@ -48,12 +48,26 @@ def _tpl_id(tpl: Any) -> Tuple:
             return ("id", d[k])
     # Otherwise derive from salient header-ish fields
     header_like = (
-        d.get("header_bytes") or d.get("header") or d.get("raw") or d.get("blob")
-        or d.get("header_cbor") or d.get("preimage")
+        d.get("header_bytes")
+        or d.get("header")
+        or d.get("raw")
+        or d.get("blob")
+        or d.get("header_cbor")
+        or d.get("preimage")
     )
-    parent = d.get("parent_hash") or d.get("prev_hash") or d.get("parent") or d.get("parentHash")
+    parent = (
+        d.get("parent_hash")
+        or d.get("prev_hash")
+        or d.get("parent")
+        or d.get("parentHash")
+    )
     height = d.get("height") or d.get("number") or d.get("slot") or d.get("epoch")
-    mix = d.get("mix_seed") or d.get("mixSeed") or d.get("nonce_domain") or d.get("nonceDomain")
+    mix = (
+        d.get("mix_seed")
+        or d.get("mixSeed")
+        or d.get("nonce_domain")
+        or d.get("nonceDomain")
+    )
     return ("derived", header_like, parent, height, mix)
 
 
@@ -61,7 +75,9 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def _expired(tpl: Any, now_ms: Optional[int] = None, now_height: Optional[int] = None) -> bool:
+def _expired(
+    tpl: Any, now_ms: Optional[int] = None, now_height: Optional[int] = None
+) -> bool:
     """
     Heuristically determine if a template is expired based on common fields.
     Supports either time-based or height-based expiry.
@@ -88,7 +104,12 @@ def _expired(tpl: Any, now_ms: Optional[int] = None, now_height: Optional[int] =
 
     # height-based
     if now_height is not None:
-        for hk in ("valid_until_height", "expiry_height", "expires_at_height", "validUntilHeight"):
+        for hk in (
+            "valid_until_height",
+            "expiry_height",
+            "expires_at_height",
+            "validUntilHeight",
+        ):
             if hk in d:
                 try:
                     return now_height >= int(d[hk])
@@ -103,7 +124,9 @@ def _expired(tpl: Any, now_ms: Optional[int] = None, now_height: Optional[int] =
 
 mt = importlib.import_module("mining.templates")
 
-TemplateManager = _maybe(mt, ("TemplateManager", "HeaderTemplateManager", "Templates", "Manager"))
+TemplateManager = _maybe(
+    mt, ("TemplateManager", "HeaderTemplateManager", "Templates", "Manager")
+)
 
 build_template = _maybe(
     mt,
@@ -120,6 +143,7 @@ refresh_fn = _maybe(mt, ("refresh_template", "refresh", "maybe_refresh", "rollov
 
 
 # --- Fakes for head/time/mempool ---------------------------------------------
+
 
 class FakeClock:
     def __init__(self, ms: int):
@@ -164,7 +188,7 @@ def _instantiate_manager() -> Optional[Any]:
         "head_provider": head_src.current,
         "mempool_provider": (lambda: []),
         "clock": clock,
-        "template_ttl_ms": 50,     # very short TTL for the test
+        "template_ttl_ms": 50,  # very short TTL for the test
         "ttl_ms": 50,
         "ttl_seconds": 0.05,
     }
@@ -199,6 +223,7 @@ def _manager_get_template(mgr: Any) -> Any:
 
 
 # --- Tests --------------------------------------------------------------------
+
 
 def test_rollover_on_head_change():
     """
@@ -240,7 +265,9 @@ def test_rollover_on_head_change():
         id1 = _tpl_id(t1)
 
         # In a healthy pipeline, a head change or explicit refresh yields a new template identity.
-        assert id1 != id0, f"Template did not change across head rollover (id0={id0}, id1={id1})"
+        assert (
+            id1 != id0
+        ), f"Template did not change across head rollover (id0={id0}, id1={id1})"
 
     else:
         # Builder fallback: construct two templates with distinct heads.
@@ -250,7 +277,9 @@ def test_rollover_on_head_change():
         head1 = FakeHeadSource(start_height=101, parent_prefix="bb").current()
         t0 = _call_with_supported(build_template, head=head0, prev=None)
         t1 = _call_with_supported(build_template, head=head1, prev=t0)
-        assert _tpl_id(t0) != _tpl_id(t1), "Builder produced identical templates for different heads"
+        assert _tpl_id(t0) != _tpl_id(
+            t1
+        ), "Builder produced identical templates for different heads"
 
 
 def test_work_expiry_handling():
@@ -286,7 +315,9 @@ def test_work_expiry_handling():
             if hasattr(mgr, attr):
                 head_src = getattr(mgr, attr)
         if isinstance(head_src, FakeHeadSource):
-            target_h = (d0.get("valid_until_height") or d0.get("expiry_height") or head_src.h) + 1
+            target_h = (
+                d0.get("valid_until_height") or d0.get("expiry_height") or head_src.h
+            ) + 1
             while head_src.h < int(target_h):
                 head_src.bump(1)
             advanced = True
@@ -323,11 +354,15 @@ def test_work_expiry_handling():
             pytest.skip("No TemplateManager and no build_template() found")
         head = FakeHeadSource(start_height=200, parent_prefix="cc").current()
         # Try to request a short TTL if the builder supports it.
-        t0 = _call_with_supported(build_template, head=head, ttl_ms=25, ttlSeconds=0.025)
+        t0 = _call_with_supported(
+            build_template, head=head, ttl_ms=25, ttlSeconds=0.025
+        )
         id0 = _tpl_id(t0)
 
         # Simulate 'expiry' by calling builder again for the same head with a flag that forces rollover
         t1 = _call_with_supported(build_template, head=head, force_new=True, prev=t0)
         id1 = _tpl_id(t1)
 
-        assert id1 != id0, "Builder produced identical work when forced rollover was requested"
+        assert (
+            id1 != id0
+        ), "Builder produced identical work when forced rollover was requested"

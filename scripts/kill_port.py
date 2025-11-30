@@ -23,11 +23,13 @@ def _parse_tcp_table(path: str) -> List[Dict[str, str]]:
                 parts = line.split()
                 if len(parts) < 10:
                     continue
-                rows.append({
-                    "local": parts[1],
-                    "state": parts[3],
-                    "inode": parts[9],
-                })
+                rows.append(
+                    {
+                        "local": parts[1],
+                        "state": parts[3],
+                        "inode": parts[9],
+                    }
+                )
     except FileNotFoundError:
         return []
     return rows
@@ -76,9 +78,13 @@ def _kill_pids(pids: Iterable[int], sig: signal.Signals) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Kill processes listening on a TCP port without external tools.")
+    parser = argparse.ArgumentParser(
+        description="Kill processes listening on a TCP port without external tools."
+    )
     parser.add_argument("port", type=int, help="TCP port to free (e.g., 8545)")
-    parser.add_argument("--signal", "-s", default="SIGTERM", help="Signal to send (default: SIGTERM)")
+    parser.add_argument(
+        "--signal", "-s", default="SIGTERM", help="Signal to send (default: SIGTERM)"
+    )
     args = parser.parse_args()
 
     try:

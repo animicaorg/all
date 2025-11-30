@@ -114,12 +114,12 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
-
 JSON = Dict[str, Any]
 Hex = str
 
 
 # ---------------------- Error Codes ----------------------
+
 
 class RpcErrorCodes(int, Enum):
     PARSE_ERROR = -32700
@@ -141,10 +141,15 @@ class RpcErrorCodes(int, Enum):
 
 class StratumError(Exception):
     """Base exception for protocol validation and builder helpers."""
+
     code: int = RpcErrorCodes.INTERNAL
 
     def to_error_obj(self) -> JSON:
-        return {"code": int(self.code), "message": self.__class__.__name__, "data": str(self)}
+        return {
+            "code": int(self.code),
+            "message": self.__class__.__name__,
+            "data": str(self),
+        }
 
 
 class InvalidRequest(StratumError):
@@ -161,6 +166,7 @@ class MethodNotFound(StratumError):
 
 # ---------------------- Methods ----------------------
 
+
 class Method(str, Enum):
     SUBSCRIBE = "mining.subscribe"
     AUTHORIZE = "mining.authorize"
@@ -172,6 +178,7 @@ class Method(str, Enum):
 
 
 # ---------------------- Dataclasses (schema) ----------------------
+
 
 @dataclass(frozen=True)
 class SubscribeParams:
@@ -211,7 +218,9 @@ class SetDifficultyParams:
 class NotifyHints:
     mixSeed: Hex
     algPolicyRoot: Optional[Hex] = None
-    proofCaps: Optional[JSON] = None  # {"ai": bool, "quantum": bool, "storage": bool, "vdf": bool}
+    proofCaps: Optional[JSON] = (
+        None  # {"ai": bool, "quantum": bool, "storage": bool, "vdf": bool}
+    )
 
 
 @dataclass(frozen=True)
@@ -236,7 +245,9 @@ class SubmitParams:
     jobId: str
     extranonce2: Hex
     hashshare: SubmitHashshare
-    attachments: Optional[JSON] = None  # {"ai": {...}, "quantum": {...}, "storage": {...}, "vdf": {...}}
+    attachments: Optional[JSON] = (
+        None  # {"ai": {...}, "quantum": {...}, "storage": {...}, "vdf": {...}}
+    )
 
 
 @dataclass(frozen=True)
@@ -249,7 +260,12 @@ class SubmitResult:
 
 # ---------------------- JSON-RPC helpers ----------------------
 
-def make_request(method: Union[str, Method], params: Optional[JSON] = None, id: Union[int, str, None] = None) -> JSON:
+
+def make_request(
+    method: Union[str, Method],
+    params: Optional[JSON] = None,
+    id: Union[int, str, None] = None,
+) -> JSON:
     if isinstance(method, Method):
         method = method.value
     if not isinstance(method, str) or not method:
@@ -266,7 +282,9 @@ def make_result(id: Union[int, str, None], result: Any) -> JSON:
     return {"jsonrpc": "2.0", "id": id, "result": result}
 
 
-def make_error(id: Union[int, str, None], code: int, message: str, data: Any = None) -> JSON:
+def make_error(
+    id: Union[int, str, None], code: int, message: str, data: Any = None
+) -> JSON:
     err = {"code": int(code), "message": message}
     if data is not None:
         err["data"] = data
@@ -278,10 +296,15 @@ def is_request(obj: JSON) -> bool:
 
 
 def is_response(obj: JSON) -> bool:
-    return isinstance(obj, dict) and obj.get("jsonrpc") == "2.0" and ("result" in obj or "error" in obj)
+    return (
+        isinstance(obj, dict)
+        and obj.get("jsonrpc") == "2.0"
+        and ("result" in obj or "error" in obj)
+    )
 
 
 # ---------------------- Validation (lightweight) ----------------------
+
 
 def _expect(cond: bool, msg: str) -> None:
     if not cond:
@@ -307,11 +330,19 @@ def validate_request(obj: JSON) -> Tuple[Method, Optional[Union[int, str]], JSON
         raise InvalidParams("params must be an object")
     # quick per-method structural checks (deep checks done in handlers)
     if method == Method.SUBSCRIBE:
-        _expect("agent" in params and isinstance(params["agent"], str), "subscribe.agent required")
-        _expect("features" in params and isinstance(params["features"], dict), "subscribe.features required")
+        _expect(
+            "agent" in params and isinstance(params["agent"], str),
+            "subscribe.agent required",
+        )
+        _expect(
+            "features" in params and isinstance(params["features"], dict),
+            "subscribe.features required",
+        )
     elif method == Method.AUTHORIZE:
         for k in ("worker", "address"):
-            _expect(k in params and isinstance(params[k], str), f"authorize.{k} required")
+            _expect(
+                k in params and isinstance(params[k], str), f"authorize.{k} required"
+            )
     elif method == Method.SET_DIFFICULTY:
         for k in ("shareTarget", "thetaMicro"):
             _expect(k in params, f"set_difficulty.{k} required")
@@ -321,13 +352,16 @@ def validate_request(obj: JSON) -> Tuple[Method, Optional[Union[int, str]], JSON
     elif method == Method.SUBMIT:
         for k in ("worker", "jobId", "extranonce2", "hashshare"):
             _expect(k in params, f"submit.{k} required")
-        _expect(isinstance(params["hashshare"], dict), "submit.hashshare must be object")
+        _expect(
+            isinstance(params["hashshare"], dict), "submit.hashshare must be object"
+        )
         for k in ("nonce", "body"):
             _expect(k in params["hashshare"], f"submit.hashshare.{k} required")
     return method, id_val, params  # type: ignore[return-value]
 
 
 # ---------------------- Framing helpers ----------------------
+
 
 def dumps(obj: JSON) -> bytes:
     """
@@ -346,6 +380,7 @@ def loads(data: Union[bytes, str]) -> JSON:
 
 
 # line-delimited framing -------------------------------------------------------
+
 
 def encode_lines(obj: JSON) -> bytes:
     return dumps(obj) + b"\n"
@@ -370,6 +405,7 @@ def decode_lines(buffer: bytearray) -> List[JSON]:
 
 
 # 4-byte BE length-prefixed framing -------------------------------------------
+
 
 def frame_lenpref(payload: bytes) -> bytes:
     n = len(payload)
@@ -405,15 +441,45 @@ def decode_lenpref(buffer: bytearray) -> List[JSON]:
 
 # ---------------------- Convenience builders ----------------------
 
-def req_subscribe(agent: str, features: Optional[JSON] = None, algo: str = "hashshare", id: Union[int, str, None] = 1) -> JSON:
-    return make_request(Method.SUBSCRIBE, {"agent": agent, "features": features or {"framing": "lines", "compress": False}, "algo": algo}, id=id)
+
+def req_subscribe(
+    agent: str,
+    features: Optional[JSON] = None,
+    algo: str = "hashshare",
+    id: Union[int, str, None] = 1,
+) -> JSON:
+    return make_request(
+        Method.SUBSCRIBE,
+        {
+            "agent": agent,
+            "features": features or {"framing": "lines", "compress": False},
+            "algo": algo,
+        },
+        id=id,
+    )
 
 
-def res_subscribe(id: Union[int, str, None], session_id: str, extranonce1: Hex, extranonce2_size: int, framing: str = "lines") -> JSON:
-    return make_result(id, {"sessionId": session_id, "extranonce1": extranonce1, "extranonce2Size": int(extranonce2_size), "framing": framing})
+def res_subscribe(
+    id: Union[int, str, None],
+    session_id: str,
+    extranonce1: Hex,
+    extranonce2_size: int,
+    framing: str = "lines",
+) -> JSON:
+    return make_result(
+        id,
+        {
+            "sessionId": session_id,
+            "extranonce1": extranonce1,
+            "extranonce2Size": int(extranonce2_size),
+            "framing": framing,
+        },
+    )
 
 
-def res_subscribe_v1(id: Union[int, str, None], extranonce1: Hex, extranonce2_size: int) -> JSON:
+def res_subscribe_v1(
+    id: Union[int, str, None], extranonce1: Hex, extranonce2_size: int
+) -> JSON:
     """Standard Stratum v1 subscribe reply.
 
     Format:
@@ -427,39 +493,82 @@ def res_subscribe_v1(id: Union[int, str, None], extranonce1: Hex, extranonce2_si
     sub2 = "subscription-id-2"
     return {
         "id": id,
-        "result": [[["mining.set_difficulty", sub1], ["mining.notify", sub2]], extranonce1, int(extranonce2_size)],
+        "result": [
+            [["mining.set_difficulty", sub1], ["mining.notify", sub2]],
+            extranonce1,
+            int(extranonce2_size),
+        ],
         "error": None,
     }
 
 
-def req_authorize(worker: str, address: str, signature: Optional[Hex] = None, id: Union[int, str, None] = 2) -> JSON:
+def req_authorize(
+    worker: str,
+    address: str,
+    signature: Optional[Hex] = None,
+    id: Union[int, str, None] = 2,
+) -> JSON:
     p: JSON = {"worker": worker, "address": address}
     if signature is not None:
         p["signature"] = signature
     return make_request(Method.AUTHORIZE, p, id=id)
 
 
-def res_authorize(id: Union[int, str, None], ok: bool, reason: Optional[str] = None) -> JSON:
+def res_authorize(
+    id: Union[int, str, None], ok: bool, reason: Optional[str] = None
+) -> JSON:
     r: JSON = {"ok": bool(ok), "authorized": bool(ok)}
     if reason:
         r["reason"] = reason
     return make_result(id, r)
 
 
-def res_authorize_v1(id: Union[int, str, None], ok: bool = True, reason: Optional[str] = None) -> JSON:
-    return {"id": id, "result": bool(ok), "error": None if ok else {"code": RpcErrorCodes.UNAUTHORIZED, "message": reason or "unauthorized"}}
+def res_authorize_v1(
+    id: Union[int, str, None], ok: bool = True, reason: Optional[str] = None
+) -> JSON:
+    return {
+        "id": id,
+        "result": bool(ok),
+        "error": (
+            None
+            if ok
+            else {
+                "code": RpcErrorCodes.UNAUTHORIZED,
+                "message": reason or "unauthorized",
+            }
+        ),
+    }
 
 
 def push_set_difficulty(share_target: float, theta_micro: int) -> JSON:
-    return make_request(Method.SET_DIFFICULTY, {"shareTarget": float(share_target), "thetaMicro": int(theta_micro)}, id=None)
+    return make_request(
+        Method.SET_DIFFICULTY,
+        {"shareTarget": float(share_target), "thetaMicro": int(theta_micro)},
+        id=None,
+    )
 
 
 def push_set_difficulty_v1(difficulty: float) -> JSON:
-    return {"id": None, "method": Method.SET_DIFFICULTY.value, "params": [float(difficulty)]}
+    return {
+        "id": None,
+        "method": Method.SET_DIFFICULTY.value,
+        "params": [float(difficulty)],
+    }
 
 
-def push_notify(job_id: str, header: JSON, share_target: float, clean_jobs: bool = True, hints: Optional[JSON] = None) -> JSON:
-    p: JSON = {"jobId": job_id, "cleanJobs": bool(clean_jobs), "header": header, "shareTarget": float(share_target)}
+def push_notify(
+    job_id: str,
+    header: JSON,
+    share_target: float,
+    clean_jobs: bool = True,
+    hints: Optional[JSON] = None,
+) -> JSON:
+    p: JSON = {
+        "jobId": job_id,
+        "cleanJobs": bool(clean_jobs),
+        "header": header,
+        "shareTarget": float(share_target),
+    }
     if hints is not None:
         p["hints"] = hints
     return make_request(Method.NOTIFY, p, id=None)
@@ -490,17 +599,37 @@ def push_notify_v1(
     return {"id": None, "method": Method.NOTIFY.value, "params": params}
 
 
-def req_submit(worker: str, job_id: str, extranonce2: Hex, hashshare_body: JSON, nonce: Hex, mix: Optional[Hex] = None, attachments: Optional[JSON] = None, id: Union[int, str, None] = 3) -> JSON:
+def req_submit(
+    worker: str,
+    job_id: str,
+    extranonce2: Hex,
+    hashshare_body: JSON,
+    nonce: Hex,
+    mix: Optional[Hex] = None,
+    attachments: Optional[JSON] = None,
+    id: Union[int, str, None] = 3,
+) -> JSON:
     hs: JSON = {"nonce": nonce, "body": hashshare_body}
     if mix is not None:
         hs["mix"] = mix
-    p: JSON = {"worker": worker, "jobId": job_id, "extranonce2": extranonce2, "hashshare": hs}
+    p: JSON = {
+        "worker": worker,
+        "jobId": job_id,
+        "extranonce2": extranonce2,
+        "hashshare": hs,
+    }
     if attachments is not None:
         p["attachments"] = attachments
     return make_request(Method.SUBMIT, p, id=id)
 
 
-def res_submit(id: Union[int, str, None], accepted: bool, reason: Optional[str] = None, is_block: Optional[bool] = None, tx_count: Optional[int] = None) -> JSON:
+def res_submit(
+    id: Union[int, str, None],
+    accepted: bool,
+    reason: Optional[str] = None,
+    is_block: Optional[bool] = None,
+    tx_count: Optional[int] = None,
+) -> JSON:
     r: JSON = {"accepted": bool(accepted)}
     if reason:
         r["reason"] = reason
@@ -511,12 +640,19 @@ def res_submit(id: Union[int, str, None], accepted: bool, reason: Optional[str] 
     return make_result(id, r)
 
 
-def res_submit_v1(id: Union[int, str, None], accepted: bool, reason: Optional[str] = None) -> JSON:
-    err = None if accepted else {"code": RpcErrorCodes.INVALID_SHARE, "message": reason or "rejected"}
+def res_submit_v1(
+    id: Union[int, str, None], accepted: bool, reason: Optional[str] = None
+) -> JSON:
+    err = (
+        None
+        if accepted
+        else {"code": RpcErrorCodes.INVALID_SHARE, "message": reason or "rejected"}
+    )
     return {"id": id, "result": bool(accepted), "error": err}
 
 
 # ---------------------- Tiny self-test (manual) ----------------------
+
 
 def _roundtrip_demo() -> None:  # pragma: no cover
     buf = bytearray()
@@ -528,7 +664,12 @@ def _roundtrip_demo() -> None:  # pragma: no cover
     assert decoded[0]["method"] == Method.SUBSCRIBE.value
     assert decoded[1]["method"] == Method.SET_DIFFICULTY.value
     method, idv, params = validate_request(decoded[0])
-    assert method == Method.SUBSCRIBE and idv == 1 and params["agent"].startswith("animica")
+    assert (
+        method == Method.SUBSCRIBE
+        and idv == 1
+        and params["agent"].startswith("animica")
+    )
+
 
 if __name__ == "__main__":  # pragma: no cover
     _roundtrip_demo()

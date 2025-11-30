@@ -1,8 +1,8 @@
 import math
 
 import pytest
-
-from animica.quantum.experiment import QuantumExperiment, simulate_from_pow_input
+from animica.quantum.experiment import (QuantumExperiment,
+                                        simulate_from_pow_input)
 from animica.quantum.simulator import run_statevector
 
 
@@ -29,7 +29,17 @@ def test_experiment_determinism(sample_payload):
 
 
 def test_pow_helper_reproducible(sample_payload):
-    result_one = simulate_from_pow_input(sample_payload["block_hash"], sample_payload["nonce"], sample_payload["difficulty"], seed=7)
-    result_two = simulate_from_pow_input(sample_payload["block_hash"], sample_payload["nonce"], sample_payload["difficulty"], seed=7)
+    result_one = simulate_from_pow_input(
+        sample_payload["block_hash"],
+        sample_payload["nonce"],
+        sample_payload["difficulty"],
+        seed=7,
+    )
+    result_two = simulate_from_pow_input(
+        sample_payload["block_hash"],
+        sample_payload["nonce"],
+        sample_payload["difficulty"],
+        seed=7,
+    )
     assert result_one.score == result_two.score
     assert result_one.fingerprint == result_two.fingerprint

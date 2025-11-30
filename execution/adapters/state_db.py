@@ -40,12 +40,14 @@ Design notes
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, Iterable, List, Mapping, MutableMapping, Optional, Protocol, Sequence, Tuple, runtime_checkable, Literal, Any
 import contextlib
-
+from dataclasses import dataclass
+from typing import (Any, Dict, Iterable, List, Literal, Mapping,
+                    MutableMapping, Optional, Protocol, Sequence, Tuple,
+                    runtime_checkable)
 
 # ----------------------------- public exceptions ------------------------------
+
 
 class StateAdapterError(Exception):
     """Base error for the state-db adapter."""
@@ -61,6 +63,7 @@ class InsufficientBalance(StateAdapterError):
 
 # ---------------------------- core-db minimal protocol ------------------------
 
+
 @runtime_checkable
 class _CoreStateDB(Protocol):
     # reads
@@ -68,11 +71,13 @@ class _CoreStateDB(Protocol):
     def get_nonce(self, address: bytes) -> int: ...
     def get_code(self, address: bytes) -> bytes: ...
     def get_storage(self, address: bytes, key: bytes) -> bytes: ...
+
     # writes
     def set_balance(self, address: bytes, value: int) -> None: ...
     def set_nonce(self, address: bytes, value: int) -> None: ...
     def set_code(self, address: bytes, code: bytes) -> None: ...
     def set_storage(self, address: bytes, key: bytes, value: bytes) -> None: ...
+
     # optional txn-ish APIs
     def snapshot(self) -> object: ...
     def revert(self, snap_id: object) -> None: ...
@@ -80,6 +85,7 @@ class _CoreStateDB(Protocol):
 
 
 # ------------------------------- read facade ----------------------------------
+
 
 class StateReader:
     """Read-only facade over the state database."""
@@ -124,9 +130,17 @@ class StateReader:
 
 # ------------------------------ write batching --------------------------------
 
+
 @dataclass(frozen=True)
 class _Op:
-    kind: Literal["set_balance", "add_balance", "set_nonce", "inc_nonce", "set_code", "set_storage"]
+    kind: Literal[
+        "set_balance",
+        "add_balance",
+        "set_nonce",
+        "inc_nonce",
+        "set_code",
+        "set_storage",
+    ]
     address: bytes
     # fields reused depending on op
     value_int: Optional[int] = None
@@ -213,7 +227,9 @@ class WriteBatch:
                 elif op.kind == "set_code":
                     self._db.set_code(op.address, op.value_bytes or b"")
                 elif op.kind == "set_storage":
-                    self._db.set_storage(op.address, op.key or b"", op.value_bytes or b"")
+                    self._db.set_storage(
+                        op.address, op.key or b"", op.value_bytes or b""
+                    )
                 else:  # pragma: no cover - defensive
                     raise StateAdapterError(f"unknown op kind: {op.kind}")
         except Exception:
@@ -244,6 +260,7 @@ class WriteBatch:
 
 
 # ------------------------------- write facade ---------------------------------
+
 
 class StateWriter(StateReader):
     """Read+write facade. Use `begin()` to collect and apply mutations."""

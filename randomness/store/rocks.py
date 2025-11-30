@@ -60,6 +60,7 @@ except Exception:  # pragma: no cover
 
 # ---- Helpers ----------------------------------------------------------------
 
+
 def _ensure_rocks_available() -> None:
     if rocksdb is None:  # pragma: no cover
         raise ImportError(
@@ -70,6 +71,7 @@ def _ensure_rocks_available() -> None:
 
 
 # ---- Implementation ----------------------------------------------------------
+
 
 @dataclass
 class RocksKeyValue(KeyValue):
@@ -243,7 +245,9 @@ class RocksKeyValue(KeyValue):
 
     @staticmethod
     def _check_key_value(key: bytes, value: bytes) -> None:
-        if not isinstance(key, (bytes, bytearray)) or not isinstance(value, (bytes, bytearray)):
+        if not isinstance(key, (bytes, bytearray)) or not isinstance(
+            value, (bytes, bytearray)
+        ):
             raise TypeError("key and value must be bytes")
 
     def _release_snapshot(self) -> None:

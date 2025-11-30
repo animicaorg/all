@@ -30,6 +30,7 @@ _TO_IMPORT: Tuple[Tuple[str, str, str], ...] = (
     ("AICFQueueAdapter", "mining.adapters.aicf_queue", "AICFQueueAdapter"),
 )
 
+
 def _safe_bind(public_name: str, module_path: str, symbol: str) -> bool:
     """
     Try to import `symbol` from `module_path` and bind it into this module's globals

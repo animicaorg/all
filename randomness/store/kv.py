@@ -23,27 +23,27 @@ from typing import Iterable, Optional, Tuple
 
 from . import KeyValue
 
-
 # --- Bucket prefix constants (single-byte, domain-separated) -----------------
 
 COMMITS_PREFIX = b"\x01"  # COMMITS:  \x01 | len(round) | round | len(part) | part
 REVEALS_PREFIX = b"\x02"  # REVEALS:  \x02 | len(round) | round | len(part) | part
-VDF_PREFIX     = b"\x03"  # VDF:      \x03 | tag | len(round) | round
-BEACON_PREFIX  = b"\x04"  # BEACON:   \x04 | tag | len(round) | round
-META_PREFIX    = b"\x05"  # META:     \x05 | len(key) | key
+VDF_PREFIX = b"\x03"  # VDF:      \x03 | tag | len(round) | round
+BEACON_PREFIX = b"\x04"  # BEACON:   \x04 | tag | len(round) | round
+META_PREFIX = b"\x05"  # META:     \x05 | len(key) | key
 
 
 # --- VDF / BEACON sub-tags ---------------------------------------------------
 
-VDF_IN_TAG    = b"I"   # VDF input
-VDF_PROOF_TAG = b"P"   # VDF proof
-VDF_AUX_TAG   = b"A"   # optional aux (e.g., calibration data), by round
+VDF_IN_TAG = b"I"  # VDF input
+VDF_PROOF_TAG = b"P"  # VDF proof
+VDF_AUX_TAG = b"A"  # optional aux (e.g., calibration data), by round
 
-BEACON_OUT_TAG   = b"O"   # finalized beacon bytes for a round
-BEACON_LIGHT_TAG = b"L"   # optional light-client proof for a round
+BEACON_OUT_TAG = b"O"  # finalized beacon bytes for a round
+BEACON_LIGHT_TAG = b"L"  # optional light-client proof for a round
 
 
 # --- Key composition helpers -------------------------------------------------
+
 
 def _be_u32(n: int) -> bytes:
     if n < 0 or n > 0xFFFFFFFF:
@@ -66,6 +66,7 @@ def _utf8(b: str | bytes) -> bytes:
 
 # --- Public bucket API -------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class Buckets:
     """
@@ -79,6 +80,7 @@ class Buckets:
         RoundId canonical encoding, address bytes, etc).
       - Iteration order is backend-defined; do not depend on it.
     """
+
     kv: KeyValue
 
     # --- Commits -------------------------------------------------------------
@@ -150,7 +152,11 @@ class Buckets:
 
     def del_vdf(self, round_id: bytes) -> None:
         """Delete all VDF artifacts for a round (input/proof/aux)."""
-        for k in (self.key_vdf_input(round_id), self.key_vdf_proof(round_id), self.key_vdf_aux(round_id)):
+        for k in (
+            self.key_vdf_input(round_id),
+            self.key_vdf_proof(round_id),
+            self.key_vdf_aux(round_id),
+        ):
             self.kv.delete(k)
 
     # --- Beacon outputs / proofs --------------------------------------------
@@ -190,9 +196,9 @@ class Buckets:
         self.kv.delete(self.key_meta(name))
 
     # Convenience meta keys commonly used by beacon logic
-    META_CURRENT_ROUND = b"current_round"          # bytes: canonical RoundId encoding
-    META_PREV_ROUND    = b"prev_round"             # bytes: canonical RoundId encoding
-    META_PARAMS_SNAPSHOT = b"params_snapshot"      # bytes: serialized params
+    META_CURRENT_ROUND = b"current_round"  # bytes: canonical RoundId encoding
+    META_PREV_ROUND = b"prev_round"  # bytes: canonical RoundId encoding
+    META_PARAMS_SNAPSHOT = b"params_snapshot"  # bytes: serialized params
     META_LAST_FINALIZED = b"last_finalized_round"  # bytes: RoundId
 
     # --- Prefix iteration helpers -------------------------------------------

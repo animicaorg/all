@@ -60,7 +60,12 @@ def test_invalid_params_type_rejected():
     Dispatcher should return -32602 Invalid params.
     """
     client, _, _ = new_test_client()
-    payload = {"jsonrpc": "2.0", "method": "chain.getHead", "params": "oops", "id": "abc"}
+    payload = {
+        "jsonrpc": "2.0",
+        "method": "chain.getHead",
+        "params": "oops",
+        "id": "abc",
+    }
     r = client.post("/rpc", json=payload)
     assert r.status_code == 200
     data = r.json()
@@ -104,7 +109,9 @@ def test_batch_mixed_valid_invalid_and_garbage():
         {"jsonrpc": "2.0", "method": "no.such.method", "id": "b"},
         "not a request",
     ]
-    r = client.post("/rpc", data=json.dumps(batch), headers={"content-type": "application/json"})
+    r = client.post(
+        "/rpc", data=json.dumps(batch), headers={"content-type": "application/json"}
+    )
     assert r.status_code == 200
     resp = r.json()
     assert isinstance(resp, list), f"Expected list response, got: {type(resp)} {resp}"
@@ -149,7 +156,9 @@ def test_id_echoing_and_types_preserved_in_batch():
         {"jsonrpc": "2.0", "method": "chain.getChainId", "id": 7},
         {"jsonrpc": "2.0", "method": "chain.getChainId", "id": "07"},
     ]
-    r = client.post("/rpc", data=json.dumps(batch), headers={"content-type": "application/json"})
+    r = client.post(
+        "/rpc", data=json.dumps(batch), headers={"content-type": "application/json"}
+    )
     assert r.status_code == 200
     resp = r.json()
     assert isinstance(resp, list) and len(resp) == 2
@@ -176,4 +185,6 @@ def test_notification_is_ignored_no_result():
     assert r.status_code in (200, 204)
     # If body exists, it should be empty or whitespace
     body = r.text or ""
-    assert body.strip() == "" or body.strip() == "null", f"Unexpected notification response body: {body!r}"
+    assert (
+        body.strip() == "" or body.strip() == "null"
+    ), f"Unexpected notification response body: {body!r}"

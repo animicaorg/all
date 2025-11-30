@@ -1,18 +1,18 @@
 from __future__ import annotations
 
-import math
 import dataclasses
+import math
 import typing as t
 
 import pytest
 
-from consensus.types import ProofKind  # HASH, AI, QUANTUM, STORAGE, VDF
-import consensus.math as cmath
 import consensus.caps as ccaps
+import consensus.math as cmath
 import consensus.scorer as scorer
-
+from consensus.types import ProofKind  # HASH, AI, QUANTUM, STORAGE, VDF
 
 # ---------- helpers: pick functions, tolerant to naming differences ------------
+
 
 def _pick(mod, name: str, alts: list[str]):
     if hasattr(mod, name):
@@ -21,6 +21,7 @@ def _pick(mod, name: str, alts: list[str]):
         if hasattr(mod, a):
             return getattr(mod, a)
     raise AttributeError(f"Missing function {name} (tried {alts}) in {mod.__name__}")
+
 
 # aggregator taking raw psi-by-kind and policy, returning either:
 #  - float sum
@@ -33,32 +34,45 @@ aggregate = _pick(
 )
 
 # decision: (S, theta)->bool or (H,sum_psi,theta)->bool
-accept_fn = getattr(scorer, "accept", None) or getattr(scorer, "is_accepted", None) or getattr(scorer, "decision", None)
+accept_fn = (
+    getattr(scorer, "accept", None)
+    or getattr(scorer, "is_accepted", None)
+    or getattr(scorer, "decision", None)
+)
 
 # caps helpers (used for baseline comparison & fallback)
 clip_per_type = _pick(ccaps, "clip_per_type", ["cap_per_type", "enforce_per_type_caps"])
-clip_total_gamma = _pick(ccaps, "clip_total_gamma", ["cap_total_gamma", "enforce_total_gamma"])
+clip_total_gamma = _pick(
+    ccaps, "clip_total_gamma", ["cap_total_gamma", "enforce_total_gamma"]
+)
 
 
 # ------------------------- duck policy fixture ---------------------------------
+
 
 class _DuckPolicy:
     """
     Tiny policy that exposes common attribute names used by caps/scorer.
     Values are in natural units (nats of ψ), not micro-nats.
     """
-    def __init__(self,
-                 per_type_caps: dict[t.Union[ProofKind, str], float],
-                 gamma_cap: float):
+
+    def __init__(
+        self, per_type_caps: dict[t.Union[ProofKind, str], float], gamma_cap: float
+    ):
         self.per_type_caps = dict(per_type_caps)
         self.type_caps = self.per_type_caps
         self.per_type = self.per_type_caps
         # also string-keyed copy
-        self.per_type_caps.update({(k.name.lower() if isinstance(k, ProofKind) else k): v
-                                   for k, v in list(self.per_type_caps.items())})
+        self.per_type_caps.update(
+            {
+                (k.name.lower() if isinstance(k, ProofKind) else k): v
+                for k, v in list(self.per_type_caps.items())
+            }
+        )
         self.gamma_cap = gamma_cap
         self.total_gamma_cap = gamma_cap
         self.Gamma_cap = gamma_cap
+
 
 @pytest.fixture
 def loose_policy() -> _DuckPolicy:
@@ -71,6 +85,7 @@ def loose_policy() -> _DuckPolicy:
         ProofKind.VDF: 1e9,
     }
     return _DuckPolicy(per_type_caps=per_type, gamma_cap=1e9)
+
 
 @pytest.fixture
 def clipping_policy() -> _DuckPolicy:
@@ -88,10 +103,12 @@ def clipping_policy() -> _DuckPolicy:
 
 # ------------------------ result normalization --------------------------------
 
+
 @dataclasses.dataclass
 class AggOut:
     sum_psi: float
     by_kind: dict
+
 
 def _norm(out) -> AggOut:
     # float only
@@ -108,7 +125,8 @@ def _norm(out) -> AggOut:
             # maybe nested
             for k in ["S", "score", "Sigma", "sigma"]:
                 if k in out:
-                    s = out[k]; break
+                    s = out[k]
+                    break
         bk = out.get("breakdown", out.get("per_kind", out.get("by_kind", {})))
         return AggOut(float(s), dict(bk))
     # dataclass/object with attributes
@@ -125,6 +143,7 @@ def _norm(out) -> AggOut:
 
 
 # --------------------------------- tests --------------------------------------
+
 
 def test_accept_reject_around_theta(loose_policy: _DuckPolicy):
     # H(u) = -ln u. Pick u=0.5 -> H ≈ 0.693147
@@ -220,8 +239,11 @@ def test_breakdown_matches_caps_and_global_gamma(clipping_policy: _DuckPolicy):
             if sk in d:
                 return float(d[sk])
             return float(d.get(k.name, 0.0))
+
         for k in raw.keys():
-            assert _get(out.by_kind, k) == pytest.approx(expected[k], rel=1e-12, abs=1e-12)
+            assert _get(out.by_kind, k) == pytest.approx(
+                expected[k], rel=1e-12, abs=1e-12
+            )
         # internal consistency
         s2 = sum(_get(out.by_kind, k) for k in raw.keys())
         assert s2 == pytest.approx(out.sum_psi, rel=1e-12, abs=1e-12)
@@ -238,7 +260,11 @@ def test_h_of_u_monotone_affects_decision(loose_policy: _DuckPolicy):
     theta = 1.0
     # u_small → H large → accept
     u_small = 0.3
-    H_big = cmath.safe_neglog(u_small) if hasattr(cmath, "safe_neglog") else -math.log(u_small)
+    H_big = (
+        cmath.safe_neglog(u_small)
+        if hasattr(cmath, "safe_neglog")
+        else -math.log(u_small)
+    )
     S_big = H_big + agg
     if accept_fn:
         try:
@@ -251,7 +277,11 @@ def test_h_of_u_monotone_affects_decision(loose_policy: _DuckPolicy):
 
     # u_close1 → H small → potentially reject if Σψ not big enough
     u_close1 = 0.95
-    H_small = cmath.safe_neglog(u_close1) if hasattr(cmath, "safe_neglog") else -math.log(u_close1)
+    H_small = (
+        cmath.safe_neglog(u_close1)
+        if hasattr(cmath, "safe_neglog")
+        else -math.log(u_close1)
+    )
     S_small = H_small + agg
     if accept_fn:
         try:
@@ -261,5 +291,3 @@ def test_h_of_u_monotone_affects_decision(loose_policy: _DuckPolicy):
         assert ok_small == (S_small >= theta)
     else:
         assert (S_small >= theta) or (S_small < theta)  # tautology; covered above
-
-

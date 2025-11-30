@@ -13,6 +13,7 @@ except Exception as e:  # pragma: no cover - helpful error if deps missing
 
 # ---------- helpers: create a fake methods module the router will use ----------
 
+
 @pytest.fixture(autouse=True)
 def fake_methods(monkeypatch):
     """
@@ -73,6 +74,7 @@ def fake_methods(monkeypatch):
 
 # ---------- helpers: build app and mount the router under a known prefix ----------
 
+
 async def _build_app(prefix: str = "/cap"):
     import importlib
 
@@ -119,7 +121,9 @@ async def _build_app(prefix: str = "/cap"):
             router = fn(prefix=prefix)  # type: ignore[misc]
             # FastAPI includes APIRouter via include_router
             try:
-                app.include_router(router, prefix="")  # router likely already has prefix
+                app.include_router(
+                    router, prefix=""
+                )  # router likely already has prefix
             except Exception:
                 # If router is a FastAPI app itself:
                 app.mount(prefix, router)  # type: ignore[arg-type]
@@ -135,13 +139,16 @@ async def _build_app(prefix: str = "/cap"):
                 pass
 
     if not mounted:
-        pytest.skip("capabilities.rpc.mount does not expose a known router mount function")
+        pytest.skip(
+            "capabilities.rpc.mount does not expose a known router mount function"
+        )
 
     client = AsyncClient(app=app, base_url="http://testserver")
     return app, client
 
 
 # ---------- tests: list/get job, get result (read-only) ----------
+
 
 @pytest.mark.anyio
 async def test_list_jobs_ok():

@@ -93,7 +93,9 @@ def is_hex_str(s: str, *, require_prefix: bool = False, even: bool = True) -> bo
     return True
 
 
-def bytes_to_hex(b: Union[bytes, bytearray, memoryview], *, prefix: bool = True, lower: bool = True) -> str:
+def bytes_to_hex(
+    b: Union[bytes, bytearray, memoryview], *, prefix: bool = True, lower: bool = True
+) -> str:
     """
     Encode bytes-like into a hex string.
 
@@ -271,7 +273,14 @@ def canonicalize(
 
     # list/tuple
     if isinstance(obj, (list, tuple)):
-        return [canonicalize(x, hexify_bytes=hexify_bytes, normalize_hex_strings=normalize_hex_strings) for x in obj]
+        return [
+            canonicalize(
+                x,
+                hexify_bytes=hexify_bytes,
+                normalize_hex_strings=normalize_hex_strings,
+            )
+            for x in obj
+        ]
 
     # mappings (dict-like)
     if isinstance(obj, Mapping):
@@ -295,7 +304,11 @@ def dumps_canonical(obj: Any) -> str:
     canon = canonicalize(obj)
     if _fastjson is not None:  # pragma: no cover - optional fast path
         # orjson.dumps already sorts keys if option is provided; emulate via default since we pre-sorted.
-        return _fastjson.dumps(canon, option=_fastjson.OPT_APPEND_NEWLINE).decode("utf-8").rstrip("\n")
+        return (
+            _fastjson.dumps(canon, option=_fastjson.OPT_APPEND_NEWLINE)
+            .decode("utf-8")
+            .rstrip("\n")
+        )
     return json.dumps(canon, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 

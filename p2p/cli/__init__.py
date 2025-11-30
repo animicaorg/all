@@ -17,6 +17,7 @@ Usage examples:
 (When p2p/cli/peer.py, listen.py, and publish.py are present, this module will
 discover and dispatch to their `main(argv: list[str] | None = None) -> int` entrypoints.)
 """
+
 from __future__ import annotations
 
 import argparse

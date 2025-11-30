@@ -43,12 +43,12 @@ If `proofs/` modules are present, we may additionally enrich/validate
 fields but we will NOT fail the normalization step on importer absence.
 """
 
-from dataclasses import dataclass, asdict
-from typing import Any, Dict, Optional, List, Tuple, Union, overload
 import base64
 import hashlib
 import json
 import logging
+from dataclasses import asdict, dataclass
+from typing import Any, Dict, List, Optional, Tuple, Union, overload
 
 from capabilities.errors import AttestationError
 
@@ -71,13 +71,15 @@ except Exception:  # pragma: no cover - optional
     _cca = None  # type: ignore[assignment]
 
 try:
-    from proofs.quantum_attest import provider_cert as _qcert, traps as _qtraps  # type: ignore
+    from proofs.quantum_attest import provider_cert as _qcert  # type: ignore
+    from proofs.quantum_attest import traps as _qtraps
 except Exception:  # pragma: no cover - optional
     _qcert = None  # type: ignore[assignment]
     _qtraps = None  # type: ignore[assignment]
 
 
 # ----- Helpers ---------------------------------------------------------------
+
 
 def _sha3_256(b: bytes) -> bytes:
     return hashlib.sha3_256(b).digest()
@@ -143,7 +145,11 @@ def _get(m: Union[Dict[str, Any], Any], key: str, default: Any = None) -> Any:
 
 
 def _vendor_name(v: Any) -> str:
-    s = (_get(v, "vendor", v) or "").strip().lower() if isinstance(v, (dict,)) else str(v).strip().lower()
+    s = (
+        (_get(v, "vendor", v) or "").strip().lower()
+        if isinstance(v, (dict,))
+        else str(v).strip().lower()
+    )
     aliases = {
         "sgx": "intel_sgx",
         "intel": "intel_sgx",
@@ -168,11 +174,12 @@ def _bound_len(b: bytes, *, max_len: int, label: str) -> bytes:
 
 # ----- Canonical normalized shapes -------------------------------------------
 
+
 @dataclass
 class NormalizedTEE:
     vendor: str
-    evidence: bytes                  # raw quote/report/token
-    workload_digest: bytes           # sha3 digest (caller-selected domain)
+    evidence: bytes  # raw quote/report/token
+    workload_digest: bytes  # sha3 digest (caller-selected domain)
     redundancy: Optional[Dict[str, Any]] = None
     traps: Optional[Dict[str, Any]] = None
     qos: Optional[Dict[str, Any]] = None
@@ -208,7 +215,10 @@ class NormalizedQuantum:
 
 # ----- Public API ------------------------------------------------------------
 
-def digest_workload(payload: Union[bytes, str, Dict[str, Any]], *, domain: str = "cap.attest.workload") -> bytes:
+
+def digest_workload(
+    payload: Union[bytes, str, Dict[str, Any]], *, domain: str = "cap.attest.workload"
+) -> bytes:
     """
     Compute a domain-separated SHA3-512 digest for AI workload binding.
 
@@ -216,17 +226,23 @@ def digest_workload(payload: Union[bytes, str, Dict[str, Any]], *, domain: str =
 
     Note: callers may choose a different domain string if policy dictates.
     """
-    prefix = (domain.encode("utf-8") if isinstance(domain, str) else bytes(domain)) + b"\x00"
+    prefix = (
+        domain.encode("utf-8") if isinstance(domain, str) else bytes(domain)
+    ) + b"\x00"
     return _sha3_512(prefix + _as_bytes(payload))
 
 
-def digest_circuit(circuit: Union[bytes, str, Dict[str, Any]], *, domain: str = "cap.attest.circuit") -> bytes:
+def digest_circuit(
+    circuit: Union[bytes, str, Dict[str, Any]], *, domain: str = "cap.attest.circuit"
+) -> bytes:
     """
     Compute a domain-separated SHA3-512 digest for Quantum circuit binding.
 
         H = sha3_512( b"cap.attest.circuit\\x00" || circuit )
     """
-    prefix = (domain.encode("utf-8") if isinstance(domain, str) else bytes(domain)) + b"\x00"
+    prefix = (
+        domain.encode("utf-8") if isinstance(domain, str) else bytes(domain)
+    ) + b"\x00"
     return _sha3_512(prefix + _as_bytes(circuit))
 
 
@@ -258,7 +274,11 @@ def normalize_tee_bundle(
     vendor = _vendor_name(_get(bundle, "vendor", ""))
     evidence = _as_bytes(_get(bundle, "evidence"))
     workload_digest = _as_bytes(
-        _get(bundle, "workload_digest", _get(bundle, "workloadHash", _get(bundle, "workloadDigest")))
+        _get(
+            bundle,
+            "workload_digest",
+            _get(bundle, "workloadHash", _get(bundle, "workloadDigest")),
+        )
     )
 
     redundancy = _get(bundle, "redundancy")
@@ -291,7 +311,9 @@ def normalize_tee_bundle(
         elif vendor == "arm_cca" and _cca is not None:
             _cca.parse_token(evidence)  # type: ignore[attr-defined]
     except Exception as e:  # pragma: no cover - environment dependent
-        raise AttestationError(f"TEE evidence failed structural parse for {vendor}: {e}") from e
+        raise AttestationError(
+            f"TEE evidence failed structural parse for {vendor}: {e}"
+        ) from e
 
     return NormalizedTEE(
         vendor=vendor,
@@ -325,16 +347,24 @@ def normalize_quantum_bundle(
     if bundle is None:
         raise AttestationError("empty Quantum attestation bundle")
 
-    provider_cert = _get(bundle, "provider_cert", _get(bundle, "providerCert", _get(bundle, "cert")))
-    trap_outcomes = _get(bundle, "trap_outcomes", _get(bundle, "traps", _get(bundle, "trapResults", [])))
-    circuit_digest = _as_bytes(_get(bundle, "circuit_digest", _get(bundle, "circuitHash")))
+    provider_cert = _get(
+        bundle, "provider_cert", _get(bundle, "providerCert", _get(bundle, "cert"))
+    )
+    trap_outcomes = _get(
+        bundle, "trap_outcomes", _get(bundle, "traps", _get(bundle, "trapResults", []))
+    )
+    circuit_digest = _as_bytes(
+        _get(bundle, "circuit_digest", _get(bundle, "circuitHash"))
+    )
     raw_circuit = _get(bundle, "circuit")
     shots = int(_get(bundle, "shots", 0))
     qos = _get(bundle, "qos")
 
     if not circuit_digest:
         if raw_circuit is None:
-            raise AttestationError("Quantum bundle missing 'circuit_digest' (or 'circuit' to digest)")
+            raise AttestationError(
+                "Quantum bundle missing 'circuit_digest' (or 'circuit' to digest)"
+            )
         circuit_digest = digest_circuit(raw_circuit)
 
     if expected_circuit_digest and circuit_digest != expected_circuit_digest:
@@ -343,7 +373,9 @@ def normalize_quantum_bundle(
     if not isinstance(trap_outcomes, list):
         raise AttestationError("'trap_outcomes' must be a list")
     if len(trap_outcomes) < min_traps:
-        raise AttestationError(f"insufficient trap outcomes (got {len(trap_outcomes)} < {min_traps})")
+        raise AttestationError(
+            f"insufficient trap outcomes (got {len(trap_outcomes)} < {min_traps})"
+        )
     if shots < 0:
         raise AttestationError("shots must be non-negative")
 

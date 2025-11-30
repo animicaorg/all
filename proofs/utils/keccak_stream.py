@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import hashlib
 import math
-from typing import Iterable, Optional, Tuple, List
+from typing import Iterable, List, Optional, Tuple
 
 # --------------------------------------------------------------------------------------
 # Domain tags (should mirror spec/domains.yaml; customizable at call sites)
@@ -44,6 +44,7 @@ DOMAIN_USTREAM = b"ANIMICA|ustream|v1"
 # --------------------------------------------------------------------------------------
 # Internal: canonical uvarint length prefix (little-endian base-128)
 # --------------------------------------------------------------------------------------
+
 
 def _uvarint(n: int) -> bytes:
     """Encode non-negative int as uvarint (base-128, LE)."""
@@ -65,13 +66,13 @@ def _frame(domain: bytes, chunks: Iterable[bytes]) -> bytes:
     """
     Frame bytes with domain separation and length prefixes:
 
-        frame = b"ANIMICA\x1E" || len(domain) || domain || Σ (len(ci) || ci)
+        frame = b"ANIMICA\x1e" || len(domain) || domain || Σ (len(ci) || ci)
 
     The sentinel 0x1E is a visual unit separator (US). Lengths are uvarint.
     """
     if not isinstance(domain, (bytes, bytearray)):
         raise TypeError("domain must be bytes")
-    framed = bytearray(b"ANIMICA\x1E")
+    framed = bytearray(b"ANIMICA\x1e")
     framed += _uvarint(len(domain)) + domain
     for c in chunks:
         if not isinstance(c, (bytes, bytearray)):
@@ -83,6 +84,7 @@ def _frame(domain: bytes, chunks: Iterable[bytes]) -> bytes:
 # --------------------------------------------------------------------------------------
 # Keccak stream based on SHAKE-256
 # --------------------------------------------------------------------------------------
+
 
 class KeccakStream:
     """
@@ -163,13 +165,17 @@ class KeccakStream:
             # (r + 1) / 2^53 ensures strictly > 0
             return (r + 1) / float(1 << 53)
 
-    def fork(self, *extra_chunks: bytes, domain: Optional[bytes] = None) -> "KeccakStream":
+    def fork(
+        self, *extra_chunks: bytes, domain: Optional[bytes] = None
+    ) -> "KeccakStream":
         """
         Derive a child stream with additional domain/chunks (like HKDF "expand").
         If `domain` is None, use DOMAIN_USTREAM.
         """
         d = domain if domain is not None else DOMAIN_USTREAM
-        return KeccakStream.from_chunks(domain=d, chunks=(self._seed, *_normalize_chunks(extra_chunks)))
+        return KeccakStream.from_chunks(
+            domain=d, chunks=(self._seed, *_normalize_chunks(extra_chunks))
+        )
 
     def peek_bytes(self, n: int) -> bytes:
         """
@@ -212,6 +218,7 @@ def _normalize_chunks(chunks: Iterable[bytes]) -> Tuple[bytes, ...]:
 # Header/nonce binding helpers
 # --------------------------------------------------------------------------------------
 
+
 def header_nonce_stream(
     header_sign_bytes: bytes,
     *,
@@ -248,6 +255,7 @@ def bind_keccak256(*, domain: bytes, chunks: Iterable[bytes]) -> bytes:
 # u-draw helpers (header/nonce → u in (0,1))
 # --------------------------------------------------------------------------------------
 
+
 def udraw_open01(
     header_sign_bytes: bytes,
     *,
@@ -259,7 +267,9 @@ def udraw_open01(
     Convenience function: derive a stream from (header, mix_seed, nonce) and
     return a single u ∈ (0,1) with 53-bit precision suitable for H(u).
     """
-    ks = header_nonce_stream(header_sign_bytes, nonce=nonce, mix_seed=mix_seed, domain=domain)
+    ks = header_nonce_stream(
+        header_sign_bytes, nonce=nonce, mix_seed=mix_seed, domain=domain
+    )
     return ks.u01_open()
 
 

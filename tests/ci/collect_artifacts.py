@@ -67,7 +67,8 @@ def find_coverage_html_dirs(reports_dir: Path) -> List[Path]:
     candidates: List[Path] = []
     for child in reports_dir.iterdir() if reports_dir.exists() else []:
         if child.is_dir() and (
-            child.name.startswith("coverage-") and child.name.endswith("-html")
+            child.name.startswith("coverage-")
+            and child.name.endswith("-html")
             or child.name == "htmlcov"
         ):
             candidates.append(child)
@@ -82,7 +83,9 @@ def find_junit_xmls(reports_dir: Path) -> List[Path]:
     return xmls
 
 
-def find_bench_outputs(reports_bench_dir: Path, bench_src_dir: Path) -> List[Tuple[Path, str]]:
+def find_bench_outputs(
+    reports_bench_dir: Path, bench_src_dir: Path
+) -> List[Tuple[Path, str]]:
     items: List[Tuple[Path, str]] = []
     # JSON results written by test/bench runner (if any)
     if reports_bench_dir.exists():
@@ -111,13 +114,29 @@ def write_index(out_dir: Path, collected: List[str]) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Collect junit/coverage/bench artifacts into an output directory.")
-    parser.add_argument("--reports-dir", default=str(REPO / "tests" / "reports"), help="Directory with test reports.")
-    parser.add_argument("--bench-dir", default=str(REPO / "tests" / "reports" / "bench"),
-                        help="Directory with benchmark outputs (JSON/MD).")
-    parser.add_argument("--bench-src", default=str(REPO / "tests" / "bench"),
-                        help="Source directory for baselines.json/report.md.")
-    parser.add_argument("--out-dir", default=str(REPO / "outputs"), help="Destination directory for artifacts.")
+    parser = argparse.ArgumentParser(
+        description="Collect junit/coverage/bench artifacts into an output directory."
+    )
+    parser.add_argument(
+        "--reports-dir",
+        default=str(REPO / "tests" / "reports"),
+        help="Directory with test reports.",
+    )
+    parser.add_argument(
+        "--bench-dir",
+        default=str(REPO / "tests" / "reports" / "bench"),
+        help="Directory with benchmark outputs (JSON/MD).",
+    )
+    parser.add_argument(
+        "--bench-src",
+        default=str(REPO / "tests" / "bench"),
+        help="Source directory for baselines.json/report.md.",
+    )
+    parser.add_argument(
+        "--out-dir",
+        default=str(REPO / "outputs"),
+        help="Destination directory for artifacts.",
+    )
     args = parser.parse_args()
 
     reports_dir = Path(args.reports_dir)

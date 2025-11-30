@@ -25,22 +25,24 @@ from typing import Dict, Optional
 try:
     # Pydantic v2
     from pydantic import BaseModel, Field, PositiveInt, model_validator
+
     _IS_PYDANTIC_V2 = True
 except Exception:  # pragma: no cover - v1 fallback
     from pydantic.v1 import BaseModel, Field, PositiveInt  # type: ignore
+
     _IS_PYDANTIC_V2 = False
 
 from .common import Address, ChainId, Hash, Hex
 
 
 class ArtifactKind(str, Enum):
-    source = "source"         # e.g., Python contract source
-    manifest = "manifest"     # contract manifest JSON
-    abi = "abi"               # ABI JSON
-    package = "package"       # bundled sources/assets (zip/tar)
-    ir = "ir"                 # intermediate representation bytes
-    bytecode = "bytecode"     # compiled code bytes (if applicable)
-    other = "other"           # anything else
+    source = "source"  # e.g., Python contract source
+    manifest = "manifest"  # contract manifest JSON
+    abi = "abi"  # ABI JSON
+    package = "package"  # bundled sources/assets (zip/tar)
+    ir = "ir"  # intermediate representation bytes
+    bytecode = "bytecode"  # compiled code bytes (if applicable)
+    other = "other"  # anything else
 
 
 _KIND_DEFAULT_MIMES: Dict[ArtifactKind, str] = {
@@ -83,28 +85,45 @@ class ArtifactPut(BaseModel):
     media_type: Optional[str] = Field(
         default=None, description="MIME type; defaults based on `kind` if omitted."
     )
-    filename: Optional[str] = Field(default=None, description="Friendly filename (optional).")
-    chain_id: Optional[ChainId] = Field(default=None, description="Optional chain linkage.")
-    address: Optional[Address] = Field(default=None, description="Optional associated contract address.")
-    code_hash: Optional[Hash] = Field(default=None, description="Optional associated compiled code hash.")
-    labels: Dict[str, str] = Field(default_factory=dict, description="Small key/value labels.")
+    filename: Optional[str] = Field(
+        default=None, description="Friendly filename (optional)."
+    )
+    chain_id: Optional[ChainId] = Field(
+        default=None, description="Optional chain linkage."
+    )
+    address: Optional[Address] = Field(
+        default=None, description="Optional associated contract address."
+    )
+    code_hash: Optional[Hash] = Field(
+        default=None, description="Optional associated compiled code hash."
+    )
+    labels: Dict[str, str] = Field(
+        default_factory=dict, description="Small key/value labels."
+    )
 
     class Config:  # type: ignore[override]
         extra = "forbid"
         anystr_strip_whitespace = True
 
     if _IS_PYDANTIC_V2:
+
         @model_validator(mode="after")
         def _fill_defaults(cls, values: "ArtifactPut") -> "ArtifactPut":  # type: ignore[override]
             if values.media_type is None:
-                values.media_type = _KIND_DEFAULT_MIMES.get(values.kind, "application/octet-stream")
+                values.media_type = _KIND_DEFAULT_MIMES.get(
+                    values.kind, "application/octet-stream"
+                )
             return values
+
     else:  # pragma: no cover - v1 compatibility
+
         @classmethod
         def validate(cls, value):  # type: ignore[override]
             obj = super().validate(value)
             if obj.media_type is None:
-                obj.media_type = _KIND_DEFAULT_MIMES.get(obj.kind, "application/octet-stream")
+                obj.media_type = _KIND_DEFAULT_MIMES.get(
+                    obj.kind, "application/octet-stream"
+                )
             return obj
 
 
@@ -114,15 +133,27 @@ class ArtifactMeta(BaseModel):
     """
 
     id: str = Field(..., description="Deterministic content-addressed id.")
-    content_hash: Hash = Field(..., description="Hash of raw bytes (e.g., sha3-512 as 0x-hex).")
+    content_hash: Hash = Field(
+        ..., description="Hash of raw bytes (e.g., sha3-512 as 0x-hex)."
+    )
     size: PositiveInt = Field(..., description="Size in bytes.")
     kind: ArtifactKind = Field(..., description="Artifact kind.")
     media_type: str = Field(..., description="MIME media type.")
-    filename: Optional[str] = Field(default=None, description="Friendly filename if provided.")
-    chain_id: Optional[ChainId] = Field(default=None, description="Linked chain id, if any.")
-    address: Optional[Address] = Field(default=None, description="Linked contract address, if any.")
-    code_hash: Optional[Hash] = Field(default=None, description="Linked compiled code hash, if any.")
-    labels: Dict[str, str] = Field(default_factory=dict, description="Free-form labels.")
+    filename: Optional[str] = Field(
+        default=None, description="Friendly filename if provided."
+    )
+    chain_id: Optional[ChainId] = Field(
+        default=None, description="Linked chain id, if any."
+    )
+    address: Optional[Address] = Field(
+        default=None, description="Linked contract address, if any."
+    )
+    code_hash: Optional[Hash] = Field(
+        default=None, description="Linked compiled code hash, if any."
+    )
+    labels: Dict[str, str] = Field(
+        default_factory=dict, description="Free-form labels."
+    )
     created_at: str = Field(..., description="ISO-8601 creation timestamp.")
     download_path: Optional[str] = Field(
         default=None, description="Relative path suitable for GET /artifacts/{id}."

@@ -1,15 +1,16 @@
 import json
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict
 
 import pytest
 
-from zk.tests import configure_test_logging
 from zk.integration.types import compute_vk_hash
+from zk.tests import configure_test_logging
 
 # The registry package should expose helpers and default paths.
 try:
-    from zk.registry import load_vk_cache, get_vk_record, VK_CACHE_PATH  # type: ignore
+    from zk.registry import (VK_CACHE_PATH, get_vk_record,  # type: ignore
+                             load_vk_cache)
 except Exception:  # pragma: no cover - fallback if symbols differ
     load_vk_cache = None
     get_vk_record = None
@@ -57,8 +58,12 @@ def test_vk_cache_integrity_hash_matches():
         # compute expected hash
         expected = compute_vk_hash(kind, vk_format, vk, fri_params)
         got = rec["vk_hash"]
-        assert isinstance(got, str) and got.startswith("sha3-256:"), "vk_hash must be sha3-256:<hex>"
-        assert expected == got, f"vk_hash mismatch for {circuit_id}: expected {expected}, got {got}"
+        assert isinstance(got, str) and got.startswith(
+            "sha3-256:"
+        ), "vk_hash must be sha3-256:<hex>"
+        assert (
+            expected == got
+        ), f"vk_hash mismatch for {circuit_id}: expected {expected}, got {got}"
 
 
 @pytest.mark.skipif(not _have_cache(), reason="vk_cache.json not present")
@@ -97,7 +102,15 @@ def test_vk_cache_records_have_minimum_fields():
     )
     for cid, rec in cache.items():
         assert isinstance(rec.get("kind"), str) and rec["kind"], f"{cid}: empty kind"
-        assert rec.get("vk_format") in {"snarkjs", "plonkjs", "fri"}, f"{cid}: unknown vk_format"
-        assert isinstance(rec.get("vk_hash"), str) and rec["vk_hash"].startswith("sha3-256:")
+        assert rec.get("vk_format") in {
+            "snarkjs",
+            "plonkjs",
+            "fri",
+        }, f"{cid}: unknown vk_format"
+        assert isinstance(rec.get("vk_hash"), str) and rec["vk_hash"].startswith(
+            "sha3-256:"
+        )
         # VK bytes must exist unless the runtime only uses vk_ref (not typical for tests)
-        assert "vk" in rec and isinstance(rec["vk"], (dict, list)), f"{cid}: missing or invalid vk payload"
+        assert "vk" in rec and isinstance(
+            rec["vk"], (dict, list)
+        ), f"{cid}: missing or invalid vk payload"

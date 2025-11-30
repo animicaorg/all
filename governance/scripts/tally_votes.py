@@ -40,7 +40,7 @@ import json
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal, getcontext, ROUND_DOWN
+from decimal import ROUND_DOWN, Decimal, getcontext
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -102,7 +102,9 @@ def _extract_ballot(d: Dict[str, Any]) -> Optional[Ballot]:
             weight=_coerce_decimal(d.get("vote", {}).get("weight", "0")),
             snapshot_type=str(d.get("snapshot", {}).get("type", "") or ""),
             snapshot_value=str(d.get("snapshot", {}).get("value", "") or ""),
-            att_ts=(d.get("attestation", {}) or {}).get("signedPayload", {}).get("timestamp"),
+            att_ts=(d.get("attestation", {}) or {})
+            .get("signedPayload", {})
+            .get("timestamp"),
             has_sig=bool((d.get("attestation", {}) or {}).get("signature")),
         )
     except Exception:
@@ -139,11 +141,17 @@ def _filter_ballots(
                     ballot_h = int(b.snapshot_value) if b.snapshot_value else None
                 except Exception:
                     continue
-                if (target_h is not None) and (ballot_h is not None) and (ballot_h > target_h):
+                if (
+                    (target_h is not None)
+                    and (ballot_h is not None)
+                    and (ballot_h > target_h)
+                ):
                     continue
             elif snapshot_type.lower() == "timestamp":
                 try:
-                    ballot_ts = _parse_iso(b.snapshot_value) if b.snapshot_value else None
+                    ballot_ts = (
+                        _parse_iso(b.snapshot_value) if b.snapshot_value else None
+                    )
                 except Exception:
                     ballot_ts = None
                 if target_ts and ballot_ts and ballot_ts > target_ts:
@@ -165,6 +173,7 @@ def _dedupe_latest(ballots: List[Ballot]) -> List[Ballot]:
         if prev is None:
             by_voter[key] = b
             continue
+
         # Compare timestamps
         def _key(bb: Ballot) -> Tuple[int, str]:
             try:
@@ -214,11 +223,14 @@ def tally(
     parsed = [b for b in (_extract_ballot(d) for d in raw) if b is not None]
 
     # Filter by proposal/chain/snapshot
-    filtered = _filter_ballots(parsed, proposal_id, chain_id, snapshot_type, snapshot_value)
+    filtered = _filter_ballots(
+        parsed, proposal_id, chain_id, snapshot_type, snapshot_value
+    )
 
     # Optional: window + signature checks (pre-dedupe)
     kept: List[Ballot] = []
     rejected_codes: Dict[str, int] = {}
+
     def rej(code: str):
         rejected_codes[code] = rejected_codes.get(code, 0) + 1
 
@@ -226,7 +238,9 @@ def tally(
         if require_sig and not b.has_sig:
             rej("missing_signature")
             continue
-        if reject_outside_window and not _within_window(b.att_ts, window_start, window_end):
+        if reject_outside_window and not _within_window(
+            b.att_ts, window_start, window_end
+        ):
             rej("outside_window")
             continue
         kept.append(b)
@@ -241,8 +255,16 @@ def tally(
 
     participating = sum(sums.values())
     # Metrics
-    participation_percent = (participating / eligible_power * Decimal("100")) if eligible_power > 0 else Decimal("0")
-    yes_share_percent = (sums["yes"] / max(Decimal("0.0000001"), participating) * Decimal("100")) if participating > 0 else Decimal("0")
+    participation_percent = (
+        (participating / eligible_power * Decimal("100"))
+        if eligible_power > 0
+        else Decimal("0")
+    )
+    yes_share_percent = (
+        (sums["yes"] / max(Decimal("0.0000001"), participating) * Decimal("100"))
+        if participating > 0
+        else Decimal("0")
+    )
 
     quorum_met = participation_percent >= Decimal(str(quorum_percent))
     approval_met = yes_share_percent >= Decimal(str(approval_threshold_percent))
@@ -260,7 +282,11 @@ def tally(
         "proposalId": proposal_id,
         "chainId": chain_id,
         "snapshot": {"type": snapshot_type, "value": snapshot_value},
-        "votingWindow": {"start": window_start, "end": window_end} if (window_start or window_end) else {},
+        "votingWindow": (
+            {"start": window_start, "end": window_end}
+            if (window_start or window_end)
+            else {}
+        ),
         "rules": {
             "quorumPercent": float(quorum_percent),
             "approvalThresholdPercent": float(approval_threshold_percent),
@@ -284,7 +310,9 @@ def tally(
             "ballotsEligible": len(filtered),
             "ballotsKept": len(unique),
             "ballotsRejected": sum(rejected_codes.values()),
-            "rejections": [{"code": k, "count": v} for k, v in sorted(rejected_codes.items())],
+            "rejections": [
+                {"code": k, "count": v} for k, v in sorted(rejected_codes.items())
+            ],
             "generator": "gov-tools/tally_votes.py@v0.1.0",
         },
     }
@@ -295,19 +323,36 @@ def tally(
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="Compute tally & quorum checks from ballots.")
-    ap.add_argument("--ballots-dir", required=True, help="Directory containing ballot JSON files")
+    ap = argparse.ArgumentParser(
+        description="Compute tally & quorum checks from ballots."
+    )
+    ap.add_argument(
+        "--ballots-dir", required=True, help="Directory containing ballot JSON files"
+    )
     ap.add_argument("--proposal-id", required=True, help="Target proposalId to tally")
-    ap.add_argument("--eligible-power", type=str, required=True, help="Total eligible voting power (decimal)")
+    ap.add_argument(
+        "--eligible-power",
+        type=str,
+        required=True,
+        help="Total eligible voting power (decimal)",
+    )
     ap.add_argument("--quorum-percent", type=float, default=10.0)
     ap.add_argument("--approval-threshold-percent", type=float, default=66.7)
     ap.add_argument("--chain-id", type=int, default=None)
     ap.add_argument("--snapshot-type", choices=["height", "timestamp"], default=None)
     ap.add_argument("--snapshot-value", default=None)
     ap.add_argument("--reject-outside-window", action="store_true")
-    ap.add_argument("--window-start", default=None, help="ISO8601; requires --reject-outside-window")
-    ap.add_argument("--window-end", default=None, help="ISO8601; requires --reject-outside-window")
-    ap.add_argument("--require-sig", action="store_true", help="Reject ballots without a non-empty attestation.signature")
+    ap.add_argument(
+        "--window-start", default=None, help="ISO8601; requires --reject-outside-window"
+    )
+    ap.add_argument(
+        "--window-end", default=None, help="ISO8601; requires --reject-outside-window"
+    )
+    ap.add_argument(
+        "--require-sig",
+        action="store_true",
+        help="Reject ballots without a non-empty attestation.signature",
+    )
     ap.add_argument("--pretty", action="store_true")
     args = ap.parse_args(argv)
 
@@ -319,11 +364,16 @@ def main(argv=None) -> int:
 
     # window sanity
     if args.reject_outside_window and not (args.window_start or args.window_end):
-        print("ERROR: --reject-outside-window requires --window-start and/or --window-end", file=sys.stderr)
+        print(
+            "ERROR: --reject-outside-window requires --window-start and/or --window-end",
+            file=sys.stderr,
+        )
         return 4
 
     return tally(
-        ballots_dir=Path(args.ballots-dir) if False else Path(args.ballots_dir),  # maintain zsh-safe heredoc; actual arg below
+        ballots_dir=(
+            Path(args.ballots - dir) if False else Path(args.ballots_dir)
+        ),  # maintain zsh-safe heredoc; actual arg below
         proposal_id=args.proposal_id,
         eligible_power=eligible,
         quorum_percent=Decimal(str(args.quorum_percent)),

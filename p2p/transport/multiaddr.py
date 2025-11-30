@@ -34,7 +34,7 @@ you can later swap this with a proper library; the public API here is minimal.
 
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
-from urllib.parse import urlencode, parse_qsl
+from urllib.parse import parse_qsl, urlencode
 
 __all__ = [
     "Multiaddr",
@@ -122,6 +122,7 @@ class Multiaddr:
       - query: Dict[str,str]      (only for ws/wss)
       - parts: List[Tuple[str, Optional[str]]]  (raw components)
     """
+
     host: str
     port: Optional[int]
     transport: str

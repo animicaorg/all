@@ -4,13 +4,13 @@ from typing import Dict, List, Tuple
 
 import pytest
 
-
 # ---------------------------------------------------
 # Minimal serial "spec-runner" to check determinism
 # ---------------------------------------------------
 
 Address = str
 Amount = int
+
 
 @dataclass(frozen=True)
 class Tx:
@@ -33,7 +33,9 @@ def _state_root(state: Dict[Address, Amount]) -> bytes:
     return hashlib.sha3_256(bytes(buf)).digest()
 
 
-def _serial_apply(initial: Dict[Address, Amount], txs: List[Tx]) -> Tuple[Dict[Address, Amount], List[str]]:
+def _serial_apply(
+    initial: Dict[Address, Amount], txs: List[Tx]
+) -> Tuple[Dict[Address, Amount], List[str]]:
     """
     Serially apply txs in the provided order with simple rules:
       - Nonce must match the sender's next expected nonce (tracked locally).
@@ -54,10 +56,14 @@ def _serial_apply(initial: Dict[Address, Amount], txs: List[Tx]) -> Tuple[Dict[A
 
     for i, tx in enumerate(txs):
         if tx.nonce != _expect_nonce(tx.sender):
-            reasons.append(f"skip[{i}]: bad-nonce sender={tx.sender} got={tx.nonce} want={_expect_nonce(tx.sender)}")
+            reasons.append(
+                f"skip[{i}]: bad-nonce sender={tx.sender} got={tx.nonce} want={_expect_nonce(tx.sender)}"
+            )
             continue
         if state.get(tx.sender, 0) < tx.amount:
-            reasons.append(f"skip[{i}]: insufficient sender={tx.sender} bal={state.get(tx.sender,0)} amt={tx.amount}")
+            reasons.append(
+                f"skip[{i}]: insufficient sender={tx.sender} bal={state.get(tx.sender,0)} amt={tx.amount}"
+            )
             continue
         # apply
         state[tx.sender] = state.get(tx.sender, 0) - tx.amount
@@ -70,6 +76,7 @@ def _serial_apply(initial: Dict[Address, Amount], txs: List[Tx]) -> Tuple[Dict[A
 # ---------------------------------------------------
 # Fixtures
 # ---------------------------------------------------
+
 
 @pytest.fixture
 def initial_state() -> Dict[Address, Amount]:
@@ -97,7 +104,9 @@ def txs_out_of_order_nonce() -> List[Tx]:
     # Same logical set as above, but with alice's second and third tx swapped (nonce order broken).
     return [
         Tx(sender="alice", to="bob", amount=10, nonce=0),
-        Tx(sender="alice", to="bob", amount=12, nonce=2),  # will be skipped until nonce=1 is seen
+        Tx(
+            sender="alice", to="bob", amount=12, nonce=2
+        ),  # will be skipped until nonce=1 is seen
         Tx(sender="bob", to="alice", amount=7, nonce=0),
         Tx(sender="alice", to="carol", amount=5, nonce=1),
     ]
@@ -106,6 +115,7 @@ def txs_out_of_order_nonce() -> List[Tx]:
 # ---------------------------------------------------
 # Tests
 # ---------------------------------------------------
+
 
 def test_serial_is_deterministic_for_same_input_order(initial_state, txs_canonical):
     st1, reasons1 = _serial_apply(initial_state, txs_canonical)
@@ -116,7 +126,9 @@ def test_serial_is_deterministic_for_same_input_order(initial_state, txs_canonic
     assert _state_root(st1) == _state_root(st2), "State commitment must be identical"
 
 
-def test_out_of_order_nonces_produce_different_effects(initial_state, txs_canonical, txs_out_of_order_nonce):
+def test_out_of_order_nonces_produce_different_effects(
+    initial_state, txs_canonical, txs_out_of_order_nonce
+):
     """
     Serial executors process txs in-sequence. If caller submits out-of-order nonces,
     behavior is deterministic but effects can differ vs a well-ordered list
@@ -147,6 +159,7 @@ def test_empty_block_idempotent(initial_state):
 # Optional integration: project serial scheduler (if present)
 # ---------------------------------------------------
 
+
 def test_project_serial_executor_if_available(initial_state, txs_canonical):
     """
     Best-effort hook into the project's serial scheduler to ensure that applying
@@ -155,7 +168,10 @@ def test_project_serial_executor_if_available(initial_state, txs_canonical):
     """
     try:
         # Try common entrypoints
-        serial_mod = __import__("execution.scheduler.serial", fromlist=["SerialExecutor", "run", "apply_block"])
+        serial_mod = __import__(
+            "execution.scheduler.serial",
+            fromlist=["SerialExecutor", "run", "apply_block"],
+        )
     except Exception:
         pytest.skip("execution.scheduler.serial not available")
 
@@ -199,9 +215,15 @@ def test_project_serial_executor_if_available(initial_state, txs_canonical):
             runner(s1, txs, apply_fn)  # type: ignore[misc]
             runner(s2, txs, apply_fn)  # type: ignore[misc]
         else:
-            pytest.skip("No callable entrypoint (run/execute/apply/apply_block) found in serial scheduler")
+            pytest.skip(
+                "No callable entrypoint (run/execute/apply/apply_block) found in serial scheduler"
+            )
     except TypeError:
         # Signature mismatch → skip rather than fail spuriously.
-        pytest.skip("Project serial executor has an incompatible signature for this smoke test")
+        pytest.skip(
+            "Project serial executor has an incompatible signature for this smoke test"
+        )
 
-    assert _state_root(s1) == _state_root(s2), "Project serial executor must be deterministic for identical inputs"
+    assert _state_root(s1) == _state_root(
+        s2
+    ), "Project serial executor must be deterministic for identical inputs"

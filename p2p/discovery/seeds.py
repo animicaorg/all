@@ -49,18 +49,19 @@ import socket
 import time
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Iterable, List, Optional, Sequence, Tuple, Dict, Any, Set
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 # Optional DNS dependency (dnspython). If missing, TXT discovery is skipped gracefully.
 try:
     import dns.resolver  # type: ignore
+
     _HAS_DNSPYTHON = True
 except Exception:
     _HAS_DNSPYTHON = False
 
 # Optional: import multiaddr helpers if available.
 try:
-    from p2p.transport.multiaddr import parse_multiaddr, MultiAddr
+    from p2p.transport.multiaddr import MultiAddr, parse_multiaddr
 except Exception:
     # Minimal shim to keep this module usable without multiaddr
     @dataclass(frozen=True)
@@ -109,25 +110,30 @@ except Exception:
 # Data structures & utilities
 # ----------------------------
 
+
 @dataclass(frozen=True)
 class SeedEndpoint:
     """Normalized endpoint produced by discovery."""
-    scheme: str      # tcp|quic|ws|wss|animica
+
+    scheme: str  # tcp|quic|ws|wss|animica
     host: str
     port: Optional[int] = None
     path: Optional[str] = None
     params: Dict[str, str] = field(default_factory=dict)
 
     def to_multiaddr(self) -> MultiAddr:
-        return MultiAddr(self.scheme, self.host, self.port, self.path, dict(self.params))
+        return MultiAddr(
+            self.scheme, self.host, self.port, self.path, dict(self.params)
+        )
 
 
 @dataclass
 class SeedBundle:
     """A set of deduplicated endpoints + resolution metadata."""
+
     endpoints: List[SeedEndpoint] = field(default_factory=list)
     resolved_ips: Dict[str, List[str]] = field(default_factory=dict)  # host → [ip...]
-    source: str = ""             # e.g., "dns:seeds.animica.dev" or "https:https://…/seeds.json"
+    source: str = ""  # e.g., "dns:seeds.animica.dev" or "https:https://…/seeds.json"
     fetched_at: float = field(default_factory=time.time)
 
 
@@ -140,6 +146,7 @@ _ADDR_RE = re.compile(
     r")\b"
 )
 
+
 def _normalize_addr(addr: str) -> Optional[SeedEndpoint]:
     try:
         m = parse_multiaddr(addr)
@@ -148,11 +155,19 @@ def _normalize_addr(addr: str) -> Optional[SeedEndpoint]:
     scheme = m.scheme.lower()
     if scheme not in _VALID_SCHEMES:
         return None
-    return SeedEndpoint(scheme=scheme, host=m.host, port=m.port, path=getattr(m, "path", None), params=getattr(m, "params", {}))
+    return SeedEndpoint(
+        scheme=scheme,
+        host=m.host,
+        port=m.port,
+        path=getattr(m, "path", None),
+        params=getattr(m, "params", {}),
+    )
 
 
 def _dedupe(endpoints: Iterable[SeedEndpoint]) -> List[SeedEndpoint]:
-    seen: Set[Tuple[str, str, Optional[int], Optional[str], Tuple[Tuple[str, str], ...]]] = set()
+    seen: Set[
+        Tuple[str, str, Optional[int], Optional[str], Tuple[Tuple[str, str], ...]]
+    ] = set()
     out: List[SeedEndpoint] = []
     for ep in endpoints:
         key = (ep.scheme, ep.host, ep.port, ep.path, tuple(sorted(ep.params.items())))
@@ -166,6 +181,7 @@ def _dedupe(endpoints: Iterable[SeedEndpoint]) -> List[SeedEndpoint]:
 # ----------------------------
 # TXT record discovery (DNS)
 # ----------------------------
+
 
 async def discover_from_dns_txt(name: str, timeout: float = 3.0) -> SeedBundle:
     """
@@ -235,11 +251,13 @@ async def discover_from_dns_txt(name: str, timeout: float = 3.0) -> SeedBundle:
 # HTTPS JSON discovery
 # ----------------------------
 
+
 async def discover_from_https_json(url: str, timeout: float = 3.5) -> SeedBundle:
     """
     Fetch <url> and parse JSON with a "peers" list (see schema in module docstring).
     Uses stdlib urllib; runs in a thread to avoid blocking the loop.
     """
+
     def _fetch() -> Dict[str, Any]:
         req = urllib.request.Request(url, headers={"User-Agent": "animica-p2p/1.0"})
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -267,6 +285,7 @@ async def discover_from_https_json(url: str, timeout: float = 3.5) -> SeedBundle
 # Static config discovery
 # ----------------------------
 
+
 def discover_from_static(addrs: Sequence[str]) -> SeedBundle:
     eps = [e for a in addrs if (e := _normalize_addr(a))]
     return SeedBundle(endpoints=_dedupe(eps), resolved_ips={}, source="static:list")
@@ -276,11 +295,15 @@ def discover_from_static(addrs: Sequence[str]) -> SeedBundle:
 # Hostname resolution helper
 # ----------------------------
 
-async def resolve_hosts(hosts: Iterable[str], timeout: float = 2.0) -> Dict[str, List[str]]:
+
+async def resolve_hosts(
+    hosts: Iterable[str], timeout: float = 2.0
+) -> Dict[str, List[str]]:
     """
     Resolve a small set of hostnames to A/AAAA using stdlib socket in a thread pool.
     Returns host→[ip...] mapping. IPv6 results are included.
     """
+
     async def _resolve_one(host: str) -> Tuple[str, List[str]]:
         def _do() -> List[str]:
             try:
@@ -290,7 +313,9 @@ async def resolve_hosts(hosts: Iterable[str], timeout: float = 2.0) -> Dict[str,
                     ip = sockaddr[0]
                     # Normalize IPv6 to compressed form
                     if family == socket.AF_INET6:
-                        ip = socket.inet_ntop(socket.AF_INET6, socket.inet_pton(socket.AF_INET6, ip))
+                        ip = socket.inet_ntop(
+                            socket.AF_INET6, socket.inet_pton(socket.AF_INET6, ip)
+                        )
                     ips.append(ip)
                 # preserve order but dedupe
                 seen = set()
@@ -298,6 +323,7 @@ async def resolve_hosts(hosts: Iterable[str], timeout: float = 2.0) -> Dict[str,
                 return ordered
             except Exception:
                 return []
+
         return host, await asyncio.to_thread(_do)
 
     tasks = [_resolve_one(h) for h in set(hosts)]
@@ -314,6 +340,7 @@ async def resolve_hosts(hosts: Iterable[str], timeout: float = 2.0) -> Dict[str,
 # ----------------------------
 # Composite discovery
 # ----------------------------
+
 
 async def discover_all(
     dns_names: Sequence[str] = (),
@@ -360,12 +387,15 @@ async def discover_all(
             extra = await resolve_hosts(need)
             resolved_ips.update(extra)
 
-    return SeedBundle(endpoints=endpoints, resolved_ips=resolved_ips, source="composite")
+    return SeedBundle(
+        endpoints=endpoints, resolved_ips=resolved_ips, source="composite"
+    )
 
 
 # ----------------------------
 # Sync helpers (for CLI/tests)
 # ----------------------------
+
 
 def discover_all_sync(
     dns_names: Sequence[str] = (),
@@ -380,26 +410,39 @@ def discover_all_sync(
 # Tiny CLI
 # ----------------------------
 
+
 def _env_list(key: str) -> List[str]:
     v = os.getenv(key, "").strip()
     if not v:
         return []
     return [x.strip() for x in v.split(",") if x.strip()]
 
+
 def main() -> None:
     import argparse
+
     ap = argparse.ArgumentParser(description="Animica P2P seed discovery")
-    ap.add_argument("--dns", action="append", default=[], help="DNS TXT name (repeatable)")
-    ap.add_argument("--https", action="append", default=[], help="HTTPS JSON URL (repeatable)")
-    ap.add_argument("--addr", action="append", default=[], help="Static seed address (repeatable)")
-    ap.add_argument("--no-resolve", action="store_true", help="Do not resolve hostnames to IPs")
+    ap.add_argument(
+        "--dns", action="append", default=[], help="DNS TXT name (repeatable)"
+    )
+    ap.add_argument(
+        "--https", action="append", default=[], help="HTTPS JSON URL (repeatable)"
+    )
+    ap.add_argument(
+        "--addr", action="append", default=[], help="Static seed address (repeatable)"
+    )
+    ap.add_argument(
+        "--no-resolve", action="store_true", help="Do not resolve hostnames to IPs"
+    )
     args = ap.parse_args()
 
     dns_names = list(args.dns) or _env_list("ANIMICA_P2P_SEEDS_DNS")
     https_urls = list(args.https) or _env_list("ANIMICA_P2P_SEEDS_HTTPS")
     addrs = list(args.addr) or _env_list("ANIMICA_P2P_SEEDS_ADDRS")
 
-    bundle = discover_all_sync(dns_names, https_urls, addrs, resolve=not args.no_resolve)
+    bundle = discover_all_sync(
+        dns_names, https_urls, addrs, resolve=not args.no_resolve
+    )
 
     print(f"# Source: {bundle.source}")
     print(f"# Endpoints: {len(bundle.endpoints)}")
@@ -414,6 +457,7 @@ def main() -> None:
         print("# Resolved IPs:")
         for host, ips in bundle.resolved_ips.items():
             print(f"{host} -> {', '.join(ips)}")
+
 
 if __name__ == "__main__":
     main()

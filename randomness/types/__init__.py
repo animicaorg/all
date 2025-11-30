@@ -49,12 +49,18 @@ except Exception:
 
 # Build __all__ dynamically from what actually resolved into globals()
 __all__ = [
-    name for name in (
-        "RoundId", "RoundPhase", "RoundWindow",
+    name
+    for name in (
+        "RoundId",
+        "RoundPhase",
+        "RoundWindow",
         "ParticipantId",
-        "CommitRecord", "RevealRecord",
-        "VDFParams", "VDFProof",
-        "MixInput", "MixOutput",
+        "CommitRecord",
+        "RevealRecord",
+        "VDFParams",
+        "VDFProof",
+        "MixInput",
+        "MixOutput",
     )
     if name in globals()
 ]

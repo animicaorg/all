@@ -33,19 +33,15 @@ try:
 except Exception as e:  # pragma: no cover
     raise RuntimeError("bridge_rpc requires FastAPI to be installed") from e
 
-from .ws_getwork import (
-    JSON,
-    WSGetWorkHub,
-    get_hub,
-    start_background_broadcaster,
-    wire_submit_callback,
-    install_template_provider,
-    router as getwork_router,
-)
+from .ws_getwork import JSON, WSGetWorkHub, get_hub, install_template_provider
+from .ws_getwork import router as getwork_router
+from .ws_getwork import start_background_broadcaster, wire_submit_callback
 
 # Public type aliases
 SubmitCallback = Callable[[JSON], Awaitable[JSON]]  # params → JSON result
-TemplateProvider = Callable[[], Awaitable[Optional[JSON]]]  # returns latest template or None
+TemplateProvider = Callable[
+    [], Awaitable[Optional[JSON]]
+]  # returns latest template or None
 
 
 def mount_getwork(app: FastAPI, *, path: str = "/ws/getwork") -> WSGetWorkHub:
@@ -93,6 +89,7 @@ def wire_submitter(cb: SubmitCallback) -> None:
     Expected result shape (see mining.ws_getwork.SubmitResult.to_json for details):
       {"accepted": bool, "isBlock": bool, "reason"?: str, "newHead"?: {...}}
     """
+
     async def _maybe_await(params: JSON) -> JSON:
         res = cb(params)
         if asyncio.iscoroutine(res):  # type: ignore
@@ -102,7 +99,9 @@ def wire_submitter(cb: SubmitCallback) -> None:
     wire_submit_callback(_maybe_await)
 
 
-def wire_template_provider(provider: TemplateProvider, *, interval_sec: float = 1.0) -> asyncio.Task:
+def wire_template_provider(
+    provider: TemplateProvider, *, interval_sec: float = 1.0
+) -> asyncio.Task:
     """
     Periodically poll the given coroutine to obtain the latest work template
     and broadcast miner.newWork when it changes.
@@ -114,6 +113,7 @@ def wire_template_provider(provider: TemplateProvider, *, interval_sec: float = 
 
 
 # -------------------- Convenience wiring for common components --------------------
+
 
 def wire_from_components(
     *,
@@ -147,9 +147,13 @@ def wire_from_components(
         fn = getattr(template_provider, "current_template", None)
         if fn is None:
             # Try a more generic 'get' or 'build' method name
-            fn = getattr(template_provider, "get", None) or getattr(template_provider, "build", None)
+            fn = getattr(template_provider, "get", None) or getattr(
+                template_provider, "build", None
+            )
         if fn is None:
-            raise RuntimeError("template_provider has no 'current_template()' (or get/build) method")
+            raise RuntimeError(
+                "template_provider has no 'current_template()' (or get/build) method"
+            )
         res = fn()
         if asyncio.iscoroutine(res):
             return await res
@@ -160,6 +164,7 @@ def wire_from_components(
 
 
 # -------------------- One-call integration helper --------------------
+
 
 def integrate_getwork(
     app: FastAPI,
@@ -189,4 +194,5 @@ def integrate_getwork(
         @app.on_event("startup")
         async def _wire_tpl() -> None:
             wire_template_provider(template_cb, interval_sec=interval_sec)
+
     return hub

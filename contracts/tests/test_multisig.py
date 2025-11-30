@@ -23,7 +23,6 @@ from pathlib import Path
 
 import pytest
 
-
 # ----------------------- Inline minimal multisig -----------------------
 
 MULTISIG_SRC = r'''
@@ -130,7 +129,10 @@ def _pack_approvals(*owners: bytes) -> bytes:
 
 # -------------------------------- tests --------------------------------
 
-def test_happy_path_2_of_3_executes_and_consumes_nonce(tmp_path: Path, compile_contract):
+
+def test_happy_path_2_of_3_executes_and_consumes_nonce(
+    tmp_path: Path, compile_contract
+):
     c = compile_contract(_write_contract(tmp_path))
     c.call("init", 2)  # 2-of-3
     assert c.call("get_threshold") == 2
@@ -166,7 +168,9 @@ def test_replay_same_nonce_rejected(tmp_path: Path, compile_contract):
         c.call("execute", b"op:1:again", nonce, _pack_approvals(O1, O2), 2)
 
 
-def test_duplicate_approver_is_rejected_even_if_meeting_threshold(tmp_path: Path, compile_contract):
+def test_duplicate_approver_is_rejected_even_if_meeting_threshold(
+    tmp_path: Path, compile_contract
+):
     c = compile_contract(_write_contract(tmp_path))
     c.call("init", 2)
 
@@ -197,7 +201,9 @@ def test_non_owner_in_approvals_rejected(tmp_path: Path, compile_contract):
 
 
 @pytest.mark.parametrize("threshold", [1, 2, 3])
-def test_insufficient_approvals_for_threshold(tmp_path: Path, compile_contract, threshold: int):
+def test_insufficient_approvals_for_threshold(
+    tmp_path: Path, compile_contract, threshold: int
+):
     c = compile_contract(_write_contract(tmp_path))
     c.call("init", threshold)
 
@@ -207,8 +213,8 @@ def test_insufficient_approvals_for_threshold(tmp_path: Path, compile_contract, 
     # Build an approvals set that is one short of the threshold (or zero when threshold=1)
     owners_by_t = {
         1: [],
-        2: [O1],         # need 2 but only 1 provided
-        3: [O1, O2],     # need 3 but only 2 provided
+        2: [O1],  # need 2 but only 1 provided
+        3: [O1, O2],  # need 3 but only 2 provided
     }
     chosen = owners_by_t[threshold]
     approvals_blob = _pack_approvals(*chosen)

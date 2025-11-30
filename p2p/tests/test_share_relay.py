@@ -1,8 +1,8 @@
+import hashlib
 import os
 import sys
-import hashlib
 from dataclasses import dataclass
-from typing import Dict, Tuple, Optional
+from typing import Dict, Optional, Tuple
 
 import pytest
 
@@ -14,8 +14,10 @@ sys.path.insert(0, os.path.expanduser("~/animica"))
 # Helpers
 # -----------------------------
 
+
 def sha3_256(data: bytes) -> bytes:
     return hashlib.sha3_256(data).digest()
+
 
 def b2h(b: bytes) -> str:
     return "0x" + b.hex()
@@ -24,6 +26,7 @@ def b2h(b: bytes) -> str:
 # -----------------------------
 # Minimal share + policy model for this test
 # -----------------------------
+
 
 @dataclass(frozen=True)
 class Share:
@@ -35,19 +38,22 @@ class Share:
              we treat it as an additive budget consumer for caps.
     nonce:   arbitrary payload for uniqueness; hashed to form share_id.
     """
+
     type_id: str
     psi: float
     nonce: bytes
 
     def share_id(self) -> str:
         # Deterministic ID for dedupe across peers. In practice this would be the envelope hash.
-        return b2h(sha3_256(self.type_id.encode() + self.nonce + str(self.psi).encode()))
+        return b2h(
+            sha3_256(self.type_id.encode() + self.nonce + str(self.psi).encode())
+        )
 
 
 @dataclass
 class CapsPolicy:
     per_type_caps: Dict[str, float]  # e.g., {'hash': 1.8, 'ai': 1.0, 'quantum': 1.0}
-    gamma_cap: float                 # total Γ cap across all types
+    gamma_cap: float  # total Γ cap across all types
 
 
 class ShareRelay:
@@ -57,10 +63,13 @@ class ShareRelay:
       - Policy precheck before acceptance
       - Rolling window accounting (reset_window() to simulate new block)
     """
+
     def __init__(self, policy: CapsPolicy) -> None:
         self.policy = policy
-        self._seen: Dict[str, str] = {}         # share_id -> reason ("ok" or rejection)
-        self._used_by_type: Dict[str, float] = {k: 0.0 for k in policy.per_type_caps.keys()}
+        self._seen: Dict[str, str] = {}  # share_id -> reason ("ok" or rejection)
+        self._used_by_type: Dict[str, float] = {
+            k: 0.0 for k in policy.per_type_caps.keys()
+        }
         self._used_total: float = 0.0
 
     def reset_window(self) -> None:
@@ -115,6 +124,7 @@ class ShareRelay:
 # -----------------------------
 # Tests
 # -----------------------------
+
 
 def test_policy_precheck_per_type_and_total_caps():
     policy = CapsPolicy(

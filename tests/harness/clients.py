@@ -16,22 +16,28 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import (Any, AsyncIterator, Dict, Iterable, List, Optional,
+                    Sequence, Tuple, Union)
 
 try:
     import httpx
 except Exception as e:  # pragma: no cover
-    raise RuntimeError("tests/harness/clients.py requires 'httpx'. Is tests/requirements.txt installed?") from e
+    raise RuntimeError(
+        "tests/harness/clients.py requires 'httpx'. Is tests/requirements.txt installed?"
+    ) from e
 
 try:
     import websockets
     from websockets.client import connect as ws_connect
 except Exception as e:  # pragma: no cover
-    raise RuntimeError("tests/harness/clients.py requires 'websockets'. Is tests/requirements.txt installed?") from e
+    raise RuntimeError(
+        "tests/harness/clients.py requires 'websockets'. Is tests/requirements.txt installed?"
+    ) from e
 
 # Optional shared helpers if tests/harness/__init__.py exists
 try:  # pragma: no cover - optional import with graceful fallback
-    from tests.harness import get_logger, DEFAULT_HTTP_TIMEOUT, DEFAULT_WS_TIMEOUT
+    from tests.harness import (DEFAULT_HTTP_TIMEOUT, DEFAULT_WS_TIMEOUT,
+                               get_logger)
 except Exception:  # pragma: no cover
     import logging
 
@@ -39,7 +45,9 @@ except Exception:  # pragma: no cover
         logger = logging.getLogger(name)
         if not logger.handlers:
             h = logging.StreamHandler()
-            h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+            h.setFormatter(
+                logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+            )
             logger.addHandler(h)
         logger.setLevel(os.environ.get("LOG_LEVEL", "INFO"))
         return logger
@@ -104,7 +112,9 @@ class HttpRpcClient:
         self._id += 1
         return self._id
 
-    def _post_json(self, payload: Union[Dict[str, Any], List[Dict[str, Any]]]) -> httpx.Response:
+    def _post_json(
+        self, payload: Union[Dict[str, Any], List[Dict[str, Any]]]
+    ) -> httpx.Response:
         url = self.base_url
         last_exc: Optional[Exception] = None
         for attempt in range(self.retries + 1):
@@ -114,25 +124,40 @@ class HttpRpcClient:
                 last_exc = e
                 if attempt >= self.retries:
                     raise
-                time.sleep(self.backoff * (2 ** attempt))
+                time.sleep(self.backoff * (2**attempt))
         # Should not reach here
         assert last_exc is not None
         raise last_exc
 
-    def call(self, method: str, params: Optional[Union[List[Any], Dict[str, Any]]] = None) -> Any:
+    def call(
+        self, method: str, params: Optional[Union[List[Any], Dict[str, Any]]] = None
+    ) -> Any:
         """
         Single JSON-RPC call; raises JsonRpcError on RPC-side errors.
         """
-        payload = {"jsonrpc": "2.0", "id": self._next_id(), "method": method, "params": params or []}
+        payload = {
+            "jsonrpc": "2.0",
+            "id": self._next_id(),
+            "method": method,
+            "params": params or [],
+        }
         resp = self._post_json(payload)
         resp.raise_for_status()
         body = resp.json()
         if "error" in body:
             err = body["error"]
-            raise JsonRpcError(err.get("code", -32000), err.get("message", "Unknown error"), err.get("data"))
+            raise JsonRpcError(
+                err.get("code", -32000),
+                err.get("message", "Unknown error"),
+                err.get("data"),
+            )
         return body.get("result")
 
-    def call_first(self, methods: Sequence[str], params: Optional[Union[List[Any], Dict[str, Any]]] = None) -> Any:
+    def call_first(
+        self,
+        methods: Sequence[str],
+        params: Optional[Union[List[Any], Dict[str, Any]]] = None,
+    ) -> Any:
         """
         Try multiple methods in order; return the first successful result.
         Useful when nodes expose 'omni_*' OR 'eth_*' style methods.
@@ -161,7 +186,9 @@ class HttpRpcClient:
         for method, params in calls:
             rid = self._next_id()
             ids.append(rid)
-            payload.append({"jsonrpc": "2.0", "id": rid, "method": method, "params": params or []})
+            payload.append(
+                {"jsonrpc": "2.0", "id": rid, "method": method, "params": params or []}
+            )
 
         resp = self._post_json(payload)
         resp.raise_for_status()
@@ -181,7 +208,11 @@ class HttpRpcClient:
                 continue
             if "error" in item:
                 e = item["error"]
-                err = JsonRpcError(e.get("code", -32000), e.get("message", "Unknown error"), e.get("data"))
+                err = JsonRpcError(
+                    e.get("code", -32000),
+                    e.get("message", "Unknown error"),
+                    e.get("data"),
+                )
                 if raise_on_error:
                     raise err
                 results.append(err)
@@ -203,7 +234,9 @@ class HttpRpcClient:
         except Exception:
             return None
 
-    def get_block_by_number(self, number: Union[int, str] = "latest", full: bool = False) -> Any:
+    def get_block_by_number(
+        self, number: Union[int, str] = "latest", full: bool = False
+    ) -> Any:
         if isinstance(number, int):
             number_hex = hex(number)
         else:
@@ -293,7 +326,12 @@ class WsSubscription:
         if self._sub_id is not None:
             return
         req_id = self._client.next_id()
-        payload = {"jsonrpc": "2.0", "id": req_id, "method": self._method, "params": self._params}
+        payload = {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "method": self._method,
+            "params": self._params,
+        }
         await self._client._send(json.dumps(payload).encode("utf-8"))
         # Wait for confirmation
         while True:
@@ -335,7 +373,11 @@ class WsSubscription:
                 obj = json.loads(raw)
                 if self._matches_event(obj):
                     # Normalize result shape:
-                    if "params" in obj and isinstance(obj["params"], dict) and "result" in obj["params"]:
+                    if (
+                        "params" in obj
+                        and isinstance(obj["params"], dict)
+                        and "result" in obj["params"]
+                    ):
                         yield obj["params"]["result"]
                     else:
                         yield obj
@@ -358,11 +400,21 @@ class WsSubscription:
             if self._sub_id is not None:
                 # Try eth_unsubscribe first, then omni_unsubscribe
                 req_id = self._client.next_id()
-                payload = {"jsonrpc": "2.0", "id": req_id, "method": "eth_unsubscribe", "params": [self._sub_id]}
+                payload = {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "method": "eth_unsubscribe",
+                    "params": [self._sub_id],
+                }
                 try:
                     await self._client._send(json.dumps(payload).encode("utf-8"))
                 except Exception:
-                    payload = {"jsonrpc": "2.0", "id": req_id, "method": "omni_unsubscribe", "params": [self._sub_id]}
+                    payload = {
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "method": "omni_unsubscribe",
+                        "params": [self._sub_id],
+                    }
                     await self._client._send(json.dumps(payload).encode("utf-8"))
         except Exception:
             pass
@@ -439,9 +491,16 @@ class WsRpcClient:
 
     # ----- Public API -----
 
-    async def send(self, method: str, params: Optional[Union[List[Any], Dict[str, Any]]] = None) -> Any:
+    async def send(
+        self, method: str, params: Optional[Union[List[Any], Dict[str, Any]]] = None
+    ) -> Any:
         rid = self.next_id()
-        payload = {"jsonrpc": "2.0", "id": rid, "method": method, "params": params or []}
+        payload = {
+            "jsonrpc": "2.0",
+            "id": rid,
+            "method": method,
+            "params": params or [],
+        }
         await self._send(json.dumps(payload).encode("utf-8"))
         while True:
             raw = await self._recv()
@@ -459,10 +518,16 @@ class WsRpcClient:
             if obj.get("id") == rid:
                 if "error" in obj:
                     e = obj["error"]
-                    raise JsonRpcError(e.get("code", -32000), e.get("message", "Unknown error"), e.get("data"))
+                    raise JsonRpcError(
+                        e.get("code", -32000),
+                        e.get("message", "Unknown error"),
+                        e.get("data"),
+                    )
                 return obj.get("result")
 
-    def subscribe(self, method: str = "eth_subscribe", params: Sequence[Any] = ("newHeads",)) -> WsSubscription:
+    def subscribe(
+        self, method: str = "eth_subscribe", params: Sequence[Any] = ("newHeads",)
+    ) -> WsSubscription:
         """
         Create a subscription (async iterator). Default is 'eth_subscribe' newHeads.
         Use method='omni_subscribe' if your node exposes that.
@@ -483,7 +548,9 @@ class WsRpcClient:
 # ------------------------------ Convenience ----------------------------
 
 
-def await_head_height(rpc: HttpRpcClient, target_height: int, *, timeout: float = 30.0, poll: float = 0.25) -> Dict[str, Any]:
+def await_head_height(
+    rpc: HttpRpcClient, target_height: int, *, timeout: float = 30.0, poll: float = 0.25
+) -> Dict[str, Any]:
     """
     Wait until latest block >= target_height and return that block header (light).
     """
@@ -506,10 +573,14 @@ def await_head_height(rpc: HttpRpcClient, target_height: int, *, timeout: float 
         if h >= target_height:
             return last_block
         time.sleep(poll)
-    raise TimeoutError(f"Timed out waiting for head >= {target_height}. Last={last_block}")
+    raise TimeoutError(
+        f"Timed out waiting for head >= {target_height}. Last={last_block}"
+    )
 
 
-def send_and_wait(rpc: HttpRpcClient, raw_tx_hex: str, *, timeout: float = 60.0) -> Dict[str, Any]:
+def send_and_wait(
+    rpc: HttpRpcClient, raw_tx_hex: str, *, timeout: float = 60.0
+) -> Dict[str, Any]:
     """
     Convenience: send raw tx and wait for its receipt.
     """
@@ -532,7 +603,12 @@ if __name__ == "__main__":  # pragma: no cover
         cid = rpc.get_chain_id()
         print("chainId:", cid)
         latest = rpc.get_block_by_number("latest", full=False)
-        print("latest:", json.dumps({k: latest.get(k) for k in ["number", "hash", "parentHash"]}, indent=2))
+        print(
+            "latest:",
+            json.dumps(
+                {k: latest.get(k) for k in ["number", "hash", "parentHash"]}, indent=2
+            ),
+        )
 
     async def _ws_demo() -> None:
         try:

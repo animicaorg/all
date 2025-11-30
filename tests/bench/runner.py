@@ -57,13 +57,14 @@ from glob import glob
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple, TypedDict
 
-
 # ----------------------------- helpers ---------------------------------------
 
 
 def _git_describe() -> str:
     try:
-        out = subprocess.check_output(["git", "describe", "--always", "--dirty"], stderr=subprocess.DEVNULL)
+        out = subprocess.check_output(
+            ["git", "describe", "--always", "--dirty"], stderr=subprocess.DEVNULL
+        )
         return out.decode().strip()
     except Exception:
         return ""
@@ -104,7 +105,13 @@ def _discover_patterns(patterns: Iterable[str]) -> List[str]:
             "tests/bench/*.py",
         ]
         for pat in defaults:
-            files.extend([f for f in glob(pat, recursive=True) if f.endswith(".py") and not f.endswith("__init__.py")])
+            files.extend(
+                [
+                    f
+                    for f in glob(pat, recursive=True)
+                    if f.endswith(".py") and not f.endswith("__init__.py")
+                ]
+            )
     # De-dup and stable order
     return sorted({str(Path(f)) for f in files})
 
@@ -148,9 +155,9 @@ class CaseSummary(TypedDict, total=False):
     case_id: str
     script: str
     params: Dict[str, Any]
-    result: Dict[str, Any]   # original result dict (raw)
-    metric: str              # "ops_per_s" | "median_s" | "mean_s" | "unknown"
-    value: float             # numeric value used for compare
+    result: Dict[str, Any]  # original result dict (raw)
+    metric: str  # "ops_per_s" | "median_s" | "mean_s" | "unknown"
+    value: float  # numeric value used for compare
     higher_is_better: bool
 
 
@@ -190,7 +197,9 @@ def _normalize_case_id(script: str, result: Dict[str, Any]) -> str:
     return str(base)
 
 
-def _run_script(script: str, cpu: Optional[int], env_extra: Dict[str, str], timeout: int) -> Tuple[Optional[Dict[str, Any]], str]:
+def _run_script(
+    script: str, cpu: Optional[int], env_extra: Dict[str, str], timeout: int
+) -> Tuple[Optional[Dict[str, Any]], str]:
     """
     Run a Python bench script and parse last JSON object from stdout.
     Returns (parsed_json_or_none, raw_stdout).
@@ -239,7 +248,7 @@ def _summarize_case(script: str, parsed: Dict[str, Any]) -> CaseSummary:
         case_id=case_id,
         script=str(script),
         params=params,
-        result=parsed,        # raw result object
+        result=parsed,  # raw result object
         metric=metric_name,
         value=(float(value) if value is not None else float("nan")),
         higher_is_better=hib,
@@ -275,13 +284,19 @@ def _compare_cases(
 
     for cid, curc in cur_cases.items():
         if cid not in prev_cases:
-            unchanged.append(f"[NEW] {cid} = {curc.get('value')} ({curc.get('metric')})")
+            unchanged.append(
+                f"[NEW] {cid} = {curc.get('value')} ({curc.get('metric')})"
+            )
             continue
         pvc = prev_cases[cid]
         metric = curc.get("metric") or pvc.get("metric") or "unknown"
         v_cur = curc.get("value")
         v_prev = pvc.get("value")
-        hib = bool(curc.get("higher_is_better") if curc.get("higher_is_better") is not None else pvc.get("higher_is_better", False))
+        hib = bool(
+            curc.get("higher_is_better")
+            if curc.get("higher_is_better") is not None
+            else pvc.get("higher_is_better", False)
+        )
 
         if not isinstance(v_cur, (int, float)) or not isinstance(v_prev, (int, float)):
             unchanged.append(f"[SKIP] {cid} (unknown numeric metric)")
@@ -295,22 +310,30 @@ def _compare_cases(
             # higher is better => regression if v_cur < v_prev
             delta = (v_cur - v_prev) / v_prev * 100.0 if v_prev else float("inf")
             if delta < -1e-12:
-                regressed.append(f"[REGRESS] {cid}: {v_prev:.6g} → {v_cur:.6g} {metric} ({delta:.2f}%)")
+                regressed.append(
+                    f"[REGRESS] {cid}: {v_prev:.6g} → {v_cur:.6g} {metric} ({delta:.2f}%)"
+                )
                 if abs(delta) > threshold_pct:
                     over += 1
             elif delta > 1e-12:
-                improved.append(f"[IMPROVE] {cid}: {v_prev:.6g} → {v_cur:.6g} {metric} (+{delta:.2f}%)")
+                improved.append(
+                    f"[IMPROVE] {cid}: {v_prev:.6g} → {v_cur:.6g} {metric} (+{delta:.2f}%)"
+                )
             else:
                 unchanged.append(f"[=] {cid}: {v_cur:.6g} {metric}")
         else:
             # lower is better => regression if v_cur > v_prev
             delta = (v_prev - v_cur) / v_prev * 100.0 if v_prev else 0.0
             if delta < -1e-12:
-                regressed.append(f"[REGRESS] {cid}: {v_prev:.6g} → {v_cur:.6g} {metric} (-{delta:.2f}%)")
+                regressed.append(
+                    f"[REGRESS] {cid}: {v_prev:.6g} → {v_cur:.6g} {metric} (-{delta:.2f}%)"
+                )
                 if abs(delta) > threshold_pct:
                     over += 1
             elif delta > 1e-12:
-                improved.append(f"[IMPROVE] {cid}: {v_prev:.6g} → {v_cur:.6g} {metric} ({delta:.2f}% better)")
+                improved.append(
+                    f"[IMPROVE] {cid}: {v_prev:.6g} → {v_cur:.6g} {metric} ({delta:.2f}% better)"
+                )
             else:
                 unchanged.append(f"[=] {cid}: {v_cur:.6g} {metric}")
 
@@ -327,21 +350,62 @@ def _compare_cases(
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    p = argparse.ArgumentParser(description="Run project benches, save baseline JSON, and compare with thresholds.")
-    p.add_argument("--patterns", nargs="*", default=["da/bench/*.py", "mining/bench/*.py", "randomness/bench/*.py"],
-                   help="Glob patterns for bench scripts (default: common module benches).")
-    p.add_argument("--cpu", type=int, default=None, help="Pin to CPU core (Linux taskset).")
-    p.add_argument("--timeout", type=int, default=300, help="Per-benchmark timeout in seconds (default: 300).")
-    p.add_argument("--save", type=Path, default=Path("benchmarks/current.json"), help="Where to write current baseline JSON.")
-    p.add_argument("--compare", type=Path, default=None, help="Path to a previous baseline JSON to compare against.")
-    p.add_argument("--threshold-pct", type=float, default=15.0, help="Regression threshold percentage (default: 15).")
-    p.add_argument("--print-stdout", action="store_true", help="Print raw stdout from bench scripts.")
-    p.add_argument("--md", type=Path, default=None, help="Also write a Markdown summary table here.")
-    p.add_argument("--env", action="append", default=[], help="Extra env (KEY=VALUE). Can repeat.")
+    p = argparse.ArgumentParser(
+        description="Run project benches, save baseline JSON, and compare with thresholds."
+    )
+    p.add_argument(
+        "--patterns",
+        nargs="*",
+        default=["da/bench/*.py", "mining/bench/*.py", "randomness/bench/*.py"],
+        help="Glob patterns for bench scripts (default: common module benches).",
+    )
+    p.add_argument(
+        "--cpu", type=int, default=None, help="Pin to CPU core (Linux taskset)."
+    )
+    p.add_argument(
+        "--timeout",
+        type=int,
+        default=300,
+        help="Per-benchmark timeout in seconds (default: 300).",
+    )
+    p.add_argument(
+        "--save",
+        type=Path,
+        default=Path("benchmarks/current.json"),
+        help="Where to write current baseline JSON.",
+    )
+    p.add_argument(
+        "--compare",
+        type=Path,
+        default=None,
+        help="Path to a previous baseline JSON to compare against.",
+    )
+    p.add_argument(
+        "--threshold-pct",
+        type=float,
+        default=15.0,
+        help="Regression threshold percentage (default: 15).",
+    )
+    p.add_argument(
+        "--print-stdout",
+        action="store_true",
+        help="Print raw stdout from bench scripts.",
+    )
+    p.add_argument(
+        "--md",
+        type=Path,
+        default=None,
+        help="Also write a Markdown summary table here.",
+    )
+    p.add_argument(
+        "--env", action="append", default=[], help="Extra env (KEY=VALUE). Can repeat."
+    )
     args = p.parse_args(argv)
 
     # Resolve env extras
-    env_extra: Dict[str, str] = {"PYTHONHASHSEED": os.environ.get("PYTHONHASHSEED", "0")}
+    env_extra: Dict[str, str] = {
+        "PYTHONHASHSEED": os.environ.get("PYTHONHASHSEED", "0")
+    }
     for kv in args.env:
         if "=" in kv:
             k, v = kv.split("=", 1)
@@ -372,8 +436,10 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     for script in scripts:
         print(f"\n[bench] Running: {script}")
-        parsed, stdout = _run_script(script, cpu=args.cpu, env_extra=env_extra, timeout=args.timeout)
-        if args.print-stdout:
+        parsed, stdout = _run_script(
+            script, cpu=args.cpu, env_extra=env_extra, timeout=args.timeout
+        )
+        if args.print - stdout:
             print("----- stdout begin -----")
             print(stdout.rstrip())
             print("----- stdout end -----")
@@ -386,7 +452,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         metric = case["metric"]
         value = case.get("value")
         hib = case["higher_is_better"]
-        print(f"[bench] Case: {cid} | metric={metric} value={value} higher_is_better={hib}")
+        print(
+            f"[bench] Case: {cid} | metric={metric} value={value} higher_is_better={hib}"
+        )
         cases[cid] = case
 
     current = {"meta": meta, "cases": cases}
@@ -397,7 +465,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.compare and args.compare.exists():
         print(f"\n[bench-runner] Comparing to baseline: {args.compare}")
         prev = _load_baseline(args.compare)
-        improved, regressed, unchanged, over = _compare_cases(prev, current, args.threshold_pct)
+        improved, regressed, unchanged, over = _compare_cases(
+            prev, current, args.threshold_pct
+        )
 
         print("\n== Improvements ==")
         for m in improved or ["(none)"]:
@@ -410,16 +480,28 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(m)
 
         if over > 0:
-            print(f"\n[bench-runner] FAIL: {over} regression(s) exceeded threshold {args.threshold_pct}%")
+            print(
+                f"\n[bench-runner] FAIL: {over} regression(s) exceeded threshold {args.threshold_pct}%"
+            )
             exit_code = 2
         else:
             print(f"\n[bench-runner] PASS: No regressions over {args.threshold_pct}%")
 
         if args.md:
-            _write_markdown(args.md, prev, current, improved, regressed, unchanged, args.threshold_pct)
+            _write_markdown(
+                args.md,
+                prev,
+                current,
+                improved,
+                regressed,
+                unchanged,
+                args.threshold_pct,
+            )
 
     elif args.compare:
-        print(f"[bench-runner] Baseline to compare not found: {args.compare} (skipping comparison)")
+        print(
+            f"[bench-runner] Baseline to compare not found: {args.compare} (skipping comparison)"
+        )
     else:
         print("[bench-runner] No --compare provided; skipping comparison.")
 
@@ -444,7 +526,9 @@ def _write_markdown(
 
     lines: List[str] = []
     lines.append(f"# Benchmark Comparison (threshold {threshold}%)\n")
-    lines.append(f"- Prev git: `{prev.get('meta', {}).get('git', '')}`  \n- Cur git: `{cur.get('meta', {}).get('git', '')}`\n")
+    lines.append(
+        f"- Prev git: `{prev.get('meta', {}).get('git', '')}`  \n- Cur git: `{cur.get('meta', {}).get('git', '')}`\n"
+    )
     lines.append("| Case | Metric | Prev | Cur | Δ% | Status |")
     lines.append("|------|--------|------|-----|----|--------|")
 
@@ -457,20 +541,34 @@ def _write_markdown(
             metric = cuc.get("metric") or pvc.get("metric") or "?"
             v_prev = pvc.get("value")
             v_cur = cuc.get("value")
-            hib = bool(cuc.get("higher_is_better") if cuc.get("higher_is_better") is not None else pvc.get("higher_is_better", False))
+            hib = bool(
+                cuc.get("higher_is_better")
+                if cuc.get("higher_is_better") is not None
+                else pvc.get("higher_is_better", False)
+            )
             if isinstance(v_prev, (int, float)) and isinstance(v_cur, (int, float)):
                 if hib:
                     d = (v_cur - v_prev) / v_prev * 100.0 if v_prev else float("inf")
                 else:
                     d = (v_prev - v_cur) / v_prev * 100.0 if v_prev else 0.0
-                status = "improve" if ((hib and d > 0) or ((not hib) and d > 0)) else ("regress" if d < 0 else "same")
-                lines.append(f"| {cid} | {metric} | {v_prev:.6g} | {v_cur:.6g} | {d:+.2f}% | {status} |")
+                status = (
+                    "improve"
+                    if ((hib and d > 0) or ((not hib) and d > 0))
+                    else ("regress" if d < 0 else "same")
+                )
+                lines.append(
+                    f"| {cid} | {metric} | {v_prev:.6g} | {v_cur:.6g} | {d:+.2f}% | {status} |"
+                )
             else:
                 lines.append(f"| {cid} | {metric} | {v_prev} | {v_cur} | n/a | n/a |")
         elif pvc and not cuc:
-            lines.append(f"| {cid} | {pvc.get('metric','?')} | {pvc.get('value')} | — | — | missing |")
+            lines.append(
+                f"| {cid} | {pvc.get('metric','?')} | {pvc.get('value')} | — | — | missing |"
+            )
         elif cuc and not pvc:
-            lines.append(f"| {cid} | {cuc.get('metric','?')} | — | {cuc.get('value')} | — | new |")
+            lines.append(
+                f"| {cid} | {cuc.get('metric','?')} | — | {cuc.get('value')} | — | new |"
+            )
 
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:

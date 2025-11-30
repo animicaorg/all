@@ -54,9 +54,7 @@ def test_module_owners_basic_shape() -> None:
     ), f"'defaults' must be a mapping, got {type(data['defaults'])!r}"
 
     modules = data["modules"]
-    assert isinstance(
-        modules, list
-    ), f"'modules' must be a list, got {type(modules)!r}"
+    assert isinstance(modules, list), f"'modules' must be a list, got {type(modules)!r}"
     assert modules, "'modules' list must not be empty"
 
 
@@ -111,14 +109,16 @@ def test_module_entries_have_required_fields_and_paths() -> None:
         ), f"modules[{idx}] must be a mapping, got {type(module)!r}"
 
         for key in ("id", "name", "paths", "maintainers", "reviewers", "backups"):
-            assert (
-                key in module
-            ), f"modules[{idx}] is missing required key {key!r}"
+            assert key in module, f"modules[{idx}] is missing required key {key!r}"
 
         mid = module["id"]
         name = module["name"]
-        assert isinstance(mid, str) and mid.strip(), f"modules[{idx}].id must be a non-empty string"
-        assert isinstance(name, str) and name.strip(), f"modules[{idx}].name must be a non-empty string"
+        assert (
+            isinstance(mid, str) and mid.strip()
+        ), f"modules[{idx}].id must be a non-empty string"
+        assert (
+            isinstance(name, str) and name.strip()
+        ), f"modules[{idx}].name must be a non-empty string"
 
         paths = _assert_str_list(f"modules[{idx}].paths", module["paths"])
         _assert_str_list(f"modules[{idx}].maintainers", module["maintainers"])
@@ -127,7 +127,9 @@ def test_module_entries_have_required_fields_and_paths() -> None:
 
         # Path pattern sanity: no obvious junk; must not contain whitespace.
         for p in paths:
-            assert " " not in p, f"modules[{idx}].paths entry {p!r} must not contain spaces"
+            assert (
+                " " not in p
+            ), f"modules[{idx}].paths entry {p!r} must not contain spaces"
             assert p, f"modules[{idx}].paths contains empty string"
             # Common convention: module patterns should include at least '/' or '**'
             assert (
@@ -161,9 +163,7 @@ def test_codeowners_shape_and_owners_required_if_present() -> None:
             entry, dict
         ), f"codeowners[{idx}] must be a mapping, got {type(entry)!r}"
         for key in ("pattern", "owners"):
-            assert (
-                key in entry
-            ), f"codeowners[{idx}] is missing required key {key!r}"
+            assert key in entry, f"codeowners[{idx}] is missing required key {key!r}"
 
         pattern = entry["pattern"]
         owners = entry["owners"]
@@ -171,7 +171,9 @@ def test_codeowners_shape_and_owners_required_if_present() -> None:
         assert isinstance(
             pattern, str
         ), f"codeowners[{idx}].pattern must be a string, got {type(pattern)!r}"
-        assert pattern.strip(), f"codeowners[{idx}].pattern must not be empty/whitespace"
+        assert (
+            pattern.strip()
+        ), f"codeowners[{idx}].pattern must not be empty/whitespace"
         # Convention: CODEOWNERS patterns normally start with '/'
         assert pattern.startswith(
             "/"
@@ -185,6 +187,6 @@ def test_codeowners_shape_and_owners_required_if_present() -> None:
             assert isinstance(
                 owner, str
             ), f"codeowners[{idx}].owners[{j}] must be a string, got {type(owner)!r}"
-            assert owner.strip(), (
-                f"codeowners[{idx}].owners[{j}] must not be empty/whitespace"
-            )
+            assert (
+                owner.strip()
+            ), f"codeowners[{idx}].owners[{j}] must not be empty/whitespace"

@@ -30,6 +30,7 @@ from typing import Callable, Optional
 # Hash providers (auto → keccak_256 if available, else sha3_256)
 # -----------------------------------------------------------------------------
 
+
 def _get_hash_fn(alg_choice: str) -> tuple[str, Callable[[bytes], bytes]]:
     """
     Returns (alg_label, hash_func) where hash_func(b: bytes)-> digest bytes.
@@ -43,17 +44,21 @@ def _get_hash_fn(alg_choice: str) -> tuple[str, Callable[[bytes], bytes]]:
         # pycryptodomex
         try:
             from Crypto.Hash import keccak  # type: ignore
+
             def _k(b: bytes) -> bytes:
                 h = keccak.new(digest_bits=256)
                 h.update(b)
                 return h.digest()
+
             return "keccak_256", _k
         except Exception:
             # eth_hash (py-evm stack)
             try:
                 from eth_hash.auto import keccak as eth_keccak  # type: ignore
+
                 def _ek(b: bytes) -> bytes:
                     return eth_keccak(b)
+
                 return "keccak_256", _ek
             except Exception:
                 if alg_choice == "keccak_256":
@@ -61,16 +66,19 @@ def _get_hash_fn(alg_choice: str) -> tuple[str, Callable[[bytes], bytes]]:
 
     # Fallback: stdlib SHA3-256 (NIST padding; fine for a perf counter)
     import hashlib
+
     def _sha3(b: bytes) -> bytes:
         h = hashlib.sha3_256()
         h.update(b)
         return h.digest()
+
     return "sha3_256", _sha3
 
 
 # -----------------------------------------------------------------------------
 # Utilities
 # -----------------------------------------------------------------------------
+
 
 def _target_from_zero_bits(zero_bits: int) -> int:
     """
@@ -91,6 +99,7 @@ def _int256(b: bytes) -> int:
 # -----------------------------------------------------------------------------
 # Core bench
 # -----------------------------------------------------------------------------
+
 
 def run_hash_loop(
     seconds: float,
@@ -156,7 +165,7 @@ def run_hash_loop(
 
     # Expected share rate given target_bits
     # p = 2^(-target_bits) for uniform 256-bit outputs.
-    expected_p = 0.0 if target_bits >= 256 else (1.0 / (2.0 ** target_bits))
+    expected_p = 0.0 if target_bits >= 256 else (1.0 / (2.0**target_bits))
     expected_shares = attempts * expected_p
 
     return {
@@ -180,14 +189,39 @@ def run_hash_loop(
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description="CPU inner loop hashes/sec benchmark (dev Θ model via leading-zero bits).")
-    ap.add_argument("--seconds", type=float, default=3.0, help="Benchmark duration in seconds (default: 3.0)")
-    ap.add_argument("--target-bits", type=int, default=16,
-                    help="Leading zero bits required to count as a 'share' (dev difficulty; default: 16)")
-    ap.add_argument("--prefix-len", type=int, default=80, help="Prefix bytes length to hash with nonce (default: 80)")
-    ap.add_argument("--seed", type=int, default=None, help="Deterministic prefix seed (default: fixed pattern)")
-    ap.add_argument("--alg", choices=("auto", "keccak_256", "sha3_256"), default="auto",
-                    help="Hash algorithm to use (default: auto)")
+    ap = argparse.ArgumentParser(
+        description="CPU inner loop hashes/sec benchmark (dev Θ model via leading-zero bits)."
+    )
+    ap.add_argument(
+        "--seconds",
+        type=float,
+        default=3.0,
+        help="Benchmark duration in seconds (default: 3.0)",
+    )
+    ap.add_argument(
+        "--target-bits",
+        type=int,
+        default=16,
+        help="Leading zero bits required to count as a 'share' (dev difficulty; default: 16)",
+    )
+    ap.add_argument(
+        "--prefix-len",
+        type=int,
+        default=80,
+        help="Prefix bytes length to hash with nonce (default: 80)",
+    )
+    ap.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Deterministic prefix seed (default: fixed pattern)",
+    )
+    ap.add_argument(
+        "--alg",
+        choices=("auto", "keccak_256", "sha3_256"),
+        default="auto",
+        help="Hash algorithm to use (default: auto)",
+    )
     args = ap.parse_args(argv)
 
     payload = run_hash_loop(

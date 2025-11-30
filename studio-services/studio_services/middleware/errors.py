@@ -13,9 +13,8 @@ Exception → RFC7807 "problem+json" mappers for FastAPI.
 - Never leaks stack traces in responses; logs them instead.
 """
 
-from typing import Any, Dict, Optional, Tuple, Type
-
 import logging
+from typing import Any, Dict, Optional, Tuple, Type
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -26,6 +25,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 try:
     from studio_services.errors import ApiError  # type: ignore
 except Exception:  # pragma: no cover - defensive
+
     class ApiError(Exception):  # type: ignore
         pass
 
@@ -111,7 +111,11 @@ def _to_status_title(status_code: int) -> Tuple[int, str]:
 
 async def _handle_api_error(request: Request, exc: ApiError) -> JSONResponse:
     # Support multiple attribute shapes to keep compatibility
-    status = getattr(exc, "status_code", None) or getattr(exc, "http_status", None) or getattr(exc, "status", 500)
+    status = (
+        getattr(exc, "status_code", None)
+        or getattr(exc, "http_status", None)
+        or getattr(exc, "status", 500)
+    )
     code = getattr(exc, "code", exc.__class__.__name__)
     detail = getattr(exc, "detail", None) or getattr(exc, "message", str(exc)) or ""
     type_uri = getattr(exc, "type_uri", "about:blank")
@@ -137,7 +141,9 @@ async def _handle_api_error(request: Request, exc: ApiError) -> JSONResponse:
     return JSONResponse(status_code=status, content=body, media_type=PROBLEM_CT)
 
 
-async def _handle_http_exception(request: Request, exc: StarletteHTTPException) -> JSONResponse:
+async def _handle_http_exception(
+    request: Request, exc: StarletteHTTPException
+) -> JSONResponse:
     status, title = _to_status_title(int(exc.status_code))
     detail = str(exc.detail) if getattr(exc, "detail", None) else ""
     body = _base_problem(request, status=status, title=title, detail=detail)
@@ -146,7 +152,9 @@ async def _handle_http_exception(request: Request, exc: StarletteHTTPException) 
     return JSONResponse(status_code=status, content=body, media_type=PROBLEM_CT)
 
 
-async def _handle_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+async def _handle_validation_error(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
     status, title = _to_status_title(422)
     errors = exc.errors()  # pydantic-style list[dict]
     body = _base_problem(

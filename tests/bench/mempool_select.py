@@ -26,6 +26,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import heapq
 import json
 import math
 import os
@@ -34,12 +35,11 @@ import statistics
 import time
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple
-import heapq
-
 
 # --------------------------------------------------------------------------- #
 # Synthetic TX model (used by fallback and as input to real adapter)
 # --------------------------------------------------------------------------- #
+
 
 @dataclass(order=False)
 class Tx:
@@ -76,9 +76,20 @@ def generate_txs(
         for i in range(txs_per_sender):
             gas = r.randint(gas_min, gas_max)
             size = r.randint(size_min, size_max)
-            tip_per_gas = 1.0 + 9.0 * (r.random() ** 2)  # skewed towards lower but with tail
+            tip_per_gas = 1.0 + 9.0 * (
+                r.random() ** 2
+            )  # skewed towards lower but with tail
             priority = tip_per_gas * sender_bias
-            txs.append(Tx(sender=s, nonce=base_nonce + i, gas=gas, size=size, priority=priority, txid=txid))
+            txs.append(
+                Tx(
+                    sender=s,
+                    nonce=base_nonce + i,
+                    gas=gas,
+                    size=size,
+                    priority=priority,
+                    txid=txid,
+                )
+            )
             txid += 1
     return txs
 
@@ -86,6 +97,7 @@ def generate_txs(
 # --------------------------------------------------------------------------- #
 # Fallback per-sender-queue + heap selector
 # --------------------------------------------------------------------------- #
+
 
 class FallbackSelector:
     """
@@ -100,6 +112,7 @@ class FallbackSelector:
 
     Returns: (selected list, total_gas, total_bytes, attempts)
     """
+
     def __init__(self, txs: List[Tx]):
         # Build queues by sender → list sorted by nonce
         self.queues: Dict[int, List[Tx]] = {}
@@ -108,7 +121,9 @@ class FallbackSelector:
         for q in self.queues.values():
             q.sort(key=lambda t: t.nonce)
 
-    def select(self, gas_budget: int, byte_budget: int) -> Tuple[List[Tx], int, int, int]:
+    def select(
+        self, gas_budget: int, byte_budget: int
+    ) -> Tuple[List[Tx], int, int, int]:
         heap: List[Tuple[float, int, int, Tx]] = []
         selected: List[Tx] = []
         gas_used = 0
@@ -117,7 +132,9 @@ class FallbackSelector:
 
         # Push initial heads
         for s, q in self.queues.items():
-            if q and q[0].nonce == q[0].nonce:  # always true; keeps mypy happy about q[0]
+            if (
+                q and q[0].nonce == q[0].nonce
+            ):  # always true; keeps mypy happy about q[0]
                 head = q[0]
                 # Max-heap via negative priority; tie-break by gas (smaller first), then txid
                 heapq.heappush(heap, (-head.priority, head.gas, head.txid, head))
@@ -163,6 +180,7 @@ class FallbackSelector:
 # Real mempool adapter (best-effort; falls back if unavailable)
 # --------------------------------------------------------------------------- #
 
+
 class RealMempoolAdapter:
     """
     Tries to bind to an actual mempool implementation. The goal is to exercise
@@ -173,6 +191,7 @@ class RealMempoolAdapter:
       - mempool.drain.select(tx_list, gas, bytes)  # functional style
       - mempool.pool.Pool(...); pool.drain(gas, bytes)
     """
+
     def __init__(self):
         import importlib
 
@@ -217,7 +236,9 @@ class RealMempoolAdapter:
             "hash": f"0x{tx.txid:064x}",
         }
 
-    def select(self, txs: List[Tx], gas_budget: int, byte_budget: int) -> Tuple[List[dict], int, int, int]:
+    def select(
+        self, txs: List[Tx], gas_budget: int, byte_budget: int
+    ) -> Tuple[List[dict], int, int, int]:
         # Build pool
         pool = self._Pool()
         add = getattr(pool, self._pool_add_method, None)
@@ -239,8 +260,12 @@ class RealMempoolAdapter:
             # Expect a structure. Try to normalize.
             if isinstance(res, dict):
                 picked = res.get("txs") or res.get("selected") or []
-                gas_used = int(res.get("gas_used") or sum(int(t.get("gas", 0)) for t in picked))
-                bytes_used = int(res.get("bytes_used") or sum(int(t.get("size", 0)) for t in picked))
+                gas_used = int(
+                    res.get("gas_used") or sum(int(t.get("gas", 0)) for t in picked)
+                )
+                bytes_used = int(
+                    res.get("bytes_used") or sum(int(t.get("size", 0)) for t in picked)
+                )
                 return picked, gas_used, bytes_used, attempts
             elif isinstance(res, (list, tuple)):
                 picked = list(res)
@@ -258,8 +283,13 @@ class RealMempoolAdapter:
                     out = m(limit_gas=gas_budget, limit_bytes=byte_budget)  # type: ignore[misc]
                 if isinstance(out, dict):
                     picked = out.get("txs") or out.get("selected") or []
-                    gas_used = int(out.get("gas_used") or sum(int(t.get("gas", 0)) for t in picked))
-                    bytes_used = int(out.get("bytes_used") or sum(int(t.get("size", 0)) for t in picked))
+                    gas_used = int(
+                        out.get("gas_used") or sum(int(t.get("gas", 0)) for t in picked)
+                    )
+                    bytes_used = int(
+                        out.get("bytes_used")
+                        or sum(int(t.get("size", 0)) for t in picked)
+                    )
                     return picked, gas_used, bytes_used, attempts
                 elif isinstance(out, (list, tuple)):
                     picked = list(out)
@@ -274,6 +304,7 @@ class RealMempoolAdapter:
 # Benchmark Core
 # --------------------------------------------------------------------------- #
 
+
 def _select_once(
     mode: str,
     txs: List[Tx],
@@ -286,7 +317,9 @@ def _select_once(
     if mode in ("auto", "mempool"):
         try:
             adapter = RealMempoolAdapter()
-            picked, gas_used, bytes_used, attempts = adapter.select(txs, gas_budget, byte_budget)
+            picked, gas_used, bytes_used, attempts = adapter.select(
+                txs, gas_budget, byte_budget
+            )
             return len(picked), gas_used, bytes_used, attempts
         except Exception:
             if mode == "mempool":
@@ -305,7 +338,9 @@ def _time_selection(
     byte_budget: int,
 ) -> Tuple[float, int, int, int]:
     t0 = time.perf_counter()
-    count, gas_used, bytes_used, attempts = _select_once(mode, txs, gas_budget, byte_budget)
+    count, gas_used, bytes_used, attempts = _select_once(
+        mode, txs, gas_budget, byte_budget
+    )
     t1 = time.perf_counter()
     return (t1 - t0), count, gas_used, bytes_used
 
@@ -352,7 +387,9 @@ def run_bench(
         bytes_used_list.append(b_used)
 
     median_s = statistics.median(timings)
-    p90_s = statistics.quantiles(timings, n=10)[8] if len(timings) >= 10 else max(timings)
+    p90_s = (
+        statistics.quantiles(timings, n=10)[8] if len(timings) >= 10 else max(timings)
+    )
 
     count_median = int(statistics.median(counts))
     gas_used_median = int(statistics.median(gas_used_list))
@@ -383,7 +420,11 @@ def run_bench(
             "warmup": warmup,
             "repeat": repeat,
             "mode": mode,
-            "seed": seed if seed is not None else int(os.environ.get("PYTHONHASHSEED", "0") or "1337"),
+            "seed": (
+                seed
+                if seed is not None
+                else int(os.environ.get("PYTHONHASHSEED", "0") or "1337")
+            ),
         },
         "result": {
             "txs_per_s": txs_per_s,
@@ -400,20 +441,82 @@ def run_bench(
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description="Mempool selection throughput under gas/byte budgets.")
-    ap.add_argument("--senders", type=int, default=2000, help="Number of distinct senders (default: 2000)")
-    ap.add_argument("--txs-per", type=int, default=8, dest="txs_per", help="Transactions per sender (default: 8)")
-    ap.add_argument("--gas-budget", type=int, default=15_000_000, dest="gas_budget", help="Gas budget per block (default: 15,000,000)")
-    ap.add_argument("--byte-budget", type=int, default=1_500_000, dest="byte_budget", help="Bytes budget per block (default: 1,500,000)")
-    ap.add_argument("--gas-min", type=int, default=21_000, dest="gas_min", help="Min gas per tx (default: 21,000)")
-    ap.add_argument("--gas-max", type=int, default=300_000, dest="gas_max", help="Max gas per tx (default: 300,000)")
-    ap.add_argument("--size-min", type=int, default=120, dest="size_min", help="Min size per tx in bytes (default: 120)")
-    ap.add_argument("--size-max", type=int, default=900, dest="size_max", help="Max size per tx in bytes (default: 900)")
-    ap.add_argument("--warmup", type=int, default=1, help="Warmup iterations (default: 1)")
-    ap.add_argument("--repeat", type=int, default=5, help="Measured iterations (default: 5)")
-    ap.add_argument("--mode", choices=("auto", "mempool", "fallback"), default="auto",
-                    help="Use real mempool if available (auto/mempool), else fallback (default: auto)")
-    ap.add_argument("--seed", type=int, default=None, help="PRNG seed (default: from PYTHONHASHSEED or 1337)")
+    ap = argparse.ArgumentParser(
+        description="Mempool selection throughput under gas/byte budgets."
+    )
+    ap.add_argument(
+        "--senders",
+        type=int,
+        default=2000,
+        help="Number of distinct senders (default: 2000)",
+    )
+    ap.add_argument(
+        "--txs-per",
+        type=int,
+        default=8,
+        dest="txs_per",
+        help="Transactions per sender (default: 8)",
+    )
+    ap.add_argument(
+        "--gas-budget",
+        type=int,
+        default=15_000_000,
+        dest="gas_budget",
+        help="Gas budget per block (default: 15,000,000)",
+    )
+    ap.add_argument(
+        "--byte-budget",
+        type=int,
+        default=1_500_000,
+        dest="byte_budget",
+        help="Bytes budget per block (default: 1,500,000)",
+    )
+    ap.add_argument(
+        "--gas-min",
+        type=int,
+        default=21_000,
+        dest="gas_min",
+        help="Min gas per tx (default: 21,000)",
+    )
+    ap.add_argument(
+        "--gas-max",
+        type=int,
+        default=300_000,
+        dest="gas_max",
+        help="Max gas per tx (default: 300,000)",
+    )
+    ap.add_argument(
+        "--size-min",
+        type=int,
+        default=120,
+        dest="size_min",
+        help="Min size per tx in bytes (default: 120)",
+    )
+    ap.add_argument(
+        "--size-max",
+        type=int,
+        default=900,
+        dest="size_max",
+        help="Max size per tx in bytes (default: 900)",
+    )
+    ap.add_argument(
+        "--warmup", type=int, default=1, help="Warmup iterations (default: 1)"
+    )
+    ap.add_argument(
+        "--repeat", type=int, default=5, help="Measured iterations (default: 5)"
+    )
+    ap.add_argument(
+        "--mode",
+        choices=("auto", "mempool", "fallback"),
+        default="auto",
+        help="Use real mempool if available (auto/mempool), else fallback (default: auto)",
+    )
+    ap.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="PRNG seed (default: from PYTHONHASHSEED or 1337)",
+    )
     args = ap.parse_args(argv)
 
     payload = run_bench(

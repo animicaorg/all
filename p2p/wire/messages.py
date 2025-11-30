@@ -18,20 +18,19 @@ import dataclasses as dc
 from dataclasses import dataclass
 from enum import IntEnum
 from hashlib import sha3_256
-from typing import List, Optional, Tuple, Dict, Any
+from typing import Any, Dict, List, Optional, Tuple
 
-from .message_ids import MsgID, WIRE_SCHEMA_VERSION
-
+from .message_ids import WIRE_SCHEMA_VERSION, MsgID
 
 # ---------------------------
 # Common aliases / small types
 # ---------------------------
 
-Hash32 = bytes        # 32-byte keccak/sha3 digest
-Hash64 = bytes        # 64-byte sha3-512 (e.g., alg-policy root)
-PeerID = bytes        # 32-byte (sha3(pubkey||alg_id)) from p2p.crypto.peer_id
-Address = str         # multiaddr-like string ("/ip4/…/tcp/…")
-NamespaceID = int     # DA namespace (uint32/uint64 per spec)
+Hash32 = bytes  # 32-byte keccak/sha3 digest
+Hash64 = bytes  # 64-byte sha3-512 (e.g., alg-policy root)
+PeerID = bytes  # 32-byte (sha3(pubkey||alg_id)) from p2p.crypto.peer_id
+Address = str  # multiaddr-like string ("/ip4/…/tcp/…")
+NamespaceID = int  # DA namespace (uint32/uint64 per spec)
 Height = int
 ChainId = int
 
@@ -42,12 +41,15 @@ def _blen(b: bytes) -> int:
 
 def _ensure_len(name: str, b: bytes, n: int) -> None:
     if _blen(b) != n:
-        raise ValueError(f"{name} must be {n} bytes, got {len(b) if isinstance(b, (bytes, bytearray)) else 'not-bytes'}")
+        raise ValueError(
+            f"{name} must be {n} bytes, got {len(b) if isinstance(b, (bytes, bytearray)) else 'not-bytes'}"
+        )
 
 
 # ---------------------------
 # 0x00xx — Core control
 # ---------------------------
+
 
 @dataclass(frozen=True)
 class Hello:
@@ -59,7 +61,9 @@ class Hello:
     head_height: Height = 0
     head_hash: Hash32 = b""
     alg_policy_root: Hash64 = b""
-    capabilities: List[str] = dc.field(default_factory=list)  # e.g., ["tx", "blocks", "da", "randomness"]
+    capabilities: List[str] = dc.field(
+        default_factory=list
+    )  # e.g., ["tx", "blocks", "da", "randomness"]
     timestamp: int = 0  # unix seconds
 
     def __post_init__(self):
@@ -109,6 +113,7 @@ class Error:
 # 0x01xx — Peer management
 # ---------------------------
 
+
 @dataclass(frozen=True)
 class Identify:
     msg_id: MsgID = MsgID.IDENTIFY
@@ -155,6 +160,7 @@ class AddressAnnounce:
 # 0x02xx — Inventory
 # ---------------------------
 
+
 class InvType(IntEnum):
     TX = 1
     BLOCK = 2
@@ -192,6 +198,7 @@ class NotFound:
 # ---------------------------
 # 0x03xx — Headers & Blocks sync
 # ---------------------------
+
 
 @dataclass(frozen=True)
 class GetHeaders:
@@ -255,6 +262,7 @@ class BlockAnnounce:
 # 0x04xx — Transactions
 # ---------------------------
 
+
 @dataclass(frozen=True)
 class Tx:
     msg_id: MsgID = MsgID.TX
@@ -285,6 +293,7 @@ class TxNotFound:
 # 0x05xx — Useful-work Shares
 # ---------------------------
 
+
 @dataclass(frozen=True)
 class Share:
     msg_id: MsgID = MsgID.SHARE
@@ -306,7 +315,9 @@ class GetShare:
 class ShareSummary:
     msg_id: MsgID = MsgID.SHARE_SUMMARY
     share_hash: Hash32 = b""
-    metrics: Dict[str, float] = dc.field(default_factory=dict)  # e.g., {"d_ratio": 0.42, "ai_units": 123.0}
+    metrics: Dict[str, float] = dc.field(
+        default_factory=dict
+    )  # e.g., {"d_ratio": 0.42, "ai_units": 123.0}
 
     def __post_init__(self):
         _ensure_len("share_hash", self.share_hash, 32)
@@ -316,9 +327,10 @@ class ShareSummary:
 # 0x06xx — Data Availability
 # ---------------------------
 
+
 @dataclass(frozen=True)
 class DACommitment:
-    commitment: Hash32   # NMT root
+    commitment: Hash32  # NMT root
     namespace: NamespaceID
     size: int  # bytes
 
@@ -370,6 +382,7 @@ class DAChunk:
 # 0x07xx — Randomness (beacon)
 # ---------------------------
 
+
 @dataclass(frozen=True)
 class RandCommit:
     msg_id: MsgID = MsgID.RAND_COMMIT
@@ -410,6 +423,7 @@ class RandBeacon:
 # 0x08xx — Execution hints (optional)
 # ---------------------------
 
+
 @dataclass(frozen=True)
 class ReceiptHint:
     msg_id: MsgID = MsgID.RECEIPT_HINT
@@ -425,6 +439,7 @@ class ReceiptHint:
 # 0x0Exx — Experimental
 # ---------------------------
 
+
 @dataclass(frozen=True)
 class ExpExample:
     msg_id: MsgID = MsgID.EXP_EXAMPLE
@@ -435,23 +450,54 @@ class ExpExample:
 # Schema fingerprint
 # ---------------------------
 
+
 def _schema_descriptor() -> str:
     """Build a stable textual descriptor of all message class fields."""
+
     def desc(cls) -> str:
         anns = getattr(cls, "__annotations__", {})
         items = sorted((k, str(v)) for k, v in anns.items())
         return f"{cls.__name__}(" + ",".join(f"{k}:{t}" for k, t in items) + ")"
 
     classes = [
-        Hello, HelloAck, Ping, Pong, Disconnect, Error,
-        Identify, IdentifyResp, GetPeers, Peers, AddressAnnounce,
-        InvItem, Inv, GetData, NotFound,
-        GetHeaders, HeaderCompact, Headers, GetBlocks, Blocks, BlockAnnounce,
-        Tx, GetTx, TxNotFound,
-        Share, GetShare, ShareSummary,
-        DACommitment, DAInv, DAGet, DAProof, DAChunk,
-        RandCommit, RandReveal, RandVdfProof, RandBeacon,
-        ReceiptHint, ExpExample,
+        Hello,
+        HelloAck,
+        Ping,
+        Pong,
+        Disconnect,
+        Error,
+        Identify,
+        IdentifyResp,
+        GetPeers,
+        Peers,
+        AddressAnnounce,
+        InvItem,
+        Inv,
+        GetData,
+        NotFound,
+        GetHeaders,
+        HeaderCompact,
+        Headers,
+        GetBlocks,
+        Blocks,
+        BlockAnnounce,
+        Tx,
+        GetTx,
+        TxNotFound,
+        Share,
+        GetShare,
+        ShareSummary,
+        DACommitment,
+        DAInv,
+        DAGet,
+        DAProof,
+        DAChunk,
+        RandCommit,
+        RandReveal,
+        RandVdfProof,
+        RandBeacon,
+        ReceiptHint,
+        ExpExample,
     ]
     return "|".join(desc(c) for c in classes)
 
@@ -461,19 +507,55 @@ FINGERPRINT: str = sha3_256(_schema_descriptor().encode("utf-8")).hexdigest()
 
 __all__ = [
     # versioning
-    "WIRE_SCHEMA_VERSION", "FINGERPRINT",
+    "WIRE_SCHEMA_VERSION",
+    "FINGERPRINT",
     # inventory enum
     "InvType",
     # messages
-    "Hello", "HelloAck", "Ping", "Pong", "Disconnect", "Error",
-    "Identify", "IdentifyResp", "GetPeers", "Peers", "AddressAnnounce",
-    "InvItem", "Inv", "GetData", "NotFound",
-    "GetHeaders", "HeaderCompact", "Headers", "GetBlocks", "Blocks", "BlockAnnounce",
-    "Tx", "GetTx", "TxNotFound",
-    "Share", "GetShare", "ShareSummary",
-    "DACommitment", "DAInv", "DAGet", "DAProof", "DAChunk",
-    "RandCommit", "RandReveal", "RandVdfProof", "RandBeacon",
-    "ReceiptHint", "ExpExample",
+    "Hello",
+    "HelloAck",
+    "Ping",
+    "Pong",
+    "Disconnect",
+    "Error",
+    "Identify",
+    "IdentifyResp",
+    "GetPeers",
+    "Peers",
+    "AddressAnnounce",
+    "InvItem",
+    "Inv",
+    "GetData",
+    "NotFound",
+    "GetHeaders",
+    "HeaderCompact",
+    "Headers",
+    "GetBlocks",
+    "Blocks",
+    "BlockAnnounce",
+    "Tx",
+    "GetTx",
+    "TxNotFound",
+    "Share",
+    "GetShare",
+    "ShareSummary",
+    "DACommitment",
+    "DAInv",
+    "DAGet",
+    "DAProof",
+    "DAChunk",
+    "RandCommit",
+    "RandReveal",
+    "RandVdfProof",
+    "RandBeacon",
+    "ReceiptHint",
+    "ExpExample",
     # aliases
-    "Hash32", "Hash64", "PeerID", "Address", "NamespaceID", "Height", "ChainId",
+    "Hash32",
+    "Hash64",
+    "PeerID",
+    "Address",
+    "NamespaceID",
+    "Height",
+    "ChainId",
 ]

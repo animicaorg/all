@@ -42,8 +42,10 @@ __all__ = ["DAClient", "__version__"]
 if TYPE_CHECKING:
     from .client import DAClient  # type: ignore
 else:
+
     def __getattr__(name: str):
         if name == "DAClient":
             from .client import DAClient  # type: ignore
+
             return DAClient
         raise AttributeError(name)

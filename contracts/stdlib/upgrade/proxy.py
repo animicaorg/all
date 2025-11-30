@@ -62,12 +62,13 @@ from __future__ import annotations
 
 from typing import Final
 
-from stdlib import abi, events, storage                      # type: ignore
-from stdlib import hash as _hash                             # type: ignore
+from stdlib import abi, events  # type: ignore
+from stdlib import hash as _hash  # type: ignore
+from stdlib import storage  # type: ignore
 
 # Optional: used only if the proxy contract chooses owner-gated upgrades.
 try:  # pragma: no cover - imported when available
-    from stdlib.access.ownable import owner                  # type: ignore
+    from stdlib.access.ownable import owner  # type: ignore
 except Exception:  # pragma: no cover
     # Fallback stub to keep import-time happy in minimal environments.
     def owner() -> bytes:  # type: ignore
@@ -97,6 +98,7 @@ PINNED_CODE_HASH: bytes = b"\x00" * 32  # patched during packaging if desired
 # UUID / compatibility
 # -----------------------------------------------------------------------------
 
+
 def uuid() -> bytes:
     """
     Return the UUPS-like proxiable UUID (keccak256 of :data:`UPGRADE_NAMESPACE`).
@@ -116,6 +118,7 @@ def pinned_code_hash() -> bytes:
 # -----------------------------------------------------------------------------
 # Internal helpers
 # -----------------------------------------------------------------------------
+
 
 def _initialized() -> bool:
     return storage.get(_INIT_KEY) == b"\x01"
@@ -141,6 +144,7 @@ def _is_pinned_active() -> bool:
 # -----------------------------------------------------------------------------
 # Public API
 # -----------------------------------------------------------------------------
+
 
 def initialize(initial_hash: bytes) -> None:
     """
@@ -211,6 +215,7 @@ def upgrade_to(new_hash: bytes, caller: bytes) -> None:
     # module is available. We intentionally ignore failures to avoid coupling.
     try:  # pragma: no cover
         from . import set_implementation  # type: ignore
+
         try:
             set_implementation(bytes(new_hash))  # may raise; safe to ignore
         except Exception:

@@ -35,7 +35,8 @@ Event names (bytes):
 """
 from __future__ import annotations
 
-from stdlib import storage, events, abi, hash  # VM-provided deterministic modules
+from stdlib import (abi, events, hash,  # VM-provided deterministic modules
+                    storage)
 
 # ----------------------------
 # Storage keys & helpers
@@ -48,17 +49,21 @@ K_DECIMALS = b"tok/dec"
 K_TOTAL = b"tok/total"
 K_OWNER = b"tok/owner"
 
+
 def _k_bal(addr: bytes) -> bytes:
     return b"tok/bal/" + addr
 
+
 def _k_allow(owner: bytes, spender: bytes) -> bytes:
     return b"tok/allow/" + owner + b"/" + spender
+
 
 # ----------------------------
 # Math (checked uint256)
 # ----------------------------
 
 UINT256_MAX = (1 << 256) - 1
+
 
 def _u256(x: int) -> int:
     if not isinstance(x, int):
@@ -67,22 +72,28 @@ def _u256(x: int) -> int:
         abi.revert(b"ERR_U256_RANGE")
     return x
 
+
 def _add(a: int, b: int) -> int:
-    a = _u256(a); b = _u256(b)
+    a = _u256(a)
+    b = _u256(b)
     c = a + b
     if c > UINT256_MAX:
         abi.revert(b"ERR_ADD_OVERFLOW")
     return c
 
+
 def _sub(a: int, b: int) -> int:
-    a = _u256(a); b = _u256(b)
+    a = _u256(a)
+    b = _u256(b)
     if b > a:
         abi.revert(b"ERR_SUB_UNDERFLOW")
     return a - b
 
+
 # ----------------------------
 # Views (helpers)
 # ----------------------------
+
 
 def _get_uint(key: bytes) -> int:
     v = storage.get(key)
@@ -92,8 +103,10 @@ def _get_uint(key: bytes) -> int:
         abi.revert(b"ERR_TYPE_UINT")
     return _u256(v)
 
+
 def _set_uint(key: bytes, val: int) -> None:
     storage.set(key, _u256(val))
+
 
 def _get_bytes(key: bytes) -> bytes:
     v = storage.get(key)
@@ -103,14 +116,17 @@ def _get_bytes(key: bytes) -> bytes:
         abi.revert(b"ERR_TYPE_BYTES")
     return bytes(v)
 
+
 def _set_bytes(key: bytes, val: bytes) -> None:
     if not isinstance(val, (bytes, bytearray)):
         abi.revert(b"ERR_TYPE_BYTES")
     storage.set(key, bytes(val))
 
+
 # ----------------------------
 # Ownership guard
 # ----------------------------
+
 
 def _only_owner() -> bytes:
     caller = abi.caller()
@@ -119,11 +135,15 @@ def _only_owner() -> bytes:
         abi.revert(b"ERR_NOT_OWNER")
     return owner
 
+
 # ----------------------------
 # Initialization
 # ----------------------------
 
-def init(name: bytes, symbol: bytes, decimals: int, initial_owner: bytes, initial_supply: int) -> None:
+
+def init(
+    name: bytes, symbol: bytes, decimals: int, initial_owner: bytes, initial_supply: int
+) -> None:
     """
     Initialize metadata, set owner, and mint an initial supply to initial_owner.
 
@@ -151,15 +171,19 @@ def init(name: bytes, symbol: bytes, decimals: int, initial_owner: bytes, initia
     # Mark initialized
     storage.set(K_INIT, 1)
 
+
 # ----------------------------
 # ERC-20–like views
 # ----------------------------
 
+
 def name() -> bytes:
     return _get_bytes(K_NAME)
 
+
 def symbol() -> bytes:
     return _get_bytes(K_SYMBOL)
+
 
 def decimals() -> int:
     v = storage.get(K_DECIMALS)
@@ -171,21 +195,27 @@ def decimals() -> int:
         abi.revert(b"ERR_DEC_RANGE")
     return v
 
+
 def totalSupply() -> int:
     return _get_uint(K_TOTAL)
+
 
 def owner() -> bytes:
     return _get_bytes(K_OWNER)
 
+
 def balanceOf(owner_addr: bytes) -> int:
     return _get_uint(_k_bal(owner_addr))
+
 
 def allowance(owner_addr: bytes, spender: bytes) -> int:
     return _get_uint(_k_allow(owner_addr, spender))
 
+
 # ----------------------------
 # Core token logic
 # ----------------------------
+
 
 def transfer(to: bytes, amount: int) -> bool:
     """
@@ -195,6 +225,7 @@ def transfer(to: bytes, amount: int) -> bool:
     caller = abi.caller()
     _transfer(caller, to, amount)
     return True
+
 
 def approve(spender: bytes, amount: int) -> bool:
     """
@@ -206,6 +237,7 @@ def approve(spender: bytes, amount: int) -> bool:
     _set_uint(_k_allow(caller, spender), amt)
     events.emit(b"Approval", {b"owner": caller, b"spender": spender, b"value": amt})
     return True
+
 
 def transferFrom(src: bytes, dst: bytes, amount: int) -> bool:
     """
@@ -221,14 +253,18 @@ def transferFrom(src: bytes, dst: bytes, amount: int) -> bool:
         if cur < amt:
             abi.revert(b"ERR_ALLOWANCE")
         _set_uint(key, _sub(cur, amt))
-        events.emit(b"Approval", {b"owner": src, b"spender": caller, b"value": _get_uint(key)})
+        events.emit(
+            b"Approval", {b"owner": src, b"spender": caller, b"value": _get_uint(key)}
+        )
 
     _transfer(src, dst, amt)
     return True
 
+
 # ----------------------------
 # Mint / Burn (owner & self)
 # ----------------------------
+
 
 def mint(to: bytes, amount: int) -> bool:
     """
@@ -238,6 +274,7 @@ def mint(to: bytes, amount: int) -> bool:
     _only_owner()
     _mint_to(to, _u256(amount))
     return True
+
 
 def burn(amount: int) -> bool:
     """
@@ -249,9 +286,11 @@ def burn(amount: int) -> bool:
     _burn_from(caller, amt)
     return True
 
+
 # ----------------------------
 # Ownership
 # ----------------------------
+
 
 def transferOwnership(new_owner: bytes) -> None:
     cur = _only_owner()
@@ -259,16 +298,21 @@ def transferOwnership(new_owner: bytes) -> None:
         abi.revert(b"ERR_OWNER_ADDR")
     new_owner_b = bytes(new_owner)
     storage.set(K_OWNER, new_owner_b)
-    events.emit(b"OwnershipTransferred", {b"previousOwner": cur, b"newOwner": new_owner_b})
+    events.emit(
+        b"OwnershipTransferred", {b"previousOwner": cur, b"newOwner": new_owner_b}
+    )
+
 
 def renounceOwnership() -> None:
     cur = _only_owner()
     storage.set(K_OWNER, b"")  # Explicitly empty; not recommended for production tokens
     events.emit(b"OwnershipTransferred", {b"previousOwner": cur, b"newOwner": b""})
 
+
 # ----------------------------
 # Internal primitives
 # ----------------------------
+
 
 def _transfer(src: bytes, dst: bytes, amount: int) -> None:
     if not isinstance(src, (bytes, bytearray)) or len(src) == 0:
@@ -280,7 +324,9 @@ def _transfer(src: bytes, dst: bytes, amount: int) -> None:
     if src == dst:
         # No-op but still validate range and emit a Transfer of 0 if requested amount is 0
         if amt == 0:
-            events.emit(b"Transfer", {b"from": bytes(src), b"to": bytes(dst), b"value": 0})
+            events.emit(
+                b"Transfer", {b"from": bytes(src), b"to": bytes(dst), b"value": 0}
+            )
             return
 
     kb_src = _k_bal(src)
@@ -295,6 +341,7 @@ def _transfer(src: bytes, dst: bytes, amount: int) -> None:
     _set_uint(kb_dst, _add(dst_bal, amt))
 
     events.emit(b"Transfer", {b"from": bytes(src), b"to": bytes(dst), b"value": amt})
+
 
 def _mint_to(dst: bytes, amount: int) -> None:
     if not isinstance(dst, (bytes, bytearray)) or len(dst) == 0:
@@ -312,6 +359,7 @@ def _mint_to(dst: bytes, amount: int) -> None:
     # events
     events.emit(b"Mint", {b"to": bytes(dst), b"value": amt})
     events.emit(b"Transfer", {b"from": b"", b"to": bytes(dst), b"value": amt})
+
 
 def _burn_from(src: bytes, amount: int) -> None:
     if not isinstance(src, (bytes, bytearray)) or len(src) == 0:
@@ -335,9 +383,11 @@ def _burn_from(src: bytes, amount: int) -> None:
     events.emit(b"Burn", {b"from": bytes(src), b"value": amt})
     events.emit(b"Transfer", {b"from": bytes(src), b"to": b"", b"value": amt})
 
+
 # ----------------------------
 # Optional: deterministic metadata hashing helper (view)
 # ----------------------------
+
 
 def codeHashDomain() -> bytes:
     """
@@ -345,5 +395,12 @@ def codeHashDomain() -> bytes:
     artifact manifests (purely informational helper).
     """
     # Domain = "A20|name|symbol|decimals"
-    msg = b"A20|" + _get_bytes(K_NAME) + b"|" + _get_bytes(K_SYMBOL) + b"|" + str(decimals()).encode("ascii")
+    msg = (
+        b"A20|"
+        + _get_bytes(K_NAME)
+        + b"|"
+        + _get_bytes(K_SYMBOL)
+        + b"|"
+        + str(decimals()).encode("ascii")
+    )
     return hash.sha3_256(msg)

@@ -32,8 +32,8 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 
 # Optional deps guard
 try:
-    import typer  # type: ignore
     import requests  # type: ignore
+    import typer  # type: ignore
 except Exception as e:  # pragma: no cover
     raise SystemExit(
         "This command requires optional dependencies.\n"
@@ -44,7 +44,8 @@ except Exception as e:  # pragma: no cover
 # Reference verifier
 wesolowski_verify = None
 try:
-    from randomness.vdf.verifier import verify as wesolowski_verify  # type: ignore
+    from randomness.vdf.verifier import \
+        verify as wesolowski_verify  # type: ignore
 except Exception:
     # Fallback verifier (NOT SECURE): recompute y by T squarings and ignore pi.
     # Only intended for tiny devnet params when the reference verifier isn't available.
@@ -56,7 +57,9 @@ except Exception:
 
     wesolowski_verify = _slow_verify  # type: ignore
 
-_DEFAULT_RPC = os.getenv("OMNI_RPC_URL") or os.getenv("ANIMICA_RPC_URL") or "http://127.0.0.1:8545"
+_DEFAULT_RPC = (
+    os.getenv("OMNI_RPC_URL") or os.getenv("ANIMICA_RPC_URL") or "http://127.0.0.1:8545"
+)
 
 app = typer.Typer(
     name="omni-rand-verify-vdf",
@@ -69,7 +72,10 @@ app = typer.Typer(
 # Helpers
 # -----------------------
 
-def _rpc_call(url: str, method: str, params: Optional[Sequence[Any]] = None, timeout: float = 30.0) -> Dict[str, Any]:
+
+def _rpc_call(
+    url: str, method: str, params: Optional[Sequence[Any]] = None, timeout: float = 30.0
+) -> Dict[str, Any]:
     body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": list(params or [])}
     try:
         r = requests.post(url, json=body, timeout=timeout)
@@ -168,14 +174,23 @@ def _fetch_round(rpc: str, round_id: Optional[int]) -> Dict[str, Any]:
     if not isinstance(result, dict):
         raise SystemExit("rand.getRound returned unexpected shape.")
     vdf = result.get("vdf") or {}
-    needed = [("modulus", vdf.get("modulus")), ("input", vdf.get("input")), ("iterations", vdf.get("iterations"))]
+    needed = [
+        ("modulus", vdf.get("modulus")),
+        ("input", vdf.get("input")),
+        ("iterations", vdf.get("iterations")),
+    ]
     miss = [k for k, v in needed if v is None]
     if miss:
-        raise SystemExit("Node did not return VDF parameters from rand.getRound; missing: " + ", ".join(miss))
+        raise SystemExit(
+            "Node did not return VDF parameters from rand.getRound; missing: "
+            + ", ".join(miss)
+        )
     return result
 
 
-def _cmp_expected_vs_proof(expected: Dict[str, Any], proof: Dict[str, Any]) -> Tuple[bool, Dict[str, Tuple[Any, Any]]]:
+def _cmp_expected_vs_proof(
+    expected: Dict[str, Any], proof: Dict[str, Any]
+) -> Tuple[bool, Dict[str, Tuple[Any, Any]]]:
     exp_N = _hex_to_int(expected["vdf"]["modulus"])
     exp_X = _hex_to_int(expected["vdf"]["input"])
     exp_T = int(expected["vdf"]["iterations"])
@@ -194,13 +209,25 @@ def _cmp_expected_vs_proof(expected: Dict[str, Any], proof: Dict[str, Any]) -> T
 # CLI
 # -----------------------
 
+
 @app.command("verify-vdf")
 def cmd_verify_vdf(
     proof_file: str = typer.Argument(..., help="Path to proof JSON (or '-' for stdin)"),
-    rpc: str = typer.Option(_DEFAULT_RPC, "--rpc", help=f"JSON-RPC endpoint (default: {_DEFAULT_RPC})"),
-    round_id: Optional[int] = typer.Option(None, "--round", "-r", help="Round id to verify against (default: current)"),
-    force: bool = typer.Option(False, "--force", "-f", help="Verify even if parameters differ from node's round."),
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="Only set exit code; print minimal output."),
+    rpc: str = typer.Option(
+        _DEFAULT_RPC, "--rpc", help=f"JSON-RPC endpoint (default: {_DEFAULT_RPC})"
+    ),
+    round_id: Optional[int] = typer.Option(
+        None, "--round", "-r", help="Round id to verify against (default: current)"
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Verify even if parameters differ from node's round.",
+    ),
+    quiet: bool = typer.Option(
+        False, "--quiet", "-q", help="Only set exit code; print minimal output."
+    ),
 ) -> None:
     """
     Verify a VDF proof file against the node-advertised VDF parameters for the given round.
@@ -210,7 +237,9 @@ def cmd_verify_vdf(
     proof = _extract_proof(proof_json)
 
     # Fetch expected round params
-    expected = _fetch_round(rpc, round_id if round_id is not None else proof.get("round"))
+    expected = _fetch_round(
+        rpc, round_id if round_id is not None else proof.get("round")
+    )
 
     ok_params, mismatches = _cmp_expected_vs_proof(expected, proof)
     if not ok_params and not force:
@@ -232,7 +261,11 @@ def cmd_verify_vdf(
     except Exception as e:
         if quiet:
             typer.Exit(code=3)
-        typer.echo(json.dumps({"ok": False, "reason": "verifier_error", "error": str(e)}, indent=2))
+        typer.echo(
+            json.dumps(
+                {"ok": False, "reason": "verifier_error", "error": str(e)}, indent=2
+            )
+        )
         raise typer.Exit(code=3)
     elapsed_ms = (time.perf_counter() - start) * 1000.0
 
@@ -241,7 +274,11 @@ def cmd_verify_vdf(
         "round": expected.get("round"),
         "phase": expected.get("phase"),
         "paramsMatch": ok_params,
-        "mismatches": {k: [int(a), int(b)] for k, (a, b) in mismatches.items()} if not ok_params else {},
+        "mismatches": (
+            {k: [int(a), int(b)] for k, (a, b) in mismatches.items()}
+            if not ok_params
+            else {}
+        ),
         "verifyMs": round(elapsed_ms, 3),
     }
 

@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 Pure-Python *educational* fallbacks for PQ primitives (DO NOT USE IN PRODUCTION).
 
@@ -36,16 +37,18 @@ Again: these functions are **for tests/devnets only**. They provide determinism,
 length-compatibility, and simple round-trip semantics—but zero cryptographic security.
 """
 
-import os
-import hmac
 import hashlib
+import hmac
+import os
 from dataclasses import dataclass
 from typing import Tuple
 
 # Local utility wrappers (sha3_256/512) if available in repo; fall back to hashlib.
 try:
-    from ..utils.hash import sha3_256 as _sha3_256, sha3_512 as _sha3_512
+    from ..utils.hash import sha3_256 as _sha3_256
+    from ..utils.hash import sha3_512 as _sha3_512
 except Exception:  # pragma: no cover
+
     def _sha3_256(data: bytes) -> bytes:
         return hashlib.sha3_256(data).digest()
 
@@ -56,6 +59,7 @@ except Exception:  # pragma: no cover
 # --------------------------------------------------------------------------------------
 # Feature gate
 # --------------------------------------------------------------------------------------
+
 
 def _check_allowed() -> None:
     if os.environ.get("ANIMICA_ALLOW_PQ_PURE_FALLBACK") != "1":
@@ -69,11 +73,13 @@ def _check_allowed() -> None:
 # Length tables (approximate canonical sizes for these algs)
 # --------------------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class SigLens:
     pk: int
     sk: int
     sig: int
+
 
 @dataclass(frozen=True)
 class KemLens:
@@ -82,13 +88,15 @@ class KemLens:
     ct: int
     ss: int
 
-DILITHIUM3 = SigLens(pk=1952, sk=4000, sig=3293)          # typical liboqs sizes
-SPHINCS_SHAKE_128S = SigLens(pk=32, sk=64, sig=7856)       # "simple" variant
-ML_KEM_768 = KemLens(pk=1184, sk=2400, ct=1088, ss=32)     # Kyber/ML-KEM-768
+
+DILITHIUM3 = SigLens(pk=1952, sk=4000, sig=3293)  # typical liboqs sizes
+SPHINCS_SHAKE_128S = SigLens(pk=32, sk=64, sig=7856)  # "simple" variant
+ML_KEM_768 = KemLens(pk=1184, sk=2400, ct=1088, ss=32)  # Kyber/ML-KEM-768
 
 # --------------------------------------------------------------------------------------
 # Helpers
 # --------------------------------------------------------------------------------------
+
 
 def _xof_shake256(tag: bytes, *parts: bytes, out_len: int) -> bytes:
     """SHAKE-256-based XOF with domain tag."""
@@ -98,6 +106,7 @@ def _xof_shake256(tag: bytes, *parts: bytes, out_len: int) -> bytes:
         sh.update(len(p).to_bytes(8, "big"))
         sh.update(p)
     return sh.digest(out_len)
+
 
 def _h(tag: bytes, *parts: bytes, out_len: int) -> bytes:
     """SHA3-512 → truncate/expand via SHAKE-256 to out_len."""
@@ -112,19 +121,24 @@ def _h(tag: bytes, *parts: bytes, out_len: int) -> bytes:
     # expand deterministically with SHAKE-256
     return _xof_shake256(b"exp", digest, out_len=out_len)
 
+
 def _ct_eq(a: bytes, b: bytes) -> bool:
     return hmac.compare_digest(a, b)
+
 
 # --------------------------------------------------------------------------------------
 # RNG
 # --------------------------------------------------------------------------------------
 
+
 def _rand(n: int) -> bytes:
     return os.urandom(n)
+
 
 # --------------------------------------------------------------------------------------
 # Signature fallbacks
 # --------------------------------------------------------------------------------------
+
 
 def fallback_sig_keypair(alg: str) -> Tuple[bytes, bytes]:
     """
@@ -142,6 +156,7 @@ def fallback_sig_keypair(alg: str) -> Tuple[bytes, bytes]:
     sk = _rand(lens.sk)
     pk = _h(b"pk", sk, out_len=lens.pk)
     return sk, pk
+
 
 def fallback_sig_sign(alg: str, msg: bytes, sk: bytes) -> bytes:
     """
@@ -161,6 +176,7 @@ def fallback_sig_sign(alg: str, msg: bytes, sk: bytes) -> bytes:
     sig = _xof_shake256(b"sig", pk, msg, out_len=lens.sig)
     return sig
 
+
 def fallback_sig_verify(alg: str, msg: bytes, sig: bytes, pk: bytes) -> bool:
     """
     Verify by recomputing XOF("sig"|pk|msg) and constant-time compare.
@@ -177,9 +193,11 @@ def fallback_sig_verify(alg: str, msg: bytes, sig: bytes, pk: bytes) -> bool:
     expected = _xof_shake256(b"sig", pk, msg, out_len=lens.sig)
     return _ct_eq(expected, sig)
 
+
 # --------------------------------------------------------------------------------------
 # KEM fallbacks (ML-KEM-768 / Kyber768)
 # --------------------------------------------------------------------------------------
+
 
 def fallback_kem_keypair(alg: str) -> Tuple[bytes, bytes]:
     """
@@ -190,6 +208,7 @@ def fallback_kem_keypair(alg: str) -> Tuple[bytes, bytes]:
     sk = _rand(lens.sk)
     pk = _h(b"pk", sk, out_len=lens.pk)
     return sk, pk
+
 
 def fallback_kem_encapsulate(alg: str, pk: bytes) -> Tuple[bytes, bytes]:
     """
@@ -204,10 +223,11 @@ def fallback_kem_encapsulate(alg: str, pk: bytes) -> Tuple[bytes, bytes]:
     ct_full = b"ct" + eph + _h(b"ctb", pk, eph, out_len=64)
     # crop/expand to ct length deterministically
     if len(ct_full) >= lens.ct:
-        ct = ct_full[:lens.ct]
+        ct = ct_full[: lens.ct]
     else:
         ct = ct_full + _xof_shake256(b"ctx", ct_full, out_len=lens.ct - len(ct_full))
     return ct, ss
+
 
 def fallback_kem_decapsulate(alg: str, sk: bytes, ct: bytes) -> bytes:
     """
@@ -225,36 +245,47 @@ def fallback_kem_decapsulate(alg: str, sk: bytes, ct: bytes) -> bytes:
     ss = _h(b"ss", pk, eph, out_len=lens.ss)
     return ss
 
+
 # --------------------------------------------------------------------------------------
 # Algorithm-specific convenience wrappers (mirroring higher-level modules)
 # --------------------------------------------------------------------------------------
 
+
 def dilithium3_keypair() -> Tuple[bytes, bytes]:
     return fallback_sig_keypair("dilithium3")
+
 
 def dilithium3_sign(msg: bytes, sk: bytes) -> bytes:
     return fallback_sig_sign("dilithium3", msg, sk)
 
+
 def dilithium3_verify(msg: bytes, sig: bytes, pk: bytes) -> bool:
     return fallback_sig_verify("dilithium3", msg, sig, pk)
+
 
 def sphincs_shake_128s_keypair() -> Tuple[bytes, bytes]:
     return fallback_sig_keypair("sphincs-shake-128s")
 
+
 def sphincs_shake_128s_sign(msg: bytes, sk: bytes) -> bytes:
     return fallback_sig_sign("sphincs-shake-128s", msg, sk)
+
 
 def sphincs_shake_128s_verify(msg: bytes, sig: bytes, pk: bytes) -> bool:
     return fallback_sig_verify("sphincs-shake-128s", msg, sig, pk)
 
+
 def kyber768_keypair() -> Tuple[bytes, bytes]:
     return fallback_kem_keypair("ml-kem-768")
+
 
 def kyber768_encapsulate(pk: bytes) -> Tuple[bytes, bytes]:
     return fallback_kem_encapsulate("ml-kem-768", pk)
 
+
 def kyber768_decapsulate(sk: bytes, ct: bytes) -> bytes:
     return fallback_kem_decapsulate("ml-kem-768", sk, ct)
+
 
 # --------------------------------------------------------------------------------------
 # Self-test (manual)
@@ -265,13 +296,35 @@ if __name__ == "__main__":
     sk, pk = dilithium3_keypair()
     m = b"hello animica"
     sig = dilithium3_sign(m, sk)
-    print("[dilithium3] verify:", dilithium3_verify(m, sig, pk), "lens:", len(pk), len(sk), len(sig))
+    print(
+        "[dilithium3] verify:",
+        dilithium3_verify(m, sig, pk),
+        "lens:",
+        len(pk),
+        len(sk),
+        len(sig),
+    )
 
     sk2, pk2 = sphincs_shake_128s_keypair()
     sig2 = sphincs_shake_128s_sign(m, sk2)
-    print("[sphincs] verify:", sphincs_shake_128s_verify(m, sig2, pk2), "lens:", len(pk2), len(sk2), len(sig2))
+    print(
+        "[sphincs] verify:",
+        sphincs_shake_128s_verify(m, sig2, pk2),
+        "lens:",
+        len(pk2),
+        len(sk2),
+        len(sig2),
+    )
 
     ksk, kpk = kyber768_keypair()
     ct, ss_b = kyber768_encapsulate(kpk)
     ss_a = kyber768_decapsulate(ksk, ct)
-    print("[kem-768] ss match:", ss_a == ss_b, "lens:", len(kpk), len(ksk), len(ct), len(ss_a))
+    print(
+        "[kem-768] ss match:",
+        ss_a == ss_b,
+        "lens:",
+        len(kpk),
+        len(ksk),
+        len(ct),
+        len(ss_a),
+    )

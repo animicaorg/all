@@ -45,6 +45,7 @@ Key = Tuple[bytes, Optional[bytes]]
 @dataclass(frozen=True)
 class LockSet:
     """Read/write lockset over (address, slot?) keys."""
+
     reads: Set[Key]
     writes: Set[Key]
 
@@ -66,7 +67,9 @@ class LockSet:
         return False
 
     def union(self, other: "LockSet") -> "LockSet":
-        return LockSet(reads=self.reads | other.reads, writes=self.writes | other.writes)
+        return LockSet(
+            reads=self.reads | other.reads, writes=self.writes | other.writes
+        )
 
     @staticmethod
     def from_pairs(reads: Iterable[Key] = (), writes: Iterable[Key] = ()) -> "LockSet":
@@ -121,6 +124,7 @@ def normalize_key(addr: BytesLike, slot: Optional[BytesLike]) -> Key:
 
 # --------------------------- Capture via tracker -----------------------------
 
+
 def run_with_lockset(
     state_view: Any,
     fn: Any,
@@ -172,6 +176,7 @@ def run_with_lockset(
 
 # ----------------------- Fallback: infer from receipt -----------------------
 
+
 def lockset_from_access_list(access_list: Sequence[Any]) -> LockSet:
     """
     Build a conservative lockset from an EIP-2930-like access list:
@@ -220,6 +225,7 @@ def lockset_from_result_receipt(result: Any) -> Optional[LockSet]:
 
 
 # ------------------------------ Utilities -----------------------------------
+
 
 def merge_locksets(items: Iterable[LockSet]) -> LockSet:
     """Union-merge a series of locksets."""

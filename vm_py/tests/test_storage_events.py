@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Tuple, Optional
-import pytest
+from typing import Any, Dict, List, Optional, Tuple
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers to compile & run a tiny contract that uses storage + events.
@@ -32,9 +32,17 @@ MANIFEST: Dict[str, Any] = {
     "version": "0.0.1",
     "abi": {
         "functions": [
-            {"name": "set_value", "inputs": [{"name": "x", "type": "int"}], "outputs": []},
+            {
+                "name": "set_value",
+                "inputs": [{"name": "x", "type": "int"}],
+                "outputs": [],
+            },
             {"name": "get_value", "inputs": [], "outputs": [{"type": "int"}]},
-            {"name": "multi_emit", "inputs": [{"name": "a", "type": "int"}, {"name": "b", "type": "int"}], "outputs": []},
+            {
+                "name": "multi_emit",
+                "inputs": [{"name": "a", "type": "int"}, {"name": "b", "type": "int"}],
+                "outputs": [],
+            },
         ],
         "events": [
             {"name": "Set", "inputs": [{"name": "x", "type": "int"}]},
@@ -97,7 +105,7 @@ class _ContractRunner:
             if callable(fn):
                 # Try common shapes
                 for style in (
-                    lambda: fn(fn_name, *args),                 # call('fn', args…)
+                    lambda: fn(fn_name, *args),  # call('fn', args…)
                     lambda: fn(name=fn_name, args=list(args)),  # run_call(name=, args=)
                     lambda: fn(method=fn_name, args=list(args)),
                 ):
@@ -110,19 +118,29 @@ class _ContractRunner:
         # Some loaders expose methods as attributes on an inner object
         # e.g., obj.methods['name'](*args)
         methods = getattr(self._obj, "methods", None)
-        if isinstance(methods, dict) and fn_name in methods and callable(methods[fn_name]):
+        if (
+            isinstance(methods, dict)
+            and fn_name in methods
+            and callable(methods[fn_name])
+        ):
             result = methods[fn_name](*args)
             return self._pull_events(result)
 
         # If nothing matched, raise to make the test output actionable.
-        raise AssertionError("Could not find a callable entrypoint on the compiled contract object.")
+        raise AssertionError(
+            "Could not find a callable entrypoint on the compiled contract object."
+        )
 
 
-def _compile_contract(src: str = CONTRACT_SRC, manifest: Dict[str, Any] = MANIFEST) -> _ContractRunner:
+def _compile_contract(
+    src: str = CONTRACT_SRC, manifest: Dict[str, Any] = MANIFEST
+) -> _ContractRunner:
     # Try the loader first (preferred).
     try:
         import vm_py.runtime.loader as L  # type: ignore
-    except Exception as e:  # pragma: no cover - loader module must exist in this repository
+    except (
+        Exception
+    ) as e:  # pragma: no cover - loader module must exist in this repository
         raise AssertionError(f"vm_py.runtime.loader not importable: {e}")
 
     last_err: Optional[Exception] = None
@@ -158,7 +176,9 @@ def _compile_contract(src: str = CONTRACT_SRC, manifest: Dict[str, Any] = MANIFE
             except Exception as e:
                 last_err = e
 
-    raise AssertionError(f"Could not compile/link contract via loader; last error: {last_err}")
+    raise AssertionError(
+        f"Could not compile/link contract via loader; last error: {last_err}"
+    )
 
 
 def _event_names(evts: List[Dict[str, Any]]) -> List[bytes]:
@@ -190,6 +210,7 @@ def _event_args(ev: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 def test_storage_set_get_roundtrip():
     c = _compile_contract()
@@ -244,8 +265,10 @@ def test_multiple_calls_append_events_in_call_scope_only():
     assert names1 == [b"A", b"B"]
     assert names2 == [b"A", b"B"]
 
-    a1 = _event_args(ev1[0]); b1 = _event_args(ev1[1])
-    a2 = _event_args(ev2[0]); b2 = _event_args(ev2[1])
+    a1 = _event_args(ev1[0])
+    b1 = _event_args(ev1[1])
+    a2 = _event_args(ev2[0])
+    b2 = _event_args(ev2[1])
 
     assert (a1.get("a") or a1.get(b"a")) == 3
     assert (b1.get("b") or b1.get(b"b")) == 4

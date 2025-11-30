@@ -38,10 +38,10 @@ import time
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
-
 # -----------------------------------------------------------------------------
 # Deterministic PRNG (tiny LCG) for reproducible datasets
 # -----------------------------------------------------------------------------
+
 
 def _lcg_next(x: int) -> int:
     # 64-bit LCG parameters
@@ -65,6 +65,7 @@ def _u256_stream(seed: int) -> int:
 # -----------------------------------------------------------------------------
 # Synthetic instance & verifier
 # -----------------------------------------------------------------------------
+
 
 @dataclass
 class VdfInstance:
@@ -131,6 +132,7 @@ def _verify_instance(inst: VdfInstance, N: int, L: int) -> bool:
 # Bench runner
 # -----------------------------------------------------------------------------
 
+
 def run_bench(
     seconds: float,
     batch: int,
@@ -143,7 +145,11 @@ def run_bench(
     """
     N = _make_modulus(mod_bits)
     L = _make_exponent_L(exp_bits)
-    s = seed if (seed is not None) else int(os.environ.get("PYTHONHASHSEED", "0") or "1337")
+    s = (
+        seed
+        if (seed is not None)
+        else int(os.environ.get("PYTHONHASHSEED", "0") or "1337")
+    )
 
     # Pre-build dataset outside timing window
     dataset = _mk_dataset(batch, s, N, L)
@@ -194,12 +200,39 @@ def run_bench(
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description="Benchmark VDF verification throughput (verifies/sec).")
-    ap.add_argument("--seconds", type=float, default=2.5, help="Target runtime in seconds (default: 2.5)")
-    ap.add_argument("--batch", type=int, default=1000, help="Dataset size, reused in loop (default: 1000)")
-    ap.add_argument("--seed", type=int, default=None, help="Deterministic dataset seed (default: from PYTHONHASHSEED or 1337)")
-    ap.add_argument("--mod-bits", type=int, default=2048, help="Modulus size in bits (default: 2048)")
-    ap.add_argument("--exp-bits", type=int, default=255, help="Exponent L size in bits (default: 255)")
+    ap = argparse.ArgumentParser(
+        description="Benchmark VDF verification throughput (verifies/sec)."
+    )
+    ap.add_argument(
+        "--seconds",
+        type=float,
+        default=2.5,
+        help="Target runtime in seconds (default: 2.5)",
+    )
+    ap.add_argument(
+        "--batch",
+        type=int,
+        default=1000,
+        help="Dataset size, reused in loop (default: 1000)",
+    )
+    ap.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Deterministic dataset seed (default: from PYTHONHASHSEED or 1337)",
+    )
+    ap.add_argument(
+        "--mod-bits",
+        type=int,
+        default=2048,
+        help="Modulus size in bits (default: 2048)",
+    )
+    ap.add_argument(
+        "--exp-bits",
+        type=int,
+        default=255,
+        help="Exponent L size in bits (default: 255)",
+    )
     args = ap.parse_args(argv)
 
     payload = run_bench(

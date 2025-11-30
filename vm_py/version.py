@@ -10,14 +10,15 @@ Environment overrides (first match wins):
 - VM_PY_VERSION
 - GIT_DESCRIBE  (treated as the describe suffix, appended to BASE_VERSION)
 """
+
 from __future__ import annotations
 
-from functools import lru_cache
-from importlib import metadata as importlib_metadata
-from pathlib import Path
 import os
 import re
 import subprocess
+from functools import lru_cache
+from importlib import metadata as importlib_metadata
+from pathlib import Path
 from typing import Optional
 
 # Bump on consensus-affecting changes to the VM (IR/gas/ABI outputs).

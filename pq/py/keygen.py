@@ -45,18 +45,16 @@ If unavailable, we raise NotImplementedError with a helpful message.
 """
 
 from dataclasses import dataclass
-from typing import Optional, Tuple, Union, Literal
+from typing import Literal, Optional, Tuple, Union
 
-from pq.py.utils.rng import os_random
-from pq.py.utils.hash import sha3_256
 from pq.py.address import address_from_pubkey
-from pq.py.registry import (
-    ALG_ID,          # dict[str,int]
-    ALG_NAME,        # dict[int,str]
-    is_known_alg_id, # (int)->bool
-    is_sig_alg_id,   # (int)->bool
-    is_kem_alg_id,   # (int)->bool
-)
+from pq.py.registry import ALG_ID  # dict[str,int]
+from pq.py.registry import ALG_NAME  # dict[int,str]
+from pq.py.registry import is_kem_alg_id  # (int)->bool
+from pq.py.registry import is_known_alg_id  # (int)->bool
+from pq.py.registry import is_sig_alg_id  # (int)->bool
+from pq.py.utils.hash import sha3_256
+from pq.py.utils.rng import os_random
 
 AlgKind = Literal["sig", "kem"]
 
@@ -64,6 +62,7 @@ AlgKind = Literal["sig", "kem"]
 # ------------------------------------------------------------------------------
 # Dataclasses
 # ------------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class SigKeypair:
@@ -75,8 +74,10 @@ class SigKeypair:
 
     def __repr__(self) -> str:
         pk8 = self.public_key[:8].hex()
-        return (f"SigKeypair(alg={self.alg_name}/0x{self.alg_id:02x}, "
-                f"pk[:8]={pk8}…, addr={self.address[:12]}…)")
+        return (
+            f"SigKeypair(alg={self.alg_name}/0x{self.alg_id:02x}, "
+            f"pk[:8]={pk8}…, addr={self.address[:12]}…)"
+        )
 
 
 @dataclass(frozen=True)
@@ -88,13 +89,13 @@ class KemKeypair:
 
     def __repr__(self) -> str:
         pk8 = self.public_key[:8].hex()
-        return (f"KemKeypair(alg={self.alg_name}/0x{self.alg_id:02x}, "
-                f"pk[:8]={pk8}…)")
+        return f"KemKeypair(alg={self.alg_name}/0x{self.alg_id:02x}, " f"pk[:8]={pk8}…)"
 
 
 # ------------------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------------------
+
 
 def _normalize_alg(alg: Union[int, str]) -> tuple[int, str, AlgKind]:
     """
@@ -133,7 +134,9 @@ def _normalize_alg(alg: Union[int, str]) -> tuple[int, str, AlgKind]:
     raise TypeError("alg must be int (alg_id) or str (name)")
 
 
-def _ensure_bytes_seed(seed: Optional[Union[bytes, str]], *, min_len: int = 0) -> Optional[bytes]:
+def _ensure_bytes_seed(
+    seed: Optional[Union[bytes, str]], *, min_len: int = 0
+) -> Optional[bytes]:
     """
     Normalize seed param:
     - None → None (backend will use OS RNG)
@@ -168,14 +171,19 @@ def _call_backend_keypair(module, seed: Optional[bytes]) -> Tuple[bytes, bytes]:
         return module.generate_keypair(seed=seed)  # type: ignore[attr-defined]
     if hasattr(module, "keypair"):
         return module.keypair(seed=seed)  # type: ignore[attr-defined]
-    raise NotImplementedError(f"Backend {module.__name__} does not expose generate_keypair/keypair")
+    raise NotImplementedError(
+        f"Backend {module.__name__} does not expose generate_keypair/keypair"
+    )
 
 
 # ------------------------------------------------------------------------------
 # Public keygen (dispatcher)
 # ------------------------------------------------------------------------------
 
-def keygen(alg: Union[int, str], *, seed: bytes | str | None = None, hrp: str = "anim") -> SigKeypair | KemKeypair:
+
+def keygen(
+    alg: Union[int, str], *, seed: bytes | str | None = None, hrp: str = "anim"
+) -> SigKeypair | KemKeypair:
     alg_id, alg_name, kind = _normalize_alg(alg)
     if kind == "sig":
         return keygen_sig(alg_id, seed=seed, hrp=hrp)
@@ -183,7 +191,9 @@ def keygen(alg: Union[int, str], *, seed: bytes | str | None = None, hrp: str = 
         return keygen_kem(alg_id, seed=seed)
 
 
-def keygen_sig(alg: Union[int, str], *, seed: bytes | str | None = None, hrp: str = "anim") -> SigKeypair:
+def keygen_sig(
+    alg: Union[int, str], *, seed: bytes | str | None = None, hrp: str = "anim"
+) -> SigKeypair:
     alg_id, alg_name, kind = _normalize_alg(alg)
     if kind != "sig":
         raise ValueError(f"{alg_name} is not a signature algorithm")
@@ -209,7 +219,9 @@ def keygen_sig(alg: Union[int, str], *, seed: bytes | str | None = None, hrp: st
 
     pk, sk = _call_backend_keypair(backend, seed_bytes)
     addr = address_from_pubkey(pk, alg_id, hrp=hrp)
-    return SigKeypair(alg_id=alg_id, alg_name=alg_name, public_key=pk, secret_key=sk, address=addr)
+    return SigKeypair(
+        alg_id=alg_id, alg_name=alg_name, public_key=pk, secret_key=sk, address=addr
+    )
 
 
 def keygen_kem(alg: Union[int, str], *, seed: bytes | str | None = None) -> KemKeypair:
@@ -239,13 +251,17 @@ def keygen_kem(alg: Union[int, str], *, seed: bytes | str | None = None) -> KemK
 # CLI-ish Smoke (python -m pq.py.keygen dilithium3|kyber768 [hex:seed])
 # ------------------------------------------------------------------------------
 
+
 def _main() -> None:
     import sys
+
     args = sys.argv[1:]
     if not args or args[0] in ("-h", "--help"):
-        print("Usage: python -m pq.py.keygen <alg> [seed]\n"
-              "  alg  = dilithium3 | sphincs_shake_128s | kyber768 | <alg_id int>\n"
-              "  seed = optional; bytes interpreted as utf-8; prefix with 'hex:' for hex")
+        print(
+            "Usage: python -m pq.py.keygen <alg> [seed]\n"
+            "  alg  = dilithium3 | sphincs_shake_128s | kyber768 | <alg_id int>\n"
+            "  seed = optional; bytes interpreted as utf-8; prefix with 'hex:' for hex"
+        )
         sys.exit(0)
 
     alg_raw: Union[str, int] = args[0]

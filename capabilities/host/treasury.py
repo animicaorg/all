@@ -58,15 +58,12 @@ This module is intentionally stand-alone and safe to import early.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, List, Tuple, Optional, Callable, Any
 import logging
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from .provider import (  # type: ignore
-    SyscallContext,
-    ProviderRegistry,
-    get_registry,
-)
+from .provider import (ProviderRegistry, SyscallContext,  # type: ignore
+                       get_registry)
 
 # Try to import named registry keys (backward compatible fallbacks)
 try:  # pragma: no cover
@@ -89,18 +86,22 @@ _DEF_MAX_DEBIT_PER_TX = 10_000_000
 _DEF_MAX_CREDIT_PER_TX = 10_000_000
 _DEF_MAX_REASON_LEN = 64
 
+
 def _limits() -> Tuple[int, int, int]:
     """
     Resolve (max_debit, max_credit, max_reason_len) from capabilities.config if present.
     """
     try:  # pragma: no cover
         from .. import config as _cfg  # type: ignore
+
         md = int(getattr(_cfg, "TREASURY_MAX_DEBIT_PER_TX", _DEF_MAX_DEBIT_PER_TX))
         mc = int(getattr(_cfg, "TREASURY_MAX_CREDIT_PER_TX", _DEF_MAX_CREDIT_PER_TX))
         rl = int(getattr(_cfg, "TREASURY_MAX_REASON_LEN", _DEF_MAX_REASON_LEN))
-        return (md if md > 0 else _DEF_MAX_DEBIT_PER_TX,
-                mc if mc > 0 else _DEF_MAX_CREDIT_PER_TX,
-                rl if 8 <= rl <= 256 else _DEF_MAX_REASON_LEN)
+        return (
+            md if md > 0 else _DEF_MAX_DEBIT_PER_TX,
+            mc if mc > 0 else _DEF_MAX_CREDIT_PER_TX,
+            rl if 8 <= rl <= 256 else _DEF_MAX_REASON_LEN,
+        )
     except Exception:
         return (_DEF_MAX_DEBIT_PER_TX, _DEF_MAX_CREDIT_PER_TX, _DEF_MAX_REASON_LEN)
 
@@ -109,16 +110,21 @@ def _limits() -> Tuple[int, int, int]:
 # Metrics (optional)
 # ----------------------------
 
+
 class _NullCounter:
     def labels(self, **_kw: Any) -> "_NullCounter":  # type: ignore
         return self
+
     def inc(self, *_a: Any, **_k: Any) -> None:  # type: ignore
         pass
+
     def observe(self, *_a: Any, **_k: Any) -> None:  # type: ignore
         pass
 
+
 try:  # pragma: no cover
     from .. import metrics as _metrics  # type: ignore
+
     _DEBIT_TOTAL = getattr(_metrics, "treasury_debit_total", _NullCounter())
     _CREDIT_TOTAL = getattr(_metrics, "treasury_credit_total", _NullCounter())
     _DEBIT_AMOUNT = getattr(_metrics, "treasury_debit_amount_sum", _NullCounter())
@@ -134,23 +140,27 @@ except Exception:  # pragma: no cover
 # In-memory deterministic ledger
 # ----------------------------
 
+
 @dataclass(frozen=True)
 class _Key:
     chain_id: int
     height: int
     tx_hash: bytes
 
+
 @dataclass
 class TreasuryNote:
-    op: str            # "debit" | "credit"
-    amount: int        # non-negative
-    reason: str        # short ASCII tag
-    index: int         # deterministic order within tx (0-based)
+    op: str  # "debit" | "credit"
+    amount: int  # non-negative
+    reason: str  # short ASCII tag
+    index: int  # deterministic order within tx (0-based)
+
 
 # key -> notes list
 _LEDGER: Dict[_Key, List[TreasuryNote]] = {}
 # key -> running totals (debit_sum, credit_sum)
 _TOTALS: Dict[_Key, Tuple[int, int]] = {}
+
 
 def _ctx_key(ctx: SyscallContext) -> _Key:
     # Fall back to zeros if some fields are missing
@@ -167,7 +177,9 @@ def _ctx_key(ctx: SyscallContext) -> _Key:
     return _Key(chain, height, bytes(txh))
 
 
-def _append_note(ctx: SyscallContext, op: str, amount: int, reason: str) -> TreasuryNote:
+def _append_note(
+    ctx: SyscallContext, op: str, amount: int, reason: str
+) -> TreasuryNote:
     key = _ctx_key(ctx)
     notes = _LEDGER.setdefault(key, [])
     note = TreasuryNote(op=op, amount=amount, reason=reason, index=len(notes))
@@ -202,12 +214,14 @@ def reset_tx_ledger(ctx: SyscallContext) -> None:
 # Validation
 # ----------------------------
 
+
 def _validate_amount(amount: int) -> int:
     if not isinstance(amount, int):
         raise TypeError("amount must be int")
     if amount < 0:
         raise ValueError("amount must be non-negative")
     return amount
+
 
 def _validate_reason(reason: Optional[str], max_len: int) -> str:
     r = (reason or "generic").strip()
@@ -223,21 +237,30 @@ def _validate_reason(reason: Optional[str], max_len: int) -> str:
     return r.replace(" ", "_")
 
 
-def _check_caps(ctx: SyscallContext, *, add_debit: int = 0, add_credit: int = 0) -> None:
+def _check_caps(
+    ctx: SyscallContext, *, add_debit: int = 0, add_credit: int = 0
+) -> None:
     maxd, maxc, _ = _limits()
     key = _ctx_key(ctx)
     dsum, csum = _TOTALS.get(key, (0, 0))
     if add_debit and dsum + add_debit > maxd:
-        raise ValueError(f"treasury debit cap exceeded for tx: {dsum + add_debit} > {maxd}")
+        raise ValueError(
+            f"treasury debit cap exceeded for tx: {dsum + add_debit} > {maxd}"
+        )
     if add_credit and csum + add_credit > maxc:
-        raise ValueError(f"treasury credit cap exceeded for tx: {csum + add_credit} > {maxc}")
+        raise ValueError(
+            f"treasury credit cap exceeded for tx: {csum + add_credit} > {maxc}"
+        )
 
 
 # ----------------------------
 # Provider entrypoints
 # ----------------------------
 
-def _treasury_debit(ctx: SyscallContext, *, amount: int, reason: str = "generic") -> Dict[str, Any]:
+
+def _treasury_debit(
+    ctx: SyscallContext, *, amount: int, reason: str = "generic"
+) -> Dict[str, Any]:
     """
     Record a *debit* against the caller/tx for later settlement.
     Returns a small dict which can be surfaced to the VM if needed.
@@ -265,7 +288,10 @@ def _treasury_debit(ctx: SyscallContext, *, amount: int, reason: str = "generic"
         "index": note.index,
     }
 
-def _treasury_credit(ctx: SyscallContext, *, amount: int, reason: str = "generic") -> Dict[str, Any]:
+
+def _treasury_credit(
+    ctx: SyscallContext, *, amount: int, reason: str = "generic"
+) -> Dict[str, Any]:
     """
     Record a *credit* (e.g., payout/fee split) for later settlement.
     """
@@ -294,7 +320,7 @@ def _treasury_credit(ctx: SyscallContext, *, amount: int, reason: str = "generic
 
 
 # Flag deterministic for the registry/router
-_treasury_debit._deterministic = True   # type: ignore[attr-defined]
+_treasury_debit._deterministic = True  # type: ignore[attr-defined]
 _treasury_credit._deterministic = True  # type: ignore[attr-defined]
 
 
@@ -302,8 +328,8 @@ def register(registry: ProviderRegistry) -> None:
     """
     Register both debit and credit handlers.
     """
-    registry.register(_KEY_DEBIT, _treasury_debit)   # type: ignore[arg-type]
-    registry.register(_KEY_CREDIT, _treasury_credit) # type: ignore[arg-type]
+    registry.register(_KEY_DEBIT, _treasury_debit)  # type: ignore[arg-type]
+    registry.register(_KEY_CREDIT, _treasury_credit)  # type: ignore[arg-type]
 
 
 # Auto-register on import (idempotent)

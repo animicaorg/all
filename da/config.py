@@ -48,11 +48,10 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Tuple
-
 
 # ------------------------------- helpers ------------------------------------
 
@@ -166,6 +165,7 @@ class NamespaceConfig:
       - user_default:   0x0100
       - reserved_high:  0xFF00..0xFFFF   (future/reserved)
     """
+
     id_bytes: int = 2
     reserved_low: Tuple[int, int] = (0x0000, 0x00FF)
     reserved_high: Tuple[int, int] = (0xFF00, 0xFFFF)
@@ -198,6 +198,7 @@ class ErasureConfig:
     - share_size: bytes per share (payload per leaf before NMT framing)
     - max_blob_bytes: upper bound for a single blob (pre-encoding)
     """
+
     k: int = 64
     n: int = 128
     share_size: int = 4096
@@ -221,6 +222,7 @@ class StoreConfig:
     - sqlite_path: path to SQLite DB for metadata and indexes
     - gc_retention_blocks: how many blocks to keep pinned by default
     """
+
     storage_dir: Path = Path("./data/da")
     sqlite_path: Path = Path("./data/da/da.sqlite3")
     gc_retention_blocks: int = 2048
@@ -235,6 +237,7 @@ class ApiConfig:
     """
     HTTP API configuration for the DA retrieval service.
     """
+
     host: str = "127.0.0.1"
     port: int = 8648
     cors_allow_origins: Tuple[str, ...] = field(default_factory=tuple)
@@ -252,6 +255,7 @@ class LimitsConfig:
     - post_max_bytes: maximum accepted POST payload (blob + envelope)
     - rate_rps_hint: global ingress guidance (actual rate limiting is in the API layer)
     """
+
     post_max_bytes: int = 9 * 1024 * 1024
     rate_rps_hint: int = 200
 
@@ -271,7 +275,8 @@ class SamplingConfig:
     - min_samples/max_samples: clamp sampler effort per blob (or per window)
     - sample_timeout_ms: per-sample network timeout
     """
-    p_fail_target: float = 2.0 ** -40
+
+    p_fail_target: float = 2.0**-40
     min_samples: int = 60
     max_samples: int = 256
     sample_timeout_ms: int = 1500
@@ -290,6 +295,7 @@ class DAConfig:
     """
     Top-level DA configuration.
     """
+
     namespaces: NamespaceConfig = field(default_factory=NamespaceConfig)
     erasure: ErasureConfig = field(default_factory=ErasureConfig)
     store: StoreConfig = field(default_factory=StoreConfig)
@@ -329,14 +335,22 @@ def _load_from_env() -> DAConfig:
     k = _getenv_int("ANIMICA_DA_K", 64)
     n = _getenv_int("ANIMICA_DA_N", 128)
     share_size = _parse_size(_getenv("ANIMICA_DA_SHARE_SIZE", "4096"), default=4096)
-    max_blob = _parse_size(_getenv("ANIMICA_DA_MAX_BLOB", "8MiB"), default=8 * 1024 * 1024)
-    erasure_cfg = ErasureConfig(k=k, n=n, share_size=share_size, max_blob_bytes=max_blob)
+    max_blob = _parse_size(
+        _getenv("ANIMICA_DA_MAX_BLOB", "8MiB"), default=8 * 1024 * 1024
+    )
+    erasure_cfg = ErasureConfig(
+        k=k, n=n, share_size=share_size, max_blob_bytes=max_blob
+    )
 
     # Store
     storage_dir = Path(_getenv("ANIMICA_DA_STORAGE_DIR", "./data/da")).resolve()
-    sqlite_path = Path(_getenv("ANIMICA_DA_SQLITE_PATH", str(storage_dir / "da.sqlite3"))).resolve()
+    sqlite_path = Path(
+        _getenv("ANIMICA_DA_SQLITE_PATH", str(storage_dir / "da.sqlite3"))
+    ).resolve()
     gc_ret = _getenv_int("ANIMICA_DA_GC_RETENTION", 2048)
-    store_cfg = StoreConfig(storage_dir=storage_dir, sqlite_path=sqlite_path, gc_retention_blocks=gc_ret)
+    store_cfg = StoreConfig(
+        storage_dir=storage_dir, sqlite_path=sqlite_path, gc_retention_blocks=gc_ret
+    )
 
     # API
     host = _getenv("ANIMICA_DA_HOST", "127.0.0.1") or "127.0.0.1"
@@ -345,15 +359,22 @@ def _load_from_env() -> DAConfig:
     api_cfg = ApiConfig(host=host, port=port, cors_allow_origins=cors)
 
     # Limits
-    post_max = _parse_size(_getenv("ANIMICA_DA_POST_MAX", "9MiB"), default=9 * 1024 * 1024)
+    post_max = _parse_size(
+        _getenv("ANIMICA_DA_POST_MAX", "9MiB"), default=9 * 1024 * 1024
+    )
     limits_cfg = LimitsConfig(post_max_bytes=post_max)
 
     # Sampling
-    p_fail = _parse_probability(_getenv("ANIMICA_DA_P_FAIL", "2^-40"), default=2.0 ** -40)
+    p_fail = _parse_probability(_getenv("ANIMICA_DA_P_FAIL", "2^-40"), default=2.0**-40)
     min_s = _getenv_int("ANIMICA_DA_MIN_SAMPLES", 60)
     max_s = _getenv_int("ANIMICA_DA_MAX_SAMPLES", 256)
     tout = _getenv_int("ANIMICA_DA_SAMPLER_TIMEOUT_MS", 1500)
-    sampling_cfg = SamplingConfig(p_fail_target=p_fail, min_samples=min_s, max_samples=max_s, sample_timeout_ms=tout)
+    sampling_cfg = SamplingConfig(
+        p_fail_target=p_fail,
+        min_samples=min_s,
+        max_samples=max_s,
+        sample_timeout_ms=tout,
+    )
 
     cfg = DAConfig(
         namespaces=ns_cfg,

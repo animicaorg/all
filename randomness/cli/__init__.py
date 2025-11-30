@@ -29,13 +29,15 @@ from typing import Any, Dict, Optional, Sequence
 
 __all__ = ["app", "main"]
 
-_DEFAULT_RPC = os.getenv("OMNI_RPC_URL") or os.getenv("ANIMICA_RPC_URL") or "http://127.0.0.1:8545"
+_DEFAULT_RPC = (
+    os.getenv("OMNI_RPC_URL") or os.getenv("ANIMICA_RPC_URL") or "http://127.0.0.1:8545"
+)
 
 
 def _require_deps() -> None:
     try:
-        import typer  # noqa: F401
         import requests  # noqa: F401
+        import typer  # noqa: F401
     except Exception as e:  # pragma: no cover - import guard
         msg = (
             "This CLI requires optional dependencies.\n"
@@ -46,11 +48,13 @@ def _require_deps() -> None:
 
 
 _require_deps()
-import typer  # type: ignore  # noqa: E402
 import requests  # type: ignore  # noqa: E402
+import typer  # type: ignore  # noqa: E402
 
 
-def _rpc_call(url: str, method: str, params: Optional[Sequence[Any]] = None, timeout: float = 10.0) -> Dict[str, Any]:
+def _rpc_call(
+    url: str, method: str, params: Optional[Sequence[Any]] = None, timeout: float = 10.0
+) -> Dict[str, Any]:
     """
     Minimal JSON-RPC 2.0 helper.
     """
@@ -103,9 +107,15 @@ def cmd_round(rpc: str = _opt_rpc()) -> None:
 
 @app.command("commit")
 def cmd_commit(
-    address: str = typer.Option(..., "--address", "-a", help="Sender address (bech32m anim1… or hex)."),
-    salt: str = typer.Option(..., "--salt", "-s", help="0x-hex salt (commit randomness)."),
-    payload: str = typer.Option(..., "--payload", "-p", help="0x-hex payload committed to."),
+    address: str = typer.Option(
+        ..., "--address", "-a", help="Sender address (bech32m anim1… or hex)."
+    ),
+    salt: str = typer.Option(
+        ..., "--salt", "-s", help="0x-hex salt (commit randomness)."
+    ),
+    payload: str = typer.Option(
+        ..., "--payload", "-p", help="0x-hex payload committed to."
+    ),
     rpc: str = _opt_rpc(),
 ) -> None:
     """
@@ -114,16 +124,24 @@ def cmd_commit(
     The server computes C = H(domain|address|salt|payload) and records it if the
     commit window is open.
     """
-    res = _rpc_call(rpc, "rand.commit", [{"address": address, "salt": salt, "payload": payload}])
+    res = _rpc_call(
+        rpc, "rand.commit", [{"address": address, "salt": salt, "payload": payload}]
+    )
     typer.echo(json.dumps(res, indent=2))
 
 
 @app.command("reveal")
 def cmd_reveal(
     round_id: int = typer.Option(..., "--round", "-r", help="Round id to reveal for."),
-    address: str = typer.Option(..., "--address", "-a", help="Sender address used at commit time."),
-    salt: str = typer.Option(..., "--salt", "-s", help="0x-hex salt used at commit time."),
-    payload: str = typer.Option(..., "--payload", "-p", help="0x-hex payload to reveal."),
+    address: str = typer.Option(
+        ..., "--address", "-a", help="Sender address used at commit time."
+    ),
+    salt: str = typer.Option(
+        ..., "--salt", "-s", help="0x-hex salt used at commit time."
+    ),
+    payload: str = typer.Option(
+        ..., "--payload", "-p", help="0x-hex payload to reveal."
+    ),
     rpc: str = _opt_rpc(),
 ) -> None:
     """Reveal the (salt, payload) for a round."""
@@ -137,7 +155,9 @@ def cmd_reveal(
 
 @app.command("beacon")
 def cmd_beacon(
-    round_id: Optional[int] = typer.Option(None, "--round", "-r", help="Round id (omit for latest)."),
+    round_id: Optional[int] = typer.Option(
+        None, "--round", "-r", help="Round id (omit for latest)."
+    ),
     rpc: str = _opt_rpc(),
 ) -> None:
     """Get the finalized beacon for a round (or latest if omitted)."""
@@ -148,8 +168,12 @@ def cmd_beacon(
 
 @app.command("history")
 def cmd_history(
-    limit: int = typer.Option(10, "--limit", "-n", min=1, max=1000, help="Max number of records."),
-    before_round: Optional[int] = typer.Option(None, "--before", help="Return entries before this round id."),
+    limit: int = typer.Option(
+        10, "--limit", "-n", min=1, max=1000, help="Max number of records."
+    ),
+    before_round: Optional[int] = typer.Option(
+        None, "--before", help="Return entries before this round id."
+    ),
     rpc: str = _opt_rpc(),
 ) -> None:
     """List recent beacons (most-recent first by default)."""
@@ -158,7 +182,9 @@ def cmd_history(
     typer.echo(json.dumps(res, indent=2))
 
 
-def main(argv: Optional[Sequence[str]] = None) -> None:  # pragma: no cover - thin wrapper
+def main(
+    argv: Optional[Sequence[str]] = None,
+) -> None:  # pragma: no cover - thin wrapper
     """Entry-point to run as `python -m randomness.cli`."""
     try:
         app(standalone_mode=False, prog_name="omni rand")

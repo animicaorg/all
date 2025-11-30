@@ -5,11 +5,11 @@ from typing import Any, Dict
 
 import pytest
 
-from vm_py.compiler import ir
 from vm_py.compiler import encode as enc
-
+from vm_py.compiler import ir
 
 # --- helpers -----------------------------------------------------------------
+
 
 def _encode(module_obj: Any) -> bytes:
     """Locate the encoder function in vm_py.compiler.encode."""
@@ -62,8 +62,16 @@ def build_sample_ir() -> Any:
     i_store_val2 = mk(Instr, op="STORE", args=["VALUE"])
 
     # blocks (tolerate different naming fields)
-    b_init = mk(Block, name="init", label="init", id="init", instrs=[i_push0, i_store_val])
-    b_inc = mk(Block, name="inc", label="inc", id="inc", instrs=[i_load_val, i_push1, i_add, i_store_val2])
+    b_init = mk(
+        Block, name="init", label="init", id="init", instrs=[i_push0, i_store_val]
+    )
+    b_inc = mk(
+        Block,
+        name="inc",
+        label="inc",
+        id="inc",
+        instrs=[i_load_val, i_push1, i_add, i_store_val2],
+    )
 
     # module: support either list-of-blocks or dict-of-funcs
     mod_fields = {f.name for f in fields(Module)}
@@ -82,6 +90,7 @@ def build_sample_ir() -> Any:
 
 
 # --- tests -------------------------------------------------------------------
+
 
 def test_roundtrip_stability() -> None:
     mod1 = build_sample_ir()

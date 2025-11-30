@@ -27,12 +27,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
 import pytest
 
-from templates.tests import (
-    REPO_ROOT,
-    temp_dir,
-    temp_cwd,
-    read_json,
-)
+from templates.tests import REPO_ROOT, read_json, temp_cwd, temp_dir
 
 TEMPLATES_DIR = REPO_ROOT / "templates"
 INDEX_PATH = TEMPLATES_DIR / "index.json"
@@ -183,9 +178,9 @@ def test_index_paths_exist_and_are_contained() -> None:
         tdir = _template_dir(entry)
         assert tdir.exists(), f"Template directory does not exist: {tdir}"
         # Ensure path stays under templates/
-        assert str(tdir).startswith(str(TEMPLATES_DIR.resolve())), (
-            f"Template path escapes templates/: {tdir}"
-        )
+        assert str(tdir).startswith(
+            str(TEMPLATES_DIR.resolve())
+        ), f"Template path escapes templates/: {tdir}"
 
 
 def test_each_template_has_required_files() -> None:
@@ -218,14 +213,14 @@ def test_variables_json_shape_and_names_unique() -> None:
             name = _required(var, "name", str)
             vtype = var.get("type", "string")
             assert vtype in VAR_TYPES, f"Unsupported type '{vtype}' in {tdir}"
-            assert re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name), (
-                f"Variable name must be snake/alnum: '{name}' in {tdir}"
-            )
+            assert re.match(
+                r"^[A-Za-z_][A-Za-z0-9_]*$", name
+            ), f"Variable name must be snake/alnum: '{name}' in {tdir}"
             if vtype == "enum":
                 choices = var.get("choices")
-                assert isinstance(choices, list) and choices, (
-                    f"Enum variable '{name}' must specify non-empty 'choices' in {tdir}"
-                )
+                assert (
+                    isinstance(choices, list) and choices
+                ), f"Enum variable '{name}' must specify non-empty 'choices' in {tdir}"
         # uniqueness
         names = [v["name"] for v in variables if isinstance(v, dict) and "name" in v]
         assert len(names) == len(set(names)), f"Duplicate variable names in {tdir}"
@@ -251,9 +246,9 @@ def test_template_json_minimal_contract() -> None:
         # either a 'files' list or a 'render' dict.
         has_files = isinstance(spec.get("files"), list) and len(spec["files"]) >= 0
         has_render = isinstance(spec.get("render"), dict)
-        assert has_files or has_render, (
-            f"{tdir}/template.json must contain a 'files' list or a 'render' object"
-        )
+        assert (
+            has_files or has_render
+        ), f"{tdir}/template.json must contain a 'files' list or a 'render' object"
 
 
 @pytest.mark.parametrize("engine_symbol", ["render_template", "render"])
@@ -331,7 +326,9 @@ def test_templates_can_dry_render(engine_symbol: str) -> None:
 
             # Out dir should have at least one file (not counting dotfiles)
             produced = [
-                p for p in Path(outdir).rglob("*") if p.is_file() and not p.name.startswith(".")
+                p
+                for p in Path(outdir).rglob("*")
+                if p.is_file() and not p.name.startswith(".")
             ]
             assert produced, f"Renderer produced no files for template {tdir}"
 
@@ -362,9 +359,9 @@ def test_ids_are_unique_and_match_directory_names() -> None:
         path = entry.get("path")
         tdir = _template_dir(entry)
         if path is None:
-            assert tdir.name == tid, (
-                f"When 'path' is omitted, directory name must equal id: {tdir.name} != {tid}"
-            )
+            assert (
+                tdir.name == tid
+            ), f"When 'path' is omitted, directory name must equal id: {tdir.name} != {tid}"
 
 
 def test_optional_tags_and_kind_types() -> None:
@@ -378,10 +375,12 @@ def test_optional_tags_and_kind_types() -> None:
         tags = entry.get("tags")
         if tags is not None:
             assert isinstance(tags, list), "'tags' must be a list if present"
-            assert all(isinstance(t, str) and t.strip() for t in tags), (
-                "All tags must be non-empty strings"
-            )
-            assert all(len(t) <= 32 for t in tags), "Tags should be concise (<= 32 chars)"
+            assert all(
+                isinstance(t, str) and t.strip() for t in tags
+            ), "All tags must be non-empty strings"
+            assert all(
+                len(t) <= 32 for t in tags
+            ), "Tags should be concise (<= 32 chars)"
 
         kind = entry.get("kind")
         if kind is not None:
@@ -403,12 +402,12 @@ def test_variables_enums_have_valid_choices() -> None:
             if v.get("type") != "enum":
                 continue
             choices = v.get("choices", [])
-            assert isinstance(choices, list) and choices, (
-                f"Enum variable '{v.get('name')}' in {tdir} must have non-empty 'choices'"
-            )
-            assert all(isinstance(c, str) and c for c in choices), (
-                f"Enum choices must be non-empty strings in {tdir}"
-            )
-            assert len(choices) == len(set(choices)), (
-                f"Enum choices contain duplicates in {tdir}"
-            )
+            assert (
+                isinstance(choices, list) and choices
+            ), f"Enum variable '{v.get('name')}' in {tdir} must have non-empty 'choices'"
+            assert all(
+                isinstance(c, str) and c for c in choices
+            ), f"Enum choices must be non-empty strings in {tdir}"
+            assert len(choices) == len(
+                set(choices)
+            ), f"Enum choices contain duplicates in {tdir}"

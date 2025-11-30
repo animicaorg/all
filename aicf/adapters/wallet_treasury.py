@@ -26,19 +26,19 @@ Notes
   installed on the node that uses this adapter.
 """
 
-import time
-import json
 import hashlib
+import json
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Protocol, runtime_checkable
 
 from aicf.errors import AICFError
 
-
 # ---- Optional encoders ---------------------------------------------------------
 
 try:
     import cbor2  # type: ignore
+
     _HAS_CBOR2 = True
 except Exception:  # pragma: no cover - optional
     cbor2 = None  # type: ignore
@@ -56,12 +56,13 @@ def _encode_canonical(obj: Any) -> bytes:
 
 # ---- Protocols (DI) ------------------------------------------------------------
 
+
 @runtime_checkable
 class Signer(Protocol):
     """PQ signer interface injected by the caller."""
 
-    alg_id: str        # e.g., "dilithium3" | "sphincs+" (policy-defined)
-    address: str       # bech32m "anim1..." or hex-raw depending on network
+    alg_id: str  # e.g., "dilithium3" | "sphincs+" (policy-defined)
+    address: str  # bech32m "anim1..." or hex-raw depending on network
 
     def sign(self, message: bytes) -> bytes:
         """Return a signature over message with domain separation handled by the caller."""
@@ -84,20 +85,23 @@ class CoreRPC(Protocol):
 # ---- Data ----------------------------------------------------------------------
 
 DOMAIN_TREASURY_TX = b"ANIMICA/tx/treasury_transfer/v1"
-DEFAULT_FEE_FALLBACK = 1_000  # conservative default if we can't estimate (network-specific)
+DEFAULT_FEE_FALLBACK = (
+    1_000  # conservative default if we can't estimate (network-specific)
+)
 
 
 @dataclass(frozen=True)
 class TreasuryTransfer:
     """Unsigned, chain-agnostic skeleton for a treasury transfer tx."""
+
     chainId: int
-    kind: str                # "treasury_transfer"
-    sender: str              # treasury address (bech32m or hex)
-    to: str                  # recipient/provider address
-    amount: int              # base units (int)
-    nonce: int               # sequential
-    fee: int                 # base units (tip or total fee per policy)
-    timestamp: int           # seconds since epoch (advisory/anti-replay per policy)
+    kind: str  # "treasury_transfer"
+    sender: str  # treasury address (bech32m or hex)
+    to: str  # recipient/provider address
+    amount: int  # base units (int)
+    nonce: int  # sequential
+    fee: int  # base units (tip or total fee per policy)
+    timestamp: int  # seconds since epoch (advisory/anti-replay per policy)
 
     def to_obj(self) -> Dict[str, Any]:
         return {
@@ -124,6 +128,7 @@ def _domain_separated_hash(domain: bytes, payload: bytes) -> bytes:
 
 
 # ---- Adapter -------------------------------------------------------------------
+
 
 class TreasuryWalletAdapter:
     """
@@ -214,7 +219,9 @@ class TreasuryWalletAdapter:
 
         envelope = {
             "tx": unsigned_obj,
-            "signature": sig if _HAS_CBOR2 else sig.hex(),  # CBOR can carry bytes directly
+            "signature": (
+                sig if _HAS_CBOR2 else sig.hex()
+            ),  # CBOR can carry bytes directly
             "alg": signer.alg_id,
             "from": signer.address,
         }

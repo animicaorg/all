@@ -1,8 +1,9 @@
 import asyncio
 import os
-import sys
 import socket
+import sys
 from contextlib import closing
+
 import pytest
 
 # Make repo root importable
@@ -24,10 +25,12 @@ sys.path.insert(0, os.path.expanduser("~/animica"))
 # Utilities
 # -----------------------------
 
+
 def find_free_port() -> int:
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
 
 async def eventually(predicate, timeout=8.0, interval=0.05) -> bool:
     """
@@ -45,6 +48,7 @@ async def eventually(predicate, timeout=8.0, interval=0.05) -> bool:
         if asyncio.get_event_loop().time() >= end:
             return False
         await asyncio.sleep(interval)
+
 
 def get_peer_count(service) -> int:
     # Try a few likely places where peer count may be exposed.
@@ -87,6 +91,7 @@ def get_peer_count(service) -> int:
                         pass
     return 0
 
+
 def get_head_height(service) -> int | None:
     """
     Best-effort read of a node's current head height from any exposed adapter/state.
@@ -116,6 +121,7 @@ def get_head_height(service) -> int | None:
                 pass
     return None
 
+
 async def dial(service, addr: str) -> None:
     """
     Try several likely methods for dialing another peer.
@@ -139,6 +145,7 @@ async def dial(service, addr: str) -> None:
                     await r
                 return
     raise RuntimeError("No dialing method found on service")
+
 
 # -----------------------------
 # Imports (lazy so the test can skip gracefully if P2P is not built)
@@ -209,7 +216,9 @@ async def test_end_to_end_two_nodes_connect_and_sync():
 
     try:
         # Compose a dialable address to A from B (prefer multiaddr string if service exposes it)
-        listen_addrs = getattr(node_a, "listen_addrs", None) or getattr(node_a, "listening", None)
+        listen_addrs = getattr(node_a, "listen_addrs", None) or getattr(
+            node_a, "listening", None
+        )
         if listen_addrs:
             # Already in multiaddr-like form
             addr_a = listen_addrs[0]
@@ -220,8 +229,13 @@ async def test_end_to_end_two_nodes_connect_and_sync():
         await dial(node_b, addr_a)
 
         # Wait until both peers see each other
-        ok = await eventually(lambda: get_peer_count(node_a) >= 1 and get_peer_count(node_b) >= 1, timeout=10.0)
-        assert ok, f"Peer connection not established: A={get_peer_count(node_a)} B={get_peer_count(node_b)}"
+        ok = await eventually(
+            lambda: get_peer_count(node_a) >= 1 and get_peer_count(node_b) >= 1,
+            timeout=10.0,
+        )
+        assert (
+            ok
+        ), f"Peer connection not established: A={get_peer_count(node_a)} B={get_peer_count(node_b)}"
 
         # Give the protocol some time to run HELLO/IDENTIFY and (optional) header-sync kickoff
         await asyncio.sleep(0.25)
@@ -231,7 +245,9 @@ async def test_end_to_end_two_nodes_connect_and_sync():
         h_b = get_head_height(node_b)
         if h_a is not None and h_b is not None:
             # Allow a brief convergence window
-            converged = await eventually(lambda: get_head_height(node_b) == get_head_height(node_a), timeout=5.0)
+            converged = await eventually(
+                lambda: get_head_height(node_b) == get_head_height(node_a), timeout=5.0
+            )
             assert converged, f"Head heights diverged: A={h_a} B={h_b}"
 
         # If an explicit sync method exists, try it and re-check.

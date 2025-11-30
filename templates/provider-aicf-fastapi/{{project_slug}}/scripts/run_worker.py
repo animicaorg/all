@@ -57,14 +57,8 @@ except Exception:
     pass
 
 from aicf_provider.config import settings
-from aicf_provider.models import (
-    JobRecord,
-    JobStatus,
-    QuantumJobIn,
-    AIJobIn,
-)
-from aicf_provider.worker import get_worker, ProviderWorker
-
+from aicf_provider.models import AIJobIn, JobRecord, JobStatus, QuantumJobIn
+from aicf_provider.worker import ProviderWorker, get_worker
 
 log = logging.getLogger("aicf_provider.run_worker")
 
@@ -108,7 +102,10 @@ async def _periodic_stats(worker: ProviderWorker, interval: float) -> None:
             conc = getattr(worker, "concurrency", 0)
             log.info(
                 "stats: queued=%s running=%s concurrency=%s queue_max=%s",
-                qsize, running, conc, maxsize
+                qsize,
+                running,
+                conc,
+                maxsize,
             )
         except Exception as exc:
             log.debug("stats error: %s", exc)
@@ -141,7 +138,9 @@ async def _seed_demo(
             await asyncio.sleep(interval_s)
 
     for i in range(n_quantum):
-        job = QuantumJobIn(kind="quantum", n_qubits=3, shots=64, client_job_id=f"qdemo-{i}")
+        job = QuantumJobIn(
+            kind="quantum", n_qubits=3, shots=64, client_job_id=f"qdemo-{i}"
+        )
         jid = await worker.enqueue(job)
         log.info("enqueued demo Quantum job id=%s", jid)
         job_ids.append(jid)
@@ -182,13 +181,17 @@ async def _read_stdin_stream(worker: ProviderWorker) -> List[str]:
     return job_ids
 
 
-async def _wait_for_all(worker: ProviderWorker, job_ids: Sequence[str]) -> List[JobRecord]:
+async def _wait_for_all(
+    worker: ProviderWorker, job_ids: Sequence[str]
+) -> List[JobRecord]:
     recs: List[JobRecord] = []
     for jid in job_ids:
         try:
             rec = await worker.wait(jid, timeout=None)
             recs.append(rec)
-            status = rec.status.value if hasattr(rec.status, "value") else str(rec.status)
+            status = (
+                rec.status.value if hasattr(rec.status, "value") else str(rec.status)
+            )
             log.info("job %s completed: status=%s", jid, status)
         except Exception as exc:
             log.error("error waiting for %s: %s", jid, exc)
@@ -209,7 +212,9 @@ async def async_main(args) -> int:
 
     # Optionally adjust concurrency at runtime if the API exists
     desired_conc = _resolve_int(
-        args.concurrency, "AICF_WORKER_CONCURRENCY", getattr(settings, "worker_concurrency", 2)
+        args.concurrency,
+        "AICF_WORKER_CONCURRENCY",
+        getattr(settings, "worker_concurrency", 2),
     )
     if hasattr(worker, "set_concurrency"):
         try:
@@ -224,12 +229,16 @@ async def async_main(args) -> int:
     # Periodic stats task
     stats_task: Optional[asyncio.Task] = None
     if args.stats_every and args.stats_every > 0:
-        stats_task = asyncio.create_task(_periodic_stats(worker, float(args.stats_every)))
+        stats_task = asyncio.create_task(
+            _periodic_stats(worker, float(args.stats_every))
+        )
 
     # Seed demo jobs if requested
     seeded_ids: List[str] = []
     if args.demo_ai or args.demo_quantum:
-        seeded_ids = await _seed_demo(worker, args.demo_ai, args.demo_quantum, float(args.demo_interval))
+        seeded_ids = await _seed_demo(
+            worker, args.demo_ai, args.demo_quantum, float(args.demo_interval)
+        )
 
     # Optionally read stdin jobs
     stdin_ids: List[str] = []
@@ -271,14 +280,40 @@ async def async_main(args) -> int:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Run the AICF provider worker loop.")
-    parser.add_argument("--concurrency", type=int, default=None, help="Override worker concurrency")
-    parser.add_argument("--stats-every", type=float, default=5.0, help="Log stats every N seconds (0 to disable)")
+    parser.add_argument(
+        "--concurrency", type=int, default=None, help="Override worker concurrency"
+    )
+    parser.add_argument(
+        "--stats-every",
+        type=float,
+        default=5.0,
+        help="Log stats every N seconds (0 to disable)",
+    )
     parser.add_argument("--demo-ai", type=int, default=0, help="Seed N demo AI jobs")
-    parser.add_argument("--demo-quantum", type=int, default=0, help="Seed N demo Quantum jobs")
-    parser.add_argument("--demo-interval", type=float, default=0.1, help="Seconds to sleep between demo job enqueues")
-    parser.add_argument("--stdin", action="store_true", help="Read newline-delimited JSON jobs from stdin")
-    parser.add_argument("--wait", action="store_true", help="Wait for seeded/stdin jobs to finish before exit")
-    parser.add_argument("--log-level", default=str(getattr(settings, "log_level", "INFO")), help="Logging level")
+    parser.add_argument(
+        "--demo-quantum", type=int, default=0, help="Seed N demo Quantum jobs"
+    )
+    parser.add_argument(
+        "--demo-interval",
+        type=float,
+        default=0.1,
+        help="Seconds to sleep between demo job enqueues",
+    )
+    parser.add_argument(
+        "--stdin",
+        action="store_true",
+        help="Read newline-delimited JSON jobs from stdin",
+    )
+    parser.add_argument(
+        "--wait",
+        action="store_true",
+        help="Wait for seeded/stdin jobs to finish before exit",
+    )
+    parser.add_argument(
+        "--log-level",
+        default=str(getattr(settings, "log_level", "INFO")),
+        help="Logging level",
+    )
 
     args = parser.parse_args(argv)
 

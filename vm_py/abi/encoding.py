@@ -34,21 +34,9 @@ from __future__ import annotations
 
 from typing import Any, Iterable, List, Sequence, Tuple, Union, overload
 
-from .types import (
-    ABITypeError,
-    ValidationError,
-    IntType,
-    UIntType,
-    BytesType,
-    BoolType,
-    AddressType,
-    parse_type,
-    coerce_bool,
-    coerce_uint,
-    coerce_int,
-    coerce_bytes,
-    coerce_address,
-)
+from .types import (ABITypeError, AddressType, BoolType, BytesType, IntType,
+                    UIntType, ValidationError, coerce_address, coerce_bool,
+                    coerce_bytes, coerce_int, coerce_uint, parse_type)
 
 __all__ = [
     "uvarint_encode",
@@ -65,6 +53,7 @@ __all__ = [
 # ──────────────────────────────────────────────────────────────────────────────
 # Varint (unsigned LEB128) for length prefixes and counts
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def uvarint_encode(n: int) -> bytes:
     """
@@ -93,6 +82,7 @@ def uvarint_encode(n: int) -> bytes:
 # Low-level helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def _minimal_be_unsigned(n: int) -> bytes:
     """Big-endian minimal bytes for a non-negative integer (0 → b'\\x00')."""
     if n < 0:
@@ -106,6 +96,7 @@ def _minimal_be_unsigned(n: int) -> bytes:
 # ──────────────────────────────────────────────────────────────────────────────
 # Primitive encoders
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def encode_bool(value: Any) -> bytes:
     v = coerce_bool(value)
@@ -126,7 +117,9 @@ def encode_int(value: Any, *, bits: int = 256) -> bytes:
     return uvarint_encode(len(payload)) + payload
 
 
-def encode_bytes(value: Any, *, fixed_len: int | None = None, max_len: int | None = None) -> bytes:
+def encode_bytes(
+    value: Any, *, fixed_len: int | None = None, max_len: int | None = None
+) -> bytes:
     """
     Encode bytes (or 0x-hex string). For fixed_len, the output is the raw bytes with
     no length prefix. For dynamic bytes, the output is LEB128(len) || bytes.
@@ -148,10 +141,14 @@ def encode_address(value: Any, *, hrp: str = "anim") -> bytes:
 # High-level dispatch
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 @overload
 def encode_value(value: Any, typ: str) -> bytes: ...
 @overload
-def encode_value(value: Any, typ: IntType | UIntType | BytesType | BoolType | AddressType) -> bytes: ...
+def encode_value(
+    value: Any, typ: IntType | UIntType | BytesType | BoolType | AddressType
+) -> bytes: ...
+
 
 def encode_value(
     value: Any,
@@ -187,8 +184,10 @@ def encode_value(
     raise ABITypeError(f"unsupported ABI type: {typ!r}")
 
 
-def encode_args(types: Sequence[Union[str, IntType, UIntType, BytesType, BoolType, AddressType]],
-                values: Sequence[Any]) -> bytes:
+def encode_args(
+    types: Sequence[Union[str, IntType, UIntType, BytesType, BoolType, AddressType]],
+    values: Sequence[Any],
+) -> bytes:
     """
     Encode a sequence of arguments as:
         LEB128(count) || item1 || item2 || ... || itemN

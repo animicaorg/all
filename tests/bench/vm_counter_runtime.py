@@ -34,10 +34,10 @@ import time
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-
 # --------------------------------------------------------------------------- #
 # Engine Adapters
 # --------------------------------------------------------------------------- #
+
 
 @dataclass
 class CallResult:
@@ -63,6 +63,7 @@ class EngineAdapter:
 
 # ------------------------------ Fallback engine ------------------------------ #
 
+
 class FallbackCounter(EngineAdapter):
     """
     Deterministic micro-engine used when vm_py isn't available.
@@ -71,6 +72,7 @@ class FallbackCounter(EngineAdapter):
       - gas_used per call: configurable (default 150)
       - steps per call: configurable (default 60)
     """
+
     name = "fallback"
 
     def __init__(self, gas_per_call: int = 150, steps_per_call: int = 60):
@@ -91,12 +93,13 @@ class FallbackCounter(EngineAdapter):
             x = (x * 3) & 0xFFFFFFFF
             x = (x ^ 0xA5) + 7
             x = (x << 1) & 0xFFFFFFFF
-            x = (x >> 1)
+            x = x >> 1
         self._value = (self._value + 1) & 0x7FFFFFFF
         return CallResult(ok=True, gas_used=self._gas, steps=self._steps, ret=None)
 
 
 # ------------------------------- vm_py adapter ------------------------------- #
+
 
 class VmPyCounter(EngineAdapter):
     """
@@ -108,6 +111,7 @@ class VmPyCounter(EngineAdapter):
       - Try vm_py.runtime.loader.* helpers to compile/link
       - Attempt to call `inc()` and read gas from a result/gasmeter field
     """
+
     name = "vm_py"
 
     def __init__(self):
@@ -163,7 +167,9 @@ class VmPyCounter(EngineAdapter):
                         eng = Engine(manifest_json=manifest_json, source=contract_src)  # type: ignore[call-arg]
                     except TypeError:
                         # Give up; rely on fallback engine
-                        raise RuntimeError("Engine(manifest_json, source) path not supported")
+                        raise RuntimeError(
+                            "Engine(manifest_json, source) path not supported"
+                        )
                 else:
                     raise RuntimeError("vm_py.runtime.engine.Engine not found")
 
@@ -183,6 +189,7 @@ class VmPyCounter(EngineAdapter):
                         # Bind engine method
                         def _bound(name: str, args: dict) -> object:
                             return m(name=name, args=args)  # type: ignore[misc]
+
                         abi_call = _bound
                         break
 
@@ -279,6 +286,7 @@ def _build_engine(mode: str) -> EngineAdapter:
 # Benchmark Core
 # --------------------------------------------------------------------------- #
 
+
 def _time_calls(engine: EngineAdapter, calls: int) -> Tuple[float, int, Optional[int]]:
     """
     Execute `calls` times `inc()` and return (seconds, total_gas, total_steps|None)
@@ -318,7 +326,9 @@ def run_bench(calls: int, warmup: int, repeat: int, mode: str) -> dict:
         steps_list.append(steps)
 
     median_s = statistics.median(timings)
-    p90_s = statistics.quantiles(timings, n=10)[8] if len(timings) >= 10 else max(timings)
+    p90_s = (
+        statistics.quantiles(timings, n=10)[8] if len(timings) >= 10 else max(timings)
+    )
 
     calls_per_s = (calls / median_s) if median_s > 0 else float("inf")
     gas_median = statistics.median(gases)
@@ -350,15 +360,32 @@ def run_bench(calls: int, warmup: int, repeat: int, mode: str) -> dict:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description="VM Counter runtime throughput (calls/sec, gas/sec).")
-    ap.add_argument("--calls", type=int, default=20_000, help="inc() calls per measured iteration (default: 20000)")
-    ap.add_argument("--warmup", type=int, default=1, help="Warmup iterations (default: 1)")
-    ap.add_argument("--repeat", type=int, default=5, help="Measured iterations (default: 5)")
-    ap.add_argument("--mode", choices=("auto", "vm", "fallback"), default="auto",
-                    help="Use vm_py if available (auto/vm), else fallback (default: auto)")
+    ap = argparse.ArgumentParser(
+        description="VM Counter runtime throughput (calls/sec, gas/sec)."
+    )
+    ap.add_argument(
+        "--calls",
+        type=int,
+        default=20_000,
+        help="inc() calls per measured iteration (default: 20000)",
+    )
+    ap.add_argument(
+        "--warmup", type=int, default=1, help="Warmup iterations (default: 1)"
+    )
+    ap.add_argument(
+        "--repeat", type=int, default=5, help="Measured iterations (default: 5)"
+    )
+    ap.add_argument(
+        "--mode",
+        choices=("auto", "vm", "fallback"),
+        default="auto",
+        help="Use vm_py if available (auto/vm), else fallback (default: auto)",
+    )
     args = ap.parse_args(argv)
 
-    out = run_bench(calls=args.calls, warmup=args.warmup, repeat=args.repeat, mode=args.mode)
+    out = run_bench(
+        calls=args.calls, warmup=args.warmup, repeat=args.repeat, mode=args.mode
+    )
     print(json.dumps(out, separators=(",", ":"), sort_keys=False))
     return 0
 

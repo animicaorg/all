@@ -21,8 +21,8 @@ Exposed functions (stable API):
 
 from __future__ import annotations
 
-import os
 import importlib
+import os
 from typing import Any, Iterable, List, Tuple
 
 _NATIVE_DISABLED = os.getenv("ZK_DISABLE_NATIVE", "0") == "1"
@@ -91,9 +91,7 @@ def _fallback_kzg_verify_opening_bytes(
         _kzg, "kzg_verify_opening", None
     )
     if fn is None:
-        raise RuntimeError(
-            "KZG fallback missing function kzg_verify_opening(_bytes)"
-        )
+        raise RuntimeError("KZG fallback missing function kzg_verify_opening(_bytes)")
     return bool(
         fn(commit_g1, proof_g1, z_fr, y_fr, g2_gen, g2_tau)  # type: ignore[misc]
     )

@@ -64,6 +64,7 @@ COMMAND_NAME = "inject-result"
 
 # --------------------------- helpers ---------------------------
 
+
 def _read_json_file(path: Path) -> Any:
     with path.open("rb") as fh:
         return json.loads(fh.read().decode("utf-8"))
@@ -75,7 +76,10 @@ def _maybe_json(s: Optional[str]) -> Optional[Any]:
     try:
         return json.loads(s)
     except Exception:
-        typer.echo("ERROR: --result-json/--meta-json/--proof-json must be valid JSON.", err=True)
+        typer.echo(
+            "ERROR: --result-json/--meta-json/--proof-json must be valid JSON.",
+            err=True,
+        )
         raise typer.Exit(2)
 
 
@@ -183,29 +187,68 @@ def _store_put(mod, store, record: Dict[str, Any], overwrite: bool) -> None:
                 fn(store, task_id, record)  # type: ignore
             return
 
-    typer.echo("ERROR: result-store backend does not expose a known put/upsert API.", err=True)
+    typer.echo(
+        "ERROR: result-store backend does not expose a known put/upsert API.", err=True
+    )
     raise typer.Exit(1)
 
 
 # --------------------------- CLI ---------------------------
 
+
 @app.command("inject-result")
 def inject_result_cmd(
-    task_id: str = typer.Option(..., "--task-id", help="Task ID to write (H(chainId|height|tx|caller|payload) or app-defined)."),
-    kind: Optional[str] = typer.Option(None, "--kind", help="Job kind: ai|quantum (optional)."),
-    status: str = typer.Option("success", "--status", help="Status string, e.g. success|error|failed."),
-    result_json: Optional[str] = typer.Option(None, "--result-json", help="Inline JSON string for result payload."),
-    result_json_file: Optional[Path] = typer.Option(None, "--result-json-file", help="Read JSON payload from file."),
-    result_bytes_file: Optional[Path] = typer.Option(None, "--result-bytes-file", help="Read raw bytes payload from file."),
-    bytes_encoding: str = typer.Option("base64", "--bytes-encoding", help="If using --result-bytes-file, annotate encoding: base64|hex|raw (stored as-is)."),
-    proof_json: Optional[str] = typer.Option(None, "--proof-json", help="Inline JSON attestation/proof object."),
-    proof_file: Optional[Path] = typer.Option(None, "--proof-file", help="Load attestation/proof JSON from file."),
-    meta_json: Optional[str] = typer.Option(None, "--meta-json", help="Inline JSON for misc metadata."),
-    producer: Optional[str] = typer.Option(None, "--producer", help="Producer ID (e.g., worker name / device id)."),
-    caller: Optional[str] = typer.Option(None, "--caller", help="Caller account (for indexing; optional)."),
-    height: Optional[int] = typer.Option(None, "--height", help="Block height the result became available (optional)."),
-    timestamp: Optional[str] = typer.Option(None, "--timestamp", help="ISO 8601 timestamp override (defaults to now on write if store supports it)."),
-    overwrite: bool = typer.Option(False, "--overwrite", help="Allow overwriting an existing record."),
+    task_id: str = typer.Option(
+        ...,
+        "--task-id",
+        help="Task ID to write (H(chainId|height|tx|caller|payload) or app-defined).",
+    ),
+    kind: Optional[str] = typer.Option(
+        None, "--kind", help="Job kind: ai|quantum (optional)."
+    ),
+    status: str = typer.Option(
+        "success", "--status", help="Status string, e.g. success|error|failed."
+    ),
+    result_json: Optional[str] = typer.Option(
+        None, "--result-json", help="Inline JSON string for result payload."
+    ),
+    result_json_file: Optional[Path] = typer.Option(
+        None, "--result-json-file", help="Read JSON payload from file."
+    ),
+    result_bytes_file: Optional[Path] = typer.Option(
+        None, "--result-bytes-file", help="Read raw bytes payload from file."
+    ),
+    bytes_encoding: str = typer.Option(
+        "base64",
+        "--bytes-encoding",
+        help="If using --result-bytes-file, annotate encoding: base64|hex|raw (stored as-is).",
+    ),
+    proof_json: Optional[str] = typer.Option(
+        None, "--proof-json", help="Inline JSON attestation/proof object."
+    ),
+    proof_file: Optional[Path] = typer.Option(
+        None, "--proof-file", help="Load attestation/proof JSON from file."
+    ),
+    meta_json: Optional[str] = typer.Option(
+        None, "--meta-json", help="Inline JSON for misc metadata."
+    ),
+    producer: Optional[str] = typer.Option(
+        None, "--producer", help="Producer ID (e.g., worker name / device id)."
+    ),
+    caller: Optional[str] = typer.Option(
+        None, "--caller", help="Caller account (for indexing; optional)."
+    ),
+    height: Optional[int] = typer.Option(
+        None, "--height", help="Block height the result became available (optional)."
+    ),
+    timestamp: Optional[str] = typer.Option(
+        None,
+        "--timestamp",
+        help="ISO 8601 timestamp override (defaults to now on write if store supports it).",
+    ),
+    overwrite: bool = typer.Option(
+        False, "--overwrite", help="Allow overwriting an existing record."
+    ),
     store_db: Optional[Path] = typer.Option(
         Path(os.getenv("CAP_RESULT_DB", "./capabilities_results.db")),
         "--store-db",
@@ -215,8 +258,14 @@ def inject_result_cmd(
     """
     Inject a completed ResultRecord for `task_id` into the local result-store.
     """
-    if sum(x is not None for x in (result_json, result_json_file, result_bytes_file)) > 1:
-        typer.echo("ERROR: choose only one of --result-json, --result-json-file, or --result-bytes-file.", err=True)
+    if (
+        sum(x is not None for x in (result_json, result_json_file, result_bytes_file))
+        > 1
+    ):
+        typer.echo(
+            "ERROR: choose only one of --result-json, --result-json-file, or --result-bytes-file.",
+            err=True,
+        )
         raise typer.Exit(2)
 
     # Compose result payload
@@ -270,9 +319,9 @@ def inject_result_cmd(
         "id": task_id,  # alias
         "status": status,
         "ok": status.lower() in ("ok", "success", "succeeded", "true"),
-        "result": result_payload,      # common
-        "output": result_payload,      # alias
-        "payload": result_payload,     # alias
+        "result": result_payload,  # common
+        "output": result_payload,  # alias
+        "payload": result_payload,  # alias
         "result_encoding": result_encoding,
         "proof": proof_obj,
         "meta": meta_obj,
@@ -284,7 +333,11 @@ def inject_result_cmd(
         "timestamp": timestamp,  # backends may override with 'now'
         "kind": kind,
         # Optional error message location (even for success it's harmless)
-        "error": None if status.lower() in ("ok", "success", "succeeded") else (meta_obj.get("error") if meta_obj else None),
+        "error": (
+            None
+            if status.lower() in ("ok", "success", "succeeded")
+            else (meta_obj.get("error") if meta_obj else None)
+        ),
     }
 
     # Strip Nones to keep the record tidy
@@ -302,7 +355,11 @@ def inject_result_cmd(
         "height": record.get("produced_height") or record.get("height"),
         "producer": record.get("producer_id") or record.get("producer"),
         "caller": record.get("caller"),
-        "result_keys": sorted(record.get("result", {}).keys()) if isinstance(record.get("result"), dict) else type(record.get("result")).__name__,
+        "result_keys": (
+            sorted(record.get("result", {}).keys())
+            if isinstance(record.get("result"), dict)
+            else type(record.get("result")).__name__
+        ),
     }
     typer.echo(json.dumps(shown, indent=2, sort_keys=True))
 

@@ -44,12 +44,15 @@ except Exception:  # pragma: no cover
 try:
     from .errors import DeviceUnavailable  # type: ignore
 except Exception:  # pragma: no cover
+
     class DeviceUnavailable(RuntimeError):
         pass
+
 
 try:  # types only
     from .device import DeviceInfo, DeviceType  # type: ignore
 except Exception:  # pragma: no cover
+
     @dataclass(frozen=True)
     class DeviceInfo:
         type: str
@@ -66,24 +69,31 @@ except Exception:  # pragma: no cover
         GPU = "gpu"
         CPU = "cpu"
 
+
 # Reuse canonical digest/uniform math if present (for CPU fallback & mapping)
 try:
     from . import nonce_domain as nd  # type: ignore
+
     _HAS_ND = True
 except Exception:  # pragma: no cover
     _HAS_ND = False
 
 import hashlib  # for CPU fallback only
 
+
 def _nonce_le8(n: int) -> bytes:
     return struct.pack("<Q", n & 0xFFFFFFFFFFFFFFFF)
+
 
 def _digest_bytes_cpu(header: bytes, mix: bytes, nonce: int) -> bytes:
     if _HAS_ND and hasattr(nd, "digest_header_mix_nonce"):
         return nd.digest_header_mix_nonce(header, mix, nonce)  # type: ignore
     h = hashlib.sha3_256()
-    h.update(header); h.update(mix); h.update(_nonce_le8(nonce))
+    h.update(header)
+    h.update(mix)
+    h.update(_nonce_le8(nonce))
     return h.digest()
+
 
 def _uniform_from_digest(d: bytes) -> float:
     if _HAS_ND and hasattr(nd, "uniform_from_digest"):
@@ -92,13 +102,17 @@ def _uniform_from_digest(d: bytes) -> float:
     hi = int.from_bytes(d[0:8], "big")
     lo = int.from_bytes(d[8:16], "big")
     # u = (hi*2^64 + lo + 1) / 2^128
-    u = (hi / 18446744073709551616.0) + ((lo + 1.0) / 340282366920938463463374607431768211456.0)
+    u = (hi / 18446744073709551616.0) + (
+        (lo + 1.0) / 340282366920938463463374607431768211456.0
+    )
     return u
+
 
 def _exp_neg_theta(theta_micro: float) -> float:
     if _HAS_ND and hasattr(nd, "exp_neg_theta"):
         return float(nd.exp_neg_theta(theta_micro))  # type: ignore
     return math.exp(-theta_micro / 1e6)
+
 
 # ────────────────────────────────────────────────────────────────────────
 # OpenCL kernel (single-block SHA3-256 + acceptance check)
@@ -271,16 +285,22 @@ __kernel void find_hashshares(
 # Backend object
 # ────────────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class _Prepared:
     header: bytes
     mix_seed: bytes
     use_gpu: bool  # false when payload would exceed single-block rate
 
+
 class OpenCLBackend:
-    def __init__(self, platform_index: Optional[int] = None, device_index: Optional[int] = None) -> None:
+    def __init__(
+        self, platform_index: Optional[int] = None, device_index: Optional[int] = None
+    ) -> None:
         if cl is None:
-            raise DeviceUnavailable("PyOpenCL not available; install pyopencl or use CPU backend.")
+            raise DeviceUnavailable(
+                "PyOpenCL not available; install pyopencl or use CPU backend."
+            )
         try:
             platforms = cl.get_platforms()
             if not platforms:
@@ -321,7 +341,9 @@ class OpenCLBackend:
     def prepare_header(self, header_bytes: bytes, mix_seed: bytes) -> _Prepared:
         # We only support single-block hashing in-kernel (rate 136)
         use_gpu = (len(header_bytes) + 32 + 8) <= 136
-        return _Prepared(header=bytes(header_bytes), mix_seed=bytes(mix_seed), use_gpu=use_gpu)
+        return _Prepared(
+            header=bytes(header_bytes), mix_seed=bytes(mix_seed), use_gpu=use_gpu
+        )
 
     def scan(
         self,
@@ -335,8 +357,13 @@ class OpenCLBackend:
     ) -> List[Dict[str, Any]]:
         if not prepared.use_gpu:
             # Fallback (too large for single-block kernel)
-            return self._scan_cpu(prepared, theta_micro=theta_micro, start_nonce=start_nonce,
-                                  iterations=iterations, max_found=max_found)
+            return self._scan_cpu(
+                prepared,
+                theta_micro=theta_micro,
+                start_nonce=start_nonce,
+                iterations=iterations,
+                max_found=max_found,
+            )
 
         cutoff = _exp_neg_theta(theta_micro)
 
@@ -406,7 +433,14 @@ class OpenCLBackend:
                 (u_f32,) = struct.unpack_from("<f", host_u, i * 4)
                 digest = bytes(host_hashes[i * 32 : (i + 1) * 32])
                 d_ratio = (-math.log(max(u_f32, 1e-38))) / max(theta_micro / 1e6, 1e-12)
-                res.append({"nonce": int(n), "u": float(u_f32), "d_ratio": float(d_ratio), "hash": digest})
+                res.append(
+                    {
+                        "nonce": int(n),
+                        "u": float(u_f32),
+                        "d_ratio": float(d_ratio),
+                        "hash": digest,
+                    }
+                )
 
         # Deterministic order
         res.sort(key=lambda x: x["nonce"])
@@ -433,30 +467,44 @@ class OpenCLBackend:
             u = _uniform_from_digest(d)
             if u <= cutoff:
                 d_ratio = (-math.log(u)) / max(theta_micro / 1e6, 1e-12)
-                out.append({"nonce": nonce, "u": float(u), "d_ratio": float(d_ratio), "hash": d})
+                out.append(
+                    {
+                        "nonce": nonce,
+                        "u": float(u),
+                        "d_ratio": float(d_ratio),
+                        "hash": d,
+                    }
+                )
         return out
+
 
 # ────────────────────────────────────────────────────────────────────────
 # Helpers
 # ────────────────────────────────────────────────────────────────────────
 
+
 def _u32(x: int) -> bytes:
     return struct.pack("<I", x & 0xFFFFFFFF)
+
 
 def _u64(x: int) -> bytes:
     return struct.pack("<Q", x & 0xFFFFFFFFFFFFFFFF)
 
+
 def _f64(x: float) -> bytes:
     return struct.pack("<d", float(x))
+
 
 def _read_u32(queue, buf) -> int:
     tmp = bytearray(4)
     cl.enqueue_copy(queue, tmp, buf).wait()
     return struct.unpack_from("<I", tmp, 0)[0]
 
+
 # ────────────────────────────────────────────────────────────────────────
 # Public factory
 # ────────────────────────────────────────────────────────────────────────
+
 
 def list_devices() -> List[DeviceInfo]:
     """Enumerate OpenCL devices (best-effort)."""
@@ -467,20 +515,23 @@ def list_devices() -> List[DeviceInfo]:
         for pi, plat in enumerate(cl.get_platforms()):
             for di, dev in enumerate(plat.get_devices()):
                 mem = getattr(dev, "global_mem_size", None)
-                infos.append(DeviceInfo(
-                    type=getattr(DeviceType, "GPU", "gpu"),
-                    name=getattr(dev, "name", f"OpenCL Device {di}"),
-                    index=di,
-                    vendor=getattr(dev, "vendor", None),
-                    driver=getattr(dev, "driver_version", None),
-                    compute_units=getattr(dev, "max_compute_units", None),
-                    memory_bytes=mem,
-                    max_batch=None,
-                    flags={"opencl": True},
-                ))
+                infos.append(
+                    DeviceInfo(
+                        type=getattr(DeviceType, "GPU", "gpu"),
+                        name=getattr(dev, "name", f"OpenCL Device {di}"),
+                        index=di,
+                        vendor=getattr(dev, "vendor", None),
+                        driver=getattr(dev, "driver_version", None),
+                        compute_units=getattr(dev, "max_compute_units", None),
+                        memory_bytes=mem,
+                        max_batch=None,
+                        flags={"opencl": True},
+                    )
+                )
     except Exception:
         pass
     return infos
+
 
 def create(**opts: Any) -> OpenCLBackend:
     """
@@ -494,6 +545,7 @@ def create(**opts: Any) -> OpenCLBackend:
     device_index = opts.get("device_index")
     return OpenCLBackend(platform_index=platform_index, device_index=device_index)
 
+
 # Diagnostics
 if __name__ == "__main__":  # pragma: no cover
     try:
@@ -502,7 +554,9 @@ if __name__ == "__main__":  # pragma: no cover
         hdr = b"\x00" * 80
         mix = b"\x11" * 32
         prep = dev.prepare_header(hdr, mix)
-        res = dev.scan(prep, theta_micro=200000.0, start_nonce=0, iterations=500000, max_found=3)
+        res = dev.scan(
+            prep, theta_micro=200000.0, start_nonce=0, iterations=500000, max_found=3
+        )
         for r in res:
             print("  nonce=", r["nonce"], "u=", r["u"], "d_ratio=", r["d_ratio"])
     except Exception as e:

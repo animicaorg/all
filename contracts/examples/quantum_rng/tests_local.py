@@ -17,10 +17,9 @@ from __future__ import annotations
 import importlib
 import os
 from pathlib import Path
-from typing import Any, Callable, Tuple, Optional
+from typing import Any, Callable, Optional, Tuple
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # VM loader shims
@@ -71,8 +70,10 @@ def _load_contract(manifest_path: Path):
 
     # Resolve a callable entrypoint
     if hasattr(handle, "call"):
+
         def _call(fname: str, *args):
             return handle.call(fname, *args)
+
         return handle, _call
 
     # Some builds expose (program, abi) and require a dispatcher
@@ -88,12 +89,15 @@ def _load_contract(manifest_path: Path):
 
         def _call(fname: str, *args):
             return abi_mod.dispatch_call(program, fname, list(args))  # type: ignore
+
         return handle, _call
 
     # Fallback: look for generic attributes
     if hasattr(handle, "invoke"):
+
         def _call(fname: str, *args):
             return handle.invoke(fname, list(args))
+
         return handle, _call
 
     raise RuntimeError("Unknown contract handle shape; cannot find call() or invoke()")
@@ -103,10 +107,12 @@ def _load_contract(manifest_path: Path):
 # Syscall fakes (monkeypatched into vm_py.runtime.syscalls_api)
 # ---------------------------------------------------------------------------
 
+
 class QuantumSyscallFakes:
     """
     Deterministic fakes for quantum enqueue/read + beacon access.
     """
+
     def __init__(self) -> None:
         self._results: dict[bytes, bytes] = {}
         self._beacon = b"\x42" * 32  # 32 bytes of deterministic 'beacon'
@@ -122,6 +128,7 @@ class QuantumSyscallFakes:
             from hashlib import sha3_256
         except Exception:  # pragma: no cover
             import hashlib
+
             sha3_256 = hashlib.sha3_256  # type: ignore
         task_id = sha3_256(b"quantum|" + material).digest()
         # Do not set a result yet; tests will inject via inject_result()
@@ -174,6 +181,7 @@ def _monkeypatch_syscalls(mp, fakes: QuantumSyscallFakes):
 # Tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.skipif(not MANIFEST.is_file(), reason="manifest.json missing")
 def test_request_then_poll_and_last(monkeypatch, tmp_path):
     """
@@ -206,7 +214,9 @@ def test_request_then_poll_and_last(monkeypatch, tmp_path):
 
     # Inject a deterministic "quantum" output for the task and poll again
     want_len = bits // 8
-    quantum_bytes = b"\xAA" * max(32, want_len)  # longer than needed; contract should derive/crop
+    quantum_bytes = b"\xaa" * max(
+        32, want_len
+    )  # longer than needed; contract should derive/crop
     fakes.inject_result(bytes(task_id), quantum_bytes)
 
     ready2, out1 = call("poll", bytes(task_id))
@@ -282,5 +292,3 @@ def test_multiple_requests_independent_results(monkeypatch):
     ready2b, out2b = call("poll", bytes(t2))
     assert ready2b is True and len(out2b) == 3  # 24 bits → 3 bytes
     assert bytes(call("last")) == bytes(out2b)
-
-

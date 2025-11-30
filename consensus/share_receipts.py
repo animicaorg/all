@@ -62,7 +62,7 @@ Integration points
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, List, Tuple, Optional
+from typing import Iterable, List, Optional, Tuple
 
 try:
     # Prefer canonical hash & merkle utilities from core
@@ -91,12 +91,14 @@ except Exception:  # pragma: no cover - fallback for isolated unit tests
             level = nxt
         return level[0]
 
+
 from enum import IntEnum
 
 # Keep in sync with consensus/types.ProofType, but allow independent unit testing.
 try:
     from consensus.types import ProofType  # type: ignore
 except Exception:  # pragma: no cover
+
     class ProofType(IntEnum):
         HASH = 0
         AI = 1
@@ -107,10 +109,12 @@ except Exception:  # pragma: no cover
 
 # ----------------------------- Encoding helpers ------------------------------
 
+
 def _u8(x: int) -> bytes:
     if not (0 <= x <= 255):
         raise ValueError("u8 out of range")
     return x.to_bytes(1, "big")
+
 
 def _u64be(x: int) -> bytes:
     if x < 0:
@@ -124,10 +128,11 @@ LEAF_DOMAIN = b"SR\x01"  # ShareReceipt v1
 @dataclass(frozen=True)
 class ShareReceipt:
     """Compact record for contribution of one proof instance."""
+
     type_id: ProofType
-    nullifier: bytes          # 32 bytes (sha3-256 from proofs/nullifiers.py)
-    micro_units: int          # integral micro-shares (>= 0)
-    meta_flags: int = 0       # reserved: u8 bitfield
+    nullifier: bytes  # 32 bytes (sha3-256 from proofs/nullifiers.py)
+    micro_units: int  # integral micro-shares (>= 0)
+    meta_flags: int = 0  # reserved: u8 bitfield
 
     def __post_init__(self) -> None:
         if len(self.nullifier) != 32:
@@ -139,13 +144,15 @@ class ShareReceipt:
 
     def leaf_bytes(self) -> bytes:
         """Return the domain-separated preimage for the leaf hash."""
-        return b"".join((
-            LEAF_DOMAIN,
-            _u8(int(self.type_id)),
-            _u8(self.meta_flags),
-            _u64be(self.micro_units),
-            self.nullifier,
-        ))
+        return b"".join(
+            (
+                LEAF_DOMAIN,
+                _u8(int(self.type_id)),
+                _u8(self.meta_flags),
+                _u64be(self.micro_units),
+                self.nullifier,
+            )
+        )
 
     def leaf_hash(self) -> bytes:
         """Return the leaf hash H(leaf_bytes)."""
@@ -153,6 +160,7 @@ class ShareReceipt:
 
 
 # --------------------------- Stochastic rounding -----------------------------
+
 
 def _prf01(seed: bytes, type_id: int, nullifier: bytes) -> float:
     """
@@ -179,11 +187,14 @@ def stochastic_round(x: float, seed: bytes, type_id: int, nullifier: bytes) -> i
 
 # ----------------------------- Aggregation API -------------------------------
 
+
 @dataclass(frozen=True)
 class AggregationStats:
     count: int
     total_micro_units: int
-    types_breakdown: Tuple[int, int, int, int, int]  # HASH, AI, QUANTUM, STORAGE, VDF (length = max type index + 1)
+    types_breakdown: Tuple[
+        int, int, int, int, int
+    ]  # HASH, AI, QUANTUM, STORAGE, VDF (length = max type index + 1)
 
 
 class ShareAggregator:
@@ -211,18 +222,27 @@ class ShareAggregator:
 
     # --- admission ---
 
-    def add_fractional(self, type_id: ProofType, nullifier: bytes, x: float, meta_flags: int = 0) -> ShareReceipt:
+    def add_fractional(
+        self, type_id: ProofType, nullifier: bytes, x: float, meta_flags: int = 0
+    ) -> ShareReceipt:
         """
         Add a contribution from a fractional signal (x >= 0). Uses stochastic rounding.
         """
         micro = stochastic_round(float(x), self._seed, int(type_id), nullifier)
         return self.add_integral(type_id, nullifier, micro, meta_flags=meta_flags)
 
-    def add_integral(self, type_id: ProofType, nullifier: bytes, units: int, meta_flags: int = 0) -> ShareReceipt:
+    def add_integral(
+        self, type_id: ProofType, nullifier: bytes, units: int, meta_flags: int = 0
+    ) -> ShareReceipt:
         """
         Add an already-integral count of micro-units (>= 0).
         """
-        r = ShareReceipt(type_id=type_id, nullifier=bytes(nullifier), micro_units=int(units), meta_flags=meta_flags)
+        r = ShareReceipt(
+            type_id=type_id,
+            nullifier=bytes(nullifier),
+            micro_units=int(units),
+            meta_flags=meta_flags,
+        )
         self._receipts.append(r)
         idx = int(type_id)
         if 0 <= idx < len(self._totals):
@@ -265,6 +285,7 @@ class ShareAggregator:
 
 
 # ------------------------------- Convenience ---------------------------------
+
 
 def receipts_root_from_fractionals(
     rounding_seed: bytes,

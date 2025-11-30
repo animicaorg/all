@@ -18,6 +18,7 @@ A tiny CLI is provided:
     python -m mempool.version         # prints version string
     python -m mempool.version --json  # prints JSON with details
 """
+
 from __future__ import annotations
 
 import json
@@ -37,6 +38,7 @@ _GIT_DESCRIBE_RE = re.compile(
     r"^(?:(?P<tag>v?\d+\.\d+\.\d+))?(?:-(?P<commits>\d+)-g(?P<sha>[0-9a-f]{7,}))?(?P<dirty>-dirty)?$"
 )
 
+
 @dataclass(frozen=True)
 class GitInfo:
     describe: Optional[str]
@@ -45,11 +47,14 @@ class GitInfo:
     commits_ahead: Optional[int]
     dirty: Optional[bool]
 
+
 def _git(args: list[str]) -> Optional[str]:
     try:
         # Run in repository root if possible
         here = Path(__file__).resolve()
-        repo_root = here.parent.parent  # ~/animica/mempool/ -> repo root is likely ~/animica
+        repo_root = (
+            here.parent.parent
+        )  # ~/animica/mempool/ -> repo root is likely ~/animica
         res = subprocess.run(
             ["git", "-C", str(repo_root)] + args,
             check=True,
@@ -60,6 +65,7 @@ def _git(args: list[str]) -> Optional[str]:
         return res.stdout.strip()
     except Exception:
         return None
+
 
 def git_info() -> GitInfo:
     desc = _git(["describe", "--tags", "--dirty", "--always"])
@@ -78,7 +84,9 @@ def git_info() -> GitInfo:
     dirty = bool(m.group("dirty"))
     return GitInfo(desc, tag, sha, commits, dirty)
 
+
 # --- Version construction ----------------------------------------------------
+
 
 def _compose_version(base: str, gi: GitInfo) -> str:
     """
@@ -91,6 +99,7 @@ def _compose_version(base: str, gi: GitInfo) -> str:
     if gi.dirty:
         local = f"{local}.dirty"
     return f"{base}+{local}"
+
 
 def build_version() -> str:
     # 1) Environment override (use as-is)
@@ -106,9 +115,11 @@ def build_version() -> str:
     # 3) Plain base version
     return BASE_VERSION
 
+
 def version_tuple() -> tuple[int, int, int]:
     major, minor, patch = BASE_VERSION.split(".")
     return int(major), int(minor), int(patch)
+
 
 def describe() -> dict:
     """Return a structured dict with version and git fields (best-effort)."""
@@ -123,13 +134,19 @@ def describe() -> dict:
             "commits_ahead": gi.commits_ahead,
             "dirty": gi.dirty,
         },
-        "source": "env" if os.environ.get("ANIMICA_VERSION_OVERRIDE") else ("git" if gi.describe else "base"),
+        "source": (
+            "env"
+            if os.environ.get("ANIMICA_VERSION_OVERRIDE")
+            else ("git" if gi.describe else "base")
+        ),
     }
+
 
 # Public: imported by mempool.__init__
 __version__ = build_version()
 
 # --- CLI ---------------------------------------------------------------------
+
 
 def _main(argv: list[str]) -> int:
     if "--json" in argv:
@@ -137,6 +154,7 @@ def _main(argv: list[str]) -> int:
     else:
         print(__version__)
     return 0
+
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(_main(os.sys.argv[1:]))

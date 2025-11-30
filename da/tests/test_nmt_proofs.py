@@ -5,19 +5,21 @@ from typing import Any, Callable, Iterable, List, Optional, Tuple, Union
 
 import pytest
 
-
 # ---------------------------
 # Generic helpers (tolerant to internal API naming drift)
 # ---------------------------
+
 
 def _sha3_256() -> Callable[[bytes], bytes]:
     hmod = importlib.import_module("da.utils.hash")
     for name in ("sha3_256", "sha3_256_bytes", "hash_sha3_256"):
         if hasattr(hmod, name):
             fn = getattr(hmod, name)
+
             def _wrap(b: bytes, _fn=fn):
                 out = _fn(b)
                 return out if isinstance(out, (bytes, bytearray)) else bytes(out)
+
             return _wrap
     raise RuntimeError("No sha3_256 in da.utils.hash")
 
@@ -88,14 +90,21 @@ def _build_range_proof(tree: Any, ns_min: int, ns_max: int) -> Any:
     raise RuntimeError("No range-proof builder found")
 
 
-def _verify_inclusion(root: bytes, index: int, ns: int, data: bytes, proof: Any, ns_bytes: int) -> bool:
+def _verify_inclusion(
+    root: bytes, index: int, ns: int, data: bytes, proof: Any, ns_bytes: int
+) -> bool:
     # Try verify module first
     for modname in ("da.nmt.verify", "da.nmt.proofs"):
         try:
             vmod = importlib.import_module(modname)
         except ModuleNotFoundError:
             continue
-        for fname in ("verify_inclusion", "verify_inclusion_proof", "inclusion_verify", "verify_leaf"):
+        for fname in (
+            "verify_inclusion",
+            "verify_inclusion_proof",
+            "inclusion_verify",
+            "verify_leaf",
+        ):
             if hasattr(vmod, fname):
                 fn = getattr(vmod, fname)
                 sig = inspect.signature(fn)
@@ -129,13 +138,20 @@ def _verify_inclusion(root: bytes, index: int, ns: int, data: bytes, proof: Any,
     raise RuntimeError("No inclusion verifier found")
 
 
-def _verify_range(root: bytes, ns_min: int, ns_max: int, proof: Any, ns_bytes: int) -> bool:
+def _verify_range(
+    root: bytes, ns_min: int, ns_max: int, proof: Any, ns_bytes: int
+) -> bool:
     for modname in ("da.nmt.verify", "da.nmt.proofs"):
         try:
             vmod = importlib.import_module(modname)
         except ModuleNotFoundError:
             continue
-        for fname in ("verify_range", "verify_namespace_range", "range_verify", "verify_range_proof"):
+        for fname in (
+            "verify_range",
+            "verify_namespace_range",
+            "range_verify",
+            "verify_range_proof",
+        ):
             if hasattr(vmod, fname):
                 fn = getattr(vmod, fname)
                 sig = inspect.signature(fn)
@@ -204,6 +220,7 @@ def _corrupt_proof(proof: Any) -> Any:
 # Fixtures
 # ---------------------------
 
+
 @pytest.fixture
 def sample_leaves() -> List[Tuple[int, bytes]]:
     # namespaces: 0x01 has two leaves, 0x03 has two, 0xFF has one
@@ -229,6 +246,7 @@ def built_tree(sample_leaves):
 # Tests — Inclusion proofs
 # ---------------------------
 
+
 def test_inclusion_proof_valid(built_tree, sample_leaves):
     tree, root = built_tree
     # choose a leaf in the middle to exercise non-trivial paths
@@ -246,7 +264,9 @@ def test_inclusion_proof_rejects_tampering(built_tree, sample_leaves):
     bad = _corrupt_proof(proof)
     # If corruption couldn't be applied (structure unknown), skip to avoid false negative
     if bad == proof:
-        pytest.skip("Proof structure did not expose a branch to corrupt; skipping tamper test")
+        pytest.skip(
+            "Proof structure did not expose a branch to corrupt; skipping tamper test"
+        )
     ok = _verify_inclusion(root, index, ns, data, proof, ns_bytes=8)
     bad_ok = _verify_inclusion(root, index, ns, data, bad, ns_bytes=8)
     assert ok is True
@@ -278,6 +298,7 @@ def test_inclusion_proof_wrong_namespace_fails(built_tree, sample_leaves):
 # Tests — Namespace range proofs
 # ---------------------------
 
+
 def test_namespace_range_proof_valid_single_ns(built_tree):
     tree, root = built_tree
     # range that selects exactly namespace 0x01
@@ -308,8 +329,8 @@ def test_namespace_range_proof_tamper_rejected(built_tree):
     proof = _build_range_proof(tree, 0x01, 0xFF)
     bad = _corrupt_proof(proof)
     if bad == proof:
-        pytest.skip("Range proof structure did not expose a branch to corrupt; skipping tamper test")
+        pytest.skip(
+            "Range proof structure did not expose a branch to corrupt; skipping tamper test"
+        )
     assert _verify_range(root, 0x01, 0xFF, proof, ns_bytes=8) is True
     assert _verify_range(root, 0x01, 0xFF, bad, ns_bytes=8) is False
-
-

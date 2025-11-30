@@ -16,6 +16,7 @@ BanList = banlist_mod.BanList
 @dataclass
 class FakeSender:
     """Helper just to keep sender identities readable in assertions."""
+
     name: str
 
     @property
@@ -42,7 +43,9 @@ class FakeClock:
         self._t += float(seconds)
 
 
-def _banlist_with_low_fee_policy(low_fee_ban_s: int) -> tuple[BanList, FakeClock, BanPolicy]:
+def _banlist_with_low_fee_policy(
+    low_fee_ban_s: int,
+) -> tuple[BanList, FakeClock, BanPolicy]:
     clock = FakeClock(start=0.0)
     policy = BanPolicy()
     policy.low_fee_ban_s = low_fee_ban_s

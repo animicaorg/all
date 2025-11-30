@@ -4,27 +4,11 @@ from typing import Any, List, Tuple
 
 import pytest
 
-from vm_py.abi.encoding import (
-    encode_bool,
-    encode_uint,
-    encode_int,
-    encode_bytes,
-    encode_value,
-    encode_args,
-)
-from vm_py.abi.decoding import (
-    decode_bool,
-    decode_uint,
-    decode_int,
-    decode_bytes,
-    decode_value,
-    decode_args,
-)
-from vm_py.abi.types import (
-    ABITypeError,
-    ValidationError,
-    parse_type,
-)
+from vm_py.abi.decoding import (decode_args, decode_bool, decode_bytes,
+                                decode_int, decode_uint, decode_value)
+from vm_py.abi.encoding import (encode_args, encode_bool, encode_bytes,
+                                encode_int, encode_uint, encode_value)
+from vm_py.abi.types import ABITypeError, ValidationError, parse_type
 
 
 def _roundtrip_scalar(py_val: Any, type_spec: str) -> Tuple[Any, bytes]:
@@ -154,8 +138,8 @@ def test_int_rejects_out_of_range() -> None:
         b"\x00",
         b"hello",
         b"\x00\xff\x10",
-        "0x",           # hex-string empty
-        "0xdeadbeef",   # hex-string, normalized by coerce_bytes
+        "0x",  # hex-string empty
+        "0xdeadbeef",  # hex-string, normalized by coerce_bytes
     ],
 )
 def test_bytes_dynamic_roundtrip(payload: Any) -> None:
@@ -189,9 +173,9 @@ def test_bytes_fixed_roundtrip_and_length_errors() -> None:
 
 def test_bytes_fixed_decode_uses_exact_length() -> None:
     # When using decode_bytes with fixed_len, it should read exactly N bytes.
-    buf = b"\xAA\xBB\xCC\xDDextra"
+    buf = b"\xaa\xbb\xcc\xddextra"
     out, offset = decode_bytes(buf, 0, fixed_len=4)
-    assert out == b"\xAA\xBB\xCC\xDD"
+    assert out == b"\xaa\xbb\xcc\xdd"
     assert offset == 4  # "extra" remains unread
 
 

@@ -29,7 +29,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from . import PosterEnv, ENV_KEYS, load_env, get_logger
+from . import ENV_KEYS, PosterEnv, get_logger, load_env
 
 _LOG = get_logger("oracle_poster.config")
 
@@ -38,7 +38,10 @@ _LOG = get_logger("oracle_poster.config")
 # .env loading (zero external deps)
 # --------------------------------------------------------------------------------------
 
-def load_dotenv_file(path: str | os.PathLike, *, override: bool = True) -> Dict[str, str]:
+
+def load_dotenv_file(
+    path: str | os.PathLike, *, override: bool = True
+) -> Dict[str, str]:
     """
     Minimal .env loader supporting KEY=VALUE lines, quotes, and comments.
     Existing os.environ keys are preserved unless override=True.
@@ -67,7 +70,9 @@ def load_dotenv_file(path: str | os.PathLike, *, override: bool = True) -> Dict[
         val = val.strip()
 
         # Strip matching quotes if present
-        if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+        if (val.startswith('"') and val.endswith('"')) or (
+            val.startswith("'") and val.endswith("'")
+        ):
             val = val[1:-1]
 
         if override or key not in os.environ:
@@ -97,16 +102,22 @@ def _path_readable(p: Optional[str]) -> bool:
 
 def _validate_addr(name: str, addr: str) -> None:
     if not _ADDR_RE.match(addr or ""):
-        raise ConfigError(f"{name} must be a 20-byte hex address like 0xabc… (got {addr!r})")
+        raise ConfigError(
+            f"{name} must be a 20-byte hex address like 0xabc… (got {addr!r})"
+        )
 
 
 def _validate_namespace(ns: str) -> None:
     if not _HEX_RE.match(ns or ""):
-        raise ConfigError("DA_NAMESPACE_ID must be hex like 0x<even-length>. Example: 0x74656d706c617465")
+        raise ConfigError(
+            "DA_NAMESPACE_ID must be hex like 0x<even-length>. Example: 0x74656d706c617465"
+        )
     # Require 4..32 bytes (8..64 hex chars after '0x')
     hexlen = len(ns) - 2
     if hexlen % 2 != 0 or not (8 <= hexlen <= 64):
-        raise ConfigError("DA_NAMESPACE_ID hex length must be even and between 8 and 64 characters (4..32 bytes)")
+        raise ConfigError(
+            "DA_NAMESPACE_ID hex length must be even and between 8 and 64 characters (4..32 bytes)"
+        )
 
 
 def _validate_method(sig: str) -> None:
@@ -127,9 +138,13 @@ def _validate_source(cfg: PosterEnv) -> None:
     both = bool(cfg.source_file_path) and bool(cfg.source_command)
     none = not cfg.source_file_path and not cfg.source_command
     if both:
-        raise ConfigError("Specify only one of SOURCE_FILE_PATH or SOURCE_COMMAND, not both")
+        raise ConfigError(
+            "Specify only one of SOURCE_FILE_PATH or SOURCE_COMMAND, not both"
+        )
     if none:
-        _LOG.warning("Neither SOURCE_FILE_PATH nor SOURCE_COMMAND set; poster may be idle.")
+        _LOG.warning(
+            "Neither SOURCE_FILE_PATH nor SOURCE_COMMAND set; poster may be idle."
+        )
 
 
 def _validate_files(cfg: PosterEnv) -> None:
@@ -143,7 +158,9 @@ def _validate_lengths(cfg: PosterEnv) -> None:
     if cfg.da_max_blob_bytes <= 0:
         raise ConfigError("DA_MAX_BLOB_BYTES must be > 0")
     if cfg.min_change_bps is not None and not (1 <= cfg.min_change_bps <= 10000):
-        raise ConfigError("MIN_CHANGE_BPS must be in [1, 10000] basis points (or unset)")
+        raise ConfigError(
+            "MIN_CHANGE_BPS must be in [1, 10000] basis points (or unset)"
+        )
     if cfg.poll_interval_sec <= 0:
         raise ConfigError("POLL_INTERVAL_SEC must be > 0")
     if cfg.http_timeout_sec <= 0:
@@ -172,7 +189,9 @@ def validate_config(cfg: PosterEnv) -> None:
 
     # Signing mode expectation (not strictly required, but sanity check)
     if not (cfg.oracle_mnemonic or cfg.keystore_path):
-        _LOG.warning("No ORACLE_MNEMONIC or KEYSTORE_PATH provided — assuming external signer.")
+        _LOG.warning(
+            "No ORACLE_MNEMONIC or KEYSTORE_PATH provided — assuming external signer."
+        )
 
 
 # --------------------------------------------------------------------------------------
@@ -224,7 +243,11 @@ def config_summary(cfg: PosterEnv) -> str:
     """
     Human-readable, single-paragraph summary suitable for logs.
     """
-    src = "command" if cfg.source_command else ("file" if cfg.source_file_path else "none")
+    src = (
+        "command"
+        if cfg.source_command
+        else ("file" if cfg.source_file_path else "none")
+    )
     parts = [
         f"rpc={cfg.rpc_url}",
         f"chain_id={cfg.chain_id}",
@@ -252,6 +275,7 @@ def effective_signing_mode(cfg: PosterEnv) -> str:
 # --------------------------------------------------------------------------------------
 # High-level resolver
 # --------------------------------------------------------------------------------------
+
 
 def resolve_config(
     env_file: Optional[str] = None,
@@ -283,6 +307,7 @@ def resolve_config(
 # CLI
 # --------------------------------------------------------------------------------------
 
+
 def _parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(
         prog="oracle_poster.config",
@@ -290,10 +315,23 @@ def _parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         epilog="Example: python -m oracle_poster.config --env-file .env --validate --print",
     )
     ap.add_argument("--env-file", help="Path to .env file to load before validating")
-    ap.add_argument("--validate", action="store_true", help="Validate config and exit non-zero on failure")
-    ap.add_argument("--print", dest="do_print", action="store_true", help="Print a human-readable summary")
-    ap.add_argument("--json", action="store_true", help="Emit JSON (redacted) config to stdout")
-    ap.add_argument("--raw", action="store_true", help="Include raw environment (redacted) in JSON")
+    ap.add_argument(
+        "--validate",
+        action="store_true",
+        help="Validate config and exit non-zero on failure",
+    )
+    ap.add_argument(
+        "--print",
+        dest="do_print",
+        action="store_true",
+        help="Print a human-readable summary",
+    )
+    ap.add_argument(
+        "--json", action="store_true", help="Emit JSON (redacted) config to stdout"
+    )
+    ap.add_argument(
+        "--raw", action="store_true", help="Include raw environment (redacted) in JSON"
+    )
     return ap.parse_args(list(argv) if argv is not None else None)
 
 

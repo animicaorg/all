@@ -1,27 +1,38 @@
 from __future__ import annotations
-from typing import Mapping, Optional, List, Any
+
 import inspect
 from dataclasses import is_dataclass, replace
+from typing import Any, List, Mapping, Optional
 
 from aicf.errors import RegistryError
-from aicf.registry.provider import Provider, ProviderStatus, Capability
 from aicf.registry import verify_attest
+from aicf.registry.provider import Capability, Provider, ProviderStatus
+
 
 class Allowlist:
-    def __init__(self, denied_ids: set[str] | None = None, denied_regions: set[str] | None = None) -> None:
+    def __init__(
+        self, denied_ids: set[str] | None = None, denied_regions: set[str] | None = None
+    ) -> None:
         self._ids = set(denied_ids or ())
         self._regions = set(denied_regions or ())
 
     def is_denied(self, provider_id: str, region: str) -> bool:
         return provider_id in self._ids or region in self._regions
 
+
 class Registry:
     def __init__(self, allowlist: Optional[Allowlist] = None) -> None:
         self._allow = allowlist or Allowlist()
         self._providers: dict[str, Provider] = {}
 
-    def _build_provider(self, provider_id: str, capabilities: Capability,
-                        endpoints: Mapping[str, str], stake: int, region: str) -> Provider:
+    def _build_provider(
+        self,
+        provider_id: str,
+        capabilities: Capability,
+        endpoints: Mapping[str, str],
+        stake: int,
+        region: str,
+    ) -> Provider:
         sig = None
         try:
             sig = inspect.signature(Provider)  # type: ignore[arg-type]
@@ -107,7 +118,9 @@ class Registry:
         self._providers[provider_id] = p2
         return p2
 
-    def update_endpoints(self, provider_id: str, new_eps: Mapping[str, str]) -> Provider:
+    def update_endpoints(
+        self, provider_id: str, new_eps: Mapping[str, str]
+    ) -> Provider:
         p = self._providers[provider_id]
         if is_dataclass(p):
             p2 = replace(p, endpoints=dict(new_eps))

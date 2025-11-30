@@ -10,9 +10,10 @@ This module centralizes a few low-level, allocation-conscious utilities:
 
 All functions are deterministic and side-effect free.
 """
+
 from __future__ import annotations
 
-from typing import Iterable, Iterator, Tuple, Union, BinaryIO
+from typing import BinaryIO, Iterable, Iterator, Tuple, Union
 
 BytesLike = Union[bytes, bytearray, memoryview]
 
@@ -22,6 +23,7 @@ HEX_PREFIX = "0x"
 # -----------------------------------------------------------------------------
 # Hex helpers
 # -----------------------------------------------------------------------------
+
 
 def add_0x(h: str) -> str:
     """Ensure a lowercase '0x' prefix is present."""
@@ -64,6 +66,7 @@ def hex_to_bytes(s: str) -> bytes:
 # Unsigned varints (LEB128-style)
 # -----------------------------------------------------------------------------
 
+
 def write_uvarint(value: int) -> bytes:
     """Encode a non-negative integer using unsigned LEB128."""
     if value < 0:
@@ -105,6 +108,7 @@ def read_uvarint(buf: BytesLike, offset: int = 0) -> tuple[int, int]:
 # Chunking helpers
 # -----------------------------------------------------------------------------
 
+
 def iter_chunks(data: BytesLike, size: int, *, start: int = 0) -> Iterator[memoryview]:
     """
     Yield memoryview slices of `data` of at most `size` bytes, starting at `start`.
@@ -139,6 +143,7 @@ def join_chunks(chunks: Iterable[BytesLike]) -> bytes:
 # Varuint (unsigned LEB128)
 # -----------------------------------------------------------------------------
 
+
 def encode_varuint(n: int) -> bytes:
     """
     Encode non-negative integer `n` using unsigned LEB128 (little-endian base-128).
@@ -157,7 +162,9 @@ def encode_varuint(n: int) -> bytes:
     return bytes(out)
 
 
-def decode_varuint(buf: BytesLike, *, offset: int = 0, max_bytes: int = 10) -> Tuple[int, int]:
+def decode_varuint(
+    buf: BytesLike, *, offset: int = 0, max_bytes: int = 10
+) -> Tuple[int, int]:
     """
     Decode a varuint from `buf` starting at `offset`.
 
@@ -203,7 +210,9 @@ def pack_varbytes(payload: BytesLike) -> bytes:
     return encode_varuint(len(pb)) + pb
 
 
-def unpack_varbytes(buf: BytesLike, *, offset: int = 0, max_len: int | None = None) -> Tuple[bytes, int]:
+def unpack_varbytes(
+    buf: BytesLike, *, offset: int = 0, max_len: int | None = None
+) -> Tuple[bytes, int]:
     """
     Unpack varbytes from `buf` starting at `offset`.
 
@@ -229,6 +238,7 @@ def unpack_varbytes(buf: BytesLike, *, offset: int = 0, max_len: int | None = No
 # Internal helpers
 # -----------------------------------------------------------------------------
 
+
 def _b(x: BytesLike) -> bytes:
     """Coerce to `bytes` without unnecessary copies."""
     if isinstance(x, bytes):
@@ -243,9 +253,19 @@ def _b(x: BytesLike) -> bytes:
 
 __all__ = [
     # hex
-    "HEX_PREFIX", "add_0x", "strip_0x", "is_hexstr", "bytes_to_hex", "hex_to_bytes",
+    "HEX_PREFIX",
+    "add_0x",
+    "strip_0x",
+    "is_hexstr",
+    "bytes_to_hex",
+    "hex_to_bytes",
     # chunking
-    "iter_chunks", "chunk_count", "join_chunks",
+    "iter_chunks",
+    "chunk_count",
+    "join_chunks",
     # varuint / varbytes
-    "encode_varuint", "decode_varuint", "pack_varbytes", "unpack_varbytes",
+    "encode_varuint",
+    "decode_varuint",
+    "pack_varbytes",
+    "unpack_varbytes",
 ]

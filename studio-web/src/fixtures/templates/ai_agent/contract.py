@@ -12,19 +12,20 @@
 #
 # Storage keys are compact single-bytes to reduce overhead.
 
-from stdlib import storage, events, abi, hash, syscalls  # type: ignore
+from stdlib import abi, events, hash, storage, syscalls  # type: ignore
 
 # ---- constants & keys -------------------------------------------------------
 
 MAX_BYTES = 4096  # conservative cap for prompts/results to keep deterministic bounds
 
-KEY_MODEL = b"m"        # preferred model id (bytes)
-KEY_LAST_TASK = b"t"    # last enqueued task_id (bytes)
+KEY_MODEL = b"m"  # preferred model id (bytes)
+KEY_LAST_TASK = b"t"  # last enqueued task_id (bytes)
 KEY_LAST_PROMPT = b"p"  # last prompt (truncated copy) (bytes)
 KEY_LAST_RESULT = b"r"  # cached last result (bytes)
 
 
 # ---- helpers ----------------------------------------------------------------
+
 
 def _clamp(b: bytes, limit: int = MAX_BYTES) -> bytes:
     if len(b) > limit:
@@ -44,6 +45,7 @@ def _emit(name: bytes, args: dict) -> None:
 
 
 # ---- view functions ---------------------------------------------------------
+
 
 def get_model() -> bytes:
     """Return the configured model id (bytes); empty if not set."""
@@ -74,6 +76,7 @@ def last_result() -> bytes:
 
 # ---- mutating functions -----------------------------------------------------
 
+
 def set_model(model: bytes) -> None:
     """
     Configure the preferred model id used by request().
@@ -81,10 +84,13 @@ def set_model(model: bytes) -> None:
     model = _clamp(model)
     _require(len(model) > 0, b"MODEL_EMPTY")
     storage.set(KEY_MODEL, model)
-    _emit(b"ModelSet", {
-        b"model": model,
-        b"model_hash": hash.keccak256(model),
-    })
+    _emit(
+        b"ModelSet",
+        {
+            b"model": model,
+            b"model_hash": hash.keccak256(model),
+        },
+    )
 
 
 def request(prompt: bytes) -> bytes:
@@ -99,16 +105,21 @@ def request(prompt: bytes) -> bytes:
     prompt = _clamp(prompt)
     _require(len(prompt) > 0, b"PROMPT_EMPTY")
 
-    task_id = syscalls.ai_enqueue(model, prompt)  # deterministic id: H(chainId|height|tx|caller|payload)
+    task_id = syscalls.ai_enqueue(
+        model, prompt
+    )  # deterministic id: H(chainId|height|tx|caller|payload)
 
     storage.set(KEY_LAST_TASK, task_id)
     storage.set(KEY_LAST_PROMPT, prompt)
 
-    _emit(b"AIRequested", {
-        b"model": model,
-        b"prompt_hash": hash.keccak256(prompt),
-        b"task_id": task_id,
-    })
+    _emit(
+        b"AIRequested",
+        {
+            b"model": model,
+            b"prompt_hash": hash.keccak256(prompt),
+            b"task_id": task_id,
+        },
+    )
     return task_id
 
 
@@ -137,11 +148,14 @@ def consume_last() -> bytes:
         return b""
 
     storage.set(KEY_LAST_RESULT, res)
-    _emit(b"AIResult", {
-        b"task_id": task_id,
-        b"result_hash": hash.keccak256(res),
-        b"size": len(res),
-    })
+    _emit(
+        b"AIResult",
+        {
+            b"task_id": task_id,
+            b"result_hash": hash.keccak256(res),
+            b"size": len(res),
+        },
+    )
     return res
 
 
@@ -153,7 +167,10 @@ def clear_cache() -> None:
     had = storage.get(KEY_LAST_RESULT)
     if len(had) > 0:
         storage.set(KEY_LAST_RESULT, b"")
-        _emit(b"CacheCleared", {
-            b"cleared_hash": hash.keccak256(had),
-            b"prev_size": len(had),
-        })
+        _emit(
+            b"CacheCleared",
+            {
+                b"cleared_hash": hash.keccak256(had),
+                b"prev_size": len(had),
+            },
+        )

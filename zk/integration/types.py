@@ -61,8 +61,10 @@ __version__ = "0.1.0"
 # Basic enums / aliases
 # -----------------------------------------------------------------------------
 
+
 class Kind(str, Enum):
     """Verifier kinds supported by the registry."""
+
     GROTH16_BN254 = "groth16_bn254"
     PLONK_KZG_BN254 = "plonk_kzg_bn254"
     STARK_FRI_MERKLE = "stark_fri_merkle"
@@ -75,6 +77,7 @@ PublicInputs = List[PublicValue]
 # -----------------------------------------------------------------------------
 # Records
 # -----------------------------------------------------------------------------
+
 
 class ProofEnvelope(msgspec.Struct, frozen=True):
     """
@@ -91,6 +94,7 @@ class ProofEnvelope(msgspec.Struct, frozen=True):
 
     At least one of (`vk`, `vk_ref`) **should** be provided for reproducibility.
     """
+
     kind: str
     proof: Dict[str, Any]
     public_inputs: Optional[PublicInputs] = None
@@ -102,7 +106,9 @@ class ProofEnvelope(msgspec.Struct, frozen=True):
     def require_vk_material(self) -> None:
         """Raise if neither `vk` nor `vk_ref` is present."""
         if self.vk is None and (self.vk_ref is None or self.vk_ref == ""):
-            raise ValueError("ProofEnvelope requires `vk` or `vk_ref` for verification.")
+            raise ValueError(
+                "ProofEnvelope requires `vk` or `vk_ref` for verification."
+            )
 
     def with_public_inputs_hex(self) -> "ProofEnvelope":
         """
@@ -131,6 +137,7 @@ class SignatureRecord(msgspec.Struct, frozen=True, omit_defaults=True):
         key_id: Free-form label identifying the signer key.
         signature: Hex-encoded signature over payload(circuit_id, kind, vk_format, vk_hash).
     """
+
     alg: str
     key_id: str
     signature: str
@@ -157,6 +164,7 @@ class VkRecord(msgspec.Struct, frozen=True, omit_defaults=True):
       - vk
       - fri_params
     """
+
     kind: str
     vk_format: str
     vk: Optional[Dict[str, Any]] = None
@@ -170,6 +178,7 @@ class VkRecord(msgspec.Struct, frozen=True, omit_defaults=True):
 # Hashing helpers (bit-for-bit compatible with registry tools)
 # -----------------------------------------------------------------------------
 
+
 def canonical_json_bytes(obj: Any) -> bytes:
     """
     Deterministic JSON bytes: sorted keys, compact separators, UTF-8.
@@ -179,7 +188,10 @@ def canonical_json_bytes(obj: Any) -> bytes:
     behavior (which use Python's stdlib `json`) to ensure bit-for-bit matches.
     """
     import json  # local import to minimize global overhead
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+    return json.dumps(
+        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
 
 
 def sha3_256_hex(data: bytes) -> str:

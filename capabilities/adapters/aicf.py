@@ -24,16 +24,16 @@ in minimal deployments (e.g., tests).
 
 from __future__ import annotations
 
-import json
-import os
-import time
 import base64
 import binascii
+import json
+import os
 import random
 import string
-from typing import Any, Dict, Optional, Union, Tuple
+import time
+from typing import Any, Dict, Optional, Tuple, Union
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-from urllib.error import URLError, HTTPError
 
 HexLike = Union[str, bytes, bytearray, memoryview]
 
@@ -49,14 +49,21 @@ __all__ = [
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _rand_id(k: int = 8) -> str:
-    return "".join(random.choice(string.ascii_letters + string.digits) for _ in range(k))
+    return "".join(
+        random.choice(string.ascii_letters + string.digits) for _ in range(k)
+    )
+
 
 def _as_hex(data: Union[bytes, bytearray, memoryview, str]) -> str:
     if isinstance(data, (bytes, bytearray, memoryview)):
         return "0x" + bytes(data).hex()
     s = str(data)
-    return s if s.startswith("0x") else "0x" + s.encode().hex()  # text → utf-8 bytes → hex
+    return (
+        s if s.startswith("0x") else "0x" + s.encode().hex()
+    )  # text → utf-8 bytes → hex
+
 
 def _from_hex(x: HexLike) -> bytes:
     if isinstance(x, (bytes, bytearray, memoryview)):
@@ -69,14 +76,17 @@ def _from_hex(x: HexLike) -> bytes:
     except binascii.Error as e:
         raise ValueError(f"Invalid hex: {x}") from e
 
+
 def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode("ascii")
+
 
 _TERMINAL_STATUSES = {"COMPLETED", "FAILED", "EXPIRED", "CANCELLED"}
 
 # ---------------------------------------------------------------------------
 # JSON-RPC shim (stdlib only)
 # ---------------------------------------------------------------------------
+
 
 class _JsonRpc:
     def __init__(self, url: str, api_key: Optional[str] = None, timeout: float = 30.0):
@@ -100,7 +110,9 @@ class _JsonRpc:
             with urlopen(req, timeout=self.timeout) as resp:
                 raw = resp.read()
         except HTTPError as e:
-            raise RuntimeError(f"HTTP {e.code} calling {method}: {e.read().decode('utf-8', 'ignore')}") from e
+            raise RuntimeError(
+                f"HTTP {e.code} calling {method}: {e.read().decode('utf-8', 'ignore')}"
+            ) from e
         except URLError as e:
             raise RuntimeError(f"Network error calling {method}: {e}") from e
         try:
@@ -113,9 +125,11 @@ class _JsonRpc:
             raise RuntimeError(f"RPC error {code} for {method}: {msg}")
         return obj.get("result")
 
+
 # ---------------------------------------------------------------------------
 # Core adapter
 # ---------------------------------------------------------------------------
+
 
 class AICFAdapter:
     """
@@ -139,7 +153,9 @@ class AICFAdapter:
         self.endpoint = endpoint or os.getenv("AICF_ENDPOINT")
         self.api_key = api_key or os.getenv("AICF_API_KEY")
         self.timeout_s = timeout_s
-        self.rpc = _JsonRpc(self.endpoint, self.api_key, timeout_s) if self.endpoint else None
+        self.rpc = (
+            _JsonRpc(self.endpoint, self.api_key, timeout_s) if self.endpoint else None
+        )
 
     # -------- Submission --------
 
@@ -158,7 +174,11 @@ class AICFAdapter:
             "model": model,
             # For JSON-RPC we send both hex and base64; servers can pick.
             "prompt_hex": _as_hex(prompt),
-            "prompt_b64": _b64(prompt if isinstance(prompt, (bytes, bytearray, memoryview)) else str(prompt).encode()),
+            "prompt_b64": _b64(
+                prompt
+                if isinstance(prompt, (bytes, bytearray, memoryview))
+                else str(prompt).encode()
+            ),
             "fee_units": fee_units,
             "tags": tags or {},
             "priority": priority,
@@ -275,8 +295,11 @@ class AICFAdapter:
             if status in _TERMINAL_STATUSES:
                 return last
             if time.monotonic() >= deadline:
-                raise TimeoutError(f"AICF job {job_id} not completed in {timeout_s}s (last status={status})")
+                raise TimeoutError(
+                    f"AICF job {job_id} not completed in {timeout_s}s (last status={status})"
+                )
             time.sleep(poll_interval_s)
+
 
 # ---------------------------------------------------------------------------
 # Public module-level convenience functions
@@ -285,27 +308,34 @@ class AICFAdapter:
 # A process-global default adapter which picks up env if the user doesn't pass one.
 _default_adapter: Optional[AICFAdapter] = None
 
+
 def _get_default() -> AICFAdapter:
     global _default_adapter
     if _default_adapter is None:
         _default_adapter = AICFAdapter()
     return _default_adapter
 
+
 def enqueue_ai(**kwargs) -> Dict[str, Any]:
     return _get_default().enqueue_ai(**kwargs)
+
 
 def enqueue_quantum(**kwargs) -> Dict[str, Any]:
     return _get_default().enqueue_quantum(**kwargs)
 
+
 def get_job(job_id: str) -> Dict[str, Any]:
     return _get_default().get_job(job_id)
+
 
 def wait_for_completion(job_id: str, **kwargs) -> Dict[str, Any]:
     return _get_default().wait_for_completion(job_id, **kwargs)
 
+
 # ---------------------------------------------------------------------------
 # Normalizers
 # ---------------------------------------------------------------------------
+
 
 def _normalize_submit_receipt(obj: Any) -> Dict[str, Any]:
     """
@@ -317,7 +347,9 @@ def _normalize_submit_receipt(obj: Any) -> Dict[str, Any]:
         job_id = obj.get("job_id") or obj.get("id") or obj.get("jobId")
         if not job_id:
             # Sometimes receipts are nested
-            job_id = (obj.get("receipt") or {}).get("job_id") or (obj.get("result") or {}).get("job_id")
+            job_id = (obj.get("receipt") or {}).get("job_id") or (
+                obj.get("result") or {}
+            ).get("job_id")
         rec = obj.get("receipt") or obj.get("result") or obj
         if not isinstance(rec, dict):
             rec = {"raw": rec}
@@ -329,6 +361,7 @@ def _normalize_submit_receipt(obj: Any) -> Dict[str, Any]:
     # Fallback: stringify
     return {"job_id": "local-" + _rand_id(10), "receipt": {"raw": obj}}
 
+
 def _normalize_job(obj: Any) -> Dict[str, Any]:
     """
     Normalize job info. Returns at minimum:
@@ -338,7 +371,7 @@ def _normalize_job(obj: Any) -> Dict[str, Any]:
         return {"job_id": "unknown", "status": "UNKNOWN", "raw": obj}
 
     job_id = obj.get("job_id") or obj.get("id") or obj.get("jobId") or "unknown"
-    status = (obj.get("status") or obj.get("state") or "UNKNOWN")
+    status = obj.get("status") or obj.get("state") or "UNKNOWN"
     # Result may appear under different keys
     result = obj.get("result") or obj.get("output") or obj.get("payload") or None
     out = dict(obj)

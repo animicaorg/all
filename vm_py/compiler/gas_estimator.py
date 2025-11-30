@@ -26,34 +26,18 @@ Assumptions & bounds
 
 This module only depends on the *instruction IR* (`Prog`, `Block`, `Instr`, …).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Set, Tuple
+from typing import (Any, Dict, Iterable, List, Mapping, MutableMapping,
+                    Optional, Sequence, Set, Tuple)
 
-from .ir import (
-    Prog,
-    Block,
-    Instr,
-    ILoadConst,
-    ILoadName,
-    IStoreName,
-    IAttrGet,
-    ISubscriptGet,
-    IBinOp,
-    IUnaryOp,
-    ICompare,
-    ICall,
-    IPop,
-    IDup,
-    IReturn,
-    IJump,
-    IJumpIfTrue,
-    IJumpIfFalse,
-    INop,
-)
+from .ir import (Block, IAttrGet, IBinOp, ICall, ICompare, IDup, IJump,
+                 IJumpIfFalse, IJumpIfTrue, ILoadConst, ILoadName, INop, Instr,
+                 IPop, IReturn, IStoreName, ISubscriptGet, IUnaryOp, Prog)
 
 # ----------------------------- Gas Table Loading ----------------------------- #
 
@@ -67,7 +51,6 @@ _DEFAULT_GAS_TABLE: Dict[str, int] = {
     "dup": 1,
     "pop": 1,
     "return": 2,
-
     # arithmetic / logic
     "binop_add": 5,
     "binop_sub": 5,
@@ -81,13 +64,11 @@ _DEFAULT_GAS_TABLE: Dict[str, int] = {
     "binop_shl": 6,
     "binop_shr": 6,
     "binop_other": 8,  # fallback
-
     # unary
     "unary_neg": 3,
     "unary_not": 2,
     "unary_invert": 3,
     "unary_other": 3,
-
     # compares
     "cmp_eq": 3,
     "cmp_ne": 3,
@@ -96,16 +77,14 @@ _DEFAULT_GAS_TABLE: Dict[str, int] = {
     "cmp_gt": 4,
     "cmp_ge": 4,
     "cmp_other": 4,
-
     # control flow
     "jump": 1,
     "jump_if": 2,
     "nop": 0,
-
     # calls
-    "call_base": 12,     # setup/dispatch baseline
-    "call_arg": 2,       # per positional arg marshalling
-    "call_kwarg": 3,     # per keyword arg marshalling
+    "call_base": 12,  # setup/dispatch baseline
+    "call_arg": 2,  # per positional arg marshalling
+    "call_kwarg": 3,  # per keyword arg marshalling
 }
 
 # Mapping from IR operator strings → gas-table keys
@@ -137,7 +116,9 @@ _CMP_KEY = {
 }
 
 
-def _load_gas_table(explicit_path: Optional[str] = None) -> Tuple[Dict[str, int], str, List[str]]:
+def _load_gas_table(
+    explicit_path: Optional[str] = None,
+) -> Tuple[Dict[str, int], str, List[str]]:
     """
     Load gas table JSON.
 
@@ -155,13 +136,16 @@ def _load_gas_table(explicit_path: Optional[str] = None) -> Tuple[Dict[str, int]
         try:
             if p.is_file():
                 import json
+
                 table = json.loads(p.read_text(encoding="utf-8"))
                 # ensure int values
                 norm = {str(k): int(v) for k, v in table.items()}
                 # fill missing with defaults but record a note
                 missing = [k for k in _DEFAULT_GAS_TABLE if k not in norm]
                 if missing:
-                    notes.append(f"missing keys filled with defaults: {', '.join(sorted(missing))}")
+                    notes.append(
+                        f"missing keys filled with defaults: {', '.join(sorted(missing))}"
+                    )
                     for k in missing:
                         norm[k] = _DEFAULT_GAS_TABLE[k]
                 return norm, f"json:{p}", notes
@@ -173,6 +157,7 @@ def _load_gas_table(explicit_path: Optional[str] = None) -> Tuple[Dict[str, int]
 
 
 # ------------------------------- Estimation Core ------------------------------ #
+
 
 @dataclass(frozen=True)
 class GasEstimate:
@@ -203,7 +188,11 @@ def _instr_cost(i: Instr, table: Mapping[str, int]) -> int:
         key = _CMP_KEY.get(i.op, "cmp_other")
         return table[key]
     if isinstance(i, ICall):
-        return table["call_base"] + i.n_pos * table["call_arg"] + len(i.kw_names) * table["call_kwarg"]
+        return (
+            table["call_base"]
+            + i.n_pos * table["call_arg"]
+            + len(i.kw_names) * table["call_kwarg"]
+        )
     if isinstance(i, IPop):
         return table["pop"]
     if isinstance(i, IDup):
@@ -340,10 +329,13 @@ def estimate_prog_gas(
         "gas_table_source": source_desc,
         "notes": load_notes,
     }
-    return GasEstimate(total_upper_bound=total, per_block_costs=per_block, config=config)
+    return GasEstimate(
+        total_upper_bound=total, per_block_costs=per_block, config=config
+    )
 
 
 # ------------------------------- Pretty Helpers ------------------------------ #
+
 
 def format_estimate(est: GasEstimate) -> str:
     """Human-friendly single-line + per-block breakdown."""

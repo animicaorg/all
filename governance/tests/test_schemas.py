@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Dict, Any, Iterable
+from typing import Any, Dict, Iterable
 
 import pytest
 
@@ -29,7 +29,9 @@ except Exception as e:  # pragma: no cover
 try:
     from jsonschema import Draft202012Validator
 except Exception as e:  # pragma: no cover
-    pytest.skip("jsonschema not installed (pip install jsonschema)", allow_module_level=True)
+    pytest.skip(
+        "jsonschema not installed (pip install jsonschema)", allow_module_level=True
+    )
 
 
 ROOT = Path(__file__).resolve().parents[2]  # repo root
@@ -68,7 +70,9 @@ def metaschema_check(schema: Dict[str, Any]) -> None:
 def validator_for(schema: Dict[str, Any]) -> Draft202012Validator:
     # base_uri allows local $ref resolution relative to SCHEMAS_DIR
     base_uri = f"file://{SCHEMAS_DIR.as_posix()}/"
-    return Draft202012Validator(schema, resolver=Draft202012Validator.RESOLVER.resolver.bind(base_uri))
+    return Draft202012Validator(
+        schema, resolver=Draft202012Validator.RESOLVER.resolver.bind(base_uri)
+    )
 
 
 def extract_front_matter(md_path: Path) -> Dict[str, Any]:
@@ -113,10 +117,13 @@ def test_markdown_examples_validate(md_file: Path) -> None:
     schema = load_schema(schema_name)
     validator = validator_for(schema)
 
-    errors = sorted(validator.iter_errors(p if t not in ("ballot", "tally") else payload),
-                    key=lambda e: (list(e.path), e.message))
+    errors = sorted(
+        validator.iter_errors(p if t not in ("ballot", "tally") else payload),
+        key=lambda e: (list(e.path), e.message),
+    )
     assert not errors, "Schema errors:\n" + "\n".join(
-        f"- {md_file}:{'/'.join(map(str, e.path)) or '(root)'}: {e.message}" for e in errors
+        f"- {md_file}:{'/'.join(map(str, e.path)) or '(root)'}: {e.message}"
+        for e in errors
     )
 
 

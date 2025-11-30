@@ -1,12 +1,13 @@
+import copy
 import json
 import os
-import copy
-import pytest
 from importlib import import_module
 from typing import Any, Callable, Tuple, Union
 
+import pytest
 
 # --- helpers ------------------------------------------------------------------
+
 
 def _load_example_policy() -> Tuple[dict, str]:
     """
@@ -72,12 +73,16 @@ def _discover_builder() -> Callable[[Union[dict, str]], str]:
 
 
 def _is_hex512(root: str) -> bool:
-    return isinstance(root, str) and root.startswith("0x") and len(root) == 130 and all(
-        c in "0123456789abcdef" for c in root[2:]
+    return (
+        isinstance(root, str)
+        and root.startswith("0x")
+        and len(root) == 130
+        and all(c in "0123456789abcdef" for c in root[2:])
     )
 
 
 # --- tests --------------------------------------------------------------------
+
 
 def test_root_deterministic_and_hex_shape():
     policy, policy_path = _load_example_policy()
@@ -216,7 +221,9 @@ def test_cli_script_outputs_same_root(monkeypatch):
         root_cli = cli_mod.compute(policy_path)  # type: ignore[attr-defined]
     elif hasattr(cli_mod, "main") and callable(getattr(cli_mod, "main")):
         # Capture stdout
-        import io, sys
+        import io
+        import sys
+
         buf = io.StringIO()
         old = sys.stdout
         sys.stdout = buf

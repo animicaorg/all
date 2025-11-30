@@ -2,6 +2,7 @@ from __future__ import annotations
 
 try:
     import cbor2  # type: ignore
+
     _HAS_CBOR2 = True
 except Exception:
     cbor2 = None  # type: ignore
@@ -25,7 +26,9 @@ def canonical_bytes(obj: Any) -> bytes:
             # Older cbor2 may not accept canonical kwarg; emulate by sorting maps
             return cbor2.dumps(_sort_obj(obj))
     # fallback
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(
+        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
 
 
 def _sort_obj(obj: Any) -> Any:

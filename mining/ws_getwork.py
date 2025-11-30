@@ -14,12 +14,16 @@ except Exception:  # pragma: no cover
     import logging as _logging
 
     def get_logger(name: str) -> _logging.Logger:
-        _logging.basicConfig(level=_logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+        _logging.basicConfig(
+            level=_logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
+        )
         return _logging.getLogger(name)
+
 
 try:
     # These imports are only needed when mounted into the main FastAPI app
-    from fastapi import APIRouter, WebSocket, WebSocketDisconnect  # type: ignore
+    from fastapi import (APIRouter, WebSocket,  # type: ignore
+                         WebSocketDisconnect)
     from fastapi.websockets import WebSocketState  # type: ignore
 except Exception:  # pragma: no cover
     # Allow importing this module for type checking without FastAPI present
@@ -143,7 +147,9 @@ class WSGetWorkHub:
             self._template_update_evt.clear()
             if self._template is None:
                 continue
-            await self.broadcast({"jsonrpc": "2.0", "method": "miner.newWork", "params": self._template})
+            await self.broadcast(
+                {"jsonrpc": "2.0", "method": "miner.newWork", "params": self._template}
+            )
 
     async def shutdown(self) -> None:
         self._shutdown.set()
@@ -163,7 +169,9 @@ class WSGetWorkHub:
 
     async def _default_submit_cb(self, params: JSON) -> JSON:  # pragma: no cover
         # Conservative default: reject unless a real bridge wires this in.
-        return SubmitResult(accepted=False, reason="No submit bridge configured").to_json()
+        return SubmitResult(
+            accepted=False, reason="No submit bridge configured"
+        ).to_json()
 
     # ----------------- WebSocket session -----------------
 
@@ -176,20 +184,42 @@ class WSGetWorkHub:
         try:
             # On connect, optionally push the current work
             if self._template:
-                await ws.send_text(json.dumps({"jsonrpc": "2.0", "method": "miner.newWork", "params": self._template}))
+                await ws.send_text(
+                    json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "method": "miner.newWork",
+                            "params": self._template,
+                        }
+                    )
+                )
 
             while True:
                 raw = await ws.receive_text()
                 try:
                     obj = json.loads(raw)
                 except Exception:
-                    await ws.send_text(json.dumps({"jsonrpc": "2.0", "error": {"code": -32700, "message": "Parse error"}}))
+                    await ws.send_text(
+                        json.dumps(
+                            {
+                                "jsonrpc": "2.0",
+                                "error": {"code": -32700, "message": "Parse error"},
+                            }
+                        )
+                    )
                     continue
 
                 # Basic JSON-RPC 2.0 handling
                 jrpc = obj.get("jsonrpc")
                 if jrpc != "2.0":
-                    await ws.send_text(json.dumps({"jsonrpc": "2.0", "error": {"code": -32600, "message": "Invalid Request"}}))
+                    await ws.send_text(
+                        json.dumps(
+                            {
+                                "jsonrpc": "2.0",
+                                "error": {"code": -32600, "message": "Invalid Request"},
+                            }
+                        )
+                    )
                     continue
 
                 method = obj.get("method")
@@ -205,29 +235,54 @@ class WSGetWorkHub:
                         result = dict(tpl)
                         result["available"] = True
                         result.setdefault("serverTimeMs", int(time.time() * 1000))
-                    await ws.send_text(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": result}))
+                    await ws.send_text(
+                        json.dumps({"jsonrpc": "2.0", "id": req_id, "result": result})
+                    )
 
                 elif method == "miner.submitShare":
                     try:
                         submit_res = await self.submit_share(params)
-                        await ws.send_text(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": submit_res}))
+                        await ws.send_text(
+                            json.dumps(
+                                {"jsonrpc": "2.0", "id": req_id, "result": submit_res}
+                            )
+                        )
                     except Exception as e:
                         log.warning(f"[ws] submit error: {e}")
-                        await ws.send_text(json.dumps({
-                            "jsonrpc": "2.0",
-                            "id": req_id,
-                            "error": {"code": -32000, "message": "Submit failed", "data": str(e)},
-                        }))
+                        await ws.send_text(
+                            json.dumps(
+                                {
+                                    "jsonrpc": "2.0",
+                                    "id": req_id,
+                                    "error": {
+                                        "code": -32000,
+                                        "message": "Submit failed",
+                                        "data": str(e),
+                                    },
+                                }
+                            )
+                        )
 
                 elif method == "ping":
-                    await ws.send_text(json.dumps({"jsonrpc": "2.0", "id": req_id, "result": {"pong": True}}))
+                    await ws.send_text(
+                        json.dumps(
+                            {"jsonrpc": "2.0", "id": req_id, "result": {"pong": True}}
+                        )
+                    )
 
                 else:
-                    await ws.send_text(json.dumps({
-                        "jsonrpc": "2.0",
-                        "id": req_id,
-                        "error": {"code": -32601, "message": f"Method not found: {method}"},
-                    }))
+                    await ws.send_text(
+                        json.dumps(
+                            {
+                                "jsonrpc": "2.0",
+                                "id": req_id,
+                                "error": {
+                                    "code": -32601,
+                                    "message": f"Method not found: {method}",
+                                },
+                            }
+                        )
+                    )
         except WebSocketDisconnect:  # pragma: no cover
             pass
         except Exception as e:  # pragma: no cover
@@ -255,6 +310,7 @@ def get_hub() -> WSGetWorkHub:
 
 
 if router is not None:
+
     @router.websocket("/ws/getwork")
     async def ws_getwork_endpoint(ws: WebSocket) -> None:  # type: ignore
         """
@@ -269,9 +325,13 @@ if router is not None:
         """
         await _hub.serve_ws(ws)
 
+
 # --------------------------- Bridge helpers ---------------------------
 
-async def start_background_broadcaster(loop: Optional[asyncio.AbstractEventLoop] = None) -> asyncio.Task:
+
+async def start_background_broadcaster(
+    loop: Optional[asyncio.AbstractEventLoop] = None,
+) -> asyncio.Task:
     """
     Launch the hub's broadcaster task. Call this once during app startup.
     """
@@ -288,12 +348,14 @@ def wire_submit_callback(cb: SubmitCallback) -> None:
     _hub._submit_cb = cb
 
 
-def install_template_provider(provider: Callable[[], Awaitable[Optional[JSON]]],
-                              interval_sec: float = 1.0) -> asyncio.Task:
+def install_template_provider(
+    provider: Callable[[], Awaitable[Optional[JSON]]], interval_sec: float = 1.0
+) -> asyncio.Task:
     """
     Periodically poll a coroutine provider() → template (or None) and install when it changes.
     Useful for wiring the mining.templates.TemplateBuilder or the orchestrator.
     """
+
     async def _runner() -> None:
         last_id: Optional[str] = None
         while True:
@@ -338,7 +400,7 @@ if __name__ == "__main__":  # pragma: no cover
             job_id = f"demo-{ts // 5}"
             return {
                 "jobId": job_id,
-                "header": {"parentHash": "0x" + "00"*32, "height": ts // 5},
+                "header": {"parentHash": "0x" + "00" * 32, "height": ts // 5},
                 "shareTarget": 0.0015,
                 "thetaMicro": 1_250_000,
                 "deadlineMs": 5000,

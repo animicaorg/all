@@ -41,11 +41,11 @@ source of truth. This module focuses on parsing, validation, and making the
 fields easily available across core/.
 """
 
-from dataclasses import dataclass
-from typing import Any, Mapping, Optional, Tuple
-from pathlib import Path
-import os
 import binascii
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Mapping, Optional, Tuple
 
 try:
     import yaml  # type: ignore
@@ -80,6 +80,7 @@ def _require_range(name: str, val: float, lo: float, hi: float) -> float:
 @dataclass(frozen=True)
 class RetargetBounds:
     """Clamp factors applied to Θ per retarget window."""
+
     min: float
     max: float
 
@@ -94,6 +95,7 @@ class RetargetBounds:
 @dataclass(frozen=True)
 class RetargetParams:
     """EMA-based fractional retarget schedule for Θ."""
+
     window: int
     ema_alpha: float
     bounds: RetargetBounds
@@ -103,7 +105,9 @@ class RetargetParams:
         window = int(m["window"])
         if window <= 0:
             raise ValueError("retarget.window must be > 0")
-        ema_alpha = _require_range("retarget.ema_alpha", float(m["ema_alpha"]), 0.0, 1.0)
+        ema_alpha = _require_range(
+            "retarget.ema_alpha", float(m["ema_alpha"]), 0.0, 1.0
+        )
         bounds = RetargetBounds.from_mapping(m["bounds"])
         return cls(window=window, ema_alpha=ema_alpha, bounds=bounds)
 
@@ -145,11 +149,12 @@ class ChainParams:
     Only the subset needed by core boot, header validation and fork-choice
     is included here. Other modules may extend via their own config.
     """
+
     chain_id: int
     chain_name: str
 
     # Genesis
-    genesis_time: str          # ISO-8601
+    genesis_time: str  # ISO-8601
     genesis_hash: Bytes32
 
     # Policy roots (binds consensus validation to published policy trees)
@@ -157,8 +162,8 @@ class ChainParams:
     poies_policy_root: Bytes32
 
     # Consensus knobs
-    theta_initial: int         # micro-nats (µ-nats) threshold at genesis
-    gamma_total_cap: int       # total Γ cap (same unit scale as ψ inputs)
+    theta_initial: int  # micro-nats (µ-nats) threshold at genesis
+    gamma_total_cap: int  # total Γ cap (same unit scale as ψ inputs)
     retarget: RetargetParams
 
     # Block-level limits
@@ -194,8 +199,12 @@ class ChainParams:
             chain_name=chain_name,
             genesis_time=str(genesis["time"]),
             genesis_hash=_hex_to_bytes32(genesis["hash"], field="genesis.hash"),
-            alg_policy_root=_hex_to_bytes32(roots["alg_policy_root"], field="policy_roots.alg_policy_root"),
-            poies_policy_root=_hex_to_bytes32(roots["poies_policy_root"], field="policy_roots.poies_policy_root"),
+            alg_policy_root=_hex_to_bytes32(
+                roots["alg_policy_root"], field="policy_roots.alg_policy_root"
+            ),
+            poies_policy_root=_hex_to_bytes32(
+                roots["poies_policy_root"], field="policy_roots.poies_policy_root"
+            ),
             theta_initial=theta_initial,
             gamma_total_cap=gamma_total_cap,
             retarget=RetargetParams.from_mapping(cons["retarget"]),
@@ -261,7 +270,9 @@ class ChainParams:
                 chain_id = int(network_key.split(":")[-1])
             except ValueError:
                 chain_id = None
-        chain_id = int(chain_id if chain_id is not None else net.get("chain_id", 0) or 0)
+        chain_id = int(
+            chain_id if chain_id is not None else net.get("chain_id", 0) or 0
+        )
         if chain_id <= 0:
             raise ValueError("chain.id must be positive")
 
@@ -270,12 +281,20 @@ class ChainParams:
             raise ValueError("chain.name must be non-empty")
 
         genesis = net.get("genesis") or {}
-        genesis_time = str(genesis.get("time") or net.get("genesis_time_utc") or "1970-01-01T00:00:00Z")
-        genesis_hash = _bytes32_or_zero(genesis.get("hash") or net.get("genesis_hash"), field="genesis.hash")
+        genesis_time = str(
+            genesis.get("time") or net.get("genesis_time_utc") or "1970-01-01T00:00:00Z"
+        )
+        genesis_hash = _bytes32_or_zero(
+            genesis.get("hash") or net.get("genesis_hash"), field="genesis.hash"
+        )
 
         roots = net.get("policy_roots") or {}
-        alg_root = _bytes32_or_zero(roots.get("alg_policy_root"), field="policy_roots.alg_policy_root")
-        poies_root = _bytes32_or_zero(roots.get("poies_policy_root"), field="policy_roots.poies_policy_root")
+        alg_root = _bytes32_or_zero(
+            roots.get("alg_policy_root"), field="policy_roots.alg_policy_root"
+        )
+        poies_root = _bytes32_or_zero(
+            roots.get("poies_policy_root"), field="policy_roots.poies_policy_root"
+        )
 
         cons = (net.get("consensus") or {}).get("poies", {})
         theta_initial = int(cons.get("theta_initial_munats", 1_000_000))
@@ -308,7 +327,9 @@ class ChainParams:
             target_seconds=target_seconds,
             max_bytes=int(blocks_cfg.get("max_bytes", 1_500_000)),
             max_gas=int(blocks_cfg.get("max_gas", 20_000_000)),
-            tx_max_bytes=int(blocks_cfg.get("tx_max_bytes", blocks_cfg.get("max_bytes", 1_500_000))),
+            tx_max_bytes=int(
+                blocks_cfg.get("tx_max_bytes", blocks_cfg.get("max_bytes", 1_500_000))
+            ),
             min_gas_price=int(blocks_cfg.get("min_gas_price", 0)),
         )
 
@@ -362,8 +383,10 @@ class ChainParams:
         """
         A minimal, JSON-friendly public view of core params (for RPC).
         """
+
         def b32(x: bytes) -> str:
             return "0x" + x.hex()
+
         return {
             "chain": {"id": self.chain_id, "name": self.chain_name},
             "genesis": {"time": self.genesis_time, "hash": b32(self.genesis_hash)},
@@ -377,7 +400,10 @@ class ChainParams:
                 "retarget": {
                     "window": self.retarget.window,
                     "ema_alpha": self.retarget.ema_alpha,
-                    "bounds": {"min": self.retarget.bounds.min, "max": self.retarget.bounds.max},
+                    "bounds": {
+                        "min": self.retarget.bounds.min,
+                        "max": self.retarget.bounds.max,
+                    },
                 },
             },
             "block": {
@@ -391,6 +417,7 @@ class ChainParams:
 
 
 # -------- discovery helpers --------
+
 
 def default_params_path(env_var: str = "ANIMICA_PARAMS") -> Path:
     """
@@ -417,13 +444,17 @@ def load_default_params(
     Load params from the default location (or provided path).
     """
     p = Path(path) if path is not None else default_params_path()
-    return ChainParams.load_yaml(p, chain_id_hint=chain_id_hint, network_name=network_name)
+    return ChainParams.load_yaml(
+        p, chain_id_hint=chain_id_hint, network_name=network_name
+    )
 
 
 # -------- tiny CLI for sanity --------
 
+
 def _main(argv: list[str]) -> int:
     import json
+
     p = default_params_path() if len(argv) < 2 else Path(argv[1])
     params = ChainParams.load_yaml(p)
     print(json.dumps(params.to_public_dict(), indent=2))
@@ -432,4 +463,5 @@ def _main(argv: list[str]) -> int:
 
 if __name__ == "__main__":  # pragma: no cover
     import sys
+
     raise SystemExit(_main(sys.argv))

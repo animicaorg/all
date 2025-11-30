@@ -45,11 +45,11 @@ it uses a fallback: (effective_fee_wei / size_bytes) * (1 + min(age/600, 0.10)).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Iterable, List, Dict, Tuple, Optional, Callable, Any
+import heapq
 import math
 import time
-import heapq
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 # Optional priority integration
 try:
@@ -67,6 +67,7 @@ def _now_monotonic() -> float:
 # -------------------------
 # Config
 # -------------------------
+
 
 @dataclass
 class EvictionConfig:
@@ -94,6 +95,7 @@ class EvictionConfig:
       - emergency_low_factor: multiply low_water_bytes by this factor (e.g. 0.80)
         as the emergency target.
     """
+
     high_water_bytes: Optional[int] = None
     low_water_bytes: Optional[int] = None
 
@@ -112,6 +114,7 @@ class EvictionConfig:
 # Snapshot & Candidate
 # -------------------------
 
+
 @dataclass(order=True)
 class EvictCandidate:
     """
@@ -120,6 +123,7 @@ class EvictCandidate:
     We keep the original tx/meta for callers who want to double-check or
     introspect before performing eviction.
     """
+
     # The first two fields are used in sorting (priority asc, then size desc)
     sort_priority: float
     sort_size: int
@@ -151,14 +155,25 @@ class EvictCandidate:
         return bytes(v)
 
     @classmethod
-    def from_entry(cls, tx: Any, meta: Any, *, now_s: float, priority_val: float) -> "EvictCandidate":
-        tx_hash = getattr(meta, "tx_hash", getattr(tx, "tx_hash", getattr(tx, "hash", None)))
+    def from_entry(
+        cls, tx: Any, meta: Any, *, now_s: float, priority_val: float
+    ) -> "EvictCandidate":
+        tx_hash = getattr(
+            meta, "tx_hash", getattr(tx, "tx_hash", getattr(tx, "hash", None))
+        )
         sender = getattr(tx, "sender", getattr(meta, "sender", None))
         size = int(getattr(meta, "size_bytes", getattr(tx, "size_bytes", 0)) or 0)
-        first_seen = float(getattr(meta, "first_seen_s", getattr(tx, "first_seen_s", now_s)) or now_s)
+        first_seen = float(
+            getattr(meta, "first_seen_s", getattr(tx, "first_seen_s", now_s)) or now_s
+        )
         local = bool(getattr(meta, "local", getattr(tx, "local", False)))
-        is_repl = bool(getattr(meta, "is_replacement_candidate",
-                               getattr(tx, "is_replacement_candidate", False)))
+        is_repl = bool(
+            getattr(
+                meta,
+                "is_replacement_candidate",
+                getattr(tx, "is_replacement_candidate", False),
+            )
+        )
         age = max(0.0, now_s - first_seen)
 
         # `sort_size` is negative to prefer evicting larger items (free bytes faster)
@@ -187,6 +202,7 @@ class PoolSnapshot:
       - capacity_bytes: configured capacity of the pool
       - rss_bytes: optional current process RSS to assess memory pressure
     """
+
     entries: Iterable[Tuple[Any, Any]]
     bytes_used: int
     capacity_bytes: int
@@ -206,6 +222,7 @@ class Victim:
 # Priority helpers
 # -------------------------
 
+
 def _fallback_effective_priority(tx: Any, meta: Any, now_s: float) -> float:
     """
     Simple, stable priority if no mempool.priority module is available.
@@ -213,9 +230,13 @@ def _fallback_effective_priority(tx: Any, meta: Any, now_s: float) -> float:
     priority ≈ (effective_fee_wei / size_bytes) * (1 + age_boost)
     where age_boost ≤ 10% grows linearly over 10 minutes.
     """
-    eff_fee = getattr(meta, "effective_fee_wei", getattr(tx, "effective_fee_wei", 0)) or 0
+    eff_fee = (
+        getattr(meta, "effective_fee_wei", getattr(tx, "effective_fee_wei", 0)) or 0
+    )
     size = int(getattr(meta, "size_bytes", getattr(tx, "size_bytes", 1)) or 1)
-    first_seen = float(getattr(meta, "first_seen_s", getattr(tx, "first_seen_s", now_s)) or now_s)
+    first_seen = float(
+        getattr(meta, "first_seen_s", getattr(tx, "first_seen_s", now_s)) or now_s
+    )
     age_s = max(0.0, now_s - first_seen)
     age_boost = min(age_s / 600.0, 0.10)
     return (int(eff_fee) / max(1, size)) * (1.0 + age_boost)
@@ -234,8 +255,11 @@ def _effective_priority(tx: Any, meta: Any, now_s: float) -> float:
 # Planner
 # -------------------------
 
+
 class EvictionPlanner:
-    def __init__(self, cfg: Optional[EvictionConfig] = None, *, clock: Clock = _now_monotonic):
+    def __init__(
+        self, cfg: Optional[EvictionConfig] = None, *, clock: Clock = _now_monotonic
+    ):
         self.cfg = cfg or EvictionConfig()
         self._clock = clock
 
@@ -262,7 +286,9 @@ class EvictionPlanner:
         cands: List[EvictCandidate] = []
         for tx, meta in snapshot.entries:
             pr = _effective_priority(tx, meta, now)
-            cands.append(EvictCandidate.from_entry(tx, meta, now_s=now, priority_val=pr))
+            cands.append(
+                EvictCandidate.from_entry(tx, meta, now_s=now, priority_val=pr)
+            )
         return cands
 
     # --- fairness ---
@@ -289,13 +315,15 @@ class EvictionPlanner:
             overflow = len(lst) - cap
             worst = sorted(lst[keep:], key=lambda x: (x.sort_priority, -x.size_bytes))
             for c in worst[:overflow]:
-                victims.append(Victim(
-                    tx_hash=c.tx_hash,
-                    reason="sender_cap",
-                    size_bytes=c.size_bytes,
-                    priority=float(c.sort_priority),
-                    sender=c.sender,
-                ))
+                victims.append(
+                    Victim(
+                        tx_hash=c.tx_hash,
+                        reason="sender_cap",
+                        size_bytes=c.size_bytes,
+                        priority=float(c.sort_priority),
+                        sender=c.sender,
+                    )
+                )
         return victims
 
     # --- global low-priority ---
@@ -329,7 +357,10 @@ class EvictionPlanner:
             if not emergency:
                 if self.cfg.protect_local and c.local:
                     continue
-                if self.cfg.protect_replacement_candidates and c.is_replacement_candidate:
+                if (
+                    self.cfg.protect_replacement_candidates
+                    and c.is_replacement_candidate
+                ):
                     continue
                 if c.age_s < self.cfg.protect_newer_than_s:
                     continue
@@ -345,13 +376,15 @@ class EvictionPlanner:
         for c in heap:
             if freed >= bytes_to_free:
                 break
-            victims.append(Victim(
-                tx_hash=c.tx_hash,
-                reason=reason,
-                size_bytes=c.size_bytes,
-                priority=float(c.sort_priority),
-                sender=c.sender,
-            ))
+            victims.append(
+                Victim(
+                    tx_hash=c.tx_hash,
+                    reason=reason,
+                    size_bytes=c.size_bytes,
+                    priority=float(c.sort_priority),
+                    sender=c.sender,
+                )
+            )
             freed += c.size_bytes
         return victims
 
@@ -399,6 +432,7 @@ class EvictionPlanner:
 # Convenience top-level
 # -------------------------
 
+
 def plan_evictions(
     *,
     entries: Iterable[Tuple[Any, Any]],
@@ -425,13 +459,24 @@ def plan_evictions(
 # Debug / pretty printing
 # -------------------------
 
+
 def format_plan(plan: List[Victim]) -> str:
     """Human-friendly single-line summary per victim."""
     out = []
     for v in plan:
-        h = v.tx_hash.hex() if isinstance(v.tx_hash, (bytes, bytearray)) else str(v.tx_hash)
-        s = v.sender.hex() if isinstance(v.sender, (bytes, bytearray)) else str(v.sender)
-        out.append(f"{h[:12]}.. sender={s[:10]}.. size={v.size_bytes}B prio={v.priority:.6g} reason={v.reason}")
+        h = (
+            v.tx_hash.hex()
+            if isinstance(v.tx_hash, (bytes, bytearray))
+            else str(v.tx_hash)
+        )
+        s = (
+            v.sender.hex()
+            if isinstance(v.sender, (bytes, bytearray))
+            else str(v.sender)
+        )
+        out.append(
+            f"{h[:12]}.. sender={s[:10]}.. size={v.size_bytes}B prio={v.priority:.6g} reason={v.reason}"
+        )
     return "\n".join(out)
 
 

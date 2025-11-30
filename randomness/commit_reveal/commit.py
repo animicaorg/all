@@ -26,20 +26,22 @@ from typing import Optional
 # Try to import a canonical domain tag; fall back to a local constant if missing.
 try:
     # Expected to be defined in randomness/constants.py
-    from randomness.constants import COMMIT_DOMAIN_TAG as _DEFAULT_DOMAIN_TAG  # type: ignore
+    from randomness.constants import \
+        COMMIT_DOMAIN_TAG as _DEFAULT_DOMAIN_TAG  # type: ignore
 except Exception:  # pragma: no cover - fallback for early bringup
     _DEFAULT_DOMAIN_TAG = b"animica-rand-commit-v1"
 
-_MIN_SALT_LEN = 8       # bytes; small but non-zero to avoid footguns
-_MAX_SALT_LEN = 128     # reasonable guardrail
-_MIN_ADDR_LEN = 20      # e.g., 160-bit addresses
-_MAX_ADDR_LEN = 64      # supports 512-bit identifiers if needed
+_MIN_SALT_LEN = 8  # bytes; small but non-zero to avoid footguns
+_MAX_SALT_LEN = 128  # reasonable guardrail
+_MIN_ADDR_LEN = 20  # e.g., 160-bit addresses
+_MAX_ADDR_LEN = 64  # supports 512-bit identifiers if needed
 _MAX_PAYLOAD_LEN = 1 << 20  # 1 MiB guardrail for commits (not a hard protocol limit)
 
 
 @dataclass(frozen=True, slots=True)
 class CommitInput:
     """Convenience bundle for commit inputs."""
+
     addr: bytes
     salt: bytes
     payload: bytes = b""
@@ -57,9 +59,13 @@ def _validate(addr: bytes, salt: bytes, payload: bytes, domain_tag: bytes) -> No
         raise TypeError("domain_tag must be bytes")
 
     if not (_MIN_ADDR_LEN <= len(addr) <= _MAX_ADDR_LEN):
-        raise ValueError(f"addr length must be in [{_MIN_ADDR_LEN}, {_MAX_ADDR_LEN}] bytes")
+        raise ValueError(
+            f"addr length must be in [{_MIN_ADDR_LEN}, {_MAX_ADDR_LEN}] bytes"
+        )
     if not (_MIN_SALT_LEN <= len(salt) <= _MAX_SALT_LEN):
-        raise ValueError(f"salt length must be in [{_MIN_SALT_LEN}, {_MAX_SALT_LEN}] bytes")
+        raise ValueError(
+            f"salt length must be in [{_MIN_SALT_LEN}, {_MAX_SALT_LEN}] bytes"
+        )
     if len(payload) > _MAX_PAYLOAD_LEN:
         raise ValueError(f"payload too large (>{_MAX_PAYLOAD_LEN} bytes)")
     if len(domain_tag) == 0:

@@ -26,10 +26,10 @@ from typing import Any, Dict, Optional, Tuple
 from core.types.header import Header
 from core.types.params import ChainParams
 
-
 # --------------------------
 # Helpers
 # --------------------------
+
 
 def _get(obj: Any, *names: str, default: Any = None) -> Any:
     """Return the first present attribute/key among names, else default."""
@@ -57,8 +57,16 @@ def _params_to_dict(params: ChainParams) -> Dict[str, Any]:
         return dict(params)
     # Best-effort: fall back to attribute scraping
     out: Dict[str, Any] = {}
-    for k in ("chainId", "theta0", "theta_initial", "theta_min", "theta_max",
-              "theta_max_step_ratio", "retarget_max_step_ratio", "target_block_time_secs"):
+    for k in (
+        "chainId",
+        "theta0",
+        "theta_initial",
+        "theta_min",
+        "theta_max",
+        "theta_max_step_ratio",
+        "retarget_max_step_ratio",
+        "target_block_time_secs",
+    ):
         v = getattr(params, k, None)
         if v is not None:
             out[k] = v
@@ -102,6 +110,7 @@ def _has_timestamp(h: Header) -> bool:
 # Public adapter
 # --------------------------
 
+
 class ConsensusView:
     """
     Cheap consensus checks for header sync.
@@ -124,9 +133,9 @@ class ConsensusView:
     ) -> None:
         self.params = params
         self.params_dict = _params_to_dict(params)
-        self.expected_chain_id = int(_get(self.params_dict, "chainId", default=0)) or int(
-            _get(self.params, "chainId", default=0)
-        )
+        self.expected_chain_id = int(
+            _get(self.params_dict, "chainId", default=0)
+        ) or int(_get(self.params, "chainId", default=0))
         self.poies_policy_root = poies_policy_root
         self.alg_policy_root = alg_policy_root
 
@@ -135,7 +144,9 @@ class ConsensusView:
     def _check_policy_roots(self, h: Header) -> None:
         # Accept multiple canonical field spellings
         poies_got = _get(h, "poiesPolicyRoot", "poies_policy_root", "poies_root")
-        alg_got = _get(h, "algPolicyRoot", "alg_policy_root", "pq_alg_policy_root", "alg_root")
+        alg_got = _get(
+            h, "algPolicyRoot", "alg_policy_root", "pq_alg_policy_root", "alg_root"
+        )
         _require_bytes_equal("poiesPolicyRoot", poies_got, self.poies_policy_root)
         _require_bytes_equal("algPolicyRoot", alg_got, self.alg_policy_root)
 
@@ -161,7 +172,9 @@ class ConsensusView:
         prev_theta = int(_get(prev, "theta", default=theta_now))
         lo, hi = _theta_bounds(prev_theta, self.params_dict)
         if not (lo <= theta_now <= hi):
-            raise ValueError(f"Θ step out of bounds: got {theta_now}, expected in [{lo}, {hi}]")
+            raise ValueError(
+                f"Θ step out of bounds: got {theta_now}, expected in [{lo}, {hi}]"
+            )
 
         # Optional timestamp sanity if both headers carry it: ensure forward time
         if _has_timestamp(prev) and _has_timestamp(h):
@@ -175,7 +188,9 @@ class ConsensusView:
         if cid <= 0:
             raise ValueError("header.chainId must be > 0")
         if self.expected_chain_id and cid != self.expected_chain_id:
-            raise ValueError(f"header.chainId mismatch: got {cid}, want {self.expected_chain_id}")
+            raise ValueError(
+                f"header.chainId mismatch: got {cid}, want {self.expected_chain_id}"
+            )
 
     # -------- public API --------
 

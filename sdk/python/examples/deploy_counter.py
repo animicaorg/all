@@ -31,14 +31,14 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from omni_sdk.address import Address
+from omni_sdk.contracts.client import ContractClient
 # SDK imports
 from omni_sdk.rpc.http import RpcClient
-from omni_sdk.wallet.signer import Signer
-from omni_sdk.address import Address
 from omni_sdk.tx.build import build_deploy_tx, estimate_deploy_gas
 from omni_sdk.tx.encode import encode_tx_cbor
-from omni_sdk.tx.send import send_raw_transaction, await_receipt
-from omni_sdk.contracts.client import ContractClient
+from omni_sdk.tx.send import await_receipt, send_raw_transaction
+from omni_sdk.wallet.signer import Signer
 
 
 def _repo_root() -> Path:
@@ -87,18 +87,64 @@ def _make_signer(alg: str, seed_hex: Optional[str]) -> Signer:
 def main() -> None:
     defaults = _default_paths()
 
-    ap = argparse.ArgumentParser(description="Deploy the Counter contract and call inc/get")
-    ap.add_argument("--rpc", default=os.getenv("OMNI_SDK_RPC_URL", "http://127.0.0.1:8545"), help="RPC HTTP URL")
-    ap.add_argument("--chain-id", type=int, default=int(os.getenv("OMNI_CHAIN_ID", "1")), help="Chain ID")
-    ap.add_argument("--timeout", type=float, default=float(os.getenv("OMNI_SDK_HTTP_TIMEOUT", "30")), help="HTTP timeout (s)")
-    ap.add_argument("--manifest", type=Path, default=defaults["manifest"], help="Path to manifest.json")
-    ap.add_argument("--code", type=Path, default=defaults["code"], help="Path to contract.py (or IR bytes)")
-    ap.add_argument("--seed-hex", default=os.getenv("OMNI_SDK_SEED_HEX"), help="Signer seed as hex (dev/test only)")
-    ap.add_argument("--alg", default="dilithium3", choices=["dilithium3", "sphincs_shake_128s"], help="PQ signature algorithm")
-    ap.add_argument("--gas-price", type=int, default=None, help="Optional gas price override")
-    ap.add_argument("--gas-limit", type=int, default=None, help="Optional gas limit override")
-    ap.add_argument("--nonce", type=int, default=None, help="Optional sender nonce override")
-    ap.add_argument("--wait-seconds", type=float, default=120.0, help="Max seconds to wait for each receipt")
+    ap = argparse.ArgumentParser(
+        description="Deploy the Counter contract and call inc/get"
+    )
+    ap.add_argument(
+        "--rpc",
+        default=os.getenv("OMNI_SDK_RPC_URL", "http://127.0.0.1:8545"),
+        help="RPC HTTP URL",
+    )
+    ap.add_argument(
+        "--chain-id",
+        type=int,
+        default=int(os.getenv("OMNI_CHAIN_ID", "1")),
+        help="Chain ID",
+    )
+    ap.add_argument(
+        "--timeout",
+        type=float,
+        default=float(os.getenv("OMNI_SDK_HTTP_TIMEOUT", "30")),
+        help="HTTP timeout (s)",
+    )
+    ap.add_argument(
+        "--manifest",
+        type=Path,
+        default=defaults["manifest"],
+        help="Path to manifest.json",
+    )
+    ap.add_argument(
+        "--code",
+        type=Path,
+        default=defaults["code"],
+        help="Path to contract.py (or IR bytes)",
+    )
+    ap.add_argument(
+        "--seed-hex",
+        default=os.getenv("OMNI_SDK_SEED_HEX"),
+        help="Signer seed as hex (dev/test only)",
+    )
+    ap.add_argument(
+        "--alg",
+        default="dilithium3",
+        choices=["dilithium3", "sphincs_shake_128s"],
+        help="PQ signature algorithm",
+    )
+    ap.add_argument(
+        "--gas-price", type=int, default=None, help="Optional gas price override"
+    )
+    ap.add_argument(
+        "--gas-limit", type=int, default=None, help="Optional gas limit override"
+    )
+    ap.add_argument(
+        "--nonce", type=int, default=None, help="Optional sender nonce override"
+    )
+    ap.add_argument(
+        "--wait-seconds",
+        type=float,
+        default=120.0,
+        help="Max seconds to wait for each receipt",
+    )
     args = ap.parse_args()
 
     # RPC client
@@ -120,7 +166,11 @@ def main() -> None:
     if gas_limit is None:
         try:
             ge = estimate_deploy_gas(rpc, manifest, code_bytes, sender=sender)
-            gas_limit = int(ge["gasLimit"]) if isinstance(ge, dict) and "gasLimit" in ge else int(ge)
+            gas_limit = (
+                int(ge["gasLimit"])
+                if isinstance(ge, dict) and "gasLimit" in ge
+                else int(ge)
+            )
         except Exception:
             gas_limit = 1_000_000  # conservative fallback
 
@@ -146,10 +196,22 @@ def main() -> None:
     receipt = await_receipt(rpc, tx_hash, timeout_seconds=args.wait_seconds)
     status = receipt.get("status")
     contract_addr = receipt.get("contractAddress")
-    print("deploy receipt:", json.dumps({"status": status, "contractAddress": contract_addr, "gasUsed": receipt.get("gasUsed")}, indent=2))
+    print(
+        "deploy receipt:",
+        json.dumps(
+            {
+                "status": status,
+                "contractAddress": contract_addr,
+                "gasUsed": receipt.get("gasUsed"),
+            },
+            indent=2,
+        ),
+    )
 
     if not contract_addr:
-        sys.exit("error: deploy succeeded but no contractAddress in receipt; cannot continue")
+        sys.exit(
+            "error: deploy succeeded but no contractAddress in receipt; cannot continue"
+        )
 
     # Contract client
     abi = manifest.get("abi", [])
@@ -175,20 +237,34 @@ def main() -> None:
     print(f"submitted inc() tx: {call_hash}")
 
     call_receipt = await_receipt(rpc, call_hash, timeout_seconds=args.wait_seconds)
-    print("inc receipt:", json.dumps({"status": call_receipt.get("status"), "gasUsed": call_receipt.get("gasUsed")}, indent=2))
+    print(
+        "inc receipt:",
+        json.dumps(
+            {
+                "status": call_receipt.get("status"),
+                "gasUsed": call_receipt.get("gasUsed"),
+            },
+            indent=2,
+        ),
+    )
 
     # Read new value
     after = cc.read("get")
     print("counter after:", after)
 
     print("\n== Summary ==")
-    print(json.dumps({
-        "deployTx": tx_hash,
-        "contract": contract_addr,
-        "incTx": call_hash,
-        "valueBefore": before,
-        "valueAfter": after
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                "deployTx": tx_hash,
+                "contract": contract_addr,
+                "incTx": call_hash,
+                "valueBefore": before,
+                "valueAfter": after,
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":

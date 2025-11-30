@@ -26,4 +26,6 @@ try:
 except Exception:  # pragma: no cover
     # Keep the package importable even if optional deps (like PyYAML) are missing.
     def bench_poies_main(argv=None) -> int:
-        raise RuntimeError("consensus.cli.bench_poies is unavailable (optional deps missing?)")
+        raise RuntimeError(
+            "consensus.cli.bench_poies is unavailable (optional deps missing?)"
+        )

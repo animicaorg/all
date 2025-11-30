@@ -1,10 +1,11 @@
+import binascii
+import hashlib
+import inspect
 import os
 import sys
 import time
 import types
-import hashlib
-import binascii
-import inspect
+
 import pytest
 
 # Ensure local package is importable when running tests from repo root
@@ -27,6 +28,7 @@ try:
     PeerClass = getattr(peer_datamod, "Peer", None)
 except Exception:
     PeerClass = None
+
 
 # ---------- Helpers ----------
 def _derive_peer_id(pubkey: bytes, alg_id: int):
@@ -116,7 +118,12 @@ def _open_store(tmpdir):
         {"filename": dbfile},
     ):
         try:
-            return cls(**kwargs), (kwargs.get("path") or kwargs.get("db_path") or kwargs.get("filename") or dirpath)
+            return cls(**kwargs), (
+                kwargs.get("path")
+                or kwargs.get("db_path")
+                or kwargs.get("filename")
+                or dirpath
+            )
         except Exception:
             pass
 
@@ -161,9 +168,19 @@ def _store_add(store, peer_id, addrs, score=0):
             # Common: Peer(id, addrs, score, last_seen)
             try:
                 rec = PeerClass(
-                    peer_id if "peer_id" in PeerClass.__annotations__ else peer_id,  # positional ok
-                    addrs if "addrs" in getattr(PeerClass, "__annotations__", {}) else list(addrs),
-                    score if "score" in getattr(PeerClass, "__annotations__", {}) else 0,
+                    (
+                        peer_id if "peer_id" in PeerClass.__annotations__ else peer_id
+                    ),  # positional ok
+                    (
+                        addrs
+                        if "addrs" in getattr(PeerClass, "__annotations__", {})
+                        else list(addrs)
+                    ),
+                    (
+                        score
+                        if "score" in getattr(PeerClass, "__annotations__", {})
+                        else 0
+                    ),
                     time.time(),
                 )
             except Exception:
@@ -236,7 +253,12 @@ def _store_set_score(store, peer_id, score):
                 pass
     # Fallback: upsert again if supported
     try:
-        return _store_add(store, peer_id, addrs=_extract_addrs(_store_get(store, peer_id)) or [], score=score)
+        return _store_add(
+            store,
+            peer_id,
+            addrs=_extract_addrs(_store_get(store, peer_id)) or [],
+            score=score,
+        )
     except Exception:
         pass
 
@@ -281,8 +303,8 @@ def test_peer_id_derivation_consistency_and_uniqueness():
 
     id1 = _derive_peer_id(pk1, alg_dilithium)
     id1b = _derive_peer_id(pk1, alg_dilithium)  # same inputs
-    id2 = _derive_peer_id(pk2, alg_dilithium)   # different pubkey
-    id3 = _derive_peer_id(pk1, alg_sphincs)     # different alg
+    id2 = _derive_peer_id(pk2, alg_dilithium)  # different pubkey
+    id3 = _derive_peer_id(pk1, alg_sphincs)  # different alg
 
     # Same inputs -> identical outputs
     assert id1 == id1b
@@ -334,7 +356,11 @@ def test_peerstore_persistence_and_scores(tmp_path):
     # Reopen same storage
     # If ctor used a directory, reuse it; if file, reuse the file.
     # We don't know which kw it expects, try the same strategy again.
-    reopened, _ = _open_store(os.path.dirname(persist_path) if os.path.isdir(persist_path) else os.path.dirname(persist_path))
+    reopened, _ = _open_store(
+        os.path.dirname(persist_path)
+        if os.path.isdir(persist_path)
+        else os.path.dirname(persist_path)
+    )
 
     # Ensure the record is still there with the updated score
     rec3 = _store_get(reopened, pid)
@@ -348,4 +374,3 @@ def test_peerstore_persistence_and_scores(tmp_path):
     addrs4 = _extract_addrs(rec4) or []
     # no silly growth (allow extra addr if store de-duplicates differently)
     assert len(set(addrs4)) >= len(set(addrs0))
-

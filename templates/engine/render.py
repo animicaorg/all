@@ -31,10 +31,11 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple
+from typing import (Dict, Iterable, List, Mapping, MutableMapping, Optional,
+                    Sequence, Tuple)
 
 # Import the engine & helpers from the sibling module
-from . import TemplateEngine, RenderPlan, RenderAction, discover_placeholders
+from . import RenderAction, RenderPlan, TemplateEngine, discover_placeholders
 
 # ------------------------------- Public API ---------------------------------
 
@@ -242,12 +243,20 @@ def _print_plan(plan: RenderPlan) -> None:
     skips = [a for a in plan.actions if not a.will_write]
     # column widths
     reason_w = max((len(a.reason) for a in plan.actions), default=6)
-    src_w = min(60, max((len(str(a.src.relative_to(plan.template_root))) for a in plan.actions), default=3))
+    src_w = min(
+        60,
+        max(
+            (len(str(a.src.relative_to(plan.template_root))) for a in plan.actions),
+            default=3,
+        ),
+    )
     print("\nPlan:")
     for a in plan.actions:
         src_rel = str(a.src.relative_to(plan.template_root))
         dst_rel = str(a.dst.relative_to(plan.out_dir))
-        print(f"{'[WRITE]' if a.will_write else '[SKIP ]'} {a.reason:<{reason_w}}  {src_rel:<{src_w}}  ->  {dst_rel}")
+        print(
+            f"{'[WRITE]' if a.will_write else '[SKIP ]'} {a.reason:<{reason_w}}  {src_rel:<{src_w}}  ->  {dst_rel}"
+        )
     print(f"\nSummary: writes={len(writes)}  skips={len(skips)}")
 
 
@@ -259,20 +268,56 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         prog="python -m templates.engine.render",
         description="Render a template folder using simple placeholder substitution.",
     )
-    ap.add_argument("--template", "-t", help="Template name (from index.json) or path to template directory")
-    ap.add_argument("--out", "-o", help="Destination directory (will be created if missing)")
-    ap.add_argument("--var", action="append", default=[], help="Variable assignment key=value (repeatable)")
-    ap.add_argument("--vars-file", action="append", default=[], help="Load variables from a file (.json, .env, .yaml) — can repeat")
-    ap.add_argument("--env-prefix", default="TPL_", help="Collect env vars with this prefix (e.g. TPL_NAME=demo). Set to '' to disable.")
-    ap.add_argument("--overwrite", action="store_true", help="Allow overwriting existing files")
-    ap.add_argument("--include-hidden", action="store_true", help="Include dotfiles/directories")
+    ap.add_argument(
+        "--template",
+        "-t",
+        help="Template name (from index.json) or path to template directory",
+    )
+    ap.add_argument(
+        "--out", "-o", help="Destination directory (will be created if missing)"
+    )
+    ap.add_argument(
+        "--var",
+        action="append",
+        default=[],
+        help="Variable assignment key=value (repeatable)",
+    )
+    ap.add_argument(
+        "--vars-file",
+        action="append",
+        default=[],
+        help="Load variables from a file (.json, .env, .yaml) — can repeat",
+    )
+    ap.add_argument(
+        "--env-prefix",
+        default="TPL_",
+        help="Collect env vars with this prefix (e.g. TPL_NAME=demo). Set to '' to disable.",
+    )
+    ap.add_argument(
+        "--overwrite", action="store_true", help="Allow overwriting existing files"
+    )
+    ap.add_argument(
+        "--include-hidden", action="store_true", help="Include dotfiles/directories"
+    )
     ap.add_argument("--dry-run", action="store_true", help="Plan only; do not write")
     ap.add_argument("--quiet", action="store_true", help="Less verbose output")
 
     # Discovery / utilities
-    ap.add_argument("--list", action="store_true", help="List templates from templates/index.json and exit")
-    ap.add_argument("--placeholders", action="store_true", help="Scan template for placeholders and print them")
-    ap.add_argument("--templates-root", default="templates", help="Root directory hosting templates/ (default: ./templates)")
+    ap.add_argument(
+        "--list",
+        action="store_true",
+        help="List templates from templates/index.json and exit",
+    )
+    ap.add_argument(
+        "--placeholders",
+        action="store_true",
+        help="Scan template for placeholders and print them",
+    )
+    ap.add_argument(
+        "--templates-root",
+        default="templates",
+        help="Root directory hosting templates/ (default: ./templates)",
+    )
 
     args = ap.parse_args(argv)
 
@@ -289,7 +334,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     # Collect variables with precedence: env < vars-files < --var
     env_map = _load_vars_env(args.env_prefix) if args.env_prefix is not None else {}
-    file_maps = _load_vars_files([Path(p) for p in args.vars_file]) if args.vars_file else {}
+    file_maps = (
+        _load_vars_files([Path(p) for p in args.vars_file]) if args.vars_file else {}
+    )
     cli_map = _parse_kv(args.var)
 
     vars_all = _merge_vars(env_map, file_maps, cli_map)

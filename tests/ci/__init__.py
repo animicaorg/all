@@ -15,10 +15,17 @@ import platform
 import sys
 from typing import Dict
 
-
 # Detect popular CI environments
 CI_ENABLED: bool = any(
-    os.getenv(var) for var in ("CI", "GITHUB_ACTIONS", "BUILDKITE", "GITLAB_CI", "CIRCLECI", "TEAMCITY_VERSION")
+    os.getenv(var)
+    for var in (
+        "CI",
+        "GITHUB_ACTIONS",
+        "BUILDKITE",
+        "GITLAB_CI",
+        "CIRCLECI",
+        "TEAMCITY_VERSION",
+    )
 )
 
 

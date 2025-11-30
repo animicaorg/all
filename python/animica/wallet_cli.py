@@ -8,6 +8,7 @@ Base58Check-encoded address. The resulting metadata is written to
 stored with POSIX permissions set to ``0o600`` to mimic the private
 ``wallet.dat`` expectation from Bitcoin nodes.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -16,7 +17,8 @@ import os
 import secrets
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from hashlib import new as hashlib_new, sha256
+from hashlib import new as hashlib_new
+from hashlib import sha256
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -26,8 +28,12 @@ WALLET_FILENAME = "wallet.dat"
 # -- Minimal secp256k1 helpers (to avoid external dependencies) --
 _SECP256K1_P = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F
 _SECP256K1_N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
-_SECP256K1_GX = 55066263022277343669578718895168534326250603453777594175500187360389116729240
-_SECP256K1_GY = 32670510020758816978083085130507043184471273380659243275938904335757337482424
+_SECP256K1_GX = (
+    55066263022277343669578718895168534326250603453777594175500187360389116729240
+)
+_SECP256K1_GY = (
+    32670510020758816978083085130507043184471273380659243275938904335757337482424
+)
 _SECP256K1_A = 0
 _SECP256K1_B = 7
 
@@ -43,7 +49,9 @@ def _is_on_curve(point: Tuple[int, int] | None) -> bool:
     return (y * y - (x * x * x + _SECP256K1_A * x + _SECP256K1_B)) % _SECP256K1_P == 0
 
 
-def _point_add(p1: Tuple[int, int] | None, p2: Tuple[int, int] | None) -> Tuple[int, int] | None:
+def _point_add(
+    p1: Tuple[int, int] | None, p2: Tuple[int, int] | None
+) -> Tuple[int, int] | None:
     if p1 is None:
         return p2
     if p2 is None:

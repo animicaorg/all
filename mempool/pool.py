@@ -44,34 +44,38 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
-from .types import PoolTx, TxMeta, PoolStats
-from . import priority
-from . import sequence
-from . import tx_lookup
+from . import priority, sequence, tx_lookup
+from .types import PoolStats, PoolTx, TxMeta
 from .watermark import FeeWatermark, Thresholds
-
 
 # -------------------------------
 # Errors (re-export from .errors if present)
 # -------------------------------
 
+
 class AdmissionError(Exception):
     pass
+
 
 class ReplacementError(Exception):
     pass
 
+
 class DoSError(Exception):
     pass
+
 
 class FeeTooLow(AdmissionError):
     pass
 
+
 class DuplicateTx(AdmissionError):
     pass
 
+
 class NonceGap(AdmissionError):
     pass
+
 
 class Oversize(AdmissionError):
     pass
@@ -100,6 +104,7 @@ class PoolConfig:
         target_util: soft ceiling; above this, apply eviction pressure
         accept_below_floor_for_local: if True, bypass floors for 'local' txs
     """
+
     max_txs: int = 150_000
     max_bytes: int = 256 * 1024 * 1024
     target_util: float = 0.9
@@ -115,6 +120,7 @@ class AddResult:
 # -------------------------------
 # Pool
 # -------------------------------
+
 
 class Pool:
     """
@@ -132,9 +138,16 @@ class Pool:
     """
 
     __slots__ = (
-        "cfg", "clock", "wm", "index", "seqs",
-        "_n_bytes", "_ready_heap", "_heap_tag",
-        "_in_heap", "_rbf_bump_ratio",
+        "cfg",
+        "clock",
+        "wm",
+        "index",
+        "seqs",
+        "_n_bytes",
+        "_ready_heap",
+        "_heap_tag",
+        "_in_heap",
+        "_rbf_bump_ratio",
     )
 
     def __init__(
@@ -244,7 +257,9 @@ class Pool:
 
         # Hard caps: drop worst scores until within (txs, bytes)
         def over_caps() -> bool:
-            return (len(self.index) > self.cfg.max_txs) or (self._n_bytes > self.cfg.max_bytes)
+            return (len(self.index) > self.cfg.max_txs) or (
+                self._n_bytes > self.cfg.max_bytes
+            )
 
         if over_caps():
             # Build a poor-man's "worst first" list without materializing all scores.
@@ -290,7 +305,9 @@ class Pool:
 
     # ------------- Public API -------------
 
-    def add(self, tx: PoolTx, meta: Optional[TxMeta] = None, *, is_local: bool = False) -> AddResult:
+    def add(
+        self, tx: PoolTx, meta: Optional[TxMeta] = None, *, is_local: bool = False
+    ) -> AddResult:
         """
         Admit a new transaction. Performs duplicate check, floor check,
         nonce sequencing and queues the tx as ready if contiguous.
@@ -307,7 +324,9 @@ class Pool:
             meta = TxMeta(
                 size_bytes=getattr(tx, "size_bytes", getattr(tx, "serialized_size", 0)),
                 first_seen_s=self.clock(),
-                effective_fee_wei=getattr(tx, "effective_fee_wei", getattr(tx, "max_fee_per_gas", 0)),
+                effective_fee_wei=getattr(
+                    tx, "effective_fee_wei", getattr(tx, "max_fee_per_gas", 0)
+                ),
                 sender=tx.sender,
                 nonce=tx.nonce,
             )
@@ -357,7 +376,9 @@ class Pool:
             meta = TxMeta(
                 size_bytes=getattr(tx, "size_bytes", getattr(tx, "serialized_size", 0)),
                 first_seen_s=self.clock(),
-                effective_fee_wei=getattr(tx, "effective_fee_wei", getattr(tx, "max_fee_per_gas", 0)),
+                effective_fee_wei=getattr(
+                    tx, "effective_fee_wei", getattr(tx, "max_fee_per_gas", 0)
+                ),
                 sender=tx.sender,
                 nonce=tx.nonce,
             )
@@ -460,7 +481,9 @@ class Pool:
             bytes=self._n_bytes,
             admit_floor_wei=th.admit_floor_wei,
             evict_below_wei=th.evict_below_wei,
-            utilization=float(total) / float(self.cfg.max_txs) if self.cfg.max_txs else 0.0,
+            utilization=(
+                float(total) / float(self.cfg.max_txs) if self.cfg.max_txs else 0.0
+            ),
         )
 
     # ------------- Iteration helpers (optional) -------------
@@ -506,5 +529,3 @@ class Pool:
 # priority.rbf_min_bump(old_meta, new_meta) -> float (ratio)
 #
 # FeeWatermark.thresholds(pool_size, capacity) -> Thresholds with admit_floor_wei, evict_below_wei
-
-

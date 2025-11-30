@@ -19,13 +19,13 @@ Here we define:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from enum import Enum, IntEnum, auto
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Union
-from datetime import datetime, timezone
 import hmac
 import json
 import struct
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from enum import Enum, IntEnum, auto
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 from proofs.errors import AttestationError
 from proofs.utils.hash import sha3_256, sha3_512
@@ -43,9 +43,9 @@ DOMAIN_TEE_POLICY_BIND_V1 = b"ANIMICA::TEE_POLICY_BINDING/v1"
 
 
 class TEEKind(str, Enum):
-    SGX = "sgx"          # Intel SGX / TDX quotes
+    SGX = "sgx"  # Intel SGX / TDX quotes
     SEV_SNP = "sev_snp"  # AMD SEV-SNP reports
-    CCA = "cca"          # Arm CCA Realm tokens
+    CCA = "cca"  # Arm CCA Realm tokens
 
 
 class SecurityMode(Enum):
@@ -64,6 +64,7 @@ class TCBStatus(IntEnum):
 # Canonical "expected" measurements
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 @dataclass(frozen=True)
 class ExpectedMeasurements:
     """
@@ -75,6 +76,7 @@ class ExpectedMeasurements:
     - For SEV-SNP: measurement (bytes), family_id (bytes), image_id (bytes), tcb_svn (int)
     - For CCA: realm_measurement (bytes), realm_public_key_hash (bytes)
     """
+
     mrenclave: Optional[bytes] = None
     mrsigner: Optional[bytes] = None
     isvprodid: Optional[int] = None
@@ -89,15 +91,16 @@ class ExpectedMeasurements:
     cca_pubkey_hash: Optional[bytes] = None
 
     # Extra bind-ins (toolchain level), e.g. code hash and manifest digest
-    code_hash: Optional[bytes] = None        # sha3_256(code_bytes)
-    manifest_hash: Optional[bytes] = None    # sha3_256(manifest JSON canonical)
+    code_hash: Optional[bytes] = None  # sha3_256(code_bytes)
+    manifest_hash: Optional[bytes] = None  # sha3_256(manifest JSON canonical)
     # Optional salt/version to avoid cross-network replays
-    network_salt: Optional[bytes] = None     # chain-specific salt (e.g., spec/chains.json)
+    network_salt: Optional[bytes] = None  # chain-specific salt (e.g., spec/chains.json)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Evidence container (normalized view)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 @dataclass(frozen=True)
 class TEEEvidence:
@@ -113,6 +116,7 @@ class TEEEvidence:
     - tcb_status: quick summary (UP_TO_DATE/OUT_OF_DATE/REVOKED/UNKNOWN)
     - not_before / not_after: validity window, if applicable
     """
+
     kind: TEEKind
     report: bytes
     claims: Mapping[str, Union[int, bytes, str, Sequence[int], Sequence[bytes]]]
@@ -125,6 +129,7 @@ class TEEEvidence:
 # ──────────────────────────────────────────────────────────────────────────────
 # Policy (what Animica requires from TEE evidence)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 @dataclass(frozen=True)
 class AttestationPolicy:
@@ -140,6 +145,7 @@ class AttestationPolicy:
     - bind_code: require code hash bound
     - freshness_max_age_s: optional freshness bound on not_before/after
     """
+
     allow_debug: bool = False
     require_chain_ok: bool = True
     require_tcb_up_to_date: bool = True
@@ -153,6 +159,7 @@ class AttestationPolicy:
 # ──────────────────────────────────────────────────────────────────────────────
 # Result surface (fed to proofs.ai → ProofMetrics)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class AttestationResult:
@@ -172,6 +179,7 @@ class AttestationResult:
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers: canonicalization & measurement binding
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def _as_bytes(x: Optional[Union[str, bytes, bytearray]]) -> Optional[bytes]:
     if x is None:
@@ -275,13 +283,23 @@ def _public_claims_subset(evidence: TEEEvidence) -> bytes:
     """
     allow_keys = {
         # SGX / TDX
-        "mrenclave", "mrsigner", "isvprodid", "isvsvn", "debug",
+        "mrenclave",
+        "mrsigner",
+        "isvprodid",
+        "isvsvn",
+        "debug",
         # SEV-SNP
-        "measurement", "family_id", "image_id", "tcb_svn",
+        "measurement",
+        "family_id",
+        "image_id",
+        "tcb_svn",
         # Arm CCA
-        "realm_measurement", "realm_pubkey_hash",
+        "realm_measurement",
+        "realm_pubkey_hash",
         # Common metadata
-        "vendor", "product", "report_version",
+        "vendor",
+        "product",
+        "report_version",
     }
     out: Dict[str, Union[int, str]] = {}
     for k, v in evidence.claims.items():
@@ -289,7 +307,9 @@ def _public_claims_subset(evidence: TEEEvidence) -> bytes:
             continue
         if isinstance(v, (bytes, bytearray)):
             out[k] = "0x" + bytes(v).hex()
-        elif isinstance(v, (list, tuple)) and v and isinstance(v[0], (bytes, bytearray)):
+        elif (
+            isinstance(v, (list, tuple)) and v and isinstance(v[0], (bytes, bytearray))
+        ):
             out[k] = ["0x" + bytes(b).hex() for b in v]  # type: ignore[assignment]
         else:
             out[k] = v  # type: ignore[assignment]
@@ -299,6 +319,7 @@ def _public_claims_subset(evidence: TEEEvidence) -> bytes:
 # ──────────────────────────────────────────────────────────────────────────────
 # Policy evaluation
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def evaluate_policy(
     evidence: TEEEvidence,
@@ -327,7 +348,9 @@ def evaluate_policy(
     if policy.freshness_max_age_s is not None and evidence.not_before:
         age = (now - evidence.not_before).total_seconds()
         if age > policy.freshness_max_age_s:
-            violations.append(f"evidence too old ({int(age)}s > {policy.freshness_max_age_s}s)")
+            violations.append(
+                f"evidence too old ({int(age)}s > {policy.freshness_max_age_s}s)"
+            )
     if evidence.not_after and now > evidence.not_after:
         violations.append("evidence expired (not_after passed)")
 
@@ -342,7 +365,10 @@ def evaluate_policy(
     # TCB
     tcb_ok = evidence.tcb_status == TCBStatus.UP_TO_DATE
     if not tcb_ok:
-        if evidence.tcb_status == TCBStatus.OUT_OF_DATE and policy.allow_tcb_out_of_date_grace_s:
+        if (
+            evidence.tcb_status == TCBStatus.OUT_OF_DATE
+            and policy.allow_tcb_out_of_date_grace_s
+        ):
             # We can't measure "how long" easily here without vendor freshness markers,
             # so we simply allow OUT_OF_DATE if grace is configured and not expired by not_after.
             pass
@@ -351,7 +377,9 @@ def evaluate_policy(
 
     # Binding checks (presence)
     if policy.bind_manifest and not exp.manifest_hash:
-        violations.append("manifest binding required by policy, but manifest_hash missing")
+        violations.append(
+            "manifest binding required by policy, but manifest_hash missing"
+        )
     if policy.bind_code and not exp.code_hash:
         violations.append("code binding required by policy, but code_hash missing")
 
@@ -398,13 +426,16 @@ def _claims_compact(evidence: TEEEvidence) -> Dict[str, Union[int, str, bytes]]:
 # Measurement comparators (best-effort, constant-time where relevant)
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def bytes_eq(a: Optional[bytes], b: Optional[bytes]) -> bool:
     if a is None or b is None:
         return False
     return hmac.compare_digest(a, b)
 
 
-def sgx_matches(exp: ExpectedMeasurements, claims: Mapping[str, Union[int, bytes, str]]) -> Tuple[bool, List[str]]:
+def sgx_matches(
+    exp: ExpectedMeasurements, claims: Mapping[str, Union[int, bytes, str]]
+) -> Tuple[bool, List[str]]:
     violations: List[str] = []
     mr_ok = True
     if exp.mrenclave is not None:
@@ -424,7 +455,9 @@ def sgx_matches(exp: ExpectedMeasurements, claims: Mapping[str, Union[int, bytes
     return (len(violations) == 0, violations)
 
 
-def sev_snp_matches(exp: ExpectedMeasurements, claims: Mapping[str, Union[int, bytes, str]]) -> Tuple[bool, List[str]]:
+def sev_snp_matches(
+    exp: ExpectedMeasurements, claims: Mapping[str, Union[int, bytes, str]]
+) -> Tuple[bool, List[str]]:
     violations: List[str] = []
     if exp.sev_measurement is not None:
         if not bytes_eq(exp.sev_measurement, _as_bytes(claims.get("measurement"))):  # type: ignore[arg-type]
@@ -441,7 +474,9 @@ def sev_snp_matches(exp: ExpectedMeasurements, claims: Mapping[str, Union[int, b
     return (len(violations) == 0, violations)
 
 
-def cca_matches(exp: ExpectedMeasurements, claims: Mapping[str, Union[int, bytes, str]]) -> Tuple[bool, List[str]]:
+def cca_matches(
+    exp: ExpectedMeasurements, claims: Mapping[str, Union[int, bytes, str]]
+) -> Tuple[bool, List[str]]:
     violations: List[str] = []
     if exp.cca_realm_measurement is not None:
         if not bytes_eq(exp.cca_realm_measurement, _as_bytes(claims.get("realm_measurement"))):  # type: ignore[arg-type]
@@ -452,7 +487,9 @@ def cca_matches(exp: ExpectedMeasurements, claims: Mapping[str, Union[int, bytes
     return (len(violations) == 0, violations)
 
 
-def check_measurements(exp: ExpectedMeasurements, evidence: TEEEvidence) -> Tuple[bool, List[str]]:
+def check_measurements(
+    exp: ExpectedMeasurements, evidence: TEEEvidence
+) -> Tuple[bool, List[str]]:
     """
     Vendor-agnostic measurement matching. Returns (ok, violations).
     """
@@ -468,6 +505,7 @@ def check_measurements(exp: ExpectedMeasurements, evidence: TEEEvidence) -> Tupl
 # ──────────────────────────────────────────────────────────────────────────────
 # Convenience: one-shot evaluation (vendor module may call this)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def evaluate_attestation(
     evidence: TEEEvidence,
@@ -505,6 +543,7 @@ def evaluate_attestation(
 # Pretty helpers (non-consensus; for logs and debugging)
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def summarize_evidence(e: TEEEvidence) -> str:
     window = ""
     if e.not_before:
@@ -520,6 +559,7 @@ def summarize_evidence(e: TEEEvidence) -> str:
 def summarize_expected(exp: ExpectedMeasurements) -> str:
     def hx(b: Optional[bytes]) -> str:
         return "—" if b is None else ("0x" + b.hex())
+
     parts = [
         f"mrenclave={hx(exp.mrenclave)}",
         f"mrsigner={hx(exp.mrsigner)}",

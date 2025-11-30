@@ -59,16 +59,39 @@ import msgspec
 import websockets
 from websockets.client import WebSocketClientProtocol
 
-
 # ---------------------------------------------------------------------------
 # Small utilities
 # ---------------------------------------------------------------------------
 
+
 class Hist:
     """Fixed buckets in milliseconds with simple percentile summaries."""
+
     def __init__(self, bounds_ms: Optional[List[float]] = None) -> None:
         if bounds_ms is None:
-            bounds_ms = [5,10,20,30,50,75,100,150,200,300,400,600,800,1000,1500,2000,3000,5000,8000,12000,20000]
+            bounds_ms = [
+                5,
+                10,
+                20,
+                30,
+                50,
+                75,
+                100,
+                150,
+                200,
+                300,
+                400,
+                600,
+                800,
+                1000,
+                1500,
+                2000,
+                3000,
+                5000,
+                8000,
+                12000,
+                20000,
+            ]
         self.bounds = list(bounds_ms)
         self.counts = [0] * len(self.bounds)
         self.overflow = 0
@@ -94,10 +117,19 @@ class Hist:
         return float(self.bounds[-1] * 1.5)
 
     def summary(self) -> Dict[str, float]:
-        return {"p50_ms": self._quantile(0.50), "p90_ms": self._quantile(0.90), "p99_ms": self._quantile(0.99)}
+        return {
+            "p50_ms": self._quantile(0.50),
+            "p90_ms": self._quantile(0.90),
+            "p99_ms": self._quantile(0.99),
+        }
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"bounds_ms": self.bounds, "counts": self.counts, "overflow": self.overflow, "n": self.n} | self.summary()
+        return {
+            "bounds_ms": self.bounds,
+            "counts": self.counts,
+            "overflow": self.overflow,
+            "n": self.n,
+        } | self.summary()
 
 
 def get_path(d: Any, path: Optional[str]) -> Any:
@@ -116,6 +148,7 @@ def get_path(d: Any, path: Optional[str]) -> Any:
 # Config / Models
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class WsNode:
     url: str
@@ -124,15 +157,25 @@ class WsNode:
 
 @dataclass
 class SubConfig:
-    jsonrpc: bool = True                 # True → JSON-RPC style subscribe
-    sub_method: str = "subscribe"        # JSON-RPC method name
-    topic_key: str = "topic"             # key name for topic in params/payload
-    id_key: str = "id"                   # request id field (JSON-RPC)
-    result_key: str = "result"           # where JSON-RPC result lands (if needed)
+    jsonrpc: bool = True  # True → JSON-RPC style subscribe
+    sub_method: str = "subscribe"  # JSON-RPC method name
+    topic_key: str = "topic"  # key name for topic in params/payload
+    id_key: str = "id"  # request id field (JSON-RPC)
+    result_key: str = "result"  # where JSON-RPC result lands (if needed)
     topics: Tuple[str, ...] = ("newHeads", "pendingTxs")
     # For event extraction
-    head_hash_paths: Tuple[str, ...] = ("hash", "block.hash", "params.hash", "params.block.hash")
-    head_num_paths: Tuple[str, ...] = ("number", "block.number", "params.number", "params.block.number")
+    head_hash_paths: Tuple[str, ...] = (
+        "hash",
+        "block.hash",
+        "params.hash",
+        "params.block.hash",
+    )
+    head_num_paths: Tuple[str, ...] = (
+        "number",
+        "block.number",
+        "params.number",
+        "params.block.number",
+    )
 
 
 @dataclass
@@ -142,7 +185,9 @@ class ConnStats:
     closes: int = 0
     failures: int = 0
     sub_rtt_ms: Hist = field(default_factory=Hist)
-    events: Dict[str, int] = field(default_factory=lambda: {"newHeads": 0, "pendingTxs": 0})
+    events: Dict[str, int] = field(
+        default_factory=lambda: {"newHeads": 0, "pendingTxs": 0}
+    )
     out_of_order: int = 0
     last_number: Optional[int] = None
 
@@ -150,16 +195,47 @@ class ConnStats:
 @dataclass
 class MeshState:
     per_node: Dict[str, ConnStats] = field(default_factory=dict)
-    gossip_skew_ms: Hist = field(default_factory=lambda: Hist(bounds_ms=[1,2,3,5,8,13,21,34,55,89,144,233,377,610,987,1597,2584]))  # Fibonacci-ish
-    first_event_at: Dict[str, float] = field(default_factory=dict)  # key: block_id (hash or num) → first ts
-    last_event_at: Dict[str, float] = field(default_factory=dict)   # latest arrival per block
-    block_seen_on: Dict[str, set] = field(default_factory=dict)     # per block → set(node_names)
-    first_sub_seen: Dict[str, float] = field(default_factory=dict)  # per-connection token → first event ts
+    gossip_skew_ms: Hist = field(
+        default_factory=lambda: Hist(
+            bounds_ms=[
+                1,
+                2,
+                3,
+                5,
+                8,
+                13,
+                21,
+                34,
+                55,
+                89,
+                144,
+                233,
+                377,
+                610,
+                987,
+                1597,
+                2584,
+            ]
+        )
+    )  # Fibonacci-ish
+    first_event_at: Dict[str, float] = field(
+        default_factory=dict
+    )  # key: block_id (hash or num) → first ts
+    last_event_at: Dict[str, float] = field(
+        default_factory=dict
+    )  # latest arrival per block
+    block_seen_on: Dict[str, set] = field(
+        default_factory=dict
+    )  # per block → set(node_names)
+    first_sub_seen: Dict[str, float] = field(
+        default_factory=dict
+    )  # per-connection token → first event ts
 
 
 # ---------------------------------------------------------------------------
 # WS client worker
 # ---------------------------------------------------------------------------
+
 
 class JsonEncoder(msgspec.Struct):
     jsonrpc: str = "2.0"
@@ -168,7 +244,9 @@ class JsonEncoder(msgspec.Struct):
     params: Any = None
 
 
-async def subscribe(ws: WebSocketClientProtocol, cfg: SubConfig, topic: str, req_id: int) -> Tuple[bool, float]:
+async def subscribe(
+    ws: WebSocketClientProtocol, cfg: SubConfig, topic: str, req_id: int
+) -> Tuple[bool, float]:
     """
     Send a subscription and wait for the first event on that topic to measure sub RTT.
     We do NOT assume a specific ack frame; we measure time to first matching event.
@@ -205,12 +283,17 @@ async def subscribe(ws: WebSocketClientProtocol, cfg: SubConfig, topic: str, req
             continue
         # Try to match a topic hint quickly
         txt = json.dumps(jd, separators=(",", ":"))[:256]
-        if topic in txt or (isinstance(jd, dict) and (jd.get("topic") == topic or jd.get("method") == topic)):
+        if topic in txt or (
+            isinstance(jd, dict)
+            and (jd.get("topic") == topic or jd.get("method") == topic)
+        ):
             dt_ms = (time.perf_counter() - t0) * 1000.0
             return True, dt_ms
 
 
-def pick_block_id(jd: Dict[str, Any], cfg: SubConfig) -> Tuple[Optional[str], Optional[int]]:
+def pick_block_id(
+    jd: Dict[str, Any], cfg: SubConfig
+) -> Tuple[Optional[str], Optional[int]]:
     blk_hash: Optional[str] = None
     blk_num: Optional[int] = None
     for p in cfg.head_hash_paths:
@@ -246,7 +329,9 @@ async def conn_worker(
     stats.attempts += 1
 
     try:
-        async with websockets.connect(node.url, max_size=8 * 1024 * 1024, ping_interval=None) as ws:
+        async with websockets.connect(
+            node.url, max_size=8 * 1024 * 1024, ping_interval=None
+        ) as ws:
             stats.opens += 1
             # Subscribe to all topics and measure first-event RTT for each
             req_id = int((time.time() * 1000) % 1_000_000)
@@ -290,7 +375,11 @@ async def conn_worker(
                 # Topic heuristics
                 topic = None
                 if isinstance(jd, dict):
-                    topic = jd.get("topic") or jd.get("method") or get_path(jd, "params.topic")
+                    topic = (
+                        jd.get("topic")
+                        or jd.get("method")
+                        or get_path(jd, "params.topic")
+                    )
                 if topic in stats.events:
                     stats.events[topic] += 1
 
@@ -325,6 +414,7 @@ async def conn_worker(
 # ---------------------------------------------------------------------------
 # Main runner
 # ---------------------------------------------------------------------------
+
 
 async def run_mesh(
     nodes: List[WsNode],
@@ -416,7 +506,9 @@ async def run_mesh(
         if now >= next_churn:
             if active:
                 to_flip = max(1, int(len(active) * churn_fraction))
-                for token in rnd.sample(list(active.keys()), k=min(to_flip, len(active))):
+                for token in rnd.sample(
+                    list(active.keys()), k=min(to_flip, len(active))
+                ):
                     node, task, churn_ev, _ts = active.get(token, (None, None, None, None))  # type: ignore
                     if churn_ev is not None:
                         churn_ev.set()
@@ -435,7 +527,9 @@ async def run_mesh(
     for _token, (_node, task, churn_ev, _ts) in list(active.items()):
         churn_ev.set()
     if active:
-        await asyncio.gather(*[t for (_n, t, _e, _s) in active.values()], return_exceptions=True)
+        await asyncio.gather(
+            *[t for (_n, t, _e, _s) in active.values()], return_exceptions=True
+        )
 
     # Final summary JSON
     per_node_out: Dict[str, Any] = {}
@@ -476,28 +570,97 @@ async def run_mesh(
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Peer churn & gossip health over WS hubs.")
-    ap.add_argument("--ws", action="append", required=True, help="WebSocket URL for a node (repeatable)")
-    ap.add_argument("--name", action="append", help="Optional human name per --ws in order")
-    ap.add_argument("--clients-per-node", type=int, default=2, help="Concurrent clients per node (default: 2)")
-    ap.add_argument("--duration", type=float, default=120.0, help="Run duration seconds (default: 120)")
-    ap.add_argument("--progress-every", type=float, default=5.0, help="Progress print interval seconds")
-    ap.add_argument("--ping-every", type=float, default=15.0, help="Send WS ping every N seconds (0 disables)")
-    ap.add_argument("--seed", type=int, default=20240913, help="Random seed for churn and lifespans")
+    ap.add_argument(
+        "--ws",
+        action="append",
+        required=True,
+        help="WebSocket URL for a node (repeatable)",
+    )
+    ap.add_argument(
+        "--name", action="append", help="Optional human name per --ws in order"
+    )
+    ap.add_argument(
+        "--clients-per-node",
+        type=int,
+        default=2,
+        help="Concurrent clients per node (default: 2)",
+    )
+    ap.add_argument(
+        "--duration",
+        type=float,
+        default=120.0,
+        help="Run duration seconds (default: 120)",
+    )
+    ap.add_argument(
+        "--progress-every",
+        type=float,
+        default=5.0,
+        help="Progress print interval seconds",
+    )
+    ap.add_argument(
+        "--ping-every",
+        type=float,
+        default=15.0,
+        help="Send WS ping every N seconds (0 disables)",
+    )
+    ap.add_argument(
+        "--seed", type=int, default=20240913, help="Random seed for churn and lifespans"
+    )
 
     # Churn controls
-    ap.add_argument("--churn-every", type=float, default=30.0, help="How often to churn a fraction of connections (default: 30s)")
-    ap.add_argument("--churn-fraction", type=float, default=0.2, help="Fraction of active conns to close on each churn (default: 0.2)")
-    ap.add_argument("--min-lifespan", type=float, default=20.0, help="Min lifespan for a connection before natural close (default: 20s)")
-    ap.add_argument("--max-lifespan", type=float, default=90.0, help="Max lifespan for a connection before natural close (default: 90s)")
+    ap.add_argument(
+        "--churn-every",
+        type=float,
+        default=30.0,
+        help="How often to churn a fraction of connections (default: 30s)",
+    )
+    ap.add_argument(
+        "--churn-fraction",
+        type=float,
+        default=0.2,
+        help="Fraction of active conns to close on each churn (default: 0.2)",
+    )
+    ap.add_argument(
+        "--min-lifespan",
+        type=float,
+        default=20.0,
+        help="Min lifespan for a connection before natural close (default: 20s)",
+    )
+    ap.add_argument(
+        "--max-lifespan",
+        type=float,
+        default=90.0,
+        help="Max lifespan for a connection before natural close (default: 90s)",
+    )
 
     # Subscription / payload config
-    ap.add_argument("--jsonrpc", type=int, default=1, help="Use JSON-RPC style subscribe (1) or plain op (0)")
-    ap.add_argument("--sub-method", default="subscribe", help="JSON-RPC subscription method name (default: subscribe)")
-    ap.add_argument("--topic-key", default="topic", help="Key name for the topic in params/payload (default: topic)")
-    ap.add_argument("--id-key", default="id", help="JSON-RPC request id field name (default: id)")
-    ap.add_argument("--topics", default="newHeads,pendingTxs", help="Comma-separated topics to subscribe (default: newHeads,pendingTxs)")
+    ap.add_argument(
+        "--jsonrpc",
+        type=int,
+        default=1,
+        help="Use JSON-RPC style subscribe (1) or plain op (0)",
+    )
+    ap.add_argument(
+        "--sub-method",
+        default="subscribe",
+        help="JSON-RPC subscription method name (default: subscribe)",
+    )
+    ap.add_argument(
+        "--topic-key",
+        default="topic",
+        help="Key name for the topic in params/payload (default: topic)",
+    )
+    ap.add_argument(
+        "--id-key", default="id", help="JSON-RPC request id field name (default: id)"
+    )
+    ap.add_argument(
+        "--topics",
+        default="newHeads,pendingTxs",
+        help="Comma-separated topics to subscribe (default: newHeads,pendingTxs)",
+    )
 
     return ap.parse_args(argv)
 
@@ -516,7 +679,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     nodes: List[WsNode] = []
     for i, url in enumerate(args.ws):
-        name = (args.name[i] if args.name and i < len(args.name) else f"node{i+1}")
+        name = args.name[i] if args.name and i < len(args.name) else f"node{i+1}"
         nodes.append(WsNode(url=url, name=name))
 
     cfg = SubConfig(

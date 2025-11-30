@@ -39,6 +39,7 @@ _MAX_KEY_LEN = 64
 
 # ---------------- Internal helpers ----------------
 
+
 def _to_bytes(name: str, v: Any) -> bytes:
     if isinstance(v, bytes):
         return v
@@ -102,6 +103,7 @@ def _normalize_args(args: Mapping[Any, Any]) -> Dict[bytes, bytes]:
 
 
 # ---------------- Public API ----------------
+
 
 def emit(name: bytes | str, args: Mapping[Any, Any] | None = None) -> None:
     """

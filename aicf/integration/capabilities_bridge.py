@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 from aicf.queue.jobkind import JobKind
+
 """
 aicf.integration.capabilities_bridge
 ------------------------------------
@@ -23,18 +25,21 @@ a lightweight dict receipt with the essential fields.
 """
 
 
-from dataclasses import asdict
-from typing import Any, Callable, Mapping, Optional, Tuple, Protocol, runtime_checkable
 import hashlib
 import json
+from dataclasses import asdict
+from typing import (Any, Callable, Mapping, Optional, Protocol, Tuple,
+                    runtime_checkable)
 
 # Types from AICF and Capabilities (used in type hints only; keep imports optional at runtime)
 try:
     from aicf.aitypes.job import JobKind  # type: ignore
 except Exception:  # pragma: no cover
+
     class JobKind:  # type: ignore
         AI = "AI"
         QUANTUM = "QUANTUM"
+
 
 try:
     from capabilities.jobs import receipts as _cap_receipts  # type: ignore
@@ -82,6 +87,7 @@ def _canon_bytes(obj: Any) -> bytes:
     We use JSON with sorted keys and no whitespace; byte blobs should be
     pre-hashed to hex to keep this stable.
     """
+
     def _normalize(v: Any) -> Any:
         if isinstance(v, bytes):
             return "0x" + v.hex()
@@ -92,7 +98,9 @@ def _canon_bytes(obj: Any) -> bytes:
         return v
 
     norm = _normalize(obj)
-    return json.dumps(norm, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(
+        norm, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
 
 
 def _as_public_dict(obj: Any) -> Mapping[str, Any]:

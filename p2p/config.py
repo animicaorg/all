@@ -30,27 +30,25 @@ Key env vars (examples):
 - ANIMICA_P2P_NODE_KEY_PATH=~/.animica/node_key.json
 - ANIMICA_P2P_NODE_CERT_PATH=~/.animica/node_cert.pem  (for optional QUIC ALPN cert)
 """
+
 from __future__ import annotations
 
-import os
 import ipaddress
-from dataclasses import dataclass, field, asdict
-from typing import Final, Iterable, Optional, Tuple, List
+import os
+from dataclasses import asdict, dataclass, field
+from typing import Final, Iterable, List, Optional, Tuple
 
-from .constants import (
-    DEFAULT_TCP_PORT,
-    DEFAULT_QUIC_PORT,
-    DEFAULT_WS_PORT,
-    MAX_PEERS as CONST_MAX_PEERS,
-    MAX_OUTBOUND_PEERS as CONST_MAX_OUTBOUND,
-    MAX_INBOUND_PEERS as CONST_MAX_INBOUND,
-    PROTOCOL_ID,
-)
+from .constants import DEFAULT_QUIC_PORT, DEFAULT_TCP_PORT, DEFAULT_WS_PORT
+from .constants import MAX_INBOUND_PEERS as CONST_MAX_INBOUND
+from .constants import MAX_OUTBOUND_PEERS as CONST_MAX_OUTBOUND
+from .constants import MAX_PEERS as CONST_MAX_PEERS
+from .constants import PROTOCOL_ID
 
 DEFAULT_SEEDS: Final[tuple[str, ...]] = ("/ip4/144.126.133.21/tcp/9000",)
 
 
 # ---------- parsing helpers ----------------------------------------------------
+
 
 def _getenv(name: str, default: str | None = None) -> str | None:
     v = os.getenv(name)
@@ -118,7 +116,12 @@ def _parse_host_port(v: str | None, default_port: int) -> tuple[str, int]:
 def _looks_like_multiaddr(s: str) -> bool:
     # A permissive check to avoid pulling the full parser here; the real parser
     # lives in p2p/transport/multiaddr.py. This only filters obvious junk.
-    return s.startswith("/ip4/") or s.startswith("/ip6/") or s.startswith("/dns") or s.startswith("/dnsaddr/")
+    return (
+        s.startswith("/ip4/")
+        or s.startswith("/ip6/")
+        or s.startswith("/dns")
+        or s.startswith("/dnsaddr/")
+    )
 
 
 def _validate_advertised_addrs(addrs: Iterable[str]) -> list[str]:
@@ -134,7 +137,11 @@ def _validate_advertised_addrs(addrs: Iterable[str]) -> list[str]:
             host, port = _parse_host_port(a, 0)
             try:
                 ipaddress.ip_address(host)
-                out.append(f"/ip4/{host}/tcp/{port}" if ":" not in host else f"/ip6/{host}/tcp/{port}")
+                out.append(
+                    f"/ip4/{host}/tcp/{port}"
+                    if ":" not in host
+                    else f"/ip6/{host}/tcp/{port}"
+                )
             except ValueError:
                 # assume DNS
                 out.append(f"/dns4/{host}/tcp/{port}")
@@ -171,6 +178,7 @@ def _normalize_stun(servers: Iterable[str]) -> list[tuple[str, int]]:
 
 # ---------- dataclass ----------------------------------------------------------
 
+
 @dataclass(frozen=True, slots=True)
 class P2PConfig:
     # Transports
@@ -202,11 +210,15 @@ class P2PConfig:
     private_network: bool = False  # if true, skip public bootstraps & harden gossip
 
     # Identity / TLS (optional self-signed for QUIC ALPN)
-    node_key_path: Optional[str] = None  # Dilithium3/SPHINCS+ identity, managed elsewhere
+    node_key_path: Optional[str] = (
+        None  # Dilithium3/SPHINCS+ identity, managed elsewhere
+    )
     node_cert_path: Optional[str] = None  # used by p2p.crypto.cert for QUIC
 
     # WebSocket CORS
-    ws_cors_allowed_origins: Tuple[str, ...] = field(default_factory=lambda: ("https://studio.animica.dev",))
+    ws_cors_allowed_origins: Tuple[str, ...] = field(
+        default_factory=lambda: ("https://studio.animica.dev",)
+    )
     ws_allow_credentials: bool = False
     ws_compression: bool = True  # permessage-deflate hint for servers/clients
 
@@ -221,6 +233,7 @@ class P2PConfig:
 
 # ---------- loader -------------------------------------------------------------
 
+
 def load_config() -> P2PConfig:
     """Load configuration from environment variables and return a validated P2PConfig."""
     enable_tcp = _getenv_bool("ANIMICA_P2P_ENABLE_TCP", True)
@@ -228,10 +241,14 @@ def load_config() -> P2PConfig:
     enable_ws = _getenv_bool("ANIMICA_P2P_ENABLE_WS", True)
 
     listen_tcp = _parse_host_port(_getenv("ANIMICA_P2P_LISTEN_TCP"), DEFAULT_TCP_PORT)
-    listen_quic = _parse_host_port(_getenv("ANIMICA_P2P_LISTEN_QUIC"), DEFAULT_QUIC_PORT)
+    listen_quic = _parse_host_port(
+        _getenv("ANIMICA_P2P_LISTEN_QUIC"), DEFAULT_QUIC_PORT
+    )
     listen_ws = _parse_host_port(_getenv("ANIMICA_P2P_LISTEN_WS"), DEFAULT_WS_PORT)
 
-    advertised_addrs = tuple(_validate_advertised_addrs(_csv(_getenv("ANIMICA_P2P_ADVERTISED_ADDRS"))))
+    advertised_addrs = tuple(
+        _validate_advertised_addrs(_csv(_getenv("ANIMICA_P2P_ADVERTISED_ADDRS")))
+    )
     seeds = _load_seeds_from_env()
 
     max_peers = _getenv_int("ANIMICA_P2P_MAX_PEERS", CONST_MAX_PEERS)
@@ -296,5 +313,6 @@ def load_config() -> P2PConfig:
 
 if __name__ == "__main__":
     import json
+
     cfg = load_config()
     print(json.dumps(cfg.to_dict(), indent=2))

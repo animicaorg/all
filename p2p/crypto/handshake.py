@@ -52,30 +52,33 @@ from enum import Enum, auto
 from typing import Optional, Tuple
 
 # PQ primitives & helpers (from the pq package)
-from pq.py.utils.hkdf import hkdf_extract, hkdf_expand
+from pq.py.utils.hkdf import hkdf_expand, hkdf_extract
+
 # Prefer the dedicated KEM wrapper (thin shim over oqs / fallback)
 try:
     # Our canonical wrappers
-    from pq.py.kem import generate_keypair as kyber_generate_keypair  # type: ignore
-    from pq.py.kem import encapsulate as kyber_encapsulate  # type: ignore
     from pq.py.kem import decapsulate as kyber_decapsulate  # type: ignore
+    from pq.py.kem import encapsulate as kyber_encapsulate  # type: ignore
+    from pq.py.kem import \
+        generate_keypair as kyber_generate_keypair  # type: ignore
 except Exception:  # pragma: no cover - fallback to algs.kyber768
-    from pq.py.algs.kyber768 import (  # type: ignore
-        generate_keypair as kyber_generate_keypair,
-        encapsulate as kyber_encapsulate,
-        decapsulate as kyber_decapsulate,
-    )
+    from pq.py.algs.kyber768 import decapsulate as kyber_decapsulate
+    from pq.py.algs.kyber768 import encapsulate as kyber_encapsulate
+    from pq.py.algs.kyber768 import \
+        generate_keypair as kyber_generate_keypair  # type: ignore
 
 # Local helpers for AEAD defaults & peer-id (lazy from __init__)
+from ..transport.base import ConnInfo, HandshakeError
 from . import get_default_aead_name
 from .aead import AEAD_DOMAIN_TAG, derive_nonce
-from ..transport.base import ConnInfo, HandshakeError
 
 # ---------------------------------------------------------------------------
+
 
 class Role(Enum):
     INITIATOR = auto()
     RESPONDER = auto()
+
 
 AEAD_KEY_SIZE = 32
 NONCE_BASE_SIZE = 12
@@ -84,58 +87,75 @@ TRANSCRIPT_DOMAIN = b"animica/p2p/hs/v1"
 # HKDF info label (kept short and constant)
 KEY_SCHEDULE_INFO = b"animica/p2p/hs/keys/v1"
 
+
 @dataclass(frozen=True)
 class HandshakeKeys:
     """Symmetric keys & bases for an established session."""
+
     aead: str
     send_key: bytes
     recv_key: bytes
     send_nonce_base: bytes
     recv_nonce_base: bytes
     transcript_hash: bytes  # 32 bytes (SHA3-256)
-    shared_secret: bytes    # raw KEM ss (not strictly needed after HKDF, kept for debugging)
+    shared_secret: (
+        bytes  # raw KEM ss (not strictly needed after HKDF, kept for debugging)
+    )
+
 
 @dataclass
 class InitiatorState:
     """Ephemeral state maintained between flight1 and flight2 on the initiator."""
+
     hello_i_bytes: bytes
     kyber_sk: bytes
     kyber_pk: bytes
     aead: str
 
+
 # ---------------------------------------------------------------------------
+
 
 def _le32(n: int) -> bytes:
     return n.to_bytes(4, "big")
+
 
 def _th_init():
     h = hashlib.sha3_256()
     h.update(TRANSCRIPT_DOMAIN)
     return h
 
+
 def _th_update(h, label: bytes, blob: bytes) -> None:
     """
     Frame into transcript as: len(label)||label || len(blob)||blob
     This prevents ambiguity and binds both order and content.
     """
-    h.update(_le32(len(label))); h.update(label)
-    h.update(_le32(len(blob)));  h.update(blob)
+    h.update(_le32(len(label)))
+    h.update(label)
+    h.update(_le32(len(blob)))
+    h.update(blob)
 
-def _derive_keys(role: Role, ss: bytes, transcript_hash: bytes, aead: str) -> HandshakeKeys:
+
+def _derive_keys(
+    role: Role, ss: bytes, transcript_hash: bytes, aead: str
+) -> HandshakeKeys:
     """HKDF-SHA3-256 extract/expand into client/server key material and map by role."""
     prk = hkdf_extract(salt=transcript_hash, ikm=ss)
     out_len = (AEAD_KEY_SIZE * 2) + (NONCE_BASE_SIZE * 2)
     okm = hkdf_expand(prk=prk, info=KEY_SCHEDULE_INFO, length=out_len)
     c_wk = okm[0:AEAD_KEY_SIZE]
-    s_wk = okm[AEAD_KEY_SIZE:AEAD_KEY_SIZE*2]
-    c_nb = okm[AEAD_KEY_SIZE*2:AEAD_KEY_SIZE*2 + NONCE_BASE_SIZE]
-    s_nb = okm[AEAD_KEY_SIZE*2 + NONCE_BASE_SIZE: AEAD_KEY_SIZE*2 + NONCE_BASE_SIZE*2]
+    s_wk = okm[AEAD_KEY_SIZE : AEAD_KEY_SIZE * 2]
+    c_nb = okm[AEAD_KEY_SIZE * 2 : AEAD_KEY_SIZE * 2 + NONCE_BASE_SIZE]
+    s_nb = okm[
+        AEAD_KEY_SIZE * 2 + NONCE_BASE_SIZE : AEAD_KEY_SIZE * 2 + NONCE_BASE_SIZE * 2
+    ]
     if role is Role.INITIATOR:
         send_key, recv_key = c_wk, s_wk
-        send_nb,  recv_nb  = c_nb, s_nb
+        send_nb, recv_nb = c_nb, s_nb
     else:  # RESPONDER
         send_key, recv_key = s_wk, c_wk
-        send_nb,  recv_nb  = s_nb, c_nb
+        send_nb, recv_nb = s_nb, c_nb
     return HandshakeKeys(
         aead=aead,
         send_key=send_key,
@@ -146,11 +166,15 @@ def _derive_keys(role: Role, ss: bytes, transcript_hash: bytes, aead: str) -> Ha
         shared_secret=ss,
     )
 
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
-def initiator_begin(hello_i_bytes: bytes, *, aead: str | None = None) -> Tuple[InitiatorState, bytes]:
+
+def initiator_begin(
+    hello_i_bytes: bytes, *, aead: str | None = None
+) -> Tuple[InitiatorState, bytes]:
     """
     Initiator flight-1:
       - Generate ephemeral Kyber-768 keypair (pk_i, sk_i).
@@ -165,10 +189,17 @@ def initiator_begin(hello_i_bytes: bytes, *, aead: str | None = None) -> Tuple[I
     """
     aead_name = aead or get_default_aead_name()
     pk, sk = kyber_generate_keypair()
-    return InitiatorState(hello_i_bytes=hello_i_bytes, kyber_sk=sk, kyber_pk=pk, aead=aead_name), pk
+    return (
+        InitiatorState(
+            hello_i_bytes=hello_i_bytes, kyber_sk=sk, kyber_pk=pk, aead=aead_name
+        ),
+        pk,
+    )
 
 
-def initiator_complete(state: InitiatorState, hello_r_bytes: bytes, kyber_ct: bytes) -> HandshakeKeys:
+def initiator_complete(
+    state: InitiatorState, hello_r_bytes: bytes, kyber_ct: bytes
+) -> HandshakeKeys:
     """
     Initiator flight-2 (after receiving responder’s HELLO-R with kyber_ct):
       - Decapsulate Kyber ct with our sk_i → ss
@@ -187,7 +218,13 @@ def initiator_complete(state: InitiatorState, hello_r_bytes: bytes, kyber_ct: by
     return _derive_keys(Role.INITIATOR, ss, transcript_hash, state.aead)
 
 
-def responder_respond(hello_i_bytes: bytes, kyber_pk_i: bytes, hello_r_bytes: bytes, *, aead: str | None = None) -> Tuple[bytes, HandshakeKeys]:
+def responder_respond(
+    hello_i_bytes: bytes,
+    kyber_pk_i: bytes,
+    hello_r_bytes: bytes,
+    *,
+    aead: str | None = None,
+) -> Tuple[bytes, HandshakeKeys]:
     """
     Responder single-shot:
       - Encapsulate to initiator’s Kyber pk → (ct, ss)
@@ -210,11 +247,15 @@ def responder_respond(hello_i_bytes: bytes, kyber_pk_i: bytes, hello_r_bytes: by
     keys = _derive_keys(Role.RESPONDER, ss, transcript_hash, aead_name)
     return ct, keys
 
+
 # ---------------------------------------------------------------------------
 # Optional convenience: all-in-one two-flight simulation (useful for tests)
 # ---------------------------------------------------------------------------
 
-def simulate_two_flight(hello_i_bytes: bytes, hello_r_bytes: bytes, *, aead: str | None = None) -> Tuple[bytes, HandshakeKeys, HandshakeKeys]:
+
+def simulate_two_flight(
+    hello_i_bytes: bytes, hello_r_bytes: bytes, *, aead: str | None = None
+) -> Tuple[bytes, HandshakeKeys, HandshakeKeys]:
     """
     Simulate a full handshake in-process:
       - I: generate (pk_i, sk_i)
@@ -229,14 +270,20 @@ def simulate_two_flight(hello_i_bytes: bytes, hello_r_bytes: bytes, *, aead: str
     keys_i = initiator_complete(state, hello_r_bytes, ct_r)
     # Sanity: both sides derived identical transcript hash and opposite directions
     assert keys_i.transcript_hash == keys_r.transcript_hash, "transcript mismatch"
-    assert keys_i.send_key == keys_r.recv_key and keys_i.recv_key == keys_r.send_key, "key mismatch"
-    assert keys_i.send_nonce_base == keys_r.recv_nonce_base and keys_i.recv_nonce_base == keys_r.send_nonce_base, "nonce base mismatch"
+    assert (
+        keys_i.send_key == keys_r.recv_key and keys_i.recv_key == keys_r.send_key
+    ), "key mismatch"
+    assert (
+        keys_i.send_nonce_base == keys_r.recv_nonce_base
+        and keys_i.recv_nonce_base == keys_r.send_nonce_base
+    ), "nonce base mismatch"
     return ct_r, keys_r, keys_i
 
 
 # ---------------------------------------------------------------------------
 # Minimal TCP handshake adapter (devnet-friendly)
 # ---------------------------------------------------------------------------
+
 
 class _TcpAead:
     """
@@ -245,7 +292,8 @@ class _TcpAead:
 
     def __init__(self, alg: str, key: bytes, nonce_base: bytes):
         try:
-            from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305
+            from cryptography.hazmat.primitives.ciphers.aead import (
+                AESGCM, ChaCha20Poly1305)
         except Exception as exc:  # pragma: no cover - optional dependency
             raise HandshakeError(f"cryptography AEAD unavailable: {exc}") from exc
 

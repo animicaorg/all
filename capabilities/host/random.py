@@ -40,16 +40,13 @@ Registered under the RANDOM (or "RANDOM") key in ProviderRegistry.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Union
 import hashlib
 import json
 import logging
+from typing import Any, Dict, Optional, Union
 
-from .provider import (  # type: ignore
-    SyscallContext,
-    ProviderRegistry,
-    get_registry,
-)
+from .provider import (ProviderRegistry, SyscallContext,  # type: ignore
+                       get_registry)
 
 # Try to import the registry key; fall back to a literal if older provider.py
 try:  # pragma: no cover
@@ -67,6 +64,7 @@ try:
     #   - get_beacon_bytes() -> bytes
     #   - get_beacon() -> { "output"/"beacon"/"digest"/"bytes": ... } | bytes
     from ..adapters import randomness as _rand_adapter  # type: ignore
+
     _HAS_BEACON_ADAPTER = True
 except Exception:  # pragma: no cover
     _rand_adapter = None
@@ -76,9 +74,11 @@ except Exception:  # pragma: no cover
 # ----------------------------
 DEFAULT_MAX = 4096  # bytes
 
+
 def _max_bytes() -> int:
     try:
         from .. import config as _cfg  # type: ignore
+
         v = getattr(_cfg, "RANDOM_MAX_BYTES", DEFAULT_MAX)
         if isinstance(v, int) and v > 0:
             return v
@@ -92,6 +92,7 @@ def _max_bytes() -> int:
 # ----------------------------
 
 JSONish = Union[dict, list, str, int, float, bool, None, bytes, bytearray]
+
 
 def _to_bytes(obj: JSONish) -> bytes:
     """Deterministically canonicalize a JSON-ish value to bytes."""
@@ -109,6 +110,7 @@ def _to_bytes(obj: JSONish) -> bytes:
     def _enc(x: Any) -> Any:
         if isinstance(x, (bytes, bytearray)):
             import base64
+
             return {"__b64__": base64.b64encode(bytes(x)).decode("ascii")}
         if isinstance(x, dict):
             return {k: _enc(v) for k, v in sorted(x.items(), key=lambda kv: str(kv[0]))}
@@ -116,7 +118,9 @@ def _to_bytes(obj: JSONish) -> bytes:
             return [_enc(v) for v in x]
         return x
 
-    return json.dumps(_enc(obj), sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return json.dumps(
+        _enc(obj), sort_keys=True, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
 
 
 def _beacon_bytes() -> bytes:
@@ -157,11 +161,15 @@ def _beacon_bytes() -> bytes:
                         return s.encode("utf-8")
                     # As a last resort, hash the JSON to a fixed-length digest
                     return hashlib.sha3_256(
-                        json.dumps(v, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                        json.dumps(v, sort_keys=True, separators=(",", ":")).encode(
+                            "utf-8"
+                        )
                     ).digest()
         # Unknown shape: hash its JSON form
         return hashlib.sha3_256(
-            json.dumps(b, sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
+            json.dumps(b, sort_keys=True, default=str, separators=(",", ":")).encode(
+                "utf-8"
+            )
         ).digest()
     except Exception as e:  # pragma: no cover
         log.debug("beacon adapter failed", exc_info=e)
@@ -171,6 +179,7 @@ def _beacon_bytes() -> bytes:
 def _seed_from_ctx(ctx: SyscallContext, personalization: Optional[JSONish]) -> bytes:
     """Build a domain-separated seed from ctx + optional personalization + beacon."""
     domain = b"cap.random.v1"
+
     # chain_id and height if present
     def _int8(x: Optional[int]) -> bytes:
         if isinstance(x, int):
@@ -216,7 +225,10 @@ def _expand(seed: bytes, n: int) -> bytes:
 # Provider entrypoint
 # ----------------------------
 
-def _random_bytes(ctx: SyscallContext, *, length: int, personalization: Optional[JSONish] = None) -> bytes:
+
+def _random_bytes(
+    ctx: SyscallContext, *, length: int, personalization: Optional[JSONish] = None
+) -> bytes:
     """
     Produce `length` pseudorandom bytes deterministically from the execution context,
     optionally incorporating a personalization message and the network beacon when available.
@@ -225,7 +237,9 @@ def _random_bytes(ctx: SyscallContext, *, length: int, personalization: Optional
         length = 0
     max_len = _max_bytes()
     if length > max_len:
-        log.debug("random(): length clipped", extra={"requested": length, "max": max_len})
+        log.debug(
+            "random(): length clipped", extra={"requested": length, "max": max_len}
+        )
         length = max_len
 
     seed = _seed_from_ctx(ctx, personalization)

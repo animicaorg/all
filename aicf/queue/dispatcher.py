@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 aicf.queue.dispatcher
 =====================
@@ -23,12 +24,12 @@ Typical usage
 
 """
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import logging
 import random
 import threading
 import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Optional
 
 from .assignment import AssignmentEngine
@@ -38,13 +39,12 @@ log = logging.getLogger(__name__)
 # ────────────────────────────── Optional metrics ──────────────────────────────
 try:
     # These names are optional; metrics module may provide them.
-    from aicf.metrics import (  # type: ignore
-        HISTOGRAM_DISPATCH_TICK_SECONDS as _H_TICK,
-        GAUGE_QUEUE_DEPTH as _G_QDEPTH,
-        GAUGE_ACTIVE_LEASES as _G_ACTIVE,
-        COUNTER_DISPATCH_TICKS as _C_TICKS,
-        COUNTER_DISPATCH_IDLE as _C_IDLE,
-    )
+    from aicf.metrics import COUNTER_DISPATCH_IDLE as _C_IDLE
+    from aicf.metrics import COUNTER_DISPATCH_TICKS as _C_TICKS
+    from aicf.metrics import GAUGE_ACTIVE_LEASES as _G_ACTIVE
+    from aicf.metrics import GAUGE_QUEUE_DEPTH as _G_QDEPTH
+    from aicf.metrics import \
+        HISTOGRAM_DISPATCH_TICK_SECONDS as _H_TICK  # type: ignore
 except Exception:  # pragma: no cover - soft import fallback
 
     class _Noop:
@@ -100,7 +100,9 @@ class Dispatcher:
     all state changes to AssignmentEngine.
     """
 
-    def __init__(self, engine: AssignmentEngine, config: Optional[DispatcherConfig] = None) -> None:
+    def __init__(
+        self, engine: AssignmentEngine, config: Optional[DispatcherConfig] = None
+    ) -> None:
         self.engine = engine
         self.config = config or DispatcherConfig()
         self._tick_count = 0
@@ -113,8 +115,11 @@ class Dispatcher:
         Block and run the dispatcher loop until `stop_event` is set (if provided).
         """
         stop = stop_event or threading.Event()
-        log.info("dispatcher: starting main loop (tick=%.3fs idle=%.3fs)",
-                 self.config.tick_interval_seconds, self.config.idle_sleep_seconds)
+        log.info(
+            "dispatcher: starting main loop (tick=%.3fs idle=%.3fs)",
+            self.config.tick_interval_seconds,
+            self.config.idle_sleep_seconds,
+        )
 
         while not stop.is_set():
             started = _now()
@@ -153,8 +158,11 @@ class Dispatcher:
             if self._tick_count % max(1, self.config.sweep_every_ticks) == 0:
                 swept_requeued, swept_tomb = self.engine.sweep_expired(now=now)
                 if swept_requeued or swept_tomb:
-                    log.debug("dispatcher: sweep_expired requeued=%d tombstoned=%d",
-                              swept_requeued, swept_tomb)
+                    log.debug(
+                        "dispatcher: sweep_expired requeued=%d tombstoned=%d",
+                        swept_requeued,
+                        swept_tomb,
+                    )
 
             assigned = self.engine.assign_pass(now=now)
 
@@ -162,9 +170,18 @@ class Dispatcher:
             self._maybe_update_gauges()
 
             if assigned or swept_requeued or swept_tomb:
-                log.debug("dispatcher: tick assigned=%d requeued=%d tombstoned=%d",
-                          assigned, swept_requeued, swept_tomb)
-            return assigned, swept_requeued, swept_tomb, int(bool(swept_requeued or swept_tomb))
+                log.debug(
+                    "dispatcher: tick assigned=%d requeued=%d tombstoned=%d",
+                    assigned,
+                    swept_requeued,
+                    swept_tomb,
+                )
+            return (
+                assigned,
+                swept_requeued,
+                swept_tomb,
+                int(bool(swept_requeued or swept_tomb)),
+            )
 
     def _maybe_update_gauges(self) -> None:
         """

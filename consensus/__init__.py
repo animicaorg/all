@@ -15,24 +15,11 @@ Re-exports:
     window, state
 """
 
-from .version import __version__  # defined in consensus/version.py
-
 # Re-export key submodules for ergonomic imports
-from . import (
-    errors,
-    math,
-    caps,
-    scorer,
-    difficulty,
-    fork_choice,
-    interfaces,
-    validator,
-    nullifiers,
-    share_receipts,
-    alpha_tuner,
-    window,
-    state,
-)
+from . import (alpha_tuner, caps, difficulty, errors, fork_choice, interfaces,
+               math, nullifiers, scorer, share_receipts, state, validator,
+               window)
+from .version import __version__  # defined in consensus/version.py
 
 __all__ = [
     "__version__",

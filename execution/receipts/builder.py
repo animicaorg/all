@@ -15,9 +15,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List
 
-from execution.types.result import ApplyResult
-from execution.types.receipt import Receipt
 from execution.types.events import LogEvent
+from execution.types.receipt import Receipt
+from execution.types.result import ApplyResult
+
 from .logs_hash import compute_logs_bloom, compute_logs_root
 
 

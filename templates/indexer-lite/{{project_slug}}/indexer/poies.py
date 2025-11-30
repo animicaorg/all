@@ -51,9 +51,10 @@ import json
 import logging
 import math
 from collections import Counter, defaultdict
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from statistics import fmean
-from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple, Union, cast
+from typing import (Any, Dict, Iterable, List, Mapping, MutableMapping,
+                    Optional, Sequence, Tuple, Union, cast)
 
 from .config import IndexerConfig, from_env
 from .rpc import JsonRpcClient
@@ -62,6 +63,7 @@ Json = Mapping[str, Any]
 
 
 # ----------------------------- utils --------------------------------------- #
+
 
 def _hx(v: Union[str, int, None], default: Optional[int] = None) -> Optional[int]:
     if v is None:
@@ -118,20 +120,21 @@ def _hhi_from_shares(shares: Sequence[float]) -> float:
 
 # ----------------------------- data models --------------------------------- #
 
+
 @dataclass
 class PoIESScore:
     number: int
     hash: Optional[str]
     producer: Optional[str]
 
-    gamma: Optional[int]              # control variable (Γ)
-    psi: Optional[int]                # instantaneous pressure (ψ)
+    gamma: Optional[int]  # control variable (Γ)
+    psi: Optional[int]  # instantaneous pressure (ψ)
 
     participation_rate: Optional[float]
     mix_entropy: Optional[float]
     lateness_s: Optional[float]
 
-    tags: Tuple[str, ...]             # notes about fallbacks/assumptions
+    tags: Tuple[str, ...]  # notes about fallbacks/assumptions
 
     def as_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -170,7 +173,9 @@ class PoIESWindowSummary:
         lines = []
         ns = namespace
 
-        def gauge(name: str, value: Optional[float], labels: Optional[Dict[str, str]] = None) -> None:
+        def gauge(
+            name: str, value: Optional[float], labels: Optional[Dict[str, str]] = None
+        ) -> None:
             if value is None:
                 return
             lab = ""
@@ -201,7 +206,13 @@ class PoIESWindowSummary:
 
 # ----------------------------- calculators --------------------------------- #
 
-def score_block(block: Json, *, target_block_time_s: Optional[float] = None, parent_ts: Optional[int] = None) -> PoIESScore:
+
+def score_block(
+    block: Json,
+    *,
+    target_block_time_s: Optional[float] = None,
+    parent_ts: Optional[int] = None,
+) -> PoIESScore:
     """
     Compute PoIES-style score for a single block. Best-effort extraction:
 
@@ -218,10 +229,16 @@ def score_block(block: Json, *, target_block_time_s: Optional[float] = None, par
 
     number = _hx(block.get("number"), 0) or 0
     bhash = cast(Optional[str], block.get("hash"))
-    header = block  # may be nested differently in some RPCs; we treat block as header-like
+    header = (
+        block  # may be nested differently in some RPCs; we treat block as header-like
+    )
 
     # producer / coinbase extraction
-    producer = cast(Optional[str], header.get("miner")) or cast(Optional[str], header.get("producer")) or cast(Optional[str], header.get("coinbase"))  # noqa: E501
+    producer = (
+        cast(Optional[str], header.get("miner"))
+        or cast(Optional[str], header.get("producer"))
+        or cast(Optional[str], header.get("coinbase"))
+    )  # noqa: E501
     if producer is None:
         tags.append("missing_producer")
 
@@ -252,13 +269,21 @@ def score_block(block: Json, *, target_block_time_s: Optional[float] = None, par
 
     # mix entropy (prefer dict of category->weight)
     mix_entropy: Optional[float] = None
-    mix = cast(Optional[Mapping[str, Any]], cons.get("mix") if cons else None) or cast(Optional[Mapping[str, Any]], header.get("mix"))  # noqa: E501
-    rand = cast(Optional[Mapping[str, Any]], header.get("randomness"))  # fallback alt location
+    mix = cast(Optional[Mapping[str, Any]], cons.get("mix") if cons else None) or cast(
+        Optional[Mapping[str, Any]], header.get("mix")
+    )  # noqa: E501
+    rand = cast(
+        Optional[Mapping[str, Any]], header.get("randomness")
+    )  # fallback alt location
     if isinstance(mix, Mapping):
-        mix_entropy = _shannon_entropy({k: float(v) for k, v in mix.items() if isinstance(v, (int, float))})
+        mix_entropy = _shannon_entropy(
+            {k: float(v) for k, v in mix.items() if isinstance(v, (int, float))}
+        )
     elif isinstance(rand, Mapping):
         # treat "randomness" content (e.g., {'beacon': 128, 'quantum': 64, 'local': 16})
-        mix_entropy = _shannon_entropy({k: float(v) for k, v in rand.items() if isinstance(v, (int, float))})
+        mix_entropy = _shannon_entropy(
+            {k: float(v) for k, v in rand.items() if isinstance(v, (int, float))}
+        )
     if mix_entropy is None:
         tags.append("missing_mix")
 
@@ -290,7 +315,13 @@ class RollingAnalyzer:
     Use `push(block)` to add a block; call `summary()` to get a `PoIESWindowSummary`.
     """
 
-    def __init__(self, *, window: int = 256, target_block_time_s: Optional[float] = None, log: Optional[logging.Logger] = None) -> None:  # noqa: E501
+    def __init__(
+        self,
+        *,
+        window: int = 256,
+        target_block_time_s: Optional[float] = None,
+        log: Optional[logging.Logger] = None,
+    ) -> None:  # noqa: E501
         self.window = max(1, int(window))
         self.target_block_time_s = target_block_time_s
         self.log = (log or logging.getLogger("indexer.poies")).getChild("rolling")
@@ -310,7 +341,9 @@ class RollingAnalyzer:
         if num is not None and (num - 1) in self._last_ts_by_num:
             parent_ts = self._last_ts_by_num[num - 1]
 
-        sc = score_block(block, target_block_time_s=self.target_block_time_s, parent_ts=parent_ts)
+        sc = score_block(
+            block, target_block_time_s=self.target_block_time_s, parent_ts=parent_ts
+        )
         self._scores.append(sc)
         if sc.producer:
             self._producers[sc.producer] += 1
@@ -385,6 +418,7 @@ class RollingAnalyzer:
 
 # ----------------------------- range helpers -------------------------------- #
 
+
 async def analyze_range(
     rpc: JsonRpcClient,
     *,
@@ -401,7 +435,9 @@ async def analyze_range(
     return `null` for blocks not yet present; we ignore those.
     """
     log = logging.getLogger("indexer.poies.range")
-    ra = RollingAnalyzer(window=window, target_block_time_s=target_block_time_s, log=log)
+    ra = RollingAnalyzer(
+        window=window, target_block_time_s=target_block_time_s, log=log
+    )
     scores: List[PoIESScore] = []
 
     cur = start
@@ -410,7 +446,12 @@ async def analyze_range(
 
     while cur <= stop:
         chunk_end = min(cur + max_batch - 1, stop)
-        blocks = cast(List[Json], await rpc.get_block_range(cur, chunk_end, full_txs=full_txs, max_batch=max_batch))
+        blocks = cast(
+            List[Json],
+            await rpc.get_block_range(
+                cur, chunk_end, full_txs=full_txs, max_batch=max_batch
+            ),
+        )
         for b in blocks:
             if not b:
                 continue
@@ -422,16 +463,27 @@ async def analyze_range(
     if summary is None:
         # empty window; synthesize an empty one for the caller
         summary = PoIESWindowSummary(
-            window=0, start=start, stop=stop,
-            avg_gamma=None, avg_psi=None, avg_participation=None,
-            avg_mix_entropy=None, avg_lateness_s=None,
-            producers={}, shares={}, gini=0.0, hhi=0.0,
-            missing_gamma=0, missing_psi=0, missing_mix=0,
+            window=0,
+            start=start,
+            stop=stop,
+            avg_gamma=None,
+            avg_psi=None,
+            avg_participation=None,
+            avg_mix_entropy=None,
+            avg_lateness_s=None,
+            producers={},
+            shares={},
+            gini=0.0,
+            hhi=0.0,
+            missing_gamma=0,
+            missing_psi=0,
+            missing_mix=0,
         )
     return scores, summary
 
 
 # ----------------------------- CLI ----------------------------------------- #
+
 
 def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="PoIES window analysis")
@@ -447,7 +499,9 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     rng.add_argument("--window", type=int, default=256)
     rng.add_argument("--target-block-time", type=float, default=None, help="seconds")
 
-    p.add_argument("--json", action="store_true", help="emit JSON instead of pretty text")
+    p.add_argument(
+        "--json", action="store_true", help="emit JSON instead of pretty text"
+    )
     p.add_argument("--log-level", default="INFO")
     return p.parse_args(argv)
 
@@ -463,20 +517,32 @@ async def _amain(ns: argparse.Namespace) -> int:
             head = await rpc.block_number()
             start = max(0, head - (ns.window - 1))
             _, summary = await analyze_range(
-                rpc, start=start, stop=head, window=ns.window, full_txs=False,
+                rpc,
+                start=start,
+                stop=head,
+                window=ns.window,
+                full_txs=False,
                 target_block_time_s=ns.target_block_time,
             )
             if ns.json:
-                print(json.dumps(summary.as_dict(), separators=(",", ":"), sort_keys=True))
+                print(
+                    json.dumps(summary.as_dict(), separators=(",", ":"), sort_keys=True)
+                )
             else:
                 _pretty_print_summary(summary)
         elif ns.cmd == "range":
             _, summary = await analyze_range(
-                rpc, start=ns.start, stop=ns.stop, window=ns.window, full_txs=False,
+                rpc,
+                start=ns.start,
+                stop=ns.stop,
+                window=ns.window,
+                full_txs=False,
                 target_block_time_s=ns.target_block_time,
             )
             if ns.json:
-                print(json.dumps(summary.as_dict(), separators=(",", ":"), sort_keys=True))
+                print(
+                    json.dumps(summary.as_dict(), separators=(",", ":"), sort_keys=True)
+                )
             else:
                 _pretty_print_summary(summary)
         else:
@@ -487,6 +553,7 @@ async def _amain(ns: argparse.Namespace) -> int:
 def _pretty_print_summary(s: PoIESWindowSummary) -> None:
     print(f"PoIES summary for blocks [{s.start}, {s.stop}] (window={s.window})")
     print("")
+
     def fmt(x: Optional[float], nd=4) -> str:
         return f"{x:.{nd}f}" if x is not None else "n/a"
 

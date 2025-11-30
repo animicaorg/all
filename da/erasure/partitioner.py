@@ -20,12 +20,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Generator, Iterable, Iterator, List, Sequence, Tuple
 
-from .params import ErasureParams, DEFAULT_PARAMS
-
+from .params import DEFAULT_PARAMS, ErasureParams
 
 # --------------------------------------------------------------------------- #
 # Model
 # --------------------------------------------------------------------------- #
+
 
 @dataclass(frozen=True)
 class DataShard:
@@ -40,6 +40,7 @@ class DataShard:
       offset_in_stripe: 0..k-1
       is_padding:  True iff data_len == 0 (pure right padding beyond blob length)
     """
+
     index: int
     payload: bytes
     data_len: int
@@ -51,6 +52,7 @@ class DataShard:
 # --------------------------------------------------------------------------- #
 # Core API
 # --------------------------------------------------------------------------- #
+
 
 def partition_blob(blob: bytes, params: ErasureParams) -> List[DataShard]:
     """
@@ -91,7 +93,7 @@ def partition_blob(blob: bytes, params: ErasureParams) -> List[DataShard]:
                     payload = meaningful + bytes(B - data_len)
                 else:
                     payload = meaningful
-                is_padding = (data_len == 0)
+                is_padding = data_len == 0
 
             shards.append(
                 DataShard(
@@ -112,6 +114,7 @@ def partition_blob(blob: bytes, params: ErasureParams) -> List[DataShard]:
 # --------------------------------------------------------------------------- #
 # Namespaced leaf helpers (optional; lazy import to avoid heavy deps)
 # --------------------------------------------------------------------------- #
+
 
 def make_namespaced_leaves(
     shards: Sequence[DataShard],
@@ -148,6 +151,7 @@ def make_namespaced_leaves(
 # Utilities
 # --------------------------------------------------------------------------- #
 
+
 def data_shard_count_for_blob(blob_len: int, params: ErasureParams) -> int:
     """
     Total number of *data* shards (k per stripe) required to carry a blob
@@ -169,7 +173,10 @@ __all__ = [
 
 # Compatibility aliases ---------------------------------------------------------------
 
-def partition(blob: bytes, namespace: bytes) -> List[bytes]:  # pragma: no cover - thin wrapper
+
+def partition(
+    blob: bytes, namespace: bytes
+) -> List[bytes]:  # pragma: no cover - thin wrapper
     """Convenience alias used by some legacy callers/tests."""
     shards = partition_blob(blob, DEFAULT_PARAMS)
     return make_namespaced_leaves(shards, namespace)

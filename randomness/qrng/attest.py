@@ -45,6 +45,7 @@ try:
     # Prefer project domain-separated SHA3 helpers if available.
     from randomness.utils.hash import sha3_256 as _sha3_256  # type: ignore
 except Exception:  # pragma: no cover - fallback for isolated usage
+
     def _sha3_256(data: bytes) -> bytes:
         return hashlib.sha3_256(data).digest()
 
@@ -55,6 +56,7 @@ _ATTEST_TRANSCRIPT_DOMAIN = b"animica/qrng/attest/v1"
 
 
 # ------------------------------- Data types -----------------------------------
+
 
 @dataclasses.dataclass(frozen=True)
 class DeviceIdentity:
@@ -69,6 +71,7 @@ class DeviceIdentity:
         cert_chain: Optional list of certificate blobs (PEM or DER as bytes).
         metadata: Free-form extra hints (e.g., {"subject": "...", "san": ["..."]}).
     """
+
     provider: str
     model: str
     serial: str
@@ -89,6 +92,7 @@ class AttestationEvidence:
         timestamp_s: Seconds since epoch (device- or agent-reported).
         auxiliary: Free-form extra fields (JSON-like) for vendor extensions.
     """
+
     nonce: bytes
     report: bytes
     signature: bytes
@@ -109,6 +113,7 @@ class TrustReport:
         policy_version: Optional policy identifier string used for verification.
         created_at_s: Local time when the report was created.
     """
+
     verified: bool
     reason: Optional[str]
     device_fingerprint: str
@@ -119,6 +124,7 @@ class TrustReport:
 
 # ------------------------------- Helpers --------------------------------------
 
+
 def transcript_hash(identity: DeviceIdentity, evidence: AttestationEvidence) -> bytes:
     """
     Compute a domain-separated transcript digest that devices are expected to sign.
@@ -127,12 +133,18 @@ def transcript_hash(identity: DeviceIdentity, evidence: AttestationEvidence) -> 
     """
     parts = [
         _ATTEST_TRANSCRIPT_DOMAIN,
-        b"|prov:", identity.provider.encode("utf-8"),
-        b"|model:", identity.model.encode("utf-8"),
-        b"|serial:", identity.serial.encode("utf-8"),
-        b"|nonce:", evidence.nonce,
-        b"|report:", evidence.report,
-        b"|ts:", str(int(evidence.timestamp_s)).encode("ascii"),
+        b"|prov:",
+        identity.provider.encode("utf-8"),
+        b"|model:",
+        identity.model.encode("utf-8"),
+        b"|serial:",
+        identity.serial.encode("utf-8"),
+        b"|nonce:",
+        evidence.nonce,
+        b"|report:",
+        evidence.report,
+        b"|ts:",
+        str(int(evidence.timestamp_s)).encode("ascii"),
     ]
     return _sha3_256(b"".join(parts))
 
@@ -159,11 +171,14 @@ def _fingerprint_from_identity(identity: DeviceIdentity) -> str:
     if identity.public_key:
         h = hashlib.sha256(identity.public_key).hexdigest()
         return f"pubkey/sha256:{h}"
-    coarse = "|".join((identity.provider, identity.model, identity.serial)).encode("utf-8")
+    coarse = "|".join((identity.provider, identity.model, identity.serial)).encode(
+        "utf-8"
+    )
     return f"id/sha256:{hashlib.sha256(coarse).hexdigest()}"
 
 
 # -------------------------- Verifier interfaces --------------------------------
+
 
 @runtime_checkable
 class AttestationVerifier(Protocol):
@@ -191,6 +206,7 @@ class AttestationVerifier(Protocol):
 
 # ------------------------- Default/placeholder verifiers -----------------------
 
+
 class NoopAttestationVerifier(AttestationVerifier):
     """
     Permissive verifier that accepts everything and emits a minimal report.
@@ -212,7 +228,9 @@ class NoopAttestationVerifier(AttestationVerifier):
         # Optionally expose a terse preview of the report for debugging
         if evidence.report:
             meas["report.b64sha256"] = hashlib.sha256(evidence.report).hexdigest()
-            meas["report.preview_b64"] = base64.b64encode(evidence.report[:32]).decode("ascii")
+            meas["report.preview_b64"] = base64.b64encode(evidence.report[:32]).decode(
+                "ascii"
+            )
         if identity.metadata.get("subject"):
             meas["x509.subject"] = str(identity.metadata["subject"])
         pv = str(policy.get("version")) if policy and "version" in policy else "none"
@@ -252,7 +270,9 @@ class MinimalX509Verifier(AttestationVerifier):
     ) -> TrustReport:
         pv = str(policy.get("version")) if policy and "version" in policy else "none"
         max_age_s = int(policy.get("max_age_s", 120)) if policy else 120
-        expected_substr = str(policy.get("expected_subject_contains", "")) if policy else ""
+        expected_substr = (
+            str(policy.get("expected_subject_contains", "")) if policy else ""
+        )
 
         now = time.time()
         age = abs(now - float(evidence.timestamp_s))
@@ -287,7 +307,9 @@ class MinimalX509Verifier(AttestationVerifier):
 
         # If a cert is present, surface a fingerprint for operators.
         if identity.cert_chain:
-            meas["leaf_cert.sha256"] = hashlib.sha256(identity.cert_chain[0]).hexdigest()
+            meas["leaf_cert.sha256"] = hashlib.sha256(
+                identity.cert_chain[0]
+            ).hexdigest()
 
         return TrustReport(
             verified=True,
@@ -300,6 +322,7 @@ class MinimalX509Verifier(AttestationVerifier):
 
 
 # ------------------------------ Factory ---------------------------------------
+
 
 def default_verifier(kind: str = "noop") -> AttestationVerifier:
     """

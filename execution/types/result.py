@@ -22,16 +22,18 @@ Utilities
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import (Any, Dict, Iterable, List, Mapping, Optional, Sequence,
+                    Tuple, Union)
 
-from .status import TxStatus
 from .events import LogEvent
+from .status import TxStatus
 
 HexLike = Union[str, bytes, bytearray, memoryview]
 Receipt = Dict[str, Any]  # Kept opaque here to avoid cross-module dependency.
 
 
 # ------------------------------ hex helpers ---------------------------------
+
 
 def _hex_to_bytes(v: HexLike) -> bytes:
     if isinstance(v, (bytes, bytearray, memoryview)):
@@ -56,6 +58,7 @@ def _bytes_to_hex(b: Optional[bytes]) -> Optional[str]:
 
 
 # ------------------------------- main type ----------------------------------
+
 
 @dataclass(frozen=True)
 class ApplyResult:
@@ -93,7 +96,9 @@ class ApplyResult:
         # Basic sanity: ensure they are LogEvent instances
         for i, ev in enumerate(logs_t):
             if not isinstance(ev, LogEvent):
-                raise TypeError(f"logs[{i}] is not a LogEvent (got {type(ev).__name__})")
+                raise TypeError(
+                    f"logs[{i}] is not a LogEvent (got {type(ev).__name__})"
+                )
 
         sr_b = (
             _hex_to_bytes(state_root)
@@ -154,11 +159,20 @@ class ApplyResult:
         raw_logs = d.get("logs", [])
         if not isinstance(raw_logs, (list, tuple)):
             raise TypeError("logs must be a list/tuple")
-        logs = tuple(LogEvent.from_dict(x) if not isinstance(x, LogEvent) else x for x in raw_logs)
+        logs = tuple(
+            LogEvent.from_dict(x) if not isinstance(x, LogEvent) else x
+            for x in raw_logs
+        )
 
         state_root = d.get("stateRoot")
         receipt = d.get("receipt")
-        return cls(status=status, gas_used=gas_used, logs=logs, state_root=state_root, receipt=receipt)
+        return cls(
+            status=status,
+            gas_used=gas_used,
+            logs=logs,
+            state_root=state_root,
+            receipt=receipt,
+        )
 
     # Pretty representation (short)
     def __repr__(self) -> str:  # pragma: no cover - cosmetic

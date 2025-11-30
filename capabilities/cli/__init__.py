@@ -38,6 +38,7 @@ log = logging.getLogger(__name__)
 # Attempt to surface a version string if available
 try:  # lazy/optional
     from capabilities.version import version as _cap_version  # type: ignore
+
     __version__ = _cap_version()
 except Exception:  # pragma: no cover - optional
     __version__ = "0.0.0"

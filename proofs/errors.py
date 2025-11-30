@@ -23,27 +23,28 @@ from typing import Any, Dict, Mapping, Optional
 
 class ProofErrorCode(str, Enum):
     """Canonical error codes for proofs/ verification & parsing."""
+
     UNKNOWN = "UNKNOWN"
 
     # Schema / decoding / shape issues
-    SCHEMA = "SCHEMA"                  # generic schema failure (JSON-Schema, CDDL, etc.)
-    DECODE = "DECODE"                  # bytes/CBOR/JSON decode error
-    SIZE_LIMIT = "SIZE_LIMIT"          # proof too large / field too large
+    SCHEMA = "SCHEMA"  # generic schema failure (JSON-Schema, CDDL, etc.)
+    DECODE = "DECODE"  # bytes/CBOR/JSON decode error
+    SIZE_LIMIT = "SIZE_LIMIT"  # proof too large / field too large
 
     # Policy / linkage issues
     POLICY_MISMATCH = "POLICY_MISMATCH"  # policy roots/ids/versions mismatch
-    ROOT_MISMATCH = "ROOT_MISMATCH"      # header roots do not bind to proof set
+    ROOT_MISMATCH = "ROOT_MISMATCH"  # header roots do not bind to proof set
 
     # Nullifiers
     NULLIFIER_REUSE = "NULLIFIER_REUSE"  # nullifier seen in TTL window
 
     # Per-proof families (high-level classification)
-    ATTESTATION = "ATTESTATION"        # TEE/QPU attestation parse/verify failed
+    ATTESTATION = "ATTESTATION"  # TEE/QPU attestation parse/verify failed
     HASH_SHARE = "HASH_SHARE_INVALID"  # PoW-ish share invalid
-    AI_PROOF = "AI_PROOF_INVALID"      # AI proof bundle invalid
+    AI_PROOF = "AI_PROOF_INVALID"  # AI proof bundle invalid
     QUANTUM_PROOF = "QUANTUM_PROOF_INVALID"  # Quantum proof/traps invalid
     STORAGE_PROOF = "STORAGE_PROOF_INVALID"  # PoSt heartbeat invalid
-    VDF_PROOF = "VDF_PROOF_INVALID"    # VDF verification failed
+    VDF_PROOF = "VDF_PROOF_INVALID"  # VDF verification failed
 
 
 @dataclass
@@ -57,6 +58,7 @@ class ProofError(Exception):
       ctx:   small dict of contextual fields (hex strings, heights, ids, etc.)
       cause: optional underlying exception (not serialized by default)
     """
+
     code: ProofErrorCode | str = ProofErrorCode.UNKNOWN
     msg: str = "proof error"
     ctx: Dict[str, Any] = field(default_factory=dict)
@@ -98,11 +100,20 @@ class ProofError(Exception):
             code = ProofErrorCode(code_raw)  # type: ignore[arg-type]
         except Exception:
             code = str(code_raw)
-        return cls(code=code, msg=str(d.get("msg", "proof error")), ctx=dict(d.get("ctx", {})))
+        return cls(
+            code=code, msg=str(d.get("msg", "proof error")), ctx=dict(d.get("ctx", {}))
+        )
 
     # Convenience factories
     @classmethod
-    def wrap(cls, code: ProofErrorCode | str, msg: str, *, ctx: Optional[Mapping[str, Any]] = None, cause: Optional[BaseException] = None) -> "ProofError":
+    def wrap(
+        cls,
+        code: ProofErrorCode | str,
+        msg: str,
+        *,
+        ctx: Optional[Mapping[str, Any]] = None,
+        cause: Optional[BaseException] = None,
+    ) -> "ProofError":
         return cls(code=code, msg=msg, ctx=dict(ctx or {}), cause=cause)
 
 
@@ -147,7 +158,9 @@ class AttestationError(ProofError):
             base_ctx["reason"] = reason
         if ctx:
             base_ctx.update(ctx)
-        super().__init__(code=ProofErrorCode.ATTESTATION, msg=msg, ctx=base_ctx, cause=cause)
+        super().__init__(
+            code=ProofErrorCode.ATTESTATION, msg=msg, ctx=base_ctx, cause=cause
+        )
 
 
 class NullifierReuseError(ProofError):
@@ -180,7 +193,10 @@ class NullifierReuseError(ProofError):
 
 # Handy guard helpers ---------------------------------------------------------
 
-def ensure(condition: bool, *, code: ProofErrorCode | str, msg: str, **ctx: Any) -> None:
+
+def ensure(
+    condition: bool, *, code: ProofErrorCode | str, msg: str, **ctx: Any
+) -> None:
     """
     Raise ProofError(code,msg,ctx) if condition is False.
     Keeps call sites concise for validation predicates.
@@ -189,7 +205,14 @@ def ensure(condition: bool, *, code: ProofErrorCode | str, msg: str, **ctx: Any)
         raise ProofError(code=code, msg=msg, ctx=ctx)
 
 
-def schema_guard(ok: bool, *, msg: str, path: Optional[str] = None, keyword: Optional[str] = None, **ctx: Any) -> None:
+def schema_guard(
+    ok: bool,
+    *,
+    msg: str,
+    path: Optional[str] = None,
+    keyword: Optional[str] = None,
+    **ctx: Any,
+) -> None:
     """
     Raise SchemaError if ok is False. Useful for inline shape checks where a full validator
     is overkill or to augment third-party validator messages with a precise path/keyword.
@@ -205,13 +228,16 @@ def rethrow_as(code: ProofErrorCode | str, *, msg: str, **ctx: Any):
       with rethrow_as(ProofErrorCode.DECODE, msg="bad CBOR", where="proofs/cbor"):
           ... code that may raise ...
     """
+
     class _Ctx:
         def __enter__(self) -> None:
             return None  # type: ignore[return-value]
+
         def __exit__(self, exc_type, exc, tb) -> bool:
             if exc is None:
                 return False
             raise ProofError.wrap(code, msg, ctx=ctx, cause=exc) from exc
+
     return _Ctx()
 
 

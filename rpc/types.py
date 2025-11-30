@@ -18,12 +18,8 @@ from dataclasses import dataclass
 from typing import Any, Iterable, NewType, Optional, Tuple, Union, overload
 
 try:
-    from pq.py.utils.bech32 import (
-        bech32_encode,
-        bech32_decode,
-        convertbits,
-        Encoding,
-    )
+    from pq.py.utils.bech32 import (Encoding, bech32_decode, bech32_encode,
+                                    convertbits)
 except ImportError:  # Older pq builds expose functions without Encoding enum
     from pq.py.utils import bech32 as _bech32  # type: ignore
 
@@ -34,13 +30,14 @@ except ImportError:  # Older pq builds expose functions without Encoding enum
     class Encoding:  # type: ignore[override]
         BECH32M = "bech32m"
 
+
 # ───────────────────────────────────────────────────────────────────────────────
 # Newtypes (for readability in annotations)
 # ───────────────────────────────────────────────────────────────────────────────
 
-HexStr = NewType("HexStr", str)          # e.g., "0xdeadbeef"
-HashHex32 = NewType("HashHex32", str)    # e.g., "0x" + 64 hex chars (32 bytes)
-Address = NewType("Address", str)        # bech32m-encoded (e.g., "anim1...")
+HexStr = NewType("HexStr", str)  # e.g., "0xdeadbeef"
+HashHex32 = NewType("HashHex32", str)  # e.g., "0x" + 64 hex chars (32 bytes)
+Address = NewType("Address", str)  # bech32m-encoded (e.g., "anim1...")
 
 HEX_PREFIX = "0x"
 
@@ -48,6 +45,7 @@ HEX_PREFIX = "0x"
 # ───────────────────────────────────────────────────────────────────────────────
 # Hex helpers
 # ───────────────────────────────────────────────────────────────────────────────
+
 
 def is_hex_str(s: str, *, prefixed: bool = True, even: bool = True) -> bool:
     """
@@ -104,7 +102,9 @@ def ensure_hex(s: str) -> HexStr:
     Ensure `s` is a valid 0x-prefixed, even-length hex string; return as HexStr.
     """
     if not is_hex_str(s, prefixed=True, even=True):
-        raise ValueError("invalid hex string (must be 0x-prefixed, even length, hex digits only)")
+        raise ValueError(
+            "invalid hex string (must be 0x-prefixed, even length, hex digits only)"
+        )
     return HexStr(s)
 
 
@@ -134,6 +134,7 @@ def parse_hash32(s: str) -> bytes:
 # Address helpers (bech32m)
 # payload = alg_id(1 byte) || sha3_256(pubkey)(32 bytes)
 # ───────────────────────────────────────────────────────────────────────────────
+
 
 @dataclass(frozen=True)
 class AddressParts:
@@ -183,7 +184,9 @@ def encode_address(parts: AddressParts) -> Address:
     return Address(addr)
 
 
-def decode_address(addr: str, *, allowed_hrps: Optional[Iterable[str]] = None) -> AddressParts:
+def decode_address(
+    addr: str, *, allowed_hrps: Optional[Iterable[str]] = None
+) -> AddressParts:
     """
     Parse bech32m address → (hrp, alg_id, pubkey_hash).
     - Validates checksum, bech32m encoding, and payload size.
@@ -199,7 +202,9 @@ def decode_address(addr: str, *, allowed_hrps: Optional[Iterable[str]] = None) -
     if allowed_hrps is not None:
         allowed = set(allowed_hrps)
         if hrp not in allowed:
-            raise ValueError(f"hrp '{hrp}' not allowed (expected one of {sorted(allowed)})")
+            raise ValueError(
+                f"hrp '{hrp}' not allowed (expected one of {sorted(allowed)})"
+            )
     payload = convertbits(data, frombits=5, tobits=8, pad=False)
     if payload is None:
         raise ValueError("convertbits failed (5→8)")
@@ -217,6 +222,7 @@ def is_address(addr: str, *, allowed_hrps: Optional[Iterable[str]] = None) -> bo
 # ───────────────────────────────────────────────────────────────────────────────
 # Convenience: round-trips and formatting
 # ───────────────────────────────────────────────────────────────────────────────
+
 
 def address_roundtrip_ok(addr: str) -> bool:
     """

@@ -32,25 +32,20 @@ All floats are bounded to finite values; ratios are clamped to [0, +∞) or [0,1
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 
-from .types import (
-    ProofType,
-    ProofEnvelope,
-    HashShareBody,
-    AIProofBody,
-    QuantumProofBody,
-    StorageHeartbeatBody,
-    VDFProofBody,
-    Bytes32,
-)
+from .types import (AIProofBody, Bytes32, HashShareBody, ProofEnvelope,
+                    ProofType, QuantumProofBody, StorageHeartbeatBody,
+                    VDFProofBody)
 
 # -------- small numeric helpers ------------------------------------------------
+
 
 def _finite_nonneg(x: float) -> float:
     if x != x or x == float("inf") or x == float("-inf"):
         raise ValueError("non-finite metric")
     return 0.0 if x < 0.0 else x
+
 
 def _ratio01(num: int, den: int) -> Optional[float]:
     if den <= 0:
@@ -64,7 +59,9 @@ def _ratio01(num: int, den: int) -> Optional[float]:
         return 1.0
     return r
 
+
 # -------- metrics container ----------------------------------------------------
+
 
 @dataclass(frozen=True)
 class ProofMetrics:
@@ -74,6 +71,7 @@ class ProofMetrics:
     Fields are optional where not applicable to a proof type. The (kind,nullifier)
     pair identifies the source envelope for debugging/tracing.
     """
+
     kind: ProofType
     nullifier: Bytes32
 
@@ -81,21 +79,21 @@ class ProofMetrics:
     d_ratio: Optional[float] = None  # ≥0.0
 
     # AI
-    ai_units: Optional[int] = None           # ≥0
-    traps_ratio: Optional[float] = None      # ∈[0,1]
-    redundancy: Optional[int] = None         # ≥1
-    qos_ms: Optional[int] = None             # ≥0
+    ai_units: Optional[int] = None  # ≥0
+    traps_ratio: Optional[float] = None  # ∈[0,1]
+    redundancy: Optional[int] = None  # ≥1
+    qos_ms: Optional[int] = None  # ≥0
 
     # Quantum
-    quantum_units: Optional[int] = None      # ≥0
+    quantum_units: Optional[int] = None  # ≥0
 
     # Storage
-    size_bytes: Optional[int] = None         # ≥0
+    size_bytes: Optional[int] = None  # ≥0
 
     # VDF
-    vdf_seconds: Optional[int] = None        # ≥0
-    vdf_iterations: Optional[int] = None     # ≥0
-    vdf_quality: Optional[float] = None      # ≥0 (contextual)
+    vdf_seconds: Optional[int] = None  # ≥0
+    vdf_iterations: Optional[int] = None  # ≥0
+    vdf_quality: Optional[float] = None  # ≥0 (contextual)
 
     def to_dict(self) -> Dict[str, Any]:
         """Plain dict suitable for JSON/CBOR; omits None fields."""
@@ -154,6 +152,7 @@ class ProofMetrics:
 
 
 # -------- builders for each proof kind ----------------------------------------
+
 
 def metrics_hashshare(env: ProofEnvelope, *, d_ratio: float) -> ProofMetrics:
     """
@@ -215,7 +214,9 @@ def metrics_storage(env: ProofEnvelope) -> ProofMetrics:
     """
     Build metrics for a Storage heartbeat envelope.
     """
-    if env.type_id != ProofType.STORAGE or not isinstance(env.body, StorageHeartbeatBody):
+    if env.type_id != ProofType.STORAGE or not isinstance(
+        env.body, StorageHeartbeatBody
+    ):
         raise TypeError("metrics_storage requires a Storage envelope")
     b = env.body
     return ProofMetrics(
@@ -260,6 +261,7 @@ def metrics_vdf(
 
 # -------- generic dispatcher ---------------------------------------------------
 
+
 def build_metrics(env: ProofEnvelope, **context: Any) -> ProofMetrics:
     """
     Convenience dispatcher that builds metrics for any envelope.
@@ -279,7 +281,9 @@ def build_metrics(env: ProofEnvelope, **context: Any) -> ProofMetrics:
     if env.type_id == ProofType.STORAGE:
         return metrics_storage(env).ensure_bounds()
     if env.type_id == ProofType.VDF:
-        return metrics_vdf(env, ref_iters_per_sec=context.get("ref_iters_per_sec")).ensure_bounds()
+        return metrics_vdf(
+            env, ref_iters_per_sec=context.get("ref_iters_per_sec")
+        ).ensure_bounds()
     raise ValueError(f"Unknown proof type: {env.type_id}")
 
 

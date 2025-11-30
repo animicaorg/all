@@ -74,7 +74,12 @@ def collect_routers(candidates: Sequence[str] = ROUTER_MODULES) -> List[APIRoute
         r = _load_router(mod)
         if r is not None:
             routers.append(r)
-            log.debug("mounted router from %s (prefixes=%s, tags=%s)", mod, getattr(r, "prefix", ""), getattr(r, "tags", []))
+            log.debug(
+                "mounted router from %s (prefixes=%s, tags=%s)",
+                mod,
+                getattr(r, "prefix", ""),
+                getattr(r, "tags", []),
+            )
     return routers
 
 

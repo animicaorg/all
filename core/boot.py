@@ -16,16 +16,16 @@ import sys
 from pathlib import Path
 from typing import Optional, Tuple
 
-# Core deps
-from core.logging import setup_logging
-from core.errors import AnimicaError
-from core.types.params import ChainParams
-from core.types.header import Header
+from core.chain.head import finalize_genesis, read_head
 from core.db import open_kv
 from core.db.block_db import BlockDB
 from core.db.state_db import StateDB
+from core.errors import AnimicaError
 from core.genesis.loader import load_genesis
-from core.chain.head import finalize_genesis, read_head
+# Core deps
+from core.logging import setup_logging
+from core.types.header import Header
+from core.types.params import ChainParams
 
 DEFAULT_GENESIS = "core/genesis/genesis.json"
 DEFAULT_DB = "sqlite:///animica.db"
@@ -101,7 +101,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         # A tiny sanity read just to prove we can fetch it back:
         head = read_head(block_db)
         if head is None:
-            raise AnimicaError("head pointer missing after finalize_genesis (unexpected)")
+            raise AnimicaError(
+                "head pointer missing after finalize_genesis (unexpected)"
+            )
         h_height, h_hash = head
 
         print("=== Animica boot complete ===")

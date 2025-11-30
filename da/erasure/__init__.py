@@ -45,26 +45,34 @@ _EXPORTS: Dict[str, Tuple[str, str]] = {
     "row_col_index": ("da.erasure.layout", "row_col_index"),
     "share_index_iter_rows": ("da.erasure.layout", "share_index_iter_rows"),
     # availability math
-    "required_samples_for_p_fail": ("da.erasure.availability_math", "required_samples_for_p_fail"),
+    "required_samples_for_p_fail": (
+        "da.erasure.availability_math",
+        "required_samples_for_p_fail",
+    ),
     "p_fail_given_samples": ("da.erasure.availability_math", "p_fail_given_samples"),
 }
 
-__all__ = tuple(sorted(_EXPORTS.keys() + ("__version__",))) if False else (
-    "ErasureParams",
-    "DEFAULT_PARAMS",
-    "partition_blob",
-    "rs_encode",
-    "rs_decode",
-    "RSCodec",
-    "encode_blob_to_leaves",
-    "recover_blob_from_leaves",
-    "extended_dims",
-    "row_col_index",
-    "share_index_iter_rows",
-    "required_samples_for_p_fail",
-    "p_fail_given_samples",
-    "__version__",
+__all__ = (
+    tuple(sorted(_EXPORTS.keys() + ("__version__",)))
+    if False
+    else (
+        "ErasureParams",
+        "DEFAULT_PARAMS",
+        "partition_blob",
+        "rs_encode",
+        "rs_decode",
+        "RSCodec",
+        "encode_blob_to_leaves",
+        "recover_blob_from_leaves",
+        "extended_dims",
+        "row_col_index",
+        "share_index_iter_rows",
+        "required_samples_for_p_fail",
+        "p_fail_given_samples",
+        "__version__",
+    )
 )
+
 
 def __getattr__(name: str) -> Any:
     """
@@ -83,10 +91,11 @@ def __getattr__(name: str) -> Any:
 
 if TYPE_CHECKING:
     # Static type checkers resolve symbols without executing __getattr__
-    from .params import ErasureParams, DEFAULT_PARAMS
-    from .partitioner import partition_blob
-    from .reedsolomon import rs_encode, rs_decode, RSCodec
-    from .encoder import encode_blob_to_leaves
+    from .availability_math import (p_fail_given_samples,
+                                    required_samples_for_p_fail)
     from .decoder import recover_blob_from_leaves
+    from .encoder import encode_blob_to_leaves
     from .layout import extended_dims, row_col_index, share_index_iter_rows
-    from .availability_math import required_samples_for_p_fail, p_fail_given_samples
+    from .params import DEFAULT_PARAMS, ErasureParams
+    from .partitioner import partition_blob
+    from .reedsolomon import RSCodec, rs_decode, rs_encode

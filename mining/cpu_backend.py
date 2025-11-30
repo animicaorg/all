@@ -60,8 +60,10 @@ except Exception:  # pragma: no cover
 try:  # pragma: no cover - types only
     from .device import DeviceInfo, DeviceType, MiningDevice  # type: ignore
 except Exception:  # Fallback lightweight types if the import graph isn't ready
+
     class DeviceType(str):
         CPU = "cpu"
+
     @dataclass(frozen=True)
     class DeviceInfo:
         type: str
@@ -74,10 +76,12 @@ except Exception:  # Fallback lightweight types if the import graph isn't ready
         max_batch: Optional[int] = None
         flags: Dict[str, bool] = None  # type: ignore
 
+
 # Prefer the canonical nonce-domain helpers if present
 # They define digest binding and uniform mapping consistent with verification.
 try:
     from . import nonce_domain as nd  # type: ignore
+
     _HAS_ND = True
 except Exception:  # pragma: no cover
     _HAS_ND = False
@@ -90,8 +94,10 @@ import hashlib
 # Utilities
 # ────────────────────────────────────────────────────────────────────────
 
+
 def _nonce_le8(n: int) -> bytes:
     return struct.pack("<Q", n & 0xFFFFFFFFFFFFFFFF)
+
 
 def _digest_bytes(header: bytes, mix: bytes, nonce: int) -> bytes:
     """
@@ -102,8 +108,11 @@ def _digest_bytes(header: bytes, mix: bytes, nonce: int) -> bytes:
         return nd.digest_header_mix_nonce(header, mix, nonce)  # type: ignore
     # Fallback (dev-only): SHA3-256 over concatenation
     h = hashlib.sha3_256()
-    h.update(header); h.update(mix); h.update(_nonce_le8(nonce))
+    h.update(header)
+    h.update(mix)
+    h.update(_nonce_le8(nonce))
     return h.digest()
+
 
 def _uniform_from_digest(d: bytes) -> float:
     """
@@ -116,19 +125,23 @@ def _uniform_from_digest(d: bytes) -> float:
     u_den = 1 << 128
     return u_num / u_den
 
+
 def _exp_neg_theta(theta_micro: float) -> float:
     if _HAS_ND and hasattr(nd, "exp_neg_theta"):
         return float(nd.exp_neg_theta(theta_micro))  # type: ignore
     return math.exp(-theta_micro / 1e6)
 
+
 # ────────────────────────────────────────────────────────────────────────
 # Backend implementation
 # ────────────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class _Prepared:
     header: bytes
     mix_seed: bytes
+
 
 class _CPUDevice:
     """
@@ -140,8 +153,15 @@ class _CPUDevice:
       - batch_size: int = hint for higher-level schedulers (not used here)
       - affinity: Optional[str] = CPU affinity string (e.g., "0-7,16-23") — best effort
     """
-    def __init__(self, index: int = 0, threads: int = 0, batch_size: int = 0,
-                 affinity: Optional[str] = None, **_: Any) -> None:
+
+    def __init__(
+        self,
+        index: int = 0,
+        threads: int = 0,
+        batch_size: int = 0,
+        affinity: Optional[str] = None,
+        **_: Any,
+    ) -> None:
         self._info = DeviceInfo(
             type=getattr(DeviceType, "CPU", "cpu"),
             name="CPU",
@@ -151,7 +171,11 @@ class _CPUDevice:
             compute_units=os.cpu_count() or 1,
             memory_bytes=None,
             max_batch=None,
-            flags={"supports_keccak": True, "supports_udraw": True, "supports_batch": True},
+            flags={
+                "supports_keccak": True,
+                "supports_udraw": True,
+                "supports_batch": True,
+            },
         )
         self._threads = max(0, int(threads))
         self._batch_hint = max(0, int(batch_size))
@@ -179,8 +203,14 @@ class _CPUDevice:
     ) -> List[Dict[str, Any]]:
         # Single-threaded fast path
         if self._threads <= 1 or iterations <= 1_000:
-            return _scan_range(prepared.header, prepared.mix_seed,
-                               theta_micro, start_nonce, iterations, max_found)
+            return _scan_range(
+                prepared.header,
+                prepared.mix_seed,
+                theta_micro,
+                start_nonce,
+                iterations,
+                max_found,
+            )
 
         # Parallel split across T threads; maintain deterministic ordering
         T = min(self._threads, max(1, os.cpu_count() or 1))
@@ -192,8 +222,14 @@ class _CPUDevice:
         threads: List[threading.Thread] = []
 
         def worker(k: int, n0: int, iters: int) -> None:
-            results[k] = _scan_range(prepared.header, prepared.mix_seed,
-                                     theta_micro, n0, iters, max_found=max_found)
+            results[k] = _scan_range(
+                prepared.header,
+                prepared.mix_seed,
+                theta_micro,
+                n0,
+                iters,
+                max_found=max_found,
+            )
 
         n = start_nonce
         for t in range(T):
@@ -240,9 +276,11 @@ class _CPUDevice:
             # Best effort; ignore if not supported
             pass
 
+
 # ────────────────────────────────────────────────────────────────────────
 # Inner loop (pure-Python; tiny hot function)
 # ────────────────────────────────────────────────────────────────────────
+
 
 def _scan_range(
     header: bytes,
@@ -266,26 +304,37 @@ def _scan_range(
         if u <= cutoff:
             # Difficulty ratio scaled relative to Θ: (-ln u) / Θ
             dr = (-math.log(u)) / max(theta_micro / 1e6, 1e-12)
-            found.append({"nonce": nonce, "u": float(u), "d_ratio": float(dr), "hash": d})
+            found.append(
+                {"nonce": nonce, "u": float(u), "d_ratio": float(dr), "hash": d}
+            )
     return found
+
 
 # ────────────────────────────────────────────────────────────────────────
 # Backend entrypoints
 # ────────────────────────────────────────────────────────────────────────
 
+
 def list_devices() -> List[DeviceInfo]:
     """Enumerate a single logical CPU device."""
-    return [DeviceInfo(
-        type=getattr(DeviceType, "CPU", "cpu"),
-        name="CPU",
-        index=0,
-        vendor="generic",
-        driver="python",
-        compute_units=os.cpu_count() or 1,
-        memory_bytes=None,
-        max_batch=None,
-        flags={"supports_keccak": True, "supports_udraw": True, "supports_batch": True},
-    )]
+    return [
+        DeviceInfo(
+            type=getattr(DeviceType, "CPU", "cpu"),
+            name="CPU",
+            index=0,
+            vendor="generic",
+            driver="python",
+            compute_units=os.cpu_count() or 1,
+            memory_bytes=None,
+            max_batch=None,
+            flags={
+                "supports_keccak": True,
+                "supports_udraw": True,
+                "supports_batch": True,
+            },
+        )
+    ]
+
 
 def create(**opts: Any) -> _CPUDevice:
     """
@@ -299,6 +348,7 @@ def create(**opts: Any) -> _CPUDevice:
     """
     return _CPUDevice(**opts)
 
+
 # ────────────────────────────────────────────────────────────────────────
 # Diagnostics
 # ────────────────────────────────────────────────────────────────────────
@@ -306,10 +356,14 @@ def create(**opts: Any) -> _CPUDevice:
 if __name__ == "__main__":  # pragma: no cover
     dev = create(threads=0)
     info = dev.info()
-    print(f"[cpu_backend] Device: {info.name} cu={info.compute_units} driver={info.driver}")
+    print(
+        f"[cpu_backend] Device: {info.name} cu={info.compute_units} driver={info.driver}"
+    )
     hdr = b"\x00" * 80
     mix = b"\x11" * 32
     prep = dev.prepare_header(hdr, mix)
-    res = dev.scan(prep, theta_micro=200000.0, start_nonce=0, iterations=1_000_0, max_found=3)
+    res = dev.scan(
+        prep, theta_micro=200000.0, start_nonce=0, iterations=1_000_0, max_found=3
+    )
     for r in res:
         print(f"  nonce={r['nonce']} u={r['u']:.6e} d_ratio={r['d_ratio']:.3f}")

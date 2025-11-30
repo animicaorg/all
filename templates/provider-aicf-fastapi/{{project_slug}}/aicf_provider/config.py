@@ -40,11 +40,11 @@ Notes
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
-from typing import Final, Iterable, List, Mapping, Optional, Tuple
-from urllib.parse import urlparse
 import os
 import re
+from dataclasses import asdict, dataclass, field
+from typing import Final, Iterable, List, Mapping, Optional, Tuple
+from urllib.parse import urlparse
 
 # Re-use canonical names exported by the package (shared with other modules).
 try:
@@ -78,7 +78,9 @@ _DUR_RE: Final[re.Pattern[str]] = re.compile(
 )
 
 
-def _getenv(key: str, default: Optional[str] = None, env: Mapping[str, str] | None = None) -> Optional[str]:
+def _getenv(
+    key: str, default: Optional[str] = None, env: Mapping[str, str] | None = None
+) -> Optional[str]:
     """Thin wrapper to allow injection during tests."""
     source = env or os.environ
     return source.get(key, default)
@@ -95,7 +97,14 @@ def parse_bool(val: Optional[str], *, default: bool = False) -> bool:
     raise ConfigError(f"Invalid boolean value: {val!r}")
 
 
-def parse_int(val: Optional[str], *, name: str, minimum: Optional[int] = None, maximum: Optional[int] = None, default: Optional[int] = None) -> int:
+def parse_int(
+    val: Optional[str],
+    *,
+    name: str,
+    minimum: Optional[int] = None,
+    maximum: Optional[int] = None,
+    default: Optional[int] = None,
+) -> int:
     if val is None or val == "":
         if default is None:
             raise ConfigError(f"Missing required integer for {name}")
@@ -138,14 +147,22 @@ def parse_duration(val: Optional[str], *, default_seconds: float) -> float:
     raise ConfigError(f"Unsupported duration unit in {val!r}")
 
 
-def validate_url(u: Optional[str], *, name: str, allow_empty: bool = False, allowed_schemes: Iterable[str] = ("http", "https", "ws", "wss")) -> Optional[str]:
+def validate_url(
+    u: Optional[str],
+    *,
+    name: str,
+    allow_empty: bool = False,
+    allowed_schemes: Iterable[str] = ("http", "https", "ws", "wss"),
+) -> Optional[str]:
     if (u is None or u.strip() == "") and allow_empty:
         return None
     if not u:
         raise ConfigError(f"Missing required URL for {name}")
     parsed = urlparse(u)
     if parsed.scheme.lower() not in set(allowed_schemes):
-        raise ConfigError(f"{name} must use one of {sorted(set(allowed_schemes))}; got scheme '{parsed.scheme}'")
+        raise ConfigError(
+            f"{name} must use one of {sorted(set(allowed_schemes))}; got scheme '{parsed.scheme}'"
+        )
     if not parsed.netloc:
         raise ConfigError(f"{name} must include host:port — got {u!r}")
     return u
@@ -215,7 +232,11 @@ class ProviderConfig:
     def summary_lines(self) -> Tuple[str, ...]:
         """Human-oriented summary for logs."""
         caps = ",".join(k for k, v in self.capabilities.items() if v) or "none"
-        cors = ", ".join(self.cors_allow_origins) if self.cors_allow_origins else "disabled"
+        cors = (
+            ", ".join(self.cors_allow_origins)
+            if self.cors_allow_origins
+            else "disabled"
+        )
         qurl = self.queue_url or "(none)"
         return (
             f"provider_id={self.provider_id}",
@@ -252,7 +273,9 @@ class ProviderConfig:
         rpc_url = validate_url(_getenv(ENV_CANON["RPC_URL"], env=E), name="RPC_URL")
 
         cap_ai = parse_bool(_getenv(ENV_CANON["CAP_AI"], env=E), default=False)
-        cap_quantum = parse_bool(_getenv(ENV_CANON["CAP_QUANTUM"], env=E), default=False)
+        cap_quantum = parse_bool(
+            _getenv(ENV_CANON["CAP_QUANTUM"], env=E), default=False
+        )
 
         queue_url = validate_url(
             _getenv(ENV_CANON["QUEUE_URL"], env=E),
@@ -262,17 +285,40 @@ class ProviderConfig:
         )
 
         host = _getenv("PROVIDER_HOST", "0.0.0.0", env=E) or "0.0.0.0"
-        port = parse_int(_getenv("PROVIDER_PORT", env=E), name="PROVIDER_PORT", minimum=1, maximum=65535, default=8080)
+        port = parse_int(
+            _getenv("PROVIDER_PORT", env=E),
+            name="PROVIDER_PORT",
+            minimum=1,
+            maximum=65535,
+            default=8080,
+        )
 
-        log_level = normalize_log_level(_getenv(ENV_CANON["LOG_LEVEL"], env=E), default="info")
+        log_level = normalize_log_level(
+            _getenv(ENV_CANON["LOG_LEVEL"], env=E), default="info"
+        )
 
-        request_timeout_s = parse_duration(_getenv("REQUEST_TIMEOUT", env=E), default_seconds=30.0)
-        queue_poll_interval_s = parse_duration(_getenv("QUEUE_POLL_INTERVAL", env=E), default_seconds=0.5)
-        max_concurrent_jobs = parse_int(_getenv("MAX_CONCURRENT_JOBS", env=E), name="MAX_CONCURRENT_JOBS", minimum=1, default=2)
+        request_timeout_s = parse_duration(
+            _getenv("REQUEST_TIMEOUT", env=E), default_seconds=30.0
+        )
+        queue_poll_interval_s = parse_duration(
+            _getenv("QUEUE_POLL_INTERVAL", env=E), default_seconds=0.5
+        )
+        max_concurrent_jobs = parse_int(
+            _getenv("MAX_CONCURRENT_JOBS", env=E),
+            name="MAX_CONCURRENT_JOBS",
+            minimum=1,
+            default=2,
+        )
 
         metrics_enabled = parse_bool(_getenv("METRICS_ENABLED", env=E), default=True)
         metrics_host = _getenv("METRICS_HOST", "0.0.0.0", env=E) or "0.0.0.0"
-        metrics_port = parse_int(_getenv("METRICS_PORT", env=E), name="METRICS_PORT", minimum=1, maximum=65535, default=9000)
+        metrics_port = parse_int(
+            _getenv("METRICS_PORT", env=E),
+            name="METRICS_PORT",
+            minimum=1,
+            maximum=65535,
+            default=9000,
+        )
 
         cors_allow_origins = parse_csv(_getenv("CORS_ALLOW_ORIGINS", env=E))
 
@@ -326,6 +372,7 @@ if __name__ == "__main__":  # pragma: no cover
         print(_render_box(cfg.summary_lines()))
         # Print machine-friendly representation (useful in smoke scripts)
         import json
+
         print(json.dumps(cfg.redact_for_logs(), indent=2, sort_keys=True))
     except ConfigError as e:
         print(f"Configuration error: {e}")

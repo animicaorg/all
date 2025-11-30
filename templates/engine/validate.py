@@ -80,6 +80,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 # Optional JSON-Schema support
 try:
     import jsonschema  # type: ignore
+
     _HAS_JSONSCHEMA = True
 except Exception:  # pragma: no cover
     jsonschema = None  # type: ignore
@@ -104,8 +105,11 @@ class ValidationReport:
     issues: List[ValidationIssue] = field(default_factory=list)
 
     def add(self, level: str, where: str, message: str, **detail: Any) -> None:
-        self.issues.append(ValidationIssue(level=level, where=where, message=message,
-                                           detail=(detail or None)))
+        self.issues.append(
+            ValidationIssue(
+                level=level, where=where, message=message, detail=(detail or None)
+            )
+        )
 
     def error(self, where: str, message: str, **detail: Any) -> None:
         self.add("error", where, message, **detail)
@@ -140,7 +144,9 @@ class ValidationReport:
     def dump_to_stderr(self) -> None:
         for i in self.issues:
             detail = f" | {json.dumps(i.detail)}" if i.detail else ""
-            print(f"[{i.level.upper():7}] {i.where}: {i.message}{detail}", file=sys.stderr)
+            print(
+                f"[{i.level.upper():7}] {i.where}: {i.message}{detail}", file=sys.stderr
+            )
 
 
 # --------------------------------------------------------------------------- #
@@ -176,8 +182,9 @@ def find_templates_root(start: Optional[Path] = None) -> Path:
         tpl = p / "templates"
         if (tpl / "schemas").is_dir():
             return tpl.resolve()
-    raise FileNotFoundError("Could not locate templates/ (with schemas/) above "
-                            f"{(start or Path.cwd())}")
+    raise FileNotFoundError(
+        "Could not locate templates/ (with schemas/) above " f"{(start or Path.cwd())}"
+    )
 
 
 def _load_schema(templates_root: Path, name: str) -> Optional[dict]:
@@ -208,11 +215,17 @@ def validate_templates_root(templates_root: Path) -> ValidationReport:
     else:
         # Check canonical schema files (optional but recommended)
         if not (schemas_dir / "template.schema.json").is_file():
-            r.warn(str(schemas_dir / "template.schema.json"), "template.schema.json missing "
-                  "(JSON-Schema checks for manifests will be skipped)")
+            r.warn(
+                str(schemas_dir / "template.schema.json"),
+                "template.schema.json missing "
+                "(JSON-Schema checks for manifests will be skipped)",
+            )
         if not (schemas_dir / "variables.schema.json").is_file():
-            r.warn(str(schemas_dir / "variables.schema.json"), "variables.schema.json missing "
-                  "(JSON-Schema checks for variables will be skipped)")
+            r.warn(
+                str(schemas_dir / "variables.schema.json"),
+                "variables.schema.json missing "
+                "(JSON-Schema checks for variables will be skipped)",
+            )
 
     index_file = templates_root / "index.json"
     if index_file.exists():
@@ -225,10 +238,17 @@ def validate_templates_root(templates_root: Path) -> ValidationReport:
                 if isinstance(idx, list):
                     for n, entry in enumerate(idx):
                         if not isinstance(entry, dict):
-                            r.warn(f"{index_file}[{n}]", "Entry should be an object", got=type(entry).__name__)
+                            r.warn(
+                                f"{index_file}[{n}]",
+                                "Entry should be an object",
+                                got=type(entry).__name__,
+                            )
                             continue
                         if "name" not in entry or "path" not in entry:
-                            r.warn(f"{index_file}[{n}]", "Entry should include 'name' and 'path'")
+                            r.warn(
+                                f"{index_file}[{n}]",
+                                "Entry should include 'name' and 'path'",
+                            )
         except Exception as e:  # pragma: no cover
             r.error(str(index_file), f"Failed to parse: {e}")
 
@@ -254,9 +274,14 @@ def validate_template_dir(template_dir: Path) -> ValidationReport:
             else:
                 for key in ("name", "version"):
                     if key not in data:
-                        r.warn(str(manifest), f"'{key}' is recommended in manifest.json")
+                        r.warn(
+                            str(manifest), f"'{key}' is recommended in manifest.json"
+                        )
                 if "variables" in data and not isinstance(data["variables"], dict):
-                    r.error(str(manifest), "'variables' must be an object mapping names to constraints")
+                    r.error(
+                        str(manifest),
+                        "'variables' must be an object mapping names to constraints",
+                    )
         except Exception as e:  # pragma: no cover
             r.error(str(manifest), f"Failed to parse JSON: {e}")
 
@@ -273,13 +298,19 @@ def validate_template_dir(template_dir: Path) -> ValidationReport:
         contentful = True
         break
     if not contentful:
-        r.warn(str(template_dir), "No content files found (only manifest/_hooks present?)")
+        r.warn(
+            str(template_dir), "No content files found (only manifest/_hooks present?)"
+        )
 
     # Warn on suspicious absolute paths or traversal placeholders in file paths
     for p in template_dir.rglob("*"):
         rel = p.relative_to(template_dir)
         if any(part in {".."} for part in rel.parts):
-            r.error(str(p), "Template contains parent-directory navigation in path", rel=str(rel))
+            r.error(
+                str(p),
+                "Template contains parent-directory navigation in path",
+                rel=str(rel),
+            )
         if p.is_file() and p.is_absolute():
             r.warn(str(p), "Absolute file path inside template (unexpected)")
 
@@ -291,7 +322,9 @@ def validate_template_dir(template_dir: Path) -> ValidationReport:
 # --------------------------------------------------------------------------- #
 
 
-def _schema_validate(instance: Any, schema: Optional[dict], *, where: str, r: ValidationReport) -> None:
+def _schema_validate(
+    instance: Any, schema: Optional[dict], *, where: str, r: ValidationReport
+) -> None:
     if not schema or not _HAS_JSONSCHEMA:
         return
     try:
@@ -348,7 +381,9 @@ def _coerce_float(v: Any) -> Optional[float]:
         return None
 
 
-def _apply_string_constraints(name: str, s: str, spec: dict, r: ValidationReport, where: str) -> None:
+def _apply_string_constraints(
+    name: str, s: str, spec: dict, r: ValidationReport, where: str
+) -> None:
     if "minLength" in spec:
         min_len = int(spec["minLength"])
         if len(s) < min_len:
@@ -360,12 +395,19 @@ def _apply_string_constraints(name: str, s: str, spec: dict, r: ValidationReport
     if "pattern" in spec:
         try:
             if not re.fullmatch(spec["pattern"], s):
-                r.error(where, f"'{name}' does not match pattern", pattern=spec["pattern"], value=s)
+                r.error(
+                    where,
+                    f"'{name}' does not match pattern",
+                    pattern=spec["pattern"],
+                    value=s,
+                )
         except re.error as e:
             r.warn(where, f"Invalid regex 'pattern' for '{name}': {e}")
 
 
-def _apply_numeric_constraints(name: str, x: float, spec: dict, r: ValidationReport, where: str) -> None:
+def _apply_numeric_constraints(
+    name: str, x: float, spec: dict, r: ValidationReport, where: str
+) -> None:
     if "minimum" in spec and x < float(spec["minimum"]):
         r.error(where, f"'{name}' below minimum", minimum=spec["minimum"], value=x)
     if "maximum" in spec and x > float(spec["maximum"]):
@@ -395,7 +437,11 @@ def validate_and_normalize_variables(
     # Pass 1: apply defaults & type-check any provided values
     for name, spec in vars_section.items():
         if not isinstance(spec, Mapping):
-            r.warn(where, f"Variable spec for '{name}' must be an object", got=type(spec).__name__)
+            r.warn(
+                where,
+                f"Variable spec for '{name}' must be an object",
+                got=type(spec).__name__,
+            )
             continue
 
         required = bool(spec.get("required", False))
@@ -417,7 +463,9 @@ def validate_and_normalize_variables(
             elif vtype == "boolean":
                 b = _coerce_bool(raw)
                 if b is None:
-                    r.error(where, f"'{name}' must be boolean-like (true/false/yes/no/1/0)")
+                    r.error(
+                        where, f"'{name}' must be boolean-like (true/false/yes/no/1/0)"
+                    )
                 else:
                     normalized[name] = "true" if b else "false"
                     value_written = True
@@ -444,12 +492,17 @@ def validate_and_normalize_variables(
                 else:
                     raw_s = str(raw)
                     if raw_s not in map(str, enum_vals):
-                        r.error(where, f"'{name}' must be one of {enum_vals}", got=raw_s)
+                        r.error(
+                            where, f"'{name}' must be one of {enum_vals}", got=raw_s
+                        )
                     else:
                         normalized[name] = raw_s
                         value_written = True
             else:
-                r.warn(where, f"Unknown type '{vtype}' for variable '{name}', coercing to string")
+                r.warn(
+                    where,
+                    f"Unknown type '{vtype}' for variable '{name}', coercing to string",
+                )
                 normalized[name] = str(raw)
                 value_written = True
         else:
@@ -460,21 +513,29 @@ def validate_and_normalize_variables(
                 if vtype == "boolean":
                     b = _coerce_bool(d)
                     if b is None:
-                        r.warn(where, f"Default for '{name}' is not boolean-like; using string")
+                        r.warn(
+                            where,
+                            f"Default for '{name}' is not boolean-like; using string",
+                        )
                         normalized[name] = _to_str(d)
                     else:
                         normalized[name] = "true" if b else "false"
                 elif vtype == "integer":
                     iv = _coerce_int(d)
                     if iv is None:
-                        r.warn(where, f"Default for '{name}' is not an integer; using string")
+                        r.warn(
+                            where,
+                            f"Default for '{name}' is not an integer; using string",
+                        )
                         normalized[name] = _to_str(d)
                     else:
                         normalized[name] = str(iv)
                 elif vtype == "number":
                     fv = _coerce_float(d)
                     if fv is None:
-                        r.warn(where, f"Default for '{name}' is not a number; using string")
+                        r.warn(
+                            where, f"Default for '{name}' is not a number; using string"
+                        )
                         normalized[name] = _to_str(d)
                     else:
                         normalized[name] = str(int(fv)) if fv.is_integer() else str(fv)
@@ -485,7 +546,11 @@ def validate_and_normalize_variables(
                     else:
                         ds = _to_str(d)
                         if ds not in map(str, enum_vals):
-                            r.error(where, f"Default for '{name}' not in enum {enum_vals}", default=ds)
+                            r.error(
+                                where,
+                                f"Default for '{name}' not in enum {enum_vals}",
+                                default=ds,
+                            )
                             normalized[name] = ds
                         else:
                             normalized[name] = ds
@@ -549,7 +614,9 @@ def validate_template(
 
     normalized: Dict[str, str] = {}
     if user_vars is not None:
-        normalized, vr = validate_and_normalize_variables(manifest, user_vars, where=str(manifest_path))
+        normalized, vr = validate_and_normalize_variables(
+            manifest, user_vars, where=str(manifest_path)
+        )
         report.issues.extend(vr.issues)
 
         # Optionally validate variables against variables.schema.json as a whole object
@@ -558,7 +625,9 @@ def validate_template(
             try:
                 jsonschema.validate(instance=normalized, schema=var_schema)  # type: ignore
             except Exception as e:
-                report.error("variables", f"variables.schema.json validation failed: {e}")
+                report.error(
+                    "variables", f"variables.schema.json validation failed: {e}"
+                )
 
     return normalized, report
 
@@ -569,15 +638,32 @@ def validate_template(
 
 
 def _parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Validate a template directory and variables")
-    p.add_argument("--template", "-t", type=str, required=True,
-                   help="Path to a template directory (e.g., templates/counter)")
-    p.add_argument("--vars", "-v", type=str,
-                   help="Path to a JSON file with variables to validate/normalize")
-    p.add_argument("--print", action="store_true",
-                   help="Print normalized variables as JSON on success")
-    p.add_argument("--strict", action="store_true",
-                   help="Exit non-zero on warnings as well as errors")
+    p = argparse.ArgumentParser(
+        description="Validate a template directory and variables"
+    )
+    p.add_argument(
+        "--template",
+        "-t",
+        type=str,
+        required=True,
+        help="Path to a template directory (e.g., templates/counter)",
+    )
+    p.add_argument(
+        "--vars",
+        "-v",
+        type=str,
+        help="Path to a JSON file with variables to validate/normalize",
+    )
+    p.add_argument(
+        "--print",
+        action="store_true",
+        help="Print normalized variables as JSON on success",
+    )
+    p.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit non-zero on warnings as well as errors",
+    )
     return p.parse_args(list(argv) if argv is not None else None)
 
 
@@ -590,7 +676,10 @@ def _main(argv: Optional[Iterable[str]] = None) -> int:
         try:
             user_vars = _read_json(Path(args.vars))
             if not isinstance(user_vars, dict):
-                print(f"--vars JSON must be an object (got {type(user_vars).__name__})", file=sys.stderr)
+                print(
+                    f"--vars JSON must be an object (got {type(user_vars).__name__})",
+                    file=sys.stderr,
+                )
                 return 1
         except Exception as e:
             print(f"Failed to read --vars: {e}", file=sys.stderr)

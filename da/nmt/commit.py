@@ -32,15 +32,15 @@ Where:
   • ns-bytes-hex: lines of the form: "<ns_uint> <hex_payload_bytes>"
   • ns-hash-hex : lines of the form: "<ns_uint> <hex_32byte_hash>"
 """
+
 from __future__ import annotations
 
 from typing import Iterable, Iterator, List, Sequence, Tuple
 
-from .tree import NMT
-from .namespace import NamespaceId
 from ..utils.bytes import bytes_to_hex, hex_to_bytes
 from ..utils.hash import sha3_256
-
+from .namespace import NamespaceId
+from .tree import NMT
 
 ROOT_SIZE = 32
 
@@ -48,6 +48,7 @@ ROOT_SIZE = 32
 # --------------------------------------------------------------------------- #
 # Public API
 # --------------------------------------------------------------------------- #
+
 
 def root_from_encoded_leaves(
     encoded_leaves: Iterable[bytes],
@@ -147,6 +148,7 @@ def root_hex_from_ns_and_hashes(pairs: Iterable[Tuple[int, bytes]], **kw) -> str
 # CLI
 # --------------------------------------------------------------------------- #
 
+
 def _iter_nonempty_lines(fp) -> Iterator[str]:
     for line in fp:
         s = line.strip()
@@ -157,6 +159,7 @@ def _iter_nonempty_lines(fp) -> Iterator[str]:
 
 def _cli_encoded_hex(path: str | None) -> bytes:
     import sys
+
     if path and path != "-":
         with open(path, "rt", encoding="utf-8") as f:
             encoded = [hex_to_bytes(s) for s in _iter_nonempty_lines(f)]
@@ -167,6 +170,7 @@ def _cli_encoded_hex(path: str | None) -> bytes:
 
 def _cli_ns_bytes_hex(path: str | None) -> bytes:
     import sys
+
     lines: List[str]
     if path and path != "-":
         with open(path, "rt", encoding="utf-8") as f:
@@ -187,6 +191,7 @@ def _cli_ns_bytes_hex(path: str | None) -> bytes:
 
 def _cli_ns_hash_hex(path: str | None) -> bytes:
     import sys
+
     lines: List[str]
     if path and path != "-":
         with open(path, "rt", encoding="utf-8") as f:
@@ -211,16 +216,27 @@ def _main(argv: Sequence[str] | None = None) -> int:  # pragma: no cover - thin 
     import argparse
     import sys
 
-    p = argparse.ArgumentParser(prog="python -m da.nmt.commit",
-                                description="Compute Animica DA (NMT) root from leaves.")
-    p.add_argument("--mode",
-                   choices=["encoded-hex", "ns-bytes-hex", "ns-hash-hex"],
-                   required=True,
-                   help="Input format (see module docstring).")
-    p.add_argument("--in", dest="in_path", default="-",
-                   help="Input file path or '-' for stdin (default: '-')")
-    p.add_argument("--no-enforce-ns-order", action="store_true",
-                   help="Allow arbitrary namespace order (not recommended).")
+    p = argparse.ArgumentParser(
+        prog="python -m da.nmt.commit",
+        description="Compute Animica DA (NMT) root from leaves.",
+    )
+    p.add_argument(
+        "--mode",
+        choices=["encoded-hex", "ns-bytes-hex", "ns-hash-hex"],
+        required=True,
+        help="Input format (see module docstring).",
+    )
+    p.add_argument(
+        "--in",
+        dest="in_path",
+        default="-",
+        help="Input file path or '-' for stdin (default: '-')",
+    )
+    p.add_argument(
+        "--no-enforce-ns-order",
+        action="store_true",
+        help="Allow arbitrary namespace order (not recommended).",
+    )
     args = p.parse_args(argv)
 
     if args.mode == "encoded-hex":

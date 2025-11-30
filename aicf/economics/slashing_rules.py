@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 AICF slashing & clawback rules.
 
@@ -54,11 +55,12 @@ class ClawbackRule:
     All ratios are in basis points (bps) to keep integer math deterministic.
     Example: 2.5% -> 250 bps.
     """
-    immediate_bps: int          # % of stake to slash immediately (scaled by severity)
-    clawback_bps: int           # % of recent_earnings to claw back (scaled by severity)
-    schedule_epochs: int        # how many future epochs to spread clawback over
+
+    immediate_bps: int  # % of stake to slash immediately (scaled by severity)
+    clawback_bps: int  # % of recent_earnings to claw back (scaled by severity)
+    schedule_epochs: int  # how many future epochs to spread clawback over
     max_immediate_abs: Optional[int] = None  # absolute cap on immediate amount
-    max_clawback_abs: Optional[int] = None   # absolute cap on total clawback
+    max_clawback_abs: Optional[int] = None  # absolute cap on total clawback
 
 
 RuleTable = Mapping[str, ClawbackRule]
@@ -66,8 +68,8 @@ RuleTable = Mapping[str, ClawbackRule]
 
 @dataclass(frozen=True)
 class ClawbackTranche:
-    epoch_idx: int   # target epoch for the deduction
-    amount: int      # amount to recover in that epoch
+    epoch_idx: int  # target epoch for the deduction
+    amount: int  # amount to recover in that epoch
 
 
 @dataclass(frozen=True)
@@ -93,38 +95,38 @@ def default_rule_table() -> Dict[str, ClawbackRule]:
     return {
         # Deliberate fraud / forged outputs: hard slash.
         "fraud_proof": ClawbackRule(
-            immediate_bps=10_000,   # up to 100% of stake (× severity)
-            clawback_bps=10_000,    # up to 100% of recent earnings
+            immediate_bps=10_000,  # up to 100% of stake (× severity)
+            clawback_bps=10_000,  # up to 100% of recent earnings
             schedule_epochs=4,
         ),
         # Attestation invalid or traps failed: strong penalty.
         "invalid_attestation": ClawbackRule(
-            immediate_bps=5_000,    # up to 50% of stake
-            clawback_bps=5_000,     # up to 50% of recent earnings
+            immediate_bps=5_000,  # up to 50% of stake
+            clawback_bps=5_000,  # up to 50% of recent earnings
             schedule_epochs=3,
         ),
         # Availability / liveness issues (offline, lease lost).
         "unavailable": ClawbackRule(
-            immediate_bps=500,      # up to 5% of stake
-            clawback_bps=2_000,     # up to 20% of recent earnings
+            immediate_bps=500,  # up to 5% of stake
+            clawback_bps=2_000,  # up to 20% of recent earnings
             schedule_epochs=2,
         ),
         # Missed deadlines or QoS below threshold.
         "deadline_miss": ClawbackRule(
-            immediate_bps=0,        # no stake slash by default
-            clawback_bps=3_000,     # up to 30% of recent earnings
+            immediate_bps=0,  # no stake slash by default
+            clawback_bps=3_000,  # up to 30% of recent earnings
             schedule_epochs=1,
         ),
         # Duplicate / conflicting submissions (sloppy but not malicious).
         "double_submit": ClawbackRule(
-            immediate_bps=1_000,    # up to 10% of stake
-            clawback_bps=1_000,     # up to 10% of recent earnings
+            immediate_bps=1_000,  # up to 10% of stake
+            clawback_bps=1_000,  # up to 10% of recent earnings
             schedule_epochs=2,
         ),
         # Safety net: minimal penalty when a reason is unclassified.
         "__default__": ClawbackRule(
             immediate_bps=0,
-            clawback_bps=500,       # up to 5% of recent earnings
+            clawback_bps=500,  # up to 5% of recent earnings
             schedule_epochs=1,
         ),
     }
@@ -158,7 +160,7 @@ def _mul_clip(amount: int, bps: int, severity_bps: int) -> int:
         return 0
     # (amount * bps * severity_bps) / (BPS_DEN^2), ordered to reduce overflow risk.
     num = amount * bps
-    num = (num * severity_bps)
+    num = num * severity_bps
     den = BPS_DEN * BPS_DEN
     return num // den
 
@@ -240,7 +242,9 @@ def compute_slash_plan(
     if max_clawback_abs is not None:
         raw_clawback = _clip_cap(raw_clawback, max_clawback_abs)
 
-    schedule = _even_schedule(raw_clawback, start_epoch=epoch_idx, epochs=max(rule.schedule_epochs, 1))
+    schedule = _even_schedule(
+        raw_clawback, start_epoch=epoch_idx, epochs=max(rule.schedule_epochs, 1)
+    )
 
     return SlashPlan(
         reason_code=reason_code,
@@ -253,13 +257,14 @@ def compute_slash_plan(
 
 # ---------------------------- SLA → severity helper ------------------------- #
 
+
 def severity_from_sla(
     *,
-    traps_ratio: Optional[float] = None,     # 0..1 (fraction of trap tests passed)
-    qos_score: Optional[float] = None,       # 0..1 (1=best)
-    latency_p99_ms: Optional[int] = None,    # absolute ms; compare to SLO
-    availability: Optional[float] = None,    # 0..1 uptime over window
-    slo_latency_ms: int = 2_000,             # target P99
+    traps_ratio: Optional[float] = None,  # 0..1 (fraction of trap tests passed)
+    qos_score: Optional[float] = None,  # 0..1 (1=best)
+    latency_p99_ms: Optional[int] = None,  # absolute ms; compare to SLO
+    availability: Optional[float] = None,  # 0..1 uptime over window
+    slo_latency_ms: int = 2_000,  # target P99
 ) -> Tuple[str, float]:
     """
     Heuristic mapping from SLA metrics to (reason_code, severity).
@@ -295,6 +300,7 @@ def severity_from_sla(
 
 # --------------------------------- Utilities -------------------------------- #
 
+
 def summarize_plan(plan: SlashPlan) -> str:
     """
     Compact single-line summary appropriate for logs / audits.
@@ -304,7 +310,9 @@ def summarize_plan(plan: SlashPlan) -> str:
         f"severity_bps={plan.severity_bps}",
         f"immediate={plan.immediate_slash}",
         f"clawback={plan.clawback_total}",
-        "schedule=[" + ",".join(f"({t.epoch_idx},{t.amount})" for t in plan.schedule) + "]",
+        "schedule=["
+        + ",".join(f"({t.epoch_idx},{t.amount})" for t in plan.schedule)
+        + "]",
     ]
     return "SlashPlan{" + " ".join(parts) + "}"
 

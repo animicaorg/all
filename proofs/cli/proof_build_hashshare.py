@@ -35,6 +35,7 @@ python -m proofs.cli.proof_build_hashshare \
 """
 
 from __future__ import annotations
+
 import binascii
 import json
 import os
@@ -49,22 +50,22 @@ except Exception:  # pragma: no cover
 
 # Pretty output (optional)
 try:
+    from rich import box  # type: ignore
     from rich.console import Console  # type: ignore
-    from rich.table import Table      # type: ignore
-    from rich.panel import Panel      # type: ignore
-    from rich import box              # type: ignore
+    from rich.panel import Panel  # type: ignore
+    from rich.table import Table  # type: ignore
 except Exception:  # pragma: no cover
     Console = None  # type: ignore
-    Table = None    # type: ignore
-    Panel = None    # type: ignore
-    box = None      # type: ignore
+    Table = None  # type: ignore
+    Panel = None  # type: ignore
+    box = None  # type: ignore
 
+from proofs import cbor as proofs_cbor
+from proofs import nullifiers as nul
+from proofs import registry
+from proofs.types import ProofEnvelope  # type: ignore
 # Animica libs
 from proofs.version import __version__
-from proofs.types import ProofEnvelope  # type: ignore
-from proofs import cbor as proofs_cbor
-from proofs import registry
-from proofs import nullifiers as nul
 
 # Optional helpers if present; we fail soft if not.
 try:
@@ -82,6 +83,7 @@ app = typer.Typer(
 
 # ---------------- util helpers ----------------
 
+
 def _read_json_or_cbor(path: Path) -> Any:
     data = path.read_bytes()
     # Heuristic: CBOR often starts with 0xa? (map) or 0x8? (array) etc. Try JSON first.
@@ -91,9 +93,11 @@ def _read_json_or_cbor(path: Path) -> Any:
         pass
     try:
         import cbor2  # type: ignore
+
         return cbor2.loads(data)
     except Exception as e:
         raise typer.BadParameter(f"Failed to parse {path} as JSON or CBOR: {e}")
+
 
 def _parse_nonce(value: Optional[str]) -> bytes:
     if value is None:
@@ -119,6 +123,7 @@ def _parse_nonce(value: Optional[str]) -> bytes:
     except Exception as e:
         raise typer.BadParameter(f"Invalid --nonce value: {e}")
 
+
 def _resolve_hashshare_type_id() -> int:
     # Ask registry by common names; fallback to 0
     for name in ("hashshare", "HashShare", "hash", "HASH"):
@@ -132,6 +137,7 @@ def _resolve_hashshare_type_id() -> int:
                 except Exception:
                     pass
     return 0
+
 
 def _compute_body(header_tmpl: Dict[str, Any], nonce: bytes) -> Dict[str, Any]:
     """
@@ -151,9 +157,10 @@ def _compute_body(header_tmpl: Dict[str, Any], nonce: bytes) -> Dict[str, Any]:
     # Minimal, schema-friendly body; verifier recomputes binding/u-draw internally.
     return {
         "version": 1,
-        "header": header_tmpl,   # bound subset; verifier will canonicalize
-        "nonce": nonce,          # raw bytes; not hex
+        "header": header_tmpl,  # bound subset; verifier will canonicalize
+        "nonce": nonce,  # raw bytes; not hex
     }
+
 
 def _encode_body(type_id: int, body: Dict[str, Any]) -> bytes:
     # proofs.cbor encoder knows how to encode proof bodies canonically.
@@ -171,7 +178,9 @@ def _encode_body(type_id: int, body: Dict[str, Any]) -> bytes:
                 pass
     # Fallback: raw CBOR (not consensus-safe but fine for local tooling)
     import cbor2  # type: ignore
+
     return cbor2.dumps(body)
+
 
 def _compute_nullifier(type_id: int, body_cbor: bytes) -> bytes:
     for cand in ("compute_nullifier", "nullifier_for_body", "nullifier"):
@@ -183,8 +192,10 @@ def _compute_nullifier(type_id: int, body_cbor: bytes) -> bytes:
                 pass
     # Domain-separated fallback (must match proofs/nullifiers.py if present)
     import hashlib
+
     tag = b"animica:nullifier:hashshare:v1"
     return hashlib.sha3_256(tag + type_id.to_bytes(2, "big") + body_cbor).digest()
+
 
 def _verify_envelope(env: ProofEnvelope) -> Dict[str, Any]:
     """
@@ -218,38 +229,72 @@ def _verify_envelope(env: ProofEnvelope) -> Dict[str, Any]:
                     if nm == "verify_body":
                         ok, metrics = fn(env.body)  # type: ignore
                     else:
-                        ok, metrics = fn(env)       # type: ignore
+                        ok, metrics = fn(env)  # type: ignore
                     return {"ok": bool(ok), "metrics": metrics or {}}
                 except Exception as e:
-                    return {"ok": False, "metrics": {}, "error": f"hashshare.{nm} failed: {e}"}
+                    return {
+                        "ok": False,
+                        "metrics": {},
+                        "error": f"hashshare.{nm} failed: {e}",
+                    }
     return {"ok": False, "metrics": {}, "error": "No verifier available"}
 
-def _save_outputs(env: ProofEnvelope, out_path: Optional[Path], json_path: Optional[Path]) -> None:
+
+def _save_outputs(
+    env: ProofEnvelope, out_path: Optional[Path], json_path: Optional[Path]
+) -> None:
     if out_path:
         try:
             data = proofs_cbor.encode_envelope(env)  # type: ignore[attr-defined]
         except Exception:
             import cbor2  # type: ignore
-            data = cbor2.dumps({"type_id": env.type_id, "body": env.body, "nullifier": env.nullifier})
+
+            data = cbor2.dumps(
+                {"type_id": env.type_id, "body": env.body, "nullifier": env.nullifier}
+            )
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(data)
     if json_path:
+
         def b2h(b: bytes) -> str:
             return "0x" + b.hex()
+
         view = {
             "type_id": env.type_id,
-            "nullifier": b2h(env.nullifier) if isinstance(env.nullifier, bytes) else env.nullifier,
+            "nullifier": (
+                b2h(env.nullifier)
+                if isinstance(env.nullifier, bytes)
+                else env.nullifier
+            ),
             "body": env.body,
         }
         json_path.parent.mkdir(parents=True, exist_ok=True)
-        json_path.write_text(json.dumps(view, indent=2, sort_keys=True), encoding="utf-8")
+        json_path.write_text(
+            json.dumps(view, indent=2, sort_keys=True), encoding="utf-8"
+        )
 
-def _pretty(console: Any, env: ProofEnvelope, verify_res: Dict[str, Any], theta_micro: Optional[int]) -> None:
+
+def _pretty(
+    console: Any,
+    env: ProofEnvelope,
+    verify_res: Dict[str, Any],
+    theta_micro: Optional[int],
+) -> None:
     t = Table(title="HashShare Envelope", box=box.SIMPLE if box else None)
-    t.add_column("Field"); t.add_column("Value", overflow="fold")
+    t.add_column("Field")
+    t.add_column("Value", overflow="fold")
     t.add_row("type_id", str(env.type_id))
-    t.add_row("nullifier", "0x" + env.nullifier.hex() if isinstance(env.nullifier, bytes) else str(env.nullifier))
-    t.add_row("version", str(env.body.get("version") if isinstance(env.body, dict) else "?"))
+    t.add_row(
+        "nullifier",
+        (
+            "0x" + env.nullifier.hex()
+            if isinstance(env.nullifier, bytes)
+            else str(env.nullifier)
+        ),
+    )
+    t.add_row(
+        "version", str(env.body.get("version") if isinstance(env.body, dict) else "?")
+    )
     if isinstance(env.body, dict):
         header = env.body.get("header")
         nonce = env.body.get("nonce")
@@ -263,7 +308,8 @@ def _pretty(console: Any, env: ProofEnvelope, verify_res: Dict[str, Any], theta_
     ok = verify_res.get("ok", False)
     metrics = verify_res.get("metrics") or {}
     tm = Table(title="Verification", box=box.SIMPLE if box else None)
-    tm.add_column("Metric"); tm.add_column("Value", overflow="fold")
+    tm.add_column("Metric")
+    tm.add_column("Value", overflow="fold")
     tm.add_row("ok", "✅" if ok else "❌")
     # Common metrics if exposed by verifier
     for k in ("d_ratio", "H_u_micro", "u", "target_micro", "header_hash"):
@@ -282,21 +328,39 @@ def _pretty(console: Any, env: ProofEnvelope, verify_res: Dict[str, Any], theta_
             pass
     console.print(tm)
 
+
 # ---------------- CLI ----------------
 
+
 @app.callback()
-def _meta(version: bool = typer.Option(False, "--version", "-V", help="Print version and exit", is_eager=True)) -> None:
+def _meta(
+    version: bool = typer.Option(
+        False, "--version", "-V", help="Print version and exit", is_eager=True
+    )
+) -> None:
     if version:
         typer.echo(f"animica-proofs {__version__}")
         raise typer.Exit(0)
 
+
 @app.command("build")
 def build_hashshare(
-    header: Path = typer.Option(..., "--header", "-H", help="Header template file (JSON or CBOR)"),
-    nonce: Optional[str] = typer.Option(None, "--nonce", "-n", help="Nonce (hex like 0x.. or base10). Omit to randomize."),
-    theta_micro: Optional[int] = typer.Option(None, "--theta", help="Optional Θ in µ-nats for reporting only"),
+    header: Path = typer.Option(
+        ..., "--header", "-H", help="Header template file (JSON or CBOR)"
+    ),
+    nonce: Optional[str] = typer.Option(
+        None,
+        "--nonce",
+        "-n",
+        help="Nonce (hex like 0x.. or base10). Omit to randomize.",
+    ),
+    theta_micro: Optional[int] = typer.Option(
+        None, "--theta", help="Optional Θ in µ-nats for reporting only"
+    ),
     out: Optional[Path] = typer.Option(None, "--out", "-o", help="Write CBOR envelope"),
-    json_out: Optional[Path] = typer.Option(None, "--json", help="Also write JSON view"),
+    json_out: Optional[Path] = typer.Option(
+        None, "--json", help="Also write JSON view"
+    ),
     quiet: bool = typer.Option(False, "--quiet", "-q", help="No pretty output"),
 ) -> None:
     """
@@ -329,15 +393,19 @@ def build_hashshare(
     if quiet or Console is None:
         ok = verify_res.get("ok", False)
         ok_s = "OK" if ok else "FAIL"
-        print(f"{ok_s} type_id={type_id} nullifier=0x{nullifier.hex()} out={out or '-'} json={json_out or '-'}")
+        print(
+            f"{ok_s} type_id={type_id} nullifier=0x{nullifier.hex()} out={out or '-'} json={json_out or '-'}"
+        )
         return
 
     console = Console()
     _pretty(console, env, verify_res, theta_micro)
 
+
 def main() -> int:
     app()
     return 0
+
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())

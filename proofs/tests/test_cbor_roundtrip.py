@@ -7,12 +7,12 @@ from typing import Any, Callable, Dict, Tuple
 import pytest
 
 import proofs.cbor as pcbor
+from proofs import types as ptypes
 from proofs.tests import schema_path
 from proofs.utils import hash as phash
-from proofs import types as ptypes
-
 
 # -------- helpers: locate encode/decode & optional schema validator ----------
+
 
 def find_encode_decode(mod) -> Tuple[Callable[[Any], bytes], Callable[[bytes], Any]]:
     """
@@ -31,7 +31,10 @@ def find_encode_decode(mod) -> Tuple[Callable[[Any], bytes], Callable[[bytes], A
             # basic sanity
             assert callable(enc) and callable(dec)
             return enc, dec
-    raise AssertionError("proofs.cbor must expose encode/decode (or dumps/loads, cbor_encode/cbor_decode, to_bytes/from_bytes)")
+    raise AssertionError(
+        "proofs.cbor must expose encode/decode (or dumps/loads, cbor_encode/cbor_decode, to_bytes/from_bytes)"
+    )
+
 
 def find_schema_validator(mod) -> Callable[[Any, str], None] | None:
     """
@@ -52,6 +55,7 @@ VALIDATE = find_schema_validator(pcbor)
 
 
 # ----------------------------- domain hashing -------------------------------
+
 
 def domain_hash(domain: str, payload: bytes) -> bytes:
     """
@@ -78,6 +82,7 @@ def domain_hash(domain: str, payload: bytes) -> bytes:
 
 # ------------------------------- test cases ---------------------------------
 
+
 def test_roundtrip_primitives_and_nested() -> None:
     obj = {
         b"a": 1,
@@ -98,15 +103,17 @@ def test_canonical_map_key_ordering() -> None:
     obj2 = {b"a": 2, b"b": 1}
     e1 = ENCODE(obj1)
     e2 = ENCODE(obj2)
-    assert e1 == e2, "canonical CBOR must produce identical bytes regardless of insertion order"
+    assert (
+        e1 == e2
+    ), "canonical CBOR must produce identical bytes regardless of insertion order"
 
 
 def test_envelope_roundtrip_and_domain_hashing() -> None:
     # Minimal, valid-looking envelope (not verifying semantics, only structure/CBOR/hash stability)
     env = {
         "type_id": int(ptypes.ProofType.HASHSHARE),
-        "body": { "header_hash": b"\xaa"*32, "nonce": 42, "d_ratio": 0.5 },
-        "nullifier": b"\xbb"*32,
+        "body": {"header_hash": b"\xaa" * 32, "nonce": 42, "d_ratio": 0.5},
+        "nullifier": b"\xbb" * 32,
     }
     # Optional schema validation if exposed
     if VALIDATE is not None:
@@ -123,7 +130,9 @@ def test_envelope_roundtrip_and_domain_hashing() -> None:
     # Hashing domains must differ if domain strings differ
     h_env = domain_hash("proof:envelope", cb)
     h_body = domain_hash("proof:body", ENCODE(env["body"]))
-    assert h_env != h_body, "different domains must yield different hashes even for related payloads"
+    assert (
+        h_env != h_body
+    ), "different domains must yield different hashes even for related payloads"
     # Re-hashing must be stable
     assert h_env == domain_hash("proof:envelope", cb)
 
@@ -135,7 +144,9 @@ def test_hash_stability_over_reencode() -> None:
     enc_second = ENCODE(DECODE(enc_first))
     sha = getattr(phash, "sha3_256")
     assert enc_first == enc_second, "re-encode must be byte-identical"
-    assert sha(enc_first) == sha(enc_second), "digest must be stable if bytes are identical"
+    assert sha(enc_first) == sha(
+        enc_second
+    ), "digest must be stable if bytes are identical"
 
 
 def test_schema_validator_rejects_shape_if_available() -> None:
@@ -145,7 +156,8 @@ def test_schema_validator_rejects_shape_if_available() -> None:
         # missing type_id, wrong field names
         "typ": 0,
         "body": {},
-        "nullifier": b"\x00"*16,  # wrong length too (but schema layer may not check size)
+        "nullifier": b"\x00"
+        * 16,  # wrong length too (but schema layer may not check size)
     }
     with pytest.raises(Exception):
         VALIDATE(bad_env, "proof_envelope.cddl")
@@ -156,13 +168,17 @@ def test_encode_bytes_type_and_strictness() -> None:
     # We expect utilities to require bytes for binary fields; ensure we can encode both,
     # but decoding retains the type used by the encoder.
     obj_bytes = {b"k": b"\xff\x00"}
-    obj_text  = {"k": "hello"}
+    obj_text = {"k": "hello"}
     eb = ENCODE(obj_bytes)
     et = ENCODE(obj_text)
     db = DECODE(eb)
     dt = DECODE(et)
-    assert isinstance(list(db.keys())[0], (bytes, bytearray)), "binary map key should remain bytes after round-trip"
-    assert isinstance(list(dt.keys())[0], str), "text map key should remain str after round-trip"
+    assert isinstance(
+        list(db.keys())[0], (bytes, bytearray)
+    ), "binary map key should remain bytes after round-trip"
+    assert isinstance(
+        list(dt.keys())[0], str
+    ), "text map key should remain str after round-trip"
     # Encodings should differ because major types differ (byte string vs text string)
     assert eb != et, "CBOR must distinguish byte-string maps from text maps"
 

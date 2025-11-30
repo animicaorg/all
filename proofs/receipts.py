@@ -31,10 +31,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
 
-from .types import ProofType  # enum
-from .utils.hash import sha3_256  # domain-tagged helpers live here, but we pass explicit tags below
 from .cbor import dumps as cbor_dumps
-
+from .types import ProofType  # enum
+from .utils.hash import \
+    sha3_256  # domain-tagged helpers live here, but we pass explicit tags below
 
 # ───────────────────────────── domains ─────────────────────────────
 
@@ -52,12 +52,12 @@ _DEFAULT_SCALES: Dict[str, int] = {
     "traps_ratio": 1_000_000_000,
     "qos": 1_000_000_000,
     # non-ratio positive reals
-    "units": 1_000_000,       # AI/Quantum abstract units
-    "seconds": 1_000_000,     # VDF seconds-equivalent
+    "units": 1_000_000,  # AI/Quantum abstract units
+    "seconds": 1_000_000,  # VDF seconds-equivalent
     "redundancy": 1_000_000,  # minimum 1.0, scaled
     # boolean flags
-    "heartbeat": 1,           # {0,1}
-    "retrieval_bonus": 1,     # {0,1}
+    "heartbeat": 1,  # {0,1}
+    "retrieval_bonus": 1,  # {0,1}
 }
 
 
@@ -105,6 +105,7 @@ def quantize_signals(signals: Mapping[str, float]) -> List[Tuple[str, int]]:
 
 # ───────────────────────── receipt object ──────────────────────────
 
+
 @dataclass(frozen=True)
 class ProofReceipt:
     """
@@ -121,6 +122,7 @@ class ProofReceipt:
       to_cbor():    canonical CBOR (dict with small int keys)
       leaf_hash():  SHA3-256 over domain || cbor(receipt)
     """
+
     version: int
     type_id: ProofType
     nullifier: bytes
@@ -144,6 +146,7 @@ class ProofReceipt:
 
 
 # ──────────────────────────── builders ─────────────────────────────
+
 
 def digest_proof_body(body: bytes) -> bytes:
     """
@@ -184,6 +187,7 @@ def build_receipt(
 
 
 # ─────────────────────── convenience & checks ──────────────────────
+
 
 def verify_signals_match(
     *,

@@ -44,6 +44,7 @@ except Exception:  # pragma: no cover - py<3.9 fallback
 try:
     from proofs.errors import SchemaError
 except Exception:  # pragma: no cover
+
     class SchemaError(Exception):
         pass
 
@@ -52,9 +53,11 @@ except Exception:  # pragma: no cover
 # Trust roots container
 # --------------------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class AttestationRoots:
     """In-memory bundle of vendor trust roots (PEM-encoded)."""
+
     sgx_root_pem: Optional[bytes] = None
     amd_sev_snp_root_pem: Optional[bytes] = None
     arm_cca_root_pem: Optional[bytes] = None
@@ -77,6 +80,7 @@ class AttestationRoots:
 # --------------------------------------------------------------------------------------
 # Resource helpers
 # --------------------------------------------------------------------------------------
+
 
 def _vendor_dir() -> Path:
     """
@@ -152,33 +156,39 @@ def load_default_roots() -> AttestationRoots:
 # Lazy accessors for verifier modules (do not import heavy deps on package import)
 # --------------------------------------------------------------------------------------
 
+
 def tee_common():
     """Return the tee.common module (lazy import)."""
     from .tee import common as _common  # local import
+
     return _common
 
 
 def tee_sgx():
     """Return the tee.sgx verifier module (lazy import)."""
     from .tee import sgx as _sgx  # local import
+
     return _sgx
 
 
 def tee_sev_snp():
     """Return the tee.sev_snp verifier module (lazy import)."""
     from .tee import sev_snp as _sev  # local import
+
     return _sev
 
 
 def tee_cca():
     """Return the tee.cca verifier module (lazy import)."""
     from .tee import cca as _cca  # local import
+
     return _cca
 
 
 def tpm_dice():
     """Return the tpm_dice validator module (lazy import)."""
     from . import tpm_dice as _tpm  # local import
+
     return _tpm
 
 

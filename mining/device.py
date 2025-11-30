@@ -32,35 +32,39 @@ Public API
 - prefer(order: list[str|DeviceType])        : helper to pick best available
 """
 
-from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Protocol, Tuple, Union
 import importlib
 import os
 import re
 import threading
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterable, List, Optional, Protocol, Tuple, Union
 
 # ────────────────────────────────────────────────────────────────────────
 # Errors (local import if available)
 # ────────────────────────────────────────────────────────────────────────
 
 try:
-    from .errors import MinerError, DeviceUnavailable
+    from .errors import DeviceUnavailable, MinerError
 except Exception:  # pragma: no cover - keep standalone
+
     class MinerError(RuntimeError):
         pass
+
     class DeviceUnavailable(MinerError):
         pass
+
 
 # ────────────────────────────────────────────────────────────────────────
 # Types & Flags
 # ────────────────────────────────────────────────────────────────────────
 
+
 class DeviceType(str):
-    CPU    = "cpu"
-    CUDA   = "cuda"
-    ROCM   = "rocm"
+    CPU = "cpu"
+    CUDA = "cuda"
+    ROCM = "rocm"
     OPENCL = "opencl"
-    METAL  = "metal"
+    METAL = "metal"
 
     @classmethod
     def normalize(cls, x: Union[str, "DeviceType"]) -> "DeviceType":
@@ -77,9 +81,11 @@ class DeviceType(str):
             return cls.METAL
         raise ValueError(f"Unknown device type: {x!r}")
 
+
 @dataclass(frozen=True)
 class DeviceInfo:
     """Static description of a physical/logical device."""
+
     type: DeviceType
     name: str
     index: int = 0
@@ -88,7 +94,9 @@ class DeviceInfo:
     compute_units: Optional[int] = None
     memory_bytes: Optional[int] = None
     max_batch: Optional[int] = None
-    flags: Dict[str, bool] = field(default_factory=dict)  # e.g., supports_keccak, supports_udraw
+    flags: Dict[str, bool] = field(
+        default_factory=dict
+    )  # e.g., supports_keccak, supports_udraw
 
     def id(self) -> str:
         return f"{self.type}:{self.index}"
@@ -96,11 +104,11 @@ class DeviceInfo:
     def has(self, flag: str) -> bool:
         return bool(self.flags.get(flag, False))
 
+
 class MiningDevice(Protocol):
     """Runtime interface provided by each backend instance."""
 
-    def info(self) -> DeviceInfo:
-        ...
+    def info(self) -> DeviceInfo: ...
 
     def prepare_header(self, header_bytes: bytes, mix_seed: bytes) -> Any:
         """
@@ -135,12 +143,16 @@ class MiningDevice(Protocol):
         """Release device resources (contexts/queues)."""
         ...
 
+
 # ────────────────────────────────────────────────────────────────────────
 # Backend registry & lazy loaders
 # ────────────────────────────────────────────────────────────────────────
 
 _loader_lock = threading.Lock()
-_registry: Dict[str, Dict[str, Any]] = {}  # {backend_name: {"mod": module, "list": fn, "create": fn}}
+_registry: Dict[str, Dict[str, Any]] = (
+    {}
+)  # {backend_name: {"mod": module, "list": fn, "create": fn}}
+
 
 def _try_load(backend: str, module_name: str, list_fn: str, create_fn: str) -> None:
     """Best-effort import; record presence in _registry."""
@@ -155,23 +167,34 @@ def _try_load(backend: str, module_name: str, list_fn: str, create_fn: str) -> N
         except Exception:
             _registry[backend] = {}  # mark as unavailable
 
+
 def _boot_registry() -> None:
     # CPU is always present (pure-Python fallback)
-    _try_load(DeviceType.CPU,   "mining.cpu_backend",   "list_devices", "create")
+    _try_load(DeviceType.CPU, "mining.cpu_backend", "list_devices", "create")
     # Optional GPU/accelerated backends (guarded)
-    _try_load(DeviceType.CUDA,  "mining.gpu_cuda",      "list_devices", "create")
-    _try_load(DeviceType.ROCM,  "mining.gpu_rocm",      "list_devices", "create")  # optional future module
-    _try_load(DeviceType.OPENCL,"mining.gpu_opencl",    "list_devices", "create")
-    _try_load(DeviceType.METAL, "mining.gpu_metal",     "list_devices", "create")
+    _try_load(DeviceType.CUDA, "mining.gpu_cuda", "list_devices", "create")
+    _try_load(
+        DeviceType.ROCM, "mining.gpu_rocm", "list_devices", "create"
+    )  # optional future module
+    _try_load(DeviceType.OPENCL, "mining.gpu_opencl", "list_devices", "create")
+    _try_load(DeviceType.METAL, "mining.gpu_metal", "list_devices", "create")
+
 
 def _available(backend: str) -> bool:
     _boot_registry()
     ent = _registry.get(backend) or {}
-    return "list" in ent and callable(ent["list"]) and "create" in ent and callable(ent["create"])
+    return (
+        "list" in ent
+        and callable(ent["list"])
+        and "create" in ent
+        and callable(ent["create"])
+    )
+
 
 # ────────────────────────────────────────────────────────────────────────
 # Discovery
 # ────────────────────────────────────────────────────────────────────────
+
 
 def list_available() -> List[DeviceInfo]:
     """
@@ -182,7 +205,7 @@ def list_available() -> List[DeviceInfo]:
     """
     _boot_registry()
     allow = _parse_csv_env("ANIMICA_DEVICE_ALLOW")
-    deny  = _parse_csv_env("ANIMICA_DEVICE_DENY")
+    deny = _parse_csv_env("ANIMICA_DEVICE_DENY")
     out: List[DeviceInfo] = []
     for backend, ent in _registry.items():
         if not ent:
@@ -195,35 +218,58 @@ def list_available() -> List[DeviceInfo]:
             devices = ent["list"]()  # returns Iterable[DeviceInfo]
             for d in devices:
                 # Normalize type & add default flags for expectations
-                flags = dict({
-                    "supports_keccak": True,
-                    "supports_udraw": True,
-                    "supports_batch": True,
-                }, **(d.flags or {}))
-                out.append(DeviceInfo(
-                    type=DeviceType.normalize(d.type),
-                    name=d.name, index=d.index, vendor=d.vendor, driver=d.driver,
-                    compute_units=d.compute_units, memory_bytes=d.memory_bytes,
-                    max_batch=d.max_batch, flags=flags
-                ))
+                flags = dict(
+                    {
+                        "supports_keccak": True,
+                        "supports_udraw": True,
+                        "supports_batch": True,
+                    },
+                    **(d.flags or {}),
+                )
+                out.append(
+                    DeviceInfo(
+                        type=DeviceType.normalize(d.type),
+                        name=d.name,
+                        index=d.index,
+                        vendor=d.vendor,
+                        driver=d.driver,
+                        compute_units=d.compute_units,
+                        memory_bytes=d.memory_bytes,
+                        max_batch=d.max_batch,
+                        flags=flags,
+                    )
+                )
         except Exception:
             # If a backend fails enumeration, skip it gracefully
             continue
     # Ensure at least one CPU info even if the cpu backend didn't provide list()
     if not any(d.type == DeviceType.CPU for d in out) and _available(DeviceType.CPU):
-        out.append(DeviceInfo(
-            type=DeviceType.CPU, name="CPU (fallback)", index=0,
-            vendor="generic", driver="python", compute_units=os.cpu_count() or 1,
-            memory_bytes=None, max_batch=None,
-            flags={"supports_keccak": True, "supports_udraw": True, "supports_batch": True}
-        ))
+        out.append(
+            DeviceInfo(
+                type=DeviceType.CPU,
+                name="CPU (fallback)",
+                index=0,
+                vendor="generic",
+                driver="python",
+                compute_units=os.cpu_count() or 1,
+                memory_bytes=None,
+                max_batch=None,
+                flags={
+                    "supports_keccak": True,
+                    "supports_udraw": True,
+                    "supports_batch": True,
+                },
+            )
+        )
     # Stable deterministic order: type→index→name
     out.sort(key=lambda d: (d.type, d.index, d.name))
     return out
 
+
 # ────────────────────────────────────────────────────────────────────────
 # Factory
 # ────────────────────────────────────────────────────────────────────────
+
 
 def create(device: Union[str, DeviceType], **opts: Any) -> MiningDevice:
     """
@@ -240,7 +286,9 @@ def create(device: Union[str, DeviceType], **opts: Any) -> MiningDevice:
     _boot_registry()
     ent = _registry.get(backend) or {}
     if not ent:
-        raise DeviceUnavailable(f"Backend '{backend}' not available (module missing or failed to import).")
+        raise DeviceUnavailable(
+            f"Backend '{backend}' not available (module missing or failed to import)."
+        )
     try:
         dev = ent["create"](**opts)
         # Quick sanity check
@@ -251,6 +299,7 @@ def create(device: Union[str, DeviceType], **opts: Any) -> MiningDevice:
         raise
     except Exception as e:
         raise DeviceUnavailable(f"Failed to create device '{backend}': {e}") from e
+
 
 def prefer(order: Iterable[Union[str, DeviceType]], **opts: Any) -> MiningDevice:
     """
@@ -268,9 +317,11 @@ def prefer(order: Iterable[Union[str, DeviceType]], **opts: Any) -> MiningDevice
         raise last_err
     raise DeviceUnavailable("No devices matched the requested preference order.")
 
+
 # ────────────────────────────────────────────────────────────────────────
 # Helpers
 # ────────────────────────────────────────────────────────────────────────
+
 
 def _parse_csv_env(key: str) -> List[str]:
     v = os.environ.get(key, "").strip()
@@ -278,11 +329,13 @@ def _parse_csv_env(key: str) -> List[str]:
         return []
     return [DeviceType.normalize(x) for x in re.split(r"[,\s]+", v) if x]
 
+
 def _validate_device_interface(dev: MiningDevice) -> None:
     # Lightweight check that required methods exist
     for m in ("info", "prepare_header", "scan", "close"):
         if not hasattr(dev, m):
             raise DeviceUnavailable(f"Device missing method: {m}")
+
 
 # ────────────────────────────────────────────────────────────────────────
 # Fallback: lightweight CPU shim if mining.cpu_backend isn't present yet
@@ -302,10 +355,19 @@ if not _available(DeviceType.CPU):
     class _ShimCPU:
         def __init__(self, index: int = 0, threads: int = 0, **_: Any) -> None:
             self._info = DeviceInfo(
-                type=DeviceType.CPU, name="CPU (shim)", index=index,
-                vendor="generic", driver="python",
-                compute_units=os.cpu_count() or 1, memory_bytes=None, max_batch=1,
-                flags={"supports_keccak": True, "supports_udraw": True, "supports_batch": False},
+                type=DeviceType.CPU,
+                name="CPU (shim)",
+                index=index,
+                vendor="generic",
+                driver="python",
+                compute_units=os.cpu_count() or 1,
+                memory_bytes=None,
+                max_batch=1,
+                flags={
+                    "supports_keccak": True,
+                    "supports_udraw": True,
+                    "supports_batch": False,
+                },
             )
 
         def info(self) -> DeviceInfo:
@@ -343,7 +405,14 @@ if not _available(DeviceType.CPU):
                 if u <= exp_neg_theta:
                     # d_ratio is proportional to -ln(u) / (-ln(exp(-Θ))) ~= (-ln u) / Θ
                     d_ratio = (-math.log(u)) / max(theta_micro / 1e6, 1e-9)
-                    found.append({"nonce": nonce, "u": float(u), "d_ratio": float(d_ratio), "hash": digest})
+                    found.append(
+                        {
+                            "nonce": nonce,
+                            "u": float(u),
+                            "d_ratio": float(d_ratio),
+                            "hash": digest,
+                        }
+                    )
             return found
 
         def close(self) -> None:
@@ -356,7 +425,11 @@ if not _available(DeviceType.CPU):
     def _shim_create(**opts: Any) -> MiningDevice:
         return _ShimCPU(**opts)
 
-    _registry[DeviceType.CPU] = {"mod": None, "list": _shim_list_devices, "create": _shim_create}
+    _registry[DeviceType.CPU] = {
+        "mod": None,
+        "list": _shim_list_devices,
+        "create": _shim_create,
+    }
 
 # ────────────────────────────────────────────────────────────────────────
 # __main__ (diagnostics)
@@ -364,9 +437,24 @@ if not _available(DeviceType.CPU):
 
 if __name__ == "__main__":  # pragma: no cover
     import json
+
     devs = list_available()
-    print(json.dumps([{
-        "id": d.id(), "type": d.type, "name": d.name, "vendor": d.vendor, "driver": d.driver,
-        "compute_units": d.compute_units, "memory_bytes": d.memory_bytes,
-        "max_batch": d.max_batch, "flags": d.flags
-    } for d in devs], indent=2))
+    print(
+        json.dumps(
+            [
+                {
+                    "id": d.id(),
+                    "type": d.type,
+                    "name": d.name,
+                    "vendor": d.vendor,
+                    "driver": d.driver,
+                    "compute_units": d.compute_units,
+                    "memory_bytes": d.memory_bytes,
+                    "max_batch": d.max_batch,
+                    "flags": d.flags,
+                }
+                for d in devs
+            ],
+            indent=2,
+        )
+    )

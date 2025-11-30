@@ -22,6 +22,7 @@ matching `da.nmt.node.leaf_hash`.
 The builder duplicates the last node on odd node counts (Bitcoin-style) which
 keeps tree sizes power-of-two aligned and proofs short.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -34,11 +35,11 @@ except Exception:  # pragma: no cover
 
 _NS_BYTES = (_NAMESPACE_BITS + 7) // 8
 
-from .namespace import NamespaceId, NamespaceRange
-from .node import Node, make_leaf, make_parent, NMTNodeError
-from .codec import encode_leaf
-from ..utils.hash import sha3_256
 from ..utils.bytes import read_uvarint
+from ..utils.hash import sha3_256
+from .codec import encode_leaf
+from .namespace import NamespaceId, NamespaceRange
+from .node import NMTNodeError, Node, make_leaf, make_parent
 
 
 @dataclass(frozen=True)
@@ -65,7 +66,9 @@ class NMT:
       new blob/chunk set.
     """
 
-    def __init__(self, *, duplicate_last: bool = True, ns_bytes: int | None = None) -> None:
+    def __init__(
+        self, *, duplicate_last: bool = True, ns_bytes: int | None = None
+    ) -> None:
         self._duplicate_last = duplicate_last
         self._ns_bytes = int(ns_bytes) if ns_bytes is not None else _NS_BYTES
         self._leaves: List[Node] = []
@@ -101,7 +104,9 @@ class NMT:
 
     # Compatibility alias: several tests look for a generic ``append(ns, data)``
     # entry-point. Delegate to ``append_data`` to avoid duplicating logic.
-    def append(self, ns: int | NamespaceId, payload_bytes: bytes) -> int:  # pragma: no cover - thin wrapper
+    def append(
+        self, ns: int | NamespaceId, payload_bytes: bytes
+    ) -> int:  # pragma: no cover - thin wrapper
         return self.append_data(ns, payload_bytes)
 
     def append_encoded(self, encoded_leaf: bytes) -> int:
@@ -151,7 +156,9 @@ class NMT:
                     right = cur[i + 1]
                 else:
                     right = None
-                parent = make_parent(left, right, duplicate_right_if_none=self._duplicate_last)
+                parent = make_parent(
+                    left, right, duplicate_right_if_none=self._duplicate_last
+                )
                 nxt.append(parent)
                 i += 2
             layers.append(nxt)
@@ -222,7 +229,9 @@ class NMT:
                     right = cur[i + 1]
                 else:
                     right = None
-                parent = make_parent(left, right, duplicate_right_if_none=self._duplicate_last)
+                parent = make_parent(
+                    left, right, duplicate_right_if_none=self._duplicate_last
+                )
                 nxt.append(parent)
                 i += 2
             layers.append(nxt)
@@ -234,6 +243,7 @@ class NMT:
 # Utilities
 # --------------------------------------------------------------------------- #
 
+
 def _b(x: bytes | bytearray | memoryview) -> bytes:
     if isinstance(x, bytes):
         return x
@@ -242,6 +252,7 @@ def _b(x: bytes | bytearray | memoryview) -> bytes:
     if isinstance(x, memoryview):
         return x.tobytes()
     return bytes(x)  # pragma: no cover - defensive
+
 
 def _hash32(h: bytes, *, where: str = "hash") -> bytes:
     b = _b(h)

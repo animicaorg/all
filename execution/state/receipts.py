@@ -21,10 +21,9 @@ instance of that class. Otherwise it returns a local ReceiptFields dataclass.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import List, Optional, Sequence, Any
-
 import hashlib
+from dataclasses import dataclass
+from typing import Any, List, Optional, Sequence
 
 try:
     # Optional dependency on core; will not be available early in bring-up.
@@ -34,10 +33,10 @@ except Exception:  # pragma: no cover - optional import
 
 from ..types.events import LogEvent
 
-
 # =============================================================================
 # Small helpers
 # =============================================================================
+
 
 def _sha3_256(data: bytes) -> bytes:
     return hashlib.sha3_256(data).digest()
@@ -117,10 +116,12 @@ def build_logs_bloom(logs: Sequence[LogEvent]) -> bytes:
     Bits are addressed big-endian as in Ethereum: index 0 is the MSB of byte 0.
     """
     bloom = bytearray(_BLOOM_BYTES)
+
     def set_bit(ix: int) -> None:
         byte_ix = (_BLOOM_BITS - 1 - ix) // 8
         bit_ix = ix % 8
-        bloom[byte_ix] |= (1 << bit_ix)
+        bloom[byte_ix] |= 1 << bit_ix
+
     for log in logs:
         # Address contributes
         for idx in _bloom_indices(log.address):
@@ -136,6 +137,7 @@ def build_logs_bloom(logs: Sequence[LogEvent]) -> bytes:
 # Receipt assembly
 # =============================================================================
 
+
 @dataclass(frozen=True)
 class ReceiptFields:
     """
@@ -143,10 +145,11 @@ class ReceiptFields:
     If core.types.receipt.Receipt is available, `build_receipt` returns that
     class instead; otherwise it returns this.
     """
-    status: int              # 1 = SUCCESS, 0 = REVERT/OOG (or as defined upstream)
+
+    status: int  # 1 = SUCCESS, 0 = REVERT/OOG (or as defined upstream)
     gas_used: int
-    logs_bloom: bytes        # 256 bytes
-    logs_root: bytes         # 32 bytes (SHA3-256 Merkle root)
+    logs_bloom: bytes  # 256 bytes
+    logs_root: bytes  # 32 bytes (SHA3-256 Merkle root)
     logs: List[LogEvent]
 
 
@@ -177,10 +180,10 @@ def build_receipt(*, status: int, gas_used: int, logs: Sequence[LogEvent]) -> An
             try:
                 return CoreReceipt(
                     status=status,
-                    gasUsed=gas_used,      # type: ignore[arg-type]
+                    gasUsed=gas_used,  # type: ignore[arg-type]
                     logs=tuple(logs),
                     logsBloom=logs_bloom,  # type: ignore[arg-type]
-                    logsRoot=logs_root,    # type: ignore[arg-type]
+                    logsRoot=logs_root,  # type: ignore[arg-type]
                 )
             except Exception:
                 # Last resort: return ReceiptFields to keep execution flowing.

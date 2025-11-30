@@ -22,19 +22,21 @@ from typing import Any, Dict, List, Literal, Optional, Tuple, TypedDict
 
 try:
     # Pydantic v2
-    from pydantic import BaseModel, Field, ConfigDict, ValidationError
+    from pydantic import BaseModel, ConfigDict, Field, ValidationError
 except Exception as e:  # pragma: no cover
     raise RuntimeError("pydantic>=2 is required: pip install pydantic") from e
 
 # jsonschema is optional; we validate via Pydantic by default and can double-check with jsonschema if present
 try:  # pragma: no cover
     import jsonschema  # type: ignore
+
     _HAS_JSONSCHEMA = True
 except Exception:
     _HAS_JSONSCHEMA = False
 
 
 # ----------------------------- Pydantic Models (mirror chains/schemas/*.json) -----------------------------
+
 
 class NativeCurrency(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -182,6 +184,7 @@ class Registry(BaseModel):
 
 # ----------------------------- Helpers: JSON IO, hashing, checksums ----------------------------------------------
 
+
 def read_json(path: os.PathLike[str] | str) -> Any:
     p = Path(path)
     try:
@@ -221,6 +224,7 @@ def parse_checksums_file(checksums_path: os.PathLike[str] | str) -> Dict[str, st
 
 # ----------------------------- Schema validation (optional extra guard) ------------------------------------------
 
+
 def _maybe_jsonschema_validate(instance: Any, schema_path: Path) -> None:
     if not _HAS_JSONSCHEMA:
         return
@@ -228,10 +232,13 @@ def _maybe_jsonschema_validate(instance: Any, schema_path: Path) -> None:
     try:
         jsonschema.validate(instance=instance, schema=schema)  # type: ignore
     except Exception as e:  # pragma: no cover
-        raise ValueError(f"jsonschema validation failed for {schema_path.name}: {e}") from e
+        raise ValueError(
+            f"jsonschema validation failed for {schema_path.name}: {e}"
+        ) from e
 
 
 # ----------------------------- Public API: load/validate ----------------------------------------------------------
+
 
 def load_chain(file_path: os.PathLike[str] | str) -> Chain:
     """
@@ -262,7 +269,9 @@ def load_registry(file_path: os.PathLike[str] | str) -> Registry:
         raise ValueError(f"{p} failed Pydantic validation:\n{e}") from e
 
 
-def resolve_from_registry(registry_path: os.PathLike[str] | str, key: str) -> Tuple[RegistryEntry, Chain]:
+def resolve_from_registry(
+    registry_path: os.PathLike[str] | str, key: str
+) -> Tuple[RegistryEntry, Chain]:
     reg = load_registry(registry_path)
     entry = next((e for e in reg.entries if e.key == key), None)
     if not entry:
@@ -272,6 +281,7 @@ def resolve_from_registry(registry_path: os.PathLike[str] | str, key: str) -> Tu
 
 
 # ----------------------------- Checksums verification -------------------------------------------------------------
+
 
 @dataclass
 class CheckResult:
@@ -284,8 +294,7 @@ class CheckResult:
 
 
 def verify_against_checksums(
-    checksums_path: os.PathLike[str] | str,
-    files: Optional[List[str]] = None
+    checksums_path: os.PathLike[str] | str, files: Optional[List[str]] = None
 ) -> List[CheckResult]:
     """
     Verify that each file's sha256 equals the signed list, and (if present)
@@ -298,7 +307,11 @@ def verify_against_checksums(
     for path in targets:
         p = Path(path)
         if not p.exists():
-            results.append(CheckResult(str(p), False, "missing file", "", checksums.get(str(p)), None))
+            results.append(
+                CheckResult(
+                    str(p), False, "missing file", "", checksums.get(str(p)), None
+                )
+            )
             continue
 
         file_hash = sha256_hex(p)
@@ -311,10 +324,21 @@ def verify_against_checksums(
             embedded = None
 
         if not list_hash:
-            results.append(CheckResult(str(p), False, "no entry in checksums.txt", file_hash, None, embedded))
+            results.append(
+                CheckResult(
+                    str(p),
+                    False,
+                    "no entry in checksums.txt",
+                    file_hash,
+                    None,
+                    embedded,
+                )
+            )
             continue
 
-        ok = (file_hash.lower() == list_hash.lower()) and (embedded is None or embedded.lower() == list_hash.lower())
+        ok = (file_hash.lower() == list_hash.lower()) and (
+            embedded is None or embedded.lower() == list_hash.lower()
+        )
         reason = None if ok else "hash mismatch (file and/or embedded)"
         results.append(CheckResult(str(p), ok, reason, file_hash, list_hash, embedded))
 
@@ -335,10 +359,14 @@ __all__ = [
     "sha256_hex",
 ]
 
+
 def _cli() -> int:
     args = sys.argv[1:]
     if not args:
-        print("Usage:\n  python -m animica_chains check <chains/checksums.txt>\n  python -m animica_chains show <registry-key>", file=sys.stderr)
+        print(
+            "Usage:\n  python -m animica_chains check <chains/checksums.txt>\n  python -m animica_chains show <registry-key>",
+            file=sys.stderr,
+        )
         return 2
 
     cmd = args[0]
@@ -348,12 +376,18 @@ def _cli() -> int:
             results = verify_against_checksums(checksums)
             bad = [r for r in results if not r.ok]
             for r in results:
-                print(f"{'OK  ' if r.ok else 'FAIL'} {r.path} file={r.file_hash} list={r.list_hash or '-'} embedded={r.embedded or '-'}{'' if r.ok else f'  # {r.reason}'}")
+                print(
+                    f"{'OK  ' if r.ok else 'FAIL'} {r.path} file={r.file_hash} list={r.list_hash or '-'} embedded={r.embedded or '-'}{'' if r.ok else f'  # {r.reason}'}"
+                )
             return 1 if bad else 0
         elif cmd == "show":
             key = args[1] if len(args) > 1 else "animica-testnet"
             entry, chain = resolve_from_registry("chains/registry.json", key)
-            print(json.dumps({"entry": entry.model_dump(), "chain": chain.model_dump()}, indent=2))
+            print(
+                json.dumps(
+                    {"entry": entry.model_dump(), "chain": chain.model_dump()}, indent=2
+                )
+            )
             return 0
         else:
             print("Unknown command. Use 'check' or 'show'.", file=sys.stderr)

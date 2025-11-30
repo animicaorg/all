@@ -30,15 +30,14 @@ from typing import Iterable, List, Optional, Sequence, Tuple, Union
 try:
     from . import ZKError
 except Exception:  # pragma: no cover - fallback if imported standalone
+
     class ZKError(Exception):
         pass
 
 
 # BN254 / alt_bn128 base field prime.
 #   P = 21888242871839275222246405745257275088548364400416034343698204186575808495617
-P: int = (
-    21888242871839275222246405745257275088548364400416034343698204186575808495617
-)
+P: int = 21888242871839275222246405745257275088548364400416034343698204186575808495617
 FP_BYTE_LEN = 32
 
 
@@ -235,6 +234,7 @@ class Fp:
 
 
 # --- Utilities ------------------------------------------------------------
+
 
 def is_canonical_bytes(b: bytes) -> bool:
     """Check if bytes represent a canonical Fp element (0 <= x < P) and length == 32."""

@@ -33,9 +33,8 @@ import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-from urllib.error import URLError, HTTPError
-
 
 # ---- paths -------------------------------------------------------------------
 
@@ -49,7 +48,10 @@ CONTRACT_PY = HERE / "contract.py"
 
 # ---- small JSON-RPC helper (no external deps) --------------------------------
 
-def jsonrpc_call(rpc_url: str, method: str, params: Any, *, timeout: float = 10.0) -> Any:
+
+def jsonrpc_call(
+    rpc_url: str, method: str, params: Any, *, timeout: float = 10.0
+) -> Any:
     payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
     data = json.dumps(payload).encode("utf-8")
     req = Request(rpc_url, data=data, headers={"Content-Type": "application/json"})
@@ -68,9 +70,14 @@ def jsonrpc_call(rpc_url: str, method: str, params: Any, *, timeout: float = 10.
 
 # ---- deploy tool integration --------------------------------------------------
 
+
 def _call_deploy_tool_import(
-    rpc_url: str, chain_id: int, mnemonic: Optional[str], alg: Optional[str],
-    manifest_path: Path, source_path: Path,
+    rpc_url: str,
+    chain_id: int,
+    mnemonic: Optional[str],
+    alg: Optional[str],
+    manifest_path: Path,
+    source_path: Path,
 ) -> Tuple[str, Dict[str, Any]]:
     """
     Try to import contracts.tools.deploy and invoke a likely function signature.
@@ -123,7 +130,9 @@ def _call_deploy_tool_import(
                 return str(addr), res
             # If the tool returns a tuple (address, meta)
             if isinstance(res, tuple) and res and isinstance(res[0], str):
-                return res[0], (res[1] if len(res) > 1 and isinstance(res[1], dict) else {})
+                return res[0], (
+                    res[1] if len(res) > 1 and isinstance(res[1], dict) else {}
+                )
             # If returns a plain address string
             if isinstance(res, str):
                 return res, {}
@@ -150,15 +159,23 @@ def _extract_address_text(text: str) -> Optional[str]:
     if m:
         return m.group(0)
     # Keyed forms
-    m = re.search(r"(?:address|deployed(?:_at)?|contract):\s*(anim1[0-9a-z]{20,}|0x[a-fA-F0-9]{40})", text, re.I)
+    m = re.search(
+        r"(?:address|deployed(?:_at)?|contract):\s*(anim1[0-9a-z]{20,}|0x[a-fA-F0-9]{40})",
+        text,
+        re.I,
+    )
     if m:
         return m.group(1)
     return None
 
 
 def _call_deploy_tool_subprocess(
-    rpc_url: str, chain_id: int, mnemonic: Optional[str], alg: Optional[str],
-    manifest_path: Path, source_path: Path,
+    rpc_url: str,
+    chain_id: int,
+    mnemonic: Optional[str],
+    alg: Optional[str],
+    manifest_path: Path,
+    source_path: Path,
 ) -> Tuple[str, Dict[str, Any]]:
     """
     Run the deploy tool as a subprocess and parse its output.
@@ -167,11 +184,16 @@ def _call_deploy_tool_subprocess(
         raise FileNotFoundError(f"Deploy tool not found at {DEPLOY_TOOL}")
 
     cmd = [
-        sys.executable, str(DEPLOY_TOOL),
-        "--manifest", str(manifest_path),
-        "--source", str(source_path),
-        "--rpc", rpc_url,
-        "--chain-id", str(chain_id),
+        sys.executable,
+        str(DEPLOY_TOOL),
+        "--manifest",
+        str(manifest_path),
+        "--source",
+        str(source_path),
+        "--rpc",
+        rpc_url,
+        "--chain-id",
+        str(chain_id),
         "--json",  # if tool supports this, we'll get structured output
     ]
     if mnemonic:
@@ -179,16 +201,24 @@ def _call_deploy_tool_subprocess(
     if alg:
         cmd += ["--alg", alg]
 
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    proc = subprocess.run(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
     out = proc.stdout.strip()
     err = proc.stderr.strip()
     if proc.returncode != 0:
-        raise RuntimeError(f"Deploy tool failed (exit {proc.returncode}).\nSTDERR:\n{err}\nSTDOUT:\n{out}")
+        raise RuntimeError(
+            f"Deploy tool failed (exit {proc.returncode}).\nSTDERR:\n{err}\nSTDOUT:\n{out}"
+        )
 
     # Try JSON first
     try:
         obj = json.loads(out)
-        addr = obj.get("address") or obj.get("contract_address") or obj.get("deployed_address")
+        addr = (
+            obj.get("address")
+            or obj.get("contract_address")
+            or obj.get("deployed_address")
+        )
         if not addr:
             # Some tools nest result
             if "result" in obj and isinstance(obj["result"], dict):
@@ -201,11 +231,14 @@ def _call_deploy_tool_subprocess(
     # Fall back to regex parsing
     addr = _extract_address_text(out) or _extract_address_text(err)
     if not addr:
-        raise RuntimeError(f"Could not parse deployed address from output.\nSTDOUT:\n{out}\n---\nSTDERR:\n{err}")
+        raise RuntimeError(
+            f"Could not parse deployed address from output.\nSTDOUT:\n{out}\n---\nSTDERR:\n{err}"
+        )
     return addr, {"stdout": out, "stderr": err}
 
 
 # ---- post-deploy checks ------------------------------------------------------
+
 
 def _post_deploy_checks(rpc_url: str, chain_id: int, address: str) -> Dict[str, Any]:
     """
@@ -228,7 +261,9 @@ def _post_deploy_checks(rpc_url: str, chain_id: int, address: str) -> Dict[str, 
 
     latest = None
     try:
-        latest = jsonrpc_call(rpc_url, "chain.getBlockByNumber", ["latest", False, False])
+        latest = jsonrpc_call(
+            rpc_url, "chain.getBlockByNumber", ["latest", False, False]
+        )
     except Exception:
         pass
 
@@ -238,30 +273,70 @@ def _post_deploy_checks(rpc_url: str, chain_id: int, address: str) -> Dict[str, 
         "expected_chain_id": chain_id,
         "contract_address": address,
         "balance": balance,
-        "latest_block": latest["header"]["number"] if isinstance(latest, dict) and "header" in latest and "number" in latest["header"] else None,
+        "latest_block": (
+            latest["header"]["number"]
+            if isinstance(latest, dict)
+            and "header" in latest
+            and "number" in latest["header"]
+            else None
+        ),
     }
 
 
 # ---- main --------------------------------------------------------------------
 
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Deploy ai_agent example and run quick checks.")
-    parser.add_argument("--rpc", dest="rpc_url", default=os.getenv("RPC_URL", "http://127.0.0.1:8545"),
-                        help="Node RPC URL (default: %(default)s or RPC_URL env)")
-    parser.add_argument("--chain-id", dest="chain_id", type=int, default=int(os.getenv("CHAIN_ID", "1337")),
-                        help="Chain ID (default: %(default)s or CHAIN_ID env)")
-    parser.add_argument("--mnemonic", dest="mnemonic", default=os.getenv("MNEMONIC"),
-                        help="Deployer mnemonic (env MNEMONIC). If omitted, tool may use a keystore or fail.")
-    parser.add_argument("--alg", dest="alg", default=os.getenv("ALG", "dilithium3"),
-                        help="PQ signer algorithm (default: dilithium3)")
-    parser.add_argument("--manifest", dest="manifest", default=str(MANIFEST_JSON),
-                        help="Path to manifest.json (default: examples/ai_agent/manifest.json)")
-    parser.add_argument("--source", dest="source", default=str(CONTRACT_PY),
-                        help="Path to contract.py (default: examples/ai_agent/contract.py)")
-    parser.add_argument("--no-import", action="store_true",
-                        help="Skip import-path deploy and force subprocess execution of the deploy tool")
-    parser.add_argument("--print-json", action="store_true",
-                        help="Emit machine-readable JSON summary to stdout")
+    parser = argparse.ArgumentParser(
+        description="Deploy ai_agent example and run quick checks."
+    )
+    parser.add_argument(
+        "--rpc",
+        dest="rpc_url",
+        default=os.getenv("RPC_URL", "http://127.0.0.1:8545"),
+        help="Node RPC URL (default: %(default)s or RPC_URL env)",
+    )
+    parser.add_argument(
+        "--chain-id",
+        dest="chain_id",
+        type=int,
+        default=int(os.getenv("CHAIN_ID", "1337")),
+        help="Chain ID (default: %(default)s or CHAIN_ID env)",
+    )
+    parser.add_argument(
+        "--mnemonic",
+        dest="mnemonic",
+        default=os.getenv("MNEMONIC"),
+        help="Deployer mnemonic (env MNEMONIC). If omitted, tool may use a keystore or fail.",
+    )
+    parser.add_argument(
+        "--alg",
+        dest="alg",
+        default=os.getenv("ALG", "dilithium3"),
+        help="PQ signer algorithm (default: dilithium3)",
+    )
+    parser.add_argument(
+        "--manifest",
+        dest="manifest",
+        default=str(MANIFEST_JSON),
+        help="Path to manifest.json (default: examples/ai_agent/manifest.json)",
+    )
+    parser.add_argument(
+        "--source",
+        dest="source",
+        default=str(CONTRACT_PY),
+        help="Path to contract.py (default: examples/ai_agent/contract.py)",
+    )
+    parser.add_argument(
+        "--no-import",
+        action="store_true",
+        help="Skip import-path deploy and force subprocess execution of the deploy tool",
+    )
+    parser.add_argument(
+        "--print-json",
+        action="store_true",
+        help="Emit machine-readable JSON summary to stdout",
+    )
     args = parser.parse_args()
 
     manifest_path = Path(args.manifest).resolve()
@@ -305,7 +380,10 @@ def main() -> None:
     try:
         checks = _post_deploy_checks(args.rpc_url, args.chain_id, address)
     except Exception as exc:
-        checks = {"error": f"post-deploy checks failed: {exc}", "contract_address": address}
+        checks = {
+            "error": f"post-deploy checks failed: {exc}",
+            "contract_address": address,
+        }
 
     result = {
         "ok": True,
@@ -323,15 +401,21 @@ def main() -> None:
         print(f"  Address: {address}")
         print(f"  RPC URL: {args.rpc_url}")
         if checks:
-            head_h = checks.get("head", {}).get("height") if isinstance(checks.get("head"), dict) else checks.get("head")
+            head_h = (
+                checks.get("head", {}).get("height")
+                if isinstance(checks.get("head"), dict)
+                else checks.get("head")
+            )
             print(f"  Head: {head_h}")
             if checks.get("balance") is not None:
                 print(f"  Balance: {checks['balance']}")
         # Friendly hints
         print("\nTry calling a simple view via RPC after a block or two:")
-        print(f"  curl -s {args.rpc_url} -H 'content-type: application/json' "
-              f"-d '{{\"jsonrpc\":\"2.0\",\"id\":1,"
-              f"\"method\":\"state.getBalance\",\"params\":[\"{address}\"]}}' | jq")
+        print(
+            f"  curl -s {args.rpc_url} -H 'content-type: application/json' "
+            f'-d \'{{"jsonrpc":"2.0","id":1,'
+            f'"method":"state.getBalance","params":["{address}"]}}\' | jq'
+        )
 
 
 if __name__ == "__main__":

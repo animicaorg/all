@@ -34,20 +34,21 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, Optional, Tuple
 
-from .errors import ProofError, SchemaError
-from .types import ProofType, ProofEnvelope
 from .cbor import validate_body
+from .errors import ProofError, SchemaError
 from .metrics import ProofMetrics
+from .types import ProofEnvelope, ProofType
 from .utils.hash import sha3_256
-from .utils.math import to_micro_nats  # float nats → int µ-nats
 from .utils.keccak_stream import u64_be  # simple helper, or we can inline
-
+from .utils.math import to_micro_nats  # float nats → int µ-nats
 
 # Domain tag for the u-draw transcript
 _U_DOMAIN = b"Animica/HashShare/u-draw/v1"
 
 
-def _recompute_u_digest(header_hash: bytes, nonce: int, mix_seed: Optional[bytes]) -> bytes:
+def _recompute_u_digest(
+    header_hash: bytes, nonce: int, mix_seed: Optional[bytes]
+) -> bytes:
     """
     u_digest = SHA3-256( _U_DOMAIN || headerHash || u64be(nonce) || [mixSeed?] )
     """
@@ -154,7 +155,9 @@ def verify_envelope(env: ProofEnvelope) -> Tuple[ProofMetrics, Dict[str, Any]]:
     Envelope-aware verifier (ignores env.nullifier; nullifier is computed separately).
     """
     if env.type_id != ProofType.HASH_SHARE:
-        raise SchemaError(f"wrong proof type for hashshare verifier: {int(env.type_id)}")
+        raise SchemaError(
+            f"wrong proof type for hashshare verifier: {int(env.type_id)}"
+        )
     return verify_hashshare_body(env.body)
 
 

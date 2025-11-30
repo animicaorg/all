@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+
 """
 Build the Animica PQ alg-policy Merkle root from a JSON policy document.
 
@@ -44,10 +45,13 @@ from typing import Any, Dict, List, Optional, Tuple
 try:
     from pq.py.utils.hash import sha3_512
 except Exception as e:  # pragma: no cover
-    raise SystemExit(f"FATAL: pq hashing utils not available: {e}\n"
-                     "Hint: run from repo root or set PYTHONPATH=~/animica")
+    raise SystemExit(
+        f"FATAL: pq hashing utils not available: {e}\n"
+        "Hint: run from repo root or set PYTHONPATH=~/animica"
+    )
 
 # ---------- Canonical JSON ----------------------------------------------------
+
 
 def _canon_dumps(obj: Any) -> bytes:
     """
@@ -57,8 +61,10 @@ def _canon_dumps(obj: Any) -> bytes:
       - ensure_ascii=False
       - integers/floats pass through; no NaN/Inf allowed
     """
+
     def _default(o):
         raise TypeError(f"Non-serializable type in policy: {type(o)}")
+
     s = json.dumps(
         obj,
         sort_keys=True,
@@ -69,27 +75,33 @@ def _canon_dumps(obj: Any) -> bytes:
     )
     return s.encode("utf-8")
 
+
 # ---------- Merkle (v1) ------------------------------------------------------
 
-DOM_LEAF  = b"animica|alg-policy|leaf|v1|"
-DOM_NODE  = b"animica|alg-policy|node|v1|"
+DOM_LEAF = b"animica|alg-policy|leaf|v1|"
+DOM_NODE = b"animica|alg-policy|node|v1|"
 DOM_EMPTY = b"animica|alg-policy|empty|v1|"
+
 
 @dataclass
 class Leaf:
-    idx: int              # position in sorted sequence
+    idx: int  # position in sorted sequence
     key: Tuple[Any, Any]  # (id, name)
     entry: Dict[str, Any]
-    h: bytes              # leaf hash
+    h: bytes  # leaf hash
+
 
 def _leaf_hash(entry: Dict[str, Any]) -> bytes:
     return sha3_512(DOM_LEAF + _canon_dumps(entry))
 
+
 def _node_hash(left: bytes, right: bytes) -> bytes:
     return sha3_512(DOM_NODE + left + right)
 
+
 def _empty_root() -> bytes:
     return sha3_512(DOM_EMPTY)
+
 
 def _build_leaves(entries: List[Dict[str, Any]]) -> List[Leaf]:
     # Validate required fields for sorting and reproducibility
@@ -106,6 +118,7 @@ def _build_leaves(entries: List[Dict[str, Any]]) -> List[Leaf]:
         leaves.append(Leaf(idx=i, key=key, entry=entry, h=_leaf_hash(entry)))
     return leaves
 
+
 def _build_tree_level(nodes: List[bytes]) -> List[bytes]:
     if not nodes:
         return []
@@ -114,13 +127,14 @@ def _build_tree_level(nodes: List[bytes]) -> List[bytes]:
     i = 0
     while i < n:
         if i + 1 < n:
-            out.append(_node_hash(nodes[i], nodes[i+1]))
+            out.append(_node_hash(nodes[i], nodes[i + 1]))
             i += 2
         else:
             # duplicate last
             out.append(_node_hash(nodes[i], nodes[i]))
             i += 1
     return out
+
 
 def _build_merkle_root(leaves: List[Leaf]) -> Tuple[bytes, List[List[bytes]]]:
     if not leaves:
@@ -133,14 +147,19 @@ def _build_merkle_root(leaves: List[Leaf]) -> Tuple[bytes, List[List[bytes]]]:
         tree.append(level)
     return level[0], tree  # root, full tree by levels (0 = leaves)
 
+
 # ---------- Proofs ------------------------------------------------------------
+
 
 @dataclass
 class ProofItem:
     sibling: str  # hex
-    side: str     # "L" or "R"
+    side: str  # "L" or "R"
 
-def _merkle_proof(leaves: List[Leaf], tree: List[List[bytes]], leaf_idx: int) -> List[ProofItem]:
+
+def _merkle_proof(
+    leaves: List[Leaf], tree: List[List[bytes]], leaf_idx: int
+) -> List[ProofItem]:
     """
     Build a simple audit path from leaf index to root. For an odd number of nodes at a level,
     the last node is duplicated; in that case if the target is the last node, sibling==self.
@@ -149,7 +168,7 @@ def _merkle_proof(leaves: List[Leaf], tree: List[List[bytes]], leaf_idx: int) ->
         return []
     proof: List[ProofItem] = []
     idx = leaf_idx
-    for level in range(len(tree)-1):  # stop before root level
+    for level in range(len(tree) - 1):  # stop before root level
         nodes = tree[level]
         # compute sibling index
         if idx % 2 == 0:
@@ -167,6 +186,7 @@ def _merkle_proof(leaves: List[Leaf], tree: List[List[bytes]], leaf_idx: int) ->
         idx //= 2
     return proof
 
+
 def _find_leaf_index(leaves: List[Leaf], q: str) -> int:
     """
     Find a leaf by 'id' or 'name'. We try:
@@ -183,7 +203,9 @@ def _find_leaf_index(leaves: List[Leaf], q: str) -> int:
             return lf.idx
     raise SystemExit(f"No entry matches id/name '{q}'")
 
+
 # ---------- Schema validation (optional) --------------------------------------
+
 
 def _maybe_validate_schema(doc: Dict[str, Any], schema_path: Optional[Path]) -> None:
     if not schema_path:
@@ -195,7 +217,9 @@ def _maybe_validate_schema(doc: Dict[str, Any], schema_path: Optional[Path]) -> 
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     jsonschema.validate(instance=doc, schema=schema)
 
+
 # ---------- I/O & CLI ---------------------------------------------------------
+
 
 def _load_policy(path: str) -> Dict[str, Any]:
     if path == "-":
@@ -206,9 +230,14 @@ def _load_policy(path: str) -> Dict[str, Any]:
         doc = json.loads(data)
     except json.JSONDecodeError as e:
         raise SystemExit(f"Invalid JSON: {e}")
-    if not isinstance(doc, dict) or "entries" not in doc or not isinstance(doc["entries"], list):
+    if (
+        not isinstance(doc, dict)
+        or "entries" not in doc
+        or not isinstance(doc["entries"], list)
+    ):
         raise SystemExit("Policy JSON must be an object with an 'entries' array")
     return doc
+
 
 def _print_tree(leaves: List[Leaf], tree: List[List[bytes]]) -> None:
     print("# Merkle Tree (level 0 = leaves)")
@@ -216,19 +245,32 @@ def _print_tree(leaves: List[Leaf], tree: List[List[bytes]]) -> None:
         if lvl == 0:
             print(f"level {lvl} (leaves, n={len(nodes)}):")
             for lf, h in zip(leaves, nodes):
-                print(f"  [{lf.idx:02d}] id={lf.entry['id']!r} name={lf.entry['name']!r}  h={h.hex()}")
+                print(
+                    f"  [{lf.idx:02d}] id={lf.entry['id']!r} name={lf.entry['name']!r}  h={h.hex()}"
+                )
         else:
             print(f"level {lvl} (n={len(nodes)}):")
             for i, h in enumerate(nodes):
                 print(f"  [{i:02d}] {h.hex()}")
 
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Build PQ alg-policy Merkle root (v1).")
-    ap.add_argument("--in", dest="inp", required=True, help="Policy JSON path or '-' for stdin")
-    ap.add_argument("--schema", type=Path, help="Optional JSON-Schema path to validate input")
-    ap.add_argument("--print-tree", action="store_true", help="Print the Merkle tree (debug)")
-    ap.add_argument("--proof", help="Emit a Merkle proof for entry with this id or name")
-    ap.add_argument("--json", action="store_true", help="Emit JSON instead of plain hex")
+    ap.add_argument(
+        "--in", dest="inp", required=True, help="Policy JSON path or '-' for stdin"
+    )
+    ap.add_argument(
+        "--schema", type=Path, help="Optional JSON-Schema path to validate input"
+    )
+    ap.add_argument(
+        "--print-tree", action="store_true", help="Print the Merkle tree (debug)"
+    )
+    ap.add_argument(
+        "--proof", help="Emit a Merkle proof for entry with this id or name"
+    )
+    ap.add_argument(
+        "--json", action="store_true", help="Emit JSON instead of plain hex"
+    )
     ap.add_argument("--out", type=Path, help="Write hex root to file")
     ap.add_argument("--quiet", action="store_true", help="Don’t print root to stdout")
     args = ap.parse_args(argv)
@@ -283,6 +325,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         args.out.write_text(root.hex() + "\n", encoding="utf-8")
 
     return 0
+
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())

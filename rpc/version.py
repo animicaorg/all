@@ -5,10 +5,11 @@ RPC module version helpers.
 - git_describe(): returns `git describe --tags --dirty --always` (or None if unavailable).
 - version_with_git(): combines __version__ with git describe for diagnostics.
 """
+
 from __future__ import annotations
 
-from functools import lru_cache
 import subprocess
+from functools import lru_cache
 from typing import Optional
 
 __version__ = "0.1.0-dev"

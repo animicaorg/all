@@ -79,32 +79,30 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
-from typing import Optional, List
+from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException, Depends, Header, status, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .config import settings  # pydantic BaseSettings in config.py
-from .models import (
-    JobRecord,
-    JobStatus,
-    QuantumJobIn,
-    QuantumResult,
-    AIJobIn,
-    AIResult,
-)
-from .worker import get_worker, ProviderWorker
+from .models import (AIJobIn, AIResult, JobRecord, JobStatus, QuantumJobIn,
+                     QuantumResult)
+from .worker import ProviderWorker, get_worker
 
 # -----------------------------------------------------------------------------
 # Optional Prometheus
 # -----------------------------------------------------------------------------
 
-_METRICS_ENABLED = str(getattr(settings, "metrics_enabled", os.getenv("AICF_METRICS_ENABLED", "false"))).lower() in {"1","true","yes","on"}
+_METRICS_ENABLED = str(
+    getattr(settings, "metrics_enabled", os.getenv("AICF_METRICS_ENABLED", "false"))
+).lower() in {"1", "true", "yes", "on"}
 
 try:  # optional; keep template easy to run
     if _METRICS_ENABLED:
-        from prometheus_client import Counter, Summary, Gauge, generate_latest, CONTENT_TYPE_LATEST  # type: ignore
+        from prometheus_client import (CONTENT_TYPE_LATEST,  # type: ignore
+                                       Counter, Gauge, Summary,
+                                       generate_latest)
 
         REQ_COUNTER = Counter(
             "aicf_http_requests_total",
@@ -134,11 +132,14 @@ except Exception:  # pragma: no cover - graceful fallback
 # Auth dependency (optional API key)
 # -----------------------------------------------------------------------------
 
+
 class AuthContext(BaseModel):
     api_key_used: bool = False
 
 
-async def require_api_key(x_api_key: Optional[str] = Header(default=None)) -> AuthContext:
+async def require_api_key(
+    x_api_key: Optional[str] = Header(default=None),
+) -> AuthContext:
     """
     If settings.api_key is set, enforce X-API-Key header equality.
     Otherwise, allow all.
@@ -158,6 +159,7 @@ async def require_api_key(x_api_key: Optional[str] = Header(default=None)) -> Au
 # -----------------------------------------------------------------------------
 # App & lifespan
 # -----------------------------------------------------------------------------
+
 
 def _app_name() -> str:
     return str(getattr(settings, "service_name", "aicf-provider"))
@@ -219,6 +221,7 @@ log.setLevel(getattr(settings, "log_level", "INFO"))
 # Schemas (responses)
 # -----------------------------------------------------------------------------
 
+
 class EnqueueResponse(BaseModel):
     job_id: str = Field(..., description="Server-generated job identifier")
     kind: str = Field(..., description='"quantum" or "ai"')
@@ -237,6 +240,7 @@ class ReadyzResponse(BaseModel):
 # -----------------------------------------------------------------------------
 # Middleware (metrics)
 # -----------------------------------------------------------------------------
+
 
 @app.middleware("http")
 async def _metrics_middleware(request, call_next):  # type: ignore[no-untyped-def]
@@ -262,6 +266,7 @@ async def _metrics_middleware(request, call_next):  # type: ignore[no-untyped-de
 # Utility
 # -----------------------------------------------------------------------------
 
+
 def _status_url(job_id: str) -> str:
     base = os.getenv("AICF_PUBLIC_BASE_URL", "").rstrip("/")
     if base:
@@ -272,6 +277,7 @@ def _status_url(job_id: str) -> str:
 # -----------------------------------------------------------------------------
 # Liveness / readiness / version / metrics
 # -----------------------------------------------------------------------------
+
 
 @app.get("/healthz", tags=["meta"])
 async def healthz():
@@ -289,8 +295,8 @@ async def readyz():
 
     if _METRICS_ENABLED:
         try:
-            JOBS_RUNNING.set(running)   # type: ignore[union-attr]
-            JOBS_QUEUED.set(queued)     # type: ignore[union-attr]
+            JOBS_RUNNING.set(running)  # type: ignore[union-attr]
+            JOBS_QUEUED.set(queued)  # type: ignore[union-attr]
         except Exception:
             pass
 
@@ -326,13 +332,16 @@ async def metrics():
 # Job endpoints
 # -----------------------------------------------------------------------------
 
+
 @app.post(
     "/v1/jobs/quantum",
     response_model=EnqueueResponse,
     status_code=201,
     tags=["jobs"],
 )
-async def enqueue_quantum(job: QuantumJobIn, _auth: AuthContext = Depends(require_api_key)):
+async def enqueue_quantum(
+    job: QuantumJobIn, _auth: AuthContext = Depends(require_api_key)
+):
     """
     Enqueue a quantum job.
 
@@ -343,9 +352,14 @@ async def enqueue_quantum(job: QuantumJobIn, _auth: AuthContext = Depends(requir
         if _METRICS_ENABLED:
             timer = ENQUEUE_LATENCY.labels(kind="quantum").time()  # type: ignore[union-attr]
         else:
+
             class _Nop:
-                def __enter__(self): return None
-                def __exit__(self, *a): return False
+                def __enter__(self):
+                    return None
+
+                def __exit__(self, *a):
+                    return False
+
             timer = _Nop()
 
         with timer:  # type: ignore[assignment]
@@ -390,9 +404,14 @@ async def enqueue_ai(job: AIJobIn, _auth: AuthContext = Depends(require_api_key)
         if _METRICS_ENABLED:
             timer = ENQUEUE_LATENCY.labels(kind="ai").time()  # type: ignore[union-attr]
         else:
+
             class _Nop:
-                def __enter__(self): return None
-                def __exit__(self, *a): return False
+                def __enter__(self):
+                    return None
+
+                def __exit__(self, *a):
+                    return False
+
             timer = _Nop()
 
         with timer:  # type: ignore[assignment]

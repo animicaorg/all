@@ -20,15 +20,10 @@ from typing import Optional
 # --------------------------- Robust import with graceful fallback ---------------------------
 
 try:
-    from prometheus_client import (
-        Counter,
-        Gauge,
-        Histogram,
-        REGISTRY,
-        generate_latest,
-        CONTENT_TYPE_LATEST,
-        start_http_server,
-    )
+    from prometheus_client import (CONTENT_TYPE_LATEST, REGISTRY, Counter,
+                                   Gauge, Histogram, generate_latest,
+                                   start_http_server)
+
     _PROM_OK = True
 except Exception:  # pragma: no cover
     _PROM_OK = False
@@ -44,6 +39,7 @@ except Exception:  # pragma: no cover
 
     def generate_latest(*_a, **_k) -> bytes:  # type: ignore
         return b""
+
     CONTENT_TYPE_LATEST = "text/plain; version=0.0.4"  # type: ignore
 
     def start_http_server(*_a, **_k):  # type: ignore
@@ -97,6 +93,7 @@ __all__ = [
 
 
 # --------------------------- Convenience helpers ---------------------------
+
 
 def report_hashrate(shares_per_sec: float) -> None:
     """

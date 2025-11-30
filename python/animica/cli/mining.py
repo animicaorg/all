@@ -1,4 +1,5 @@
 """Stratum pool helper CLI for Animica developers."""
+
 from __future__ import annotations
 
 import os
@@ -6,9 +7,8 @@ from pathlib import Path
 from typing import Optional
 
 import typer
-
+from animica.cli.wallet import WalletEntry, _wallet_file_path, create_wallet
 from animica.config import load_network_config
-from animica.cli.wallet import WalletEntry, create_wallet, _wallet_file_path
 from animica.stratum_pool import cli as pool_cli
 from animica.stratum_pool.config import PoolConfig, load_config_from_env
 
@@ -29,11 +29,21 @@ def _ensure_network_env() -> None:
 
 @app.command("run-pool")
 def run_pool(
-    rpc_url: Optional[str] = typer.Option(None, "--rpc-url", help="Animica node RPC URL", envvar=RPC_ENV),
-    db_url: Optional[str] = typer.Option(None, "--db-url", help="Database URL", envvar=DB_ENV),
-    stratum_bind: Optional[str] = typer.Option(None, "--stratum-bind", help="Stratum bind address", envvar=STRATUM_BIND_ENV),
-    api_bind: Optional[str] = typer.Option(None, "--api-bind", help="API bind address", envvar=API_BIND_ENV),
-    log_level: Optional[str] = typer.Option(None, "--log-level", help="Log level", envvar=LOG_LEVEL_ENV),
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc-url", help="Animica node RPC URL", envvar=RPC_ENV
+    ),
+    db_url: Optional[str] = typer.Option(
+        None, "--db-url", help="Database URL", envvar=DB_ENV
+    ),
+    stratum_bind: Optional[str] = typer.Option(
+        None, "--stratum-bind", help="Stratum bind address", envvar=STRATUM_BIND_ENV
+    ),
+    api_bind: Optional[str] = typer.Option(
+        None, "--api-bind", help="API bind address", envvar=API_BIND_ENV
+    ),
+    log_level: Optional[str] = typer.Option(
+        None, "--log-level", help="Log level", envvar=LOG_LEVEL_ENV
+    ),
 ) -> None:
     """Start the Animica Stratum mining pool."""
     _ensure_network_env()
@@ -68,8 +78,12 @@ def show_config() -> None:
 
 @app.command("generate-payout-address")
 def generate_payout_address(
-    wallet_file: Optional[Path] = typer.Option(None, "--wallet-file", help="Wallet store for generated address"),
-    label: str = typer.Option("pool-payout", "--label", help="Label for the generated wallet"),
+    wallet_file: Optional[Path] = typer.Option(
+        None, "--wallet-file", help="Wallet store for generated address"
+    ),
+    label: str = typer.Option(
+        "pool-payout", "--label", help="Label for the generated wallet"
+    ),
 ) -> None:
     """Generate a dev wallet for pool payouts using the wallet CLI helpers."""
     entry: WalletEntry = create_wallet(label, _wallet_file_path(wallet_file))

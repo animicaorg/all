@@ -39,8 +39,8 @@ import hashlib
 import json
 import os
 from typing import Any, Dict, Optional, Tuple, Union
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-from urllib.error import URLError, HTTPError
 
 __all__ = [
     "ZKAdapter",
@@ -55,11 +55,13 @@ HexLike = Union[str, bytes, bytearray, memoryview]
 # Small utilities
 # ---------------------------------------------------------------------------
 
+
 def _as_hex(data: HexLike) -> str:
     if isinstance(data, (bytes, bytearray, memoryview)):
         return "0x" + bytes(data).hex()
     s = str(data)
     return s if s.startswith("0x") else "0x" + s.encode().hex()
+
 
 def _from_hex(x: HexLike) -> bytes:
     if isinstance(x, (bytes, bytearray, memoryview)):
@@ -72,8 +74,10 @@ def _from_hex(x: HexLike) -> bytes:
     except binascii.Error as e:
         raise ValueError(f"Invalid hex: {x!r}") from e
 
+
 def _sha3_256(data: bytes) -> bytes:
     return hashlib.sha3_256(data).digest()
+
 
 def _canonical_json(obj: Any) -> bytes:
     # Canonical-ish JSON for challenge derivation
@@ -84,6 +88,7 @@ def _canonical_json(obj: Any) -> bytes:
 # Minimal JSON-RPC shim (stdlib only)
 # ---------------------------------------------------------------------------
 
+
 class _JsonRpc:
     def __init__(self, url: str, api_key: Optional[str] = None, timeout: float = 30.0):
         self.url = url
@@ -91,7 +96,12 @@ class _JsonRpc:
         self.timeout = timeout
 
     def call(self, method: str, params: Any) -> Any:
-        payload = {"jsonrpc": "2.0", "id": "zk-verify", "method": method, "params": params}
+        payload = {
+            "jsonrpc": "2.0",
+            "id": "zk-verify",
+            "method": method,
+            "params": params,
+        }
         data = json.dumps(payload).encode("utf-8")
         headers = {"Content-Type": "application/json"}
         if self.api_key:
@@ -126,6 +136,7 @@ class _JsonRpc:
 # Adapter
 # ---------------------------------------------------------------------------
 
+
 class ZKAdapter:
     """
     Verifier facade. Tries a service object, then JSON-RPC, finally a local stub.
@@ -143,7 +154,9 @@ class ZKAdapter:
         self.service = service
         self.endpoint = endpoint or os.getenv("ZK_ENDPOINT")
         self.api_key = api_key or os.getenv("ZK_API_KEY")
-        self.rpc = _JsonRpc(self.endpoint, self.api_key, timeout_s) if self.endpoint else None
+        self.rpc = (
+            _JsonRpc(self.endpoint, self.api_key, timeout_s) if self.endpoint else None
+        )
         if allow_local_stub is None:
             allow_local_stub = os.getenv("ZK_LOCAL_STUB", "0") == "1"
         self.allow_local_stub = allow_local_stub
@@ -182,7 +195,11 @@ class ZKAdapter:
                 fn = getattr(self.service, name, None)
                 if callable(fn):
                     res = fn(circuit=circuit, proof=proof, public_input=public_input, max_units=max_units, scheme=scheme)  # type: ignore[misc]
-                    return normalize_result(res, default_scheme=_get_scheme_hint(circuit, scheme), provider="service")
+                    return normalize_result(
+                        res,
+                        default_scheme=_get_scheme_hint(circuit, scheme),
+                        provider="service",
+                    )
 
         # 2) JSON-RPC
         if self.rpc:
@@ -196,7 +213,9 @@ class ZKAdapter:
             for method in ("zk.verify", "zk.verifyProof", "capabilities.zkVerify"):
                 try:
                     res = self.rpc.call(method, params)
-                    return normalize_result(res, default_scheme=params["scheme"], provider="rpc")
+                    return normalize_result(
+                        res, default_scheme=params["scheme"], provider="rpc"
+                    )
                 except RuntimeError as e:
                     # try next method if "Method not found"
                     msg = str(e)
@@ -206,16 +225,23 @@ class ZKAdapter:
 
         # 3) Local stub (tests/dev only)
         if self.allow_local_stub or os.getenv("ZK_LOCAL_ACCEPT") == "1":
-            return _local_stub_verify(circuit=circuit, proof=proof, public_input=public_input, scheme=scheme)
+            return _local_stub_verify(
+                circuit=circuit, proof=proof, public_input=public_input, scheme=scheme
+            )
 
-        raise RuntimeError("No ZK verifier backend available (service/endpoint missing and local stub disabled).")
+        raise RuntimeError(
+            "No ZK verifier backend available (service/endpoint missing and local stub disabled)."
+        )
 
 
 # ---------------------------------------------------------------------------
 # Normalization & helpers
 # ---------------------------------------------------------------------------
 
-def _get_scheme_hint(circuit: Union[Dict[str, Any], str], override: Optional[str]) -> Optional[str]:
+
+def _get_scheme_hint(
+    circuit: Union[Dict[str, Any], str], override: Optional[str]
+) -> Optional[str]:
     if override:
         return override
     if isinstance(circuit, dict):
@@ -223,9 +249,13 @@ def _get_scheme_hint(circuit: Union[Dict[str, Any], str], override: Optional[str
         return str(val) if val else None
     return None
 
+
 def _prepare_proof_for_rpc(proof: Union[Dict[str, Any], bytes, str]) -> Any:
     if isinstance(proof, (bytes, bytearray, memoryview)):
-        return {"hex": "0x" + bytes(proof).hex(), "b64": base64.b64encode(bytes(proof)).decode("ascii")}
+        return {
+            "hex": "0x" + bytes(proof).hex(),
+            "b64": base64.b64encode(bytes(proof)).decode("ascii"),
+        }
     if isinstance(proof, str):
         # If hex, pass both forms; else treat as opaque string
         if proof.startswith(("0x", "0X")):
@@ -235,7 +265,10 @@ def _prepare_proof_for_rpc(proof: Union[Dict[str, Any], bytes, str]) -> Any:
     # assume dict / JSON-encodable
     return proof
 
-def normalize_result(res: Any, *, default_scheme: Optional[str], provider: str) -> Dict[str, Any]:
+
+def normalize_result(
+    res: Any, *, default_scheme: Optional[str], provider: str
+) -> Dict[str, Any]:
     """
     Map various backend return shapes to the normalized result.
     """
@@ -250,8 +283,15 @@ def normalize_result(res: Any, *, default_scheme: Optional[str], provider: str) 
         # common keys
         ok = bool(res.get("ok", res.get("valid", res.get("verified", False))))
         units = int(res.get("units", res.get("cost_units", res.get("gas", 0))) or 0)
-        scheme = str(res.get("scheme", scheme)) if res.get("scheme") is not None else scheme
-        details = {k: v for k, v in res.items() if k not in ("ok", "valid", "verified", "units", "cost_units", "gas", "scheme")}
+        scheme = (
+            str(res.get("scheme", scheme)) if res.get("scheme") is not None else scheme
+        )
+        details = {
+            k: v
+            for k, v in res.items()
+            if k
+            not in ("ok", "valid", "verified", "units", "cost_units", "gas", "scheme")
+        }
     else:
         # Unknown type: keep raw
         details = {"raw": res}
@@ -268,6 +308,7 @@ def normalize_result(res: Any, *, default_scheme: Optional[str], provider: str) 
 # ---------------------------------------------------------------------------
 # Local stub (deterministic, for tests/dev)
 # ---------------------------------------------------------------------------
+
 
 def _local_stub_verify(
     *,
@@ -292,7 +333,13 @@ def _local_stub_verify(
     This allows predictable tests without a heavy verifier.
     """
     if os.getenv("ZK_LOCAL_ACCEPT") == "1":
-        return {"ok": True, "units": 0, "scheme": scheme or _get_scheme_hint(circuit, None), "provider": "local", "details": {"mode": "force-accept"}}
+        return {
+            "ok": True,
+            "units": 0,
+            "scheme": scheme or _get_scheme_hint(circuit, None),
+            "provider": "local",
+            "details": {"mode": "force-accept"},
+        }
 
     # Normalize proof bytes for challenge
     if isinstance(proof, (bytes, bytearray, memoryview)):
@@ -335,11 +382,13 @@ def _local_stub_verify(
 
 _default_adapter: Optional[ZKAdapter] = None
 
+
 def _get_default() -> ZKAdapter:
     global _default_adapter
     if _default_adapter is None:
         _default_adapter = ZKAdapter()
     return _default_adapter
+
 
 def verify(
     *,
@@ -358,7 +407,10 @@ def verify(
     One-shot verification helper that constructs a temporary adapter if any
     backend overrides are provided; otherwise reuses the default adapter.
     """
-    if any(x is not None for x in (service, endpoint, api_key, allow_local_stub)) or timeout_s != 30.0:
+    if (
+        any(x is not None for x in (service, endpoint, api_key, allow_local_stub))
+        or timeout_s != 30.0
+    ):
         adapter = ZKAdapter(
             service=service,
             endpoint=endpoint,

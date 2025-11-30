@@ -54,10 +54,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
 
-from .errors import ProofError, SchemaError
-from .types import ProofType, ProofEnvelope
-from .metrics import ProofMetrics
 from .cbor import validate_body
+from .errors import ProofError, SchemaError
+from .metrics import ProofMetrics
+from .types import ProofEnvelope, ProofType
 from .utils.hash import sha3_256
 from .utils.math import clamp01
 
@@ -67,11 +67,14 @@ _LEAF_DOMAIN = b"Animica/StorageLeaf/v1"
 _NODE_DOMAIN = b"Animica/StorageNode/v1"
 _CHALLENGE_DOMAIN = b"Animica/StorageChallenge/v1"
 
+
 def _leaf_hash(raw_leaf: bytes) -> bytes:
     return sha3_256(_LEAF_DOMAIN + raw_leaf)
 
+
 def _node_hash(left: bytes, right: bytes) -> bytes:
     return sha3_256(_NODE_DOMAIN + left + right)
+
 
 def _derive_sample_indices(seed: bytes, epoch: int, count: int) -> List[int]:
     """
@@ -88,13 +91,16 @@ def _derive_sample_indices(seed: bytes, epoch: int, count: int) -> List[int]:
         h = sha3_256(_CHALLENGE_DOMAIN + seed + epoch.to_bytes(8, "big") + ctr_bytes)
         # Extract four 64-bit integers per digest for efficiency.
         for i in range(0, 32, 8):
-            out.append(int.from_bytes(h[i:i+8], "big"))
+            out.append(int.from_bytes(h[i : i + 8], "big"))
             if len(out) == count:
                 break
         ctr += 1
     return out
 
-def _verify_merkle_path(leaf_raw: bytes, index: int, path: List[bytes], root: bytes) -> bool:
+
+def _verify_merkle_path(
+    leaf_raw: bytes, index: int, path: List[bytes], root: bytes
+) -> bool:
     """
     Verify a canonical binary Merkle path using domain-separated hashing.
     - leaf hash is H(LEAF_DOMAIN || leaf_raw)
@@ -114,7 +120,9 @@ def _verify_merkle_path(leaf_raw: bytes, index: int, path: List[bytes], root: by
         idx >>= 1
     return node == root
 
+
 # ─────────────────────────────── Retrieval bonus ───────────────────────────────
+
 
 def _retrieval_bonus(tickets: List[Dict[str, Any]]) -> Tuple[float, Dict[str, Any]]:
     """
@@ -144,7 +152,9 @@ def _retrieval_bonus(tickets: List[Dict[str, Any]]) -> Tuple[float, Dict[str, An
     bonus = clamp01(0.7 * success + 0.3 * lat_avg)
     return bonus, {"count": total, "ok": oks, "lat_avg": lat_avg}
 
+
 # ─────────────────────────────── Main verification ───────────────────────────────
+
 
 def verify_storage_body(body: Dict[str, Any]) -> Tuple[ProofMetrics, Dict[str, Any]]:
     """
@@ -175,7 +185,9 @@ def verify_storage_body(body: Dict[str, Any]) -> Tuple[ProofMetrics, Dict[str, A
     # 3) Verify inclusion samples
     samples = proof.get("samples", [])
     if not isinstance(samples, list) or len(samples) < min_samples:
-        raise ProofError(f"insufficient samples: got {len(samples)}, need >= {min_samples}")
+        raise ProofError(
+            f"insufficient samples: got {len(samples)}, need >= {min_samples}"
+        )
 
     # Deterministically derive the expected *positions*; we tolerate any superset order,
     # but require at least the first min_samples derived indices to appear.
@@ -209,15 +221,20 @@ def verify_storage_body(body: Dict[str, Any]) -> Tuple[ProofMetrics, Dict[str, A
     max_idx = max(provided_indices)
     # Avoid zero; choose the next power-of-two above max index to model tree size.
     import math
+
     tree_size = 1 << (max(1, math.ceil(math.log2(max(1, max_idx + 1)))))
     derived_mod = {d % tree_size for d in derived}
     if not derived_mod.issubset(provided_indices):
-        raise ProofError("derived challenge indices are not fully covered by provided samples")
+        raise ProofError(
+            "derived challenge indices are not fully covered by provided samples"
+        )
 
     # 4) Compute nominal storage proven
     # Scale by sample coverage ratio as a conservative quality factor in [0.5, 1.0].
     coverage = valid_count / float(max(valid_count, min_samples))
-    quality = clamp01(0.5 + 0.5 * coverage)  # at min_samples → 0.5, grows to 1.0 with more samples
+    quality = clamp01(
+        0.5 + 0.5 * coverage
+    )  # at min_samples → 0.5, grows to 1.0 with more samples
     storage_bytes = int(sector_size * replicas * quality)
 
     # 5) Optional retrieval bonus
@@ -240,7 +257,12 @@ def verify_storage_body(body: Dict[str, Any]) -> Tuple[ProofMetrics, Dict[str, A
         "replicas": replicas,
         "minSamples": min_samples,
         "challenge": {"epoch": epoch, "seed": seed.hex()},
-        "samples": {"provided": len(samples), "valid": valid_count, "coverage": coverage, "tree_size_guess": tree_size},
+        "samples": {
+            "provided": len(samples),
+            "valid": valid_count,
+            "coverage": coverage,
+            "tree_size_guess": tree_size,
+        },
         "quality": quality,
         "storage_bytes": storage_bytes,
         "retrieval": bonus_details,

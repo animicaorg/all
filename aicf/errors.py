@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 # aicf/errors.py
 """
 Error types for the AI Compute Fund (AICF) and a small event record used when a
@@ -16,10 +17,10 @@ Exports:
 """
 
 
+import json
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, Mapping, Optional
-import json
 
 
 class AICFError(Exception):
@@ -27,7 +28,9 @@ class AICFError(Exception):
 
     code: str = "AICF_ERROR"
 
-    def __init__(self, message: str = "", *, details: Optional[Mapping[str, Any]] = None) -> None:
+    def __init__(
+        self, message: str = "", *, details: Optional[Mapping[str, Any]] = None
+    ) -> None:
         self.message = message or self.__class__.__name__
         self.details = dict(details or {})
         super().__init__(self.__str__())
@@ -51,6 +54,7 @@ class RegistryError(AICFError):
     Provider registry-related failures: missing provider, bad status, duplicate,
     signature mismatch, etc.
     """
+
     code = "AICF_REGISTRY_ERROR"
 
     def __init__(
@@ -68,6 +72,7 @@ class RegistryError(AICFError):
 
 class InsufficientStake(AICFError):
     """Provider attempted an action without the minimum required stake."""
+
     code = "AICF_INSUFFICIENT_STAKE"
 
     def __init__(
@@ -88,6 +93,7 @@ class InsufficientStake(AICFError):
 
 class JobExpired(AICFError):
     """A job cannot be processed because its lease/TTL or expiry height passed."""
+
     code = "AICF_JOB_EXPIRED"
 
     def __init__(
@@ -113,6 +119,7 @@ class LeaseLost(AICFError):
     A worker lost its assignment lease on a job (e.g., heartbeat lapsed or the
     coordinator reassigned it). Retrying or re-acquiring a lease is required.
     """
+
     code = "AICF_LEASE_LOST"
 
     def __init__(
@@ -135,10 +142,11 @@ class LeaseLost(AICFError):
 
 class SlashReason(Enum):
     """Enumerates canonical slashing reasons for providers."""
-    TRAPS_FAIL = "traps_fail"           # failed quantum/AI trap-circuit checks
-    QOS_FAIL = "qos_fail"               # missed QoS/SLA thresholds
+
+    TRAPS_FAIL = "traps_fail"  # failed quantum/AI trap-circuit checks
+    QOS_FAIL = "qos_fail"  # missed QoS/SLA thresholds
     AVAILABILITY_FAIL = "availability_fail"  # insufficient uptime/heartbeats
-    MISBEHAVIOR = "misbehavior"         # explicit double-signing, fraud, etc.
+    MISBEHAVIOR = "misbehavior"  # explicit double-signing, fraud, etc.
     OTHER = "other"
 
 
@@ -156,6 +164,7 @@ class SlashEvent:
       - evidence_hash: optional hex-encoded hash of the evidence bundle.
       - at_height: optional block height when slash was effected.
     """
+
     provider_id: str
     reason: SlashReason
     bps: int

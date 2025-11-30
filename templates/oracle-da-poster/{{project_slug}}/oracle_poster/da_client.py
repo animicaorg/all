@@ -47,6 +47,7 @@ _LOG = get_logger("oracle_poster.da_client")
 # Errors & Results
 # --------------------------------------------------------------------------------------
 
+
 class DAClientError(RuntimeError):
     """Raised on DA posting / verification issues."""
 
@@ -67,6 +68,7 @@ class PostResult:
         response:      Parsed JSON response (if available).
         elapsed_ms:    Client-side elapsed time in milliseconds.
     """
+
     ok: bool
     commitment: str
     size: int
@@ -82,6 +84,7 @@ class PostResult:
 # Helpers
 # --------------------------------------------------------------------------------------
 
+
 def _commitment_hex(payload: bytes) -> str:
     return "0x" + sha256(payload).hexdigest()
 
@@ -90,7 +93,9 @@ def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode("ascii")
 
 
-def _request_json(url: str, *, method: str, json_body: Optional[Dict[str, Any]], timeout: int) -> Tuple[int, Dict[str, Any]]:
+def _request_json(
+    url: str, *, method: str, json_body: Optional[Dict[str, Any]], timeout: int
+) -> Tuple[int, Dict[str, Any]]:
     """
     Perform an HTTP request with JSON body/response using stdlib.
     Returns (status_code, parsed_json). Raises DAClientError on network/parse errors.
@@ -107,7 +112,9 @@ def _request_json(url: str, *, method: str, json_body: Optional[Dict[str, Any]],
             try:
                 parsed = json.loads(raw.decode("utf-8"))
             except json.JSONDecodeError as e:
-                raise DAClientError(f"Non-JSON response from {url} (status {status}): {raw[:256]!r}") from e
+                raise DAClientError(
+                    f"Non-JSON response from {url} (status {status}): {raw[:256]!r}"
+                ) from e
             return int(status), parsed
     except HTTPError as e:
         raw = e.read()
@@ -117,7 +124,9 @@ def _request_json(url: str, *, method: str, json_body: Optional[Dict[str, Any]],
         raise DAClientError(f"URLError for {url}: {e}") from e
 
 
-def _jsonrpc(url: str, *, method: str, params: Dict[str, Any], timeout: int) -> Dict[str, Any]:
+def _jsonrpc(
+    url: str, *, method: str, params: Dict[str, Any], timeout: int
+) -> Dict[str, Any]:
     """
     Minimal JSON-RPC 2.0 client. Returns parsed JSON or raises DAClientError.
     """
@@ -127,7 +136,9 @@ def _jsonrpc(url: str, *, method: str, params: Dict[str, Any], timeout: int) -> 
         "method": method,
         "params": params,
     }
-    status, parsed = _request_json(url, method="POST", json_body=payload, timeout=timeout)
+    status, parsed = _request_json(
+        url, method="POST", json_body=payload, timeout=timeout
+    )
     if "error" in parsed:
         err = parsed["error"]
         raise DAClientError(f"JSON-RPC error calling {method}: {err}")
@@ -139,6 +150,7 @@ def _jsonrpc(url: str, *, method: str, params: Dict[str, Any], timeout: int) -> 
 # --------------------------------------------------------------------------------------
 # Client
 # --------------------------------------------------------------------------------------
+
 
 class DAClient:
     """
@@ -255,7 +267,9 @@ class DAClient:
         In "rpc" mode, this method returns False unless you adapt it to your stack.
         """
         if self.mode != "services":
-            _LOG.info("verify_commitment_light: not implemented for da_mode=%s", self.mode)
+            _LOG.info(
+                "verify_commitment_light: not implemented for da_mode=%s", self.mode
+            )
             return False
 
         endpoint = f"{self.services_url}{self.verify_path}"
@@ -263,7 +277,9 @@ class DAClient:
         qs = urlencode({"commitment": commitment})
         url = f"{endpoint}?{qs}"
         try:
-            status, parsed = _request_json(url, method="GET", json_body=None, timeout=self.timeout)
+            status, parsed = _request_json(
+                url, method="GET", json_body=None, timeout=self.timeout
+            )
             if "ok" in parsed and parsed.get("ok") is True:
                 return True
             # Accept boolean result field too
@@ -292,6 +308,7 @@ class DAClient:
 # --------------------------------------------------------------------------------------
 # Backends
 # --------------------------------------------------------------------------------------
+
 
 def _post_via_services(
     *,
@@ -331,5 +348,10 @@ def _post_via_rpc(
         "content_type": content_type,
         "commitment": commitment,
     }
-    _LOG.debug("JSON-RPC da_postBlob -> %s (bytes=%d, type=%s)", rpc_url, len(payload), content_type)
+    _LOG.debug(
+        "JSON-RPC da_postBlob -> %s (bytes=%d, type=%s)",
+        rpc_url,
+        len(payload),
+        content_type,
+    )
     return _jsonrpc(rpc_url, method="da_postBlob", params=params, timeout=timeout)

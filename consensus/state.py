@@ -30,22 +30,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-from .window import (
-    WindowSpec,
-    diffs_from_timestamps,
-    ema_interval_update,
-    ema_interval_value,
-    lambda_from_ema_interval,
-    observed_lambda_from_timestamps,
-    retarget_ratio_ppm,
-    clamp_retgt_ppm,
-    apply_ratio_int,
-    SCALE,
-    PPM,
-)
-
+from .window import (PPM, SCALE, WindowSpec, apply_ratio_int, clamp_retgt_ppm,
+                     diffs_from_timestamps, ema_interval_update,
+                     ema_interval_value, lambda_from_ema_interval,
+                     observed_lambda_from_timestamps, retarget_ratio_ppm)
 
 # ------------------------------ Type shorthands ------------------------------
+
 
 @dataclass(frozen=True)
 class Tip:
@@ -56,7 +47,9 @@ class Tip:
 
 @dataclass(frozen=True)
 class PolicyRoots:
-    alg_policy_root: bytes  # root for post-quantum alg-policy (see spec/alg_policy.schema.json)
+    alg_policy_root: (
+        bytes  # root for post-quantum alg-policy (see spec/alg_policy.schema.json)
+    )
     poies_policy_root: bytes  # root for PoIES policy (see spec/poies_policy.yaml)
 
 
@@ -71,6 +64,7 @@ class RetargetParams:
     - ema_shift: EMA window = 2^ema_shift samples (integer-only filter).
     - window: a sampling window for "snapshot" estimators (harmonic/mean).
     """
+
     target_interval_sec: int = 10
     up_ppm: int = 1_050_000
     down_ppm: int = 950_000
@@ -101,6 +95,7 @@ class InMemoryConsensusState:
         and also track an EMA accumulator for Δt to reduce sensitivity to
         outliers and small reorgs in synthetic tests.
     """
+
     chain_id: int
     theta_micro: int
     policy_roots: PolicyRoots
@@ -109,7 +104,9 @@ class InMemoryConsensusState:
     # Tip & header index (minimal: only what's needed for sims)
     tip: Tip = field(init=False)
     headers: Dict[bytes, Tip] = field(default_factory=dict)  # hash -> Tip
-    parents: Dict[bytes, bytes] = field(default_factory=dict)  # child_hash -> parent_hash
+    parents: Dict[bytes, bytes] = field(
+        default_factory=dict
+    )  # child_hash -> parent_hash
 
     # Timing / retarget stats
     timestamps: List[int] = field(default_factory=list)  # append-only (tests are small)
@@ -123,12 +120,16 @@ class InMemoryConsensusState:
         """
         Initialize the in-memory state with a given genesis header.
         """
-        self.tip = Tip(height=0, hash=bytes(genesis_hash), timestamp=int(genesis_timestamp))
+        self.tip = Tip(
+            height=0, hash=bytes(genesis_hash), timestamp=int(genesis_timestamp)
+        )
         self.headers[self.tip.hash] = self.tip
         self.timestamps = [self.tip.timestamp]
         # Initialize EMA with an arbitrary "neutral" Δt equal to target interval
         # so the first updates converge smoothly.
-        self.ema_dt_scaled = (self.retarget.target_interval_sec << self.retarget.ema_shift)
+        self.ema_dt_scaled = (
+            self.retarget.target_interval_sec << self.retarget.ema_shift
+        )
 
     # ------------------------------ Read-only views ------------------------------
 
@@ -208,7 +209,9 @@ class InMemoryConsensusState:
             observed = dt_ema
 
         ratio_ppm = retarget_ratio_ppm(self.retarget.target_interval_sec, observed)
-        ratio_ppm = clamp_retgt_ppm(ratio_ppm, self.retarget.up_ppm, self.retarget.down_ppm)
+        ratio_ppm = clamp_retgt_ppm(
+            ratio_ppm, self.retarget.up_ppm, self.retarget.down_ppm
+        )
         self.theta_micro = apply_ratio_int(self.theta_micro, ratio_ppm)
 
     def accept_header(
@@ -226,10 +229,14 @@ class InMemoryConsensusState:
         """
         # Minimal linkage check against the current tip
         if parent_hash != self.tip.hash:
-            raise ValueError("accept_header: parent does not match current tip (no fork handling here)")
+            raise ValueError(
+                "accept_header: parent does not match current tip (no fork handling here)"
+            )
 
         new_height = self.tip.height + 1
-        new_tip = Tip(height=new_height, hash=bytes(header_hash), timestamp=int(timestamp_sec))
+        new_tip = Tip(
+            height=new_height, hash=bytes(header_hash), timestamp=int(timestamp_sec)
+        )
 
         # Update indices
         self.headers[new_tip.hash] = new_tip
@@ -294,12 +301,13 @@ class InMemoryConsensusState:
 
 if __name__ == "__main__":  # pragma: no cover
     # Tiny smoke demo
-    roots = PolicyRoots(alg_policy_root=b"\xaa"*32, poies_policy_root=b"\xbb"*32)
+    roots = PolicyRoots(alg_policy_root=b"\xaa" * 32, poies_policy_root=b"\xbb" * 32)
     st = InMemoryConsensusState(chain_id=1, theta_micro=5_000_000, policy_roots=roots)
-    st.init_from_genesis(genesis_hash=b"\x00"*32, genesis_timestamp=1_700_000_000)
+    st.init_from_genesis(genesis_hash=b"\x00" * 32, genesis_timestamp=1_700_000_000)
 
     # Synthesize ~10s blocks with jitter
     import random
+
     ts = st.tip.timestamp
     rng = random.Random(42)
     for _ in range(30):
@@ -308,4 +316,6 @@ if __name__ == "__main__":  # pragma: no cover
         st.accept_header(hh, st.head.hash, ts)
         if (_ + 1) % 10 == 0:
             snap = st.snapshot()
-            print(f"After {st.head.height} blocks: Θ={snap['thetaMicro']}, λ≈{snap['lambda']:.4f} blk/s, Δt_ema={snap['emaDt']}s")
+            print(
+                f"After {st.head.height} blocks: Θ={snap['thetaMicro']}, λ≈{snap['lambda']:.4f} blk/s, Δt_ema={snap['emaDt']}s"
+            )

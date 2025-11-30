@@ -66,19 +66,8 @@ import os
 import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Iterable,
-    List,
-    Mapping,
-    MutableMapping,
-    Optional,
-    Sequence,
-    Tuple,
-    Union,
-)
+from typing import (Any, Callable, Dict, Iterable, List, Mapping,
+                    MutableMapping, Optional, Sequence, Tuple, Union)
 
 # --------------------------------------------------------------------------- #
 # Data structures
@@ -96,6 +85,7 @@ class RenderContext:
         output_dir:     Destination directory where files will be written.
         variables:      Final (stringified) variables after merging & schema application.
     """
+
     templates_root: Path
     template_dir: Path
     output_dir: Path
@@ -335,7 +325,9 @@ class _ModuleHooks(Hooks):
         if len(result) == 3 and result[2] is not None:
             new_rel = str(result[2])
         if decision not in ("overwrite", "skip", "rename"):
-            raise HookError(f"{self._label}.on_conflict returned invalid decision: {decision!r}")
+            raise HookError(
+                f"{self._label}.on_conflict returned invalid decision: {decision!r}"
+            )
         return decision, data, new_rel
 
     def after_write(self, ctx: RenderContext, rel_path: Path) -> None:
@@ -429,11 +421,15 @@ def build_glob_filter(
         name = rel.name
 
         if inc:
-            matched = any(fnmatch.fnmatch(p, pat) or fnmatch.fnmatch(name, pat) for pat in inc)
+            matched = any(
+                fnmatch.fnmatch(p, pat) or fnmatch.fnmatch(name, pat) for pat in inc
+            )
             if not matched:
                 return False
         if exc:
-            if any(fnmatch.fnmatch(p, pat) or fnmatch.fnmatch(name, pat) for pat in exc):
+            if any(
+                fnmatch.fnmatch(p, pat) or fnmatch.fnmatch(name, pat) for pat in exc
+            ):
                 return False
         return True
 
@@ -479,7 +475,9 @@ def _load_from_ref(ref: str) -> Hooks:
     try:
         mod = importlib.import_module(mod_name)
     except Exception as e:
-        raise HookError(f"Failed to import module '{mod_name}' from '{ref}': {e}") from e
+        raise HookError(
+            f"Failed to import module '{mod_name}' from '{ref}': {e}"
+        ) from e
 
     target = mod if not attr else getattr(mod, attr, None)
     if target is None:
@@ -491,7 +489,9 @@ def _load_from_ref(ref: str) -> Hooks:
         try:
             return target()  # type: ignore[call-arg]
         except Exception as e:
-            raise HookError(f"Failed to instantiate Hooks subclass '{target}': {e}") from e
+            raise HookError(
+                f"Failed to instantiate Hooks subclass '{target}': {e}"
+            ) from e
     if inspect.ismodule(target):
         return _ModuleHooks(target, label=ref)
     if inspect.isfunction(target) or inspect.ismethod(target):
@@ -506,7 +506,9 @@ def _load_from_file(path: Path, *, label: str) -> Hooks:
     Load hooks from an arbitrary python file path (no package install required).
     """
     try:
-        spec = importlib.util.spec_from_file_location(f"_tpl_hook_{abs(hash(path))}", path)
+        spec = importlib.util.spec_from_file_location(
+            f"_tpl_hook_{abs(hash(path))}", path
+        )
         if spec is None or spec.loader is None:
             raise HookError(f"spec_from_file_location failed for {path}")
         mod = importlib.util.module_from_spec(spec)

@@ -45,14 +45,10 @@ log = logging.getLogger("mining.orchestrator")
 
 try:
     # Optional Prometheus metrics (mining/metrics.py)
-    from .metrics import (
-        MINER_FOUND_SHARES,
-        MINER_SUBMIT_OK,
-        MINER_SUBMIT_REJECT,
-        MINER_SUBMIT_LATENCY_SEC,
-        MINER_ACTIVE_TEMPLATE_AGE_SEC,
-        MINER_SCANNER_HASHRATE_ABS,  # abstract shares/s
-    )
+    from .metrics import MINER_SCANNER_HASHRATE_ABS  # abstract shares/s
+    from .metrics import (MINER_ACTIVE_TEMPLATE_AGE_SEC, MINER_FOUND_SHARES,
+                          MINER_SUBMIT_LATENCY_SEC, MINER_SUBMIT_OK,
+                          MINER_SUBMIT_REJECT)
 except Exception:
     # No-op fallbacks
     class _Counter:
@@ -70,6 +66,7 @@ except Exception:
 
 # --------------------------- Adapters (duck-typed) ---------------------------
 
+
 def _try_import_hash_scanner():
     """
     Tries to import a scanner implementation from mining.hash_search.
@@ -80,7 +77,9 @@ def _try_import_hash_scanner():
     try:
         from . import hash_search as _hs  # type: ignore
     except Exception as e:  # pragma: no cover
-        log.warning("hash_search module not available, falling back to naive scanner: %s", e)
+        log.warning(
+            "hash_search module not available, falling back to naive scanner: %s", e
+        )
         return None, None
 
     scanner_cls = getattr(_hs, "Scanner", None)
@@ -91,6 +90,7 @@ def _try_import_hash_scanner():
 def _try_import_ws_hub():
     try:
         from .ws_getwork import get_hub  # type: ignore
+
         return get_hub()
     except Exception:
         return None
@@ -98,20 +98,35 @@ def _try_import_ws_hub():
 
 # --------------------------- Orchestrator Config ---------------------------
 
+
 @dataclass
 class OrchestratorConfig:
     # Template polling
-    template_interval_sec: float = float(os.getenv("ANIMICA_MINER_TEMPLATE_INTERVAL", "1.0"))
-    template_stale_after_sec: float = float(os.getenv("ANIMICA_MINER_TEMPLATE_STALE_AFTER", "20.0"))
+    template_interval_sec: float = float(
+        os.getenv("ANIMICA_MINER_TEMPLATE_INTERVAL", "1.0")
+    )
+    template_stale_after_sec: float = float(
+        os.getenv("ANIMICA_MINER_TEMPLATE_STALE_AFTER", "20.0")
+    )
 
     # Submission
-    submit_max_concurrency: int = int(os.getenv("ANIMICA_MINER_SUBMIT_CONCURRENCY", "4"))
-    submit_backoff_initial: float = float(os.getenv("ANIMICA_MINER_SUBMIT_BACKOFF_INITIAL", "0.25"))
-    submit_backoff_max: float = float(os.getenv("ANIMICA_MINER_SUBMIT_BACKOFF_MAX", "3.0"))
+    submit_max_concurrency: int = int(
+        os.getenv("ANIMICA_MINER_SUBMIT_CONCURRENCY", "4")
+    )
+    submit_backoff_initial: float = float(
+        os.getenv("ANIMICA_MINER_SUBMIT_BACKOFF_INITIAL", "0.25")
+    )
+    submit_backoff_max: float = float(
+        os.getenv("ANIMICA_MINER_SUBMIT_BACKOFF_MAX", "3.0")
+    )
 
     # Scanner
-    device_kind: str = os.getenv("ANIMICA_MINER_DEVICE", "cpu")  # cpu|cuda|rocm|opencl|metal
-    threads: int = int(os.getenv("ANIMICA_MINER_THREADS", "0"))  # 0 => auto (per backend)
+    device_kind: str = os.getenv(
+        "ANIMICA_MINER_DEVICE", "cpu"
+    )  # cpu|cuda|rocm|opencl|metal
+    threads: int = int(
+        os.getenv("ANIMICA_MINER_THREADS", "0")
+    )  # 0 => auto (per backend)
 
     # Useful-work workers
     run_ai_worker: bool = os.getenv("ANIMICA_MINER_AI_WORKER", "1") != "0"
@@ -124,6 +139,7 @@ class OrchestratorConfig:
 
 
 # --------------------------- Template Iterator ---------------------------
+
 
 class TemplateFeeder:
     """
@@ -166,7 +182,12 @@ class TemplateFeeder:
             try:
                 tpl = await self._refresh()
                 if tpl and isinstance(tpl, dict):
-                    job_id = str(tpl.get("jobId") or tpl.get("job_id") or tpl.get("headerHash") or "")
+                    job_id = str(
+                        tpl.get("jobId")
+                        or tpl.get("job_id")
+                        or tpl.get("headerHash")
+                        or ""
+                    )
                     # Detect changes
                     if job_id and job_id != self._last_job_id:
                         self._last_job_id = job_id
@@ -175,7 +196,9 @@ class TemplateFeeder:
                             try:
                                 await self._ws_hub.broadcast_new_work(tpl)  # type: ignore
                             except Exception:
-                                log.debug("WS hub broadcast_new_work failed", exc_info=True)
+                                log.debug(
+                                    "WS hub broadcast_new_work failed", exc_info=True
+                                )
                         yield tpl
                     else:
                         # Track staleness
@@ -199,6 +222,7 @@ class TemplateFeeder:
 
 # --------------------------- Scanner Adapter ---------------------------
 
+
 class ScannerAdapter:
     """
     Wraps whichever scanner implementation is present.
@@ -218,15 +242,21 @@ class ScannerAdapter:
         stop_evt: asyncio.Event,
     ) -> None:
         if self._scanner_cls is not None:
-            log.info("Starting scanner via mining.hash_search.Scanner (device=%s, threads=%s)",
-                     self._device_kind, self._threads or "auto")
+            log.info(
+                "Starting scanner via mining.hash_search.Scanner (device=%s, threads=%s)",
+                self._device_kind,
+                self._threads or "auto",
+            )
             scanner = self._scanner_cls(device=self._device_kind, threads=self._threads)  # type: ignore
             await scanner.run(template_iter, out_queue, stop_evt)  # type: ignore
             return
 
         if self._scan_forever is not None:
-            log.info("Starting scanner via mining.hash_search.scan_forever (device=%s, threads=%s)",
-                     self._device_kind, self._threads or "auto")
+            log.info(
+                "Starting scanner via mining.hash_search.scan_forever (device=%s, threads=%s)",
+                self._device_kind,
+                self._threads or "auto",
+            )
             await self._scan_forever(  # type: ignore
                 template_iter=template_iter,
                 out_queue=out_queue,
@@ -242,6 +272,7 @@ class ScannerAdapter:
 
 
 # --------------------------- Submission Pipe ---------------------------
+
 
 class SubmitPipe:
     """
@@ -261,7 +292,9 @@ class SubmitPipe:
         self._b0 = max(0.01, backoff_initial)
         self._bmax = max(self._b0, backoff_max)
 
-    async def run(self, in_queue: "asyncio.Queue[JSON]", stop_evt: asyncio.Event) -> None:
+    async def run(
+        self, in_queue: "asyncio.Queue[JSON]", stop_evt: asyncio.Event
+    ) -> None:
         async def _worker():
             while not stop_evt.is_set():
                 try:
@@ -304,13 +337,20 @@ class SubmitPipe:
 
 # --------------------------- Workers (optional) ---------------------------
 
-async def _maybe_run_worker(module_name: str, fn_name: str, stop_evt: asyncio.Event) -> None:
+
+async def _maybe_run_worker(
+    module_name: str, fn_name: str, stop_evt: asyncio.Event
+) -> None:
     """
     Import mining.{module_name} and run its coroutine function `main` or `run`.
     """
     try:
         mod = __import__(f"mining.{module_name}", fromlist=["*"])
-        fn = getattr(mod, fn_name, None) or getattr(mod, "main", None) or getattr(mod, "run", None)
+        fn = (
+            getattr(mod, fn_name, None)
+            or getattr(mod, "main", None)
+            or getattr(mod, "run", None)
+        )
         if fn is None:
             log.debug("Worker %s has no runnable entrypoint", module_name)
             return
@@ -320,6 +360,7 @@ async def _maybe_run_worker(module_name: str, fn_name: str, stop_evt: asyncio.Ev
 
 
 # --------------------------- Orchestrator ---------------------------
+
 
 @dataclass
 class MinerOrchestrator:
@@ -331,7 +372,9 @@ class MinerOrchestrator:
     # internals
     _stop: asyncio.Event = field(default_factory=asyncio.Event, init=False)
     _tasks: list[asyncio.Task] = field(default_factory=list, init=False)
-    _share_queue: "asyncio.Queue[JSON]" = field(default_factory=lambda: asyncio.Queue(maxsize=2048), init=False)
+    _share_queue: "asyncio.Queue[JSON]" = field(
+        default_factory=lambda: asyncio.Queue(maxsize=2048), init=False
+    )
     _scanner: ScannerAdapter = field(default=None, init=False)  # type: ignore
     _feeder: TemplateFeeder = field(default=None, init=False)  # type: ignore
 
@@ -348,13 +391,20 @@ class MinerOrchestrator:
         )
 
     async def start(self) -> None:
-        log.info("MinerOrchestrator starting (device=%s, threads=%s)",
-                 self.config.device_kind, self.config.threads or "auto")
+        log.info(
+            "MinerOrchestrator starting (device=%s, threads=%s)",
+            self.config.device_kind,
+            self.config.threads or "auto",
+        )
         # Scanner
-        self._tasks.append(asyncio.create_task(
-            self._scanner.run(self._feeder.__aiter__(), self._share_queue, self._stop),
-            name="scanner",
-        ))
+        self._tasks.append(
+            asyncio.create_task(
+                self._scanner.run(
+                    self._feeder.__aiter__(), self._share_queue, self._stop
+                ),
+                name="scanner",
+            )
+        )
         # Submitter
         submit_pipe = SubmitPipe(
             self.submitter,
@@ -362,31 +412,41 @@ class MinerOrchestrator:
             backoff_initial=self.config.submit_backoff_initial,
             backoff_max=self.config.submit_backoff_max,
         )
-        self._tasks.append(asyncio.create_task(
-            submit_pipe.run(self._share_queue, self._stop),
-            name="submitter",
-        ))
+        self._tasks.append(
+            asyncio.create_task(
+                submit_pipe.run(self._share_queue, self._stop),
+                name="submitter",
+            )
+        )
         # Optional workers
         if self.config.run_ai_worker:
-            self._tasks.append(asyncio.create_task(
-                _maybe_run_worker("ai_worker", "run", self._stop),
-                name="ai-worker",
-            ))
+            self._tasks.append(
+                asyncio.create_task(
+                    _maybe_run_worker("ai_worker", "run", self._stop),
+                    name="ai-worker",
+                )
+            )
         if self.config.run_quantum_worker:
-            self._tasks.append(asyncio.create_task(
-                _maybe_run_worker("quantum_worker", "run", self._stop),
-                name="quantum-worker",
-            ))
+            self._tasks.append(
+                asyncio.create_task(
+                    _maybe_run_worker("quantum_worker", "run", self._stop),
+                    name="quantum-worker",
+                )
+            )
         if self.config.run_storage_worker:
-            self._tasks.append(asyncio.create_task(
-                _maybe_run_worker("storage_worker", "run", self._stop),
-                name="storage-worker",
-            ))
+            self._tasks.append(
+                asyncio.create_task(
+                    _maybe_run_worker("storage_worker", "run", self._stop),
+                    name="storage-worker",
+                )
+            )
         if self.config.run_vdf_worker:
-            self._tasks.append(asyncio.create_task(
-                _maybe_run_worker("vdf_worker", "run", self._stop),
-                name="vdf-worker",
-            ))
+            self._tasks.append(
+                asyncio.create_task(
+                    _maybe_run_worker("vdf_worker", "run", self._stop),
+                    name="vdf-worker",
+                )
+            )
 
         # Signal handlers (posix)
         _install_signal_handlers(self.stop)
@@ -419,6 +479,7 @@ class MinerOrchestrator:
 
 # --------------------------- Helpers ---------------------------
 
+
 def _install_signal_handlers(stop_coro: Callable[[], Awaitable[None]]) -> None:
     loop = asyncio.get_running_loop()
     for sig in (getattr(signal, "SIGINT", None), getattr(signal, "SIGTERM", None)):
@@ -446,6 +507,7 @@ async def _maybe_await(obj: Any, attr: str, *args, **kwargs):
 
 
 # --------------------------- Naive CPU Scanner (fallback) ---------------------------
+
 
 async def _naive_cpu_scanner(
     template_iter: AsyncIterator[JSON],
@@ -530,6 +592,7 @@ def _leading_zero_bits(b: bytes) -> int:
 
 
 # --------------------------- Convenience factory ---------------------------
+
 
 async def run_orchestrator(
     *,

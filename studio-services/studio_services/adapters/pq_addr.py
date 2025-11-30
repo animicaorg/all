@@ -32,7 +32,7 @@ import hashlib
 import logging
 import re
 from dataclasses import dataclass
-from typing import Iterable, Optional, Tuple, List
+from typing import Iterable, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,7 @@ except Exception:
 
 # ------------------------------- Data types ----------------------------------
 
+
 @dataclass(frozen=True)
 class ParsedAddress:
     hrp: str
@@ -67,7 +68,7 @@ class ParsedAddress:
 
 _CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 _CHARSET_DICT = {c: i for i, c in enumerate(_CHARSET)}
-_BECH32M_CONST = 0x2bc830a3
+_BECH32M_CONST = 0x2BC830A3
 
 # Simple pre-check (length + charset + one '1' separator, case rules)
 _BECH_RE = re.compile(r"^[a-z0-9]{1,83}1[ac-hj-np-z02-9]{6,}$")
@@ -78,7 +79,7 @@ def _bech32_hrp_expand(s: str) -> List[int]:
 
 
 def _bech32_polymod(values: Iterable[int]) -> int:
-    GEN = (0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3)
+    GEN = (0x3B6A57B2, 0x26508E6D, 0x1EA119FA, 0x3D4233DD, 0x2A1462B3)
     chk = 1
     for v in values:
         top = chk >> 25
@@ -172,7 +173,11 @@ def _try_sdk_is_valid(addr: str, hrp: Optional[str]) -> Optional[bool]:
 def _try_sdk_normalize(addr: str) -> Optional[str]:
     if _sdk_addr is None:
         return None
-    for fn in ("normalize_address", "normalize", "to_checksum"):  # last one unlikely for bech32m
+    for fn in (
+        "normalize_address",
+        "normalize",
+        "to_checksum",
+    ):  # last one unlikely for bech32m
         if hasattr(_sdk_addr, fn):
             try:
                 v = getattr(_sdk_addr, fn)(addr)
@@ -195,7 +200,9 @@ def _try_sdk_parse(addr: str) -> Optional[ParsedAddress]:
                     hrp, alg_id, digest = out
                     return ParsedAddress(str(hrp), int(alg_id), bytes(digest))
                 if isinstance(out, dict):
-                    return ParsedAddress(str(out["hrp"]), int(out["alg_id"]), bytes(out["digest"]))
+                    return ParsedAddress(
+                        str(out["hrp"]), int(out["alg_id"]), bytes(out["digest"])
+                    )
             except Exception:
                 return None
     return None
@@ -226,7 +233,9 @@ def parse_address(addr: str) -> ParsedAddress:
                 pass
             raw = _convertbits(data, 5, 8, False)
             if len(raw) != 33:
-                raise ValueError("address payload must be 33 bytes (alg_id + sha3-256 digest)")
+                raise ValueError(
+                    "address payload must be 33 bytes (alg_id + sha3-256 digest)"
+                )
             return ParsedAddress(hrp=hrp, alg_id=raw[0], digest=raw[1:])
         except Exception as e:
             raise ValueError(f"invalid address: {e}") from e
@@ -274,6 +283,7 @@ def ensure_valid_address(addr: str, *, hrp: Optional[str] = None) -> str:
 
 
 # ----------------------------- Additional helpers -----------------------------
+
 
 def sha3_256_hex(b: bytes) -> str:
     """Utility: 0x-prefixed SHA3-256 digest of bytes."""

@@ -21,10 +21,11 @@ from __future__ import annotations
 import dataclasses as _dc
 import inspect
 import sys
-from typing import Any, Dict, Optional, Tuple, get_origin, get_args
+from typing import Any, Dict, Optional, Tuple, get_args, get_origin
 
 import pytest
-from hypothesis import given, settings, strategies as st
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 # ---- Optional imports (guarded) ---------------------------------------------
 
@@ -48,6 +49,7 @@ except Exception:  # pragma: no cover
 
 
 # ---- Capability detection ----------------------------------------------------
+
 
 def _get_tx_type():
     return getattr(_tx_mod, "Tx", None) if _tx_mod else None
@@ -73,6 +75,7 @@ def _has_codec() -> bool:
 
 # ---- Encoding/decoding shims ------------------------------------------------
 
+
 def _encode_bytes(tx_obj: Any) -> bytes:
     """Try a few likely function names on the tx module; fall back to core CBOR."""
     if _tx_mod:
@@ -80,11 +83,15 @@ def _encode_bytes(tx_obj: Any) -> bytes:
             fn = getattr(_tx_mod, name, None)
             if fn:
                 b = fn(tx_obj)  # type: ignore[call-arg]
-                assert isinstance(b, (bytes, bytearray)), f"{name} must return bytes-like"
+                assert isinstance(
+                    b, (bytes, bytearray)
+                ), f"{name} must return bytes-like"
                 return bytes(b)
     if _cbor_mod and hasattr(_cbor_mod, "dumps"):
         return _cbor_mod.dumps(tx_obj)  # type: ignore[attr-defined]
-    pytest.skip("No tx encoder available (tx.encode_tx/… or core.encoding.cbor.dumps not found)")
+    pytest.skip(
+        "No tx encoder available (tx.encode_tx/… or core.encoding.cbor.dumps not found)"
+    )
 
 
 def _decode_obj(b: bytes, TxType: Optional[type]) -> Any:
@@ -100,8 +107,11 @@ def _decode_obj(b: bytes, TxType: Optional[type]) -> Any:
             if TxType is not None:
                 # Some loaders accept a 'type' kwarg; call defensively
                 sig = inspect.signature(_cbor_mod.loads)  # type: ignore[attr-defined]
-                if any(p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY) and p.name == "type"
-                       for p in sig.parameters.values()):
+                if any(
+                    p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+                    and p.name == "type"
+                    for p in sig.parameters.values()
+                ):
                     return _cbor_mod.loads(b, type=TxType)  # type: ignore[attr-defined]
         except Exception:
             pass
@@ -113,7 +123,9 @@ def _decode_obj(b: bytes, TxType: Optional[type]) -> Any:
             except Exception:
                 return obj
         return obj
-    pytest.skip("No tx decoder available (tx.decode_tx/… or core.encoding.cbor.loads not found)")
+    pytest.skip(
+        "No tx decoder available (tx.decode_tx/… or core.encoding.cbor.loads not found)"
+    )
 
 
 def _normalize(obj: Any) -> Any:
@@ -143,18 +155,25 @@ def _normalize(obj: Any) -> Any:
 _INT64 = st.integers(min_value=0, max_value=(1 << 63) - 1)
 _U128 = st.integers(min_value=0, max_value=(1 << 128) - 1)
 
+
 def _addr_bytes() -> st.SearchStrategy[bytes]:
     # 20 or 32 bytes addresses; choose one randomly
-    return st.one_of(st.binary(min_size=20, max_size=20), st.binary(min_size=32, max_size=32))
+    return st.one_of(
+        st.binary(min_size=20, max_size=20), st.binary(min_size=32, max_size=32)
+    )
+
 
 def _maybe(t: st.SearchStrategy[Any]) -> st.SearchStrategy[Optional[Any]]:
     return st.one_of(st.none(), t)
 
+
 def _bytes(max_len: int = 2048) -> st.SearchStrategy[bytes]:
     return st.binary(min_size=0, max_size=max_len)
 
+
 def _tiny_list(elt: st.SearchStrategy[Any]) -> st.SearchStrategy[list]:
     return st.lists(elt, min_size=0, max_size=3)
+
 
 def _signature_placeholder() -> st.SearchStrategy[Any]:
     """
@@ -170,6 +189,7 @@ def _signature_placeholder() -> st.SearchStrategy[Any]:
         st.tuples(alg_id, pk, sig),
         _bytes(8192),  # some codecs may use raw bytes for signatures
     )
+
 
 def _infer_strategy_from_type(tp: Any) -> Optional[st.SearchStrategy[Any]]:
     """Very small type → strategy mapper for common field annotations."""
@@ -188,6 +208,7 @@ def _infer_strategy_from_type(tp: Any) -> Optional[st.SearchStrategy[Any]]:
         base = _infer_strategy_from_type(args[0]) if args else _bytes()
         return _tiny_list(base)
     return None
+
 
 def _tx_strategy_dataclass(TxType: type) -> st.SearchStrategy[Any]:
     """
@@ -260,7 +281,9 @@ def _arb_tx_strategy() -> Tuple[Optional[type], st.SearchStrategy[Any]]:
     if TxType is not None:
         # Try Hypothesis' dataclass support (if available), else our builder
         try:
-            from hypothesis.extra import dataclasses as hdataclasses  # type: ignore
+            from hypothesis.extra import \
+                dataclasses as hdataclasses  # type: ignore
+
             return TxType, hdataclasses.from_type(TxType)  # type: ignore
         except Exception:
             return TxType, _tx_strategy_dataclass(TxType)
@@ -286,6 +309,7 @@ def _arb_tx_strategy() -> Tuple[Optional[type], st.SearchStrategy[Any]]:
 
 # ---- Tests ------------------------------------------------------------------
 
+
 @pytest.mark.skipif(not _has_codec(), reason="Tx codec not available yet")
 @given(_arb_tx_strategy()[1])
 @settings(max_examples=200)
@@ -307,5 +331,3 @@ def test_tx_cbor_idempotent_bytes(tx_any: Any):
     tx_dec = _decode_obj(b1, TxType)
     b2 = _encode_bytes(tx_dec)
     assert b1 == b2, "CBOR encoding must be canonical/idempotent for Tx"
-
-

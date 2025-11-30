@@ -7,6 +7,7 @@ Useful work demo pipeline:
 Run from repo root:
     python -m vm_py.examples.useful_work_demo
 """
+
 from __future__ import annotations
 
 import argparse
@@ -18,7 +19,6 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict
-
 from urllib import error, request
 
 DEFAULT_MANIFEST = Path(__file__).resolve().parent / "useful_work" / "manifest.json"
@@ -70,14 +70,20 @@ def build_args_from_block(block: Dict[str, Any]) -> str:
     height = int(block["number"], 16)
     timestamp = int(block["timestamp"], 16)
     difficulty_hex = block.get("difficulty", "0x0")
-    difficulty = int(difficulty_hex, 16) if isinstance(difficulty_hex, str) else int(difficulty_hex)
+    difficulty = (
+        int(difficulty_hex, 16)
+        if isinstance(difficulty_hex, str)
+        else int(difficulty_hex)
+    )
     miner = block.get("miner", "0x" + "0" * 40)
     args = [block.get("hash"), height, timestamp, difficulty, miner]
     return json.dumps(args)
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run a useful-work demo against the devnet shim")
+    parser = argparse.ArgumentParser(
+        description="Run a useful-work demo against the devnet shim"
+    )
     parser.add_argument("--rpc-port", type=int, default=18545)
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     args = parser.parse_args(argv)
@@ -91,7 +97,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[demo] mined block: {mined}")
 
             block = rpc_call(rpc_url, "eth_getBlockByNumber", ["latest", False])
-            print(f"[demo] fetched block hash={block.get('hash')} height={block.get('number')}\n")
+            print(
+                f"[demo] fetched block hash={block.get('hash')} height={block.get('number')}\n"
+            )
 
             arg_json = build_args_from_block(block)
             run_cmd = [

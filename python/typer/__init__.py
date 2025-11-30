@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import inspect
 import asyncio
+import inspect
 import os
 import sys
 from pathlib import Path
@@ -74,7 +74,9 @@ class Typer:
 
         return decorator
 
-    def _parse_options(self, func: Callable[..., Any], args: List[str], ctx: Optional[Context] = None) -> tuple[Dict[str, Any], List[str]]:
+    def _parse_options(
+        self, func: Callable[..., Any], args: List[str], ctx: Optional[Context] = None
+    ) -> tuple[Dict[str, Any], List[str]]:
         sig = inspect.signature(func)
         params = list(sig.parameters.values())
         idx_map = {p.name.replace("-", "_"): p for p in params}
@@ -89,7 +91,9 @@ class Typer:
                     raise BadParameter(f"Unknown option {arg}")
                 param = idx_map[key]
                 default = param.default
-                default_val = default.default if isinstance(default, OptionInfo) else default
+                default_val = (
+                    default.default if isinstance(default, OptionInfo) else default
+                )
                 next_is_value = i + 1 < len(args) and not args[i + 1].startswith("--")
                 if next_is_value:
                     provided[key] = args[i + 1]
@@ -104,8 +108,13 @@ class Typer:
                 i += 1
         values: Dict[str, Any] = {}
         for position, param in enumerate(params):
-            if ctx is not None and position == 0 and (
-                param.annotation == Context or str(param.annotation) in {"Context", "typer.Context"}
+            if (
+                ctx is not None
+                and position == 0
+                and (
+                    param.annotation == Context
+                    or str(param.annotation) in {"Context", "typer.Context"}
+                )
             ):
                 values[param.name] = ctx
                 continue
@@ -124,7 +133,10 @@ class Typer:
                 continue
             if param.annotation is int:
                 values[param.name] = int(raw)
-            elif param.annotation is Path or str(param.annotation) in {"Path", "pathlib.Path"}:
+            elif param.annotation is Path or str(param.annotation) in {
+                "Path",
+                "pathlib.Path",
+            }:
                 values[param.name] = Path(raw)
             elif isinstance(default_val, bool):
                 values[param.name] = str(raw).lower() not in {"", "0", "false", "none"}

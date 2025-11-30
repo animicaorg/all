@@ -28,8 +28,8 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 
 import pytest
 
-from tests.integration import env  # package gate lives in tests/integration/__init__.py
-
+from tests.integration import \
+    env  # package gate lives in tests/integration/__init__.py
 
 # ---------------------------------------------------------------------------
 # Section A: Kyber + HKDF handshake smoke (skips if libs not present)
@@ -46,6 +46,7 @@ _sha3_256 = None
 # Prefer high-level pq.py.kem first
 try:
     from pq.py import kem as _kem_mod  # type: ignore
+
     _has_kem = all(hasattr(_kem_mod, nm) for nm in ("keygen", "encaps", "decaps"))
 except Exception:
     _kem_mod = None
@@ -54,6 +55,7 @@ except Exception:
 if not _has_kem:
     try:
         from pq.py.algs import kyber768 as _kem_mod  # type: ignore
+
         _has_kem = all(hasattr(_kem_mod, nm) for nm in ("keygen", "encaps", "decaps"))
     except Exception:
         _kem_mod = None
@@ -62,6 +64,7 @@ if not _has_kem:
 # HKDF-SHA3-256
 try:
     from pq.py.utils.hkdf import hkdf_sha3_256 as _hkdf_fn  # type: ignore
+
     _has_hkdf = callable(_hkdf_fn)
 except Exception:
     _hkdf_fn = None
@@ -70,6 +73,7 @@ except Exception:
 # SHA3-256 (for transcript hashing, optional)
 try:
     from pq.py.utils.hash import sha3_256 as _sha3_256  # type: ignore
+
     _has_sha3 = callable(_sha3_256)
 except Exception:
     _sha3_256 = None
@@ -124,12 +128,15 @@ def test_kyber_encapsulation_is_fresh_randomized():
     pkB, skB = _kem_mod.keygen()  # type: ignore[attr-defined]
     ct1, ss1 = _kem_mod.encaps(pkB)  # type: ignore[attr-defined]
     ct2, ss2 = _kem_mod.encaps(pkB)  # type: ignore[attr-defined]
-    assert ct1 != ct2 or ss1 != ss2, "Kyber encapsulation appears deterministic; expected randomized outputs"
+    assert (
+        ct1 != ct2 or ss1 != ss2
+    ), "Kyber encapsulation appears deterministic; expected randomized outputs"
 
 
 # ---------------------------------------------------------------------------
 # Section B: Two nodes sync — header/blocks converge
 # ---------------------------------------------------------------------------
+
 
 def _http_timeout() -> float:
     try:
@@ -138,13 +145,24 @@ def _http_timeout() -> float:
         return 5.0
 
 
-def _rpc_call(rpc_url: str, method: str, params: Optional[Sequence[Any] | Dict[str, Any]] = None, *, req_id: int = 1) -> Any:
+def _rpc_call(
+    rpc_url: str,
+    method: str,
+    params: Optional[Sequence[Any] | Dict[str, Any]] = None,
+    *,
+    req_id: int = 1,
+) -> Any:
     if params is None:
         params = []
     if isinstance(params, dict):
         payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
     else:
-        payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": list(params)}
+        payload = {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "method": method,
+            "params": list(params),
+        }
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         rpc_url,
@@ -160,7 +178,11 @@ def _rpc_call(rpc_url: str, method: str, params: Optional[Sequence[Any] | Dict[s
     return msg.get("result")
 
 
-def _rpc_try(rpc_url: str, methods: Sequence[str], params: Optional[Sequence[Any] | Dict[str, Any]] = None) -> Tuple[str, Any]:
+def _rpc_try(
+    rpc_url: str,
+    methods: Sequence[str],
+    params: Optional[Sequence[Any] | Dict[str, Any]] = None,
+) -> Tuple[str, Any]:
     last_exc: Optional[Exception] = None
     for i, m in enumerate(methods, start=1):
         try:
@@ -168,7 +190,9 @@ def _rpc_try(rpc_url: str, methods: Sequence[str], params: Optional[Sequence[Any
         except Exception as exc:
             last_exc = exc
             continue
-    raise AssertionError(f"All RPC spellings failed ({methods}). Last error: {last_exc}")
+    raise AssertionError(
+        f"All RPC spellings failed ({methods}). Last error: {last_exc}"
+    )
 
 
 def _parse_height(head: Any) -> int:
@@ -249,20 +273,26 @@ def test_two_nodes_headers_converge_and_blocks_fetch():
                     matched_hashes.add(ha)
                     matched_hashes.add(hb)
                     # If both present, they should match
-                    assert len(matched_hashes) == 1, f"At height {matched_height}, hashes differ: {matched_hashes}"
+                    assert (
+                        len(matched_hashes) == 1
+                    ), f"At height {matched_height}, hashes differ: {matched_hashes}"
             break
 
         time.sleep(interval_s)
 
     # Final convergence assertion
-    assert abs(hA - hB) <= lag_tol, (
-        f"Nodes did not converge within {timeout_s:.1f}s: A={hA}, B={hB}, tol={lag_tol}"
-    )
+    assert (
+        abs(hA - hB) <= lag_tol
+    ), f"Nodes did not converge within {timeout_s:.1f}s: A={hA}, B={hB}, tol={lag_tol}"
 
     # If we had an exact match and a hash, try to fetch the same block from both nodes and compare.
     if matched_height is not None:
         # Fetch by number (best-effort across a few spellings)
-        for method in (("chain.getBlockByNumber",), ("chain.getBlock",), ("getBlockByNumber",)):
+        for method in (
+            ("chain.getBlockByNumber",),
+            ("chain.getBlock",),
+            ("getBlockByNumber",),
+        ):
             try:
                 # Some APIs take (number, includeTx, includeReceipts); try minimal forms
                 blkA = _rpc_call(rpc_a, method[0], [matched_height])
@@ -272,9 +302,9 @@ def test_two_nodes_headers_converge_and_blocks_fetch():
                     ha = _parse_hash(blkA)
                     hb = _parse_hash(blkB)
                     if ha and hb:
-                        assert ha == hb, f"Block hash mismatch at height {matched_height}: {ha} vs {hb}"
+                        assert (
+                            ha == hb
+                        ), f"Block hash mismatch at height {matched_height}: {ha} vs {hb}"
                 break
             except Exception:
                 continue
-
-

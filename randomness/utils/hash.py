@@ -34,8 +34,9 @@ Conventions
 from __future__ import annotations
 
 from dataclasses import dataclass
-from hashlib import sha3_256 as _sha3_256, sha3_512 as _sha3_512
-from typing import Iterable, Protocol, Union, runtime_checkable, overload, Any
+from hashlib import sha3_256 as _sha3_256
+from hashlib import sha3_512 as _sha3_512
+from typing import Any, Iterable, Protocol, Union, overload, runtime_checkable
 
 # Try to import configured prefix (non-fatal fallback).
 try:  # pragma: no cover - trivial import guard
@@ -209,6 +210,7 @@ def commit(domain: DomainLike, *parts: Any) -> bytes:
 # -------------
 # Transcripts
 # -------------
+
 
 @dataclass
 class _HashFactory:

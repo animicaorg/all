@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+
 import pytest
 
 # These tests exercise the health endpoints mounted by the app:
@@ -12,6 +13,7 @@ import pytest
 # deployments may include extra diagnostic fields) but still assert the
 # key invariants: HTTP 200, JSON content, and expected top-level keys/types.
 
+
 @pytest.mark.asyncio
 async def test_healthz_ok(aclient):
     resp = await aclient.get("/healthz")
@@ -22,9 +24,8 @@ async def test_healthz_ok(aclient):
     data = resp.json()
     assert isinstance(data, dict)
     # Accept either {"ok": true} or {"status": "ok"} (or both)
-    assert (
-        ("ok" in data and bool(data["ok"]) is True)
-        or (data.get("status", "").lower() == "ok")
+    assert ("ok" in data and bool(data["ok"]) is True) or (
+        data.get("status", "").lower() == "ok"
     )
 
 
@@ -60,7 +61,11 @@ async def test_version_endpoint(aclient):
     version = data.get("version") or data.get("appVersion") or ""
     assert isinstance(version, str) and version.strip()
     # Best-effort semver prefix check (tolerate suffixes like +meta or -dirty)
-    assert re.match(r"^\d+\.\d+\.\d+", version) or version.lower() in {"dev", "test", "unknown"}
+    assert re.match(r"^\d+\.\d+\.\d+", version) or version.lower() in {
+        "dev",
+        "test",
+        "unknown",
+    }
 
     # Optional git describe/hash fields are strings if present
     if "git" in data:
@@ -69,4 +74,3 @@ async def test_version_endpoint(aclient):
         assert isinstance(data["gitDescribe"], str)
     if "name" in data:
         assert isinstance(data["name"], str) and data["name"].strip()
-

@@ -31,10 +31,10 @@ _MODULES: Dict[str, str] = {
 
 if TYPE_CHECKING:
     # Static import hints for type checkers (no runtime cost).
+    from . import cca as cca  # noqa: F401
     from . import common as common  # noqa: F401
-    from . import sgx as sgx        # noqa: F401
     from . import sev_snp as sev_snp  # noqa: F401
-    from . import cca as cca        # noqa: F401
+    from . import sgx as sgx  # noqa: F401
 
 
 def __getattr__(name: str):

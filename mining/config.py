@@ -1,18 +1,19 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Any, Dict, Optional
 
 
 class DeviceKind(str, Enum):
     """Supported mining device backends."""
+
     cpu = "cpu"
-    cuda = "cuda"       # NVIDIA CUDA (optional)
-    rocm = "rocm"       # AMD ROCm (optional)
-    opencl = "opencl"   # Generic OpenCL (optional)
-    metal = "metal"     # Apple Metal (optional)
+    cuda = "cuda"  # NVIDIA CUDA (optional)
+    rocm = "rocm"  # AMD ROCm (optional)
+    opencl = "opencl"  # Generic OpenCL (optional)
+    metal = "metal"  # Apple Metal (optional)
 
 
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -134,37 +135,37 @@ class MiningConfig:
     @classmethod
     def from_env(cls) -> "MiningConfig":
         dev = _env("ANIMICA_MINER_DEVICE", "cpu").lower()
-        device = DeviceKind(dev) if dev in DeviceKind.__members__.keys() or dev in [d.value for d in DeviceKind] else DeviceKind.cpu
+        device = (
+            DeviceKind(dev)
+            if dev in DeviceKind.__members__.keys()
+            or dev in [d.value for d in DeviceKind]
+            else DeviceKind.cpu
+        )
 
         cfg = cls(
             device=device,
             threads=max(1, _env_int("ANIMICA_MINER_THREADS", os.cpu_count() or 1)),
             share_target=_env_float("ANIMICA_MINER_SHARE_TARGET", 1e-6),
-
             rpc_http_url=_env("ANIMICA_MINER_RPC_HTTP", "http://127.0.0.1:8545/rpc"),
             rpc_ws_url=_env("ANIMICA_MINER_RPC_WS", "ws://127.0.0.1:8545/ws"),
             chain_id=_env_int("ANIMICA_MINER_CHAIN_ID", 1),
-
             stratum_enabled=_env_bool("ANIMICA_MINER_STRATUM_ENABLED", True),
             stratum_host=_env("ANIMICA_MINER_STRATUM_HOST", "0.0.0.0"),
             stratum_port=_env_int("ANIMICA_MINER_STRATUM_PORT", 22224),
-
             ws_getwork_enabled=_env_bool("ANIMICA_MINER_WS_GETWORK_ENABLED", True),
             ws_getwork_host=_env("ANIMICA_MINER_WS_GETWORK_HOST", "0.0.0.0"),
             ws_getwork_port=_env_int("ANIMICA_MINER_WS_GETWORK_PORT", 22225),
-
-            template_refresh_secs=_env_float("ANIMICA_MINER_TEMPLATE_REFRESH_SECS", 2.0),
+            template_refresh_secs=_env_float(
+                "ANIMICA_MINER_TEMPLATE_REFRESH_SECS", 2.0
+            ),
             submit_batch_size=_env_int("ANIMICA_MINER_SUBMIT_BATCH_SIZE", 128),
-
             attach_ai=_env_bool("ANIMICA_MINER_ATTACH_AI", True),
             attach_quantum=_env_bool("ANIMICA_MINER_ATTACH_QUANTUM", True),
             attach_storage=_env_bool("ANIMICA_MINER_ATTACH_STORAGE", False),
             attach_vdf=_env_bool("ANIMICA_MINER_ATTACH_VDF", False),
-
             metrics_enabled=_env_bool("ANIMICA_MINER_METRICS_ENABLED", True),
             metrics_host=_env("ANIMICA_MINER_METRICS_HOST", "127.0.0.1"),
             metrics_port=_env_int("ANIMICA_MINER_METRICS_PORT", 9106),
-
             rng_seed=_env("ANIMICA_MINER_RNG_SEED"),
         )
         cfg.validate()
@@ -178,7 +179,11 @@ class MiningConfig:
         if not (0.0 < self.share_target < 1.0):
             raise ValueError("share_target must be in the open interval (0, 1).")
         # Ports
-        for name, port in (("stratum_port", self.stratum_port), ("ws_getwork_port", self.ws_getwork_port), ("metrics_port", self.metrics_port)):
+        for name, port in (
+            ("stratum_port", self.stratum_port),
+            ("ws_getwork_port", self.ws_getwork_port),
+            ("metrics_port", self.metrics_port),
+        ):
             if not (0 < port < 65536):
                 raise ValueError(f"{name} must be a valid TCP port (1..65535)")
         # Chain id

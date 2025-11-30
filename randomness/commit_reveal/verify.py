@@ -27,8 +27,8 @@ import hmac
 from dataclasses import dataclass
 from typing import Optional, Union
 
-from randomness.errors import BadReveal
 from randomness.commit_reveal.commit import build_commitment
+from randomness.errors import BadReveal
 
 BytesLike = Union[bytes, bytearray, memoryview]
 
@@ -70,6 +70,7 @@ def normalize_commitment(commitment: Union[BytesLike, str]) -> bytes:
 @dataclass(frozen=True, slots=True)
 class Reveal:
     """Container for reveal inputs."""
+
     addr: bytes
     salt: bytes
     payload: bytes = b""

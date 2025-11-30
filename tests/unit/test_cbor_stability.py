@@ -17,7 +17,8 @@ import os
 from typing import Any, Dict
 
 import pytest
-from hypothesis import given, strategies as st
+from hypothesis import given
+from hypothesis import strategies as st
 
 # -----------------------------------------------------------------------------
 # CBOR backend resolution
@@ -70,20 +71,24 @@ if _dumps is None or _loads is None:
         pass
 
 if not (callable(_dumps) and callable(_loads)):
-    pytest.skip("No CBOR backend available (omni_sdk.tx.encode / cbor2 / msgspec)", allow_module_level=True)
+    pytest.skip(
+        "No CBOR backend available (omni_sdk.tx.encode / cbor2 / msgspec)",
+        allow_module_level=True,
+    )
 
 
 # -----------------------------------------------------------------------------
 # Helpers & fixtures
 # -----------------------------------------------------------------------------
 
+
 def b32(fill: int) -> bytes:
-    return bytes([fill & 0xff]) * 32
+    return bytes([fill & 0xFF]) * 32
 
 
 def addr(fill: int) -> bytes:
     # 33-byte payloads are typical in our PQ schemes (e.g., compressed forms).
-    return bytes([fill & 0xff]) * 33
+    return bytes([fill & 0xFF]) * 33
 
 
 # Deterministic sample envelopes representative of real payloads.
@@ -120,7 +125,7 @@ PROOF_ENVELOPE: Dict[str, Any] = {
         "kind": "hashshare",
         "block": 12_345,
         "root": b32(0x09),
-        "publisher": addr(0xaa),
+        "publisher": addr(0xAA),
         "parts": [b32(0x0A), b32(0x0B), b32(0x0C)],
         "meta": {"version": 1, "algo": "sha3-256"},
     }
@@ -140,6 +145,7 @@ def reorder_map(d: Any) -> Any:
 # -----------------------------------------------------------------------------
 # Deterministic tests
 # -----------------------------------------------------------------------------
+
 
 def test_backend_selected():
     assert _backend_name in {"omni_sdk.tx.encode", "cbor2", "msgspec.cbor"}
@@ -171,8 +177,12 @@ def test_canonical_map_ordering_simple():
 # Limit structure to "envelope-like" content to keep encoders fast & deterministic.
 leaf_scalars = st.one_of(
     st.integers(min_value=0, max_value=2**53 - 1),  # JS-safe range, common in APIs
-    st.binary(min_size=0, max_size=48),             # typical hash/addr/data sizes
-    st.text(alphabet=st.characters(min_codepoint=32, max_codepoint=126), min_size=0, max_size=32),
+    st.binary(min_size=0, max_size=48),  # typical hash/addr/data sizes
+    st.text(
+        alphabet=st.characters(min_codepoint=32, max_codepoint=126),
+        min_size=0,
+        max_size=32,
+    ),
 )
 
 key_names = st.text(
@@ -204,6 +214,7 @@ nested = st.recursive(
     max_leaves=30,
 )
 
+
 @given(obj=envelope_like)
 def test_envelope_like_roundtrip_is_stable(obj: Dict[str, Any]):
     b1 = _dumps(obj)
@@ -226,5 +237,3 @@ def test_order_independence(obj: Dict[str, Any]):
     obj_reordered = reorder_map(obj)
     b2 = _dumps(obj_reordered)
     assert b1 == b2
-
-

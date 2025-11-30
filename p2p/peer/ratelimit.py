@@ -3,8 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
-from typing import Dict, Tuple, Optional, Iterable, Any
-
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Simple token bucket (public API)
@@ -21,9 +20,13 @@ class RateBucket:
     last_refill: float
 
     @classmethod
-    def fresh(cls, capacity: float, fill_rate: float, now: Optional[float] = None) -> "RateBucket":
+    def fresh(
+        cls, capacity: float, fill_rate: float, now: Optional[float] = None
+    ) -> "RateBucket":
         n = time.monotonic() if now is None else now
-        return cls(capacity=capacity, fill_rate=fill_rate, tokens=capacity, last_refill=n)
+        return cls(
+            capacity=capacity, fill_rate=fill_rate, tokens=capacity, last_refill=n
+        )
 
     def refill(self, now: Optional[float] = None) -> None:
         n = time.monotonic() if now is None else now
@@ -47,6 +50,7 @@ class RateBucket:
 # Token-bucket primitives
 # ────────────────────────────────────────────────────────────────────────────────
 
+
 @dataclass(frozen=True)
 class BucketSpec:
     """
@@ -55,6 +59,7 @@ class BucketSpec:
     capacity:   maximum burst (tokens)
     refill_ps:  steady-state refill rate (tokens per second)
     """
+
     capacity: float
     refill_ps: float
 
@@ -81,7 +86,9 @@ class Bucket:
         self.tokens = min(self.spec.capacity, self.tokens + dt * self.spec.refill_ps)
         self.t_last = now
 
-    def try_consume(self, cost: float, now: Optional[float] = None) -> Tuple[bool, float]:
+    def try_consume(
+        self, cost: float, now: Optional[float] = None
+    ) -> Tuple[bool, float]:
         """
         Attempt to consume 'cost' tokens.
 
@@ -104,11 +111,13 @@ class Bucket:
 # Hierarchical limiter (global • topic • peer • peer×topic)
 # ────────────────────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class RatelimitConfig:
     """
     Limiter configuration. All specs are optional; unspecified tiers are skipped.
     """
+
     # global across all messages from/to this node
     global_spec: Optional[BucketSpec] = None
 
@@ -147,7 +156,9 @@ class RateLimiter:
     def __init__(self, cfg: RatelimitConfig) -> None:
         self.cfg = cfg
         self._lock = asyncio.Lock()
-        self._buckets_global: Optional[Bucket] = Bucket.fresh(cfg.global_spec) if cfg.global_spec else None
+        self._buckets_global: Optional[Bucket] = (
+            Bucket.fresh(cfg.global_spec) if cfg.global_spec else None
+        )
         self._buckets_topic: Dict[str, Bucket] = {}
         self._buckets_peer: Dict[str, Bucket] = {}
         self._buckets_peer_topic: Dict[Tuple[str, str], Bucket] = {}
@@ -208,18 +219,26 @@ class RateLimiter:
                 if spec is not None:
                     bp = self._buckets_peer.get(peer_id)
                     if bp is None:
-                        bp = self._buckets_peer.setdefault(peer_id, Bucket.fresh(spec, n))
+                        bp = self._buckets_peer.setdefault(
+                            peer_id, Bucket.fresh(spec, n)
+                        )
                     ok, wait = bp.try_consume(c, n)
                     if not ok:
                         violated[f"peer:{peer_id}"] = wait
 
             # 4) per-peer×topic
-            if peer_id is not None and topic is not None and topic in self.cfg.per_peer_topic_specs:
+            if (
+                peer_id is not None
+                and topic is not None
+                and topic in self.cfg.per_peer_topic_specs
+            ):
                 key = (peer_id, topic)
                 spec = self.cfg.per_peer_topic_specs[topic]
                 bpt = self._buckets_peer_topic.get(key)
                 if bpt is None:
-                    bpt = self._buckets_peer_topic.setdefault(key, Bucket.fresh(spec, n))
+                    bpt = self._buckets_peer_topic.setdefault(
+                        key, Bucket.fresh(spec, n)
+                    )
                 ok, wait = bpt.try_consume(c, n)
                 if not ok:
                     violated[f"peer_topic:{peer_id}:{topic}"] = wait
@@ -256,7 +275,9 @@ class RateLimiter:
         if self._buckets_peer:
             snap["peer"] = {k: _bview(v) for k, v in self._buckets_peer.items()}
         if self._buckets_peer_topic:
-            snap["peer_topic"] = {f"{p}:{t}": _bview(b) for (p, t), b in self._buckets_peer_topic.items()}
+            snap["peer_topic"] = {
+                f"{p}:{t}": _bview(b) for (p, t), b in self._buckets_peer_topic.items()
+            }
         return snap
 
     # ── Admin helpers ───────────────────────────────────────────────────────────
@@ -308,7 +329,7 @@ class RateLimiter:
                 for pid in list(self._buckets_peer.keys()):
                     if pid not in alive:
                         self._buckets_peer.pop(pid, None)
-                for (pid, topic) in list(self._buckets_peer_topic.keys()):
+                for pid, topic in list(self._buckets_peer_topic.keys()):
                     if pid not in alive:
                         self._buckets_peer_topic.pop((pid, topic), None)
 
@@ -357,6 +378,7 @@ class PeerRateLimiter(RateLimiter):
 # Utilities & sensible defaults
 # ────────────────────────────────────────────────────────────────────────────────
 
+
 def _bview(b: Bucket) -> Dict[str, float]:
     now = time.monotonic()
     # project a view after refill to avoid confusing snapshots
@@ -403,6 +425,7 @@ def default_config() -> RatelimitConfig:
 # Example usage (for tests / reference)
 # ────────────────────────────────────────────────────────────────────────────────
 
+
 async def _example() -> None:  # pragma: no cover
     limiter = RateLimiter(default_config())
 
@@ -412,10 +435,13 @@ async def _example() -> None:  # pragma: no cover
     for i in range(5):
         ok, retry, keys = await limiter.allow(peer_id=peer, topic=topic, cost=1.0)
         if ok:
-            print(f"[{i}] allowed; snapshot={limiter.snapshot()['peer_topic'][f'{peer}:{topic}']}")
+            print(
+                f"[{i}] allowed; snapshot={limiter.snapshot()['peer_topic'][f'{peer}:{topic}']}"
+            )
         else:
             print(f"[{i}] limited by {keys}, retry in {retry:.3f}s")
             await asyncio.sleep(retry)
+
 
 if __name__ == "__main__":  # pragma: no cover
     asyncio.run(_example())

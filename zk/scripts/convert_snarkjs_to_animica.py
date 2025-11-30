@@ -74,7 +74,11 @@ def _hash_json(obj: Any, algo: str) -> str:
 
 
 def _is_dir_with_artifacts(p: Path) -> bool:
-    return (p / "vk.json").exists() or (p / "proof.json").exists() or (p / "public.json").exists()
+    return (
+        (p / "vk.json").exists()
+        or (p / "proof.json").exists()
+        or (p / "public.json").exists()
+    )
 
 
 def _load_json(path: Optional[Path]) -> Optional[Any]:
@@ -158,7 +162,8 @@ def build_envelope(
             "paths": src_paths,
         },
         "meta": {
-            "created_at": _dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+            "created_at": _dt.datetime.utcnow().replace(microsecond=0).isoformat()
+            + "Z",
             "notes": "",
         },
         "public": public,
@@ -190,7 +195,9 @@ def build_envelope(
     # Envelope hash is computed on a shallow copy that does NOT include the 'hashes' field yet.
     env_for_digest = dict(env)  # shallow copy
     # Guarantee stable field order by dumping canonically:
-    env_digest = _hash_bytes(_canonical_dumps(env_for_digest).encode("utf-8"), hash_algo)
+    env_digest = _hash_bytes(
+        _canonical_dumps(env_for_digest).encode("utf-8"), hash_algo
+    )
     hashes["envelope"] = env_digest
 
     env["hashes"] = hashes
@@ -201,7 +208,9 @@ def build_envelope(
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Convert snarkjs proof/VK/public into an Animica proof envelope.")
+    p = argparse.ArgumentParser(
+        description="Convert snarkjs proof/VK/public into an Animica proof envelope."
+    )
     p.add_argument(
         "path",
         nargs="?",
@@ -210,8 +219,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--vk", type=str, help="Path to snarkjs vk.json")
     p.add_argument("--proof", type=str, help="Path to snarkjs proof.json")
     p.add_argument("--public", type=str, help="Path to snarkjs public.json")
-    p.add_argument("--system", type=str, choices=["groth16", "plonk_kzg"], help="Override system (otherwise inferred)")
-    p.add_argument("--curve", type=str, help="Override curve name (otherwise inferred from VK)")
+    p.add_argument(
+        "--system",
+        type=str,
+        choices=["groth16", "plonk_kzg"],
+        help="Override system (otherwise inferred)",
+    )
+    p.add_argument(
+        "--curve", type=str, help="Override curve name (otherwise inferred from VK)"
+    )
     p.add_argument(
         "--vk-embed",
         type=str,
@@ -219,9 +235,22 @@ def parse_args() -> argparse.Namespace:
         default="full",
         help="How to include the VK in the envelope (default: full)",
     )
-    p.add_argument("--hash", dest="hash_algo", type=str, default="sha256", choices=["sha256", "sha3_256"], help="Hash algorithm")
-    p.add_argument("-o", "--out", type=str, help="Output JSON path (default: <dir>/envelope.json)")
-    p.add_argument("--stdout", action="store_true", help="Write envelope to stdout instead of a file")
+    p.add_argument(
+        "--hash",
+        dest="hash_algo",
+        type=str,
+        default="sha256",
+        choices=["sha256", "sha3_256"],
+        help="Hash algorithm",
+    )
+    p.add_argument(
+        "-o", "--out", type=str, help="Output JSON path (default: <dir>/envelope.json)"
+    )
+    p.add_argument(
+        "--stdout",
+        action="store_true",
+        help="Write envelope to stdout instead of a file",
+    )
     return p.parse_args()
 
 
@@ -291,6 +320,7 @@ def main() -> None:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(payload, encoding="utf-8")
         print(f"✓ Wrote envelope: {out_path} ({len(payload)} bytes)")
+
 
 if __name__ == "__main__":
     main()

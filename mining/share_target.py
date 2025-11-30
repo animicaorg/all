@@ -37,13 +37,13 @@ All functions are pure and side-effect free.
 import math
 from dataclasses import dataclass
 
-
 MICRO = 1_000_000  # µ-nats per nat
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Conversions & basic exponentials in µ-nats
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def nats_to_micro(n: float) -> int:
     """float nats → int µ-nats (rounded)."""
@@ -71,6 +71,7 @@ def ln_to_micro(x: float) -> int:
 # Trial counts & thresholds
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def theta_to_expected_trials(theta_micro: int) -> float:
     """
     Expected trials to *win a block* at threshold Θ.
@@ -92,6 +93,7 @@ def threshold_for_expected_trials(expected_trials: float) -> int:
 # ─────────────────────────────────────────────────────────────────────────────
 # Share thresholds from a ratio to block probability
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def share_threshold_from_ratio(theta_micro: int, share_ratio: float) -> int:
     """
@@ -119,6 +121,7 @@ def share_ratio_from_threshold(theta_micro: int, t_share_micro: int) -> float:
 # ─────────────────────────────────────────────────────────────────────────────
 # Acceptance predicates
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def is_block_win(H_micro: int, theta_micro: int) -> bool:
     """
@@ -148,6 +151,7 @@ def d_ratio(H_micro: int, theta_micro: int) -> float:
 # ─────────────────────────────────────────────────────────────────────────────
 # Calibrations for UX: pick t_share for a target shares/sec, given hashrate
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @dataclass(frozen=True)
 class ShareCalib:
@@ -228,7 +232,7 @@ if __name__ == "__main__":  # pragma: no cover
     theta_micro = nats_to_micro(theta_nat)
 
     # Choose R = 2**20 shares per expected block
-    R = float(2 ** 20)
+    R = float(2**20)
     t_share = share_threshold_from_ratio(theta_micro, R)
 
     print("Θ (µ-nats):", theta_micro)

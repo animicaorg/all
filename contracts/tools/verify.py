@@ -100,14 +100,16 @@ from typing import Any, Dict, Optional, Tuple
 
 # Shared helpers if available
 try:
-    from contracts.tools import (  # type: ignore
-        canonical_json_str,
-        find_project_root as _maybe_find_project_root,
-        project_root as _project_root,
-    )
+    from contracts.tools import canonical_json_str
+    from contracts.tools import \
+        find_project_root as _maybe_find_project_root  # type: ignore
+    from contracts.tools import project_root as _project_root
 except Exception:
+
     def canonical_json_str(obj: Any) -> str:
-        return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return json.dumps(
+            obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        )
 
     def _project_root() -> Path:
         return Path(__file__).resolve().parents[2]
@@ -117,6 +119,7 @@ except Exception:
 
 
 # ------------------------------ .env loader ------------------------------- #
+
 
 def _load_env() -> None:
     """
@@ -152,12 +155,15 @@ def _load_env() -> None:
 
 # ------------------------------ HTTP client -------------------------------- #
 
+
 class _HttpError(RuntimeError):
     pass
 
 
 class _Http:
-    def __init__(self, base_url: str, timeout: float = 15.0, api_key: Optional[str] = None):
+    def __init__(
+        self, base_url: str, timeout: float = 15.0, api_key: Optional[str] = None
+    ):
         self.base = base_url.rstrip("/")
         self.timeout = timeout
         self.api_key = api_key
@@ -180,7 +186,9 @@ class _Http:
 
     def post(self, path: str, json_body: Dict[str, Any]) -> Dict[str, Any]:
         url = f"{self.base}{path}"
-        r = self._requests.post(url, headers=self._headers(), json=json_body, timeout=self.timeout)
+        r = self._requests.post(
+            url, headers=self._headers(), json=json_body, timeout=self.timeout
+        )
         if not r.ok:
             try:
                 payload = r.json()
@@ -209,6 +217,7 @@ class _Http:
 
 # ------------------------------ IO helpers --------------------------------- #
 
+
 def _read_json_file(p: Path) -> Dict[str, Any]:
     try:
         return json.loads(p.read_text(encoding="utf-8"))
@@ -229,6 +238,7 @@ def _as_hex(b: bytes) -> str:
 
 # ----------------------- Optional local hash (vm_py) ----------------------- #
 
+
 @dataclass
 class LocalHashResult:
     ok: bool
@@ -240,6 +250,7 @@ class LocalHashResult:
 def _sha3_256(data: bytes) -> str:
     try:
         import hashlib
+
         h = hashlib.sha3_256()
         h.update(data)
         return _as_hex(h.digest())
@@ -247,6 +258,7 @@ def _sha3_256(data: bytes) -> str:
         # Fallback to pysha3 for older envs (not needed in 3.11+)
         try:
             import sha3  # type: ignore
+
             h = sha3.sha3_256()
             h.update(data)
             return _as_hex(h.digest())
@@ -270,7 +282,9 @@ def _compute_local_code_hash(manifest_path: Path, source_path: Path) -> LocalHas
 
     # Try vm_py toolchain
     try:
-        from vm_py.runtime.loader import load_package as _load_pkg  # type: ignore
+        from vm_py.runtime.loader import \
+            load_package as _load_pkg  # type: ignore
+
         # Some versions expose compile & pack differently; accept both dict/bytes returns.
         pkg = {"manifest": manifest, "source": source}
         compiled = _load_pkg(pkg)  # may raise
@@ -280,19 +294,25 @@ def _compute_local_code_hash(manifest_path: Path, source_path: Path) -> LocalHas
             if isinstance(code_bytes, str):
                 # Might already be hex or base64; assume hex w/o 0x
                 try:
-                    code_bytes = binascii.unhexlify(code_bytes[2:] if code_bytes.startswith("0x") else code_bytes)
+                    code_bytes = binascii.unhexlify(
+                        code_bytes[2:] if code_bytes.startswith("0x") else code_bytes
+                    )
                 except Exception:
                     code_bytes = code_bytes.encode("utf-8")
         elif isinstance(compiled, (tuple, list)) and len(compiled) >= 1:
             code_bytes = compiled[0]
         else:
             # Last resort: serialize whole 'compiled' object deterministically
-            code_bytes = json.dumps(compiled, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            code_bytes = json.dumps(
+                compiled, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
 
         if not isinstance(code_bytes, (bytes, bytearray)):
             code_bytes = bytes(code_bytes)
         code_hash = _sha3_256(code_bytes)
-        return LocalHashResult(True, code_hash, len(code_bytes), "vm_py.runtime.loader path")
+        return LocalHashResult(
+            True, code_hash, len(code_bytes), "vm_py.runtime.loader path"
+        )
     except Exception:
         pass
 
@@ -319,12 +339,17 @@ def _compute_local_code_hash(manifest_path: Path, source_path: Path) -> LocalHas
         if not isinstance(ir_bytes, (bytes, bytearray)):
             ir_bytes = bytes(ir_bytes)
         code_hash = _sha3_256(ir_bytes)
-        return LocalHashResult(True, code_hash, len(ir_bytes), "vm_py.compiler.encode path")
+        return LocalHashResult(
+            True, code_hash, len(ir_bytes), "vm_py.compiler.encode path"
+        )
     except Exception as exc:
-        return LocalHashResult(False, None, None, f"vm_py not available or failed: {exc}")
+        return LocalHashResult(
+            False, None, None, f"vm_py not available or failed: {exc}"
+        )
 
 
 # ----------------------------- Payload builders ---------------------------- #
+
 
 def _normalize_code_hash(s: Optional[str]) -> Optional[str]:
     if not s:
@@ -366,6 +391,7 @@ def _build_submit_payload(
 
 # --------------------------------- CLI ------------------------------------- #
 
+
 def _parse_cli(argv=None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="contracts.tools.verify",
@@ -373,38 +399,95 @@ def _parse_cli(argv=None) -> argparse.Namespace:
     )
 
     # Target identifiers (one of these is required when submitting; optional for --status)
-    p.add_argument("--address", type=str, default=None, help="Deployed contract address (bech32m anim1… or hex)")
-    p.add_argument("--tx-hash", type=str, default=None, help="Deployment transaction hash (0x...)")
-    p.add_argument("--code-hash", type=str, default=None, help="Explicit code hash (0x...)")
+    p.add_argument(
+        "--address",
+        type=str,
+        default=None,
+        help="Deployed contract address (bech32m anim1… or hex)",
+    )
+    p.add_argument(
+        "--tx-hash", type=str, default=None, help="Deployment transaction hash (0x...)"
+    )
+    p.add_argument(
+        "--code-hash", type=str, default=None, help="Explicit code hash (0x...)"
+    )
 
     # Inputs
-    p.add_argument("--manifest", type=Path, default=None, help="Path to manifest.json (required unless --status only)")
-    p.add_argument("--source", type=Path, default=None, help="Path to contract source (required unless --status only)")
-    p.add_argument("--abi", type=Path, default=None, help="Optional ABI JSON; forwarded to service")
+    p.add_argument(
+        "--manifest",
+        type=Path,
+        default=None,
+        help="Path to manifest.json (required unless --status only)",
+    )
+    p.add_argument(
+        "--source",
+        type=Path,
+        default=None,
+        help="Path to contract source (required unless --status only)",
+    )
+    p.add_argument(
+        "--abi", type=Path, default=None, help="Optional ABI JSON; forwarded to service"
+    )
 
     # Service
-    p.add_argument("--service-url", type=str, default=None, help="Base URL for studio-services (env: SERVICE_URL / SERVICES_URL)")
-    p.add_argument("--api-key", type=str, default=None, help="API key (env: SERVICE_API_KEY / STUDIO_API_KEY)")
+    p.add_argument(
+        "--service-url",
+        type=str,
+        default=None,
+        help="Base URL for studio-services (env: SERVICE_URL / SERVICES_URL)",
+    )
+    p.add_argument(
+        "--api-key",
+        type=str,
+        default=None,
+        help="API key (env: SERVICE_API_KEY / STUDIO_API_KEY)",
+    )
     p.add_argument("--timeout", type=float, default=20.0, help="HTTP timeout seconds")
 
     # Behavior
-    p.add_argument("--status", action="store_true", help="Do not submit; only query status for {address|tx}")
-    p.add_argument("--wait", action="store_true", help="After submit, poll until result (success/failure)")
-    p.add_argument("--poll-interval", type=float, default=1.0, help="Polling interval seconds")
-    p.add_argument("--wait-timeout", type=float, default=120.0, help="Max seconds to wait when --wait")
+    p.add_argument(
+        "--status",
+        action="store_true",
+        help="Do not submit; only query status for {address|tx}",
+    )
+    p.add_argument(
+        "--wait",
+        action="store_true",
+        help="After submit, poll until result (success/failure)",
+    )
+    p.add_argument(
+        "--poll-interval", type=float, default=1.0, help="Polling interval seconds"
+    )
+    p.add_argument(
+        "--wait-timeout",
+        type=float,
+        default=120.0,
+        help="Max seconds to wait when --wait",
+    )
 
     # Local-only sanity
-    p.add_argument("--local-hash", "--dry-run", dest="local_hash", action="store_true",
-                   help="Compute and print local code hash only; do not contact service")
+    p.add_argument(
+        "--local-hash",
+        "--dry-run",
+        dest="local_hash",
+        action="store_true",
+        help="Compute and print local code hash only; do not contact service",
+    )
 
     # Misc
-    p.add_argument("--chain-id", type=int, default=None, help="Optional chainId hint forwarded to service")
+    p.add_argument(
+        "--chain-id",
+        type=int,
+        default=None,
+        help="Optional chainId hint forwarded to service",
+    )
     p.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
 
     return p.parse_args(argv)
 
 
 # ------------------------------ Status helpers ----------------------------- #
+
 
 def _status_path(address: Optional[str], tx_hash: Optional[str]) -> str:
     if address:
@@ -422,6 +505,7 @@ def _maybe_print_json(obj: Any, as_json: bool) -> None:
 
 
 # ---------------------------------- main ----------------------------------- #
+
 
 def main(argv=None) -> int:
     _load_env()
@@ -445,7 +529,10 @@ def main(argv=None) -> int:
     # 1) Local hash path (no network)
     if args.local_hash:
         if not args.manifest or not args.source:
-            print("[verify] ERROR: --local-hash requires --manifest and --source", file=sys.stderr)
+            print(
+                "[verify] ERROR: --local-hash requires --manifest and --source",
+                file=sys.stderr,
+            )
             return 2
         res = _compute_local_code_hash(args.manifest, args.source)
         out = {
@@ -467,7 +554,10 @@ def main(argv=None) -> int:
             print(f"[verify] ERROR: init HTTP failed: {exc}", file=sys.stderr)
             return 2
         if not args.address and not args.tx_hash:
-            print("[verify] ERROR: --status requires --address or --tx-hash", file=sys.stderr)
+            print(
+                "[verify] ERROR: --status requires --address or --tx-hash",
+                file=sys.stderr,
+            )
             return 2
         try:
             status = http.get(_status_path(args.address, args.tx_hash))
@@ -482,10 +572,16 @@ def main(argv=None) -> int:
 
     # 3) Submit verification job
     if not args.manifest or not args.source:
-        print("[verify] ERROR: submitting requires --manifest and --source", file=sys.stderr)
+        print(
+            "[verify] ERROR: submitting requires --manifest and --source",
+            file=sys.stderr,
+        )
         return 2
     if not (args.address or args.tx_hash or args.code_hash):
-        print("[verify] ERROR: one of --address, --tx-hash, --code-hash must be provided", file=sys.stderr)
+        print(
+            "[verify] ERROR: one of --address, --tx-hash, --code-hash must be provided",
+            file=sys.stderr,
+        )
         return 2
 
     # Read inputs
@@ -570,7 +666,9 @@ def main(argv=None) -> int:
         time.sleep(float(args.poll_interval))
 
     out = {
-        "ok": bool(isinstance(last_status, dict) and last_status.get("verified") is True),
+        "ok": bool(
+            isinstance(last_status, dict) and last_status.get("verified") is True
+        ),
         "submitted": True,
         "result": last_status,
         "submittedResponse": submit_res,

@@ -28,9 +28,10 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
-from dataclasses import is_dataclass, fields
+from dataclasses import fields, is_dataclass
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Sequence, Tuple, Type, TypeVar, get_args, get_origin
+from typing import (Any, Dict, Mapping, Optional, Sequence, Tuple, Type,
+                    TypeVar, get_args, get_origin)
 
 try:
     import yaml  # type: ignore
@@ -38,6 +39,7 @@ except Exception:  # pragma: no cover - fallback to JSON only
     yaml = None  # type: ignore
 
 # ---- public errors -----------------------------------------------------------
+
 
 class ParamsError(Exception):
     """Base error for params adapter."""
@@ -66,6 +68,7 @@ T = TypeVar("T")
 
 
 # ---- public API --------------------------------------------------------------
+
 
 def load_chain_params(
     source: Optional[os.PathLike | str | Mapping[str, Any]] = None,
@@ -110,7 +113,11 @@ def load_chain_params(
 
     # Optional sanity check
     chain_id = getattr(params, "chain_id", None) or getattr(params, "chainId", None)
-    if expected_chain_id is not None and chain_id is not None and chain_id != expected_chain_id:
+    if (
+        expected_chain_id is not None
+        and chain_id is not None
+        and chain_id != expected_chain_id
+    ):
         raise ParamsValidationError(
             f"expected chain_id={expected_chain_id}, got {chain_id}"
         )
@@ -128,6 +135,7 @@ def params_to_dict(params: ChainParams) -> Dict[str, Any]:
 
 
 # ---- internal: locating & parsing files -------------------------------------
+
 
 def _default_params_path() -> Path:
     env = os.getenv("ANIMICA_PARAMS")
@@ -158,7 +166,9 @@ def _load_mapping_file(path: Path) -> Mapping[str, Any]:
             loaded = yaml.safe_load(text)  # type: ignore
             if isinstance(loaded, Mapping):
                 return loaded
-            raise ParamsError(f"Top-level YAML must be a mapping (got {type(loaded).__name__})")
+            raise ParamsError(
+                f"Top-level YAML must be a mapping (got {type(loaded).__name__})"
+            )
         except Exception as e:
             raise ParamsError(f"Failed to parse YAML in {path}: {e}") from e
     else:
@@ -166,12 +176,15 @@ def _load_mapping_file(path: Path) -> Mapping[str, Any]:
             loaded = json.loads(text)
             if isinstance(loaded, Mapping):
                 return loaded
-            raise ParamsError(f"Top-level JSON must be a mapping (got {type(loaded).__name__})")
+            raise ParamsError(
+                f"Top-level JSON must be a mapping (got {type(loaded).__name__})"
+            )
         except Exception as e:
             raise ParamsError(f"Failed to parse JSON in {path}: {e}") from e
 
 
 # ---- internal: mapping → dataclass ------------------------------------------
+
 
 def _from_mapping(cls: Type[T], data: Mapping[str, Any]) -> T:
     """
@@ -214,7 +227,11 @@ def _coerce_value(t: Any, v: Any) -> Any:
         return _from_mapping(t, v)
 
     # Collections
-    if origin in (list, tuple, set) and isinstance(v, Sequence) and not isinstance(v, (str, bytes, bytearray)):
+    if (
+        origin in (list, tuple, set)
+        and isinstance(v, Sequence)
+        and not isinstance(v, (str, bytes, bytearray))
+    ):
         inner = args[0] if args else Any
         seq = [_coerce_value(inner, x) for x in v]
         if origin is list:
@@ -228,7 +245,7 @@ def _coerce_value(t: Any, v: Any) -> Any:
     if origin in (dict, Mapping) and isinstance(v, Mapping):
         kt = args[0] if args else Any
         vt = args[1] if len(args) > 1 else Any
-        return { _coerce_value(kt, k): _coerce_value(vt, val) for k, val in v.items() }
+        return {_coerce_value(kt, k): _coerce_value(vt, val) for k, val in v.items()}
 
     # Primitives: int/str/float/bool/bytes
     if t in (int, float, str, bool):

@@ -19,14 +19,15 @@ Dilithium/SPHINCS+ backends from pq/.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Callable, Optional, Any, Dict, Tuple
-import time
 import binascii
+import time
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Optional, Tuple
 
+from da.constants import MAX_BLOB_BYTES
 # Local helpers
 from da.utils.hash import sha3_256  # canonical object hash
-from da.constants import MAX_BLOB_BYTES
+
 try:
     import cbor2  # preferred for canonical CBOR
 except Exception:  # pragma: no cover
@@ -172,15 +173,15 @@ class BlobReceipt:
         if self.size_bytes < 0 or self.size_bytes > MAX_BLOB_BYTES:
             raise ValueError("size_bytes out of bounds")
         m: Dict[int, Any] = {
-            1: _DOMAIN_TAG,                # domain/version tag
-            2: int(self.chain_id),         # chain binding
-            3: bytes(self.commitment),     # commitment/root
+            1: _DOMAIN_TAG,  # domain/version tag
+            2: int(self.chain_id),  # chain binding
+            3: bytes(self.commitment),  # commitment/root
             4: int(self.namespace),
             5: int(self.size_bytes),
             6: self.mime if self.mime is not None else None,
-            7: bytes(self.policy_root),    # alg-policy root binding
+            7: bytes(self.policy_root),  # alg-policy root binding
             8: int(self.alg_id),
-            9: self.signer.lower(),        # bech32m (lowercase for stability)
+            9: self.signer.lower(),  # bech32m (lowercase for stability)
             10: int(self.timestamp),
         }
         return _cbor_dumps_canonical(m)
@@ -299,7 +300,9 @@ def verify_receipt(
     # Basic bindings
     if expect_chain_id is not None and int(r.chain_id) != int(expect_chain_id):
         return False, "chain_id mismatch"
-    if expect_policy_root is not None and bytes(r.policy_root) != bytes(expect_policy_root):
+    if expect_policy_root is not None and bytes(r.policy_root) != bytes(
+        expect_policy_root
+    ):
         return False, "policy_root mismatch"
 
     # Size sanity (not a proof; just local bounds)

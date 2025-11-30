@@ -57,7 +57,9 @@ def __dir__() -> List[str]:  # helps IDEs and dir()
     std = list(globals().keys())
     try:
         mod = import_module(_SUBMODULE)
-        public = [n for n in getattr(mod, "__all__", []) or dir(mod) if not n.startswith("_")]
+        public = [
+            n for n in getattr(mod, "__all__", []) or dir(mod) if not n.startswith("_")
+        ]
         return sorted(set(std + public + __all__))
     except Exception:  # pragma: no cover
         return sorted(set(std + __all__))

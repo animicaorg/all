@@ -19,8 +19,8 @@ Example
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Optional
 import logging
+from typing import Any, Iterable, Optional
 
 __all__ = ["mount"]
 
@@ -50,7 +50,9 @@ def _ensure_state_set(app: Any) -> set[str]:
     return mounted
 
 
-def mount(app: Any, prefix: str = "/cap", *, tags: Optional[Iterable[str]] = None) -> None:
+def mount(
+    app: Any, prefix: str = "/cap", *, tags: Optional[Iterable[str]] = None
+) -> None:
     """
     Mount Capabilities HTTP and WS routes into an existing FastAPI app.
 
@@ -93,7 +95,9 @@ def mount(app: Any, prefix: str = "/cap", *, tags: Optional[Iterable[str]] = Non
     # Include into the app
     include_router = getattr(app, "include_router", None)
     if include_router is None:
-        raise TypeError("Provided 'app' does not look like a FastAPI app: missing include_router().")
+        raise TypeError(
+            "Provided 'app' does not look like a FastAPI app: missing include_router()."
+        )
 
     include_kwargs = {}
     if tags is not None:

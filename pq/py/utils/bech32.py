@@ -42,6 +42,7 @@ CHARSET_REV = {c: i for i, c in enumerate(CHARSET)}
 _BECH32_CONST = 1
 _BECH32M_CONST = 0x2BC830A3
 
+
 class Bech32Error(ValueError):
     pass
 
@@ -49,6 +50,7 @@ class Bech32Error(ValueError):
 # ---------------------------------------------------------------------------
 # Core Bech32/Bech32m primitives
 # ---------------------------------------------------------------------------
+
 
 def _polymod(values: Sequence[int]) -> int:
     """Internal: Compute Bech32 checksum polymod."""
@@ -105,7 +107,7 @@ def bech32_encode(hrp: str, data: Sequence[int], spec: str = "bech32m") -> str:
 
     # Enforce lowercase output.
     hrp = hrp.lower()
-    bech32m = (spec == "bech32m")
+    bech32m = spec == "bech32m"
     checksum = _create_checksum(hrp, data, bech32m)
     combined = list(data) + checksum
     return hrp + "1" + "".join(CHARSET[d] for d in combined)
@@ -120,7 +122,7 @@ def bech32_decode(bech: str) -> Tuple[str, List[int], str]:
         raise Bech32Error("string too short for bech32")
 
     # Enforce single-case.
-    if (any(c.isupper() for c in bech) and any(c.islower() for c in bech)):
+    if any(c.isupper() for c in bech) and any(c.islower() for c in bech):
         raise Bech32Error("mixed-case bech32 is invalid")
     bech = bech.lower()
 
@@ -150,7 +152,10 @@ def bech32_decode(bech: str) -> Tuple[str, List[int], str]:
 # 8↔5 bit conversion (BIP-0173 "convertbits")
 # ---------------------------------------------------------------------------
 
-def convertbits(data: Iterable[int], from_bits: int, to_bits: int, pad: bool = True) -> List[int]:
+
+def convertbits(
+    data: Iterable[int], from_bits: int, to_bits: int, pad: bool = True
+) -> List[int]:
     """
     General power-of-2 base conversion.
     E.g. convertbits(bytes, 8, 5) to make Bech32 data words.
@@ -197,6 +202,7 @@ def fivebit_to_bytes(words: Sequence[int]) -> bytes:
 # ---------------------------------------------------------------------------
 
 DEFAULT_HRP = "anim"
+
 
 def encode_address(payload: bytes, hrp: str = DEFAULT_HRP) -> str:
     """

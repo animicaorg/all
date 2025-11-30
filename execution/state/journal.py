@@ -37,11 +37,13 @@ Notes
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Mapping, MutableMapping, Iterator, Tuple, List, Set
+from typing import (Dict, Iterator, List, Mapping, MutableMapping, Optional,
+                    Set, Tuple)
 
-from .accounts import Account, EMPTY_CODE_HASH
-from .storage import StorageView
 from execution.errors import StateConflict
+
+from .accounts import EMPTY_CODE_HASH, Account
+from .storage import StorageView
 
 
 def _b(x: bytes | bytearray | memoryview, *, name: str) -> bytes:
@@ -64,6 +66,7 @@ class _Overlay:
     - `destroyed`: addresses marked for deletion in this layer.
     - `storage`: staged storage changes. `None` means deletion for that key.
     """
+
     accounts: Dict[bytes, Account] = field(default_factory=dict)
     destroyed: Set[bytes] = field(default_factory=set)
     storage: Dict[bytes, Dict[bytes, Optional[bytes]]] = field(default_factory=dict)
@@ -77,16 +80,24 @@ class _Overlay:
 
     def put_account_copy(self, addr: bytes, acc: Account) -> Account:
         # Store a *copy* to avoid aliasing with lower layers.
-        acc_copy = Account(nonce=acc.nonce, balance=acc.balance, code_hash=acc.code_hash)
+        acc_copy = Account(
+            nonce=acc.nonce, balance=acc.balance, code_hash=acc.code_hash
+        )
         self.accounts[addr] = acc_copy
         self.destroyed.discard(addr)
         return acc_copy
 
-    def create_account_fresh(self, addr: bytes, initial_balance: int = 0, code_hash: Optional[bytes] = None) -> Account:
+    def create_account_fresh(
+        self, addr: bytes, initial_balance: int = 0, code_hash: Optional[bytes] = None
+    ) -> Account:
         if addr in self.accounts and addr not in self.destroyed:
             raise StateConflict("account already exists in current overlay")
         self.destroyed.discard(addr)
-        acc = Account(nonce=0, balance=int(initial_balance), code_hash=(EMPTY_CODE_HASH if code_hash is None else bytes(code_hash)))
+        acc = Account(
+            nonce=0,
+            balance=int(initial_balance),
+            code_hash=(EMPTY_CODE_HASH if code_hash is None else bytes(code_hash)),
+        )
         self.accounts[addr] = acc
         return acc
 
@@ -104,7 +115,9 @@ class _Overlay:
             return None
         return m.get(key, None)
 
-    def storage_set_local(self, addr: bytes, key: bytes, value: Optional[bytes]) -> None:
+    def storage_set_local(
+        self, addr: bytes, key: bytes, value: Optional[bytes]
+    ) -> None:
         if addr in self.destroyed:
             # Writes to a destroyed account are irrelevant in this layer.
             return
@@ -142,13 +155,13 @@ class Journal:
     target the top overlay.
     """
 
-    def __init__(self,
-                 accounts: MutableMapping[bytes, Account],
-                 storage: StorageView) -> None:
+    def __init__(
+        self, accounts: MutableMapping[bytes, Account], storage: StorageView
+    ) -> None:
         self._base_accounts = accounts
         self._base_storage = storage
         # Start with a single empty overlay for convenience.
-        self._layers: List[_Overlay] = [ _Overlay() ]
+        self._layers: List[_Overlay] = [_Overlay()]
 
     # --------------------------------------------------------------------- #
     # Checkpointing
@@ -242,7 +255,9 @@ class Journal:
         addr = _b(address, name="address")
         return self._lookup_account_any(addr)
 
-    def get_account_for_write(self, address: bytes | bytearray | memoryview) -> Optional[Account]:
+    def get_account_for_write(
+        self, address: bytes | bytearray | memoryview
+    ) -> Optional[Account]:
         """
         Fetch an Account suitable for **mutation** in the top layer:
         - If present in any lower layer/base, a copy is promoted to the top.
@@ -261,7 +276,9 @@ class Journal:
             return None
         return top.put_account_copy(addr, acc)
 
-    def ensure_account_for_write(self, address: bytes | bytearray | memoryview) -> Account:
+    def ensure_account_for_write(
+        self, address: bytes | bytearray | memoryview
+    ) -> Account:
         """
         Ensure an Account exists for mutation in the top layer.
         If absent anywhere, a fresh zeroed account is created.
@@ -275,11 +292,13 @@ class Journal:
 
     # Lifecycle helpers ------------------------------------------------------ #
 
-    def create_account(self,
-                       address: bytes | bytearray | memoryview,
-                       *,
-                       initial_balance: int = 0,
-                       code_hash: Optional[bytes] = None) -> Account:
+    def create_account(
+        self,
+        address: bytes | bytearray | memoryview,
+        *,
+        initial_balance: int = 0,
+        code_hash: Optional[bytes] = None,
+    ) -> Account:
         """
         Create a new account in the **top** overlay.
         Raises StateConflict if the account exists in any layer/base (and not destroyed at the top).
@@ -289,7 +308,9 @@ class Journal:
         existing = self._lookup_account_any(addr)
         if existing is not None and addr not in self._layers[-1].destroyed:
             raise StateConflict("account already exists")
-        return self._layers[-1].create_account_fresh(addr, initial_balance=initial_balance, code_hash=code_hash)
+        return self._layers[-1].create_account_fresh(
+            addr, initial_balance=initial_balance, code_hash=code_hash
+        )
 
     def destroy_account(self, address: bytes | bytearray | memoryview) -> bool:
         """
@@ -309,10 +330,12 @@ class Journal:
     # Storage API
     # --------------------------------------------------------------------- #
 
-    def storage_get(self,
-                    address: bytes | bytearray | memoryview,
-                    key: bytes | bytearray | memoryview,
-                    default: bytes = b"") -> bytes:
+    def storage_get(
+        self,
+        address: bytes | bytearray | memoryview,
+        key: bytes | bytearray | memoryview,
+        default: bytes = b"",
+    ) -> bytes:
         """
         Read storage with overlay precedence. Returns `default` if absent.
         """
@@ -330,10 +353,12 @@ class Journal:
         # Fallback to base
         return self._base_storage.get(addr, key_b, default=default)
 
-    def storage_set(self,
-                    address: bytes | bytearray | memoryview,
-                    key: bytes | bytearray | memoryview,
-                    value: bytes | bytearray | memoryview) -> None:
+    def storage_set(
+        self,
+        address: bytes | bytearray | memoryview,
+        key: bytes | bytearray | memoryview,
+        value: bytes | bytearray | memoryview,
+    ) -> None:
         """
         Stage a storage write in the top overlay. Empty value is a deletion.
         """
@@ -346,9 +371,11 @@ class Journal:
         else:
             top.storage_set_local(addr, key_b, val_b)
 
-    def storage_delete(self,
-                       address: bytes | bytearray | memoryview,
-                       key: bytes | bytearray | memoryview) -> None:
+    def storage_delete(
+        self,
+        address: bytes | bytearray | memoryview,
+        key: bytes | bytearray | memoryview,
+    ) -> None:
         """Explicit storage deletion in the top overlay."""
         addr = _b(address, name="address")
         key_b = _b(key, name="key")
@@ -356,7 +383,9 @@ class Journal:
 
     # Iteration helpers ------------------------------------------------------ #
 
-    def storage_items(self, address: bytes | bytearray | memoryview) -> Iterator[Tuple[bytes, bytes]]:
+    def storage_items(
+        self, address: bytes | bytearray | memoryview
+    ) -> Iterator[Tuple[bytes, bytes]]:
         """
         Iterate visible (key, value) for an address with overlay precedence.
         Stable order by key. Deletions in overlays are respected.
@@ -370,7 +399,9 @@ class Journal:
 
         # Start from base, apply overlay diffs.
         base_map = dict(self._base_storage.export_account_hex(addr))
-        visible: Dict[bytes, bytes] = {bytes.fromhex(k): bytes.fromhex(v) for k, v in base_map.items()}
+        visible: Dict[bytes, bytes] = {
+            bytes.fromhex(k): bytes.fromhex(v) for k, v in base_map.items()
+        }
 
         # Apply overlays from bottom → top to get final view.
         for layer in self._layers:
@@ -397,14 +428,16 @@ class Journal:
         commits). This does *not* touch the base state.
         """
         # 1) Apply account destructions (excluding addresses resurrected in src.accounts)
-        for addr in (src.destroyed - set(src.accounts.keys())):
+        for addr in src.destroyed - set(src.accounts.keys()):
             dst.destroyed.add(addr)
             dst.accounts.pop(addr, None)
             dst.storage.pop(addr, None)
 
         # 2) Apply account upserts (these override `destroyed`)
         for addr, acc in src.accounts.items():
-            dst.accounts[addr] = Account(nonce=acc.nonce, balance=acc.balance, code_hash=acc.code_hash)
+            dst.accounts[addr] = Account(
+                nonce=acc.nonce, balance=acc.balance, code_hash=acc.code_hash
+            )
             dst.destroyed.discard(addr)
 
         # 3) Apply storage writes (skip addresses ultimately destroyed)
@@ -430,7 +463,9 @@ class Journal:
 
         # Account upserts (overrides previous base).
         for addr, acc in layer.accounts.items():
-            self._base_accounts[addr] = Account(nonce=acc.nonce, balance=acc.balance, code_hash=acc.code_hash)
+            self._base_accounts[addr] = Account(
+                nonce=acc.nonce, balance=acc.balance, code_hash=acc.code_hash
+            )
 
         # Storage writes (skip addresses that were destroyed in this layer).
         for addr, writes in layer.storage.items():

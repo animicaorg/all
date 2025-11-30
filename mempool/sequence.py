@@ -40,6 +40,7 @@ from typing import Dict, Iterable, Iterator, List, Optional, Tuple
 try:
     from mempool.types import PoolTx, TxMeta  # type: ignore
 except Exception:  # pragma: no cover
+
     @dataclass
     class TxMeta:  # type: ignore
         sender: str
@@ -60,8 +61,9 @@ except Exception:  # pragma: no cover
 
 # Optional RBF policy
 try:
-    from mempool.priority import should_replace, RBFPolicy  # type: ignore
+    from mempool.priority import RBFPolicy, should_replace  # type: ignore
 except Exception:  # pragma: no cover
+
     @dataclass(frozen=True)
     class RBFPolicy:  # type: ignore
         rel_bump: float = 0.10
@@ -92,6 +94,7 @@ class AdmitResult:
     """
     Outcome of an attempt to admit a transaction into a SenderQueue.
     """
+
     ok: bool
     action: str  # "added_ready" | "added_held" | "replaced_ready" | "replaced_held" | "rejected_*"
     reason: Optional[str] = None
@@ -107,6 +110,7 @@ class SenderQueue:
       - `ready_end` is the smallest nonce >= next_nonce that is missing in `txs`.
       - For all n in [next_nonce, ready_end): n in txs.
     """
+
     sender: str
     next_nonce: int
     txs: Dict[int, PoolTx] = field(default_factory=dict)
@@ -323,7 +327,11 @@ class NonceSequencer:
         s = tx.meta.sender
         q = self._queues.get(s)
         if q is None:
-            base_nonce = int(sender_next_nonce_hint if sender_next_nonce_hint is not None else tx.meta.nonce)
+            base_nonce = int(
+                sender_next_nonce_hint
+                if sender_next_nonce_hint is not None
+                else tx.meta.nonce
+            )
             q = SenderQueue(sender=s, next_nonce=base_nonce)
             self._queues[s] = q
             self._maybe_add_rr_sender(s)
@@ -443,7 +451,12 @@ if __name__ == "__main__":  # pragma: no cover
     from pprint import pprint
 
     def mk(sender: str, nonce: int) -> PoolTx:
-        return PoolTx(tx_hash=f"{sender}:{nonce}", meta=TxMeta(sender=sender, nonce=nonce), fee=object(), raw=b"x")
+        return PoolTx(
+            tx_hash=f"{sender}:{nonce}",
+            meta=TxMeta(sender=sender, nonce=nonce),
+            fee=object(),
+            raw=b"x",
+        )
 
     seq = NonceSequencer()
     # Assume account A needs next_nonce=5 (hinted from state)

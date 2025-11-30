@@ -33,17 +33,18 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Iterator, Optional
 
-from studio_services.storage.sqlite import transaction, get_db
+from studio_services.storage.sqlite import get_db, transaction
 
 try:
     import boto3
     from botocore.config import Config as _BotoConfig
     from botocore.exceptions import ClientError
+
     _HAS_BOTO = True
 except Exception as _e:  # pragma: no cover
     boto3 = None
     ClientError = Exception  # type: ignore
-    _BotoConfig = object      # type: ignore
+    _BotoConfig = object  # type: ignore
     _HAS_BOTO = False
     _IMPORT_ERR = _e
 
@@ -118,14 +119,15 @@ def _client():
 # Types & DB helpers (mirror fs backend)
 # -----------------------------------------------------------------------------#
 
+
 @dataclass(frozen=True)
 class ArtifactMeta:
-    content_hash: str       # 0x + hex
+    content_hash: str  # 0x + hex
     size: int
     mime: Optional[str]
     filename: Optional[str]
-    storage_backend: str    # 's3'
-    storage_locator: str    # "bucket/key" (no scheme)
+    storage_backend: str  # 's3'
+    storage_locator: str  # "bucket/key" (no scheme)
 
     @property
     def bucket(self) -> str:
@@ -193,6 +195,7 @@ def get_meta(content_hash: str) -> Optional[ArtifactMeta]:
 # Errors
 # -----------------------------------------------------------------------------#
 
+
 class ArtifactMismatch(Exception):
     """Artifact exists in bucket with different size or contents."""
 
@@ -204,6 +207,7 @@ class ArtifactNotFound(FileNotFoundError):
 # -----------------------------------------------------------------------------#
 # Write paths
 # -----------------------------------------------------------------------------#
+
 
 def _sha3_hasher():
     return hashlib.sha3_256()
@@ -225,7 +229,9 @@ def _spool_and_hash(fp) -> tuple[str, int, Path]:
     return _to_0x(hasher.hexdigest()), total, tmp_path
 
 
-def store_fileobj(fp, mime: Optional[str] = None, filename: Optional[str] = None) -> ArtifactMeta:
+def store_fileobj(
+    fp, mime: Optional[str] = None, filename: Optional[str] = None
+) -> ArtifactMeta:
     """
     Store content from a binary file-like object to S3 with content-addressed key.
     """
@@ -290,8 +296,11 @@ def store_fileobj(fp, mime: Optional[str] = None, filename: Optional[str] = None
     return meta
 
 
-def store_bytes(data: bytes, mime: Optional[str] = None, filename: Optional[str] = None) -> ArtifactMeta:
+def store_bytes(
+    data: bytes, mime: Optional[str] = None, filename: Optional[str] = None
+) -> ArtifactMeta:
     from io import BytesIO
+
     return store_fileobj(BytesIO(data), mime=mime, filename=filename)
 
 
@@ -304,6 +313,7 @@ def store_file(path: Path | str, mime: Optional[str] = None) -> ArtifactMeta:
 # -----------------------------------------------------------------------------#
 # Read paths
 # -----------------------------------------------------------------------------#
+
 
 def _split_locator(locator: str) -> tuple[str, str]:
     parts = locator.split("/", 1)
@@ -362,6 +372,7 @@ def read_bytes(content_hash: str) -> bytes:
 # -----------------------------------------------------------------------------#
 # Integrity helpers
 # -----------------------------------------------------------------------------#
+
 
 def rehash_verify(content_hash: str) -> bool:
     """

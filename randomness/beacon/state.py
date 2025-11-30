@@ -41,15 +41,17 @@ Notes
 
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass
-from typing import Callable, Optional, Protocol, MutableMapping, runtime_checkable
 import io
 import os
 import threading
+from dataclasses import asdict, is_dataclass
+from typing import (Callable, MutableMapping, Optional, Protocol,
+                    runtime_checkable)
 
 # Optional high-performance codec
 try:
     import msgspec  # type: ignore[attr-defined]
+
     _HAS_MSGSPEC = True
 except Exception:  # pragma: no cover - best-effort optional dep
     _HAS_MSGSPEC = False
@@ -57,8 +59,8 @@ import json
 
 from randomness.types.state import BeaconState
 
-
 # ------------------------- Serialization helpers ------------------------- #
+
 
 def _encode_state(state: BeaconState) -> bytes:
     """Serialize BeaconState to bytes (JSON)."""
@@ -68,7 +70,9 @@ def _encode_state(state: BeaconState) -> bytes:
         # Use structural encoding to avoid relying on dataclass default hook.
         return msgspec.json.encode(asdict(state))  # type: ignore[name-defined]
     # Fallback: standard library json (ensure stable key ordering)
-    return json.dumps(asdict(state), separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return json.dumps(asdict(state), separators=(",", ":"), sort_keys=True).encode(
+        "utf-8"
+    )
 
 
 def _decode_state(payload: bytes) -> BeaconState:
@@ -86,6 +90,7 @@ def _decode_state(payload: bytes) -> BeaconState:
 
 # ---------------------------- KV abstractions ---------------------------- #
 
+
 @runtime_checkable
 class _KV(Protocol):
     def get(self, key: bytes) -> Optional[bytes]: ...
@@ -95,6 +100,7 @@ class _KV(Protocol):
 
 class _MappingKV:
     """Adapter for a dict-like mapping (bytes→bytes)."""
+
     def __init__(self, mapping: Optional[MutableMapping[bytes, bytes]] = None) -> None:
         self._m: MutableMapping[bytes, bytes] = mapping if mapping is not None else {}
         self._lock = threading.RLock()
@@ -114,6 +120,7 @@ class _MappingKV:
 
 
 # ------------------------------ File-backed ------------------------------ #
+
 
 def _atomic_write(path: str, data: bytes) -> None:
     d = os.path.dirname(os.path.abspath(path)) or "."
@@ -170,7 +177,11 @@ _BEACON_STATE_KEY = b"beacon/state/v1"  # domain-separated key
 class BeaconStateStore:
     """Generic KV-backed store for BeaconState."""
 
-    def __init__(self, kv: Optional[_KV] = None, mapping: Optional[MutableMapping[bytes, bytes]] = None) -> None:
+    def __init__(
+        self,
+        kv: Optional[_KV] = None,
+        mapping: Optional[MutableMapping[bytes, bytes]] = None,
+    ) -> None:
         if kv is None:
             kv = _MappingKV(mapping)
         self._kv: _KV = kv

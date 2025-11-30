@@ -32,10 +32,10 @@ from typing import Tuple
 
 from .params import VDFParams, get_params
 
-
 # ---------------------------------------------------------------------------
 # Basic math helpers
 # ---------------------------------------------------------------------------
+
 
 def _int_from_be(data: bytes) -> int:
     return int.from_bytes(data, "big", signed=False)
@@ -73,8 +73,30 @@ def _len_prefix_chunks(chunks: Tuple[bytes, ...]) -> bytes:
 # ---------------------------------------------------------------------------
 
 _SMALL_PRIMES = (
-    3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47,
-    53, 59, 61, 67, 71, 73, 79, 83, 89, 97,
+    3,
+    5,
+    7,
+    11,
+    13,
+    17,
+    19,
+    23,
+    29,
+    31,
+    37,
+    41,
+    43,
+    47,
+    53,
+    59,
+    61,
+    67,
+    71,
+    73,
+    79,
+    83,
+    89,
+    97,
 )
 
 
@@ -138,6 +160,7 @@ def _hash_to_prime(data: bytes, k_bits: int = 128) -> int:
 # Core VDF routines
 # ---------------------------------------------------------------------------
 
+
 def _normalize_x(x: int | bytes, N: int) -> int:
     """
     Map input into Z*_N (best-effort). For bytes, hash to integer in [2, N-1].
@@ -171,7 +194,9 @@ def eval_y(x: int | bytes, t: int, N: int) -> int:
 
 def derive_challenge_prime(N: int, x: int, y: int, t: int, k_bits: int = 128) -> int:
     """Derive a challenge prime ℓ = H_to_prime(N, x, y, t)."""
-    material = b"".join((_int_to_be(N), _int_to_be(x), _int_to_be(y), t.to_bytes(8, "big")))
+    material = b"".join(
+        (_int_to_be(N), _int_to_be(x), _int_to_be(y), t.to_bytes(8, "big"))
+    )
     return _hash_to_prime(material, k_bits=k_bits)
 
 
@@ -217,6 +242,7 @@ def verify(x: int | bytes, y: int, t: int, N: int, l: int, pi: int) -> bool:
 # Prover wrapper bound to VDFParams
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class Prover:
     params: VDFParams
@@ -228,13 +254,17 @@ class Prover:
     def prove(self, x: int | bytes) -> Tuple[int, int, int]:
         """Prove with parameters in :attr:`params`. Returns (y, l, pi)."""
         if self.params.backend != "rsa":
-            raise NotImplementedError("Wesolowski prover currently supports RSA backend only")
+            raise NotImplementedError(
+                "Wesolowski prover currently supports RSA backend only"
+            )
         return prove(x, self.params.iterations, self.params.modulus_n)
 
     def verify(self, x: int | bytes, y: int, l: int, pi: int) -> bool:
         """Verify with parameters in :attr:`params`."""
         if self.params.backend != "rsa":
-            raise NotImplementedError("Wesolowski verifier currently supports RSA backend only")
+            raise NotImplementedError(
+                "Wesolowski verifier currently supports RSA backend only"
+            )
         return verify(x, y, self.params.iterations, self.params.modulus_n, l, pi)
 
 

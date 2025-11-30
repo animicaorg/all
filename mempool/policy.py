@@ -25,25 +25,26 @@ are passed in (e.g., FeeWatermark) or taken from Tx/Meta attributes.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple, Callable
 import time
+from dataclasses import dataclass, field
+from typing import Callable, Dict, Optional, Tuple
 
 # Prefer the canonical error types if available
 try:
-    from .errors import (
-        AdmissionError,
-        ReplacementError,
-        DoSError,
-        FeeTooLow,
-        Oversize,
-    )
+    from .errors import (AdmissionError, DoSError, FeeTooLow, Oversize,
+                         ReplacementError)
 except Exception:  # pragma: no cover - fallback types for stand-alone use
+
     class AdmissionError(Exception): ...
+
     class ReplacementError(Exception): ...
+
     class DoSError(Exception): ...
+
     class FeeTooLow(AdmissionError): ...
+
     class Oversize(AdmissionError): ...
+
 
 # Optional watermark integration
 try:
@@ -68,6 +69,7 @@ def _now_monotonic() -> float:
 # Ban policy
 # -------------------------
 
+
 @dataclass
 class BanPolicy:
     """
@@ -82,6 +84,7 @@ class BanPolicy:
     - max_rejects_in_window: if a sender triggers this many rejects in `window_s`,
       they are banned for `spam_ban_s`.
     """
+
     low_fee_ban_s: int = 30
     spam_ban_s: int = 120
     window_s: int = 10
@@ -91,6 +94,7 @@ class BanPolicy:
 @dataclass
 class BanState:
     """Internal accounting for bans and rolling reject counters."""
+
     until_s: float = 0.0
     # simple rolling window counter
     last_reset_s: float = 0.0
@@ -102,7 +106,9 @@ class BanList:
     In-memory ban list keyed by sender address bytes (or any hashable id).
     """
 
-    def __init__(self, policy: Optional[BanPolicy] = None, *, clock: Clock = _now_monotonic):
+    def __init__(
+        self, policy: Optional[BanPolicy] = None, *, clock: Clock = _now_monotonic
+    ):
         self._policy = policy or BanPolicy()
         self._clock = clock
         self._state: Dict[bytes, BanState] = {}
@@ -140,6 +146,7 @@ class BanList:
 # Admission policy
 # -------------------------
 
+
 @dataclass
 class AdmissionConfig:
     """
@@ -152,6 +159,7 @@ class AdmissionConfig:
     - allow_chain_id: optional int to reject mismatched chainIds early
       (stateless fast path; callers may also perform richer validation)
     """
+
     max_tx_size_bytes: int = 128 * 1024
     accept_below_floor_for_local: bool = True
     min_effective_fee_override_wei: Optional[int] = None
@@ -212,19 +220,23 @@ class AdmissionPolicy:
         # Size
         size = int(getattr(meta, "size_bytes", 0))
         if size <= 0 or size > self.cfg.max_tx_size_bytes:
-                raise Oversize(size_bytes=size, max_bytes=self.cfg.max_tx_size_bytes)
+            raise Oversize(size_bytes=size, max_bytes=self.cfg.max_tx_size_bytes)
 
         # Chain id (if configured)
         if self.cfg.allow_chain_id is not None:
             tx_chain = getattr(tx, "chain_id", None)
             if tx_chain is not None and int(tx_chain) != int(self.cfg.allow_chain_id):
-                raise AdmissionError(f"wrong chainId {tx_chain}, expected {self.cfg.allow_chain_id}")
+                raise AdmissionError(
+                    f"wrong chainId {tx_chain}, expected {self.cfg.allow_chain_id}"
+                )
 
         # Fee floors
         if not (is_local and self.cfg.accept_below_floor_for_local):
             eff = self._effective_fee(meta, tx)
             dyn_floor = self._floor_from_watermark(pool_size, capacity)
-            min_floor = max(int(self.cfg.min_effective_fee_override_wei or 0), dyn_floor)
+            min_floor = max(
+                int(self.cfg.min_effective_fee_override_wei or 0), dyn_floor
+            )
             if eff < min_floor:
                 raise FeeTooLow(offered_gas_price_wei=eff, min_required_wei=min_floor)
 
@@ -266,7 +278,9 @@ class AdmissionPolicy:
             ReplacementError if the bump is insufficient.
         """
         # Allow a custom policy to override the default
-        ratio = self._rbf_ratio_from_priority(old_meta, new_meta) or float(min_bump_ratio)
+        ratio = self._rbf_ratio_from_priority(old_meta, new_meta) or float(
+            min_bump_ratio
+        )
         old_fee = int(getattr(old_meta, "effective_fee_wei", 0))
         new_fee = int(getattr(new_meta, "effective_fee_wei", 0))
 
@@ -284,6 +298,7 @@ class AdmissionPolicy:
 # Top-level helpers
 # -------------------------
 
+
 @dataclass
 class PolicySuite:
     """
@@ -291,6 +306,7 @@ class PolicySuite:
       - admission: AdmissionPolicy
       - bans: BanList
     """
+
     admission: AdmissionPolicy
     bans: BanList
 
@@ -300,7 +316,9 @@ class PolicySuite:
         bl = BanList()
         return cls(admission=adm, bans=bl)
 
-    def should_admit(self, tx, meta, *, pool_size: int, capacity: int, is_local: bool = False) -> None:
+    def should_admit(
+        self, tx, meta, *, pool_size: int, capacity: int, is_local: bool = False
+    ) -> None:
         """
         Combined check: ban gate + admission. Raises if not allowed.
         """
@@ -309,7 +327,11 @@ class PolicySuite:
             raise DoSError("sender temporarily banned due to prior abusive behavior")
         try:
             self.admission.check_admit(
-                tx=tx, meta=meta, pool_size=pool_size, capacity=capacity, is_local=is_local
+                tx=tx,
+                meta=meta,
+                pool_size=pool_size,
+                capacity=capacity,
+                is_local=is_local,
             )
         except FeeTooLow:
             # Record reject for potential low-fee auto-ban
@@ -321,4 +343,3 @@ class PolicySuite:
             if sender:
                 self.bans.record_reject(sender)
             raise
-

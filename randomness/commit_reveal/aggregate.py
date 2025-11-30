@@ -48,8 +48,8 @@ except Exception:  # pragma: no cover - fallback if module layout changes in ear
     def sha3_256(data: bytes) -> bytes:  # type: ignore
         return hashlib.sha3_256(data).digest()
 
-from randomness.commit_reveal.verify import Reveal
 
+from randomness.commit_reveal.verify import Reveal
 
 BytesLike = Union[bytes, bytearray, memoryview]
 
@@ -94,7 +94,7 @@ def _xor32(a: bytes, b: bytes) -> bytes:
 
 def _finalize(tag: bytes, folded: bytes) -> bytes:
     # Optional final hash to hide structure and avalanche
-    return sha3_256(tag + b"\xFF" + folded)
+    return sha3_256(tag + b"\xff" + folded)
 
 
 # Compatibility helpers used by legacy tests expecting simple digest folds.
@@ -193,6 +193,7 @@ def hash_chain(
 @dataclass(frozen=True, slots=True)
 class CombinedOutput:
     """Holds both strategies for diagnostics/experiments."""
+
     xor_fold: bytes
     chain: bytes
 

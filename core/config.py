@@ -32,9 +32,9 @@ import os
 import platform
 import re
 import sys
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict, Any
+from typing import Any, Dict, List, Optional, Tuple
 
 # -- Optional TOML support (Python 3.11+ has tomllib). We use a tiny shim.
 try:  # py311+
@@ -47,13 +47,13 @@ except Exception:  # py310 or missing
 # Defaults & helpers
 # ------------------------------
 
-MAINNET_CHAIN_ID = 1      # animica:1
-TESTNET_CHAIN_ID = 2      # animica:2
-DEVNET_CHAIN_ID  = 1337   # animica:1337
+MAINNET_CHAIN_ID = 1  # animica:1
+TESTNET_CHAIN_ID = 2  # animica:2
+DEVNET_CHAIN_ID = 1337  # animica:1337
 
 DEFAULT_RPC_HOST = "127.0.0.1"
 DEFAULT_RPC_HTTP_PORT = 8547
-DEFAULT_RPC_WS_PORT   = 8548
+DEFAULT_RPC_WS_PORT = 8548
 
 DEFAULT_P2P_LISTEN_IP = "0.0.0.0"
 DEFAULT_P2P_PORT = 30307
@@ -157,6 +157,7 @@ def _env_bool(name: str, default: bool) -> bool:
 # Typed configuration model
 # ------------------------------
 
+
 @dataclass
 class ChainConfig:
     chain_id: int = DEVNET_CHAIN_ID
@@ -167,7 +168,9 @@ class ChainConfig:
         # Priority: explicit chain id → network name
         if "ANIMICA_CHAIN_ID" in os.environ:
             cid = _env_int("ANIMICA_CHAIN_ID", default)
-            name = {"1": "mainnet", "2": "testnet", "1337": "devnet"}.get(str(cid), f"chain-{cid}")
+            name = {"1": "mainnet", "2": "testnet", "1337": "devnet"}.get(
+                str(cid), f"chain-{cid}"
+            )
             return ChainConfig(chain_id=cid, network_name=name)
 
         net = (os.environ.get("ANIMICA_NETWORK") or "").strip().lower()
@@ -211,7 +214,9 @@ class RPCConfig:
     host: str = DEFAULT_RPC_HOST
     http_port: int = DEFAULT_RPC_HTTP_PORT
     ws_port: int = DEFAULT_RPC_WS_PORT
-    cors_allow_origins: List[str] = field(default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"])  # studio-web dev
+    cors_allow_origins: List[str] = field(
+        default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
+    )  # studio-web dev
     rate_limit_rps: float = 100.0
     enable_openrpc: bool = True
 
@@ -226,7 +231,9 @@ class RPCConfig:
 class P2PConfig:
     listen_ip: str = DEFAULT_P2P_LISTEN_IP
     listen_port: int = DEFAULT_P2P_PORT
-    seeds: List[str] = field(default_factory=list)  # multiaddrs like /ip4/1.2.3.4/tcp/30307
+    seeds: List[str] = field(
+        default_factory=list
+    )  # multiaddrs like /ip4/1.2.3.4/tcp/30307
     enable_quic: bool = False
     max_peers: int = 64
 
@@ -288,6 +295,7 @@ class Config:
 # File loader (TOML / JSON)
 # ------------------------------
 
+
 def _load_file(path: Path) -> Dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(str(path))
@@ -295,7 +303,9 @@ def _load_file(path: Path) -> Dict[str, Any]:
     with path.open("rb") as f:
         if suffix in {".toml", ".tml"}:
             if not _toml:
-                raise RuntimeError("tomllib is unavailable (Python < 3.11). Use JSON config or upgrade Python.")
+                raise RuntimeError(
+                    "tomllib is unavailable (Python < 3.11). Use JSON config or upgrade Python."
+                )
             return _toml.load(f)  # type: ignore[no-any-return]
         if suffix in {".json"}:
             return json.load(f)
@@ -316,6 +326,7 @@ def _merge_dict(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
 # ------------------------------
 # Main loader
 # ------------------------------
+
 
 def load(config_file: Optional[str | Path] = None, **overrides: Any) -> Config:
     """
@@ -340,9 +351,9 @@ def load(config_file: Optional[str | Path] = None, **overrides: Any) -> Config:
     # 1) Defaults
     chain = ChainConfig.infer_from_env()
     paths = PathsConfig.defaults(chain)
-    db    = DBConfig.sqlite_default(paths)
-    rpc   = RPCConfig()
-    p2p   = P2PConfig()
+    db = DBConfig.sqlite_default(paths)
+    rpc = RPCConfig()
+    p2p = P2PConfig()
     policies = PolicyRoots()
 
     base: Dict[str, Any] = {
@@ -370,11 +381,19 @@ def load(config_file: Optional[str | Path] = None, **overrides: Any) -> Config:
         base = _merge_dict(base, {"chain": asdict(chain_env)})
     # Paths
     if "ANIMICA_DATA_DIR" in os.environ:
-        base["paths"]["data_dir"] = str(_env_path("ANIMICA_DATA_DIR", Path(base["paths"]["data_dir"])))
+        base["paths"]["data_dir"] = str(
+            _env_path("ANIMICA_DATA_DIR", Path(base["paths"]["data_dir"]))
+        )
     if "ANIMICA_LOGS_DIR" in os.environ:
-        base["paths"]["logs_dir"] = str(_env_path("ANIMICA_LOGS_DIR", Path(base["paths"]["logs_dir"])))
+        base["paths"]["logs_dir"] = str(
+            _env_path("ANIMICA_LOGS_DIR", Path(base["paths"]["logs_dir"]))
+        )
     if "ANIMICA_GENESIS_PATH" in os.environ:
-        base["paths"]["genesis_path"] = str(_env_path("ANIMICA_GENESIS_PATH", Path(base["paths"]["data_dir"]) / "genesis.json"))
+        base["paths"]["genesis_path"] = str(
+            _env_path(
+                "ANIMICA_GENESIS_PATH", Path(base["paths"]["data_dir"]) / "genesis.json"
+            )
+        )
     # DB
     if "ANIMICA_DB_URI" in os.environ:
         base["db"]["uri"] = os.environ["ANIMICA_DB_URI"]
@@ -382,7 +401,9 @@ def load(config_file: Optional[str | Path] = None, **overrides: Any) -> Config:
     if "ANIMICA_RPC_HOST" in os.environ:
         base["rpc"]["host"] = os.environ["ANIMICA_RPC_HOST"].strip()
     if "ANIMICA_RPC_HTTP_PORT" in os.environ:
-        base["rpc"]["http_port"] = _env_int("ANIMICA_RPC_HTTP_PORT", DEFAULT_RPC_HTTP_PORT)
+        base["rpc"]["http_port"] = _env_int(
+            "ANIMICA_RPC_HTTP_PORT", DEFAULT_RPC_HTTP_PORT
+        )
     if "ANIMICA_RPC_WS_PORT" in os.environ:
         base["rpc"]["ws_port"] = _env_int("ANIMICA_RPC_WS_PORT", DEFAULT_RPC_WS_PORT)
     if "ANIMICA_RPC_CORS" in os.environ:
@@ -404,9 +425,13 @@ def load(config_file: Optional[str | Path] = None, **overrides: Any) -> Config:
         base["p2p"]["max_peers"] = _env_int("ANIMICA_P2P_MAX_PEERS", 64)
     # Policy roots
     if "ANIMICA_POIES_POLICY_ROOT" in os.environ:
-        base["policies"]["poies_policy_root_hex"] = os.environ["ANIMICA_POIES_POLICY_ROOT"].strip()
+        base["policies"]["poies_policy_root_hex"] = os.environ[
+            "ANIMICA_POIES_POLICY_ROOT"
+        ].strip()
     if "ANIMICA_PQ_POLICY_ROOT" in os.environ:
-        base["policies"]["pq_alg_policy_root_hex"] = os.environ["ANIMICA_PQ_POLICY_ROOT"].strip()
+        base["policies"]["pq_alg_policy_root_hex"] = os.environ[
+            "ANIMICA_PQ_POLICY_ROOT"
+        ].strip()
 
     # 4) Overrides (highest)
     if overrides:
@@ -418,7 +443,11 @@ def load(config_file: Optional[str | Path] = None, **overrides: Any) -> Config:
         paths=PathsConfig(
             data_dir=_expand(base["paths"]["data_dir"]),
             logs_dir=_expand(base["paths"]["logs_dir"]),
-            genesis_path=_expand(base["paths"]["genesis_path"]) if base["paths"]["genesis_path"] else None,
+            genesis_path=(
+                _expand(base["paths"]["genesis_path"])
+                if base["paths"]["genesis_path"]
+                else None
+            ),
         ),
         db=DBConfig(**base["db"]),
         rpc=RPCConfig(
@@ -459,21 +488,32 @@ def _validate_hex_root(hexstr: Optional[str], name: str) -> None:
     if h.startswith("0x"):
         h = h[2:]
     if not re.fullmatch(r"[0-9a-f]{64}|[0-9a-f]{128}", h):
-        raise ValueError(f"{name} must be 32-byte or 64-byte hex (optionally 0x-prefixed), got: {hexstr!r}")
+        raise ValueError(
+            f"{name} must be 32-byte or 64-byte hex (optionally 0x-prefixed), got: {hexstr!r}"
+        )
 
 
 def _validate_db_uri(uri: str) -> None:
     # Accept sqlite:///..., rocksdb://..., memory://
-    if uri.startswith("sqlite:///") or uri.startswith("memory://") or uri.startswith("rocksdb://"):
+    if (
+        uri.startswith("sqlite:///")
+        or uri.startswith("memory://")
+        or uri.startswith("rocksdb://")
+    ):
         return
-    raise ValueError(f"Unsupported DB URI scheme in {uri!r}. Use sqlite:///path/to.db, rocksdb://path or memory://")
+    raise ValueError(
+        f"Unsupported DB URI scheme in {uri!r}. Use sqlite:///path/to.db, rocksdb://path or memory://"
+    )
 
 
 def _validate_config(cfg: Config) -> None:
     # Paths sanity
     if cfg.paths.genesis_path is not None and not cfg.paths.genesis_path.exists():
         # Not fatal: allow later creation; but warn via stderr for developer ergonomics.
-        print(f"[config] Warning: genesis file not found at {cfg.paths.genesis_path}", file=sys.stderr)
+        print(
+            f"[config] Warning: genesis file not found at {cfg.paths.genesis_path}",
+            file=sys.stderr,
+        )
 
     # DB
     _validate_db_uri(cfg.db.uri)
@@ -489,6 +529,7 @@ def _validate_config(cfg: Config) -> None:
 # ------------------------------
 # CLI helper
 # ------------------------------
+
 
 def _print_json(obj: Any) -> None:
     print(json.dumps(obj, indent=2, sort_keys=True))

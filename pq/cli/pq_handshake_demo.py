@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+
 """
 omni pq handshake demo — two-party Kyber768 KEM handshake with HKDF key schedule,
 transcript hash, and (optional) PQ identity signatures for mutual auth.
@@ -39,47 +40,50 @@ Security notes:
   • It’s intended for developer intuition and test harnesses, *not* production ops.
 """
 
-import os
-import json
 import argparse
-from dataclasses import dataclass, asdict
+import json
+import os
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 
 # --- Local PQ modules ---------------------------------------------------------
 
 try:
     # Hash/HKDF utilities
-    from pq.py.utils.hash import sha3_256
-    from pq.py.utils.hkdf import hkdf_sha3_256
-
+    # Algorithm registry (for friendly names/ids)
+    from pq.py import registry as pq_registry
     # KEM (Kyber-768) wrappers
-    from pq.py.algs.kyber768 import keygen as kyber_keygen
-    from pq.py.algs.kyber768 import encapsulate as kyber_encapsulate
     from pq.py.algs.kyber768 import decapsulate as kyber_decapsulate
-
+    from pq.py.algs.kyber768 import encapsulate as kyber_encapsulate
+    from pq.py.algs.kyber768 import keygen as kyber_keygen
     # Identity keygen/sign/verify (Dilithium3 or SPHINCS+)
     from pq.py.keygen import generate_keypair
     from pq.py.sign import sign_detached
+    from pq.py.utils.hash import sha3_256
+    from pq.py.utils.hkdf import hkdf_sha3_256
     from pq.py.verify import verify_detached
-
-    # Algorithm registry (for friendly names/ids)
-    from pq.py import registry as pq_registry
 except Exception as e:  # pragma: no cover
-    raise SystemExit(f"FATAL: missing pq package modules: {e}\n"
-                     "Hint: run from the repo root or add it to PYTHONPATH.")
+    raise SystemExit(
+        f"FATAL: missing pq package modules: {e}\n"
+        "Hint: run from the repo root or add it to PYTHONPATH."
+    )
 
 
 # --- Helpers -----------------------------------------------------------------
 
+
 def _hx(b: bytes) -> str:
     return b.hex()
+
 
 def _tag(label: str) -> bytes:
     return sha3_256(("animica|p2p|" + label).encode("utf-8"))
 
+
 def _transcript_hash(pk_i: bytes, pk_r: bytes, ct: bytes) -> bytes:
     return sha3_256(b"animica|p2p|handshake|" + pk_i + pk_r + ct)
+
 
 def _derive_keys(ss: bytes, pk_i: bytes, pk_r: bytes, ct: bytes) -> Dict[str, bytes]:
     """
@@ -100,6 +104,7 @@ def _derive_keys(ss: bytes, pk_i: bytes, pk_r: bytes, ct: bytes) -> Dict[str, by
 
 # --- Data structures ----------------------------------------------------------
 
+
 @dataclass
 class PartyKeys:
     kyber_pk: bytes
@@ -107,6 +112,7 @@ class PartyKeys:
     id_alg: Optional[str] = None
     id_pk: Optional[bytes] = None
     id_sk: Optional[bytes] = None
+
 
 @dataclass
 class HandshakeArtifacts:
@@ -149,15 +155,20 @@ class HandshakeArtifacts:
             "verify_responder_ok": self.verify_responder_ok,
             "checks": {
                 "ss_equal": self.ss_initiator == self.ss_responder,
-                "key_dir_match": (self.keys["i_tx"] == self.keys["r_rx"]
-                                  and self.keys["i_rx"] == self.keys["r_tx"]),
+                "key_dir_match": (
+                    self.keys["i_tx"] == self.keys["r_rx"]
+                    and self.keys["i_rx"] == self.keys["r_tx"]
+                ),
             },
         }
 
 
 # --- Main logic ---------------------------------------------------------------
 
-def run_demo(sig_alg: Optional[str] = "dilithium3", do_sign: bool = True) -> HandshakeArtifacts:
+
+def run_demo(
+    sig_alg: Optional[str] = "dilithium3", do_sign: bool = True
+) -> HandshakeArtifacts:
     """
     Build two Kyber keypairs, perform Kyber encaps/decaps, derive transcript & AEAD keys,
     and (optionally) generate/verify identity signatures over the transcript hash.
@@ -238,36 +249,62 @@ def _print_human(art: HandshakeArtifacts) -> None:
     print(f"  I.rx_key   = { _hx(art.keys['i_rx']) }")
     print(f"  R.tx_key   = { _hx(art.keys['r_tx']) }")
     print(f"  R.rx_key   = { _hx(art.keys['r_rx']) }")
-    print(f"  ✓ dir match? I.tx==R.rx and I.rx==R.tx → "
-          f"{art.keys['i_tx']==art.keys['r_rx'] and art.keys['i_rx']==art.keys['r_tx']}")
+    print(
+        f"  ✓ dir match? I.tx==R.rx and I.rx==R.tx → "
+        f"{art.keys['i_tx']==art.keys['r_rx'] and art.keys['i_rx']==art.keys['r_tx']}"
+    )
     print()
     if art.sign_initiator is not None:
         print(f"Identity signatures ({art.initiator.id_alg}):")
-        print(f"  sig(I) = { _hx(art.sign_initiator) }  → verify={art.verify_initiator_ok}")
-        print(f"  sig(R) = { _hx(art.sign_responder) }  → verify={art.verify_responder_ok}")
+        print(
+            f"  sig(I) = { _hx(art.sign_initiator) }  → verify={art.verify_initiator_ok}"
+        )
+        print(
+            f"  sig(R) = { _hx(art.sign_responder) }  → verify={art.verify_responder_ok}"
+        )
         print()
+
 
 def _write_out(out_dir: Path, art: HandshakeArtifacts) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "handshake.json").write_text(json.dumps(art.to_jsonable(), indent=2), encoding="utf-8")
+    (out_dir / "handshake.json").write_text(
+        json.dumps(art.to_jsonable(), indent=2), encoding="utf-8"
+    )
     (out_dir / "ct.hex").write_text(_hx(art.ct) + "\n", encoding="utf-8")
-    (out_dir / "transcript_hash.hex").write_text(_hx(art.transcript_hash) + "\n", encoding="utf-8")
+    (out_dir / "transcript_hash.hex").write_text(
+        _hx(art.transcript_hash) + "\n", encoding="utf-8"
+    )
     (out_dir / "keys.txt").write_text(
-        "\n".join([
-            f"I.tx_key={_hx(art.keys['i_tx'])}",
-            f"I.rx_key={_hx(art.keys['i_rx'])}",
-            f"R.tx_key={_hx(art.keys['r_tx'])}",
-            f"R.rx_key={_hx(art.keys['r_rx'])}",
-        ]) + "\n", encoding="utf-8"
+        "\n".join(
+            [
+                f"I.tx_key={_hx(art.keys['i_tx'])}",
+                f"I.rx_key={_hx(art.keys['i_rx'])}",
+                f"R.tx_key={_hx(art.keys['r_tx'])}",
+                f"R.rx_key={_hx(art.keys['r_rx'])}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
     )
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description="Two-party Kyber768 handshake & transcript demo.")
-    ap.add_argument("--sig-alg", default="dilithium3",
-                    help="PQ identity signature algorithm: dilithium3 | sphincs-shake-128s (default: dilithium3)")
-    ap.add_argument("--no-sign", action="store_true", help="Skip identity signatures (unauthenticated demo).")
-    ap.add_argument("--json", action="store_true", help="Emit JSON instead of human-readable text.")
+    ap = argparse.ArgumentParser(
+        description="Two-party Kyber768 handshake & transcript demo."
+    )
+    ap.add_argument(
+        "--sig-alg",
+        default="dilithium3",
+        help="PQ identity signature algorithm: dilithium3 | sphincs-shake-128s (default: dilithium3)",
+    )
+    ap.add_argument(
+        "--no-sign",
+        action="store_true",
+        help="Skip identity signatures (unauthenticated demo).",
+    )
+    ap.add_argument(
+        "--json", action="store_true", help="Emit JSON instead of human-readable text."
+    )
     ap.add_argument("--out", type=Path, help="Optional output directory for artifacts.")
     args = ap.parse_args(argv)
 
@@ -283,9 +320,11 @@ def main(argv: Optional[list[str]] = None) -> int:
         _write_out(args.out, art)
 
     # sanity: return nonzero if checks fail
-    ok = (art.ss_initiator == art.ss_responder) and \
-         (art.keys["i_tx"] == art.keys["r_rx"]) and \
-         (art.keys["i_rx"] == art.keys["r_tx"])
+    ok = (
+        (art.ss_initiator == art.ss_responder)
+        and (art.keys["i_tx"] == art.keys["r_rx"])
+        and (art.keys["i_rx"] == art.keys["r_tx"])
+    )
     if do_sign:
         ok = ok and bool(art.verify_initiator_ok) and bool(art.verify_responder_ok)
 

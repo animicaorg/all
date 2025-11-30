@@ -34,10 +34,12 @@ __all__ = [
     "vm_entry",
 ]
 
+
 def __getattr__(name: str) -> Any:  # PEP 562 lazy import
     if name in __all__:
         return import_module(f"{__name__}.{name}")
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 def __dir__() -> List[str]:
     return sorted(list(globals().keys()) + __all__)

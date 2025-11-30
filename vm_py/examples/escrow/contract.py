@@ -32,7 +32,7 @@ Notes / Simplifications:
   decoded by tooling before calling into the VM).
 """
 
-from stdlib import storage, events, abi, treasury  # deterministic stdlib
+from stdlib import abi, events, storage, treasury  # deterministic stdlib
 
 # Storage keys
 _KEY_STATE = b"escrow:state"
@@ -92,8 +92,14 @@ def setup(depositor: bytes, beneficiary: bytes, amount: int) -> None:
     - depositor and beneficiary are non-empty (opaque) byte strings
     """
     abi.require(_get_state() == STATE_INIT, b"escrow: already inited")
-    abi.require(isinstance(depositor, (bytes, bytearray)) and len(depositor) > 0, b"escrow: bad depositor")
-    abi.require(isinstance(beneficiary, (bytes, bytearray)) and len(beneficiary) > 0, b"escrow: bad beneficiary")
+    abi.require(
+        isinstance(depositor, (bytes, bytearray)) and len(depositor) > 0,
+        b"escrow: bad depositor",
+    )
+    abi.require(
+        isinstance(beneficiary, (bytes, bytearray)) and len(beneficiary) > 0,
+        b"escrow: bad beneficiary",
+    )
     abi.require(isinstance(amount, int) and amount > 0, b"escrow: bad amount")
 
     storage.set(_KEY_DEPOSITOR, bytes(depositor))
@@ -120,7 +126,9 @@ def deposit_check() -> None:
     Mark FUNDED if contract balance covers required amount.
     No funds are moved here; deposit is assumed to have been made out-of-band.
     """
-    abi.require(_get_state() in (STATE_INIT, STATE_FUNDED), b"escrow: immutable after finish")
+    abi.require(
+        _get_state() in (STATE_INIT, STATE_FUNDED), b"escrow: immutable after finish"
+    )
     req = _get_amount()
     abi.require(req > 0, b"escrow: not configured")
     if treasury.balance() >= req:
@@ -173,6 +181,7 @@ def refund() -> None:
 
     _set_state(STATE_REFUNDED)
     events.emit(b"Escrow.Refunded", {b"to": depositor, b"amount": amt})
+
 
 # --- Animica test-compat shim: disallow calling setup() twice ---
 

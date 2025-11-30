@@ -33,10 +33,10 @@ from typing import Any, Dict, Optional, Tuple
 
 import pytest
 
-from tests.e2e import env, skip_unless_e2e, default_timeout
-
+from tests.e2e import default_timeout, env, skip_unless_e2e
 
 # ----------------------------- JSON-RPC mock node -----------------------------
+
 
 def _pick_free_port() -> int:
     s = socket.socket()
@@ -73,22 +73,43 @@ class _RpcHandler(BaseHTTPRequestHandler):
         try:
             doc = json.loads(raw.decode("utf-8"))
         except Exception:
-            return self._send({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}, 400)
+            return self._send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32700, "message": "Parse error"},
+                },
+                400,
+            )
 
         mid = doc.get("id")
         method = doc.get("method")
         params = doc.get("params") or []
 
         if method == "chain.getChainId":
-            return self._send({"jsonrpc": "2.0", "id": mid, "result": self.rec.chain_id})
+            return self._send(
+                {"jsonrpc": "2.0", "id": mid, "result": self.rec.chain_id}
+            )
 
         if method == "tx.sendRawTransaction":
-            if not (isinstance(params, list) and params and isinstance(params[0], str) and params[0].startswith("0x")):
-                return self._send({"jsonrpc": "2.0", "id": mid,
-                                   "error": {"code": -32602, "message": "raw tx hex required"}}, 400)
+            if not (
+                isinstance(params, list)
+                and params
+                and isinstance(params[0], str)
+                and params[0].startswith("0x")
+            ):
+                return self._send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": mid,
+                        "error": {"code": -32602, "message": "raw tx hex required"},
+                    },
+                    400,
+                )
             raw_hex = params[0]
             # Hash is deterministic over provided hex string (sufficient for e2e)
             import hashlib
+
             tx_hash = "0x" + hashlib.sha3_256(raw_hex.encode("utf-8")).hexdigest()
             self.rec.sent[tx_hash] = {
                 "transactionHash": tx_hash,
@@ -101,28 +122,45 @@ class _RpcHandler(BaseHTTPRequestHandler):
 
         if method == "tx.getTransactionReceipt":
             if not (isinstance(params, list) and params and isinstance(params[0], str)):
-                return self._send({"jsonrpc": "2.0", "id": mid,
-                                   "error": {"code": -32602, "message": "tx hash required"}}, 400)
+                return self._send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": mid,
+                        "error": {"code": -32602, "message": "tx hash required"},
+                    },
+                    400,
+                )
             rec = self.rec.sent.get(params[0])
             return self._send({"jsonrpc": "2.0", "id": mid, "result": rec})
 
-        return self._send({"jsonrpc": "2.0", "id": mid,
-                           "error": {"code": -32601, "message": f"Method not found: {method}"}}, 404)
+        return self._send(
+            {
+                "jsonrpc": "2.0",
+                "id": mid,
+                "error": {"code": -32601, "message": f"Method not found: {method}"},
+            },
+            404,
+        )
 
     def log_message(self, *_: Any) -> None:  # hush test logs
         return
 
 
-def _start_mock_node(chain_id: int) -> Tuple[str, HTTPServer, threading.Thread, _Recorder]:
+def _start_mock_node(
+    chain_id: int,
+) -> Tuple[str, HTTPServer, threading.Thread, _Recorder]:
     port = _pick_free_port()
     server = HTTPServer(("127.0.0.1", port), _RpcHandler)
     server.recorder = _Recorder(chain_id=chain_id)  # type: ignore[attr-defined]
-    t = threading.Thread(target=server.serve_forever, name="StudioWebMockRPC", daemon=True)
+    t = threading.Thread(
+        target=server.serve_forever, name="StudioWebMockRPC", daemon=True
+    )
     t.start()
     return f"http://127.0.0.1:{port}", server, t, server.recorder  # type: ignore[attr-defined]
 
 
 # ------------------------------- wallet provider ------------------------------
+
 
 def _provider_init_script(rpc_base: str) -> str:
     """
@@ -211,13 +249,16 @@ def _provider_init_script(rpc_base: str) -> str:
 
 # ---------------------------------- the test ----------------------------------
 
+
 @pytest.mark.timeout(420)
 def test_studio_web_deploy_template_flow():
     skip_unless_e2e()
 
     web_url = env("STUDIO_WEB_URL")
     if not web_url:
-        pytest.skip("STUDIO_WEB_URL is not set; provide a running studio-web (e.g., http://127.0.0.1:5173)")
+        pytest.skip(
+            "STUDIO_WEB_URL is not set; provide a running studio-web (e.g., http://127.0.0.1:5173)"
+        )
 
     chain_id = int(env("E2E_CHAIN_ID", "1337") or "1337")
     rpc_url = env("ANIMICA_RPC_URL")
@@ -239,6 +280,7 @@ def test_studio_web_deploy_template_flow():
             )
 
         from playwright.sync_api import sync_playwright  # type: ignore
+
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             ctx = browser.new_context()
@@ -250,7 +292,9 @@ def test_studio_web_deploy_template_flow():
             # Try navigating to Deploy view if there's a visible link
             navigated = False
             try:
-                link = page.get_by_role("link", name=lambda n: bool(n and "deploy" in n.lower()))
+                link = page.get_by_role(
+                    "link", name=lambda n: bool(n and "deploy" in n.lower())
+                )
                 if link and link.count():
                     link.first.click()
                     navigated = True
@@ -261,7 +305,10 @@ def test_studio_web_deploy_template_flow():
                 # Try common hash-route variants
                 for path in ("#/deploy", "/deploy", "#/Deploy"):
                     try:
-                        page.goto(web_url.rstrip("/") + "/" + path.lstrip("/"), wait_until="domcontentloaded")
+                        page.goto(
+                            web_url.rstrip("/") + "/" + path.lstrip("/"),
+                            wait_until="domcontentloaded",
+                        )
                         navigated = True
                         break
                     except Exception:
@@ -272,23 +319,35 @@ def test_studio_web_deploy_template_flow():
             try:
                 # Option A: Scaffold a template if the page exposes a "Scaffold" or "Templates" tab
                 # (we only try soft selectors to avoid coupling; failures are ok)
-                maybe_scaffold = page.get_by_role("link", name=lambda n: bool(n and "scaffold" in n.lower()))
+                maybe_scaffold = page.get_by_role(
+                    "link", name=lambda n: bool(n and "scaffold" in n.lower())
+                )
                 if maybe_scaffold and maybe_scaffold.count():
                     maybe_scaffold.first.click()
                 # Try to select "Counter" template
-                maybe_counter = page.get_by_role("button", name=lambda n: bool(n and "counter" in n.lower()))
+                maybe_counter = page.get_by_role(
+                    "button", name=lambda n: bool(n and "counter" in n.lower())
+                )
                 if maybe_counter and maybe_counter.count():
                     maybe_counter.first.click()
                 # Navigate to Deploy page again
-                maybe_deploy_tab = page.get_by_role("link", name=lambda n: bool(n and "deploy" in n.lower()))
+                maybe_deploy_tab = page.get_by_role(
+                    "link", name=lambda n: bool(n and "deploy" in n.lower())
+                )
                 if maybe_deploy_tab and maybe_deploy_tab.count():
                     maybe_deploy_tab.first.click()
                 # Find a generic "Deploy" button on the page
-                deploy_btn = page.get_by_role("button", name=lambda n: bool(n and "deploy" in n.lower()))
+                deploy_btn = page.get_by_role(
+                    "button", name=lambda n: bool(n and "deploy" in n.lower())
+                )
                 if deploy_btn and deploy_btn.count():
                     deploy_btn.first.click()
                     page.wait_for_timeout(600)  # allow any dialogs/requests
-                    txt = (page.text_content("body") or "") + " " + (page.text_content("pre") or "")
+                    txt = (
+                        (page.text_content("body") or "")
+                        + " "
+                        + (page.text_content("pre") or "")
+                    )
                     if "txHash" in txt or "transaction" in txt.lower():
                         deployed_via_ui = True
             except Exception:
@@ -296,10 +355,16 @@ def test_studio_web_deploy_template_flow():
 
             # Fallback: programmatic deploy through injected provider harness
             if not deployed_via_ui:
-                res = page.evaluate("() => window.__animicaTestHarness && window.__animicaTestHarness.deployDummy()")
+                res = page.evaluate(
+                    "() => window.__animicaTestHarness && window.__animicaTestHarness.deployDummy()"
+                )
                 assert isinstance(res, dict), "Injected deploy returned non-dict"
-                assert isinstance(res.get("txHash"), str) and res["txHash"].startswith("0x"), "Missing txHash from provider"
-                assert res.get("receipt", {}).get("status") == 1, "Receipt status not successful"
+                assert isinstance(res.get("txHash"), str) and res["txHash"].startswith(
+                    "0x"
+                ), "Missing txHash from provider"
+                assert (
+                    res.get("receipt", {}).get("status") == 1
+                ), "Receipt status not successful"
 
             ctx.close()
             browser.close()

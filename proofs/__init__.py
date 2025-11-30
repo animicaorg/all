@@ -10,7 +10,8 @@ Public surface:
 - registry: functions to register/resolve verifiers (type_id ↔ verifier)
 """
 
+from . import \
+    registry  # re-export registry module (get_verifier, register_verifier, ...)
 from .version import __version__  # re-export module version
-from . import registry  # re-export registry module (get_verifier, register_verifier, ...)
 
 __all__ = ["__version__", "registry"]

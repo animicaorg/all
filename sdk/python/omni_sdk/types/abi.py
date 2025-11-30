@@ -12,15 +12,18 @@ We intentionally avoid a heavy JSON-Schema dependency to keep the SDK slim.
 Validation here is structural and type-string–aware.
 """
 
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple, TypedDict, Union, Literal
 import re
+from dataclasses import dataclass
+from typing import (Any, Dict, List, Literal, Optional, Sequence, Tuple,
+                    TypedDict, Union)
 
 try:
     from omni_sdk.errors import AbiError
 except Exception:  # pragma: no cover
+
     class AbiError(ValueError):
         pass
+
 
 # --- Type-string parsing -----------------------------------------------------
 
@@ -31,10 +34,10 @@ _BASE_TYPES = {
     **{f"i{b}": True for b in (8, 16, 32, 64, 128, 256)},
     # misc scalars
     "bool": True,
-    "address": True,   # bech32m string at the wire level
-    "hash": True,      # 32-byte hex
-    "bytes": True,     # dynamic
-    "string": True,    # utf-8
+    "address": True,  # bech32m string at the wire level
+    "hash": True,  # 32-byte hex
+    "bytes": True,  # dynamic
+    "string": True,  # utf-8
     # fixed-size bytes
     **{f"bytes{n}": True for n in range(1, 33)},
 }
@@ -110,7 +113,9 @@ def _peel_array_suffixes(t: str) -> Tuple[str, List[Optional[int]]]:
     return t, dims
 
 
-def _parse_type(type_str: str) -> Union[str, Tuple[str, Tuple[Union[str, Tuple], ...], Tuple[Optional[int], ...]]]:
+def _parse_type(
+    type_str: str,
+) -> Union[str, Tuple[str, Tuple[Union[str, Tuple], ...], Tuple[Optional[int], ...]]]:
     """
     Parse a type string into a structured form:
       - base scalar like "u256"
@@ -133,6 +138,7 @@ def _parse_type(type_str: str) -> Union[str, Tuple[str, Tuple[Union[str, Tuple],
 
 
 # --- ABI shapes --------------------------------------------------------------
+
 
 class AbiParam(TypedDict, total=False):
     name: str
@@ -161,6 +167,7 @@ Abi = List[AbiEntry]
 
 # --- Validation & normalization ---------------------------------------------
 
+
 def _require(cond: bool, msg: str) -> None:
     if not cond:
         raise AbiError(msg)
@@ -174,7 +181,11 @@ def _validate_param(p: Dict[str, Any], ctx: str) -> AbiParam:
     _require(isinstance(typ, str), f"{ctx}: param.type must be string")
     ctyp = canonical_type(typ)
     indexed = bool(p.get("indexed", False))
-    return {"name": name, "type": ctyp, **({"indexed": indexed} if "indexed" in p else {})}
+    return {
+        "name": name,
+        "type": ctyp,
+        **({"indexed": indexed} if "indexed" in p else {}),
+    }
 
 
 def _validate_fn(e: Dict[str, Any]) -> AbiFunction:
@@ -185,7 +196,10 @@ def _validate_fn(e: Dict[str, Any]) -> AbiFunction:
     _require(isinstance(inputs, list), "function.inputs must be a list")
     _require(isinstance(outputs, list), "function.outputs must be a list")
     mut = e.get("stateMutability", "nonpayable")
-    _require(mut in ("view", "pure", "nonpayable", "payable"), "function.stateMutability invalid")
+    _require(
+        mut in ("view", "pure", "nonpayable", "payable"),
+        "function.stateMutability invalid",
+    )
 
     v_inputs = [_validate_param(p, f"function {name} input") for p in inputs]
     v_outputs = [_validate_param(p, f"function {name} output") for p in outputs]
@@ -291,6 +305,7 @@ def event_topic(ev: Union[AbiEvent, Tuple[str, Sequence[AbiParam]]]) -> bytes:
 
 
 # --- Convenience model -------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class AbiModel:

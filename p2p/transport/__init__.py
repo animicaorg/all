@@ -21,9 +21,9 @@ module import stays fast. Use ``available_transports()`` to probe what's usable.
 from typing import Dict
 
 try:  # Prefer the real ABCs when base.py is present
-    from .base import Transport, Conn, Stream  # type: ignore
+    from .base import Conn, Stream, Transport  # type: ignore
 except Exception:  # pragma: no cover - fallback Protocols for early-import contexts
-    from typing import Protocol, runtime_checkable, Any
+    from typing import Any, Protocol, runtime_checkable
 
     @runtime_checkable
     class Stream(Protocol):  # minimal surface for type-checkers
@@ -39,16 +39,27 @@ except Exception:  # pragma: no cover - fallback Protocols for early-import cont
     @runtime_checkable
     class Transport(Protocol):
         name: str
+
         async def listen(self, addr: str) -> None: ...
         async def dial(self, addr: str) -> Conn: ...
         async def close(self) -> None: ...
 
-__all__ = ["Transport", "Conn", "Stream", "available_transports", "has_tcp", "has_quic", "has_ws"]
+
+__all__ = [
+    "Transport",
+    "Conn",
+    "Stream",
+    "available_transports",
+    "has_tcp",
+    "has_quic",
+    "has_ws",
+]
 
 
 def has_tcp() -> bool:
     try:
         from . import tcp  # noqa: F401
+
         return True
     except Exception:
         return False
@@ -57,6 +68,7 @@ def has_tcp() -> bool:
 def has_quic() -> bool:
     try:
         from . import quic  # noqa: F401
+
         return True
     except Exception:
         return False
@@ -65,6 +77,7 @@ def has_quic() -> bool:
 def has_ws() -> bool:
     try:
         from . import ws  # noqa: F401
+
         return True
     except Exception:
         return False

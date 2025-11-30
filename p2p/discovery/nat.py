@@ -56,7 +56,8 @@ except Exception:  # pragma: no cover - optional
 # natpmp (NAT-PMP / PCP)
 try:  # pragma: no cover - optional path
     # There are a few variants; try the common one first.
-    from natpmp import NatPMP, NATPMPNetworkError, NATPMPProtocolError  # type: ignore
+    from natpmp import (NatPMP, NATPMPNetworkError,  # type: ignore
+                        NATPMPProtocolError)
 except Exception:  # pragma: no cover - optional
     NatPMP = None  # type: ignore
     NATPMPNetworkError = Exception  # type: ignore
@@ -65,20 +66,22 @@ except Exception:  # pragma: no cover - optional
 
 # ---- Data model --------------------------------------------------------------
 
+
 @dataclass
 class NATStatus:
-    method: Optional[str] = None         # "upnp" | "natpmp" | None
+    method: Optional[str] = None  # "upnp" | "natpmp" | None
     public_ip: Optional[str] = None
     public_port: Optional[int] = None
     internal_ip: Optional[str] = None
     internal_port: Optional[int] = None
     proto: str = "TCP"
-    ttl: int = 30 * 60                   # seconds (mapping lifetime)
+    ttl: int = 30 * 60  # seconds (mapping lifetime)
     ok: bool = False
     details: Optional[str] = None
 
 
 # ---- Manager -----------------------------------------------------------------
+
 
 class NATManager:
     """
@@ -99,7 +102,7 @@ class NATManager:
         proto: str = "TCP",
         desc: str = "Animica P2P",
         ttl_seconds: int = 30 * 60,
-        prefer: str = "auto",   # "auto" | "upnp" | "natpmp"
+        prefer: str = "auto",  # "auto" | "upnp" | "natpmp"
     ) -> None:
         self.internal_port = int(internal_port)
         self.public_port = int(public_port or internal_port)
@@ -122,8 +125,8 @@ class NATManager:
         self._stopped = asyncio.Event()
 
         # Backends
-        self._upnpc = None       # type: ignore
-        self._natpmp = None      # type: ignore
+        self._upnpc = None  # type: ignore
+        self._natpmp = None  # type: ignore
 
     # -- lifecycle -------------------------------------------------------------
 
@@ -234,7 +237,7 @@ class NATManager:
             internal_ip,
             self.internal_port,
             self.desc,
-            ""  # remoteHost (wildcard)
+            "",  # remoteHost (wildcard)
         )
         if not ok:
             return False
@@ -302,7 +305,9 @@ class NATManager:
                 public_ip = ".".join(str(x) for x in public_ip)
             if isinstance(public_ip, int):
                 # some libs return a 32-bit int
-                public_ip = ".".join(str((public_ip >> (8 * i)) & 0xFF) for i in (3, 2, 1, 0))
+                public_ip = ".".join(
+                    str((public_ip >> (8 * i)) & 0xFF) for i in (3, 2, 1, 0)
+                )
             ipaddress.ip_address(public_ip)  # validate
         except Exception:
             public_ip = None
@@ -367,7 +372,9 @@ class NATManager:
         except asyncio.CancelledError:
             pass
 
+
 # ---- Convenience -------------------------------------------------------------
+
 
 async def auto_configure(
     internal_port: int,

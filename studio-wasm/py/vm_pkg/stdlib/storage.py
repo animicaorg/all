@@ -36,7 +36,6 @@ from typing import Optional
 from ..errors import ValidationError
 from ..runtime import storage_api
 
-
 # ---------------- Validation ----------------
 
 _MAX_KEY_LEN = 128
@@ -67,6 +66,7 @@ def _check_val(val: bytes) -> bytes:
 
 # ---------------- Raw ops ----------------
 
+
 def get_raw(key: bytes) -> Optional[bytes]:
     """Return raw value for key, or None if missing."""
     key = _check_key(key)
@@ -93,6 +93,7 @@ def exists(key: bytes) -> bool:
 
 
 # ---------------- Bytes helpers ----------------
+
 
 def get_bytes(key: bytes, default: bytes = b"") -> bytes:
     """

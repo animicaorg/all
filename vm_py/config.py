@@ -34,13 +34,12 @@ Usage:
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib import resources as importlib_resources
 from pathlib import Path
-from typing import Optional, Dict, Any
-import os
-
+from typing import Any, Dict, Optional
 
 # ----------------------------- helpers ---------------------------------------
 
@@ -74,7 +73,9 @@ def _env_int(name: str, default: int, *, min_v: int, max_v: int) -> int:
 
 
 def _env_path(name: str) -> Optional[Path]:
-    raw = os.getenv(name) or os.getenv(name.replace("ANIMICA_", "VM_").replace("VM_", "VM_PY_"))
+    raw = os.getenv(name) or os.getenv(
+        name.replace("ANIMICA_", "VM_").replace("VM_", "VM_PY_")
+    )
     if not raw:
         return None
     try:
@@ -162,16 +163,34 @@ def load_config() -> VMConfig:
         strict_mode=strict,
         enable_experimental=experimental,
         gas_table_path=gas_path,
-        max_ops_per_call=_env_int("ANIMICA_VM_MAX_OPS", 2_000_000, min_v=10_000, max_v=50_000_000),
+        max_ops_per_call=_env_int(
+            "ANIMICA_VM_MAX_OPS", 2_000_000, min_v=10_000, max_v=50_000_000
+        ),
         max_call_depth=_env_int("ANIMICA_VM_MAX_CALL_DEPTH", 64, min_v=8, max_v=1024),
-        max_code_bytes=_env_int("ANIMICA_VM_MAX_CODE_BYTES", 512_000, min_v=4_096, max_v=8_388_608),
-        max_abi_payload_bytes=_env_int("ANIMICA_VM_MAX_ABI_BYTES", 256_000, min_v=1_024, max_v=8_388_608),
-        max_return_bytes=_env_int("ANIMICA_VM_MAX_RETURN_BYTES", 256_000, min_v=1_024, max_v=8_388_608),
-        max_event_args_bytes=_env_int("ANIMICA_VM_MAX_EVENT_ARGS_BYTES", 256_000, min_v=1_024, max_v=8_388_608),
-        max_storage_key_bytes=_env_int("ANIMICA_VM_MAX_STORAGE_KEY_BYTES", 64, min_v=1, max_v=256),
-        max_storage_value_bytes=_env_int("ANIMICA_VM_MAX_STORAGE_VAL_BYTES", 131_072, min_v=32, max_v=1_048_576),
-        max_logs_per_tx=_env_int("ANIMICA_VM_MAX_LOGS_PER_TX", 1024, min_v=1, max_v=10_000),
-        max_syscall_payload_bytes=_env_int("ANIMICA_VM_MAX_SYSCALL_BYTES", 131_072, min_v=1_024, max_v=1_048_576),
+        max_code_bytes=_env_int(
+            "ANIMICA_VM_MAX_CODE_BYTES", 512_000, min_v=4_096, max_v=8_388_608
+        ),
+        max_abi_payload_bytes=_env_int(
+            "ANIMICA_VM_MAX_ABI_BYTES", 256_000, min_v=1_024, max_v=8_388_608
+        ),
+        max_return_bytes=_env_int(
+            "ANIMICA_VM_MAX_RETURN_BYTES", 256_000, min_v=1_024, max_v=8_388_608
+        ),
+        max_event_args_bytes=_env_int(
+            "ANIMICA_VM_MAX_EVENT_ARGS_BYTES", 256_000, min_v=1_024, max_v=8_388_608
+        ),
+        max_storage_key_bytes=_env_int(
+            "ANIMICA_VM_MAX_STORAGE_KEY_BYTES", 64, min_v=1, max_v=256
+        ),
+        max_storage_value_bytes=_env_int(
+            "ANIMICA_VM_MAX_STORAGE_VAL_BYTES", 131_072, min_v=32, max_v=1_048_576
+        ),
+        max_logs_per_tx=_env_int(
+            "ANIMICA_VM_MAX_LOGS_PER_TX", 1024, min_v=1, max_v=10_000
+        ),
+        max_syscall_payload_bytes=_env_int(
+            "ANIMICA_VM_MAX_SYSCALL_BYTES", 131_072, min_v=1_024, max_v=1_048_576
+        ),
     )
     return cfg
 

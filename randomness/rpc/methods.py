@@ -23,18 +23,21 @@ All hex-typed inputs/outputs are 0x-prefixed.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Mapping, Callable
+from typing import Any, Callable, Dict, Mapping, Optional
+
 from pydantic import BaseModel, Field, validator
 
 # Import only for typing; the concrete implementation lives in adapters.rpc_mount.
 try:
     from ..adapters.rpc_mount import RandomnessService  # type: ignore
 except Exception:  # pragma: no cover - typing fallback if import side-effects
+
     class RandomnessService:  # type: ignore
         pass
 
 
 # ---------- helpers ----------
+
 
 def _strip_0x(s: str) -> str:
     return s[2:] if s.startswith("0x") or s.startswith("0X") else s
@@ -49,6 +52,7 @@ def _bytes_to_hex(b: bytes) -> str:
 
 
 # ---------- request models ----------
+
 
 class _RoundArg(BaseModel):
     round_id: Optional[int] = Field(
@@ -103,14 +107,19 @@ class HistoryQuery(BaseModel):
 
 # ---------- method handlers ----------
 
-def rand_get_params(service: RandomnessService, _args: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+
+def rand_get_params(
+    service: RandomnessService, _args: Optional[Mapping[str, Any]] = None
+) -> Dict[str, Any]:
     """
     Returns beacon/round/VDF parameters and config.
     """
     return service.get_params()
 
 
-def rand_get_round(service: RandomnessService, _args: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+def rand_get_round(
+    service: RandomnessService, _args: Optional[Mapping[str, Any]] = None
+) -> Dict[str, Any]:
     """
     Returns current round info: round_id, phase, deadlines, now.
     """
@@ -162,7 +171,9 @@ def rand_reveal(service: RandomnessService, args: Mapping[str, Any]) -> Dict[str
     )
 
 
-def rand_get_beacon(service: RandomnessService, args: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+def rand_get_beacon(
+    service: RandomnessService, args: Optional[Mapping[str, Any]] = None
+) -> Dict[str, Any]:
     """
     Get the finalized beacon output for the given or latest round.
 
@@ -179,7 +190,9 @@ def rand_get_beacon(service: RandomnessService, args: Optional[Mapping[str, Any]
     return service.get_beacon(round_id=q.round_id)
 
 
-def rand_get_history(service: RandomnessService, args: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+def rand_get_history(
+    service: RandomnessService, args: Optional[Mapping[str, Any]] = None
+) -> Dict[str, Any]:
     """
     Paginated history of recent beacons. Returns:
       - items: [beacon_record, ...]

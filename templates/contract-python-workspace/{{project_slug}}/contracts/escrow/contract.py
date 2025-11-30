@@ -42,7 +42,8 @@ Events (canonical, bytes names)
 from __future__ import annotations
 
 # Contract-safe standard library (deterministic subset)
-from stdlib import storage, events, abi, treasury  # type: ignore[import-not-found]
+from stdlib import (abi, events, storage,  # type: ignore[import-not-found]
+                    treasury)
 
 # ---- storage keys ------------------------------------------------------------
 
@@ -135,7 +136,9 @@ def status() -> bytes:
 # ---- mutators ----------------------------------------------------------------
 
 
-def init(payer_addr: bytes, payee_addr: bytes, arbiter_addr: bytes, amount: int) -> None:
+def init(
+    payer_addr: bytes, payee_addr: bytes, arbiter_addr: bytes, amount: int
+) -> None:
     """
     Initialize the escrow. Callable once.
     """

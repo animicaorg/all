@@ -36,7 +36,7 @@ API
 from __future__ import annotations
 
 import struct
-from typing import Any, Iterable, Mapping, Tuple, Union, Optional
+from typing import Any, Iterable, Mapping, Optional, Tuple, Union
 
 from .bytes import ensure_bytes, to_hex
 
@@ -49,6 +49,7 @@ except Exception:  # pragma: no cover
 # -----------------------------------------------------------------------------
 # Exceptions
 # -----------------------------------------------------------------------------
+
 
 class CBOREncodeError(ValueError):
     pass
@@ -63,6 +64,7 @@ BytesLike = Union[bytes, bytearray, memoryview]
 # -----------------------------------------------------------------------------
 # Public API
 # -----------------------------------------------------------------------------
+
 
 def dumps(obj: Any) -> bytes:
     """Encode *obj* to deterministic CBOR bytes."""
@@ -205,6 +207,7 @@ def _encode_key(key: Any) -> bytes:
 # Minimal decoder (fallback)
 # -----------------------------------------------------------------------------
 
+
 class _Reader:
     __slots__ = ("b", "i", "n")
 
@@ -282,7 +285,7 @@ def _decode_one(r: _Reader) -> Any:
             # encoded bytes, but we keep decoding simple and just build dict.
             k_start = r.i
             k = _decode_one(r)
-            k_bytes = r.b[k_start:r.i]
+            k_bytes = r.b[k_start : r.i]
             if last_key_bytes is not None and last_key_bytes > k_bytes:
                 # Not fatal for general CBOR, but we enforce to catch non-deterministic encodings early.
                 raise CBORDecodeError("map keys out of deterministic order")

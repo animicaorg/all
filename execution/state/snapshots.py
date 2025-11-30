@@ -39,17 +39,17 @@ All bytes are opaque and domain-separated by higher layers.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
-from typing import Dict, Optional, Set, Tuple, Iterable, MutableMapping
+from dataclasses import asdict, dataclass, field
+from typing import Dict, Iterable, MutableMapping, Optional, Set, Tuple
 
 from .accounts import Account
-from .storage import StorageView
 from .journal import Journal  # same-package access to overlays is acceptable
-
+from .storage import StorageView
 
 # =============================================================================
 # Diff object
 # =============================================================================
+
 
 @dataclass
 class StateDiff:
@@ -68,12 +68,19 @@ class StateDiff:
     - If an address is present in accounts_upsert, that upsert overrides
       any previous delete for that address (last-wins policy).
     """
+
     accounts_upsert: Dict[bytes, Account] = field(default_factory=dict)
     accounts_delete: Set[bytes] = field(default_factory=set)
-    storage_writes: Dict[bytes, Dict[bytes, Optional[bytes]]] = field(default_factory=dict)
+    storage_writes: Dict[bytes, Dict[bytes, Optional[bytes]]] = field(
+        default_factory=dict
+    )
 
     def is_empty(self) -> bool:
-        return not (self.accounts_upsert or self.accounts_delete or any(self.storage_writes.values()))
+        return not (
+            self.accounts_upsert
+            or self.accounts_delete
+            or any(self.storage_writes.values())
+        )
 
     def items_count(self) -> int:
         n = len(self.accounts_upsert) + len(self.accounts_delete)
@@ -145,14 +152,16 @@ def diff_since(journal: Journal, marker: SnapshotId) -> StateDiff:
 
     for layer in layers:
         # 1) Apply destructions (except addresses resurrected in this very layer via accounts dict)
-        for addr in (layer.destroyed - set(layer.accounts.keys())):
+        for addr in layer.destroyed - set(layer.accounts.keys()):
             acc_delete.add(addr)
             acc_upsert.pop(addr, None)
             stor.pop(addr, None)
 
         # 2) Upserts override deletions
         for addr, acct in layer.accounts.items():
-            acc_upsert[addr] = Account(nonce=acct.nonce, balance=acct.balance, code_hash=acct.code_hash)
+            acc_upsert[addr] = Account(
+                nonce=acct.nonce, balance=acct.balance, code_hash=acct.code_hash
+            )
             acc_delete.discard(addr)
 
         # 3) Storage writes (skip addresses that are currently deleted by accumulation)
@@ -166,12 +175,14 @@ def diff_since(journal: Journal, marker: SnapshotId) -> StateDiff:
             for k, v in writes.items():
                 m[k] = v
 
-    return StateDiff(accounts_upsert=acc_upsert, accounts_delete=acc_delete, storage_writes=stor)
+    return StateDiff(
+        accounts_upsert=acc_upsert, accounts_delete=acc_delete, storage_writes=stor
+    )
 
 
-def apply_diff(accounts: MutableMapping[bytes, Account],
-               storage: StorageView,
-               diff: StateDiff) -> None:
+def apply_diff(
+    accounts: MutableMapping[bytes, Account], storage: StorageView, diff: StateDiff
+) -> None:
     """
     Apply a StateDiff to the given (accounts, storage) state.
 
@@ -200,7 +211,9 @@ def apply_diff(accounts: MutableMapping[bytes, Account],
 
     # 2) Upserts
     for addr, acct in diff.accounts_upsert.items():
-        accounts[addr] = Account(nonce=acct.nonce, balance=acct.balance, code_hash=acct.code_hash)
+        accounts[addr] = Account(
+            nonce=acct.nonce, balance=acct.balance, code_hash=acct.code_hash
+        )
 
     # 3) Storage writes (skip addrs that were deleted in this diff)
     skip = diff.accounts_delete
@@ -231,8 +244,10 @@ def compose(a: StateDiff, b: StateDiff) -> StateDiff:
 
     # Start with A
     out.accounts_delete = set(a.accounts_delete)
-    out.accounts_upsert = {addr: Account(nonce=acc.nonce, balance=acc.balance, code_hash=acc.code_hash)
-                           for addr, acc in a.accounts_upsert.items()}
+    out.accounts_upsert = {
+        addr: Account(nonce=acc.nonce, balance=acc.balance, code_hash=acc.code_hash)
+        for addr, acc in a.accounts_upsert.items()
+    }
     for addr, writes in a.storage_writes.items():
         out.storage_writes[addr] = dict(writes)
 
@@ -245,7 +260,9 @@ def compose(a: StateDiff, b: StateDiff) -> StateDiff:
 
     # 2) upserts
     for addr, acc in b.accounts_upsert.items():
-        out.accounts_upsert[addr] = Account(nonce=acc.nonce, balance=acc.balance, code_hash=acc.code_hash)
+        out.accounts_upsert[addr] = Account(
+            nonce=acc.nonce, balance=acc.balance, code_hash=acc.code_hash
+        )
         out.accounts_delete.discard(addr)
 
     # 3) storage (skip addrs deleted by B)
@@ -265,6 +282,7 @@ def compose(a: StateDiff, b: StateDiff) -> StateDiff:
 # -----------------------------------------------------------------------------
 # Convenience helpers that delegate to Journal checkpoint controls
 # -----------------------------------------------------------------------------
+
 
 def revert_to(journal: Journal, marker: SnapshotId) -> None:
     """

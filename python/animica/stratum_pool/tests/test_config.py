@@ -24,7 +24,9 @@ def test_load_config_from_env_overrides(monkeypatch):
     monkeypatch.setenv("ANIMICA_CHAIN_ID", "7")
     monkeypatch.setenv("ANIMICA_POOL_ADDRESS", "animica1pool")
     monkeypatch.setenv("ANIMICA_NETWORK", "testnet")
-    cfg = load_config_from_env(overrides={"min_difficulty": 0.5, "max_difficulty": 0.75})
+    cfg = load_config_from_env(
+        overrides={"min_difficulty": 0.5, "max_difficulty": 0.75}
+    )
     assert cfg.host == "127.0.0.1"
     assert cfg.port == 9999
     assert cfg.rpc_url == "http://rpc.test/rpc"

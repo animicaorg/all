@@ -27,13 +27,16 @@ from typing import Optional, Sequence
 import typer
 
 from .config import Config, load_config
-from .logging import get_logger  # type: ignore[attr-defined]  # logger helper expected in module
-from .storage import sqlite as storage_sqlite
+from .logging import \
+    get_logger  # type: ignore[attr-defined]  # logger helper expected in module
 from .storage import fs as storage_fs
+from .storage import sqlite as storage_sqlite
 from .tasks import queue as tasks_queue
 
 app = typer.Typer(add_completion=False, help="Animica Studio Services — Admin CLI")
-log = get_logger(__name__) if hasattr(sys.modules.get(__name__), "get_logger") else None  # fallback later
+log = (
+    get_logger(__name__) if hasattr(sys.modules.get(__name__), "get_logger") else None
+)  # fallback later
 
 
 @dataclass
@@ -73,10 +76,17 @@ async def _close_db(db: object):
 def _ensure_logger():
     global log
     if log is None:
+
         class _Dummy:
-            def info(self, *a, **k): print(*a)
-            def warning(self, *a, **k): print(*a, file=sys.stderr)
-            def error(self, *a, **k): print(*a, file=sys.stderr)
+            def info(self, *a, **k):
+                print(*a)
+
+            def warning(self, *a, **k):
+                print(*a, file=sys.stderr)
+
+            def error(self, *a, **k):
+                print(*a, file=sys.stderr)
+
         log = _Dummy()
 
 
@@ -84,14 +94,20 @@ def _ctx_or_init(config_path: Optional[str] = None) -> AppCtx:
     global _ctx
     if _ctx is not None:
         return _ctx
-    cfg = load_config(config_path=config_path) if "config_path" in load_config.__code__.co_varnames else load_config()
+    cfg = (
+        load_config(config_path=config_path)
+        if "config_path" in load_config.__code__.co_varnames
+        else load_config()
+    )
     _ctx = AppCtx(cfg=cfg, db=None)
     return _ctx
 
 
 @app.callback()
 def main(
-    config: Optional[str] = typer.Option(None, "--config", "-c", help="Path to env/config file (optional)"),
+    config: Optional[str] = typer.Option(
+        None, "--config", "-c", help="Path to env/config file (optional)"
+    ),
 ):
     """
     Shared options for all subcommands.
@@ -106,6 +122,7 @@ def migrate():
     Apply DB migrations or initialize schema.
     """
     ctx = _ctx_or_init()
+
     async def _run():
         db = await _open_db(ctx.cfg)
         ctx.db = db
@@ -131,8 +148,12 @@ def _random_api_key(n_bytes: int = 32) -> str:
 @app.command("create-api-key")
 def create_api_key(
     name: str = typer.Option("default", "--name", "-n", help="Label for this key"),
-    scopes: Optional[str] = typer.Option(None, "--scopes", "-s", help="CSV of scopes (optional)"),
-    print_only: bool = typer.Option(False, "--print-only", help="Do not persist; just print a random key"),
+    scopes: Optional[str] = typer.Option(
+        None, "--scopes", "-s", help="CSV of scopes (optional)"
+    ),
+    print_only: bool = typer.Option(
+        False, "--print-only", help="Do not persist; just print a random key"
+    ),
 ):
     """
     Generate and store an API key in the database (or print without storing).
@@ -156,6 +177,7 @@ def create_api_key(
         else:
             # Best-effort generic SQL (assumes sqlite3-like connection)
             import sqlite3  # type: ignore
+
             if isinstance(db, sqlite3.Connection):
                 cur = db.cursor()
                 cur.execute(
@@ -168,10 +190,15 @@ def create_api_key(
                            revoked_at TIMESTAMP
                        );"""
                 )
-                cur.execute("INSERT INTO api_keys(name, key, scopes) VALUES (?, ?, ?);", (name, key, scopes))
+                cur.execute(
+                    "INSERT INTO api_keys(name, key, scopes) VALUES (?, ?, ?);",
+                    (name, key, scopes),
+                )
                 db.commit()
             else:
-                raise RuntimeError("DB helper for API keys not available and DB is not sqlite3.Connection")
+                raise RuntimeError(
+                    "DB helper for API keys not available and DB is not sqlite3.Connection"
+                )
 
         print("✅ API key created:")
         print(key)
@@ -198,9 +225,12 @@ def list_api_keys():
         else:
             try:
                 import sqlite3  # type: ignore
+
                 if isinstance(db, sqlite3.Connection):
                     cur = db.cursor()
-                    cur.execute("SELECT id, name, key, scopes, created_at, revoked_at FROM api_keys ORDER BY id;")
+                    cur.execute(
+                        "SELECT id, name, key, scopes, created_at, revoked_at FROM api_keys ORDER BY id;"
+                    )
                     rows = cur.fetchall()
             except Exception:
                 pass
@@ -216,9 +246,15 @@ def list_api_keys():
                 rscopes = r[3] if len(r) > 3 else None
                 rcreated = r[4] if len(r) > 4 else None
                 rrevoked = r[5] if len(r) > 5 else None
-                red = (rkey[:6] + "…" + rkey[-4:]) if isinstance(rkey, str) and len(rkey) > 10 else "redacted"
+                red = (
+                    (rkey[:6] + "…" + rkey[-4:])
+                    if isinstance(rkey, str) and len(rkey) > 10
+                    else "redacted"
+                )
                 status = "revoked" if rrevoked else "active"
-                print(f"[{rid}] {rname:<16} {red:<16} scopes={rscopes or '-'} created={rcreated} {status}")
+                print(
+                    f"[{rid}] {rname:<16} {red:<16} scopes={rscopes or '-'} created={rcreated} {status}"
+                )
 
         await _close_db(db)
 
@@ -245,6 +281,7 @@ def revoke_api_key(
         else:
             try:
                 import sqlite3  # type: ignore
+
                 if isinstance(db, sqlite3.Connection):
                     cur = db.cursor()
                     cur.execute(
@@ -259,7 +296,9 @@ def revoke_api_key(
         if ok:
             print(f"✅ Revoked API key id={key_id}")
         else:
-            print(f"⚠️  Could not revoke API key id={key_id} (not found?)", file=sys.stderr)
+            print(
+                f"⚠️  Could not revoke API key id={key_id} (not found?)", file=sys.stderr
+            )
             sys.exit(1)
 
         await _close_db(db)
@@ -286,6 +325,7 @@ def queue_stats():
             # Fallback heuristic for a 'queue' table
             try:
                 import sqlite3  # type: ignore
+
                 if isinstance(db, sqlite3.Connection):
                     cur = db.cursor()
                     cur.execute("SELECT COUNT(*) FROM queue WHERE status='pending';")
@@ -311,8 +351,12 @@ def queue_stats():
 
 @app.command("backfill")
 def backfill(
-    artifacts: bool = typer.Option(True, help="Backfill artifacts metadata/hashes if missing"),
-    verifications: bool = typer.Option(True, help="Recompute verification digests if missing"),
+    artifacts: bool = typer.Option(
+        True, help="Backfill artifacts metadata/hashes if missing"
+    ),
+    verifications: bool = typer.Option(
+        True, help="Recompute verification digests if missing"
+    ),
     dry_run: bool = typer.Option(False, help="Scan only; do not write changes"),
 ):
     """
@@ -342,7 +386,9 @@ def backfill(
 
 @app.command("gc")
 def gc(
-    days: int = typer.Option(30, "--days", "-d", help="Delete orphaned artifacts older than N days"),
+    days: int = typer.Option(
+        30, "--days", "-d", help="Delete orphaned artifacts older than N days"
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Scan only; do not delete"),
 ):
     """
@@ -360,7 +406,9 @@ def gc(
             maybe = storage_fs.gc(db, ctx.cfg, older_than_days=days, dry_run=dry_run)
             removed += await maybe if asyncio.iscoroutine(maybe) else int(maybe or 0)
         if hasattr(storage_sqlite, "gc"):
-            maybe = storage_sqlite.gc(db, ctx.cfg, older_than_days=days, dry_run=dry_run)
+            maybe = storage_sqlite.gc(
+                db, ctx.cfg, older_than_days=days, dry_run=dry_run
+            )
             removed += await maybe if asyncio.iscoroutine(maybe) else int(maybe or 0)
 
         print(f"✅ GC complete. Removed: {removed} (dry_run={dry_run}, days={days})")

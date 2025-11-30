@@ -4,18 +4,19 @@ from typing import Any, Callable, Dict, Optional
 
 import pytest
 
-from proofs.tests import schema_path  # local helper ensures schemas dir exists
 import proofs.registry as reg
 from proofs import types as ptypes
-
+from proofs.tests import schema_path  # local helper ensures schemas dir exists
 
 # ---------- helpers to tolerate minor API/name drift in registry.py ----------
+
 
 def _first_attr(obj: Any, *names: str) -> Any:
     for n in names:
         if hasattr(obj, n):
             return getattr(obj, n)
     raise AttributeError(f"None of the expected attributes exist: {names!r}")
+
 
 def _schema_map() -> Dict[int, Any]:
     """
@@ -31,9 +32,12 @@ def _schema_map() -> Dict[int, Any]:
             "TYPE_SCHEMA_MAP",
         )
     except AttributeError:
-        pytest.fail("proofs.registry must expose a mapping of type→schema (e.g., TYPE_TO_SCHEMA)")
+        pytest.fail(
+            "proofs.registry must expose a mapping of type→schema (e.g., TYPE_TO_SCHEMA)"
+        )
     assert isinstance(m, dict), "schema map must be a dict"
     return m  # type: ignore[return-value]
+
 
 def _verifier_map() -> Dict[int, Callable[..., Any]]:
     """
@@ -43,7 +47,9 @@ def _verifier_map() -> Dict[int, Callable[..., Any]]:
         m = _first_attr(reg, "VERIFIERS", "TYPE_TO_VERIFIER", "VERIFIER_BY_TYPE")
     except AttributeError:
         # Fall back to a getter function if present.
-        getter = getattr(reg, "get_verifier", None) or getattr(reg, "verifier_for", None)
+        getter = getattr(reg, "get_verifier", None) or getattr(
+            reg, "verifier_for", None
+        )
         if getter is None:
             pytest.fail(
                 "proofs.registry must expose verifiers via VERIFIERS (dict) "
@@ -62,6 +68,7 @@ def _verifier_map() -> Dict[int, Callable[..., Any]]:
     for k, v in m.items():
         assert callable(v), f"Verifier for type {k} must be callable"
     return m  # type: ignore[return-value]
+
 
 def _schema_path_from_descriptor(desc: Any) -> Optional[Path]:
     """
@@ -82,6 +89,7 @@ def _schema_path_from_descriptor(desc: Any) -> Optional[Path]:
 
 
 # ---------- tests ----------
+
 
 def test_registry_exposes_known_types_and_verifiers() -> None:
     vmap = _verifier_map()
@@ -121,9 +129,13 @@ def test_schema_mapping_points_to_existing_files() -> None:
     for tid, suffix in expected_suffix.items():
         assert tid in smap, f"Schema map missing entry for type id {tid}"
         sp = _schema_path_from_descriptor(smap[tid])
-        assert sp is not None, f"Could not resolve schema path for type id {tid} (desc={smap[tid]!r})"
+        assert (
+            sp is not None
+        ), f"Could not resolve schema path for type id {tid} (desc={smap[tid]!r})"
         assert sp.exists(), f"Schema path not found on disk: {sp}"
-        assert sp.name.lower().endswith(suffix), f"Schema for type {tid} should end with {suffix}, got {sp.name}"
+        assert sp.name.lower().endswith(
+            suffix
+        ), f"Schema for type {tid} should end with {suffix}, got {sp.name}"
 
 
 def test_register_and_override_round_trip(monkeypatch) -> None:
@@ -155,7 +167,9 @@ def test_register_and_override_round_trip(monkeypatch) -> None:
     # Validate presence
     smap2 = _schema_map()
     vmap2 = _verifier_map()
-    assert TEST_TYPE in vmap2 and callable(vmap2[TEST_TYPE]), "dummy verifier should be installed"
+    assert TEST_TYPE in vmap2 and callable(
+        vmap2[TEST_TYPE]
+    ), "dummy verifier should be installed"
     sp = _schema_path_from_descriptor(smap2[TEST_TYPE])
     assert sp is not None and sp.name == Path(tmp_schema).name
 
@@ -187,4 +201,6 @@ def test_all_schema_files_are_well_located_on_disk() -> None:
         sp = _schema_path_from_descriptor(desc)
         if sp is None or not sp.exists():
             missing.append((tid, desc))
-    assert not missing, f"Some schema entries are missing or could not be resolved: {missing}"
+    assert (
+        not missing
+    ), f"Some schema entries are missing or could not be resolved: {missing}"

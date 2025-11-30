@@ -35,14 +35,19 @@ from tests.integration import env  # RUN_INTEGRATION_TESTS gate lives here
 
 # Local "light verify" uses the in-repo DA commitment helper
 try:
-    from da.blob.commitment import commit as da_commit  # (data: bytes, ns: int) -> (root: bytes, size: int, ns_out: int)
-except Exception:  # pragma: no cover - if the package layout isn't importable in this environment
+    from da.blob.commitment import \
+        commit as \
+        da_commit  # (data: bytes, ns: int) -> (root: bytes, size: int, ns_out: int)
+except (
+    Exception
+):  # pragma: no cover - if the package layout isn't importable in this environment
     da_commit = None  # type: ignore[assignment]
 
 
 # -----------------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------------
+
 
 def _http_timeout() -> float:
     try:
@@ -82,7 +87,9 @@ def _extract_commitment(obj: Any) -> Optional[str]:
     return None
 
 
-def _post_bytes(url: str, data: bytes, *, headers: Optional[Dict[str, str]] = None) -> Tuple[int, bytes, Dict[str, str]]:
+def _post_bytes(
+    url: str, data: bytes, *, headers: Optional[Dict[str, str]] = None
+) -> Tuple[int, bytes, Dict[str, str]]:
     req = urllib.request.Request(
         url,
         data=data,
@@ -140,7 +147,11 @@ def _load_blob_bytes() -> bytes:
 # Test
 # -----------------------------------------------------------------------------
 
-@pytest.mark.skipif(da_commit is None, reason="da.blob.commitment.commit not importable (in-repo DA lib missing)")
+
+@pytest.mark.skipif(
+    da_commit is None,
+    reason="da.blob.commitment.commit not importable (in-repo DA lib missing)",
+)
 @pytest.mark.timeout(180)
 def test_da_post_commitment_and_light_verify_roundtrip():
     base = _derive_base_url()
@@ -157,7 +168,9 @@ def test_da_post_commitment_and_light_verify_roundtrip():
         try:
             res = json.loads(body.decode("utf-8"))
         except Exception as exc:
-            raise AssertionError(f"POST /da/blob returned non-JSON body: {body[:100]!r}") from exc
+            raise AssertionError(
+                f"POST /da/blob returned non-JSON body: {body[:100]!r}"
+            ) from exc
     except Exception:
         # Fallback: JSON payload {"ns": int, "data": "0x.."}
         json_url = f"{base}/da/blob"
@@ -175,9 +188,9 @@ def test_da_post_commitment_and_light_verify_roundtrip():
     assert ns_out == ns, "Local commitment namespace mismatch"
 
     local_hex = _hex(root_bytes).lower()
-    assert local_hex == commitment_hex, (
-        f"Server commitment mismatch.\n server: {commitment_hex}\n  local: {local_hex}"
-    )
+    assert (
+        local_hex == commitment_hex
+    ), f"Server commitment mismatch.\n server: {commitment_hex}\n  local: {local_hex}"
 
     # 3) GET the blob back by commitment — try canonical path and a query fallback.
     get_url = f"{base}/da/blob/{commitment_hex}"
@@ -216,5 +229,6 @@ def test_da_post_commitment_and_light_verify_roundtrip():
 
     # Proof endpoint might be disabled — don't fail the round-trip for that.
     if not proof_ok:
-        pytest.skip("Proof endpoint not available or returned unexpected shape; blob post/get & commitment verified")
-
+        pytest.skip(
+            "Proof endpoint not available or returned unexpected shape; blob post/get & commitment verified"
+        )

@@ -52,10 +52,9 @@ import os
 import re
 import time
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple, Callable, Awaitable, Any, List
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
-from fastapi import Request, HTTPException, status
-from fastapi import Depends
+from fastapi import Depends, HTTPException, Request, status
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
@@ -197,7 +196,9 @@ class TokenBucket:
         async with self.lock:
             elapsed = max(0.0, now - self.ts)
             if self.refill_per_sec > 0.0 and elapsed > 0.0:
-                self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_per_sec)
+                self.tokens = min(
+                    self.capacity, self.tokens + elapsed * self.refill_per_sec
+                )
             self.ts = now
 
             if self.tokens >= cost:
@@ -229,7 +230,9 @@ class TokenStore:
         async with self._lock:
             bucket = self._buckets.get(key)
             if bucket is None:
-                bucket = TokenBucket(capacity=rule.capacity, refill_per_sec=rule.refill_per_sec)
+                bucket = TokenBucket(
+                    capacity=rule.capacity, refill_per_sec=rule.refill_per_sec
+                )
                 self._buckets[key] = bucket
             return bucket
 
@@ -294,7 +297,9 @@ class RateLimiter:
         self.cfg = config or load_config_from_env()
         self.store = TokenStore()
 
-    async def check(self, request: Request, *, extra_route_rule: Optional[RateRule] = None) -> None:
+    async def check(
+        self, request: Request, *, extra_route_rule: Optional[RateRule] = None
+    ) -> None:
         """
         Evaluate all applicable buckets; raise HTTP 429 if any is exceeded.
         """
@@ -321,7 +326,9 @@ class RateLimiter:
         # Consume cost=1 from each bucket; fail-fast on first denial.
         for kind, ident, rule in scopes:
             bucket = await self.store.get(kind, ident, rule)
-            allowed, retry_after, remaining, capacity = await bucket.try_consume(rule.cost)
+            allowed, retry_after, remaining, capacity = await bucket.try_consume(
+                rule.cost
+            )
             if not allowed:
                 # Compose helpful headers; for multiple buckets we report the one that blocked.
                 headers = {
@@ -382,7 +389,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.limiter = limiter or get_limiter()
 
-    async def dispatch(self, request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+    async def dispatch(
+        self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
         try:
             await self.limiter.check(request)
         except HTTPException as e:
@@ -432,7 +441,12 @@ def rate_limit(
     """
     rule = _rule_from(rate, burst, name=f"route:{route_name}")
     # Apply custom cost if provided
-    rule = RateRule(name=rule.name, refill_per_sec=rule.refill_per_sec, capacity=rule.capacity, cost=cost)
+    rule = RateRule(
+        name=rule.name,
+        refill_per_sec=rule.refill_per_sec,
+        capacity=rule.capacity,
+        cost=cost,
+    )
 
     async def _dep(request: Request) -> None:
         await get_limiter().check(request, extra_route_rule=rule)

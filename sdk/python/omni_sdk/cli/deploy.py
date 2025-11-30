@@ -34,16 +34,17 @@ from typing import Any, Dict, Optional, Tuple
 
 import typer
 
-from ..rpc.http import RpcClient  # required
-from ..tx.send import await_receipt, send_raw_transaction
-from ..tx.encode import encode_tx_cbor  # CBOR encoder for raw tx submission
-from ..tx.build import build_deploy_tx, estimate_deploy_gas  # helpers for deploy construction
-from ..wallet.signer import Signer  # PQ signer interface
 from ..address import Address
+from ..rpc.http import RpcClient  # required
+from ..tx.build import (build_deploy_tx,  # helpers for deploy construction
+                        estimate_deploy_gas)
+from ..tx.encode import encode_tx_cbor  # CBOR encoder for raw tx submission
+from ..tx.send import await_receipt, send_raw_transaction
+from ..wallet.signer import Signer  # PQ signer interface
 
 # Optional: content-addressed artifact writes
 try:
-    from ..filestore import ensure_dir, atomic_write, write_blob_ca
+    from ..filestore import atomic_write, ensure_dir, write_blob_ca
 except Exception:  # pragma: no cover
     ensure_dir = None
     atomic_write = None
@@ -86,15 +87,23 @@ def _make_signer(alg: str, seed_hex: Optional[str]) -> Signer:
         # Allow env var as a safer default than interactive prompt for automation
         seed_hex = os.environ.get("OMNI_SDK_SEED_HEX")
     if not seed_hex:
-        seed_hex = typer.prompt("Enter signer seed as hex (dev/test only!)", hide_input=True, confirmation_prompt=False)
+        seed_hex = typer.prompt(
+            "Enter signer seed as hex (dev/test only!)",
+            hide_input=True,
+            confirmation_prompt=False,
+        )
     try:
         seed = bytes.fromhex(seed_hex.strip().replace("0x", ""))
     except Exception as e:
-        raise typer.BadParameter("seed-hex must be raw hex bytes (with or without 0x prefix)") from e
+        raise typer.BadParameter(
+            "seed-hex must be raw hex bytes (with or without 0x prefix)"
+        ) from e
     return Signer.from_seed(seed, alg=alg)  # type: ignore[attr-defined]
 
 
-def _store_artifacts(out_dir: Optional[Path], *, tx_cbor: bytes, receipt: Optional[Dict[str, Any]] = None) -> None:
+def _store_artifacts(
+    out_dir: Optional[Path], *, tx_cbor: bytes, receipt: Optional[Dict[str, Any]] = None
+) -> None:
     if not out_dir:
         return
     if ensure_dir is None or atomic_write is None:
@@ -102,13 +111,17 @@ def _store_artifacts(out_dir: Optional[Path], *, tx_cbor: bytes, receipt: Option
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / "tx.cbor").write_bytes(tx_cbor)
         if receipt is not None:
-            (out_dir / "receipt.json").write_text(json.dumps(receipt, indent=2), encoding="utf-8")
+            (out_dir / "receipt.json").write_text(
+                json.dumps(receipt, indent=2), encoding="utf-8"
+            )
         return
 
     ensure_dir(out_dir)
     atomic_write(out_dir / "tx.cbor", tx_cbor)
     if receipt is not None:
-        atomic_write(out_dir / "receipt.json", json.dumps(receipt, indent=2).encode("utf-8"))
+        atomic_write(
+            out_dir / "receipt.json", json.dumps(receipt, indent=2).encode("utf-8")
+        )
     # Also store CBOR under a content-addressed path for reproducibility (best-effort)
     try:
         write_blob_ca(out_dir / "ca", tx_cbor, algo="sha3-256", ext="cbor")
@@ -133,17 +146,51 @@ def _summarize(receipt: Optional[Dict[str, Any]], tx_hash: str) -> Dict[str, Any
 @app.command("package")
 def deploy_package(
     ctx: typer.Context,
-    manifest: Path = typer.Option(..., "--manifest", "-m", exists=True, file_okay=True, dir_okay=False, readable=True,
-                                  help="Path to manifest.json"),
-    code: Path = typer.Option(..., "--code", "-c", exists=True, file_okay=True, dir_okay=False, readable=True,
-                              help="Path to contract source (e.g., contract.py) or IR bytes"),
-    seed_hex: Optional[str] = typer.Option(None, "--seed-hex", help="Signer seed as hex (dev/test only; can use OMNI_SDK_SEED_HEX)"),
-    alg: str = typer.Option("dilithium3", "--alg", help="PQ signature algorithm: dilithium3 | sphincs_shake_128s"),
-    gas_price: Optional[int] = typer.Option(None, "--gas-price", help="Optional gas price override"),
-    gas_limit: Optional[int] = typer.Option(None, "--gas-limit", help="Optional gas limit override"),
-    nonce: Optional[int] = typer.Option(None, "--nonce", help="Optional sender nonce override"),
-    wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for transaction receipt."),
-    out_dir: Optional[Path] = typer.Option(None, "--out-dir", help="Directory to store tx/receipt artifacts"),
+    manifest: Path = typer.Option(
+        ...,
+        "--manifest",
+        "-m",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help="Path to manifest.json",
+    ),
+    code: Path = typer.Option(
+        ...,
+        "--code",
+        "-c",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help="Path to contract source (e.g., contract.py) or IR bytes",
+    ),
+    seed_hex: Optional[str] = typer.Option(
+        None,
+        "--seed-hex",
+        help="Signer seed as hex (dev/test only; can use OMNI_SDK_SEED_HEX)",
+    ),
+    alg: str = typer.Option(
+        "dilithium3",
+        "--alg",
+        help="PQ signature algorithm: dilithium3 | sphincs_shake_128s",
+    ),
+    gas_price: Optional[int] = typer.Option(
+        None, "--gas-price", help="Optional gas price override"
+    ),
+    gas_limit: Optional[int] = typer.Option(
+        None, "--gas-limit", help="Optional gas limit override"
+    ),
+    nonce: Optional[int] = typer.Option(
+        None, "--nonce", help="Optional sender nonce override"
+    ),
+    wait: bool = typer.Option(
+        True, "--wait/--no-wait", help="Wait for transaction receipt."
+    ),
+    out_dir: Optional[Path] = typer.Option(
+        None, "--out-dir", help="Directory to store tx/receipt artifacts"
+    ),
 ) -> None:
     """
     Deploy a contract package (manifest + code). Prints a JSON summary with
@@ -164,8 +211,14 @@ def deploy_package(
     # Construct deploy tx (estimate gas if not provided)
     if gas_limit is None:
         try:
-            gas_est = estimate_deploy_gas(client, manifest_obj, code_bytes, sender=sender_addr)
-            gas_limit = int(gas_est["gasLimit"]) if isinstance(gas_est, dict) and "gasLimit" in gas_est else int(gas_est)
+            gas_est = estimate_deploy_gas(
+                client, manifest_obj, code_bytes, sender=sender_addr
+            )
+            gas_limit = (
+                int(gas_est["gasLimit"])
+                if isinstance(gas_est, dict) and "gasLimit" in gas_est
+                else int(gas_est)
+            )
         except Exception:
             # Fallback to a conservative default if estimate path is unavailable
             gas_limit = 1_000_000
@@ -201,4 +254,3 @@ def deploy_package(
 
 
 # ------------------------------ module end -----------------------------------
-

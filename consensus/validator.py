@@ -38,18 +38,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import log
-from typing import Dict, Iterable, List, Optional, Protocol, Sequence, Tuple, runtime_checkable
+from typing import (Dict, Iterable, List, Optional, Protocol, Sequence, Tuple,
+                    runtime_checkable)
 
 from .errors import ConsensusError  # re-raised by callers with context
-from .interfaces import (
-    HeaderView,
-    PolicySnapshot,
-    ProofEnvelope,
-    ProofMetrics,
-    VerificationResult,
-    VerifierRegistry,
-    PROOF_TYPE_HASHSHARE,
-)
+from .interfaces import (PROOF_TYPE_HASHSHARE, HeaderView, PolicySnapshot,
+                         ProofEnvelope, ProofMetrics, VerificationResult,
+                         VerifierRegistry)
 
 # Fixed-point scale for µ-nats (micro-nats)
 _MICRO: int = 1_000_000
@@ -58,6 +53,7 @@ _MICRO: int = 1_000_000
 # ---------------------------------------------------------------------------
 # Protocols for dependency injection (keep validator decoupled & testable)
 # ---------------------------------------------------------------------------
+
 
 @runtime_checkable
 class Scorer(Protocol):
@@ -102,6 +98,7 @@ class NullifierStore(Protocol):
 # Result type
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class ValidationOutcome:
     ok: bool
@@ -123,6 +120,7 @@ class ValidationOutcome:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _is_finite_nonneg(x: float) -> bool:
     return (x == x) and (x >= 0.0) and (x < float("inf"))  # NaN check via x==x
@@ -167,6 +165,7 @@ def _compute_h_micro_from_hashshares(items: Sequence[Tuple[int, ProofMetrics]]) 
 # Core
 # ---------------------------------------------------------------------------
 
+
 def validate_block(
     *,
     header: HeaderView,
@@ -202,8 +201,10 @@ def validate_block(
             bad_index=None,
             bad_stage="score",
             normalized_envelopes=(),
-            breakdown={"expected": int.from_bytes(policy.alg_policy_root, "big"),
-                       "header": int.from_bytes(header.policy_alg_root, "big")},
+            breakdown={
+                "expected": int.from_bytes(policy.alg_policy_root, "big"),
+                "header": int.from_bytes(header.policy_alg_root, "big"),
+            },
         )
 
     # (2) Nullifier freshness (pre-check)
@@ -270,9 +271,18 @@ def validate_block(
 
         # keep normalized CBOR body for receipts hashing/persistence
         normalized_envelopes.append(
-            ProofEnvelope(type_id=env.type_id, body_cbor=res.normalized_body_cbor, nullifier=env.nullifier)
+            ProofEnvelope(
+                type_id=env.type_id,
+                body_cbor=res.normalized_body_cbor,
+                nullifier=env.nullifier,
+            )
         )
-        verified.append((env.type_id, res.metrics,))
+        verified.append(
+            (
+                env.type_id,
+                res.metrics,
+            )
+        )
 
     # (4) Score Σψ via provided scorer (caps inside)
     try:
@@ -315,7 +325,9 @@ def validate_block(
         # Construct a compact reason with a couple of leading contributors (if present)
         top = {}
         # pick up to 3 largest breakdown entries
-        for k in sorted(breakdown, key=lambda x: abs(float(breakdown[x])), reverse=True)[:3]:
+        for k in sorted(
+            breakdown, key=lambda x: abs(float(breakdown[x])), reverse=True
+        )[:3]:
             top[k] = breakdown[k]
         return ValidationOutcome(
             ok=False,

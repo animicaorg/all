@@ -64,12 +64,12 @@ import sqlite3
 import tempfile
 import time
 from dataclasses import asdict
-from typing import Iterable, IO, Optional, Tuple, Union, List, Dict
+from typing import IO, Dict, Iterable, List, Optional, Tuple, Union
 
-from .types import Commitment, BlobMeta, BlobRef, Receipt
-from .index import BlobIndexRecord, InMemoryBlobIndex, root_hex
-from .commitment import commit as compute_commitment
 from ..constants import MAX_BLOB_BYTES
+from .commitment import commit as compute_commitment
+from .index import BlobIndexRecord, InMemoryBlobIndex, root_hex
+from .types import BlobMeta, BlobRef, Commitment, Receipt
 
 # ----------------------------- helpers ------------------------------------ #
 
@@ -91,7 +91,9 @@ def _atomic_write_bytes(dst_path: str, data: BytesLike) -> None:
     _ensure_dir(os.path.dirname(dst_path))
     dir_fd = os.open(os.path.dirname(dst_path), os.O_RDONLY)
     try:
-        with tempfile.NamedTemporaryFile(dir=os.path.dirname(dst_path), delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(
+            dir=os.path.dirname(dst_path), delete=False
+        ) as tmp:
             tmp.write(data)
             tmp.flush()
             os.fsync(tmp.fileno())
@@ -109,7 +111,9 @@ def _atomic_copy_file(src_path: str, dst_path: str) -> None:
     _ensure_dir(os.path.dirname(dst_path))
     dir_fd = os.open(os.path.dirname(dst_path), os.O_RDONLY)
     try:
-        with tempfile.NamedTemporaryFile(dir=os.path.dirname(dst_path), delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(
+            dir=os.path.dirname(dst_path), delete=False
+        ) as tmp:
             with open(src_path, "rb") as fsrc:
                 shutil.copyfileobj(fsrc, tmp)
             tmp.flush()
@@ -123,7 +127,9 @@ def _atomic_copy_file(src_path: str, dst_path: str) -> None:
         os.close(dir_fd)
 
 
-def _buffer_iter_to_temp(root_dir: str, it: Iterable[bytes], *, max_bytes: int) -> Tuple[str, int]:
+def _buffer_iter_to_temp(
+    root_dir: str, it: Iterable[bytes], *, max_bytes: int
+) -> Tuple[str, int]:
     _ensure_dir(root_dir)
     total = 0
     fd, path = tempfile.mkstemp(prefix="buf_", dir=root_dir)
@@ -132,7 +138,9 @@ def _buffer_iter_to_temp(root_dir: str, it: Iterable[bytes], *, max_bytes: int) 
             for chunk in it:
                 total += len(chunk)
                 if total > max_bytes:
-                    raise ValueError(f"blob too large: {total} > MAX_BLOB_BYTES={max_bytes}")
+                    raise ValueError(
+                        f"blob too large: {total} > MAX_BLOB_BYTES={max_bytes}"
+                    )
                 f.write(chunk)
             f.flush()
             os.fsync(f.fileno())
@@ -156,6 +164,7 @@ def _open_db(db_path: str) -> sqlite3.Connection:
 
 
 # ------------------------------ store ------------------------------------- #
+
 
 class BlobStore:
     """
@@ -281,9 +290,15 @@ class BlobStore:
         erasure_params: Optional[object] = None,
     ) -> Tuple[BlobRef, Commitment, BlobMeta, Receipt]:
         if len(data) > MAX_BLOB_BYTES:
-            raise ValueError(f"blob too large: {len(data)} > MAX_BLOB_BYTES={MAX_BLOB_BYTES}")
-        commitment, meta = compute_commitment(data, namespace, mime=mime, erasure_params=erasure_params)
-        return self._store_and_index(source_bytes=data, commitment=commitment, meta=meta)
+            raise ValueError(
+                f"blob too large: {len(data)} > MAX_BLOB_BYTES={MAX_BLOB_BYTES}"
+            )
+        commitment, meta = compute_commitment(
+            data, namespace, mime=mime, erasure_params=erasure_params
+        )
+        return self._store_and_index(
+            source_bytes=data, commitment=commitment, meta=meta
+        )
 
     def add_file(
         self,
@@ -296,8 +311,12 @@ class BlobStore:
         path = os.fspath(path)
         size = os.path.getsize(path)
         if size > MAX_BLOB_BYTES:
-            raise ValueError(f"blob too large: {size} > MAX_BLOB_BYTES={MAX_BLOB_BYTES}")
-        commitment, meta = compute_commitment(path, namespace, mime=mime, erasure_params=erasure_params)
+            raise ValueError(
+                f"blob too large: {size} > MAX_BLOB_BYTES={MAX_BLOB_BYTES}"
+            )
+        commitment, meta = compute_commitment(
+            path, namespace, mime=mime, erasure_params=erasure_params
+        )
         return self._store_and_index(source_path=path, commitment=commitment, meta=meta)
 
     def add_iter(
@@ -313,8 +332,12 @@ class BlobStore:
         _ensure_dir(buf_dir)
         tmp_path, _ = _buffer_iter_to_temp(buf_dir, it, max_bytes=MAX_BLOB_BYTES)
         try:
-            commitment, meta = compute_commitment(tmp_path, namespace, mime=mime, erasure_params=erasure_params)
-            return self._store_and_index(source_path=tmp_path, commitment=commitment, meta=meta, is_temp=True)
+            commitment, meta = compute_commitment(
+                tmp_path, namespace, mime=mime, erasure_params=erasure_params
+            )
+            return self._store_and_index(
+                source_path=tmp_path, commitment=commitment, meta=meta, is_temp=True
+            )
         finally:
             with contextlib.suppress(FileNotFoundError):
                 os.unlink(tmp_path)
@@ -378,7 +401,9 @@ class BlobStore:
 
     # --- public API: list/find/stats -------------------------------------- #
 
-    def list_by_namespace(self, ns: int, *, limit: int = 100, offset: int = 0) -> List[BlobRef]:
+    def list_by_namespace(
+        self, ns: int, *, limit: int = 100, offset: int = 0
+    ) -> List[BlobRef]:
         cur = self.db.execute(
             "SELECT root, namespace, size_bytes, mime, storage_key, path, created_at "
             "FROM blobs WHERE namespace=? ORDER BY created_at DESC, root LIMIT ? OFFSET ?",
@@ -508,7 +533,11 @@ class BlobStore:
         # If already present, short-circuit to ref result
         existing = self.get_ref(commitment.root)
         if existing:
-            receipt = Receipt(commitment=commitment, created_at=existing.created_at, mime=existing.mime)
+            receipt = Receipt(
+                commitment=commitment,
+                created_at=existing.created_at,
+                mime=existing.mime,
+            )
             return existing, commitment, meta, receipt
 
         # Write the payload atomically
@@ -589,7 +618,9 @@ class BlobStore:
 
         # Mirror to in-memory index if enabled
         if self.index:
-            rec = BlobIndexRecord.from_commit_meta(storage_key=root_h, commit=commitment, meta=meta, created_at=created_at)
+            rec = BlobIndexRecord.from_commit_meta(
+                storage_key=root_h, commit=commitment, meta=meta, created_at=created_at
+            )
             self.index.put(rec)
 
         return ref, commitment, meta, receipt

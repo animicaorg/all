@@ -15,11 +15,11 @@ Why this file exists (and why it's non-empty):
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
-import logging
 from dataclasses import dataclass
-from typing import Optional, Dict, Any
+from typing import Any, Dict, Optional
 
 # --------------------------------------------------------------------------------------
 # Version
@@ -281,7 +281,10 @@ def load_env(strict: bool = True) -> PosterEnv:
 # Logging
 # --------------------------------------------------------------------------------------
 
-def get_logger(name: str = "oracle_poster", level: Optional[str] = None) -> logging.Logger:
+
+def get_logger(
+    name: str = "oracle_poster", level: Optional[str] = None
+) -> logging.Logger:
     """
     Get a structured-ish logger with a sensible default format. Respects LOG_LEVEL.
     """
@@ -304,6 +307,7 @@ def get_logger(name: str = "oracle_poster", level: Optional[str] = None) -> logg
 # Helpers
 # --------------------------------------------------------------------------------------
 
+
 def short_help() -> str:
     """
     A brief usage description suitable for CLI --help epilogs.
@@ -324,4 +328,3 @@ def short_help() -> str:
 # Some templates/tools still execute `python -m oracle_da_poster`. Make that resolve
 # to this package module without requiring duplicate directories.
 sys.modules.setdefault("oracle_da_poster", sys.modules[__name__])
-

@@ -24,13 +24,17 @@ try:
 except Exception as e:  # pragma: no cover
     raise RuntimeError(f"simulate router missing models: {e}")
 
+
 # Optional API-key guard for this endpoint (often useful in hosted Studio)
 def _maybe_guard():
     try:  # pragma: no cover - optional import
-        from studio_services.security.auth import require_api_key  # type: ignore
+        from studio_services.security.auth import \
+            require_api_key  # type: ignore
+
         return [Depends(require_api_key)]
     except Exception:
         return []
+
 
 router = APIRouter(tags=["simulate"], dependencies=_maybe_guard())
 
@@ -79,7 +83,11 @@ def post_simulate(req: SimulateCall) -> SimulateResult:
     Raises:
       ApiError-based exceptions on validation or execution failure; mapped by middleware.
     """
-    log.debug("POST /simulate kind=%s address=%s", getattr(req, "kind", None), getattr(req, "address", None))
+    log.debug(
+        "POST /simulate kind=%s address=%s",
+        getattr(req, "kind", None),
+        getattr(req, "address", None),
+    )
     result = _simulate(req)
     if not isinstance(result, SimulateResult):
         log.warning("service returned unexpected type for simulate: %r", type(result))

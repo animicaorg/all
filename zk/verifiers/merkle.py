@@ -60,9 +60,8 @@ License: MIT
 
 from __future__ import annotations
 
-from typing import Callable, Iterable, List, Sequence, Tuple, Union, Optional
 import hashlib
-
+from typing import Callable, Iterable, List, Optional, Sequence, Tuple, Union
 
 # -----------------------------------------------------------------------------
 # Hashers (32-byte digests)
@@ -70,11 +69,14 @@ import hashlib
 
 Hasher = Callable[[bytes], bytes]
 
+
 def sha3_256(b: bytes) -> bytes:
     return hashlib.sha3_256(b).digest()
 
+
 def sha2_256(b: bytes) -> bytes:
     return hashlib.sha256(b).digest()
+
 
 def blake2s_256(b: bytes) -> bytes:
     return hashlib.blake2s(b, digest_size=32).digest()
@@ -84,21 +86,25 @@ def blake2s_256(b: bytes) -> bytes:
 # Encoding helpers
 # -----------------------------------------------------------------------------
 
+
 def be_bytes(x: int, n: int = 32) -> bytes:
     """Big-endian, fixed-length encoding of an integer (wraps negative via mod 2^(8n))."""
     if n <= 0:
         raise ValueError("n must be > 0")
     return int(x % (1 << (8 * n))).to_bytes(n, "big")
 
+
 def encode_u256(x: int) -> bytes:
     """Encode integer as 32-byte big-endian (mod 2^256)."""
     return be_bytes(int(x), 32)
+
 
 def encode_field(x: int, modulus: int) -> bytes:
     """Encode field element (reduced mod `modulus`) as 32-byte big-endian."""
     if not isinstance(modulus, int) or modulus <= 1:
         raise ValueError("modulus must be an integer > 1")
     return be_bytes(int(x) % modulus, 32)
+
 
 def ensure_bytes32(b: bytes) -> bytes:
     """Ensure `b` is exactly 32 bytes (left-pad with zeros if shorter)."""
@@ -112,8 +118,10 @@ def ensure_bytes32(b: bytes) -> bytes:
     # If longer, hash to 32 bytes (sane default for dev tools)
     return sha3_256(b)
 
+
 def hexify(b: bytes) -> str:
     return "0x" + bytes(b).hex()
+
 
 def parse_hex(s: str) -> bytes:
     s = str(s).strip()
@@ -128,8 +136,10 @@ def parse_hex(s: str) -> bytes:
 # Core Merkle utilities
 # -----------------------------------------------------------------------------
 
+
 def _combine(left: bytes, right: bytes, *, hasher: Hasher) -> bytes:
     return hasher(left + right)
+
 
 def _leaf_bytes(
     leaf_value: Union[int, bytes, str],
@@ -146,7 +156,11 @@ def _leaf_bytes(
         raise ValueError("encoding must be one of: 'u256', 'field', 'bytes'")
 
     if isinstance(leaf_value, (bytes, bytearray, memoryview)):
-        raw = ensure_bytes32(bytes(leaf_value)) if encoding == "bytes" else ensure_bytes32(bytes(leaf_value))
+        raw = (
+            ensure_bytes32(bytes(leaf_value))
+            if encoding == "bytes"
+            else ensure_bytes32(bytes(leaf_value))
+        )
     elif isinstance(leaf_value, str):
         # Treat as hex string when encoding=bytes; as int otherwise
         if encoding == "bytes":
@@ -169,6 +183,7 @@ def _leaf_bytes(
 
     return raw
 
+
 def merkle_root(leaves: Iterable[bytes], *, hasher: Hasher = sha3_256) -> bytes:
     """
     Compute Merkle root (H(left||right) at each internal node).
@@ -190,7 +205,10 @@ def merkle_root(leaves: Iterable[bytes], *, hasher: Hasher = sha3_256) -> bytes:
         level = nxt
     return level[0]
 
-def build_tree(leaves: Iterable[bytes], *, hasher: Hasher = sha3_256) -> List[List[bytes]]:
+
+def build_tree(
+    leaves: Iterable[bytes], *, hasher: Hasher = sha3_256
+) -> List[List[bytes]]:
     """
     Build the full tree levels (for testing):
     returns [L0 leaves_hashed, L1, ..., root_level] where root_level has len==1.
@@ -211,6 +229,7 @@ def build_tree(leaves: Iterable[bytes], *, hasher: Hasher = sha3_256) -> List[Li
         levels.append(nxt)
     return levels
 
+
 def merkle_verify(
     root: Union[bytes, str],
     leaf_value: Union[int, bytes, str],
@@ -218,8 +237,8 @@ def merkle_verify(
     index: int,
     *,
     hasher: Hasher = sha3_256,
-    encoding: str = "u256",             # "u256" | "field" | "bytes"
-    modulus: Optional[int] = None,      # required when encoding == "field"
+    encoding: str = "u256",  # "u256" | "field" | "bytes"
+    modulus: Optional[int] = None,  # required when encoding == "field"
     bind_position: bool = False,
     prehashed_leaf: bool = False,
 ) -> bool:
@@ -256,7 +275,11 @@ def merkle_verify(
 
         idx = int(index)
         for sib in path:
-            sib_bytes = bytes(sib) if isinstance(sib, (bytes, bytearray, memoryview)) else parse_hex(str(sib))
+            sib_bytes = (
+                bytes(sib)
+                if isinstance(sib, (bytes, bytearray, memoryview))
+                else parse_hex(str(sib))
+            )
             if len(sib_bytes) != 32:
                 return False
             if (idx & 1) == 1:

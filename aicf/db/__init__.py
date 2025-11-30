@@ -58,7 +58,9 @@ def default_base_dir() -> Path:
     return Path.home() / ".animica" / "aicf"
 
 
-def db_path(name: str, *, base_dir: Optional[Pathish] = None, create: bool = False) -> Path:
+def db_path(
+    name: str, *, base_dir: Optional[Pathish] = None, create: bool = False
+) -> Path:
     """
     Build a path under the AICF DB base directory.
 

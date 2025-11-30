@@ -3,9 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from typer.testing import CliRunner
-
 from animica.cli import mining
+from typer.testing import CliRunner
 
 runner = CliRunner()
 

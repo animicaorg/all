@@ -27,6 +27,7 @@ except ImportError:  # pragma: no cover
 
 # ------------------------------- Path resolution -------------------------------
 
+
 def _default_db_path() -> Path:
     return Path("./.studio-services/meta.db").resolve()
 
@@ -54,7 +55,7 @@ def _configure_connection(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys=ON;")
     conn.execute("PRAGMA temp_store=MEMORY;")
     conn.execute("PRAGMA mmap_size=268435456;")  # 256 MiB (advisory)
-    conn.execute("PRAGMA busy_timeout=5000;")    # 5s
+    conn.execute("PRAGMA busy_timeout=5000;")  # 5s
     # Use UTF-8 by default
     # Note: isolation_level=None enables autocommit; we keep explicit transactions with ctx manager
 
@@ -64,7 +65,7 @@ def _open_connection() -> sqlite3.Connection:
         _DB_PATH.as_posix(),
         detect_types=sqlite3.PARSE_DECLTYPES,
         check_same_thread=False,  # safely used across threads with our thread-local
-        isolation_level=None,     # autocommit by default; explicit transactions when needed
+        isolation_level=None,  # autocommit by default; explicit transactions when needed
     )
     _configure_connection(conn)
     return conn
@@ -116,6 +117,7 @@ def transaction() -> Iterator[sqlite3.Connection]:
 
 # --------------------------------- Migrations ---------------------------------
 
+
 def _schema_sql_text() -> str:
     """
     Load the baseline schema SQL bundled at:
@@ -149,6 +151,7 @@ def run_migrations() -> None:
 
 
 # ------------------------------- Utility helpers -------------------------------
+
 
 def vacuum_analyze() -> None:
     """

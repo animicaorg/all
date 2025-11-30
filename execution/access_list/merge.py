@@ -36,12 +36,14 @@ Examples
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, Iterator, List, Mapping, MutableMapping, Sequence, Set, Tuple, Literal
+from typing import (Dict, Iterable, Iterator, List, Literal, Mapping,
+                    MutableMapping, Sequence, Set, Tuple)
 
 # Prefer project type; fall back to a local definition for early bring-up.
 try:
     from execution.types.access_list import AccessListEntry  # type: ignore
 except Exception:  # pragma: no cover
+
     @dataclass(frozen=True)
     class AccessListEntry:  # type: ignore
         address: bytes
@@ -49,6 +51,7 @@ except Exception:  # pragma: no cover
 
 
 # ------------------------------ internal utils -------------------------------
+
 
 def _to_map(entries: Iterable[AccessListEntry]) -> Dict[bytes, Set[bytes]]:
     """
@@ -76,7 +79,10 @@ def _from_map(m: Mapping[bytes, Set[bytes]]) -> List[AccessListEntry]:
 
 # ---------------------------------- union ------------------------------------
 
-def merge_union(access_lists: Iterable[Iterable[AccessListEntry]]) -> List[AccessListEntry]:
+
+def merge_union(
+    access_lists: Iterable[Iterable[AccessListEntry]],
+) -> List[AccessListEntry]:
     """
     Union of multiple access lists.
 
@@ -98,6 +104,7 @@ def merge_union(access_lists: Iterable[Iterable[AccessListEntry]]) -> List[Acces
 
 
 # ------------------------------- intersection --------------------------------
+
 
 def merge_intersection(
     access_lists: Iterable[Iterable[AccessListEntry]],
@@ -126,7 +133,7 @@ def merge_intersection(
         Canonical, sorted list of entries in the intersection.
     """
     # Convert each list to a map for faster operations.
-    maps: List[Dict[bytes, Set[bytes]]] = [ _to_map(al) for al in access_lists ]
+    maps: List[Dict[bytes, Set[bytes]]] = [_to_map(al) for al in access_lists]
     if not maps:
         return []
 

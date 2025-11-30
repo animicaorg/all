@@ -3,13 +3,14 @@ import hashlib
 import pytest
 
 from core.types.header import Header
-
 from rpc.methods import miner as miner_methods
 from rpc.tests import new_test_client, rpc_call
 
 
 def _find_nonce(sign_bytes_hex: str, target_hex: str) -> str:
-    sign_bytes = bytes.fromhex(sign_bytes_hex[2:] if sign_bytes_hex.startswith("0x") else sign_bytes_hex)
+    sign_bytes = bytes.fromhex(
+        sign_bytes_hex[2:] if sign_bytes_hex.startswith("0x") else sign_bytes_hex
+    )
     target = int(target_hex, 16)
     for i in range(10000):
         candidate = i.to_bytes(8, "big")
@@ -95,7 +96,9 @@ def test_submit_work_accepts_valid_solution_and_updates_head():
     job = rpc_call(client, "miner.getWork")["result"]
 
     nonce_hex = _find_nonce(job["signBytes"], job["target"])
-    res = rpc_call(client, "miner.submitWork", {"jobId": job["jobId"], "nonce": nonce_hex})
+    res = rpc_call(
+        client, "miner.submitWork", {"jobId": job["jobId"], "nonce": nonce_hex}
+    )
 
     result = res["result"]
     assert result["accepted"] is True
@@ -121,12 +124,21 @@ def test_submit_work_rejects_invalid_or_stale_jobs():
     job = rpc_call(client, "miner.getWork")["result"]
 
     # Missing nonce → invalid params
-    bad = rpc_call(client, "miner.submitWork", {"jobId": job["jobId"]}, expect_error=True)
+    bad = rpc_call(
+        client, "miner.submitWork", {"jobId": job["jobId"]}, expect_error=True
+    )
     assert bad["error"]["code"] == -32602
 
     # Mark head as advanced past the template height to force stale rejection
-    miner_methods._LOCAL_HEAD.update({"height": job["height"], "hash": "0x01", "header": None})
-    stale = rpc_call(client, "miner.submitWork", {"jobId": job["jobId"], "nonce": "0x00"}, expect_error=True)
+    miner_methods._LOCAL_HEAD.update(
+        {"height": job["height"], "hash": "0x01", "header": None}
+    )
+    stale = rpc_call(
+        client,
+        "miner.submitWork",
+        {"jobId": job["jobId"], "nonce": "0x00"},
+        expect_error=True,
+    )
     assert stale["error"]["code"] == -32602
 
 

@@ -23,6 +23,7 @@ class FakeRandRpc:
     Minimal JSON-RPC stub for randomness endpoints.
     Simulates a single open round with basic commit→reveal→beacon flow.
     """
+
     def __init__(self) -> None:
         self.calls: List[Tuple[str, Any]] = []
         self.round_id: int = 1
@@ -57,7 +58,9 @@ class FakeRandRpc:
                 payload = _unhex(params.get("payload"))
 
             dom = b"animica:rand:commit|"
-            commit = _hex(hashlib.sha3_256(dom + addr.encode("utf-8") + salt + payload).digest())
+            commit = _hex(
+                hashlib.sha3_256(dom + addr.encode("utf-8") + salt + payload).digest()
+            )
             self._commits[commit] = (addr, salt, payload)
             return {"roundId": self.round_id, "commitment": commit}
 
@@ -75,7 +78,11 @@ class FakeRandRpc:
             matched = None
             for commit, (addr, s, p) in self._commits.items():
                 if s == salt and p == payload:
-                    want = _hex(hashlib.sha3_256(dom + addr.encode("utf-8") + salt + payload).digest())
+                    want = _hex(
+                        hashlib.sha3_256(
+                            dom + addr.encode("utf-8") + salt + payload
+                        ).digest()
+                    )
                     if want == commit:
                         ok = True
                         matched = commit
@@ -87,7 +94,9 @@ class FakeRandRpc:
         if method in ("rand.getBeacon", "randomness.getBeacon"):
             # Build a deterministic beacon from revealed commitments (order-independent)
             if not self._revealed:
-                out = hashlib.sha3_256(b"beacon|empty|" + str(self.round_id).encode()).digest()
+                out = hashlib.sha3_256(
+                    b"beacon|empty|" + str(self.round_id).encode()
+                ).digest()
             else:
                 acc = hashlib.sha3_256()
                 acc.update(b"beacon|round|")
@@ -121,7 +130,11 @@ def test_commit_reveal_beacon_roundtrip():
     salt = b"\xaa" * 32
     payload = b"hello-beacon"
     c = rand.commit(address=addr, salt=salt, payload=payload)
-    assert isinstance(c, dict) and c.get("roundId") == 1 and str(c.get("commitment")).startswith("0x")
+    assert (
+        isinstance(c, dict)
+        and c.get("roundId") == 1
+        and str(c.get("commitment")).startswith("0x")
+    )
 
     # Reveal must succeed
     rev = rand.reveal(salt=salt, payload=payload)
@@ -132,7 +145,9 @@ def test_commit_reveal_beacon_roundtrip():
     b = rand.get_beacon()
     assert isinstance(b, dict) and b.get("roundId") == 1
     out = b.get("output")
-    assert isinstance(out, str) and out.startswith("0x") and len(out) == 66  # 32-byte hash
+    assert (
+        isinstance(out, str) and out.startswith("0x") and len(out) == 66
+    )  # 32-byte hash
 
     # History returns the same beacon entry
     hist = rand.get_history()
@@ -160,5 +175,3 @@ def test_reveal_with_wrong_payload_fails():
     # With no successful reveals, beacon should still be well-formed but "empty"
     b = rand.get_beacon()
     assert isinstance(b.get("output"), str) and b["output"].startswith("0x")
-
-

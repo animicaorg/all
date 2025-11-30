@@ -64,6 +64,7 @@ __all__ = [
 # Locking: atomic directory lock (portable, robust against process crashes)
 # ---------------------------------------------------------------------------
 
+
 class DirLock:
     """
     Simple cross-platform directory lock.
@@ -71,9 +72,20 @@ class DirLock:
     Creates a <path>.lock directory atomically. If it already exists,
     waits until it disappears or becomes stale (then breaks it).
     """
-    def __init__(self, path: Path, timeout: float = 15.0, poll: float = 0.05, stale_sec: float = 120.0) -> None:
+
+    def __init__(
+        self,
+        path: Path,
+        timeout: float = 15.0,
+        poll: float = 0.05,
+        stale_sec: float = 120.0,
+    ) -> None:
         self.base = Path(path)
-        self.lock_dir = self.base.with_suffix(self.base.suffix + ".lock") if self.base.suffix else Path(str(self.base) + ".lock")
+        self.lock_dir = (
+            self.base.with_suffix(self.base.suffix + ".lock")
+            if self.base.suffix
+            else Path(str(self.base) + ".lock")
+        )
         self.timeout = timeout
         self.poll = poll
         self.stale_sec = stale_sec
@@ -130,7 +142,9 @@ REG_FILE = "registry.json"
 
 
 def _registry_dir() -> Path:
-    root = os.getenv("TEST_PORT_REG_DIR") or os.path.join(tempfile.gettempdir(), "animica-test-ports")
+    root = os.getenv("TEST_PORT_REG_DIR") or os.path.join(
+        tempfile.gettempdir(), "animica-test-ports"
+    )
     p = Path(root)
     p.mkdir(parents=True, exist_ok=True)
     return p
@@ -219,7 +233,9 @@ def _probe_free(host: str, port: int) -> bool:
     return True
 
 
-def _purge_stale(reg: Dict[str, Dict[str, float]], host: str, stale_sec: float = 120.0) -> None:
+def _purge_stale(
+    reg: Dict[str, Dict[str, float]], host: str, stale_sec: float = 120.0
+) -> None:
     """Drop entries older than stale_sec *and* currently free."""
     now = time.time()
     to_del = []
@@ -357,37 +373,49 @@ def is_free(host: str, port: int, timeout: float = 0.25) -> bool:
     # If we can't bind, it might be because something is listening already.
     # Try a quick connect; if succeeds, it's not free.
     try:
-        with contextlib.closing(socket.create_connection((host, port), timeout=timeout)):
+        with contextlib.closing(
+            socket.create_connection((host, port), timeout=timeout)
+        ):
             return False
     except OSError as e:
         # Connection refused/timeout -> treat as free (nothing listening)
-        if e.errno in (errno.ECONNREFUSED, errno.ETIMEDOUT) or isinstance(e, TimeoutError):
+        if e.errno in (errno.ECONNREFUSED, errno.ETIMEDOUT) or isinstance(
+            e, TimeoutError
+        ):
             return True
         return False
 
 
-def wait_for_listen(host: str, port: int, timeout: float = 10.0, interval: float = 0.05) -> bool:
+def wait_for_listen(
+    host: str, port: int, timeout: float = 10.0, interval: float = 0.05
+) -> bool:
     """
     Wait until a TCP server is listening on (host, port). Returns True if ready.
     """
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            with contextlib.closing(socket.create_connection((host, port), timeout=interval)):
+            with contextlib.closing(
+                socket.create_connection((host, port), timeout=interval)
+            ):
                 return True
         except OSError:
             time.sleep(interval)
     return False
 
 
-def wait_for_closed(host: str, port: int, timeout: float = 10.0, interval: float = 0.05) -> bool:
+def wait_for_closed(
+    host: str, port: int, timeout: float = 10.0, interval: float = 0.05
+) -> bool:
     """
     Wait until nothing is listening on (host, port). Returns True when closed.
     """
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            with contextlib.closing(socket.create_connection((host, port), timeout=interval)):
+            with contextlib.closing(
+                socket.create_connection((host, port), timeout=interval)
+            ):
                 # Still open
                 time.sleep(interval)
         except OSError:

@@ -42,6 +42,7 @@ class MatrixLayout:
       parity_cols: number of parity columns (p).
       share_bytes: shard payload size in bytes (B). Used only for diagnostics.
     """
+
     rows: int
     cols: int
     data_cols: int
@@ -79,7 +80,9 @@ class MatrixLayout:
         Convert row-major linear `index` → (row, col).
         """
         if index < 0 or index >= self.rows * self.cols:
-            raise IndexError(f"index out of range (0..{self.rows*self.cols-1}): {index}")
+            raise IndexError(
+                f"index out of range (0..{self.rows*self.cols-1}): {index}"
+            )
         row = index // self.cols
         col = index % self.cols
         return row, col
@@ -192,7 +195,9 @@ class MatrixLayout:
     def _assert_flat_length(self, flat: Sequence[bytes]) -> None:
         need = self.rows * self.cols
         if len(flat) != need:
-            raise ValueError(f"expected {need} leaves (got {len(flat)}) for shape {self.shape()}")
+            raise ValueError(
+                f"expected {need} leaves (got {len(flat)}) for shape {self.shape()}"
+            )
 
     # Post-init patch for transpose_index (keeps simple structure above)
     def __post_init__(self):
@@ -207,6 +212,7 @@ class MatrixLayout:
 
 # ---- Constructors from encoding metadata ---------------------------------- #
 
+
 @dataclass(frozen=True)
 class EncodeLikeInfo:
     """
@@ -215,6 +221,7 @@ class EncodeLikeInfo:
     This is intentionally duck-typed to match `ErasureEncodeInfo` from
     `da.erasure.encoder` without importing it here to avoid a hard dependency.
     """
+
     stripes: int
     share_bytes: int
     data_per_stripe: int
@@ -245,6 +252,7 @@ def layout_from_encode_info(info: EncodeLikeInfo) -> MatrixLayout:
 
 
 # ---- Lightweight free functions ------------------------------------------ #
+
 
 def rc_to_index(row: int, col: int, cols: int) -> int:
     """(row, col) → index for a given `cols` (row-major)."""

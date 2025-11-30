@@ -34,10 +34,10 @@ import time
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
-
 # -----------------------------------------------------------------------------
 # Deterministic PRNG (tiny LCG) and helpers
 # -----------------------------------------------------------------------------
+
 
 def _lcg_next(x: int) -> int:
     a = 6364136223846793005
@@ -65,23 +65,24 @@ def _rand_float01(x: int) -> Tuple[int, float]:
 # Synthetic AICF models
 # -----------------------------------------------------------------------------
 
+
 @dataclass
 class Provider:
     pid: int
-    stake: int            # arbitrary units
-    max_concurrent: int   # concurrent lease capacity (quota)
-    health: float         # 0..1
-    region: int           # small integer tag
-    avail: int            # mutable per-iteration counter
+    stake: int  # arbitrary units
+    max_concurrent: int  # concurrent lease capacity (quota)
+    health: float  # 0..1
+    region: int  # small integer tag
+    avail: int  # mutable per-iteration counter
 
 
 @dataclass
 class Job:
     jid: int
-    kind: int             # 0=AI, 1=Quantum
-    fee_units: int        # priority component
-    size_units: int       # cost/size hint
-    age_ticks: int        # larger = older = higher priority
+    kind: int  # 0=AI, 1=Quantum
+    fee_units: int  # priority component
+    size_units: int  # cost/size hint
+    age_ticks: int  # larger = older = higher priority
 
 
 def gen_providers(n: int, quota: int, seed: int) -> List[Provider]:
@@ -91,10 +92,18 @@ def gen_providers(n: int, quota: int, seed: int) -> List[Provider]:
         x = _lcg_next(x)
         stake = 1_000 + (_u32(x) % 1_000_000)
         x, health = _rand_float01(x)
-        region = (_u8(x) % 8)
+        region = _u8(x) % 8
         max_concurrent = max(1, quota + int((health - 0.5) * 2.0 * quota * 0.25))
-        out.append(Provider(pid=i, stake=stake, max_concurrent=max_concurrent, health=health,
-                            region=region, avail=max_concurrent))
+        out.append(
+            Provider(
+                pid=i,
+                stake=stake,
+                max_concurrent=max_concurrent,
+                health=health,
+                region=region,
+                avail=max_concurrent,
+            )
+        )
     return out
 
 
@@ -103,22 +112,34 @@ def gen_jobs(m: int, seed: int) -> List[Job]:
     out: List[Job] = []
     for j in range(m):
         x = _lcg_next(x)
-        kind = (_u8(x) & 1)  # mix AI/Quantum ~50/50
+        kind = _u8(x) & 1  # mix AI/Quantum ~50/50
         x = _lcg_next(x)
         fee_units = 1 + (_u32(x) % 10_000)
         x = _lcg_next(x)
         size_units = 1 + (_u32(x) % 2_000)
         x = _lcg_next(x)
         age_ticks = _u8(x)
-        out.append(Job(jid=j, kind=kind, fee_units=fee_units, size_units=size_units, age_ticks=age_ticks))
+        out.append(
+            Job(
+                jid=j,
+                kind=kind,
+                fee_units=fee_units,
+                size_units=size_units,
+                age_ticks=age_ticks,
+            )
+        )
     # Pre-sort by a simple priority heuristic: fee/size + age
-    out.sort(key=lambda jb: (jb.fee_units / max(1, jb.size_units)) + (jb.age_ticks * 0.01), reverse=True)
+    out.sort(
+        key=lambda jb: (jb.fee_units / max(1, jb.size_units)) + (jb.age_ticks * 0.01),
+        reverse=True,
+    )
     return out
 
 
 # -----------------------------------------------------------------------------
 # Matching benchmark
 # -----------------------------------------------------------------------------
+
 
 def _reset_avail(providers: List[Provider]) -> None:
     for p in providers:
@@ -146,7 +167,12 @@ def run_match_bench(
     """
     nprov = len(providers)
     if nprov == 0:
-        return {"assignments": 0, "elapsed_s": 0.0, "assignments_per_s": 0.0, "utilization": 0.0}
+        return {
+            "assignments": 0,
+            "elapsed_s": 0.0,
+            "assignments_per_s": 0.0,
+            "utilization": 0.0,
+        }
 
     _reset_avail(providers)
     assigned_total = 0
@@ -210,19 +236,20 @@ def run_match_bench(
 # SLA evaluation benchmark
 # -----------------------------------------------------------------------------
 
+
 @dataclass
 class JobMetrics:
-    traps_ratio: float    # 0..1
-    qos: float            # 0..1
+    traps_ratio: float  # 0..1
+    qos: float  # 0..1
     latency_s: float
-    availability: float   # 0..1
+    availability: float  # 0..1
 
 
 @dataclass
 class SlaThresholds:
     traps_min: float = 0.60
     qos_min: float = 0.70
-    latency_target_s: float = 2.0   # pass if latency <= 2*target
+    latency_target_s: float = 2.0  # pass if latency <= 2*target
     availability_min: float = 0.985
 
 
@@ -236,7 +263,14 @@ def gen_metrics(n: int, seed: int) -> List[JobMetrics]:
         x, avail = _rand_float01(x)
         # latency in [0.1, 5.1) seconds, concentrated around ~2s
         latency = 0.1 + 5.0 * (latj * latj)
-        out.append(JobMetrics(traps_ratio=traps, qos=qos, latency_s=latency, availability=avail * 0.02 + 0.98))
+        out.append(
+            JobMetrics(
+                traps_ratio=traps,
+                qos=qos,
+                latency_s=latency,
+                availability=avail * 0.02 + 0.98,
+            )
+        )
     return out
 
 
@@ -259,7 +293,12 @@ def run_sla_bench(
 ) -> dict:
     n = len(dataset)
     if n == 0:
-        return {"evaluations": 0, "elapsed_s": 0.0, "evaluations_per_s": 0.0, "pass_rate": 0.0}
+        return {
+            "evaluations": 0,
+            "elapsed_s": 0.0,
+            "evaluations_per_s": 0.0,
+            "pass_rate": 0.0,
+        }
 
     total = 0
     passed = 0
@@ -306,21 +345,69 @@ def run_sla_bench(
 # Glue / CLI
 # -----------------------------------------------------------------------------
 
+
 def main(argv: Optional[list[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description="AICF matcher & SLA evaluation throughput benchmarks.")
-    ap.add_argument("--providers", type=int, default=500, help="Number of providers (default: 500)")
-    ap.add_argument("--jobs", type=int, default=10_000, help="Number of queued jobs (default: 10k)")
-    ap.add_argument("--quota", type=int, default=8, help="Per-provider max concurrent leases (default: 8)")
-    ap.add_argument("--match-seconds", type=float, default=2.5, help="Target seconds for matching bench (default: 2.5)")
-    ap.add_argument("--sla-seconds", type=float, default=2.5, help="Target seconds for SLA bench (default: 2.5)")
-    ap.add_argument("--seed", type=int, default=None, help="Deterministic seed (default: from PYTHONHASHSEED or 1337)")
-    ap.add_argument("--traps-min", type=float, default=0.60, help="SLA minimum traps ratio (default: 0.60)")
-    ap.add_argument("--qos-min", type=float, default=0.70, help="SLA minimum QoS (default: 0.70)")
-    ap.add_argument("--latency-target", type=float, default=2.0, help="SLA latency target seconds (default: 2.0)")
-    ap.add_argument("--availability-min", type=float, default=0.985, help="SLA minimum availability (default: 0.985)")
+    ap = argparse.ArgumentParser(
+        description="AICF matcher & SLA evaluation throughput benchmarks."
+    )
+    ap.add_argument(
+        "--providers", type=int, default=500, help="Number of providers (default: 500)"
+    )
+    ap.add_argument(
+        "--jobs", type=int, default=10_000, help="Number of queued jobs (default: 10k)"
+    )
+    ap.add_argument(
+        "--quota",
+        type=int,
+        default=8,
+        help="Per-provider max concurrent leases (default: 8)",
+    )
+    ap.add_argument(
+        "--match-seconds",
+        type=float,
+        default=2.5,
+        help="Target seconds for matching bench (default: 2.5)",
+    )
+    ap.add_argument(
+        "--sla-seconds",
+        type=float,
+        default=2.5,
+        help="Target seconds for SLA bench (default: 2.5)",
+    )
+    ap.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Deterministic seed (default: from PYTHONHASHSEED or 1337)",
+    )
+    ap.add_argument(
+        "--traps-min",
+        type=float,
+        default=0.60,
+        help="SLA minimum traps ratio (default: 0.60)",
+    )
+    ap.add_argument(
+        "--qos-min", type=float, default=0.70, help="SLA minimum QoS (default: 0.70)"
+    )
+    ap.add_argument(
+        "--latency-target",
+        type=float,
+        default=2.0,
+        help="SLA latency target seconds (default: 2.0)",
+    )
+    ap.add_argument(
+        "--availability-min",
+        type=float,
+        default=0.985,
+        help="SLA minimum availability (default: 0.985)",
+    )
     args = ap.parse_args(argv)
 
-    seed = args.seed if (args.seed is not None) else int(os.environ.get("PYTHONHASHSEED", "0") or "1337")
+    seed = (
+        args.seed
+        if (args.seed is not None)
+        else int(os.environ.get("PYTHONHASHSEED", "0") or "1337")
+    )
 
     # Generate fixtures
     providers = gen_providers(args.providers, args.quota, seed)

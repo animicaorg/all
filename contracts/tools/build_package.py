@@ -53,16 +53,10 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, Union
 
 # Local tooling helpers (dependency-free)
-from contracts.tools import (  # type: ignore
-    __version__ as tools_version,
-    atomic_write_bytes,
-    atomic_write_text,
-    canonical_json_bytes,
-    canonical_json_str,
-    ensure_dir,
-    project_root,
-    sha3_256_hex,
-)
+from contracts.tools import __version__ as tools_version  # type: ignore
+from contracts.tools import (atomic_write_bytes, atomic_write_text,
+                             canonical_json_bytes, canonical_json_str,
+                             ensure_dir, project_root, sha3_256_hex)
 
 # ------------------------------ utilities ------------------------------------
 
@@ -75,7 +69,9 @@ def _read_json(path: Union[str, Path]) -> Any:
     try:
         return json.loads(_read_text(path))
     except Exception as exc:
-        raise SystemExit(f"[build_package] Failed to parse JSON: {path} :: {exc}") from exc
+        raise SystemExit(
+            f"[build_package] Failed to parse JSON: {path} :: {exc}"
+        ) from exc
 
 
 def _now_iso() -> str:
@@ -199,7 +195,11 @@ def _try_compile_with_loader(source_path: Path) -> Optional[bytes]:
             # Normalize outputs
             if isinstance(res, (bytes, bytearray, memoryview)):
                 return bytes(res)
-            if isinstance(res, tuple) and res and isinstance(res[0], (bytes, bytearray, memoryview)):
+            if (
+                isinstance(res, tuple)
+                and res
+                and isinstance(res[0], (bytes, bytearray, memoryview))
+            ):
                 return bytes(res[0])
             # Object with attribute
             for attr in ("ir_bytes", "ir", "bytes"):
@@ -234,11 +234,7 @@ def _derive_name_version(
     manifest_in: Optional[Dict[str, Any]],
     source_path: Path,
 ) -> Tuple[str, str]:
-    n = (
-        name
-        or (manifest_in.get("name") if manifest_in else None)
-        or source_path.stem
-    )
+    n = name or (manifest_in.get("name") if manifest_in else None) or source_path.stem
     v = version or (manifest_in.get("version") if manifest_in else None) or "0.1.0"
     return str(n), str(v)
 
@@ -293,7 +289,11 @@ def build_package(
     code_hash = sha3_256_hex(ir_bytes)
 
     # Build final manifest (inject code_hash)
-    abi_obj = manifest_in["abi"] if (manifest_in and "abi" in manifest_in) else _normalize_abi(abi)
+    abi_obj = (
+        manifest_in["abi"]
+        if (manifest_in and "abi" in manifest_in)
+        else _normalize_abi(abi)
+    )
     manifest_out = manifest_in or _manifest_from_parts(name_res, ver_res, abi_obj)
     manifest_out = dict(manifest_out)  # shallow copy
     manifest_out["code_hash"] = code_hash
@@ -446,7 +446,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     else:
         # --source mode
         if not args.abi:
-            raise SystemExit("[build_package] --abi is required when using --source without --manifest.")
+            raise SystemExit(
+                "[build_package] --abi is required when using --source without --manifest."
+            )
         source_path = args.source
         abi_obj = _normalize_abi(args.abi)
 

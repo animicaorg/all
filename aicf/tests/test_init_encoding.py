@@ -13,4 +13,3 @@ def test_package_init_is_ascii():
         data.decode("ascii")
     except UnicodeDecodeError as exc:  # pragma: no cover - fail with context
         pytest.fail(f"__init__.py contains non-ASCII characters: {exc}")
-

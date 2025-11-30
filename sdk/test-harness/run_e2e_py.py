@@ -26,15 +26,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Tuple
 
+from omni_sdk.address import encode_address
+from omni_sdk.contracts import events as contracts_events
 # --- SDK imports (generated earlier) ---
 from omni_sdk.rpc.http import RpcClient
 from omni_sdk.tx import build as tx_build
 from omni_sdk.tx import send as tx_send
 from omni_sdk.wallet import mnemonic as wallet_mnemonic
 from omni_sdk.wallet import signer as wallet_signer
-from omni_sdk.address import encode_address
-from omni_sdk.contracts import events as contracts_events
-
 
 # ---------- Helpers ----------
 
@@ -95,7 +94,9 @@ def _make_signer(cfg: E2EConfig, chain_id: int) -> wallet_signer.Signer:
     """
     if cfg.account_mnemonic:
         seed = wallet_mnemonic.mnemonic_to_seed(cfg.account_mnemonic)
-        return wallet_signer.Signer.from_seed(seed, alg_id=cfg.alg_id, account_index=cfg.account_index, chain_id=chain_id)
+        return wallet_signer.Signer.from_seed(
+            seed, alg_id=cfg.alg_id, account_index=cfg.account_index, chain_id=chain_id
+        )
 
     # Try fixtures
     fx = _load_funded_fixture()
@@ -103,13 +104,20 @@ def _make_signer(cfg: E2EConfig, chain_id: int) -> wallet_signer.Signer:
         seed = wallet_mnemonic.mnemonic_to_seed(fx["mnemonic"])
         alg = fx.get("alg", cfg.alg_id)
         idx = int(fx.get("index", cfg.account_index))
-        return wallet_signer.Signer.from_seed(seed, alg_id=alg, account_index=idx, chain_id=chain_id)
+        return wallet_signer.Signer.from_seed(
+            seed, alg_id=alg, account_index=idx, chain_id=chain_id
+        )
 
     # Ephemeral (NOT funded) — suitable if devnet prefunds default derivations
     eph_mn, _ = wallet_mnemonic.create_mnemonic()
     seed = wallet_mnemonic.mnemonic_to_seed(eph_mn)
-    print("[warn] Using ephemeral mnemonic (devnet should prefund default accounts).", file=sys.stderr)
-    return wallet_signer.Signer.from_seed(seed, alg_id=cfg.alg_id, account_index=cfg.account_index, chain_id=chain_id)
+    print(
+        "[warn] Using ephemeral mnemonic (devnet should prefund default accounts).",
+        file=sys.stderr,
+    )
+    return wallet_signer.Signer.from_seed(
+        seed, alg_id=cfg.alg_id, account_index=cfg.account_index, chain_id=chain_id
+    )
 
 
 def _pretty(obj: Any) -> str:
@@ -118,7 +126,10 @@ def _pretty(obj: Any) -> str:
 
 # ---------- Deploy & Call ----------
 
-def deploy_counter(rpc: RpcClient, chain_id: int, signer: wallet_signer.Signer) -> Tuple[str, str]:
+
+def deploy_counter(
+    rpc: RpcClient, chain_id: int, signer: wallet_signer.Signer
+) -> Tuple[str, str]:
     """
     Returns (address, tx_hash_hex)
     """
@@ -154,7 +165,9 @@ def deploy_counter(rpc: RpcClient, chain_id: int, signer: wallet_signer.Signer) 
     return address, tx_hash
 
 
-def call_inc_then_get(rpc: RpcClient, chain_id: int, signer: wallet_signer.Signer, address: str) -> dict:
+def call_inc_then_get(
+    rpc: RpcClient, chain_id: int, signer: wallet_signer.Signer, address: str
+) -> dict:
     """
     Calls inc(2) then get(), returns dict with hashes, new_value, logs
     """
@@ -185,11 +198,9 @@ def call_inc_then_get(rpc: RpcClient, chain_id: int, signer: wallet_signer.Signe
     # For simplicity, we reuse tx_build to prepare a call and use a 'call' path.
     # Many nodes offer a `state.call`/`simulate` — the RpcClient wrapper exposes it when available.
     try:
-        new_value = rpc.call("state.call", [{
-            "to": address,
-            "function": "get",
-            "args": []
-        }])
+        new_value = rpc.call(
+            "state.call", [{"to": address, "function": "get", "args": []}]
+        )
     except Exception:
         # Fallback: send a tx call with zero fee on devnet if state.call isn't available.
         tx_get = tx_build.build_call(
@@ -220,14 +231,43 @@ def call_inc_then_get(rpc: RpcClient, chain_id: int, signer: wallet_signer.Signe
 
 # ---------- CLI ----------
 
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Animica Python SDK E2E (deploy+call Counter)")
-    p.add_argument("--rpc", default=os.environ.get("RPC_URL", DEFAULT_RPC), help=f"HTTP RPC URL (default: {DEFAULT_RPC})")
-    p.add_argument("--ws", default=os.environ.get("WS_URL", DEFAULT_WS), help=f"WS URL (default: derive: {DEFAULT_WS})")
-    p.add_argument("--chain", type=int, default=int(os.environ.get("CHAIN_ID", "0")), help="Chain ID (0 = auto-detect)")
-    p.add_argument("--alg", default=os.environ.get("ALG_ID", "dilithium3"), help="PQ alg id (dilithium3|sphincs_shake_128s)")
-    p.add_argument("--mnemonic", default=os.environ.get("MNEMONIC"), help="Use explicit mnemonic (overrides fixtures)")
-    p.add_argument("--account-index", type=int, default=int(os.environ.get("ACCOUNT_INDEX", "0")), help="Derivation index (default 0)")
+    p = argparse.ArgumentParser(
+        description="Animica Python SDK E2E (deploy+call Counter)"
+    )
+    p.add_argument(
+        "--rpc",
+        default=os.environ.get("RPC_URL", DEFAULT_RPC),
+        help=f"HTTP RPC URL (default: {DEFAULT_RPC})",
+    )
+    p.add_argument(
+        "--ws",
+        default=os.environ.get("WS_URL", DEFAULT_WS),
+        help=f"WS URL (default: derive: {DEFAULT_WS})",
+    )
+    p.add_argument(
+        "--chain",
+        type=int,
+        default=int(os.environ.get("CHAIN_ID", "0")),
+        help="Chain ID (0 = auto-detect)",
+    )
+    p.add_argument(
+        "--alg",
+        default=os.environ.get("ALG_ID", "dilithium3"),
+        help="PQ alg id (dilithium3|sphincs_shake_128s)",
+    )
+    p.add_argument(
+        "--mnemonic",
+        default=os.environ.get("MNEMONIC"),
+        help="Use explicit mnemonic (overrides fixtures)",
+    )
+    p.add_argument(
+        "--account-index",
+        type=int,
+        default=int(os.environ.get("ACCOUNT_INDEX", "0")),
+        help="Derivation index (default 0)",
+    )
     return p.parse_args(argv)
 
 
@@ -268,7 +308,11 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:
         v = None
     if v is None or v < 2:
-        print("[e2e] ERROR: unexpected counter value:", result["value_after_inc"], file=sys.stderr)
+        print(
+            "[e2e] ERROR: unexpected counter value:",
+            result["value_after_inc"],
+            file=sys.stderr,
+        )
         return 2
 
     # Display decoded events

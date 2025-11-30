@@ -13,17 +13,21 @@ We provide TWO layers:
 The structured IR is intentionally simple and close to Python surface syntax (after
 validation). A later pass can lower it to the instruction IR for execution/encoding.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import (Any, Dict, Iterable, List, Mapping, Optional, Sequence,
+                    Tuple, Union)
 
 # =============================================================================
 # Structured IR (Expr/Stmt)
 # =============================================================================
 
+
 class Expr:
     """Base class for expression nodes."""
+
     __slots__ = ()
 
 
@@ -39,26 +43,26 @@ class Name(Expr):
 
 @dataclass(frozen=True)
 class BinOp(Expr):
-    op: str               # "add" | "sub" | "mul" | "floordiv" | "mod" | "and" | "or" | "xor" | "lshift" | "rshift"
+    op: str  # "add" | "sub" | "mul" | "floordiv" | "mod" | "and" | "or" | "xor" | "lshift" | "rshift"
     left: Expr
     right: Expr
 
 
 @dataclass(frozen=True)
 class BoolOp(Expr):
-    op: str               # "and" | "or"
+    op: str  # "and" | "or"
     values: List[Expr]
 
 
 @dataclass(frozen=True)
 class UnaryOp(Expr):
-    op: str               # "pos" | "neg" | "not" | "invert"
+    op: str  # "pos" | "neg" | "not" | "invert"
     operand: Expr
 
 
 @dataclass(frozen=True)
 class Compare(Expr):
-    op: str               # "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "in" | "not_in" | "is" | "is_not"
+    op: str  # "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "in" | "not_in" | "is" | "is_not"
     left: Expr
     right: Expr
 
@@ -84,6 +88,7 @@ class Call(Expr):
 
 class Stmt:
     """Base class for statement nodes."""
+
     __slots__ = ()
 
 
@@ -135,14 +140,17 @@ class Module:
 #   - A minimal, stack-based form suitable for deterministic execution and wire encoding.
 # =============================================================================
 
+
 @dataclass(frozen=True)
 class Instr:
     """Base instruction type used by the IR encoder/decoder."""
+
     op: str
     args: tuple
 
 
 # --- Stack/Data ops -----------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class ILoadConst(Instr):
@@ -167,6 +175,7 @@ class IAttrGet(Instr):
 @dataclass(frozen=True)
 class ISubscriptGet(Instr):
     """Pop index, pop value; push value[index]."""
+
     pass
 
 
@@ -188,7 +197,9 @@ class ICompare(Instr):
 @dataclass(frozen=True)
 class ICall(Instr):
     n_pos: int
-    kw_names: Tuple[str, ...]  # order preserved; args taken from stack: [.., *pos, *kwvals]
+    kw_names: Tuple[
+        str, ...
+    ]  # order preserved; args taken from stack: [.., *pos, *kwvals]
 
 
 @dataclass(frozen=True)
@@ -203,9 +214,11 @@ class IDup(Instr):
 
 # --- Control flow -------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class IReturn(Instr):
     """Return top-of-stack (or None if stack empty by convention)."""
+
     pass
 
 
@@ -232,6 +245,7 @@ class INop(Instr):
 @dataclass(frozen=True)
 class Block:
     """A labeled basic block of instructions. Control flows by jumps or fallthrough."""
+
     label: str
     instrs: List[Instr] = field(default_factory=list)
     # Optional explicit fallthrough label; if None, the next block in layout is the fallthrough.
@@ -241,6 +255,7 @@ class Block:
 @dataclass(frozen=True)
 class Prog:
     """A complete program comprised of labeled blocks."""
+
     entry: str
     blocks: Dict[str, Block]
 
@@ -248,6 +263,7 @@ class Prog:
 # =============================================================================
 # Utilities: validation / traversal / pretty-print
 # =============================================================================
+
 
 def validate_module(mod: Module) -> None:
     """Light sanity checks on structured IR."""
@@ -284,12 +300,19 @@ def _validate_stmt_block(block: Sequence[Stmt], *, ctx: str) -> None:
     for st in block:
         if isinstance(st, Assign):
             # Validate targets shape
-            if isinstance(st.targets, list) and st.targets and isinstance(st.targets[0], list):
+            if (
+                isinstance(st.targets, list)
+                and st.targets
+                and isinstance(st.targets[0], list)
+            ):
                 # Unpack assignment form [["a","b",...]]
                 names = st.targets[0]
                 _validate_identifier_list(names, what=f"unpack targets in {ctx}")
             else:
-                _validate_identifier_list(st.targets if isinstance(st.targets, list) else [], what=f"targets in {ctx}")
+                _validate_identifier_list(
+                    st.targets if isinstance(st.targets, list) else [],
+                    what=f"targets in {ctx}",
+                )
         elif isinstance(st, (ExprStmt, Return)):
             pass
         elif isinstance(st, If):
@@ -451,14 +474,48 @@ def pretty_stmt(st: Stmt, indent: int = 0) -> str:
 
 __all__ = [
     # structured
-    "Expr", "Const", "Name", "BinOp", "BoolOp", "UnaryOp", "Compare", "Attribute", "Subscript", "Call",
-    "Stmt", "Assign", "ExprStmt", "Return", "If", "While",
-    "Function", "Module",
+    "Expr",
+    "Const",
+    "Name",
+    "BinOp",
+    "BoolOp",
+    "UnaryOp",
+    "Compare",
+    "Attribute",
+    "Subscript",
+    "Call",
+    "Stmt",
+    "Assign",
+    "ExprStmt",
+    "Return",
+    "If",
+    "While",
+    "Function",
+    "Module",
     # instruction IR
-    "Instr", "ILoadConst", "ILoadName", "IStoreName", "IAttrGet", "ISubscriptGet",
-    "IBinOp", "IUnaryOp", "ICompare", "ICall", "IPop", "IDup",
-    "IReturn", "IJump", "IJumpIfTrue", "IJumpIfFalse", "INop",
-    "Block", "Prog",
+    "Instr",
+    "ILoadConst",
+    "ILoadName",
+    "IStoreName",
+    "IAttrGet",
+    "ISubscriptGet",
+    "IBinOp",
+    "IUnaryOp",
+    "ICompare",
+    "ICall",
+    "IPop",
+    "IDup",
+    "IReturn",
+    "IJump",
+    "IJumpIfTrue",
+    "IJumpIfFalse",
+    "INop",
+    "Block",
+    "Prog",
     # utils
-    "validate_module", "walk_expr", "walk_stmt", "pretty_expr", "pretty_stmt",
+    "validate_module",
+    "walk_expr",
+    "walk_stmt",
+    "pretty_expr",
+    "pretty_stmt",
 ]

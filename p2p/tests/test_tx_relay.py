@@ -1,9 +1,9 @@
+import hashlib
 import os
 import sys
 import time
-import hashlib
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple, List
+from typing import Dict, List, Optional, Tuple
 
 import pytest
 
@@ -15,8 +15,10 @@ sys.path.insert(0, os.path.expanduser("~/animica"))
 # Utilities
 # -----------------------------
 
+
 def sha3_256(data: bytes) -> bytes:
     return hashlib.sha3_256(data).digest()
+
 
 def b2h(b: bytes) -> str:
     return "0x" + b.hex()
@@ -25,6 +27,7 @@ def b2h(b: bytes) -> str:
 # -----------------------------
 # Fake clock for deterministic rate tests
 # -----------------------------
+
 
 class FakeClock:
     def __init__(self, start: float = 0.0) -> None:
@@ -41,10 +44,12 @@ class FakeClock:
 # Token-bucket rate limiter
 # -----------------------------
 
+
 @dataclass
 class _BucketState:
     tokens: float
     last: float
+
 
 class TokenBucket:
     """
@@ -53,7 +58,10 @@ class TokenBucket:
       - rate: tokens per second.
       - cost: tokens consumed per event (default 1).
     """
-    def __init__(self, capacity: float, rate: float, clock: Optional[FakeClock] = None) -> None:
+
+    def __init__(
+        self, capacity: float, rate: float, clock: Optional[FakeClock] = None
+    ) -> None:
         self.capacity = float(capacity)
         self.rate = float(rate)
         self._clock = clock
@@ -90,9 +98,15 @@ class TokenBucket:
 # Minimal Tx relay with admission + dedupe + rate control
 # -----------------------------
 
+
 class AdmissionError(Exception): ...
+
+
 class RateLimited(Exception): ...
+
+
 class Duplicate(Exception): ...
+
 
 class TxRelayService:
     """
@@ -101,12 +115,19 @@ class TxRelayService:
       - Dedupe by tx hash; duplicates short-circuit BEFORE rate-limit consumption.
       - Per-peer token-bucket rate control.
     """
-    def __init__(self, max_tx_size: int = 1024, rate_per_sec: float = 20.0, burst: float = 40.0, clock: Optional[FakeClock] = None) -> None:
+
+    def __init__(
+        self,
+        max_tx_size: int = 1024,
+        rate_per_sec: float = 20.0,
+        burst: float = 40.0,
+        clock: Optional[FakeClock] = None,
+    ) -> None:
         self.max_tx_size = int(max_tx_size)
         self.clock = clock
         self.limiter = TokenBucket(capacity=burst, rate=rate_per_sec, clock=clock)
-        self.seen: Dict[str, float] = {}      # tx_hash_hex -> first_seen_time
-        self.pool: Dict[str, bytes] = {}      # tx_hash_hex -> tx bytes
+        self.seen: Dict[str, float] = {}  # tx_hash_hex -> first_seen_time
+        self.pool: Dict[str, bytes] = {}  # tx_hash_hex -> tx bytes
 
     def _now(self) -> float:
         return self.clock.now() if self.clock is not None else time.monotonic()
@@ -150,6 +171,7 @@ class TxRelayService:
 # -----------------------------
 # Tests
 # -----------------------------
+
 
 def test_dedupe_suppresses_second_submit_without_spending_tokens():
     clk = FakeClock(0.0)
@@ -248,5 +270,3 @@ def test_dedupe_is_global_across_peers_but_rate_is_per_peer():
     clk.advance(0.0)  # no refill
     ok3, r3, _ = relay.submit(peerB, b"TX|different")
     assert ok3 and r3 == "ok"
-
-

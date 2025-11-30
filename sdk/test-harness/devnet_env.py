@@ -33,7 +33,8 @@ import sys
 import time
 import typing as t
 from pathlib import Path
-from urllib import request, error as urlerror
+from urllib import error as urlerror
+from urllib import request
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8545
@@ -66,7 +67,9 @@ class DevnetInfo:
         )
 
 
-def _json_rpc_call(rpc_url: str, method: str, params: t.Any = None, timeout: float = 3.0) -> t.Any:
+def _json_rpc_call(
+    rpc_url: str, method: str, params: t.Any = None, timeout: float = 3.0
+) -> t.Any:
     """Minimal JSON-RPC 2.0 call using stdlib only."""
     body = {
         "jsonrpc": "2.0",
@@ -100,10 +103,14 @@ def _wait_for_ready(rpc_url: str, deadline_sec: float = 20.0) -> int:
         except Exception as e:  # noqa: BLE001
             last_exc = e
         time.sleep(0.25)
-    raise TimeoutError(f"RPC did not become ready within {deadline_sec:.1f}s; last={last_exc!r}")
+    raise TimeoutError(
+        f"RPC did not become ready within {deadline_sec:.1f}s; last={last_exc!r}"
+    )
 
 
-def _spawn(cmd: list[str], env: dict[str, str], cwd: Path, stdout_file: Path) -> subprocess.Popen:
+def _spawn(
+    cmd: list[str], env: dict[str, str], cwd: Path, stdout_file: Path
+) -> subprocess.Popen:
     stdout_file.parent.mkdir(parents=True, exist_ok=True)
     # Open in append mode; keep logs across sessions.
     out = open(stdout_file, "ab", buffering=0)
@@ -224,11 +231,16 @@ def do_up(args: argparse.Namespace) -> int:
 
         print(f"[devnet] launching miner: {' '.join(miner_cmd)}")
         try:
-            miner_proc = _spawn(miner_cmd, env=miner_env, cwd=work, stdout_file=work / "miner.log")
+            miner_proc = _spawn(
+                miner_cmd, env=miner_env, cwd=work, stdout_file=work / "miner.log"
+            )
             miner_pid = miner_proc.pid
             _write_pidfile(work / MINER_PID, miner_pid)
         except Exception as e:  # noqa: BLE001
-            print(f"[devnet] WARN: miner failed to start: {e}. Continuing without mining.", file=sys.stderr)
+            print(
+                f"[devnet] WARN: miner failed to start: {e}. Continuing without mining.",
+                file=sys.stderr,
+            )
 
     info = DevnetInfo(
         rpc_url=rpc_url,
@@ -239,8 +251,14 @@ def do_up(args: argparse.Namespace) -> int:
     (work / INFO_JSON).write_text(info.to_json())
 
     print("[devnet] ✅ up")
-    print(json.dumps({"rpc_url": rpc_url, "ws_url": ws_url, "chain_id": detected_chain}, indent=2))
-    print(f"[devnet] logs: {work/'rpc.log'} {'; ' + str(work/'miner.log') if miner_pid else ''}")
+    print(
+        json.dumps(
+            {"rpc_url": rpc_url, "ws_url": ws_url, "chain_id": detected_chain}, indent=2
+        )
+    )
+    print(
+        f"[devnet] logs: {work/'rpc.log'} {'; ' + str(work/'miner.log') if miner_pid else ''}"
+    )
     return 0
 
 
@@ -297,7 +315,10 @@ def do_status(args: argparse.Namespace) -> int:
 
 def do_attach(args: argparse.Namespace) -> int:
     rpc_url = args.rpc
-    ws_url = args.ws or (rpc_url.replace("http://", "ws://").replace("https://", "wss://").rstrip("/") + "/ws")
+    ws_url = args.ws or (
+        rpc_url.replace("http://", "ws://").replace("https://", "wss://").rstrip("/")
+        + "/ws"
+    )
     # Probe endpoint
     try:
         cid = _json_rpc_call(rpc_url, "chain.getChainId")
@@ -317,25 +338,59 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     up = sub.add_parser("up", help="Start a local devnet (RPC + optional miner)")
-    up.add_argument("--dir", default=DEFAULT_DIR, help="Working directory for db/logs/pids (default: .animica-devnet)")
-    up.add_argument("--host", default=DEFAULT_HOST, help="Bind host (default: 127.0.0.1)")
-    up.add_argument("--port", type=int, default=DEFAULT_PORT, help="HTTP/WS port (default: 8545)")
-    up.add_argument("--chain", type=int, default=DEFAULT_CHAIN_ID, help="Desired chain id hint (default: 1337)")
-    up.add_argument("--mine", dest="mine", action=argparse.BooleanOptionalAction, default=True, help="Start CPU miner")
+    up.add_argument(
+        "--dir",
+        default=DEFAULT_DIR,
+        help="Working directory for db/logs/pids (default: .animica-devnet)",
+    )
+    up.add_argument(
+        "--host", default=DEFAULT_HOST, help="Bind host (default: 127.0.0.1)"
+    )
+    up.add_argument(
+        "--port", type=int, default=DEFAULT_PORT, help="HTTP/WS port (default: 8545)"
+    )
+    up.add_argument(
+        "--chain",
+        type=int,
+        default=DEFAULT_CHAIN_ID,
+        help="Desired chain id hint (default: 1337)",
+    )
+    up.add_argument(
+        "--mine",
+        dest="mine",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Start CPU miner",
+    )
     up.add_argument("--threads", default="auto", help="Miner threads (default: auto)")
-    up.add_argument("--rpc-timeout", type=float, default=20.0, help="Seconds to wait for RPC readiness (default: 20.0)")
+    up.add_argument(
+        "--rpc-timeout",
+        type=float,
+        default=20.0,
+        help="Seconds to wait for RPC readiness (default: 20.0)",
+    )
     up.set_defaults(func=do_up)
 
     down = sub.add_parser("down", help="Stop local devnet processes")
-    down.add_argument("--dir", default=DEFAULT_DIR, help="Working directory (default: .animica-devnet)")
+    down.add_argument(
+        "--dir",
+        default=DEFAULT_DIR,
+        help="Working directory (default: .animica-devnet)",
+    )
     down.set_defaults(func=do_down)
 
     status = sub.add_parser("status", help="Print connection info and ping RPC")
-    status.add_argument("--dir", default=DEFAULT_DIR, help="Working directory (default: .animica-devnet)")
+    status.add_argument(
+        "--dir",
+        default=DEFAULT_DIR,
+        help="Working directory (default: .animica-devnet)",
+    )
     status.set_defaults(func=do_status)
 
     attach = sub.add_parser("attach", help="Check and print info for an existing node")
-    attach.add_argument("--rpc", required=True, help="HTTP RPC base URL (e.g., http://127.0.0.1:8545)")
+    attach.add_argument(
+        "--rpc", required=True, help="HTTP RPC base URL (e.g., http://127.0.0.1:8545)"
+    )
     attach.add_argument("--ws", help="WS URL (default: derive from --rpc as /ws)")
     attach.set_defaults(func=do_attach)
 

@@ -62,7 +62,8 @@ License: MIT
 
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping, Tuple, List, Union, Iterable, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Union
+
 from .snarkjs_loader import load_json, normalize_numbers
 
 JsonLike = Union[str, bytes, "os.PathLike[str]", Mapping[str, Any]]
@@ -71,6 +72,7 @@ JsonLike = Union[str, bytes, "os.PathLike[str]", Mapping[str, Any]]
 # -----------------------------------------------------------------------------
 # Shape detection
 # -----------------------------------------------------------------------------
+
 
 def is_plonkjs_vk(obj: Mapping[str, Any]) -> bool:
     """
@@ -89,6 +91,7 @@ def is_plonkjs_vk(obj: Mapping[str, Any]) -> bool:
         return any(k in ck for k in ("s_g2", "g2_s", "tau_g2"))
     return False
 
+
 def is_plonkjs_proof(obj: Mapping[str, Any]) -> bool:
     """
     Heuristic for a PlonkJS proof bundle:
@@ -99,7 +102,16 @@ def is_plonkjs_proof(obj: Mapping[str, Any]) -> bool:
         return True
     # Flat: look for common fields (very tolerant)
     keys = set(obj.keys())
-    candidates = {"publicSignals", "commitments", "W", "opening", "pi", "proof", "z", "x"}
+    candidates = {
+        "publicSignals",
+        "commitments",
+        "W",
+        "opening",
+        "pi",
+        "proof",
+        "z",
+        "x",
+    }
     return bool(keys & candidates)
 
 
@@ -107,11 +119,13 @@ def is_plonkjs_proof(obj: Mapping[str, Any]) -> bool:
 # Normalizers
 # -----------------------------------------------------------------------------
 
+
 def _norm_g1(pt: Iterable[Any]) -> List[int]:
     arr = list(pt)
     if len(arr) != 2:
         raise ValueError("G1 point must be [x, y]")
     return [int(arr[0]), int(arr[1])]
+
 
 def _norm_g2(pt: Iterable[Iterable[Any]]) -> List[List[int]]:
     arr = [list(a) for a in pt]
@@ -119,11 +133,13 @@ def _norm_g2(pt: Iterable[Iterable[Any]]) -> List[List[int]]:
         raise ValueError("G2 point must be [[x0,x1],[y0,y1]]")
     return [[int(arr[0][0]), int(arr[0][1])], [int(arr[1][0]), int(arr[1][1])]]
 
+
 def _maybe_get(mapping: Mapping[str, Any], *names: str) -> Any:
     for n in names:
         if n in mapping:
             return mapping[n]
     return None
+
 
 def _pluck_s_g2(vk: Mapping[str, Any]) -> Optional[List[List[int]]]:
     # direct
@@ -144,6 +160,7 @@ def _pluck_s_g2(vk: Mapping[str, Any]) -> Optional[List[List[int]]]:
                     return _norm_g2(v)  # type: ignore[arg-type]
     return None
 
+
 def normalize_plonkjs_vk(vk: Mapping[str, Any]) -> Dict[str, Any]:
     """
     Return a dict with **numbers coerced to ints** and common KZG params normalized.
@@ -162,7 +179,10 @@ def normalize_plonkjs_vk(vk: Mapping[str, Any]) -> Dict[str, Any]:
         out.setdefault("s_g2", sg2)
     return out
 
-def normalize_plonkjs_proof(bundle_or_proof: Mapping[str, Any]) -> Tuple[Dict[str, Any], List[int]]:
+
+def normalize_plonkjs_proof(
+    bundle_or_proof: Mapping[str, Any],
+) -> Tuple[Dict[str, Any], List[int]]:
     """
     Accept either:
       - bundle: { proof: {...}, publicSignals: [...] }
@@ -185,7 +205,9 @@ def normalize_plonkjs_proof(bundle_or_proof: Mapping[str, Any]) -> Tuple[Dict[st
     if publics is None:
         publics_n: List[int] = []
     elif isinstance(publics, list):
-        publics_n = [int(x if isinstance(x, int) else normalize_numbers(x)) for x in publics]
+        publics_n = [
+            int(x if isinstance(x, int) else normalize_numbers(x)) for x in publics
+        ]
     else:
         raise ValueError("publicSignals must be a list when present")
 
@@ -195,6 +217,7 @@ def normalize_plonkjs_proof(bundle_or_proof: Mapping[str, Any]) -> Tuple[Dict[st
 # -----------------------------------------------------------------------------
 # KZG convenience extractors (optional)
 # -----------------------------------------------------------------------------
+
 
 def extract_kzg_vk(vk_json: Mapping[str, Any]) -> Dict[str, Any]:
     """
@@ -213,6 +236,7 @@ def extract_kzg_vk(vk_json: Mapping[str, Any]) -> Dict[str, Any]:
     if sg2 is not None:
         return {"s_g2": sg2}
     raise KeyError("Could not locate KZG s_g2 in verifying key")
+
 
 def extract_kzg_opening(proof_json: Mapping[str, Any]) -> Dict[str, Any]:
     """
@@ -234,19 +258,19 @@ def extract_kzg_opening(proof_json: Mapping[str, Any]) -> Dict[str, Any]:
     """
     p = normalize_numbers(proof_json)
 
-    C  = _maybe_get(p, "commitment", "C")
-    z  = _maybe_get(p, "z", "x")
-    v  = _maybe_get(p, "value", "y", "v")
+    C = _maybe_get(p, "commitment", "C")
+    z = _maybe_get(p, "z", "x")
+    v = _maybe_get(p, "value", "y", "v")
     pi = _maybe_get(p, "proof", "opening_proof", "pi")
 
     if C is None or z is None or v is None or pi is None:
         raise KeyError("KZG opening fields not found in proof object")
 
     return {
-        "commitment": _norm_g1(C),          # type: ignore[arg-type]
+        "commitment": _norm_g1(C),  # type: ignore[arg-type]
         "z": int(z),
         "value": int(v),
-        "proof": _norm_g1(pi),              # type: ignore[arg-type]
+        "proof": _norm_g1(pi),  # type: ignore[arg-type]
     }
 
 
@@ -254,7 +278,10 @@ def extract_kzg_opening(proof_json: Mapping[str, Any]) -> Dict[str, Any]:
 # Top-level loaders
 # -----------------------------------------------------------------------------
 
-def load_plonkjs(vk_source: JsonLike, proof_source: JsonLike) -> Tuple[Dict[str, Any], Dict[str, Any], List[int]]:
+
+def load_plonkjs(
+    vk_source: JsonLike, proof_source: JsonLike
+) -> Tuple[Dict[str, Any], Dict[str, Any], List[int]]:
     """
     Convenience loader:
         vk_json, proof_json, public_inputs = load_plonkjs("vk.json", "proof.json")

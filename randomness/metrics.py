@@ -35,41 +35,59 @@ from contextlib import contextmanager
 from time import perf_counter
 from typing import Iterable, Optional
 
-from prometheus_client import Counter, Histogram, REGISTRY
-
+from prometheus_client import REGISTRY, Counter, Histogram
 
 # --------- Vocabularies (kept small for bounded cardinality) ---------
 
 _COMMIT_OUTCOMES = (
-    "accepted",     # commit accepted for the round
-    "too_late",     # arrived after commit window closed
-    "duplicate",    # already have a commit from the same participant
-    "invalid",      # malformed / failed basic validation
+    "accepted",  # commit accepted for the round
+    "too_late",  # arrived after commit window closed
+    "duplicate",  # already have a commit from the same participant
+    "invalid",  # malformed / failed basic validation
 )
 
 _REVEAL_OUTCOMES = (
-    "accepted",     # reveal matched commitment and within window
-    "too_early",    # reveal before window opens
-    "too_late",     # reveal after window closes (if enforced)
-    "bad_reveal",   # hash mismatch vs commitment / domain issues
-    "invalid",      # malformed / failed validation
+    "accepted",  # reveal matched commitment and within window
+    "too_early",  # reveal before window opens
+    "too_late",  # reveal after window closes (if enforced)
+    "bad_reveal",  # hash mismatch vs commitment / domain issues
+    "invalid",  # malformed / failed validation
 )
 
 # --------- Default histogram buckets ---------
 
 # VDF verification latency buckets (seconds): fine-grained sub-100ms up to 10s
 _VDF_VERIFY_BUCKETS = (
-    0.005, 0.01, 0.025, 0.05,
-    0.1, 0.25, 0.5,
-    1.0, 2.5, 5.0, 10.0,
+    0.005,
+    0.01,
+    0.025,
+    0.05,
+    0.1,
+    0.25,
+    0.5,
+    1.0,
+    2.5,
+    5.0,
+    10.0,
 )
 
 # Entropy bits distribution buckets: from 0 up to 256 bits
 _ENTROPY_BITS_BUCKETS = (
-    0.0, 1.0, 2.0, 4.0,
-    8.0, 16.0, 32.0, 48.0,
-    64.0, 96.0, 128.0, 160.0,
-    192.0, 224.0, 256.0,
+    0.0,
+    1.0,
+    2.0,
+    4.0,
+    8.0,
+    16.0,
+    32.0,
+    48.0,
+    64.0,
+    96.0,
+    128.0,
+    160.0,
+    192.0,
+    224.0,
+    256.0,
 )
 
 
@@ -88,7 +106,7 @@ class Metrics:
         *,
         namespace: str = "animica",
         subsystem: str = "randomness",
-        registry = REGISTRY,
+        registry=REGISTRY,
         vdf_buckets: Iterable[float] = _VDF_VERIFY_BUCKETS,
         entropy_buckets: Iterable[float] = _ENTROPY_BITS_BUCKETS,
     ) -> None:

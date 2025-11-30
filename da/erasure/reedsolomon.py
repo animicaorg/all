@@ -47,7 +47,6 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .params import ErasureParams
 
-
 # =============================================================================
 # GF(256) arithmetic (poly 0x11D, generator 0x02)
 # =============================================================================
@@ -140,6 +139,7 @@ _gf_build_mul_table()
 # Generator matrix helpers
 # =============================================================================
 
+
 def _generator_row(row_index: int, k: int) -> List[int]:
     """
     Return the `row_index`-th row of the generator matrix G (length k).
@@ -168,6 +168,7 @@ def _select_rows(indices: Sequence[int], k: int) -> List[List[int]]:
 # =============================================================================
 # Matrix ops over GF(256)
 # =============================================================================
+
 
 def _mat_identity(k: int) -> List[List[int]]:
     m = [[0] * k for _ in range(k)]
@@ -251,7 +252,10 @@ def _mat_mul_bytes(mat: List[List[int]], rows: Sequence[bytes]) -> List[bytes]:
 # Public API
 # =============================================================================
 
-def _rs_encode_from_shards(data_shards: Sequence[bytes], params: ErasureParams) -> List[bytes]:
+
+def _rs_encode_from_shards(
+    data_shards: Sequence[bytes], params: ErasureParams
+) -> List[bytes]:
     """
     Core encoder operating on pre-split data shards.
     """
@@ -314,9 +318,13 @@ def rs_encode(
 
     # Byte-buffer form: (bytes, k, n, share_bytes)
     if not isinstance(data, (bytes, bytearray, memoryview)):
-        raise TypeError("rs_encode(data, k, n, share_bytes) expects a bytes-like data buffer")
+        raise TypeError(
+            "rs_encode(data, k, n, share_bytes) expects a bytes-like data buffer"
+        )
     if n is None or share_bytes is None:
-        raise TypeError("rs_encode(data, k, n, share_bytes) requires k, n, and share_bytes")
+        raise TypeError(
+            "rs_encode(data, k, n, share_bytes) requires k, n, and share_bytes"
+        )
 
     k = int(params_or_k)
     n_int = int(n)
@@ -324,7 +332,9 @@ def rs_encode(
     buf = bytes(data)
     expected = k * share
     if len(buf) != expected:
-        raise ValueError(f"data length must be exactly k*share_bytes={expected}, got {len(buf)}")
+        raise ValueError(
+            f"data length must be exactly k*share_bytes={expected}, got {len(buf)}"
+        )
     params = ErasureParams(k, n_int, share)
     shards = [buf[i * share : (i + 1) * share] for i in range(k)]
     parity = _rs_encode_from_shards(shards, params)
@@ -358,7 +368,7 @@ def rs_decode(
             raise ValueError("shard length mismatch")
 
     sel = sorted(shards.keys())[:k]  # pick first k deterministically
-    A = _select_rows(sel, k)         # k×k
+    A = _select_rows(sel, k)  # k×k
     try:
         A_inv = _mat_inv(A)
     except ValueError as e:
@@ -380,15 +390,21 @@ def rs_decode(
 # -----------------------------------------------------------------------------
 
 
-def encode(data: bytes, k: int, n: int, share_bytes: int) -> List[bytes]:  # pragma: no cover - light wrapper
+def encode(
+    data: bytes, k: int, n: int, share_bytes: int
+) -> List[bytes]:  # pragma: no cover - light wrapper
     return rs_encode(data, k, n, share_bytes)
 
 
-def encode_bytes(data: bytes, k: int, n: int, share_bytes: int) -> List[bytes]:  # pragma: no cover - alias
+def encode_bytes(
+    data: bytes, k: int, n: int, share_bytes: int
+) -> List[bytes]:  # pragma: no cover - alias
     return encode(data, k, n, share_bytes)
 
 
-def encode_shards(data_shards: Sequence[bytes], k: int, n: int, share_bytes: int) -> List[bytes]:
+def encode_shards(
+    data_shards: Sequence[bytes], k: int, n: int, share_bytes: int
+) -> List[bytes]:
     params = ErasureParams(k, n, share_bytes)
     if len(data_shards) != k:
         raise ValueError(f"expected {k} data shards, got {len(data_shards)}")
@@ -399,7 +415,9 @@ def encode_shards(data_shards: Sequence[bytes], k: int, n: int, share_bytes: int
     return list(data_shards) + parity
 
 
-def reconstruct(shards: Sequence[Optional[bytes]], k: int, n: int, share_bytes: int) -> List[bytes]:
+def reconstruct(
+    shards: Sequence[Optional[bytes]], k: int, n: int, share_bytes: int
+) -> List[bytes]:
     params = ErasureParams(k, n, share_bytes)
     provided: Dict[int, bytes] = {i: s for i, s in enumerate(shards) if s is not None}
     if len(provided) < k:
@@ -415,16 +433,22 @@ def reconstruct(shards: Sequence[Optional[bytes]], k: int, n: int, share_bytes: 
     return full
 
 
-def decode_shards(shards: Sequence[Optional[bytes]], k: int, n: int, share_bytes: int) -> List[bytes]:  # pragma: no cover - thin wrapper
+def decode_shards(
+    shards: Sequence[Optional[bytes]], k: int, n: int, share_bytes: int
+) -> List[bytes]:  # pragma: no cover - thin wrapper
     return reconstruct(shards, k, n, share_bytes)
 
 
-def decode(data_shards: Sequence[Optional[bytes]], k: int, n: int, share_bytes: int) -> bytes:
+def decode(
+    data_shards: Sequence[Optional[bytes]], k: int, n: int, share_bytes: int
+) -> bytes:
     full = reconstruct(data_shards, k, n, share_bytes)
     return b"".join(full[:k])
 
 
-def decode_bytes(data_shards: Sequence[Optional[bytes]], k: int, n: int, share_bytes: int) -> bytes:  # pragma: no cover - alias
+def decode_bytes(
+    data_shards: Sequence[Optional[bytes]], k: int, n: int, share_bytes: int
+) -> bytes:  # pragma: no cover - alias
     return decode(data_shards, k, n, share_bytes)
 
 
@@ -443,6 +467,7 @@ def verify(shards: Sequence[bytes], k: int, n: int, share_bytes: int) -> bool:
 # -----------------------------------------------------------------------------
 # Convenience OO wrapper
 # -----------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class RSCodec:

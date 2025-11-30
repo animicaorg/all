@@ -11,6 +11,7 @@ These benches measure performance characteristics like:
 Each script in this package is intended to be runnable as a module, e.g.:
     python -m randomness.bench.vdf_verify
 """
+
 from __future__ import annotations
 
 __all__: list[str] = []

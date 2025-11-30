@@ -46,7 +46,6 @@ from typing import Dict, List, Optional
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 # ----------------------------- Helpers & Models ------------------------------ #
 
 
@@ -78,7 +77,13 @@ class RateLimitSpec(BaseModel):
     burst: int = Field(ge=0, description="Max burst size before throttling.")
 
     @classmethod
-    def from_env_pair(cls, rps: float | str | None, burst: int | str | None, *, defaults: "RateLimitSpec") -> "RateLimitSpec":
+    def from_env_pair(
+        cls,
+        rps: float | str | None,
+        burst: int | str | None,
+        *,
+        defaults: "RateLimitSpec",
+    ) -> "RateLimitSpec":
         try:
             r = float(rps) if rps is not None else defaults.rps
         except Exception:
@@ -91,9 +96,16 @@ class RateLimitSpec(BaseModel):
 
 
 class CorsConfig(BaseModel):
-    allow_origins: List[str] = Field(default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"])
+    allow_origins: List[str] = Field(
+        default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
+    )
     allow_headers: List[str] = Field(
-        default_factory=lambda: ["Authorization", "Content-Type", "X-Requested-With", "X-API-Key"]
+        default_factory=lambda: [
+            "Authorization",
+            "Content-Type",
+            "X-Requested-With",
+            "X-API-Key",
+        ]
     )
     allow_methods: List[str] = Field(default_factory=lambda: ["GET", "POST", "OPTIONS"])
     allow_credentials: bool = False
@@ -105,8 +117,12 @@ class CorsConfig(BaseModel):
 
 
 class SecurityConfig(BaseModel):
-    api_keys: List[str] = Field(default_factory=list, description="Accepted API keys for protected endpoints.")
-    faucet_key: Optional[str] = Field(default=None, description="Optional hot key for faucet (dev/test only).")
+    api_keys: List[str] = Field(
+        default_factory=list, description="Accepted API keys for protected endpoints."
+    )
+    faucet_key: Optional[str] = Field(
+        default=None, description="Optional hot key for faucet (dev/test only)."
+    )
     enable_faucet: bool = False
     enable_verify: bool = True
     host_allowlist: List[str] = Field(default_factory=list)
@@ -118,7 +134,9 @@ class SecurityConfig(BaseModel):
 
 
 class RateLimitConfig(BaseModel):
-    global_limit: RateLimitSpec = Field(default_factory=lambda: RateLimitSpec(rps=25.0, burst=50))
+    global_limit: RateLimitSpec = Field(
+        default_factory=lambda: RateLimitSpec(rps=25.0, burst=50)
+    )
     route_overrides: Dict[str, RateLimitSpec] = Field(default_factory=dict)
 
     @field_validator("route_overrides", mode="before")
@@ -128,7 +146,12 @@ class RateLimitConfig(BaseModel):
             return {}
         if isinstance(v, dict):
             # Could be already parsed from .env backed by pydantic
-            return {str(k): (RateLimitSpec(**vv) if not isinstance(vv, RateLimitSpec) else vv) for k, vv in v.items()}
+            return {
+                str(k): (
+                    RateLimitSpec(**vv) if not isinstance(vv, RateLimitSpec) else vv
+                )
+                for k, vv in v.items()
+            }
         if isinstance(v, str):
             s = v.strip()
             if not s:
@@ -139,7 +162,9 @@ class RateLimitConfig(BaseModel):
                 data = json.loads(s)
                 return {str(k): RateLimitSpec(**vv) for k, vv in data.items()}
             except Exception as e:
-                raise ValueError("RATE_LIMITS must be valid JSON mapping of route->spec") from e
+                raise ValueError(
+                    "RATE_LIMITS must be valid JSON mapping of route->spec"
+                ) from e
         raise TypeError("Invalid type for rate limit overrides")
 
 
@@ -159,7 +184,9 @@ class Settings(BaseSettings):
     # Core
     rpc_url: str = Field("http://127.0.0.1:8545", description="Node JSON-RPC endpoint")
     chain_id: int = Field(1337, description="Network chain id to enforce")
-    log_level: str = Field("INFO", description="Logging level (DEBUG, INFO, WARNING, ERROR)")
+    log_level: str = Field(
+        "INFO", description="Logging level (DEBUG, INFO, WARNING, ERROR)"
+    )
 
     # Sub-configs
     cors: CorsConfig = Field(default_factory=CorsConfig)
@@ -168,21 +195,33 @@ class Settings(BaseSettings):
     storage: StorageConfig = Field(default_factory=StorageConfig)
 
     # pydantic-settings
-    model_config = SettingsConfigDict(env_prefix="", env_file=".env", case_sensitive=False, extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="", env_file=".env", case_sensitive=False, extra="ignore"
+    )
 
     # --- Env bridges for convenience (.env keys -> nested models) ------------
     # CORS
-    CORS_ALLOW_ORIGINS: Optional[str | List[str]] = Field(default=None, alias="CORS_ALLOW_ORIGINS")
-    CORS_ALLOW_HEADERS: Optional[str | List[str]] = Field(default=None, alias="CORS_ALLOW_HEADERS")
-    CORS_ALLOW_METHODS: Optional[str | List[str]] = Field(default=None, alias="CORS_ALLOW_METHODS")
-    CORS_ALLOW_CREDENTIALS: Optional[bool] = Field(default=None, alias="CORS_ALLOW_CREDENTIALS")
+    CORS_ALLOW_ORIGINS: Optional[str | List[str]] = Field(
+        default=None, alias="CORS_ALLOW_ORIGINS"
+    )
+    CORS_ALLOW_HEADERS: Optional[str | List[str]] = Field(
+        default=None, alias="CORS_ALLOW_HEADERS"
+    )
+    CORS_ALLOW_METHODS: Optional[str | List[str]] = Field(
+        default=None, alias="CORS_ALLOW_METHODS"
+    )
+    CORS_ALLOW_CREDENTIALS: Optional[bool] = Field(
+        default=None, alias="CORS_ALLOW_CREDENTIALS"
+    )
 
     # Security
     API_KEYS: Optional[str | List[str]] = Field(default=None, alias="API_KEYS")
     FAUCET_KEY: Optional[str] = Field(default=None, alias="FAUCET_KEY")
     ENABLE_FAUCET: Optional[bool] = Field(default=None, alias="ENABLE_FAUCET")
     ENABLE_VERIFY: Optional[bool] = Field(default=None, alias="ENABLE_VERIFY")
-    HOST_ALLOWLIST: Optional[str | List[str]] = Field(default=None, alias="HOST_ALLOWLIST")
+    HOST_ALLOWLIST: Optional[str | List[str]] = Field(
+        default=None, alias="HOST_ALLOWLIST"
+    )
 
     # Rate limits
     RATE_GLOBAL_RPS: Optional[float] = Field(default=None, alias="RATE_GLOBAL_RPS")
@@ -235,7 +274,9 @@ class Settings(BaseSettings):
         gl_rps = data.get("RATE_GLOBAL_RPS")
         gl_burst = data.get("RATE_GLOBAL_BURST")
         if gl_rps is not None or gl_burst is not None:
-            v.global_limit = RateLimitSpec.from_env_pair(gl_rps, gl_burst, defaults=v.global_limit)
+            v.global_limit = RateLimitSpec.from_env_pair(
+                gl_rps, gl_burst, defaults=v.global_limit
+            )
         overrides = data.get("RATE_LIMITS")
         if overrides is not None:
             v.route_overrides = RateLimitConfig.model_fields["route_overrides"].annotation.__get_validators__  # type: ignore[attr-defined]
@@ -336,9 +377,21 @@ class Config(Settings):
         }
 
         return RateConfig(
-            global_rule=RateRule("global", refill_per_sec=global_limit.rps, capacity=float(global_limit.burst)),
-            ip_rule=RateRule("ip", refill_per_sec=global_limit.rps, capacity=float(global_limit.burst)),
-            key_rule=RateRule("key", refill_per_sec=global_limit.rps, capacity=float(global_limit.burst)),
+            global_rule=RateRule(
+                "global",
+                refill_per_sec=global_limit.rps,
+                capacity=float(global_limit.burst),
+            ),
+            ip_rule=RateRule(
+                "ip",
+                refill_per_sec=global_limit.rps,
+                capacity=float(global_limit.burst),
+            ),
+            key_rule=RateRule(
+                "key",
+                refill_per_sec=global_limit.rps,
+                capacity=float(global_limit.burst),
+            ),
             route_rules=route_rules,
         )
 

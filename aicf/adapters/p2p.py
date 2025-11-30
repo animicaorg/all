@@ -44,7 +44,7 @@ import json
 import logging
 import threading
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import Any, Callable, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -57,11 +57,13 @@ TOPIC_AVAILABILITY_V1 = "aicf/provider/availability/v1"
 
 # ---- Errors --------------------------------------------------------------------
 
+
 class P2PError(Exception):
     """Generic P2P adapter error."""
 
 
 # ---- Messages ------------------------------------------------------------------
+
 
 @dataclass
 class Heartbeat:
@@ -78,6 +80,7 @@ class Heartbeat:
       nonce      : monotonically increasing integer per provider (dedupe aid)
       sig        : optional signature string (opaque to transport)
     """
+
     provider_id: str
     height: int
     timestamp: int
@@ -133,6 +136,7 @@ class AvailabilityView:
     Aggregated availability snapshot for a provider (optional).
     Produced by observers; may be gossiped for operator visibility.
     """
+
     provider_id: str
     height: int
     timestamp: int
@@ -155,7 +159,14 @@ class AvailabilityView:
             obj = json.loads(data.decode("utf-8"))
         except Exception as e:  # pragma: no cover
             raise P2PError(f"invalid availability payload: {e}")
-        required = ("provider_id", "height", "timestamp", "alive", "recent_qos", "recent_success")
+        required = (
+            "provider_id",
+            "height",
+            "timestamp",
+            "alive",
+            "recent_qos",
+            "recent_success",
+        )
         for k in required:
             if k not in obj:
                 raise P2PError(f"missing field {k} in availability")
@@ -170,6 +181,7 @@ class AvailabilityView:
 
 
 # ---- Adapter -------------------------------------------------------------------
+
 
 class P2PAdapter:
     """
@@ -207,11 +219,15 @@ class P2PAdapter:
     def start(self) -> None:
         """Subscribe to topics on the bus."""
         try:
-            self._subs.append(self.bus.subscribe(TOPIC_HEARTBEAT_V1, self._handle_heartbeat))
+            self._subs.append(
+                self.bus.subscribe(TOPIC_HEARTBEAT_V1, self._handle_heartbeat)
+            )
         except Exception as e:  # pragma: no cover - bus-dependent
             logger.warning("failed to subscribe heartbeat topic: %s", e)
         try:
-            self._subs.append(self.bus.subscribe(TOPIC_AVAILABILITY_V1, self._handle_availability))
+            self._subs.append(
+                self.bus.subscribe(TOPIC_AVAILABILITY_V1, self._handle_availability)
+            )
         except Exception as e:  # pragma: no cover
             logger.debug("availability subscription skipped: %s", e)
 
@@ -235,7 +251,9 @@ class P2PAdapter:
     def on_heartbeat(self, cb: Callable[[Heartbeat, Optional[str]], None]) -> None:
         self._on_hb = cb
 
-    def on_availability(self, cb: Callable[[AvailabilityView, Optional[str]], None]) -> None:
+    def on_availability(
+        self, cb: Callable[[AvailabilityView, Optional[str]], None]
+    ) -> None:
         self._on_av = cb
 
     # -- Publish ----------------------------------------------------------------
@@ -261,7 +279,12 @@ class P2PAdapter:
 
         now = time.time()
         if hb.timestamp < int(now - self.max_skew):
-            logger.debug("stale heartbeat from %s dropped: ts=%s now=%s", hb.provider_id, hb.timestamp, int(now))
+            logger.debug(
+                "stale heartbeat from %s dropped: ts=%s now=%s",
+                hb.provider_id,
+                hb.timestamp,
+                int(now),
+            )
             return
 
         with self._lock:
@@ -273,10 +296,16 @@ class P2PAdapter:
                     logger.debug("rate-limited heartbeat from %s", hb.provider_id)
                     return
                 # Dedupe/ordering: strictly increasing nonce OR (same nonce & newer ts)
-                if hb.nonce < last_nonce or (hb.nonce == last_nonce and hb.timestamp <= last_ts):
+                if hb.nonce < last_nonce or (
+                    hb.nonce == last_nonce and hb.timestamp <= last_ts
+                ):
                     logger.debug(
                         "non-monotonic heartbeat from %s dropped (nonce %s<=%s, ts %s<=%s)",
-                        hb.provider_id, hb.nonce, last_nonce, hb.timestamp, last_ts,
+                        hb.provider_id,
+                        hb.nonce,
+                        last_nonce,
+                        hb.timestamp,
+                        last_ts,
                     )
                     return
             # Accept and record
@@ -288,7 +317,9 @@ class P2PAdapter:
             except Exception as e:  # pragma: no cover
                 logger.warning("heartbeat callback error: %s", e)
 
-    def _handle_availability(self, payload: bytes, peer_id: Optional[str] = None) -> None:
+    def _handle_availability(
+        self, payload: bytes, peer_id: Optional[str] = None
+    ) -> None:
         try:
             av = AvailabilityView.from_bytes(payload)
         except Exception as e:

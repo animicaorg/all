@@ -50,6 +50,7 @@ BUILD_DIR = ROOT / "contracts" / "build"
 
 # --- helpers: robust import shims --------------------------------------------
 
+
 def _import_optional(path: str):
     try:
         return __import__(path, fromlist=["*"])
@@ -67,6 +68,7 @@ def _info(msg: str) -> None:
 
 
 # --- package build ------------------------------------------------------------
+
 
 @dataclass
 class BuiltPackage:
@@ -91,7 +93,11 @@ def build_package() -> BuiltPackage:
         )
         # Expected to return dict-like with 'manifest', 'code', 'code_hash'
         manifest = pack["manifest"]
-        code = pack["code"] if isinstance(pack["code"], (bytes, bytearray)) else bytes(pack["code"])
+        code = (
+            pack["code"]
+            if isinstance(pack["code"], (bytes, bytearray))
+            else bytes(pack["code"])
+        )
         code_hash = pack["code_hash"]
         return BuiltPackage(manifest=manifest, code=code, code_hash=code_hash)
 
@@ -136,6 +142,7 @@ def build_package() -> BuiltPackage:
 
 # --- SDK adapters -------------------------------------------------------------
 
+
 @dataclass
 class RpcEnv:
     url: str
@@ -145,7 +152,7 @@ class RpcEnv:
 @dataclass
 class SignerEnv:
     address: str  # bech32 or hex
-    impl: Any     # underlying signer object
+    impl: Any  # underlying signer object
 
 
 class SdkAdapter:
@@ -158,7 +165,9 @@ class SdkAdapter:
             # try common names
             for cls_name in ("HttpClient", "Client", "RPC", "Http"):
                 if hasattr(http_mod, cls_name):
-                    self._rpc_http = getattr(http_mod, cls_name)(rpc_url=self.rpc.url, chain_id=self.rpc.chain_id)
+                    self._rpc_http = getattr(http_mod, cls_name)(
+                        rpc_url=self.rpc.url, chain_id=self.rpc.chain_id
+                    )
                     break
 
     # -- signer & address --
@@ -169,7 +178,9 @@ class SdkAdapter:
         """
         wallet_signer = _import_optional("omni_sdk.wallet.signer")
         wallet_mnemo = _import_optional("omni_sdk.wallet.mnemonic")
-        addr_mod = _import_optional("omni_sdk.address") or _import_optional("omni_sdk.utils.bech32")
+        addr_mod = _import_optional("omni_sdk.address") or _import_optional(
+            "omni_sdk.utils.bech32"
+        )
 
         if wallet_signer and wallet_mnemo:
             # try patterns
@@ -204,44 +215,63 @@ class SdkAdapter:
 
             # derive address (alg_id || sha3(pubkey)) → bech32m anim1...
             if addr_mod and hasattr(addr_mod, "address_from_pubkey"):
-                address = addr_mod.address_from_pubkey(signer_obj.public_key, alg=getattr(signer_obj, "alg", alg))
+                address = addr_mod.address_from_pubkey(
+                    signer_obj.public_key, alg=getattr(signer_obj, "alg", alg)
+                )
             elif addr_mod and hasattr(addr_mod, "encode"):
                 # older helper: bech32.encode(hrp, data)
                 address = addr_mod.encode("anim", signer_obj.public_key)  # type: ignore[attr-defined]
             else:
                 # last resort: hex
-                address = "0x" + (getattr(signer_obj, "address_hex", None) or signer_obj.public_key.hex())
+                address = "0x" + (
+                    getattr(signer_obj, "address_hex", None)
+                    or signer_obj.public_key.hex()
+                )
 
             return SignerEnv(address=address, impl=signer_obj)
 
-        _fail("omni_sdk.wallet.{mnemonic,signer} not importable; install the Python SDK")
+        _fail(
+            "omni_sdk.wallet.{mnemonic,signer} not importable; install the Python SDK"
+        )
         raise RuntimeError  # unreachable
 
     # -- deploy --
 
-    def deploy_package(self, package: BuiltPackage, signer: SignerEnv) -> Tuple[str, str]:
+    def deploy_package(
+        self, package: BuiltPackage, signer: SignerEnv
+    ) -> Tuple[str, str]:
         """
         Deploy package (manifest + code) and return (contract_address, tx_hash).
         """
         deployer_mod = _import_optional("omni_sdk.contracts.deployer")
         if not deployer_mod:
-            _fail("omni_sdk.contracts.deployer not importable; install/update the Python SDK")
+            _fail(
+                "omni_sdk.contracts.deployer not importable; install/update the Python SDK"
+            )
 
         # try class-based deployer first
         for nm in ("Deployer", "ContractDeployer"):
             if hasattr(deployer_mod, nm):
                 Deployer = getattr(deployer_mod, nm)
                 try:
-                    d = Deployer(rpc_url=self.rpc.url, chain_id=self.rpc.chain_id, signer=signer.impl)
+                    d = Deployer(
+                        rpc_url=self.rpc.url,
+                        chain_id=self.rpc.chain_id,
+                        signer=signer.impl,
+                    )
                 except TypeError:
-                    d = Deployer(self.rpc.url, self.rpc.chain_id, signer.impl)  # older signature
+                    d = Deployer(
+                        self.rpc.url, self.rpc.chain_id, signer.impl
+                    )  # older signature
 
                 result = None
                 # Common method names
                 for meth in ("deploy_package", "deploy", "deploy_contract"):
                     if hasattr(d, meth):
                         try:
-                            result = getattr(d, meth)(manifest=package.manifest, code=package.code)
+                            result = getattr(d, meth)(
+                                manifest=package.manifest, code=package.code
+                            )
                             break
                         except TypeError:
                             result = getattr(d, meth)(package.manifest, package.code)
@@ -251,7 +281,11 @@ class SdkAdapter:
 
                 # normalize result
                 if isinstance(result, dict):
-                    addr = result.get("address") or result.get("contractAddress") or result.get("addr")
+                    addr = (
+                        result.get("address")
+                        or result.get("contractAddress")
+                        or result.get("addr")
+                    )
                     txh = result.get("txHash") or result.get("tx_hash")
                     if not addr or not txh:
                         _fail("Deployer returned dict without address/txHash")
@@ -276,13 +310,17 @@ class SdkAdapter:
 
     # -- contract calls --
 
-    def _contract_client(self, address: str, abi: Dict[str, Any], signer: Optional[SignerEnv]) -> Any:
+    def _contract_client(
+        self, address: str, abi: Dict[str, Any], signer: Optional[SignerEnv]
+    ) -> Any:
         """
         Obtain a generic contracts client from the SDK (read/write).
         """
         cmod = _import_optional("omni_sdk.contracts.client")
         if not cmod:
-            _fail("omni_sdk.contracts.client not importable; cannot call contract functions")
+            _fail(
+                "omni_sdk.contracts.client not importable; cannot call contract functions"
+            )
 
         for nm in ("ContractClient", "Client", "Contract"):
             if hasattr(cmod, nm):
@@ -296,12 +334,20 @@ class SdkAdapter:
                     )
                 except TypeError:
                     # older ctor ordering
-                    return getattr(cmod, nm)(self.rpc.url, self.rpc.chain_id, address, abi, signer.impl if signer else None)
+                    return getattr(cmod, nm)(
+                        self.rpc.url,
+                        self.rpc.chain_id,
+                        address,
+                        abi,
+                        signer.impl if signer else None,
+                    )
 
         _fail("No recognizable contract client class in omni_sdk.contracts.client")
         raise RuntimeError
 
-    def call_read(self, address: str, abi: Dict[str, Any], fn: str, args: list[Any]) -> Any:
+    def call_read(
+        self, address: str, abi: Dict[str, Any], fn: str, args: list[Any]
+    ) -> Any:
         cl = self._contract_client(address, abi, signer=None)
         for nm in ("read", "call_read", "call"):
             if hasattr(cl, nm):
@@ -311,7 +357,14 @@ class SdkAdapter:
                     return getattr(cl, nm)(fn, args)
         _fail("Contract client has no recognized read method")
 
-    def call_write(self, address: str, abi: Dict[str, Any], fn: str, args: list[Any], signer: SignerEnv) -> Dict[str, Any]:
+    def call_write(
+        self,
+        address: str,
+        abi: Dict[str, Any],
+        fn: str,
+        args: list[Any],
+        signer: SignerEnv,
+    ) -> Dict[str, Any]:
         cl = self._contract_client(address, abi, signer=signer)
         for nm in ("write", "call_write", "transact", "send"):
             if hasattr(cl, nm):
@@ -324,15 +377,44 @@ class SdkAdapter:
 
 # --- CLI & flow ---------------------------------------------------------------
 
+
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Deploy Escrow contract and run a quick smoke test.")
-    p.add_argument("--rpc", default=os.environ.get("RPC_URL", "http://127.0.0.1:8545"), help="Node RPC URL")
-    p.add_argument("--chain", type=int, default=int(os.environ.get("CHAIN_ID", "1337")), help="Chain ID")
-    p.add_argument("--mnemonic", default=os.environ.get("DEPLOYER_MNEMONIC"), help="Deployer mnemonic (24 words)")
-    p.add_argument("--amount", type=int, default=123_456, help="Escrow amount (small integer units)")
-    p.add_argument("--deadline", type=int, default=10_000, help="Deadline height (relative, small)")
-    p.add_argument("--alg", default=os.environ.get("PQ_ALG", "dilithium3"), help="PQ alg for signer")
-    p.add_argument("--out", default=None, help="Write JSON summary to this path as well")
+    p = argparse.ArgumentParser(
+        description="Deploy Escrow contract and run a quick smoke test."
+    )
+    p.add_argument(
+        "--rpc",
+        default=os.environ.get("RPC_URL", "http://127.0.0.1:8545"),
+        help="Node RPC URL",
+    )
+    p.add_argument(
+        "--chain",
+        type=int,
+        default=int(os.environ.get("CHAIN_ID", "1337")),
+        help="Chain ID",
+    )
+    p.add_argument(
+        "--mnemonic",
+        default=os.environ.get("DEPLOYER_MNEMONIC"),
+        help="Deployer mnemonic (24 words)",
+    )
+    p.add_argument(
+        "--amount",
+        type=int,
+        default=123_456,
+        help="Escrow amount (small integer units)",
+    )
+    p.add_argument(
+        "--deadline", type=int, default=10_000, help="Deadline height (relative, small)"
+    )
+    p.add_argument(
+        "--alg",
+        default=os.environ.get("PQ_ALG", "dilithium3"),
+        help="PQ alg for signer",
+    )
+    p.add_argument(
+        "--out", default=None, help="Write JSON summary to this path as well"
+    )
     return p.parse_args()
 
 
@@ -382,10 +464,14 @@ def main() -> int:
     )
 
     _info("Calling deposit()")
-    dep_receipt = sdk.call_write(address=address, abi=abi, fn="deposit", args=[], signer=signer)
+    dep_receipt = sdk.call_write(
+        address=address, abi=abi, fn="deposit", args=[], signer=signer
+    )
 
     _info("Calling release()")
-    rel_receipt = sdk.call_write(address=address, abi=abi, fn="release", args=[], signer=signer)
+    rel_receipt = sdk.call_write(
+        address=address, abi=abi, fn="release", args=[], signer=signer
+    )
 
     _info("Reading state()")
     state = sdk.call_read(address=address, abi=abi, fn="state", args=[])
@@ -397,9 +483,21 @@ def main() -> int:
         },
         "txs": {
             "deploy": tx_hash,
-            "init": init_receipt.get("transactionHash") if isinstance(init_receipt, dict) else init_receipt,
-            "deposit": dep_receipt.get("transactionHash") if isinstance(dep_receipt, dict) else dep_receipt,
-            "release": rel_receipt.get("transactionHash") if isinstance(rel_receipt, dict) else rel_receipt,
+            "init": (
+                init_receipt.get("transactionHash")
+                if isinstance(init_receipt, dict)
+                else init_receipt
+            ),
+            "deposit": (
+                dep_receipt.get("transactionHash")
+                if isinstance(dep_receipt, dict)
+                else dep_receipt
+            ),
+            "release": (
+                rel_receipt.get("transactionHash")
+                if isinstance(rel_receipt, dict)
+                else rel_receipt
+            ),
         },
         "final_state": state,
     }

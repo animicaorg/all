@@ -5,6 +5,7 @@ package is not installed in editable mode. Also provides a minimal asyncio
 runner so tests marked with ``@pytest.mark.asyncio`` can execute without
 external plugins.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -30,11 +31,15 @@ _prepend_unique((PYTHON_ROOT, REPO_ROOT))
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_configure(config: pytest.Config) -> None:  # pragma: no cover - plugin hook
-    config.addinivalue_line("markers", "asyncio: mark test as requiring asyncio event loop")
+    config.addinivalue_line(
+        "markers", "asyncio: mark test as requiring asyncio event loop"
+    )
 
 
 @pytest.hookimpl(tryfirst=True)
-def pytest_pyfunc_call(pyfuncitem: pytest.Function) -> bool | None:  # pragma: no cover - plugin hook
+def pytest_pyfunc_call(
+    pyfuncitem: pytest.Function,
+) -> bool | None:  # pragma: no cover - plugin hook
     if pyfuncitem.get_closest_marker("asyncio") is None:
         return None
 

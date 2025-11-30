@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import types
+
 import pytest
 
 validate = pytest.importorskip("mempool.validate")
@@ -30,7 +31,7 @@ class FakeTx:
     ):
         self.chain_id = chain_id
         self.gas_limit = gas_limit
-        self._bytes = b"\xAA" * size_bytes
+        self._bytes = b"\xaa" * size_bytes
         self.sign_domain = sign_domain
         self.alg_id = alg_id
         self.pubkey = pubkey
@@ -44,18 +45,32 @@ class FakeTx:
         return self._bytes
 
 
-def _call_validator(tx: FakeTx, chain_id: int, limits: object, monkeypatch: pytest.MonkeyPatch):
+def _call_validator(
+    tx: FakeTx, chain_id: int, limits: object, monkeypatch: pytest.MonkeyPatch
+):
     """
     Try a few common entrypoints/signatures, so tests remain stable
     while the implementation stabilizes.
     """
     # Help the validator compute size if it uses a helper
-    for name in ("estimate_encoded_size", "encoded_size", "tx_encoded_size", "get_encoded_size"):
+    for name in (
+        "estimate_encoded_size",
+        "encoded_size",
+        "tx_encoded_size",
+        "get_encoded_size",
+    ):
         if hasattr(validate, name):
-            monkeypatch.setattr(validate, name, lambda _tx: len(bytes(_tx)), raising=True)
+            monkeypatch.setattr(
+                validate, name, lambda _tx: len(bytes(_tx)), raising=True
+            )
 
     # Pick an entrypoint
-    for fname in ("validate_tx", "fast_stateless_check", "stateless_validate", "validate"):
+    for fname in (
+        "validate_tx",
+        "fast_stateless_check",
+        "stateless_validate",
+        "validate",
+    ):
         if hasattr(validate, fname):
             fn = getattr(validate, fname)
             break
@@ -76,7 +91,9 @@ def _call_validator(tx: FakeTx, chain_id: int, limits: object, monkeypatch: pyte
             tried.append((args, e))
             continue
     # If we got here, signature didn't match any attempt
-    raise RuntimeError(f"Could not call validator {fn.__name__}; tried arg shapes: {tried}")
+    raise RuntimeError(
+        f"Could not call validator {fn.__name__}; tried arg shapes: {tried}"
+    )
 
 
 def _make_limits(max_tx_bytes: int = 1024, max_gas: int = 10_000_000):
@@ -201,4 +218,6 @@ def test_pq_sig_precheck_passes_does_not_raise(monkeypatch: pytest.MonkeyPatch):
         _call_validator(tx, chain_id=1, limits=limits, monkeypatch=monkeypatch)
     except ERR_ADMISSION as e:  # pragma: no cover - allow unrelated failures to surface
         # Re-raise with context so failures are informative
-        raise AssertionError(f"Validator rejected despite PQ precheck passing: {e}") from e
+        raise AssertionError(
+            f"Validator rejected despite PQ precheck passing: {e}"
+        ) from e

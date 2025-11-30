@@ -47,15 +47,9 @@ from typing import Any, Dict, Optional
 
 # Local deps (stable, small surface)
 from zk.integration import verify as _verify_envelope_call
-from zk.integration.policy import (
-    DEFAULT_POLICY,
-    Policy,
-    load_policy,
-    check_and_meter,
-    NotAllowedCircuit,
-    LimitExceeded,
-    PolicyError,
-)
+from zk.integration.policy import (DEFAULT_POLICY, LimitExceeded,
+                                   NotAllowedCircuit, Policy, PolicyError,
+                                   check_and_meter, load_policy)
 from zk.integration.types import ProofEnvelope, canonical_json_bytes
 from zk.registry import list_kinds as _list_kinds
 
@@ -63,6 +57,7 @@ from zk.registry import list_kinds as _list_kinds
 try:
     from zk.adapters.omni_bridge import OmniError  # type: ignore
 except Exception:  # pragma: no cover
+
     class OmniError(Exception):  # fallback shim
         pass
 
@@ -122,7 +117,9 @@ def _size_bytes(obj: Any) -> int:
     return len(canonical_json_bytes(obj))
 
 
-def zk_verify(payload: Dict[str, Any], policy_path: Optional[str | Path] = None) -> Dict[str, Any]:
+def zk_verify(
+    payload: Dict[str, Any], policy_path: Optional[str | Path] = None
+) -> Dict[str, Any]:
     """
     Main hook for omni/crypto/zk_verify.py.
 
@@ -172,7 +169,9 @@ def zk_verify(payload: Dict[str, Any], policy_path: Optional[str | Path] = None)
         }
 
         # Policy enforcement + deterministic metering
-        units = check_and_meter(env, policy=policy, kzg_openings_hint=payload.get("kzg_openings_hint"))
+        units = check_and_meter(
+            env, policy=policy, kzg_openings_hint=payload.get("kzg_openings_hint")
+        )
         result["units"] = int(units)
 
         # Fast path: caller only needs price quote
@@ -183,7 +182,10 @@ def zk_verify(payload: Dict[str, Any], policy_path: Optional[str | Path] = None)
         # Full verification
         ok = _verify_envelope_call(envelope=asdict(env))  # uses zk.integration.verify
         if not ok:
-            result["error"] = {"code": HookErrorCode.VERIFY_FAILED, "message": "Verifier returned false"}
+            result["error"] = {
+                "code": HookErrorCode.VERIFY_FAILED,
+                "message": "Verifier returned false",
+            }
             return result
 
         # Success
@@ -215,8 +217,12 @@ def zk_verify(payload: Dict[str, Any], policy_path: Optional[str | Path] = None)
 # Tiny CLI for local testing
 # ---------------------------
 
+
 def _cli(argv: Optional[list[str]] = None) -> None:
-    import argparse, json, sys
+    import argparse
+    import json
+    import sys
+
     ap = argparse.ArgumentParser(description="omni_hooks zk_verify CLI")
     ap.add_argument("payload", help="Path to JSON payload with 'envelope'")
     ap.add_argument("--policy", help="Optional policy JSON/YAML path")
@@ -228,6 +234,7 @@ def _cli(argv: Optional[list[str]] = None) -> None:
     res = zk_verify(payload, policy_path=args.policy)
     json.dump(res, sys.stdout, indent=2, sort_keys=True)
     print()
+
 
 if __name__ == "__main__":  # pragma: no cover
     _cli()

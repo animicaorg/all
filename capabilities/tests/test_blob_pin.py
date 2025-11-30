@@ -1,10 +1,11 @@
 import importlib
 import os
-from typing import Optional, Any
+from typing import Any, Optional
+
 import pytest
 
-
 # ---------- dynamic import helpers ----------
+
 
 def _import(name: str):
     try:
@@ -26,7 +27,9 @@ def _get_attr(obj: Any, names: list[str]):
 # ---------- limits / constants (best-effort) ----------
 
 _CONST = _import("da.constants")
-_MAX_BLOB_BYTES = getattr(_CONST, "MAX_BLOB_BYTES", 1 << 20)  # default 1 MiB if DA not present
+_MAX_BLOB_BYTES = getattr(
+    _CONST, "MAX_BLOB_BYTES", 1 << 20
+)  # default 1 MiB if DA not present
 
 _NS = _import("da.nmt.namespace")
 _NS_MIN = getattr(_NS, "MIN_NAMESPACE_ID", 0)
@@ -34,6 +37,7 @@ _NS_MAX = getattr(_NS, "MAX_NAMESPACE_ID", (1 << 32) - 1)
 
 
 # ---------- syscall wrappers (with graceful fallbacks) ----------
+
 
 def _blob_pin(ctx: Optional[object], ns: int, data: bytes):
     """
@@ -109,6 +113,7 @@ def _blob_get(commitment: bytes | str) -> bytes:
 
 # ---------- small helpers ----------
 
+
 def _ctx(chain_id=1337, height=1):
     # Context object shape is intentionally loose; providers that don't need it will ignore it.
     class Ctx:
@@ -117,6 +122,7 @@ def _ctx(chain_id=1337, height=1):
             self.height = height
             self.tx_hash = b"\xaa" * 32
             self.caller = b"\xbb" * 32
+
     return Ctx()
 
 
@@ -130,6 +136,7 @@ def _as_commit_bytes(commitment: bytes | str) -> bytes:
 
 
 # ========================= TESTS =========================
+
 
 def test_blob_pin_round_trip_small_payload(tmp_path, monkeypatch):
     """
@@ -156,13 +163,18 @@ def test_blob_pin_round_trip_small_payload(tmp_path, monkeypatch):
         r_ns = receipt[2] if len(receipt) > 2 else ns
     elif isinstance(receipt, dict):
         commit_b = _as_commit_bytes(
-            receipt.get("commitment") or receipt.get("root") or receipt.get("id") or receipt.get("hash")
+            receipt.get("commitment")
+            or receipt.get("root")
+            or receipt.get("id")
+            or receipt.get("hash")
         )
         size = receipt.get("size", len(data))
         r_ns = receipt.get("namespace", ns)
     else:
         # object with attributes
-        commit_b = _as_commit_bytes(getattr(receipt, "commitment", getattr(receipt, "root", b"")))
+        commit_b = _as_commit_bytes(
+            getattr(receipt, "commitment", getattr(receipt, "root", b""))
+        )
         size = getattr(receipt, "size", len(data))
         r_ns = getattr(receipt, "namespace", ns)
 
@@ -193,7 +205,11 @@ def test_blob_pin_rejects_oversize(monkeypatch, tmp_path):
         return
     except Exception as e:
         # Many implementations raise domain-specific DAError/NamespaceRangeError; accept any failure.
-        if e.__class__.__name__ in {"DAError", "InvalidBlobSize", "NamespaceRangeError"}:
+        if e.__class__.__name__ in {
+            "DAError",
+            "InvalidBlobSize",
+            "NamespaceRangeError",
+        }:
             return
         # Unexpected exception still counts as a rejection
         return

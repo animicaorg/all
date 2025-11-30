@@ -25,7 +25,7 @@ and `details` (implementation-defined diagnostic data).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import Any, Callable, Dict, Optional
 
 try:
@@ -107,7 +107,9 @@ def _call_best_effort_verify(
         try:
             # Try named args first
             try:
-                result = func(header=header, da_light_proof=da_light_proof, trusted=trusted)
+                result = func(
+                    header=header, da_light_proof=da_light_proof, trusted=trusted
+                )
             except TypeError:
                 # Fall back to positional variants
                 if da_light_proof is not None and trusted is not None:
@@ -179,7 +181,13 @@ def verify_header_da(
     try:
         details = _call_best_effort_verify(header, da_light_proof, trusted)
         ok = bool(details.get("ok", False))
-        reason = None if ok else (details.get("reason") or details.get("error") or "verification failed")
+        reason = (
+            None
+            if ok
+            else (
+                details.get("reason") or details.get("error") or "verification failed"
+            )
+        )
         return VerifyResult(ok=ok, reason=reason, details=details)
     except LightVerifyError:
         raise

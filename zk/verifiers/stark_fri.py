@@ -79,11 +79,11 @@ License: MIT
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Iterable, List, Mapping, Sequence, Tuple, Union, Optional
 import hashlib
 import math
 import os
+from dataclasses import dataclass
+from typing import Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
 # ---------------------------
 # Field: Goldilocks (2^64 - 2^32 + 1)
@@ -92,20 +92,26 @@ import os
 P = (1 << 64) - (1 << 32) + 1  # 18446744069414584321
 MASK64 = (1 << 64) - 1
 
+
 def fadd(a: int, b: int) -> int:
     return (a + b) % P
+
 
 def fsub(a: int, b: int) -> int:
     return (a - b) % P
 
+
 def fmul(a: int, b: int) -> int:
     return (a * b) % P
+
 
 def fpow(a: int, e: int) -> int:
     return pow(a % P, e, P)
 
+
 def fred(a: int) -> int:
     return int(a) % P
+
 
 # A simple, fast-ish x^7 S-box over GL
 def x7(x: int) -> int:
@@ -120,6 +126,7 @@ def x7(x: int) -> int:
 # Toy 2→1 hash for the AIR
 # ---------------------------
 
+
 def toy_hash2(left: int, right: int) -> int:
     """
     A tiny algebraic "hash": (left + 3*right + 5)^7  mod P
@@ -127,6 +134,7 @@ def toy_hash2(left: int, right: int) -> int:
     """
     acc = fadd(fadd(left, fmul(3, right)), 5)
     return x7(acc)
+
 
 def toy_merkle_step(curr: int, sibling: int, direction_bit: int) -> int:
     """
@@ -145,6 +153,7 @@ def toy_merkle_step(curr: int, sibling: int, direction_bit: int) -> int:
 # Utilities
 # ---------------------------
 
+
 def _to_int(z: Union[int, str, bytes]) -> int:
     if isinstance(z, int):
         return z
@@ -155,11 +164,14 @@ def _to_int(z: Union[int, str, bytes]) -> int:
         return int(s, 16)
     return int(s)
 
+
 def be32(x: int) -> bytes:
     return int(x % (1 << 256)).to_bytes(32, "big")
 
+
 def hx(b: bytes) -> str:
     return "0x" + b.hex()
+
 
 def _hex_to_bytes(s: str) -> bytes:
     s = s.strip().lower()
@@ -172,13 +184,18 @@ def _hex_to_bytes(s: str) -> bytes:
 # Merkle (SHA3-256)
 # ---------------------------
 
+
 def sha3(b: bytes) -> bytes:
     return hashlib.sha3_256(b).digest()
+
 
 def merkle_combine(left: bytes, right: bytes) -> bytes:
     return sha3(left + right)
 
-def merkle_verify(root_hex: str, leaf_value: int, path: Sequence[str], index: int) -> bool:
+
+def merkle_verify(
+    root_hex: str, leaf_value: int, path: Sequence[str], index: int
+) -> bool:
     """
     Verify a SHA3-256 Merkle authentication path where leaves are 32-byte
     big-endian encodings of field elements mod P.
@@ -202,6 +219,7 @@ def merkle_verify(root_hex: str, leaf_value: int, path: Sequence[str], index: in
 # Fiat–Shamir sampling (indices)
 # ---------------------------
 
+
 def sample_indices(
     *,
     trace_len: int,
@@ -223,16 +241,19 @@ def sample_indices(
     seen = set()
     seed = sha3(
         domain_tag.encode("utf-8")
-        + b"|roots|" + b"|".join(_hex_to_bytes(r) for r in bind_roots)
-        + b"|pub|" + b"|".join(be32(x) for x in bind_public)
-        + b"|len|" + trace_len.to_bytes(8, "big")
+        + b"|roots|"
+        + b"|".join(_hex_to_bytes(r) for r in bind_roots)
+        + b"|pub|"
+        + b"|".join(be32(x) for x in bind_public)
+        + b"|len|"
+        + trace_len.to_bytes(8, "big")
     )
     ctr = 0
     while len(acc) < want:
         block = sha3(seed + ctr.to_bytes(8, "big"))
         # break into four 64-bit chunks
         for j in range(4):
-            r = int.from_bytes(block[8*j:8*(j+1)], "big")
+            r = int.from_bytes(block[8 * j : 8 * (j + 1)], "big")
             i = r % upper  # i in [0, trace_len-2]
             if i not in seen:
                 seen.add(i)
@@ -247,13 +268,16 @@ def sample_indices(
 # Minimal single-fold FRI (demonstration)
 # ---------------------------
 
+
 @dataclass
 class FriParams:
-    layers: List[str]    # hex roots from L0 (original h) to Lr (last)
-    last_size: int       # power-of-two <= 32
+    layers: List[str]  # hex roots from L0 (original h) to Lr (last)
+    last_size: int  # power-of-two <= 32
+
 
 def _is_pow2(x: int) -> bool:
     return x > 0 and (x & (x - 1)) == 0
+
 
 def fri_verify_single_fold_for_query(
     roots: List[str],
@@ -283,20 +307,24 @@ def fri_verify_single_fold_for_query(
                 break
             pair = qj.get("pair")
             path = qj.get("path")
-            if not (isinstance(pair, (list, tuple)) and len(pair) == 2 and isinstance(path, (list, tuple))):
+            if not (
+                isinstance(pair, (list, tuple))
+                and len(pair) == 2
+                and isinstance(path, (list, tuple))
+            ):
                 return False
             v0 = fred(_to_int(pair[0]))
             v1 = fred(_to_int(pair[1]))
             # Authenticate both siblings under roots[j]
             # We'll encode a "leaf" as sha3( be32(v) || be32(idx) ) to bind positions.
             # (This is still demo-only.)
-            leaf0 = sha3(be32(v0) + be32(i & ~1))        # position even
+            leaf0 = sha3(be32(v0) + be32(i & ~1))  # position even
             leaf1 = sha3(be32(v1) + be32((i & ~1) | 1))  # position odd
             # Walk proof assuming the last hash in path is the sibling of the *pair* node
             # For simplicity, we authenticate the *pair hash* itself:
             pair_node = merkle_combine(leaf0, leaf1)
             node = pair_node
-            idx = (i >> 1)
+            idx = i >> 1
             for sib_hex in path:
                 sib = _hex_to_bytes(sib_hex)
                 if idx & 1:
@@ -307,7 +335,17 @@ def fri_verify_single_fold_for_query(
             if node != _hex_to_bytes(roots[j]):
                 return False
             # derive r_j and compute folded value for index i//2
-            rj = int.from_bytes(sha3(domain_tag.encode() + _hex_to_bytes(roots[j]) + j.to_bytes(4, "big")), "big") % P
+            rj = (
+                int.from_bytes(
+                    sha3(
+                        domain_tag.encode()
+                        + _hex_to_bytes(roots[j])
+                        + j.to_bytes(4, "big")
+                    ),
+                    "big",
+                )
+                % P
+            )
             folded = fadd(v0, fmul(rj, v1))
             # the next layer should present `folded` as one of the siblings at index i//2
             # (we don't enforce which side; next loop will use provided pair)
@@ -321,7 +359,10 @@ def fri_verify_single_fold_for_query(
 # Verifier
 # ---------------------------
 
-def verify_toy_stark_merkle(proof: Mapping[str, object], public: Mapping[str, object], *, with_fri: bool = True) -> bool:
+
+def verify_toy_stark_merkle(
+    proof: Mapping[str, object], public: Mapping[str, object], *, with_fri: bool = True
+) -> bool:
     """
     Verify the toy STARK (Merkle-path AIR) using random spot checks and
     optional minimal FRI consistency on the `h` column.
@@ -335,9 +376,9 @@ def verify_toy_stark_merkle(proof: Mapping[str, object], public: Mapping[str, ob
             return False
         Q = int(proof["num_queries"])
         commits = proof["commitments"]
-        root_h  = str(commits["h"])
-        root_s  = str(commits["sib"])
-        root_d  = str(commits["dir"])
+        root_h = str(commits["h"])
+        root_s = str(commits["sib"])
+        root_d = str(commits["dir"])
 
         fri_obj: Optional[Mapping[str, object]] = proof.get("fri") if with_fri else None
         fri_params: Optional[FriParams] = None
@@ -430,7 +471,9 @@ def verify_toy_stark_merkle(proof: Mapping[str, object], public: Mapping[str, ob
                 qfri = d.get("fri")
                 if not isinstance(qfri, (list, tuple)) or not qfri:
                     return False
-                if not fri_verify_single_fold_for_query(fri_params.layers, qfri, i, domain_tag=label):
+                if not fri_verify_single_fold_for_query(
+                    fri_params.layers, qfri, i, domain_tag=label
+                ):
                     return False
 
         return True
@@ -443,7 +486,9 @@ def verify_toy_stark_merkle(proof: Mapping[str, object], public: Mapping[str, ob
 # ---------------------------
 
 if __name__ == "__main__":  # pragma: no cover
-    import json, sys
+    import json
+    import sys
+
     if len(sys.argv) != 3:
         print("Usage: python zk/verifiers/stark_fri.py proof.json public.json")
         sys.exit(1)

@@ -54,13 +54,12 @@ from typing import Final
 
 # Re-use the canonical implementations from the control package.
 # We intentionally *re-export* a stable, minimal surface here.
-from . import (  # noqa: F401 (re-exported via __all__)
-    is_paused as _is_paused_core,
-    require_not_paused as _require_not_paused_core,
-    pause as _pause_core,
-    unpause as _unpause_core,
-    get_pauser_role as _get_pauser_role_core,
-)
+from . import get_pauser_role as _get_pauser_role_core
+from . import \
+    is_paused as _is_paused_core  # noqa: F401 (re-exported via __all__)
+from . import pause as _pause_core
+from . import require_not_paused as _require_not_paused_core
+from . import unpause as _unpause_core
 
 __all__ = [
     "PAUSER_ROLE_NAME",
@@ -80,13 +79,16 @@ PAUSER_ROLE_NAME: Final[bytes] = b"PAUSER_ROLE"
 
 # ---- Local stdlib accessors --------------------------------------------------
 
+
 def _abi():
     # Import-late to cooperate with the VM's sandbox/import guard.
     from stdlib import abi  # type: ignore
+
     return abi
 
 
 # ---- Re-exports / thin wrappers ---------------------------------------------
+
 
 def get_pauser_role() -> bytes:
     """

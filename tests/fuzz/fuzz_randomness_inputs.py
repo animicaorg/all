@@ -25,10 +25,10 @@ Or directly:
 from __future__ import annotations
 
 import sys
-from typing import Any, Callable, Optional, Tuple, Dict
-
+from typing import Any, Callable, Dict, Optional, Tuple
 
 # ---------------- optional import helper ----------------
+
 
 def _import_optional(modname: str):
     try:
@@ -40,11 +40,14 @@ def _import_optional(modname: str):
 
 # ---------------- hashing ----------------
 
+
 def _sha3_256(data: bytes) -> bytes:
     # Prefer project hash wrappers if present
-    for modname, fn in (("randomness.utils.hash", "sha3_256"),
-                        ("core.utils.hash", "sha3_256"),
-                        ("da.utils.hash", "sha3_256")):
+    for modname, fn in (
+        ("randomness.utils.hash", "sha3_256"),
+        ("core.utils.hash", "sha3_256"),
+        ("da.utils.hash", "sha3_256"),
+    ):
         m = _import_optional(modname)
         if m and hasattr(m, fn):
             try:
@@ -52,6 +55,7 @@ def _sha3_256(data: bytes) -> bytes:
             except Exception:
                 pass
     import hashlib
+
     return hashlib.sha3_256(data).digest()
 
 
@@ -59,10 +63,13 @@ def _sha3_256(data: bytes) -> bytes:
 
 _commit_mod = _import_optional("randomness.commit_reveal.commit")
 _verify_mod = _import_optional("randomness.commit_reveal.verify")
-_round_mgr  = _import_optional("randomness.commit_reveal.round_manager")
+_round_mgr = _import_optional("randomness.commit_reveal.round_manager")
 _beacon_sched = _import_optional("randomness.beacon.schedule")
 
-def _build_commitment_project(addr: bytes, salt: bytes, payload: bytes) -> Optional[Any]:
+
+def _build_commitment_project(
+    addr: bytes, salt: bytes, payload: bytes
+) -> Optional[Any]:
     if not _commit_mod:
         return None
     # Try several plausible signatures
@@ -72,7 +79,9 @@ def _build_commitment_project(addr: bytes, salt: bytes, payload: bytes) -> Optio
         ((), {"addr": addr, "salt": salt, "payload": payload}),
     ):
         try:
-            c = getattr(_commit_mod, "build_commitment", None) or getattr(_commit_mod, "commit", None)
+            c = getattr(_commit_mod, "build_commitment", None) or getattr(
+                _commit_mod, "commit", None
+            )
             if callable(c):
                 return c(*args, **kwargs)
         except Exception:
@@ -99,7 +108,14 @@ def _extract_commit_bytes(commit_obj: Any) -> Optional[bytes]:
     return None
 
 
-def _project_verify(commitment: Any, addr: bytes, salt: bytes, payload: bytes, now_ts: int, sched: Dict[str, int]) -> Optional[bool]:
+def _project_verify(
+    commitment: Any,
+    addr: bytes,
+    salt: bytes,
+    payload: bytes,
+    now_ts: int,
+    sched: Dict[str, int],
+) -> Optional[bool]:
     if not _verify_mod:
         return None
 
@@ -107,7 +123,15 @@ def _project_verify(commitment: Any, addr: bytes, salt: bytes, payload: bytes, n
     # Known knobs we might pass along
     attempts: list[tuple[tuple, dict]] = [
         ((commitment, reveal_obj, now_ts, sched), {}),
-        ((), {"commitment": commitment, "reveal": reveal_obj, "now": now_ts, "schedule": sched}),
+        (
+            (),
+            {
+                "commitment": commitment,
+                "reveal": reveal_obj,
+                "now": now_ts,
+                "schedule": sched,
+            },
+        ),
         ((commitment, addr, salt, payload, now_ts, sched), {}),
         ((commitment, addr, salt, payload, now_ts), {}),
         ((commitment, reveal_obj), {}),
@@ -135,7 +159,9 @@ def _project_verify(commitment: Any, addr: bytes, salt: bytes, payload: bytes, n
     return None
 
 
-def _get_schedule_project(commit_len: int, reveal_len: int, settle_len: int) -> Optional[Dict[str, int]]:
+def _get_schedule_project(
+    commit_len: int, reveal_len: int, settle_len: int
+) -> Optional[Dict[str, int]]:
     # Ask round_manager / beacon.schedule, else None
     # We provide the numbers we want to test as hints when possible; many APIs
     # compute from chain params instead, which is also fine.
@@ -166,10 +192,20 @@ def _get_schedule_project(commit_len: int, reveal_len: int, settle_len: int) -> 
 
 # ---------------- fallback timing & verify model ----------------
 
+
 def _fallback_commit(addr: bytes, salt: bytes, payload: bytes) -> bytes:
     return _sha3_256(b"commit|" + addr + b"|" + salt + b"|" + payload)
 
-def _fallback_verify(commit_bytes: bytes, addr: bytes, salt: bytes, payload: bytes, t_commit: int, t_reveal: int, sched: Dict[str, int]) -> bool:
+
+def _fallback_verify(
+    commit_bytes: bytes,
+    addr: bytes,
+    salt: bytes,
+    payload: bytes,
+    t_commit: int,
+    t_reveal: int,
+    sched: Dict[str, int],
+) -> bool:
     c = _fallback_commit(addr, salt, payload)
     if c != commit_bytes:
         return False
@@ -193,6 +229,7 @@ def _fallback_verify(commit_bytes: bytes, addr: bytes, salt: bytes, payload: byt
 
 # ---------------- byte cursor for shaping fuzz data ----------------
 
+
 class Cur:
     def __init__(self, b: bytes):
         self.b = b
@@ -211,7 +248,7 @@ class Cur:
         if self.i >= len(self.b):
             return b"\x00" * n
         j = min(self.i + n, len(self.b))
-        out = self.b[self.i:j]
+        out = self.b[self.i : j]
         self.i = j
         if len(out) < n:
             out = out + b"\x00" * (n - len(out))
@@ -219,6 +256,7 @@ class Cur:
 
 
 # ---------------- main fuzz logic ----------------
+
 
 def fuzz(data: bytes) -> None:
     # Size guard
@@ -230,7 +268,7 @@ def fuzz(data: bytes) -> None:
     # Schedule (seconds)
     commit_len = 1 + (cur.u8() % 60)
     reveal_len = 1 + (cur.u8() % 60)
-    settle_len = (cur.u8() % 60)
+    settle_len = cur.u8() % 60
     total = commit_len + reveal_len + settle_len
 
     sched = _get_schedule_project(commit_len, reveal_len, settle_len) or {
@@ -241,13 +279,13 @@ def fuzz(data: bytes) -> None:
     }
 
     # Times relative to start of round
-    t_commit = cur.u8() % (total + 20)   # may intentionally go out of window
+    t_commit = cur.u8() % (total + 20)  # may intentionally go out of window
     t_reveal = cur.u8() % (total + 20)
 
     # Inputs
     addr = _sha3_256(b"addr|" + data)[:20]  # 20-byte address derived deterministically
     salt_len = cur.u8() % 32
-    pay_len  = cur.u8() % 64
+    pay_len = cur.u8() % 64
     salt = cur.take(salt_len)
     payload = cur.take(pay_len)
 
@@ -258,42 +296,58 @@ def fuzz(data: bytes) -> None:
         commit_bytes = _fallback_commit(addr, salt, payload)
 
     # Decide whether to ask project verify; if not, use fallback model
-    proj_ok: Optional[bool] = _project_verify(commit_obj if commit_obj is not None else commit_bytes,
-                                              addr, salt, payload, t_reveal, sched)
+    proj_ok: Optional[bool] = _project_verify(
+        commit_obj if commit_obj is not None else commit_bytes,
+        addr,
+        salt,
+        payload,
+        t_reveal,
+        sched,
+    )
 
     if proj_ok is None:
         # Fallback truth value
-        base_ok = _fallback_verify(commit_bytes, addr, salt, payload, t_commit, t_reveal, sched)
+        base_ok = _fallback_verify(
+            commit_bytes, addr, salt, payload, t_commit, t_reveal, sched
+        )
     else:
         base_ok = proj_ok
 
     # --- Mutations ---
     flip_salt = (cur.u8() & 1) == 1
-    flip_pay  = (cur.u8() & 1) == 1
+    flip_pay = (cur.u8() & 1) == 1
     shift_kind = cur.u8() % 3  # 0: early, 1: late, 2: move-to-reveal-start
-    shift_amt  = 1 + (cur.u8() % 8)
+    shift_amt = 1 + (cur.u8() % 8)
 
     bad_salt = (salt[:-1] + bytes([salt[-1] ^ 0x01])) if salt else b"\x01"
-    bad_pay  = (payload[:-1] + bytes([payload[-1] ^ 0x01])) if payload else b"\x02"
+    bad_pay = (payload[:-1] + bytes([payload[-1] ^ 0x01])) if payload else b"\x02"
 
     # Time shifts
     if shift_kind == 0:
         t_reveal_bad = max(0, t_reveal - shift_amt)  # likely too early
     elif shift_kind == 1:
-        t_reveal_bad = t_reveal + shift_amt          # likely too late
+        t_reveal_bad = t_reveal + shift_amt  # likely too late
     else:
-        t_reveal_bad = sched["commit"]               # edge: exactly reveal start
+        t_reveal_bad = sched["commit"]  # edge: exactly reveal start
 
     # Compose mutated reveals
     salt2 = bad_salt if flip_salt else salt
-    pay2  = bad_pay if flip_pay else payload
+    pay2 = bad_pay if flip_pay else payload
 
     # Check mutated outcomes via project or fallback
-    proj_mut_ok: Optional[bool] = _project_verify(commit_obj if commit_obj is not None else commit_bytes,
-                                                  addr, salt2, pay2, t_reveal_bad, sched)
+    proj_mut_ok: Optional[bool] = _project_verify(
+        commit_obj if commit_obj is not None else commit_bytes,
+        addr,
+        salt2,
+        pay2,
+        t_reveal_bad,
+        sched,
+    )
 
     if proj_mut_ok is None:
-        mut_ok = _fallback_verify(commit_bytes, addr, salt2, pay2, t_commit, t_reveal_bad, sched)
+        mut_ok = _fallback_verify(
+            commit_bytes, addr, salt2, pay2, t_commit, t_reveal_bad, sched
+        )
     else:
         mut_ok = proj_mut_ok
 
@@ -308,8 +362,8 @@ def fuzz(data: bytes) -> None:
                 raise AssertionError("Reveal accepted despite salt/payload mutation")
             # Timing: if we definitely shoved outside window under fallback math, enforce.
             c_len, r_len = sched["commit"], sched["reveal"]
-            in_window = (c_len <= t_reveal < c_len + r_len)
-            in_window_bad = (c_len <= t_reveal_bad < c_len + r_len)
+            in_window = c_len <= t_reveal < c_len + r_len
+            in_window_bad = c_len <= t_reveal_bad < c_len + r_len
             if in_window and not in_window_bad and mut_ok:
                 raise AssertionError("Reveal accepted outside window after time shift")
     except Exception:
@@ -319,11 +373,14 @@ def fuzz(data: bytes) -> None:
 
 # ---------------- direct execution ----------------
 
+
 def _run_direct(argv: list[str]) -> int:  # pragma: no cover
     try:
         import atheris  # type: ignore
     except Exception:
-        sys.stderr.write("[fuzz_randomness_inputs] atheris not installed. pip install atheris\n")
+        sys.stderr.write(
+            "[fuzz_randomness_inputs] atheris not installed. pip install atheris\n"
+        )
         return 2
     atheris.instrument_all()
     corpus = [p for p in argv if not p.startswith("-")] or ["tests/fuzz/corpus_txs"]

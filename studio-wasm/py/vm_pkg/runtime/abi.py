@@ -40,11 +40,11 @@ contract code. This module focuses on (de)serialization and validation.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple
+from typing import (Any, Dict, Iterable, List, Mapping, MutableMapping,
+                    Optional, Sequence, Tuple)
 
 # Use the trimmed ValidationError from the VM package
 from ..errors import ValidationError
-
 
 # ---------------- Limits ----------------
 
@@ -54,6 +54,7 @@ ADDRESS_LEN = 32
 
 
 # ---------------- Small hex helpers ----------------
+
 
 def _is_hex_prefixed(s: str) -> bool:
     return s.startswith("0x") or s.startswith("0X")
@@ -108,6 +109,7 @@ def _hex_to_int(s: str) -> int:
 
 # ---------------- Type validators ----------------
 
+
 def _as_u256(v: Any) -> int:
     if isinstance(v, bool):
         # Bool is a subclass of int; treat explicitly to avoid surprises.
@@ -119,6 +121,7 @@ def _as_u256(v: Any) -> int:
     if isinstance(v, str):
         return _hex_to_int(v)
     raise ValidationError("u256 must be int or hex string")
+
 
 def _as_bool(v: Any) -> bool:
     if isinstance(v, bool):
@@ -135,6 +138,7 @@ def _as_bool(v: Any) -> bool:
             return False
     raise ValidationError("bool must be true/false, 0/1, or 'true'/'false'")
 
+
 def _as_bytes(v: Any, *, max_len: int = MAX_BYTES) -> bytes:
     if isinstance(v, (bytes, bytearray)):
         b = bytes(v)
@@ -146,6 +150,7 @@ def _as_bytes(v: Any, *, max_len: int = MAX_BYTES) -> bytes:
         raise ValidationError("bytes exceeds maximum length")
     return b
 
+
 def _as_address(v: Any) -> bytes:
     b = _as_bytes(v, max_len=ADDRESS_LEN)
     if len(b) != ADDRESS_LEN:
@@ -154,6 +159,7 @@ def _as_address(v: Any) -> bytes:
 
 
 # ---------------- Public (de)serializers ----------------
+
 
 def decode_arg(type_name: str, value: Any) -> Any:
     """
@@ -169,6 +175,7 @@ def decode_arg(type_name: str, value: Any) -> Any:
     if t == "address":
         return _as_address(value)
     raise ValidationError(f"unsupported abi type: {type_name}")
+
 
 def encode_value(type_name: str, value: Any) -> Any:
     """
@@ -188,10 +195,12 @@ def encode_value(type_name: str, value: Any) -> Any:
 
 # ---------------- ABI schema & dispatch helpers ----------------
 
+
 @dataclass(frozen=True)
 class AbiParam:
     name: str
     type: str
+
 
 @dataclass(frozen=True)
 class AbiFunction:
@@ -199,6 +208,7 @@ class AbiFunction:
     inputs: Tuple[AbiParam, ...]
     outputs: Tuple[AbiParam, ...]  # zero or more
     view: bool  # True for read-only
+
 
 class AbiSchema:
     """
@@ -218,7 +228,9 @@ class AbiSchema:
     """
 
     def __init__(self, manifest_like: Mapping[str, Any]) -> None:
-        funcs_in = manifest_like.get("functions") or manifest_like.get("abi", {}).get("functions")
+        funcs_in = manifest_like.get("functions") or manifest_like.get("abi", {}).get(
+            "functions"
+        )
         if not isinstance(funcs_in, Sequence):
             raise ValidationError("manifest must include an array of functions")
         index: Dict[str, AbiFunction] = {}
@@ -228,7 +240,9 @@ class AbiSchema:
             name = str(f.get("name") or "")
             if not name:
                 raise ValidationError("function.name missing")
-            mut = str(f.get("mutability") or f.get("stateMutability") or "nonpayable").lower()
+            mut = str(
+                f.get("mutability") or f.get("stateMutability") or "nonpayable"
+            ).lower()
             view = mut in ("view", "pure", "readonly")
             inputs = tuple(self._parse_params(f.get("inputs", []), "inputs"))
             outputs = tuple(self._parse_params(f.get("outputs", []), "outputs"))
@@ -288,13 +302,14 @@ class AbiDispatcher:
                 decode_arg(p.type, self._get_required(payload, p.name))
                 for p in fn.inputs
             )
-        elif isinstance(payload, Sequence) and not isinstance(payload, (bytes, bytearray, str)):
+        elif isinstance(payload, Sequence) and not isinstance(
+            payload, (bytes, bytearray, str)
+        ):
             # list/tuple mode: positional
             if len(payload) != len(fn.inputs):
                 raise ValidationError("argument count mismatch")
             return tuple(
-                decode_arg(p.type, payload[i])
-                for i, p in enumerate(fn.inputs)
+                decode_arg(p.type, payload[i]) for i, p in enumerate(fn.inputs)
             )
         else:
             raise ValidationError("payload must be dict or list")
@@ -315,10 +330,16 @@ class AbiDispatcher:
             return None
         if len(outs) == 1:
             # Single return: allow bare scalar
-            val = native_values[0] if isinstance(native_values, (list, tuple)) else native_values
+            val = (
+                native_values[0]
+                if isinstance(native_values, (list, tuple))
+                else native_values
+            )
             return encode_value(outs[0].type, val)
         # Multi-return: expect a sequence
-        if not isinstance(native_values, (list, tuple)) or len(native_values) != len(outs):
+        if not isinstance(native_values, (list, tuple)) or len(native_values) != len(
+            outs
+        ):
             raise ValidationError("expected a list/tuple of return values")
         # Prefer object if names are unique & non-empty
         names = [o.name for o in outs]
@@ -333,13 +354,21 @@ class AbiDispatcher:
 
 # ---------------- Convenience wrappers ----------------
 
-def decode_inputs(manifest_like: Mapping[str, Any], fn_name: str, payload: Any) -> Tuple[Any, ...]:
+
+def decode_inputs(
+    manifest_like: Mapping[str, Any], fn_name: str, payload: Any
+) -> Tuple[Any, ...]:
     """One-shot helper: manifest + function + payload → native args tuple."""
     return AbiDispatcher(AbiSchema(manifest_like)).decode_inputs(fn_name, payload)
 
-def encode_outputs(manifest_like: Mapping[str, Any], fn_name: str, native_values: Any) -> Any:
+
+def encode_outputs(
+    manifest_like: Mapping[str, Any], fn_name: str, native_values: Any
+) -> Any:
     """One-shot helper: manifest + function + native values → transport data."""
-    return AbiDispatcher(AbiSchema(manifest_like)).encode_outputs(fn_name, native_values)
+    return AbiDispatcher(AbiSchema(manifest_like)).encode_outputs(
+        fn_name, native_values
+    )
 
 
 __all__ = [

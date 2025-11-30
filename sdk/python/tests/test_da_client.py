@@ -9,6 +9,7 @@ class FakeRpc:
     Minimal JSON-RPC stub for DA endpoints.
     Accepts several method-name variants to stay compatible with different mounts.
     """
+
     def __init__(self) -> None:
         self.calls: List[Tuple[str, Any]] = []
         self._store: Dict[str, bytes] = {}
@@ -38,7 +39,9 @@ class FakeRpc:
             if data_hex.startswith("0x") or data_hex.startswith("0X"):
                 data_hex = data_hex[2:]
             blob = binascii.unhexlify(data_hex)
-            commit = "0x" + binascii.sha256(blob).hexdigest()  # deterministic enough for a stub
+            commit = (
+                "0x" + binascii.sha256(blob).hexdigest()
+            )  # deterministic enough for a stub
             self._store[commit] = blob
             return {"commitment": commit, "namespace": ns, "size": len(blob)}
 
@@ -101,5 +104,9 @@ def test_post_get_proof_roundtrip():
     # Ensure expected methods were called
     methods = [m for (m, _p) in rpc.calls]
     assert any(m.startswith("da.") and ("put" in m or "post" in m) for m in methods)
-    assert any(m.startswith("da.") and "getBlob" in m or "blob.get" in m for m in methods)
-    assert any(m.startswith("da.") and ("Proof" in m or "getProof" in m) for m in methods)
+    assert any(
+        m.startswith("da.") and "getBlob" in m or "blob.get" in m for m in methods
+    )
+    assert any(
+        m.startswith("da.") and ("Proof" in m or "getProof" in m) for m in methods
+    )

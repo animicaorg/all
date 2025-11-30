@@ -24,6 +24,7 @@ from typing import Any, Callable, Optional, Tuple
 
 # ---------------- optional import helper ----------------
 
+
 def _import_optional(modname: str):
     try:
         __import__(modname)
@@ -77,6 +78,7 @@ def _choose_cbor() -> Tuple[DecodeFn, EncodeFn, str]:
     for prov in (_get_project_cbor(), _get_cbor2(), _get_msgspec()):
         if prov:
             return prov
+
     # Tiny stub so the target still imports
     def _loads_stub(b: bytes) -> Any:
         if b == b"\xa0":
@@ -154,6 +156,7 @@ for mod in (_frames, _enc):
 
 # ---------------- utilities ----------------
 
+
 def _sha3_256(data: bytes) -> Optional[bytes]:
     h = _import_optional("core.utils.hash")
     if h and hasattr(h, "sha3_256"):
@@ -163,6 +166,7 @@ def _sha3_256(data: bytes) -> Optional[bytes]:
             pass
     try:
         import hashlib
+
         return hashlib.sha3_256(data).digest()
     except Exception:
         return None
@@ -216,7 +220,19 @@ def _frame_normalize_shape(frame: dict) -> dict:
         out["checksum"] = csum
     # keep extras
     for k, v in frame.items():
-        if k not in ("msg_id", "msgId", "id", "payload", "p", "seq", "s", "flags", "f", "checksum", "csum"):
+        if k not in (
+            "msg_id",
+            "msgId",
+            "id",
+            "payload",
+            "p",
+            "seq",
+            "s",
+            "flags",
+            "f",
+            "checksum",
+            "csum",
+        ):
             out[k] = v
     return out
 
@@ -264,6 +280,7 @@ def _maybe_validate_checksum(frame: dict) -> None:
 
 
 # ---------------- fuzz entry ----------------
+
 
 def fuzz(data: bytes) -> None:
     # Size guard (1 MiB max)
@@ -398,11 +415,14 @@ def fuzz(data: bytes) -> None:
 
 # ---------------- direct execution ----------------
 
+
 def _run_direct(argv: list[str]) -> int:  # pragma: no cover
     try:
         import atheris  # type: ignore
     except Exception:
-        sys.stderr.write("[fuzz_p2p_messages] atheris not installed. pip install atheris\n")
+        sys.stderr.write(
+            "[fuzz_p2p_messages] atheris not installed. pip install atheris\n"
+        )
         return 2
     atheris.instrument_all()
     corpus = [p for p in argv if not p.startswith("-")] or ["tests/fuzz/corpus_txs"]

@@ -5,10 +5,9 @@ from typing import Any, Dict, Optional, Tuple
 
 import pytest
 
-from vm_py.compiler import ir
 from vm_py.compiler import encode as enc
 from vm_py.compiler import gas_estimator as ge
-
+from vm_py.compiler import ir
 
 # ----------------------------- helpers ---------------------------------------
 
@@ -56,7 +55,9 @@ def build_counter_ir() -> Tuple[Any, str, str]:
     i_store_val2 = mk(Instr, op="STORE", args=["VALUE"])
 
     # blocks (support different naming fields)
-    b_init = mk(Block, name="init", label="init", id="init", instrs=[i_push0, i_store_val])
+    b_init = mk(
+        Block, name="init", label="init", id="init", instrs=[i_push0, i_store_val]
+    )
     b_inc = mk(
         Block,
         name="inc",
@@ -110,6 +111,7 @@ def _extract_upper_bound(est_result: Any, entry: Optional[str] = None) -> int:
     - dict with keys above
     - dict with per-function mapping (per_func|funcs)[entry].upper(_bound)
     """
+
     def pick_num(obj: Any) -> Optional[int]:
         if isinstance(obj, int):
             return obj
@@ -149,7 +151,9 @@ def _extract_upper_bound(est_result: Any, entry: Optional[str] = None) -> int:
     if n is not None:
         return n
 
-    raise AssertionError("Could not extract an integer upper bound from estimator result")
+    raise AssertionError(
+        "Could not extract an integer upper bound from estimator result"
+    )
 
 
 def _maybe_run_dynamic(mod: Any, entry: str) -> Optional[int]:
@@ -251,7 +255,9 @@ def test_static_upper_bound_ge_runtime_usage() -> None:
 
     dyn = _maybe_run_dynamic(mod, entry=inc)
     if dyn is None:
-        pytest.skip("VM runtime engine API not available for dynamic run; skipping bound check")
+        pytest.skip(
+            "VM runtime engine API not available for dynamic run; skipping bound check"
+        )
 
     # Prefer per-function bound if present; otherwise use module-level
     try:

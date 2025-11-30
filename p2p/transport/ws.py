@@ -6,26 +6,17 @@ import hashlib
 import os
 import ssl
 from dataclasses import dataclass
-from typing import AsyncIterator, Optional, Tuple, Dict
-from urllib.parse import urlparse, parse_qs, urlunparse
+from typing import AsyncIterator, Dict, Optional, Tuple
+from urllib.parse import parse_qs, urlparse, urlunparse
 
-from .base import (
-    Transport,
-    Conn,
-    Stream,
-    ListenConfig,
-    ConnInfo,
-    CloseCode,
-    MAX_FRAME_DEFAULT,
-    TransportError,
-    StreamClosed,
-)
+from .base import (MAX_FRAME_DEFAULT, CloseCode, Conn, ConnInfo, ListenConfig,
+                   Stream, StreamClosed, Transport, TransportError)
 
 # Optional deps
 try:
     import websockets
-    from websockets.server import WebSocketServerProtocol
     from websockets.legacy.client import WebSocketClientProtocol
+    from websockets.server import WebSocketServerProtocol
 except Exception as _e:  # pragma: no cover
     websockets = None  # type: ignore
     WebSocketServerProtocol = object  # type: ignore
@@ -52,8 +43,10 @@ except Exception:
         """
         Very small HKDF (extract+expand) using SHA3-256. For dev only.
         """
+
         def hmac_sha3(key: bytes, data: bytes) -> bytes:
             import hmac
+
             return hmac.new(key, data, hashlib.sha3_256).digest()
 
         prk = hmac_sha3(salt or b"\x00" * hashlib.sha3_256().digest_size, ikm)
@@ -71,7 +64,9 @@ WS_ALPN = "animica/ws/1"
 AAD_TX = b"animica/ws/aead/tx/v1"
 AAD_RX = b"animica/ws/aead/rx/v1"
 
-NONCE_PREFIX = b"\x00\x00\x00\x00"  # 4 bytes; + 8B seq = 12B nonce for ChaCha20-Poly1305
+NONCE_PREFIX = (
+    b"\x00\x00\x00\x00"  # 4 bytes; + 8B seq = 12B nonce for ChaCha20-Poly1305
+)
 SEQ_BYTES = 8
 
 
@@ -79,6 +74,7 @@ class _AeadBox:
     """
     Simple AEAD box with monotonic-nonce schedule (uint64 BE counter embedded in frame).
     """
+
     __slots__ = ("_aead", "_aad", "_send_seq")
 
     def __init__(self, key: bytes, aad: bytes) -> None:
@@ -133,14 +129,18 @@ def _parse_ws_addr(addr: str) -> Tuple[str, str, int, str, Dict[str, str]]:
     return u.scheme, host, port, path, q
 
 
-def _derive_session_keys(psk: bytes, role_is_client: bool, ctx: bytes) -> Tuple[bytes, bytes]:
+def _derive_session_keys(
+    psk: bytes, role_is_client: bool, ctx: bytes
+) -> Tuple[bytes, bytes]:
     """
     Derive (tx_key, rx_key) from PSK and role using HKDF-SHA3-256.
 
     tx_key is the key *this* side uses to send; rx_key is what it expects from peer.
     """
     # A salt that binds to context and WS ALPN
-    salt = hashlib.sha3_256(b"animica/ws/salt|" + ctx + b"|" + WS_ALPN.encode()).digest()
+    salt = hashlib.sha3_256(
+        b"animica/ws/salt|" + ctx + b"|" + WS_ALPN.encode()
+    ).digest()
     if role_is_client:
         tx = hkdf_sha3_256(psk, salt, b"client->server|" + ctx, 32)
         rx = hkdf_sha3_256(psk, salt, b"server->client|" + ctx, 32)
@@ -276,13 +276,16 @@ class WebSocketTransport(Transport):
             # Prefer repo cert via p2p.crypto.cert.ensure_node_cert(); else auto
             with contextlib.suppress(Exception):
                 from p2p.crypto.cert import ensure_node_cert  # type: ignore
+
                 cert, key = ensure_node_cert()
                 ctx.load_cert_chain(certfile=cert, keyfile=key)
                 return ctx
             # Dev fallback: generate ephemeral self-signed if cert helper absent
             # (we reuse QUIC's helper if present)
             with contextlib.suppress(Exception):
-                from p2p.transport.quic import _ensure_quic_cert  # type: ignore
+                from p2p.transport.quic import \
+                    _ensure_quic_cert  # type: ignore
+
                 cert, key = _ensure_quic_cert()
                 ctx.load_cert_chain(certfile=cert, keyfile=key)
                 return ctx
@@ -320,8 +323,12 @@ class WebSocketTransport(Transport):
         async def _handler(ws: WebSocketServerProtocol):
             # Derive per-connection crypto (server receives -> tx=server->client)
             if psk:
-                tx_key, rx_key = _derive_session_keys(psk, role_is_client=False, ctx=ctx_bytes)
-                crypto = _WsCrypto(tx=_AeadBox(tx_key, AAD_TX), rx=_AeadBox(rx_key, AAD_RX))
+                tx_key, rx_key = _derive_session_keys(
+                    psk, role_is_client=False, ctx=ctx_bytes
+                )
+                crypto = _WsCrypto(
+                    tx=_AeadBox(tx_key, AAD_TX), rx=_AeadBox(rx_key, AAD_RX)
+                )
             else:
                 crypto = _WsCrypto(tx=None, rx=None)
 
@@ -337,7 +344,9 @@ class WebSocketTransport(Transport):
                 remote_addr=f"{peer[0]}:{peer[1]}",
                 is_outbound=False,
             )
-            conn = WsConn(ws, info=info, crypto=crypto, max_frame=config.max_frame_bytes)
+            conn = WsConn(
+                ws, info=info, crypto=crypto, max_frame=config.max_frame_bytes
+            )
             await self._incoming.put(conn)
             # Keep the handler alive until closed to avoid premature drop
             await ws.wait_closed()
@@ -376,12 +385,20 @@ class WebSocketTransport(Transport):
                 subprotocols=[WS_ALPN],
                 ssl=ssl_ctx,
                 ping_timeout=20,
-                max_size=(self._listen_cfg.max_frame_bytes if self._listen_cfg else MAX_FRAME_DEFAULT),
+                max_size=(
+                    self._listen_cfg.max_frame_bytes
+                    if self._listen_cfg
+                    else MAX_FRAME_DEFAULT
+                ),
             )
             # Derive per-connection crypto (client role)
             if psk:
-                tx_key, rx_key = _derive_session_keys(psk, role_is_client=True, ctx=ctx_bytes)
-                crypto = _WsCrypto(tx=_AeadBox(tx_key, AAD_TX), rx=_AeadBox(rx_key, AAD_RX))
+                tx_key, rx_key = _derive_session_keys(
+                    psk, role_is_client=True, ctx=ctx_bytes
+                )
+                crypto = _WsCrypto(
+                    tx=_AeadBox(tx_key, AAD_TX), rx=_AeadBox(rx_key, AAD_RX)
+                )
             else:
                 crypto = _WsCrypto(tx=None, rx=None)
 
@@ -397,7 +414,16 @@ class WebSocketTransport(Transport):
                 remote_addr=f"{peer[0]}:{peer[1]}",
                 is_outbound=True,
             )
-            return WsConn(ws, info=info, crypto=crypto, max_frame=(self._listen_cfg.max_frame_bytes if self._listen_cfg else MAX_FRAME_DEFAULT))
+            return WsConn(
+                ws,
+                info=info,
+                crypto=crypto,
+                max_frame=(
+                    self._listen_cfg.max_frame_bytes
+                    if self._listen_cfg
+                    else MAX_FRAME_DEFAULT
+                ),
+            )
 
         try:
             if timeout and timeout > 0:

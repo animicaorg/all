@@ -15,12 +15,13 @@ Reference:
 
 from __future__ import annotations
 
-from decimal import Decimal, getcontext, localcontext, ROUND_HALF_EVEN, InvalidOperation
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
+from decimal import (ROUND_HALF_EVEN, Decimal, InvalidOperation, getcontext,
+                     localcontext)
 from typing import Tuple
 
-from .types import MicroNat, Psi, ThetaMicro, GammaMicro
+from .types import GammaMicro, MicroNat, Psi, ThetaMicro
 
 # -------------------------
 # Decimal precision & scales
@@ -48,6 +49,7 @@ def _dec_ctx():
 # -------------------------
 # Helpers
 # -------------------------
+
 
 def clamp(value: int, lo: int, hi: int) -> int:
     """Clamp integer `value` to [lo, hi]."""
@@ -83,6 +85,7 @@ def decimal_from_micronats(mn: int) -> Decimal:
 # -------------------------
 # Log functions (Decimal)
 # -------------------------
+
 
 def ln(x: Decimal) -> Decimal:
     """
@@ -126,6 +129,7 @@ def log1p(x: Decimal) -> Decimal:
 # -------------------------
 # H(u) = -ln(u) in µ-nats
 # -------------------------
+
 
 def H_u_decimal(u: Decimal) -> int:
     """
@@ -184,6 +188,7 @@ def H_from_qbits(n: int, bits: int) -> int:
 # Typed wrappers & utilities
 # -------------------------
 
+
 def psi_from_hash(hash_bytes: bytes) -> Psi:
     """Convenience: H(u) as Psi from a 32-byte hash."""
     return Psi(H_from_hash256(hash_bytes))
@@ -206,6 +211,7 @@ def gamma_from_micronats(x: int) -> GammaMicro:
 # -------------------------
 # Lightweight float helpers (legacy test shim)
 # -------------------------
+
 
 def H(u: float) -> float:
     """
@@ -254,6 +260,7 @@ def sub_micronats(a: int, b: int) -> int:
 
 if __name__ == "__main__":  # simple local checks; not run in unit CI
     import os
+
     # Determinism check: identical input → identical µ-nats
     h = os.urandom(32)
     v1 = H_from_hash256(h)
@@ -262,8 +269,11 @@ if __name__ == "__main__":  # simple local checks; not run in unit CI
 
     # Monotonicity: larger u ⇒ smaller H(u)
     from copy import deepcopy
+
     with localcontext(_dec_ctx()):
-        u_small = (Decimal(int.from_bytes(b"\x00"*31 + b"\x01", "big")) + 1) / Decimal(1 << 256)
-        u_big   = (Decimal(int.from_bytes(b"\xff"*32, "big")) + 1) / Decimal(1 << 256)
+        u_small = (
+            Decimal(int.from_bytes(b"\x00" * 31 + b"\x01", "big")) + 1
+        ) / Decimal(1 << 256)
+        u_big = (Decimal(int.from_bytes(b"\xff" * 32, "big")) + 1) / Decimal(1 << 256)
         assert H_u_decimal(u_small) > H_u_decimal(u_big)
     print("OK: basic invariants hold")

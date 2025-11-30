@@ -56,19 +56,15 @@ import socket
 import struct
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, AsyncIterator
+from typing import AsyncIterator, Dict, List, Optional
 
 _LOG = logging.getLogger("p2p.discovery.mdns")
 
 # Optional dependency
 try:
-    from zeroconf import (
-        IPVersion,
-        ServiceBrowser,
-        ServiceInfo,
-        Zeroconf,
-        InterfaceChoice,
-    )
+    from zeroconf import (InterfaceChoice, IPVersion, ServiceBrowser,
+                          ServiceInfo, Zeroconf)
+
     _HAS_ZC = True
 except Exception:  # pragma: no cover - environment-specific
     _HAS_ZC = False
@@ -81,7 +77,9 @@ def _ipv4_addrs() -> List[bytes]:
     """Collect local IPv4 addresses encoded as 4-byte packed form for zeroconf."""
     addrs: List[bytes] = []
     try:
-        infos = socket.getaddrinfo(None, 0, family=socket.AF_INET, type=socket.SOCK_STREAM)
+        infos = socket.getaddrinfo(
+            None, 0, family=socket.AF_INET, type=socket.SOCK_STREAM
+        )
         # getaddrinfo(None, 0, …) returns wildcard 0.0.0.0; we prefer interface scan by hostname below.
     except Exception:
         infos = []
@@ -112,28 +110,36 @@ def _ipv4_addrs() -> List[bytes]:
     return out
 
 
-def _mk_txt(peer_id: str, chain_id: int, version: str, endpoints: List[str]) -> Dict[str, bytes]:
+def _mk_txt(
+    peer_id: str, chain_id: int, version: str, endpoints: List[str]
+) -> Dict[str, bytes]:
     # TXT values must be bytes
-    ep = ",".join(endpoints)[:650]  # stay well below 255 per key by splitting if needed (we keep it short anyway)
+    ep = ",".join(endpoints)[
+        :650
+    ]  # stay well below 255 per key by splitting if needed (we keep it short anyway)
     return {
         b"peer": peer_id.encode("utf-8"),
         b"chain": str(chain_id).encode("utf-8"),
         b"vers": version.encode("utf-8"),
         b"endpt": ep.encode("utf-8"),
-        b"proto": ",".join(sorted({e.split("://", 1)[0] for e in endpoints})).encode("utf-8"),
+        b"proto": ",".join(sorted({e.split("://", 1)[0] for e in endpoints})).encode(
+            "utf-8"
+        ),
         b"ts": str(int(time.time())).encode("utf-8"),
     }
 
 
 def _parse_txt(txt: Dict[bytes, bytes]) -> Dict[str, str]:
-    return {k.decode("utf-8", "ignore"): v.decode("utf-8", "ignore") for k, v in txt.items()}
+    return {
+        k.decode("utf-8", "ignore"): v.decode("utf-8", "ignore") for k, v in txt.items()
+    }
 
 
 @dataclass(frozen=True)
 class MdnsEvent:
-    kind: str          # "added" | "removed" | "updated"
-    name: str          # instance name
-    host: str          # target hostname
+    kind: str  # "added" | "removed" | "updated"
+    name: str  # instance name
+    host: str  # target hostname
     port: int
     txt: Dict[str, str] = field(default_factory=dict)
 
@@ -182,7 +188,9 @@ class MdnsAdvertiser:
                 properties=props,
                 server=f"{socket.gethostname()}.",
             )
-            zc = Zeroconf(interfaces=InterfaceChoice.Default, ip_version=IPVersion.V4Only)
+            zc = Zeroconf(
+                interfaces=InterfaceChoice.Default, ip_version=IPVersion.V4Only
+            )
             zc.register_service(info, ttl=self.ttl)
             self._zc = zc
             self._info = info
@@ -193,6 +201,7 @@ class MdnsAdvertiser:
     async def close(self) -> None:
         if not _HAS_ZC:  # pragma: no cover
             return
+
         def _unregister() -> None:
             if self._zc and self._info:
                 try:
@@ -203,6 +212,7 @@ class MdnsAdvertiser:
                     self._zc.close()
                 except Exception:
                     pass
+
         await asyncio.to_thread(_unregister)
 
 
@@ -234,10 +244,14 @@ class _Listener:  # zeroconf callback target
     def add_service(self, zc: "Zeroconf", type_: str, name: str) -> None:  # noqa: N802
         self._emit("added", type_, name)
 
-    def update_service(self, zc: "Zeroconf", type_: str, name: str) -> None:  # noqa: N802
+    def update_service(
+        self, zc: "Zeroconf", type_: str, name: str
+    ) -> None:  # noqa: N802
         self._emit("updated", type_, name)
 
-    def remove_service(self, zc: "Zeroconf", type_: str, name: str) -> None:  # noqa: N802
+    def remove_service(
+        self, zc: "Zeroconf", type_: str, name: str
+    ) -> None:  # noqa: N802
         self._emit("removed", type_, name)
 
 
@@ -259,7 +273,9 @@ class MdnsBrowser:
             return
 
         def _start() -> None:
-            zc = Zeroconf(interfaces=InterfaceChoice.Default, ip_version=IPVersion.V4Only)
+            zc = Zeroconf(
+                interfaces=InterfaceChoice.Default, ip_version=IPVersion.V4Only
+            )
             listener = _Listener(zc, self._queue)
             browser = ServiceBrowser(zc, self.service_type, listener=listener)
             self._zc = zc
@@ -284,6 +300,7 @@ class MdnsBrowser:
                     self._zc.close()
                 except Exception:
                     pass
+
         await asyncio.to_thread(_stop)
 
     async def events_iter(self) -> AsyncIterator[MdnsEvent]:
@@ -295,6 +312,7 @@ class MdnsBrowser:
 
 # Stubs to make imports safe when zeroconf is missing
 if not _HAS_ZC:  # pragma: no cover
+
     class MdnsAdvertiser:  # type: ignore[no-redef]
         def __init__(self, *a, **k):
             _LOG.info("MdnsAdvertiser stub active (pip install zeroconf to enable)")

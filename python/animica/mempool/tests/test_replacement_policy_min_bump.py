@@ -21,6 +21,7 @@ MempoolErrorCode = errors_mod.MempoolErrorCode
 @dataclass
 class FakeMeta:
     """Minimal metadata object for RBF tests."""
+
     effective_fee_wei: int
 
 

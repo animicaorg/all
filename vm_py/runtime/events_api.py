@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Sequence
-import re
 
 from .error import VmError
 
@@ -21,6 +21,7 @@ ArgValue = Any  # constrained at runtime
 @dataclass
 class Event:
     """In-VM representation of an emitted event."""
+
     name: bytes
     args: Dict[str, ArgValue]
 
@@ -36,6 +37,7 @@ class CanonicalEvent:
               t="i" => integer
               t="z" => boolean
     """
+
     name: str
     args: Sequence[Mapping[str, Any]]
 
@@ -178,9 +180,7 @@ def events_for_receipt() -> List[CanonicalEvent]:
         enc_args: List[Dict[str, Any]] = []
         for k, v in ev.args.items():
             if isinstance(v, (bytes, bytearray)):
-                enc_args.append(
-                    {"k": k, "t": "b", "v": "0x" + bytes(v).hex()}
-                )
+                enc_args.append({"k": k, "t": "b", "v": "0x" + bytes(v).hex()})
             elif isinstance(v, bool):
                 enc_args.append({"k": k, "t": "z", "v": v})
             elif isinstance(v, int):
@@ -191,7 +191,10 @@ def events_for_receipt() -> List[CanonicalEvent]:
                 raise VmError(
                     "unsupported event arg type in receipt",
                     code="event_invalid",
-                    context={"where": "receipt_value_type", "py_type": type(v).__name__},
+                    context={
+                        "where": "receipt_value_type",
+                        "py_type": type(v).__name__,
+                    },
                 )
 
         out.append(

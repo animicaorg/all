@@ -38,12 +38,13 @@ try:
     # Preferred exports from __init__.py
     from . import PosterEnv, get_logger, load_env
 except Exception:  # pragma: no cover - fallback to config.py
-    from .config import PosterEnv, load_env  # type: ignore
     from . import get_logger  # type: ignore
+    from .config import PosterEnv, load_env  # type: ignore
 
 # Feeds & clients
-from .feeds import load_feed  # Factory returning an object with .produce() -> (bytes, dict)
 from .da_client import DAClient  # Exposes .post(data: bytes, **kw) -> DAResult
+from .feeds import \
+    load_feed  # Factory returning an object with .produce() -> (bytes, dict)
 from .tx_client import TxClient, TxReceipt
 
 LOG = get_logger("oracle_poster.main")
@@ -52,6 +53,7 @@ LOG = get_logger("oracle_poster.main")
 # ======================================================================================
 # Helpers
 # ======================================================================================
+
 
 def _bool_env(name: str, default: bool) -> bool:
     v = os.getenv(name)
@@ -67,6 +69,7 @@ def _bool_env(name: str, default: bool) -> bool:
 
 def _flatten_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
     """Best-effort JSON-serializable copy for logs/prints."""
+
     def _coerce(x: Any) -> Any:
         if isinstance(x, (str, int, float, bool)) or x is None:
             return x
@@ -79,10 +82,13 @@ def _flatten_meta(meta: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(x, (list, tuple)):
             return [_coerce(v) for v in x]
         return repr(x)
+
     return _coerce(meta)  # type: ignore[return-value]
 
 
-def _map_oracle_args(order: Iterable[str], *, commitment: str, size: int, meta: Dict[str, Any]) -> List[Any]:
+def _map_oracle_args(
+    order: Iterable[str], *, commitment: str, size: int, meta: Dict[str, Any]
+) -> List[Any]:
     """
     Build the contract-call arguments according to a configured order.
     Supported tokens (case-insensitive):
@@ -106,7 +112,11 @@ def _map_oracle_args(order: Iterable[str], *, commitment: str, size: int, meta: 
         elif t == "feed_tag":
             out.append(meta.get("feed_tag") or meta_l.get("tag") or "")
         elif t == "mime":
-            out.append(meta.get("mime") or meta_l.get("content_type") or "application/octet-stream")
+            out.append(
+                meta.get("mime")
+                or meta_l.get("content_type")
+                or "application/octet-stream"
+            )
         elif t == "ts":
             out.append(int(now_ts))
         elif t == "digest":
@@ -130,6 +140,7 @@ def _print_json(obj: Any) -> None:
 # ======================================================================================
 # Core flow
 # ======================================================================================
+
 
 def run_once(
     cfg: PosterEnv,
@@ -160,7 +171,9 @@ def run_once(
     meta.setdefault("feed_tag", feed_id)
     meta.setdefault("ts", int(time.time()))
     size = len(payload or b"")
-    LOG.info("Feed produced %d bytes (feed=%s mime=%s)", size, feed_id, meta.get("mime"))
+    LOG.info(
+        "Feed produced %d bytes (feed=%s mime=%s)", size, feed_id, meta.get("mime")
+    )
 
     # In dry-run mode we still compute args to show what *would* be sent.
     commitment_hex: Optional[str] = None
@@ -205,7 +218,9 @@ def run_once(
         # Build method + args
         method = (cfg.oracle_method or "set(bytes32,uint256)").strip()
         order = list(cfg.oracle_arg_order or ("commitment", "size"))
-        args = _map_oracle_args(order, commitment=str(commitment_hex), size=size, meta=meta)
+        args = _map_oracle_args(
+            order, commitment=str(commitment_hex), size=size, meta=meta
+        )
 
         if print_args or dry_run:
             _print_json({"method": method, "args": args, "meta": _flatten_meta(meta)})
@@ -243,7 +258,7 @@ def run_once(
                     receipt.gas_used,
                 )
 
-    return (commitment_hex, receipt if 'receipt' in locals() else None)
+    return (commitment_hex, receipt if "receipt" in locals() else None)
 
 
 def run_loop(cfg: PosterEnv) -> None:
@@ -265,7 +280,12 @@ def run_loop(cfg: PosterEnv) -> None:
     signal.signal(signal.SIGINT, _stop)
     signal.signal(signal.SIGTERM, _stop)
 
-    LOG.info("Starting loop: every %.3fs (feed=%s, oracle=%s)", interval, cfg.feed_name, cfg.oracle_contract)
+    LOG.info(
+        "Starting loop: every %.3fs (feed=%s, oracle=%s)",
+        interval,
+        cfg.feed_name,
+        cfg.oracle_contract,
+    )
     while not stopping["flag"]:
         t0 = time.time()
         try:
@@ -284,16 +304,52 @@ def run_loop(cfg: PosterEnv) -> None:
 # CLI
 # ======================================================================================
 
+
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Oracle DA Poster")
-    p.add_argument("--once", action="store_true", help="Run exactly one iteration, then exit")
-    p.add_argument("--dry-run", action="store_true", help="Do everything except submitting a transaction")
-    p.add_argument("--no-da", dest="skip_da", action="store_true", help="Skip DA posting (use feed/meta commitment or local compute)")
-    p.add_argument("--no-tx", dest="skip_tx", action="store_true", help="Skip transaction submission")
-    p.add_argument("--print-args", action="store_true", help="Print the method/args/meta JSON before submitting")
-    p.add_argument("--feed", type=str, default=None, help="Override feed name (defaults to $FEED_NAME or config)")
-    p.add_argument("--wait-receipt", dest="wait_receipt", action="store_true", help="Wait for receipt after submit")
-    p.add_argument("--no-wait-receipt", dest="wait_receipt", action="store_false", help="Do not wait for receipt")
+    p.add_argument(
+        "--once", action="store_true", help="Run exactly one iteration, then exit"
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Do everything except submitting a transaction",
+    )
+    p.add_argument(
+        "--no-da",
+        dest="skip_da",
+        action="store_true",
+        help="Skip DA posting (use feed/meta commitment or local compute)",
+    )
+    p.add_argument(
+        "--no-tx",
+        dest="skip_tx",
+        action="store_true",
+        help="Skip transaction submission",
+    )
+    p.add_argument(
+        "--print-args",
+        action="store_true",
+        help="Print the method/args/meta JSON before submitting",
+    )
+    p.add_argument(
+        "--feed",
+        type=str,
+        default=None,
+        help="Override feed name (defaults to $FEED_NAME or config)",
+    )
+    p.add_argument(
+        "--wait-receipt",
+        dest="wait_receipt",
+        action="store_true",
+        help="Wait for receipt after submit",
+    )
+    p.add_argument(
+        "--no-wait-receipt",
+        dest="wait_receipt",
+        action="store_false",
+        help="Do not wait for receipt",
+    )
     p.set_defaults(wait_receipt=None)
     return p
 

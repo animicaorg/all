@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+
 """
 omni pq verify — domain-separated post-quantum signature verification for Animica.
 
@@ -19,21 +20,24 @@ Examples:
   python -m pq.cli.pq_verify --in msg.bin --sig msg.bin.sig --key alice.json --addr anim1...
 """
 
-import sys
-import os
-import json
 import argparse
+import json
+import os
+import sys
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 # Local package imports
 try:
+    from pq.py import address as pq_address  # optional use
     from pq.py import registry as pq_registry
     from pq.py import verify as pq_verify
     from pq.py.utils.hash import sha3_256
-    from pq.py import address as pq_address  # optional use
 except Exception as e:  # pragma: no cover
-    print("FATAL: could not import pq package. Ensure repo root is on PYTHONPATH.", file=sys.stderr)
+    print(
+        "FATAL: could not import pq package. Ensure repo root is on PYTHONPATH.",
+        file=sys.stderr,
+    )
     raise
 
 SUPPORTED_SIG_ALGS = ("dilithium3", "sphincs-shake-128s")
@@ -43,14 +47,22 @@ SUPPORTED_SIG_ALGS = ("dilithium3", "sphincs-shake-128s")
 # --------------------------------------------------------------------------------------
 
 _WELL_KNOWN_LABELS = {
-    "generic", "tx", "p2p", "da", "contract", "aicf", "randomness",
+    "generic",
+    "tx",
+    "p2p",
+    "da",
+    "contract",
+    "aicf",
+    "randomness",
 }
+
 
 def _domain_tag_from_label(label: str) -> bytes:
     if not label:
         label = "generic"
     base = ("animica|sign|" + label.lower()).encode("utf-8")
     return sha3_256(base)
+
 
 def _resolve_domain(domain_arg: Optional[str], prehash_mode: str) -> Tuple[str, bytes]:
     """
@@ -74,12 +86,15 @@ def _resolve_domain(domain_arg: Optional[str], prehash_mode: str) -> Tuple[str, 
     if domain_arg.startswith("custom:"):
         label = domain_arg.split(":", 1)[1].strip()
         if not label:
-            raise SystemExit("custom domain label cannot be empty. e.g., --domain custom:mytool")
+            raise SystemExit(
+                "custom domain label cannot be empty. e.g., --domain custom:mytool"
+            )
         return (label, _fold_prehash(_domain_tag_from_label(label), prehash_mode))
 
     # plain label
     label = domain_arg.strip().lower()
     return (label, _fold_prehash(_domain_tag_from_label(label), prehash_mode))
+
 
 def _fold_prehash(base_tag: bytes, prehash_mode: str) -> bytes:
     """
@@ -91,13 +106,16 @@ def _fold_prehash(base_tag: bytes, prehash_mode: str) -> bytes:
         return sha3_256(base_tag + b"|ph:sha3-256")
     return base_tag
 
+
 # --------------------------------------------------------------------------------------
 # Inputs: pk/sig/meta
 # --------------------------------------------------------------------------------------
 
+
 def _load_json(path: Path) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
+
 
 def _load_pk_from_keyjson(path: Path) -> Tuple[bytes, Optional[str]]:
     j = _load_json(path)
@@ -111,13 +129,17 @@ def _load_pk_from_keyjson(path: Path) -> Tuple[bytes, Optional[str]]:
     addr = j.get("address") or None
     return pk, addr
 
+
 def _load_pk(path: Path) -> bytes:
     if path.suffix.lower() == ".json":
         pk, _ = _load_pk_from_keyjson(path)
         return pk
     return path.read_bytes()
 
-def _maybe_check_address(addr_str: Optional[str], alg: Optional[str], pk: Optional[bytes]) -> Optional[str]:
+
+def _maybe_check_address(
+    addr_str: Optional[str], alg: Optional[str], pk: Optional[bytes]
+) -> Optional[str]:
     """
     If address string is provided and pq_address has helpers, ensure it matches the given alg+pk.
     Returns a warning string if we could not check; raises SystemExit on mismatch.
@@ -130,7 +152,9 @@ def _maybe_check_address(addr_str: Optional[str], alg: Optional[str], pk: Option
         if hasattr(pq_address, "address_from_pubkey") and alg and pk:
             derived = pq_address.address_from_pubkey(alg, pk)  # type: ignore[attr-defined]
             if derived != addr_str:
-                raise SystemExit(f"Address mismatch: provided {addr_str} != derived {derived} from alg+pk.")
+                raise SystemExit(
+                    f"Address mismatch: provided {addr_str} != derived {derived} from alg+pk."
+                )
             return None
         elif hasattr(pq_address, "decode_address"):
             _alg_id, _digest = pq_address.decode_address(addr_str)  # type: ignore[attr-defined]
@@ -141,6 +165,7 @@ def _maybe_check_address(addr_str: Optional[str], alg: Optional[str], pk: Option
     except Exception as e:
         raise SystemExit(f"Invalid address {addr_str}: {e}")
     return warn
+
 
 def _read_sig(sig_path: Optional[Path], sig_hex: Optional[str]) -> bytes:
     if sig_path and sig_hex:
@@ -155,30 +180,65 @@ def _read_sig(sig_path: Optional[Path], sig_hex: Optional[str]) -> bytes:
             raise SystemExit("Invalid --sig-hex (must be hex string or '-' for stdin).")
     raise SystemExit("Provide --sig <file> or --sig-hex <hex|->.")
 
+
 # --------------------------------------------------------------------------------------
 # Main
 # --------------------------------------------------------------------------------------
 
+
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="omni pq verify", description="Verify Animica PQ signatures.")
-    ap.add_argument("--in", dest="in_path", required=True, type=Path, help="Input message file that was signed.")
+    ap = argparse.ArgumentParser(
+        prog="omni pq verify", description="Verify Animica PQ signatures."
+    )
+    ap.add_argument(
+        "--in",
+        dest="in_path",
+        required=True,
+        type=Path,
+        help="Input message file that was signed.",
+    )
     gsig = ap.add_mutually_exclusive_group(required=True)
-    gsig.add_argument("--sig", dest="sig_path", type=Path, help="Signature file (binary).")
-    gsig.add_argument("--sig-hex", dest="sig_hex", help="Signature hex string, or '-' to read from stdin.")
-    ap.add_argument("--alg", help=f"Signature algorithm to use ({', '.join(SUPPORTED_SIG_ALGS)}). "
-                                  "If omitted, the verifier will try supported algorithms.")
+    gsig.add_argument(
+        "--sig", dest="sig_path", type=Path, help="Signature file (binary)."
+    )
+    gsig.add_argument(
+        "--sig-hex",
+        dest="sig_hex",
+        help="Signature hex string, or '-' to read from stdin.",
+    )
+    ap.add_argument(
+        "--alg",
+        help=f"Signature algorithm to use ({', '.join(SUPPORTED_SIG_ALGS)}). "
+        "If omitted, the verifier will try supported algorithms.",
+    )
     gk = ap.add_mutually_exclusive_group(required=True)
     gk.add_argument("--pk", type=Path, help="Public-key file (raw bytes).")
     gk.add_argument("--key", type=Path, help="Key JSON (from pq_keygen; uses pk_hex).")
-    ap.add_argument("--addr", help="Optional bech32m address to cross-check pk/alg compatibility.")
-    ap.add_argument("--domain", default="tx",
-                    help="Domain label: tx|p2p|da|contract|aicf|randomness|generic, "
-                         "or custom:<label>, or hex:<bytes>. Default: tx")
-    ap.add_argument("--prehash", choices=["none", "sha3-256"], default="none",
-                    help="If the message was prehashed before signing, set this accordingly.")
-    ap.add_argument("--meta", type=Path, help="Optional metadata JSON (from pq_sign) to cross-check fields.")
-    ap.add_argument("--use-meta", action="store_true",
-                    help="Fill in missing --alg/--domain/--prehash from --meta automatically.")
+    ap.add_argument(
+        "--addr", help="Optional bech32m address to cross-check pk/alg compatibility."
+    )
+    ap.add_argument(
+        "--domain",
+        default="tx",
+        help="Domain label: tx|p2p|da|contract|aicf|randomness|generic, "
+        "or custom:<label>, or hex:<bytes>. Default: tx",
+    )
+    ap.add_argument(
+        "--prehash",
+        choices=["none", "sha3-256"],
+        default="none",
+        help="If the message was prehashed before signing, set this accordingly.",
+    )
+    ap.add_argument(
+        "--meta",
+        type=Path,
+        help="Optional metadata JSON (from pq_sign) to cross-check fields.",
+    )
+    ap.add_argument(
+        "--use-meta",
+        action="store_true",
+        help="Fill in missing --alg/--domain/--prehash from --meta automatically.",
+    )
     ap.add_argument("--json", action="store_true", help="Emit a JSON result object.")
     args = ap.parse_args(argv)
 
@@ -197,9 +257,17 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as e:
             raise SystemExit(f"Failed to read --meta: {e}")
 
-    alg = (args.alg or (meta.get("alg") if args.use_meta else None))
-    prehash_mode = args.prehash if not args.use_meta else (args.prehash if args.prehash != "none" else meta.get("prehash", "none"))
-    domain_label = args.domain if not args.use_meta else (args.domain if args.domain != "tx" else meta.get("domain_label", "tx"))
+    alg = args.alg or (meta.get("alg") if args.use_meta else None)
+    prehash_mode = (
+        args.prehash
+        if not args.use_meta
+        else (args.prehash if args.prehash != "none" else meta.get("prehash", "none"))
+    )
+    domain_label = (
+        args.domain
+        if not args.use_meta
+        else (args.domain if args.domain != "tx" else meta.get("domain_label", "tx"))
+    )
 
     # Prehash handling (must match pq_sign)
     if prehash_mode == "sha3-256":
@@ -284,7 +352,9 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(out, indent=2))
     else:
         if valid:
-            print(f"VALID ✓  (alg={valid_alg}, domain={domain_label}, prehash={prehash_mode})")
+            print(
+                f"VALID ✓  (alg={valid_alg}, domain={domain_label}, prehash={prehash_mode})"
+            )
             if addr_warn:
                 print(f"  note: {addr_warn}")
             if args.meta:
@@ -293,7 +363,9 @@ def main(argv: list[str] | None = None) -> int:
                     for k, v in meta_mismatch.items():
                         print(f"    - {k}: {v}")
         else:
-            print(f"INVALID ✗  (tried={tried_algs}; domain={domain_label}; prehash={prehash_mode})")
+            print(
+                f"INVALID ✗  (tried={tried_algs}; domain={domain_label}; prehash={prehash_mode})"
+            )
             if error:
                 print(f"  error: {error}")
 

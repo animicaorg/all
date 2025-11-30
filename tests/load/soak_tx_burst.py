@@ -30,20 +30,20 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import asyncio
+import json
 import os
+import pathlib
 import sys
 import time
-import json
-import asyncio
-import pathlib
-from typing import Optional, List, Tuple, Dict
+from typing import Dict, List, Optional, Tuple
 
 import httpx
-
 
 # -----------------------------------------------------------------------------
 # Payload source (round-robin over CBOR files or synthetic bytes)
 # -----------------------------------------------------------------------------
+
 
 def _load_payloads_from_dir(dirpath: str) -> List[bytes]:
     p = pathlib.Path(dirpath)
@@ -66,9 +66,12 @@ class PayloadGen:
     If 'payloads' provided, cycles through them. Otherwise emits synthetic bytes
     that *look* like CBOR-ish blobs (but will likely fail signature checks).
     """
+
     __slots__ = ("_payloads", "_i", "_seed")
 
-    def __init__(self, payloads: Optional[List[bytes]] = None, seed: int = 1337) -> None:
+    def __init__(
+        self, payloads: Optional[List[bytes]] = None, seed: int = 1337
+    ) -> None:
         self._payloads = payloads or []
         self._i = 0
         self._seed = (seed & ((1 << 64) - 1)) or 1
@@ -107,14 +110,37 @@ class PayloadGen:
 # Histogram utilities (fixed buckets, approximate quantiles)
 # -----------------------------------------------------------------------------
 
+
 class Hist:
     """
     Fixed bucket histogram in milliseconds. Buckets are *upper bounds*.
     """
+
     def __init__(self, buckets_ms: Optional[List[float]] = None) -> None:
         if buckets_ms is None:
             # Tuned for RPC latencies: 5ms .. 10s
-            buckets_ms = [5,10,20,30,50,75,100,150,200,300,400,600,800,1000,1500,2000,3000,5000,8000,10000]
+            buckets_ms = [
+                5,
+                10,
+                20,
+                30,
+                50,
+                75,
+                100,
+                150,
+                200,
+                300,
+                400,
+                600,
+                800,
+                1000,
+                1500,
+                2000,
+                3000,
+                5000,
+                8000,
+                10000,
+            ]
         self.bounds = list(buckets_ms)
         self.counts = [0] * len(self.bounds)
         self.overflow = 0
@@ -149,23 +175,51 @@ class Hist:
         return float(self.bounds[-1] * 1.5)
 
     def summary(self) -> Dict[str, float]:
-        return {"p50_ms": self._quantile(0.50), "p90_ms": self._quantile(0.90), "p99_ms": self._quantile(0.99)}
+        return {
+            "p50_ms": self._quantile(0.50),
+            "p90_ms": self._quantile(0.90),
+            "p99_ms": self._quantile(0.99),
+        }
 
 
 # -----------------------------------------------------------------------------
 # Submit + (optional) receipt tracking
 # -----------------------------------------------------------------------------
 
+
 class SoakState:
     __slots__ = (
-        "ack_hist", "rcpt_hist",
-        "ok", "err",
-        "receipt_ok", "receipt_timeout",
-        "submitted", "completed",
+        "ack_hist",
+        "rcpt_hist",
+        "ok",
+        "err",
+        "receipt_ok",
+        "receipt_timeout",
+        "submitted",
+        "completed",
     )
+
     def __init__(self) -> None:
         self.ack_hist = Hist()
-        self.rcpt_hist = Hist(buckets_ms=[50,100,200,300,500,750,1000,1500,2000,3000,5000,8000,12000,20000,30000])
+        self.rcpt_hist = Hist(
+            buckets_ms=[
+                50,
+                100,
+                200,
+                300,
+                500,
+                750,
+                1000,
+                1500,
+                2000,
+                3000,
+                5000,
+                8000,
+                12000,
+                20000,
+                30000,
+            ]
+        )
         self.ok = 0
         self.err = 0
         self.receipt_ok = 0
@@ -198,7 +252,11 @@ async def submit_one(
         state.ack_hist.observe(ack_ms)
         state.completed += 1
         data = r.json()
-        if r.status_code == 200 and "result" in data and isinstance(data["result"], str):
+        if (
+            r.status_code == 200
+            and "result" in data
+            and isinstance(data["result"], str)
+        ):
             state.ok += 1
             if track_receipts:
                 tx_hash = data["result"]
@@ -233,6 +291,7 @@ async def submit_one(
 # Rate control (token/cadence) and runner
 # -----------------------------------------------------------------------------
 
+
 async def run_soak(
     url: str,
     rps: float,
@@ -262,15 +321,25 @@ async def run_soak(
         while True:
             now = time.perf_counter()
             # Launch as many sends as we should have emitted by now (cadence)
-            while next_tick <= now and (len(inflight) < max_inflight) and (now < deadline):
+            while (
+                next_tick <= now and (len(inflight) < max_inflight) and (now < deadline)
+            ):
                 b = gen.next_bytes()
                 payload_hex = "0x" + b.hex()
                 state.submitted += 1
                 rpc_id += 1
-                task = asyncio.create_task(submit_one(
-                    client, url, payload_hex, state,
-                    track_receipts, receipt_timeout_s, receipt_poll_every_s, rpc_id
-                ))
+                task = asyncio.create_task(
+                    submit_one(
+                        client,
+                        url,
+                        payload_hex,
+                        state,
+                        track_receipts,
+                        receipt_timeout_s,
+                        receipt_poll_every_s,
+                        rpc_id,
+                    )
+                )
                 inflight.add(task)
                 task.add_done_callback(inflight.discard)
                 next_tick += dt
@@ -324,11 +393,16 @@ async def run_soak(
                 "err": state.err,
                 "ack_rate_rps": state.completed / elapsed,
                 "ack_latency_hist": state.ack_hist.to_dict() | state.ack_hist.summary(),
-                "receipt": {
-                    "tracked_ok": state.receipt_ok,
-                    "tracked_timeout": state.receipt_timeout,
-                    "latency_hist": state.rcpt_hist.to_dict() | state.rcpt_hist.summary(),
-                } if track_receipts else None,
+                "receipt": (
+                    {
+                        "tracked_ok": state.receipt_ok,
+                        "tracked_timeout": state.receipt_timeout,
+                        "latency_hist": state.rcpt_hist.to_dict()
+                        | state.rcpt_hist.summary(),
+                    }
+                    if track_receipts
+                    else None
+                ),
             },
         }
         return result
@@ -338,21 +412,68 @@ async def run_soak(
 # CLI
 # -----------------------------------------------------------------------------
 
+
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Sustain tx.sendRawTransaction at a fixed RPS and record latency histograms.")
-    ap.add_argument("--url", default=os.environ.get("RPC_URL", "http://127.0.0.1:8545/rpc"),
-                    help="JSON-RPC endpoint (default: %(default)s or RPC_URL env)")
-    ap.add_argument("--rps", type=float, default=100.0, help="Target requests per second (default: 100)")
-    ap.add_argument("--duration", type=float, default=60.0, help="Duration in seconds (default: 60)")
-    ap.add_argument("--max-inflight", type=int, default=400, help="Max in-flight requests (default: 400)")
-    ap.add_argument("--payload-dir", type=str, default=None, help="Directory of *.cbor payload files to cycle")
-    ap.add_argument("--seed", type=int, default=1337, help="Deterministic seed for synthetic payloads (default: 1337)")
+    ap = argparse.ArgumentParser(
+        description="Sustain tx.sendRawTransaction at a fixed RPS and record latency histograms."
+    )
+    ap.add_argument(
+        "--url",
+        default=os.environ.get("RPC_URL", "http://127.0.0.1:8545/rpc"),
+        help="JSON-RPC endpoint (default: %(default)s or RPC_URL env)",
+    )
+    ap.add_argument(
+        "--rps",
+        type=float,
+        default=100.0,
+        help="Target requests per second (default: 100)",
+    )
+    ap.add_argument(
+        "--duration", type=float, default=60.0, help="Duration in seconds (default: 60)"
+    )
+    ap.add_argument(
+        "--max-inflight",
+        type=int,
+        default=400,
+        help="Max in-flight requests (default: 400)",
+    )
+    ap.add_argument(
+        "--payload-dir",
+        type=str,
+        default=None,
+        help="Directory of *.cbor payload files to cycle",
+    )
+    ap.add_argument(
+        "--seed",
+        type=int,
+        default=1337,
+        help="Deterministic seed for synthetic payloads (default: 1337)",
+    )
 
-    ap.add_argument("--track-receipts", action="store_true", help="Poll tx.getTransactionReceipt for success latency")
-    ap.add_argument("--receipt-timeout", type=float, default=20.0, help="Per-tx receipt timeout seconds (default: 20)")
-    ap.add_argument("--receipt-poll-every", type=float, default=0.5, help="Receipt poll interval seconds (default: 0.5)")
+    ap.add_argument(
+        "--track-receipts",
+        action="store_true",
+        help="Poll tx.getTransactionReceipt for success latency",
+    )
+    ap.add_argument(
+        "--receipt-timeout",
+        type=float,
+        default=20.0,
+        help="Per-tx receipt timeout seconds (default: 20)",
+    )
+    ap.add_argument(
+        "--receipt-poll-every",
+        type=float,
+        default=0.5,
+        help="Receipt poll interval seconds (default: 0.5)",
+    )
 
-    ap.add_argument("--progress-every", type=float, default=5.0, help="Progress log cadence in seconds (stderr)")
+    ap.add_argument(
+        "--progress-every",
+        type=float,
+        default=5.0,
+        help="Progress log cadence in seconds (stderr)",
+    )
 
     return ap.parse_args(argv)
 
@@ -367,18 +488,20 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("Duration must be > 0", file=sys.stderr)
         return 2
 
-    res = asyncio.run(run_soak(
-        url=args.url,
-        rps=args.rps,
-        duration_s=args.duration,
-        max_inflight=args.max_inflight,
-        track_receipts=args.track_receipts,
-        receipt_timeout_s=args.receipt_timeout,
-        receipt_poll_every_s=args.receipt_poll_every,
-        payload_dir=args.payload_dir,
-        seed=int(args.seed),
-        progress_every_s=args.progress_every,
-    ))
+    res = asyncio.run(
+        run_soak(
+            url=args.url,
+            rps=args.rps,
+            duration_s=args.duration,
+            max_inflight=args.max_inflight,
+            track_receipts=args.track_receipts,
+            receipt_timeout_s=args.receipt_timeout,
+            receipt_poll_every_s=args.receipt_poll_every,
+            payload_dir=args.payload_dir,
+            seed=int(args.seed),
+            progress_every_s=args.progress_every,
+        )
+    )
     print(json.dumps(res, separators=(",", ":"), sort_keys=False))
     return 0
 

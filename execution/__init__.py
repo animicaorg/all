@@ -15,4 +15,5 @@ except Exception:  # pragma: no cover - fallback for fresh checkouts
         """Return a best-effort version string when VCS metadata isn't available."""
         return __version__
 
+
 __all__ = ["__version__", "git_describe"]

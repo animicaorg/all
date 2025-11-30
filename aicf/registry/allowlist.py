@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Set
+
 
 @dataclass
 class Allowlist:
@@ -9,5 +11,6 @@ class Allowlist:
 
     def is_denied(self, provider_id: str, region: str) -> bool:
         return (provider_id in self.denied_ids) or (region in self.denied_regions)
+
 
 __all__ = ["Allowlist"]

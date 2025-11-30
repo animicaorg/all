@@ -84,10 +84,13 @@ try:
     from proofs.utils.hash import sha3_256  # type: ignore
 except Exception:  # pragma: no cover
     import hashlib
+
     def sha3_256(data: bytes) -> bytes:
         return hashlib.sha3_256(data).digest()
 
+
 # ---------- Types ----------
+
 
 @dataclass(frozen=True)
 class StorageJobSpec:
@@ -96,21 +99,25 @@ class StorageJobSpec:
     bytes_per_sector: int
     ticket_count: int = 0
     redundancy: float = 1.0
-    seed: bytes = b""           # deterministic sampling seed (tickets/layout)
+    seed: bytes = b""  # deterministic sampling seed (tickets/layout)
     qos_hint: t.Optional[str] = None
-    window_id: t.Optional[int] = None  # optional explicit window index (e.g., floor(now/period))
+    window_id: t.Optional[int] = (
+        None  # optional explicit window index (e.g., floor(now/period))
+    )
+
 
 @dataclass
 class Ticket:
     task_id: str
     submitted_at: float
-    status: str = "queued"      # queued|running|completed|failed|unknown
+    status: str = "queued"  # queued|running|completed|failed|unknown
     provider_id: t.Optional[str] = None
     error: t.Optional[str] = None
 
+
 @dataclass
 class ResultRecord:
-    kind: str                   # "STORAGE"
+    kind: str  # "STORAGE"
     task_id: str
     provider_id: t.Optional[str]
     output_digest: bytes
@@ -121,6 +128,7 @@ class ResultRecord:
 
 # ---------- Backend protocol ----------
 
+
 class StorageBackend(t.Protocol):
     async def enqueue(self, spec: StorageJobSpec) -> Ticket: ...
     async def status(self, task_id: str) -> Ticket: ...
@@ -128,6 +136,7 @@ class StorageBackend(t.Protocol):
 
 
 # ---------- Dev local backend ----------
+
 
 class DevLocalBackend:
     """
@@ -138,6 +147,7 @@ class DevLocalBackend:
     - qos ~= 0.99 for normal simulated latency; slightly lower if STORAGE_SIM_LAT_MS > 750
     - output_digest = H("storage-output" || canonical_result_bytes)
     """
+
     def __init__(self) -> None:
         self._lat_ms = int(os.getenv("STORAGE_SIM_LAT_MS", "450"))
         self._store: dict[str, tuple[StorageJobSpec, float, float]] = {}
@@ -149,15 +159,27 @@ class DevLocalBackend:
         if task_id not in self._store:
             done = now + (self._lat_ms / 1000.0)
             self._store[task_id] = (spec, now, done)
-        return Ticket(task_id=task_id, submitted_at=now, status="queued", provider_id="devsim-storage")
+        return Ticket(
+            task_id=task_id,
+            submitted_at=now,
+            status="queued",
+            provider_id="devsim-storage",
+        )
 
     async def status(self, task_id: str) -> Ticket:
         rec = self._store.get(task_id)
         if not rec:
-            return Ticket(task_id=task_id, submitted_at=time.time(), status="unknown", provider_id="devsim-storage")
+            return Ticket(
+                task_id=task_id,
+                submitted_at=time.time(),
+                status="unknown",
+                provider_id="devsim-storage",
+            )
         _, sub, done = rec
         st = "completed" if time.time() >= done else "running"
-        return Ticket(task_id=task_id, submitted_at=sub, status=st, provider_id="devsim-storage")
+        return Ticket(
+            task_id=task_id, submitted_at=sub, status=st, provider_id="devsim-storage"
+        )
 
     async def fetch_result(self, task_id: str) -> ResultRecord:
         rec = self._store.get(task_id)
@@ -187,7 +209,9 @@ class DevLocalBackend:
             "layout_hash_hex": sha3_256(self._layout_bytes(spec)).hex(),
             "tickets": {"ok": tickets_ok, "total": spec.ticket_count},
         }
-        out_digest = sha3_256(b"storage-output\0" + self._canonical_result_bytes(spec, metrics, att))
+        out_digest = sha3_256(
+            b"storage-output\0" + self._canonical_result_bytes(spec, metrics, att)
+        )
         return ResultRecord(
             kind="STORAGE",
             task_id=task_id,
@@ -221,28 +245,33 @@ class DevLocalBackend:
     def _derive_task_id(self, spec: StorageJobSpec) -> str:
         w = self._window_id(spec)
         h = sha3_256(
-            b"animica.task.storage\0" +
-            spec.dataset_id.encode() + b"\0" +
-            w.to_bytes(8, "big") +
-            spec.sectors.to_bytes(8, "big") +
-            spec.bytes_per_sector.to_bytes(8, "big") +
-            spec.ticket_count.to_bytes(4, "big") +
-            struct_pack_f64(spec.redundancy) +
-            (spec.seed or self._seed_from_spec(spec))
+            b"animica.task.storage\0"
+            + spec.dataset_id.encode()
+            + b"\0"
+            + w.to_bytes(8, "big")
+            + spec.sectors.to_bytes(8, "big")
+            + spec.bytes_per_sector.to_bytes(8, "big")
+            + spec.ticket_count.to_bytes(4, "big")
+            + struct_pack_f64(spec.redundancy)
+            + (spec.seed or self._seed_from_spec(spec))
         )
         return "stor-" + h.hex()[:32]
 
     def _seed_from_spec(self, spec: StorageJobSpec) -> bytes:
         return sha3_256(
-            b"stor-seed\0" + spec.dataset_id.encode() +
-            spec.sectors.to_bytes(8,"big") + spec.bytes_per_sector.to_bytes(8,"big")
+            b"stor-seed\0"
+            + spec.dataset_id.encode()
+            + spec.sectors.to_bytes(8, "big")
+            + spec.bytes_per_sector.to_bytes(8, "big")
         )
 
     def _layout_bytes(self, spec: StorageJobSpec) -> bytes:
         return (
-            spec.dataset_id.encode() + b"\0" +
-            spec.sectors.to_bytes(8,"big") + spec.bytes_per_sector.to_bytes(8,"big") +
-            (spec.seed or self._seed_from_spec(spec))
+            spec.dataset_id.encode()
+            + b"\0"
+            + spec.sectors.to_bytes(8, "big")
+            + spec.bytes_per_sector.to_bytes(8, "big")
+            + (spec.seed or self._seed_from_spec(spec))
         )
 
     def _simulate_tickets(self, spec: StorageJobSpec) -> int:
@@ -252,39 +281,43 @@ class DevLocalBackend:
         seed = spec.seed or self._seed_from_spec(spec)
         # success probability around 0.985 with tiny jitter by seed & redundancy
         base = 0.985 * min(1.0, spec.redundancy / 1.0)
-        jitter = int.from_bytes(sha3_256(b"stor-jit"+seed)[:1], "big") / 255.0
-        p_ok = max(0.95, min(0.999, base + 0.01*(jitter - 0.5)))
+        jitter = int.from_bytes(sha3_256(b"stor-jit" + seed)[:1], "big") / 255.0
+        p_ok = max(0.95, min(0.999, base + 0.01 * (jitter - 0.5)))
         ok = 0
         stream = b""
         idx = 0
         while idx < n:
             if len(stream) < 32:
-                stream += sha3_256(seed + idx.to_bytes(8,"big"))
+                stream += sha3_256(seed + idx.to_bytes(8, "big"))
             b0, stream = stream[0], stream[1:]
-            if b0 <= int(p_ok*255):
+            if b0 <= int(p_ok * 255):
                 ok += 1
             idx += 1
         return min(ok, n)
 
-    def _canonical_result_bytes(self, spec: StorageJobSpec, metrics: dict, att: dict) -> bytes:
+    def _canonical_result_bytes(
+        self, spec: StorageJobSpec, metrics: dict, att: dict
+    ) -> bytes:
         # Compact canonical bytes (without JSON encoding ambiguities)
         def enc_str(s: str) -> bytes:
             b = s.encode()
             return len(b).to_bytes(2, "big") + b
+
         return (
-            enc_str(spec.dataset_id) +
-            self._window_id(spec).to_bytes(8,"big") +
-            spec.sectors.to_bytes(8,"big") +
-            spec.bytes_per_sector.to_bytes(8,"big") +
-            int(metrics["tickets_total"]).to_bytes(4,"big") +
-            int(metrics["tickets_ok"]).to_bytes(4,"big") +
-            struct_pack_f64(float(metrics["redundancy"])) +
-            struct_pack_f64(float(metrics["qos"])) +
-            bytes.fromhex(att["layout_hash_hex"])
+            enc_str(spec.dataset_id)
+            + self._window_id(spec).to_bytes(8, "big")
+            + spec.sectors.to_bytes(8, "big")
+            + spec.bytes_per_sector.to_bytes(8, "big")
+            + int(metrics["tickets_total"]).to_bytes(4, "big")
+            + int(metrics["tickets_ok"]).to_bytes(4, "big")
+            + struct_pack_f64(float(metrics["redundancy"]))
+            + struct_pack_f64(float(metrics["qos"]))
+            + bytes.fromhex(att["layout_hash_hex"])
         )
 
 
 # ---------- HTTP backend ----------
+
 
 class HttpStorageBackend:
     """
@@ -306,12 +339,15 @@ class HttpStorageBackend:
              completed_at
            }
     """
-    def __init__(self, base_url: str, api_key: str | None = None, timeout_s: float = 15.0) -> None:
+
+    def __init__(
+        self, base_url: str, api_key: str | None = None, timeout_s: float = 15.0
+    ) -> None:
         self.base = base_url.rstrip("/")
         self.key = api_key
         self.timeout = timeout_s
 
-    def _headers(self) -> dict[str,str]:
+    def _headers(self) -> dict[str, str]:
         h = {"content-type": "application/json"}
         if self.key:
             h["authorization"] = f"Bearer {self.key}"
@@ -328,24 +364,39 @@ class HttpStorageBackend:
             "qos": spec.qos_hint,
             "window_id": spec.window_id,
         }
-        data = await _http_json("POST", f"{self.base}/storage/heartbeat",
-                                headers=self._headers(), json_body=body, timeout=self.timeout)
-        tid = t.cast(str, data.get("task_id",""))
+        data = await _http_json(
+            "POST",
+            f"{self.base}/storage/heartbeat",
+            headers=self._headers(),
+            json_body=body,
+            timeout=self.timeout,
+        )
+        tid = t.cast(str, data.get("task_id", ""))
         if not tid:
             raise RuntimeError("storage enqueue: missing task_id")
         return Ticket(task_id=tid, submitted_at=time.time(), status="queued")
 
     async def status(self, task_id: str) -> Ticket:
-        data = await _http_json("GET", f"{self.base}/storage/{task_id}",
-                                headers=self._headers(), timeout=self.timeout)
-        st = t.cast(str, data.get("status","unknown"))
+        data = await _http_json(
+            "GET",
+            f"{self.base}/storage/{task_id}",
+            headers=self._headers(),
+            timeout=self.timeout,
+        )
+        st = t.cast(str, data.get("status", "unknown"))
         prov = t.cast(t.Optional[str], data.get("provider_id"))
-        return Ticket(task_id=task_id, submitted_at=time.time(), status=st, provider_id=prov)
+        return Ticket(
+            task_id=task_id, submitted_at=time.time(), status=st, provider_id=prov
+        )
 
     async def fetch_result(self, task_id: str) -> ResultRecord:
-        data = await _http_json("GET", f"{self.base}/storage/{task_id}/result",
-                                headers=self._headers(), timeout=self.timeout)
-        out_hex = t.cast(str, data.get("output_digest_hex",""))
+        data = await _http_json(
+            "GET",
+            f"{self.base}/storage/{task_id}/result",
+            headers=self._headers(),
+            timeout=self.timeout,
+        )
+        out_hex = t.cast(str, data.get("output_digest_hex", ""))
         if len(out_hex) != 64:
             raise RuntimeError("storage result: bad output_digest_hex")
         return ResultRecord(
@@ -361,11 +412,13 @@ class HttpStorageBackend:
 
 # ---------- Worker orchestrator ----------
 
+
 @dataclass
 class _Pending:
     spec: StorageJobSpec
     ticket: Ticket
     last_polled: float = field(default_factory=lambda: 0.0)
+
 
 class StorageWorker:
     """
@@ -374,7 +427,13 @@ class StorageWorker:
     - optional auto-heartbeat loop (env)
     - pop_ready(max_n) -> completed ResultRecord items
     """
-    def __init__(self, backend: StorageBackend, poll_interval_s: float = 0.5, queue_limit: int = 128) -> None:
+
+    def __init__(
+        self,
+        backend: StorageBackend,
+        poll_interval_s: float = 0.5,
+        queue_limit: int = 128,
+    ) -> None:
         self._backend = backend
         self._poll_interval = float(poll_interval_s)
         self._queue_limit = int(queue_limit)
@@ -389,19 +448,25 @@ class StorageWorker:
     @classmethod
     def create_from_env(cls) -> "StorageWorker":
         base = os.getenv("STORAGE_URL")
-        key  = os.getenv("STORAGE_API_KEY")
+        key = os.getenv("STORAGE_API_KEY")
         poll_ms = int(os.getenv("STORAGE_WORKER_POLL_MS", "500"))
         cap = int(os.getenv("STORAGE_WORKER_QUEUE", "128"))
-        backend: StorageBackend = HttpStorageBackend(base, key) if base else DevLocalBackend()
+        backend: StorageBackend = (
+            HttpStorageBackend(base, key) if base else DevLocalBackend()
+        )
         return cls(backend=backend, poll_interval_s=poll_ms / 1000.0, queue_limit=cap)
 
     async def start(self) -> None:
         if self._poll_task is None:
-            self._poll_task = asyncio.create_task(self._run_poll(), name="StorageWorker.poller")
+            self._poll_task = asyncio.create_task(
+                self._run_poll(), name="StorageWorker.poller"
+            )
         # optional auto-heartbeat
         auto_ds = os.getenv("STORAGE_AUTO_DATASET")
         if auto_ds and self._auto_task is None:
-            self._auto_task = asyncio.create_task(self._run_auto(auto_ds), name="StorageWorker.auto")
+            self._auto_task = asyncio.create_task(
+                self._run_auto(auto_ds), name="StorageWorker.auto"
+            )
 
     async def stop(self) -> None:
         self._closed = True
@@ -413,7 +478,8 @@ class StorageWorker:
         self._pending.clear()
 
     async def enqueue(
-        self, *,
+        self,
+        *,
         dataset_id: str,
         sectors: int,
         bytes_per_sector: int,
@@ -423,10 +489,16 @@ class StorageWorker:
         qos_hint: str | None = None,
         window_id: int | None = None,
     ) -> Ticket:
-        spec = StorageJobSpec(dataset_id=dataset_id, sectors=int(sectors),
-                              bytes_per_sector=int(bytes_per_sector),
-                              ticket_count=int(ticket_count), redundancy=float(redundancy),
-                              seed=bytes(seed), qos_hint=qos_hint, window_id=window_id)
+        spec = StorageJobSpec(
+            dataset_id=dataset_id,
+            sectors=int(sectors),
+            bytes_per_sector=int(bytes_per_sector),
+            ticket_count=int(ticket_count),
+            redundancy=float(redundancy),
+            seed=bytes(seed),
+            qos_hint=qos_hint,
+            window_id=window_id,
+        )
         async with self._lock:
             if len(self._pending) >= self._queue_limit:
                 raise RuntimeError("storage_worker queue full")
@@ -500,17 +572,26 @@ class StorageWorker:
     async def _run_auto(self, dataset_id: str) -> None:
         period = max(5, int(os.getenv("STORAGE_HEARTBEAT_SEC", "30")))
         sectors = int(os.getenv("STORAGE_AUTO_SECTORS", "256"))
-        bps = int(os.getenv("STORAGE_AUTO_BPS", str(1<<20)))
+        bps = int(os.getenv("STORAGE_AUTO_BPS", str(1 << 20)))
         tickets = int(os.getenv("STORAGE_AUTO_TICKETS", "0"))
         redundancy = float(os.getenv("STORAGE_AUTO_REDUNDANCY", "1.0"))
 
         try:
             while not self._closed:
                 win = int(time.time() // period)
-                seed = sha3_256(b"auto\0"+dataset_id.encode()+win.to_bytes(8,"big"))
+                seed = sha3_256(
+                    b"auto\0" + dataset_id.encode() + win.to_bytes(8, "big")
+                )
                 try:
-                    await self.enqueue(dataset_id=dataset_id, sectors=sectors, bytes_per_sector=bps,
-                                       ticket_count=tickets, redundancy=redundancy, seed=seed, window_id=win)
+                    await self.enqueue(
+                        dataset_id=dataset_id,
+                        sectors=sectors,
+                        bytes_per_sector=bps,
+                        ticket_count=tickets,
+                        redundancy=redundancy,
+                        seed=seed,
+                        window_id=win,
+                    )
                 except Exception:
                     # swallow; next cycle will try again
                     pass
@@ -521,16 +602,21 @@ class StorageWorker:
 
 # ---------- helpers ----------
 
+
 def _b64(b: bytes) -> str:
     import base64
+
     return base64.b64encode(b).decode()
+
 
 def struct_pack_f64(x: float) -> bytes:
     import struct
+
     return struct.pack("!d", float(x))
 
 
 # ---------- tiny HTTP helper (stdlib) ----------
+
 
 async def _http_json(
     method: str,
@@ -540,13 +626,15 @@ async def _http_json(
     json_body: dict[str, t.Any] | None = None,
     timeout: float = 15.0,
 ) -> dict[str, t.Any]:
-    import urllib.request
     import urllib.error
+    import urllib.request
 
     data = None
     if json_body is not None:
         data = json.dumps(json_body).encode()
-    req = urllib.request.Request(url=url, method=method.upper(), data=data, headers=headers or {})
+    req = urllib.request.Request(
+        url=url, method=method.upper(), data=data, headers=headers or {}
+    )
     if data is not None and "content-type" not in req.headers:
         req.add_header("content-type", "application/json")
     loop = asyncio.get_running_loop()
@@ -559,7 +647,9 @@ async def _http_json(
                     return {}
                 return t.cast(dict[str, t.Any], json.loads(raw.decode()))
         except urllib.error.HTTPError as e:
-            raise RuntimeError(f"http {e.code}: {e.read().decode(errors='ignore')[:256]}") from None
+            raise RuntimeError(
+                f"http {e.code}: {e.read().decode(errors='ignore')[:256]}"
+            ) from None
         except urllib.error.URLError as e:
             raise RuntimeError(f"http error: {e.reason}") from None
 
@@ -568,15 +658,20 @@ async def _http_json(
 
 # ---------- CLI demo ----------
 
+
 async def _demo() -> None:  # pragma: no cover
     print("[storage_worker] demo starting…")
     w = StorageWorker.create_from_env()
     await w.start()
     # one-shot enqueue
-    tkt = await w.enqueue(dataset_id=os.getenv("STORAGE_AUTO_DATASET","devset"),
-                          sectors=256, bytes_per_sector=1<<20,
-                          ticket_count=8, redundancy=1.5,
-                          seed=sha3_256(b"demo-seed"))
+    tkt = await w.enqueue(
+        dataset_id=os.getenv("STORAGE_AUTO_DATASET", "devset"),
+        sectors=256,
+        bytes_per_sector=1 << 20,
+        ticket_count=8,
+        redundancy=1.5,
+        seed=sha3_256(b"demo-seed"),
+    )
     print(" enqueued:", tkt.task_id)
     # wait for completion
     t_end = time.time() + 3.0
@@ -585,11 +680,19 @@ async def _demo() -> None:  # pragma: no cover
         got.extend(w.pop_ready())
         await asyncio.sleep(0.1)
     for r in got:
-        print(" completed:", r.task_id, "digest=", r.output_digest.hex()[:16],
-              "tickets=", f"{r.metrics['tickets_ok']}/{r.metrics['tickets_total']}",
-              "bytes=", r.metrics["storage_bytes"])
+        print(
+            " completed:",
+            r.task_id,
+            "digest=",
+            r.output_digest.hex()[:16],
+            "tickets=",
+            f"{r.metrics['tickets_ok']}/{r.metrics['tickets_total']}",
+            "bytes=",
+            r.metrics["storage_bytes"],
+        )
     await w.stop()
     print("[storage_worker] demo done.")
+
 
 if __name__ == "__main__":  # pragma: no cover
     asyncio.run(_demo())

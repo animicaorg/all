@@ -62,9 +62,10 @@ _ALIASES: Dict[str, str] = {
 if TYPE_CHECKING:  # pragma: no cover - type-checking only
     # These imports are only for static type checkers; they don't execute at runtime.
     from . import bytes as bytes  # type: ignore
-    from . import hash as hash    # type: ignore
+    from . import hash as hash  # type: ignore
     from . import merkle as merkle
     from . import serialization as serialization
+
     bytes_utils: ModuleType
     hash_utils: ModuleType
 

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import typing as t
 
-from rpc.methods import method
 from rpc import deps
 from rpc import errors as rpc_errors
+from rpc.methods import method
 
 # Optional helpers (be tolerant during bring-up)
 try:
@@ -14,6 +14,7 @@ except Exception:  # pragma: no cover
 
 
 # ——— Utilities ———
+
 
 def _is_hex_addr(s: str) -> bool:
     s = s.lower()
@@ -52,7 +53,9 @@ def _to_account_key_bytes(addr: str) -> bytes | None:
         try:
             hrp, data = _bech32.decode(addr)
             if hrp and data:
-                return bytes(data)  # payload = (alg_id || sha3_256(pubkey)) per pq/address
+                return bytes(
+                    data
+                )  # payload = (alg_id || sha3_256(pubkey)) per pq/address
         except Exception:
             return None
     # hex
@@ -74,6 +77,7 @@ def _to_hex_quantity(n: int) -> str:
 
 
 # ——— Service Adapters ———
+
 
 def _svc_balance(addr: str, *, tag: str = "latest") -> int:
     """
@@ -156,6 +160,7 @@ def _svc_nonce(addr: str, *, tag: str = "latest") -> int:
 
 # ——— RPC Methods ———
 
+
 @method(
     "state.getBalance",
     desc="Return the account balance for an address at a given block tag. Returns a hex quantity string (e.g. 0x0).",
@@ -163,7 +168,12 @@ def _svc_nonce(addr: str, *, tag: str = "latest") -> int:
 def state_get_balance(address: str, tag: str = "latest") -> str:
     addr = _validate_address(address)
     tag = (tag or "latest").lower()
-    if tag not in ("latest", "pending", "safe", "finalized"):  # be liberal; ignore unknowns as 'latest'
+    if tag not in (
+        "latest",
+        "pending",
+        "safe",
+        "finalized",
+    ):  # be liberal; ignore unknowns as 'latest'
         tag = "latest"
     value = _svc_balance(addr, tag=tag)
     return _to_hex_quantity(value)

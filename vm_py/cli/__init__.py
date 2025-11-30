@@ -24,6 +24,7 @@ ENTRYPOINTS: Dict[str, str] = {
     "inspect": "vm_py.cli.inspect_ir:main",
 }
 
+
 def resolve_entrypoint(name: str) -> Callable[[], int]:
     """
     Resolve a CLI name to its `main()` callable without importing all submodules.
@@ -56,5 +57,6 @@ def resolve_entrypoint(name: str) -> Callable[[], int]:
     if not callable(main_fn):
         raise AttributeError(f"Entrypoint {target!r} is not callable")
     return main_fn  # type: ignore[return-value]
+
 
 __all__ = ["ENTRYPOINTS", "resolve_entrypoint"]

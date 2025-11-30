@@ -80,7 +80,14 @@ def _get_bus_and_api():
 
     # Heuristics for dedupe capability
     supports_dedupe = False
-    for attr in ("supports_dedupe", "dedupe", "seen", "seen_ids", "recent_ids", "max_seen"):
+    for attr in (
+        "supports_dedupe",
+        "dedupe",
+        "seen",
+        "seen_ids",
+        "recent_ids",
+        "max_seen",
+    ):
         if hasattr(bus, attr):
             supports_dedupe = True
             break
@@ -111,7 +118,9 @@ def _wait_until(cond: Callable[[], bool], timeout_s: float = 1.0):
     return cond()
 
 
-def _make_msg(commitment_hex: str, ns: int = 24, size: int = 4096, msg_id: Optional[str] = None) -> dict:
+def _make_msg(
+    commitment_hex: str, ns: int = 24, size: int = 4096, msg_id: Optional[str] = None
+) -> dict:
     msg = {
         "commitment": commitment_hex,
         "namespace": ns,
@@ -165,14 +174,19 @@ def test_da_gossip_relay_and_dedupe():
     # If bus supports dedupe, ensure we still have exactly one
     if supports_dedupe:
         time.sleep(0.05)  # allow any async delivery to settle
-        assert len(received) == 1, f"Expected dedupe to drop duplicate, got {len(received)} deliveries"
+        assert (
+            len(received) == 1
+        ), f"Expected dedupe to drop duplicate, got {len(received)} deliveries"
     else:
         # If the adapter doesn't expose a dedupe hint, allow either behavior but xfail if duplicate not dropped
         if _wait_until(lambda: len(received) > 1, timeout_s=0.1):
-            pytest.xfail("Gossip adapter did not advertise dedupe capability; duplicate was delivered")
+            pytest.xfail(
+                "Gossip adapter did not advertise dedupe capability; duplicate was delivered"
+            )
 
     # Publishing a *different* msg_id should always deliver another event
     payload2 = _make_msg(commitment, ns=24, size=4096, msg_id="da-" + "ef" * 16)
     _call_maybe_await(publish, topic, payload2)
-    assert _wait_until(lambda: len(received) >= 2), "Second, distinct message should be delivered"
-
+    assert _wait_until(
+        lambda: len(received) >= 2
+    ), "Second, distinct message should be delivered"

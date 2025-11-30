@@ -17,9 +17,9 @@ Uniform surface exposed to higher layers (see pq/py/algs/__init__.py):
   - verify(pk: bytes, msg: bytes, sig: bytes) -> bool
 """
 
-from dataclasses import dataclass
 import os
-from typing import Optional, Tuple, Dict
+from dataclasses import dataclass
+from typing import Dict, Optional, Tuple
 
 # --------------------------------------------------------------------------------------
 # Try python-oqs first
@@ -34,9 +34,9 @@ try:
         # Probe sizes once; reuse instances per call to ensure fresh context
         with oqs.Signature("Dilithium3") as _probe:
             _sizes = {
-                "pk": _probe.length_public_key,   # type: ignore[attr-defined]
-                "sk": _probe.length_secret_key,   # type: ignore[attr-defined]
-                "sig": _probe.length_signature,   # type: ignore[attr-defined]
+                "pk": _probe.length_public_key,  # type: ignore[attr-defined]
+                "sk": _probe.length_secret_key,  # type: ignore[attr-defined]
+                "sig": _probe.length_signature,  # type: ignore[attr-defined]
             }
         _OQS_OK = True
 except Exception:
@@ -51,6 +51,7 @@ if not _OQS_OK and os.environ.get("ANIMICA_UNSAFE_PQ_FAKE", "") == "1":
     _DEV_FAKE_OK = True
     # Chosen arbitrarily; matches our fake encode/verify below
     _sizes = {"pk": 32, "sk": 32, "sig": 64}
+
 
 # Hash helpers for the fake mode (kept local to avoid extra deps here)
 def _sha3_256(data: bytes) -> bytes:
@@ -152,11 +153,19 @@ def verify(pk: bytes, msg: bytes, sig: bytes) -> bool:
                 return False
 
     if _DEV_FAKE_OK:
-        expect = _sha3_512(b"animica-dev-fake-sig|" + _sha3_256(b"animica-dev-fake-sk|" + pk) + b"|" + msg)
+        expect = _sha3_512(
+            b"animica-dev-fake-sig|"
+            + _sha3_256(b"animica-dev-fake-sk|" + pk)
+            + b"|"
+            + msg
+        )
         # In fake mode we don't have the real sk; accept either derivation:
         #   (a) signer used sk directly (sign() path)
         #   (b) verifier reconstructs a pseudo-sk from pk for convenience
-        return sig == _sha3_512(b"animica-dev-fake-sig|" + pk + b"|" + msg) or sig == expect
+        return (
+            sig == _sha3_512(b"animica-dev-fake-sig|" + pk + b"|" + msg)
+            or sig == expect
+        )
 
     # If neither backend is available, report failure cleanly.
     return False

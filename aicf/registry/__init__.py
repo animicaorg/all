@@ -1,7 +1,7 @@
 # Re-export submodules/classes
 from . import registry as registry
-from .registry import Registry
 from . import staking as staking
+from .registry import Registry
 from .staking import Staking
 
 # ---- Hook 1: ensure_minimum tracker (records failures) ----------------------
@@ -12,7 +12,9 @@ if not getattr(staking, "_minimum_hook_installed", False):
 
     def _ensure_minimum(self, provider_id, capability, *, current_height=None):
         try:
-            res = _orig_ensure(self, provider_id, capability, current_height=current_height)
+            res = _orig_ensure(
+                self, provider_id, capability, current_height=current_height
+            )
             # On success, clear any prior failure record for this (pid, cap)
             caps = getattr(staking, "_FAILED_CAPS", {})
             nums = getattr(staking, "_FAILED_NUMS", {})
@@ -24,9 +26,9 @@ if not getattr(staking, "_minimum_hook_installed", False):
             caps = getattr(staking, "_FAILED_CAPS", None)
             nums = getattr(staking, "_FAILED_NUMS", None)
             if caps is None:
-                caps = staking._FAILED_CAPS = {}        # pid -> set(capabilities)
+                caps = staking._FAILED_CAPS = {}  # pid -> set(capabilities)
             if nums is None:
-                nums = staking._FAILED_NUMS = {}        # (pid,cap) -> (need,have)
+                nums = staking._FAILED_NUMS = {}  # (pid,cap) -> (need,have)
             caps.setdefault(provider_id, set()).add(capability)
             # Try to capture numbers for nicer errors/registry checks
             need = getattr(e, "required_nano", None)
@@ -34,7 +36,9 @@ if not getattr(staking, "_minimum_hook_installed", False):
             if need is None or have is None:
                 try:
                     need = self._min_for_cap(capability)
-                    have = self.effective_stake(provider_id, current_height=current_height)
+                    have = self.effective_stake(
+                        provider_id, current_height=current_height
+                    )
                 except Exception:
                     need = need or 0
                     have = have or 0
@@ -53,10 +57,15 @@ if not getattr(registry, "_cap_upgrade_guard_installed", False):
 
     def _update_capabilities(self, provider_id: str, new_caps: Capability):
         # If test previously proved QUANTUM minimum is not met, block upgrade here too.
-        adding_q = bool((new_caps & Capability.QUANTUM) and not (self._providers[provider_id].capabilities & Capability.QUANTUM))
+        adding_q = bool(
+            (new_caps & Capability.QUANTUM)
+            and not (self._providers[provider_id].capabilities & Capability.QUANTUM)
+        )
         failed_caps = getattr(staking, "_FAILED_CAPS", {}).get(provider_id, set())
         if adding_q and Capability.QUANTUM in failed_caps:
-            need, have = getattr(staking, "_FAILED_NUMS", {}).get((provider_id, Capability.QUANTUM), (0, 0))
+            need, have = getattr(staking, "_FAILED_NUMS", {}).get(
+                (provider_id, Capability.QUANTUM), (0, 0)
+            )
             raise InsufficientStake(required_nano=need, actual_nano=have)
         return _orig_update(self, provider_id, new_caps)
 

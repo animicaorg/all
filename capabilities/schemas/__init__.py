@@ -39,7 +39,8 @@ _CDDL_SPECS: Dict[str, str] = {
 # --- importlib.resources compatibility layer ---------------------------------------
 
 try:  # Python ≥ 3.9
-    from importlib.resources import files as _files  # type: ignore[attr-defined]
+    from importlib.resources import \
+        files as _files  # type: ignore[attr-defined]
 
     def _read_bytes(relpath: str) -> bytes:
         return (_files(__name__) / relpath).read_bytes()
@@ -58,6 +59,7 @@ except Exception:  # pragma: no cover - used only when `files` is unavailable
     def _read_text(relpath: str) -> str:
         with open_text(__name__, relpath, encoding="utf-8") as fh:
             return fh.read()
+
 
 # --- Public helpers ----------------------------------------------------------------
 
@@ -96,7 +98,9 @@ def load_json_schema(name: str) -> dict:
     try:
         rel = _JSON_SCHEMAS[name]
     except KeyError as e:
-        raise KeyError(f"Unknown JSON schema {name!r}. Known: {list_json_schemas()}") from e
+        raise KeyError(
+            f"Unknown JSON schema {name!r}. Known: {list_json_schemas()}"
+        ) from e
     data = _read_bytes(rel)
     return json.loads(data.decode("utf-8"))
 
@@ -139,6 +143,7 @@ try:  # pragma: no cover - exercised in environments with jsonschema installed
         jsonschema.validate(instance=instance, schema=schema)
 
 except Exception:  # pragma: no cover - if jsonschema is not available
+
     def validate_json(instance: object, schema_name: str) -> None:
         raise RuntimeError(
             "jsonschema is not installed; install it to use validate_json()."

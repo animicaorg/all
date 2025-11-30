@@ -29,7 +29,6 @@ except Exception:  # pragma: no cover - v1 fallback
 
 from .common import Address, ChainId, Hash, Hex
 
-
 # ---------------------------------------------------------------------------
 # /deploy
 # ---------------------------------------------------------------------------
@@ -54,10 +53,13 @@ class DeployRequest(BaseModel):
     """
 
     chain_id: ChainId = Field(..., description="Target chain id.")
-    from_address: Address = Field(..., alias="from", description="Sender address (informational).")
+    from_address: Address = Field(
+        ..., alias="from", description="Sender address (informational)."
+    )
     raw_tx: Hex = Field(..., description="Signed CBOR transaction bytes (0x-hex).")
     await_receipt: bool = Field(
-        default=True, description="If true, wait for inclusion and return receipt when available."
+        default=True,
+        description="If true, wait for inclusion and return receipt when available.",
     )
     timeout_ms: Optional[conint(ge=1, le=10_0000)] = Field(  # up to ~100s
         default=None, description="Client-provided wait timeout (milliseconds)."
@@ -79,13 +81,18 @@ class DeployResponse(BaseModel):
 
     tx_hash: Hash = Field(..., description="Transaction hash assigned by the node.")
     contract_address: Optional[Address] = Field(
-        default=None, description="Address of deployed contract, if determinable from receipt."
+        default=None,
+        description="Address of deployed contract, if determinable from receipt.",
     )
     receipt: Optional[Dict[str, Any]] = Field(
         default=None, description="Raw receipt object as returned by the node RPC."
     )
-    block_hash: Optional[Hash] = Field(default=None, description="Block hash if included.")
-    block_number: Optional[PositiveInt] = Field(default=None, description="Block number if included.")
+    block_hash: Optional[Hash] = Field(
+        default=None, description="Block hash if included."
+    )
+    block_number: Optional[PositiveInt] = Field(
+        default=None, description="Block number if included."
+    )
 
     class Config:  # type: ignore[override]
         extra = "forbid"
@@ -133,10 +140,17 @@ class PreflightResponse(BaseModel):
     Result of an offline compile + deploy-cost estimation.
     """
 
-    code_hash: Hash = Field(..., description="Deterministic code hash computed from compiled artifact.")
-    gas_estimate: PositiveInt = Field(..., description="Estimated intrinsic gas to deploy.")
+    code_hash: Hash = Field(
+        ..., description="Deterministic code hash computed from compiled artifact."
+    )
+    gas_estimate: PositiveInt = Field(
+        ..., description="Estimated intrinsic gas to deploy."
+    )
     abi: Dict[str, Any] = Field(..., description="Normalized ABI as seen by clients.")
-    diagnostics: List[str] = Field(default_factory=list, description="Compiler/analysis diagnostics (warnings/info).")
+    diagnostics: List[str] = Field(
+        default_factory=list,
+        description="Compiler/analysis diagnostics (warnings/info).",
+    )
 
     class Config:  # type: ignore[override]
         extra = "forbid"

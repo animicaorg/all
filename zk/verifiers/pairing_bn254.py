@@ -36,7 +36,7 @@ License: MIT (matches repository policy)
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Tuple, Optional
+from typing import Any, Iterable, Optional, Tuple
 
 # -------------------------
 # Backend selection (py_ecc)
@@ -45,24 +45,40 @@ from typing import Any, Iterable, Tuple, Optional
 # Try the optimized backend first; fall back to reference if needed.
 # Both expose compatible symbols for our usage.
 try:  # Optimized, faster if present
-    from py_ecc.optimized_bn128 import (  # type: ignore
-        FQ, FQ2, FQ12, add, b as _B, b2 as _B2, curve_order as _Q, field_modulus as _P,
-        is_on_curve as _is_on_curve, pairing as _pairing, normalize as _normalize,
-        G1 as _G1, G2 as _G2,
-    )
+    from py_ecc.optimized_bn128 import FQ, FQ2, FQ12
+    from py_ecc.optimized_bn128 import G1 as _G1
+    from py_ecc.optimized_bn128 import G2 as _G2
+    from py_ecc.optimized_bn128 import add
+    from py_ecc.optimized_bn128 import b as _B  # type: ignore
+    from py_ecc.optimized_bn128 import b2 as _B2
+    from py_ecc.optimized_bn128 import curve_order as _Q
+    from py_ecc.optimized_bn128 import field_modulus as _P
+    from py_ecc.optimized_bn128 import is_on_curve as _is_on_curve
+    from py_ecc.optimized_bn128 import normalize as _normalize
+    from py_ecc.optimized_bn128 import pairing as _pairing
+
     _BACKEND_NAME = "py_ecc.optimized_bn128"
 except Exception:  # pragma: no cover
-    from py_ecc.bn128 import (  # type: ignore
-        FQ, FQ2, FQ12, add, b as _B, b2 as _B2, curve_order as _Q, field_modulus as _P,
-        is_on_curve as _is_on_curve, pairing as _pairing, normalize as _normalize,
-        G1 as _G1, G2 as _G2,
-    )
+    from py_ecc.bn128 import FQ, FQ2, FQ12
+    from py_ecc.bn128 import G1 as _G1
+    from py_ecc.bn128 import G2 as _G2
+    from py_ecc.bn128 import add
+    from py_ecc.bn128 import b as _B  # type: ignore
+    from py_ecc.bn128 import b2 as _B2
+    from py_ecc.bn128 import curve_order as _Q
+    from py_ecc.bn128 import field_modulus as _P
+    from py_ecc.bn128 import is_on_curve as _is_on_curve
+    from py_ecc.bn128 import normalize as _normalize
+    from py_ecc.bn128 import pairing as _pairing
+
     _BACKEND_NAME = "py_ecc.bn128"
 
 # Optional native hook (no hard dependency). If present, we will try to use it
 # when the caller sets use_native=True. Any exception -> graceful Python fallback.
 try:  # pragma: no cover - optional
-    from animica_native import bn254 as _native  # hypothetical accelerated adapter
+    from animica_native import \
+        bn254 as _native  # hypothetical accelerated adapter
+
     _NATIVE_OK = True
 except Exception:  # pragma: no cover
     _native = None  # type: ignore
@@ -188,7 +204,10 @@ def normalize_g2(Q: G2Point) -> Optional[Tuple[Tuple[int, int], Tuple[int, int]]
 # Pairing
 # -------------------------
 
-def pair(P: G1Point, Q: G2Point, *, use_native: bool = False, validate: bool = True) -> GTElement:
+
+def pair(
+    P: G1Point, Q: G2Point, *, use_native: bool = False, validate: bool = True
+) -> GTElement:
     """
     Compute the Ate pairing e(P, Q) on BN254.
 
@@ -238,7 +257,9 @@ def pair(P: G1Point, Q: G2Point, *, use_native: bool = False, validate: bool = T
             # Expect gt to be a 12-tuple of FQ limbs or a backend-native FQ12; if tuple, rebuild:
             if isinstance(gt, tuple):
                 # Reconstruct FQ12 from 12 limbs c0..c11 = (a + b*w + ...)
-                coeffs = [FQ(int(c)) for c in gt]  # simplistic — your native may return FQ elements
+                coeffs = [
+                    FQ(int(c)) for c in gt
+                ]  # simplistic — your native may return FQ elements
                 return FQ12(coeffs)  # type: ignore
             return gt  # already a backend element
         except Exception:
@@ -250,7 +271,10 @@ def pair(P: G1Point, Q: G2Point, *, use_native: bool = False, validate: bool = T
 
 
 def product_of_pairings(
-    pairs: Iterable[Tuple[G1Point, G2Point]], *, use_native: bool = False, validate: bool = True
+    pairs: Iterable[Tuple[G1Point, G2Point]],
+    *,
+    use_native: bool = False,
+    validate: bool = True,
 ) -> GTElement:
     """
     Compute ∏ e(P_i, Q_i) over an iterable of (P_i, Q_i).
@@ -264,14 +288,20 @@ def product_of_pairings(
 
 
 def check_pairing_product(
-    pairs: Iterable[Tuple[G1Point, G2Point]], *, use_native: bool = False, validate: bool = True
+    pairs: Iterable[Tuple[G1Point, G2Point]],
+    *,
+    use_native: bool = False,
+    validate: bool = True,
 ) -> bool:
     """
     Return True iff ∏ e(P_i, Q_i) == 1 in GT.
 
     Common use: signature or SNARK verification equations expressed as pairing products.
     """
-    return product_of_pairings(pairs, use_native=use_native, validate=validate) == FQ12.one()
+    return (
+        product_of_pairings(pairs, use_native=use_native, validate=validate)
+        == FQ12.one()
+    )
 
 
 # -------------------------
@@ -279,7 +309,9 @@ def check_pairing_product(
 # -------------------------
 
 if __name__ == "__main__":  # pragma: no cover
-    print(f"[pairing_bn254] Backend: {BACKEND_NAME} (native_available={NATIVE_AVAILABLE})")
+    print(
+        f"[pairing_bn254] Backend: {BACKEND_NAME} (native_available={NATIVE_AVAILABLE})"
+    )
     P = g1_generator()
     Q = g2_generator()
 
@@ -294,10 +326,16 @@ if __name__ == "__main__":  # pragma: no cover
 
     # Product check: e(P, Q) * e(-P, Q) == 1
     # Construct -P as (x, -y, z) via addition with inverse (py_ecc has `add(P, -P)` trick)
-    negP = (P[0], FQ(-P[1].n), P[2]) if isinstance(P, (tuple, list)) and len(P) == 3 else None
+    negP = (
+        (P[0], FQ(-P[1].n), P[2])
+        if isinstance(P, (tuple, list)) and len(P) == 3
+        else None
+    )
     if negP is None:
         # fallback via multiplying by curve_order-1
-        from py_ecc.optimized_bn128 import multiply as _mul  # safe import if available
+        from py_ecc.optimized_bn128 import \
+            multiply as _mul  # safe import if available
+
         negP = _mul(P, curve_order() - 1)  # type: ignore
 
     ok3 = check_pairing_product([(P, Q), (negP, Q)])

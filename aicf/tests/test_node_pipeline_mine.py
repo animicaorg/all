@@ -18,14 +18,20 @@ def _pick_port() -> int:
         return s.getsockname()[1]
 
 
-def _start_rpc_server(cfg: rpc_config.Config) -> tuple[uvicorn.Server, threading.Thread]:
+def _start_rpc_server(
+    cfg: rpc_config.Config,
+) -> tuple[uvicorn.Server, threading.Thread]:
     app = rpc_server.create_app(cfg)
-    server = uvicorn.Server(uvicorn.Config(app, host=cfg.host, port=cfg.port, log_level="error"))
+    server = uvicorn.Server(
+        uvicorn.Config(app, host=cfg.host, port=cfg.port, log_level="error")
+    )
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     for _ in range(50):
         try:
-            urllib.request.urlopen(f"http://{cfg.host}:{cfg.port}/healthz", timeout=0.25)
+            urllib.request.urlopen(
+                f"http://{cfg.host}:{cfg.port}/healthz", timeout=0.25
+            )
             break
         except Exception:
             time.sleep(0.1)
@@ -53,7 +59,14 @@ def test_node_pipeline_mine_roundtrip(tmp_path):
     rpc_url = f"http://{cfg.host}:{cfg.port}/rpc"
     try:
         start_status = subprocess.run(
-            [sys.executable, "-m", "aicf.cli.node_pipeline", "status", "--rpc-url", rpc_url],
+            [
+                sys.executable,
+                "-m",
+                "aicf.cli.node_pipeline",
+                "status",
+                "--rpc-url",
+                rpc_url,
+            ],
             check=True,
             capture_output=True,
             text=True,
@@ -62,7 +75,16 @@ def test_node_pipeline_mine_roundtrip(tmp_path):
         start_height = int(start_out.split("height=")[1].split()[0])
 
         mine = subprocess.run(
-            [sys.executable, "-m", "aicf.cli.node_pipeline", "mine", "--count", "2", "--rpc-url", rpc_url],
+            [
+                sys.executable,
+                "-m",
+                "aicf.cli.node_pipeline",
+                "mine",
+                "--count",
+                "2",
+                "--rpc-url",
+                rpc_url,
+            ],
             check=True,
             capture_output=True,
             text=True,
@@ -71,7 +93,14 @@ def test_node_pipeline_mine_roundtrip(tmp_path):
         assert mined_height - start_height == 2
 
         status = subprocess.run(
-            [sys.executable, "-m", "aicf.cli.node_pipeline", "status", "--rpc-url", rpc_url],
+            [
+                sys.executable,
+                "-m",
+                "aicf.cli.node_pipeline",
+                "status",
+                "--rpc-url",
+                rpc_url,
+            ],
             check=True,
             capture_output=True,
             text=True,

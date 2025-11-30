@@ -7,6 +7,7 @@ for the main entrypoint.
 
 This module intentionally exports no public API.
 """
+
 from __future__ import annotations
 
 __all__: list[str] = []

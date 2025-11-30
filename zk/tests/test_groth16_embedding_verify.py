@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from zk.tests import fixture_path, read_json, configure_test_logging
 from zk.integration.omni_hooks import zk_verify
+from zk.tests import configure_test_logging, fixture_path, read_json
 
 configure_test_logging()
 
@@ -63,7 +63,9 @@ def _load_proof_vk() -> tuple[dict, dict, list[str]]:
                 "No public inputs found: proof.json lacks 'publicSignals' and no public.json present."
             )
     if not isinstance(pub_inputs, list):
-        raise TypeError("publicSignals/public.json must be a list of field elements (hex or decimal strings).")
+        raise TypeError(
+            "publicSignals/public.json must be a list of field elements (hex or decimal strings)."
+        )
 
     return proof, vk, pub_inputs
 

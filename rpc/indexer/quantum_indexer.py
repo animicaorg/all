@@ -6,10 +6,11 @@ and calls the in-memory index helpers in `rpc.methods.quantum`.
 In production, swap this with an event-listener that subscribes to the chain event stream
 and forwards JobSubmitted/ResultSubmitted events.
 """
+
 from __future__ import annotations
 
-import json
 import argparse
+import json
 from typing import Any
 
 import rpc.methods.quantum as qmod
@@ -33,14 +34,18 @@ def index_event(event: dict[str, Any]) -> None:
         result = event.get("result")
         if job_id and result:
             qmod._index_result(job_id, result)
-            print(f"Indexed result for job {job_id} by worker {result.get('worker_id')}" )
+            print(
+                f"Indexed result for job {job_id} by worker {result.get('worker_id')}"
+            )
     else:
         print(f"Unknown event type: {t}")
 
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--events-file", required=True, help="Newline-delimited JSON events file")
+    p.add_argument(
+        "--events-file", required=True, help="Newline-delimited JSON events file"
+    )
     args = p.parse_args()
 
     with open(args.events_file, "r", encoding="utf8") as f:

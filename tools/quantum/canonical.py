@@ -5,6 +5,7 @@ with stable ordering (sort_keys=True) and minimal separators. This is not CBOR,
 but is deterministic and suitable for early development and for the HMAC-based
 mock signer. Replace with canonical CBOR for production.
 """
+
 from __future__ import annotations
 
 import json
@@ -12,4 +13,6 @@ from typing import Any
 
 
 def canonical_bytes(obj: Any) -> bytes:
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(
+        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")

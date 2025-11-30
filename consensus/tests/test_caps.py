@@ -2,23 +2,23 @@ from __future__ import annotations
 
 import math
 import types
+
 import pytest
 
-from consensus.types import ProofKind  # expected enum: HASH, AI, QUANTUM, STORAGE, VDF
 import consensus.caps as caps
-
+from consensus.types import \
+    ProofKind  # expected enum: HASH, AI, QUANTUM, STORAGE, VDF
 
 # ---- Helpers to make a duck-typed policy for caps ----------------------------
+
 
 class _DuckPolicy:
     """
     A tiny policy object that exposes multiple likely attribute names so the caps
     module can read whichever it expects. Keys can be either ProofKind or str.
     """
-    def __init__(self,
-                 per_proof_caps: dict,
-                 per_type_caps: dict,
-                 gamma_cap: float):
+
+    def __init__(self, per_proof_caps: dict, per_type_caps: dict, gamma_cap: float):
         # Common/expected names:
         self.per_proof_caps = per_proof_caps
         self.per_type_caps = per_type_caps
@@ -37,6 +37,7 @@ def _k(kind: ProofKind) -> tuple[ProofKind, str]:
 
 
 # ---- Basic fixtures ----------------------------------------------------------
+
 
 @pytest.fixture
 def sample_policy() -> _DuckPolicy:
@@ -60,10 +61,13 @@ def sample_policy() -> _DuckPolicy:
     per_type.update({k.name.lower(): v for k, v in per_type.items()})
 
     gamma = 20.0
-    return _DuckPolicy(per_proof_caps=per_proof, per_type_caps=per_type, gamma_cap=gamma)
+    return _DuckPolicy(
+        per_proof_caps=per_proof, per_type_caps=per_type, gamma_cap=gamma
+    )
 
 
 # ---- Resolve function names if they differ slightly --------------------------
+
 
 def _pick_fn(name: str, alts: list[str]):
     if hasattr(caps, name):
@@ -75,13 +79,18 @@ def _pick_fn(name: str, alts: list[str]):
 
 
 clip_per_proof = _pick_fn("clip_per_proof", ["cap_per_proof", "per_proof_clip"])
-clip_per_type = _pick_fn("clip_per_type", ["cap_per_type", "per_type_clip", "enforce_per_type_caps"])
-clip_total_gamma = _pick_fn("clip_total_gamma", ["cap_total_gamma", "total_gamma_clip", "enforce_total_gamma"])
+clip_per_type = _pick_fn(
+    "clip_per_type", ["cap_per_type", "per_type_clip", "enforce_per_type_caps"]
+)
+clip_total_gamma = _pick_fn(
+    "clip_total_gamma", ["cap_total_gamma", "total_gamma_clip", "enforce_total_gamma"]
+)
 # optional high-level vector applier; tests are tolerant if not present
 _apply_caps_vector = getattr(caps, "apply_caps_vector", None)
 
 
 # ---- Tests: per-proof clipping -----------------------------------------------
+
 
 def test_per_proof_clip_bounds(sample_policy: _DuckPolicy):
     # Over cap → clipped
@@ -104,13 +113,14 @@ def test_per_proof_clip_never_increases(sample_policy: _DuckPolicy):
 
 # ---- Tests: per-type clipping ------------------------------------------------
 
+
 def test_per_type_clip_individual_caps(sample_policy: _DuckPolicy):
     sums = {
-        ProofKind.HASH: 7.2,      # cap = 6.0
-        ProofKind.AI: 3.0,        # below cap
+        ProofKind.HASH: 7.2,  # cap = 6.0
+        ProofKind.AI: 3.0,  # below cap
         ProofKind.QUANTUM: 20.0,  # cap = 12.0
-        ProofKind.STORAGE: 3.0,   # at cap
-        ProofKind.VDF: 10.0,      # cap = 5.0
+        ProofKind.STORAGE: 3.0,  # at cap
+        ProofKind.VDF: 10.0,  # cap = 5.0
     }
     clipped = clip_per_type(sums, sample_policy)
     assert clipped[ProofKind.HASH] == pytest.approx(6.0)
@@ -126,11 +136,11 @@ def test_per_type_clip_individual_caps(sample_policy: _DuckPolicy):
 
 def test_per_type_clip_accepts_string_keys(sample_policy: _DuckPolicy):
     sums = {
-        "hash": 9.0,       # -> 6.0
-        "ai": 11.0,        # -> 10.0
-        "quantum": 8.0,    # -> 8.0 (under 12.0)
-        "storage": 9.0,    # -> 3.0
-        "vdf": 1.0,        # -> 1.0
+        "hash": 9.0,  # -> 6.0
+        "ai": 11.0,  # -> 10.0
+        "quantum": 8.0,  # -> 8.0 (under 12.0)
+        "storage": 9.0,  # -> 3.0
+        "vdf": 1.0,  # -> 1.0
     }
     clipped = clip_per_type(sums, sample_policy)
     assert clipped["hash"] == pytest.approx(6.0)
@@ -141,6 +151,7 @@ def test_per_type_clip_accepts_string_keys(sample_policy: _DuckPolicy):
 
 
 # ---- Tests: total Γ clipping (global cap) ------------------------------------
+
 
 def test_total_gamma_clip_scales_when_needed(sample_policy: _DuckPolicy):
     # Construct a post-type-clip vector that exceeds Γ
@@ -159,6 +170,7 @@ def test_total_gamma_clip_scales_when_needed(sample_policy: _DuckPolicy):
     scaled_total = sum(v * s for v in vec.values())
     assert scaled_total == pytest.approx(sample_policy.gamma_cap, rel=1e-12, abs=1e-12)
 
+
 def test_total_gamma_clip_noop_when_under_cap(sample_policy: _DuckPolicy):
     total = 9.999
     s = clip_total_gamma(total, sample_policy)
@@ -166,6 +178,7 @@ def test_total_gamma_clip_noop_when_under_cap(sample_policy: _DuckPolicy):
 
 
 # ---- Composition / high-level vector applier --------------------------------
+
 
 @pytest.mark.skipif(_apply_caps_vector is None, reason="apply_caps_vector not exported")
 def test_apply_caps_vector_matches_manual_recipe(sample_policy: _DuckPolicy):
@@ -196,6 +209,9 @@ def test_apply_caps_vector_matches_manual_recipe(sample_policy: _DuckPolicy):
     if sum(got.values()) > 0:
         # if scaling occurred, sum should be ~Γ
         assert sum(got.values()) == pytest.approx(
-            min(sample_policy.gamma_cap, sum(clip_per_type(raw, sample_policy).values())),
-            rel=1e-12, abs=1e-12
+            min(
+                sample_policy.gamma_cap, sum(clip_per_type(raw, sample_policy).values())
+            ),
+            rel=1e-12,
+            abs=1e-12,
         )

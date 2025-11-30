@@ -15,6 +15,16 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
+      - name: Cache cargo & pip
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/pip
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
       - name: Install liboqs system package
         run: |
           sudo apt-get update
@@ -48,11 +58,24 @@ jobs:
           else
             echo 'Native bench not available'
           fi
-      - name: Upload CI artifacts (bench + pytest)
+      - name: Parse bench output and produce suggested gas
+        if: always()
+        run: |
+          cd native/pq_precompile
+          if [ -f ../../bench_output.jsonl ]; then
+            echo 'Parsing bench output with bench_parser.py'
+            # bench_parser expects PQ_BENCH_JSON lines on stdin
+            python bench_parser.py < ../../bench_output.jsonl > ../../bench_suggested_gas.json || true
+          else
+            echo 'No bench_output.jsonl to parse'
+          fi
+
+      - name: Upload CI artifacts (bench + pytest + gas suggestion)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: pq-ci-artifacts
           path: |
             bench_output.jsonl
+            bench_suggested_gas.json
             reports/junit.xml

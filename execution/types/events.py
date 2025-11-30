@@ -20,8 +20,7 @@ Helpers
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Sequence, Tuple, Union, Dict, Any, List
-
+from typing import Any, Dict, Iterable, List, Sequence, Tuple, Union
 
 HexLike = Union[str, bytes, bytearray, memoryview]
 
@@ -79,13 +78,16 @@ class LogEvent:
     Raises:
         ValueError if inputs are empty or obviously malformed.
     """
+
     address: bytes
     topics: Tuple[bytes, ...]
     data: bytes
 
     # --------------------- construction helpers ---------------------
 
-    def __init__(self, address: HexLike, topics: Sequence[HexLike] = (), data: HexLike = b""):
+    def __init__(
+        self, address: HexLike, topics: Sequence[HexLike] = (), data: HexLike = b""
+    ):
         addr_b = _hex_to_bytes(address)
         if len(addr_b) == 0:
             raise ValueError("address must not be empty")
@@ -94,7 +96,11 @@ class LogEvent:
             topics_b: Tuple[bytes, ...] = tuple()
         else:
             topics_b = tuple(_normalize_topic(t) for t in topics)
-        data_b = _hex_to_bytes(data) if isinstance(data, str) or isinstance(data, (bytes, bytearray, memoryview)) else bytes(data)
+        data_b = (
+            _hex_to_bytes(data)
+            if isinstance(data, str) or isinstance(data, (bytes, bytearray, memoryview))
+            else bytes(data)
+        )
 
         # Basic sanity checks without enforcing a single address size.
         if len(addr_b) not in (20, 24, 32):
@@ -143,7 +149,10 @@ class LogEvent:
     # Pretty printable (short) representation
     def __repr__(self) -> str:  # pragma: no cover - cosmetic
         addr = _bytes_to_hex(self.address)
-        ts = ", ".join(_bytes_to_hex(t)[:12] + "…" if len(t) > 6 else _bytes_to_hex(t) for t in self.topics)
+        ts = ", ".join(
+            _bytes_to_hex(t)[:12] + "…" if len(t) > 6 else _bytes_to_hex(t)
+            for t in self.topics
+        )
         data_h = _bytes_to_hex(self.data)
         if len(data_h) > 18:
             data_h = data_h[:18] + "…"

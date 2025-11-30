@@ -64,8 +64,8 @@ __version__ = "0.1.0"
 STD_MODULE_CANDIDATES: Tuple[str, ...] = (
     "counter",
     "escrow",
-    "an20",              # Fungible token (Animica AN20)
-    "an721",             # Non-fungible token (Animica AN721)
+    "an20",  # Fungible token (Animica AN20)
+    "an721",  # Non-fungible token (Animica AN721)
     "payment_splitter",
     "multisig",
     "timelock",
@@ -82,6 +82,7 @@ class StdlibArtifact:
     A simple, typed view over one stdlib contract directory.
     All paths may be missing if the checkout is partial; consumers should check existence.
     """
+
     name: str
     base_dir: Path
     source_path: Path
@@ -157,7 +158,9 @@ def _artifact_from_dir(name: str, base: Path) -> StdlibArtifact:
     )
 
 
-def discover_stdlib(extra_names: Iterable[str] | None = None, base_dir: Optional[Path] = None) -> List[StdlibArtifact]:
+def discover_stdlib(
+    extra_names: Iterable[str] | None = None, base_dir: Optional[Path] = None
+) -> List[StdlibArtifact]:
     """
     Discover stdlib modules by scanning the known candidate list plus any extras.
 
@@ -230,6 +233,7 @@ def load_abi(name: str) -> Optional[Dict]:
 
 
 # ---- Pretty printer / CLI ----------------------------------------------------
+
 
 def _fmt_path(p: Path) -> str:
     try:

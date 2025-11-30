@@ -3,14 +3,15 @@ import inspect
 import os
 import random
 from dataclasses import asdict, is_dataclass
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import (Any, Callable, Dict, Iterable, List, Optional, Sequence,
+                    Tuple, Union)
 
 import pytest
-
 
 # =========================================
 # Helpers: robust adapters across APIs
 # =========================================
+
 
 def _import(path: str):
     return importlib.import_module(path)
@@ -47,6 +48,7 @@ def _rnd_bytes(n: int, seed: int) -> bytes:
 # Locate building blocks
 # =========================================
 
+
 def _encode_leaves_fn() -> Callable[[bytes, int], List[bytes]]:
     """
     Returns a function (data: bytes, ns: int) -> List[bytes] encoding the blob into namespaced leaves.
@@ -58,18 +60,28 @@ def _encode_leaves_fn() -> Callable[[bytes, int], List[bytes]]:
             mod = _import(mname)
         except ModuleNotFoundError:
             continue
-        for name in ("encode_leaves", "blob_to_leaves", "encode", "build_leaves", "partition"):
+        for name in (
+            "encode_leaves",
+            "blob_to_leaves",
+            "encode",
+            "build_leaves",
+            "partition",
+        ):
             if hasattr(mod, name):
                 fn = getattr(mod, name)
                 if callable(fn):
+
                     def _wrap(data: bytes, ns: int, _fn=fn):
                         try:
                             return list(_fn(data, ns))
                         except TypeError:
                             # Some APIs embed ns elsewhere; try single-arg
                             return list(_fn(data))
+
                     return _wrap
-    raise RuntimeError("Could not find leaves encoder in da.erasure.encoder|partitioner")
+    raise RuntimeError(
+        "Could not find leaves encoder in da.erasure.encoder|partitioner"
+    )
 
 
 def _nmt_commit_fn() -> Callable[[Sequence[bytes]], bytes]:
@@ -93,6 +105,7 @@ def _build_tree_fn() -> Optional[Callable[[Sequence[bytes]], Any]]:
     for cname in ("Tree", "NMT", "NamespacedMerkleTree"):
         if hasattr(mod, cname):
             cls = getattr(mod, cname)
+
             def _builder(leaves: Sequence[bytes], _cls=cls):
                 try:
                     # Try common constructors/constructors + append/finalize
@@ -112,6 +125,7 @@ def _build_tree_fn() -> Optional[Callable[[Sequence[bytes]], Any]]:
                         return t
                 except Exception as e:
                     raise
+
             return _builder
 
     # Functional builders
@@ -132,18 +146,30 @@ def _inclusion_proof_builder(leaves: Sequence[bytes]) -> Callable[[int], Any]:
     # Direct proofs module
     try:
         pmod = _import("da.nmt.proofs")
-        for bulk in ("build_inclusion_proofs", "inclusion_proofs", "prove_inclusion_set", "proofs_for_indices"):
+        for bulk in (
+            "build_inclusion_proofs",
+            "inclusion_proofs",
+            "prove_inclusion_set",
+            "proofs_for_indices",
+        ):
             if hasattr(pmod, bulk):
                 bulk_fn = getattr(pmod, bulk)
                 if callable(bulk_fn):
+
                     def _bulk(idx: int, _fn=bulk_fn):
                         out = _fn(leaves, [idx])
                         # Normalize single-proof returns
                         if isinstance(out, (list, tuple)) and len(out) == 1:
                             return out[0]
                         return out
+
                     return _bulk
-        for single in ("build_inclusion_proof", "inclusion_proof", "prove_inclusion", "proof_for_index"):
+        for single in (
+            "build_inclusion_proof",
+            "inclusion_proof",
+            "prove_inclusion",
+            "proof_for_index",
+        ):
             if hasattr(pmod, single):
                 single_fn = getattr(pmod, single)
                 if callable(single_fn):
@@ -154,7 +180,9 @@ def _inclusion_proof_builder(leaves: Sequence[bytes]) -> Callable[[int], Any]:
     # Tree-based
     t_builder = _build_tree_fn()
     if t_builder is None:
-        raise RuntimeError("No proof builder available (neither da.nmt.proofs nor da.nmt.tree)")
+        raise RuntimeError(
+            "No proof builder available (neither da.nmt.proofs nor da.nmt.tree)"
+        )
 
     tree = t_builder(leaves)
     for meth in ("prove_inclusion", "inclusion_proof", "get_inclusion_proof", "prove"):
@@ -171,16 +199,25 @@ def _sample_indices_fn() -> Callable[[int, int, int], List[int]]:
     """
     try:
         qmod = _import("da.sampling.queries")
-        for nm in ("uniform_indices", "uniform", "plan_uniform_indices", "build_uniform"):
+        for nm in (
+            "uniform_indices",
+            "uniform",
+            "plan_uniform_indices",
+            "build_uniform",
+        ):
             if hasattr(qmod, nm):
                 qf = getattr(qmod, nm)
                 if callable(qf):
+
                     def _wrap(n_leaves: int, s: int, seed: int, _fn=qf):
                         try:
                             out = _fn(n=n_leaves, samples=s, seed=seed)
                         except TypeError:
                             out = _fn(n_leaves, s, seed)
-                        return list(dict.fromkeys(int(i) for i in out if 0 <= int(i) < n_leaves))  # dedupe, clamp
+                        return list(
+                            dict.fromkeys(int(i) for i in out if 0 <= int(i) < n_leaves)
+                        )  # dedupe, clamp
+
                     return _wrap
     except ModuleNotFoundError:
         pass
@@ -189,6 +226,7 @@ def _sample_indices_fn() -> Callable[[int, int, int], List[int]]:
         random.seed(seed)
         s = min(s, n_leaves)
         return random.sample(range(n_leaves), s) if s > 0 else []
+
     return _fallback
 
 
@@ -213,6 +251,7 @@ def _lc_verify_fn() -> Optional[Callable[..., bool]]:
 # =========================================
 # Packing samples for verifiers
 # =========================================
+
 
 def _pack_sample(index: int, leaf: bytes, proof: Any) -> Any:
     """
@@ -299,6 +338,7 @@ SEED = 1337
 # Tests
 # =========================================
 
+
 @pytest.mark.parametrize("tamper_mode", ["none", "leaf", "root"])
 def test_light_client_verify_true_and_false(tamper_mode: str):
     """
@@ -315,10 +355,14 @@ def test_light_client_verify_true_and_false(tamper_mode: str):
     except RuntimeError as e:
         pytest.skip(str(e))
     if lc_verify is None:
-        pytest.skip("No light-client verify function found in da.sampling.light_client|verifier")
+        pytest.skip(
+            "No light-client verify function found in da.sampling.light_client|verifier"
+        )
 
     leaves = encode_leaves(DATA, NAMESPACE)
-    assert isinstance(leaves, list) and len(leaves) > 0, "encoder must return non-empty leaf list"
+    assert (
+        isinstance(leaves, list) and len(leaves) > 0
+    ), "encoder must return non-empty leaf list"
 
     root = _as_bytes(nmt_commit(leaves))
     assert isinstance(root, (bytes, bytearray)) and len(root) >= 16
@@ -383,5 +427,3 @@ def test_light_client_rejects_index_out_of_range():
 
     assert ok_good is True, "sanity: a single valid sample should verify True"
     assert ok_bad is False, "out-of-range index must be rejected"
-
-

@@ -1,24 +1,33 @@
 import json
 from pathlib import Path
+
 import pytest
 
 verify_mod = pytest.importorskip("contracts.tools.verify")
+
 
 def _pick_example() -> tuple[Path, Path]:
     root = Path(__file__).resolve().parents[3]
     candidates = [
         # Most likely to exist in this repo
-        (root / "vm_py" / "examples" / "escrow" / "manifest.json",
-         root / "vm_py" / "examples" / "escrow" / "contract.py"),
-        (root / "tests" / "fixtures" / "contracts" / "counter" / "manifest.json",
-         root / "tests" / "fixtures" / "contracts" / "counter" / "contract.py"),
-        (root / "contracts" / "examples" / "token" / "manifest.json",
-         root / "contracts" / "examples" / "token" / "contract.py"),
+        (
+            root / "vm_py" / "examples" / "escrow" / "manifest.json",
+            root / "vm_py" / "examples" / "escrow" / "contract.py",
+        ),
+        (
+            root / "tests" / "fixtures" / "contracts" / "counter" / "manifest.json",
+            root / "tests" / "fixtures" / "contracts" / "counter" / "contract.py",
+        ),
+        (
+            root / "contracts" / "examples" / "token" / "manifest.json",
+            root / "contracts" / "examples" / "token" / "contract.py",
+        ),
     ]
     for m, s in candidates:
         if m.exists() and s.exists():
             return m, s
     pytest.skip("No example contract+manifest found")
+
 
 def _compute_local_code_hash(manifest: Path, source: Path):
     if not hasattr(verify_mod, "_compute_local_code_hash"):
@@ -28,10 +37,18 @@ def _compute_local_code_hash(manifest: Path, source: Path):
         pytest.skip(f"Local hash unavailable: {getattr(res, 'details', '')}")
     return res.code_hash, res.ir_bytes_len
 
+
 def _run_cli(manifest: Path, source: Path, capsys):
     if not hasattr(verify_mod, "main"):
         pytest.skip("contracts.tools.verify.main missing")
-    argv = ["--local-hash", "--manifest", str(manifest), "--source", str(source), "--json"]
+    argv = [
+        "--local-hash",
+        "--manifest",
+        str(manifest),
+        "--source",
+        str(source),
+        "--json",
+    ]
     capsys.readouterr()
     rc = verify_mod.main(argv)
     assert rc == 0
@@ -40,6 +57,7 @@ def _run_cli(manifest: Path, source: Path, capsys):
     payload = json.loads(out)
     assert payload.get("ok") is True
     return payload["codeHash"], payload["irBytes"]
+
 
 def test_compute_code_hash_cli_matches_library_and_is_deterministic(capsys):
     manifest, source = _pick_example()

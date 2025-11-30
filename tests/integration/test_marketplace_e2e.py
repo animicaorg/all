@@ -22,14 +22,15 @@ Test Categories:
 - E2E: Complete user journey
 """
 
-import pytest
 import asyncio
-import json
-import hmac
 import hashlib
+import hmac
+import json
 from datetime import datetime, timedelta
-from typing import Dict, Any, List
 from decimal import Decimal
+from typing import Any, Dict, List
+
+import pytest
 
 # Mock classes for testing
 
@@ -255,9 +256,7 @@ class TestMarketplaceRpcMethods:
     async def test_get_market_data(self):
         """Test explorer_getMarketData"""
         client = MockRpcClient()
-        result = await client.call(
-            "explorer_getMarketData", {"token": "ANM"}
-        )
+        result = await client.call("explorer_getMarketData", {"token": "ANM"})
 
         assert result["price"] == 1.50
         assert result["change24h"] == 12.5
@@ -304,7 +303,9 @@ class TestMarketplaceRpcMethods:
     async def test_rpc_error_handling(self):
         """Test RPC error handling"""
         client = MockRpcClient()
-        client.set_error("explorer_getTreasurySnapshot", ValueError("Service unavailable"))
+        client.set_error(
+            "explorer_getTreasurySnapshot", ValueError("Service unavailable")
+        )
 
         with pytest.raises(ValueError):
             await client.call("explorer_getTreasurySnapshot")
@@ -374,9 +375,7 @@ class TestPaymentFlow:
             user_address="0x" + "a" * 40,
         )
 
-        payment = await processor.confirm_payment(
-            intent["id"], {"method": "stripe"}
-        )
+        payment = await processor.confirm_payment(intent["id"], {"method": "stripe"})
 
         assert payment["status"] == "completed"
         assert payment["user_address"] == intent["user_address"]
@@ -529,12 +528,8 @@ class TestEndToEndFlow:
         rpc_client = MockRpcClient()
 
         # Get price history for different periods
-        history_7d = await rpc_client.call(
-            "explorer_getPriceHistory", {"days": 7}
-        )
-        history_30d = await rpc_client.call(
-            "explorer_getPriceHistory", {"days": 30}
-        )
+        history_7d = await rpc_client.call("explorer_getPriceHistory", {"days": 7})
+        history_30d = await rpc_client.call("explorer_getPriceHistory", {"days": 30})
 
         assert len(history_7d["prices"]) == 7
         assert len(history_30d["prices"]) == 30

@@ -25,7 +25,6 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Paths & helpers
 # ---------------------------------------------------------------------------
@@ -93,10 +92,13 @@ def _load_json(path: Path) -> Dict:
 # Tests
 # ---------------------------------------------------------------------------
 
+
 def test_sources_exist():
     """Sanity: ensure the token sources exist in the template."""
     assert TOKEN_SRC.exists(), f"Expected source missing: {TOKEN_SRC}"
-    assert TOKEN_MANIFEST_SRC.exists(), f"Expected manifest missing: {TOKEN_MANIFEST_SRC}"
+    assert (
+        TOKEN_MANIFEST_SRC.exists()
+    ), f"Expected manifest missing: {TOKEN_MANIFEST_SRC}"
 
 
 def test_build_produces_artifacts_and_code_hash():
@@ -128,7 +130,11 @@ def test_build_produces_artifacts_and_code_hash():
     # Prefer checking package.json if present
     if package_out.exists():
         pkg = _load_json(package_out)
-        recorded = (pkg.get("code_hash") or pkg.get("codeHash") or "").lower().removeprefix("0x")
+        recorded = (
+            (pkg.get("code_hash") or pkg.get("codeHash") or "")
+            .lower()
+            .removeprefix("0x")
+        )
         assert recorded == computed_hash, (
             "code_hash in package.json does not match compiled IR.\n"
             f" recorded: 0x{recorded}\n"
@@ -137,7 +143,11 @@ def test_build_produces_artifacts_and_code_hash():
 
     # Some pipelines also record code_hash in the manifest; validate if present.
     manifest = _load_json(manifest_out)
-    m_code_hash = (manifest.get("code_hash") or manifest.get("codeHash") or "").lower().removeprefix("0x")
+    m_code_hash = (
+        (manifest.get("code_hash") or manifest.get("codeHash") or "")
+        .lower()
+        .removeprefix("0x")
+    )
     if m_code_hash:
         assert m_code_hash == computed_hash, (
             "code_hash in manifest.json does not match compiled IR.\n"
@@ -156,7 +166,9 @@ def test_manifest_shape_minimums():
     assert token_build, "Token build directory not found (run the build step first)."
     manifest = _load_json(token_build / "manifest.json")
 
-    assert isinstance(manifest.get("name"), str) and manifest["name"].strip(), "Manifest must have a non-empty name"
+    assert (
+        isinstance(manifest.get("name"), str) and manifest["name"].strip()
+    ), "Manifest must have a non-empty name"
     assert isinstance(manifest.get("abi"), list), "Manifest must include an ABI array"
 
 
@@ -171,7 +183,11 @@ def test_abi_exposes_core_token_functions_and_events():
     abi = _load_json(token_build / "manifest.json").get("abi", [])
     assert isinstance(abi, list), "ABI must be a list"
 
-    fn_names = {e.get("name") for e in abi if e.get("type") in (None, "function", "func", "method")}
+    fn_names = {
+        e.get("name")
+        for e in abi
+        if e.get("type") in (None, "function", "func", "method")
+    }
     ev_names = {e.get("name") for e in abi if e.get("type") in ("event",)}
 
     expected_functions = {
@@ -207,7 +223,12 @@ def test_token_metadata_is_sane():
     # If present, validate their shapes, otherwise this test is a no-op.
     def get_abi_entry(name: str) -> Optional[Dict]:
         for e in abi:
-            if e.get("name") == name and e.get("type") in (None, "function", "func", "method"):
+            if e.get("name") == name and e.get("type") in (
+                None,
+                "function",
+                "func",
+                "method",
+            ):
                 return e
         return None
 
@@ -216,14 +237,19 @@ def test_token_metadata_is_sane():
     decimals_fn = get_abi_entry("decimals")
 
     # If constant encodings are present, do a sanity check
-    for entry, label, typ in ((name_fn, "name", "string"), (symbol_fn, "symbol", "string")):
+    for entry, label, typ in (
+        (name_fn, "name", "string"),
+        (symbol_fn, "symbol", "string"),
+    ):
         if entry and entry.get("constant") is True:
             outs = entry.get("outputs") or entry.get("returns") or []
             if outs and isinstance(outs, list) and outs[0].get("type") == typ:
                 # If a concrete default value is provided, ensure it's non-empty
                 default_val = outs[0].get("default") or outs[0].get("example") or ""
                 if default_val is not None:
-                    assert str(default_val).strip(), f"{label} default/example must not be empty"
+                    assert str(
+                        default_val
+                    ).strip(), f"{label} default/example must not be empty"
             # else: schema not providing concrete value — that's fine for the template
 
     if decimals_fn and decimals_fn.get("constant") is True:
@@ -257,7 +283,9 @@ def test_manifest_optionally_lists_sections(required_key: str):
 
     if required_key in manifest:
         val = manifest[required_key]
-        assert isinstance(val, (list, dict)), f"manifest['{required_key}'] must be list/dict when present"
+        assert isinstance(
+            val, (list, dict)
+        ), f"manifest['{required_key}'] must be list/dict when present"
         # Not enforcing a schema here; templates vary across toolchains.
 
 
@@ -293,12 +321,15 @@ def test_build_is_idempotent(tmp_path: Path):
     assert d2, "Missing token build directory after second build"
     h2 = sha3_256((d2 / "code.ir").read_bytes()).hexdigest()
 
-    assert h1 == h2, "IR code hash changed across two successive builds (non-deterministic build?)"
+    assert (
+        h1 == h2
+    ), "IR code hash changed across two successive builds (non-deterministic build?)"
 
 
 # ---------------------------------------------------------------------------
 # Optional: gated VM execution tests (skipped if the local VM is not available)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.skipif(
     not any(

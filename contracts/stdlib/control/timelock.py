@@ -97,27 +97,32 @@ from typing import Final, Optional, Tuple
 
 def _abi():
     from stdlib import abi  # type: ignore
+
     return abi
 
 
 def _storage():
     from stdlib import storage  # type: ignore
+
     return storage
 
 
 def _events():
     from stdlib import events  # type: ignore
+
     return events
 
 
 def _hash():
     from stdlib import hash as std_hash  # type: ignore
+
     return std_hash
 
 
 def _roles_or_none():
     try:
         from stdlib.access import roles  # type: ignore
+
         return roles
     except Exception:
         return None
@@ -126,6 +131,7 @@ def _roles_or_none():
 def _ownable_or_none():
     try:
         from stdlib.access import ownable  # type: ignore
+
         return ownable
     except Exception:
         return None
@@ -147,6 +153,7 @@ _DEFAULT_GRACE_BLOCKS: Final[int] = 200
 
 # ---- Int encoding helpers (u64 big-endian) ---------------------------------
 
+
 def _u64_be(n: int) -> bytes:
     if n < 0:
         _abi().revert(b"TIMELOCK:NEGATIVE_U64")
@@ -162,6 +169,7 @@ def _u64_from(b: Optional[bytes]) -> Optional[int]:
 
 
 # ---- Height helpers ---------------------------------------------------------
+
 
 def _read_height_from_env() -> Optional[int]:
     """
@@ -188,11 +196,14 @@ def _resolve_now(now_height: Optional[int]) -> int:
         return int(now_height)
     h = _read_height_from_env()
     if h is None:
-        _abi().revert(b"TIMELOCK:NO_HEIGHT")  # Contract must pass now_height explicitly.
+        _abi().revert(
+            b"TIMELOCK:NO_HEIGHT"
+        )  # Contract must pass now_height explicitly.
     return h
 
 
 # ---- Admin guard ------------------------------------------------------------
+
 
 def _admin_role_id() -> bytes:
     return _hash().sha3_256(b"ROLE|" + _ADMIN_ROLE_NAME)
@@ -226,6 +237,7 @@ def _require_admin(caller: bytes) -> None:
 
 # ---- Public: identifiers & params ------------------------------------------
 
+
 def compute_id(payload: bytes, salt: bytes = b"") -> bytes:
     """
     Compute deterministic op_id from payload and salt.
@@ -240,8 +252,10 @@ def get_params() -> Tuple[int, int]:
     s = _storage()
     md = _u64_from(s.get(_KEY_MIN_DELAY))
     gr = _u64_from(s.get(_KEY_GRACE))
-    return (md if md is not None else _DEFAULT_MIN_DELAY_BLOCKS,
-            gr if gr is not None else _DEFAULT_GRACE_BLOCKS)
+    return (
+        md if md is not None else _DEFAULT_MIN_DELAY_BLOCKS,
+        gr if gr is not None else _DEFAULT_GRACE_BLOCKS,
+    )
 
 
 def set_params(
@@ -298,11 +312,13 @@ def get_admin() -> Optional[bytes]:
 
 # ---- Queue keys -------------------------------------------------------------
 
+
 def _qkey(op_id: bytes) -> bytes:
     return _KEY_Q_PREFIX + op_id
 
 
 # ---- Public: queue / cancel / ready / execute -------------------------------
+
 
 def queue(
     caller: bytes,
@@ -401,6 +417,7 @@ def execute_mark(
 
 # ---- Sugar: typed helpers for common patterns -------------------------------
 
+
 def queue_call(
     caller: bytes,
     method_name: bytes,
@@ -417,7 +434,9 @@ def queue_call(
     return queue(caller, payload, delay_blocks, salt=salt, now_height=now_height)
 
 
-def compute_call_id(method_name: bytes, args_blob: bytes, *, salt: bytes = b"") -> bytes:
+def compute_call_id(
+    method_name: bytes, args_blob: bytes, *, salt: bytes = b""
+) -> bytes:
     """
     Convenience: deterministic id for a method+args pair.
     """
@@ -425,4 +444,3 @@ def compute_call_id(method_name: bytes, args_blob: bytes, *, salt: bytes = b"") 
 
 
 # ---- Module end -------------------------------------------------------------
-

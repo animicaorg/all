@@ -11,7 +11,10 @@ try:
     import jsonschema
     from jsonschema import Draft202012Validator
 except Exception as e:  # pragma: no cover
-    pytest.skip("jsonschema is required for this test (pip install jsonschema)", allow_module_level=True)
+    pytest.skip(
+        "jsonschema is required for this test (pip install jsonschema)",
+        allow_module_level=True,
+    )
 
 ROOT = Path(__file__).resolve().parents[2]
 CHAINS_DIR = ROOT / "chains"
@@ -54,7 +57,9 @@ def test_registry_schema_valid(registry, schemas):
 def test_registry_entries_unique_and_paths_exist(registry):
     """Keys/chainIds unique; paths resolve; icon paths (when present) exist."""
     entries = registry.get("entries", [])
-    assert isinstance(entries, list) and entries, "registry.entries must be a non-empty array"
+    assert (
+        isinstance(entries, list) and entries
+    ), "registry.entries must be a non-empty array"
 
     keys = [e["key"] for e in entries]
     chain_ids = [e["chainId"] for e in entries]

@@ -93,7 +93,7 @@ def _to_plain(obj: Any) -> Any:
             out[k] = _to_plain(v)
         return out
     if isinstance(obj, (tuple, list)):
-        return [ _to_plain(x) for x in obj ]
+        return [_to_plain(x) for x in obj]
     # Fallback: try __dict__ then repr()
     if hasattr(obj, "__dict__"):
         return _to_plain(vars(obj))
@@ -118,6 +118,7 @@ def _validate_mapping_keys(obj: Any) -> None:
 
 
 # -------------------------- Encode / Decode (public) --------------------------------
+
 
 def dumps(obj: Any) -> bytes:
     """

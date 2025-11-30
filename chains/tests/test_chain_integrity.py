@@ -57,7 +57,9 @@ def registry():
 
 @pytest.fixture(scope="session")
 def checksums():
-    assert CHECKSUMS_PATH.exists(), f"missing {CHECKSUMS_PATH}; run chains/scripts/generate_checksums.py"
+    assert (
+        CHECKSUMS_PATH.exists()
+    ), f"missing {CHECKSUMS_PATH}; run chains/scripts/generate_checksums.py"
     return _parse_checksums(CHECKSUMS_PATH)
 
 
@@ -67,7 +69,9 @@ def test_checksums_include_registry_and_all_entries(registry, checksums):
       • chains/registry.json
       • every chain JSON referenced by the registry
     """
-    assert "chains/registry.json" in checksums, "checksums.txt must include chains/registry.json"
+    assert (
+        "chains/registry.json" in checksums
+    ), "checksums.txt must include chains/registry.json"
 
     missing: List[str] = []
     for e in registry.get("entries", []):
@@ -76,7 +80,9 @@ def test_checksums_include_registry_and_all_entries(registry, checksums):
         if path not in checksums:
             missing.append(path)
 
-    assert not missing, "checksums.txt missing entries for:\n" + "\n".join(f"- {m}" for m in missing)
+    assert not missing, "checksums.txt missing entries for:\n" + "\n".join(
+        f"- {m}" for m in missing
+    )
 
 
 def test_file_hashes_match_checksums_and_embedded(registry, checksums):
@@ -88,12 +94,16 @@ def test_file_hashes_match_checksums_and_embedded(registry, checksums):
     for e in registry.get("entries", []):
         rel = e["path"]
         file_hash_expected = checksums.get(rel)
-        assert file_hash_expected and HEX64.match(file_hash_expected), f"bad or missing checksum for {rel}"
+        assert file_hash_expected and HEX64.match(
+            file_hash_expected
+        ), f"bad or missing checksum for {rel}"
 
         p = ROOT / rel
         assert p.exists(), f"missing chain file: {p}"
         actual = _sha256_hex(p).lower()
-        assert actual == file_hash_expected, f"hash mismatch for {rel}: file={actual} list={file_hash_expected}"
+        assert (
+            actual == file_hash_expected
+        ), f"hash mismatch for {rel}: file={actual} list={file_hash_expected}"
 
         # Embedded checksum (optional but, if present, should match list)
         try:
@@ -103,13 +113,13 @@ def test_file_hashes_match_checksums_and_embedded(registry, checksums):
 
         embedded = obj.get("checksum")
         if isinstance(embedded, str):
-            assert HEX64.match(embedded.lower()) or embedded == "<sha256-to-be-generated>", (
-                f"{rel}: embedded checksum has invalid format: {embedded!r}"
-            )
+            assert (
+                HEX64.match(embedded.lower()) or embedded == "<sha256-to-be-generated>"
+            ), f"{rel}: embedded checksum has invalid format: {embedded!r}"
             if HEX64.match(embedded.lower()):
-                assert embedded.lower() == file_hash_expected, (
-                    f"{rel}: embedded checksum != checksums.txt (embedded={embedded}, list={file_hash_expected})"
-                )
+                assert (
+                    embedded.lower() == file_hash_expected
+                ), f"{rel}: embedded checksum != checksums.txt (embedded={embedded}, list={file_hash_expected})"
 
 
 def test_endpoint_url_formats(registry):
@@ -128,14 +138,18 @@ def test_endpoint_url_formats(registry):
         assert isinstance(http_urls, list), f"{p}: rpc.http must be an array"
         for u in http_urls:
             assert isinstance(u, str) and u, f"{p}: rpc.http contains a non-string"
-            assert u.startswith(HTTP_OK), f"{p}: rpc.http URL must start with http(s):// — got {u!r}"
+            assert u.startswith(
+                HTTP_OK
+            ), f"{p}: rpc.http URL must start with http(s):// — got {u!r}"
 
         # rpc.ws
         ws_urls = (data.get("rpc") or {}).get("ws") or []
         assert isinstance(ws_urls, list), f"{p}: rpc.ws must be an array"
         for u in ws_urls:
             assert isinstance(u, str) and u, f"{p}: rpc.ws contains a non-string"
-            assert u.startswith(WS_OK), f"{p}: rpc.ws URL must start with ws(s):// — got {u!r}"
+            assert u.startswith(
+                WS_OK
+            ), f"{p}: rpc.ws URL must start with ws(s):// — got {u!r}"
 
         # explorers
         explorers = data.get("explorers") or []
@@ -143,5 +157,9 @@ def test_endpoint_url_formats(registry):
         for ex in explorers:
             assert isinstance(ex, dict), f"{p}: explorers[] must be objects"
             url = ex.get("url")
-            assert isinstance(url, str) and url, f"{p}: explorer.url must be a non-empty string"
-            assert url.startswith(HTTP_OK), f"{p}: explorer.url must start with http(s):// — got {url!r}"
+            assert (
+                isinstance(url, str) and url
+            ), f"{p}: explorer.url must be a non-empty string"
+            assert url.startswith(
+                HTTP_OK
+            ), f"{p}: explorer.url must start with http(s):// — got {url!r}"

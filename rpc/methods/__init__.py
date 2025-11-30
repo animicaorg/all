@@ -45,16 +45,20 @@ from dataclasses import dataclass, field
 try:
     # Optional types for nicer validation hooks
     from pydantic import BaseModel  # type: ignore
+
     PydanticModel = BaseModel
 except Exception:  # pragma: no cover - optional dep
+
     class _Dummy:  # type: ignore
         pass
+
     PydanticModel = _Dummy  # type: ignore
 
 
 @dataclass(frozen=True)
 class MethodSpec:
     """Metadata about a JSON-RPC method binding."""
+
     name: str
     func: t.Callable[..., t.Any]
     desc: str | None = None
@@ -91,7 +95,9 @@ class MethodSpec:
         if self.params_model is not None and kwargs:
             validated = self.params_model(**kwargs)  # type: ignore[misc]
             # Pydantic v1 exposes .dict(); v2 exposes .model_dump()
-            kwargs = getattr(validated, "model_dump", getattr(validated, "dict", lambda **_: {}))()
+            kwargs = getattr(
+                validated, "model_dump", getattr(validated, "dict", lambda **_: {})
+            )()
 
         result = self.func(*args, **kwargs)
 
@@ -136,7 +142,9 @@ def register(
 ) -> MethodSpec:
     """Register a method callable under a JSON-RPC name."""
     if not isinstance(name, str) or "." not in name:
-        raise ValueError(f"Method name must be namespaced like 'ns.method', got {name!r}")
+        raise ValueError(
+            f"Method name must be namespaced like 'ns.method', got {name!r}"
+        )
 
     namespace = name.split(".", 1)[0]
 
@@ -174,6 +182,7 @@ def method(
         @method("chain.getHead")
         def get_head(): ...
     """
+
     def _wrap(fn: t.Callable[..., t.Any]):
         register(
             name,
@@ -185,6 +194,7 @@ def method(
             replace=replace,
         )
         return fn
+
     return _wrap
 
 
@@ -241,6 +251,7 @@ def clear_registry() -> None:
 
 
 # ---- Introspection helpers --------------------------------------------------
+
 
 def _func_desc(fn: t.Callable[..., t.Any]) -> str | None:
     """Return a compact one-line description for a function from its docstring/signature."""

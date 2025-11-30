@@ -7,11 +7,14 @@ import pytest
 
 # --- Helpers -----------------------------------------------------------------
 
+
 def hx(b: bytes) -> str:
     return "0x" + hexlify(b).decode()
 
+
 def make_hex(n: int, byte: int = 0x11) -> str:
     return hx(bytes([byte]) * n)
+
 
 def _load_gossip_module():
     """
@@ -19,9 +22,11 @@ def _load_gossip_module():
     """
     try:
         import randomness.adapters.p2p_gossip as gossip  # type: ignore
+
         return gossip
     except Exception as e:
         pytest.skip(f"randomness.adapters.p2p_gossip not available: {e}")
+
 
 def _mk_instance(gossip_mod: Any) -> Any:
     """
@@ -41,7 +46,10 @@ def _mk_instance(gossip_mod: Any) -> Any:
                 continue
     return gossip_mod  # function-based API
 
-def _find_handlers(obj: Any) -> Tuple[Callable[[Dict[str, Any]], Any], Callable[[Dict[str, Any]], Any]]:
+
+def _find_handlers(
+    obj: Any,
+) -> Tuple[Callable[[Dict[str, Any]], Any], Callable[[Dict[str, Any]], Any]]:
     """
     Locate commit/reveal handlers on either an instance or module, trying a list
     of common method/function names. Returns (handle_commit, handle_reveal).
@@ -75,9 +83,12 @@ def _find_handlers(obj: Any) -> Tuple[Callable[[Dict[str, Any]], Any], Callable[
             break
 
     if commit_fn is None or reveal_fn is None:
-        pytest.skip("Could not locate commit/reveal handler functions on p2p_gossip adapter.")
+        pytest.skip(
+            "Could not locate commit/reveal handler functions on p2p_gossip adapter."
+        )
 
     return commit_fn, reveal_fn
+
 
 def _normalize_result(res: Any) -> Tuple[bool, Optional[str]]:
     """
@@ -112,20 +123,22 @@ def _normalize_result(res: Any) -> Tuple[bool, Optional[str]]:
     # Unknown style — treat as truthy/falsy
     return (bool(res), None)
 
+
 # --- Test Vectors ------------------------------------------------------------
 
 GOOD_COMMIT = make_hex(32, 0xAB)  # 32-byte hex commitment
-BAD_COMMIT   = "0x1234"            # too short, should be rejected by validators
+BAD_COMMIT = "0x1234"  # too short, should be rejected by validators
 
-GOOD_SALT    = make_hex(16, 0xCD)  # 16 bytes
+GOOD_SALT = make_hex(16, 0xCD)  # 16 bytes
 GOOD_PAYLOAD = make_hex(32, 0xEF)  # 32 bytes
-BAD_SALT     = "0xZZ"              # malformed hex
-BAD_PAYLOAD  = "0x"                # empty/malformed
+BAD_SALT = "0xZZ"  # malformed hex
+BAD_PAYLOAD = "0x"  # empty/malformed
 
 PEER_A = "peerA"
 PEER_B = "peerB"
 
 # --- Tests -------------------------------------------------------------------
+
 
 def test_commit_dedupe_and_validation():
     gossip_mod = _load_gossip_module()
@@ -162,6 +175,7 @@ def test_commit_dedupe_and_validation():
     ok_bad, why_bad = _normalize_result(handle_commit(bad))  # type: ignore[misc]
     assert not ok_bad, "invalid commit was not rejected"
 
+
 def test_reveal_dedupe_and_validation():
     gossip_mod = _load_gossip_module()
     inst = _mk_instance(gossip_mod)
@@ -194,8 +208,8 @@ def test_reveal_dedupe_and_validation():
     # 4) Invalid reveal fields should be rejected
     bad = {
         "kind": "reveal",
-        "salt": BAD_SALT,         # malformed hex
-        "payload": BAD_PAYLOAD,   # malformed/empty
+        "salt": BAD_SALT,  # malformed hex
+        "payload": BAD_PAYLOAD,  # malformed/empty
         "commitment": GOOD_COMMIT,
         "from": PEER_A,
         "ts": int(time.time()),

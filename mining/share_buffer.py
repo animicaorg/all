@@ -40,11 +40,11 @@ Swapping backend later
 Create a subclass that implements the same public methods with a native ring.
 """
 
-from dataclasses import dataclass
-from typing import Optional, List, Iterable, Iterator, TYPE_CHECKING
 import queue
 import threading
 import time
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Iterable, Iterator, List, Optional
 
 # Import type only to avoid runtime import cycles
 if TYPE_CHECKING:
@@ -180,7 +180,9 @@ class ShareBuffer:
         except queue.Empty:
             return None
 
-    def pop_batch(self, max_items: int = 1024, timeout: float = 0.0) -> list["FoundShare"]:
+    def pop_batch(
+        self, max_items: int = 1024, timeout: float = 0.0
+    ) -> list["FoundShare"]:
         """
         Pop up to `max_items` shares. If `timeout>0` and the queue is empty,
         wait up to `timeout` seconds for at least one to arrive, then drain
@@ -269,6 +271,7 @@ if __name__ == "__main__":  # pragma: no cover
     class _FoundShare:
         def __init__(self, n: int):
             self.nonce = n
+
         def __repr__(self) -> str:
             return f"FoundShare(nonce={self.nonce})"
 
@@ -283,7 +286,9 @@ if __name__ == "__main__":  # pragma: no cover
             if k % 17 == 0:
                 time.sleep(0.0005)
 
-    producers = [threading.Thread(target=prod, args=(i,), daemon=True) for i in range(4)]
+    producers = [
+        threading.Thread(target=prod, args=(i,), daemon=True) for i in range(4)
+    ]
     for t in producers:
         t.start()
 

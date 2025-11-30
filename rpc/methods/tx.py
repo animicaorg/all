@@ -3,24 +3,24 @@ from __future__ import annotations
 import dataclasses as _dc
 import typing as t
 
-from rpc.methods import method
 from rpc import deps
 from rpc import errors as rpc_errors
+from rpc.methods import method
 
 # ——— Optional deps (be tolerant during early bring-up) ———
 
 # CBOR codec (canonical, from core)
 try:
-    from core.encoding.cbor import loads as _cbor_loads, dumps as _cbor_dumps  # type: ignore
+    from core.encoding.cbor import dumps as _cbor_dumps
+    from core.encoding.cbor import loads as _cbor_loads  # type: ignore
 except Exception as _e:  # pragma: no cover
     _cbor_loads = None  # type: ignore
     _cbor_dumps = None  # type: ignore
 
 # Canonical SignBytes encoders (preferred)
 try:
-    from core.encoding.canonical import (
-        tx_sign_bytes as _tx_sign_bytes,  # type: ignore
-    )
+    from core.encoding.canonical import \
+        tx_sign_bytes as _tx_sign_bytes  # type: ignore
 except Exception:  # pragma: no cover
     _tx_sign_bytes = None  # type: ignore
 
@@ -38,6 +38,7 @@ except Exception:  # pragma: no cover
 
     def _sha3_256(b: bytes) -> bytes:  # type: ignore
         return hashlib.sha3_256(b).digest()
+
 
 # Pending pool (strongly preferred)
 _PEND = None
@@ -59,6 +60,7 @@ _FALLBACK_PENDING: dict[str, bytes] = {}
 
 
 # ——— Helpers ———
+
 
 def _dcd(obj: t.Any) -> t.Any:
     """Dataclass → dict (deep)."""
@@ -158,7 +160,11 @@ def _extract_sig(obj: dict) -> tuple[int, bytes, bytes]:
     s = sig.get("sig") or sig.get("signature")
     if pub is None or s is None:
         raise rpc_errors.InvalidParams("Missing 'sig.pubkey' or 'sig.sig'")
-    return alg_id, _b(pub) if isinstance(pub, str) else bytes(pub), _b(s) if isinstance(s, str) else bytes(s)
+    return (
+        alg_id,
+        _b(pub) if isinstance(pub, str) else bytes(pub),
+        _b(s) if isinstance(s, str) else bytes(s),
+    )
 
 
 def _validate_chain_id(obj: dict) -> None:
@@ -166,7 +172,9 @@ def _validate_chain_id(obj: dict) -> None:
     cid = obj.get("chainId") or obj.get("chain_id")
     if cid is None:
         # Some txs rely on external chainId; enforce explicit for now.
-        raise rpc_errors.ChainIdMismatch(f"Transaction missing chainId (required {want})")
+        raise rpc_errors.ChainIdMismatch(
+            f"Transaction missing chainId (required {want})"
+        )
     if int(cid) != int(want):
         raise rpc_errors.ChainIdMismatch(f"chainId mismatch: tx={cid} node={want}")
 
@@ -201,7 +209,15 @@ def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
     return obj, obj
 
 
-def _tx_view(tx: t.Any, obj: dict, *, pending: bool, block_hash: bytes | None = None, block_number: int | None = None, tx_index: int | None = None) -> dict:
+def _tx_view(
+    tx: t.Any,
+    obj: dict,
+    *,
+    pending: bool,
+    block_hash: bytes | None = None,
+    block_number: int | None = None,
+    tx_index: int | None = None,
+) -> dict:
     _from = obj.get("from") or obj.get("sender") or getattr(tx, "sender", None)
     to = obj.get("to", getattr(tx, "to", None))
     nonce = obj.get("nonce", getattr(tx, "nonce", None))
@@ -219,9 +235,23 @@ def _tx_view(tx: t.Any, obj: dict, *, pending: bool, block_hash: bytes | None = 
         "tip": int(tip) if tip is not None else None,
         "value": int(value) if value is not None else None,
         "data": _hex(data) if isinstance(data, (bytes, bytearray)) else data,
-        "blockHash": None if pending else (_hex(block_hash) if isinstance(block_hash, (bytes, bytearray)) else block_hash),
-        "blockNumber": None if pending else (int(block_number) if block_number is not None else None),
-        "transactionIndex": None if pending else (int(tx_index) if tx_index is not None else None),
+        "blockHash": (
+            None
+            if pending
+            else (
+                _hex(block_hash)
+                if isinstance(block_hash, (bytes, bytearray))
+                else block_hash
+            )
+        ),
+        "blockNumber": (
+            None
+            if pending
+            else (int(block_number) if block_number is not None else None)
+        ),
+        "transactionIndex": (
+            None if pending else (int(tx_index) if tx_index is not None else None)
+        ),
     }
     return {k: v for k, v in v.items() if v is not None}
 
@@ -246,7 +276,9 @@ def _pending_get(tx_hash_hex: str) -> bytes | None:
     return _FALLBACK_PENDING.get(tx_hash_hex)
 
 
-def _lookup_persisted_tx(tx_hash_hex: str) -> tuple[dict | None, int | None, int | None, bytes | None]:
+def _lookup_persisted_tx(
+    tx_hash_hex: str,
+) -> tuple[dict | None, int | None, int | None, bytes | None]:
     """
     Return (obj_view, block_number, tx_index, block_hash) if found in DB; otherwise (None, None, None, None).
     """
@@ -271,8 +303,20 @@ def _lookup_persisted_tx(tx_hash_hex: str) -> tuple[dict | None, int | None, int
                 else:
                     tx_like = tx_obj
                     obj = _dcd(tx_obj) if _dc.is_dataclass(tx_obj) else dict(tx_obj)
-                view = _tx_view(tx_like, obj, pending=False, block_hash=b_hash, block_number=block_number, tx_index=index)
-                return view, int(block_number) if block_number is not None else None, int(index) if index is not None else None, b_hash if isinstance(b_hash, (bytes, bytearray)) else None
+                view = _tx_view(
+                    tx_like,
+                    obj,
+                    pending=False,
+                    block_hash=b_hash,
+                    block_number=block_number,
+                    tx_index=index,
+                )
+                return (
+                    view,
+                    int(block_number) if block_number is not None else None,
+                    int(index) if index is not None else None,
+                    b_hash if isinstance(b_hash, (bytes, bytearray)) else None,
+                )
 
     # Try lower-level deps if present
     if hasattr(deps, "get_tx_by_hash"):
@@ -286,12 +330,20 @@ def _lookup_persisted_tx(tx_hash_hex: str) -> tuple[dict | None, int | None, int
             bh = blk.get("hash")
             if isinstance(bh, str):
                 bh = _b(bh)
-            view = _tx_view(obj, obj if isinstance(obj, dict) else _dcd(obj), pending=False, block_hash=bh, block_number=h, tx_index=idx)
+            view = _tx_view(
+                obj,
+                obj if isinstance(obj, dict) else _dcd(obj),
+                pending=False,
+                block_hash=bh,
+                block_number=h,
+                tx_index=idx,
+            )
             return view, h, idx, bh
     return None, None, None, None
 
 
 # ——— Methods ———
+
 
 @method(
     "tx.sendRawTransaction",
@@ -352,7 +404,9 @@ def tx_get_transaction_by_hash(txHash: str) -> t.Optional[dict]:
     if raw is not None and _cbor_loads is not None:
         obj = _cbor_loads(raw)
         tx_like = obj
-        return _tx_view(tx_like, obj if isinstance(obj, dict) else _dcd(obj), pending=True)
+        return _tx_view(
+            tx_like, obj if isinstance(obj, dict) else _dcd(obj), pending=True
+        )
 
     # 2) Check persisted DB via deps/state_service
     view, *_etc = _lookup_persisted_tx(tx_hash_hex)

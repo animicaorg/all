@@ -30,12 +30,12 @@ Receipt construction is performed by higher layers.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping, Optional, Tuple, TYPE_CHECKING, List
+from typing import TYPE_CHECKING, Any, List, Mapping, Optional, Tuple
 
-from ..errors import ExecError, OOG, Revert
-from ..types.status import TxStatus
-from ..types.result import ApplyResult
+from ..errors import OOG, ExecError, Revert
 from ..types.events import LogEvent
+from ..types.result import ApplyResult
+from ..types.status import TxStatus
 
 if TYPE_CHECKING:
     from .env import BlockEnv, TxEnv
@@ -50,6 +50,7 @@ DEFAULT_INTRINSIC_TRANSFER = 21_000  # sane default; may be overridden by gas.ta
 # ------------------------------------------------------------------------------
 # Tolerant getters/coercers
 # ------------------------------------------------------------------------------
+
 
 def _get(obj: Any, *names: str, default: Any = None) -> Any:
     for n in names:
@@ -120,6 +121,7 @@ def _as_bytes(x: Any, *, expect_len: Optional[int] = None) -> bytes:
 # State access (duck-typed)
 # ------------------------------------------------------------------------------
 
+
 def _ensure_account(state: Any, addr: bytes) -> None:
     """Best-effort: create account if backend exposes such an API."""
     if hasattr(state, "ensure_account"):
@@ -180,6 +182,7 @@ def _set_balance(state: Any, addr: bytes, value: int) -> None:
                 nonce: int = 0
                 balance: int = 0
                 code_hash: bytes = b""
+
             accounts[addr] = _Acc(balance=int(value))
         else:
             setattr(acc, "balance", int(value))
@@ -247,6 +250,7 @@ def _maybe_state_root(state: Any) -> bytes:
 # Gas helpers
 # ------------------------------------------------------------------------------
 
+
 def _intrinsic_for_transfer(tx: Any, params: Optional[Any]) -> int:
     """
     Try to get intrinsic gas from execution.gas.table / intrinsic; otherwise default.
@@ -254,12 +258,14 @@ def _intrinsic_for_transfer(tx: Any, params: Optional[Any]) -> int:
     # execution.gas.intrinsic
     try:
         from ..gas.intrinsic import intrinsic_for_transfer  # type: ignore
+
         return int(intrinsic_for_transfer(tx, params))  # type: ignore[misc]
     except Exception:
         pass
     # execution.gas.table (lookup by name)
     try:
         from ..gas.table import get_gas_cost  # type: ignore
+
         v = get_gas_cost("transfer")  # type: ignore[misc]
         if isinstance(v, int):
             return v
@@ -284,6 +290,7 @@ def _split_fee(base_price: int, gas_price: int, gas_used: int) -> Tuple[int, int
 # Logs
 # ------------------------------------------------------------------------------
 
+
 def _make_transfer_log(sender: bytes, recipient: bytes, amount: int) -> LogEvent:
     data = int(amount).to_bytes(max(1, (int(amount).bit_length() + 7) // 8), "big")
     # topics are raw bytes; "transfer" tag is a small, explicit domain tag.
@@ -297,6 +304,7 @@ def _make_transfer_log(sender: bytes, recipient: bytes, amount: int) -> LogEvent
 # ------------------------------------------------------------------------------
 # Public API
 # ------------------------------------------------------------------------------
+
 
 def apply_transfer(
     tx: Any,
@@ -365,7 +373,9 @@ def apply_transfer(
             receipt=None,
         )
 
-    total_fee, base_fee_part, tip_fee_part = _split_fee(base_price, gas_price, intrinsic)
+    total_fee, base_fee_part, tip_fee_part = _split_fee(
+        base_price, gas_price, intrinsic
+    )
 
     # Ensure sender has enough to cover amount + fee
     _ensure_account(state, sender)

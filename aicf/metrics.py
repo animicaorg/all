@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 Prometheus metrics for the AI Compute Fund (AICF).
 
@@ -15,18 +16,12 @@ or FastAPI app via the helpers at the bottom.
 """
 
 
-from typing import Optional
-from contextlib import contextmanager
 import time
+from contextlib import contextmanager
+from typing import Optional
 
-from prometheus_client import (
-    Counter,
-    Histogram,
-    Gauge,
-    CollectorRegistry,
-    CONTENT_TYPE_LATEST,
-    generate_latest,
-)
+from prometheus_client import (CONTENT_TYPE_LATEST, CollectorRegistry, Counter,
+                               Gauge, Histogram, generate_latest)
 
 # Use a dedicated registry so embedding apps can choose to merge or expose it directly.
 REGISTRY = CollectorRegistry()
@@ -148,14 +143,48 @@ SETTLEMENT_SECONDS = Histogram(
 PAYOUT_AMOUNT_TOKENS = Histogram(
     "animica_aicf_payout_amount_tokens",
     "Distribution of payout amounts (in tokens).",
-    buckets=(0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 25, 50, 100, 250, 500, 1000),
+    buckets=(
+        0.001,
+        0.01,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        25,
+        50,
+        100,
+        250,
+        500,
+        1000,
+    ),
     registry=REGISTRY,
 )
 
 SLASH_AMOUNT_TOKENS = Histogram(
     "animica_aicf_slash_amount_tokens",
     "Distribution of slash amounts (in tokens).",
-    buckets=(0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 25, 50, 100, 250, 500, 1000),
+    buckets=(
+        0.001,
+        0.01,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        25,
+        50,
+        100,
+        250,
+        500,
+        1000,
+    ),
     registry=REGISTRY,
 )
 
@@ -176,6 +205,7 @@ QUEUE_DEPTH = Gauge(
 # ────────────────────────────────────────────────────────────────────────────────
 # Recording helpers
 # ────────────────────────────────────────────────────────────────────────────────
+
 
 def record_enqueue(kind: str) -> None:
     """Increment the enqueue counter for a job kind."""
@@ -233,6 +263,7 @@ def record_slash(reason: str, amount_tokens: float = 0.0) -> None:
 
 # Timers (context managers) for latency histograms
 
+
 @contextmanager
 def time_enqueue_to_assign(kind: str):
     """Context manager to observe enqueue→assign latency for a given kind."""
@@ -250,7 +281,9 @@ def time_assign_to_complete(kind: str):
     try:
         yield
     finally:
-        ASSIGN_TO_COMPLETE_SECONDS.labels(kind=kind).observe(time.perf_counter() - start)
+        ASSIGN_TO_COMPLETE_SECONDS.labels(kind=kind).observe(
+            time.perf_counter() - start
+        )
 
 
 @contextmanager
@@ -277,6 +310,7 @@ def time_settlement():
 # ASGI/FastAPI mounting helpers
 # ────────────────────────────────────────────────────────────────────────────────
 
+
 def make_prometheus_asgi_app(registry: Optional[CollectorRegistry] = None):
     """
     Return a minimal ASGI app that serves Prometheus metrics at '/'.
@@ -289,7 +323,7 @@ def make_prometheus_asgi_app(registry: Optional[CollectorRegistry] = None):
             await send({"type": "http.response.start", "status": 404, "headers": []})
             await send({"type": "http.response.body", "body": b"Not Found"})
             return
-        path = (scope.get("path") or "/")
+        path = scope.get("path") or "/"
         if path != "/":
             await send({"type": "http.response.start", "status": 404, "headers": []})
             await send({"type": "http.response.body", "body": b"Not Found"})
@@ -305,7 +339,9 @@ def make_prometheus_asgi_app(registry: Optional[CollectorRegistry] = None):
     return app
 
 
-def mount_fastapi(app, path: str = "/metrics", registry: Optional[CollectorRegistry] = None) -> None:
+def mount_fastapi(
+    app, path: str = "/metrics", registry: Optional[CollectorRegistry] = None
+) -> None:
     """
     Mount a GET {path} endpoint on a FastAPI app to serve metrics.
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 from aicf.queue.jobkind import JobKind
+
 """
 Escrow: hold requester funds for off-chain jobs and unlock them deterministically.
 
@@ -29,14 +31,10 @@ Typical flow
 
 
 from dataclasses import dataclass, field
-from typing import Dict,Final,Optional,Tuple
+from typing import Dict, Final, Optional, Tuple
 
 from ..errors import AICFError
-from .split import (
-    DEFAULT_SPLIT_POLICY,
-    SplitPolicy,
-    split_for_kind,
-)
+from .split import DEFAULT_SPLIT_POLICY, SplitPolicy, split_for_kind
 
 try:  # pragma: no cover - convenience import if present
     from ..types.payout import Payout  # type: ignore
@@ -270,7 +268,9 @@ class EscrowLedger:
         self.store.update(settled)
         return settled
 
-    def expire_if_due(self, *, task_id: str, current_height: int) -> Optional[EscrowHold]:
+    def expire_if_due(
+        self, *, task_id: str, current_height: int
+    ) -> Optional[EscrowHold]:
         """
         If a hold has reached its unlock height without being released, mark EXPIRED and refund.
         Returns the updated hold if an expiration occurred, else None.

@@ -12,7 +12,7 @@ This subpackage will host:
   • Optional WebSocket notifications (e.g., job assignments/completions, slashes)
 """
 
-from typing import Final, Dict
+from typing import Dict, Final
 
 # Base path under which AICF endpoints are mounted into the node's primary API.
 RPC_PREFIX: Final[str] = "/aicf"

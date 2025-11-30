@@ -33,15 +33,15 @@ Pass a `status_hook` to mirror state into your registry, e.g.:
     hb = HeartbeatMonitor(status_hook=on_status_change)
 """
 
+import logging
 import math
 import time
-import logging
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Optional, Tuple
 
 try:
     # Prometheus is optional; the monitor works without it.
-    from prometheus_client import Counter, Histogram, Gauge
+    from prometheus_client import Counter, Gauge, Histogram
 except Exception:  # pragma: no cover - optional dependency
     Counter = Histogram = Gauge = None  # type: ignore[misc]
 
@@ -59,7 +59,9 @@ class HeartbeatConfig:
 
     # Target and tolerance for latency contribution to health impulses.
     latency_target_ms: float = 250.0
-    latency_tolerance_ms: float = 750.0  # beyond target+tolerance, latency contributes ~0
+    latency_tolerance_ms: float = (
+        750.0  # beyond target+tolerance, latency contributes ~0
+    )
 
     # Upward movement aggressiveness on success: s += asc_rate * (1 - s) * impulse
     asc_rate: float = 0.5
@@ -80,10 +82,14 @@ class HeartbeatConfig:
 
 # Attempt to import defaults from aicf.config if available
 try:  # pragma: no cover - best-effort import
-    from aicf.config import AICF_HEARTBEAT_HALFLIFE_S, AICF_LATENCY_TARGET_MS, AICF_LATENCY_TOLERANCE_MS
-    from aicf.config import AICF_HEARTBEAT_ASC_RATE, AICF_FAIL_PENALTY_BASE, AICF_FAIL_PENALTY_PER_CONSEC
-    from aicf.config import AICF_FAIL_PENALTY_CAP, AICF_DEGRADE_THRESHOLD, AICF_DOWN_THRESHOLD
-    from aicf.config import AICF_STALE_TIMEOUT_S, AICF_MAX_CONSEC_FAIL_FOR_DOWN
+    from aicf.config import (AICF_DEGRADE_THRESHOLD, AICF_DOWN_THRESHOLD,
+                             AICF_FAIL_PENALTY_BASE, AICF_FAIL_PENALTY_CAP,
+                             AICF_FAIL_PENALTY_PER_CONSEC,
+                             AICF_HEARTBEAT_ASC_RATE,
+                             AICF_HEARTBEAT_HALFLIFE_S, AICF_LATENCY_TARGET_MS,
+                             AICF_LATENCY_TOLERANCE_MS,
+                             AICF_MAX_CONSEC_FAIL_FOR_DOWN,
+                             AICF_STALE_TIMEOUT_S)
 
     _cfg_from_env = HeartbeatConfig(
         halflife_s=float(AICF_HEARTBEAT_HALFLIFE_S),
@@ -113,9 +119,7 @@ if Counter is not None:  # pragma: no cover - trivial wiring
     HB_LAT_MS = Histogram(
         "aicf_heartbeat_latency_ms",
         "Provider heartbeat latency in milliseconds",
-        buckets=(
-            50, 100, 150, 200, 250, 350, 500, 750, 1000, 1500, 2500, 5000
-        ),
+        buckets=(50, 100, 150, 200, 250, 350, 500, 750, 1000, 1500, 2500, 5000),
         labelnames=("provider_id",),
     )
     HB_SCORE = Gauge(
@@ -239,7 +243,9 @@ class HeartbeatMonitor:
 
         # Metrics
         if HB_PINGS is not None:  # pragma: no cover - trivial path
-            HB_PINGS.labels(provider_id=provider_id, outcome=("ok" if ok else "fail")).inc()
+            HB_PINGS.labels(
+                provider_id=provider_id, outcome=("ok" if ok else "fail")
+            ).inc()
             if ok and latency_ms is not None and math.isfinite(latency_ms):
                 HB_LAT_MS.labels(provider_id=provider_id).observe(latency_ms)
 
@@ -260,7 +266,9 @@ class HeartbeatMonitor:
                     st.latency_ema_ms += (latency_ms - st.latency_ema_ms) * 0.6
 
             # Health impulse blends success (1.0) with latency mapping
-            imp_lat = _latency_impulse(latency_ms, self.cfg.latency_target_ms, self.cfg.latency_tolerance_ms)
+            imp_lat = _latency_impulse(
+                latency_ms, self.cfg.latency_target_ms, self.cfg.latency_tolerance_ms
+            )
             impulse = 0.5 * 1.0 + 0.5 * imp_lat  # in [0,1]
 
             # Move score upward proportionally to remaining headroom
@@ -272,7 +280,10 @@ class HeartbeatMonitor:
             st.success_ema *= 0.5  # dampen optimism faster on failures
 
             # Penalize score, increasing with consecutive failures
-            penalty = self.cfg.fail_penalty_base + self.cfg.fail_penalty_per_consecutive * (st.consecutive_failures - 1)
+            penalty = (
+                self.cfg.fail_penalty_base
+                + self.cfg.fail_penalty_per_consecutive * (st.consecutive_failures - 1)
+            )
             penalty = min(self.cfg.fail_penalty_cap, max(0.0, penalty))
             st.score = _clamp(st.score * (1.0 - penalty))
 
@@ -343,7 +354,10 @@ class HeartbeatMonitor:
         """
         # Staleness wins first: if we haven't seen a success for too long, mark down.
         if st.last_seen_ts <= 0 or (now - st.last_seen_ts) > self.cfg.stale_timeout_s:
-            if st.consecutive_failures >= self.cfg.max_consecutive_fail_for_down or st.score <= self.cfg.down_threshold:
+            if (
+                st.consecutive_failures >= self.cfg.max_consecutive_fail_for_down
+                or st.score <= self.cfg.down_threshold
+            ):
                 return "UNRESPONSIVE", "no recent success; stale beyond timeout"
             # stale but not fully down → degraded if score is lowish
             if st.score < self.cfg.degrade_threshold:
@@ -352,15 +366,22 @@ class HeartbeatMonitor:
             return "DEGRADED", "stale but acceptable score"
 
         # Not stale: use thresholds
-        if st.score <= self.cfg.down_threshold or st.consecutive_failures >= self.cfg.max_consecutive_fail_for_down:
+        if (
+            st.score <= self.cfg.down_threshold
+            or st.consecutive_failures >= self.cfg.max_consecutive_fail_for_down
+        ):
             return "UNRESPONSIVE", "score below down threshold or too many failures"
         if st.score <= self.cfg.degrade_threshold:
             return "DEGRADED", "score below degrade threshold"
         return "HEALTHY", "score within healthy range"
 
+
 # ---- Optional: simple HTTP probe helper -------------------------------------
 
-async def http_probe(endpoint: str, timeout_s: float = 3.0) -> Tuple[bool, Optional[float]]:
+
+async def http_probe(
+    endpoint: str, timeout_s: float = 3.0
+) -> Tuple[bool, Optional[float]]:
     """
     Best-effort async HTTP liveness probe for a provider endpoint.
 
@@ -376,7 +397,7 @@ async def http_probe(endpoint: str, timeout_s: float = 3.0) -> Tuple[bool, Optio
     try:
         async with httpx.AsyncClient(timeout=timeout_s) as client:
             r = await client.get(endpoint)
-            ok = (200 <= r.status_code < 300)
+            ok = 200 <= r.status_code < 300
     except Exception:
         return False, None
     finally:

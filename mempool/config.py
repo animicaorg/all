@@ -36,6 +36,7 @@ ENV overrides (all optional; examples shown as defaults):
   MEMPOOL_GLOBAL_TXS_PER_SEC=500
   MEMPOOL_GOSSIP_BATCH=100
 """
+
 from __future__ import annotations
 
 import json
@@ -88,6 +89,7 @@ def wei_to_gwei(w: int) -> float:
 
 # --------- Dataclasses -------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class Limits:
     # Global bounds
@@ -119,6 +121,7 @@ class MinGasPricePolicy:
     An EMA (in blocks) can be used by the caller to smooth utilization before
     calling `min_gas_gwei(util)`.
     """
+
     floor_gwei: float = 1.0
     dynamic_enabled: bool = True
     target_utilization: float = 0.60
@@ -134,7 +137,11 @@ class MinGasPricePolicy:
         if u <= 0.0:
             return base
         # When u == target_utilization, dynamic term = base * surge_multiplier
-        dyn = base * self.surge_multiplier * (u / max(1e-9, self.target_utilization)) ** self.alpha
+        dyn = (
+            base
+            * self.surge_multiplier
+            * (u / max(1e-9, self.target_utilization)) ** self.alpha
+        )
         # Never go below base
         return max(base, dyn)
 
@@ -185,7 +192,11 @@ class MempoolConfig:
 
     # Convenience: compute effective min gas in gwei/wei given current occupancy.
     def min_gas_gwei(self, current_bytes: int) -> float:
-        util = 0.0 if self.limits.max_bytes <= 0 else min(1.0, max(0.0, current_bytes / float(self.limits.max_bytes)))
+        util = (
+            0.0
+            if self.limits.max_bytes <= 0
+            else min(1.0, max(0.0, current_bytes / float(self.limits.max_bytes)))
+        )
         return self.gas.min_gas_gwei(util)
 
     def min_gas_wei(self, current_bytes: int) -> int:
@@ -197,7 +208,10 @@ class MempoolConfig:
             raise ValueError("limits.max_txs must be > 0")
         if self.limits.max_bytes < 1 << 20:  # < 1 MiB
             raise ValueError("limits.max_bytes unrealistically small")
-        if self.limits.max_tx_size_bytes <= 0 or self.limits.max_tx_size_bytes > self.limits.max_bytes:
+        if (
+            self.limits.max_tx_size_bytes <= 0
+            or self.limits.max_tx_size_bytes > self.limits.max_bytes
+        ):
             raise ValueError("limits.max_tx_size_bytes out of range")
         if self.limits.per_sender_max_txs <= 0:
             raise ValueError("per_sender_max_txs must be > 0")
@@ -211,7 +225,9 @@ class MempoolConfig:
         if self.gas.alpha <= 0.0:
             raise ValueError("gas.alpha must be > 0")
         if self.gas.surge_multiplier < 1.0 and self.gas.dynamic_enabled:
-            raise ValueError("gas.surge_multiplier should be >= 1.0 when dynamic_enabled")
+            raise ValueError(
+                "gas.surge_multiplier should be >= 1.0 when dynamic_enabled"
+            )
 
         if self.ttls.pending_seconds < 60:
             raise ValueError("ttls.pending_seconds is too small (< 60)")
@@ -231,36 +247,65 @@ class MempoolConfig:
 
 # --------- Loading -----------------------------------------------------------
 
+
 def _from_env(base: Optional[MempoolConfig] = None) -> MempoolConfig:
     b = base or MempoolConfig()
 
     limits = Limits(
         max_txs=int(_get_env("MEMPOOL_MAX_TXS", b.limits.max_txs)),
         max_bytes=int(_get_env("MEMPOOL_MAX_BYTES", b.limits.max_bytes)),
-        max_tx_size_bytes=int(_get_env("MEMPOOL_MAX_TX_SIZE", b.limits.max_tx_size_bytes)),
-        per_sender_max_txs=int(_get_env("MEMPOOL_PER_SENDER_MAX_TXS", b.limits.per_sender_max_txs)),
-        per_sender_max_bytes=int(_get_env("MEMPOOL_PER_SENDER_MAX_BYTES", b.limits.per_sender_max_bytes)),
+        max_tx_size_bytes=int(
+            _get_env("MEMPOOL_MAX_TX_SIZE", b.limits.max_tx_size_bytes)
+        ),
+        per_sender_max_txs=int(
+            _get_env("MEMPOOL_PER_SENDER_MAX_TXS", b.limits.per_sender_max_txs)
+        ),
+        per_sender_max_bytes=int(
+            _get_env("MEMPOOL_PER_SENDER_MAX_BYTES", b.limits.per_sender_max_bytes)
+        ),
     )
     gas = MinGasPricePolicy(
         floor_gwei=float(_get_env("MEMPOOL_GAS_FLOOR_GWEI", b.gas.floor_gwei)),
-        dynamic_enabled=_get_env_bool("MEMPOOL_GAS_DYNAMIC_ENABLED", b.gas.dynamic_enabled),
-        target_utilization=float(_get_env("MEMPOOL_GAS_TARGET_UTIL", b.gas.target_utilization)),
-        surge_multiplier=float(_get_env("MEMPOOL_GAS_SURGE_MULT", b.gas.surge_multiplier)),
+        dynamic_enabled=_get_env_bool(
+            "MEMPOOL_GAS_DYNAMIC_ENABLED", b.gas.dynamic_enabled
+        ),
+        target_utilization=float(
+            _get_env("MEMPOOL_GAS_TARGET_UTIL", b.gas.target_utilization)
+        ),
+        surge_multiplier=float(
+            _get_env("MEMPOOL_GAS_SURGE_MULT", b.gas.surge_multiplier)
+        ),
         alpha=float(_get_env("MEMPOOL_GAS_ALPHA", b.gas.alpha)),
-        ema_halflife_blocks=int(_get_env("MEMPOOL_GAS_EMA_HALFLIFE", b.gas.ema_halflife_blocks)),
+        ema_halflife_blocks=int(
+            _get_env("MEMPOOL_GAS_EMA_HALFLIFE", b.gas.ema_halflife_blocks)
+        ),
     )
     ttls = TTLs(
-        pending_seconds=int(_get_env("MEMPOOL_TTL_PENDING_SEC", b.ttls.pending_seconds)),
+        pending_seconds=int(
+            _get_env("MEMPOOL_TTL_PENDING_SEC", b.ttls.pending_seconds)
+        ),
         orphan_seconds=int(_get_env("MEMPOOL_TTL_ORPHAN_SEC", b.ttls.orphan_seconds)),
-        reannounce_interval_seconds=int(_get_env("MEMPOOL_TTL_REANNOUNCE_SEC", b.ttls.reannounce_interval_seconds)),
-        replacement_grace_seconds=int(_get_env("MEMPOOL_TTL_REPLACEMENT_GRACE_SEC", b.ttls.replacement_grace_seconds)),
+        reannounce_interval_seconds=int(
+            _get_env("MEMPOOL_TTL_REANNOUNCE_SEC", b.ttls.reannounce_interval_seconds)
+        ),
+        replacement_grace_seconds=int(
+            _get_env(
+                "MEMPOOL_TTL_REPLACEMENT_GRACE_SEC", b.ttls.replacement_grace_seconds
+            )
+        ),
     )
     peers = PeerCaps(
-        max_in_flight=int(_get_env("MEMPOOL_PEER_MAX_IN_FLIGHT", b.peers.max_in_flight)),
+        max_in_flight=int(
+            _get_env("MEMPOOL_PEER_MAX_IN_FLIGHT", b.peers.max_in_flight)
+        ),
         txs_per_sec=int(_get_env("MEMPOOL_PEER_TXS_PER_SEC", b.peers.txs_per_sec)),
         burst=int(_get_env("MEMPOOL_PEER_BURST", b.peers.burst)),
-        global_txs_per_sec=int(_get_env("MEMPOOL_GLOBAL_TXS_PER_SEC", b.peers.global_txs_per_sec)),
-        gossip_batch_size=int(_get_env("MEMPOOL_GOSSIP_BATCH", b.peers.gossip_batch_size)),
+        global_txs_per_sec=int(
+            _get_env("MEMPOOL_GLOBAL_TXS_PER_SEC", b.peers.global_txs_per_sec)
+        ),
+        gossip_batch_size=int(
+            _get_env("MEMPOOL_GOSSIP_BATCH", b.peers.gossip_batch_size)
+        ),
     )
     cfg = MempoolConfig(limits=limits, gas=gas, ttls=ttls, peers=peers)
     cfg.validate()
@@ -305,12 +350,20 @@ def load_config(path: Optional[Union[str, Path]] = None) -> MempoolConfig:
 
 # --------- CLI ---------------------------------------------------------------
 
+
 def _main(argv: list[str]) -> int:
     import argparse
 
     ap = argparse.ArgumentParser(description="Print mempool config or compute min gas")
-    ap.add_argument("--config", type=str, help="Path to YAML/JSON config file", default=None)
-    ap.add_argument("--bytes", type=int, help="Current mempool bytes to compute min gas", default=None)
+    ap.add_argument(
+        "--config", type=str, help="Path to YAML/JSON config file", default=None
+    )
+    ap.add_argument(
+        "--bytes",
+        type=int,
+        help="Current mempool bytes to compute min gas",
+        default=None,
+    )
     ap.add_argument("--json", action="store_true", help="Emit JSON")
     args = ap.parse_args(argv)
 
@@ -335,4 +388,5 @@ def _main(argv: list[str]) -> int:
 
 if __name__ == "__main__":  # pragma: no cover
     import sys
+
     raise SystemExit(_main(sys.argv[1:]))

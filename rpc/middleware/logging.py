@@ -19,6 +19,7 @@ try:  # pragma: no cover
         return _json.dumps(obj).decode("utf-8")
 
 except Exception:  # pragma: no cover
+
     def _dumps(obj: Any) -> str:
         return json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
 
@@ -163,7 +164,9 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             cl = response.headers.get("content-length")
             if cl and cl.isdigit():
                 bytes_sent = int(cl)
-            elif hasattr(response, "body_iterator") and isinstance(response.body_iterator, (bytes, bytearray)):
+            elif hasattr(response, "body_iterator") and isinstance(
+                response.body_iterator, (bytes, bytearray)
+            ):
                 bytes_sent = len(response.body_iterator)  # type: ignore[arg-type]
             return response
         except Exception as e:

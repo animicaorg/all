@@ -52,14 +52,14 @@ The adapter is robust to missing sub-objects; absent metrics will be None.
 """
 
 import math
-from dataclasses import dataclass, asdict
-from typing import Any,Dict,Mapping,Optional,Tuple,Union
+from dataclasses import asdict, dataclass
+from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
 from aicf.errors import AICFError
 
 # Scaling constants (devnet-friendly defaults; can be tuned via policy later)
-AI_TOKENS_PER_UNIT = 1_000                  # 1k tokens ~ 1 ai_unit
-Q_GATE_SHOTS_PER_UNIT = 1_000               # 1k (depth*width*shots) ~ 1 quantum_unit
+AI_TOKENS_PER_UNIT = 1_000  # 1k tokens ~ 1 ai_unit
+Q_GATE_SHOTS_PER_UNIT = 1_000  # 1k (depth*width*shots) ~ 1 quantum_unit
 
 Kind = Literal["ai", "quantum"]
 
@@ -74,7 +74,7 @@ class ProofMetrics:
     kind: Kind
     units: int
     traps_ratio: Optional[float]
-    qos: Optional[float]             # AI: tokens/sec; Quantum: provider-reported QoS (if any)
+    qos: Optional[float]  # AI: tokens/sec; Quantum: provider-reported QoS (if any)
     latency_ms: Optional[int]
     details: Dict[str, Any]
 
@@ -170,8 +170,14 @@ def _ai_qos(env: Mapping[str, Any]) -> Optional[float]:
         if tps is not None:
             return max(0.0, tps)
     # derive from output_tokens / duration_s if available
-    usage = _extract(env, "usage") if isinstance(_extract(env, "usage"), Mapping) else None
-    ot = _as_int(usage.get("output_tokens"), 0) if isinstance(usage, Mapping) else _as_int(_extract(env, "output_tokens"), 0)
+    usage = (
+        _extract(env, "usage") if isinstance(_extract(env, "usage"), Mapping) else None
+    )
+    ot = (
+        _as_int(usage.get("output_tokens"), 0)
+        if isinstance(usage, Mapping)
+        else _as_int(_extract(env, "output_tokens"), 0)
+    )
     dur_ms = _as_int(_extract(env, "duration_ms"), 0)
     if ot > 0 and dur_ms > 0:
         return max(0.0, ot / (dur_ms / 1000.0))
@@ -218,15 +224,30 @@ def extract_ai_metrics(envelope: Mapping[str, Any]) -> ProofMetrics:
     # Collect details for auditing
     usage = _extract(envelope, "usage")
     details: Dict[str, Any] = {
-        "input_tokens": _as_int(usage.get("input_tokens"), 0) if isinstance(usage, Mapping) else _as_int(_extract(envelope, "input_tokens"), 0),
-        "output_tokens": _as_int(usage.get("output_tokens"), 0) if isinstance(usage, Mapping) else _as_int(_extract(envelope, "output_tokens"), 0),
+        "input_tokens": (
+            _as_int(usage.get("input_tokens"), 0)
+            if isinstance(usage, Mapping)
+            else _as_int(_extract(envelope, "input_tokens"), 0)
+        ),
+        "output_tokens": (
+            _as_int(usage.get("output_tokens"), 0)
+            if isinstance(usage, Mapping)
+            else _as_int(_extract(envelope, "output_tokens"), 0)
+        ),
         "duration_ms": _as_int(_extract(envelope, "duration_ms"), 0),
         "latency_ms_raw": _as_int(_extract(envelope, "latency_ms"), 0),
         "qos_tokens_per_sec": qos,
         "traps_ratio": traps,
     }
 
-    return ProofMetrics(kind="ai", units=units, traps_ratio=traps, qos=qos, latency_ms=latency, details=details)
+    return ProofMetrics(
+        kind="ai",
+        units=units,
+        traps_ratio=traps,
+        qos=qos,
+        latency_ms=latency,
+        details=details,
+    )
 
 
 def extract_quantum_metrics(envelope: Mapping[str, Any]) -> ProofMetrics:
@@ -266,7 +287,14 @@ def extract_quantum_metrics(envelope: Mapping[str, Any]) -> ProofMetrics:
         "traps_ratio": traps,
     }
 
-    return ProofMetrics(kind="quantum", units=units, traps_ratio=traps, qos=qos, latency_ms=latency, details=details)
+    return ProofMetrics(
+        kind="quantum",
+        units=units,
+        traps_ratio=traps,
+        qos=qos,
+        latency_ms=latency,
+        details=details,
+    )
 
 
 def extract_metrics(kind: Kind, envelope: Mapping[str, Any]) -> ProofMetrics:
@@ -276,7 +304,9 @@ def extract_metrics(kind: Kind, envelope: Mapping[str, Any]) -> ProofMetrics:
     k = (kind or _extract(envelope, "kind") or "").lower()
     if k not in ("ai", "quantum"):
         raise AICFError(f"unknown proof kind {kind!r}")
-    return extract_ai_metrics(envelope) if k == "ai" else extract_quantum_metrics(envelope)
+    return (
+        extract_ai_metrics(envelope) if k == "ai" else extract_quantum_metrics(envelope)
+    )
 
 
 # Optional convenience if callers pass the entire on-chain proof object

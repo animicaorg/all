@@ -33,7 +33,7 @@ __all__: List[str] = [
     "__version__",
     "main",
     "run",
-    "app",      # Typer app (lazy)
+    "app",  # Typer app (lazy)
 ]
 
 _SUBMODULE = "omni_sdk.cli.main"
@@ -62,7 +62,9 @@ def __dir__() -> List[str]:
     base = list(globals().keys())
     try:
         mod = _load()
-        pub = [n for n in getattr(mod, "__all__", []) or dir(mod) if not n.startswith("_")]
+        pub = [
+            n for n in getattr(mod, "__all__", []) or dir(mod) if not n.startswith("_")
+        ]
     except Exception:  # pragma: no cover
         pub = list(_EXPOSE)
     return sorted(set(base + pub + list(__all__)))

@@ -8,8 +8,8 @@ import pytest
 
 import consensus.difficulty as diff
 
-
 # ---------- tolerant pick/extract helpers (handle naming & signature drift) -----
+
 
 def _pick(mod, name: str, alts: list[str]):
     if hasattr(mod, name):
@@ -18,6 +18,7 @@ def _pick(mod, name: str, alts: list[str]):
         if hasattr(mod, a):
             return getattr(mod, a)
     raise AttributeError(f"Missing function {name} (tried {alts}) in {mod.__name__}")
+
 
 # main retarget fn
 RETARGET = _pick(
@@ -30,8 +31,14 @@ RETARGET = _pick(
 MICRO = _pick(
     diff,
     "share_microtarget",
-    ["compute_share_microtarget", "micro_target", "compute_share_threshold", "share_threshold"],
+    [
+        "compute_share_microtarget",
+        "micro_target",
+        "compute_share_threshold",
+        "share_threshold",
+    ],
 )
+
 
 # Extract theta from various return shapes
 def _extract_theta(ret):
@@ -124,6 +131,7 @@ def _call_retarget(
 
 # ------------------------------- tests -----------------------------------------
 
+
 def test_directionality_short_vs_long_intervals():
     """
     If blocks come faster than target (short interval), difficulty/Θ should go UP.
@@ -133,11 +141,15 @@ def test_directionality_short_vs_long_intervals():
     target = 12.0
 
     # 10s < 12s → increase Θ
-    theta1 = _call_retarget(theta0, observed_interval=10.0, target_interval=target, alpha=0.3)
+    theta1 = _call_retarget(
+        theta0, observed_interval=10.0, target_interval=target, alpha=0.3
+    )
     assert theta1 > theta0, "shorter interval should raise Θ (harder) via EMA"
 
     # 20s > 12s → decrease Θ
-    theta2 = _call_retarget(theta1, observed_interval=20.0, target_interval=target, alpha=0.3)
+    theta2 = _call_retarget(
+        theta1, observed_interval=20.0, target_interval=target, alpha=0.3
+    )
     assert theta2 < theta1, "longer interval should lower Θ (easier) via EMA"
 
 
@@ -153,16 +165,34 @@ def test_clamp_limits_applied():
     down, up = 0.8, 1.25  # at most -20% or +25% per retarget step
 
     # Force "too slow" (long interval) ⇒ Θ should not increase; it should go DOWN but not below 0.8×
-    theta1 = _call_retarget(theta0, observed_interval=1200.0, target_interval=target, alpha=0.5, clamp_down=down, clamp_up=up)
+    theta1 = _call_retarget(
+        theta0,
+        observed_interval=1200.0,
+        target_interval=target,
+        alpha=0.5,
+        clamp_down=down,
+        clamp_up=up,
+    )
     ratio1 = theta1 / theta0
     assert 0.0 < ratio1 <= 1.0, "long interval should reduce Θ"
-    assert ratio1 >= down - 1e-12, f"downward movement should be clamped to >= {down}, got {ratio1}"
+    assert (
+        ratio1 >= down - 1e-12
+    ), f"downward movement should be clamped to >= {down}, got {ratio1}"
 
     # Now force "too fast" (short interval) ⇒ Θ should go UP but not exceed 1.25×
-    theta2 = _call_retarget(theta1, observed_interval=0.12, target_interval=target, alpha=0.5, clamp_down=down, clamp_up=up)
+    theta2 = _call_retarget(
+        theta1,
+        observed_interval=0.12,
+        target_interval=target,
+        alpha=0.5,
+        clamp_down=down,
+        clamp_up=up,
+    )
     ratio2 = theta2 / theta1
     assert ratio2 >= 1.0, "short interval should raise Θ"
-    assert ratio2 <= up + 1e-12, f"upward movement should be clamped to <= {up}, got {ratio2}"
+    assert (
+        ratio2 <= up + 1e-12
+    ), f"upward movement should be clamped to <= {up}, got {ratio2}"
 
 
 def test_stability_under_interval_jitter():
@@ -182,7 +212,14 @@ def test_stability_under_interval_jitter():
         sign = -1.0 if (i % 2 == 0) else 1.0
         eps = 0.10 * sign + random.uniform(-0.01, 0.01)  # ~±10% with tiny noise
         interval = target * (1.0 + eps)
-        theta = _call_retarget(theta, observed_interval=interval, target_interval=target, alpha=alpha, clamp_down=down, clamp_up=up)
+        theta = _call_retarget(
+            theta,
+            observed_interval=interval,
+            target_interval=target,
+            alpha=alpha,
+            clamp_down=down,
+            clamp_up=up,
+        )
         series.append(theta)
 
     tmin, tmax = min(series), max(series)
@@ -238,12 +275,21 @@ def test_converges_toward_equilibrium_from_off_target():
     theta = 5.0  # way too high
     history = []
     for _ in range(50):
-        theta = _call_retarget(theta, observed_interval=target, target_interval=target, alpha=alpha, clamp_down=down, clamp_up=up)
+        theta = _call_retarget(
+            theta,
+            observed_interval=target,
+            target_interval=target,
+            alpha=alpha,
+            clamp_down=down,
+            clamp_up=up,
+        )
         history.append(theta)
 
     # Should monotonically move toward a fixed point; i.e., subsequent steps change less.
     # Check that the step deltas shrink (not strictly needed every step, but overall).
-    deltas = [abs(history[i+1] - history[i]) for i in range(len(history) - 1)]
-    assert deltas[-1] <= deltas[0] + 1e-12, "EMA should reduce step size toward equilibrium"
+    deltas = [abs(history[i + 1] - history[i]) for i in range(len(history) - 1)]
+    assert (
+        deltas[-1] <= deltas[0] + 1e-12
+    ), "EMA should reduce step size toward equilibrium"
     # And Θ should be within a tight band around some value (close to initial / arbitrary units).
     assert min(history) > 0, "Θ must stay positive"

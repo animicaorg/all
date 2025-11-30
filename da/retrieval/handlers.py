@@ -27,8 +27,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 # Optional dependency: hex helpers from da.utils.bytes (fallback to local impl)
 try:
-    from da.utils.bytes import hex_to_bytes, bytes_to_hex  # type: ignore
+    from da.utils.bytes import bytes_to_hex, hex_to_bytes  # type: ignore
 except Exception:  # pragma: no cover
+
     def hex_to_bytes(s: str) -> bytes:
         s = s.lower().strip()
         if s.startswith("0x"):
@@ -46,6 +47,7 @@ except Exception:  # pragma: no cover
 # Commitment parsing & ETag helpers
 # --------------------------------------------------------------------------------------
 
+
 def normalize_commitment_hex(s: str) -> str:
     """
     Normalize a commitment hex string:
@@ -55,23 +57,31 @@ def normalize_commitment_hex(s: str) -> str:
     - validate hex chars and length (>= 32 bytes preferred but not enforced here)
     """
     if not isinstance(s, str) or not s:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing commitment")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Missing commitment"
+        )
     s2 = s.strip().lower()
     if s2.startswith("0x"):
         s2 = s2[2:]
     if not re.fullmatch(r"[0-9a-f]+", s2 or ""):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid commitment (non-hex)")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid commitment (non-hex)",
+        )
     # Typical commitment size is 32 bytes (64 hex). We accept any >= 16 bytes to be future-proof.
     if len(s2) < 32:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Commitment too short")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Commitment too short"
+        )
     return s2
+
 
 def etag_for_commitment(commitment_hex: str) -> str:
     """
     Build a strong ETag for a DA artifact bound to the commitment.
     """
     ch = normalize_commitment_hex(commitment_hex)
-    return f"\"da-{ch}\""
+    return f'"da-{ch}"'
 
 
 # --------------------------------------------------------------------------------------
@@ -80,11 +90,12 @@ def etag_for_commitment(commitment_hex: str) -> str:
 
 _BYTES_UNIT = "bytes="
 
+
 @dataclass(frozen=True)
 class RangeSpec:
-    start: int        # inclusive
-    end: int          # inclusive
-    length: int       # total object length
+    start: int  # inclusive
+    end: int  # inclusive
+    length: int  # total object length
 
     @property
     def size(self) -> int:
@@ -93,7 +104,10 @@ class RangeSpec:
     def to_content_range(self) -> str:
         return f"bytes {self.start}-{self.end}/{self.length}"
 
-def parse_range_header(range_header: Optional[str], total_length: int) -> Optional[RangeSpec]:
+
+def parse_range_header(
+    range_header: Optional[str], total_length: int
+) -> Optional[RangeSpec]:
     """
     Parse a single-range header of the form:
         bytes=START-
@@ -112,14 +126,18 @@ def parse_range_header(range_header: Optional[str], total_length: int) -> Option
         return None
     if not hdr.startswith(_BYTES_UNIT):
         # Unknown unit — reject
-        raise HTTPException(status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
-                            detail="Unsupported Range unit")
+        raise HTTPException(
+            status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+            detail="Unsupported Range unit",
+        )
 
     # Reject multiple ranges "bytes=a-b,c-d"
-    parts = hdr[len(_BYTES_UNIT):].split(",")
+    parts = hdr[len(_BYTES_UNIT) :].split(",")
     if len(parts) != 1:
-        raise HTTPException(status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
-                            detail="Multiple ranges not supported")
+        raise HTTPException(
+            status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+            detail="Multiple ranges not supported",
+        )
     spec = parts[0]
 
     # "-SUFFIX" (last N bytes)
@@ -127,14 +145,20 @@ def parse_range_header(range_header: Optional[str], total_length: int) -> Option
         try:
             n = int(spec[1:])
         except ValueError:
-            raise HTTPException(status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
-                                detail="Invalid Range header")
+            raise HTTPException(
+                status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+                detail="Invalid Range header",
+            )
         if n <= 0:
-            raise HTTPException(status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
-                                detail="Invalid suffix length")
+            raise HTTPException(
+                status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+                detail="Invalid suffix length",
+            )
         if total_length == 0:
-            raise HTTPException(status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
-                                detail="Empty resource")
+            raise HTTPException(
+                status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+                detail="Empty resource",
+            )
         n = min(n, total_length)
         start = total_length - n
         end = total_length - 1
@@ -142,17 +166,23 @@ def parse_range_header(range_header: Optional[str], total_length: int) -> Option
 
     # "START-" or "START-END"
     if "-" not in spec:
-        raise HTTPException(status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
-                            detail="Invalid Range (missing '-')")
+        raise HTTPException(
+            status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+            detail="Invalid Range (missing '-')",
+        )
     start_s, end_s = spec.split("-", 1)
     try:
         start = int(start_s)
     except ValueError:
-        raise HTTPException(status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
-                            detail="Invalid Range start")
+        raise HTTPException(
+            status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+            detail="Invalid Range start",
+        )
     if start < 0 or start >= total_length:
-        raise HTTPException(status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
-                            detail="Range start out of bounds")
+        raise HTTPException(
+            status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+            detail="Range start out of bounds",
+        )
 
     if end_s == "" or end_s is None:
         end = total_length - 1
@@ -160,11 +190,15 @@ def parse_range_header(range_header: Optional[str], total_length: int) -> Option
         try:
             end = int(end_s)
         except ValueError:
-            raise HTTPException(status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
-                                detail="Invalid Range end")
+            raise HTTPException(
+                status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+                detail="Invalid Range end",
+            )
         if end < start:
-            raise HTTPException(status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
-                                detail="Range end < start")
+            raise HTTPException(
+                status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE,
+                detail="Range end < start",
+            )
         end = min(end, total_length - 1)
 
     return RangeSpec(start=start, end=end, length=total_length)
@@ -176,7 +210,10 @@ def parse_range_header(range_header: Optional[str], total_length: int) -> Option
 
 _DEFAULT_CHUNK = 1024 * 1024  # 1 MiB
 
-def _iter_file_range(path: Path, start: int, end: int, chunk_size: int = _DEFAULT_CHUNK) -> Iterator[bytes]:
+
+def _iter_file_range(
+    path: Path, start: int, end: int, chunk_size: int = _DEFAULT_CHUNK
+) -> Iterator[bytes]:
     to_read = end - start + 1
     with path.open("rb") as f:
         f.seek(start)
@@ -187,6 +224,7 @@ def _iter_file_range(path: Path, start: int, end: int, chunk_size: int = _DEFAUL
                 break
             yield chunk
             remaining -= len(chunk)
+
 
 def stream_file_response(
     request: Request,
@@ -203,7 +241,9 @@ def stream_file_response(
     Sets: ETag, Accept-Ranges, Cache-Control, Content-Disposition (if filename provided).
     """
     if not path.exists() or not path.is_file():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Blob not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Blob not found"
+        )
 
     size = path.stat().st_size
 
@@ -224,12 +264,16 @@ def stream_file_response(
     if rspec is None:
         # Full content (200)
         body = _iter_file_range(path, 0, size - 1, chunk_size=chunk_size)
-        resp = StreamingResponse(body, media_type=content_type, status_code=status.HTTP_200_OK)
+        resp = StreamingResponse(
+            body, media_type=content_type, status_code=status.HTTP_200_OK
+        )
         resp.headers["Content-Length"] = str(size)
     else:
         # Partial content (206)
         body = _iter_file_range(path, rspec.start, rspec.end, chunk_size=chunk_size)
-        resp = StreamingResponse(body, media_type=content_type, status_code=status.HTTP_206_PARTIAL_CONTENT)
+        resp = StreamingResponse(
+            body, media_type=content_type, status_code=status.HTTP_206_PARTIAL_CONTENT
+        )
         resp.headers["Content-Range"] = rspec.to_content_range()
         resp.headers["Content-Length"] = str(rspec.size)
 
@@ -239,9 +283,10 @@ def stream_file_response(
     resp.headers["Cache-Control"] = f"public, max-age={int(cache_max_age)}"
     if filename:
         # RFC 6266
-        safe = filename.replace("\"", "")
+        safe = filename.replace('"', "")
         resp.headers["Content-Disposition"] = f'inline; filename="{safe}"'
     return resp
+
 
 def json_response(
     data: dict,
@@ -264,7 +309,10 @@ def json_response(
 # Misc helpers
 # --------------------------------------------------------------------------------------
 
-def guess_content_type_for_blob(ns: Optional[int] = None, filename: Optional[str] = None) -> str:
+
+def guess_content_type_for_blob(
+    ns: Optional[int] = None, filename: Optional[str] = None
+) -> str:
     """
     Best-effort content type for blobs. We default to octet-stream; if a filename
     hint is available, use a simple extension-based mapping.

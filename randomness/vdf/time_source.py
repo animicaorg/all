@@ -36,26 +36,29 @@ Notes
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional, Tuple
-import time
 import json
 import os
+import time
+from dataclasses import dataclass
+from typing import Optional, Tuple
 
 # --- Soft imports of consensus params (optional) ---------------------------------
 try:
     from .params import get_params  # type: ignore
 except Exception:  # pragma: no cover
+
     def get_params():
         class _P:
             iterations = 1
             # Fallback modulus is fine for timing loops; security irrelevant here.
             modulus_n = (1 << 2048) - 159
             backend = "rsa"
+
         return _P()
 
 
 # --- Internal helpers ------------------------------------------------------------
+
 
 def _be_u64(n: int) -> bytes:
     return int(n).to_bytes(8, "big", signed=False)
@@ -85,7 +88,9 @@ def _squarings(n: int, x: int, T: int) -> int:
     return x
 
 
-def _measure_once(n: int, warmup_squarings: int, window_seconds: float) -> Tuple[int, float]:
+def _measure_once(
+    n: int, warmup_squarings: int, window_seconds: float
+) -> Tuple[int, float]:
     # Warmup to stabilize caches/JITs (if any).
     x = 5
     if warmup_squarings > 0:
@@ -114,6 +119,7 @@ def _measure_once(n: int, warmup_squarings: int, window_seconds: float) -> Tuple
 
 
 # --- Public functions ------------------------------------------------------------
+
 
 def measure_iterations_per_second(
     *,
@@ -173,9 +179,11 @@ def estimate_seconds_for_iterations(iterations: int, ips: float) -> float:
 
 # --- Simple EMA smoother ---------------------------------------------------------
 
+
 @dataclass
 class RateEMA:
     """Exponential moving average for iterations/sec measurements."""
+
     alpha: float = 0.2
     value: Optional[float] = None
 
@@ -191,12 +199,14 @@ class RateEMA:
 
 # --- TimeSource convenience wrapper ---------------------------------------------
 
+
 @dataclass
 class TimeSource:
     """
     Convenience wrapper that tracks a smoothed iterations/sec and can
     persist it to a small JSON file between runs (optional).
     """
+
     alpha: float = 0.2
     cache_path: Optional[str] = None
     ema: RateEMA = None  # type: ignore
@@ -215,8 +225,12 @@ class TimeSource:
 
     # Calibration / persistence
 
-    def calibrate(self, seconds: float = 0.5, warmup: int = 4096, rounds: int = 3) -> float:
-        sample = measure_iterations_per_second(seconds=seconds, warmup=warmup, rounds=rounds)
+    def calibrate(
+        self, seconds: float = 0.5, warmup: int = 4096, rounds: int = 3
+    ) -> float:
+        sample = measure_iterations_per_second(
+            seconds=seconds, warmup=warmup, rounds=rounds
+        )
         ips = self.ema.update(sample)
         self._persist()
         return ips

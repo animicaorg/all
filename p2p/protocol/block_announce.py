@@ -36,12 +36,13 @@ Limits import from p2p.constants when available and fall back to sane defaults.
 """
 
 from dataclasses import dataclass
-from typing import Iterable, List, Sequence, Tuple, Dict
+from typing import Dict, Iterable, List, Sequence, Tuple
 
 import msgspec
 
 try:
-    from p2p.constants import HASH_LEN, MAX_TXIDS_PER_COMPACT, SHORT_ID_LEN, MAX_BLOCK_TXS, MAX_PROOFS
+    from p2p.constants import (HASH_LEN, MAX_BLOCK_TXS, MAX_PROOFS,
+                               MAX_TXIDS_PER_COMPACT, SHORT_ID_LEN)
 except Exception:  # pragma: no cover
     HASH_LEN = 32
     SHORT_ID_LEN = 6
@@ -62,6 +63,7 @@ class ProtocolError(Exception):
 
 # ---------------------- Structs ----------------------
 
+
 class _CompactAnnounceS(msgspec.Struct, omit_defaults=True):
     """
     CompactAnnounce:
@@ -74,6 +76,7 @@ class _CompactAnnounceS(msgspec.Struct, omit_defaults=True):
       pc  : proofs count (uint)
       sid : list[bytes(SHORT_ID_LEN)] optional (short-ids of txs in canonical order)
     """
+
     t: int
     hh: bytes
     ph: bytes
@@ -91,6 +94,7 @@ class _RequestBlockPiecesS(msgspec.Struct, omit_defaults=True):
       hh  : block hash (32B)
       want: bitmask (header=1, txs=2, proofs=4, receipts=8)
     """
+
     t: int
     hh: bytes
     want: int
@@ -103,6 +107,7 @@ class _RequestMissingTxsS(msgspec.Struct, omit_defaults=True):
       hh  : block hash (32B)
       sid : list[bytes(SHORT_ID_LEN)] — short-ids to fetch
     """
+
     t: int
     hh: bytes
     sid: List[bytes]
@@ -116,6 +121,7 @@ class _RespondMissingTxsS(msgspec.Struct, omit_defaults=True):
       tx  : list[bytes] — raw CBOR-encoded tx bodies matching request order
       dup : list[int]   — indices of entries that collided (optional; default empty)
     """
+
     t: int
     hh: bytes
     tx: List[bytes]
@@ -131,6 +137,7 @@ DEC_MTX = msgspec.msgpack.Decoder(type=_RespondMissingTxsS)
 
 # ---------------------- Helpers ----------------------
 
+
 def short_id(header_hash: bytes, tx_hash: bytes) -> bytes:
     """
     Compute a 6-byte short-id deterministically from header-hash and tx-hash.
@@ -139,13 +146,16 @@ def short_id(header_hash: bytes, tx_hash: bytes) -> bytes:
     if len(header_hash) != HASH_LEN or len(tx_hash) != HASH_LEN:
         raise ProtocolError("bad hash length for short-id")
     import hashlib
+
     h = hashlib.sha3_256(b"sid" + header_hash + tx_hash).digest()
     return h[:SHORT_ID_LEN]
 
 
 def _check_hash(tag: str, h: bytes) -> None:
     if not isinstance(h, (bytes, bytearray)) or len(h) != HASH_LEN:
-        raise ProtocolError(f"{tag}: invalid hash length {len(h) if isinstance(h,(bytes,bytearray)) else 'NA'}")
+        raise ProtocolError(
+            f"{tag}: invalid hash length {len(h) if isinstance(h,(bytes,bytearray)) else 'NA'}"
+        )
 
 
 def _check_sid_list(sids: Sequence[bytes]) -> None:
@@ -164,6 +174,7 @@ def _check_counts(txc: int, pc: int) -> None:
 
 
 # ---------------------- Builders ----------------------
+
 
 @dataclass(frozen=True)
 class CompactAnnounce:
@@ -192,8 +203,13 @@ def build_announce(
     sids = list(short_ids or [])
     _check_sid_list(sids)
     msg = _CompactAnnounceS(
-        t=TAG_ANNOUNCE, hh=bytes(header_hash), ph=bytes(parent_hash),
-        ht=int(height), sc=int(score), tc=int(tx_count), pc=int(proofs_count),
+        t=TAG_ANNOUNCE,
+        hh=bytes(header_hash),
+        ph=bytes(parent_hash),
+        ht=int(height),
+        sc=int(score),
+        tc=int(tx_count),
+        pc=int(proofs_count),
         sid=[bytes(s) for s in sids],
     )
     return ENC.encode(msg)
@@ -202,7 +218,9 @@ def build_announce(
 def build_get_block(header_hash: bytes, want_mask: int) -> bytes:
     """Encode RequestBlockPieces for a given block hash and 'want' bitmask."""
     _check_hash("header", header_hash)
-    msg = _RequestBlockPiecesS(t=TAG_GET_BLOCK, hh=bytes(header_hash), want=int(want_mask))
+    msg = _RequestBlockPiecesS(
+        t=TAG_GET_BLOCK, hh=bytes(header_hash), want=int(want_mask)
+    )
     return ENC.encode(msg)
 
 
@@ -211,22 +229,29 @@ def build_ask_missing(header_hash: bytes, short_ids: Iterable[bytes]) -> bytes:
     _check_hash("header", header_hash)
     sids = list(short_ids)
     _check_sid_list(sids)
-    msg = _RequestMissingTxsS(t=TAG_ASK_MISSING, hh=bytes(header_hash), sid=[bytes(s) for s in sids])
+    msg = _RequestMissingTxsS(
+        t=TAG_ASK_MISSING, hh=bytes(header_hash), sid=[bytes(s) for s in sids]
+    )
     return ENC.encode(msg)
 
 
-def build_missing_txs(header_hash: bytes, tx_bodies: Iterable[bytes], dup_indices: Iterable[int] = ()) -> bytes:
+def build_missing_txs(
+    header_hash: bytes, tx_bodies: Iterable[bytes], dup_indices: Iterable[int] = ()
+) -> bytes:
     """Encode RespondMissingTxs with raw CBOR-encoded tx bodies and optional duplicate indices."""
     _check_hash("header", header_hash)
     txs = [bytes(b) for b in tx_bodies]
     if len(txs) > MAX_TXIDS_PER_COMPACT:
         raise ProtocolError("too many tx bodies in response")
     dups = [int(i) for i in dup_indices]
-    msg = _RespondMissingTxsS(t=TAG_MISSING_TXS, hh=bytes(header_hash), tx=txs, dup=dups)
+    msg = _RespondMissingTxsS(
+        t=TAG_MISSING_TXS, hh=bytes(header_hash), tx=txs, dup=dups
+    )
     return ENC.encode(msg)
 
 
 # ---------------------- Parsers ----------------------
+
 
 def parse_announce(data: bytes) -> CompactAnnounce:
     m = DEC_ANN.decode(data)
@@ -273,7 +298,9 @@ def parse_ask_missing(data: bytes) -> RequestMissingTxs:
         raise ProtocolError("ASK_MISSING tag mismatch")
     _check_hash("header", m.hh)
     _check_sid_list(m.sid)
-    return RequestMissingTxs(header_hash=bytes(m.hh), short_ids=[bytes(s) for s in m.sid])
+    return RequestMissingTxs(
+        header_hash=bytes(m.hh), short_ids=[bytes(s) for s in m.sid]
+    )
 
 
 @dataclass(frozen=True)
@@ -297,6 +324,7 @@ def parse_missing_txs(data: bytes) -> RespondMissingTxs:
 
 # ---------------------- Utilities ----------------------
 
+
 def make_short_ids(header_hash: bytes, tx_hashes: Iterable[bytes]) -> List[bytes]:
     """Compute short-ids for a list of tx hashes for this header."""
     return [short_id(header_hash, h) for h in tx_hashes]
@@ -318,15 +346,33 @@ def missing_from_sid_set(
 
 __all__ = [
     # tags
-    "TAG_ANNOUNCE", "TAG_GET_BLOCK", "TAG_ASK_MISSING", "TAG_MISSING_TXS",
+    "TAG_ANNOUNCE",
+    "TAG_GET_BLOCK",
+    "TAG_ASK_MISSING",
+    "TAG_MISSING_TXS",
     # builders
-    "build_announce", "build_get_block", "build_ask_missing", "build_missing_txs",
+    "build_announce",
+    "build_get_block",
+    "build_ask_missing",
+    "build_missing_txs",
     # parsers
-    "parse_announce", "parse_get_block", "parse_ask_missing", "parse_missing_txs",
+    "parse_announce",
+    "parse_get_block",
+    "parse_ask_missing",
+    "parse_missing_txs",
     # dataclasses
-    "CompactAnnounce", "RequestBlockPieces", "RequestMissingTxs", "RespondMissingTxs",
+    "CompactAnnounce",
+    "RequestBlockPieces",
+    "RequestMissingTxs",
+    "RespondMissingTxs",
     # helpers
-    "short_id", "make_short_ids", "missing_from_sid_set",
+    "short_id",
+    "make_short_ids",
+    "missing_from_sid_set",
     # constants (re-export fallbacks ok)
-    "HASH_LEN", "SHORT_ID_LEN", "MAX_TXIDS_PER_COMPACT", "MAX_BLOCK_TXS", "MAX_PROOFS",
+    "HASH_LEN",
+    "SHORT_ID_LEN",
+    "MAX_TXIDS_PER_COMPACT",
+    "MAX_BLOCK_TXS",
+    "MAX_PROOFS",
 ]

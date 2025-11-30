@@ -31,23 +31,23 @@ This module is pure logic and does not do any IO or sleeping.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple
-import time
 import math
 import threading
+import time
 from collections import OrderedDict
-
+from dataclasses import dataclass, field
+from typing import Dict, Optional, Tuple
 
 # -------------------------------
 # Token bucket implementation
 # -------------------------------
 
+
 @dataclass
 class TokenBucket:
-    capacity: float            # maximum number of tokens
-    rate_per_sec: float        # refill rate (tokens/sec)
-    tokens: float = 0.0        # current tokens
+    capacity: float  # maximum number of tokens
+    rate_per_sec: float  # refill rate (tokens/sec)
+    tokens: float = 0.0  # current tokens
     last_refill: float = field(default_factory=time.monotonic)
 
     def refill(self, now: Optional[float] = None) -> None:
@@ -63,7 +63,9 @@ class TokenBucket:
             self.tokens = min(self.capacity, self.tokens + self.rate_per_sec * dt)
             self.last_refill = now
 
-    def try_consume(self, amount: float, now: Optional[float] = None) -> Tuple[bool, float]:
+    def try_consume(
+        self, amount: float, now: Optional[float] = None
+    ) -> Tuple[bool, float]:
         """
         Attempt to consume 'amount' tokens.
         Returns (ok, wait_seconds_if_denied).
@@ -108,6 +110,7 @@ class TokenBucket:
 # Limiter config/state
 # -------------------------------
 
+
 @dataclass(frozen=True)
 class LimiterConfig:
     # Global TX
@@ -123,8 +126,8 @@ class LimiterConfig:
     per_peer_tx_burst: float = 40.0
 
     # Housekeeping
-    peer_bucket_ttl_sec: float = 600.0     # drop idle peers after 10 min
-    peer_bucket_max: int = 10_000          # upper bound on peers kept (LRU)
+    peer_bucket_ttl_sec: float = 600.0  # drop idle peers after 10 min
+    peer_bucket_max: int = 10_000  # upper bound on peers kept (LRU)
 
 
 @dataclass
@@ -155,8 +158,15 @@ class Limiter:
     def __init__(self, cfg: LimiterConfig):
         self.cfg = cfg
         now = time.monotonic()
-        self._global_tx = TokenBucket(cfg.global_tx_burst, cfg.global_tx_rate_per_sec, cfg.global_tx_burst, now)
-        self._global_bytes = TokenBucket(cfg.global_bytes_burst, cfg.global_bytes_rate_per_sec, cfg.global_bytes_burst, now)
+        self._global_tx = TokenBucket(
+            cfg.global_tx_burst, cfg.global_tx_rate_per_sec, cfg.global_tx_burst, now
+        )
+        self._global_bytes = TokenBucket(
+            cfg.global_bytes_burst,
+            cfg.global_bytes_rate_per_sec,
+            cfg.global_bytes_burst,
+            now,
+        )
         # Per-peer buckets stored in an OrderedDict to support LRU-style cleanup
         self._peers: "OrderedDict[str, PeerBucket]" = OrderedDict()
         self._lock = threading.Lock()
@@ -167,8 +177,12 @@ class Limiter:
         pb = self._peers.get(peer_id)
         if pb is None:
             pb = PeerBucket(
-                bucket=TokenBucket(self.cfg.per_peer_tx_burst, self.cfg.per_peer_tx_rate_per_sec,
-                                   self.cfg.per_peer_tx_burst, now),
+                bucket=TokenBucket(
+                    self.cfg.per_peer_tx_burst,
+                    self.cfg.per_peer_tx_rate_per_sec,
+                    self.cfg.per_peer_tx_burst,
+                    now,
+                ),
                 last_seen=now,
             )
             self._peers[peer_id] = pb
@@ -182,7 +196,9 @@ class Limiter:
         # TTL eviction
         ttl = self.cfg.peer_bucket_ttl_sec
         if ttl > 0:
-            expired = [pid for pid, pb in self._peers.items() if (now - pb.last_seen) > ttl]
+            expired = [
+                pid for pid, pb in self._peers.items() if (now - pb.last_seen) > ttl
+            ]
             for pid in expired:
                 self._peers.pop(pid, None)
         # Size cap eviction (LRU)
@@ -192,7 +208,9 @@ class Limiter:
 
     # --------- admission ---------
 
-    def admit(self, peer_id: str, tx_bytes: int, *, now: Optional[float] = None) -> AdmissionDecision:
+    def admit(
+        self, peer_id: str, tx_bytes: int, *, now: Optional[float] = None
+    ) -> AdmissionDecision:
         """
         Atomically check & consume tokens for:
           - 1 TX from 'peer_id'
@@ -265,10 +283,18 @@ class Limiter:
         with self._lock:
             self.cfg = cfg
             # Update globals
-            self._global_tx.refill(now); self._global_tx.capacity = cfg.global_tx_burst; self._global_tx.rate_per_sec = cfg.global_tx_rate_per_sec
-            self._global_tx.tokens = min(self._global_tx.tokens, self._global_tx.capacity)
-            self._global_bytes.refill(now); self._global_bytes.capacity = cfg.global_bytes_burst; self._global_bytes.rate_per_sec = cfg.global_bytes_rate_per_sec
-            self._global_bytes.tokens = min(self._global_bytes.tokens, self._global_bytes.capacity)
+            self._global_tx.refill(now)
+            self._global_tx.capacity = cfg.global_tx_burst
+            self._global_tx.rate_per_sec = cfg.global_tx_rate_per_sec
+            self._global_tx.tokens = min(
+                self._global_tx.tokens, self._global_tx.capacity
+            )
+            self._global_bytes.refill(now)
+            self._global_bytes.capacity = cfg.global_bytes_burst
+            self._global_bytes.rate_per_sec = cfg.global_bytes_rate_per_sec
+            self._global_bytes.tokens = min(
+                self._global_bytes.tokens, self._global_bytes.capacity
+            )
             # Update peers
             for pb in self._peers.values():
                 pb.bucket.refill(now)

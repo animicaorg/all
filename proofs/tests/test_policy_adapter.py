@@ -6,8 +6,8 @@ from typing import Any, Callable
 
 import pytest
 
-from proofs.metrics import ProofMetrics
 import proofs.policy_adapter as adapter_mod
+from proofs.metrics import ProofMetrics
 
 
 def _get_adapter() -> Callable[..., float]:
@@ -70,6 +70,7 @@ def _try_call(kind: Any, m: ProofMetrics) -> float:
 
 # ------------------------------ HashShare mapping ------------------------------------
 
+
 def test_hashshare_monotonic_in_d_ratio():
     m_low = ProofMetrics(d_ratio=0.10)
     m_mid = ProofMetrics(d_ratio=0.50)
@@ -79,10 +80,13 @@ def test_hashshare_monotonic_in_d_ratio():
     psi_mid = _try_call("hash", m_mid)
     psi_high = _try_call("hash", m_high)
 
-    assert 0.0 <= psi_low < psi_mid < psi_high, "ψ must increase with share difficulty ratio"
+    assert (
+        0.0 <= psi_low < psi_mid < psi_high
+    ), "ψ must increase with share difficulty ratio"
 
 
 # ------------------------------ AI mapping -------------------------------------------
+
 
 def test_ai_increases_with_units_and_quality():
     # Base: reasonable traps ratio and QoS
@@ -95,14 +99,18 @@ def test_ai_increases_with_units_and_quality():
     assert psi_more > psi_base >= 0.0
 
     # Worse traps/QoS → lower ψ (holding units constant)
-    worse_quality = ProofMetrics(ai_units=10.0, traps_ratio=0.60, qos=0.80, redundancy=2)
+    worse_quality = ProofMetrics(
+        ai_units=10.0, traps_ratio=0.60, qos=0.80, redundancy=2
+    )
     psi_worse = _try_call("ai", worse_quality)
     assert psi_worse < psi_base
 
     # Redundancy shouldn't *increase* ψ beyond diminishing returns; ensure it's bounded
     high_redund = ProofMetrics(ai_units=10.0, traps_ratio=0.90, qos=0.95, redundancy=6)
     psi_high_redund = _try_call("ai", high_redund)
-    assert psi_high_redund <= psi_more + 1e-9  # at most comparable to more units, not unbounded
+    assert (
+        psi_high_redund <= psi_more + 1e-9
+    )  # at most comparable to more units, not unbounded
 
 
 def test_ai_zero_units_yields_zero_or_near_zero():
@@ -115,6 +123,7 @@ def test_ai_zero_units_yields_zero_or_near_zero():
 
 # ------------------------------ VDF mapping ------------------------------------------
 
+
 def test_vdf_seconds_monotonic():
     fast = ProofMetrics(vdf_seconds=0.10)
     slow = ProofMetrics(vdf_seconds=0.50)
@@ -125,6 +134,7 @@ def test_vdf_seconds_monotonic():
 
 
 # ------------------------------ Non-negativity & stability ---------------------------
+
 
 @pytest.mark.parametrize(
     "kind,metrics",

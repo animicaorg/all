@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import dataclasses as dc
 import typing as t
+
 import pytest
 
-import consensus.validator as validator_mod
-import consensus.scorer as scorer_mod
 import consensus.math as math_mod
 import consensus.policy as policy_mod
+import consensus.scorer as scorer_mod
+import consensus.validator as validator_mod
 
 try:
-    from consensus.errors import PolicyError, ConsensusError
+    from consensus.errors import ConsensusError, PolicyError
 except Exception:  # pragma: no cover - make the test resilient to naming
+
     class PolicyError(Exception):
         pass
 
@@ -21,12 +23,14 @@ except Exception:  # pragma: no cover - make the test resilient to naming
 
 # ------------------------------- Helpers & Adaptor --------------------------------
 
+
 @dc.dataclass
 class _Header:
     """
     A minimal header shape that offers both attribute and item access
     for common theta/policy-root field spellings.
     """
+
     theta_micro: int
     poies_policy_root: bytes
     alg_policy_root: bytes
@@ -62,6 +66,7 @@ def _normalize(k: str) -> str:
 @dc.dataclass
 class _Proof:
     """Tiny proof envelope carrying a psi contribution (µ-nats)."""
+
     type_id: int
     psi_micro: int
     body: bytes = b""
@@ -75,6 +80,7 @@ class _Adaptor:
       - Class-style:    Validator(...).validate_header(...)
       - Or, as a last resort, falls back to scorer+math directly to assert acceptance.
     """
+
     def __init__(self):
         self.V = None
         for cname in ("Validator", "HeaderValidator"):
@@ -90,7 +96,12 @@ class _Adaptor:
 
     def accept(self, header: _Header, proofs: list[_Proof], policy: t.Any) -> bool:
         # Try function-style entrypoints
-        for fname in ("validate_header", "validate_block_header", "validate", "check_header"):
+        for fname in (
+            "validate_header",
+            "validate_block_header",
+            "validate",
+            "check_header",
+        ):
             fn = getattr(validator_mod, fname, None)
             if callable(fn):
                 for args in (
@@ -130,6 +141,7 @@ class _Adaptor:
 
 # ------------------------------- Test Fixtures ------------------------------------
 
+
 @pytest.fixture
 def good_roots() -> tuple[bytes, bytes]:
     # 32-byte roots for policy bindings
@@ -167,6 +179,7 @@ def adaptor() -> _Adaptor:
 
 # ------------------------------- Tests --------------------------------------------
 
+
 def test_accept_header_when_S_ge_theta(monkeypatch, adaptor: _Adaptor, good_roots):
     """
     Acceptance: with H(u)=200_000 µ-nats and Σψ=900_000 µ-nats and θ=1_000_000,
@@ -180,9 +193,12 @@ def test_accept_header_when_S_ge_theta(monkeypatch, adaptor: _Adaptor, good_root
         theta_micro=1_000_000,
         poies_policy_root=poies_root,
         alg_policy_root=alg_root,
-        u_draw=b"\xAA" * 32,
+        u_draw=b"\xaa" * 32,
     )
-    proofs = [_Proof(type_id=1, psi_micro=500_000), _Proof(type_id=2, psi_micro=400_000)]
+    proofs = [
+        _Proof(type_id=1, psi_micro=500_000),
+        _Proof(type_id=2, psi_micro=400_000),
+    ]
 
     # Some implementations compute Σψ via scorer; ensure it can sum our test proofs if consulted.
     def fake_score(_policy, _proofs):
@@ -192,9 +208,13 @@ def test_accept_header_when_S_ge_theta(monkeypatch, adaptor: _Adaptor, good_root
         }
 
     if hasattr(scorer_mod, "score_batch"):
-        monkeypatch.setattr(scorer_mod, "score_batch", lambda pol, prfs: fake_score(pol, prfs))
+        monkeypatch.setattr(
+            scorer_mod, "score_batch", lambda pol, prfs: fake_score(pol, prfs)
+        )
     elif hasattr(scorer_mod, "sum_psi"):
-        monkeypatch.setattr(scorer_mod, "sum_psi", lambda prfs: sum(p.psi_micro for p in prfs))
+        monkeypatch.setattr(
+            scorer_mod, "sum_psi", lambda prfs: sum(p.psi_micro for p in prfs)
+        )
 
     # Policy object is optional/shape-agnostic here; pass roots dict for convenience.
     policy = {"poies_policy_root": poies_root, "alg_policy_root": alg_root}
@@ -207,7 +227,9 @@ def test_reject_on_policy_root_mismatch(monkeypatch, adaptor: _Adaptor, good_roo
     """
     Policy-root mismatch should be rejected by the validator (PolicyError or False).
     """
-    monkeypatch.setattr(math_mod, "H", lambda u: 1_000_000, raising=True)  # huge H(u) so S would pass if not for roots
+    monkeypatch.setattr(
+        math_mod, "H", lambda u: 1_000_000, raising=True
+    )  # huge H(u) so S would pass if not for roots
 
     poies_root, alg_root = good_roots
     bad_alg_root = bytes.fromhex("33" * 32)
@@ -224,7 +246,9 @@ def test_reject_on_policy_root_mismatch(monkeypatch, adaptor: _Adaptor, good_roo
     try:
         accepted = adaptor.accept(header, proofs, policy)
         # If the API signaled via boolean, ensure it's False.
-        assert accepted is False, "header should be rejected due to policy-root mismatch"
+        assert (
+            accepted is False
+        ), "header should be rejected due to policy-root mismatch"
     except PolicyError:
         # Preferred behavior: explicit PolicyError.
         pass
@@ -241,7 +265,10 @@ def test_theta_schedule_accept_vs_reject(monkeypatch, adaptor: _Adaptor, good_ro
     monkeypatch.setattr(math_mod, "H", lambda u: 150_000, raising=True)
 
     poies_root, alg_root = good_roots
-    proofs = [_Proof(type_id=1, psi_micro=200_000), _Proof(type_id=2, psi_micro=100_000)]
+    proofs = [
+        _Proof(type_id=1, psi_micro=200_000),
+        _Proof(type_id=2, psi_micro=100_000),
+    ]
     policy = {"poies_policy_root": poies_root, "alg_policy_root": alg_root}
 
     # High θ → reject (S = 450_000 < 500_000)

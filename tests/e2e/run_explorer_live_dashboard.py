@@ -40,10 +40,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
 
-from tests.e2e import env, skip_unless_e2e, default_timeout
-
+from tests.e2e import default_timeout, env, skip_unless_e2e
 
 # ------------------------------ WS mock injector ------------------------------
+
 
 def _ws_mock_init_script() -> str:
     """
@@ -57,7 +57,7 @@ def _ws_mock_init_script() -> str:
     # We provide a deterministic sequence of updates here to check against later
     gamma_seq = [0.10, 0.12, 0.15]
     fairness_seq = [0.50, 0.55, 0.60]
-    mix_seq = ["0x" + "ab"*32, "0x" + "cd"*32, "0x" + "ef"*32]
+    mix_seq = ["0x" + "ab" * 32, "0x" + "cd" * 32, "0x" + "ef" * 32]
 
     return f"""
     (() => {{
@@ -147,6 +147,7 @@ def _ws_mock_init_script() -> str:
 
 # ---------------------------------- helpers -----------------------------------
 
+
 def _parse_first_number(s: str) -> Optional[float]:
     m = re.search(r"([-+]?[0-9]*\\.?[0-9]+)", s)
     if not m:
@@ -159,13 +160,16 @@ def _parse_first_number(s: str) -> Optional[float]:
 
 # ---------------------------------- the test ----------------------------------
 
+
 @pytest.mark.timeout(360)
 def test_explorer_live_dashboard_updates_from_ws_mock():
     skip_unless_e2e()
 
     url = env("EXPLORER_WEB_URL")
     if not url:
-        pytest.skip("EXPLORER_WEB_URL is not set; provide a running explorer-web (e.g., http://127.0.0.1:5174)")
+        pytest.skip(
+            "EXPLORER_WEB_URL is not set; provide a running explorer-web (e.g., http://127.0.0.1:5174)"
+        )
 
     try:
         from playwright.sync_api import sync_playwright  # type: ignore
@@ -176,6 +180,7 @@ def test_explorer_live_dashboard_updates_from_ws_mock():
         )
 
     from playwright.sync_api import sync_playwright  # type: ignore
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         ctx = browser.new_context()
@@ -204,7 +209,9 @@ def test_explorer_live_dashboard_updates_from_ws_mock():
             # Try a broader query over the whole body text
             body_text = (page.text_content("body") or "").lower()
             if not any(k.lower() in body_text for k in keywords):
-                pytest.xfail("Explorer UI did not render Γ/Gamma/Fairness/Mix labels; app build/layout may differ.")
+                pytest.xfail(
+                    "Explorer UI did not render Γ/Gamma/Fairness/Mix labels; app build/layout may differ."
+                )
 
         # Observe numeric changes near those keywords via a MutationObserver
         # The observer will resolve once it sees a delta for any matched element.
@@ -258,18 +265,22 @@ def test_explorer_live_dashboard_updates_from_ws_mock():
                 ctx.close()
                 browser.close()
                 return
-            pytest.xfail("Did not observe live numeric changes near Γ/Fairness/Mix within timeout (UI wiring may differ).")
+            pytest.xfail(
+                "Did not observe live numeric changes near Γ/Fairness/Mix within timeout (UI wiring may differ)."
+            )
 
         # If we did observe a change, try to match against our injected sequences
         # Accept any change; prefer to assert it's one of the gamma/fairness values we pushed.
         after_num = float(changed.get("after")) if isinstance(changed, dict) else None
         if after_num is not None:
-            injected = page.evaluate("() => ({ g:(window.__explorerE2E||{}).gammaSeq, f:(window.__explorerE2E||{}).fairnessSeq })")
+            injected = page.evaluate(
+                "() => ({ g:(window.__explorerE2E||{}).gammaSeq, f:(window.__explorerE2E||{}).fairnessSeq })"
+            )
             gseq = [float(x) for x in (injected.get("g") or [])]
             fseq = [float(x) for x in (injected.get("f") or [])]
-            assert any(abs(after_num - v) < 1e-9 for v in (gseq + fseq)), (
-                f"Observed change ({after_num}) did not match injected gamma/fairness sequences {gseq+fseq}"
-            )
+            assert any(
+                abs(after_num - v) < 1e-9 for v in (gseq + fseq)
+            ), f"Observed change ({after_num}) did not match injected gamma/fairness sequences {gseq+fseq}"
 
         ctx.close()
         browser.close()

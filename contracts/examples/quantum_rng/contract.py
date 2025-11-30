@@ -29,7 +29,7 @@ Notes:
 """
 
 # Contract-safe stdlib (imported by the VM sandbox)
-from stdlib import storage, events, abi
+from stdlib import abi, events, storage
 from stdlib.hash import sha3_256
 
 # --- syscall bindings ---------------------------------------------------------
@@ -37,7 +37,7 @@ from stdlib.hash import sha3_256
 # We keep imports flexible to accommodate slightly different host names across
 # environments (devnet vs. future networks).
 try:
-    from stdlib.syscalls import quantum_enqueue, read_result, read_beacon
+    from stdlib.syscalls import quantum_enqueue, read_beacon, read_result
 except Exception:  # pragma: no cover
     # Fallbacks (older runtimes may expose a single namespace)
     from stdlib import syscalls  # type: ignore
@@ -51,12 +51,12 @@ except Exception:  # pragma: no cover
 
 # --- constants / bounds -------------------------------------------------------
 
-_MAX_BITS = 4096          # hard cap for requested random bits
-_MIN_BITS = 32            # ensure we get at least 32 bits (one SHA3-256 block)
-_MAX_SHOTS = 4096         # limit repetitions (sampling passes)
+_MAX_BITS = 4096  # hard cap for requested random bits
+_MIN_BITS = 32  # ensure we get at least 32 bits (one SHA3-256 block)
+_MAX_SHOTS = 4096  # limit repetitions (sampling passes)
 _MIN_SHOTS = 16
-_MIN_TRAP_RATE = 4        # at least 1 trap per 4 data qubits
-_MAX_TRAP_RATE = 1024     # but bound so payload stays compact
+_MIN_TRAP_RATE = 4  # at least 1 trap per 4 data qubits
+_MAX_TRAP_RATE = 1024  # but bound so payload stays compact
 
 # Storage keys
 _K_PENDING = b"pending_task"
@@ -74,24 +74,26 @@ __all__ = ("request", "poll", "last", "stats")
 
 # --- utility helpers (deterministic only) ------------------------------------
 
+
 def _u32(n: int) -> bytes:
     n &= 0xFFFFFFFF
-    return bytes(((n >> 24) & 0xFF,
-                  (n >> 16) & 0xFF,
-                  (n >> 8) & 0xFF,
-                  n & 0xFF))
+    return bytes(((n >> 24) & 0xFF, (n >> 16) & 0xFF, (n >> 8) & 0xFF, n & 0xFF))
 
 
 def _u64(n: int) -> bytes:
     n &= 0xFFFFFFFFFFFFFFFF
-    return bytes(((n >> 56) & 0xFF,
-                  (n >> 48) & 0xFF,
-                  (n >> 40) & 0xFF,
-                  (n >> 32) & 0xFF,
-                  (n >> 24) & 0xFF,
-                  (n >> 16) & 0xFF,
-                  (n >> 8) & 0xFF,
-                  n & 0xFF))
+    return bytes(
+        (
+            (n >> 56) & 0xFF,
+            (n >> 48) & 0xFF,
+            (n >> 40) & 0xFF,
+            (n >> 32) & 0xFF,
+            (n >> 24) & 0xFF,
+            (n >> 16) & 0xFF,
+            (n >> 8) & 0xFF,
+            n & 0xFF,
+        )
+    )
 
 
 def _inc(key: bytes) -> None:
@@ -100,8 +102,16 @@ def _inc(key: bytes) -> None:
         storage.set(key, _u64(1))
     else:
         # big-endian u64
-        v = (cur[0] << 56) | (cur[1] << 48) | (cur[2] << 40) | (cur[3] << 32) | \
-            (cur[4] << 24) | (cur[5] << 16) | (cur[6] << 8) | cur[7]
+        v = (
+            (cur[0] << 56)
+            | (cur[1] << 48)
+            | (cur[2] << 40)
+            | (cur[3] << 32)
+            | (cur[4] << 24)
+            | (cur[5] << 16)
+            | (cur[6] << 8)
+            | cur[7]
+        )
         storage.set(key, _u64(v + 1))
 
 
@@ -141,6 +151,7 @@ def _mix_with_beacon(qbytes: bytes, beacon: bytes) -> bytes:
 
 # --- contract entrypoints -----------------------------------------------------
 
+
 def request(bits: int = 256, shots: int = 256, trap_rate: int = 16) -> bytes:
     """
     Enqueue a quantum job for ~`bits` random bits with `shots` sampling passes
@@ -171,12 +182,15 @@ def request(bits: int = 256, shots: int = 256, trap_rate: int = 16) -> bytes:
     storage.set(_K_PENDING, task_id)
     _inc(_K_CNT_REQ)
 
-    events.emit(_EV_REQUESTED, {
-        b"task_id": task_id,
-        b"bits": bits,
-        b"shots": shots,
-        b"trap_rate": trap_rate,
-    })
+    events.emit(
+        _EV_REQUESTED,
+        {
+            b"task_id": task_id,
+            b"bits": bits,
+            b"shots": shots,
+            b"trap_rate": trap_rate,
+        },
+    )
     return task_id
 
 

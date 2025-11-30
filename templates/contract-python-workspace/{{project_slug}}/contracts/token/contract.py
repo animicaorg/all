@@ -33,8 +33,7 @@ from __future__ import annotations
 from typing import Dict, Tuple
 
 # VM stdlib shims (provided by the on-chain runtime)
-from stdlib import storage, events, abi
-
+from stdlib import abi, events, storage
 
 # ---- constants & storage keys ------------------------------------------------
 
@@ -53,6 +52,7 @@ ALW_PREFIX = b"\x02alw:"  # + owner(32) + b":" + spender(32) => value: u256
 
 
 # ---- low-level storage helpers ----------------------------------------------
+
 
 def _get_u256(key: bytes) -> int:
     b = storage.get(key)
@@ -116,6 +116,7 @@ def _sender() -> bytes:
 
 # ---- safe math ---------------------------------------------------------------
 
+
 def _u256_add(a: int, b: int) -> int:
     c = a + b
     if c > U256_MAX:
@@ -130,6 +131,7 @@ def _u256_sub(a: int, b: int) -> int:
 
 
 # ---- metadata getters --------------------------------------------------------
+
 
 def name() -> bytes:
     """Return the token name (bytes)."""
@@ -153,6 +155,7 @@ def total_supply() -> int:
 
 # ---- balance & allowance views ----------------------------------------------
 
+
 def balance_of(owner: bytes) -> int:
     """
     Return the balance of `owner` (u256).
@@ -175,6 +178,7 @@ def allowance(owner: bytes, spender: bytes) -> int:
 
 
 # ---- core transfers ----------------------------------------------------------
+
 
 def _transfer(src: bytes, dst: bytes, amount: int) -> None:
     if amount < 0:
@@ -249,6 +253,7 @@ def transfer_from(owner: bytes, to: bytes, amount: int) -> bool:
 
 # ---- owner-gated mint/burn ---------------------------------------------------
 
+
 def _owner() -> bytes:
     o = _get_raw(K_OWNER)
     if len(o) != 32:
@@ -300,11 +305,14 @@ def burn(from_addr: bytes, amount: int) -> bool:
     bal = _get_bal(from_addr)
     _set_bal(from_addr, _u256_sub(bal, amount))
 
-    events.emit(b"Transfer", {b"from": from_addr, b"to": b"\x00" * 32, b"value": amount})
+    events.emit(
+        b"Transfer", {b"from": from_addr, b"to": b"\x00" * 32, b"value": amount}
+    )
     return True
 
 
 # ---- initialization -----------------------------------------------------------
+
 
 def initialized() -> int:
     """
@@ -359,6 +367,7 @@ def init(
 
 
 # ---- optional convenience aliases (ERC-20 style names) -----------------------
+
 
 def totalSupply() -> int:
     """Alias to total_supply()."""

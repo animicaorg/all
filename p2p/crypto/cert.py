@@ -43,20 +43,21 @@ Notes
 
 """
 
-import os
-import ssl
 import binascii
 import datetime as dt
+import os
+import ssl
 from pathlib import Path
 from typing import Optional, Tuple
 
 from cryptography import x509
-from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
-from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
+from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 # Local deps (no heavy imports at module top to avoid cycles)
-from p2p.crypto.peer_id import peer_id_hex_from_identity, is_valid_peer_id_hex, format_peer_id_short
+from p2p.crypto.peer_id import (format_peer_id_short, is_valid_peer_id_hex,
+                                peer_id_hex_from_identity)
 
 ALPN = "animica/1"
 SAN_URI_PREFIX = "animica:peerid:"
@@ -101,10 +102,14 @@ def generate_self_signed_pem(
     not_after = not_before + dt.timedelta(days=days_valid)
 
     # SAN with our binding to the P2P peer-id
-    san = x509.SubjectAlternativeName([x509.UniformResourceIdentifier(SAN_URI_PREFIX + peer_id_hex)])
+    san = x509.SubjectAlternativeName(
+        [x509.UniformResourceIdentifier(SAN_URI_PREFIX + peer_id_hex)]
+    )
 
     # Extended Key Usage: serverAuth + clientAuth (QUIC usually uses serverAuth)
-    eku = x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH, ExtendedKeyUsageOID.CLIENT_AUTH])
+    eku = x509.ExtendedKeyUsage(
+        [ExtendedKeyUsageOID.SERVER_AUTH, ExtendedKeyUsageOID.CLIENT_AUTH]
+    )
 
     serial = x509.random_serial_number()
 
@@ -131,7 +136,9 @@ def generate_self_signed_pem(
     return cert_pem, key_pem
 
 
-def save_pem_pair(cert_pem: bytes, key_pem: bytes, *, cert_path: Path, key_path: Path) -> None:
+def save_pem_pair(
+    cert_pem: bytes, key_pem: bytes, *, cert_path: Path, key_path: Path
+) -> None:
     cert_path.parent.mkdir(parents=True, exist_ok=True)
     key_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -181,7 +188,9 @@ def load_or_create_cert(
             pass
         # If mismatch or parse error, regenerate to be safe
     cn = f"Animica Node {format_peer_id_short(pid_hex)}"
-    cert_pem, key_pem = generate_self_signed_pem(common_name=cn, peer_id_hex=pid_hex, days_valid=days_valid)
+    cert_pem, key_pem = generate_self_signed_pem(
+        common_name=cn, peer_id_hex=pid_hex, days_valid=days_valid
+    )
     save_pem_pair(cert_pem, key_pem, cert_path=cert_path, key_path=key_path)
     return cert_path, key_path
 
@@ -227,7 +236,9 @@ def cert_matches_identity(cert: x509.Certificate, identity: "NodeIdentity") -> b
 # ---------- SSL contexts (TLS/QUIC) -----------------------------------------
 
 
-def tls_server_context(cert_path: str | os.PathLike[str], key_path: str | os.PathLike[str]) -> ssl.SSLContext:
+def tls_server_context(
+    cert_path: str | os.PathLike[str], key_path: str | os.PathLike[str]
+) -> ssl.SSLContext:
     """
     Build a TLS server context for QUIC/TLS 1.3 with ALPN=[animica/1].
     """
@@ -236,7 +247,9 @@ def tls_server_context(cert_path: str | os.PathLike[str], key_path: str | os.Pat
     ctx.minimum_version = ssl.TLSVersion.TLSv1_3
     ctx.maximum_version = ssl.TLSVersion.TLSv1_3
     ctx.set_alpn_protocols([ALPN])
-    ctx.load_cert_chain(certfile=os.fspath(_expand(cert_path)), keyfile=os.fspath(_expand(key_path)))
+    ctx.load_cert_chain(
+        certfile=os.fspath(_expand(cert_path)), keyfile=os.fspath(_expand(key_path))
+    )
     # Reasonable defaults
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
@@ -260,18 +273,33 @@ def tls_client_context() -> ssl.SSLContext:
 
 # ---------- CLI helper -------------------------------------------------------
 
+
 def _cli() -> None:  # pragma: no cover
     import argparse
-    from p2p.crypto.keys import load_or_generate_identity  # convenience (user-defined helper)
 
-    ap = argparse.ArgumentParser(description="Generate or show Animica node TLS certificate bound to peer-id.")
-    ap.add_argument("--dir", default="~/.animica/p2p/certs", help="Directory to store cert/key (default: %(default)s)")
-    ap.add_argument("--basename", default=None, help="File base name (default: node-<peerid8>).")
-    ap.add_argument("--days", type=int, default=3650, help="Validity in days (default: %(default)s)")
+    from p2p.crypto.keys import \
+        load_or_generate_identity  # convenience (user-defined helper)
+
+    ap = argparse.ArgumentParser(
+        description="Generate or show Animica node TLS certificate bound to peer-id."
+    )
+    ap.add_argument(
+        "--dir",
+        default="~/.animica/p2p/certs",
+        help="Directory to store cert/key (default: %(default)s)",
+    )
+    ap.add_argument(
+        "--basename", default=None, help="File base name (default: node-<peerid8>)."
+    )
+    ap.add_argument(
+        "--days", type=int, default=3650, help="Validity in days (default: %(default)s)"
+    )
     args = ap.parse_args()
 
     ident = load_or_generate_identity()  # implement in p2p.crypto.keys as a convenience
-    cert_path, key_path = load_or_create_cert(ident, dirpath=args.dir, basename=args.basename, days_valid=args.days)
+    cert_path, key_path = load_or_create_cert(
+        ident, dirpath=args.dir, basename=args.basename, days_valid=args.days
+    )
     crt = load_cert(cert_path)
     print(f"wrote: {cert_path}")
     print(f"wrote: {key_path}")

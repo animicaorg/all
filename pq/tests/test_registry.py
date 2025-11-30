@@ -97,16 +97,12 @@ def _get(name: str) -> Any:
 
 def _is_sig(info: Any) -> bool:
     return any(
-        hasattr(info, f)
-        for f in ("sig_len", "signature_len", "signature_bytes")
+        hasattr(info, f) for f in ("sig_len", "signature_len", "signature_bytes")
     )
 
 
 def _is_kem(info: Any) -> bool:
-    return all(
-        hasattr(info, f)
-        for f in ("ct_len", "ss_len")
-    )
+    return all(hasattr(info, f) for f in ("ct_len", "ss_len"))
 
 
 def test_alg_ids_unique_and_names_unique():
@@ -179,4 +175,3 @@ def test_dataclass_like_shape():
         # If it's a real dataclass, fields should be hashable.
         if dataclasses.is_dataclass(info):  # pragma: no branch
             tuple(getattr(info, f.name) for f in dataclasses.fields(info))  # no crash
-

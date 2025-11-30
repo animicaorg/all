@@ -39,16 +39,20 @@ from typing import Callable, Iterable, List, Optional, Sequence, Tuple
 
 # ------------------------------ RNG & helpers ---------------------------------
 
+
 def _rng(seed: Optional[int]) -> random.Random:
     if seed is None:
         seed = int(os.environ.get("PYTHONHASHSEED", "0") or "1337")
     return random.Random(seed)
 
+
 def _rand_bytes(r: random.Random, n: int) -> bytes:
     return bytes(r.getrandbits(8) for _ in range(n))
 
+
 def _to_hex(b: bytes) -> str:
     return "0x" + b.hex()
+
 
 # Minimal unsigned varint encoder (LEB128-like; 7-bit chunks)
 def _uvarint(x: int) -> bytes:
@@ -65,20 +69,25 @@ def _uvarint(x: int) -> bytes:
             break
     return bytes(out)
 
+
 # ------------------------------ Adapters --------------------------------------
+
 
 @dataclass
 class Leaf:
     ns: int
     data: bytes
 
+
 class NMTAdapter:
     """Abstract adapter: compute root for a batch of leaves."""
+
     def __init__(self, ns_bits: int):
         self.ns_bits = ns_bits
 
     def root(self, leaves: Sequence[Leaf]) -> bytes:
         raise NotImplementedError
+
 
 class FallbackNMT(NMTAdapter):
     """
@@ -129,6 +138,7 @@ class FallbackNMT(NMTAdapter):
             level = nxt
         return level[0]
 
+
 def _maybe_real_adapter(ns_bits: int) -> Optional[NMTAdapter]:
     """
     Try to bind to a real implementation if present.
@@ -158,6 +168,7 @@ def _maybe_real_adapter(ns_bits: int) -> Optional[NMTAdapter]:
             leaf_encoder = None
 
         if callable(commit_fn):
+
             class _CommitAdapter(NMTAdapter):
                 def root(self, leaves: Sequence[Leaf]) -> bytes:
                     # Try several calling conventions
@@ -202,7 +213,10 @@ def _maybe_real_adapter(ns_bits: int) -> Optional[NMTAdapter]:
                     except Exception:
                         pass
 
-                    raise RuntimeError("Unable to use da.nmt.commit.commit with provided leaves")
+                    raise RuntimeError(
+                        "Unable to use da.nmt.commit.commit with provided leaves"
+                    )
+
             return _CommitAdapter(ns_bits)
     except Exception:
         # ignore and try tree API
@@ -210,9 +224,11 @@ def _maybe_real_adapter(ns_bits: int) -> Optional[NMTAdapter]:
 
     try:
         import importlib
+
         tree_mod = importlib.import_module("da.nmt.tree")
         TreeCls = getattr(tree_mod, "Tree", None)
         if TreeCls is not None:
+
             class _TreeAdapter(NMTAdapter):
                 def root(self, leaves: Sequence[Leaf]) -> bytes:
                     t = TreeCls(ns_bits)  # type: ignore
@@ -234,13 +250,16 @@ def _maybe_real_adapter(ns_bits: int) -> Optional[NMTAdapter]:
                     if isinstance(r, (bytes, bytearray)):
                         return bytes(r)
                     raise RuntimeError("Tree adapter could not obtain root")
+
             return _TreeAdapter(ns_bits)
     except Exception:
         pass
 
     return None
 
+
 # ------------------------------ Benchmark core --------------------------------
+
 
 def _timeit(fn: Callable[[], bytes], repeats: int) -> Tuple[List[float], bytes]:
     timings: List[float] = []
@@ -252,7 +271,10 @@ def _timeit(fn: Callable[[], bytes], repeats: int) -> Tuple[List[float], bytes]:
         timings.append(t1 - t0)
     return timings, last
 
-def _gen_leaves(n: int, leaf_size: int, ns_bits: int, seed: Optional[int]) -> List[Leaf]:
+
+def _gen_leaves(
+    n: int, leaf_size: int, ns_bits: int, seed: Optional[int]
+) -> List[Leaf]:
     r = _rng(seed)
     ns_mask = (1 << ns_bits) - 1
     leaves: List[Leaf] = []
@@ -261,6 +283,7 @@ def _gen_leaves(n: int, leaf_size: int, ns_bits: int, seed: Optional[int]) -> Li
         data = _rand_bytes(r, leaf_size)
         leaves.append(Leaf(ns=ns, data=data))
     return leaves
+
 
 def run_bench(
     leaves: int,
@@ -300,7 +323,9 @@ def run_bench(
     timings, last_root = _timeit(do_build, repeat)
 
     build_median = statistics.median(timings)
-    build_p90 = statistics.quantiles(timings, n=10)[8] if len(timings) >= 10 else max(timings)
+    build_p90 = (
+        statistics.quantiles(timings, n=10)[8] if len(timings) >= 10 else max(timings)
+    )
 
     total_leaves = leaves * rounds
     leaves_per_s = (total_leaves / build_median) if build_median > 0 else float("inf")
@@ -315,7 +340,11 @@ def run_bench(
             "warmup": warmup,
             "ns_bits": ns_bits,
             "mode": label,
-            "seed": seed if seed is not None else int(os.environ.get("PYTHONHASHSEED", "0") or "1337"),
+            "seed": (
+                seed
+                if seed is not None
+                else int(os.environ.get("PYTHONHASHSEED", "0") or "1337")
+            ),
         },
         "result": {
             "leaves_per_s": leaves_per_s,
@@ -325,17 +354,53 @@ def run_bench(
         },
     }
 
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="NMT build throughput benchmark.")
-    ap.add_argument("--leaves", type=int, default=65_536, help="Number of leaves per build (default: 65536)")
-    ap.add_argument("--leaf-size", type=int, default=64, dest="leaf_size", help="Leaf payload size in bytes (default: 64)")
-    ap.add_argument("--rounds", type=int, default=5, help="Number of tree builds per iteration (default: 5)")
-    ap.add_argument("--warmup", type=int, default=1, help="Warmup iterations (default: 1)")
-    ap.add_argument("--repeat", type=int, default=5, help="Measured iterations (default: 5)")
-    ap.add_argument("--ns-bits", type=int, default=16, dest="ns_bits", help="Namespace id bit width (default: 16)")
-    ap.add_argument("--mode", choices=("auto", "da", "fallback"), default="auto",
-                    help="Use real da.nmt implementation if available (default: auto)")
-    ap.add_argument("--seed", type=int, default=None, help="PRNG seed (default: from PYTHONHASHSEED or 1337)")
+    ap.add_argument(
+        "--leaves",
+        type=int,
+        default=65_536,
+        help="Number of leaves per build (default: 65536)",
+    )
+    ap.add_argument(
+        "--leaf-size",
+        type=int,
+        default=64,
+        dest="leaf_size",
+        help="Leaf payload size in bytes (default: 64)",
+    )
+    ap.add_argument(
+        "--rounds",
+        type=int,
+        default=5,
+        help="Number of tree builds per iteration (default: 5)",
+    )
+    ap.add_argument(
+        "--warmup", type=int, default=1, help="Warmup iterations (default: 1)"
+    )
+    ap.add_argument(
+        "--repeat", type=int, default=5, help="Measured iterations (default: 5)"
+    )
+    ap.add_argument(
+        "--ns-bits",
+        type=int,
+        default=16,
+        dest="ns_bits",
+        help="Namespace id bit width (default: 16)",
+    )
+    ap.add_argument(
+        "--mode",
+        choices=("auto", "da", "fallback"),
+        default="auto",
+        help="Use real da.nmt implementation if available (default: auto)",
+    )
+    ap.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="PRNG seed (default: from PYTHONHASHSEED or 1337)",
+    )
     args = ap.parse_args(argv)
 
     payload = run_bench(
@@ -351,6 +416,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     print(json.dumps(payload, separators=(",", ":"), sort_keys=False))
     return 0
+
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())

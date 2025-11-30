@@ -52,20 +52,19 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from typing import Callable, Optional, Protocol, Sequence, Tuple, List
+from typing import Callable, List, Optional, Protocol, Sequence, Tuple
 
 log = logging.getLogger(__name__)
 
 # --- Lightweight protocols ------------------------------------------------------------
 
+
 class DrainFn(Protocol):
-    def __call__(self, max_gas: int, max_bytes: int) -> Sequence["Tx"]:
-        ...
+    def __call__(self, max_gas: int, max_bytes: int) -> Sequence["Tx"]: ...
 
 
 class Notifier(Protocol):
-    def subscribe(self, callback: Callable[[str, Optional[dict]], None]) -> None:
-        ...
+    def subscribe(self, callback: Callable[[str, Optional[dict]], None]) -> None: ...
 
 
 # --- Types ----------------------------------------------------------------------------
@@ -82,6 +81,7 @@ except Exception:  # pragma: no cover
 @dataclass(frozen=True)
 class MinerTxBatch:
     """A ready batch of transactions and accounting info."""
+
     txs: Sequence[Tx]
     total_gas: int
     total_bytes: int
@@ -92,6 +92,7 @@ class MinerTxBatch:
 
 
 # --- Implementation ------------------------------------------------------------------
+
 
 class MinerFeed:
     """
@@ -181,6 +182,7 @@ class MinerFeed:
         wait_s: float = 0.25,
     ) -> MinerTxBatch:
         import asyncio
+
         # First attempt
         batch = self._drain_once(max_gas, max_bytes)
         if batch.count or wait_s <= 0:
@@ -200,6 +202,7 @@ class MinerFeed:
         idle_sleep_s: float = 0.10,
     ):
         import asyncio
+
         while not self._closed:
             yield await self.anext_batch(max_gas, max_bytes, wait_s=idle_sleep_s)
 
@@ -223,13 +226,17 @@ class MinerFeed:
             if raw is None:
                 # Try canonical encoder if available
                 try:
-                    from core.encoding.cbor import dumps as cbor_dumps  # type: ignore
+                    from core.encoding.cbor import \
+                        dumps as cbor_dumps  # type: ignore
+
                     raw = cbor_dumps(tx)  # type: ignore[arg-type]
                 except Exception:
                     raw = b""
             total_bytes += len(raw)
 
-        return MinerTxBatch(txs=tuple(txs), total_gas=total_gas, total_bytes=total_bytes)
+        return MinerTxBatch(
+            txs=tuple(txs), total_gas=total_gas, total_bytes=total_bytes
+        )
 
     # Notifier callback: wake waiters (with throttling to avoid thundering herd)
     def _on_event(self, event_name: str, payload: Optional[dict]) -> None:

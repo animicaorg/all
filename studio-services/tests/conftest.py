@@ -24,6 +24,7 @@ except Exception:  # pragma: no cover
 
 # App factory and (optionally) config helpers
 from studio_services.app import create_app  # type: ignore[import]
+
 # If your implementation exposes a Config class, we accept it; otherwise we just build from env.
 try:  # pragma: no cover - optional
     from studio_services.config import Config  # type: ignore
@@ -105,7 +106,11 @@ def app(app_env: dict[str, str]) -> FastAPI:
             allowed_origins=os.environ.get("ALLOWED_ORIGINS", "*"),
             faucet_key=os.environ.get("FAUCET_KEY") or None,
             sqlite_path=Path(os.environ.get("SQLITE_PATH", ":memory:")),
-            api_keys=[k.strip() for k in os.environ.get("API_KEYS", "").split(",") if k.strip()],
+            api_keys=[
+                k.strip()
+                for k in os.environ.get("API_KEYS", "").split(",")
+                if k.strip()
+            ],
             testing=True,
         )
         # Filter None fields that your Config may not support
@@ -162,5 +167,3 @@ def auth_headers(api_key: str) -> dict[str, str]:
 def scratch(tmp_path: Path) -> Path:
     """Per-test scratch directory for writing temp files/artifacts."""
     return tmp_path
-
-

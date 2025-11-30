@@ -32,16 +32,19 @@ from pathlib import Path
 from typing import Any, Dict, Mapping, MutableMapping, Optional
 
 from fastapi import FastAPI
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
-from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
-from starlette.responses import JSONResponse, HTMLResponse
+from starlette.responses import HTMLResponse, JSONResponse
 
 log = logging.getLogger(__name__)
 
 
 # ---------- Utilities ----------
 
-def _deep_merge(dst: MutableMapping[str, Any], src: Mapping[str, Any]) -> MutableMapping[str, Any]:
+
+def _deep_merge(
+    dst: MutableMapping[str, Any], src: Mapping[str, Any]
+) -> MutableMapping[str, Any]:
     """
     Recursively merge src into dst (modifies dst), returning dst.
     Scalars/arrays in src replace dst; dicts are merged.
@@ -59,7 +62,9 @@ def _load_overrides() -> Dict[str, Any]:
     Load OpenAPI overrides if available. Missing file is fine.
     """
     try:
-        base = Path(__file__).resolve().parents[1] / "schemas" / "openapi_overrides.json"
+        base = (
+            Path(__file__).resolve().parents[1] / "schemas" / "openapi_overrides.json"
+        )
         if not base.exists():
             return {}
         with base.open("r", encoding="utf-8") as f:
@@ -79,16 +84,19 @@ def auto_version() -> str:
     """
     try:
         from studio_services.version import __version__ as v  # type: ignore
+
         return str(v)
     except Exception:
         try:
             from studio_services.version import version as vfn  # type: ignore
+
             return str(vfn())
         except Exception:
             return "0.0.0+dev"
 
 
 # ---------- Mount ----------
+
 
 def mount_openapi(
     app: FastAPI,
@@ -127,12 +135,15 @@ def mount_openapi(
     app.openapi = custom_openapi  # type: ignore[method-assign]
 
     # Determine paths (prefer app settings, then our args, then defaults)
-    openapi_path = openapi_url or getattr(app, "openapi_url", "/openapi.json") or "/openapi.json"
+    openapi_path = (
+        openapi_url or getattr(app, "openapi_url", "/openapi.json") or "/openapi.json"
+    )
     docs_path = docs_url or getattr(app, "docs_url", "/docs") or "/docs"
     redoc_path = redoc_url or getattr(app, "redoc_url", "/redoc") or "/redoc"
 
     # Add an explicit /openapi.json route if one isn't already present. If it is, it will call our patched app.openapi.
     if not any(getattr(r, "path", None) == openapi_path for r in app.router.routes):
+
         @app.get(openapi_path, include_in_schema=False)
         def _openapi_json() -> JSONResponse:  # type: ignore[no-redef]
             return JSONResponse(app.openapi())
@@ -150,6 +161,7 @@ def mount_openapi(
         sui_params.update(swagger_ui_parameters)
 
     if not any(getattr(r, "path", None) == docs_path for r in app.router.routes):
+
         @app.get(docs_path, include_in_schema=False)
         def _swagger_ui() -> HTMLResponse:  # type: ignore[no-redef]
             return get_swagger_ui_html(
@@ -161,6 +173,7 @@ def mount_openapi(
 
     # ReDoc
     if not any(getattr(r, "path", None) == redoc_path for r in app.router.routes):
+
         @app.get(redoc_path, include_in_schema=False)
         def _redoc() -> HTMLResponse:  # type: ignore[no-redef]
             return get_redoc_html(
@@ -171,7 +184,10 @@ def mount_openapi(
 
     log.info(
         "OpenAPI mounted: openapi=%s docs=%s redoc=%s overrides=%s",
-        openapi_path, docs_path, redoc_path, bool(overrides),
+        openapi_path,
+        docs_path,
+        redoc_path,
+        bool(overrides),
     )
 
 

@@ -38,7 +38,8 @@ import json
 import logging
 from typing import Any, AsyncIterator, Optional, Protocol
 
-from fastapi import APIRouter, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import (APIRouter, FastAPI, HTTPException, Query, WebSocket,
+                     WebSocketDisconnect)
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------------------------------------------------
 # Service & Event Protocols
 # --------------------------------------------------------------------------------------
+
 
 class RandomnessService(Protocol):
     """Abstracts the randomness beacon & commit–reveal/VDF plumbing."""
@@ -57,9 +59,15 @@ class RandomnessService(Protocol):
     async def get_history(self, *, offset: int, limit: int) -> list[dict]: ...
 
     # Writes
-    async def submit_commit(self, *, address: str, salt_hex: str, payload_hex: str) -> dict: ...
-    async def submit_reveal(self, *, round_id: int, address: str, salt_hex: str, payload_hex: str) -> dict: ...
-    async def submit_vdf_proof(self, *, round_id: int, y_hex: str, pi_hex: str, worker_id: Optional[str]) -> dict: ...
+    async def submit_commit(
+        self, *, address: str, salt_hex: str, payload_hex: str
+    ) -> dict: ...
+    async def submit_reveal(
+        self, *, round_id: int, address: str, salt_hex: str, payload_hex: str
+    ) -> dict: ...
+    async def submit_vdf_proof(
+        self, *, round_id: int, y_hex: str, pi_hex: str, worker_id: Optional[str]
+    ) -> dict: ...
 
 
 class EventSource(Protocol):
@@ -72,10 +80,13 @@ class EventSource(Protocol):
 # Pydantic request/response models (minimal; service returns plain dicts already)
 # --------------------------------------------------------------------------------------
 
+
 class CommitReq(BaseModel):
     address: str = Field(..., description="Bech32/hex address string")
     salt: str = Field(..., description="0x-prefixed hex salt")
-    payload: str = Field(..., description="0x-prefixed hex payload (committed preimage)")
+    payload: str = Field(
+        ..., description="0x-prefixed hex payload (committed preimage)"
+    )
 
 
 class RevealReq(BaseModel):
@@ -95,6 +106,7 @@ class VdfProofReq(BaseModel):
 # --------------------------------------------------------------------------------------
 # REST router
 # --------------------------------------------------------------------------------------
+
 
 def get_router(service: RandomnessService) -> APIRouter:
     r = APIRouter(prefix="/rand", tags=["randomness"])
@@ -133,12 +145,17 @@ def get_router(service: RandomnessService) -> APIRouter:
 
     @r.post("/commit")
     async def post_commit(req: CommitReq) -> dict:
-        return await service.submit_commit(address=req.address, salt_hex=req.salt, payload_hex=req.payload)
+        return await service.submit_commit(
+            address=req.address, salt_hex=req.salt, payload_hex=req.payload
+        )
 
     @r.post("/reveal")
     async def post_reveal(req: RevealReq) -> dict:
         return await service.submit_reveal(
-            round_id=req.round_id, address=req.address, salt_hex=req.salt, payload_hex=req.payload
+            round_id=req.round_id,
+            address=req.address,
+            salt_hex=req.salt,
+            payload_hex=req.payload,
         )
 
     @r.post("/vdf_proof")
@@ -153,6 +170,7 @@ def get_router(service: RandomnessService) -> APIRouter:
 # --------------------------------------------------------------------------------------
 # WebSocket (server-sent event stream)
 # --------------------------------------------------------------------------------------
+
 
 async def ws_randomness(websocket: WebSocket, events: Optional[EventSource]) -> None:
     await websocket.accept()
@@ -170,7 +188,9 @@ async def ws_randomness(websocket: WebSocket, events: Optional[EventSource]) -> 
                     await websocket.send_text(json.dumps(ev))
                 except (TypeError, ValueError):
                     # Best-effort stringification fallback
-                    await websocket.send_text(json.dumps({"type": "event", "payload": str(ev)}))
+                    await websocket.send_text(
+                        json.dumps({"type": "event", "payload": str(ev)})
+                    )
     except WebSocketDisconnect:
         pass
     except Exception as e:
@@ -184,6 +204,7 @@ async def ws_randomness(websocket: WebSocket, events: Optional[EventSource]) -> 
 # --------------------------------------------------------------------------------------
 # JSON-RPC registration helpers
 # --------------------------------------------------------------------------------------
+
 
 def _rpc_register(registry: Any, name: str, fn: Any) -> None:
     """
@@ -205,7 +226,9 @@ def _rpc_register(registry: Any, name: str, fn: Any) -> None:
             return
         except Exception:
             pass
-    raise TypeError("Unsupported JSON-RPC registry; expected add_method/add/register/method")
+    raise TypeError(
+        "Unsupported JSON-RPC registry; expected add_method/add/register/method"
+    )
 
 
 def _bind_jsonrpc(service: RandomnessService, rpc_registry: Any) -> None:
@@ -213,23 +236,39 @@ def _bind_jsonrpc(service: RandomnessService, rpc_registry: Any) -> None:
     async def _get_status(**_params: Any) -> dict:
         return await service.get_status()
 
-    async def _get_beacon(round_id: Optional[int] = None, **_params: Any) -> Optional[dict]:
+    async def _get_beacon(
+        round_id: Optional[int] = None, **_params: Any
+    ) -> Optional[dict]:
         return await service.get_beacon(round_id)
 
     async def _get_light_proof(round_id: int, **_params: Any) -> Optional[dict]:
         return await service.get_light_proof(round_id)
 
-    async def _get_history(offset: int = 0, limit: int = 32, **_params: Any) -> list[dict]:
+    async def _get_history(
+        offset: int = 0, limit: int = 32, **_params: Any
+    ) -> list[dict]:
         return await service.get_history(offset=offset, limit=limit)
 
-    async def _submit_commit(address: str, salt: str, payload: str, **_params: Any) -> dict:
-        return await service.submit_commit(address=address, salt_hex=salt, payload_hex=payload)
+    async def _submit_commit(
+        address: str, salt: str, payload: str, **_params: Any
+    ) -> dict:
+        return await service.submit_commit(
+            address=address, salt_hex=salt, payload_hex=payload
+        )
 
-    async def _submit_reveal(round_id: int, address: str, salt: str, payload: str, **_params: Any) -> dict:
-        return await service.submit_reveal(round_id=round_id, address=address, salt_hex=salt, payload_hex=payload)
+    async def _submit_reveal(
+        round_id: int, address: str, salt: str, payload: str, **_params: Any
+    ) -> dict:
+        return await service.submit_reveal(
+            round_id=round_id, address=address, salt_hex=salt, payload_hex=payload
+        )
 
-    async def _submit_vdf_proof(round_id: int, y: str, pi: str, worker_id: Optional[str] = None, **_p: Any) -> dict:
-        return await service.submit_vdf_proof(round_id=round_id, y_hex=y, pi_hex=pi, worker_id=worker_id)
+    async def _submit_vdf_proof(
+        round_id: int, y: str, pi: str, worker_id: Optional[str] = None, **_p: Any
+    ) -> dict:
+        return await service.submit_vdf_proof(
+            round_id=round_id, y_hex=y, pi_hex=pi, worker_id=worker_id
+        )
 
     _rpc_register(rpc_registry, "rand.getStatus", _get_status)
     _rpc_register(rpc_registry, "rand.getBeacon", _get_beacon)
@@ -243,6 +282,7 @@ def _bind_jsonrpc(service: RandomnessService, rpc_registry: Any) -> None:
 # --------------------------------------------------------------------------------------
 # Mount helper
 # --------------------------------------------------------------------------------------
+
 
 def mount_randomness_rpc(
     app: FastAPI,

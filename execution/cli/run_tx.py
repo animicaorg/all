@@ -34,6 +34,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping
 
+
 # --- Logging -------------------------------------------------------------------------------------
 def eprint(*args: object) -> None:
     print(*args, file=sys.stderr)
@@ -67,13 +68,14 @@ except Exception:
 
 # Execution adapters & executor
 try:
-    from execution.adapters.state_db import StateAdapter  # type: ignore
     from execution.adapters.params import load_chain_params  # type: ignore
+    from execution.adapters.state_db import StateAdapter  # type: ignore
 except Exception as ex:  # pragma: no cover
     _import_fail(f"Cannot import execution adapters: {ex}")
 
 try:
-    from execution.runtime.executor import apply_tx as exec_apply_tx  # type: ignore
+    from execution.runtime.executor import \
+        apply_tx as exec_apply_tx  # type: ignore
 except Exception as ex:  # pragma: no cover
     _import_fail(f"Cannot import execution.runtime.executor.apply_tx: {ex}")
 
@@ -85,7 +87,9 @@ def _cbor_load_file(path: Path) -> Any:
         fn = getattr(core_cbor, fn_name, None)
         if fn:
             return fn(data)
-    raise RuntimeError("core.encoding.cbor does not provide decode/loads/decode_canonical")
+    raise RuntimeError(
+        "core.encoding.cbor does not provide decode/loads/decode_canonical"
+    )
 
 
 def _coerce_tx(obj: Any) -> Tx:
@@ -120,14 +124,32 @@ def _hexify(x: Any) -> Any:
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Run a single CBOR tx against a temporary state.")
-    p.add_argument("--tx", required=True, type=Path, help="Path to CBOR-encoded transaction file")
-    p.add_argument("--db", default=None, help="KV DB URI (e.g., sqlite:///animica_tmp.db). If omitted, a temp DB is used.")
-    p.add_argument("--genesis", type=Path, default=None, help="Genesis JSON (used if DB is empty)")
-    p.add_argument("--chain-id", type=int, default=1, help="Expected chainId for sanity checks")
-    p.add_argument("--persist-db", action="store_true", help="Keep the temporary DB for inspection and print its path")
+    p = argparse.ArgumentParser(
+        description="Run a single CBOR tx against a temporary state."
+    )
+    p.add_argument(
+        "--tx", required=True, type=Path, help="Path to CBOR-encoded transaction file"
+    )
+    p.add_argument(
+        "--db",
+        default=None,
+        help="KV DB URI (e.g., sqlite:///animica_tmp.db). If omitted, a temp DB is used.",
+    )
+    p.add_argument(
+        "--genesis", type=Path, default=None, help="Genesis JSON (used if DB is empty)"
+    )
+    p.add_argument(
+        "--chain-id", type=int, default=1, help="Expected chainId for sanity checks"
+    )
+    p.add_argument(
+        "--persist-db",
+        action="store_true",
+        help="Keep the temporary DB for inspection and print its path",
+    )
     p.add_argument("--json", action="store_true", help="Print full JSON ApplyResult")
-    p.add_argument("--quiet", action="store_true", help="Only print the final summary / JSON")
+    p.add_argument(
+        "--quiet", action="store_true", help="Only print the final summary / JSON"
+    )
     return p.parse_args(argv)
 
 
@@ -195,7 +217,9 @@ def main(argv: list[str] | None = None) -> int:
         else:
             logs_count = len(logs) if isinstance(logs, (list, tuple)) else 0
             sr_hex = _hexify(state_root)
-            print(f"APPLY_RESULT STATUS={status} GAS_USED={gas_used} LOGS={logs_count} STATE_ROOT={sr_hex}")
+            print(
+                f"APPLY_RESULT STATUS={status} GAS_USED={gas_used} LOGS={logs_count} STATE_ROOT={sr_hex}"
+            )
 
         if tmp_dir and ns.persist_db:
             print(f"DB_PATH {Path(tmp_dir) / 'state.db'}")

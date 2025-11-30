@@ -10,14 +10,16 @@ import pytest
 # The module under test. We keep the test resilient by accepting several API shapes.
 import consensus.share_receipts as sr_mod  # type: ignore
 
-
 # ------------------------- Local canonical helpers (spec-aligned) -------------------------
+
 
 def _sha3_256(b: bytes) -> bytes:
     return hashlib.sha3_256(b).digest()
 
 
-def canonical_leaf_bytes(idx: int, miner: bytes, d_ratio_micro: int, nonce: int) -> bytes:
+def canonical_leaf_bytes(
+    idx: int, miner: bytes, d_ratio_micro: int, nonce: int
+) -> bytes:
     """
     Deterministic, schema-agnostic leaf material for a 'share receipt'.
 
@@ -68,6 +70,7 @@ def merkle_root_from_leaves(leaves: Iterable[bytes]) -> bytes:
 
 # ----------------------------- Adapter into sr_mod (flexible) -----------------------------
 
+
 def sr_merkle_root(leaves: List[bytes]) -> bytes:
     """
     Try a handful of plausible entrypoints in consensus/share_receipts.py.
@@ -114,6 +117,7 @@ def sort_key_hash(leaf: bytes) -> bytes:
 
 
 # ------------------------------------ Test cases ------------------------------------
+
 
 def _make_sample_leaves(n: int = 7) -> List[bytes]:
     rng = random.Random(1337)

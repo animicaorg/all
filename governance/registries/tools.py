@@ -1,4 +1,5 @@
 """Utility helpers for governance registries and templates."""
+
 from __future__ import annotations
 
 import fnmatch

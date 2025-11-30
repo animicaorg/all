@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 aicf.version — semantic version string with optional git-describe suffix.
 

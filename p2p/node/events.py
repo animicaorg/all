@@ -4,7 +4,8 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Callable, Dict, Generic, List, Optional, Tuple, TypeVar, Union
+from typing import (Any, AsyncIterator, Callable, Dict, Generic, List,
+                    Optional, Tuple, TypeVar, Union)
 
 log = logging.getLogger("animica.p2p.events")
 
@@ -23,6 +24,7 @@ __all__ = [
 # -----------------------------
 # Event payload dataclasses
 # -----------------------------
+
 
 @dataclass(frozen=True)
 class NewPeerEvent:
@@ -57,12 +59,13 @@ class NewTxEvent:
 class NewShareEvent:
     share_type: str  # "hash" | "ai" | "quantum" | "storage" | "vdf"
     nullifier: str
-    d_ratio_ppm: Optional[int] = None   # share difficulty ratio in ppm
-    psi_micro: Optional[int] = None     # ψ contribution in micro-units
-    miner: Optional[str] = None         # coinbase / address
+    d_ratio_ppm: Optional[int] = None  # share difficulty ratio in ppm
+    psi_micro: Optional[int] = None  # ψ contribution in micro-units
+    miner: Optional[str] = None  # coinbase / address
 
 
 Payload = Union[NewPeerEvent, NewHeadEvent, NewTxEvent, NewShareEvent]
+
 
 @dataclass(frozen=True)
 class BusEvent(Generic[T]):
@@ -74,6 +77,7 @@ class BusEvent(Generic[T]):
 # -----------------------------
 # EventBus implementation
 # -----------------------------
+
 
 class Subscription(Generic[T]):
     """Handle returned by EventBus.subscribe(); allows async iteration and manual close()."""
@@ -109,6 +113,7 @@ class Subscription(Generic[T]):
                     yield await self.__anext__()
                 except StopAsyncIteration:
                     break
+
         return gen()
 
     async def close(self) -> None:
@@ -136,7 +141,9 @@ class EventBus:
     the publish() will drop the event for that subscriber and log a debug line.
     """
 
-    def __init__(self, *, loop: Optional[asyncio.AbstractEventLoop] = None, queue_size: int = 512) -> None:
+    def __init__(
+        self, *, loop: Optional[asyncio.AbstractEventLoop] = None, queue_size: int = 512
+    ) -> None:
         self._loop = loop or asyncio.get_event_loop()
         self._subs: Dict[str, List[Tuple[asyncio.Queue, Subscription]]] = {}
         self._wildcards: List[Tuple[asyncio.Queue, Subscription]] = []
@@ -174,7 +181,9 @@ class EventBus:
             self._wildcards = [(q, s) for (q, s) in self._wildcards if s is not sub]
         else:
             if sub.topic in self._subs:
-                self._subs[sub.topic] = [(q, s) for (q, s) in self._subs[sub.topic] if s is not sub]
+                self._subs[sub.topic] = [
+                    (q, s) for (q, s) in self._subs[sub.topic] if s is not sub
+                ]
                 if not self._subs[sub.topic]:
                     self._subs.pop(sub.topic, None)
 
@@ -196,7 +205,9 @@ class EventBus:
                     alive.append((q, s))
             # rewrite lists (cheap & safe)
             if topic in self._subs:
-                self._subs[topic] = [(q, s) for (q, s) in self._subs[topic] if not s.closed()]
+                self._subs[topic] = [
+                    (q, s) for (q, s) in self._subs[topic] if not s.closed()
+                ]
             self._wildcards = [(q, s) for (q, s) in self._wildcards if not s.closed()]
             targets = alive
 
@@ -251,6 +262,7 @@ class EventBus:
 # Run this file directly to test the bus quickly.
 # -----------------------------
 if __name__ == "__main__":
+
     async def _demo() -> None:
         bus = EventBus(queue_size=2)
         sub_all = bus.subscribe("*")
@@ -264,13 +276,23 @@ if __name__ == "__main__":
         t2 = asyncio.create_task(printer("HEAD", sub_heads))
 
         await bus.emit_new_peer(peer_id="p1", addr="127.0.0.1:1234", inbound=True)
-        await bus.emit_new_head(height=1, hash_hex="0xabc", parent_hex=None, timestamp=int(time.time()), difficulty_theta=1_000_000)
+        await bus.emit_new_head(
+            height=1,
+            hash_hex="0xabc",
+            parent_hex=None,
+            timestamp=int(time.time()),
+            difficulty_theta=1_000_000,
+        )
         await bus.emit_new_tx(tx_hash="0xdead", size_bytes=120, sender="anim1xyz")
-        await bus.emit_new_share(share_type="hash", nullifier="n1", d_ratio_ppm=500_000, psi_micro=12_345)
+        await bus.emit_new_share(
+            share_type="hash", nullifier="n1", d_ratio_ppm=500_000, psi_micro=12_345
+        )
 
         await asyncio.sleep(0.1)
         await bus.close()
         await asyncio.gather(t1, t2, return_exceptions=True)
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
     asyncio.run(_demo())

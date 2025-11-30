@@ -26,26 +26,28 @@ import inspect
 import logging
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Any, Optional, Protocol, Union, Mapping, MutableMapping
+from typing import Any, Mapping, MutableMapping, Optional, Protocol, Union
 
 # Best-effort imports of rich mempool types/errors. If unavailable, we fallback.
 try:
-    from mempool.errors import (
-        AdmissionError,
-        ReplacementError,
-        DoSError,
-        FeeTooLow,
-        NonceGap,
-        Oversize,
-    )
+    from mempool.errors import (AdmissionError, DoSError, FeeTooLow, NonceGap,
+                                Oversize, ReplacementError)
 except Exception:  # pragma: no cover - optional dependency
+
     class _BaseErr(Exception): ...
+
     class AdmissionError(_BaseErr): ...
+
     class ReplacementError(_BaseErr): ...
+
     class DoSError(_BaseErr): ...
+
     class FeeTooLow(_BaseErr): ...
+
     class NonceGap(_BaseErr): ...
+
     class Oversize(_BaseErr): ...
+
 
 # Pending pool (json-rpc fast path) is optional too.
 try:
@@ -59,7 +61,9 @@ log = logging.getLogger(__name__)
 
 class TxLike(Protocol):
     """Minimal surface we rely on from core.types.tx.Tx."""
+
     def hash(self) -> bytes: ...
+
     sender: bytes
     nonce: int
     maxFeePerGas: int  # or tip fields, used only for optional views
@@ -67,6 +71,7 @@ class TxLike(Protocol):
 
 class PoolLike(Protocol):
     """Protocol we *try* to satisfy against mempool.pool.TxPool implementations."""
+
     async def add(self, tx: TxLike) -> Any: ...
     def get(self, tx_hash: bytes) -> Optional[Any]: ...
     def stats(self) -> Any: ...
@@ -91,6 +96,7 @@ class SubmitResult:
 @dataclass
 class TxView:
     """Lightweight, JSON-serializable view returned to RPC layer."""
+
     hash: str
     sender: Optional[str] = None
     nonce: Optional[int] = None
@@ -123,7 +129,9 @@ class RpcSubmitAdapter:
     # Submission
     # ----------------------------------------------------------------------------------
 
-    async def submit_decoded(self, tx: TxLike, raw_cbor: bytes, tx_hash: bytes) -> SubmitResult:
+    async def submit_decoded(
+        self, tx: TxLike, raw_cbor: bytes, tx_hash: bytes
+    ) -> SubmitResult:
         """
         Submit a *decoded* Tx to the real mempool if present; otherwise queue it
         in the pending pool. Returns a structured SubmitResult suitable for RPC.
@@ -134,22 +142,50 @@ class RpcSubmitAdapter:
             try:
                 add_coro = self._try_pool_add(self._pool, tx)
                 meta = await add_coro if asyncio.iscoroutine(add_coro) else add_coro
-                return SubmitResult(status=SubmitStatus.ADDED, tx_hash=tx_hash, meta=meta)
+                return SubmitResult(
+                    status=SubmitStatus.ADDED, tx_hash=tx_hash, meta=meta
+                )
             except ReplacementError as e:
-                return SubmitResult(status=SubmitStatus.REPLACED, tx_hash=tx_hash, reason=str(e))
+                return SubmitResult(
+                    status=SubmitStatus.REPLACED, tx_hash=tx_hash, reason=str(e)
+                )
             except FeeTooLow as e:
-                return SubmitResult(status=SubmitStatus.REJECTED, tx_hash=tx_hash, reason=f"fee_too_low: {e}")
+                return SubmitResult(
+                    status=SubmitStatus.REJECTED,
+                    tx_hash=tx_hash,
+                    reason=f"fee_too_low: {e}",
+                )
             except NonceGap as e:
-                return SubmitResult(status=SubmitStatus.REJECTED, tx_hash=tx_hash, reason=f"nonce_gap: {e}")
+                return SubmitResult(
+                    status=SubmitStatus.REJECTED,
+                    tx_hash=tx_hash,
+                    reason=f"nonce_gap: {e}",
+                )
             except Oversize as e:
-                return SubmitResult(status=SubmitStatus.REJECTED, tx_hash=tx_hash, reason=f"oversize: {e}")
+                return SubmitResult(
+                    status=SubmitStatus.REJECTED,
+                    tx_hash=tx_hash,
+                    reason=f"oversize: {e}",
+                )
             except AdmissionError as e:
-                return SubmitResult(status=SubmitStatus.REJECTED, tx_hash=tx_hash, reason=f"admission_error: {e}")
+                return SubmitResult(
+                    status=SubmitStatus.REJECTED,
+                    tx_hash=tx_hash,
+                    reason=f"admission_error: {e}",
+                )
             except DoSError as e:
-                return SubmitResult(status=SubmitStatus.REJECTED, tx_hash=tx_hash, reason=f"dos_reject: {e}")
+                return SubmitResult(
+                    status=SubmitStatus.REJECTED,
+                    tx_hash=tx_hash,
+                    reason=f"dos_reject: {e}",
+                )
             except Exception as e:  # pragma: no cover - safety net
                 log.exception("Unexpected mempool error during submit")
-                return SubmitResult(status=SubmitStatus.REJECTED, tx_hash=tx_hash, reason=f"unknown: {e}")
+                return SubmitResult(
+                    status=SubmitStatus.REJECTED,
+                    tx_hash=tx_hash,
+                    reason=f"unknown: {e}",
+                )
 
         # Fallback: pending pool (if available)
         if self._pending is not None:
@@ -158,10 +194,16 @@ class RpcSubmitAdapter:
                 return SubmitResult(status=SubmitStatus.QUEUED, tx_hash=tx_hash)
             except Exception as e:  # pragma: no cover
                 log.exception("Failed to enqueue into pending pool")
-                return SubmitResult(status=SubmitStatus.REJECTED, tx_hash=tx_hash, reason=f"pending_enqueue_failed: {e}")
+                return SubmitResult(
+                    status=SubmitStatus.REJECTED,
+                    tx_hash=tx_hash,
+                    reason=f"pending_enqueue_failed: {e}",
+                )
 
         # No pool at all
-        return SubmitResult(status=SubmitStatus.REJECTED, tx_hash=tx_hash, reason="no_pool_available")
+        return SubmitResult(
+            status=SubmitStatus.REJECTED, tx_hash=tx_hash, reason="no_pool_available"
+        )
 
     # ----------------------------------------------------------------------------------
     # Reads
@@ -184,7 +226,9 @@ class RpcSubmitAdapter:
         if self._pending is not None:
             raw = self._pending_get(tx_hash)
             if raw is not None:
-                return TxView(hash=_hex(tx_hash) or "0x", raw_cbor_hex=_hex(raw), origin="pending")
+                return TxView(
+                    hash=_hex(tx_hash) or "0x", raw_cbor_hex=_hex(raw), origin="pending"
+                )
 
         return None
 
@@ -230,7 +274,9 @@ class RpcSubmitAdapter:
                 return fn(tx)
         raise AdmissionError("pool does not expose an add/add_tx/submit method")
 
-    def _try_pool_get(self, pool: Any, tx_hash: bytes) -> Union[Any, "asyncio.Future[Any]", None]:
+    def _try_pool_get(
+        self, pool: Any, tx_hash: bytes
+    ) -> Union[Any, "asyncio.Future[Any]", None]:
         """Try common method names for fetching by hash."""
         for name in ("get", "by_hash", "get_tx", "get_by_hash"):
             if hasattr(pool, name):

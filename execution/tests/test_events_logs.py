@@ -9,6 +9,7 @@ try:
     # type: ignore
     from execution.types.events import LogEvent  # noqa: F401
 except Exception:  # pragma: no cover
+
     @dataclass
     class LogEvent:  # type: ignore[no-redef]
         address: bytes
@@ -17,6 +18,7 @@ except Exception:  # pragma: no cover
 
 
 # ---- Fallback, spec-aligned helpers (used in tests and to cross-check module code) ----
+
 
 def _keccak256(x: bytes) -> bytes:
     # We use SHA3-256 (FIPS keccak) which is the project default per synopsis.
@@ -70,13 +72,14 @@ def compute_bloom(logs: Iterable[LogEvent]) -> bytes:
     derived from the SHA3-256 hash (Ethereum-style positions).
     """
     bloom = 0
+
     def _add(x: bytes) -> None:
         nonlocal bloom
         h = _keccak256(x)
         # Take three 11-bit slices using pairs of bytes
         for off in (0, 2, 4):
             bit = ((h[off] << 8) | h[off + 1]) & 2047  # 0..2047
-            bloom |= (1 << bit)
+            bloom |= 1 << bit
 
     for e in logs:
         _add(e.address)
@@ -90,18 +93,21 @@ def compute_bloom(logs: Iterable[LogEvent]) -> bytes:
 # If the project provides its own helpers, import and cross-check where possible.
 try:  # pragma: no cover
     # type: ignore
-    from execution.receipts.logs_hash import logs_merkle_root as mod_logs_root  # noqa: F401
+    from execution.receipts.logs_hash import \
+        logs_merkle_root as mod_logs_root  # noqa: F401
 except Exception:  # pragma: no cover
     mod_logs_root = None
 
 try:  # pragma: no cover
     # type: ignore
-    from execution.receipts.logs_hash import compute_bloom as mod_compute_bloom  # noqa: F401
+    from execution.receipts.logs_hash import \
+        compute_bloom as mod_compute_bloom  # noqa: F401
 except Exception:  # pragma: no cover
     mod_compute_bloom = None
 
 
 # ---- Fixtures ----
+
 
 def ev(addr_byte: int, topics: Sequence[bytes], data: bytes) -> LogEvent:
     return LogEvent(address=bytes([addr_byte]) * 32, topics=list(topics), data=data)
@@ -118,6 +124,7 @@ def logs_abc() -> List[LogEvent]:
 
 # ---- Tests ----
 
+
 def test_event_order_preserved(logs_abc: List[LogEvent]) -> None:
     # Local "sink": just append in order and assert order is preserved
     collected: List[LogEvent] = []
@@ -128,7 +135,9 @@ def test_event_order_preserved(logs_abc: List[LogEvent]) -> None:
     assert collected != list(reversed(logs_abc))
 
 
-def test_logs_merkle_root_determinism_and_order_sensitivity(logs_abc: List[LogEvent]) -> None:
+def test_logs_merkle_root_determinism_and_order_sensitivity(
+    logs_abc: List[LogEvent],
+) -> None:
     r1 = logs_merkle_root(logs_abc)
     r2 = logs_merkle_root(list(logs_abc))  # same content, new list
     r_rev = logs_merkle_root(list(reversed(logs_abc)))
@@ -143,7 +152,9 @@ def test_logs_merkle_root_determinism_and_order_sensitivity(logs_abc: List[LogEv
         assert r1 == mod_logs_root(logs_abc)
 
 
-def test_bloom_order_insensitive_but_content_sensitive(logs_abc: List[LogEvent]) -> None:
+def test_bloom_order_insensitive_but_content_sensitive(
+    logs_abc: List[LogEvent],
+) -> None:
     b1 = compute_bloom(logs_abc)
     b_rev = compute_bloom(list(reversed(logs_abc)))
     assert b1 == b_rev  # order-insensitive

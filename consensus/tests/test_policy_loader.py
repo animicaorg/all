@@ -9,6 +9,7 @@ from consensus.tests import load_policy_example
 
 # ---- small helpers -----------------------------------------------------------
 
+
 def _dig(d: Dict[str, Any], *keys: str, default: Any = None) -> Any:
     """
     Try a sequence of alternative nested key paths (dot-separated) and return the first found.
@@ -20,7 +21,10 @@ def _dig(d: Dict[str, Any], *keys: str, default: Any = None) -> Any:
         for part in path.split("."):
             if isinstance(cur, dict) and part in cur:
                 cur = cur[part]
-            elif isinstance(cur, dict) and part.lower() in {k.lower(): k for k in cur}.keys():
+            elif (
+                isinstance(cur, dict)
+                and part.lower() in {k.lower(): k for k in cur}.keys()
+            ):
                 # case-insensitive match
                 # remap to actual key with matching lower() to avoid KeyError
                 lower_map = {k.lower(): k for k in cur}
@@ -46,11 +50,14 @@ def _as_float(x: Any) -> float:
 
 # ---- tests -------------------------------------------------------------------
 
+
 def test_policy_basic_keys():
     p = load_policy_example()  # YAML → dict
     assert isinstance(p, dict), "policy fixture should parse to a dict"
 
-    total_gamma = _dig(p, "gamma.total", "Gamma.total", "total_gamma", "caps.gamma_total")
+    total_gamma = _dig(
+        p, "gamma.total", "Gamma.total", "total_gamma", "caps.gamma_total"
+    )
     assert total_gamma is not None, "total Γ (gamma) cap must be present"
     assert _as_float(total_gamma) > 0.0, "total Γ must be positive"
 
@@ -63,6 +70,7 @@ def test_policy_basic_keys():
     per_type = _dig(p, "caps.per_type", "per_type_caps", "caps.types")
     assert isinstance(per_type, dict), "per-type caps must be a mapping"
 
+
 def test_required_proof_types_present():
     p = load_policy_example()
     per_type = _dig(p, "caps.per_type", "per_type_caps", "caps.types")
@@ -73,11 +81,16 @@ def test_required_proof_types_present():
     for required in ("hash", "ai", "quantum", "storage"):
         assert required in keys, f"missing per-type cap for {required}"
     # vdf is optional/bonus but recommended
-    assert "vdf" in keys or "vdf" not in keys, "noop assertion to document optional VDF cap"
+    assert (
+        "vdf" in keys or "vdf" not in keys
+    ), "noop assertion to document optional VDF cap"
+
 
 def test_caps_are_positive_and_reasonable():
     p = load_policy_example()
-    total_gamma = _as_float(_dig(p, "gamma.total", "Gamma.total", "total_gamma", "caps.gamma_total"))
+    total_gamma = _as_float(
+        _dig(p, "gamma.total", "Gamma.total", "total_gamma", "caps.gamma_total")
+    )
     per_type = _dig(p, "caps.per_type", "per_type_caps", "caps.types")
     assert isinstance(per_type, dict)
 
@@ -86,13 +99,16 @@ def test_caps_are_positive_and_reasonable():
     # All per-type caps must be non-negative and not absurdly larger than total Γ
     for k, v in caps.items():
         assert v >= 0.0, f"cap for {k} must be ≥ 0"
-        assert v <= max(total_gamma, 1.0) * 1.01, f"cap for {k} should not exceed total Γ"
+        assert (
+            v <= max(total_gamma, 1.0) * 1.01
+        ), f"cap for {k} should not exceed total Γ"
 
     # Sum of per-type caps should not wildly exceed total Γ (allow a small slack for config)
     total_per_type = sum(caps.values())
-    assert total_per_type <= total_gamma * 1.10 + 1e-9, (
-        f"sum of per-type caps ({total_per_type}) should be ≤ ~total Γ ({total_gamma})"
-    )
+    assert (
+        total_per_type <= total_gamma * 1.10 + 1e-9
+    ), f"sum of per-type caps ({total_per_type}) should be ≤ ~total Γ ({total_gamma})"
+
 
 def test_escort_parameters_sound():
     p = load_policy_example()
@@ -106,6 +122,7 @@ def test_escort_parameters_sound():
         if escort_q < 1.0:
             assert w >= 4, "with q<1, escort window should be at least a few blocks"
 
+
 def test_weights_if_present_are_probabilities():
     p = load_policy_example()
     weights = _dig(p, "weights", "psi.weights", "caps.weights")
@@ -118,5 +135,6 @@ def test_weights_if_present_are_probabilities():
         assert 0.0 <= val <= 1.0, f"weight for {k} must be in [0,1]"
         s += val
     # Allow small numeric slack
-    assert math.isclose(s, 1.0, rel_tol=1e-6, abs_tol=1e-6), f"weights should sum to 1, got {s}"
-
+    assert math.isclose(
+        s, 1.0, rel_tol=1e-6, abs_tol=1e-6
+    ), f"weights should sum to 1, got {s}"

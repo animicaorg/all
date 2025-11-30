@@ -19,12 +19,9 @@ from fastapi import APIRouter
 
 # Models (request/response)
 try:
-    from studio_services.models.deploy import (
-        DeployRequest,
-        DeployResponse,
-        PreflightRequest,
-        PreflightResponse,
-    )
+    from studio_services.models.deploy import (DeployRequest, DeployResponse,
+                                               PreflightRequest,
+                                               PreflightResponse)
 except Exception as e:  # pragma: no cover - defensive, keeps app importable
     raise RuntimeError(f"deploy router missing models: {e}")
 
@@ -73,7 +70,10 @@ def post_deploy(req: DeployRequest) -> DeployResponse:
         - ChainId mismatches, invalid CBOR, or RPC errors are surfaced as ApiError
           and converted to JSON problem responses by the global error handler.
     """
-    log.debug("POST /deploy received (bytes=%s)", len(req.tx_cbor) if req and req.tx_cbor else 0)
+    log.debug(
+        "POST /deploy received (bytes=%s)",
+        len(req.tx_cbor) if req and req.tx_cbor else 0,
+    )
     res = _submit_deploy(req)
     # Strong typing guard: ensure service returned the correct model
     if not isinstance(res, DeployResponse):

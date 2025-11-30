@@ -39,17 +39,13 @@ This provider is registered under RESULT_READ in the ProviderRegistry.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Tuple
-import logging
 import hashlib
+import logging
+from typing import Any, Dict, Optional, Tuple
 
-from .provider import (
-    SyscallContext,
-    ProviderRegistry,
-    get_registry,
-    RESULT_READ,
-)
 from ..errors import CapError, NotDeterministic
+from .provider import (RESULT_READ, ProviderRegistry, SyscallContext,
+                       get_registry)
 
 log = logging.getLogger("capabilities.host.result_read")
 
@@ -57,6 +53,7 @@ log = logging.getLogger("capabilities.host.result_read")
 _HAS_RESULT_STORE = False
 try:
     from ..jobs import result_store as _result_store  # type: ignore
+
     _HAS_RESULT_STORE = True
 except Exception:  # pragma: no cover
     _result_store = None
@@ -65,6 +62,7 @@ except Exception:  # pragma: no cover
 _HAS_PROOFS_ADAPTER = False
 try:
     from ..adapters import proofs as _proofs_adapter  # type: ignore
+
     _HAS_PROOFS_ADAPTER = True
 except Exception:  # pragma: no cover
     _proofs_adapter = None
@@ -73,6 +71,7 @@ except Exception:  # pragma: no cover
 # ----------------------------
 # Internal helpers
 # ----------------------------
+
 
 def _normalize_record(rec: Any) -> Tuple[Optional[int], Optional[bytes], bool]:
     """
@@ -206,7 +205,10 @@ def _min_read_height(ready_height: int) -> int:
 # Provider function
 # ----------------------------
 
-def _read_result(ctx: SyscallContext, *, task_id: bytes, consume: bool = False) -> Dict[str, Any]:
+
+def _read_result(
+    ctx: SyscallContext, *, task_id: bytes, consume: bool = False
+) -> Dict[str, Any]:
     """
     Deterministically read a result record for `task_id`.
 

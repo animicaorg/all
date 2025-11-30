@@ -25,8 +25,8 @@ from __future__ import annotations
 
 from typing import Callable
 
-from ..version import __version__  # re-exported for convenience
 from ..types.core import VDFInput, VDFProof
+from ..version import __version__  # re-exported for convenience
 
 VerifierFn = Callable[[VDFInput, VDFProof], bool]
 
@@ -39,6 +39,7 @@ def _resolve_wesolowski() -> VerifierFn:
         def verify(input: VDFInput, proof: VDFProof) -> bool: ...
     """
     from . import wesolowski  # type: ignore
+
     return wesolowski.verify  # type: ignore[attr-defined]
 
 

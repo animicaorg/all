@@ -40,12 +40,14 @@ from typing import Optional
 
 from . import EntropySource, QRNGNotAvailable
 
-
 # -----------------------------------------------------------------------------#
 # Utilities
 # -----------------------------------------------------------------------------#
 
-def _read_exact_from_file(f: io.BufferedReader, n: int, *, chunk_size: int = 1 << 16) -> bytes:
+
+def _read_exact_from_file(
+    f: io.BufferedReader, n: int, *, chunk_size: int = 1 << 16
+) -> bytes:
     """
     Read exactly n bytes from an open binary file object, raising EOFError
     if not enough bytes are available.
@@ -68,6 +70,7 @@ def _read_exact_from_file(f: io.BufferedReader, n: int, *, chunk_size: int = 1 <
 # File-backed provider
 # -----------------------------------------------------------------------------#
 
+
 class FileQRNG(EntropySource):
     """
     Read entropy bytes from a file path (e.g., a character device or FIFO).
@@ -80,14 +83,18 @@ class FileQRNG(EntropySource):
         block_size: Internal read chunk size.
     """
 
-    def __init__(self, path: str, *, reopen_each_call: bool = True, block_size: int = 1 << 16):
+    def __init__(
+        self, path: str, *, reopen_each_call: bool = True, block_size: int = 1 << 16
+    ):
         if not path or not isinstance(path, str):
             raise ValueError("path must be a non-empty string")
         self._path = path
         self._reopen = reopen_each_call
         self._block = block_size
         self._lock = threading.Lock()
-        self._fh: Optional[io.BufferedReader] = None  # kept only if reopen_each_call=False
+        self._fh: Optional[io.BufferedReader] = (
+            None  # kept only if reopen_each_call=False
+        )
 
     def _ensure_open(self) -> io.BufferedReader:
         if self._fh is not None:
@@ -135,6 +142,7 @@ class FileQRNG(EntropySource):
 # Device provider (thin wrapper)
 # -----------------------------------------------------------------------------#
 
+
 class DeviceQRNG(FileQRNG):
     """
     Device-centric QRNG provider. Defaults are suitable for character devices,
@@ -150,13 +158,22 @@ class DeviceQRNG(FileQRNG):
     device semantics are blocking with guaranteed output.
     """
 
-    def __init__(self, device_path: str, *, reopen_each_call: bool = True, block_size: int = 1 << 15):
-        super().__init__(device_path, reopen_each_call=reopen_each_call, block_size=block_size)
+    def __init__(
+        self,
+        device_path: str,
+        *,
+        reopen_each_call: bool = True,
+        block_size: int = 1 << 15,
+    ):
+        super().__init__(
+            device_path, reopen_each_call=reopen_each_call, block_size=block_size
+        )
 
 
 # -----------------------------------------------------------------------------#
 # HTTP(S) provider
 # -----------------------------------------------------------------------------#
+
 
 class HTTPQRNG(EntropySource):
     """
@@ -204,12 +221,16 @@ class HTTPQRNG(EntropySource):
         qs = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
         qs.append((self._param, str(need)))
         new_qs = urllib.parse.urlencode(qs)
-        url = urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, new_qs, parts.fragment))
+        url = urllib.parse.urlunsplit(
+            (parts.scheme, parts.netloc, parts.path, new_qs, parts.fragment)
+        )
 
         req = urllib.request.Request(url, headers=self._headers, method="GET")
         # Open with optional SSL context
         if self._ctx is None:
-            resp = urllib.request.urlopen(req, timeout=self._timeout)  # nosec - caller chooses URL
+            resp = urllib.request.urlopen(
+                req, timeout=self._timeout
+            )  # nosec - caller chooses URL
         else:
             resp = urllib.request.urlopen(req, timeout=self._timeout, context=self._ctx)  # type: ignore[call-arg] # nosec
 
