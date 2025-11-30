@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
 import time
 import uuid
 from dataclasses import asdict
 from typing import Any, Dict, Tuple
+
+from core.types.block import Block
+from core.types.header import Header
+from mining.adapters.core_chain import CoreChainAdapter
 
 from rpc.methods import method
 from rpc import deps
@@ -31,10 +36,27 @@ _DEFAULT_SHA256_BITS = os.getenv("ANIMICA_SHA256_NBITS", "1d00ffff")
 # In-memory job cache for miner.getWork / miner.submitWork flows
 _JOB_CACHE: dict[str, dict[str, Any]] = {}
 _LOCAL_HEAD: dict[str, Any] = {}
+_AUTO_MINE: bool = False
+_AUTO_TASK: asyncio.Task | None = None
 
 
 def _to_hex(b: bytes | None) -> str | None:
     return None if b is None else "0x" + b.hex()
+
+
+def _bytes32(val: Any) -> bytes:
+    if isinstance(val, (bytes, bytearray)):
+        b = bytes(val)
+    elif isinstance(val, str):
+        s = val[2:] if val.startswith("0x") else val
+        if len(s) % 2:
+            s = "0" + s
+        b = bytes.fromhex(s)
+    else:
+        return ZERO32
+    if len(b) < 32:
+        b = b.rjust(32, b"\x00")
+    return b[:32]
 
 
 def _resolve_theta() -> int:
@@ -62,6 +84,11 @@ def _ctx():
 def _head_info() -> Tuple[bytes, int, bytes, int, bytes]:
     ctx = _ctx()
     snap = ctx.get_head()
+    if _LOCAL_HEAD and isinstance(_LOCAL_HEAD, dict):
+        local_h = int(_LOCAL_HEAD.get("height", 0))
+        snap_h = int(snap.get("height", 0)) if isinstance(snap, dict) else 0
+        if local_h > snap_h:
+            snap = _LOCAL_HEAD
     if (snap.get("height") is None or snap.get("hash") is None) and _LOCAL_HEAD:
         snap = _LOCAL_HEAD
     header = snap.get("header") if isinstance(snap, dict) else None
@@ -143,6 +170,113 @@ def _parse_nonce(nonce: Any) -> bytes:
 
 def _record_local_block(height: int, block_hash: str, header: dict[str, Any] | None = None) -> None:
     _LOCAL_HEAD.update({"height": height, "hash": block_hash, "header": header})
+
+
+def auto_mine_enabled() -> bool:
+    return _AUTO_MINE
+
+
+def _adapter() -> CoreChainAdapter:
+    ctx = _ctx()
+    return CoreChainAdapter(kv=ctx.kv, block_db=ctx.block_db, state_db=getattr(ctx, "state_db", None))
+
+
+def _build_child_header(parent_height: int, parent_hash: bytes, parent_header: Any) -> Header:
+    theta = getattr(parent_header, "thetaMicro", getattr(parent_header, "theta_micro", None))
+    mix_seed = getattr(parent_header, "mixSeed", getattr(parent_header, "mix_seed", None))
+    state_root = getattr(parent_header, "stateRoot", getattr(parent_header, "state_root", None))
+    pq_root, poies_root = _policy_roots()
+    return Header(
+        v=1,
+        chainId=_ctx().cfg.chain_id,
+        height=parent_height + 1,
+        parentHash=_bytes32(parent_hash),
+        timestamp=int(time.time()),
+        stateRoot=_bytes32(state_root or ZERO32),
+        txsRoot=ZERO32,
+        receiptsRoot=ZERO32,
+        proofsRoot=ZERO32,
+        daRoot=ZERO32,
+        mixSeed=_bytes32(mix_seed or ZERO32),
+        poiesPolicyRoot=poies_root,
+        pqAlgPolicyRoot=pq_root,
+        thetaMicro=int(theta or _resolve_theta()),
+        nonce=0,
+        extra=b"",
+    )
+
+
+def _mine_once() -> bool:
+    ctx = _ctx()
+    adapter = _adapter()
+    head = adapter.get_head()
+    parent_height = int(head.get("height") or 0)
+    parent_hash_val = head.get("hash") or head.get("hash_hex")
+    parent_header = head.get("obj") or head.get("header")
+
+    if parent_header is None:
+        # If the DB is empty, force bootstrap and retry once
+        _maybe_bootstrap = getattr(deps, "startup", None)
+        if callable(_maybe_bootstrap):
+            try:
+                # reinitialize context to pick up genesis
+                deps.ensure_started(ctx.cfg)
+                head = adapter.get_head()
+                parent_height = int(head.get("height") or 0)
+                parent_hash_val = head.get("hash") or head.get("hash_hex")
+                parent_header = head.get("obj") or head.get("header")
+            except Exception:
+                parent_header = None
+
+    parent_hash_bytes = _bytes32(parent_hash_val or ZERO32)
+    if parent_header is None:
+        # Build a minimal synthetic parent header so hashes/roots have sane defaults
+        parent_header = Header(
+            v=1,
+            chainId=_ctx().cfg.chain_id,
+            height=parent_height,
+            parentHash=parent_hash_bytes,
+            timestamp=int(time.time()),
+            stateRoot=ZERO32,
+            txsRoot=ZERO32,
+            receiptsRoot=ZERO32,
+            proofsRoot=ZERO32,
+            daRoot=ZERO32,
+            mixSeed=ZERO32,
+            poiesPolicyRoot=ZERO32,
+            pqAlgPolicyRoot=ZERO32,
+            thetaMicro=_resolve_theta(),
+            nonce=0,
+            extra=b"",
+        )
+
+    header = _build_child_header(parent_height, parent_hash_bytes, parent_header)
+    block = Block.from_components(header=header, txs=(), proofs=(), receipts=None, verify=True)
+    accepted = adapter.submit_block(block)
+    if accepted:
+        _record_local_block(header.height, "0x" + header.hash().hex(), header)
+    return accepted
+
+
+async def _auto_mine_loop(interval: float = 1.0) -> None:
+    global _AUTO_MINE
+    while _AUTO_MINE:
+        try:
+            _mine_once()
+        except Exception:
+            pass
+        await asyncio.sleep(interval)
+
+
+def _start_auto_task() -> bool:
+    global _AUTO_TASK
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    if _AUTO_TASK is None or _AUTO_TASK.done():
+        _AUTO_TASK = loop.create_task(_auto_mine_loop())
+    return True
 
 
 @method("miner.getWork", desc="Return a mining work template for Stratum/CPU miners")
@@ -263,6 +397,37 @@ def miner_submit_work(**payload: Any) -> Dict[str, Any]:
         "newHead": {"height": int(job.get("height", 0)), "hash": block_hash},
     })
     return res
+
+
+@method("miner.mine", desc="Mine up to N blocks locally")
+def miner_mine(count: int | None = None) -> dict[str, int]:
+    target = max(1, int(count or 1))
+    mined = 0
+    for _ in range(target):
+        if _mine_once():
+            mined += 1
+        else:
+            break
+    head = _ctx().get_head()
+    height = int(head.get("height") or 0) if isinstance(head, dict) else 0
+    return {"mined": mined, "height": height}
+
+
+@method("miner.start", aliases=("miner_start", "miner.setAutoMine", "animica_setAutoMine"))
+def miner_start(enable: bool | None = None) -> bool:
+    global _AUTO_MINE
+    _AUTO_MINE = True if enable is None else bool(enable)
+    _start_auto_task()
+    return _AUTO_MINE
+
+
+@method("miner.stop", aliases=("miner_stop", "animica_stopAutoMine"))
+def miner_stop() -> bool:
+    global _AUTO_MINE
+    _AUTO_MINE = False
+    if _AUTO_TASK is not None:
+        _AUTO_TASK.cancel()
+    return False
 
 
 @method("miner.submitShare", desc="Accept a submitted share from the mining pool")

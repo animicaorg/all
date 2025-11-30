@@ -201,6 +201,25 @@ python -m aicf.cli.node_pipeline auto true --datadir /tmp/node
 python -m aicf.cli.node_pipeline pipeline -m 2 --rpc-url http://127.0.0.1:8545
 ```
 
+For devnet, the RPC server and core tools share the same SQLite DB and genesis. Once the node is running via `ops/run.sh node`, y
+ou can:
+
+```sh
+# check status (expects chainId 1337 on devnet)
+python -m aicf.cli.node_pipeline status \
+  --rpc-url http://127.0.0.1:8545/rpc
+
+# mine 3 blocks via RPC
+python -m aicf.cli.node_pipeline mine \
+  --count 3 \
+  --rpc-url http://127.0.0.1:8545/rpc
+
+# verify the chain state directly from core
+python -m core.cli_demo \
+  --db "sqlite:////$HOME/animica/devnet/chain.db" \
+  --genesis genesis/devnet.json
+```
+
 - `status [--json]` prints chain ID, head height, and whether auto-mining is enabled.
 - `mine --count/-n <blocks>` bumps the chain height by the requested number of blocks (RPC via miner endpoints or local datadir).
 - `block <tag|number> [--json]` fetches a block by number or tag (`latest`, `earliest`, or hex tags) using RPC or local state.

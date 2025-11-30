@@ -46,6 +46,11 @@ class _RpcHandler(BaseHTTPRequestHandler):
             }
         elif method == "chain.getChainId":
             result = self.state["chainId"]
+        elif method == "miner.mine":
+            count = int(params[0]) if params else 1
+            mined = max(1, count)
+            self.state["height"] += mined
+            result = {"mined": mined, "height": self.state["height"]}
         elif method == "miner.getWork":
             next_height = self.state["height"] + 1
             result = {
@@ -56,6 +61,12 @@ class _RpcHandler(BaseHTTPRequestHandler):
         elif method == "miner.submit_sha256_block":
             self.state["height"] += 1
             result = {"accepted": True, "height": self.state["height"]}
+        elif method in {"miner.start", "miner_start", "miner.setAutoMine"}:
+            self.state["auto"] = True
+            result = True
+        elif method in {"miner.stop", "miner_stop"}:
+            self.state["auto"] = False
+            result = False
         elif method == "chain.getBlockByNumber":
             tag = params[0] if params else "latest"
             if isinstance(tag, str):
@@ -181,6 +192,53 @@ class _AnvilMineHandler(BaseHTTPRequestHandler):
         self._send(payload)
 
 
+class _MinerOnlyHandler(BaseHTTPRequestHandler):
+    state = {"height": 0, "chainId": 0xA11CA, "auto": False}
+
+    def log_message(self, fmt: str, *args) -> None:  # pragma: no cover - silence server logs in tests
+        return
+
+    def _send(self, payload: dict, code: int = 200) -> None:
+        data = json.dumps(payload).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_POST(self):  # noqa: N802 - http.server signature
+        length = int(self.headers.get("content-length", "0"))
+        body = self.rfile.read(length)
+        req = json.loads(body.decode() or "{}")
+        method = req.get("method")
+        params = req.get("params") or []
+
+        if self.path.rstrip("/") != "/rpc":
+            self.send_error(404)
+            return
+
+        if method == "chain.getHead":
+            result = {"height": self.state["height"], "chainId": self.state["chainId"], "autoMine": self.state["auto"]}
+        elif method == "miner.mine":
+            count = int(params[0]) if params else 1
+            mined = max(1, count)
+            self.state["height"] += mined
+            result = {"mined": mined, "height": self.state["height"]}
+        elif method == "miner.start":
+            self.state["auto"] = True
+            result = True
+        elif method == "miner.stop":
+            self.state["auto"] = False
+            result = False
+        else:
+            payload = {"jsonrpc": "2.0", "id": req.get("id"), "error": {"code": -32601, "message": "Method not found"}}
+            self._send(payload)
+            return
+
+        payload = {"jsonrpc": "2.0", "id": req.get("id", 1), "result": result}
+        self._send(payload)
+
+
 def test_status_and_mine_against_rpc(tmp_path: Path) -> None:
     server, url = _start_rpc_server(tmp_path)
     try:
@@ -222,6 +280,22 @@ def test_mine_fallbacks_to_anvil_mine(tmp_path: Path) -> None:
 
         status_after = json.loads(_run_cli(["status", "--rpc-url", url, "--json"]))
         assert status_after["height"] == 3
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_mine_uses_miner_endpoint_when_available(tmp_path: Path) -> None:
+    server, url = _start_rpc_server(tmp_path, _MinerOnlyHandler)
+    try:
+        new_height = int(_run_cli(["mine", "--rpc-url", url, "--count", "2"]))
+        assert new_height == 2
+
+        status_after = json.loads(_run_cli(["status", "--rpc-url", url, "--json"]))
+        assert status_after["height"] == 2
+
+        toggled = _run_cli(["auto", "true", "--rpc-url", url])
+        assert toggled.strip() == "on"
     finally:
         server.shutdown()
         server.server_close()
