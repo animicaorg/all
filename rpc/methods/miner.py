@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import time
 import uuid
@@ -25,6 +26,11 @@ except Exception:  # pragma: no cover
 _DEFAULT_THETA_MICRO = int(os.getenv("ANIMICA_DEFAULT_THETA_MICRO", "3000000"))
 _DEFAULT_SHARE_TARGET = float(os.getenv("ANIMICA_DEFAULT_SHARE_TARGET", "0.01"))
 _DEFAULT_SHA256_BITS = os.getenv("ANIMICA_SHA256_NBITS", "1d00ffff")
+
+
+# In-memory job cache for miner.getWork / miner.submitWork flows
+_JOB_CACHE: dict[str, dict[str, Any]] = {}
+_LOCAL_HEAD: dict[str, Any] = {}
 
 
 def _to_hex(b: bytes | None) -> str | None:
@@ -56,6 +62,8 @@ def _ctx():
 def _head_info() -> Tuple[bytes, int, bytes, int, bytes]:
     ctx = _ctx()
     snap = ctx.get_head()
+    if (snap.get("height") is None or snap.get("hash") is None) and _LOCAL_HEAD:
+        snap = _LOCAL_HEAD
     header = snap.get("header") if isinstance(snap, dict) else None
     height = int(snap.get("height") or 0)
     chain_id = int(getattr(header, "chain_id", None) or ctx.cfg.chain_id)
@@ -65,6 +73,8 @@ def _head_info() -> Tuple[bytes, int, bytes, int, bytes]:
         parent_hash = bytes.fromhex(parent_hash_hex[2:] if parent_hash_hex.startswith("0x") else parent_hash_hex)
     else:
         parent_hash = getattr(header, "hash", None) or ZERO32
+    if len(parent_hash) < 32:
+        parent_hash = parent_hash.rjust(32, b"\x00")
     parent_mix_seed = getattr(header, "mix_seed", None) or ZERO32
     parent_state_root = getattr(header, "state_root", None) or ZERO32
     return parent_hash, height or 0, parent_mix_seed, chain_id, parent_state_root
@@ -102,6 +112,39 @@ def _bits_to_target(bits_hex: str) -> int:
     return mantissa * (1 << (8 * (exponent - 3)))
 
 
+def _theta_to_target(theta_micro: int) -> int:
+    """Derive a loose block target from θ for lightweight validation."""
+
+    # Keep the target reachable in tests and offline environments; default
+    # share target is a 1% slice of the 256-bit space.
+    max_target = (1 << 256) - 1
+    base = int(max_target * _DEFAULT_SHARE_TARGET)
+    if theta_micro <= 0:
+        return base
+    # Clamp so that higher θ lowers the target but never goes to zero.
+    scaled = max(1, int(base / max(theta_micro / 1_000_000, 1)))
+    return min(max_target, scaled)
+
+
+def _parse_nonce(nonce: Any) -> bytes:
+    if isinstance(nonce, (bytes, bytearray)):
+        return bytes(nonce)
+    if isinstance(nonce, int):
+        if nonce < 0:
+            raise ValueError("nonce must be non-negative")
+        return nonce.to_bytes(8, "big")
+    if isinstance(nonce, str):
+        s = nonce[2:] if nonce.startswith("0x") else nonce
+        if len(s) % 2:
+            s = "0" + s
+        return bytes.fromhex(s)
+    raise ValueError("nonce must be hex string, int, or bytes")
+
+
+def _record_local_block(height: int, block_hash: str, header: dict[str, Any] | None = None) -> None:
+    _LOCAL_HEAD.update({"height": height, "hash": block_hash, "header": header})
+
+
 @method("miner.getWork", desc="Return a mining work template for Stratum/CPU miners")
 def miner_get_work(params: Dict[str, Any] | None = None) -> Dict[str, Any]:
     from mining.templates import TemplateBuilder
@@ -116,6 +159,7 @@ def miner_get_work(params: Dict[str, Any] | None = None) -> Dict[str, Any]:
     tpl = tb.current_template(force=True)
 
     theta = tpl.theta_target_micro
+    block_target = _theta_to_target(theta)
     share_target = _DEFAULT_SHARE_TARGET
     if share_microtarget is not None:
         try:
@@ -136,16 +180,89 @@ def miner_get_work(params: Dict[str, Any] | None = None) -> Dict[str, Any]:
 
         body = {k: (v if not isinstance(v, (bytes, bytearray)) else v.hex()) for k, v in header_dict.items()}
         sign_bytes = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    job_id = uuid.uuid4().hex
+    _JOB_CACHE[job_id] = {
+        "template": tpl,
+        "sign_bytes": sign_bytes,
+        "block_target": block_target,
+        "share_target": share_target,
+        "height": int(tpl.height),
+        "created_at": time.time(),
+    }
 
     return {
-        "jobId": uuid.uuid4().hex,
+        "jobId": job_id,
         "header": header_view,
         "thetaMicro": int(theta),
         "shareTarget": float(share_target),
+        "target": hex(block_target),
         "height": int(tpl.height),
         "hints": {"mixSeed": _to_hex(tpl.mix_seed)},
         "signBytes": _to_hex(sign_bytes),
     }
+
+
+@method(
+    "miner.submitWork",
+    desc="Validate and accept a mined solution",
+    aliases=("miner_submitWork", "miner.submit_work"),
+)
+def miner_submit_work(**payload: Any) -> Dict[str, Any]:
+    if len(payload) == 1 and "payload" in payload and isinstance(payload["payload"], dict):
+        payload = payload["payload"]
+    if not isinstance(payload, dict):
+        raise ValueError("params must be an object")
+
+    job_id = payload.get("jobId") or payload.get("job_id")
+    nonce_val = payload.get("nonce")
+    if not job_id or nonce_val is None:
+        raise ValueError("jobId and nonce are required")
+
+    job = _JOB_CACHE.get(str(job_id))
+    if job is None:
+        raise ValueError("unknown or stale jobId")
+
+    # Guard against stale work: if the head advanced to this height or beyond,
+    # reject and evict the job.
+    _parent_hash, head_height, _mix, _chain_id, _state_root = _head_info()
+    if head_height >= int(job.get("height", 0)):
+        _JOB_CACHE.pop(str(job_id), None)
+        raise ValueError("stale work for current head")
+
+    nonce = _parse_nonce(nonce_val)
+    sign_bytes: bytes = job["sign_bytes"]
+    digest = hashlib.sha3_256(sign_bytes + nonce).digest()
+    digest_int = int.from_bytes(digest, "big")
+
+    accepted = digest_int <= int(job["block_target"])
+    block_hash = "0x" + digest.hex()
+    res: Dict[str, Any] = {
+        "accepted": bool(accepted),
+        "jobId": job_id,
+        "hash": block_hash,
+        "target": hex(int(job["block_target"])),
+    }
+
+    if not accepted:
+        res["reason"] = "target-not-met"
+        return res
+
+    # Record the new head locally for lightweight test chains.
+    try:
+        header_obj = job["template"].header  # type: ignore[index]
+        header_view = asdict(header_obj)
+    except Exception:
+        header_obj = None
+        header_view = None
+
+    _JOB_CACHE.pop(str(job_id), None)
+    _record_local_block(int(job.get("height", 0)), block_hash, header_view or header_obj)
+    res.update({
+        "reason": None,
+        "height": int(job.get("height", 0)),
+        "newHead": {"height": int(job.get("height", 0)), "hash": block_hash},
+    })
+    return res
 
 
 @method("miner.submitShare", desc="Accept a submitted share from the mining pool")
