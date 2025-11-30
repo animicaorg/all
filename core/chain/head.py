@@ -43,6 +43,7 @@ from core.types.header import Header
 from core.encoding.canonical import header_signing_bytes
 from core.utils.hash import sha3_256
 from core.errors import GenesisError
+from core.db.block_db import PFX_HIX, _from_u64be
 
 
 # --- Small field helpers (tolerate snake/camel) -----------------------------
@@ -82,11 +83,49 @@ def read_head(block_db) -> Optional[Tuple[int, bytes]]:
     Return the canonical head (height, hash) if present, else None.
     Supports both the legacy get_canonical_head() API and the newer get_head().
     """
+    head = None
     if hasattr(block_db, "get_canonical_head"):
-        return block_db.get_canonical_head()
-    if hasattr(block_db, "get_head"):
-        return block_db.get_head()
+        head = block_db.get_canonical_head()
+    elif hasattr(block_db, "get_head"):
+        head = block_db.get_head()
+
+    fallback = _recover_head_from_canonical(block_db)
+    if fallback is not None:
+        # If the stored head is missing or stale, prefer the canonical tip.
+        if head is None or fallback[0] > head[0]:
+            return fallback
+
+    if head is not None:
+        return head
     raise GenesisError("block_db missing head getter")
+
+
+def _recover_head_from_canonical(block_db) -> Optional[Tuple[int, bytes]]:
+    """
+    Reconstruct the head from the canonical height index if the explicit head
+    pointer is missing or stale (e.g., when importing a prebuilt devnet DB).
+    """
+
+    kv = getattr(block_db, "kv", None)
+    if kv is None or not hasattr(kv, "iter_prefix"):
+        return None
+
+    try:
+        max_height = -1
+        max_hash: Optional[bytes] = None
+        for key, value in kv.iter_prefix(PFX_HIX):
+            if len(key) < len(PFX_HIX) + 8:
+                continue
+            height = _from_u64be(key[-8:])
+            if height >= max_height:
+                max_height = height
+                max_hash = bytes(value)
+        if max_hash is not None:
+            return (max_height, max_hash)
+    except Exception:
+        return None
+
+    return None
 
 
 def write_head(block_db, height: int, h: bytes) -> None:
