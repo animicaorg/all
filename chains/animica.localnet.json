@@ -9,7 +9,7 @@
   "nativeCurrency": { "name": "Animica", "symbol": "ANM", "decimals": 18 },
 
   "rpc": {
-    "http": ["http://127.0.0.1:8545"],
+    "http": ["http://144.126.133.21:8545", "http://127.0.0.1:8545"],
     "ws":   ["ws://127.0.0.1:8546"]
   },
 
@@ -24,7 +24,7 @@
   "p2p": {
     "protocols": ["animica/1"],
     "port": 30303,
-    "seeds": ["127.0.0.1"],
+    "seeds": ["144.126.133.21", "127.0.0.1"],
     "bootnodes": []
   },
 
