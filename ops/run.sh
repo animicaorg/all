@@ -54,6 +54,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PROFILE_PATH="${REPO_ROOT}/ops/profiles/${PROFILE}.env"
 
+# Ensure in-repo Python packages (e.g., animica) are importable without requiring
+# a global installation. This matches the layout used by `python/pyproject.toml`
+# and keeps `python -m animica.*` working when running from the repo root.
+export PYTHONPATH="${REPO_ROOT}/python${PYTHONPATH:+:${PYTHONPATH}}"
+
 if [[ ! -f "${PROFILE_PATH}" ]]; then
   echo "Missing profile file: ${PROFILE_PATH}" >&2
   exit 1
