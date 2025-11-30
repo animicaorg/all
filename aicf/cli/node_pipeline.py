@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from aicf.node import make_block
@@ -14,23 +15,46 @@ from aicf.node import make_block
 DEFAULT_RPC = "http://127.0.0.1:8545"
 
 
+def _normalize_rpc_url(rpc_url: str) -> str:
+    parsed = urlparse(rpc_url)
+    path = parsed.path or ""
+    if path.rstrip("/") == "/rpc":
+        return rpc_url
+    if path and path not in {"", "/"}:
+        return rpc_url
+    return rpc_url.rstrip("/") + "/rpc"
+
+
 def _rpc_call(rpc_url: str, method: str, params: Optional[list[Any]] = None) -> Any:
     payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or []}
     data_bytes = json.dumps(payload).encode()
-    try:
-        req = Request(
-            rpc_url,
-            data=data_bytes,
-            headers={
-                "Content-Type": "application/json",
-                "Content-Length": str(len(data_bytes)),
-                "Connection": "close",
-            },
-        )
-        with urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode())
-    except (HTTPError, URLError, TimeoutError, ValueError) as exc:  # pragma: no cover - handled by caller
-        raise RuntimeError(f"RPC request failed: {exc}")
+
+    errors: list[str] = []
+    targets = []
+    for candidate in (_normalize_rpc_url(rpc_url), rpc_url):
+        if candidate not in targets:
+            targets.append(candidate)
+
+    for target in targets:  # normalize first, original URL as fallback
+        try:
+            req = Request(
+                target,
+                data=data_bytes,
+                headers={
+                    "Content-Type": "application/json",
+                    "Content-Length": str(len(data_bytes)),
+                    "Connection": "close",
+                },
+            )
+            with urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode())
+            break
+        except (HTTPError, URLError, TimeoutError, ValueError) as exc:  # pragma: no cover - handled by caller
+            errors.append(f"{target}: {exc}")
+            continue
+    else:  # pragma: no cover - loop always breaks or raises
+        raise RuntimeError(f"RPC request failed: {'; '.join(errors)}")
+
     if not isinstance(data, dict):
         raise RuntimeError(f"Unexpected RPC response: {data}")
     if "error" in data:
@@ -79,6 +103,17 @@ def _status(rpc_url: str, datadir: Optional[Path]) -> Dict[str, Any]:
         state = _load_local_state(datadir)
         state.pop("_path", None)
         return state
+
+    try:
+        head = _rpc_call(rpc_url, "chain.getHead")
+        if isinstance(head, dict):
+            return {
+                "height": _parse_height(head.get("height", head.get("number", 0))),
+                "chainId": head.get("chainId"),
+                "autoMine": bool(head.get("autoMine", False)),
+            }
+    except RuntimeError:
+        pass
     try:
         info = _rpc_call(rpc_url, "animica_status")
         if isinstance(info, dict):
@@ -103,6 +138,17 @@ def _mine(rpc_url: str, count: int, datadir: Optional[Path]) -> int:
     if count <= 0:
         return _status(rpc_url, None)["height"]
     try:
+        for _ in range(count):
+            work = _rpc_call(rpc_url, "miner.getWork")
+            payload: Dict[str, Any] = {"jobId": work.get("jobId") if isinstance(work, dict) else None}
+            if isinstance(work, dict) and "header" in work:
+                payload["header"] = work["header"]
+            payload.setdefault("nonce", hex(int(time.time() * 1000) & 0xFFFFFFFF))
+            _rpc_call(rpc_url, "miner.submit_sha256_block", payload)
+        return _status(rpc_url, None)["height"]
+    except RuntimeError:
+        pass
+    try:
         result = _rpc_call(rpc_url, "animica_generate", [count])
         if isinstance(result, dict) and "height" in result:
             return int(result["height"])
@@ -126,6 +172,12 @@ def _block(rpc_url: str, tag: str, datadir: Optional[Path]) -> Dict[str, Any]:
         else:
             n = int(tag)
         return make_block(max(0, n))
+    try:
+        result = _rpc_call(rpc_url, "chain.getBlockByNumber", [tag, False, False])
+        if isinstance(result, dict):
+            return result
+    except RuntimeError:
+        pass
     try:
         result = _rpc_call(rpc_url, "animica_getBlock", [tag])
         if isinstance(result, dict):
