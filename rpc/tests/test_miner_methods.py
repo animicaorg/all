@@ -77,3 +77,15 @@ def test_submit_sha256_block_stub_accepts_payload():
     res = rpc_call(client, "miner.submit_sha256_block", payload)
     assert res["result"]["accepted"] is True
     assert res["result"]["payload"] == payload
+
+
+def test_miner_mine_advances_head():
+    client, cfg, _ = new_test_client()
+    start = rpc_call(client, "chain.getHead")["result"].get("height") or 0
+
+    mined = rpc_call(client, "miner.mine", [2])["result"]
+    assert mined["mined"] >= 1
+    assert mined["height"] >= start + 1
+
+    after = rpc_call(client, "chain.getHead")["result"].get("height") or 0
+    assert after >= start + 1
