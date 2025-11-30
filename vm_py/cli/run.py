@@ -176,6 +176,15 @@ def compile_manifest_to_ir(manifest_path: str) -> Tuple[bytes, Dict[str, Any], D
     except Exception:
         pass
 
+    # Next, try the omni-vm-compile helper for consistent fallbacks
+    try:
+        from vm_py.cli import compile as cli_compile
+
+        ir_bytes, meta = cli_compile.compile_source_to_ir(src, filename=source_path)
+        return ir_bytes, abi if isinstance(abi, dict) else {}, meta
+    except Exception:
+        pass
+
     # Fallback: lower pipeline encode
     ir_bytes = _compile_lower_pipeline(src, source_path)
     return ir_bytes, abi if isinstance(abi, dict) else {}, {}
@@ -183,7 +192,16 @@ def compile_manifest_to_ir(manifest_path: str) -> Tuple[bytes, Dict[str, Any], D
 def _encode_ir_bytes(ir_obj: Any) -> bytes:
     from importlib import import_module
     enc = import_module("vm_py.compiler.encode")
-    for name in ("dumps", "encode", "encode_module", "to_bytes"):
+    try:
+        ir_types = import_module("vm_py.compiler.ir")
+        if isinstance(ir_obj, getattr(ir_types, "Module", ())):
+            return enc.encode_module(ir_obj)  # type: ignore[arg-type]
+        if isinstance(ir_obj, getattr(ir_types, "Prog", ())):
+            return enc.encode_prog(ir_obj)  # type: ignore[arg-type]
+    except Exception:
+        pass
+
+    for name in ("dumps", "encode", "encode_module", "encode_prog", "to_bytes"):
         fn = getattr(enc, name, None)
         if callable(fn):
             out = fn(ir_obj)  # type: ignore[misc]
@@ -199,13 +217,19 @@ def _compile_lower_pipeline(src: str, filename: str) -> bytes:
     lower = import_module("vm_py.compiler.ast_lower")
     ir_mod = getattr(lower, "lower", None)
     if not callable(ir_mod):
-        for alt in ("lower_module", "lower_from_ast", "lower_from_source"):
+        for alt in ("lower_module", "lower_from_ast", "lower_from_source", "lower_to_ir"):
             ir_mod = getattr(lower, alt, None)
             if callable(ir_mod):
                 break
     if ir_mod is None:
         raise RuntimeError("No lower() function found in vm_py.compiler.ast_lower")
-    ir = ir_mod(ast.parse(src, filename=filename), filename)  # type: ignore[misc]
+    mod_ast = ast.parse(src, filename=filename)
+
+    try:
+        ir = ir_mod(mod_ast, filename)  # type: ignore[misc]
+    except TypeError:
+        ir = ir_mod(mod_ast)  # type: ignore[misc]
+
     return _encode_ir_bytes(ir)
 
 # ---------------------- engine fallback runner ---------------------- #
@@ -271,6 +295,31 @@ def run_via_engine(ir_bytes: bytes, abi: Dict[str, Any], func: str, args: List[A
 
     raise RuntimeError("Engine constructed, but no runnable method (run_call/call/execute_call/run) was found")
 
+
+def run_via_pyexec(manifest_path: str, func: str, args: List[Any]) -> Tuple[Any, Dict[str, Any]]:
+    """Last-resort fallback: exec the contract source and call the function directly."""
+
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    mdir = _manifest_dir(manifest_path)
+    source_rel = manifest.get("source") or manifest.get("code") or manifest.get("path") or manifest.get("entry")
+    if not source_rel:
+        raise RuntimeError("Manifest missing 'source' and 'entry'; cannot exec contract source")
+    source_path = os.path.join(mdir, source_rel)
+
+    with open(source_path, "r", encoding="utf-8") as f:
+        src = f.read()
+
+    scope: Dict[str, Any] = {}
+    exec(src, scope)
+    fn = scope.get(func)
+    if not callable(fn):
+        raise RuntimeError(f"Function {func!r} not found in contract source")
+
+    result = fn(*args)
+    return result, {"executed_via": "pyexec", "source": os.path.abspath(source_path)}
+
 def _normalize_engine_result(out: Any) -> Tuple[Any, Dict[str, Any]]:
     """
     Accept flexible engine returns:
@@ -320,7 +369,11 @@ def main(argv: list[str] | None = None) -> int:
         code_hash = "0x" + sha3_256(ir_bytes).hexdigest()
         eprint(f"[vm-run] code hash: {code_hash}")
         eprint("[vm-run] executing via vm_py.runtime.engine …")
-        result, emeta = run_via_engine(ir_bytes, abi, args.call, call_args)
+        try:
+            result, emeta = run_via_engine(ir_bytes, abi, args.call, call_args)
+        except Exception as e_engine:
+            eprint(f"[vm-run] engine path failed: {e_engine}; falling back to direct exec …")
+            result, emeta = run_via_pyexec(args.manifest, args.call, call_args)
         meta = {"code_hash": code_hash, **cmeta, **emeta}
 
     # Output
