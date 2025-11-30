@@ -2,6 +2,8 @@ import hashlib
 
 import pytest
 
+from core.types.header import Header
+
 from rpc.methods import miner as miner_methods
 from rpc.tests import new_test_client, rpc_call
 
@@ -52,6 +54,40 @@ def test_jsonrpc_endpoint_accepts_empty_params_via_post_body():
     assert data.get("error") is None
     assert data.get("result") is not None
     assert data["result"].get("jobId") in miner_methods._JOB_CACHE
+
+
+def test_get_work_handles_callable_header_hash():
+    """Ensure headers exposing hash() methods don't break parent hash resolution."""
+
+    client, _, _ = new_test_client()
+
+    prev_head = dict(miner_methods._LOCAL_HEAD)
+    try:
+        header = Header(
+            v=1,
+            chainId=1,
+            height=1,
+            parentHash=miner_methods.ZERO32,
+            timestamp=0,
+            stateRoot=miner_methods.ZERO32,
+            txsRoot=miner_methods.ZERO32,
+            receiptsRoot=miner_methods.ZERO32,
+            proofsRoot=miner_methods.ZERO32,
+            daRoot=miner_methods.ZERO32,
+            mixSeed=miner_methods.ZERO32,
+            poiesPolicyRoot=miner_methods.ZERO32,
+            pqAlgPolicyRoot=miner_methods.ZERO32,
+            thetaMicro=miner_methods._resolve_theta(),
+            nonce=0,
+            extra=b"",
+        )
+        miner_methods._LOCAL_HEAD.update({"height": 5, "hash": None, "header": header})
+
+        res = rpc_call(client, "miner.getWork")
+        assert res["result"]["jobId"] in miner_methods._JOB_CACHE
+    finally:
+        miner_methods._LOCAL_HEAD.clear()
+        miner_methods._LOCAL_HEAD.update(prev_head)
 
 
 def test_submit_work_accepts_valid_solution_and_updates_head():
