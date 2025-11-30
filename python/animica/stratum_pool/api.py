@@ -17,10 +17,12 @@ def create_app(metrics: PoolMetrics) -> FastAPI:
         allow_headers=["*"],
     )
 
+    @app.get("/summary")
     @app.get("/api/pool/summary")
     async def pool_summary():
         return metrics.pool_summary()
 
+    @app.get("/miners")
     @app.get("/api/miners")
     async def list_miners(page: int = 1, page_size: int = 50):
         data = metrics.miners()
@@ -29,6 +31,7 @@ def create_app(metrics: PoolMetrics) -> FastAPI:
         items = data["items"][start:end]
         return {"items": items, "total": data["total"]}
 
+    @app.get("/miners/{worker_id}")
     @app.get("/api/miners/{worker_id}")
     async def miner_detail(worker_id: str):
         data = metrics.miner_detail(worker_id)
@@ -36,6 +39,7 @@ def create_app(metrics: PoolMetrics) -> FastAPI:
             raise HTTPException(status_code=404, detail="worker not found")
         return data
 
+    @app.get("/blocks")
     @app.get("/api/blocks/recent")
     async def recent_blocks():
         return metrics.recent_blocks()
