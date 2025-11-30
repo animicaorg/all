@@ -161,13 +161,25 @@ def _mine(rpc_url: str, count: int, datadir: Optional[Path]) -> int:
             return current_height
     except RuntimeError:
         pass
-    evm_height = _parse_height(_rpc_call(rpc_url, "evm_mine", [count]))
-    if evm_height > start_height:
-        return evm_height
+    try:
+        evm_height = _parse_height(_rpc_call(rpc_url, "evm_mine", [count]))
+        if evm_height > start_height:
+            return evm_height
+    except RuntimeError:
+        pass
+
+    try:
+        _rpc_call(rpc_url, "anvil_mine", [count])
+        current_height = _status(rpc_url, None)["height"]
+        if current_height > start_height:
+            return current_height
+    except RuntimeError:
+        pass
+
     try:
         return _status(rpc_url, None)["height"]
     except RuntimeError:
-        return evm_height
+        return start_height
 
 
 def _block(rpc_url: str, tag: str, datadir: Optional[Path]) -> Dict[str, Any]:
