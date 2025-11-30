@@ -22,8 +22,12 @@ def load_state(datadir: str) -> None:
 
 def save_state() -> None:
     if state_file is None: return
-    with lock:
-        state_file.write_text(json.dumps({"height": state["height"], "chain_id": state["chain_id"]}))
+    payload = json.dumps({"height": state["height"], "chain_id": state["chain_id"]})
+    if lock.locked():
+        state_file.write_text(payload)
+    else:
+        with lock:
+            state_file.write_text(payload)
 
 def make_block(n: int) -> dict:
     parent = "0x" + "0"*64 if n <= 0 else "0x" + hashlib.sha256(f"{n-1}".encode()).hexdigest()
