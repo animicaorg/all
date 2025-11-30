@@ -18,3 +18,4 @@
 # community-seed.ap.mainnet.animica.dev
 
 # Add real seeds here prior to launch.
+144.126.133.21
