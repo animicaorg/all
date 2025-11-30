@@ -1,0 +1,57 @@
+{
+  "meta": {
+    "version": 1,
+    "description": "Animica genesis sample (chainId=1337). Premine + system accounts only."
+  },
+  "chainId": 1337,
+  "network": "animica-devnet-sample",
+  "genesisTime": "2025-01-01T00:00:00Z",
+
+  "unit": {
+    "symbol": "ANM",
+    "decimals": 9
+  },
+
+  "paramsRef": {
+    "path": "spec/params.yaml",
+    "sha3_256": "0x0000000000000000000000000000000000000000000000000000000000000000"
+  },
+
+  "algPolicyRoot": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+
+  "beacon": {
+    "seed": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "round": 0
+  },
+
+  "economics": {
+    "premineTotal": "81000000000000000",
+    "premineBreakdownANM": {
+      "treasury": 39600000,
+      "aicf": 20250000,
+      "foundation": 8100000,
+      "faucet": 3240000,
+      "dev_reserve": 9810000
+    }
+  },
+
+  "alloc": [
+    { "address": "system:treasury",   "nonce": 0, "balance": "39600000000000000" },
+    { "address": "system:aicf",       "nonce": 0, "balance": "20250000000000000" },
+    { "address": "system:foundation", "nonce": 0, "balance": "8100000000000000" },
+    { "address": "system:faucet",     "nonce": 0, "balance": "3240000000000000" },
+    { "address": "system:dev",        "nonce": 0, "balance": "9810000000000000" }
+  ],
+
+  "consensus": {
+    "initialThetaMicro": 1000000,
+    "gammaCapMicro": 2000000
+  },
+
+  "notes": [
+    "All balances are integers in base units (10^9 = 1 ANM).",
+    "Premine total: 81,000,000 ANM → 81,000,000 × 10^9 = 81,000,000,000,000,000 base units.",
+    "System addresses use the 'system:<name>' convention and are resolved by execution/runtime/system.py.",
+    "algPolicyRoot and paramsRef.sha3_256 are placeholders—replace with actual roots before launch."
+  ]
+}
