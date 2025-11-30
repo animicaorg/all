@@ -102,7 +102,8 @@ def _head_info() -> Tuple[bytes, int, bytes, int, bytes]:
     if parent_hash_hex and isinstance(parent_hash_hex, str):
         parent_hash = bytes.fromhex(parent_hash_hex[2:] if parent_hash_hex.startswith("0x") else parent_hash_hex)
     else:
-        parent_hash = getattr(header, "hash", None) or ZERO32
+        header_hash = getattr(header, "hash", None)
+        parent_hash = header_hash() if callable(header_hash) else header_hash or ZERO32
     if len(parent_hash) < 32:
         parent_hash = parent_hash.rjust(32, b"\x00")
     parent_mix_seed = getattr(header, "mix_seed", None) or ZERO32
