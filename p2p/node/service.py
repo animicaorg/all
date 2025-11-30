@@ -474,6 +474,12 @@ class P2PService:
         self._listen_config_cls = ListenConfig
         self._log = logging.getLogger("animica.p2p.service")
 
+        # Lazy identify helper (filled on-demand). We intentionally keep the
+        # devnet-friendly service light, but still want peers to exchange
+        # basic metadata (height, versions, caps) so operators can confirm the
+        # network is healthy.
+        self._identify = idsvc.perform_identify
+
     async def start(self) -> None:
         if self._running:
             return
@@ -550,6 +556,44 @@ class P2PService:
             "conn": conn,
         }
         self._log.info("peer connected", extra={"remote": remote})
+
+        # Best-effort IDENTIFY so peers exchange heights/caps/versions.
+        async def _do_identify() -> None:
+            info: Dict[str, Any] | None = None
+            try:
+                info = await self._identify(
+                    conn,
+                    timeout=5.0,
+                    local_height=self._local_height(),
+                    network_id=str(self.chain_id),
+                    agent=f"animica-p2p/{p2p_version.__version__}",
+                )
+            except Exception:
+                self._log.debug("identify failed", exc_info=True, extra={"remote": remote})
+            if info:
+                self._peers[remote].update(info=info, height=info.get("height"))
+                self._log.info(
+                    "peer identified",
+                    extra={"remote": remote, "network": info.get("network_id"), "height": info.get("height")},
+                )
+
+        self.loop.create_task(_do_identify(), name=f"identify@{remote}")
+
+    def _local_height(self) -> int:
+        """Read the local canonical height if available (best-effort)."""
+
+        if self.deps and hasattr(self.deps, "block_db"):
+            try:
+                getter = getattr(self.deps.block_db, "get_canonical_height", None)
+                if callable(getter):
+                    return int(getter())
+                head = getattr(self.deps.block_db, "get_head", None)
+                if callable(head):
+                    h, _hdr = head()
+                    return int(h)
+            except Exception:
+                self._log.debug("local height probe failed", exc_info=True)
+        return 0
 
     # Exposed for tests/ops
     @property
