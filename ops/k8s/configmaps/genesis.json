@@ -33,6 +33,22 @@ data:
         "pq_alg_policy_root": "0x0000000000000000000000000000000000000000000000000000000000000000"
       },
 
+      "consensus": {
+        "target_block_time_seconds": 2,
+        "theta_initial_munats": 2000000,
+        "theta_min_munats": 1000000,
+        "theta_max_munats": 12000000,
+        "retarget": {
+          "half_life_blocks": 32,
+          "gain_beta": 0.6,
+          "step_clamp_micro": 250000,
+          "clamp_ratio": { "min": 0.98, "max": 1.15 }
+        },
+        "share_target_munats": 600000,
+        "subsidy_nANM_per_block": 10000000,
+        "subsidy_split_pct": { "miner": 60, "aicf": 30, "treasury": 10 }
+      },
+
       "randomness": {
         "commit_phase_seconds": 15,
         "reveal_phase_seconds": 15,

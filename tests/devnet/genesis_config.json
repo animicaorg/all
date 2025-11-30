@@ -36,19 +36,22 @@
   },
 
   "blocks": {
-    "target_seconds": 6,
-    "timestamp_grace_seconds": 2,
+    "target_seconds": 2,
+    "timestamp_grace_seconds": 1,
     "max_txs_per_block": 5000,
     "max_block_bytes": 2000000
   },
 
   "consensus": {
-    "theta_target_munats": 1000000,
+    "theta_target_munats": 2000000,
+    "theta_min_munats": 1000000,
+    "theta_max_munats": 12000000,
+    "target_seconds": 2,
     "theta_update": {
       "ema_alpha_num": 1,
-      "ema_alpha_den": 8,
-      "min_factor_ppm": 500000,
-      "max_factor_ppm": 2000000
+      "ema_alpha_den": 4,
+      "min_factor_ppm": 980000,
+      "max_factor_ppm": 1150000
     },
     "randomness": {
       "round_seconds": 30,
