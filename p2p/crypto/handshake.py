@@ -275,6 +275,7 @@ async def perform_handshake_tcp(
     *,
     is_outbound: bool,
     prologue: bytes = b"animica/tcp/1",
+    chain_id: int | None = None,
     timeout: Optional[float] = None,
 ):
     """
@@ -293,6 +294,8 @@ async def perform_handshake_tcp(
     async def _do_handshake():
         magic = b"ANIMICA/TCP/HS/V0"
         pro = prologue or b""
+        if chain_id is not None:
+            pro = pro + b"|cid=" + int(chain_id).to_bytes(4, "big", signed=False)
         if len(pro) > 255:
             pro = pro[:255]
 
@@ -316,6 +319,8 @@ async def perform_handshake_tcp(
             raise HandshakeError("invalid handshake magic")
         pro_len = their[len(magic)]
         peer_prologue = their[len(magic) + 1 : len(magic) + 1 + pro_len]
+        if peer_prologue != pro:
+            raise HandshakeError("prologue/chain-id mismatch")
         seed_remote = their[-32:]
 
         role = Role.INITIATOR if is_outbound else Role.RESPONDER

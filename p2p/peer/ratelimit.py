@@ -7,6 +7,43 @@ from typing import Dict, Tuple, Optional, Iterable, Any
 
 
 # ────────────────────────────────────────────────────────────────────────────────
+# Simple token bucket (public API)
+# ────────────────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class RateBucket:
+    """Minimal deterministic token bucket used by callers that expect RateBucket."""
+
+    capacity: float
+    fill_rate: float
+    tokens: float
+    last_refill: float
+
+    @classmethod
+    def fresh(cls, capacity: float, fill_rate: float, now: Optional[float] = None) -> "RateBucket":
+        n = time.monotonic() if now is None else now
+        return cls(capacity=capacity, fill_rate=fill_rate, tokens=capacity, last_refill=n)
+
+    def refill(self, now: Optional[float] = None) -> None:
+        n = time.monotonic() if now is None else now
+        if n <= self.last_refill:
+            return
+        delta = (n - self.last_refill) * self.fill_rate
+        self.tokens = min(self.capacity, self.tokens + delta)
+        self.last_refill = n
+
+    def try_consume(self, cost: float = 1.0, now: Optional[float] = None) -> bool:
+        if cost <= 0:
+            return True
+        self.refill(now)
+        if self.tokens >= cost:
+            self.tokens -= cost
+            return True
+        return False
+
+
+# ────────────────────────────────────────────────────────────────────────────────
 # Token-bucket primitives
 # ────────────────────────────────────────────────────────────────────────────────
 
@@ -274,6 +311,46 @@ class RateLimiter:
                 for (pid, topic) in list(self._buckets_peer_topic.keys()):
                     if pid not in alive:
                         self._buckets_peer_topic.pop((pid, topic), None)
+
+
+class PeerRateLimiter(RateLimiter):
+    """
+    Compatibility wrapper expected by older callers.
+
+    Accepts a handful of relaxed constructor shapes and normalizes them into a
+    RatelimitConfig. Only the per-peer and per-topic tiers are wired here since
+    that covers the majority of use cases in the Animica stack.
+    """
+
+    def __init__(
+        self,
+        *,
+        per_peer: Optional[Dict[str, float]] = None,
+        per_topic: Optional[Dict[str, Dict[str, float]]] = None,
+        global_limits: Optional[Dict[str, float]] = None,
+    ) -> None:
+        def _spec(maybe: Optional[Dict[str, float]]) -> Optional[BucketSpec]:
+            if not maybe:
+                return None
+            cap = maybe.get("capacity") or maybe.get("cap") or maybe.get("burst")
+            rate = maybe.get("fill_rate") or maybe.get("rate")
+            if cap is None or rate is None:
+                return None
+            return BucketSpec(float(cap), float(rate))
+
+        topic_specs: Dict[str, BucketSpec] = {}
+        if per_topic:
+            for topic, cfg in per_topic.items():
+                spec = _spec(cfg)
+                if spec:
+                    topic_specs[topic] = spec
+
+        cfg = RatelimitConfig(
+            global_spec=_spec(global_limits),
+            topic_specs=topic_specs,
+            per_peer_default=_spec(per_peer),
+        )
+        super().__init__(cfg)
 
 
 # ────────────────────────────────────────────────────────────────────────────────
