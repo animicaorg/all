@@ -32,8 +32,20 @@ ops/run.sh dashboard
 ops/run.sh --profile mainnet dashboard
 ```
 
-The dashboard runs at http://localhost:5173 and reads `VITE_STRATUM_API_URL`
+The dashboard runs at http://localhost:5173 and reads `VITE_POOL_API_URL`
 from the selected profile (default `http://127.0.0.1:8550`).
+
+To run the UI directly from the workspace:
+
+```
+cd apps/miner-dashboard
+cp .env.example .env # optional
+VITE_POOL_API_URL=http://127.0.0.1:8550 pnpm install
+VITE_POOL_API_URL=http://127.0.0.1:8550 pnpm dev
+```
+
+The `dev:host` script (`pnpm dev:host`) binds to `0.0.0.0:5173` for use with
+containers or remote browsers.
 
 ## Connecting a miner
 

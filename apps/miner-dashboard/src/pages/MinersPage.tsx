@@ -1,9 +1,10 @@
 import { useState, useMemo } from 'react';
 import MinersTable from '../components/Tables/MinersTable';
 import useMiners from '../hooks/useMiners';
+import DataState from '../components/Feedback/DataState';
 
 const MinersPage = () => {
-  const { data } = useMiners();
+  const { data, isLoading, isError, error } = useMiners();
   const [search, setSearch] = useState('');
 
   const filtered = useMemo(() => {
@@ -26,7 +27,9 @@ const MinersPage = () => {
           onChange={(e) => setSearch(e.target.value)}
         />
       </div>
-      <MinersTable miners={filtered} />
+      <DataState isLoading={isLoading} isError={isError} errorMessage={error instanceof Error ? error.message : undefined}>
+        <MinersTable miners={filtered} />
+      </DataState>
     </div>
   );
 };
