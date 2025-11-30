@@ -205,16 +205,20 @@ For devnet, the RPC server and core tools share the same SQLite DB and genesis. 
 ou can:
 
 ```sh
-# check status (expects chainId 1337 on devnet)
+# check status (expects chainId 1337 on devnet, height 0 before mining)
 python -m aicf.cli.node_pipeline status \
   --rpc-url http://127.0.0.1:8545/rpc
 
-# mine 3 blocks via RPC
+# mine 3 blocks via RPC (prints "3" on success)
 python -m aicf.cli.node_pipeline mine \
   --count 3 \
   --rpc-url http://127.0.0.1:8545/rpc
 
-# verify the chain state directly from core
+# status now reports height=3 as well
+python -m aicf.cli.node_pipeline status \
+  --rpc-url http://127.0.0.1:8545/rpc
+
+# verify the chain state directly from core (head height 3)
 python -m core.cli_demo \
   --db "sqlite:////$HOME/animica/devnet/chain.db" \
   --genesis genesis/devnet.json

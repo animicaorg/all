@@ -84,8 +84,8 @@ def test_miner_mine_advances_head():
     start = rpc_call(client, "chain.getHead")["result"].get("height") or 0
 
     mined = rpc_call(client, "miner.mine", [2])["result"]
-    assert mined["mined"] >= 1
-    assert mined["height"] >= start + 1
+    assert mined["mined"] == 2
+    assert mined["height"] >= start + 2
 
     after = rpc_call(client, "chain.getHead")["result"].get("height") or 0
-    assert after >= start + 1
+    assert after >= start + 2
