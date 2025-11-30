@@ -133,6 +133,54 @@ class _GenerateOnlyHandler(BaseHTTPRequestHandler):
         self._send(payload)
 
 
+class _AnvilMineHandler(BaseHTTPRequestHandler):
+    state = {"height": 0, "chainId": 0xA11CA, "auto": False}
+
+    def log_message(self, fmt: str, *args) -> None:  # pragma: no cover - silence server logs in tests
+        return
+
+    def _send(self, payload: dict, code: int = 200) -> None:
+        data = json.dumps(payload).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_POST(self):  # noqa: N802 - http.server signature
+        length = int(self.headers.get("content-length", "0"))
+        body = self.rfile.read(length)
+        req = json.loads(body.decode() or "{}")
+
+        if self.path.rstrip("/") != "/rpc":
+            self.send_error(404)
+            return
+
+        method = req.get("method")
+        params = req.get("params") or []
+        if method == "chain.getHead":
+            result = {
+                "height": self.state["height"],
+                "chainId": self.state["chainId"],
+                "autoMine": self.state["auto"],
+            }
+        elif method == "anvil_mine":
+            count = int(params[0]) if params else 1
+            self.state["height"] += max(1, count)
+            result = True
+        elif method == "eth_blockNumber":
+            result = hex(self.state["height"])
+        elif method == "eth_chainId":
+            result = hex(self.state["chainId"])
+        else:
+            payload = {"jsonrpc": "2.0", "id": req.get("id"), "error": {"code": -32601, "message": "Method not found"}}
+            self._send(payload)
+            return
+
+        payload = {"jsonrpc": "2.0", "id": req.get("id", 1), "result": result}
+        self._send(payload)
+
+
 def test_status_and_mine_against_rpc(tmp_path: Path) -> None:
     server, url = _start_rpc_server(tmp_path)
     try:
@@ -161,6 +209,19 @@ def test_mine_fallbacks_when_miner_endpoints_missing(tmp_path: Path) -> None:
 
         status_after = json.loads(_run_cli(["status", "--rpc-url", url, "--json"]))
         assert status_after["height"] == 2
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_mine_fallbacks_to_anvil_mine(tmp_path: Path) -> None:
+    server, url = _start_rpc_server(tmp_path, _AnvilMineHandler)
+    try:
+        new_height = int(_run_cli(["mine", "--rpc-url", url, "--count", "3"]))
+        assert new_height == 3
+
+        status_after = json.loads(_run_cli(["status", "--rpc-url", url, "--json"]))
+        assert status_after["height"] == 3
     finally:
         server.shutdown()
         server.server_close()
