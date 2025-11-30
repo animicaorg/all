@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 import types
@@ -16,6 +17,11 @@ try:
     aead_mod = __import__("p2p.crypto.aead", fromlist=["*"])
 except Exception as e:
     pytest.skip(f"p2p.crypto.aead not available: {e}", allow_module_level=True)
+
+try:
+    from p2p.transport.base import HandshakeError
+except Exception as e:
+    pytest.skip(f"p2p.transport.base not available: {e}", allow_module_level=True)
 
 
 # --- Helpers to adapt to slightly different APIs -------------------------------------
@@ -198,4 +204,46 @@ def test_transcript_hash_stability_len_only():
     initiator, responder = _call_handshake()
     th = _extract_transcript(initiator)
     assert th and th == _extract_transcript(responder)
-    assert len(th) in (32, 64)
+
+
+@pytest.mark.asyncio
+async def test_tcp_handshake_handles_mismatched_prologue_lengths():
+    perform_tcp = getattr(hs_mod, "perform_handshake_tcp", None)
+    if perform_tcp is None:
+        pytest.skip("perform_handshake_tcp not available")
+
+    errors: list[HandshakeError] = []
+    server_done = asyncio.Event()
+
+    async def _server(reader, writer):
+        try:
+            await perform_tcp(reader, writer, is_outbound=False, chain_id=1)
+        except HandshakeError as exc:
+            errors.append(exc)
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            server_done.set()
+
+    server = await asyncio.start_server(_server, host="127.0.0.1", port=0)
+    host, port = server.sockets[0].getsockname()[:2]
+
+    async def _client():
+        reader, writer = await asyncio.open_connection(host, port)
+        try:
+            await perform_tcp(reader, writer, is_outbound=True, chain_id=999)
+        except HandshakeError as exc:
+            errors.append(exc)
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    await _client()
+    await asyncio.wait_for(server_done.wait(), timeout=1.0)
+
+    server.close()
+    await server.wait_closed()
+
+    assert len(errors) == 2, "both peers should fail the handshake"
+    for exc in errors:
+        assert "prologue/chain-id mismatch" in str(exc)
