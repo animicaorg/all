@@ -5,6 +5,8 @@ import time
 from dataclasses import dataclass, asdict
 from typing import Callable, Dict, Optional, Tuple
 
+from mining.hash_search import micro_threshold_to_target256
+
 from .nonce_domain import derive_mix_seed  # mixSeed evolution
 # We *prefer* the canonical header SignBytes encoder from core if present.
 try:
@@ -23,6 +25,7 @@ except Exception:  # pragma: no cover
 # ─────────────────────────────────────────────────────────────────────────────
 
 ZERO32 = b"\x00" * 32
+D1_TARGET = (0xFFFF) * 2 ** (8 * (0x1D - 3))
 
 
 # What the miner needs to scan:
@@ -225,6 +228,45 @@ def _enc_hook_msgspec(obj):  # pragma: no cover
         # Keep raw bytes; consumers expect bytes, not hex-strings
         return obj
     return obj
+
+
+def compact_from_target(target: int) -> str:
+    """
+    Convert a 256-bit target integer into Bitcoin-style compact bits hex.
+
+    This is helpful when exposing Animica templates to SHA256 stratum clients
+    that expect the traditional compact representation.
+    """
+    if target < 0:
+        target = 0
+    exponent = (target.bit_length() + 7) // 8
+    if exponent <= 3:
+        mantissa = target << (8 * (3 - exponent))
+    else:
+        mantissa = target >> (8 * (exponent - 3))
+    if mantissa & 0x800000:
+        mantissa >>= 8
+        exponent += 1
+    compact = (exponent << 24) | (mantissa & 0x7FFFFF)
+    return f"{compact:08x}"
+
+
+def share_target_to_difficulty(theta_micro: int, share_target: float) -> float:
+    """
+    Map Animica's shareTarget ratio into a SHA256-style difficulty figure.
+
+    ASIC dashboards dislike probability-like decimals; they expect the classic
+    difficulty numbers derived from the D1 target. We approximate by turning
+    the micro-threshold into a 256-bit target and scaling against D1.
+    """
+    share_target = max(float(share_target), 1e-12)
+    theta_micro = max(int(theta_micro), 0)
+    share_threshold = int(theta_micro * share_target)
+    target = micro_threshold_to_target256(share_threshold)
+    if target <= 0:
+        return 1.0
+    difficulty = D1_TARGET / target
+    return max(difficulty, 1e-6)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

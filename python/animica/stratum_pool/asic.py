@@ -110,7 +110,7 @@ class Sha256ShareValidator:
 
     def _target_for_difficulty(self, difficulty: float) -> int:
         if difficulty <= 0:
-            difficulty = 0.0001
+            difficulty = 1e-12
         target = int(D1_TARGET / difficulty)
         max_target = 2**256 - 1
         return min(target, max_target)
@@ -245,11 +245,18 @@ class Sha256StratumServer:
                 job.clean_jobs,
             ],
         })
-        self._log.info("[ASIC] notify job=%s difficulty=%s", job.job_id, job.difficulty)
+        self._log.info("[ASIC] notify job=%s difficulty=%s height=%s", job.job_id, job.difficulty, job.height)
 
     async def set_difficulty(self, session: Sha256Session, difficulty: float) -> None:
+        difficulty = max(float(difficulty), 1e-12)
         session.difficulty = difficulty
         await self._send(session.writer, {"id": None, "method": "mining.set_difficulty", "params": [difficulty]})
+        self._log.debug(
+            "[ASIC] set_difficulty worker=%s session_ex1=%s diff=%s",
+            session.worker,
+            session.extranonce1,
+            difficulty,
+        )
 
     async def _broadcast(self, obj: Dict[str, Any]) -> None:
         for writer in list(self._sessions.keys()):
@@ -342,7 +349,16 @@ class Sha256StratumServer:
             resp = {"id": msg_id, "result": accepted, "error": error}
             await self._send(session.writer, resp)
             level = logging.INFO if accepted else logging.WARNING
-            self._log.log(level, "[ASIC] submit worker=%s job=%s accepted=%s reason=%s", session.worker, job_id, accepted, reason)
+            self._log.log(
+                level,
+                "[ASIC] submit worker=%s job=%s accepted=%s block=%s reason=%s diff=%s",
+                session.worker,
+                job_id,
+                accepted,
+                is_block,
+                reason,
+                session.difficulty,
+            )
 
             submit_payload = {
                 "job_id": job.job_id,
