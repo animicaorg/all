@@ -22,10 +22,12 @@ Threading:
 Python stdlib `sqlite3` on Ubuntu 22.04 is 3.37+ (supports UPSERT).
 """
 
+import os
 import sqlite3
+from urllib.parse import urlparse
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Iterator, Optional, Tuple, Iterable, List, Union
+from typing import Iterable, Iterator, List, Optional, Tuple, Union
 
 from .kv import KV, ReadOnlyKV, Batch
 
@@ -143,6 +145,50 @@ class SQLiteBatch(Batch):
         return None
 
 
+def _open_connection(
+    path: Union[str, bytes, "os.PathLike[str]", "os.PathLike[bytes]"],
+    *,
+    pragmas: Optional[dict] = None,
+    create: bool = True,
+    readonly: bool = False,
+) -> sqlite3.Connection:
+    uri_mode = False
+    path_str = str(path)
+    if path_str.startswith("sqlite://"):
+        parsed = urlparse(path_str)
+        path_str = parsed.path or ""
+        if path_str.startswith("///"):
+            path_str = "/" + path_str.lstrip("/")
+    if readonly:
+        # Use URI to pass immutable flag; also disable journal changes.
+        path_str = f"file:{path_str}?mode=ro&immutable=1"
+        uri_mode = True
+    elif not create and not os.path.exists(path_str):
+        raise FileNotFoundError(f"SQLite KV not found at {path_str}")
+
+    conn = sqlite3.connect(
+        path_str,
+        detect_types=0,
+        isolation_level=None,      # autocommit; we explicitly BEGIN for batches
+        check_same_thread=False,   # allow multi-threaded use; caller synchronizes
+        uri=uri_mode,
+    )
+    # Speed up row→bytes conversion slightly
+    conn.text_factory = bytes  # though we store blobs; being explicit is fine
+
+    if not readonly:
+        _apply_pragmas(conn, pragmas)
+        _migrate(conn)
+    else:
+        # In readonly we skip pragmas that mutate journal/page size.
+        try:
+            conn.execute("PRAGMA query_only=ON")
+        except Exception:
+            pass
+
+    return conn
+
+
 class SQLiteKV(KV):
     """
     SQLite-backed KV. Safe for multi-threaded access when the caller
@@ -153,8 +199,20 @@ class SQLiteKV(KV):
 
     __slots__ = ("_conn",)
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
-        self._conn = conn
+    def __init__(
+        self,
+        conn_or_path: Union[sqlite3.Connection, str, bytes, "os.PathLike[str]", "os.PathLike[bytes]"],
+        *,
+        pragmas: Optional[dict] = None,
+        create: bool = True,
+        readonly: bool = False,
+    ) -> None:
+        if isinstance(conn_or_path, sqlite3.Connection):
+            self._conn = conn_or_path
+        else:
+            self._conn = _open_connection(
+                conn_or_path, pragmas=pragmas, create=create, readonly=readonly
+            )
         # `row_factory` left default; we fetch blobs as bytes.
 
     # --- ReadOnlyKV ---
@@ -232,33 +290,7 @@ def open_sqlite_kv(
     - `readonly=True` opens with immutable-like semantics (no WAL/journal change).
     - `create=False` will raise if the DB file does not exist.
     """
-    uri_mode = False
-    path_str = str(path)
-    if readonly:
-        # Use URI to pass immutable flag; also disable journal changes.
-        path_str = f"file:{path_str}?mode=ro&immutable=1"
-        uri_mode = True
-
-    conn = sqlite3.connect(
-        path_str,
-        detect_types=0,
-        isolation_level=None,      # autocommit; we explicitly BEGIN for batches
-        check_same_thread=False,   # allow multi-threaded use; caller synchronizes
-        uri=uri_mode,
-    )
-    # Speed up row→bytes conversion slightly
-    conn.text_factory = bytes  # though we store blobs; being explicit is fine
-
-    if not readonly:
-        _apply_pragmas(conn, pragmas)
-        _migrate(conn)
-    else:
-        # In readonly we skip pragmas that mutate journal/page size.
-        try:
-            conn.execute("PRAGMA query_only=ON")
-        except Exception:
-            pass
-
+    conn = _open_connection(path, pragmas=pragmas, create=create, readonly=readonly)
     return SQLiteKV(conn)
 
 
