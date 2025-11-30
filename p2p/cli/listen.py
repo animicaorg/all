@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import asyncio as _asyncio
 import contextlib
+import json
 import os
 import signal
 import sys
@@ -86,6 +87,18 @@ def _load_default_listen_config(args: argparse.Namespace) -> ListenConfig:
     except Exception:
         pass
 
+    if not seeds and int(args.chain_id or 0) == 1337:
+        seeds = _load_devnet_seeds()
+
+    # Ensure at least the built-in default seed is present
+    try:
+        from p2p.config import DEFAULT_SEEDS  # type: ignore
+
+        if not seeds:
+            seeds = list(DEFAULT_SEEDS)
+    except Exception:
+        pass
+
     try:
         from p2p.config import load_config  # type: ignore
 
@@ -111,6 +124,27 @@ def _load_default_listen_config(args: argparse.Namespace) -> ListenConfig:
             nat=bool(args.nat),
             log_level=args.log_level or "INFO",
         )
+
+
+def _load_devnet_seeds() -> List[str]:
+    """Load devnet seed multiaddrs from ops/seeds/devnet.json if present."""
+
+    try:
+        repo_root = Path(__file__).resolve().parents[2]
+        path = repo_root / "ops" / "seeds" / "devnet.json"
+        if not path.exists():
+            return []
+        data = json.loads(path.read_text())
+        seeds: List[str] = []
+        for entry in data.get("seeds", []):
+            seeds.extend(entry.get("multiaddrs", []))
+        out: List[str] = []
+        for s in seeds:
+            if s not in out:
+                out.append(s)
+        return out
+    except Exception:
+        return []
 
 # ---- Minimal deps wiring --------------------------------------------------------------
 @dataclass
@@ -164,6 +198,68 @@ def _build_deps(db_uri: str, chain_id: int) -> _Deps:
         pass
     return deps
 
+# ---- Minimal TCP shim (fallback if full P2P service unavailable) ---------------------
+
+
+class _MinimalTcpNode:
+    def __init__(self, listen_addrs: List[str]):
+        self.listen_addrs = listen_addrs or ["/ip4/0.0.0.0/tcp/42069"]
+        self.transport = None
+        self._task: Optional[_asyncio.Task] = None
+        self._running = False
+
+    async def start(self) -> None:
+        from p2p.transport.tcp import TcpTransport  # type: ignore
+        from p2p.transport.base import ListenConfig
+        from p2p.transport.multiaddr import parse_multiaddr
+
+        import logging
+
+        self.transport = TcpTransport()
+        for ma in self.listen_addrs:
+            try:
+                parsed = parse_multiaddr(ma)
+            except Exception:
+                continue
+            if parsed.transport != "tcp":
+                continue
+            host = parsed.host or "0.0.0.0"
+            port = parsed.port or 0
+            await self.transport.listen(ListenConfig(addr=f"tcp://{host}:{port}"))
+
+        self._running = True
+        self._task = _asyncio.create_task(self._accept_loop(), name="tcp.accept")
+        logging.getLogger("p2p.cli.listen").info(
+            "Started minimal TCP listener", extra={"addrs": self.listen_addrs}
+        )
+
+    async def _accept_loop(self) -> None:
+        import logging
+
+        log = logging.getLogger("p2p.cli.listen")
+        while self._running:
+            try:
+                conn = await self.transport.accept()  # type: ignore[operator]
+            except Exception as e:
+                if self._running:
+                    log.warning("minimal TCP accept error: %s", e)
+                break
+            log.info(
+                "Accepted TCP peer", extra={"remote": getattr(conn, "remote_addr", None)}
+            )
+            with contextlib.suppress(Exception):
+                await conn.close()
+
+    async def stop(self) -> None:
+        self._running = False
+        if self._task and not self._task.done():
+            self._task.cancel()
+            with contextlib.suppress(Exception):
+                await self._task
+        if self.transport:
+            with contextlib.suppress(Exception):
+                await self.transport.close()  # type: ignore[attr-defined]
+
 # ---- P2P Service bootstrap ------------------------------------------------------------
 class _ServiceBridge:
     """
@@ -194,8 +290,7 @@ class _ServiceBridge:
             # Fallback to a minimal TCP-only server if full service unavailable
             import logging
             logging.getLogger("p2p.cli.listen").warning("Falling back to minimal TCP listener: %s", e)
-            from p2p.transport.tcp import TCPTransport  # type: ignore
-            self.impl = TCPTransport(self.cfg.listen_addrs or ["/ip4/0.0.0.0/tcp/42069"])
+            self.impl = _MinimalTcpNode(self.cfg.listen_addrs)
             await self.impl.start()
 
     async def stop(self) -> None:
