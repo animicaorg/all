@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Quantum Job Spec",
+  "type": "object",
+  "required": ["job_id", "owner", "program_id", "input_commitment", "backend_type", "shots", "payment_max", "deadline_block"],
+  "properties": {
+    "job_id": {
+      "type": "string",
+      "description": "Hex-encoded unique job id (e.g., SHA-256 or NMT root)"
+    },
+    "owner": { "type": "string", "description": "On-chain address submitting the job" },
+    "program_id": { "type": "string", "description": "Reference to approved program template" },
+    "input_commitment": { "type": "string", "description": "DA/NMT root for input blob" },
+    "backend_type": { "type": "string", "enum": ["ion_trap", "superconducting", "neutral_atom", "photonic", "simulator", "other"] },
+    "shots": { "type": "integer", "minimum": 1 },
+    "tolerance": { "type": "object", "description": "Acceptance/tolerance parameters (domain-specific)" },
+    "payment_max": { "type": "string", "description": "Max payment in ANM wei (string to preserve precision)" },
+    "deadline_block": { "type": "integer", "minimum": 0 },
+    "committee_size": { "type": "integer", "minimum": 0 },
+    "min_agreement_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+    "proof_scheme": { "type": "string", "description": "Optional proof scheme identifier" },
+    "metadata": { "type": "object", "additionalProperties": true }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Quantum Result / Receipt",
+  "type": "object",
+  "required": ["job_id", "worker_id", "result_commitment", "worker_signature"],
+  "properties": {
+    "job_id": { "type": "string", "description": "Hex job id" },
+    "worker_id": { "type": "string", "description": "On-chain worker address" },
+    "result_data": { "type": "object", "description": "Small summary of result data (application-specific)", "additionalProperties": true },
+    "result_commitment": { "type": "string", "description": "DA/NMT root of full result blob" },
+    "metadata": { "type": "object", "additionalProperties": true, "description": "Device name, error rates, runtime" },
+    "worker_signature": { "type": "string", "description": "PQ signature (hex/base64) over canonical bytes" },
+    "proof": { "type": ["object", "string"], "description": "Optional proof blob or reference" },
+    "timestamp_block": { "type": "integer", "minimum": 0 }
+  }
+}

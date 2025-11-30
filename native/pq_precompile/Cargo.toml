@@ -1,0 +1,16 @@
+[package]
+name = "pq_precompile"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "pq_precompile"
+crate-type = ["cdylib"]
+
+[dependencies]
+# Optional bindings; not enabled by default to keep prototype compile flexible
+oqs = { version = "0.8", optional = true }
+
+[features]
+default = []
+with-oqs = ["oqs"]

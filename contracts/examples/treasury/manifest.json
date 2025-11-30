@@ -1,0 +1,253 @@
+{
+  "name": "ANM Treasury",
+  "version": "1.0.0",
+  "description": "ANM Token Treasury Contract — manages token sales, revenue tracking, and pricing",
+  "author": "Animica Foundation",
+  "license": "Apache-2.0",
+  "contract": {
+    "name": "ANMTreasury",
+    "language": "python",
+    "entry_file": "contract.py",
+    "entry_function": "main"
+  },
+  "abi": {
+    "constructor": {
+      "name": "init",
+      "params": [
+        {
+          "name": "owner",
+          "type": "address",
+          "description": "Treasury owner (governance multi-sig)"
+        },
+        {
+          "name": "total_supply",
+          "type": "uint256",
+          "description": "Total ANM supply (1 billion = 1e27)"
+        },
+        {
+          "name": "target_revenue",
+          "type": "uint256",
+          "description": "Target revenue ($1B = 1e27 wei)"
+        }
+      ]
+    },
+    "functions": [
+      {
+        "name": "recordSale",
+        "kind": "transaction",
+        "params": [
+          {
+            "name": "buyer",
+            "type": "address",
+            "description": "Address receiving ANM tokens"
+          },
+          {
+            "name": "quantity",
+            "type": "uint256",
+            "description": "ANM tokens to mint"
+          },
+          {
+            "name": "price_usd",
+            "type": "uint256",
+            "description": "Price per token in USD (wei scale)"
+          }
+        ],
+        "returns": [],
+        "description": "Record token sale and mint to buyer (owner-only)"
+      },
+      {
+        "name": "transferOwnership",
+        "kind": "transaction",
+        "params": [
+          {
+            "name": "new_owner",
+            "type": "address",
+            "description": "New owner address"
+          }
+        ],
+        "returns": [],
+        "description": "Transfer treasury ownership (governance)"
+      },
+      {
+        "name": "renounceOwnership",
+        "kind": "transaction",
+        "params": [],
+        "returns": [],
+        "description": "Renounce ownership (destroy governance)"
+      },
+      {
+        "name": "name",
+        "kind": "view",
+        "params": [],
+        "returns": [{ "name": "name", "type": "bytes" }],
+        "description": "Get token name"
+      },
+      {
+        "name": "symbol",
+        "kind": "view",
+        "params": [],
+        "returns": [{ "name": "symbol", "type": "bytes" }],
+        "description": "Get token symbol"
+      },
+      {
+        "name": "decimals",
+        "kind": "view",
+        "params": [],
+        "returns": [{ "name": "decimals", "type": "int" }],
+        "description": "Get decimal places"
+      },
+      {
+        "name": "owner",
+        "kind": "view",
+        "params": [],
+        "returns": [{ "name": "owner", "type": "address" }],
+        "description": "Get treasury owner"
+      },
+      {
+        "name": "totalSupply",
+        "kind": "view",
+        "params": [],
+        "returns": [{ "name": "supply", "type": "uint256" }],
+        "description": "Get total ANM supply"
+      },
+      {
+        "name": "soldToDate",
+        "kind": "view",
+        "params": [],
+        "returns": [{ "name": "sold", "type": "uint256" }],
+        "description": "Get ANM tokens sold to date"
+      },
+      {
+        "name": "revenueToDate",
+        "kind": "view",
+        "params": [],
+        "returns": [{ "name": "revenue", "type": "uint256" }],
+        "description": "Get USD revenue collected (wei scale)"
+      },
+      {
+        "name": "balanceOf",
+        "kind": "view",
+        "params": [
+          {
+            "name": "addr",
+            "type": "address",
+            "description": "Account address"
+          }
+        ],
+        "returns": [{ "name": "balance", "type": "uint256" }],
+        "description": "Get ANM balance of address"
+      },
+      {
+        "name": "percentSold",
+        "kind": "view",
+        "params": [],
+        "returns": [{ "name": "percent", "type": "uint256" }],
+        "description": "Get percentage of supply sold (0-100)"
+      },
+      {
+        "name": "pricingMultiplier",
+        "kind": "view",
+        "params": [],
+        "returns": [{ "name": "multiplier", "type": "uint256" }],
+        "description": "Get current pricing multiplier"
+      },
+      {
+        "name": "treasurySnapshot",
+        "kind": "view",
+        "params": [],
+        "returns": [
+          {
+            "name": "snapshot",
+            "type": "struct",
+            "fields": [
+              { "name": "totalSupply", "type": "uint256" },
+              { "name": "soldToDate", "type": "uint256" },
+              { "name": "revenueToDate", "type": "uint256" },
+              { "name": "targetRevenue", "type": "uint256" },
+              { "name": "percentSold", "type": "uint256" },
+              { "name": "pricingMultiplier", "type": "uint256" },
+              { "name": "lastUpdateBlock", "type": "uint256" }
+            ]
+          }
+        ],
+        "description": "Get full treasury state snapshot"
+      }
+    ]
+  },
+  "state": {
+    "treasury_owner": {
+      "type": "address",
+      "description": "Address of treasury owner (multi-sig governance)"
+    },
+    "total_supply": {
+      "type": "uint256",
+      "description": "Total ANM tokens (1 billion)"
+    },
+    "sold_to_date": {
+      "type": "uint256",
+      "description": "ANM tokens sold"
+    },
+    "revenue_to_date": {
+      "type": "uint256",
+      "description": "USD revenue collected (wei scale)"
+    },
+    "target_revenue": {
+      "type": "uint256",
+      "description": "Target revenue ($1B)"
+    },
+    "pricing_multiplier": {
+      "type": "uint256",
+      "description": "Current treasury multiplier (WAD scale)"
+    },
+    "last_update_block": {
+      "type": "uint256",
+      "description": "Last block with state update"
+    }
+  },
+  "events": [
+    {
+      "name": "Sale",
+      "params": [
+        { "name": "buyer", "type": "address", "indexed": true },
+        { "name": "quantity", "type": "uint256", "indexed": false },
+        { "name": "price_usd", "type": "uint256", "indexed": false },
+        { "name": "block", "type": "uint256", "indexed": false }
+      ],
+      "description": "Emitted when tokens are sold"
+    },
+    {
+      "name": "PriceUpdate",
+      "params": [
+        { "name": "percent_sold", "type": "uint256", "indexed": false },
+        { "name": "multiplier", "type": "uint256", "indexed": false }
+      ],
+      "description": "Emitted when pricing multiplier updates"
+    },
+    {
+      "name": "RevenueUpdate",
+      "params": [
+        { "name": "new_revenue", "type": "uint256", "indexed": false },
+        { "name": "percent_to_target", "type": "uint256", "indexed": false }
+      ],
+      "description": "Emitted when revenue updates"
+    },
+    {
+      "name": "OwnershipTransferred",
+      "params": [
+        { "name": "previous_owner", "type": "address", "indexed": true },
+        { "name": "new_owner", "type": "address", "indexed": true }
+      ],
+      "description": "Emitted when ownership transfers"
+    }
+  ],
+  "dependencies": [],
+  "deployment": {
+    "network": "animica",
+    "constructor_args": {
+      "owner": "0x1234567890123456789012345678901234567890",
+      "total_supply": 1000000000000000000000000000,
+      "target_revenue": 1000000000000000000000000000
+    },
+    "estimated_gas": 500000
+  }
+}

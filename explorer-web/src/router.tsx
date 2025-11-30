@@ -20,6 +20,7 @@ const AICFPage = lazy(() => import("./pages/AICF/AICFPage"));
 const DAPage = lazy(() => import("./pages/DA/DAPage"));
 const BeaconPage = lazy(() => import("./pages/Beacon/BeaconPage"));
 const NetworkPage = lazy(() => import("./pages/Network/NetworkPage"));
+const MarketplacePage = lazy(() => import("./pages/Marketplace/MarketplacePage"));
 // Home is optional; we redirect to /blocks by default to keep UX smooth.
 // If you later add HomePage, switch the "/" route below.
 const HomePage = null;
@@ -71,6 +72,9 @@ export default function AppRouter() {
 
         {/* Network */}
         <Route path="/network" element={<NetworkPage />} />
+
+        {/* Marketplace */}
+        <Route path="/marketplace" element={<MarketplacePage />} />
 
         {/* 404 */}
         <Route path="*" element={<NotFound />} />

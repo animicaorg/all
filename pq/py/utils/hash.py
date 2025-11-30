@@ -128,7 +128,7 @@ def _keccak_factory():
     - pycryptodome (Crypto.Hash.keccak) → new(digest_bits=256)
     Returns a callable `f(data: bytes) -> bytes`, or None if unavailable.
     """
-    # pysha3
+    # pysha3 (preferred)
     try:
         import sha3  # type: ignore
         def _k(data: bytes) -> bytes:
@@ -139,7 +139,8 @@ def _keccak_factory():
     except Exception:
         pass
 
-    # pycryptodome
+    # pycryptodome / pycryptodomex
+    # Try both possible top-level package names (Crypto vs Cryptodome).
     try:
         from Crypto.Hash import keccak as _keccak  # type: ignore
         def _k2(data: bytes) -> bytes:
@@ -148,7 +149,15 @@ def _keccak_factory():
             return h.digest()
         return _k2
     except Exception:
-        pass
+        try:
+            from Cryptodome.Hash import keccak as _keccak  # type: ignore
+            def _k3(data: bytes) -> bytes:
+                h = _keccak.new(digest_bits=256)
+                h.update(data)
+                return h.digest()
+            return _k3
+        except Exception:
+            pass
 
     return None
 

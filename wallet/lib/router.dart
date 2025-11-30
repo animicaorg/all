@@ -25,6 +25,7 @@ import 'pages/onboarding/import_wallet_page.dart';
 import 'pages/onboarding/set_pin_page.dart';
 import 'pages/onboarding/success_page.dart';
 import 'keyring/keyring.dart';
+import 'router/marketplace_routes.dart';
 
 /// Route names (centralized to avoid typos)
 abstract class Routes {
@@ -62,7 +63,6 @@ final _shellNavigatorKey = GlobalKey<NavigatorState>();
 // those providers and calls `notifyListeners()`; pass it as `refreshListenable`
 // and implement redirect logic based on the provider values.
 class _GuardState {
-  // TODO: replace with providers (hasWalletProvider, isUnlockedProvider)
   Future<bool> hasWallet() async {
     try {
       return await keyring.hasWallet();
@@ -72,7 +72,17 @@ class _GuardState {
     }
   }
 
-  bool get isUnlocked => true; // default: no lock gate
+  /// Returns true when the keyring indicates an unlocked wallet. This reads
+  /// the synchronous `keyring.status` which is safe as a default guard.
+  bool get isUnlocked {
+    try {
+      return keyring.status == KeyringStatus.unlocked;
+    } catch (_) {
+      // If keyring isn't available for some reason, assume unlocked so we
+      // don't unnecessarily block navigation in early boot scenarios.
+      return true;
+    }
+  }
 }
 
 Future<String?> _guardRedirect(_GuardState g, GoRouterState state) async {
@@ -192,6 +202,8 @@ GoRouter createRouter(Env env, {String flavor = 'dev'}) {
               name: 'dev_tools',
               builder: (ctx, st) => const DevToolsPage(),
             ),
+          // Marketplace routes
+          ...marketplaceRoutes,
         ],
       ),
     ],
