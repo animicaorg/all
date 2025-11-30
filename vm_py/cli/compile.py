@@ -182,6 +182,19 @@ def compile_source_to_ir(src: str, filename: str = "<stdin>") -> Tuple[bytes, Di
     ir_bytes, meta = compile_via_lower_pipeline(src, filename=filename)
     return ir_bytes, meta
 
+
+def compile_manifest(manifest_path: str) -> Tuple[bytes, Dict[str, Any]]:
+    """Compile a contract from its manifest using the same helper as omni-vm-run."""
+
+    try:
+        from vm_py.cli.run import compile_manifest_to_ir
+    except Exception as exc:  # pragma: no cover - defensive
+        raise RuntimeError(f"compile_manifest_to_ir unavailable: {exc}") from exc
+
+    ir_bytes, _abi, meta = compile_manifest_to_ir(manifest_path)
+    meta = {"compiled_from": "manifest", **meta}
+    return ir_bytes, meta
+
 # ---------------------- CLI ---------------------- #
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -189,6 +202,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     src_group = p.add_mutually_exclusive_group(required=True)
     src_group.add_argument("source", nargs="?", help="Path to contract.py (use '-' for stdin)")
     src_group.add_argument("--stdin", action="store_true", help="Read contract source from stdin")
+    src_group.add_argument(
+        "--manifest", help="Compile from a contract manifest.json (uses its entry/source field)"
+    )
     p.add_argument("--out", "-o", required=True, help="Output file path for IR (e.g., out.ir or out.json)")
     p.add_argument("--format", choices=("cbor", "json"), default="cbor", help="IR output format (default: cbor)")
     p.add_argument("--meta", help="Write compile metadata to this JSON file")
@@ -199,17 +215,20 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     _CTX["quiet"] = bool(args.quiet)
 
-    # Load source
-    if args.stdin or args.source == "-":
-        src = sys.stdin.read()
-        filename = "<stdin>"
+    # Load source or manifest
+    if args.manifest:
+        filename = os.fspath(args.manifest)
+        ir_bytes, meta = compile_manifest(filename)
     else:
-        filename = os.fspath(args.source)
-        with open(filename, "r", encoding="utf-8") as f:
-            src = f.read()
+        if args.stdin or args.source == "-":
+            src = sys.stdin.read()
+            filename = "<stdin>"
+        else:
+            filename = os.fspath(args.source)
+            with open(filename, "r", encoding="utf-8") as f:
+                src = f.read()
 
-    # Compile
-    ir_bytes, meta = compile_source_to_ir(src, filename=filename)
+        ir_bytes, meta = compile_source_to_ir(src, filename=filename)
     # Compute code hash (sha3-256 of IR bytes)
     code_hash = "0x" + sha3_256(ir_bytes).hexdigest()
     meta = {"code_hash": code_hash, **meta}

@@ -58,7 +58,7 @@ All examples below assume the repository root as the working directory. Use the 
 
 ### `omni-vm-compile`
 Compile a deterministic Python contract to Animica VM IR bytes. Works via `python -m vm_py.cli.compile` or the console script alias. Key flags:
-- `path/to/contract.py --out out.ir` (required output path)
+- `path/to/contract.py --out out.ir` (required output path) or `--manifest manifest.json --out out.ir`
 - `--format {cbor,json}` to pick IR encoding (default CBOR)
 - `--meta META.json` to save compile metadata
 - `--stdin`/`-` to read source from stdin
