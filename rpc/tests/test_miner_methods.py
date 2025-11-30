@@ -39,6 +39,21 @@ def test_get_work_accepts_explicit_empty_params():
     assert job["jobId"] in miner_methods._JOB_CACHE
 
 
+def test_jsonrpc_endpoint_accepts_empty_params_via_post_body():
+    """Mimic the curl call with params: [] hitting the /rpc endpoint directly."""
+
+    client, _, _ = new_test_client()
+
+    payload = {"jsonrpc": "2.0", "id": 3, "method": "miner.getWork", "params": []}
+    res = client.post("/rpc", json=payload)
+
+    assert res.status_code == 200
+    data = res.json()
+    assert data.get("error") is None
+    assert data.get("result") is not None
+    assert data["result"].get("jobId") in miner_methods._JOB_CACHE
+
+
 def test_submit_work_accepts_valid_solution_and_updates_head():
     client, _, _ = new_test_client()
     job = rpc_call(client, "miner.getWork")["result"]
@@ -77,6 +92,26 @@ def test_submit_work_rejects_invalid_or_stale_jobs():
     miner_methods._LOCAL_HEAD.update({"height": job["height"], "hash": "0x01", "header": None})
     stale = rpc_call(client, "miner.submitWork", {"jobId": job["jobId"], "nonce": "0x00"}, expect_error=True)
     assert stale["error"]["code"] == -32602
+
+
+def test_get_work_rejects_wrong_param_type():
+    client, _, _ = new_test_client()
+
+    res = rpc_call(client, "miner.getWork", "bad-type", expect_error=True)
+
+    assert res["error"]["code"] == -32602
+
+
+@pytest.mark.asyncio
+async def test_dispatch_accepts_empty_param_array():
+    from rpc import jsonrpc
+
+    payload = {"jsonrpc": "2.0", "id": 9, "method": "miner.getWork", "params": []}
+    ctx = jsonrpc._default_ctx()
+
+    res = await jsonrpc.dispatch(payload, ctx)
+
+    assert res["result"]["jobId"] in miner_methods._JOB_CACHE
 
 
 def test_get_sha256_job_shape():

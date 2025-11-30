@@ -312,7 +312,11 @@ def _bind_call_args(fn: CallableLike, params: Optional[Params], ctx: Context) ->
     if "request" in sig.parameters and "request" not in bound.arguments:
         bound.arguments["request"] = ctx.request
 
-    return [], dict(bound.arguments)
+    # Preserve positional arguments when present (e.g., varargs handlers) while
+    # still honoring keyword-only bindings.
+    args = list(bound.args)
+    kwargs = dict(bound.kwargs)
+    return args, kwargs
 
 
 async def _maybe_await(x: Any) -> Any:
