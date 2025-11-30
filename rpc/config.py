@@ -200,6 +200,7 @@ class RpcConfig:
     metrics_enabled: bool
     metrics_port: int
     openrpc_enabled: bool
+    genesis_path: Path | None = None
 
     @property
     def base_url(self) -> str:
@@ -253,6 +254,17 @@ def load() -> RpcConfig:
             chain_id = 1
     log_level = (_env("ANIMICA_LOG_LEVEL", "INFO") or "INFO").upper()
 
+    genesis_env = _env("ANIMICA_GENESIS_PATH")
+    genesis_path: Path | None = Path(genesis_env).expanduser() if genesis_env else None
+    if genesis_path is None:
+        repo_root = Path(__file__).resolve().parents[1]
+        if network in {"dev", "devnet"}:
+            genesis_path = repo_root / "genesis" / "genesis.sample.devnet.json"
+        elif network in {"test", "testnet"}:
+            genesis_path = repo_root / "genesis" / "genesis.sample.testnet.json"
+        else:
+            genesis_path = repo_root / "genesis" / "genesis.sample.mainnet.json"
+
     metrics_enabled = _env_bool("ANIMICA_METRICS_ENABLED", True)
     metrics_port = _env_int("ANIMICA_METRICS_PORT", 9100)
     openrpc_enabled = _env_bool("ANIMICA_OPENRPC_ENABLED", True)
@@ -269,6 +281,7 @@ def load() -> RpcConfig:
         metrics_enabled=metrics_enabled,
         metrics_port=metrics_port,
         openrpc_enabled=openrpc_enabled,
+        genesis_path=genesis_path,
     )
 
 
@@ -311,6 +324,7 @@ class Config:
     cors_allow_origins: list[str] = field(default_factory=list)
     rate_limit_per_ip: float = 0.0
     rate_limit_per_method: float = 0.0
+    genesis_path: Path | None = None
 
 
 def load_config() -> Config:
@@ -324,6 +338,7 @@ def load_config() -> Config:
         cors_allow_origins=list(cfg.cors.allow_origins),
         rate_limit_per_ip=cfg.rate.default_rps,
         rate_limit_per_method=cfg.rate.default_rps,
+        genesis_path=cfg.genesis_path,
     )
 
 

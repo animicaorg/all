@@ -200,4 +200,11 @@ def chain_get_head() -> dict:
                 header_view = merged
         return header_view
 
-    return _header_view(int(height), header, chain_id_fallback=chain_id_val)
+    view = _header_view(int(height), header, chain_id_fallback=chain_id_val)
+    try:
+        from rpc.methods import miner as miner_methods
+
+        view["autoMine"] = bool(getattr(miner_methods, "auto_mine_enabled", lambda: False)())
+    except Exception:
+        pass
+    return view

@@ -140,6 +140,12 @@ def _mine(rpc_url: str, count: int, datadir: Optional[Path]) -> int:
     start_height = _status(rpc_url, None)["height"]
     current_height = start_height
     try:
+        res = _rpc_call(rpc_url, "miner.mine", [count])
+        if isinstance(res, dict) and "height" in res:
+            return int(res.get("height", start_height))
+    except RuntimeError:
+        pass
+    try:
         for _ in range(count):
             work = _rpc_call(rpc_url, "miner.getWork")
             payload: Dict[str, Any] = {"jobId": work.get("jobId") if isinstance(work, dict) else None}
@@ -240,8 +246,13 @@ def cmd_auto(args: argparse.Namespace) -> None:
         _write_local_state(state)
         print("on" if state["autoMine"] else "off")
     else:
-        method = "miner_start" if args.enable else "miner_stop"
-        result = _rpc_call(args.rpc_url, method)
+        method = "miner.start" if args.enable else "miner.stop"
+        try:
+            result = _rpc_call(args.rpc_url, method)
+        except RuntimeError:
+            # fall back to legacy aliases
+            legacy = "miner_start" if args.enable else "miner_stop"
+            result = _rpc_call(args.rpc_url, legacy)
         print("on" if result else "off")
 
 

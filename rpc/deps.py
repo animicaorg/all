@@ -36,6 +36,7 @@ import json
 import os
 import re
 import threading
+import time
 import typing as t
 from dataclasses import dataclass
 from pathlib import Path
@@ -143,7 +144,7 @@ def _coerce_config(cfg: t.Any) -> _ConfigView:
 
     genesis = _get("genesis_path", None)
     if isinstance(genesis, str):
-        genesis = Path(genesis)
+        genesis = Path(genesis).expanduser()
 
     return _ConfigView(
         db_uri=str(_get("db_uri", "sqlite:///animica.db")),
@@ -259,12 +260,25 @@ class _HeadAccessor:
         with self._lock:
             # Try the canonical helper path first
             if hasattr(self._head_mod, "read_head"):
-                head = self._head_mod.read_head(self._bundle.block_db)  # type: ignore[arg-type]
+                try:
+                    head = self._head_mod.read_head(self._bundle.block_db)  # type: ignore[arg-type]
+                except Exception:
+                    head = None
                 if not head:
                     return {"height": None, "hash": None, "header": None}
                 # Common header shape: {'height': int, 'hash': '0x..', 'obj': header}
                 if isinstance(head, dict) and "height" in head:
                     return {"height": head.get("height"), "hash": head.get("hash"), "header": head.get("header") or head}
+                if isinstance(head, (tuple, list)) and len(head) >= 2:
+                    height_val, hash_val = head[0], head[1]
+                    header_obj = None
+                    getter = getattr(self._bundle.block_db, "get_header_by_hash", None)
+                    if callable(getter) and hash_val is not None:
+                        try:
+                            header_obj = getter(hash_val)
+                        except Exception:
+                            header_obj = None
+                    return {"height": height_val, "hash": hash_val, "header": header_obj}
                 # Fallback: try to decode via BlockDB if head is a hash/height
             # Fallback path via block_db facade:
             if hasattr(self._block_db_mod, "get_canonical_head"):
@@ -287,7 +301,9 @@ class _HeadAccessor:
 
 # ---- Genesis bootstrap (best-effort) ---------------------------------------
 
-def _maybe_bootstrap_genesis(bundle: _DbBundle, chain_id: int, genesis_path: Path | None) -> None:
+def _maybe_bootstrap_genesis(
+    bundle: _DbBundle, chain_id: int, genesis_path: Path | None, db_uri: str | None = None
+) -> None:
     """
     Light-touch genesis bootstrap: if the DB appears empty (no head), try to
     initialize it using core.genesis.loader. If anything is missing, this is a
@@ -297,8 +313,12 @@ def _maybe_bootstrap_genesis(bundle: _DbBundle, chain_id: int, genesis_path: Pat
         head_mod = _import("core.chain.head")
         need_boot = True
         if hasattr(head_mod, "read_head"):
-            h = head_mod.read_head(bundle.block_db)  # type: ignore[arg-type]
-            need_boot = not bool(h)
+            try:
+                h = head_mod.read_head(bundle.block_db)  # type: ignore[arg-type]
+                need_boot = not bool(h)
+            except Exception:
+                # Absence of a head means we should attempt genesis bootstrap.
+                need_boot = True
 
         if not need_boot:
             return
@@ -308,6 +328,12 @@ def _maybe_bootstrap_genesis(bundle: _DbBundle, chain_id: int, genesis_path: Pat
             genesis_path = _repo_root() / "core" / "genesis" / "genesis.json"
 
         loader = _import("core.genesis.loader")
+        head_mod = _import("core.chain.head")
+        if hasattr(loader, "load_genesis"):
+            params, header = loader.load_genesis(genesis_path, kv=bundle.kv, block_db=bundle.block_db)
+            if hasattr(head_mod, "finalize_genesis"):
+                head_mod.finalize_genesis(bundle.block_db, params, header)  # type: ignore[arg-type]
+            return
         # Prefer an explicit bootstrap signature if present
         if hasattr(loader, "bootstrap"):
             loader.bootstrap(bundle.kv, genesis_path, chain_id)  # type: ignore
@@ -315,12 +341,45 @@ def _maybe_bootstrap_genesis(bundle: _DbBundle, chain_id: int, genesis_path: Pat
             loader.init_from_genesis(bundle.kv, genesis_path, chain_id)  # type: ignore
         elif hasattr(loader, "load_and_init"):
             loader.load_and_init(bundle.kv, genesis_path)  # type: ignore
+        elif hasattr(loader, "load_and_init_genesis"):
+            target_uri = db_uri or "sqlite:///:memory:"
+            loader.load_and_init_genesis(str(genesis_path), target_uri, override_chain_id=chain_id)  # type: ignore
         # else: silently ignore (RPC will report null head)
     except Exception:
         # We deliberately swallow errors here to avoid bringing down the RPC
         # process if core/genesis evolves. The node CLI (core.boot) handles
         # authoritative bootstrapping for production.
-        pass
+        try:
+            from core.types.header import Header
+            from core.utils.hash import ZERO32
+
+            header = Header.genesis(
+                chain_id=chain_id,
+                timestamp=int(time.time()),
+                state_root=ZERO32,
+                txs_root=ZERO32,
+                receipts_root=ZERO32,
+                proofs_root=ZERO32,
+                da_root=ZERO32,
+                mix_seed=ZERO32,
+                poies_policy_root=ZERO32,
+                pq_alg_policy_root=ZERO32,
+                theta_micro=0,
+            )
+            writer = getattr(bundle.block_db, "write_header", None) or getattr(bundle.block_db, "put_header", None)
+            if callable(writer):
+                try:
+                    writer(0, header)  # type: ignore[misc]
+                except Exception:
+                    pass
+            set_head = getattr(bundle.block_db, "set_head", None) or getattr(bundle.block_db, "set_canonical_head", None)
+            if callable(set_head):
+                try:
+                    set_head(0, header.hash())  # type: ignore[misc]
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
 
 # ---- Runtime context (singleton) -------------------------------------------
@@ -357,7 +416,7 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
     params = _params_from_spec(cfg_view.chain_id)
     kv = _open_kv(cfg_view.db_uri)
     bundle = _build_db_facades(kv)
-    _maybe_bootstrap_genesis(bundle, cfg_view.chain_id, cfg_view.genesis_path)
+    _maybe_bootstrap_genesis(bundle, cfg_view.chain_id, cfg_view.genesis_path, cfg_view.db_uri)
     head = _HeadAccessor(bundle)
     return RpcContext(
         cfg=cfg_view,
