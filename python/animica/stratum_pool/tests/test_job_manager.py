@@ -53,8 +53,9 @@ async def test_job_manager_publishes_updates():
     await asyncio.sleep(0.05)
     await manager.stop()
 
-    assert seen, "expected callbacks to run"
+    assert len(seen) >= 2, "expected multiple job updates"
     assert seen[0] == "1"
+    assert seen[1] == "2"
 
 
 def test_job_manager_backoff_resets_after_success():
