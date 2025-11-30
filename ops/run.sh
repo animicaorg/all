@@ -64,6 +64,22 @@ set -a
 source "${PROFILE_PATH}"
 set +a
 
+load_p2p_seeds() {
+  if [[ -n "${ANIMICA_P2P_SEEDS:-}" ]]; then
+    echo "[animica] Using P2P seeds from environment"
+    return
+  fi
+
+  local seed_csv
+  seed_csv=$(cd "${REPO_ROOT}" && python -m ops.seeds.profile_loader --profile "${PROFILE}" --write-peerstore 2>/dev/null || true)
+  if [[ -n "${seed_csv}" ]]; then
+    export ANIMICA_P2P_SEEDS="${seed_csv}"
+    echo "[animica] Loaded ${PROFILE} seeds (${seed_csv//,/, })"
+  else
+    echo "[animica] No profile seeds found for ${PROFILE}; falling back to defaults"
+  fi
+}
+
 parse_rpc_from_url() {
   python - <<'PY'
 import os
@@ -116,6 +132,7 @@ PY
 
 start_node() {
   echo "[animica] Starting node (profile=${PROFILE})"
+  load_p2p_seeds
   read -r rpc_host rpc_port rpc_path < <(parse_rpc_from_url)
   export ANIMICA_RPC_HOST="${ANIMICA_RPC_HOST:-${rpc_host}}"
   export ANIMICA_RPC_PORT="${ANIMICA_RPC_PORT:-${rpc_port}}"

@@ -78,3 +78,27 @@ def test_probe_failure_is_non_fatal(temp_store, capsys):
     peers = {p["peer_id"]: p for p in data.get("peers", [])}
     assert peers["peer-fail"]["addrs"] == [addr]
     assert peers["peer-fail"].get("last_seen") is None
+
+
+def test_store_facade_writes_json(temp_store):
+    store = peer_cli.StoreFacade(temp_store)
+    store.ensure_addr("peer-123", "/ip4/1.2.3.4/tcp/3333")
+
+    data = json.loads(temp_store.read_text())
+    peers = {p["peer_id"]: p for p in data.get("peers", [])}
+    assert peers["peer-123"]["addrs"] == ["/ip4/1.2.3.4/tcp/3333"]
+
+
+def test_parse_addr_handles_multiaddr_object(monkeypatch):
+    class FakeMultiaddr:
+        def __init__(self, raw: str):
+            self._raw = raw
+
+        def __str__(self) -> str:  # pragma: no cover - trivial
+            return self._raw
+
+    monkeypatch.setattr(peer_cli, "_parse_multiaddr", lambda raw: FakeMultiaddr(raw))
+    host, port = peer_cli.parse_addr("/ip4/10.1.2.3/tcp/4100")
+
+    assert host == "10.1.2.3"
+    assert port == 4100
