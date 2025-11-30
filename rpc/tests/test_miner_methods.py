@@ -26,6 +26,7 @@ def test_get_work_returns_template():
     assert job["header"].get("number") == job["height"]
     assert "thetaMicro" in job
     assert "shareTarget" in job
+    assert job["algo"] == "asic_sha256"
     assert "jobId" in job and job["jobId"] in miner_methods._JOB_CACHE
 
 
@@ -42,6 +43,17 @@ def test_submit_work_accepts_valid_solution_and_updates_head():
     assert result["height"] == job["height"]
     assert miner_methods._LOCAL_HEAD.get("height") == job["height"]
     assert miner_methods._LOCAL_HEAD.get("hash") == result["hash"]
+
+
+def test_submit_work_accepts_positional_params():
+    client, _, _ = new_test_client()
+    job = rpc_call(client, "miner.getWork", ["asic_sha256"])["result"]
+
+    nonce_hex = _find_nonce(job["signBytes"], job["target"])
+    res = rpc_call(client, "miner.submitWork", [job["jobId"], nonce_hex])
+
+    result = res["result"]
+    assert result["accepted"] is True
 
 
 def test_submit_work_rejects_invalid_or_stale_jobs():
