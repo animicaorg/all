@@ -1,0 +1,37 @@
+{
+  "name": "UsefulWorkDemo",
+  "version": "1.0.0",
+  "manifestVersion": 1,
+  "language": "python-vm",
+  "entry": "contract.py",
+  "source": "./contract.py",
+  "sources": {
+    "contract.py": "./contract.py"
+  },
+  "abi": {
+    "functions": [
+      {
+        "name": "score_block",
+        "inputs": [
+          { "name": "block_hash", "type": "bytes" },
+          { "name": "height", "type": "int" },
+          { "name": "timestamp", "type": "int" },
+          { "name": "difficulty", "type": "int" },
+          { "name": "miner", "type": "bytes" }
+        ],
+        "outputs": [
+          { "type": "int" }
+        ]
+      }
+    ]
+  },
+  "deploy": {
+    "initStorage": {},
+    "metadata": {
+      "description": "Scores a devnet block using header data to showcase useful work plumbing."
+    }
+  },
+  "resources": {
+    "maxCodeBytes": 24576
+  }
+}

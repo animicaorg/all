@@ -517,7 +517,7 @@ def to_bytes(ir_module) -> bytes:
     """
     if not isinstance(ir_module, Module):
         raise TypeError("to_bytes expects an ir.Module")
-    return encode_ir(ir_module)
+    return encode_module(ir_module)
 
 
 def encode(ir_module) -> bytes:
@@ -529,7 +529,7 @@ def encode(ir_module) -> bytes:
         blob = enc_mod.encode(ir_mod)
 
     """
-    return to_bytes(ir_module)
+    return encode_module(ir_module)
 
 
 def ir_to_bytes(ir_module) -> bytes:
