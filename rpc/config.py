@@ -48,14 +48,26 @@ def _expand_sqlite_uri(uri: str) -> str:
       - rocksdb:///var/lib/animica
     Returns unchanged if scheme is not sqlite or rocksdb or if no ~ present.
     """
-    if ":///" not in uri:
+    expanded = os.path.expandvars(uri)
+    if ":///" not in expanded:
         # Allow bare file path; convert to sqlite URI.
-        return "sqlite:///" + str(Path(uri).expanduser())
-    scheme, rest = uri.split(":///", 1)
+        return "sqlite:///" + str(Path(expanded).expanduser())
+    scheme, rest = expanded.split(":///", 1)
     if scheme in ("sqlite", "rocksdb") and rest.startswith("~"):
         rest_expanded = str(Path(rest).expanduser())
         return f"{scheme}:///{rest_expanded}"
-    return uri
+    return expanded
+
+
+def _chain_id_from_genesis(genesis_path: Path | None) -> int | None:
+    if genesis_path is None:
+        return None
+    try:
+        data = json.loads(Path(genesis_path).read_text())
+        chain_id = data.get("chainId", data.get("chain_id"))
+        return int(chain_id) if chain_id is not None else None
+    except Exception:
+        return None
 
 
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -238,12 +250,13 @@ def load() -> RpcConfig:
 
     db_uri = _expand_sqlite_uri(_env("ANIMICA_RPC_DB_URI", "sqlite:///~/animica/data/chain.db"))
 
+    explicit_chain_id = "ANIMICA_CHAIN_ID" in os.environ
     # Respect explicit chain id first, then fall back to ANIMICA_NETWORK so
     # "devnet" boots with the expected 1337 instead of the mainnet default.
-    if "ANIMICA_CHAIN_ID" in os.environ:
+    network = (_env("ANIMICA_NETWORK", "") or "").strip().lower()
+    if explicit_chain_id:
         chain_id = _env_int("ANIMICA_CHAIN_ID", 1)
     else:
-        network = (_env("ANIMICA_NETWORK", "") or "").strip().lower()
         if network in {"main", "mainnet"}:
             chain_id = 1
         elif network in {"test", "testnet"}:
@@ -264,6 +277,11 @@ def load() -> RpcConfig:
             genesis_path = repo_root / "genesis" / "genesis.sample.testnet.json"
         else:
             genesis_path = repo_root / "genesis" / "genesis.sample.mainnet.json"
+
+    if not explicit_chain_id:
+        genesis_chain_id = _chain_id_from_genesis(genesis_path)
+        if genesis_chain_id is not None:
+            chain_id = genesis_chain_id
 
     metrics_enabled = _env_bool("ANIMICA_METRICS_ENABLED", True)
     metrics_port = _env_int("ANIMICA_METRICS_PORT", 9100)
