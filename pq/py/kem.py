@@ -10,6 +10,7 @@ key schedule used by higher-level protocols (e.g., P2P handshake).
 Public API
 ----------
 - keygen(seed: bytes|None = None) -> (pk: bytes, sk: bytes)
+- generate_keypair(seed: bytes|None = None) -> (pk: bytes, sk: bytes)  # compat alias
 - encapsulate(pk: bytes, *, context: bytes = b"", salt: bytes|None = None) -> (ct: bytes, ss: bytes)
 - decapsulate(sk: bytes, ct: bytes, *, context: bytes = b"", salt: bytes|None = None) -> bytes
 - derive_symmetric_keys(ss: bytes, *, our_pub: bytes = b"", peer_pub: bytes = b"",
@@ -61,6 +62,7 @@ except Exception:  # pragma: no cover - defensive fallback
 __all__ = [
     "KEM_ALG_NAME",
     "KEM_ALG_ID",
+    "generate_keypair",
     "keygen",
     "encapsulate",
     "decapsulate",
@@ -103,21 +105,32 @@ def _backend():
 
 def keygen(seed: Optional[bytes] = None) -> tuple[bytes, bytes]:
     """
-    Generate a Kyber768 keypair.
+    Generate a Kyber768 keypair as (pk, sk).
 
     If `seed` is provided, and the backend supports deterministic keygen, it will be used.
     Otherwise, OS RNG will be used for entropy.
     """
     kyb = _backend()
     if seed is not None:
-        return kyb.keypair(seed=seed)  # type: ignore[call-arg]
-    # Use OS RNG to source entropy if backend supports implicit RNG.
-    # Some wrappers accept `seed=None`; others expect zero args.
-    try:
-        return kyb.keypair()  # type: ignore[call-arg]
-    except TypeError:
-        rnd = rng_utils.os_random(48)  # generous seed; backend may KDF internally
-        return kyb.keypair(seed=rnd)  # type: ignore[call-arg]
+        sk, pk = kyb.keypair(seed=seed)  # type: ignore[call-arg]
+    else:
+        # Use OS RNG to source entropy if backend supports implicit RNG.
+        # Some wrappers accept `seed=None`; others expect zero args.
+        try:
+            sk, pk = kyb.keypair()  # type: ignore[call-arg]
+        except TypeError:
+            rnd = rng_utils.os_random(48)  # generous seed; backend may KDF internally
+            sk, pk = kyb.keypair(seed=rnd)  # type: ignore[call-arg]
+    return pk, sk
+
+
+def generate_keypair(seed: Optional[bytes] = None) -> tuple[bytes, bytes]:
+    """
+    Compatibility alias for callers expecting `generate_keypair`.
+
+    Mirrors :func:`keygen` and returns (pk, sk).
+    """
+    return keygen(seed=seed)
 
 
 def encapsulate(

@@ -143,6 +143,12 @@ def keypair(seed: Optional[bytes] = None) -> Tuple[bytes, bytes]:
     )
 
 
+def generate_keypair(seed: Optional[bytes] = None) -> Tuple[bytes, bytes]:
+    """Compatibility wrapper returning (pk, sk)."""
+    sk, pk = keypair(seed)
+    return (pk, sk)
+
+
 def encapsulate(pk: bytes) -> Tuple[bytes, bytes]:
     """
     Encapsulate to a public key, returning (ciphertext, shared_secret).
