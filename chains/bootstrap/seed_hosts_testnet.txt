@@ -8,3 +8,4 @@ seed2.testnet.animica.dev
 # community-seed.us.testnet.animica.dev
 # community-seed.eu.testnet.animica.dev
 # community-seed.ap.testnet.animica.dev
+144.126.133.21

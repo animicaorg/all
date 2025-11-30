@@ -5,6 +5,7 @@
 
 127.0.0.1
 localhost
+144.126.133.21
 
 # Docker service names (if using docker-compose):
 seed1
