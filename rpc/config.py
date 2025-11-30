@@ -236,7 +236,21 @@ def load() -> RpcConfig:
     )
 
     db_uri = _expand_sqlite_uri(_env("ANIMICA_RPC_DB_URI", "sqlite:///~/animica/data/chain.db"))
-    chain_id = _env_int("ANIMICA_CHAIN_ID", 1)
+
+    # Respect explicit chain id first, then fall back to ANIMICA_NETWORK so
+    # "devnet" boots with the expected 1337 instead of the mainnet default.
+    if "ANIMICA_CHAIN_ID" in os.environ:
+        chain_id = _env_int("ANIMICA_CHAIN_ID", 1)
+    else:
+        network = (_env("ANIMICA_NETWORK", "") or "").strip().lower()
+        if network in {"main", "mainnet"}:
+            chain_id = 1
+        elif network in {"test", "testnet"}:
+            chain_id = 2
+        elif network in {"dev", "devnet"}:
+            chain_id = 1337
+        else:
+            chain_id = 1
     log_level = (_env("ANIMICA_LOG_LEVEL", "INFO") or "INFO").upper()
 
     metrics_enabled = _env_bool("ANIMICA_METRICS_ENABLED", True)
