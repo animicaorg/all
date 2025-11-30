@@ -4,6 +4,10 @@ export type PoolSummary = {
   height: number;
   last_block_hash: string;
   pool_hashrate: number;
+  hashrate_series: [string, number][];
+  hashrate_1m: number;
+  hashrate_15m: number;
+  hashrate_1h: number;
   num_miners: number;
   num_workers: number;
   round_duration_seconds: number;
@@ -12,6 +16,7 @@ export type PoolSummary = {
   uptime_seconds: number;
   stratum_endpoint: string;
   last_update: string;
+  latest_block?: { height: number; hash: string; timestamp: string | null; found_by_pool: boolean };
 };
 
 export type Miner = {
@@ -48,9 +53,11 @@ export type BlockRow = {
   timestamp: string;
   found_by_pool: boolean;
   reward: string;
+  tx_count?: number;
 };
 
-const API_URL = import.meta.env.VITE_STRATUM_API_URL || 'http://127.0.0.1:8550';
+const API_URL =
+  import.meta.env.VITE_POOL_API_URL || import.meta.env.VITE_STRATUM_API_URL || 'http://127.0.0.1:8550';
 
 async function request<T>(path: string): Promise<T> {
   const res = await fetch(`${API_URL}${path}`);
@@ -62,9 +69,9 @@ async function request<T>(path: string): Promise<T> {
 }
 
 export const api = {
-  getPoolSummary: () => request<PoolSummary>('/api/pool/summary'),
-  getMiners: () => request<{ items: Miner[]; total: number }>('/api/miners'),
-  getMinerDetail: (workerId: string) => request<MinerDetail>(`/api/miners/${workerId}`),
-  getRecentBlocks: () => request<{ items: BlockRow[]; total: number }>('/api/blocks/recent'),
+  getPoolSummary: () => request<PoolSummary>('/summary'),
+  getMiners: () => request<{ items: Miner[]; total: number }>('/miners'),
+  getMinerDetail: (workerId: string) => request<MinerDetail>(`/miners/${workerId}`),
+  getRecentBlocks: () => request<{ items: BlockRow[]; total: number }>('/blocks'),
   getHealth: () => request<{ status: string; uptime: number }>('/healthz'),
 };
