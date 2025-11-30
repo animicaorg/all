@@ -24,6 +24,8 @@ class PoolShareValidator:
             share_target=job.share_target,
             height=submit_params.get("height") or 0,
             hints=job.hints,
+            target=job.target,
+            sign_bytes=job.sign_bytes,
         )
         try:
             return await self._adapter.validate_and_submit_share(mining_job, submit_params)
@@ -64,12 +66,22 @@ class StratumPoolServer:
         await self._job_manager.stop()
 
     async def _on_new_job(self, job: MiningJob) -> None:
+        header = dict(job.header or {})
+        if job.sign_bytes:
+            header.setdefault("signBytes", job.sign_bytes)
+        if job.target:
+            header.setdefault("target", job.target)
+        if job.height:
+            header.setdefault("number", job.height)
         stratum_job = StratumJob(
             job_id=job.job_id,
-            header=job.header,
+            header=header,
             share_target=job.share_target or self._config.min_difficulty,
             theta_micro=job.theta_micro,
             hints=job.hints,
+            target=job.target,
+            sign_bytes=job.sign_bytes or header.get("signBytes"),
+            height=job.height,
         )
         await self._server.publish_job(stratum_job)
 

@@ -143,6 +143,9 @@ class MiningCoreAdapter:
             share_target=job.share_target,
             theta_micro=job.theta_micro,
             hints=job.hints,
+            target=job.target,
+            sign_bytes=job.sign_bytes,
+            height=job.height,
         )
         ok, reason, is_block, tx_count = await self._validator.validate(stratum_job, submit_params)
         if not ok:
