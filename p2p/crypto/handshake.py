@@ -52,7 +52,6 @@ from enum import Enum, auto
 from typing import Optional, Tuple
 
 # PQ primitives & helpers (from the pq package)
-from pq.py.utils.hash import sha3_256
 from pq.py.utils.hkdf import hkdf_extract, hkdf_expand
 # Prefer the dedicated KEM wrapper (thin shim over oqs / fallback)
 try:
@@ -109,8 +108,8 @@ class InitiatorState:
 def _le32(n: int) -> bytes:
     return n.to_bytes(4, "big")
 
-def _th_init() -> sha3_256:
-    h = sha3_256()
+def _th_init():
+    h = hashlib.sha3_256()
     h.update(TRANSCRIPT_DOMAIN)
     return h
 
@@ -334,7 +333,7 @@ async def perform_handshake_tcp(
         seed_i = seed_local if role is Role.INITIATOR else seed_remote
         seed_r = seed_remote if role is Role.INITIATOR else seed_local
 
-        th = sha3_256()
+        th = hashlib.sha3_256()
         th.update(magic)
         th.update(bytes([len(pro)]))
         th.update(pro)
@@ -344,7 +343,7 @@ async def perform_handshake_tcp(
         th.update(seed_r)
         transcript_hash = th.digest()
 
-        shared_secret = sha3_256(seed_i + seed_r).digest()
+        shared_secret = hashlib.sha3_256(seed_i + seed_r).digest()
         aead_name = get_default_aead_name()
         keys = _derive_keys(role, shared_secret, transcript_hash, aead_name)
 
