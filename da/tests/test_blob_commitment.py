@@ -7,10 +7,10 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import pytest
 
-
 # ------------------------------------------------------------
 # Adapters: tolerant to small API variations across modules
 # ------------------------------------------------------------
+
 
 def _import(path: str):
     return importlib.import_module(path)
@@ -137,6 +137,7 @@ def _nmt_commit_fn():
 # Test fixtures
 # ------------------------------------------------------------
 
+
 def _rnd_bytes(n: int, seed: int) -> bytes:
     random.seed(seed)
     return bytes(random.getrandbits(8) for _ in range(n))
@@ -153,6 +154,7 @@ SAMPLES = [
 # Tests
 # ------------------------------------------------------------
 
+
 @pytest.mark.parametrize("data,ns", SAMPLES)
 def test_commitment_is_deterministic(data: bytes, ns: int):
     commit = _commit_fn()
@@ -160,7 +162,9 @@ def test_commitment_is_deterministic(data: bytes, ns: int):
     r2 = _extract_commit_fields(commit(data, ns))
     assert r1[0] == r2[0], "same input must produce identical commitment root"
     if r1[1] != -1 and r2[1] != -1:
-        assert r1[1] == r2[1] == len(data), "reported size must be stable and equal to input length"
+        assert (
+            r1[1] == r2[1] == len(data)
+        ), "reported size must be stable and equal to input length"
     if r1[2] is not None and r2[2] is not None:
         assert r1[2] == r2[2] == ns, "namespace must round-trip unchanged"
     # root length sanity (sha3-256 or similar)
@@ -216,12 +220,18 @@ def test_commitment_matches_nmt_of_encoder_leaves_when_available(data: bytes, ns
         # Some encoders might only take data and embed ns elsewhere; try single-arg form.
         leaves = leaves_fn(data)
 
-    assert isinstance(leaves, (list, tuple)) and len(leaves) > 0, "encoder must return a non-empty leaf list"
-    assert all(isinstance(x, (bytes, bytearray)) for x in leaves), "leaves must be bytes-like"
+    assert (
+        isinstance(leaves, (list, tuple)) and len(leaves) > 0
+    ), "encoder must return a non-empty leaf list"
+    assert all(
+        isinstance(x, (bytes, bytearray)) for x in leaves
+    ), "leaves must be bytes-like"
 
     manual_root = _as_bytes(nmt_commit(list(leaves)))
     committed_root, *_ = _extract_commit_fields(commit(data, ns))
-    assert manual_root == committed_root, "commit() root must equal NMT(root(leaves)) from encoder"
+    assert (
+        manual_root == committed_root
+    ), "commit() root must equal NMT(root(leaves)) from encoder"
 
 
 @pytest.mark.parametrize("data,ns", SAMPLES)

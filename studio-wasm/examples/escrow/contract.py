@@ -16,23 +16,18 @@ Notes:
   - Emits deterministic events on key actions.
 """
 
-from stdlib.storage import (
-    get_int,
-    set_int,
-    get_bytes,
-    set_bytes,
-)
-from stdlib.events import emit
 from stdlib.abi import require
+from stdlib.events import emit
+from stdlib.storage import get_bytes, get_int, set_bytes, set_int
 
 # Storage keys
 K_PAYER = b"escrow/payer"
 K_PAYEE = b"escrow/payee"
-K_BAL   = b"escrow/balance"
+K_BAL = b"escrow/balance"
 
 # Limits for safe arithmetic / sizes in examples
-MAX_AMOUNT = 2**53 - 1           # JS-safe integer for demo UX
-MAX_ADDR_LEN = 96                # bytes
+MAX_AMOUNT = 2**53 - 1  # JS-safe integer for demo UX
+MAX_ADDR_LEN = 96  # bytes
 
 
 def _addr_ok(a: bytes) -> bool:

@@ -31,13 +31,14 @@ If no backend is selected, calls to `random_bytes` raise `QRNGNotAvailable`.
 
 from __future__ import annotations
 
-from typing import Protocol, Dict, Optional
-
+from typing import Dict, Optional, Protocol
 
 # --- Public protocol & error -----------------------------------------------------
 
+
 class EntropySource(Protocol):
     """Minimal QRNG source protocol."""
+
     def random_bytes(self, n: int) -> bytes:  # pragma: no cover - protocol
         """Return exactly n bytes of entropy, or raise on failure."""
         ...
@@ -85,6 +86,7 @@ def current_backend() -> Optional[EntropySource]:
 
 
 # --- Convenience API -------------------------------------------------------------
+
 
 def random_bytes(n: int) -> bytes:
     """

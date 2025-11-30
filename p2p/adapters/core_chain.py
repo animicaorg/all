@@ -22,11 +22,11 @@ from typing import Any, Dict, Tuple, Type, TypeVar, Union, overload
 
 # Core primitives
 from core.encoding import cbor
-from core.types.header import Header
 from core.types.block import Block
+from core.types.header import Header
 from core.types.tx import Tx
-from core.utils.hash import sha3_256
 from core.utils.bytes import to_hex
+from core.utils.hash import sha3_256
 
 T = TypeVar("T")
 
@@ -36,6 +36,7 @@ BytesLike = Union[bytes, bytearray, memoryview]
 # --------------------------
 # Decoding & coercion
 # --------------------------
+
 
 def _ensure_bytes(b: BytesLike) -> bytes:
     if isinstance(b, bytes):
@@ -91,6 +92,7 @@ def decode_block(raw: BytesLike) -> Block:
 # Canonical content hashes
 # --------------------------
 
+
 def _canonical_cbor_hash(obj: Any) -> bytes:
     """
     Compute the canonical content-hash of a core object as sha3_256(CBOR(obj)),
@@ -117,6 +119,7 @@ def block_hash(blk: Block) -> bytes:
 # --------------------------
 # Cheap, structural sanity
 # --------------------------
+
 
 def _len_is(data: Union[bytes, bytearray, memoryview], n: int) -> bool:
     return len(data) == n
@@ -145,7 +148,9 @@ def sanity_header(h: Header) -> None:
     ]
     for r in roots:
         if not isinstance(r, (bytes, bytearray, memoryview)) or not _len_is(r, 32):
-            raise ValueError("header root must be 32 bytes (state/txs/receipts/proofs/da)")
+            raise ValueError(
+                "header root must be 32 bytes (state/txs/receipts/proofs/da)"
+            )
 
     # Previous hash (genesis may be zero-bytes)
     prev = getattr(h, "prevHash", b"\x00" * 32)
@@ -197,7 +202,10 @@ def sanity_tx(tx: Tx, expected_chain_id: int | None = None) -> None:
     for attr in ("to", "from_"):
         if hasattr(tx, attr):
             v = getattr(tx, attr)
-            if v is not None and not (isinstance(v, (bytes, bytearray, memoryview)) and len(v) in (20, 32, 35, 36, 42)):  # address payloads vary by encoding
+            if v is not None and not (
+                isinstance(v, (bytes, bytearray, memoryview))
+                and len(v) in (20, 32, 35, 36, 42)
+            ):  # address payloads vary by encoding
                 raise ValueError(f"tx.{attr} has invalid length")
 
     # Signature envelope plausibility (presence)
@@ -216,7 +224,10 @@ def sanity_block(b: Block, expected_chain_id: int | None = None) -> None:
     Does not re-execute or re-verify signatures/proofs.
     """
     sanity_header(b.header)
-    if expected_chain_id is not None and int(getattr(b.header, "chainId", 0)) != expected_chain_id:
+    if (
+        expected_chain_id is not None
+        and int(getattr(b.header, "chainId", 0)) != expected_chain_id
+    ):
         raise ValueError("block.header.chainId mismatch")
 
     # Optional quick checks on txs count/size relationships can be added here.
@@ -225,6 +236,7 @@ def sanity_block(b: Block, expected_chain_id: int | None = None) -> None:
 # --------------------------
 # Inventory helpers (logging)
 # --------------------------
+
 
 def short(h: bytes) -> str:
     """Hex-encode first 8 bytes of a hash for concise logs."""
@@ -256,8 +268,11 @@ def describe_block(b: Block) -> str:
 # Overloads for convenience
 # --------------------------
 
+
 @overload
-def decode_and_sanity(payload: BytesLike, kind: Type[Header]) -> Tuple[Header, bytes]: ...
+def decode_and_sanity(
+    payload: BytesLike, kind: Type[Header]
+) -> Tuple[Header, bytes]: ...
 @overload
 def decode_and_sanity(payload: BytesLike, kind: Type[Tx]) -> Tuple[Tx, bytes]: ...
 @overload

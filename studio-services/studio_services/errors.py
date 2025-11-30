@@ -28,7 +28,6 @@ Design
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional
 
-
 DEFAULT_ERROR_DOCS_BASE = "https://docs.animica.dev/errors"  # hypothetical docs base
 
 
@@ -97,16 +96,20 @@ class ApiError(Exception):
         # Try FastAPI first, then Starlette
         exc_cls = None
         try:
-            from fastapi import HTTPException as FastApiHTTPException  # type: ignore
+            from fastapi import \
+                HTTPException as FastApiHTTPException  # type: ignore
 
             exc_cls = FastApiHTTPException
         except Exception:  # pragma: no cover
             try:
-                from starlette.exceptions import HTTPException as StarletteHTTPException  # type: ignore
+                from starlette.exceptions import \
+                    HTTPException as StarletteHTTPException  # type: ignore
 
                 exc_cls = StarletteHTTPException
             except Exception as e:  # pragma: no cover
-                raise RuntimeError("Neither FastAPI nor Starlette HTTPException is available") from e
+                raise RuntimeError(
+                    "Neither FastAPI nor Starlette HTTPException is available"
+                ) from e
 
         return exc_cls(status_code=self.status_code, detail=self.to_problem())
 
@@ -128,8 +131,15 @@ class ApiError(Exception):
 
 
 class BadRequest(ApiError):
-    def __init__(self, message: str = "Bad request", *, details: Optional[Mapping[str, Any]] = None):
-        super().__init__(message=message, status_code=400, code="bad_request", details=details)
+    def __init__(
+        self,
+        message: str = "Bad request",
+        *,
+        details: Optional[Mapping[str, Any]] = None,
+    ):
+        super().__init__(
+            message=message, status_code=400, code="bad_request", details=details
+        )
 
 
 class ChainMismatch(ApiError):
@@ -143,28 +153,55 @@ class ChainMismatch(ApiError):
 
 
 class VerifyFail(ApiError):
-    def __init__(self, reason: str = "Source verification failed", *, details: Optional[Mapping[str, Any]] = None):
-        super().__init__(message=reason, status_code=422, code="verify_failed", details=details)
+    def __init__(
+        self,
+        reason: str = "Source verification failed",
+        *,
+        details: Optional[Mapping[str, Any]] = None,
+    ):
+        super().__init__(
+            message=reason, status_code=422, code="verify_failed", details=details
+        )
 
 
 class FaucetOff(ApiError):
     def __init__(self):
-        super().__init__(message="Faucet is disabled", status_code=403, code="faucet_disabled")
+        super().__init__(
+            message="Faucet is disabled", status_code=403, code="faucet_disabled"
+        )
 
 
 class Unauthorized(ApiError):
-    def __init__(self, message: str = "Missing or invalid credentials", *, details: Optional[Mapping[str, Any]] = None):
-        super().__init__(message=message, status_code=401, code="unauthorized", details=details)
+    def __init__(
+        self,
+        message: str = "Missing or invalid credentials",
+        *,
+        details: Optional[Mapping[str, Any]] = None,
+    ):
+        super().__init__(
+            message=message, status_code=401, code="unauthorized", details=details
+        )
 
 
 class Forbidden(ApiError):
-    def __init__(self, message: str = "Forbidden", *, details: Optional[Mapping[str, Any]] = None):
-        super().__init__(message=message, status_code=403, code="forbidden", details=details)
+    def __init__(
+        self, message: str = "Forbidden", *, details: Optional[Mapping[str, Any]] = None
+    ):
+        super().__init__(
+            message=message, status_code=403, code="forbidden", details=details
+        )
 
 
 class NotFound(ApiError):
-    def __init__(self, what: str = "Resource", *, details: Optional[Mapping[str, Any]] = None):
-        super().__init__(message=f"{what} not found", status_code=404, code="not_found", details=details)
+    def __init__(
+        self, what: str = "Resource", *, details: Optional[Mapping[str, Any]] = None
+    ):
+        super().__init__(
+            message=f"{what} not found",
+            status_code=404,
+            code="not_found",
+            details=details,
+        )
 
 
 class RateLimited(ApiError):
@@ -172,17 +209,37 @@ class RateLimited(ApiError):
         details: Dict[str, Any] = {}
         if retry_after is not None:
             details["retry_after"] = retry_after
-        super().__init__(message="Too many requests", status_code=429, code="rate_limited", details=details)
+        super().__init__(
+            message="Too many requests",
+            status_code=429,
+            code="rate_limited",
+            details=details,
+        )
 
 
 class RpcError(ApiError):
-    def __init__(self, message: str = "Upstream RPC error", *, details: Optional[Mapping[str, Any]] = None, status: int = 502):
-        super().__init__(message=message, status_code=status, code="rpc_error", details=details)
+    def __init__(
+        self,
+        message: str = "Upstream RPC error",
+        *,
+        details: Optional[Mapping[str, Any]] = None,
+        status: int = 502,
+    ):
+        super().__init__(
+            message=message, status_code=status, code="rpc_error", details=details
+        )
 
 
 class ServerError(ApiError):
-    def __init__(self, message: str = "Internal server error", *, details: Optional[Mapping[str, Any]] = None):
-        super().__init__(message=message, status_code=500, code="server_error", details=details)
+    def __init__(
+        self,
+        message: str = "Internal server error",
+        *,
+        details: Optional[Mapping[str, Any]] = None,
+    ):
+        super().__init__(
+            message=message, status_code=500, code="server_error", details=details
+        )
 
 
 __all__ = [

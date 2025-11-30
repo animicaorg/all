@@ -28,17 +28,19 @@ Example:
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, Optional
 
 try:  # Python 3.9+ preferred path
     from importlib import resources as _res
+
     _FILES = _res.files  # type: ignore[attr-defined]
     _HAVE_FILES = True
 except Exception:  # pragma: no cover
     from importlib import resources as _res  # type: ignore[no-redef]
+
     _FILES = None  # type: ignore[assignment]
     _HAVE_FILES = False
 
@@ -54,6 +56,7 @@ _SCHEMA_FILES = {
 
 
 # ----------------------------- resource access --------------------------------
+
 
 def _read_text(filename: str) -> str:
     pkg = __package__
@@ -96,6 +99,7 @@ def _sha3_256(b: bytes) -> str:
 
 
 # ------------------------------- public API ----------------------------------
+
 
 def load_blob_cddl() -> str:
     """Return the text of `blob.cddl`."""

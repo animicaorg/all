@@ -20,14 +20,13 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import Dict, Tuple, Optional
+from typing import Dict, Optional, Tuple
 
 import pytest
 
-
 # ---------------------------- inline AI agent contract -------------------------
 
-CONTRACT_SOURCE = r'''
+CONTRACT_SOURCE = r"""
 from stdlib.storage import get, set
 from stdlib.events import emit
 from stdlib.abi import require
@@ -65,7 +64,7 @@ def consume() -> bytes:
     set(K_RES, res)
     emit(b"AIResult", {"task": tid, "size": len(res)})
     return res
-'''
+"""
 
 
 def _write_contract(tmp_path: Path) -> Path:
@@ -76,6 +75,7 @@ def _write_contract(tmp_path: Path) -> Path:
 
 # ------------------------------- mocked provider -------------------------------
 
+
 class MockAIHost:
     """
     Deterministic AI host with "next-block" availability.
@@ -84,6 +84,7 @@ class MockAIHost:
     - read_result(task_id) -> None until self.height >= available_at[task_id]
                             -> b"MOCK:" + prompt thereafter
     """
+
     def __init__(self) -> None:
         self.height: int = 0
         # task_id -> (prompt, available_at_height)
@@ -118,6 +119,7 @@ class MockAIHost:
 
 # ------------------------------------ tests ------------------------------------
 
+
 @pytest.fixture()
 def mock_ai(monkeypatch) -> MockAIHost:
     """
@@ -127,12 +129,15 @@ def mock_ai(monkeypatch) -> MockAIHost:
     host = MockAIHost()
     # Import where the VM exposes its stdlib; patch in-place so contract sees it.
     import vm_py.stdlib.syscalls as sc  # type: ignore
+
     monkeypatch.setattr(sc, "ai_enqueue", host.ai_enqueue, raising=True)
     monkeypatch.setattr(sc, "read_result", host.read_result, raising=True)
     return host
 
 
-def test_ai_agent_enqueue_and_consume_next_block(tmp_path: Path, compile_contract, mock_ai: MockAIHost):
+def test_ai_agent_enqueue_and_consume_next_block(
+    tmp_path: Path, compile_contract, mock_ai: MockAIHost
+):
     """
     End-to-end within the local VM:
       - init
@@ -174,7 +179,9 @@ def test_ai_agent_enqueue_and_consume_next_block(tmp_path: Path, compile_contrac
     assert int(last_args["size"]) == len(res1)
 
 
-def test_multiple_enqueues_and_height_rules(tmp_path: Path, compile_contract, mock_ai: MockAIHost):
+def test_multiple_enqueues_and_height_rules(
+    tmp_path: Path, compile_contract, mock_ai: MockAIHost
+):
     """
     Two enqueues across different heights:
       - T1 at h=0 (available >= 1), T2 at h=0 (available >= 1)

@@ -48,10 +48,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Generator, Iterable, Iterator, List, Sequence, Tuple
 
-
 # --------------------------------------------------------------------------- #
 # Basic tree arithmetic
 # --------------------------------------------------------------------------- #
+
 
 def is_power_of_two(n: int) -> bool:
     return n > 0 and (n & (n - 1)) == 0
@@ -94,6 +94,7 @@ def leaf_base_index(padded_leaves: int) -> int:
 # Leaf/node index conversions (heap layout)
 # --------------------------------------------------------------------------- #
 
+
 def node_index_of_leaf(leaf_idx: int, padded_leaves: int) -> int:
     if leaf_idx < 0 or leaf_idx >= padded_leaves:
         raise ValueError("leaf_idx out of range")
@@ -126,6 +127,7 @@ def sibling_index(node_idx: int) -> int:
 # Level/offset representation <-> heap index
 # --------------------------------------------------------------------------- #
 
+
 def node_index_from_level_offset(level: int, offset: int) -> int:
     """
     Level 0 is root, level L is leaves. Offset ∈ [0, 2**level).
@@ -156,7 +158,10 @@ def level_offset_from_index(node_idx: int) -> Tuple[int, int]:
 # Paths & coverage
 # --------------------------------------------------------------------------- #
 
-def path_to_root_leaf_nodes(leaf_idx: int, padded_leaves: int) -> Iterator[Tuple[int, int]]:
+
+def path_to_root_leaf_nodes(
+    leaf_idx: int, padded_leaves: int
+) -> Iterator[Tuple[int, int]]:
     """
     Yield (node_idx, sibling_idx) pairs for the path from the leaf to just below the root.
     Does not include the root itself. Order: bottom-up.
@@ -245,6 +250,7 @@ def cover_range_as_nodes(
 # --------------------------------------------------------------------------- #
 # Share ↔ leaf helpers (identity at NMT layer)
 # --------------------------------------------------------------------------- #
+
 
 def share_index_from_leaf_index(leaf_idx: int) -> int:
     """

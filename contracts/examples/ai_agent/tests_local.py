@@ -21,7 +21,6 @@ from typing import Any, Dict, Iterable, Optional, Tuple
 
 import pytest
 
-
 # ---- path helpers ------------------------------------------------------------
 
 HERE = Path(__file__).resolve().parent
@@ -102,7 +101,9 @@ def _build_contract():
             pass
 
     if not candidates:
-        pytest.skip("No compatible vm_py loader entrypoint found for building the contract")
+        pytest.skip(
+            "No compatible vm_py loader entrypoint found for building the contract"
+        )
 
     # Prefer the first candidate that exposes a usable call surface
     for vm in candidates:
@@ -166,6 +167,7 @@ def _find_event(logs: Iterable[dict], name: str) -> Optional[dict]:
 
 # ---- fixtures ----------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def vm() -> Any:
     """Compile & link the example contract once for this module."""
@@ -177,6 +179,7 @@ def vm() -> Any:
 
 # ---- tests -------------------------------------------------------------------
 
+
 def test_build_and_manifest_present():
     assert CONTRACT_PY.is_file(), "contract.py must exist"
     assert MANIFEST_JSON.is_file(), "manifest.json must exist"
@@ -184,7 +187,14 @@ def test_build_and_manifest_present():
     assert manifest.get("name") == "ai_agent"
     abi = manifest.get("abi") or {}
     fn_names = [f.get("name") for f in (abi.get("functions") or [])]
-    for needed in ("request", "read", "get_prompt", "get_model", "get_output", "has_result"):
+    for needed in (
+        "request",
+        "read",
+        "get_prompt",
+        "get_model",
+        "get_output",
+        "has_result",
+    ):
         assert needed in fn_names, f"ABI is missing function: {needed}"
     event_names = [e.get("name") for e in (abi.get("events") or [])]
     assert "JobRequested" in event_names

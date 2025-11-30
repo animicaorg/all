@@ -19,26 +19,28 @@ Notes
   runtime adapts to this mapping (only used by the stdlib.storage helpers).
 """
 
-from typing import Any, Dict, Optional, Sequence, Tuple, Union, cast
 import base64
-import json
 import hashlib
+import json
+from typing import Any, Dict, Optional, Sequence, Tuple, Union, cast
 
-# vm_pkg (trimmed in-browser VM)
-from ..vm_pkg.loader import load_manifest, build_from_source, build_from_ir
+from ..vm_pkg.compiler import ir as irmod
 from ..vm_pkg.compiler.encode import decode_ir, encode_ir
 from ..vm_pkg.compiler.gas_estimator import estimate_entry
-from ..vm_pkg.compiler import ir as irmod
 from ..vm_pkg.errors import ValidationError, VmError
+# vm_pkg (trimmed in-browser VM)
+from ..vm_pkg.loader import build_from_ir, build_from_source, load_manifest
 from ..vm_pkg.runtime import abi as rt_abi  # type: ignore
 from ..vm_pkg.runtime import context as rt_ctx  # type: ignore
 
 # ----------------------------- Public API -----------------------------
 
+
 def version() -> str:
     """Return a simple version banner from vm_pkg (falls back to a static string)."""
     try:
         from ..vm_pkg import __version__  # type: ignore
+
         return str(__version__)
     except Exception:
         return "vm-pkg/0.1.0"
@@ -75,7 +77,11 @@ def compile_bytes(
         bundle = build_from_ir(manifest, ir_bytes)
     elif ir_obj_json is not None:
         try:
-            obj = json.loads(ir_obj_json) if isinstance(ir_obj_json, (str, bytes, bytearray)) else ir_obj_json
+            obj = (
+                json.loads(ir_obj_json)
+                if isinstance(ir_obj_json, (str, bytes, bytearray))
+                else ir_obj_json
+            )
         except Exception as e:
             raise ValidationError(f"ir_obj_json parse error: {e}") from e
         bundle = build_from_ir(manifest, cast(Dict[str, Any], obj))
@@ -83,7 +89,9 @@ def compile_bytes(
         src = source_bytes.decode("utf-8")
         bundle = build_from_source(manifest, src)
     else:
-        raise ValidationError("one of source_bytes, ir_bytes, ir_obj_json must be provided")
+        raise ValidationError(
+            "one of source_bytes, ir_bytes, ir_obj_json must be provided"
+        )
 
     # Compute a conservative upper bound for entry function.
     gas_upper = _safe_estimate_entry(bundle.ir)
@@ -137,7 +145,9 @@ def run_call(
     block_env, tx_env = _build_context(ctx)
     storage = state if state is not None else {}
 
-    ret, events, gas_used = _abi_run(ir_mod, fn, list(args), gas_limit, block_env, tx_env, storage)
+    ret, events, gas_used = _abi_run(
+        ir_mod, fn, list(args), gas_limit, block_env, tx_env, storage
+    )
 
     return {
         "ok": True,
@@ -173,6 +183,7 @@ def simulate_tx(
 
 
 # ----------------------------- Internals -----------------------------
+
 
 def _safe_estimate_entry(m: irmod.Module) -> int:
     try:
@@ -286,7 +297,11 @@ def _abi_run(
         )
         # Expect a dict-like result
         if isinstance(result, dict):
-            return result.get("return"), result.get("events", []), int(result.get("gas_used", 0))
+            return (
+                result.get("return"),
+                result.get("events", []),
+                int(result.get("gas_used", 0)),
+            )
         # Or a tuple (ret, events, gas_used)
         if isinstance(result, tuple) and len(result) == 3:
             return result  # type: ignore[return-value]
@@ -308,7 +323,9 @@ def _abi_run(
         ret = rt_abi.call(mod, fn, args)  # type: ignore[attr-defined]
         return ret, [], 0
 
-    raise ValidationError("runtime ABI does not expose a compatible run_call/call function")
+    raise ValidationError(
+        "runtime ABI does not expose a compatible run_call/call function"
+    )
 
 
 __all__ = ["version", "compile_bytes", "run_call", "simulate_tx"]

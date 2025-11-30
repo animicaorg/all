@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 Optional liboqs ctypes backend for Animica PQ primitives.
 
@@ -26,26 +27,18 @@ Safety notes
   source), `is_available()` will be False.
 """
 
-import os
 import ctypes
-from ctypes import (
-    c_char_p,
-    c_int,
-    c_size_t,
-    c_uint8,
-    c_void_p,
-    POINTER,
-    byref,
-    create_string_buffer,
-)
+import os
+from ctypes import (POINTER, byref, c_char_p, c_int, c_size_t, c_uint8,
+                    c_void_p, create_string_buffer)
 from ctypes.util import find_library
 from dataclasses import dataclass
-from typing import Optional, Tuple, Dict, List
-
+from typing import Dict, List, Optional, Tuple
 
 # --------------------------------------------------------------------------------------------------
 # Attempt to load liboqs
 # --------------------------------------------------------------------------------------------------
+
 
 def _load_liboqs() -> Optional[ctypes.CDLL]:
     # Allow manual override (useful in CI or non-standard paths)
@@ -89,11 +82,12 @@ def is_available() -> bool:
 # members in the real C structs follow those fields and need not be declared here.
 # --------------------------------------------------------------------------------------------------
 
+
 class _OQS_SIG(ctypes.Structure):
     _fields_ = [
         ("method_name", c_char_p),
         ("alg_version", c_char_p),
-        ("claimed_nist_level", c_size_t),   # uint32 in practice; size_t is conservative
+        ("claimed_nist_level", c_size_t),  # uint32 in practice; size_t is conservative
         ("is_euf_cma", c_int),
         ("length_public_key", c_size_t),
         ("length_secret_key", c_size_t),
@@ -123,7 +117,11 @@ if _HAVE:
     _LIB.OQS_SIG_free.argtypes = [POINTER(_OQS_SIG)]
     _LIB.OQS_SIG_free.restype = None
 
-    _LIB.OQS_SIG_keypair.argtypes = [POINTER(_OQS_SIG), POINTER(c_uint8), POINTER(c_uint8)]
+    _LIB.OQS_SIG_keypair.argtypes = [
+        POINTER(_OQS_SIG),
+        POINTER(c_uint8),
+        POINTER(c_uint8),
+    ]
     _LIB.OQS_SIG_keypair.restype = c_int
 
     _LIB.OQS_SIG_sign.argtypes = [
@@ -152,7 +150,11 @@ if _HAVE:
     _LIB.OQS_KEM_free.argtypes = [POINTER(_OQS_KEM)]
     _LIB.OQS_KEM_free.restype = None
 
-    _LIB.OQS_KEM_keypair.argtypes = [POINTER(_OQS_KEM), POINTER(c_uint8), POINTER(c_uint8)]
+    _LIB.OQS_KEM_keypair.argtypes = [
+        POINTER(_OQS_KEM),
+        POINTER(c_uint8),
+        POINTER(c_uint8),
+    ]
     _LIB.OQS_KEM_keypair.restype = c_int
 
     _LIB.OQS_KEM_encaps.argtypes = [
@@ -179,8 +181,8 @@ ALG_SPHINCS_SHAKE_128S = b"SPHINCS+-SHAKE-128s-simple"
 # Some liboqs builds use '-robust'; we try both at runtime.
 ALG_SPHINCS_SHAKE_128S_ROBUST = b"SPHINCS+-SHAKE-128s-robust"
 
-ALG_KYBER768 = b"Kyber768"          # Older builds
-ALG_ML_KEM_768 = b"ML-KEM-768"      # Newer NIST alias
+ALG_KYBER768 = b"Kyber768"  # Older builds
+ALG_ML_KEM_768 = b"ML-KEM-768"  # Newer NIST alias
 
 
 @dataclass(frozen=True)
@@ -205,7 +207,9 @@ class OQSBackend:
 
     def __init__(self):
         if not _HAVE:
-            raise RuntimeError("liboqs not found: install liboqs or set up python-oqs for higher-level wrappers.")
+            raise RuntimeError(
+                "liboqs not found: install liboqs or set up python-oqs for higher-level wrappers."
+            )
 
     # ------------- internals -------------
     def _sig_new(self, name: bytes) -> Tuple[POINTER(_OQS_SIG), SigSizes]:
@@ -267,7 +271,9 @@ class OQSBackend:
             sig_len = c_size_t(0)
             msg_buf = (c_uint8 * len(msg)).from_buffer_copy(msg)
             sk_buf = (c_uint8 * len(sk)).from_buffer_copy(sk)
-            rc = _LIB.OQS_SIG_sign(sig, sig_out, byref(sig_len), msg_buf, c_size_t(len(msg)), sk_buf)
+            rc = _LIB.OQS_SIG_sign(
+                sig, sig_out, byref(sig_len), msg_buf, c_size_t(len(msg)), sk_buf
+            )
             if rc != OQS_SUCCESS:
                 raise RuntimeError(f"OQS_SIG_sign failed (rc={rc})")
             return bytes(sig_out)[: int(sig_len.value)]
@@ -401,7 +407,18 @@ if __name__ == "__main__":
             sk, pk = oqs.kem_keypair(alg)
             ct, ss_b = oqs.kem_encapsulate(alg, pk)
             ss_a = oqs.kem_decapsulate(alg, sk, ct)
-            print("    sizes: pk", len(pk), "sk", len(sk), "ct", len(ct), "ss", len(ss_a), "match:", ss_a == ss_b)
+            print(
+                "    sizes: pk",
+                len(pk),
+                "sk",
+                len(sk),
+                "ct",
+                len(ct),
+                "ss",
+                len(ss_a),
+                "match:",
+                ss_a == ss_b,
+            )
             break  # first that works is fine
         except Exception as e:
             print("    (skip) reason:", e)

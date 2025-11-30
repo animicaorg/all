@@ -19,9 +19,8 @@ If vm_py is not present, a clear VmCompileError is raised.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, asdict
-from typing import Any, Dict, List, Optional, Tuple, Callable
-
+from dataclasses import asdict, dataclass
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # ----------------------------- Errors & Result -------------------------------
 
@@ -50,6 +49,7 @@ class CompileArtifact:
     diagnostics : List[str]
         Human-friendly warnings/notes produced by the compiler, if any.
     """
+
     code: bytes
     code_hash: str
     abi: Dict[str, Any]
@@ -78,6 +78,7 @@ def _import_vm() -> None:
     try:
         # Primary entrypoint that "loads/validates/compiles" (per repo layout)
         from vm_py.runtime import loader as vm_loader  # type: ignore
+
         _vm_loader = vm_loader
     except Exception as e:
         raise VmCompileError(
@@ -86,13 +87,16 @@ def _import_vm() -> None:
 
     # Optional helpers; absence is fine.
     try:
-        from vm_py.compiler import gas_estimator as vm_gas_estimator  # type: ignore
+        from vm_py.compiler import \
+            gas_estimator as vm_gas_estimator  # type: ignore
+
         _vm_gas_estimator = vm_gas_estimator
     except Exception:
         _vm_gas_estimator = None
 
     try:
         from vm_py.compiler import encode as vm_encode  # type: ignore
+
         _vm_encode = vm_encode
     except Exception:
         _vm_encode = None
@@ -134,7 +138,11 @@ def estimate_gas_for_deploy(build: CompileArtifact | Dict[str, Any]) -> Optional
     if isinstance(build, CompileArtifact):
         return build.gas_upper_bound
     if isinstance(build, dict):
-        gv = build.get("gas_upper_bound") or build.get("gasUpperBound") or build.get("gas_estimate")
+        gv = (
+            build.get("gas_upper_bound")
+            or build.get("gasUpperBound")
+            or build.get("gas_estimate")
+        )
         try:
             return int(gv) if gv is not None else None
         except Exception:
@@ -142,7 +150,9 @@ def estimate_gas_for_deploy(build: CompileArtifact | Dict[str, Any]) -> Optional
     return None
 
 
-def simulate_deploy_locally(build: CompileArtifact | Dict[str, Any], call_data: Dict[str, Any]):
+def simulate_deploy_locally(
+    build: CompileArtifact | Dict[str, Any], call_data: Dict[str, Any]
+):
     """Placeholder local simulation; returns None when unavailable."""
 
     # If vm_py exposes a simulator, wire it here in the future.
@@ -182,7 +192,9 @@ def _as_bytes(maybe_bytes_or_hex: Any) -> Optional[bytes]:
 # ----------------------------- Core compile ----------------------------------
 
 
-def _call_vm_loader(source: str, manifest: Dict[str, Any]) -> Tuple[bytes, Dict[str, Any], Optional[int], Dict[str, Any], List[str]]:
+def _call_vm_loader(
+    source: str, manifest: Dict[str, Any]
+) -> Tuple[bytes, Dict[str, Any], Optional[int], Dict[str, Any], List[str]]:
     """
     Invoke vm_loader using several tolerant signatures and normalize the result.
 
@@ -231,19 +243,37 @@ def _call_vm_loader(source: str, manifest: Dict[str, Any]) -> Tuple[bytes, Dict[
 
                 abi = _pick_abi(manifest, result.get("abi"))
                 gas = None
-                gv = result.get("gas_upper_bound") or result.get("gasUpperBound") or result.get("gas_estimate")
+                gv = (
+                    result.get("gas_upper_bound")
+                    or result.get("gasUpperBound")
+                    or result.get("gas_estimate")
+                )
                 if isinstance(gv, int):
                     gas = gv
-                manifest_out = result.get("manifest") if isinstance(result.get("manifest"), dict) else None
-                diags = result.get("diagnostics") if isinstance(result.get("diagnostics"), list) else []
+                manifest_out = (
+                    result.get("manifest")
+                    if isinstance(result.get("manifest"), dict)
+                    else None
+                )
+                diags = (
+                    result.get("diagnostics")
+                    if isinstance(result.get("diagnostics"), list)
+                    else []
+                )
                 return code_b, abi, gas, (manifest_out or None), (diags or [])
 
             # 2) Object with attributes (common in internal loaders)
-            code_b = _as_bytes(_first_attr(result, ("ir_bytes", "code", "bytecode", "module_bytes", "ir")))
+            code_b = _as_bytes(
+                _first_attr(
+                    result, ("ir_bytes", "code", "bytecode", "module_bytes", "ir")
+                )
+            )
             if code_b is None:
                 raise VmCompileError(f"{name} produced an object without code bytes")
             abi_attr = _first_attr(result, ("abi",))
-            gas_attr = _first_attr(result, ("gas_upper_bound", "gasUpperBound", "gas_estimate"))
+            gas_attr = _first_attr(
+                result, ("gas_upper_bound", "gasUpperBound", "gas_estimate")
+            )
             manifest_attr = _first_attr(result, ("manifest",))
             diags_attr = _first_attr(result, ("diagnostics",))
             abi = _pick_abi(manifest, abi_attr)
@@ -256,7 +286,9 @@ def _call_vm_loader(source: str, manifest: Dict[str, Any]) -> Tuple[bytes, Dict[
             last_err = e
             continue
 
-    raise VmCompileError(f"vm_loader did not accept known signatures or failed: {last_err!r}")
+    raise VmCompileError(
+        f"vm_loader did not accept known signatures or failed: {last_err!r}"
+    )
 
 
 def compile_source(source: str, manifest: Dict[str, Any]) -> CompileArtifact:
@@ -282,7 +314,11 @@ def compile_source(source: str, manifest: Dict[str, Any]) -> CompileArtifact:
     code_hash = _sha3_256_hex(code_b)
 
     # If gas upper bound wasn't provided, try static estimator (optional)
-    if gas is None and _vm_gas_estimator is not None and hasattr(_vm_gas_estimator, "estimate_upper_bound"):
+    if (
+        gas is None
+        and _vm_gas_estimator is not None
+        and hasattr(_vm_gas_estimator, "estimate_upper_bound")
+    ):
         try:
             # Some estimators accept IR bytes directly; others want a decoded IR/module.
             gas = int(_vm_gas_estimator.estimate_upper_bound(code_b))  # type: ignore[attr-defined]
@@ -303,7 +339,9 @@ def compile_source(source: str, manifest: Dict[str, Any]) -> CompileArtifact:
 # ----------------------------- File helpers ----------------------------------
 
 
-def compile_files(source_path: str, manifest_path: str, encoding: str = "utf-8") -> CompileArtifact:
+def compile_files(
+    source_path: str, manifest_path: str, encoding: str = "utf-8"
+) -> CompileArtifact:
     """
     Convenience wrapper to compile from filesystem paths (used by tests/tools).
     """
@@ -311,6 +349,7 @@ def compile_files(source_path: str, manifest_path: str, encoding: str = "utf-8")
         with open(source_path, "r", encoding=encoding) as f:
             src = f.read()
         import json
+
         with open(manifest_path, "r", encoding=encoding) as f:
             manifest = json.load(f)
     except Exception as e:
@@ -320,7 +359,9 @@ def compile_files(source_path: str, manifest_path: str, encoding: str = "utf-8")
 
 
 # Compatibility shim: some call sites import ``compile_package``.
-def compile_package(source_path: str, manifest_path: str, encoding: str = "utf-8") -> CompileArtifact:
+def compile_package(
+    source_path: str, manifest_path: str, encoding: str = "utf-8"
+) -> CompileArtifact:
     return compile_files(source_path, manifest_path, encoding=encoding)
 
 

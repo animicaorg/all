@@ -60,8 +60,8 @@ def __dir__():
 
 # Optional static typing support (without importing heavy modules at runtime)
 if TYPE_CHECKING:  # pragma: no cover
-    from . import deploy as deploy
-    from . import verify as verify
-    from . import faucet as faucet
     from . import artifacts as artifacts
+    from . import deploy as deploy
+    from . import faucet as faucet
     from . import simulate as simulate
+    from . import verify as verify

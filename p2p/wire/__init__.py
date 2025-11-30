@@ -32,6 +32,7 @@ __all__: List[str] = [
     "__version__",
 ]
 
+
 def __getattr__(name: str) -> Any:
     """
     Lazy-import submodules so downstreams can do:
@@ -43,6 +44,7 @@ def __getattr__(name: str) -> Any:
     if name in ("encoding", "message_ids", "messages", "frames"):
         return _import_module(f"{__name__}.{name}")
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 def __dir__() -> List[str]:  # pragma: no cover - trivial
     return sorted(list(globals().keys()) + __all__)

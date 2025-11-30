@@ -5,10 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from stdlib import storage as std_storage, events as std_events, abi as std_abi  # type: ignore
-from vm_py.runtime.vm_error import VmError
+from stdlib import abi as std_abi
+from stdlib import events as std_events
+from stdlib import storage as std_storage  # type: ignore
 from vm_py.examples.counter import contract as counter  # type: ignore
-
+from vm_py.runtime.vm_error import VmError
 
 HERE = Path(__file__).resolve()
 # .../animica/vm_py/tests

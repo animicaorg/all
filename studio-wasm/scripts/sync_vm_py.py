@@ -25,10 +25,10 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import sys
+from pathlib import Path
 from typing import Iterable, List, Tuple
 
 # --------------------------------------------------------------------------------------
@@ -69,7 +69,7 @@ INCLUDE_FILES: List[str] = [
 STRIP_IMPORT_SUFFIXES: Tuple[str, ...] = (
     "runtime/sandbox",
     "runtime/syscalls_api",
-    "runtime/treasury_api",   # runtime variant (stdlib/treasury.py stays)
+    "runtime/treasury_api",  # runtime variant (stdlib/treasury.py stays)
     "runtime/state_adapter",
 )
 
@@ -82,6 +82,7 @@ LOCK_FILENAME = "_sync_manifest.json"
 # --------------------------------------------------------------------------------------
 # Helpers
 # --------------------------------------------------------------------------------------
+
 
 def repo_root_from_here() -> Path:
     """Resolve repo root assuming this script lives under studio-wasm/scripts/."""
@@ -188,7 +189,9 @@ def write_requirements(dest_root: Path) -> None:
         )
 
 
-def write_lock(dest_pkg_root: Path, records: List[dict], src_version: str, src_root: Path) -> None:
+def write_lock(
+    dest_pkg_root: Path, records: List[dict], src_version: str, src_root: Path
+) -> None:
     lock = {
         "generatedBy": "studio-wasm/scripts/sync_vm_py.py",
         "srcRoot": str(src_root),
@@ -203,6 +206,7 @@ def write_lock(dest_pkg_root: Path, records: List[dict], src_version: str, src_r
 # --------------------------------------------------------------------------------------
 # Core sync
 # --------------------------------------------------------------------------------------
+
 
 def plan_paths(src_root: Path, dest_pkg_root: Path) -> List[Tuple[Path, Path]]:
     pairs: List[Tuple[Path, Path]] = []
@@ -254,7 +258,9 @@ def sync(
 
     for src, dst in pairs:
         if dry_run:
-            print(f"[dry-run] would copy {rel(src, src_root)} → {rel(dst, dest_pkg_root)}")
+            print(
+                f"[dry-run] would copy {rel(src, src_root)} → {rel(dst, dest_pkg_root)}"
+            )
             continue
 
         dst.parent.mkdir(parents=True, exist_ok=True)
@@ -276,12 +282,16 @@ def sync(
             }
         )
         if verbose:
-            print(f"[sync] {rel(src, src_root)} → {rel(dst, dest_pkg_root)}  ({size} bytes)")
+            print(
+                f"[sync] {rel(src, src_root)} → {rel(dst, dest_pkg_root)}  ({size} bytes)"
+            )
 
     if not dry_run:
         # Ensure package init + requirements + manifest
         create_dest_init_py(dest_pkg_root, src_version)
-        write_requirements(dest_pkg_root.parent)  # dest_pkg_root=.../py/vm_pkg → parent=.../py
+        write_requirements(
+            dest_pkg_root.parent
+        )  # dest_pkg_root=.../py/vm_pkg → parent=.../py
         write_lock(dest_pkg_root, records, src_version, src_root)
         if verbose:
             print(f"[sync] Wrote {LOCK_FILENAME} with {len(records)} entries")
@@ -291,17 +301,38 @@ def sync(
 # CLI
 # --------------------------------------------------------------------------------------
 
+
 def parse_args(argv: Iterable[str]) -> argparse.Namespace:
     root = repo_root_from_here()
     default_src = (root / "vm_py").resolve()
     default_dest = (root / "studio-wasm" / "py" / DEST_PKG_NAME).resolve()
 
-    ap = argparse.ArgumentParser(description="Sync minimal vm_py subset into studio-wasm/py/vm_pkg")
-    ap.add_argument("--src", type=Path, default=Path(os.environ.get("SYNC_VM_PY_SRC", default_src)))
-    ap.add_argument("--dest", type=Path, default=Path(os.environ.get("SYNC_VM_PY_DEST", default_dest)))
-    ap.add_argument("--clean", action="store_true", help="Remove existing files in destination before copying")
-    ap.add_argument("--dry-run", action="store_true", help="Show what would happen without writing files")
-    ap.add_argument("--no-rewrite-imports", action="store_true", help="Do not rewrite 'vm_py' → 'vm_pkg' imports")
+    ap = argparse.ArgumentParser(
+        description="Sync minimal vm_py subset into studio-wasm/py/vm_pkg"
+    )
+    ap.add_argument(
+        "--src", type=Path, default=Path(os.environ.get("SYNC_VM_PY_SRC", default_src))
+    )
+    ap.add_argument(
+        "--dest",
+        type=Path,
+        default=Path(os.environ.get("SYNC_VM_PY_DEST", default_dest)),
+    )
+    ap.add_argument(
+        "--clean",
+        action="store_true",
+        help="Remove existing files in destination before copying",
+    )
+    ap.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would happen without writing files",
+    )
+    ap.add_argument(
+        "--no-rewrite-imports",
+        action="store_true",
+        help="Do not rewrite 'vm_py' → 'vm_pkg' imports",
+    )
     ap.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
     return ap.parse_args(list(argv))
 
@@ -310,12 +341,16 @@ def main(argv: Iterable[str] = sys.argv[1:]) -> int:
     args = parse_args(argv)
 
     src_root = args.src.resolve()
-    dest_pkg_root = (args.dest if args.dest.name == DEST_PKG_NAME else args.dest / DEST_PKG_NAME).resolve()
+    dest_pkg_root = (
+        args.dest if args.dest.name == DEST_PKG_NAME else args.dest / DEST_PKG_NAME
+    ).resolve()
 
     if args.verbose:
         print(f"[sync] src : {src_root}")
         print(f"[sync] dest: {dest_pkg_root}")
-        print(f"[sync] options: clean={args.clean} dry_run={args.dry_run} rewrite_imports={not args.no_rewrite_imports}")
+        print(
+            f"[sync] options: clean={args.clean} dry_run={args.dry_run} rewrite_imports={not args.no_rewrite_imports}"
+        )
 
     try:
         sync(

@@ -4,14 +4,19 @@ import json
 import os
 from pathlib import Path
 
-from animica.wallet_cli import DATA_DIR_NAME, WALLET_FILENAME, generate_wallet, main, write_wallet
+from animica.wallet_cli import (DATA_DIR_NAME, WALLET_FILENAME,
+                                generate_wallet, main, write_wallet)
 
 
 def test_generate_wallet_has_expected_fields():
     wallet = generate_wallet()
     assert wallet.address.startswith("1") or wallet.address.startswith("3")
     assert len(wallet.public_key) in (66, 130)  # compressed hex length is 66
-    assert wallet.wif.startswith("5") or wallet.wif.startswith("K") or wallet.wif.startswith("L")
+    assert (
+        wallet.wif.startswith("5")
+        or wallet.wif.startswith("K")
+        or wallet.wif.startswith("L")
+    )
 
 
 def test_write_wallet_creates_file(tmp_path: Path):

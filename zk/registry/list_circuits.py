@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from hashlib import sha3_256
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -65,9 +65,11 @@ except Exception:  # pragma: no cover
 # IO helpers
 # ---------------------------------------------------------------------------
 
+
 def _load_json(path: Path) -> Dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
+
 
 def _try_load_yaml_or_json(path: Path) -> Dict[str, Any]:
     if not path.exists():
@@ -83,6 +85,7 @@ def _try_load_yaml_or_json(path: Path) -> Dict[str, Any]:
         )
     return yaml.safe_load(text) or {}
 
+
 def _load_registry_yaml(path: Path = REGISTRY_YAML_PATH) -> Dict[str, Any]:
     if not path.exists():
         return {}
@@ -91,6 +94,7 @@ def _load_registry_yaml(path: Path = REGISTRY_YAML_PATH) -> Dict[str, Any]:
     data.setdefault("kinds", {})
     data.setdefault("circuits", {})
     return data
+
 
 def _load_vk_cache(path: Path = VK_CACHE_PATH) -> Dict[str, Any]:
     if not path.exists():
@@ -104,11 +108,16 @@ def _load_vk_cache(path: Path = VK_CACHE_PATH) -> Dict[str, Any]:
 # Hashing logic (must match updater)
 # ---------------------------------------------------------------------------
 
+
 def _canonical_json_bytes(obj: Any) -> bytes:
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(
+        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+
 
 def _sha3_256_hex(data: bytes) -> str:
     return sha3_256(data).hexdigest()
+
 
 def _compute_vk_hash(entry: Dict[str, Any]) -> str:
     """
@@ -131,6 +140,7 @@ def _compute_vk_hash(entry: Dict[str, Any]) -> str:
 # Data model
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class KindMeta:
     kind: str
@@ -140,6 +150,7 @@ class KindMeta:
     vk_format: str = ""
     version: str = ""
 
+
 @dataclass
 class CircuitRow:
     circuit_id: str
@@ -148,7 +159,7 @@ class CircuitRow:
     curve_or_field: str
     vk_hash_short: str
     signed: bool
-    status: str   # OK | MISSING | STALE
+    status: str  # OK | MISSING | STALE
     version: str
 
     def as_markdown_row(self) -> str:
@@ -171,6 +182,7 @@ class CircuitRow:
 # Core merge logic
 # ---------------------------------------------------------------------------
 
+
 def _build_kind_meta(kinds: Dict[str, Any]) -> Dict[str, KindMeta]:
     out: Dict[str, KindMeta] = {}
     for k, v in (kinds or {}).items():
@@ -179,8 +191,16 @@ def _build_kind_meta(kinds: Dict[str, Any]) -> Dict[str, KindMeta]:
         th = str((v.get("transcript") or {}).get("hash", ""))
         vkf = str(v.get("vk_format", ""))
         ver = str(v.get("version", ""))
-        out[k] = KindMeta(kind=k, scheme=scheme, curve=curve, transcript_hash=th, vk_format=vkf, version=ver)
+        out[k] = KindMeta(
+            kind=k,
+            scheme=scheme,
+            curve=curve,
+            transcript_hash=th,
+            vk_format=vkf,
+            version=ver,
+        )
     return out
+
 
 def _status_for(entry: Optional[Dict[str, Any]]) -> Tuple[str, str, bool]:
     """
@@ -189,11 +209,16 @@ def _status_for(entry: Optional[Dict[str, Any]]) -> Tuple[str, str, bool]:
     if entry is None:
         return ("MISSING", "—", False)
     stored_hash = entry.get("vk_hash") or "—"
-    short = stored_hash.split(":")[-1][:8] if isinstance(stored_hash, str) and stored_hash != "none" else "—"
+    short = (
+        stored_hash.split(":")[-1][:8]
+        if isinstance(stored_hash, str) and stored_hash != "none"
+        else "—"
+    )
     recomputed = _compute_vk_hash(entry)
     status = "OK" if stored_hash == recomputed else "STALE"
     signed = bool(entry.get("sig"))
     return (status, short, signed)
+
 
 def _gather_rows(registry: Dict[str, Any], cache: Dict[str, Any]) -> List[CircuitRow]:
     kinds_meta = _build_kind_meta(registry.get("kinds", {}))
@@ -214,7 +239,8 @@ def _gather_rows(registry: Dict[str, Any], cache: Dict[str, Any]) -> List[Circui
                 circuit_id=cid,
                 kind=kind,
                 scheme=km.scheme,
-                curve_or_field=km.curve or km.scheme,  # if curve empty for STARK, leave scheme
+                curve_or_field=km.curve
+                or km.scheme,  # if curve empty for STARK, leave scheme
                 vk_hash_short=short_hash,
                 signed=signed,
                 status=status,
@@ -225,7 +251,9 @@ def _gather_rows(registry: Dict[str, Any], cache: Dict[str, Any]) -> List[Circui
     # Any extra entries in cache not referenced by registry.yaml
     for vk_key, entry in cache_entries.items():
         # skip if present via circuits mapping
-        if vk_key in circuits or any(v.get("vk_cache_key") == vk_key for v in circuits.values()):
+        if vk_key in circuits or any(
+            v.get("vk_cache_key") == vk_key for v in circuits.values()
+        ):
             continue
         kind = str(entry.get("kind", ""))
         km = kinds_meta.get(kind, KindMeta(kind=kind))
@@ -252,8 +280,18 @@ def _gather_rows(registry: Dict[str, Any], cache: Dict[str, Any]) -> List[Circui
 # Rendering
 # ---------------------------------------------------------------------------
 
+
 def _render_table(rows: List[CircuitRow]) -> str:
-    headers = ("CIRCUIT_ID", "KIND", "SCHEME", "CURVE/FIELD", "VK_HASH", "SIGNED", "STATUS", "VER")
+    headers = (
+        "CIRCUIT_ID",
+        "KIND",
+        "SCHEME",
+        "CURVE/FIELD",
+        "VK_HASH",
+        "SIGNED",
+        "STATUS",
+        "VER",
+    )
     data = [r.as_table_tuple() for r in rows]
     widths = [len(h) for h in headers]
     for row in data:
@@ -268,13 +306,16 @@ def _render_table(rows: List[CircuitRow]) -> str:
         lines.append(fmt_row(row))
     return "\n".join(lines)
 
+
 def _render_markdown(rows: List[CircuitRow]) -> str:
     head = "| CIRCUIT_ID | KIND | SCHEME | CURVE/FIELD | VK_HASH | SIGNED | STATUS | VER |\n|---|---|---|---|---|---|---|---|"
     body = "\n".join(r.as_markdown_row() for r in rows)
     return f"{head}\n{body}"
 
+
 def _render_json(rows: List[CircuitRow]) -> str:
     return json.dumps([asdict(r) for r in rows], indent=2, sort_keys=True)
+
 
 def _render_ndjson(rows: List[CircuitRow]) -> str:
     return "\n".join(json.dumps(asdict(r), sort_keys=True) for r in rows)
@@ -284,16 +325,37 @@ def _render_ndjson(rows: List[CircuitRow]) -> str:
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Pretty-print zk registry circuits")
-    p.add_argument("--format", choices=("table", "markdown", "json", "ndjson"), default="table")
+    p.add_argument(
+        "--format", choices=("table", "markdown", "json", "ndjson"), default="table"
+    )
     p.add_argument("--kind", help="Filter by verifier kind (e.g., groth16_bn254)")
-    p.add_argument("--only-missing", action="store_true", help="Show only circuits without VKs")
-    p.add_argument("--only-stale", action="store_true", help="Show only circuits with hash mismatch")
-    p.add_argument("--strict", action="store_true", help="Exit non-zero if any missing/stale entries")
-    p.add_argument("--registry", type=Path, default=REGISTRY_YAML_PATH, help="Path to registry.yaml")
-    p.add_argument("--vk-cache", type=Path, default=VK_CACHE_PATH, help="Path to vk_cache.json")
+    p.add_argument(
+        "--only-missing", action="store_true", help="Show only circuits without VKs"
+    )
+    p.add_argument(
+        "--only-stale",
+        action="store_true",
+        help="Show only circuits with hash mismatch",
+    )
+    p.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit non-zero if any missing/stale entries",
+    )
+    p.add_argument(
+        "--registry",
+        type=Path,
+        default=REGISTRY_YAML_PATH,
+        help="Path to registry.yaml",
+    )
+    p.add_argument(
+        "--vk-cache", type=Path, default=VK_CACHE_PATH, help="Path to vk_cache.json"
+    )
     return p
+
 
 def main(argv: Optional[List[str]] = None) -> None:
     parser = _build_parser()
@@ -326,6 +388,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     if args.strict:
         if any(r.status in ("MISSING", "STALE") for r in rows):
             raise SystemExit(2)
+
 
 if __name__ == "__main__":
     main()

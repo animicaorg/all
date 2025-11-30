@@ -22,8 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Dict, Union, Optional
-
+from typing import Any, Dict, Optional, Union
 
 HexStr = str
 BytesLike = Union[bytes, bytearray, memoryview, HexStr]
@@ -59,7 +58,9 @@ def _canon_json_bytes(obj: Any) -> bytes:
       - no whitespace (',' ':')
       - ensure_ascii=False so bytes are preserved once encoded
     """
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(
+        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
 
 
 # ----------------------------- public API ------------------------------------
@@ -121,7 +122,14 @@ def artifact_digest(
     mh = manifest_hash(manifest).lower()
 
     domain = b"animica:artifact|v1|"
-    parts = [domain, ch.encode("utf-8"), b"|", ah.encode("utf-8"), b"|", mh.encode("utf-8")]
+    parts = [
+        domain,
+        ch.encode("utf-8"),
+        b"|",
+        ah.encode("utf-8"),
+        b"|",
+        mh.encode("utf-8"),
+    ]
     if address:
         parts.extend([b"|", address.strip().encode("utf-8")])
 

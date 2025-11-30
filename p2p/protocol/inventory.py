@@ -32,10 +32,10 @@ import msgspec
 
 # ---- Constants (import from p2p.constants if available) ----
 try:
-    from p2p.constants import MAX_INV_PER_MSG, HASH_LEN
+    from p2p.constants import HASH_LEN, MAX_INV_PER_MSG
 except Exception:  # pragma: no cover
-    MAX_INV_PER_MSG = 2048          # sane upper bound for batched mempool announcements
-    HASH_LEN = 32                    # SHA3-256 digest length
+    MAX_INV_PER_MSG = 2048  # sane upper bound for batched mempool announcements
+    HASH_LEN = 32  # SHA3-256 digest length
 
 
 class ProtocolError(Exception):
@@ -43,6 +43,7 @@ class ProtocolError(Exception):
 
 
 # ---- Inventory kinds ----
+
 
 class InvKind(IntEnum):
     TX = 1
@@ -57,6 +58,7 @@ class InvItem:
 
 
 # ---- Wire structs (msgspec Structs keep canonical order) ----
+
 
 class _InvItemS(msgspec.Struct, omit_defaults=True):
     k: int
@@ -90,6 +92,7 @@ TAG_NOTFOUND = 3
 
 
 # ---- Validation helpers ----
+
 
 def _validate_item(item: InvItem) -> None:
     if not isinstance(item.kind, InvKind):
@@ -132,6 +135,7 @@ def _unpack_items(items: List[_InvItemS]) -> List[InvItem]:
 
 # ---- Builders ----
 
+
 def build_inv(items: Iterable[InvItem]) -> bytes:
     """Encode an InvMessage (INV)."""
     deduped = _dedupe_and_bound(list(items))
@@ -154,6 +158,7 @@ def build_notfound(items: Iterable[InvItem]) -> bytes:
 
 
 # ---- Parsers ----
+
 
 def parse_inv(data: bytes) -> List[InvItem]:
     """Parse & validate an INV payload."""
@@ -181,6 +186,7 @@ def parse_notfound(data: bytes) -> List[InvItem]:
 
 # ---- Conveniences ----
 
+
 def inv_for_hashes(kind: InvKind, hashes: Iterable[bytes]) -> bytes:
     """Convenience to build an INV from a single kind and an iterable of 32B hashes."""
     return build_inv(InvItem(kind, h) for h in hashes)
@@ -193,7 +199,11 @@ def getdata_for_missing(kind: InvKind, hashes: Iterable[bytes]) -> bytes:
 
 def partition_by_kind(items: Sequence[InvItem]) -> dict[InvKind, List[bytes]]:
     """Group inventory items by kind → [hash]."""
-    out: dict[InvKind, List[bytes]] = {InvKind.TX: [], InvKind.BLOCK: [], InvKind.SHARE: []}
+    out: dict[InvKind, List[bytes]] = {
+        InvKind.TX: [],
+        InvKind.BLOCK: [],
+        InvKind.SHARE: [],
+    }
     for it in items:
         out.setdefault(it.kind, []).append(it.hash)
     return out

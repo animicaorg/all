@@ -77,7 +77,7 @@ def _new_trace_ids(sampled: bool = True) -> Tuple[str, str, str]:
     Return (trace_id, span_id, flags) hex strings per W3C.
     """
     trace_id = secrets.token_hex(16)  # 16 bytes = 32 hex
-    span_id = secrets.token_hex(8)    # 8 bytes = 16 hex
+    span_id = secrets.token_hex(8)  # 8 bytes = 16 hex
     flags = "01" if sampled else "00"
     return trace_id, span_id, flags
 
@@ -115,6 +115,7 @@ def _maybe_unbind_structlog(*keys: str) -> None:
 
 
 # --------------------------- middleware ---------------------------
+
 
 @dataclass(frozen=True)
 class RequestIdConfig:
@@ -186,11 +187,15 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
             response: Response = await call_next(request)
         finally:
             # Always unbind to avoid leaking context across tasks
-            _maybe_unbind_structlog("request_id", "trace_id", "span_id", "parent_span_id", "correlation_id")
+            _maybe_unbind_structlog(
+                "request_id", "trace_id", "span_id", "parent_span_id", "correlation_id"
+            )
 
         # ----- Outbound: set headers -----
         response.headers[self._resp_request_id] = req_id
-        response.headers[self._resp_traceparent] = _format_traceparent(trace_id, span_id, flags)
+        response.headers[self._resp_traceparent] = _format_traceparent(
+            trace_id, span_id, flags
+        )
         if self.cfg.echo_correlation_id and corr_id:
             response.headers[self._resp_correlation_id] = corr_id
 
@@ -198,6 +203,7 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
 
 
 # --------------------------- install helper ---------------------------
+
 
 def install_request_id_middleware(
     app: FastAPI,

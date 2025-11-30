@@ -10,7 +10,6 @@ The end-to-end harness is not yet wired up, so the test is skipped for now.
 
 import pytest
 
-
 pytestmark = pytest.mark.skip(
     reason="Vertical 12 governance upgrade scenario not yet implemented"
 )

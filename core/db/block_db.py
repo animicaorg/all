@@ -31,47 +31,58 @@ Notes
 """
 
 from dataclasses import asdict, is_dataclass
-from typing import Optional, Iterator, Tuple, Callable
+from typing import Callable, Iterator, Optional, Tuple
 
-from .kv import KV, ReadOnlyKV, Batch
 from ..encoding.cbor import cbor_dumps, cbor_loads
-from ..utils.hash import sha3_256
-from ..utils.bytes import to_hex
-
+from ..types.block import Block  # type: ignore
 from ..types.header import Header  # type: ignore
-from ..types.block import Block    # type: ignore
+from ..utils.bytes import to_hex
+from ..utils.hash import sha3_256
+from .kv import KV, Batch, ReadOnlyKV
 
 # ---------------------------------------------------------------------------
 # Key helpers
 # ---------------------------------------------------------------------------
 
-PFX_HDR  = b"\x10"
-PFX_BLK  = b"\x11"
-PFX_HIX  = b"\x12"
-PFX_META = b"\x1F"
+PFX_HDR = b"\x10"
+PFX_BLK = b"\x11"
+PFX_HIX = b"\x12"
+PFX_META = b"\x1f"
 
-META_HEAD_HASH   = PFX_META + b"head_hash"
+META_HEAD_HASH = PFX_META + b"head_hash"
 META_HEAD_HEIGHT = PFX_META + b"head_height"
-META_GENESIS     = PFX_META + b"genesis_hash"
-META_CHAIN_ID    = PFX_META + b"chain_id"
+META_GENESIS = PFX_META + b"genesis_hash"
+META_CHAIN_ID = PFX_META + b"chain_id"
+
 
 def _u64be(n: int) -> bytes:
     if n < 0 or n > 0xFFFFFFFFFFFFFFFF:
         raise ValueError("u64 out of range")
     return n.to_bytes(8, "big")
 
+
 def _from_u64be(b: bytes) -> int:
     if len(b) != 8:
         raise ValueError("expected 8 bytes for u64")
     return int.from_bytes(b, "big")
 
-def k_hdr(h: bytes) -> bytes: return PFX_HDR + h
-def k_blk(h: bytes) -> bytes: return PFX_BLK + h
-def k_hix(height: int) -> bytes: return PFX_HIX + _u64be(height)
+
+def k_hdr(h: bytes) -> bytes:
+    return PFX_HDR + h
+
+
+def k_blk(h: bytes) -> bytes:
+    return PFX_BLK + h
+
+
+def k_hix(height: int) -> bytes:
+    return PFX_HIX + _u64be(height)
+
 
 # ---------------------------------------------------------------------------
 # Encoding helpers (tolerant of dataclass with/without to_cbor)
 # ---------------------------------------------------------------------------
+
 
 def _to_cbor(obj) -> bytes:
     # Prefer object-provided to_cbor for canonical layout.
@@ -83,11 +94,13 @@ def _to_cbor(obj) -> bytes:
     # Last resort: trust it's already a json-like structure
     return cbor_dumps(obj)
 
+
 def _from_cbor_header(b: bytes) -> Header:
     if hasattr(Header, "from_cbor"):
         return Header.from_cbor(b)  # type: ignore[attr-defined]
     d = cbor_loads(b)
     return Header(**d)  # type: ignore[arg-type]
+
 
 def _from_cbor_block(b: bytes) -> Block:
     if hasattr(Block, "from_cbor"):
@@ -95,9 +108,11 @@ def _from_cbor_block(b: bytes) -> Block:
     d = cbor_loads(b)
     return Block(**d)  # type: ignore[arg-type]
 
+
 # ---------------------------------------------------------------------------
 # Hashing
 # ---------------------------------------------------------------------------
+
 
 def header_hash(header: Header) -> bytes:
     """
@@ -109,9 +124,11 @@ def header_hash(header: Header) -> bytes:
         return bytes(h)
     return sha3_256(_to_cbor(header))
 
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 class BlockDB:
     """
@@ -150,7 +167,9 @@ class BlockDB:
 
     # --- Canonical index ---
 
-    def set_canonical(self, height: int, block_hash: bytes, batch: Optional[Batch] = None) -> None:
+    def set_canonical(
+        self, height: int, block_hash: bytes, batch: Optional[Batch] = None
+    ) -> None:
         """
         Set the canonical block at `height` to `block_hash`. Does not verify that the hash
         corresponds to a stored header—callers should ensure existence earlier.
@@ -165,7 +184,9 @@ class BlockDB:
 
     # --- Head pointers ---
 
-    def set_head(self, height: int, block_hash: bytes, batch: Optional[Batch] = None) -> None:
+    def set_head(
+        self, height: int, block_hash: bytes, batch: Optional[Batch] = None
+    ) -> None:
         """
         Update the canonical head pointers. Usually called after writing the height index.
         """
@@ -186,7 +207,9 @@ class BlockDB:
             return None
         return (n, hh)
 
-    def set_genesis_hash(self, block_hash: bytes, batch: Optional[Batch] = None) -> None:
+    def set_genesis_hash(
+        self, block_hash: bytes, batch: Optional[Batch] = None
+    ) -> None:
         if batch is None:
             self.kv.put(META_GENESIS, block_hash)
         else:
@@ -285,6 +308,7 @@ class BlockDB:
         if head is None:
             return "<BlockDB head=None>"
         return f"<BlockDB head=({head[0]}, {to_hex(head[1])})>"
+
 
 __all__ = [
     "BlockDB",

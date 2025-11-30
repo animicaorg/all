@@ -30,9 +30,11 @@ Typical usage
 
 from __future__ import annotations
 
-from typing import Any, Callable, Optional, Sequence, Tuple, Protocol, runtime_checkable, Literal, List
+from typing import (Any, Callable, List, Literal, Optional, Protocol, Sequence,
+                    Tuple, runtime_checkable)
 
 # ----------------------------- Public exceptions ------------------------------
+
 
 class BlockAdapterError(Exception):
     """Base error for block-db adapter."""
@@ -48,12 +50,15 @@ class ReceiptsRootMismatch(BlockAdapterError):
 
 # ---------------------------- Underlying DB Protocol --------------------------
 
+
 @runtime_checkable
 class _CoreBlockDB(Protocol):
     # puts --------------------------------------------------------------------
     def put_block(self, block: Any) -> bytes: ...
+
     # Alternative legacy naming:
     def set_block(self, block: Any) -> None: ...
+
     # Combined variant (optional):
     def put_block_with_receipts(self, block: Any, receipts: Sequence[Any]) -> bytes: ...
 
@@ -77,6 +82,7 @@ class _CoreBlockDB(Protocol):
 
 # ------------------------------ Helper utilities ------------------------------
 
+
 def _maybe(db: Any, *names: str):
     """Return the first callable attribute that exists on db, else None."""
     for n in names:
@@ -87,6 +93,7 @@ def _maybe(db: Any, *names: str):
 
 
 # ------------------------------- Main Facade ----------------------------------
+
 
 class BlockStore:
     """
@@ -183,7 +190,9 @@ class BlockStore:
                     raise BlockAdapterError("underlying DB lacks put_block/set_block")
                 res = put_block(block)
                 block_hash = (
-                    res if isinstance(res, (bytes, bytearray)) else self._derive_block_hash(block)
+                    res
+                    if isinstance(res, (bytes, bytearray))
+                    else self._derive_block_hash(block)
                 )
 
                 set_receipts = _maybe(self._db, "set_receipts")
@@ -226,7 +235,9 @@ class BlockStore:
             raise BlockAdapterError("underlying DB lacks get_receipts")
         return fn(block_hash)
 
-    def get_block_and_receipts_by_hash(self, block_hash: bytes) -> Tuple[Any, Sequence[Any]]:
+    def get_block_and_receipts_by_hash(
+        self, block_hash: bytes
+    ) -> Tuple[Any, Sequence[Any]]:
         return self.get_block_by_hash(block_hash), self.get_receipts_by_hash(block_hash)
 
     # --------------------------------- head ----------------------------------
@@ -255,7 +266,10 @@ class BlockStore:
             return bytes(h2)
         if self._hash_block is not None:
             return bytes(self._hash_block(block))
-        raise BlockAdapterError("cannot determine block hash; provide compute_block_hash")
+        raise BlockAdapterError(
+            "cannot determine block hash; provide compute_block_hash"
+        )
+
 
 # Public API
 __all__ = [

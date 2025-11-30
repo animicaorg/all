@@ -45,7 +45,8 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import (Any, Dict, Iterable, List, Mapping, Optional, Sequence,
+                    Tuple, Union)
 from urllib.parse import urljoin
 
 try:
@@ -57,15 +58,18 @@ except Exception as _e:  # pragma: no cover
 try:
     from omni_sdk.utils.bytes import to_hex as _to_hex  # type: ignore
 except Exception:
+
     def _to_hex(b: bytes) -> str:  # pragma: no cover
         return "0x" + bytes(b).hex()
+
 
 # Error surface
 try:
     from omni_sdk.errors import RpcError  # type: ignore
 except Exception:  # pragma: no cover
-    class RpcError(RuntimeError):
-        ...
+
+    class RpcError(RuntimeError): ...
+
 
 JsonDict = Dict[str, Any]
 
@@ -83,22 +87,34 @@ def _detect_base_url(rpc_or_url: Union[str, Any]) -> Optional[str]:
 @dataclass(frozen=True)
 class _RPCCompat:
     """Tiny adapter to support either a rich RPC client or direct HTTP JSON-RPC."""
+
     call_fn: Any
     base_url: Optional[str]
     session: requests.Session
 
 
-def _wrap_rpc(rpc_or_url: Union[str, Any], *, session: Optional[requests.Session], timeout_s: float) -> _RPCCompat:
+def _wrap_rpc(
+    rpc_or_url: Union[str, Any],
+    *,
+    session: Optional[requests.Session],
+    timeout_s: float,
+) -> _RPCCompat:
     # If object exposes .call(method, params), prefer it.
     if not isinstance(rpc_or_url, str) and hasattr(rpc_or_url, "call"):
         call_fn = getattr(rpc_or_url, "call")
         base = _detect_base_url(rpc_or_url)
-        return _RPCCompat(call_fn=call_fn, base_url=base, session=session or requests.Session())
+        return _RPCCompat(
+            call_fn=call_fn, base_url=base, session=session or requests.Session()
+        )
 
     # Otherwise, we build a direct JSON-RPC shim
-    base = _detect_base_url(rpc_or_url) if not isinstance(rpc_or_url, str) else rpc_or_url
+    base = (
+        _detect_base_url(rpc_or_url) if not isinstance(rpc_or_url, str) else rpc_or_url
+    )
     if not isinstance(base, str) or not base:
-        raise ValueError("AICFClient needs an RPC object with .call(...) or a base URL string")
+        raise ValueError(
+            "AICFClient needs an RPC object with .call(...) or a base URL string"
+        )
 
     rpc_url = urljoin(base.rstrip("/") + "/", "rpc")
     sess = session or requests.Session()
@@ -112,7 +128,9 @@ def _wrap_rpc(rpc_or_url: Union[str, Any], *, session: Optional[requests.Session
         try:
             data = resp.json()
         except Exception as e:
-            raise RpcError(f"Invalid JSON-RPC response from {rpc_url}: {resp.text[:256]}") from e
+            raise RpcError(
+                f"Invalid JSON-RPC response from {rpc_url}: {resp.text[:256]}"
+            ) from e
         if "error" in data and data["error"]:
             err = data["error"]
             raise RpcError(f"RPC {method} failed: {err}")
@@ -191,9 +209,15 @@ class AICFClient:
             try:
                 res = self._rpc.call_fn("aicf.queueSubmitAI", params)  # type: ignore
             except Exception as e2:
-                raise RpcError(f"enqueue_ai failed via cap.enqueueAI and aicf.queueSubmitAI: {e} / {e2}") from e2
+                raise RpcError(
+                    f"enqueue_ai failed via cap.enqueueAI and aicf.queueSubmitAI: {e} / {e2}"
+                ) from e2
 
-        job_id = res.get("jobId") if isinstance(res, Mapping) else (res if isinstance(res, str) else None)
+        job_id = (
+            res.get("jobId")
+            if isinstance(res, Mapping)
+            else (res if isinstance(res, str) else None)
+        )
         if not isinstance(job_id, str):
             raise RpcError("enqueue_ai: server did not return a jobId")
         return job_id
@@ -225,7 +249,9 @@ class AICFClient:
         """
         payload_hex: str
         if isinstance(circuit, (dict, list, tuple)):
-            payload_hex = _to_hex(json.dumps(circuit, separators=(",", ":")).encode("utf-8"))
+            payload_hex = _to_hex(
+                json.dumps(circuit, separators=(",", ":")).encode("utf-8")
+            )
         elif isinstance(circuit, str):
             # If it looks like JSON, pass as-is; always hex-encode bytes on the wire
             payload_hex = _to_hex(circuit.encode("utf-8"))
@@ -246,9 +272,15 @@ class AICFClient:
             try:
                 res = self._rpc.call_fn("aicf.queueSubmitQuantum", params)  # type: ignore
             except Exception as e2:
-                raise RpcError(f"enqueue_quantum failed via cap.enqueueQuantum and aicf.queueSubmitQuantum: {e} / {e2}") from e2
+                raise RpcError(
+                    f"enqueue_quantum failed via cap.enqueueQuantum and aicf.queueSubmitQuantum: {e} / {e2}"
+                ) from e2
 
-        job_id = res.get("jobId") if isinstance(res, Mapping) else (res if isinstance(res, str) else None)
+        job_id = (
+            res.get("jobId")
+            if isinstance(res, Mapping)
+            else (res if isinstance(res, str) else None)
+        )
         if not isinstance(job_id, str):
             raise RpcError("enqueue_quantum: server did not return a jobId")
         return job_id
@@ -267,11 +299,11 @@ class AICFClient:
     def list_jobs(
         self,
         *,
-        kind: Optional[str] = None,          # "AI" | "Quantum"
-        status: Optional[str] = None,        # "Queued" | "Assigned" | "Completed" | "Expired"
+        kind: Optional[str] = None,  # "AI" | "Quantum"
+        status: Optional[str] = None,  # "Queued" | "Assigned" | "Completed" | "Expired"
         limit: int = 50,
         cursor: Optional[str] = None,
-        caller: Optional[str] = None,        # filter by contract/account address (if indexed)
+        caller: Optional[str] = None,  # filter by contract/account address (if indexed)
     ) -> List[JsonDict]:
         """List recent jobs with optional filters (if supported by the server)."""
         params: JsonDict = {"limit": int(limit)}

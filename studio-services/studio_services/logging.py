@@ -34,14 +34,23 @@ import structlog
 from structlog.contextvars import merge_contextvars
 from structlog.processors import JSONRenderer
 
-
 # ------------------------------ Redaction ------------------------------------
 
 
-REDACT_KEYS = {"authorization", "token", "access_token", "refresh_token", "password", "secret", "api_key"}
+REDACT_KEYS = {
+    "authorization",
+    "token",
+    "access_token",
+    "refresh_token",
+    "password",
+    "secret",
+    "api_key",
+}
 
 
-def _redact_secrets(_: logging.Logger, __: str, event_dict: Dict[str, Any]) -> Dict[str, Any]:
+def _redact_secrets(
+    _: logging.Logger, __: str, event_dict: Dict[str, Any]
+) -> Dict[str, Any]:
     """
     Processor that redacts sensitive values for well-known keys.
     """
@@ -63,8 +72,11 @@ def _base_processors(service_name: str, include_stacktrace: bool) -> Iterable:
         yield structlog.processors.format_exc_info
     yield _redact_secrets
     yield structlog.processors.UnicodeDecoder()
+
     # Add service name if not present
-    def _ensure_service(_: logging.Logger, __: str, ev: Dict[str, Any]) -> Dict[str, Any]:
+    def _ensure_service(
+        _: logging.Logger, __: str, ev: Dict[str, Any]
+    ) -> Dict[str, Any]:
         ev.setdefault("service", service_name)
         return ev
 
@@ -151,7 +163,14 @@ def setup_logging(
     root.addHandler(shared_handler)
 
     # Uvicorn / FastAPI loggers harmonization
-    for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "gunicorn", "gunicorn.error", "gunicorn.access"):
+    for name in (
+        "uvicorn",
+        "uvicorn.error",
+        "uvicorn.access",
+        "gunicorn",
+        "gunicorn.error",
+        "gunicorn.access",
+    ):
         lg = logging.getLogger(name)
         lg.handlers = [shared_handler]
         lg.propagate = False
@@ -174,6 +193,7 @@ def get_logger(name: Optional[str] = None) -> structlog.stdlib.BoundLogger:
 
 
 # ------------------------------ Context helpers -------------------------------
+
 
 def bind_request_context(**kv: Any) -> None:
     """

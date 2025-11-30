@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Protocol
 
-from ..types.core import RoundId, CommitRecord, RevealRecord
+from ..types.core import CommitRecord, RevealRecord, RoundId
 from . import params as cr_params
 
 # ------------------------------------------------------------------------------
@@ -41,13 +41,17 @@ from . import params as cr_params
 
 try:
     from prometheus_client import Counter  # type: ignore
-except Exception:  # pragma: no cover - tiny shim for environments without prometheus_client
+except (
+    Exception
+):  # pragma: no cover - tiny shim for environments without prometheus_client
 
     class Counter:  # type: ignore
         def __init__(self, *_args, **_kwargs) -> None: ...
         def labels(self, *_args, **_kwargs) -> "Counter":  # noqa: N805
             return self
+
         def inc(self, *_args, **_kwargs) -> None: ...
+
 
 SLASH_EVENTS = Counter(
     "randomness_slash_events_total",
@@ -222,7 +226,11 @@ def record_miss(
     if not _enabled():
         return None
 
-    amt = suggest_penalty(stake_units or 0, MisbehaviorKind.MISS) if stake_units is not None else None
+    amt = (
+        suggest_penalty(stake_units or 0, MisbehaviorKind.MISS)
+        if stake_units is not None
+        else None
+    )
     reason = "missed reveal within window"
     if reason_suffix:
         reason = f"{reason} ({reason_suffix})"
@@ -260,7 +268,11 @@ def record_bad_reveal(
     if not _enabled():
         return None
 
-    amt = suggest_penalty(stake_units or 0, MisbehaviorKind.BAD_REVEAL) if stake_units is not None else None
+    amt = (
+        suggest_penalty(stake_units or 0, MisbehaviorKind.BAD_REVEAL)
+        if stake_units is not None
+        else None
+    )
     reason = "bad reveal: does not verify against prior commitment"
     if reason_suffix:
         reason = f"{reason} ({reason_suffix})"

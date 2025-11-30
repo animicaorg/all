@@ -74,14 +74,17 @@ from dataclasses import asdict
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Union
 
 from ..errors import AttestationError
-from .common import TEEEvidence, TEEKind, TCBStatus
+from .common import TCBStatus, TEEEvidence, TEEKind
 
 # Optional cryptography for X.509 and signature checks
 try:  # pragma: no cover - availability depends on environment
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.asymmetric import rsa, padding, ec, utils
-    from cryptography.hazmat.primitives.serialization import load_pem_public_key
+    from cryptography.hazmat.primitives.asymmetric import (ec, padding, rsa,
+                                                           utils)
+    from cryptography.hazmat.primitives.serialization import \
+        load_pem_public_key
+
     _HAS_CRYPTO = True
 except Exception:
     _HAS_CRYPTO = False
@@ -89,7 +92,7 @@ except Exception:
 # ---------------------------------------------------------------------------
 
 SUPPORTED_HASHALGS = {
-    "sha1":  hashlib.sha1,
+    "sha1": hashlib.sha1,
     "sha256": hashlib.sha256,
 }
 
@@ -133,7 +136,9 @@ def parse_eventlog_json(buf: Union[str, bytes, bytearray]) -> List[Event]:
             if not isinstance(ev, dict):
                 raise AttestationError("Event log entries must be objects")
             if "pcrIndex" not in ev or "digests" not in ev:
-                raise AttestationError("Event missing required keys (pcrIndex, digests)")
+                raise AttestationError(
+                    "Event missing required keys (pcrIndex, digests)"
+                )
         return data  # type: ignore
     except AttestationError:
         raise
@@ -197,11 +202,12 @@ def _pcr_selection_bytes(selection: Iterable[int], total: int = 24) -> bytes:
     out = 0
     for i, b in enumerate(bits):
         if b:
-            out |= (1 << i)
+            out |= 1 << i
     return out.to_bytes((total + 7) // 8, "little")
 
 
 # --------------------- TPM Quote minimal parsing & verify ---------------------
+
 
 def _parse_tpms_attest_sha256(attest: bytes) -> Tuple[Optional[bytes], Optional[bytes]]:
     """
@@ -228,8 +234,8 @@ def _parse_tpms_attest_sha256(attest: bytes) -> Tuple[Optional[bytes], Optional[
 
         # Heuristic for pcrDigest: look for several repeating 0x20-length chunks that look non-zero.
         for i in range(0, len(attest) - 34):
-            if attest[i] == 0x00 and attest[i+1] == 0x20:
-                cand = attest[i+2:i+2+32]
+            if attest[i] == 0x00 and attest[i + 1] == 0x20:
+                cand = attest[i + 2 : i + 2 + 32]
                 if len(cand) == 32 and any(cand):
                     pcr_digest = cand
                     break
@@ -241,9 +247,9 @@ def _parse_tpms_attest_sha256(attest: bytes) -> Tuple[Optional[bytes], Optional[
             stop = attest.index(pcr_digest) if pcr_digest in attest else stop
         best = None
         for i in range(0, stop - 2):
-            ln = int.from_bytes(attest[i:i+2], "big")
-            if 4 <= ln <= 64 and i+2+ln <= stop:
-                blob = attest[i+2:i+2+ln]
+            ln = int.from_bytes(attest[i : i + 2], "big")
+            if 4 <= ln <= 64 and i + 2 + ln <= stop:
+                blob = attest[i + 2 : i + 2 + ln]
                 # Prefer ascii-ish entropy or hex-ish data
                 if any(32 <= b <= 126 for b in blob) or any(b > 127 for b in blob):
                     best = blob
@@ -270,13 +276,18 @@ def _verify_quote_signature(
                 pub.verify(
                     quote_sig,
                     quote_attest,
-                    padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+                    padding.PSS(
+                        mgf=padding.MGF1(hashes.SHA256()),
+                        salt_length=padding.PSS.MAX_LENGTH,
+                    ),
                     hashes.SHA256(),
                 )
                 return True
             except Exception:
                 try:
-                    pub.verify(quote_sig, quote_attest, padding.PKCS1v15(), hashes.SHA256())
+                    pub.verify(
+                        quote_sig, quote_attest, padding.PKCS1v15(), hashes.SHA256()
+                    )
                     return True
                 except Exception:
                     return False
@@ -294,6 +305,7 @@ def _verify_quote_signature(
 
 
 # --------------------------- DICE chain validation ----------------------------
+
 
 def verify_dice_chain_simple(der_chain: List[bytes], root_pem: Optional[bytes]) -> bool:
     """
@@ -333,7 +345,10 @@ def verify_dice_chain_simple(der_chain: List[bytes], root_pem: Optional[bytes]) 
                 # self-signed root
                 if not anchors:
                     return True
-                return any(curr.fingerprint(hashes.SHA256()) == r.fingerprint(hashes.SHA256()) for r in anchors)
+                return any(
+                    curr.fingerprint(hashes.SHA256()) == r.fingerprint(hashes.SHA256())
+                    for r in anchors
+                )
             parent = by_subject.get(isub)
             if parent is None:
                 return False
@@ -341,9 +356,11 @@ def verify_dice_chain_simple(der_chain: List[bytes], root_pem: Optional[bytes]) 
                 parent.public_key().verify(
                     curr.signature,
                     curr.tbs_certificate_bytes,
-                    ec.ECDSA(curr.signature_hash_algorithm)  # type: ignore[arg-type]
-                    if isinstance(parent.public_key(), ec.EllipticCurvePublicKey)  # type: ignore[name-defined]
-                    else padding.PKCS1v15(),  # RSA fallback
+                    (
+                        ec.ECDSA(curr.signature_hash_algorithm)  # type: ignore[arg-type]
+                        if isinstance(parent.public_key(), ec.EllipticCurvePublicKey)  # type: ignore[name-defined]
+                        else padding.PKCS1v15()
+                    ),  # RSA fallback
                 )
             except Exception:
                 # For RSA parents, the above line may not be correct due to hash algorithm.
@@ -366,6 +383,7 @@ def verify_dice_chain_simple(der_chain: List[bytes], root_pem: Optional[bytes]) 
 
 
 # ------------------------------ High-level API --------------------------------
+
 
 def verify_tpm_dice(
     *,
@@ -409,7 +427,7 @@ def verify_tpm_dice(
     # Compare composite to quoted pcrDigest if present (best-effort cross-check)
     digest_matches = True
     if quoted_pcr_digest is not None:
-        digest_matches = (quoted_pcr_digest == composite_digest)
+        digest_matches = quoted_pcr_digest == composite_digest
 
     # Verify quote signature if possible
     signature_ok = False
@@ -422,15 +440,23 @@ def verify_tpm_dice(
         chain_ok = verify_dice_chain_simple(dice_chain_der, dice_root_pem)
 
     # Host-data: hash of the entire eventlog JSON bytes
-    ev_bytes = eventlog_json if isinstance(eventlog_json, (bytes, bytearray)) else eventlog_json.encode("utf-8")
+    ev_bytes = (
+        eventlog_json
+        if isinstance(eventlog_json, (bytes, bytearray))
+        else eventlog_json.encode("utf-8")
+    )
     host_data = hashlib.sha3_256(ev_bytes).digest()
 
     # Evidence measurement preference: quoted digest if present and matched; else composite
-    measurement = quoted_pcr_digest if quoted_pcr_digest and digest_matches else composite_digest
+    measurement = (
+        quoted_pcr_digest if quoted_pcr_digest and digest_matches else composite_digest
+    )
 
     evidence = TEEEvidence(
         vendor="tpm",
-        kind=getattr(TEEKind, "TPM_DICE", getattr(TEEKind, "TPM", TEEKind.GENERIC)),  # graceful fallback
+        kind=getattr(
+            TEEKind, "TPM_DICE", getattr(TEEKind, "TPM", TEEKind.GENERIC)
+        ),  # graceful fallback
         measurement=measurement,
         report=quote_attest or b"",
         report_data=nonce or b"",

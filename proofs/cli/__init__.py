@@ -18,6 +18,7 @@ Usage:
   python -m proofs.cli           # runs the app
   python -m proofs.cli verify -h # help for a subcommand
 """
+
 from __future__ import annotations
 
 import importlib

@@ -38,7 +38,8 @@ from __future__ import annotations
 
 import binascii
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Set, Tuple
+from typing import (Dict, Iterable, Iterator, List, Optional, Sequence, Set,
+                    Tuple)
 
 # Optional alias import (keeps decoupled from consensus.types)
 try:
@@ -50,6 +51,7 @@ except Exception:  # pragma: no cover - when running standalone
 # ---------------------------------------------------------------------------
 # Utilities
 # ---------------------------------------------------------------------------
+
 
 def _hex_to_bytes(h: str | bytes) -> bytes:
     if isinstance(h, bytes):
@@ -78,20 +80,23 @@ def _hash_lt(a: bytes, b: bytes) -> bool:
 # Data structures
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class Node:
-    h: bytes                         # block hash (bytes)
-    parent: Optional[bytes]          # parent hash or None (genesis)
-    height: int                      # genesis=0 or 1, depending on caller convention
-    weight_micro: WeightMicro        # per-block weight (non-negative)
-    cum_weight_micro: WeightMicro    # cumulative weight up to this node (inclusive)
+    h: bytes  # block hash (bytes)
+    parent: Optional[bytes]  # parent hash or None (genesis)
+    height: int  # genesis=0 or 1, depending on caller convention
+    weight_micro: WeightMicro  # per-block weight (non-negative)
+    cum_weight_micro: WeightMicro  # cumulative weight up to this node (inclusive)
     # metadata
     children: Set[bytes] = field(default_factory=set)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging helper
-        return (f"Node(h={_bytes_to_hex(self.h)[:10]}…, "
-                f"height={self.height}, weight={self.weight_micro}, "
-                f"cum={self.cum_weight_micro})")
+        return (
+            f"Node(h={_bytes_to_hex(self.h)[:10]}…, "
+            f"height={self.height}, weight={self.weight_micro}, "
+            f"cum={self.cum_weight_micro})"
+        )
 
 
 @dataclass(frozen=True)
@@ -107,17 +112,18 @@ class BestTip:
 
 @dataclass(frozen=True)
 class AddResult:
-    accepted: bool                  # inserted into the tree (or updated from orphan)
-    became_best: bool               # True if the best tip changed to this node
-    best: BestTip                   # current best tip after the insert
-    reorg_depth: int                # depth of reorg (0 if none)
-    detached: Tuple[bytes, ...]     # old tip → LCA exclusive
-    attached: Tuple[bytes, ...]     # LCA → new tip inclusive
+    accepted: bool  # inserted into the tree (or updated from orphan)
+    became_best: bool  # True if the best tip changed to this node
+    best: BestTip  # current best tip after the insert
+    reorg_depth: int  # depth of reorg (0 if none)
+    detached: Tuple[bytes, ...]  # old tip → LCA exclusive
+    attached: Tuple[bytes, ...]  # LCA → new tip inclusive
 
 
 # ---------------------------------------------------------------------------
 # Fork choice engine
 # ---------------------------------------------------------------------------
+
 
 class ForkChoice:
     """
@@ -149,8 +155,12 @@ class ForkChoice:
         if genesis_weight_micro < 0:
             raise ValueError("genesis_weight_micro must be non-negative")
         self.nodes: Dict[bytes, Node] = {}
-        self.orphans: Dict[bytes, List[Tuple[bytes, int, WeightMicro]]] = {}  # parent -> [(h, height, weight), ...]
-        self._best: BestTip = BestTip(h=g, height=int(genesis_height), cum_weight_micro=int(genesis_weight_micro))
+        self.orphans: Dict[bytes, List[Tuple[bytes, int, WeightMicro]]] = (
+            {}
+        )  # parent -> [(h, height, weight), ...]
+        self._best: BestTip = BestTip(
+            h=g, height=int(genesis_height), cum_weight_micro=int(genesis_weight_micro)
+        )
         self.max_reorg_depth = max_reorg_depth
 
         self.nodes[g] = Node(
@@ -246,7 +256,7 @@ class ForkChoice:
         while queue:
             p = queue.pop(0)
             waiting = self.orphans.pop(p, [])
-            for (hh, height, weight) in waiting:
+            for hh, height, weight in waiting:
                 if hh in self.nodes:  # was possibly attached by earlier pass
                     continue
                 child = self._attach_known_parent(hh, p, height, weight)
@@ -271,7 +281,9 @@ class ForkChoice:
     def _collect_tip(self, h: bytes) -> Node:
         return self.nodes[h]
 
-    def _maybe_update_best(self, candidate: Node) -> Tuple[bool, int, List[bytes], List[bytes]]:
+    def _maybe_update_best(
+        self, candidate: Node
+    ) -> Tuple[bool, int, List[bytes], List[bytes]]:
         old_best = self._collect_tip(self._best.h)
         if not self._better(candidate, old_best):
             return False, 0, [], []
@@ -283,11 +295,17 @@ class ForkChoice:
             # Ignore excessive reorgs; keep best unchanged.
             return False, depth, [], []
 
-        self._best = BestTip(h=candidate.h, height=candidate.height, cum_weight_micro=candidate.cum_weight_micro)
+        self._best = BestTip(
+            h=candidate.h,
+            height=candidate.height,
+            cum_weight_micro=candidate.cum_weight_micro,
+        )
         return True, depth, detached, attached
 
     # LCA & reorg path
-    def reorg_path(self, from_h: bytes | str, to_h: bytes | str) -> Tuple[List[bytes], List[bytes]]:
+    def reorg_path(
+        self, from_h: bytes | str, to_h: bytes | str
+    ) -> Tuple[List[bytes], List[bytes]]:
         """
         Compute the detach/attach path to move the canonical head from `from_h` to `to_h`.
 
@@ -356,19 +374,23 @@ if __name__ == "__main__":  # pragma: no cover
 
     def add(h, p, ht, w):
         r = fc.add_block(h=h, parent=p, height=ht, weight_micro=w)
-        print(f"add {h} parent={p} h={ht} w={w} → best={r.best.hex} "
-              f"(cum={r.best.cum_weight_micro}, became_best={r.became_best}, reorg={r.reorg_depth})")
+        print(
+            f"add {h} parent={p} h={ht} w={w} → best={r.best.hex} "
+            f"(cum={r.best.cum_weight_micro}, became_best={r.became_best}, reorg={r.reorg_depth})"
+        )
         if r.detached or r.attached:
-            print("  detach:", [ _bytes_to_hex(x) for x in r.detached ])
-            print("  attach:", [ _bytes_to_hex(x) for x in r.attached ])
+            print("  detach:", [_bytes_to_hex(x) for x in r.detached])
+            print("  attach:", [_bytes_to_hex(x) for x in r.attached])
 
     # Build two branches with different weights
     add("0x01", "0x00", 1, 1_500_000)  # cum 1.5
     add("0x02", "0x01", 2, 1_500_000)  # cum 3.0  -> best=0x02
-    add("0x0a", "0x00", 1, 2_800_000)  # heavier sibling of 0x01 (cum 2.8) -> reorg to branch 0x0a
+    add(
+        "0x0a", "0x00", 1, 2_800_000
+    )  # heavier sibling of 0x01 (cum 2.8) -> reorg to branch 0x0a
     add("0x0b", "0x0a", 2, 2_000_000)  # cum 4.8 -> remains best
 
     # Equal weight + height tie resolved by lexicographic hash
-    add("0x10", "0x0b", 3, 100_000)    # cum 4.9
-    add("0x11", "0x0b", 3, 100_000)    # cum 4.9   → best becomes 0x10 (smaller hash)
-    print("tips:", [ _bytes_to_hex(h) for h in fc.tip_set() ])
+    add("0x10", "0x0b", 3, 100_000)  # cum 4.9
+    add("0x11", "0x0b", 3, 100_000)  # cum 4.9   → best becomes 0x10 (smaller hash)
+    print("tips:", [_bytes_to_hex(h) for h in fc.tip_set()])

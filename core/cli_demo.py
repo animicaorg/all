@@ -19,13 +19,12 @@ from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from core.logging import setup_logging
-from core.errors import AnimicaError
+from core.chain.head import read_head
 from core.db import open_kv
 from core.db.block_db import BlockDB
+from core.errors import AnimicaError
 from core.genesis.loader import load_genesis
-from core.chain.head import read_head
-
+from core.logging import setup_logging
 
 DEFAULT_DB = "sqlite:///animica.db"
 DEFAULT_GENESIS = "core/genesis/genesis.json"
@@ -80,7 +79,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     # Load params (source of truth is the genesis file for now).
     genesis_path = Path(args.genesis)
     if not genesis_path.exists():
-        print(f"[cli_demo] warning: genesis file not found: {genesis_path} — params may be missing")
+        print(
+            f"[cli_demo] warning: genesis file not found: {genesis_path} — params may be missing"
+        )
 
     params = None
     if genesis_path.exists():
@@ -109,7 +110,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         # Pull a few common fields if present to headline them.
         chain_id = p.get("chain_id", "unknown")
         network_name = p.get("network_name", "unknown")
-        block_time = p.get("target_block_time_secs", p.get("block_time_target_secs", "n/a"))
+        block_time = p.get(
+            "target_block_time_secs", p.get("block_time_target_secs", "n/a")
+        )
         base_reward = p.get("base_block_reward", "n/a")
         premine = p.get("premine_amount", p.get("premine", "n/a"))
         print("— Params —")

@@ -66,20 +66,27 @@ __all__ = [
 
 # --- Internal stdlib accessors (lazy to satisfy VM import guard) --------------
 
+
 def _std_storage():
     from stdlib import storage  # type: ignore
+
     return storage
+
 
 def _std_events():
     from stdlib import events  # type: ignore
+
     return events
+
 
 def _std_abi():
     from stdlib import abi  # type: ignore
+
     return abi
 
 
 # --- Owner primitives ---------------------------------------------------------
+
 
 def get_owner() -> Optional[bytes]:
     """

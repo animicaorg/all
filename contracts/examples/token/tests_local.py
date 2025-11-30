@@ -22,14 +22,14 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers to deal with slightly different vm_py loader/runner shapes
 # ---------------------------------------------------------------------------
+
 
 def _try_import_vm():
     """
@@ -142,6 +142,7 @@ def _assert_event(logs: List[Dict[str, Any]], name: str) -> Dict[str, Any]:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def token() -> VmRunner:
     """
@@ -170,6 +171,7 @@ def fresh_token(token: VmRunner) -> VmRunner:
 # Tests
 # ---------------------------------------------------------------------------
 
+
 def test_initializer_and_views(fresh_token: VmRunner):
     owner = _addr("owner")
     name = b"Animica Token"
@@ -178,9 +180,7 @@ def test_initializer_and_views(fresh_token: VmRunner):
     initial_supply = 1_000_000
 
     # init(name, symbol, decimals, initial_owner, initial_supply)
-    res, logs = fresh_token.call(
-        "init", name, symbol, decimals, owner, initial_supply
-    )
+    res, logs = fresh_token.call("init", name, symbol, decimals, owner, initial_supply)
     # initializer typically returns nothing; be tolerant
     assert fresh_token.view("name") == name
     assert fresh_token.view("symbol") == symbol
@@ -322,5 +322,3 @@ def test_transfer_ownership_and_enforce(fresh_token: VmRunner):
     ok, _ = fresh_token.call("mint", new_owner, 7)
     assert bool(ok) is True
     assert int(fresh_token.view("balanceOf", new_owner)) == 7
-
-

@@ -34,18 +34,13 @@ This module is designed to be imported by the central ProviderRegistry in
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Union
-import logging
 import hashlib
+import logging
+from typing import Any, Dict, Optional, Union
 
-from .provider import (
-    SyscallContext,
-    ProviderRegistry,
-    get_registry,
-    AI_ENQUEUE,
-    QUANTUM_ENQUEUE,
-)
 from ..errors import CapError, LimitExceeded, NotDeterministic
+from .provider import (AI_ENQUEUE, QUANTUM_ENQUEUE, ProviderRegistry,
+                       SyscallContext, get_registry)
 
 log = logging.getLogger("capabilities.host.compute")
 
@@ -55,12 +50,17 @@ log = logging.getLogger("capabilities.host.compute")
 
 # Pull caps from config if available; otherwise use sane defaults for devnets/tests.
 try:
-    from ..config import (
-        AI_MAX_PROMPT_BYTES as _AI_MAX_PROMPT_BYTES,          # type: ignore[attr-defined]
-        AI_MAX_MODEL_ID_LEN as _AI_MAX_MODEL_ID_LEN,          # type: ignore[attr-defined]
-        Q_MAX_CIRCUIT_BYTES as _Q_MAX_CIRCUIT_BYTES,          # type: ignore[attr-defined]
-        Q_MAX_SHOTS as _Q_MAX_SHOTS,                          # type: ignore[attr-defined]
-    )
+    from ..config import \
+        AI_MAX_MODEL_ID_LEN as \
+        _AI_MAX_MODEL_ID_LEN  # type: ignore[attr-defined]
+    from ..config import \
+        AI_MAX_PROMPT_BYTES as \
+        _AI_MAX_PROMPT_BYTES  # type: ignore[attr-defined]
+    from ..config import \
+        Q_MAX_CIRCUIT_BYTES as \
+        _Q_MAX_CIRCUIT_BYTES  # type: ignore[attr-defined]
+    from ..config import \
+        Q_MAX_SHOTS as _Q_MAX_SHOTS  # type: ignore[attr-defined]
 except Exception:  # pragma: no cover - defaults for when config isn't wired yet
     _AI_MAX_PROMPT_BYTES = 64 * 1024
     _AI_MAX_MODEL_ID_LEN = 64
@@ -71,26 +71,39 @@ except Exception:  # pragma: no cover - defaults for when config isn't wired yet
 _CBOR_OK = False
 try:
     from ..cbor.codec import dumps as _cbor_dumps  # type: ignore
+
     _CBOR_OK = True
 except Exception:  # pragma: no cover
     _cbor_dumps = None
 
 try:
     import json
+
     def _json_dumps_det(obj: Any) -> bytes:
         # Deterministic JSON (sorted keys, no whitespace), UTF-8 bytes
         return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
 except Exception as _e:  # pragma: no cover
     _e  # silence linter
+
     def _json_dumps_det(obj: Any) -> bytes:
         raise CapError("No serializer available for quantum circuit.")
 
 
 # Deterministic task-id derivation
 try:
-    from ..jobs.id import derive_task_id as _derive_task_id  # type: ignore[attr-defined]
+    from ..jobs.id import \
+        derive_task_id as _derive_task_id  # type: ignore[attr-defined]
 except Exception:  # pragma: no cover
-    def _derive_task_id(*, chain_id: int, height: int, tx_hash: bytes, caller: bytes, payload_digest: bytes) -> bytes:
+
+    def _derive_task_id(
+        *,
+        chain_id: int,
+        height: int,
+        tx_hash: bytes,
+        caller: bytes,
+        payload_digest: bytes,
+    ) -> bytes:
         """Fallback: domain-separated SHA3-256 over context||payload_digest."""
         h = hashlib.sha3_256()
         h.update(b"animica:capabilities:task-id:v1")
@@ -109,8 +122,10 @@ except Exception:  # pragma: no cover
 # Local queue fallback
 _HAS_LOCAL_QUEUE = False
 try:
-    from ..jobs.queue import enqueue_job as _enqueue_job  # type: ignore[attr-defined]
+    from ..jobs.queue import \
+        enqueue_job as _enqueue_job  # type: ignore[attr-defined]
     from ..jobs.types import JobKind, JobRequest  # type: ignore[attr-defined]
+
     _HAS_LOCAL_QUEUE = True
 except Exception:  # pragma: no cover
     _enqueue_job = None
@@ -122,6 +137,7 @@ except Exception:  # pragma: no cover
 _HAS_AICF = False
 try:
     from ..adapters import aicf as _aicf  # type: ignore
+
     _HAS_AICF = True
 except Exception:  # pragma: no cover
     _aicf = None
@@ -130,6 +146,7 @@ except Exception:  # pragma: no cover
 # ----------------------------
 # Helpers
 # ----------------------------
+
 
 def _hash_ai_payload(model: str, prompt: bytes) -> bytes:
     h = hashlib.sha3_256()
@@ -141,7 +158,9 @@ def _hash_ai_payload(model: str, prompt: bytes) -> bytes:
     return h.digest()
 
 
-def _hash_quantum_payload(circuit_bytes: bytes, shots: int, extras: Optional[Dict[str, Any]]) -> bytes:
+def _hash_quantum_payload(
+    circuit_bytes: bytes, shots: int, extras: Optional[Dict[str, Any]]
+) -> bytes:
     h = hashlib.sha3_256()
     h.update(b"animica:cap:quantum:payload:v1")
     h.update(len(circuit_bytes).to_bytes(4, "big"))
@@ -160,10 +179,14 @@ def _hash_quantum_payload(circuit_bytes: bytes, shots: int, extras: Optional[Dic
     return h.digest()
 
 
-def _mk_receipt(task_id: bytes, kind: str, provider: str, height: int) -> Dict[str, Any]:
+def _mk_receipt(
+    task_id: bytes, kind: str, provider: str, height: int
+) -> Dict[str, Any]:
     if not isinstance(task_id, (bytes, bytearray)) or len(task_id) != 32:
         # We tolerate other sizes but strongly prefer 32 bytes (sha3_256)
-        log.debug("task_id length not 32 bytes; still returning", extra={"len": len(task_id)})
+        log.debug(
+            "task_id length not 32 bytes; still returning", extra={"len": len(task_id)}
+        )
     return {
         "task_id": bytes(task_id),
         "kind": kind,
@@ -176,14 +199,19 @@ def _mk_receipt(task_id: bytes, kind: str, provider: str, height: int) -> Dict[s
 # Providers
 # ----------------------------
 
-def _ai_enqueue(ctx: SyscallContext, *, model: str, prompt: Union[bytes, bytearray]) -> Dict[str, Any]:
+
+def _ai_enqueue(
+    ctx: SyscallContext, *, model: str, prompt: Union[bytes, bytearray]
+) -> Dict[str, Any]:
     """Enqueue an AI job deterministically and return a minimal receipt."""
     if not isinstance(model, str):
         raise CapError("ai_enqueue: model must be a string")
     if not isinstance(prompt, (bytes, bytearray)):
         raise CapError("ai_enqueue: prompt must be bytes")
     if len(model.encode("utf-8")) > _AI_MAX_MODEL_ID_LEN:
-        raise LimitExceeded(f"ai_enqueue: model id too long (>{_AI_MAX_MODEL_ID_LEN} bytes utf-8)")
+        raise LimitExceeded(
+            f"ai_enqueue: model id too long (>{_AI_MAX_MODEL_ID_LEN} bytes utf-8)"
+        )
     if len(prompt) == 0:
         raise CapError("ai_enqueue: prompt cannot be empty")
     if len(prompt) > _AI_MAX_PROMPT_BYTES:
@@ -222,7 +250,9 @@ def _ai_enqueue(ctx: SyscallContext, *, model: str, prompt: Union[bytes, bytearr
         return _mk_receipt(task_id, "AI", "local.queue", ctx.height)
 
     # If neither path exists, we still return a deterministic receipt so tests/devnets can proceed.
-    log.warning("ai_enqueue: no adapter/queue available; returning receipt only (no persistence)")
+    log.warning(
+        "ai_enqueue: no adapter/queue available; returning receipt only (no persistence)"
+    )
     return _mk_receipt(task_id, "AI", "none", ctx.height)
 
 
@@ -245,7 +275,9 @@ def _quantum_enqueue(
     if len(c_bytes) == 0:
         raise CapError("quantum_enqueue: circuit cannot be empty")
     if len(c_bytes) > _Q_MAX_CIRCUIT_BYTES:
-        raise LimitExceeded(f"quantum_enqueue: circuit exceeds {_Q_MAX_CIRCUIT_BYTES} bytes")
+        raise LimitExceeded(
+            f"quantum_enqueue: circuit exceeds {_Q_MAX_CIRCUIT_BYTES} bytes"
+        )
     if not isinstance(shots, int) or shots <= 0:
         raise CapError("quantum_enqueue: shots must be a positive int")
     if shots > _Q_MAX_SHOTS:
@@ -284,13 +316,15 @@ def _quantum_enqueue(
         _enqueue_job(ctx, jr)  # type: ignore[misc]
         return _mk_receipt(task_id, "Quantum", "local.queue", ctx.height)
 
-    log.warning("quantum_enqueue: no adapter/queue available; returning receipt only (no persistence)")
+    log.warning(
+        "quantum_enqueue: no adapter/queue available; returning receipt only (no persistence)"
+    )
     return _mk_receipt(task_id, "Quantum", "none", ctx.height)
 
 
 # Mark as deterministic (checked by registry)
-_ai_enqueue._deterministic = True          # type: ignore[attr-defined]
-_quantum_enqueue._deterministic = True     # type: ignore[attr-defined]
+_ai_enqueue._deterministic = True  # type: ignore[attr-defined]
+_quantum_enqueue._deterministic = True  # type: ignore[attr-defined]
 
 
 def register(registry: ProviderRegistry) -> None:

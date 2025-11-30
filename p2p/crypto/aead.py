@@ -42,7 +42,8 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 try:
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305
+    from cryptography.hazmat.primitives.ciphers.aead import (AESGCM,
+                                                             ChaCha20Poly1305)
 except Exception as e:  # pragma: no cover - environment without cryptography
     AESGCM = None  # type: ignore
     ChaCha20Poly1305 = None  # type: ignore
@@ -85,6 +86,7 @@ class AEADContext:
     encrypt(plaintext, aad=...) -> (ciphertext, seq_used)
     decrypt(ciphertext, seq, aad=...) -> plaintext
     """
+
     name: str
     key: bytes
     nonce_base: bytes
@@ -129,7 +131,9 @@ class AEADContext:
             return self._aad_prefix + user_aad
         return self._aad_prefix
 
-    def encrypt(self, plaintext: bytes, *, aad: Optional[bytes] = None) -> Tuple[bytes, int]:
+    def encrypt(
+        self, plaintext: bytes, *, aad: Optional[bytes] = None
+    ) -> Tuple[bytes, int]:
         """
         Encrypt and increment sequence counter.
         Returns (ciphertext, seq_used).
@@ -148,7 +152,9 @@ class AEADContext:
         self._seq += 1
         return ct, seq_used
 
-    def decrypt(self, ciphertext: bytes, seq: int, *, aad: Optional[bytes] = None) -> bytes:
+    def decrypt(
+        self, ciphertext: bytes, seq: int, *, aad: Optional[bytes] = None
+    ) -> bytes:
         """
         Decrypt a record that used the given sequence number.
         Does *not* mutate the internal sequence counter.

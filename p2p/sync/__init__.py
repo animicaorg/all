@@ -36,6 +36,7 @@ DEFAULT_MAX_REORG_DEPTH: int = 96
 @dataclass(slots=True)
 class SyncStats:
     """Minimal, transport-agnostic stats container updated by sync loops."""
+
     started_at: float
     last_progress_at: float
     headers_fetched: int = 0
@@ -63,20 +64,25 @@ __all__ = (
     "DEFAULT_MAX_REORG_DEPTH",
 )
 
+
 def __getattr__(name: str):
     """
     Lazily import heavy submodules only when their top-level symbols are accessed.
     """
     if name == "HeaderSync":
         from .headers import HeaderSync  # type: ignore
+
         return HeaderSync
     if name == "BlockSync":
         from .blocks import BlockSync  # type: ignore
+
         return BlockSync
     if name == "MempoolSync":
         from .mempool import MempoolSync  # type: ignore
+
         return MempoolSync
     if name == "ShareSync":
         from .shares import ShareSync  # type: ignore
+
         return ShareSync
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

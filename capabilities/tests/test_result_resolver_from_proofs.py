@@ -27,6 +27,7 @@ except Exception:
 TEST_TASK_HEX = "0x" + ("11" * 32)
 TEST_HEIGHT = 12345
 
+
 def _mk_result_record(task_id_hex: str, kind: str = "AI") -> Any:
     """
     Create a ResultRecord (preferred) or a dict fallback if the dataclass isn't available.
@@ -61,18 +62,34 @@ class FakeResultStore:
     A compatibility stub that implements several common method names so the resolver
     can call any of them. All write methods funnel into _put().
     """
+
     def __init__(self) -> None:
         self._records: Dict[str, Any] = {}
 
     # --- writers the resolver might call
-    def put(self, rec: Any) -> None: self._put(rec)
-    def save(self, rec: Any) -> None: self._put(rec)
-    def add(self, rec: Any) -> None: self._put(rec)
-    def store(self, rec: Any) -> None: self._put(rec)
-    def upsert(self, rec: Any) -> None: self._put(rec)
-    def write(self, rec: Any) -> None: self._put(rec)
-    def set(self, rec: Any) -> None: self._put(rec)
-    def put_result(self, rec: Any) -> None: self._put(rec)
+    def put(self, rec: Any) -> None:
+        self._put(rec)
+
+    def save(self, rec: Any) -> None:
+        self._put(rec)
+
+    def add(self, rec: Any) -> None:
+        self._put(rec)
+
+    def store(self, rec: Any) -> None:
+        self._put(rec)
+
+    def upsert(self, rec: Any) -> None:
+        self._put(rec)
+
+    def write(self, rec: Any) -> None:
+        self._put(rec)
+
+    def set(self, rec: Any) -> None:
+        self._put(rec)
+
+    def put_result(self, rec: Any) -> None:
+        self._put(rec)
 
     # --- readers the test uses (and the resolver might also call)
     def get(self, task_id: Any) -> Optional[Any]:
@@ -135,7 +152,9 @@ def _find_resolver_entry() -> Callable[..., Any]:
     pytest.skip("No known resolver entrypoint found")
 
 
-def _call_resolver(fn: Callable[..., Any], store: Any, proofs: Iterable[Any], height: int) -> Any:
+def _call_resolver(
+    fn: Callable[..., Any], store: Any, proofs: Iterable[Any], height: int
+) -> Any:
     """
     Try a few common call patterns; prefer keyword calls for clarity.
     """
@@ -175,7 +194,10 @@ def _call_resolver(fn: Callable[..., Any], store: Any, proofs: Iterable[Any], he
 
 # --- Monkeypatch proof→result mapping if the resolver defers to an adapter ------
 
-def _patch_attest_bridge(monkeypatch: pytest.MonkeyPatch, expected_task_hex: str) -> None:
+
+def _patch_attest_bridge(
+    monkeypatch: pytest.MonkeyPatch, expected_task_hex: str
+) -> None:
     """
     If resolver calls into capabilities.jobs.attest_bridge (e.g., normalize_proof/proof_to_result),
     patch those functions to return a deterministic ResultRecord from the incoming proof.
@@ -199,12 +221,18 @@ def _patch_attest_bridge(monkeypatch: pytest.MonkeyPatch, expected_task_hex: str
         )
         return _mk_result_record(t_hex, kind=kind)
 
-    for name in ("normalize_proof", "proof_to_result", "map_proof_to_result", "to_result_record"):
+    for name in (
+        "normalize_proof",
+        "proof_to_result",
+        "map_proof_to_result",
+        "to_result_record",
+    ):
         if hasattr(bridge, name):
             monkeypatch.setattr(bridge, name, to_result, raising=True)
 
 
 # --- Tests ----------------------------------------------------------------------
+
 
 def test_apply_block_proofs_ingests_ai_result(monkeypatch: pytest.MonkeyPatch):
     """
@@ -223,7 +251,9 @@ def test_apply_block_proofs_ingests_ai_result(monkeypatch: pytest.MonkeyPatch):
     _call_resolver(fn, store, [ai_proof], TEST_HEIGHT)
 
     rec = store.get(TEST_TASK_HEX)
-    assert rec is not None, "ResultRecord not found in store after resolver applied proofs"
+    assert (
+        rec is not None
+    ), "ResultRecord not found in store after resolver applied proofs"
 
     # Shape checks (both dataclass or dict are acceptable)
     if isinstance(rec, dict):
@@ -235,6 +265,7 @@ def test_apply_block_proofs_ingests_ai_result(monkeypatch: pytest.MonkeyPatch):
         assert getattr(rec, "ok", False) is True
         assert getattr(rec, "kind", None) in ("AI", "Quantum")
         assert getattr(rec, "height", None) == TEST_HEIGHT
+
 
 def test_idempotent_on_duplicate_proofs(monkeypatch: pytest.MonkeyPatch):
     """
@@ -254,11 +285,14 @@ def test_idempotent_on_duplicate_proofs(monkeypatch: pytest.MonkeyPatch):
     _call_resolver(fn, store, [proof], TEST_HEIGHT)
     second_snapshot = dict(store._records)
 
-    assert set(first_snapshot.keys()) == set(second_snapshot.keys()) == {TEST_TASK_HEX.lower()}
+    assert (
+        set(first_snapshot.keys())
+        == set(second_snapshot.keys())
+        == {TEST_TASK_HEX.lower()}
+    )
     # And the record is still OK
     rec = store.get(TEST_TASK_HEX)
     if isinstance(rec, dict):
         assert rec.get("ok") is True
     else:
         assert getattr(rec, "ok", False) is True
-

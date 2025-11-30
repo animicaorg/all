@@ -14,9 +14,8 @@ from typing import Any, Dict, Tuple
 from core.types.block import Block
 from core.types.header import Header
 from mining.adapters.core_chain import CoreChainAdapter
-
-from rpc.methods import method
 from rpc import deps
+from rpc.methods import method
 
 try:  # Optional helper to compute share target from Θ
     from consensus.difficulty import share_microtarget
@@ -100,7 +99,9 @@ def _head_info() -> Tuple[bytes, int, bytes, int, bytes]:
 
     parent_hash_hex = snap.get("hash") if isinstance(snap, dict) else None
     if parent_hash_hex and isinstance(parent_hash_hex, str):
-        parent_hash = bytes.fromhex(parent_hash_hex[2:] if parent_hash_hex.startswith("0x") else parent_hash_hex)
+        parent_hash = bytes.fromhex(
+            parent_hash_hex[2:] if parent_hash_hex.startswith("0x") else parent_hash_hex
+        )
     else:
         header_hash = getattr(header, "hash", None)
         parent_hash = header_hash() if callable(header_hash) else header_hash or ZERO32
@@ -119,7 +120,9 @@ def _policy_roots() -> Tuple[bytes, bytes]:
     if isinstance(pq_root, str):
         pq_root = bytes.fromhex(pq_root[2:] if pq_root.startswith("0x") else pq_root)
     if isinstance(poies_root, str):
-        poies_root = bytes.fromhex(poies_root[2:] if poies_root.startswith("0x") else poies_root)
+        poies_root = bytes.fromhex(
+            poies_root[2:] if poies_root.startswith("0x") else poies_root
+        )
     if not isinstance(pq_root, (bytes, bytearray)):
         pq_root = ZERO32
     if not isinstance(poies_root, (bytes, bytearray)):
@@ -172,7 +175,9 @@ def _parse_nonce(nonce: Any) -> bytes:
     raise ValueError("nonce must be hex string, int, or bytes")
 
 
-def _record_local_block(height: int, block_hash: str, header: dict[str, Any] | None = None) -> None:
+def _record_local_block(
+    height: int, block_hash: str, header: dict[str, Any] | None = None
+) -> None:
     _LOCAL_HEAD.update({"height": height, "hash": block_hash, "header": header})
 
 
@@ -182,13 +187,23 @@ def auto_mine_enabled() -> bool:
 
 def _adapter() -> CoreChainAdapter:
     ctx = _ctx()
-    return CoreChainAdapter(kv=ctx.kv, block_db=ctx.block_db, state_db=getattr(ctx, "state_db", None))
+    return CoreChainAdapter(
+        kv=ctx.kv, block_db=ctx.block_db, state_db=getattr(ctx, "state_db", None)
+    )
 
 
-def _build_child_header(parent_height: int, parent_hash: bytes, parent_header: Any) -> Header:
-    theta = getattr(parent_header, "thetaMicro", getattr(parent_header, "theta_micro", None))
-    mix_seed = getattr(parent_header, "mixSeed", getattr(parent_header, "mix_seed", None))
-    state_root = getattr(parent_header, "stateRoot", getattr(parent_header, "state_root", None))
+def _build_child_header(
+    parent_height: int, parent_hash: bytes, parent_header: Any
+) -> Header:
+    theta = getattr(
+        parent_header, "thetaMicro", getattr(parent_header, "theta_micro", None)
+    )
+    mix_seed = getattr(
+        parent_header, "mixSeed", getattr(parent_header, "mix_seed", None)
+    )
+    state_root = getattr(
+        parent_header, "stateRoot", getattr(parent_header, "state_root", None)
+    )
     pq_root, poies_root = _policy_roots()
     return Header(
         v=1,
@@ -255,7 +270,9 @@ def _mine_once() -> bool:
         )
 
     header = _build_child_header(parent_height, parent_hash_bytes, parent_header)
-    block = Block.from_components(header=header, txs=(), proofs=(), receipts=None, verify=True)
+    block = Block.from_components(
+        header=header, txs=(), proofs=(), receipts=None, verify=True
+    )
     accepted = adapter.submit_block(block)
     if accepted:
         _record_local_block(header.height, "0x" + header.hash().hex(), header)
@@ -291,7 +308,11 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
     if params is None:
         payload: dict[str, Any] | None = None
     elif isinstance(params, dict):
-        payload = params.get("payload") if len(params) == 1 and "payload" in params else params
+        payload = (
+            params.get("payload")
+            if len(params) == 1 and "payload" in params
+            else params
+        )
     elif isinstance(params, (list, tuple)):
         params_list = list(params)
         if len(params_list) == 0:
@@ -310,7 +331,12 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
         raise ValueError("params must be array or object")
 
     if payload:
-        algo_hint = str(payload.get("algo") or payload.get("algorithm") or algo_hint or "asic_sha256")
+        algo_hint = str(
+            payload.get("algo")
+            or payload.get("algorithm")
+            or algo_hint
+            or "asic_sha256"
+        )
     elif algo_hint is None:
         algo_hint = "asic_sha256"
 
@@ -327,13 +353,18 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
     share_target = _DEFAULT_SHARE_TARGET
     if share_microtarget is not None:
         try:
-            share_target = float(share_microtarget(theta, shares_per_block=1)) / float(theta or 1)
+            share_target = float(share_microtarget(theta, shares_per_block=1)) / float(
+                theta or 1
+            )
         except Exception:
             share_target = _DEFAULT_SHARE_TARGET
 
     header_dict = asdict(tpl.header)
     # asdict preserves bytes; coerce to hex for JSON clients
-    header_view = {k: (_to_hex(v) if isinstance(v, (bytes, bytearray)) else v) for k, v in header_dict.items()}
+    header_view = {
+        k: (_to_hex(v) if isinstance(v, (bytes, bytearray)) else v)
+        for k, v in header_dict.items()
+    }
 
     try:
         sign_bytes = tpl.header.to_sign_bytes()
@@ -342,8 +373,13 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
         # to a deterministic JSON encoding with hex-encoded bytes.
         import json
 
-        body = {k: (v if not isinstance(v, (bytes, bytearray)) else v.hex()) for k, v in header_dict.items()}
-        sign_bytes = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        body = {
+            k: (v if not isinstance(v, (bytes, bytearray)) else v.hex())
+            for k, v in header_dict.items()
+        }
+        sign_bytes = json.dumps(body, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
     job_id = uuid.uuid4().hex
     _JOB_CACHE[job_id] = {
         "template": tpl,
@@ -374,10 +410,19 @@ def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
 )
 def miner_submit_work(*args: Any, **payload: Any) -> Dict[str, Any]:
     positional = list(args)
-    if not positional and "args" in payload and isinstance(payload["args"], (list, tuple)):
+    if (
+        not positional
+        and "args" in payload
+        and isinstance(payload["args"], (list, tuple))
+    ):
         positional = list(payload.pop("args"))
 
-    if payload and len(payload) == 1 and "payload" in payload and isinstance(payload["payload"], dict):
+    if (
+        payload
+        and len(payload) == 1
+        and "payload" in payload
+        and isinstance(payload["payload"], dict)
+    ):
         payload = payload["payload"]
     elif payload:
         payload = payload
@@ -439,12 +484,16 @@ def miner_submit_work(*args: Any, **payload: Any) -> Dict[str, Any]:
         header_view = None
 
     _JOB_CACHE.pop(str(job_id), None)
-    _record_local_block(int(job.get("height", 0)), block_hash, header_view or header_obj)
-    res.update({
-        "reason": None,
-        "height": int(job.get("height", 0)),
-        "newHead": {"height": int(job.get("height", 0)), "hash": block_hash},
-    })
+    _record_local_block(
+        int(job.get("height", 0)), block_hash, header_view or header_obj
+    )
+    res.update(
+        {
+            "reason": None,
+            "height": int(job.get("height", 0)),
+            "newHead": {"height": int(job.get("height", 0)), "hash": block_hash},
+        }
+    )
     return res
 
 
@@ -459,7 +508,8 @@ def miner_mine(count: int | None = None) -> dict[str, int]:
         "miner.mine request",
         extra={
             "db_uri": getattr(ctx, "cfg", None) and getattr(ctx.cfg, "db_uri", None),
-            "chain_id": getattr(ctx, "cfg", None) and getattr(ctx.cfg, "chain_id", None),
+            "chain_id": getattr(ctx, "cfg", None)
+            and getattr(ctx.cfg, "chain_id", None),
             "count": count,
             "head_height": head_before.get("height"),
             "head_hash": head_before.get("hash"),
@@ -476,12 +526,18 @@ def miner_mine(count: int | None = None) -> dict[str, int]:
     height = int(head.get("height") or 0) if isinstance(head, dict) else 0
     log.info(
         "miner.mine completed",
-        extra={"mined": mined, "height": height, "head_hash": head.get("hash") if isinstance(head, dict) else None},
+        extra={
+            "mined": mined,
+            "height": height,
+            "head_hash": head.get("hash") if isinstance(head, dict) else None,
+        },
     )
     return {"mined": mined, "height": height}
 
 
-@method("miner.start", aliases=("miner_start", "miner.setAutoMine", "animica_setAutoMine"))
+@method(
+    "miner.start", aliases=("miner_start", "miner.setAutoMine", "animica_setAutoMine")
+)
 def miner_start(enable: bool | None = None) -> bool:
     global _AUTO_MINE
     _AUTO_MINE = True if enable is None else bool(enable)
@@ -501,7 +557,11 @@ def miner_stop() -> bool:
 @method("miner.submitShare", desc="Accept a submitted share from the mining pool")
 def miner_submit_share(**payload: Any) -> Dict[str, Any]:
     # TODO: wire into real PoW validation once available. For now accept and echo.
-    share = payload.get("payload") if len(payload) == 1 and "payload" in payload else payload
+    share = (
+        payload.get("payload")
+        if len(payload) == 1 and "payload" in payload
+        else payload
+    )
     return {"accepted": True, "reason": None, "share": share}
 
 
@@ -531,7 +591,9 @@ def miner_get_sha256_job(params: Dict[str, Any] | None = None) -> Dict[str, Any]
     share_target = _DEFAULT_SHARE_TARGET
     if share_microtarget is not None:
         try:
-            share_target = float(share_microtarget(_resolve_theta(), shares_per_block=1)) / float(_resolve_theta() or 1)
+            share_target = float(
+                share_microtarget(_resolve_theta(), shares_per_block=1)
+            ) / float(_resolve_theta() or 1)
         except Exception:
             share_target = _DEFAULT_SHARE_TARGET
 
@@ -551,8 +613,14 @@ def miner_get_sha256_job(params: Dict[str, Any] | None = None) -> Dict[str, Any]
     }
 
 
-@method("miner.submit_sha256_block", desc="Accept a candidate SHA-256 block from the pool")
+@method(
+    "miner.submit_sha256_block", desc="Accept a candidate SHA-256 block from the pool"
+)
 def miner_submit_sha256_block(**payload: Any) -> Dict[str, Any]:
     # Stub for integration with the Animica orchestrator. For now we simply echo success.
-    block = payload.get("payload") if len(payload) == 1 and "payload" in payload else payload
+    block = (
+        payload.get("payload")
+        if len(payload) == 1 and "payload" in payload
+        else payload
+    )
     return {"accepted": True, "payload": block}

@@ -21,22 +21,23 @@ Raise `DAError` (or a subclass) on failure.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Tuple
 
-import re
-
-from da.errors import DAError, NamespaceRangeError
 from da.constants import MAX_BLOB_BYTES
+from da.errors import DAError, NamespaceRangeError
+
 # Prefer to delegate range checks to the namespace helper if available.
 try:
-    from da.nmt.namespace import assert_namespace_id as _assert_ns  # type: ignore
+    from da.nmt.namespace import \
+        assert_namespace_id as _assert_ns  # type: ignore
 except Exception:  # pragma: no cover
     _assert_ns = None  # fallback to local check below
 
 # If constants expose explicit namespace bounds, use them; otherwise fallback.
 try:
-    from da.constants import MIN_NAMESPACE_ID, MAX_NAMESPACE_ID  # type: ignore
+    from da.constants import MAX_NAMESPACE_ID, MIN_NAMESPACE_ID  # type: ignore
 except Exception:  # pragma: no cover
     MIN_NAMESPACE_ID, MAX_NAMESPACE_ID = 0, (1 << 32) - 1
 
@@ -49,9 +50,12 @@ class ValidEnvelope:
     """
     Canonical, sanitized envelope used by DA ingestion.
     """
+
     namespace: int
     mime: Optional[str] = None
-    declared_size: Optional[int] = None  # what client claims; may be checked against Content-Length
+    declared_size: Optional[int] = (
+        None  # what client claims; may be checked against Content-Length
+    )
 
 
 # ----------------------------- Validators ----------------------------------
@@ -69,7 +73,9 @@ def _validate_namespace(ns: Any) -> int:
         return ns
     # Fallback basic bounds
     if ns < int(MIN_NAMESPACE_ID) or ns > int(MAX_NAMESPACE_ID):
-        raise NamespaceRangeError(f"namespace out of range [{MIN_NAMESPACE_ID}, {MAX_NAMESPACE_ID}]: {ns}")
+        raise NamespaceRangeError(
+            f"namespace out of range [{MIN_NAMESPACE_ID}, {MAX_NAMESPACE_ID}]: {ns}"
+        )
     return ns
 
 

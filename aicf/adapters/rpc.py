@@ -25,8 +25,8 @@ If your node uses different names (e.g. "chain_head"), pass a method map.
 import json
 import logging
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 
@@ -37,11 +37,13 @@ logger = logging.getLogger(__name__)
 
 # ---- Errors --------------------------------------------------------------------
 
+
 class RPCError(AICFError):
     """Raised when the node RPC returns an error or cannot be reached."""
 
 
 # ---- Client --------------------------------------------------------------------
+
 
 @dataclass
 class RpcMethodMap:
@@ -86,23 +88,31 @@ class JsonRpcClient:
         attempts = 1 + self.retries
         for attempt in range(attempts):
             try:
-                req = urllib.request.Request(self.url, data=body, headers=self.headers, method="POST")
+                req = urllib.request.Request(
+                    self.url, data=body, headers=self.headers, method="POST"
+                )
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                     data = resp.read()
                 obj = json.loads(data.decode("utf-8"))
                 if "error" in obj and obj["error"]:
                     raise RPCError(f"RPC error {obj['error']}")
                 return obj.get("result")
-            except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError) as e:
+            except (
+                urllib.error.URLError,
+                urllib.error.HTTPError,
+                TimeoutError,
+                json.JSONDecodeError,
+            ) as e:
                 last_err = e
                 if attempt < attempts - 1 and self.backoff_sec > 0:
-                    time.sleep(self.backoff_sec * (2 ** attempt))
+                    time.sleep(self.backoff_sec * (2**attempt))
                 else:
                     break
         raise RPCError(f"RPC call failed after {attempts} attempt(s): {last_err}")
 
 
 # ---- Adapter -------------------------------------------------------------------
+
 
 class NodeRPCAdapter:
     """
@@ -139,7 +149,9 @@ class NodeRPCAdapter:
         method_map: Optional[RpcMethodMap] = None,
         ws_emit: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     ) -> None:
-        self.client = JsonRpcClient(rpc_url, timeout=timeout_sec, headers=headers, retries=retries)
+        self.client = JsonRpcClient(
+            rpc_url, timeout=timeout_sec, headers=headers, retries=retries
+        )
         self.methods = method_map or RpcMethodMap()
         # Broadcasting callable; if None, becomes a no-op
         self._ws_emit = ws_emit

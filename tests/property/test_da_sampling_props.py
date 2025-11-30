@@ -30,7 +30,8 @@ import math
 from typing import Any, Optional, Tuple
 
 import pytest
-from hypothesis import given, settings, strategies as st
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 # ---- Optional import of animica DA probability helpers ----------------------
 
@@ -42,6 +43,7 @@ except Exception:
 
 
 # ---- Numerically stable reference bounds ------------------------------------
+
 
 def _p_hypergeom_no_bad(n: int, k: int, s: int) -> float:
     """
@@ -73,6 +75,7 @@ def _p_binomial_upper(n: int, k: int, s: int) -> float:
 
 
 # ---- Adapters: find & call p_fail and required_samples ----------------------
+
 
 def _find_fn(mod: Any, names: tuple[str, ...]) -> Optional[Any]:
     for nm in names:
@@ -119,9 +122,7 @@ def _call_p_fail(s: int, k: int, n: int) -> float:
         if fn is not None:
             try:
                 # Try keyword-rich form first
-                return float(
-                    fn(samples=s, bad=k, total=n)  # type: ignore[call-arg]
-                )
+                return float(fn(samples=s, bad=k, total=n))  # type: ignore[call-arg]
             except Exception:
                 pass
             try:
@@ -174,11 +175,11 @@ def _call_required_samples(target_p_fail: float, k: int, n: int) -> Optional[int
         return None
     # Try a few calling conventions
     for call in (
-        lambda: fn(target_p_fail=target_p_fail, bad=k, total=n),   # kw form
-        lambda: fn(target_p_fail, k, n),                           # positional (pt, k, n)
-        lambda: fn(target_p_fail, k / float(n), n),                # (pt, fraction, n)
+        lambda: fn(target_p_fail=target_p_fail, bad=k, total=n),  # kw form
+        lambda: fn(target_p_fail, k, n),  # positional (pt, k, n)
+        lambda: fn(target_p_fail, k / float(n), n),  # (pt, fraction, n)
         lambda: fn(target_p_fail=target_p_fail, fraction=k / float(n), total=n),
-        lambda: fn(target_p_fail, k / float(n)),                   # (pt, fraction)
+        lambda: fn(target_p_fail, k / float(n)),  # (pt, fraction)
     ):
         try:
             s = int(call())
@@ -195,7 +196,10 @@ def _call_required_samples(target_p_fail: float, k: int, n: int) -> Optional[int
 N = st.integers(min_value=64, max_value=4096)
 
 # Choose a corruption fraction in (0, 0.5]. Ensure at least 1 bad shard.
-FRACTION = st.floats(min_value=1e-4, max_value=0.5, allow_nan=False, allow_infinity=False)
+FRACTION = st.floats(
+    min_value=1e-4, max_value=0.5, allow_nan=False, allow_infinity=False
+)
+
 
 @st.composite
 def das_params(draw):
@@ -213,7 +217,10 @@ TOL = 1e-9
 LOOSETOL = 2e-3  # looser tolerance for minimality checks (module-specific rounding)
 
 
-@pytest.mark.skipif(not _has_p_fail(), reason="da.sampling.probability.p_fail-like function not available")
+@pytest.mark.skipif(
+    not _has_p_fail(),
+    reason="da.sampling.probability.p_fail-like function not available",
+)
 @given(das_params())
 @settings(max_examples=160)
 def test_p_fail_is_bounded_and_monotone(params: Tuple[int, int, int]):
@@ -226,7 +233,9 @@ def test_p_fail_is_bounded_and_monotone(params: Tuple[int, int, int]):
     # Bounds
     lower = _p_hypergeom_no_bad(n, k, s)
     upper = _p_binomial_upper(n, k, s)
-    assert lower - 1e-7 <= p <= upper + 1e-7, f"p_fail={p} not within [{lower}, {upper}]"
+    assert (
+        lower - 1e-7 <= p <= upper + 1e-7
+    ), f"p_fail={p} not within [{lower}, {upper}]"
 
     # Monotone in s (more samples → lower or equal failure prob)
     p_more = _call_p_fail(s + 1 if s + 1 <= n else s, k, n)
@@ -245,7 +254,9 @@ def test_p_fail_is_bounded_and_monotone(params: Tuple[int, int, int]):
 )
 @given(
     st.integers(min_value=64, max_value=4096),
-    st.floats(min_value=1e-6, max_value=1e-2, allow_nan=False, allow_infinity=False),  # target p_fail in (1e-6..1e-2]
+    st.floats(
+        min_value=1e-6, max_value=1e-2, allow_nan=False, allow_infinity=False
+    ),  # target p_fail in (1e-6..1e-2]
     FRACTION,
 )
 @settings(max_examples=120)
@@ -256,13 +267,17 @@ def test_required_samples_hits_target(n: int, target: float, frac: float):
 
     # Check that s_req achieves ≤ target (allow tiny numerical overshoot).
     p_req = _call_p_fail(s_req, k, n)
-    assert p_req <= target * (1.0 + 1e-6), f"p_fail({s_req})={p_req} exceeds target={target}"
+    assert p_req <= target * (
+        1.0 + 1e-6
+    ), f"p_fail({s_req})={p_req} exceeds target={target}"
 
     # Minimality-ish: one fewer sample should *typically* exceed target (allow looser tolerance).
     if s_req > 0:
         p_prev = _call_p_fail(s_req - 1, k, n)
         # Don't make this a hard requirement (implementations may round); use soft lower bound.
-        assert p_prev >= target * (1.0 - LOOSETOL) or p_prev > target, "required_samples not near-minimal"
+        assert (
+            p_prev >= target * (1.0 - LOOSETOL) or p_prev > target
+        ), "required_samples not near-minimal"
 
 
 @pytest.mark.skipif(not _has_p_fail(), reason="p_fail helper not available")
@@ -286,5 +301,3 @@ def test_p_fail_matches_extremes(params: Tuple[int, int, int]):
     if k <= max(1, n // 512) and s <= 8:
         approx = _p_binomial_upper(n, k, s)
         assert abs(p - approx) <= 5e-2  # 5% slack is fine here
-
-

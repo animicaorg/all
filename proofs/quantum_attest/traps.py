@@ -14,14 +14,14 @@ import math
 from dataclasses import dataclass
 from typing import Iterable, List, Sequence, Tuple
 
-
 # ---------- Data structures ----------
+
 
 @dataclass(frozen=True)
 class TrapStats:
-    n: int                   # number of traps evaluated
-    k: int                   # number of correct trap outcomes (matches)
-    p_hat: float             # empirical success rate k/n
+    n: int  # number of traps evaluated
+    k: int  # number of correct trap outcomes (matches)
+    p_hat: float  # empirical success rate k/n
 
 
 @dataclass(frozen=True)
@@ -37,12 +37,13 @@ class TrapVerificationResult:
     stats: TrapStats
     ci: ConfidenceInterval
     target_ratio: float
-    passed: bool            # True if (lower bound) >= target_ratio
+    passed: bool  # True if (lower bound) >= target_ratio
     p_value_one_sided: float  # P_{H0:p=target}(X >= k)  (binomial right tail)
     notes: str
 
 
 # ---------- Helpers ----------
+
 
 def _clamp01(x: float) -> float:
     return 0.0 if x < 0.0 else (1.0 if x > 1.0 else x)
@@ -57,32 +58,55 @@ def _z_from_alpha(alpha: float) -> float:
         raise ValueError("alpha must be in (0,1)")
     p = 1.0 - alpha / 2.0
     # Acklam constants
-    a = [-3.969683028665376e+01, 2.209460984245205e+02,
-         -2.759285104469687e+02, 1.383577518672690e+02,
-         -3.066479806614716e+01, 2.506628277459239e+00]
-    b = [-5.447609879822406e+01, 1.615858368580409e+02,
-         -1.556989798598866e+02, 6.680131188771972e+01,
-         -1.328068155288572e+01]
-    c = [-7.784894002430293e-03, -3.223964580411365e-01,
-         -2.400758277161838e+00, -2.549732539343734e+00,
-         4.374664141464968e+00, 2.938163982698783e+00]
-    d = [7.784695709041462e-03, 3.224671290700398e-01,
-         2.445134137142996e+00, 3.754408661907416e+00]
+    a = [
+        -3.969683028665376e01,
+        2.209460984245205e02,
+        -2.759285104469687e02,
+        1.383577518672690e02,
+        -3.066479806614716e01,
+        2.506628277459239e00,
+    ]
+    b = [
+        -5.447609879822406e01,
+        1.615858368580409e02,
+        -1.556989798598866e02,
+        6.680131188771972e01,
+        -1.328068155288572e01,
+    ]
+    c = [
+        -7.784894002430293e-03,
+        -3.223964580411365e-01,
+        -2.400758277161838e00,
+        -2.549732539343734e00,
+        4.374664141464968e00,
+        2.938163982698783e00,
+    ]
+    d = [
+        7.784695709041462e-03,
+        3.224671290700398e-01,
+        2.445134137142996e00,
+        3.754408661907416e00,
+    ]
     plow = 0.02425
     phigh = 1 - plow
     if p < plow:
         q = math.sqrt(-2 * math.log(p))
-        x = (((((c[0]*q + c[1])*q + c[2])*q + c[3])*q + c[4])*q + c[5]) / \
-            ((((d[0]*q + d[1])*q + d[2])*q + d[3])*q + 1)
+        x = (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / (
+            (((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1
+        )
     elif p > phigh:
         q = math.sqrt(-2 * math.log(1 - p))
-        x = -(((((c[0]*q + c[1])*q + c[2])*q + c[3])*q + c[4])*q + c[5]) / \
-             ((((d[0]*q + d[1])*q + d[2])*q + d[3])*q + 1)
+        x = -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / (
+            (((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1
+        )
     else:
         q = p - 0.5
-        r = q*q
-        x = (((((a[0]*r + a[1])*r + a[2])*r + a[3])*r + a[4])*r + a[5])*q / \
-            (((((b[0]*r + b[1])*r + b[2])*r + b[3])*r + b[4])*r + 1)
+        r = q * q
+        x = (
+            (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5])
+            * q
+            / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1)
+        )
     return x
 
 
@@ -96,7 +120,7 @@ def _binom_pmf(k: int, n: int, p: float) -> float:
         return 1.0 if k == 0 else 0.0
     if p >= 1.0:
         return 1.0 if k == n else 0.0
-    return _comb(n, k) * (p**k) * ((1.0 - p)**(n - k))
+    return _comb(n, k) * (p**k) * ((1.0 - p) ** (n - k))
 
 
 def _binom_cdf(k: int, n: int, p: float) -> float:
@@ -118,6 +142,7 @@ def _binom_sf(k: int, n: int, p: float) -> float:
 
 # ---------- Confidence intervals ----------
 
+
 def wilson_interval(k: int, n: int, alpha: float) -> ConfidenceInterval:
     """
     Wilson score interval (two-sided) for binomial proportion.
@@ -126,10 +151,10 @@ def wilson_interval(k: int, n: int, alpha: float) -> ConfidenceInterval:
         raise ValueError("n must be > 0")
     p = k / n
     z = _z_from_alpha(alpha)
-    z2 = z*z
+    z2 = z * z
     denom = 1.0 + z2 / n
-    center = (p + z2/(2*n)) / denom
-    half = z * math.sqrt((p*(1-p)/n) + (z2/(4*n*n))) / denom
+    center = (p + z2 / (2 * n)) / denom
+    half = z * math.sqrt((p * (1 - p) / n) + (z2 / (4 * n * n))) / denom
     lo, hi = _clamp01(center - half), _clamp01(center + half)
     return ConfidenceInterval(lower=lo, upper=hi, method="wilson", alpha=alpha)
 
@@ -142,11 +167,13 @@ def hoeffding_interval(k: int, n: int, alpha: float) -> ConfidenceInterval:
     if n <= 0:
         raise ValueError("n must be > 0")
     p_hat = k / n
-    eps = math.sqrt(0.5 * math.log(2.0/alpha) / n)
-    return ConfidenceInterval(lower=_clamp01(p_hat - eps),
-                              upper=_clamp01(p_hat + eps),
-                              method="hoeffding",
-                              alpha=alpha)
+    eps = math.sqrt(0.5 * math.log(2.0 / alpha) / n)
+    return ConfidenceInterval(
+        lower=_clamp01(p_hat - eps),
+        upper=_clamp01(p_hat + eps),
+        method="hoeffding",
+        alpha=alpha,
+    )
 
 
 def _invert_cdf_for_lower(k: int, n: int, alpha: float) -> float:
@@ -190,13 +217,17 @@ def clopper_pearson_interval(k: int, n: int, alpha: float) -> ConfidenceInterval
         raise ValueError("n must be > 0")
     lo = _invert_cdf_for_lower(k, n, alpha)
     hi = _invert_cdf_for_upper(k, n, alpha)
-    return ConfidenceInterval(lower=_clamp01(lo), upper=_clamp01(hi),
-                              method="clopper-pearson", alpha=alpha)
+    return ConfidenceInterval(
+        lower=_clamp01(lo), upper=_clamp01(hi), method="clopper-pearson", alpha=alpha
+    )
 
 
 # ---------- Trap stats & verification ----------
 
-def count_trap_hits(observed: Sequence[int | bool], expected: Sequence[int | bool]) -> TrapStats:
+
+def count_trap_hits(
+    observed: Sequence[int | bool], expected: Sequence[int | bool]
+) -> TrapStats:
     if len(observed) != len(expected):
         raise ValueError("observed and expected must have equal length")
     n = len(observed)
@@ -208,7 +239,7 @@ def count_trap_hits(observed: Sequence[int | bool], expected: Sequence[int | boo
         b1 = 1 if bool(b) else 0
         if a1 == b1:
             k += 1
-    return TrapStats(n=n, k=k, p_hat=k/n)
+    return TrapStats(n=n, k=k, p_hat=k / n)
 
 
 def one_sided_p_value(k: int, n: int, target_ratio: float) -> float:
@@ -268,6 +299,7 @@ def verify_traps(
 
 # ---------- Sample sizing ----------
 
+
 def min_samples_for_margin(
     target_ratio: float,
     margin: float,
@@ -285,7 +317,10 @@ def min_samples_for_margin(
     z = _z_from_alpha(alpha)
     p = _clamp01(target_ratio)
     # Conservative at extremes: use max(p*(1-p), 0.25 * bias_guard)
-    p_var = max(p * (1 - p), 0.25 if method.lower() in ("wilson", "cp", "exact") else p * (1 - p))
+    p_var = max(
+        p * (1 - p),
+        0.25 if method.lower() in ("wilson", "cp", "exact") else p * (1 - p),
+    )
     n = math.ceil((z * z) * p_var / (margin * margin))
     return int(n)
 
@@ -306,10 +341,11 @@ def min_samples_hoeffding(
 
 # ---------- Sequential (optional) ----------
 
+
 @dataclass(frozen=True)
 class SPRTDecision:
     decided: bool
-    accept: bool   # accept H1 (p ≥ p1) if decided and True; else reject (accept H0)
+    accept: bool  # accept H1 (p ≥ p1) if decided and True; else reject (accept H0)
     log_likelihood_ratio: float
     A: float
     B: float
@@ -350,6 +386,7 @@ def sprt_one_sided(
 
 
 # ---------- Convenience: boolean adapters ----------
+
 
 def verify_traps_bool(
     observed_ok: Sequence[bool],

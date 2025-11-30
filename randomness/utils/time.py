@@ -29,13 +29,15 @@ The module is dependency-light and safe for deterministic contexts.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Tuple, Optional
+from typing import Optional, Tuple
 
 # We only import error types to surface precise reasons when desired.
 # Keep this import shallow to avoid cycles elsewhere.
 try:  # pragma: no cover - soft dependency for nicer errors
-    from randomness.errors import CommitTooLate, RevealTooEarly, BadReveal  # type: ignore
+    from randomness.errors import (BadReveal, CommitTooLate,  # type: ignore
+                                   RevealTooEarly)
 except Exception:  # pragma: no cover
+
     class CommitTooLate(RuntimeError):  # type: ignore
         pass
 
@@ -134,6 +136,7 @@ class RoundSchedule:
 # Core computations
 # -----------------
 
+
 def round_id_for_time(s: RoundSchedule, block_time: int | float) -> int:
     """
     Compute the round id for a given *block_time* (epoch seconds or ms/µs/ns).
@@ -189,6 +192,7 @@ def vdf_window(s: RoundSchedule, rid: int) -> Tuple[int, int]:
 # Validations
 # -------------
 
+
 def is_within(ts: int | float, window: Tuple[int, int]) -> bool:
     """Return True if *ts* falls within [start, end) of *window* (unit-agnostic)."""
     t = RoundSchedule._normalize_epoch_seconds(ts)
@@ -233,9 +237,8 @@ def assert_reveal_time(s: RoundSchedule, rid: int, ts: int | float) -> None:
 # Convenience info
 # ----------------
 
-def round_info_for_time(
-    s: RoundSchedule, block_time: int | float
-) -> dict[str, int]:
+
+def round_info_for_time(s: RoundSchedule, block_time: int | float) -> dict[str, int]:
     """
     Produce a small dictionary with boundary timestamps for the
     round that contains *block_time*.

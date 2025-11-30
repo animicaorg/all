@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Dict, Iterable, Optional, TypedDict, Literal
+from typing import Any, Dict, Iterable, Literal, Optional, TypedDict
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -32,8 +32,10 @@ __all__ = [
 
 # ----------- Event types -----------
 
+
 class JobCompletedEvent(TypedDict, total=False):
     """Wire shape for jobCompleted push messages."""
+
     type: Literal["jobCompleted"]
     task_id: str
     kind: Literal["AI", "Quantum"]
@@ -45,6 +47,7 @@ class JobCompletedEvent(TypedDict, total=False):
 
 
 # ----------- Simple in-process WS hub -----------
+
 
 class _Hub:
     """Minimal broadcast hub that tracks live WebSocket clients."""
@@ -91,6 +94,7 @@ _hub = _Hub()
 
 
 # ----------- Public publisher API -----------
+
 
 async def publish_job_completed(
     *,
@@ -139,6 +143,7 @@ def publish_job_completed_nowait(**kwargs: Any) -> None:
 
 
 # ----------- Router factory -----------
+
 
 def router() -> APIRouter:
     """

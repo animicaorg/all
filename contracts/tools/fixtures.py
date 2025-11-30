@@ -20,19 +20,19 @@ Nothing here talks to the chain; higher-level scripts do that via the SDK.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import sys
-import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-
 # --------------------------------------------------------------------------------------
 # Paths & environment
 # --------------------------------------------------------------------------------------
+
 
 def repo_root() -> Path:
     """
@@ -86,6 +86,7 @@ def write_bytes(path: Path, data: bytes) -> None:
 # --------------------------------------------------------------------------------------
 # Deterministic bytes & hashing helpers
 # --------------------------------------------------------------------------------------
+
 
 def drbg(seed: bytes, n: int) -> bytes:
     """
@@ -156,6 +157,7 @@ def sample_address(idx: int = 0) -> str:
 # Minimal ABI & manifest templates for examples
 # --------------------------------------------------------------------------------------
 
+
 def abi_counter() -> Dict[str, Any]:
     """
     Minimal ABI for the Counter contract, compatible with vm_py runtime.
@@ -165,7 +167,11 @@ def abi_counter() -> Dict[str, Any]:
         "version": 1,
         "functions": [
             {"name": "inc", "inputs": [{"name": "n", "type": "uint64"}], "outputs": []},
-            {"name": "get", "inputs": [], "outputs": [{"name": "value", "type": "uint64"}]},
+            {
+                "name": "get",
+                "inputs": [],
+                "outputs": [{"name": "value", "type": "uint64"}],
+            },
         ],
         "events": [
             {"name": "Inc", "args": [{"name": "by", "type": "uint64"}]},
@@ -182,20 +188,42 @@ def abi_escrow() -> Dict[str, Any]:
         "name": "Escrow",
         "version": 1,
         "functions": [
-            {"name": "init", "inputs": [
-                {"name": "party_a", "type": "address"},
-                {"name": "party_b", "type": "address"},
-                {"name": "amount", "type": "uint64"},
-            ], "outputs": []},
-            {"name": "release", "inputs": [{"name": "to", "type": "address"}], "outputs": []},
-            {"name": "balance", "inputs": [], "outputs": [{"name": "amount", "type": "uint64"}]},
+            {
+                "name": "init",
+                "inputs": [
+                    {"name": "party_a", "type": "address"},
+                    {"name": "party_b", "type": "address"},
+                    {"name": "amount", "type": "uint64"},
+                ],
+                "outputs": [],
+            },
+            {
+                "name": "release",
+                "inputs": [{"name": "to", "type": "address"}],
+                "outputs": [],
+            },
+            {
+                "name": "balance",
+                "inputs": [],
+                "outputs": [{"name": "amount", "type": "uint64"}],
+            },
         ],
-        "events": [{"name": "Released", "args": [{"name": "to", "type": "address"}, {"name": "amount", "type": "uint64"}]}],
+        "events": [
+            {
+                "name": "Released",
+                "args": [
+                    {"name": "to", "type": "address"},
+                    {"name": "amount", "type": "uint64"},
+                ],
+            }
+        ],
         "errors": [],
     }
 
 
-def manifest_template(name: str, abi: Dict[str, Any], code_hash: Optional[str] = None) -> Dict[str, Any]:
+def manifest_template(
+    name: str, abi: Dict[str, Any], code_hash: Optional[str] = None
+) -> Dict[str, Any]:
     """
     Skeleton manifest matching contracts/schemas/manifest.schema.json (loosely; code_hash can be filled post-compile).
     """
@@ -203,8 +231,8 @@ def manifest_template(name: str, abi: Dict[str, Any], code_hash: Optional[str] =
         "name": name,
         "abi": abi,
         "code_hash": code_hash or "<fill-after-compile>",
-        "caps": {},         # reserved for future capability declarations
-        "resources": {},    # optional metadata
+        "caps": {},  # reserved for future capability declarations
+        "resources": {},  # optional metadata
         "version": 1,
     }
 
@@ -220,6 +248,7 @@ def example_escrow_manifest() -> Dict[str, Any]:
 # --------------------------------------------------------------------------------------
 # Example argument builders
 # --------------------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class CounterIncArgs:
@@ -244,6 +273,7 @@ def sample_escrow_init(amount: int = 1000) -> EscrowInitArgs:
 
 
 # --- Capabilities: AI/Quantum & DA sample payloads ------------------------------------
+
 
 def sample_ai_prompt(model: str = "small:chat") -> Dict[str, Any]:
     """
@@ -290,6 +320,7 @@ def sample_da_blob(size: int = 4 * 1024, ns: int = 24) -> Tuple[int, bytes]:
 # Fixture file access (tests/fixtures/*)
 # --------------------------------------------------------------------------------------
 
+
 def fixtures_dir() -> Path:
     return repo_root() / "tests" / "fixtures"
 
@@ -307,6 +338,7 @@ def read_fixture_json(relpath: str) -> Any:
 # --------------------------------------------------------------------------------------
 # Temp artifact helpers
 # --------------------------------------------------------------------------------------
+
 
 def materialize_temp_json(name: str, obj: Any) -> Path:
     """
@@ -357,22 +389,42 @@ def assert_address(v: str, field: str = "address") -> None:
 
 __all__ = [
     # paths & IO
-    "repo_root", "ensure_build_dir", "canonical_json_str", "write_json", "write_bytes",
+    "repo_root",
+    "ensure_build_dir",
+    "canonical_json_str",
+    "write_json",
+    "write_bytes",
     # hashing & drbg
-    "drbg", "sha3_256_hex", "sha3_512_hex",
+    "drbg",
+    "sha3_256_hex",
+    "sha3_512_hex",
     # addresses & seeds
-    "SAMPLE_ADDRESSES", "load_seed_wallets", "sample_address",
+    "SAMPLE_ADDRESSES",
+    "load_seed_wallets",
+    "sample_address",
     # ABI & manifests
-    "abi_counter", "abi_escrow", "manifest_template",
-    "example_counter_manifest", "example_escrow_manifest",
+    "abi_counter",
+    "abi_escrow",
+    "manifest_template",
+    "example_counter_manifest",
+    "example_escrow_manifest",
     # args & capability payloads
-    "CounterIncArgs", "sample_counter_inc",
-    "EscrowInitArgs", "sample_escrow_init",
-    "sample_ai_prompt", "sample_quantum_circuit", "sample_da_blob",
+    "CounterIncArgs",
+    "sample_counter_inc",
+    "EscrowInitArgs",
+    "sample_escrow_init",
+    "sample_ai_prompt",
+    "sample_quantum_circuit",
+    "sample_da_blob",
     # fixtures access
-    "fixtures_dir", "read_fixture_bytes", "read_fixture_json",
+    "fixtures_dir",
+    "read_fixture_bytes",
+    "read_fixture_json",
     # temp artifacts
-    "materialize_temp_json", "materialize_temp_bytes",
+    "materialize_temp_json",
+    "materialize_temp_bytes",
     # validation
-    "is_hexlike", "is_address_like", "assert_address",
+    "is_hexlike",
+    "is_address_like",
+    "assert_address",
 ]

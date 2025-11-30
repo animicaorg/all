@@ -30,36 +30,27 @@ from dataclasses import dataclass
 from typing import Any
 
 # Pairing helpers and generators from our wrapper
-from .pairing_bn254 import (
-    pair,
-    check_pairing_product,
-    is_on_curve_g1,
-    is_on_curve_g2,
-    g1_generator,
-    g2_generator,
-    curve_order,
-)
+from .pairing_bn254 import (check_pairing_product, curve_order, g1_generator,
+                            g2_generator, is_on_curve_g1, is_on_curve_g2, pair)
 
 # ---- py_ecc group ops (backend-agnostic import) -----------------------------
 try:  # Prefer optimized backend
-    from py_ecc.optimized_bn128 import (  # type: ignore
-        add as _add,
-        neg as _neg,
-        multiply as _mul,
-        is_on_curve as _is_on_curve,
-        b as _B,
-        b2 as _B2,
-    )
+    from py_ecc.optimized_bn128 import add as _add  # type: ignore
+    from py_ecc.optimized_bn128 import b as _B
+    from py_ecc.optimized_bn128 import b2 as _B2
+    from py_ecc.optimized_bn128 import is_on_curve as _is_on_curve
+    from py_ecc.optimized_bn128 import multiply as _mul
+    from py_ecc.optimized_bn128 import neg as _neg
+
     _BACKEND = "py_ecc.optimized_bn128"
 except Exception:  # pragma: no cover
-    from py_ecc.bn128 import (  # type: ignore
-        add as _add,
-        neg as _neg,
-        multiply as _mul,
-        is_on_curve as _is_on_curve,
-        b as _B,
-        b2 as _B2,
-    )
+    from py_ecc.bn128 import add as _add  # type: ignore
+    from py_ecc.bn128 import b as _B
+    from py_ecc.bn128 import b2 as _B2
+    from py_ecc.bn128 import is_on_curve as _is_on_curve
+    from py_ecc.bn128 import multiply as _mul
+    from py_ecc.bn128 import neg as _neg
+
     _BACKEND = "py_ecc.bn128"
 
 
@@ -82,6 +73,7 @@ class VerifyingKey:
     s_g2 : G2Point
         Trusted-setup element s * g2.
     """
+
     g1: G1Point
     g2: G2Point
     s_g2: G2Point
@@ -90,7 +82,7 @@ class VerifyingKey:
 __all__ = [
     "VerifyingKey",
     "kzg_verify",
-    "verify",               # alias
+    "verify",  # alias
     "make_verifying_key",
     "is_on_curve_g1",
     "is_on_curve_g2",
@@ -98,6 +90,7 @@ __all__ = [
 
 
 # ---- Helpers ----------------------------------------------------------------
+
 
 def _on_curve_g1(P: G1Point) -> bool:
     try:
@@ -134,6 +127,7 @@ def make_verifying_key(s: int) -> VerifyingKey:
 
 
 # ---- Core verification -------------------------------------------------------
+
 
 def kzg_verify(
     commitment: G1Point,
@@ -211,8 +205,8 @@ if __name__ == "__main__":  # pragma: no cover
     q = curve_order()
     a0 = rnd.randrange(1, q)
     a1 = rnd.randrange(1, q)
-    s  = rnd.randrange(2, q-1)  # toxic waste (dev only)
-    x  = rnd.randrange(1, q)
+    s = rnd.randrange(2, q - 1)  # toxic waste (dev only)
+    x = rnd.randrange(1, q)
 
     # Build verifying key from s (dev only)
     vk = make_verifying_key(s)

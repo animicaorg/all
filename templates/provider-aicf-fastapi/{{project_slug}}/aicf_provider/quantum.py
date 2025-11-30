@@ -50,18 +50,17 @@ simulator, remote QPU API, etc.) when you’re ready.
 
 from __future__ import annotations
 
-import os
-import re
-import time
+import hashlib
 import json
 import math
-import hashlib
+import os
 import random
+import re
+import time
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple, Union
 
 from .models import QuantumJobIn, QuantumResult
-
 
 BACKEND_NAME = "simple-sampler/v1"
 # Soft upper bound on total produced bits to avoid accidental memory blow-ups.
@@ -71,6 +70,7 @@ MAX_TOTAL_BITS = 20_000_000  # e.g. 20M (n_qubits * shots)
 # ---------------------------------------------------------------------------
 # Utilities
 # ---------------------------------------------------------------------------
+
 
 def _stable_seed_for_job(job: QuantumJobIn) -> int:
     """
@@ -91,7 +91,9 @@ def _stable_seed_for_job(job: QuantumJobIn) -> int:
 
     # Normalize the circuit for hashing
     if isinstance(job.circuit, dict):
-        circuit_bytes = json.dumps(job.circuit, sort_keys=True, separators=(",", ":")).encode()
+        circuit_bytes = json.dumps(
+            job.circuit, sort_keys=True, separators=(",", ":")
+        ).encode()
     else:
         circuit_bytes = str(job.circuit).encode()
 
@@ -113,7 +115,9 @@ def _parse_qasm_qubits(qasm: str) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 
-def _normalize_circuit(job: QuantumJobIn) -> Tuple[int, Optional[List[float]], Dict[str, Union[str, int, float]]]:
+def _normalize_circuit(
+    job: QuantumJobIn,
+) -> Tuple[int, Optional[List[float]], Dict[str, Union[str, int, float]]]:
     """
     Normalize various circuit representations into:
         (n_qubits, bias_list_or_None, meta)
@@ -234,12 +238,14 @@ def _trap_check(
 # Backend
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class SamplerConfig:
     """Configuration toggles for the simple sampler backend."""
+
     name: str = BACKEND_NAME
-    trap_min_ratio: float = 0.06      # fraction of shots used by trap check
-    trap_tolerance: float = 0.18      # how far from 50/50 we still accept
+    trap_min_ratio: float = 0.06  # fraction of shots used by trap check
+    trap_tolerance: float = 0.18  # how far from 50/50 we still accept
 
 
 class SimpleSamplerBackend:
@@ -269,7 +275,9 @@ class SimpleSamplerBackend:
         trap_checks = None
         if job.include_traps:
             trap_checks = _trap_check(
-                rng, n_qubits, bitstrings,
+                rng,
+                n_qubits,
+                bitstrings,
                 min_ratio=self.cfg.trap_min_ratio,
                 tolerance=self.cfg.trap_tolerance,
             )
@@ -305,7 +313,9 @@ def get_backend() -> SimpleSamplerBackend:
     return _backend_singleton
 
 
-def run_quantum_job(job: QuantumJobIn, *, job_id: Optional[str] = None) -> QuantumResult:
+def run_quantum_job(
+    job: QuantumJobIn, *, job_id: Optional[str] = None
+) -> QuantumResult:
     """
     High-level helper used by route handlers:
       - Executes the job on the sampler backend

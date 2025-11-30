@@ -24,14 +24,17 @@ byte layouts described in the NMT spec:
 
 All functions return raw bytes. `*_hex` variants return lowercase "0x" hex.
 """
+
 from __future__ import annotations
 
-from hashlib import sha3_256 as _sha3_256, sha3_512 as _sha3_512
+from hashlib import sha3_256 as _sha3_256
+from hashlib import sha3_512 as _sha3_512
 from typing import Iterable, Union
 
 BytesLike = Union[bytes, bytearray, memoryview]
 
 # ------------------------------ Basic wrappers -------------------------------
+
 
 def sha3_256(data: BytesLike) -> bytes:
     """Return SHA3-256(bytes(data))."""
@@ -56,6 +59,7 @@ def sha3_512_hex(data: BytesLike) -> str:
 # -------------------------- Domain-separated hashing -------------------------
 
 _ANIMICA_DS_PREFIX = b"Animica|DS|"
+
 
 def hash_domain(tag: Union[str, bytes], *parts: BytesLike, bits: int = 256) -> bytes:
     """
@@ -97,18 +101,23 @@ def hash_domain(tag: Union[str, bytes], *parts: BytesLike, bits: int = 256) -> b
 
 def hash_domain_hex(tag: Union[str, bytes], *parts: BytesLike, bits: int = 256) -> str:
     """Hex string ('0x'…) form of `hash_domain`."""
-    return "0x" + ( _sha3_256 if bits == 256 else _sha3_512 )(  # type: ignore[misc]
-        bytearray(_ANIMICA_DS_PREFIX) +
-        (tag.encode("ascii") if isinstance(tag, str) else bytes(tag)) + b"|\x00" +
-        b"".join(_varuint(len(_b(p))) + _b(p) for p in parts)
-    ).hexdigest()
+    return (
+        "0x"
+        + (_sha3_256 if bits == 256 else _sha3_512)(  # type: ignore[misc]
+            bytearray(_ANIMICA_DS_PREFIX)
+            + (tag.encode("ascii") if isinstance(tag, str) else bytes(tag))
+            + b"|\x00"
+            + b"".join(_varuint(len(_b(p))) + _b(p) for p in parts)
+        ).hexdigest()
+    )
 
 
 # ---------------------------- NMT-specific helpers ---------------------------
 
 # Single-byte domain tags used by NMT hashing (see nmt.cddl):
-TAG_NMT_LEAF  = b"\x00"
+TAG_NMT_LEAF = b"\x00"
 TAG_NMT_INNER = b"\x01"
+
 
 def nmt_leaf_preimage(ns: int, size: int, data: BytesLike) -> bytes:
     """
@@ -139,7 +148,9 @@ def nmt_leaf_hash_hex(ns: int, data: BytesLike) -> str:
     return "0x" + _sha3_256(nmt_leaf_preimage(ns, len(_b(data)), _b(data))).hexdigest()
 
 
-def nmt_inner_preimage(left_hash: BytesLike, right_hash: BytesLike, ns_min: int, ns_max: int) -> bytes:
+def nmt_inner_preimage(
+    left_hash: BytesLike, right_hash: BytesLike, ns_min: int, ns_max: int
+) -> bytes:
     """
     Build the exact preimage used by the NMT for an inner node.
 
@@ -154,19 +165,29 @@ def nmt_inner_preimage(left_hash: BytesLike, right_hash: BytesLike, ns_min: int,
     return TAG_NMT_INNER + lh + rh + _varuint(ns_min) + _varuint(ns_max)
 
 
-def nmt_inner_hash(left_hash: BytesLike, right_hash: BytesLike, ns_min: int, ns_max: int) -> bytes:
+def nmt_inner_hash(
+    left_hash: BytesLike, right_hash: BytesLike, ns_min: int, ns_max: int
+) -> bytes:
     """
     Compute SHA3-256 hash of an NMT inner node with domain tag 0x01.
     """
     return _sha3_256(nmt_inner_preimage(left_hash, right_hash, ns_min, ns_max)).digest()
 
 
-def nmt_inner_hash_hex(left_hash: BytesLike, right_hash: BytesLike, ns_min: int, ns_max: int) -> str:
+def nmt_inner_hash_hex(
+    left_hash: BytesLike, right_hash: BytesLike, ns_min: int, ns_max: int
+) -> str:
     """Hex form of `nmt_inner_hash`."""
-    return "0x" + _sha3_256(nmt_inner_preimage(left_hash, right_hash, ns_min, ns_max)).hexdigest()
+    return (
+        "0x"
+        + _sha3_256(
+            nmt_inner_preimage(left_hash, right_hash, ns_min, ns_max)
+        ).hexdigest()
+    )
 
 
 # ------------------------------- Misc helpers --------------------------------
+
 
 def _b(x: BytesLike) -> bytes:
     """Coerce common byte-likes (bytes/bytearray/memoryview) to `bytes`."""
@@ -206,13 +227,22 @@ def concat(parts: Iterable[BytesLike]) -> bytes:
 
 __all__ = [
     # basic
-    "sha3_256", "sha3_256_hex", "sha3_512", "sha3_512_hex",
+    "sha3_256",
+    "sha3_256_hex",
+    "sha3_512",
+    "sha3_512_hex",
     # domain-separated
-    "hash_domain", "hash_domain_hex",
+    "hash_domain",
+    "hash_domain_hex",
     # NMT helpers
-    "TAG_NMT_LEAF", "TAG_NMT_INNER",
-    "nmt_leaf_preimage", "nmt_leaf_hash", "nmt_leaf_hash_hex",
-    "nmt_inner_preimage", "nmt_inner_hash", "nmt_inner_hash_hex",
+    "TAG_NMT_LEAF",
+    "TAG_NMT_INNER",
+    "nmt_leaf_preimage",
+    "nmt_leaf_hash",
+    "nmt_leaf_hash_hex",
+    "nmt_inner_preimage",
+    "nmt_inner_hash",
+    "nmt_inner_hash_hex",
     # misc
     "concat",
 ]

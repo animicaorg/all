@@ -36,8 +36,10 @@ except Exception:  # pragma: no cover
 
 # --- small local hex helpers (avoid hard dependency on utils at import time) ---- #
 
+
 def _b2h(b: bytes) -> str:
     return "0x" + b.hex()
+
 
 def _h2b(s: str) -> bytes:
     s = s.strip()
@@ -47,6 +49,7 @@ def _h2b(s: str) -> bytes:
 
 
 # --------------------------------- Types ----------------------------------- #
+
 
 @dataclass(frozen=True)
 class Commitment:
@@ -60,6 +63,7 @@ class Commitment:
     The commitment is what is included/linked in headers as the DA root for
     a bundle of blobs (possibly aggregated).
     """
+
     namespace: NamespaceId
     root: bytes
     size_bytes: int
@@ -106,12 +110,16 @@ class BlobRef:
     BlobRef is typically produced by the store/index after a put(), or derived
     from a Commitment when constructing retrieval requests.
     """
+
     commitment_root: bytes
     namespace: NamespaceId
     size_bytes: int
 
     def __post_init__(self) -> None:
-        if not isinstance(self.commitment_root, (bytes, bytearray)) or len(self.commitment_root) == 0:
+        if (
+            not isinstance(self.commitment_root, (bytes, bytearray))
+            or len(self.commitment_root) == 0
+        ):
             raise ValueError("commitment_root must be non-empty bytes")
         if not isinstance(self.namespace, int) or self.namespace < 0:
             raise ValueError("namespace must be a non-negative integer")
@@ -150,6 +158,7 @@ class BlobMeta:
       • total_shards — n used during encoding (if available)
       • share_bytes  — size of each share (if available)
     """
+
     namespace: NamespaceId
     size_bytes: int
     mime: Optional[str] = None
@@ -166,8 +175,11 @@ class BlobMeta:
             raise ValueError("data_shards must be > 0 when provided")
         if self.total_shards is not None and self.total_shards <= 0:
             raise ValueError("total_shards must be > 0 when provided")
-        if (self.data_shards is not None and self.total_shards is not None
-                and self.data_shards > self.total_shards):
+        if (
+            self.data_shards is not None
+            and self.total_shards is not None
+            and self.data_shards > self.total_shards
+        ):
             raise ValueError("data_shards cannot exceed total_shards")
         if self.share_bytes is not None and self.share_bytes <= 0:
             raise ValueError("share_bytes must be > 0 when provided")
@@ -189,7 +201,9 @@ class BlobMeta:
             size_bytes=int(d["sizeBytes"]),
             mime=d.get("mime"),
             data_shards=(None if d.get("dataShards") is None else int(d["dataShards"])),
-            total_shards=(None if d.get("totalShards") is None else int(d["totalShards"])),
+            total_shards=(
+                None if d.get("totalShards") is None else int(d["totalShards"])
+            ),
             share_bytes=(None if d.get("shareBytes") is None else int(d["shareBytes"])),
         )
 
@@ -210,6 +224,7 @@ class Receipt:
     (e.g., adapters/rpc). Here we only carry the bytes and expose helpers for
     (de)serialization.
     """
+
     commitment_root: bytes
     namespace: NamespaceId
     size_bytes: int
@@ -218,7 +233,10 @@ class Receipt:
     signature: Optional[bytes] = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.commitment_root, (bytes, bytearray)) or len(self.commitment_root) == 0:
+        if (
+            not isinstance(self.commitment_root, (bytes, bytearray))
+            or len(self.commitment_root) == 0
+        ):
             raise ValueError("commitment_root must be non-empty bytes")
         if not isinstance(self.namespace, int) or self.namespace < 0:
             raise ValueError("namespace must be a non-negative integer")
@@ -253,9 +271,15 @@ class Receipt:
             commitment_root=_h2b(d["root"]),
             namespace=int(d["namespace"]),
             size_bytes=int(d["sizeBytes"]),
-            alg_policy_root=(None if d.get("algPolicyRoot") in (None, "") else _h2b(d["algPolicyRoot"])),
+            alg_policy_root=(
+                None
+                if d.get("algPolicyRoot") in (None, "")
+                else _h2b(d["algPolicyRoot"])
+            ),
             signer_address=d.get("signer"),
-            signature=(None if d.get("signature") in (None, "") else _h2b(d["signature"])),
+            signature=(
+                None if d.get("signature") in (None, "") else _h2b(d["signature"])
+            ),
         )
 
 

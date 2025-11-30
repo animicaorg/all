@@ -35,7 +35,6 @@ from importlib import import_module
 from threading import RLock
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
-
 __version__ = "0.1.0"
 
 
@@ -43,8 +42,10 @@ __version__ = "0.1.0"
 # Errors
 # =============================================================================
 
+
 class RegistryError(Exception):
     """Base error for registry operations."""
+
     code: str = "REGISTRY_ERROR"
 
     def __init__(self, message: str, *, code: Optional[str] = None):
@@ -74,9 +75,11 @@ class MissingField(RegistryError):
 # Spec & storage
 # =============================================================================
 
+
 @dataclass(frozen=True)
 class VerifierSpec:
     """Declarative binding of a kind → module:function (+ optional metadata)."""
+
     kind: str
     module: str
     func: str = "verify"
@@ -92,6 +95,7 @@ _LOCK = RLock()
 # =============================================================================
 # Core API
 # =============================================================================
+
 
 def register(
     kind: str,
@@ -206,6 +210,7 @@ def verify(kind: str, /, **kwargs: Any) -> bool:
 # Defaults
 # =============================================================================
 
+
 def _register_defaults() -> None:
     defaults = [
         VerifierSpec(
@@ -244,6 +249,7 @@ def _register_defaults() -> None:
     with _LOCK:
         for spec in defaults:
             _REGISTRY.setdefault(spec.kind, spec)
+
 
 _register_defaults()
 

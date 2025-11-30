@@ -21,8 +21,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable, List, Optional, Sequence, Tuple
 
-from ..types.result import ApplyResult
 from ..types.events import LogEvent
+from ..types.result import ApplyResult
 
 # Optional imports: dispatcher (preferred), journal (if present)
 try:
@@ -40,6 +40,7 @@ except Exception:  # pragma: no cover
 # --------------------------------------------------------------------------------------
 # Helpers
 # --------------------------------------------------------------------------------------
+
 
 def _state_root(state: Any) -> bytes:
     """
@@ -91,11 +92,13 @@ def _as_bytes32(x: Any) -> bytes:
 # Public result container for blocks
 # --------------------------------------------------------------------------------------
 
+
 @dataclass
 class BlockResult:
     """
     Result of applying all txs in a block *in order*.
     """
+
     tx_results: List[ApplyResult]
     total_gas_used: int
     logs: List[LogEvent]
@@ -106,6 +109,7 @@ class BlockResult:
 # --------------------------------------------------------------------------------------
 # TX and Block application
 # --------------------------------------------------------------------------------------
+
 
 def apply_tx(
     tx: Any,
@@ -144,16 +148,20 @@ def apply_tx(
 
     if kind == "transfer":
         from .transfers import apply_transfer  # lazy import; raises if missing
+
         return apply_transfer(tx, state, block_env, tx_env=tx_env, params=params)
     elif kind == "deploy":
         from .contracts import apply_deploy
+
         return apply_deploy(tx, state, block_env, tx_env=tx_env, params=params)
     elif kind == "call":
         from .contracts import apply_call
+
         return apply_call(tx, state, block_env, tx_env=tx_env, params=params)
     else:
         # Unknown kind — treat as REVERT with zero gas (defensive)
         from ..types.status import TxStatus
+
         return ApplyResult(
             status=TxStatus.REVERT,
             gas_used=0,
@@ -217,10 +225,17 @@ def apply_block(
         except Exception as exc:
             # Defensive: transform unexpected exceptions into a REVERT result
             from ..types.status import TxStatus
+
             res = ApplyResult(
                 status=TxStatus.REVERT,
                 gas_used=0,
-                logs=[LogEvent(address=b"\x00" * 20, topics=[b"executor.error"], data=str(exc).encode())],
+                logs=[
+                    LogEvent(
+                        address=b"\x00" * 20,
+                        topics=[b"executor.error"],
+                        data=str(exc).encode(),
+                    )
+                ],
                 state_root=_state_root(state),
                 receipt=None,
             )
@@ -232,7 +247,9 @@ def apply_block(
             all_logs.extend(logs)
 
         # Revert partial state if the tx failed with OOG (hard) or if callee indicated rollback.
-        status_name = getattr(getattr(res, "status", None), "name", None) or str(getattr(res, "status", ""))
+        status_name = getattr(getattr(res, "status", None), "name", None) or str(
+            getattr(res, "status", "")
+        )
         failed = str(status_name).upper() in ("OOG", "REVERT", "FAILED")
         if use_journal and jh is not None and inner_cp is not None:
             try:

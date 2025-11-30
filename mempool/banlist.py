@@ -15,7 +15,6 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional
 
-
 Clock = Callable[[], float]
 
 
@@ -44,6 +43,7 @@ class BanPolicy:
     - max_rejects_in_window: if a sender triggers this many rejects in `window_s`,
       they are banned for `spam_ban_s`.
     """
+
     low_fee_ban_s: int = 30
     spam_ban_s: int = 120
     window_s: int = 10
@@ -53,6 +53,7 @@ class BanPolicy:
 @dataclass
 class BanState:
     """Internal accounting for bans and rolling reject counters."""
+
     until_s: float = 0.0
     # simple rolling window counter
     last_reset_s: float = 0.0

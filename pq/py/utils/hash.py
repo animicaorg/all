@@ -22,16 +22,17 @@ Notes
 
 """
 
-from typing import Iterable, Optional
-import hashlib
 import binascii
+import hashlib
 import logging
+from typing import Iterable, Optional
 
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Hex helpers
 # ---------------------------------------------------------------------------
+
 
 def to_hex(b: bytes, prefix: str = "0x") -> str:
     """
@@ -68,6 +69,7 @@ def from_hex(s: str | bytes | bytearray | memoryview) -> bytes:
 # Core SHA3 (always available via hashlib in Python 3.6+)
 # ---------------------------------------------------------------------------
 
+
 def sha3_256(data: bytes | bytearray | memoryview) -> bytes:
     """
     SHA3-256 digest of `data`.
@@ -90,10 +92,12 @@ def sha3_512(data: bytes | bytearray | memoryview) -> bytes:
 # Optional BLAKE3
 # ---------------------------------------------------------------------------
 
+
 def _blake3_impl():
     try:
         # Lazy import to keep this module importable without blake3 installed.
         import blake3  # type: ignore
+
         return blake3
     except Exception:
         return None
@@ -110,7 +114,9 @@ def blake3_256(data: bytes | bytearray | memoryview) -> bytes:
     impl = _blake3_impl()
     if impl is None:
         if not getattr(blake3_256, "_warned", False):
-            log.warning("blake3 package not installed; blake3_256() falling back to sha3_256.")
+            log.warning(
+                "blake3 package not installed; blake3_256() falling back to sha3_256."
+            )
             setattr(blake3_256, "_warned", True)
         return sha3_256(data)
 
@@ -120,6 +126,7 @@ def blake3_256(data: bytes | bytearray | memoryview) -> bytes:
 # ---------------------------------------------------------------------------
 # Optional Keccak-256 (pre-standard SHA-3 — used in some ecosystems)
 # ---------------------------------------------------------------------------
+
 
 def _keccak_factory():
     """
@@ -131,10 +138,12 @@ def _keccak_factory():
     # pysha3 (preferred)
     try:
         import sha3  # type: ignore
+
         def _k(data: bytes) -> bytes:
             h = sha3.keccak_256()
             h.update(data)
             return h.digest()
+
         return _k
     except Exception:
         pass
@@ -143,18 +152,22 @@ def _keccak_factory():
     # Try both possible top-level package names (Crypto vs Cryptodome).
     try:
         from Crypto.Hash import keccak as _keccak  # type: ignore
+
         def _k2(data: bytes) -> bytes:
             h = _keccak.new(digest_bits=256)
             h.update(data)
             return h.digest()
+
         return _k2
     except Exception:
         try:
             from Cryptodome.Hash import keccak as _keccak  # type: ignore
+
             def _k3(data: bytes) -> bytes:
                 h = _keccak.new(digest_bits=256)
                 h.update(data)
                 return h.digest()
+
             return _k3
         except Exception:
             pass
@@ -185,6 +198,7 @@ def keccak_256(data: bytes | bytearray | memoryview) -> bytes:
 # ---------------------------------------------------------------------------
 # Utility helpers
 # ---------------------------------------------------------------------------
+
 
 def hash_concat(parts: Iterable[bytes], algo: str = "sha3_256") -> bytes:
     """
@@ -223,7 +237,9 @@ def hash_tagged(tag: bytes, msg: bytes, algo: str = "sha3_256") -> bytes:
     Simple domain separation helper: H( len(tag)||tag || msg ).
     **Do not** use for consensus unless the exact construction is specified in `spec/domains.yaml`.
     """
-    if not isinstance(tag, (bytes, bytearray)) or not isinstance(msg, (bytes, bytearray)):
+    if not isinstance(tag, (bytes, bytearray)) or not isinstance(
+        msg, (bytes, bytearray)
+    ):
         raise TypeError("hash_tagged expects bytes for tag and msg")
     if len(tag) > 255:
         raise ValueError("tag too long; must fit in one byte length for this helper")

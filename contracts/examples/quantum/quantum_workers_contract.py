@@ -1,7 +1,7 @@
 # QuantumWorkers contract skeleton
 # Deterministic Python contract for the VM
 
-from stdlib import storage, events, abi
+from stdlib import abi, events, storage
 
 K_INIT = b"qw/init"
 K_WORKER_PREFIX = b"qw/worker/"  # + worker_id -> struct
@@ -10,6 +10,7 @@ K_WORKER_SEQ = b"qw/seq"
 UINT256_MAX = (1 << 256) - 1
 
 # Helpers
+
 
 def _get_uint(k):
     v = storage.get(k)
@@ -27,7 +28,9 @@ def _set_uint(k, v):
 def _worker_key(worker_id: bytes) -> bytes:
     return K_WORKER_PREFIX + worker_id
 
+
 # Views
+
 
 def get_worker(worker_id: bytes) -> dict:
     w = storage.get(_worker_key(worker_id))
@@ -35,24 +38,29 @@ def get_worker(worker_id: bytes) -> dict:
         return {"exists": False}
     return w
 
+
 # State-changing
+
 
 def register_worker(pubkey: bytes, metadata: bytes) -> bytes:
     # Assign simple incrementing worker id (bytes)
     seq = _get_uint(K_WORKER_SEQ)
-    worker_id = seq.to_bytes(8, 'big')
+    worker_id = seq.to_bytes(8, "big")
 
     # Minimal validation
     if not isinstance(pubkey, bytes):
         abi.revert(b"ERR_INVALID_PUBKEY")
 
-    storage.set(_worker_key(worker_id), {
-        "pubkey": pubkey,
-        "stake": 0,
-        "status": b"active",
-        "reputation": 0,
-        "metadata": metadata,
-    })
+    storage.set(
+        _worker_key(worker_id),
+        {
+            "pubkey": pubkey,
+            "stake": 0,
+            "status": b"active",
+            "reputation": 0,
+            "metadata": metadata,
+        },
+    )
 
     _set_uint(K_WORKER_SEQ, seq + 1)
 
@@ -65,7 +73,7 @@ def stake(worker_id: bytes, amount: int) -> None:
     w = storage.get(_worker_key(worker_id))
     if w is None:
         abi.revert(b"ERR_UNKNOWN_WORKER")
-    w['stake'] = w.get('stake', 0) + amount
+    w["stake"] = w.get("stake", 0) + amount
     storage.set(_worker_key(worker_id), w)
     events.emit(b"WorkerStaked", [worker_id, amount])
 
@@ -75,7 +83,7 @@ def slash(worker_id: bytes, reason: bytes) -> None:
     w = storage.get(_worker_key(worker_id))
     if w is None:
         abi.revert(b"ERR_UNKNOWN_WORKER")
-    w['status'] = b"slashed"
+    w["status"] = b"slashed"
     storage.set(_worker_key(worker_id), w)
     events.emit(b"WorkerSlashed", [worker_id, reason])
 
@@ -84,24 +92,26 @@ def update_reputation(worker_id: bytes, delta: int) -> None:
     w = storage.get(_worker_key(worker_id))
     if w is None:
         abi.revert(b"ERR_UNKNOWN_WORKER")
-    w['reputation'] = w.get('reputation', 0) + delta
+    w["reputation"] = w.get("reputation", 0) + delta
     storage.set(_worker_key(worker_id), w)
     events.emit(b"ReputationUpdated", [worker_id, delta])
 
+
 # Main dispatcher
+
 
 def main(action: bytes, **kwargs) -> bytes:
     if action == b"register_worker":
-        return register_worker(kwargs['pubkey'], kwargs.get('metadata', b''))
+        return register_worker(kwargs["pubkey"], kwargs.get("metadata", b""))
     if action == b"stake":
-        stake(kwargs['worker_id'], kwargs['amount'])
+        stake(kwargs["worker_id"], kwargs["amount"])
         return b""
     if action == b"slash":
-        slash(kwargs['worker_id'], kwargs.get('reason', b''))
+        slash(kwargs["worker_id"], kwargs.get("reason", b""))
         return b""
     if action == b"update_reputation":
-        update_reputation(kwargs['worker_id'], kwargs['delta'])
+        update_reputation(kwargs["worker_id"], kwargs["delta"])
         return b""
     if action == b"get_worker":
-        return abi.encode_struct(get_worker(kwargs['worker_id']))
+        return abi.encode_struct(get_worker(kwargs["worker_id"]))
     abi.revert(b"ERR_UNKNOWN_ACTION")

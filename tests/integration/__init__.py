@@ -74,7 +74,9 @@ def require_env(name: str) -> str:
     """
     val = os.getenv(name)
     if val is None:
-        pytest.skip(f"Missing env var {name!r}; set it or provide a fixture to run this integration test.")
+        pytest.skip(
+            f"Missing env var {name!r}; set it or provide a fixture to run this integration test."
+        )
     return val
 
 

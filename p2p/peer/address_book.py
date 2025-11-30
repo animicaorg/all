@@ -19,13 +19,13 @@ except Exception:  # pragma: no cover
 
 @dataclass(frozen=True)
 class AddressEntry:
-    address: str        # original address as provided
-    norm: str           # normalized, canonical string
-    proto: str          # tcp|quic|ws|wss (best-effort)
-    host: str           # IP or DNS
+    address: str  # original address as provided
+    norm: str  # normalized, canonical string
+    proto: str  # tcp|quic|ws|wss (best-effort)
+    host: str  # IP or DNS
     port: int
     peer_id: Optional[str]
-    tag: str            # seed|manual|learned|peer
+    tag: str  # seed|manual|learned|peer
     first_seen: float
     last_seen: float
     bad_count: int
@@ -173,7 +173,14 @@ class AddressBook:
 
     # --------------- Storage ops ---------------- #
 
-    def add(self, addr: str, *, tag: str = "manual", peer_id: Optional[str] = None, score: Optional[float] = None) -> AddressEntry:
+    def add(
+        self,
+        addr: str,
+        *,
+        tag: str = "manual",
+        peer_id: Optional[str] = None,
+        score: Optional[float] = None,
+    ) -> AddressEntry:
         """
         Validate + upsert an address. Returns the stored entry.
         """
@@ -202,7 +209,9 @@ class AddressBook:
         with self._locked_conn() as conn:
             conn.execute("DELETE FROM addresses WHERE address=?", (addr.strip(),))
 
-    def mark_seen(self, addr: str, *, good: bool = True, peer_id: Optional[str] = None) -> None:
+    def mark_seen(
+        self, addr: str, *, good: bool = True, peer_id: Optional[str] = None
+    ) -> None:
         """
         Mark address as seen now, incrementing good/bad counters.
         """
@@ -227,19 +236,31 @@ class AddressBook:
 
     def set_score(self, addr: str, score: Optional[float]) -> None:
         with self._locked_conn() as conn:
-            conn.execute("UPDATE addresses SET score=? WHERE address=?", (score, addr.strip()))
+            conn.execute(
+                "UPDATE addresses SET score=? WHERE address=?", (score, addr.strip())
+            )
 
     def last_seen(self, addr: str) -> Optional[float]:
         with self._locked_conn() as conn:
-            row = conn.execute("SELECT last_seen FROM addresses WHERE address=?", (addr.strip(),)).fetchone()
+            row = conn.execute(
+                "SELECT last_seen FROM addresses WHERE address=?", (addr.strip(),)
+            ).fetchone()
             return float(row["last_seen"]) if row else None
 
     def get(self, addr: str) -> Optional[AddressEntry]:
         with self._locked_conn() as conn:
-            row = conn.execute("SELECT * FROM addresses WHERE address=?", (addr.strip(),)).fetchone()
+            row = conn.execute(
+                "SELECT * FROM addresses WHERE address=?", (addr.strip(),)
+            ).fetchone()
             return _row_to_entry(row) if row else None
 
-    def list_recent(self, *, limit: int = 200, since: Optional[float] = None, tags: Optional[Iterable[str]] = None) -> List[AddressEntry]:
+    def list_recent(
+        self,
+        *,
+        limit: int = 200,
+        since: Optional[float] = None,
+        tags: Optional[Iterable[str]] = None,
+    ) -> List[AddressEntry]:
         where = ["1=1"]
         args: list = []
         if since is not None:
@@ -295,12 +316,16 @@ class AddressBook:
             cur1 = conn.execute("DELETE FROM addresses WHERE last_seen < ?", (cutoff,))
             removed = cur1.rowcount or 0
             # Remove by bad ratio
-            rows = conn.execute("SELECT address, good_count, bad_count FROM addresses").fetchall()
+            rows = conn.execute(
+                "SELECT address, good_count, bad_count FROM addresses"
+            ).fetchall()
             for r in rows:
                 good, bad = int(r["good_count"]), int(r["bad_count"])
                 tot = good + bad
                 if tot >= 5 and bad / max(tot, 1) >= max_bad_ratio:
-                    conn.execute("DELETE FROM addresses WHERE address=?", (r["address"],))
+                    conn.execute(
+                        "DELETE FROM addresses WHERE address=?", (r["address"],)
+                    )
                     removed += 1
             return removed
 
@@ -328,6 +353,7 @@ class AddressBook:
 
 
 # ----------------- helpers ----------------- #
+
 
 def _row_to_entry(r: sqlite3.Row) -> AddressEntry:
     return AddressEntry(
@@ -366,7 +392,10 @@ def _validate_host(host: str) -> None:
         return
     except Exception:
         pass
-    if not re.match(r"^[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9\-]{1,63})*$", host):
+    if not re.match(
+        r"^[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9\-]{1,63})*$",
+        host,
+    ):
         raise ValueError(f"invalid host: {host}")
 
 

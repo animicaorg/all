@@ -44,12 +44,13 @@ import os
 import sys
 from typing import Optional, Tuple
 
-
 # Try to learn defaults from the library (if present)
 DEFAULT_NS_BYTES = 8
 try:
     # Prefer a single source of truth if available
-    from da.nmt.namespace import NAMESPACE_ID_BYTES as _LIB_NS_BYTES  # type: ignore
+    from da.nmt.namespace import \
+        NAMESPACE_ID_BYTES as _LIB_NS_BYTES  # type: ignore
+
     DEFAULT_NS_BYTES = int(_LIB_NS_BYTES)
 except Exception:
     pass
@@ -89,7 +90,7 @@ def _split_augmented(b: bytes, ns_bytes: int) -> Optional[Tuple[int, int, bytes]
     if len(b) != need:
         return None
     min_ns = int.from_bytes(b[0:ns_bytes], "big")
-    max_ns = int.from_bytes(b[ns_bytes:2 * ns_bytes], "big")
+    max_ns = int.from_bytes(b[ns_bytes : 2 * ns_bytes], "big")
     digest = b[2 * ns_bytes :]
     return (min_ns, max_ns, digest)
 
@@ -143,7 +144,10 @@ def main(argv: Optional[list[str]] = None) -> int:
             args.in_path = args.commitment
             args.commitment = None
         else:
-            print("error: commitment must be hex or an existing file path", file=sys.stderr)
+            print(
+                "error: commitment must be hex or an existing file path",
+                file=sys.stderr,
+            )
             return 2
 
     try:
@@ -205,8 +209,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     print(f"Digest     : {summary['root_digest']}")
     if is_augmented:
         print(f"NS bytes   : {summary['ns_bytes']}")
-        print(f"Min NS     : {summary['min_ns']['hex']} (int {summary['min_ns']['int']})")
-        print(f"Max NS     : {summary['max_ns']['hex']} (int {summary['max_ns']['int']})")
+        print(
+            f"Min NS     : {summary['min_ns']['hex']} (int {summary['min_ns']['int']})"
+        )
+        print(
+            f"Max NS     : {summary['max_ns']['hex']} (int {summary['max_ns']['int']})"
+        )
         print(f"Range OK   : {summary['range_ok']}")
     else:
         print("Note       : No namespace range embedded (digest-only).")

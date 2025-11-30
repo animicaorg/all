@@ -26,13 +26,13 @@ from typing import Optional, Tuple, Union
 from .params import VDFParams, get_params
 from .wesolowski import derive_challenge_prime
 
-
 IntOrBytes = Union[int, bytes]
 
 
 # -----------------------------------------------------------------------------
 # Constant-time-ish primitives (best-effort in Python)
 # -----------------------------------------------------------------------------
+
 
 def _int_byte_width(n: int) -> int:
     return max(1, (n.bit_length() + 7) // 8)
@@ -51,13 +51,15 @@ def _ct_bytes_eq(a: bytes, b: bytes) -> bool:
     bb = b.rjust(m, b"\x00")
     diff = 0
     for x, y in zip(aa, bb):
-        diff |= (x ^ y)
+        diff |= x ^ y
     return diff == 0
 
 
 def _ct_int_eq(a: int, b: int, width: int) -> bool:
-    return _ct_bytes_eq(_int_to_be(a % (1 << (8 * width)), width),
-                        _int_to_be(b % (1 << (8 * width)), width))
+    return _ct_bytes_eq(
+        _int_to_be(a % (1 << (8 * width)), width),
+        _int_to_be(b % (1 << (8 * width)), width),
+    )
 
 
 def _ct_and(*flags: bool) -> bool:
@@ -73,9 +75,11 @@ def _ct_and(*flags: bool) -> bool:
 # Local normalization of x (mirrors wesolowski._normalize_x)
 # -----------------------------------------------------------------------------
 
+
 def _sha3_256(*chunks: bytes) -> bytes:
     # local import to keep module surface minimal
     import hashlib
+
     h = hashlib.sha3_256()
     for c in chunks:
         h.update(c)
@@ -90,6 +94,7 @@ def _dom_hash(tag: bytes, *chunks: bytes) -> bytes:
             out += len(p).to_bytes(8, "big")
             out += p
         return bytes(out)
+
     return _sha3_256(b"VDF\x01" + tag, frame(chunks))
 
 
@@ -101,19 +106,29 @@ def _normalize_x(x: IntOrBytes, N: int) -> int:
     if isinstance(x, (bytes, bytearray)):
         h = _dom_hash(b"x", bytes(x), _int_to_be(N, _int_byte_width(N)))
         # ensure in [2, N-1] when possible
-        return (2 + int.from_bytes(h, "big") % max(1, (N - 3))) % N if N > 3 else (2 % N)
+        return (
+            (2 + int.from_bytes(h, "big") % max(1, (N - 3))) % N if N > 3 else (2 % N)
+        )
     else:
         xi = int(x) % N
         if xi in (0, 1):
-            h = _dom_hash(b"x", _int_to_be(int(x), max(1, (int(x).bit_length() + 7) // 8)),
-                          _int_to_be(N, _int_byte_width(N)))
-            xi = (2 + int.from_bytes(h, "big") % max(1, (N - 3))) % N if N > 3 else (2 % N)
+            h = _dom_hash(
+                b"x",
+                _int_to_be(int(x), max(1, (int(x).bit_length() + 7) // 8)),
+                _int_to_be(N, _int_byte_width(N)),
+            )
+            xi = (
+                (2 + int.from_bytes(h, "big") % max(1, (N - 3))) % N
+                if N > 3
+                else (2 % N)
+            )
         return xi
 
 
 # -----------------------------------------------------------------------------
 # Verifier
 # -----------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class Verifier:
@@ -123,6 +138,7 @@ class Verifier:
     Use :meth:`verify` for boolean-only checks or :meth:`verify_with_report`
     to obtain a reason string for diagnostics/metrics.
     """
+
     params: VDFParams
     k_bits: int = 128  # challenge size used when re-deriving ℓ
 
@@ -134,7 +150,9 @@ class Verifier:
         ok, _ = self.verify_with_report(x, y, pi, l)
         return ok
 
-    def verify_with_report(self, x: IntOrBytes, y: int, pi: int, l: Optional[int] = None) -> Tuple[bool, str]:
+    def verify_with_report(
+        self, x: IntOrBytes, y: int, pi: int, l: Optional[int] = None
+    ) -> Tuple[bool, str]:
         """
         Constant-time-ish verification:
 
@@ -186,11 +204,17 @@ class Verifier:
         if not ok:
             # Assign reason by a fixed check order (informational only).
             reason = (
-                "backend_mismatch" if self.params.backend != "rsa" else
-                "challenge_mismatch" if not l_eq else
-                "equation_mismatch" if not y_eq else
-                "invalid_challenge" if not sane_l else
-                "invalid_input"
+                "backend_mismatch"
+                if self.params.backend != "rsa"
+                else (
+                    "challenge_mismatch"
+                    if not l_eq
+                    else (
+                        "equation_mismatch"
+                        if not y_eq
+                        else "invalid_challenge" if not sane_l else "invalid_input"
+                    )
+                )
             )
 
         return ok, reason
@@ -199,6 +223,7 @@ class Verifier:
 # -----------------------------------------------------------------------------
 # Convenience API
 # -----------------------------------------------------------------------------
+
 
 def verify_consensus(x: IntOrBytes, y: int, pi: int, l: Optional[int] = None) -> bool:
     """
@@ -209,7 +234,9 @@ def verify_consensus(x: IntOrBytes, y: int, pi: int, l: Optional[int] = None) ->
 
 
 # Legacy alias expected by tests/importers.
-def verify(x: IntOrBytes, y: int, pi: int, l: Optional[int] = None) -> bool:  # pragma: no cover - thin wrapper
+def verify(
+    x: IntOrBytes, y: int, pi: int, l: Optional[int] = None
+) -> bool:  # pragma: no cover - thin wrapper
     return verify_consensus(x, y, pi, l)
 
 

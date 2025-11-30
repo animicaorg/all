@@ -39,7 +39,7 @@ Provide a `Mesh` and sinks:
     await rg.start()
 
     # Locally announce:
-    await rg.announce_commit(round_id=42, addr=b"\x01"*32, commitment=b"\xAA"*32)
+    await rg.announce_commit(round_id=42, addr=b"\x01"*32, commitment=b"\xaa"*32)
     await rg.announce_reveal(round_id=42, addr=b"\x01"*32, salt=b"\x02"*32, payload=b"\x03"*32)
 
 """
@@ -50,7 +50,7 @@ import asyncio
 import hashlib
 import logging
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import Any, Awaitable, Callable, Optional, Protocol, Tuple
 
 logger = logging.getLogger(__name__)
@@ -63,8 +63,12 @@ TOPIC_REVEAL = "animica/rand/reveal/1"
 try:  # pragma: no cover - optional
     from prometheus_client import Counter
 
-    GOSSIP_SEEN = Counter("rand_gossip_seen_total", "Incoming gossip frames", ["topic", "result"])
-    GOSSIP_PUBLISHED = Counter("rand_gossip_published_total", "Outgoing gossip frames", ["topic"])
+    GOSSIP_SEEN = Counter(
+        "rand_gossip_seen_total", "Incoming gossip frames", ["topic", "result"]
+    )
+    GOSSIP_PUBLISHED = Counter(
+        "rand_gossip_published_total", "Outgoing gossip frames", ["topic"]
+    )
 except Exception:  # pragma: no cover - fallback
 
     class _Noop:
@@ -80,6 +84,7 @@ except Exception:  # pragma: no cover - fallback
 
 # ---- Encoding (msgspec -> cbor2 -> json) ----
 _encoder = _decoder = None
+
 
 def _setup_codec() -> None:
     global _encoder, _decoder
@@ -113,6 +118,7 @@ _setup_codec()
 def _b2h(b: bytes) -> str:
     return "0x" + b.hex()
 
+
 def _h2b(h: str) -> bytes:
     if not isinstance(h, str) or not h.startswith("0x"):
         raise ValueError("expected 0x-prefixed hex string")
@@ -123,28 +129,31 @@ def _h2b(h: str) -> bytes:
 @dataclass
 class CommitMsg:
     type: str  # "commit"
-    v: int     # version
+    v: int  # version
     round: int
-    addr: str          # 0x-hex (address bytes as produced by identity layer)
-    commitment: str    # 0x-hex (32 bytes)
-    ts: int            # unix seconds (sender clock; non-consensus)
+    addr: str  # 0x-hex (address bytes as produced by identity layer)
+    commitment: str  # 0x-hex (32 bytes)
+    ts: int  # unix seconds (sender clock; non-consensus)
+
 
 @dataclass
 class RevealMsg:
     type: str  # "reveal"
-    v: int     # version
+    v: int  # version
     round: int
-    addr: str          # 0x-hex
-    salt: str          # 0x-hex
-    payload: str       # 0x-hex
-    commitment: str    # 0x-hex (should match H(domain|addr|salt|payload))
-    ts: int            # unix seconds (sender clock; non-consensus)
+    addr: str  # 0x-hex
+    salt: str  # 0x-hex
+    payload: str  # 0x-hex
+    commitment: str  # 0x-hex (should match H(domain|addr|salt|payload))
+    ts: int  # unix seconds (sender clock; non-consensus)
 
 
 # ---- Protocols for external deps ----
 class Mesh(Protocol):
     async def publish(self, topic: str, data: bytes) -> None: ...
-    def subscribe(self, topic: str, handler: Callable[[bytes, str], Awaitable[None]]) -> None: ...
+    def subscribe(
+        self, topic: str, handler: Callable[[bytes, str], Awaitable[None]]
+    ) -> None: ...
 
 
 class RoundChecker(Protocol):
@@ -196,10 +205,12 @@ class _TTLSet:
 # ---- Optional verification import ----
 _commit_func = None
 try:  # pragma: no cover - import glue
-    from randomness.commit_reveal.commit import build_commitment as _commit_func  # type: ignore[attr-defined]
+    from randomness.commit_reveal.commit import \
+        build_commitment as _commit_func  # type: ignore[attr-defined]
 except Exception:
     try:
-        from randomness.commit_reveal.commit import commit as _commit_func  # type: ignore[attr-defined]
+        from randomness.commit_reveal.commit import \
+            commit as _commit_func  # type: ignore[attr-defined]
     except Exception:
         _commit_func = None  # fallback to domain-naive hash
 
@@ -233,7 +244,9 @@ class _Validator:
     def __init__(self, round_checker: Optional[RoundChecker] = None) -> None:
         self.round_checker = round_checker
 
-    def _check_hex_len(self, label: str, hx: str, expect_len: Optional[int] = None) -> None:
+    def _check_hex_len(
+        self, label: str, hx: str, expect_len: Optional[int] = None
+    ) -> None:
         if not isinstance(hx, str) or not hx.startswith("0x"):
             raise ValueError(f"{label}: expected 0x-hex string")
         raw_len = (len(hx) - 2) // 2
@@ -315,7 +328,9 @@ class RandomnessGossip:
 
     # ---- Local announce (publish) ----
 
-    async def announce_commit(self, *, round_id: int, addr: bytes, commitment: bytes) -> None:
+    async def announce_commit(
+        self, *, round_id: int, addr: bytes, commitment: bytes
+    ) -> None:
         msg = CommitMsg(
             type="commit",
             v=1,

@@ -42,8 +42,10 @@ from typing import Optional, Tuple
 try:
     from core.types.tx import Tx  # type: ignore
 except Exception:  # pragma: no cover
+
     class Tx:  # type: ignore
         """Minimal stub for isolated tests."""
+
         kind: str
         chain_id: int
         gas_limit: int
@@ -61,19 +63,23 @@ except Exception:  # pragma: no cover
         def sign_bytes(self) -> bytes:
             return b"TEST_SIGN_BYTES"
 
+
 try:
     from core.types.params import ChainParams  # type: ignore
 except Exception:  # pragma: no cover
+
     @dataclass
     class ChainParams:  # type: ignore
         chain_id: int = 1
         block_gas_limit: int = 30_000_000
         tx_max_bytes: int = 1_048_576  # 1 MiB default
 
+
 # PQ verify (uniform API)
 try:
     from pq.py.verify import verify as pq_verify  # type: ignore
 except Exception:  # pragma: no cover
+
     def pq_verify(message: bytes, signature: bytes, public_key: bytes, alg_id: int, domain: bytes = b"") -> bool:  # type: ignore
         # Educational fallback: *never* use in production.
         return False  # cause tests to explicitly inject a real verifier
@@ -83,8 +89,10 @@ except Exception:  # pragma: no cover
 # Errors / results
 # -----------------------------
 
+
 class StatelessValidationError(Exception):
     """Raised when a stateless validation check fails."""
+
     code: str
 
     def __init__(self, code: str, msg: str) -> None:
@@ -100,15 +108,17 @@ class StatelessConfig:
     If ChainParams is provided, missing fields fall back to defaults or
     are derived from it.
     """
+
     chain_id: int
-    max_tx_bytes: int = 1_048_576        # 1 MiB hard cap unless overridden
-    max_gas_limit: int = 30_000_000      # sane default matching many L1s
-    enforce_sig_precheck: bool = True    # toggle fast PQ verify
+    max_tx_bytes: int = 1_048_576  # 1 MiB hard cap unless overridden
+    max_gas_limit: int = 30_000_000  # sane default matching many L1s
+    enforce_sig_precheck: bool = True  # toggle fast PQ verify
 
 
 # -----------------------------
 # Public API
 # -----------------------------
+
 
 def validate_stateless(
     tx: "Tx",
@@ -142,6 +152,7 @@ def validate_stateless(
 # -----------------------------
 # Individual checks
 # -----------------------------
+
 
 def _check_size(raw: bytes, cfg: StatelessConfig) -> None:
     n = len(raw)
@@ -194,25 +205,34 @@ def _check_payload_shape(tx: "Tx") -> None:
             )
         # Transfers require a destination
         if to_field in (None, b"", ""):
-            raise StatelessValidationError("MissingTo", "transfer requires a 'to' address.")
+            raise StatelessValidationError(
+                "MissingTo", "transfer requires a 'to' address."
+            )
 
     elif kind in ("deploy", "create"):
         # Deployments should include code bytes in data; 'to' MUST be empty.
         if to_field not in (None, b"", ""):
-            raise StatelessValidationError("CreateHasTo", "deploy/create must not set 'to'.")
+            raise StatelessValidationError(
+                "CreateHasTo", "deploy/create must not set 'to'."
+            )
         if not data or len(data) < 8:
-            raise StatelessValidationError("MissingCode", "deploy/create requires non-empty code bytes.")
+            raise StatelessValidationError(
+                "MissingCode", "deploy/create requires non-empty code bytes."
+            )
 
     elif kind in ("call", "invoke"):
         # Calls require a destination; data may be empty (fallback) or ABI-encoded payload.
         if to_field in (None, b"", ""):
-            raise StatelessValidationError("MissingTo", "call/invoke requires a 'to' address.")
+            raise StatelessValidationError(
+                "MissingTo", "call/invoke requires a 'to' address."
+            )
 
     else:
         # Unknown kinds are permitted to future-proof, but must still be reasonable.
         if len(data) > 512 * 1024:  # 512 KiB absolute guardrail for unknown kinds
             raise StatelessValidationError(
-                "DataTooLarge", f"payload too large for unknown kind: {len(data)} bytes."
+                "DataTooLarge",
+                f"payload too large for unknown kind: {len(data)} bytes.",
             )
 
 
@@ -229,7 +249,9 @@ def _precheck_pq_signature(tx: "Tx") -> None:
     # Build message bytes using whichever API the Tx exposes.
     msg = _sign_bytes_for_tx(tx)
     if not isinstance(msg, (bytes, bytearray)) or len(msg) == 0:
-        raise StatelessValidationError("SignBytesError", "Could not build sign-bytes for transaction.")
+        raise StatelessValidationError(
+            "SignBytesError", "Could not build sign-bytes for transaction."
+        )
 
     ok = False
     try:
@@ -240,14 +262,19 @@ def _precheck_pq_signature(tx: "Tx") -> None:
         raise StatelessValidationError("SigVerifyError", f"Verifier raised: {e!r}")
 
     if not ok:
-        raise StatelessValidationError("BadSignature", "Post-quantum signature verification failed.")
+        raise StatelessValidationError(
+            "BadSignature", "Post-quantum signature verification failed."
+        )
 
 
 # -----------------------------
 # Helpers
 # -----------------------------
 
-def _derive_cfg(params: Optional[ChainParams], cfg: Optional[StatelessConfig]) -> StatelessConfig:
+
+def _derive_cfg(
+    params: Optional[ChainParams], cfg: Optional[StatelessConfig]
+) -> StatelessConfig:
     if cfg is not None:
         return cfg
     if params is not None:
@@ -255,7 +282,9 @@ def _derive_cfg(params: Optional[ChainParams], cfg: Optional[StatelessConfig]) -
         chain_id = getattr(params, "chain_id", 0) or 0
         max_gas = getattr(params, "block_gas_limit", 30_000_000) or 30_000_000
         tx_max = getattr(params, "tx_max_bytes", 1_048_576) or 1_048_576
-        return StatelessConfig(chain_id=int(chain_id), max_tx_bytes=int(tx_max), max_gas_limit=int(max_gas))
+        return StatelessConfig(
+            chain_id=int(chain_id), max_tx_bytes=int(tx_max), max_gas_limit=int(max_gas)
+        )
     # Absolute fallbacks (tests/dev)
     return StatelessConfig(chain_id=1)
 
@@ -270,7 +299,9 @@ def _extract_sig_tuple(tx: "Tx") -> Tuple[int, bytes, bytes]:
     if alg_id is None:
         alg_id = getattr(tx, "sig_alg_id", None)
     if alg_id is None:
-        raise StatelessValidationError("MissingField", "Transaction missing 'alg_id'/'sig_alg_id'.")
+        raise StatelessValidationError(
+            "MissingField", "Transaction missing 'alg_id'/'sig_alg_id'."
+        )
 
     pubkey = (
         getattr(tx, "pubkey", None)
@@ -278,7 +309,9 @@ def _extract_sig_tuple(tx: "Tx") -> Tuple[int, bytes, bytes]:
         or getattr(tx, "pk", None)
     )
     if not isinstance(pubkey, (bytes, bytearray)) or len(pubkey) == 0:
-        raise StatelessValidationError("MissingField", "Transaction missing 'pubkey' bytes.")
+        raise StatelessValidationError(
+            "MissingField", "Transaction missing 'pubkey' bytes."
+        )
 
     signature = (
         getattr(tx, "signature", None)
@@ -286,7 +319,9 @@ def _extract_sig_tuple(tx: "Tx") -> Tuple[int, bytes, bytes]:
         or getattr(tx, "pq_signature", None)
     )
     if not isinstance(signature, (bytes, bytearray)) or len(signature) == 0:
-        raise StatelessValidationError("MissingField", "Transaction missing 'signature' bytes.")
+        raise StatelessValidationError(
+            "MissingField", "Transaction missing 'signature' bytes."
+        )
 
     return int(alg_id), bytes(pubkey), bytes(signature)
 
@@ -309,6 +344,7 @@ def _sign_bytes_for_tx(tx: "Tx") -> bytes:
     # Fallback: canonical encoder function
     try:
         from core.encoding.canonical import tx_sign_bytes  # type: ignore
+
         b = tx_sign_bytes(tx)  # type: ignore
         if isinstance(b, (bytes, bytearray)) and b:
             return bytes(b)
@@ -318,6 +354,7 @@ def _sign_bytes_for_tx(tx: "Tx") -> bytes:
     # Last resort: encode via CBOR deterministically if available
     try:
         from core.encoding.cbor import dumps_canonical_tx  # type: ignore
+
         return dumps_canonical_tx(tx)  # type: ignore
     except Exception:
         return b""

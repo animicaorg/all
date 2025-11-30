@@ -22,27 +22,30 @@
 # - Integers are non-negative and bounded (amount fits within 128-bit).
 # - Time is modeled as block height only for determinism.
 
-from stdlib import storage, events, treasury, abi  # provided by the Animica VM
+from stdlib import abi, events, storage, treasury  # provided by the Animica VM
 
 # ---- storage keys (bytes constants; small & stable) ---------------------------------
-K_INIT            = b"i"   # 1 if initialized
-K_BUYER           = b"b"
-K_SELLER          = b"s"
-K_ARBITER         = b"a"
-K_AMOUNT          = b"A"   # u128
-K_DEADLINE        = b"D"   # u64 (block height)
-K_DEPOSITED       = b"d"   # 0/1
-K_DISPUTED        = b"X"   # 0/1
-K_FINALIZED       = b"F"   # 0/1
+K_INIT = b"i"  # 1 if initialized
+K_BUYER = b"b"
+K_SELLER = b"s"
+K_ARBITER = b"a"
+K_AMOUNT = b"A"  # u128
+K_DEADLINE = b"D"  # u64 (block height)
+K_DEPOSITED = b"d"  # 0/1
+K_DISPUTED = b"X"  # 0/1
+K_FINALIZED = b"F"  # 0/1
 
 # ---- small codec helpers (deterministic & total) ------------------------------------
+
 
 def _require_address(x: bytes) -> None:
     # address is always 32 bytes at the VM ABI boundary
     abi.require(isinstance(x, (bytes, bytearray)) and len(x) == 32, b"bad address")
 
+
 def _put_bool(k: bytes, v: bool) -> None:
     storage.set(k, b"\x01" if v else b"\x00")
+
 
 def _get_bool(k: bytes) -> bool:
     v = storage.get(k)
@@ -51,10 +54,12 @@ def _get_bool(k: bytes) -> bool:
     # Accept any non-zero as True to be robust to historical values
     return len(v) > 0 and v[0] != 0
 
+
 def _put_u128(k: bytes, n: int) -> None:
     abi.require(isinstance(n, int) and n >= 0, b"bad int")
     # 16-byte big-endian fixed width encoding
     storage.set(k, n.to_bytes(16, "big"))
+
 
 def _get_u128(k: bytes) -> int:
     v = storage.get(k)
@@ -63,9 +68,11 @@ def _get_u128(k: bytes) -> int:
     abi.require(isinstance(v, (bytes, bytearray)) and len(v) == 16, b"corrupt u128")
     return int.from_bytes(v, "big")
 
+
 def _put_u64(k: bytes, n: int) -> None:
     abi.require(isinstance(n, int) and 0 <= n <= 0xFFFFFFFFFFFFFFFF, b"bad height")
     storage.set(k, n.to_bytes(8, "big"))
+
 
 def _get_u64(k: bytes) -> int:
     v = storage.get(k)
@@ -74,41 +81,52 @@ def _get_u64(k: bytes) -> int:
     abi.require(isinstance(v, (bytes, bytearray)) and len(v) == 8, b"corrupt u64")
     return int.from_bytes(v, "big")
 
+
 def _put_addr(k: bytes, addr: bytes) -> None:
     _require_address(addr)
     storage.set(k, bytes(addr))
+
 
 def _get_addr(k: bytes) -> bytes:
     v = storage.get(k)
     abi.require(isinstance(v, (bytes, bytearray)) and len(v) == 32, b"missing address")
     return bytes(v)
 
+
 # ---- role checks & guards -----------------------------------------------------------
+
 
 def _guard_not_finalized() -> None:
     abi.require(not _get_bool(K_FINALIZED), b"finalized")
 
+
 def _guard_inited() -> None:
     abi.require(storage.get(K_INIT) == b"\x01", b"not inited")
+
 
 def _guard_not_inited() -> None:
     abi.require(storage.get(K_INIT) is None, b"already inited")
 
+
 def _is_party(caller: bytes) -> bool:
     return caller == _get_addr(K_BUYER) or caller == _get_addr(K_SELLER)
+
 
 # ---- events (canonical names; encoded via stdlib.events) ----------------------------
 
 EV_DEPOSITED = b"Deposited"
-EV_RELEASED  = b"Released"
-EV_REFUNDED  = b"Refunded"
-EV_DISPUTED  = b"Disputed"
-EV_RESOLVED  = b"Resolved"
+EV_RELEASED = b"Released"
+EV_REFUNDED = b"Refunded"
+EV_DISPUTED = b"Disputed"
+EV_RESOLVED = b"Resolved"
 EV_CANCELLED = b"Cancelled"
 
 # ---- public entrypoints -------------------------------------------------------------
 
-def init(buyer: bytes, seller: bytes, arbiter: bytes, amount: int, deadline_height: int) -> None:
+
+def init(
+    buyer: bytes, seller: bytes, arbiter: bytes, amount: int, deadline_height: int
+) -> None:
     """
     One-time initializer. Sets parties, amount, and deadline (block height).
     """
@@ -118,7 +136,9 @@ def init(buyer: bytes, seller: bytes, arbiter: bytes, amount: int, deadline_heig
     _require_address(arbiter)
 
     abi.require(isinstance(amount, int) and amount > 0, b"bad amount")
-    abi.require(isinstance(deadline_height, int) and deadline_height >= 0, b"bad deadline")
+    abi.require(
+        isinstance(deadline_height, int) and deadline_height >= 0, b"bad deadline"
+    )
 
     _put_addr(K_BUYER, buyer)
     _put_addr(K_SELLER, seller)
@@ -130,6 +150,7 @@ def init(buyer: bytes, seller: bytes, arbiter: bytes, amount: int, deadline_heig
     _put_bool(K_DISPUTED, False)
     _put_bool(K_FINALIZED, False)
     storage.set(K_INIT, b"\x01")
+
 
 def deposit() -> None:
     """
@@ -148,6 +169,7 @@ def deposit() -> None:
 
     _put_bool(K_DEPOSITED, True)
     events.emit(EV_DEPOSITED, {b"buyer": caller, b"amount": amount})
+
 
 def release() -> None:
     """
@@ -169,6 +191,7 @@ def release() -> None:
 
     _put_bool(K_FINALIZED, True)
     events.emit(EV_RELEASED, {b"seller": seller, b"amount": amount})
+
 
 def refund() -> None:
     """
@@ -195,6 +218,7 @@ def refund() -> None:
     _put_bool(K_FINALIZED, True)
     events.emit(EV_REFUNDED, {b"buyer": buyer, b"amount": amount})
 
+
 def dispute(reason: bytes) -> None:
     """
     Open a dispute; either Buyer or Seller may do so prior to finalization.
@@ -214,6 +238,7 @@ def dispute(reason: bytes) -> None:
 
     _put_bool(K_DISPUTED, True)
     events.emit(EV_DISPUTED, {b"opener": caller, b"reason": bytes(reason)})
+
 
 def resolve(to_seller: bool) -> None:
     """
@@ -238,7 +263,11 @@ def resolve(to_seller: bool) -> None:
     treasury.transfer(dest, amount)
 
     _put_bool(K_FINALIZED, True)
-    events.emit(EV_RESOLVED, {b"arbiter": caller, b"to_seller": bool(to_seller), b"amount": amount})
+    events.emit(
+        EV_RESOLVED,
+        {b"arbiter": caller, b"to_seller": bool(to_seller), b"amount": amount},
+    )
+
 
 def cancel_before_deposit() -> None:
     """
@@ -258,7 +287,9 @@ def cancel_before_deposit() -> None:
     _put_bool(K_FINALIZED, True)
     events.emit(EV_CANCELLED, {})
 
+
 # ---- views -------------------------------------------------------------------------
+
 
 def state() -> dict:
     """
@@ -291,16 +322,26 @@ def state() -> dict:
         b"finalized": _get_bool(K_FINALIZED),
     }
 
+
 def balance() -> int:
     """
     Current escrow balance (should be either 0 or 'amount').
     """
     return treasury.balance()
 
+
 def parties() -> dict:
     """
     Return buyer/seller/arbiter addresses.
     """
     if storage.get(K_INIT) != b"\x01":
-        return {b"buyer": b"\x00" * 32, b"seller": b"\x00" * 32, b"arbiter": b"\x00" * 32}
-    return {b"buyer": _get_addr(K_BUYER), b"seller": _get_addr(K_SELLER), b"arbiter": _get_addr(K_ARBITER)}
+        return {
+            b"buyer": b"\x00" * 32,
+            b"seller": b"\x00" * 32,
+            b"arbiter": b"\x00" * 32,
+        }
+    return {
+        b"buyer": _get_addr(K_BUYER),
+        b"seller": _get_addr(K_SELLER),
+        b"arbiter": _get_addr(K_ARBITER),
+    }

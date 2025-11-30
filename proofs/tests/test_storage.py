@@ -7,9 +7,8 @@ from typing import Any, Dict
 import pytest
 
 from proofs.errors import ProofError
-from proofs.storage import verify_storage_heartbeat
 from proofs.metrics import ProofMetrics
-
+from proofs.storage import verify_storage_heartbeat
 
 VECTORS = Path(__file__).resolve().parents[1] / "test_vectors" / "storage.json"
 
@@ -23,11 +22,14 @@ def _load_vectors() -> list[dict[str, Any]]:
 
 
 def _as_metrics(x: Any) -> ProofMetrics:
-    assert isinstance(x, ProofMetrics), f"verify_storage_heartbeat must return ProofMetrics, got {type(x)}"
+    assert isinstance(
+        x, ProofMetrics
+    ), f"verify_storage_heartbeat must return ProofMetrics, got {type(x)}"
     return x
 
 
 # ----------------------------- Vector-driven acceptance -----------------------------
+
 
 @pytest.mark.parametrize("vec", _load_vectors())
 def test_storage_vectors_accept_and_bonus(vec: Dict[str, Any]):
@@ -55,6 +57,7 @@ def test_storage_vectors_accept_and_bonus(vec: Dict[str, Any]):
 
 # -------------------------- Window boundary behavior --------------------------
 
+
 def test_storage_window_boundaries_min_mid_max():
     """
     Construct a minimal heartbeat and exercise timing boundaries:
@@ -67,9 +70,9 @@ def test_storage_window_boundaries_min_mid_max():
     base = {
         "provider_id": "provider:test",
         "namespace": 24,
-        "commitment": "0x" + "ab"*32,
+        "commitment": "0x" + "ab" * 32,
         "window_start": 1_000,
-        "window_end":   2_000,
+        "window_end": 2_000,
         # optional fields tolerated by verifier (nonce/sig/etc.) may be absent in tests
     }
 
@@ -93,6 +96,7 @@ def test_storage_window_boundaries_min_mid_max():
 
 # -------------------------- Retrieval bonus effect on QoS --------------------------
 
+
 def test_retrieval_bonus_increases_qos_monotonically():
     """
     If a retrieval ticket is present and valid, the metrics should reflect a strictly higher QoS.
@@ -101,9 +105,9 @@ def test_retrieval_bonus_increases_qos_monotonically():
     hb = {
         "provider_id": "provider:test",
         "namespace": 42,
-        "commitment": "0x" + "cd"*32,
+        "commitment": "0x" + "cd" * 32,
         "window_start": 10_000,
-        "window_end":   11_000,
+        "window_end": 11_000,
     }
     mid = (hb["window_start"] + hb["window_end"]) // 2
 
@@ -116,7 +120,7 @@ def test_retrieval_bonus_increases_qos_monotonically():
     hb_rt = dict(hb)
     hb_rt["retrieval_ticket"] = {
         "request_id": "deadbeef",
-        "ticket_hash": "0x" + "ef"*32,
+        "ticket_hash": "0x" + "ef" * 32,
         "served_ts": mid,
     }
     m_bonus = _as_metrics(verify_storage_heartbeat(hb_rt, now=mid))
@@ -128,16 +132,17 @@ def test_retrieval_bonus_increases_qos_monotonically():
 
 # -------------------------- Negative/malformed cases --------------------------
 
+
 def test_negative_bad_namespace_and_commitment_lengths():
     """
     Bad namespaces or malformed commitments should be rejected early with ProofError.
     """
     hb = {
         "provider_id": "provider:test",
-        "namespace": -1,                 # invalid
-        "commitment": "0x1234",          # too short to be a 32-byte digest
+        "namespace": -1,  # invalid
+        "commitment": "0x1234",  # too short to be a 32-byte digest
         "window_start": 100,
-        "window_end":   200,
+        "window_end": 200,
     }
     with pytest.raises(ProofError):
         verify_storage_heartbeat(hb, now=150)

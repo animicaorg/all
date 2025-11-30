@@ -16,19 +16,8 @@ Public surface:
 Implementations live in ``model.py`` and ``normalize.py`` respectively.
 """
 
-from .model import (
-    AbiIR,
-    FunctionIR,
-    EventIR,
-    ErrorIR,
-    TypeRef,
-    Param,
-)
-from .normalize import (
-    normalize_abi,
-    compute_abi_hash,
-    AbiNormalizationError,
-)
+from .model import AbiIR, ErrorIR, EventIR, FunctionIR, Param, TypeRef
+from .normalize import AbiNormalizationError, compute_abi_hash, normalize_abi
 
 __all__ = [
     # IR

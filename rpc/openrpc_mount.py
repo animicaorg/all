@@ -28,11 +28,11 @@ mount_openrpc(app)  # now GET /openrpc.json returns the spec verbatim
 import email.utils
 import hashlib
 import os
-from pathlib import Path
 import typing as t
+from pathlib import Path
 
 from fastapi import APIRouter, FastAPI, Request
-from starlette.responses import Response, PlainTextResponse
+from starlette.responses import PlainTextResponse, Response
 
 
 def _default_repo_root() -> Path:
@@ -98,7 +98,9 @@ class _OpenRPCDoc:
         )
 
 
-def mount_openrpc(app: FastAPI, *, openrpc_path: t.Optional[t.Union[str, Path]] = None) -> None:
+def mount_openrpc(
+    app: FastAPI, *, openrpc_path: t.Optional[t.Union[str, Path]] = None
+) -> None:
     """
     Mount GET /openrpc.json to serve the spec verbatim.
 
@@ -120,7 +122,11 @@ def mount_openrpc(app: FastAPI, *, openrpc_path: t.Optional[t.Union[str, Path]] 
         async def head_openrpc(request: Request) -> Response:
             resp = doc.make_response(request)
             # Strip body for HEAD
-            return Response(status_code=resp.status_code, headers=resp.headers, media_type=resp.media_type)
+            return Response(
+                status_code=resp.status_code,
+                headers=resp.headers,
+                media_type=resp.media_type,
+            )
 
     else:
         # Graceful placeholder; helps during early boot or misconfig.

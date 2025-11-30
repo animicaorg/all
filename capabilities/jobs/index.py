@@ -38,18 +38,15 @@ Usage
     index.remove(record.task_id)
 """
 
-from dataclasses import asdict, is_dataclass
-from typing import Dict, Iterable, List, Optional, Tuple
 import bisect
 import time
+from dataclasses import asdict, is_dataclass
+from typing import Dict, Iterable, List, Optional, Tuple
 
 from capabilities.errors import CapError
+from capabilities.jobs.result_store import (MemoryResultStore, ResultStore,
+                                            SqliteResultStore)
 from capabilities.jobs.types import ResultRecord
-from capabilities.jobs.result_store import (
-    ResultStore,
-    MemoryResultStore,
-    SqliteResultStore,
-)
 
 
 def _to_map(rec: ResultRecord) -> dict:
@@ -58,7 +55,11 @@ def _to_map(rec: ResultRecord) -> dict:
         return to_map()
     if is_dataclass(rec):
         return asdict(rec)
-    return {k: getattr(rec, k) for k in dir(rec) if not k.startswith("_") and not callable(getattr(rec, k))}
+    return {
+        k: getattr(rec, k)
+        for k in dir(rec)
+        if not k.startswith("_") and not callable(getattr(rec, k))
+    }
 
 
 def _get_field(rec: ResultRecord, m: dict, name: str, default=None):
@@ -79,7 +80,9 @@ class ResultIndex:
       - If you don't call those, use `rebuild()` to refresh from the store snapshot.
     """
 
-    def __init__(self, store: ResultStore, *, preload: bool = False, max_cache: int = 1_000_000) -> None:
+    def __init__(
+        self, store: ResultStore, *, preload: bool = False, max_cache: int = 1_000_000
+    ) -> None:
         self._store = store
         self._delegate = isinstance(store, SqliteResultStore) and not preload
         self._max_cache = int(max_cache)
@@ -120,7 +123,9 @@ class ResultIndex:
         sel.reverse()
         return [self._records[tid] for _, _, tid in sel]
 
-    def list_by_caller(self, caller: bytes, *, limit: int = 50, offset: int = 0) -> List[ResultRecord]:
+    def list_by_caller(
+        self, caller: bytes, *, limit: int = 50, offset: int = 0
+    ) -> List[ResultRecord]:
         if self._delegate:
             return self._store.list_by_caller(caller, limit=limit, offset=offset)
         lst = self._by_caller.get(bytes(caller), [])
@@ -153,7 +158,9 @@ class ResultIndex:
             page = 0
             page_size = max(limit + offset, 100)
             while len(acc) < offset + limit:
-                batch = self._store.list_recent(limit=page_size, offset=page * page_size)
+                batch = self._store.list_recent(
+                    limit=page_size, offset=page * page_size
+                )
                 if not batch:
                     break
                 for rec in batch:
@@ -262,6 +269,7 @@ class ResultIndex:
             # Stream from store in pages using list_recent (height desc)
             page_size = 1000
             offset = 0
+
             def pager():
                 nonlocal offset
                 while True:
@@ -271,6 +279,7 @@ class ResultIndex:
                     offset += len(batch)
                     for r in batch:
                         yield r
+
             it = pager()
 
         for rec in it:
@@ -290,8 +299,8 @@ class ResultIndex:
             # keys are sorted asc on (-height, -created_at); oldest is keys[0] in terms of created_at? No:
             # keys[-1] has smallest -created_at? Let's compute created_at from key.
             # Safer: peek both ends and compute created_at.
-            k0 = keys[0]      # most negative -> highest height/created_at
-            kN = keys[-1]     # least negative -> lowest height/created_at
+            k0 = keys[0]  # most negative -> highest height/created_at
+            kN = keys[-1]  # least negative -> lowest height/created_at
             for k in (kN,):
                 neg_h, neg_ct, tid = k
                 created_at = -neg_ct

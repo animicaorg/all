@@ -45,19 +45,21 @@ Fork choice (from core/chain/fork_choice.py):
 """
 
 from dataclasses import asdict, is_dataclass
-from typing import Any, Dict, Optional, Tuple, Union, List, NamedTuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union
 
+from core.chain.fork_choice import ForkChoice
+from core.encoding.canonical import \
+    header_signing_bytes  # canonical SignBytes for header hashing
+from core.encoding.cbor import dumps as cbor_dumps
+from core.encoding.cbor import loads as cbor_loads
 from core.errors import AnimicaError
 from core.types.block import Block
 from core.types.header import Header
-from core.types.tx import Tx
-from core.types.receipt import Receipt  # imported for type completeness; not used here
-from core.encoding.cbor import loads as cbor_loads
-from core.encoding.cbor import dumps as cbor_dumps
-from core.encoding.canonical import header_signing_bytes  # canonical SignBytes for header hashing
-from core.utils.hash import sha3_256
-from core.chain.fork_choice import ForkChoice
 from core.types.params import ChainParams
+from core.types.receipt import \
+    Receipt  # imported for type completeness; not used here
+from core.types.tx import Tx
+from core.utils.hash import sha3_256
 
 
 class ImportErrorCode(str):
@@ -68,7 +70,7 @@ class ImportErrorCode(str):
 
 
 class ImportResult(NamedTuple):
-    code: str                      # see ImportErrorCode
+    code: str  # see ImportErrorCode
     height: Optional[int]
     block_hash: Optional[bytes]
     head_changed: bool
@@ -88,8 +90,12 @@ def _as_bytes(x: Any, *, name: str) -> bytes:
         try:
             return bytes.fromhex(s)
         except ValueError:
-            raise BlockImportError(f"{name}: expected hex/bytes, got str not hex-decodable")
-    raise BlockImportError(f"{name}: expected bytes-like/hex str, got {type(x).__name__}")
+            raise BlockImportError(
+                f"{name}: expected hex/bytes, got str not hex-decodable"
+            )
+    raise BlockImportError(
+        f"{name}: expected bytes-like/hex str, got {type(x).__name__}"
+    )
 
 
 def _parent_hash_of(header: Header, payload: Optional[Dict[str, Any]] = None) -> bytes:
@@ -183,7 +189,9 @@ def block_from_mapping(m: Dict[str, Any]) -> Block:
     return _dataclass_from_dict(Block, block_payload)  # type: ignore[return-value]
 
 
-def decode_block(raw: Union[Block, bytes, Dict[str, Any]]) -> Tuple[Block, Dict[str, Any]]:
+def decode_block(
+    raw: Union[Block, bytes, Dict[str, Any]],
+) -> Tuple[Block, Dict[str, Any]]:
     """
     Decode `raw` into a Block and return `(block, raw_mapping_for_header_fallbacks)`.
 
@@ -212,7 +220,14 @@ class BlockImporter:
 
     __slots__ = ("params", "block_db", "tx_index", "fork_choice")
 
-    def __init__(self, *, params: ChainParams, block_db, tx_index=None, fork_choice: Optional[ForkChoice] = None):
+    def __init__(
+        self,
+        *,
+        params: ChainParams,
+        block_db,
+        tx_index=None,
+        fork_choice: Optional[ForkChoice] = None,
+    ):
         self.params = params
         self.block_db = block_db
         self.tx_index = tx_index
@@ -237,16 +252,27 @@ class BlockImporter:
             # Duplicate?
             if self.block_db.get_header_by_hash(h) is not None:
                 # already persisted
-                head_changed = self.fork_choice.consider(height=_height_of(header, hdr_map), block_hash=h)
+                head_changed = self.fork_choice.consider(
+                    height=_height_of(header, hdr_map), block_hash=h
+                )
                 self._maybe_update_canonical_head()
-                return ImportResult(ImportErrorCode.DUPLICATE, _height_of(header, hdr_map), h, head_changed, "duplicate")
+                return ImportResult(
+                    ImportErrorCode.DUPLICATE,
+                    _height_of(header, hdr_map),
+                    h,
+                    head_changed,
+                    "duplicate",
+                )
 
             # chainId check
             chain_id = _chain_id_of(header, hdr_map)
             if chain_id != self.params.chain_id:
                 return ImportResult(
-                    ImportErrorCode.INVALID, None, None, False,
-                    f"chainId mismatch: got {chain_id}, expected {self.params.chain_id}"
+                    ImportErrorCode.INVALID,
+                    None,
+                    None,
+                    False,
+                    f"chainId mismatch: got {chain_id}, expected {self.params.chain_id}",
                 )
 
             height = _height_of(header, hdr_map)
@@ -257,7 +283,9 @@ class BlockImporter:
                 # Must match configured genesis in DB (or DB empty)
                 current_head = self.block_db.get_canonical_head()
                 if current_head is not None:
-                    return ImportResult(ImportErrorCode.DUPLICATE, 0, h, False, "genesis already exists")
+                    return ImportResult(
+                        ImportErrorCode.DUPLICATE, 0, h, False, "genesis already exists"
+                    )
                 # Minimal header sanity
                 self._sanity_header(header)
                 # Persist
@@ -272,14 +300,19 @@ class BlockImporter:
             # Non-genesis needs parent
             parent_header = self.block_db.get_header_by_hash(parent_hash)
             if parent_header is None:
-                return ImportResult(ImportErrorCode.ORPHAN, height, h, False, "missing parent")
+                return ImportResult(
+                    ImportErrorCode.ORPHAN, height, h, False, "missing parent"
+                )
 
             # Height continuity
             parent_height = _height_of(parent_header)  # type: ignore[arg-type]
             if height != parent_height + 1:
                 return ImportResult(
-                    ImportErrorCode.INVALID, height, h, False,
-                    f"height continuity failed: got {height}, parent at {parent_height}"
+                    ImportErrorCode.INVALID,
+                    height,
+                    h,
+                    False,
+                    f"height continuity failed: got {height}, parent at {parent_height}",
                 )
 
             # Basic header sanity
@@ -324,6 +357,7 @@ class BlockImporter:
         - Θ (theta) domain sanity if present (non-negative, bounded)
         - mixSeed/nonce length sanity
         """
+
         # Tolerate differing attribute names (snake/camel)
         def has(name: str) -> bool:
             return hasattr(header, name)
@@ -374,18 +408,22 @@ class BlockImporter:
     def _tx_hash(self, tx: Tx) -> bytes:
         # Canonical: sha3_256 over the tx SignBytes (encoding/ canonical domain).
         from core.encoding.canonical import tx_signing_bytes
+
         return sha3_256(tx_signing_bytes(tx))
 
 
 # Convenience: tiny CLI for manual testing
 if __name__ == "__main__":  # pragma: no cover
     import argparse
-    from core.db.sqlite import SQLiteKV
-    from core.db.block_db import BlockDB
-    from core.genesis.loader import load_genesis
-    from core.config import load_config
 
-    ap = argparse.ArgumentParser(description="Import a CBOR-encoded block into the local DB")
+    from core.config import load_config
+    from core.db.block_db import BlockDB
+    from core.db.sqlite import SQLiteKV
+    from core.genesis.loader import load_genesis
+
+    ap = argparse.ArgumentParser(
+        description="Import a CBOR-encoded block into the local DB"
+    )
     ap.add_argument("--db", default="sqlite:///animica.db")
     ap.add_argument("--genesis", default="core/genesis/genesis.json")
     ap.add_argument("--block", required=True, help="path to block.cbor")

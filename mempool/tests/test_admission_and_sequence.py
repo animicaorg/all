@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Callable, Iterable, Optional, Tuple, Union, List
+from typing import Any, Callable, Iterable, List, Optional, Tuple, Union
 
 import pytest
 
-seq_mod = pytest.importorskip("mempool.sequence", reason="mempool.sequence module not found")
+seq_mod = pytest.importorskip(
+    "mempool.sequence", reason="mempool.sequence module not found"
+)
 
 
 # -------------------------
 # Test scaffolding / helpers
 # -------------------------
+
 
 @dataclasses.dataclass(frozen=True)
 class FakeTx:
@@ -18,11 +21,11 @@ class FakeTx:
     nonce: int
     size_bytes: int = 100
     fee: int = 0  # optional: effective priority
-    tx_hash: bytes = b"\xAB" * 32  # placeholder
+    tx_hash: bytes = b"\xab" * 32  # placeholder
 
     # Many pools expect a bytes-like encoding for size checks
     def __bytes__(self) -> bytes:
-        return b"\xFF" * self.size_bytes
+        return b"\xff" * self.size_bytes
 
     # Some pools expect attributes named differently; provide a few aliases
     @property
@@ -51,6 +54,7 @@ def _install_account_nonce_getter(
     Many implementations read 'current on-chain nonce' via a module-level function
     or dependency. We attempt to patch a few common names.
     """
+
     def get_nonce(addr: Sender) -> int:
         return table.get(addr, 0)
 
@@ -211,6 +215,7 @@ def _drain_ready(q: Any) -> list[FakeTx]:
 # Tests
 # -------------------------
 
+
 def test_nonce_gap_then_fill_transitions(monkeypatch: pytest.MonkeyPatch):
     """
     Base nonce(ALICE)=5. Insert nonce=7 first -> held (gap).
@@ -231,7 +236,9 @@ def test_nonce_gap_then_fill_transitions(monkeypatch: pytest.MonkeyPatch):
     status_7 = _add_tx(q, tx7)
     # It's okay if the API doesn't return a status; enforce via emptiness of ready set
     ready_after_7 = _drain_ready(q)
-    assert ready_after_7 == [], "Nonce gap: adding nonce=7 with base=5 must not produce ready txs"
+    assert (
+        ready_after_7 == []
+    ), "Nonce gap: adding nonce=7 with base=5 must not produce ready txs"
 
     status_5 = _add_tx(q, tx5)
     ready_after_5 = _drain_ready(q)
@@ -248,7 +255,9 @@ def test_nonce_gap_then_fill_transitions(monkeypatch: pytest.MonkeyPatch):
     if 7 not in nonces:
         second_drain = _drain_ready(q)
         nonces2 = [t.nonce for t in second_drain]
-        assert 7 in nonces2, "nonce=7 should become ready after contiguous 5 and 6 are consumed"
+        assert (
+            7 in nonces2
+        ), "nonce=7 should become ready after contiguous 5 and 6 are consumed"
 
 
 def test_per_sender_independence(monkeypatch: pytest.MonkeyPatch):
@@ -266,7 +275,9 @@ def test_per_sender_independence(monkeypatch: pytest.MonkeyPatch):
     # BOB: insert nonce 0 (base), should be immediately ready.
     _add_tx(q, FakeTx(sender=BOB, nonce=0))
     ready = _drain_ready(q)
-    assert any(t.sender == BOB and t.nonce == 0 for t in ready), "BOB's nonce=0 should be ready despite ALICE's gap"
+    assert any(
+        t.sender == BOB and t.nonce == 0 for t in ready
+    ), "BOB's nonce=0 should be ready despite ALICE's gap"
 
 
 def test_advance_base_unblocks_held(monkeypatch: pytest.MonkeyPatch):
@@ -282,7 +293,9 @@ def test_advance_base_unblocks_held(monkeypatch: pytest.MonkeyPatch):
     # Insert txs with nonces 3,4,5; but start with a gap (skip 3 initially)
     _add_tx(q, FakeTx(sender=ALICE, nonce=4))
     _add_tx(q, FakeTx(sender=ALICE, nonce=5))
-    assert _drain_ready(q) == [], "With base=3 and no nonce=3 tx present, 4/5 should be held"
+    assert (
+        _drain_ready(q) == []
+    ), "With base=3 and no nonce=3 tx present, 4/5 should be held"
 
     # Simulate external inclusion of nonce=3 (e.g., mined elsewhere) by advancing base to 4
     table[ALICE] = 4  # our getter will now report 4
@@ -294,10 +307,12 @@ def test_advance_base_unblocks_held(monkeypatch: pytest.MonkeyPatch):
         _add_tx(q, FakeTx(sender=ALICE, nonce=6))
         ready = _drain_ready(q)
 
-    assert any(t.nonce == 4 for t in ready), "After base advance to 4, nonce=4 must become ready"
+    assert any(
+        t.nonce == 4 for t in ready
+    ), "After base advance to 4, nonce=4 must become ready"
     # Advancing base to 5 should free the next held
     table[ALICE] = 5
     ready2 = _drain_ready(q)
-    assert any(t.nonce == 5 for t in ready2), "After base advance to 5, nonce=5 must become ready"
-
-
+    assert any(
+        t.nonce == 5 for t in ready2
+    ), "After base advance to 5, nonce=5 must become ready"

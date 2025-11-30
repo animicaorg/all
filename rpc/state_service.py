@@ -20,14 +20,16 @@ import hashlib
 import typing as t
 from dataclasses import dataclass
 
-from .deps import get_ctx, cbor_loads, cbor_dumps
-
+from .deps import cbor_dumps, cbor_loads, get_ctx
 
 # -------- Address helpers ----------------------------------------------------
 
+
 def _import(path: str):
     import importlib
+
     return importlib.import_module(path)
+
 
 def _is_hex(s: str) -> bool:
     try:
@@ -38,6 +40,7 @@ def _is_hex(s: str) -> bool:
         return True
     except Exception:
         return False
+
 
 def parse_address(addr: str) -> bytes:
     """
@@ -72,6 +75,7 @@ def parse_address(addr: str) -> bytes:
 
 # -------- Hash helpers -------------------------------------------------------
 
+
 def _sha3_256(data: bytes) -> bytes:
     try:
         hmod = _import("core.utils.hash")
@@ -81,9 +85,11 @@ def _sha3_256(data: bytes) -> bytes:
         pass
     return hashlib.sha3_256(data).digest()
 
+
 def _keccak_256(data: bytes) -> bytes:
     try:
         import sha3  # pysha3
+
         k = sha3.keccak_256()
         k.update(data)
         return k.digest()
@@ -94,17 +100,18 @@ def _keccak_256(data: bytes) -> bytes:
 
 # -------- Tx decode / encode domain -----------------------------------------
 
+
 @dataclass
 class DecodedTx:
-    raw: t.Any                 # original object (dict or core.types.tx.Tx)
-    view: dict                 # JSON-friendly dict view (for RPC models)
-    sign_bytes: bytes          # canonical message that was signed
-    hash: str                  # tx hash (0x…)
-    alg_id: int | None         # PQ algorithm id (if present)
-    pubkey: bytes | None       # signer pubkey bytes (if present)
-    signature: bytes | None    # signature bytes (if present)
-    chain_id: int | None       # chain id inside tx (if present)
-    from_addr: str | None      # bech32/hex address if included/derivable
+    raw: t.Any  # original object (dict or core.types.tx.Tx)
+    view: dict  # JSON-friendly dict view (for RPC models)
+    sign_bytes: bytes  # canonical message that was signed
+    hash: str  # tx hash (0x…)
+    alg_id: int | None  # PQ algorithm id (if present)
+    pubkey: bytes | None  # signer pubkey bytes (if present)
+    signature: bytes | None  # signature bytes (if present)
+    chain_id: int | None  # chain id inside tx (if present)
+    from_addr: str | None  # bech32/hex address if included/derivable
 
 
 def _tx_sign_bytes(tx_obj: t.Any) -> bytes:
@@ -142,11 +149,14 @@ def _tx_sign_bytes(tx_obj: t.Any) -> bytes:
     return cbor_dumps(tx_obj)
 
 
-def _tx_extract_fields(tx_obj: t.Any) -> tuple[int | None, bytes | None, bytes | None, str | None]:
+def _tx_extract_fields(
+    tx_obj: t.Any,
+) -> tuple[int | None, bytes | None, bytes | None, str | None]:
     """
     Returns (alg_id, pubkey, signature, from_addr) if discoverable.
     Tries common field names regardless of case/underscore differences.
     """
+
     def get(obj, *names):
         for n in names:
             if isinstance(obj, dict) and n in obj:
@@ -187,7 +197,12 @@ def _tx_extract_fields(tx_obj: t.Any) -> tuple[int | None, bytes | None, bytes |
                 return x.encode()
         return None
 
-    return t.cast(int | None, alg_id), to_bytes(pubkey), to_bytes(signature), t.cast(str | None, from_addr)
+    return (
+        t.cast(int | None, alg_id),
+        to_bytes(pubkey),
+        to_bytes(signature),
+        t.cast(str | None, from_addr),
+    )
 
 
 def _tx_compute_hash(tx_obj: t.Any) -> str:
@@ -285,11 +300,13 @@ def decode_tx(cbor_bytes: bytes) -> DecodedTx:
 
 # -------- Verification -------------------------------------------------------
 
+
 @dataclass
 class VerifyResult:
     ok: bool
     reason: str | None = None
     alg_id: int | None = None
+
 
 def verify_tx_signature(dt: DecodedTx) -> VerifyResult:
     """
@@ -299,21 +316,30 @@ def verify_tx_signature(dt: DecodedTx) -> VerifyResult:
     ctx = get_ctx()
     # Chain-id check
     if dt.chain_id is not None and int(dt.chain_id) != int(ctx.cfg.chain_id):
-        return VerifyResult(ok=False, reason=f"ChainIdMismatch: {dt.chain_id} != {ctx.cfg.chain_id}", alg_id=dt.alg_id)
+        return VerifyResult(
+            ok=False,
+            reason=f"ChainIdMismatch: {dt.chain_id} != {ctx.cfg.chain_id}",
+            alg_id=dt.alg_id,
+        )
 
     # Signature presence
     if dt.signature is None or dt.pubkey is None or dt.alg_id is None:
-        return VerifyResult(ok=False, reason="Missing signature/pubkey/alg_id", alg_id=dt.alg_id)
+        return VerifyResult(
+            ok=False, reason="Missing signature/pubkey/alg_id", alg_id=dt.alg_id
+        )
 
     try:
         pv = _import("pq.py.verify")
         ok = bool(pv.verify(dt.alg_id, dt.pubkey, dt.signature, dt.sign_bytes))
-        return VerifyResult(ok=ok, reason=None if ok else "SignatureInvalid", alg_id=dt.alg_id)
+        return VerifyResult(
+            ok=ok, reason=None if ok else "SignatureInvalid", alg_id=dt.alg_id
+        )
     except Exception as e:
         return VerifyResult(ok=False, reason=f"VerifyError: {e}", alg_id=dt.alg_id)
 
 
 # -------- State DB (balance/nonce) ------------------------------------------
+
 
 def get_balance(addr_str: str) -> int:
     """
@@ -369,6 +395,7 @@ def get_nonce(addr_str: str) -> int:
 
 # -------- Block & Tx lookup --------------------------------------------------
 
+
 def _block_view(block_obj: t.Any, include_txs: bool = True) -> dict:
     """
     Convert a core.types.block.Block or dict into a JSON-friendly view.
@@ -388,7 +415,18 @@ def _block_view(block_obj: t.Any, include_txs: bool = True) -> dict:
     hdr = getattr(block_obj, "header", None)
     if hdr is not None:
         out["header"] = {}
-        for k in ("number", "parentHash", "stateRoot", "txRoot", "proofsRoot", "daRoot", "theta", "nonce", "mixSeed", "chainId"):
+        for k in (
+            "number",
+            "parentHash",
+            "stateRoot",
+            "txRoot",
+            "proofsRoot",
+            "daRoot",
+            "theta",
+            "nonce",
+            "mixSeed",
+            "chainId",
+        ):
             if hasattr(hdr, k):
                 out["header"][k] = getattr(hdr, k)
     # txs projection
@@ -437,8 +475,12 @@ def get_block_by_hash(block_hash: str, include_txs: bool = True) -> dict | None:
         hdr = get_header(block_hash)  # type: ignore
         if hdr is None:
             return None
-        height = hdr.get("number") if isinstance(hdr, dict) else getattr(hdr, "number", None)
-        return _block_view({"header": hdr, "height": height, "hash": block_hash}, include_txs=False)
+        height = (
+            hdr.get("number") if isinstance(hdr, dict) else getattr(hdr, "number", None)
+        )
+        return _block_view(
+            {"header": hdr, "height": height, "hash": block_hash}, include_txs=False
+        )
     return None
 
 
@@ -492,8 +534,10 @@ def get_tx_by_hash(tx_hash: str) -> dict | None:
 
 # -------- Public facade ------------------------------------------------------
 
+
 class StateService:
     """Stateless facade — methods read from the global context opened by rpc.deps."""
+
     # Balances / nonces
     def get_balance(self, address: str) -> int:
         return get_balance(address)
@@ -505,7 +549,9 @@ class StateService:
     def get_block_by_number(self, height: int, include_txs: bool = True) -> dict | None:
         return get_block_by_number(height, include_txs)
 
-    def get_block_by_hash(self, block_hash: str, include_txs: bool = True) -> dict | None:
+    def get_block_by_hash(
+        self, block_hash: str, include_txs: bool = True
+    ) -> dict | None:
         return get_block_by_hash(block_hash, include_txs)
 
     # Tx

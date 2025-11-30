@@ -21,29 +21,20 @@ The generated client:
 Primary entrypoint: `render_client(abi, class_name="MyContract") -> str`.
 """
 
-from dataclasses import asdict
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 import json
 import keyword
 import textwrap
+from dataclasses import asdict
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
-from sdk.codegen.common.normalize import (
-    normalize_abi,
-    AbiNormalizationError,
-)
-from sdk.codegen.common.model import (
-    AbiIR,
-    FunctionIR,
-    EventIR,
-    ErrorIR,
-    TypeRef,
-    Param,
-)
-
+from sdk.codegen.common.model import (AbiIR, ErrorIR, EventIR, FunctionIR,
+                                      Param, TypeRef)
+from sdk.codegen.common.normalize import AbiNormalizationError, normalize_abi
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def render_client(
     abi: Union[str, Dict[str, Any], AbiIR],
@@ -90,7 +81,11 @@ def render_client(
     w(textwrap.indent(_emit_init_body(class_name), "    "))
     w("\n")
     for fn in abi_ir.functions:
-        w(textwrap.indent(_emit_function_method(fn, call_method, transact_method), "    "))
+        w(
+            textwrap.indent(
+                _emit_function_method(fn, call_method, transact_method), "    "
+            )
+        )
         w("")
     # Event helpers (lightweight: just topic IDs as constants dict)
     w(textwrap.indent(_emit_event_helpers(), "    "))
@@ -101,6 +96,7 @@ def render_client(
 # ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
+
 
 def _to_ir(abi: Union[str, Dict[str, Any], AbiIR]) -> AbiIR:
     if isinstance(abi, AbiIR):
@@ -190,7 +186,9 @@ def _emit_init_body(class_name: str) -> str:
     ).rstrip()
 
 
-def _emit_function_method(fn: FunctionIR, call_method: str, transact_method: str) -> str:
+def _emit_function_method(
+    fn: FunctionIR, call_method: str, transact_method: str
+) -> str:
     name = _method_name(fn)
     py_sig = _py_signature(fn)
     doc = _fn_docstring(fn)
@@ -234,6 +232,7 @@ def _emit_event_helpers() -> str:
 # ---------------------------------------------------------------------------
 # Rendering helpers
 # ---------------------------------------------------------------------------
+
 
 def _method_name(fn: FunctionIR) -> str:
     """
@@ -340,6 +339,7 @@ def _assert(x: Optional[Any]) -> Any:
 # CLI convenience (optional)
 # ---------------------------------------------------------------------------
 
+
 def render_client_from_file(
     abi_path: str,
     *,
@@ -356,10 +356,20 @@ def render_client_from_file(
 
 if __name__ == "__main__":
     import argparse
-    ap = argparse.ArgumentParser(description="Render a Python contract client from ABI JSON.")
+
+    ap = argparse.ArgumentParser(
+        description="Render a Python contract client from ABI JSON."
+    )
     ap.add_argument("abi_json", help="Path to ABI JSON file")
-    ap.add_argument("--class", dest="class_name", default="ContractClient", help="Generated class name")
-    ap.add_argument("--base-import", dest="base_import", default="omni_sdk.contracts.client")
+    ap.add_argument(
+        "--class",
+        dest="class_name",
+        default="ContractClient",
+        help="Generated class name",
+    )
+    ap.add_argument(
+        "--base-import", dest="base_import", default="omni_sdk.contracts.client"
+    )
     ap.add_argument("--base-class", dest="base_class", default="ContractClient")
     args = ap.parse_args()
 

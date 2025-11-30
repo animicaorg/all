@@ -31,7 +31,7 @@ async def test_v1_handshake_and_submit_round_trip():
             "merkleBranch": ["0x" + "22" * 32],
             "version": 0x20000000,
             "nbits": "1d00ffff",
-            "timestamp": 0x5f5e100,
+            "timestamp": 0x5F5E100,
         },
         share_target=1.0,
         theta_micro=800_000,
@@ -61,22 +61,34 @@ async def test_v1_handshake_and_submit_round_trip():
         assert notify_msg.get("method") == "mining.notify"
 
         # Authorize
-        await _send({"id": 2, "method": "mining.authorize", "params": ["worker.test", "p"]})
+        await _send(
+            {"id": 2, "method": "mining.authorize", "params": ["worker.test", "p"]}
+        )
         auth_res = await _recv()
         auth_result = auth_res.get("result")
-        assert auth_result is True or (isinstance(auth_result, dict) and auth_result.get("authorized"))
+        assert auth_result is True or (
+            isinstance(auth_result, dict) and auth_result.get("authorized")
+        )
 
         # Submit a share
         ntime = notify_msg["params"][7]
         await _send(
-            {"id": 3, "method": "mining.submit", "params": ["worker.test", job.job_id, "00000001", ntime, "00000000"]}
+            {
+                "id": 3,
+                "method": "mining.submit",
+                "params": ["worker.test", job.job_id, "00000001", ntime, "00000000"],
+            }
         )
         submit_res = await _recv()
         assert submit_res.get("result") is True
 
         # Submitting against stale job should return an error
         await _send(
-            {"id": 4, "method": "mining.submit", "params": ["worker.test", "stale", "00000001", ntime, "00000000"]}
+            {
+                "id": 4,
+                "method": "mining.submit",
+                "params": ["worker.test", "stale", "00000001", ntime, "00000000"],
+            }
         )
         stale_res = await _recv()
         assert stale_res.get("error", {}).get("code") == RpcErrorCodes.STALE_JOB

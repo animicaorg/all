@@ -22,7 +22,6 @@ from importlib import import_module
 from types import ModuleType
 from typing import Callable, Dict, Optional
 
-
 __all__ = [
     "get",
     "available",
@@ -78,7 +77,9 @@ def require(name: str) -> ModuleType:
     """
     mod = get(name)
     if mod is None:
-        raise ImportError(f"Benchmark '{name}' is not available on this platform or missing optional deps")
+        raise ImportError(
+            f"Benchmark '{name}' is not available on this platform or missing optional deps"
+        )
     return mod
 
 

@@ -26,19 +26,10 @@ Notes
 """
 
 from dataclasses import dataclass
-from typing import Optional, Union, Tuple, Literal
+from typing import Literal, Optional, Tuple, Union
 
-from pq.py.registry import (
-    ALG_NAME,
-    is_known_alg_id,
-    is_sig_alg_id,
-)
-from pq.py.sign import (
-    Signature,
-    SignedMessage,
-    build_sign_bytes,
-    PrehashKind,
-)
+from pq.py.registry import ALG_NAME, is_known_alg_id, is_sig_alg_id
+from pq.py.sign import PrehashKind, Signature, SignedMessage, build_sign_bytes
 
 __all__ = [
     "verify_detached",
@@ -49,6 +40,7 @@ __all__ = [
 # --------------------------------------------------------------------------------------
 # Backend dispatcher
 # --------------------------------------------------------------------------------------
+
 
 def _backend_verify(alg_name: str, pk: bytes, msg: bytes, sig: bytes) -> bool:
     """
@@ -69,12 +61,16 @@ def _backend_verify(alg_name: str, pk: bytes, msg: bytes, sig: bytes) -> bool:
         ) from e
 
     if not hasattr(backend, "verify"):
-        raise NotImplementedError(f"Backend {backend.__name__} lacks .verify(public_key, message, signature)")
+        raise NotImplementedError(
+            f"Backend {backend.__name__} lacks .verify(public_key, message, signature)"
+        )
     return bool(backend.verify(pk, msg, sig))  # type: ignore[arg-type]
+
 
 # --------------------------------------------------------------------------------------
 # Verify API
 # --------------------------------------------------------------------------------------
+
 
 def _check_alg(sig: Signature) -> Tuple[int, str]:
     alg_id = sig.alg_id
@@ -133,7 +129,11 @@ def verify_detached(
     if strict_domain and domain is not None:
         # normalize both to str for comparison
         lhs = env_domain
-        rhs = domain.decode("utf-8", "replace") if isinstance(domain, (bytes, bytearray)) else str(domain)
+        rhs = (
+            domain.decode("utf-8", "replace")
+            if isinstance(domain, (bytes, bytearray))
+            else str(domain)
+        )
         if lhs != rhs:
             raise ValueError(f"Domain mismatch: envelope={lhs!r} verifier={rhs!r}")
 
@@ -146,7 +146,9 @@ def verify_detached(
         # Ensure name maps back to id consistently
         expected_name = ALG_NAME.get(alg_id, "")
         if expected_name and expected_name != sig.alg_name:
-            raise ValueError(f"Algorithm name/id mismatch: {sig.alg_name} vs 0x{alg_id:02x}")
+            raise ValueError(
+                f"Algorithm name/id mismatch: {sig.alg_name} vs 0x{alg_id:02x}"
+            )
 
     # Recompute canonical SignBytes and verify with backend
     ph = build_sign_bytes(
@@ -179,13 +181,16 @@ def verify_attached(
 # provides alg & prehash info. Use the Python API for real workflows.
 # --------------------------------------------------------------------------------------
 
+
 def _parse_hex_arg(s: str) -> bytes:
     if not s.startswith("hex:"):
         raise ValueError("expected hex:…")
     return bytes.fromhex(s[4:].replace("_", "").replace(" ", ""))
 
+
 def _main() -> None:
     import sys
+
     from pq.py.sign import Signature as Sig
 
     args = sys.argv[1:]
@@ -209,6 +214,7 @@ def _main() -> None:
         # Map name → id by creating a tiny throwaway Signature via sign's helper
         # (We can piggyback on registry through verify path)
         from pq.py.registry import ALG_ID
+
         name = alg_raw.strip().lower()
         if name not in ALG_ID:
             print(f"Unknown algorithm name: {name}")
@@ -238,6 +244,7 @@ def _main() -> None:
     ok = verify_detached(msg, env, pk, chain_id=chain_id)
     print("valid" if ok else "invalid")
     sys.exit(0 if ok else 1)
+
 
 if __name__ == "__main__":
     _main()

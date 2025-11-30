@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+
 from anyio import from_thread
 
 from rpc import ws
@@ -44,4 +45,3 @@ def test_ws_new_heads_roundtrip():
                 break
         else:
             raise AssertionError("No newHeads payload received over WebSocket")
-

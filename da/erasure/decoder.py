@@ -48,11 +48,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
+from ..errors import DAError, InvalidProof
+from ..nmt.codec import decode_leaf  # returns (namespace: bytes, body: bytes)
+from ..nmt.namespace import normalize_namespace
 from .params import ErasureParams
 from .reedsolomon import rs_decode
-from ..errors import DAError, InvalidProof
-from ..nmt.namespace import normalize_namespace
-from ..nmt.codec import decode_leaf  # returns (namespace: bytes, body: bytes)
 
 # `da.nmt.verify` is optional at import time for flexibility; we import lazily.
 try:  # pragma: no cover - exercised in integration tests
@@ -64,6 +64,7 @@ except Exception:  # pragma: no cover
 # --------------------------------------------------------------------------- #
 # Data structures
 # --------------------------------------------------------------------------- #
+
 
 @dataclass(frozen=True)
 class ErasureLeafRecord:
@@ -78,6 +79,7 @@ class ErasureLeafRecord:
       proof:    optional NMT inclusion proof object; if provided and `da_root`
                 is passed to the decoder, it will be verified.
     """
+
     stripe: int
     position: int
     leaf: bytes
@@ -89,6 +91,7 @@ class ErasureDecodeResult:
     """
     Outcome of an erasure decode attempt.
     """
+
     blob: bytes
     recovered_stripes: int
     stripes_total: int
@@ -101,6 +104,7 @@ class ErasureDecodeResult:
 # --------------------------------------------------------------------------- #
 # Internal helpers
 # --------------------------------------------------------------------------- #
+
 
 def _verify_leaf_inclusion(
     leaf: bytes,
@@ -182,7 +186,9 @@ def _group_records_by_stripe(
 
         stripe_map = by_stripe.setdefault(rec.stripe, {})
         if rec.position in stripe_map:
-            raise DAError(f"duplicate leaf for stripe {rec.stripe}, position {rec.position}")
+            raise DAError(
+                f"duplicate leaf for stripe {rec.stripe}, position {rec.position}"
+            )
         stripe_map[rec.position] = payload_B
 
     return by_stripe
@@ -216,6 +222,7 @@ def _infer_last_shard_meaningful_len(
 # --------------------------------------------------------------------------- #
 # Public API
 # --------------------------------------------------------------------------- #
+
 
 def decode_blob_from_records(
     records: Sequence[ErasureLeafRecord],
@@ -258,7 +265,11 @@ def decode_blob_from_records(
       InvalidProof on proof failures, DAError on structural/decoding issues.
     """
     # Normalize expected namespace, if any
-    ns_norm = normalize_namespace(expected_namespace) if expected_namespace is not None else None
+    ns_norm = (
+        normalize_namespace(expected_namespace)
+        if expected_namespace is not None
+        else None
+    )
 
     # 1) Optional NMT inclusion verification for every record
     if da_root is not None:

@@ -17,12 +17,12 @@ not the beacon engine or quantum device attestations (covered elsewhere).
 from __future__ import annotations
 
 from pathlib import Path
-import pytest
 
+import pytest
 
 # --------------------------- inline quantum-rng contract ------------------------
 
-CONTRACT_SRC = r'''
+CONTRACT_SRC = r"""
 from stdlib.storage import get, set
 from stdlib.events import emit
 from stdlib.hash import sha3_256
@@ -47,7 +47,7 @@ def mix_with(qbytes: bytes) -> bytes:
     set(K_LAST, out)
     emit(b"QMix", {"qlen": len(qbytes)})
     return out
-'''
+"""
 
 
 def _write_contract(tmp_path: Path) -> Path:
@@ -57,6 +57,7 @@ def _write_contract(tmp_path: Path) -> Path:
 
 
 # --------------------------------- fixtures ------------------------------------
+
 
 @pytest.fixture()
 def beacon_patch(monkeypatch):
@@ -89,6 +90,7 @@ def beacon_patch(monkeypatch):
 
 # ----------------------------------- tests -------------------------------------
 
+
 def test_qmix_reproducible_same_inputs(tmp_path: Path, compile_contract, beacon_patch):
     """
     Same beacon + same qbytes ⇒ identical mix across calls.
@@ -96,7 +98,7 @@ def test_qmix_reproducible_same_inputs(tmp_path: Path, compile_contract, beacon_
     c = compile_contract(_write_contract(tmp_path))
     c.call("init")
 
-    qbytes = b"\xAA" * 64
+    qbytes = b"\xaa" * 64
     m1 = c.call("mix_with", qbytes)
     m2 = c.call("mix_with", qbytes)
 
@@ -154,10 +156,10 @@ def test_qmix_regression_sanity_vectors(tmp_path: Path, compile_contract, beacon
     c.call("init")
 
     vectors = [
-        (b"\x11"*32, b"alpha"),
-        (b"\x11"*32, b"beta"),
-        (b"\x33"*32, b"alpha"),
-        (b"\x33"*32, b"gamma"),
+        (b"\x11" * 32, b"alpha"),
+        (b"\x11" * 32, b"beta"),
+        (b"\x33" * 32, b"alpha"),
+        (b"\x33" * 32, b"gamma"),
     ]
 
     prefixes = []
@@ -169,7 +171,9 @@ def test_qmix_regression_sanity_vectors(tmp_path: Path, compile_contract, beacon
         prefixes.append(bytes(out[:8]))
 
     # All entries should be distinct across these deliberately different (beacon,q) pairs
-    assert len(set(prefixes)) == len(prefixes), "mix outputs should differ across distinct inputs"
+    assert len(set(prefixes)) == len(
+        prefixes
+    ), "mix outputs should differ across distinct inputs"
 
 
 def test_qmix_rejects_empty_qbytes(tmp_path: Path, compile_contract, beacon_patch):

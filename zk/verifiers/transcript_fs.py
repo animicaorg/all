@@ -50,16 +50,14 @@ License: MIT
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence, Tuple, Union
 
-import hashlib
-
+# BN254 helpers (for canonicalizing group elements)
+from .pairing_bn254 import curve_order, normalize_g1, normalize_g2
 # Poseidon permutation & params registry
 from .poseidon import PoseidonParams, get_params, poseidon_permute
-# BN254 helpers (for canonicalizing group elements)
-from .pairing_bn254 import normalize_g1, normalize_g2, curve_order
-
 
 # ---------------------------
 # Field arithmetic (Fr)
@@ -67,8 +65,10 @@ from .pairing_bn254 import normalize_g1, normalize_g2, curve_order
 
 _FR = int(curve_order())  # BN254 scalar field order (r)
 
+
 def _fadd(a: int, b: int) -> int:
     return (int(a) + int(b)) % _FR
+
 
 def _fred(a: int) -> int:
     return int(a) % _FR
@@ -153,6 +153,7 @@ def _encode_g2_bytes(Q) -> bytes:
 # Poseidon sponge
 # ---------------------------
 
+
 @dataclass
 class _Sponge:
     params: PoseidonParams
@@ -195,6 +196,7 @@ class _Sponge:
 # Transcript
 # ---------------------------
 
+
 class Transcript:
     """
     Fiat–Shamir transcript using Poseidon over Fr.
@@ -218,7 +220,9 @@ class Transcript:
 
     # --- append methods ---
 
-    def append_message(self, label: str, data: Union[bytes, bytearray, memoryview]) -> None:
+    def append_message(
+        self, label: str, data: Union[bytes, bytearray, memoryview]
+    ) -> None:
         """
         Append arbitrary bytes with length delimiting and label domain tag.
         """

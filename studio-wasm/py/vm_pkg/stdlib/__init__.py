@@ -16,10 +16,10 @@ This is a thin re-export layer to keep imports stable and readable inside
 example contracts that run under the in-browser VM.
 """
 
-from . import storage as storage
+from . import abi as abi
 from . import events as events
 from . import hash as hash
-from . import abi as abi
+from . import storage as storage
 from . import treasury as treasury
 
 __all__ = ["storage", "events", "hash", "abi", "treasury"]

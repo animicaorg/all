@@ -4,11 +4,12 @@ import random
 
 import pytest
 
+import randomness.commit_reveal.aggregate as agg_mod  # type: ignore
 # Expected API (best-effort across plausible names).
 # The aggregator module should expose a function that combines a list of digests
 # (32B each) into a single 32B beacon candidate using a hash–xor-style fold.
-from randomness.utils.hash import sha3_256  # deterministic, domain-separated in module
-import randomness.commit_reveal.aggregate as agg_mod  # type: ignore
+from randomness.utils.hash import \
+    sha3_256  # deterministic, domain-separated in module
 
 
 def _find_aggregate_func():
@@ -18,7 +19,7 @@ def _find_aggregate_func():
     """
     candidates = [
         "aggregate_digests",
-        "aggregate_reveals",   # many impls just hash inputs internally; passing digests still OK
+        "aggregate_reveals",  # many impls just hash inputs internally; passing digests still OK
         "aggregate",
         "fold_hash_xor",
         "fold_xor",
@@ -32,6 +33,7 @@ def _find_aggregate_func():
     for name in ("combine_pair", "combine", "mix_pair"):
         f = getattr(agg_mod, name, None)
         if callable(f):
+
             def fold(digests: list[bytes]) -> bytes:
                 if not digests:
                     # Conventional identity: 32 zero bytes
@@ -40,9 +42,12 @@ def _find_aggregate_func():
                 for d in digests[1:]:
                     acc = f(acc, d)
                 return acc
+
             return fold
 
-    pytest.skip("No compatible aggregate function found in randomness.commit_reveal.aggregate")
+    pytest.skip(
+        "No compatible aggregate function found in randomness.commit_reveal.aggregate"
+    )
 
 
 AGG = _find_aggregate_func()
@@ -81,7 +86,9 @@ def test_additional_reveal_changes_output():
     base = digest_set(10, 12)
     out1 = AGG(base)
     out2 = AGG(base + [digest(999)])
-    assert out1 != out2, "Including an additional valid reveal must change the aggregate"
+    assert (
+        out1 != out2
+    ), "Including an additional valid reveal must change the aggregate"
 
 
 def test_chunking_associativity_like_property_when_exposed():
@@ -110,7 +117,9 @@ def test_chunking_associativity_like_property_when_exposed():
         finalize = getattr(agg_mod, "finalize", None)
         if callable(finalize):
             combined = finalize(combined)
-        assert combined == out_all, "Aggregator should be decomposable via XOR when helpers are present"
+        assert (
+            combined == out_all
+        ), "Aggregator should be decomposable via XOR when helpers are present"
     else:
         pytest.skip("xor_bytes helper not exposed; associativity-like check skipped")
 
@@ -123,12 +132,16 @@ def test_duplicate_handling_idempotence_when_deduper_present():
     """
     dedup = getattr(agg_mod, "aggregate_digests_dedup", None)
     if not callable(dedup):
-        pytest.skip("No dedup aggregator exposed; skipping idempotence-under-duplicates test")
+        pytest.skip(
+            "No dedup aggregator exposed; skipping idempotence-under-duplicates test"
+        )
 
     vals = digest_set(42, 6)
     out1 = dedup(vals)
     out2 = dedup(vals + [vals[0], vals[2], vals[0]])  # inject duplicates
-    assert out1 == out2, "Dedup-enabled aggregator must be idempotent under duplicate reveals"
+    assert (
+        out1 == out2
+    ), "Dedup-enabled aggregator must be idempotent under duplicate reveals"
 
 
 def test_empty_input_convention():
@@ -143,7 +156,9 @@ def test_empty_input_convention():
         assert is_32_or_64(a)
     except Exception:
         # Also acceptable: raising a well-typed error to forbid empty rounds (policy-level).
-        pytest.skip("Aggregator forbids empty input (policy-level); skipping convention check")
+        pytest.skip(
+            "Aggregator forbids empty input (policy-level); skipping convention check"
+        )
 
 
 def test_bit_diffusion_sanity():

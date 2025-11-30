@@ -46,7 +46,9 @@ def _state_id(request: Request, name: str) -> str:
 
 def _client_ip(request: Request) -> str:
     # Prefer X-Forwarded-For (first hop), then X-Real-IP, then ASGI client addr
-    fwd = request.headers.get("x-forwarded-for") or request.headers.get("X-Forwarded-For")
+    fwd = request.headers.get("x-forwarded-for") or request.headers.get(
+        "X-Forwarded-For"
+    )
     if fwd:
         return fwd.split(",")[0].strip()
     real = request.headers.get("x-real-ip") or request.headers.get("X-Real-Ip")
@@ -97,9 +99,13 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
 
     def __init__(self, app, *, redact_headers: Optional[Tuple[str, ...]] = None):
         super().__init__(app)
-        self.redact_headers = tuple((h.lower() for h in (redact_headers or ())))  # reserved for future
+        self.redact_headers = tuple(
+            (h.lower() for h in (redact_headers or ()))
+        )  # reserved for future
 
-    async def dispatch(self, request: Request, call_next: Callable[[Request], Response]) -> Response:
+    async def dispatch(
+        self, request: Request, call_next: Callable[[Request], Response]
+    ) -> Response:
         start_ns = time.perf_counter_ns()
 
         method = request.method
@@ -270,9 +276,9 @@ def _log_line(
             logger.info("access")
     else:
         msg = (
-            f'{method} {path}{qs} -> {status} '
+            f"{method} {path}{qs} -> {status} "
             f'latency_ms={payload["latency_ms"]} rx={rx_bytes} tx={tx_bytes} '
-            f'ip={client_ip} req_id={request_id} trace_id={trace_id}'
+            f"ip={client_ip} req_id={request_id} trace_id={trace_id}"
         )
         if level == "error":
             logging.getLogger("studio_services.access").error(msg, exc_info=exc)
@@ -285,7 +291,9 @@ def _log_line(
 # --------------------------- installer ---------------------------
 
 
-def install_access_log_middleware(app: FastAPI, *, redact_headers: Optional[Tuple[str, ...]] = None) -> None:
+def install_access_log_middleware(
+    app: FastAPI, *, redact_headers: Optional[Tuple[str, ...]] = None
+) -> None:
     """
     Add the AccessLogMiddleware to the FastAPI app.
 

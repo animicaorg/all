@@ -5,6 +5,7 @@
 
 try:
     from . import quotas as _quotas  # type: ignore[attr-defined]
+
     QT = getattr(_quotas, "QuotaTracker", None)
     if QT and not getattr(QT, "_release_compat_installed", False):
         _orig_release = getattr(QT, "release", None)
@@ -23,7 +24,9 @@ try:
 
             if prov_id is not None:
                 try:
-                    from aicf.queue import assignment as _assign  # local import to avoid cycles
+                    from aicf.queue import \
+                        assignment as _assign  # local import to avoid cycles
+
                     _assign._release_by_provider_for(self, str(prov_id))
                 except Exception:
                     # Never fail a release due to compat shim

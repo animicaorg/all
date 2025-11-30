@@ -26,10 +26,10 @@ APIs
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Sequence, Tuple, Union
-
 import json
 from decimal import Decimal
+from typing import (Any, Dict, Iterable, List, Mapping, MutableMapping,
+                    Sequence, Tuple, Union)
 
 try:
     import orjson as _orjson  # type: ignore
@@ -38,7 +38,6 @@ except Exception:  # pragma: no cover - optional dep
 
 from .bytes import BytesLike
 
-
 _JS_SAFE_MAX = (1 << 53) - 1  # Number.MAX_SAFE_INTEGER
 _JS_SAFE_MIN = -_JS_SAFE_MAX
 
@@ -46,6 +45,7 @@ _JS_SAFE_MIN = -_JS_SAFE_MAX
 # -------------------------------
 # Container & type normalization
 # -------------------------------
+
 
 def _is_js_unsafe_int(n: int) -> bool:
     return not (_JS_SAFE_MIN <= n <= _JS_SAFE_MAX)
@@ -106,6 +106,7 @@ def forbid_floats(obj: Any, *, path: str = "$") -> None:
 # BigInt handling
 # -------------------------------
 
+
 def encode_bigints(obj: Any, *, mode: str = "string") -> Any:
     """
     Recursively encode integers per mode:
@@ -146,6 +147,7 @@ def encode_bigints(obj: Any, *, mode: str = "string") -> Any:
 # JSON encode helpers
 # -------------------------------
 
+
 def _default_json(obj: Any) -> Any:
     """
     Default serializer for unsupported types:
@@ -156,7 +158,11 @@ def _default_json(obj: Any) -> Any:
         return "0x" + bytes(obj).hex()
     if isinstance(obj, Decimal):
         # Produce a plain string with no exponent to avoid locale/scientific notation issues
-        return format(obj, "f").rstrip("0").rstrip(".") if "." in format(obj, "f") else format(obj, "f")
+        return (
+            format(obj, "f").rstrip("0").rstrip(".")
+            if "." in format(obj, "f")
+            else format(obj, "f")
+        )
     # dataclasses etc. could be supported here if needed
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
@@ -199,7 +205,9 @@ def canonical_dumps(
                 _orjson.OPT_SORT_KEYS
                 | _orjson.OPT_OMIT_MICROSECONDS
                 | (_orjson.OPT_ESCAPE_FORWARD_SLASHES)
-                | (_orjson.OPT_NON_STR_KEYS)  # we still expect str keys, but this is harmless
+                | (
+                    _orjson.OPT_NON_STR_KEYS
+                )  # we still expect str keys, but this is harmless
             ),
             default=_orjson_default,
         )
@@ -244,6 +252,7 @@ def canonical_hash_equal(a: Any, b: Any, **kw: Any) -> bool:
 # JSON decode helpers
 # -------------------------------
 
+
 def loads_allow_hex_bigint(s: Union[str, bytes, bytearray]) -> Any:
     """
     Load JSON but post-process string values that *look* like 0x-hex integers
@@ -271,6 +280,7 @@ def loads_allow_hex_bigint(s: Union[str, bytes, bytearray]) -> Any:
 # -------------------------------
 # Pretty helpers (non-canonical)
 # -------------------------------
+
 
 def pretty_dumps(obj: Any) -> str:
     """

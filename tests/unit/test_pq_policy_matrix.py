@@ -21,14 +21,14 @@ import json
 import os
 from dataclasses import dataclass
 from hashlib import sha3_256
-from typing import Dict, Iterable, List, Optional, Set, Tuple, Any
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 import pytest
-
 
 # -----------------------------------------------------------------------------
 # Helpers to fetch algorithms from omni_sdk.wallet.signer
 # -----------------------------------------------------------------------------
+
 
 def _collect_algorithms_from_signer() -> Set[str]:
     """
@@ -42,7 +42,12 @@ def _collect_algorithms_from_signer() -> Set[str]:
         raise
 
     # 1) Common constant names
-    for name in ("SUPPORTED_PQ_ALGS", "PQ_ALGS", "AVAILABLE_PQ_ALGOS", "AVAILABLE_PQ_ALGS"):
+    for name in (
+        "SUPPORTED_PQ_ALGS",
+        "PQ_ALGS",
+        "AVAILABLE_PQ_ALGOS",
+        "AVAILABLE_PQ_ALGS",
+    ):
         algs = getattr(_signer, name, None)
         if isinstance(algs, (set, list, tuple)):
             return set(str(a) for a in algs)
@@ -83,6 +88,7 @@ def _collect_algorithms_from_signer() -> Set[str]:
 # Helpers to fetch address-kind mapping from studio_services.adapters.pq_addr
 # -----------------------------------------------------------------------------
 
+
 def _load_addr_kinds() -> Dict[str, Optional[str]]:
     """
     Return mapping {alg_name -> addr_kind_or_None}. If an adapter doesn't
@@ -118,7 +124,9 @@ def _load_addr_kinds() -> Dict[str, Optional[str]]:
         for row in tab:
             if isinstance(row, dict):
                 k = str(row.get("alg"))
-                out[k] = None if row.get("addr_kind") is None else str(row.get("addr_kind"))
+                out[k] = (
+                    None if row.get("addr_kind") is None else str(row.get("addr_kind"))
+                )
             elif isinstance(row, (list, tuple)) and len(row) >= 2:
                 k = str(row[0])
                 out[k] = None if row[1] is None else str(row[1])
@@ -132,6 +140,7 @@ def _load_addr_kinds() -> Dict[str, Optional[str]]:
 # -----------------------------------------------------------------------------
 # Canonical root calculation
 # -----------------------------------------------------------------------------
+
 
 def _canonical_bytes(entries: List[Dict[str, Optional[str]]]) -> bytes:
     """
@@ -148,7 +157,9 @@ def compute_policy_root(algos: Iterable[str], kinds: Dict[str, Optional[str]]) -
     """
     domain-separated SHA3-256 over canonical entries.
     """
-    entries = [{"alg": a, "addr_kind": kinds.get(a)} for a in sorted(set(map(str, algos)))]
+    entries = [
+        {"alg": a, "addr_kind": kinds.get(a)} for a in sorted(set(map(str, algos)))
+    ]
     payload = b"pq-policy-v1|" + _canonical_bytes(entries)
     return sha3_256(payload).hexdigest()
 
@@ -157,7 +168,10 @@ def compute_policy_root(algos: Iterable[str], kinds: Dict[str, Optional[str]]) -
 # Tests
 # -----------------------------------------------------------------------------
 
-def test_policy_sets_are_consistent_and_root_matches_expected(monkeypatch: pytest.MonkeyPatch):
+
+def test_policy_sets_are_consistent_and_root_matches_expected(
+    monkeypatch: pytest.MonkeyPatch,
+):
     signer_algs = _collect_algorithms_from_signer()
     addr_kinds = _load_addr_kinds()
 
@@ -190,10 +204,15 @@ def test_policy_sets_are_consistent_and_root_matches_expected(monkeypatch: pytes
 
     # If an expected root is provided anywhere, enforce match.
     if expected:
-        assert root == expected, f"PQ policy root mismatch: computed {root}, expected {expected}"
+        assert (
+            root == expected
+        ), f"PQ policy root mismatch: computed {root}, expected {expected}"
 
     # Always assert root shape (hex-64)
-    assert len(root) == 64 and all(c in "0123456789abcdef" for c in root), "root must be hex-64"
+    assert len(root) == 64 and all(
+        c in "0123456789abcdef" for c in root
+    ), "root must be hex-64"
+
 
 def test_policy_root_is_order_independent():
     # Build two differently ordered views and ensure root is stable.
@@ -203,4 +222,3 @@ def test_policy_root_is_order_independent():
     root1 = compute_policy_root(sorted(signer_algs), addr_kinds)
     root2 = compute_policy_root(sorted(signer_algs, reverse=True), addr_kinds)
     assert root1 == root2
-

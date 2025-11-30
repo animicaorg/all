@@ -41,50 +41,87 @@ from typing import Any, Optional
 # Optional faster loop
 try:  # pragma: no cover
     import uvloop  # type: ignore
+
     uvloop.install()
 except Exception:
     pass
+
 
 # ---- Logging --------------------------------------------------------------------------
 def _setup_logging(level: str = "INFO") -> None:
     try:
         from core.logging import setup_logging  # type: ignore
+
         setup_logging(level=level, fmt="text")
         return
     except Exception:
         import logging
+
         logging.basicConfig(
             level=getattr(logging, level.upper(), 20),
             format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
             stream=sys.stdout,
         )
 
+
 # ---- Args -----------------------------------------------------------------------------
 def _build_argparser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="animica-p2p publish", add_help=True)
     p.add_argument("--chain-id", type=int, default=1, help="Chain ID (default: 1)")
-    p.add_argument("--seed", action="append", default=[], help="Seed multiaddr (repeatable)")
-    p.add_argument("--listen", action="append", default=[], help="Optional local listen addrs (repeatable)")
-    p.add_argument("--enable-quic", action="store_true", help="Enable QUIC (if available)")
-    p.add_argument("--enable-ws", action="store_true", help="Enable WebSocket transport (if available)")
-    p.add_argument("--log-level", default="INFO", help="Logging level (DEBUG, INFO, WARN, ERROR)")
+    p.add_argument(
+        "--seed", action="append", default=[], help="Seed multiaddr (repeatable)"
+    )
+    p.add_argument(
+        "--listen",
+        action="append",
+        default=[],
+        help="Optional local listen addrs (repeatable)",
+    )
+    p.add_argument(
+        "--enable-quic", action="store_true", help="Enable QUIC (if available)"
+    )
+    p.add_argument(
+        "--enable-ws",
+        action="store_true",
+        help="Enable WebSocket transport (if available)",
+    )
+    p.add_argument(
+        "--log-level", default="INFO", help="Logging level (DEBUG, INFO, WARN, ERROR)"
+    )
 
     # Topic & payload
-    p.add_argument("--topic", required=True, help="Topic name (e.g. txs, headers, blocks, shares, blobs, or custom.foo)")
+    p.add_argument(
+        "--topic",
+        required=True,
+        help="Topic name (e.g. txs, headers, blocks, shares, blobs, or custom.foo)",
+    )
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument("--hex", help="Hex payload (with or without 0x)")
     g.add_argument("--file", help="Read payload bytes from file")
     g.add_argument("--json", help="JSON string; use --encode to choose wire format")
 
-    p.add_argument("--encode", choices=["raw", "cbor", "json"], default="raw",
-                   help="When providing --json, choose on-wire encoding (default raw = UTF-8 bytes)")
-    p.add_argument("--dry-run", action="store_true", help="Parse and print but do not publish")
-    p.add_argument("--linger", type=float, default=2.0, help="Seconds to linger after publish (default: 2.0)")
+    p.add_argument(
+        "--encode",
+        choices=["raw", "cbor", "json"],
+        default="raw",
+        help="When providing --json, choose on-wire encoding (default raw = UTF-8 bytes)",
+    )
+    p.add_argument(
+        "--dry-run", action="store_true", help="Parse and print but do not publish"
+    )
+    p.add_argument(
+        "--linger",
+        type=float,
+        default=2.0,
+        help="Seconds to linger after publish (default: 2.0)",
+    )
     return p
+
 
 # ---- Payload helpers ------------------------------------------------------------------
 def _strip0x(h: str) -> str:
     return h[2:] if h.startswith(("0x", "0X")) else h
+
 
 def _load_payload(args: argparse.Namespace) -> bytes:
     if args.hex is not None:
@@ -97,21 +134,28 @@ def _load_payload(args: argparse.Namespace) -> bytes:
         obj = json.loads(args.json)
         if args.encode == "json":
             # Canonical-ish JSON: sorted keys, no whitespace
-            return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
         if args.encode == "cbor":
             # Prefer msgspec for speed, fallback to cbor2
             try:
                 import msgspec  # type: ignore
+
                 return msgspec.dumps(obj)
             except Exception:
                 try:
                     import cbor2  # type: ignore
+
                     return cbor2.dumps(obj)
                 except Exception as e:
-                    raise RuntimeError("CBOR encoding requested but neither msgspec nor cbor2 is available") from e
+                    raise RuntimeError(
+                        "CBOR encoding requested but neither msgspec nor cbor2 is available"
+                    ) from e
         # raw: just UTF-8 of the original JSON string (not the object)
         return args.json.encode("utf-8")
     raise AssertionError("unreachable: one of --hex/--file/--json is required")
+
 
 def _resolve_topic(name: str, chain_id: int) -> str:
     """
@@ -120,6 +164,7 @@ def _resolve_topic(name: str, chain_id: int) -> str:
     """
     try:
         from p2p.gossip.topics import canonical_topic  # type: ignore
+
         return canonical_topic(name, chain_id=chain_id)  # may raise -> fall through
     except Exception:
         # Minimal mapping
@@ -138,6 +183,7 @@ def _resolve_topic(name: str, chain_id: int) -> str:
         # Custom, use as-is
         return name
 
+
 # ---- Publisher bridge -----------------------------------------------------------------
 @dataclass
 class _BootCfg:
@@ -146,6 +192,7 @@ class _BootCfg:
     seeds: list[str]
     enable_quic: bool
     enable_ws: bool
+
 
 class _Publisher:
     def __init__(self, cfg: _BootCfg) -> None:
@@ -159,6 +206,7 @@ class _Publisher:
         # Try the full node service with gossip engine
         try:
             from p2p.node.service import P2PService  # type: ignore
+
             self.service = P2PService(
                 listen_addrs=self.cfg.listen_addrs,
                 seeds=self.cfg.seeds,
@@ -197,7 +245,9 @@ class _Publisher:
             await self.service.publish(topic, payload)  # type: ignore
             return
         except Exception as e:
-            raise RuntimeError(f"P2P service does not expose a publish method: {e}") from e
+            raise RuntimeError(
+                f"P2P service does not expose a publish method: {e}"
+            ) from e
 
     async def stop(self) -> None:
         try:
@@ -205,6 +255,7 @@ class _Publisher:
                 await self.service.stop()
         except Exception:
             pass
+
 
 # ---- Main -----------------------------------------------------------------------------
 async def _amain(args: argparse.Namespace) -> int:
@@ -245,6 +296,7 @@ async def _amain(args: argparse.Namespace) -> int:
         await pub.stop()
     return 0
 
+
 def main(argv: Optional[list[str]] = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
@@ -253,6 +305,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         return _asyncio.run(_amain(args))
     except KeyboardInterrupt:
         return 130
+
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())

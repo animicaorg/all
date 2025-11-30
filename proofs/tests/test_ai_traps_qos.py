@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import math
 from typing import Any, Callable, Optional, Tuple
 
-import math
 import pytest
 
 # We deliberately write these tests to be resilient to small API name changes.
@@ -11,8 +11,8 @@ import pytest
 # QoS scaler. We dynamically discover them by common names.
 from proofs.quantum_attest import traps as traps_mod  # type: ignore[import]
 
-
 # ----------------------------- helpers ---------------------------------
+
 
 def _get_fn(mod: Any, *names: str) -> Optional[Callable[..., Any]]:
     for n in names:
@@ -55,7 +55,9 @@ qos_fn = _get_fn(
 )
 
 assert ratio_fn is not None, "traps module must expose a trap pass-ratio function"
-assert lcb_fn is not None, "traps module must expose a Wilson (or equivalent) lower bound function"
+assert (
+    lcb_fn is not None
+), "traps module must expose a Wilson (or equivalent) lower bound function"
 
 
 def _call_decide(passes: int, total: int, threshold: float = 0.9) -> Optional[bool]:
@@ -82,6 +84,7 @@ def _call_decide(passes: int, total: int, threshold: float = 0.9) -> Optional[bo
 
 
 # ----------------------------- tests -----------------------------------
+
 
 @pytest.mark.parametrize("total", [20, 100, 1000])
 def test_wilson_lcb_monotonic_in_passes(total: int):
@@ -126,7 +129,9 @@ def test_threshold_decision_behaves_sensibly():
     """
     decision = _call_decide(950, 1000, threshold=0.9)
     if decision is None:
-        pytest.skip("No decision function exported; ratio/LCB tests already cover correctness")
+        pytest.skip(
+            "No decision function exported; ratio/LCB tests already cover correctness"
+        )
     assert decision is True
 
     decision = _call_decide(850, 1000, threshold=0.9)
@@ -148,13 +153,16 @@ def test_threshold_matrix(passes: int, total: int, thr: float, expect: bool):
     """
     decision = _call_decide(passes, total, threshold=thr)
     if decision is None:
-        pytest.skip("No decision function exported; ratio/LCB tests already cover correctness")
+        pytest.skip(
+            "No decision function exported; ratio/LCB tests already cover correctness"
+        )
     # We allow implementations to be slightly conservative; only assert on clear cases.
     # The above pairs are chosen to be far enough from the boundary for Wilson LCB with z≈1.96–3.0.
     assert decision is expect
 
 
 # ----------------------------- QoS scaling ------------------------------
+
 
 @pytest.mark.skipif(qos_fn is None, reason="No QoS scaler exported by traps module")
 def test_qos_monotonic_in_ratio_and_redundancy_and_inverse_in_latency():

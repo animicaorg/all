@@ -4,34 +4,22 @@ import asyncio
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import (
-    AsyncIterator,
-    Callable,
-    Deque,
-    Dict,
-    Iterable,
-    List,
-    MutableMapping,
-    Optional,
-    Protocol,
-    Sequence,
-    Set,
-    Tuple,
-    runtime_checkable,
-)
+from typing import (AsyncIterator, Callable, Deque, Dict, Iterable, List,
+                    MutableMapping, Optional, Protocol, Sequence, Set, Tuple,
+                    runtime_checkable)
 
 # Shared knobs & types expected to be exported by p2p/sync/__init__.py
 from . import DEFAULT_MAX_IN_FLIGHT, DEFAULT_REQUEST_TIMEOUT_SEC, Hash
-
 
 # ---------------------------
 # Protocols / adapter surfaces
 # ---------------------------
 
+
 @runtime_checkable
 class TxLike(Protocol):
     hash: bytes  # canonical transaction hash
-    raw: bytes   # canonical CBOR bytes (or wire form) for admission
+    raw: bytes  # canonical CBOR bytes (or wire form) for admission
 
 
 class TxAdmissionResult:
@@ -49,6 +37,7 @@ class MempoolAdapter(Protocol):
 
     Implementations typically live in p2p/adapters or mempool/adapters.
     """
+
     async def has_tx(self, h: Hash) -> bool: ...
     async def admit_tx(self, raw: bytes) -> Tuple[str, Optional[Hash]]:
         """
@@ -57,6 +46,7 @@ class MempoolAdapter(Protocol):
         If ADDED or DUPLICATE, hash may be returned for convenience.
         """
         ...
+
     async def iter_local_announces(self) -> AsyncIterator[Hash]:
         """
         Iterate over hashes of locally-originated txs that are candidates for announce.
@@ -71,13 +61,16 @@ class TxFetcher(Protocol):
     Transport-agnostic fetcher. Implementations choose peers, issue GETDATA/TX,
     handle timeouts, and return bytes keyed by hash for the subset it could fetch.
     """
-    async def get_txs(self, hashes: Sequence[Hash], timeout_sec: float) -> Dict[Hash, bytes]:
-        ...
+
+    async def get_txs(
+        self, hashes: Sequence[Hash], timeout_sec: float
+    ) -> Dict[Hash, bytes]: ...
 
 
 # ---------------------------
 # Small utilities
 # ---------------------------
+
 
 @dataclass(slots=True)
 class TTLSet:
@@ -134,6 +127,7 @@ class PerPeerRecentlySent:
 # Config & Stats
 # ---------------------------
 
+
 @dataclass(slots=True)
 class MempoolSyncConfig:
     request_timeout_sec: float = DEFAULT_REQUEST_TIMEOUT_SEC
@@ -141,8 +135,10 @@ class MempoolSyncConfig:
     fetch_batch_size: int = 64
     inv_batch_size: int = 512
     max_retries: int = 2
-    seen_ttl_sec: float = 5 * 60    # suppress refetching the same tx for 5 minutes
-    per_peer_suppress_sec: float = 60.0  # do not re-announce same tx to same peer for 60s
+    seen_ttl_sec: float = 5 * 60  # suppress refetching the same tx for 5 minutes
+    per_peer_suppress_sec: float = (
+        60.0  # do not re-announce same tx to same peer for 60s
+    )
     per_peer_cap: int = 2048
     rebroadcast_interval_sec: float = 7.5
     max_rebroadcast_batch: int = 512
@@ -167,6 +163,7 @@ class MempoolSyncStats:
 # ---------------------------
 # Core: MempoolSync
 # ---------------------------
+
 
 class MempoolSync:
     """
@@ -249,7 +246,9 @@ class MempoolSync:
     def unregister_peer(self, peer_id: str) -> None:
         self._peers.discard(peer_id)
 
-    async def rebroadcast_task(self, send_inv: Callable[[str, Sequence[Hash]], "asyncio.Future[None]"]) -> None:
+    async def rebroadcast_task(
+        self, send_inv: Callable[[str, Sequence[Hash]], "asyncio.Future[None]"]
+    ) -> None:
         """
         Periodically polls local mempool for announce candidates and sends INV
         to connected peers, with per-peer suppression to avoid storms.
@@ -257,16 +256,24 @@ class MempoolSync:
         try:
             while not self._stop.is_set():
                 batch: List[Hash] = []
-                async for h in self._bounded_iter(self.mempool.iter_local_announces(), self.cfg.max_rebroadcast_batch):
+                async for h in self._bounded_iter(
+                    self.mempool.iter_local_announces(), self.cfg.max_rebroadcast_batch
+                ):
                     batch.append(h)
                 if batch and self._peers:
                     await self._broadcast_batch(batch, send_inv)
-                await asyncio.wait_for(self._stop.wait(), timeout=self.cfg.rebroadcast_interval_sec)
+                await asyncio.wait_for(
+                    self._stop.wait(), timeout=self.cfg.rebroadcast_interval_sec
+                )
         except asyncio.TimeoutError:
             # normal periodic wake-up
             return await self.rebroadcast_task(send_inv)
 
-    async def _broadcast_batch(self, hashes: Sequence[Hash], send_inv: Callable[[str, Sequence[Hash]], "asyncio.Future[None]"]) -> None:
+    async def _broadcast_batch(
+        self,
+        hashes: Sequence[Hash],
+        send_inv: Callable[[str, Sequence[Hash]], "asyncio.Future[None]"],
+    ) -> None:
         # For each peer, filter out hashes we've recently sent to that peer.
         sends: List[Tuple[str, List[Hash]]] = []
         for pid in list(self._peers):
@@ -324,7 +331,9 @@ class MempoolSync:
         retries = 0
         while remaining and retries <= self.cfg.max_retries and not self._stop.is_set():
             try:
-                got = await asyncio.wait_for(self.fetcher.get_txs(remaining, timeout), timeout=timeout + 0.05)
+                got = await asyncio.wait_for(
+                    self.fetcher.get_txs(remaining, timeout), timeout=timeout + 0.05
+                )
             except asyncio.TimeoutError:
                 self.stats.timeouts += 1
                 self.stats.retries += 1
@@ -381,7 +390,9 @@ class MempoolSync:
     # --------- Helpers ---------
 
     @staticmethod
-    async def _bounded_iter(ait: AsyncIterator[Hash], limit: int) -> AsyncIterator[Hash]:
+    async def _bounded_iter(
+        ait: AsyncIterator[Hash], limit: int
+    ) -> AsyncIterator[Hash]:
         i = 0
         async for x in ait:
             yield x
@@ -423,7 +434,9 @@ if __name__ == "__main__":
                 yield self._local.popleft()
 
     class _StubFetcher:
-        async def get_txs(self, hashes: Sequence[Hash], timeout_sec: float) -> Dict[Hash, bytes]:
+        async def get_txs(
+            self, hashes: Sequence[Hash], timeout_sec: float
+        ) -> Dict[Hash, bytes]:
             # Return "raw" == hash for demo
             await asyncio.sleep(0.01)
             return {h: h for h in hashes}
@@ -442,7 +455,9 @@ if __name__ == "__main__":
 
         # Start rebroadcast loop (send_inv simply prints)
         async def send_inv(pid: str, hs: Sequence[Hash]) -> None:
-            print(f"[send_inv] -> {pid}: {list(map(bytes.hex, hs))[:4]}{'...' if len(hs) > 4 else ''}")
+            print(
+                f"[send_inv] -> {pid}: {list(map(bytes.hex, hs))[:4]}{'...' if len(hs) > 4 else ''}"
+            )
 
         reb_task = asyncio.create_task(sync.rebroadcast_task(send_inv))
         await asyncio.sleep(0.5)

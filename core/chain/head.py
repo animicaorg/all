@@ -36,17 +36,17 @@ Public API
 """
 
 from dataclasses import asdict
-from typing import Optional, Tuple, Any
+from typing import Any, Optional, Tuple
 
-from core.types.params import ChainParams
-from core.types.header import Header
-from core.encoding.canonical import header_signing_bytes
-from core.utils.hash import sha3_256
-from core.errors import GenesisError
 from core.db.block_db import PFX_HIX, _from_u64be
-
+from core.encoding.canonical import header_signing_bytes
+from core.errors import GenesisError
+from core.types.header import Header
+from core.types.params import ChainParams
+from core.utils.hash import sha3_256
 
 # --- Small field helpers (tolerate snake/camel) -----------------------------
+
 
 def _get_chain_id(hdr: Header) -> int:
     if hasattr(hdr, "chain_id"):
@@ -77,6 +77,7 @@ def _header_hash(hdr: Header) -> bytes:
 
 
 # --- Head I/O ---------------------------------------------------------------
+
 
 def read_head(block_db) -> Optional[Tuple[int, bytes]]:
     """
@@ -144,7 +145,10 @@ def write_head(block_db, height: int, h: bytes) -> None:
 
 # --- Genesis finalization ---------------------------------------------------
 
-def finalize_genesis(block_db, params: ChainParams, genesis_header: Header) -> Tuple[int, bytes]:
+
+def finalize_genesis(
+    block_db, params: ChainParams, genesis_header: Header
+) -> Tuple[int, bytes]:
     """
     Ensure the DB has a consistent genesis and a canonical head.
 
@@ -163,7 +167,9 @@ def finalize_genesis(block_db, params: ChainParams, genesis_header: Header) -> T
     # (1) Basic invariants from header vs params
     chain_id = _get_chain_id(genesis_header)
     if chain_id != params.chain_id:
-        raise GenesisError(f"genesis chainId={chain_id} does not match params.chain_id={params.chain_id}")
+        raise GenesisError(
+            f"genesis chainId={chain_id} does not match params.chain_id={params.chain_id}"
+        )
 
     height0 = _get_height(genesis_header)
     if height0 != 0:
@@ -204,7 +210,9 @@ def finalize_genesis(block_db, params: ChainParams, genesis_header: Header) -> T
     if cur_height == 0:
         # If DB points to genesis, ensure it's OUR genesis
         if cur_hash != h0:
-            raise GenesisError("existing DB has different genesis hash (wrong network or corrupted DB)")
+            raise GenesisError(
+                "existing DB has different genesis hash (wrong network or corrupted DB)"
+            )
         # Nothing to do
         return head
 
@@ -221,7 +229,9 @@ def finalize_genesis(block_db, params: ChainParams, genesis_header: Header) -> T
         except TypeError:
             gh = None  # method exists but different signature
         if gh is not None and gh != h0:
-            raise GenesisError("existing DB genesis hash does not match provided genesis header")
+            raise GenesisError(
+                "existing DB genesis hash does not match provided genesis header"
+            )
 
     # Otherwise we accept the current head as-is.
     return head

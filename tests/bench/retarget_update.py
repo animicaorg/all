@@ -35,13 +35,16 @@ except Exception:  # pragma: no cover
 
 # --------------------------- Synthetic Data Gen -------------------------------
 
+
 def _rng(seed: Optional[int]) -> random.Random:
     if seed is None:
         seed = int(os.environ.get("PYTHONHASHSEED", "0") or "1337")
     return random.Random(seed)
 
 
-def _gen_intervals_lognormal(n: int, target_s: float, sigma: float, seed: Optional[int]) -> List[float]:
+def _gen_intervals_lognormal(
+    n: int, target_s: float, sigma: float, seed: Optional[int]
+) -> List[float]:
     """
     Generate positive intervals with mean ~= target_s using a lognormal distribution.
     sigma is the log-space stddev (0.0 → deterministic).
@@ -52,14 +55,14 @@ def _gen_intervals_lognormal(n: int, target_s: float, sigma: float, seed: Option
 
     if np is not None:
         np.random.seed(seed if seed is not None else 1337)
-        mu = -0.5 * (sigma ** 2)
+        mu = -0.5 * (sigma**2)
         base = np.random.lognormal(mean=mu, sigma=sigma, size=n)
         return (base * target_s).tolist()
     else:
         # Box-Muller for normal -> exp -> lognormal
         r = _rng(seed)
         out: List[float] = []
-        mu = -0.5 * (sigma ** 2)
+        mu = -0.5 * (sigma**2)
         for _ in range(n):
             # approx standard normal
             u1 = max(r.random(), 1e-12)
@@ -72,8 +75,17 @@ def _gen_intervals_lognormal(n: int, target_s: float, sigma: float, seed: Option
 
 # ------------------------------ Retarget Fallback -----------------------------
 
-def _retarget_step(theta: float, dt: float, target_s: float, alpha: float,
-                   k: float, clamp_up: float, clamp_down: float, eps: float = 1e-18) -> float:
+
+def _retarget_step(
+    theta: float,
+    dt: float,
+    target_s: float,
+    alpha: float,
+    k: float,
+    clamp_up: float,
+    clamp_down: float,
+    eps: float = 1e-18,
+) -> float:
     """
     Single-step multiplicative correction with smoothing:
 
@@ -100,15 +112,25 @@ def _retarget_step(theta: float, dt: float, target_s: float, alpha: float,
     return theta_next
 
 
-def retarget_stream_fallback(intervals: Iterable[float], theta0: float, target_s: float,
-                             alpha: float, k: float, clamp_up: float, clamp_down: float) -> float:
+def retarget_stream_fallback(
+    intervals: Iterable[float],
+    theta0: float,
+    target_s: float,
+    alpha: float,
+    k: float,
+    clamp_up: float,
+    clamp_down: float,
+) -> float:
     theta = theta0
     for dt in intervals:
-        theta = _retarget_step(theta, float(dt), target_s, alpha, k, clamp_up, clamp_down)
+        theta = _retarget_step(
+            theta, float(dt), target_s, alpha, k, clamp_up, clamp_down
+        )
     return theta
 
 
 # ------------------------------ Optional Import -------------------------------
+
 
 def _maybe_real_retarget() -> Optional[Callable]:
     """
@@ -120,6 +142,7 @@ def _maybe_real_retarget() -> Optional[Callable]:
     """
     try:
         import importlib
+
         mod = importlib.import_module("consensus.difficulty")
         for name in ("retarget_stream", "update_theta_stream", "retarget_batch"):
             fn = getattr(mod, name, None)
@@ -131,6 +154,7 @@ def _maybe_real_retarget() -> Optional[Callable]:
 
 
 # ------------------------------ Benchmark Core --------------------------------
+
 
 def _timeit(fn: Callable[[], float], repeats: int) -> Tuple[List[float], float]:
     timings: List[float] = []
@@ -164,12 +188,17 @@ def run_bench(
     fn_real = _maybe_real_retarget() if mode == "consensus" else None
     if fn_real is not None:
         label = "consensus"
+
         def bench_call() -> float:
             return float(fn_real(intervals, theta0, target_s, alpha, k, clamp_up, clamp_down))  # type: ignore
+
     else:
         label = "fallback"
+
         def bench_call() -> float:
-            return retarget_stream_fallback(intervals, theta0, target_s, alpha, k, clamp_up, clamp_down)
+            return retarget_stream_fallback(
+                intervals, theta0, target_s, alpha, k, clamp_up, clamp_down
+            )
 
     # Warmup
     if warmup > 0:
@@ -179,7 +208,9 @@ def run_bench(
     timings, last_theta = _timeit(bench_call, repeat)
 
     median_s = statistics.median(timings)
-    p90_s = statistics.quantiles(timings, n=10)[8] if len(timings) >= 10 else max(timings)
+    p90_s = (
+        statistics.quantiles(timings, n=10)[8] if len(timings) >= 10 else max(timings)
+    )
     updates_per_s = (updates * repeat / median_s) if median_s > 0 else float("inf")
 
     return {
@@ -196,32 +227,93 @@ def run_bench(
             "repeat": repeat,
             "warmup": warmup,
             "mode": label,
-            "seed": seed if seed is not None else int(os.environ.get("PYTHONHASHSEED", "0") or "1337"),
+            "seed": (
+                seed
+                if seed is not None
+                else int(os.environ.get("PYTHONHASHSEED", "0") or "1337")
+            ),
         },
         "result": {
             "updates_per_s": updates_per_s,
             "median_s": median_s,
             "p90_s": p90_s,
-            "final_theta": last_theta
-        }
+            "final_theta": last_theta,
+        },
     }
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Θ retarget math throughput benchmark.")
-    ap.add_argument("--updates", type=int, default=1_000_000, help="Number of retarget steps per run (default: 1,000,000)")
-    ap.add_argument("--target-s", type=float, default=2.0, dest="target_s", help="Target inter-block interval in seconds (default: 2.0)")
-    ap.add_argument("--alpha", type=float, default=0.10, help="EMA smoothing factor in [0,1] (default: 0.10)")
-    ap.add_argument("--k", type=float, default=0.50, help="Proportional gain for per-step correction (default: 0.50)")
-    ap.add_argument("--clamp-up", type=float, default=1.25, dest="clamp_up", help="Max multiplicative increase per step (default: 1.25)")
-    ap.add_argument("--clamp-down", type=float, default=0.80, dest="clamp_down", help="Max multiplicative decrease per step (default: 0.80)")
-    ap.add_argument("--jitter-sigma", type=float, default=0.20, dest="jitter_sigma", help="Lognormal sigma for interval jitter (default: 0.20)")
-    ap.add_argument("--theta0", type=float, default=1.0, help="Initial Θ (dimensionless) (default: 1.0)")
-    ap.add_argument("--warmup", type=int, default=1, help="Warmup iterations (default: 1)")
-    ap.add_argument("--repeat", type=int, default=5, help="Measured iterations (default: 5)")
-    ap.add_argument("--mode", choices=("auto", "fallback", "consensus"), default="auto",
-                    help="Use fallback reference or try importing consensus.difficulty (default: auto)")
-    ap.add_argument("--seed", type=int, default=None, help="PRNG seed (default: from PYTHONHASHSEED or 1337)")
+    ap.add_argument(
+        "--updates",
+        type=int,
+        default=1_000_000,
+        help="Number of retarget steps per run (default: 1,000,000)",
+    )
+    ap.add_argument(
+        "--target-s",
+        type=float,
+        default=2.0,
+        dest="target_s",
+        help="Target inter-block interval in seconds (default: 2.0)",
+    )
+    ap.add_argument(
+        "--alpha",
+        type=float,
+        default=0.10,
+        help="EMA smoothing factor in [0,1] (default: 0.10)",
+    )
+    ap.add_argument(
+        "--k",
+        type=float,
+        default=0.50,
+        help="Proportional gain for per-step correction (default: 0.50)",
+    )
+    ap.add_argument(
+        "--clamp-up",
+        type=float,
+        default=1.25,
+        dest="clamp_up",
+        help="Max multiplicative increase per step (default: 1.25)",
+    )
+    ap.add_argument(
+        "--clamp-down",
+        type=float,
+        default=0.80,
+        dest="clamp_down",
+        help="Max multiplicative decrease per step (default: 0.80)",
+    )
+    ap.add_argument(
+        "--jitter-sigma",
+        type=float,
+        default=0.20,
+        dest="jitter_sigma",
+        help="Lognormal sigma for interval jitter (default: 0.20)",
+    )
+    ap.add_argument(
+        "--theta0",
+        type=float,
+        default=1.0,
+        help="Initial Θ (dimensionless) (default: 1.0)",
+    )
+    ap.add_argument(
+        "--warmup", type=int, default=1, help="Warmup iterations (default: 1)"
+    )
+    ap.add_argument(
+        "--repeat", type=int, default=5, help="Measured iterations (default: 5)"
+    )
+    ap.add_argument(
+        "--mode",
+        choices=("auto", "fallback", "consensus"),
+        default="auto",
+        help="Use fallback reference or try importing consensus.difficulty (default: auto)",
+    )
+    ap.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="PRNG seed (default: from PYTHONHASHSEED or 1337)",
+    )
     args = ap.parse_args(argv)
 
     mode = args.mode

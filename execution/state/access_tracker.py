@@ -56,7 +56,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
-
 StorageSet = Dict[bytes, Set[bytes]]
 
 
@@ -133,7 +132,9 @@ class AccessTracker:
 
     def _expect_token(self, token: int) -> None:
         if not self._checkpoints or self._checkpoints[-1] != token:
-            raise RuntimeError("checkpoint token mismatch or out-of-order commit/rollback")
+            raise RuntimeError(
+                "checkpoint token mismatch or out-of-order commit/rollback"
+            )
 
     # ---- record helpers ---------------------------------------------------
 
@@ -199,7 +200,9 @@ class AccessTracker:
         addresses and storage keys. Storage keys include both read & write slots.
         Accounts show up if they were touched in any way (read/write/code/slot).
         """
-        addresses: Set[bytes] = set(self.accounts_read) | set(self.accounts_write) | set(self.code_read)
+        addresses: Set[bytes] = (
+            set(self.accounts_read) | set(self.accounts_write) | set(self.code_read)
+        )
         addresses |= set(self.storage_read.keys()) | set(self.storage_write.keys())
 
         def sorted_bytes(items: Iterable[bytes]) -> List[bytes]:

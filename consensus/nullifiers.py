@@ -38,10 +38,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Iterable, Iterator, Optional, Protocol, Tuple
 
-
 # -----------------------------------------------------------------------------
 # Public protocol (mirrors usage from consensus/validator.py)
 # -----------------------------------------------------------------------------
+
 
 class NullifierStore(Protocol):
     def seen(self, nullifier: bytes) -> bool: ...
@@ -53,6 +53,7 @@ class NullifierStore(Protocol):
 # -----------------------------------------------------------------------------
 # Config
 # -----------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class Config:
@@ -72,6 +73,7 @@ class Config:
 # -----------------------------------------------------------------------------
 # In-memory implementation (bucketed by height)
 # -----------------------------------------------------------------------------
+
 
 class MemoryNullifierStore:
     """
@@ -124,7 +126,10 @@ class MemoryNullifierStore:
             self._min_live_height = height
 
         # Oversize guard: opportunistic pruning hint — evict oldest buckets first.
-        if len(self._by_null) > self.cfg.max_entries and self._min_live_height is not None:
+        if (
+            len(self._by_null) > self.cfg.max_entries
+            and self._min_live_height is not None
+        ):
             # Evict until under cap (bounded by window; no correctness impact if we prune more).
             target = len(self._by_null) - self.cfg.max_entries
             pruned = 0
@@ -197,8 +202,10 @@ class MemoryNullifierStore:
 # Generic KV interface + KV-backed implementation
 # -----------------------------------------------------------------------------
 
+
 class KV(Protocol):
     """Minimal KV used by KVNullifierStore. Keys and values are raw bytes."""
+
     def get(self, key: bytes) -> Optional[bytes]: ...
     def put(self, key: bytes, value: bytes) -> None: ...
     def delete(self, key: bytes) -> None: ...
@@ -207,15 +214,21 @@ class KV(Protocol):
 
 class InMemoryKV:
     """A tiny in-memory KV with prefix iteration for tests/dev."""
+
     __slots__ = ("_m",)
+
     def __init__(self):
         self._m: Dict[bytes, bytes] = {}
+
     def get(self, key: bytes) -> Optional[bytes]:
         return self._m.get(key)
+
     def put(self, key: bytes, value: bytes) -> None:
         self._m[key] = value
+
     def delete(self, key: bytes) -> None:
         self._m.pop(key, None)
+
     def iter_prefix(self, prefix: bytes) -> Iterator[Tuple[bytes, bytes]]:
         for k, v in self._m.items():
             if k.startswith(prefix):

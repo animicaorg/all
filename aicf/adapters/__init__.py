@@ -19,6 +19,4 @@ try:
 except Exception:  # pragma: no cover - fallback in early bootstraps
     __version__ = "0.0.0"
 
-__all__: Tuple[str, ...] = (
-    "__version__",
-)
+__all__: Tuple[str, ...] = ("__version__",)

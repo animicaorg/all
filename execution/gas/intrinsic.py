@@ -33,11 +33,10 @@ API
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Literal, Mapping, Optional, Tuple
-
-import json
 
 # Optional YAML (graceful if missing)
 try:
@@ -45,14 +44,9 @@ try:
 except Exception:  # pragma: no cover
     yaml = None  # type: ignore
 
-from execution.types.gas import (
-    Gas,
-    U256_MAX,
-    is_u256,
-    saturating_add,
-    mul_price_gas,  # reused for generic multiply w/ cap semantics
-)
-
+from execution.types.gas import \
+    mul_price_gas  # reused for generic multiply w/ cap semantics
+from execution.types.gas import U256_MAX, Gas, is_u256, saturating_add
 
 # --------------------------- parameter model ---------------------------------
 
@@ -65,6 +59,7 @@ class IntrinsicGasParams:
     The defaults below are conservative placeholders suitable for devnets.
     Tune via spec/params.yaml for your network.
     """
+
     # Base costs by tx kind
     base_transfer: int = 21_000
     base_deploy: int = 53_000
@@ -178,6 +173,7 @@ class IntrinsicGas:
     """
     Result of an intrinsic gas computation with a debuggable breakdown.
     """
+
     kind: Literal["transfer", "deploy", "call", "blob"]
     base: int
     calldata: int
@@ -289,7 +285,9 @@ def intrinsic_gas(
     # Blob component
     blob_cost = 0
     if blob_bytes > 0:
-        blob_cost = saturating_add(p.base_blob, _mul(blob_bytes, p.blob_per_byte, p.cap), cap=p.cap)
+        blob_cost = saturating_add(
+            p.base_blob, _mul(blob_bytes, p.blob_per_byte, p.cap), cap=p.cap
+        )
 
     return IntrinsicGas(
         kind=kind,
@@ -298,6 +296,7 @@ def intrinsic_gas(
         access_list=access_list_cost,
         blob=blob_cost,
     )
+
 
 def calc_intrinsic_gas(
     *,
@@ -332,4 +331,10 @@ def calc_intrinsic_gas(
     return int(res.total)
 
 
-__all__ = ["IntrinsicGasParams", "IntrinsicGas", "resolve_params", "intrinsic_gas", "calc_intrinsic_gas"]
+__all__ = [
+    "IntrinsicGasParams",
+    "IntrinsicGas",
+    "resolve_params",
+    "intrinsic_gas",
+    "calc_intrinsic_gas",
+]

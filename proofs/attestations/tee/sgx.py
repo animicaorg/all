@@ -47,18 +47,13 @@ Downstream, apply policy checks with AttestationPolicy (require_chain_ok, requir
 
 from __future__ import annotations
 
+import struct
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Dict, Optional, Tuple
 
-import struct
-
+from proofs.attestations.tee.common import TCBStatus, TEEEvidence, TEEKind
 from proofs.errors import AttestationError
-from proofs.attestations.tee.common import (
-    TEEKind,
-    TEEEvidence,
-    TCBStatus,
-)
 
 # Optional: use cryptography for PCK parsing if available
 try:
@@ -130,7 +125,9 @@ class ReportBody:
 
 def parse_quote_header(quote: bytes) -> QuoteHeader:
     if len(quote) < Q_HEADER_SIZE:
-        raise AttestationError(f"SGX quote too short for header: {len(quote)} < {Q_HEADER_SIZE}")
+        raise AttestationError(
+            f"SGX quote too short for header: {len(quote)} < {Q_HEADER_SIZE}"
+        )
     (
         version,
         att_key_type,
@@ -153,7 +150,9 @@ def parse_quote_header(quote: bytes) -> QuoteHeader:
 
 def parse_report_body_sgx(report_body: bytes) -> ReportBody:
     if len(report_body) < Q_REPORT_BODY_SIZE:
-        raise AttestationError(f"SGX report body too short: {len(report_body)} < {Q_REPORT_BODY_SIZE}")
+        raise AttestationError(
+            f"SGX report body too short: {len(report_body)} < {Q_REPORT_BODY_SIZE}"
+        )
     # attributes at offset 48
     flags_le = struct.unpack_from("<Q", report_body, 48)[0]
     xfrm_le = struct.unpack_from("<Q", report_body, 56)[0]
@@ -187,7 +186,9 @@ def parse_quote_sgx_v3(quote: bytes) -> Tuple[QuoteHeader, Optional[ReportBody]]
     header = parse_quote_header(quote)
     if header.tee_type == 0x00000000:
         # Plain SGX: REPORTBODY follows immediately.
-        report_body = parse_report_body_sgx(quote[Q_HEADER_SIZE : Q_HEADER_SIZE + Q_REPORT_BODY_SIZE])
+        report_body = parse_report_body_sgx(
+            quote[Q_HEADER_SIZE : Q_HEADER_SIZE + Q_REPORT_BODY_SIZE]
+        )
         return header, report_body
     else:
         # Likely TDX: we keep the header but skip body parsing.
@@ -199,7 +200,9 @@ def parse_quote_sgx_v3(quote: bytes) -> Tuple[QuoteHeader, Optional[ReportBody]]
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def verify_pck_chain(pem_bundle: Optional[bytes]) -> Tuple[bool, Optional[datetime], Optional[datetime]]:
+def verify_pck_chain(
+    pem_bundle: Optional[bytes],
+) -> Tuple[bool, Optional[datetime], Optional[datetime]]:
     """
     Best-effort check of PCK certificate bundle.
 
@@ -243,8 +246,8 @@ def verify_pck_chain(pem_bundle: Optional[bytes]) -> Tuple[bool, Optional[dateti
     leaf = certs[0]
     now = datetime.now(timezone.utc)
     nb = leaf.not_valid_before.replace(tzinfo=timezone.utc)  # type: ignore[attr-defined]
-    na = leaf.not_valid_after.replace(tzinfo=timezone.utc)   # type: ignore[attr-defined]
-    chain_ok = (nb <= now <= na)
+    na = leaf.not_valid_after.replace(tzinfo=timezone.utc)  # type: ignore[attr-defined]
+    chain_ok = nb <= now <= na
     return chain_ok, nb, na
 
 

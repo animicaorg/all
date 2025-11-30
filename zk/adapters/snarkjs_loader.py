@@ -56,8 +56,8 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Tuple, Union
-
+from typing import (Any, Dict, Iterable, List, Mapping, MutableMapping, Tuple,
+                    Union)
 
 JsonLike = Union[str, bytes, os.PathLike, Mapping[str, Any]]
 
@@ -65,6 +65,7 @@ JsonLike = Union[str, bytes, os.PathLike, Mapping[str, Any]]
 # -----------------------------------------------------------------------------
 # I/O helpers
 # -----------------------------------------------------------------------------
+
 
 def load_json(source: JsonLike) -> Dict[str, Any]:
     """
@@ -99,6 +100,7 @@ def load_json(source: JsonLike) -> Dict[str, Any]:
 
 _INT_RE = re.compile(r"^\s*([+-]?(?:0x[0-9a-fA-F]+|\d+))n?\s*$")
 
+
 def _maybe_to_int(x: Any) -> Any:
     if isinstance(x, int):
         return x
@@ -116,6 +118,7 @@ def _maybe_to_int(x: Any) -> Any:
             except Exception:
                 return x
     return x
+
 
 def normalize_numbers(obj: Any) -> Any:
     """
@@ -136,15 +139,17 @@ def normalize_numbers(obj: Any) -> Any:
 # Shape detection
 # -----------------------------------------------------------------------------
 
+
 def is_groth16_vk(obj: Mapping[str, Any]) -> bool:
     keys = set(obj.keys())
     return (
-        ("vk_alpha_1" in keys) and
-        ("vk_beta_2" in keys) and
-        ("vk_gamma_2" in keys) and
-        ("vk_delta_2" in keys) and
-        ("IC" in keys)
+        ("vk_alpha_1" in keys)
+        and ("vk_beta_2" in keys)
+        and ("vk_gamma_2" in keys)
+        and ("vk_delta_2" in keys)
+        and ("IC" in keys)
     )
+
 
 def is_groth16_proof(obj: Mapping[str, Any]) -> bool:
     # Either proof bundle {proof:{pi_a,..}, publicSignals:[..]} or flat with pi_a
@@ -153,13 +158,17 @@ def is_groth16_proof(obj: Mapping[str, Any]) -> bool:
         return all(k in p for k in ("pi_a", "pi_b", "pi_c"))
     return all(k in obj for k in ("pi_a", "pi_b", "pi_c"))
 
+
 def is_plonk_vk(obj: Mapping[str, Any]) -> bool:
     # SnarkJS PLONK VK shapes vary; accept "protocol":"plonk" as a hint
     return obj.get("protocol", "").lower() == "plonk"
 
+
 def is_plonk_proof(obj: Mapping[str, Any]) -> bool:
     # SnarkJS usually emits { proof: {...}, publicSignals: [...] } with "protocol":"plonk"
-    if obj.get("protocol", "").lower() == "plonk" and ("proof" in obj or "pi_a" not in obj):
+    if obj.get("protocol", "").lower() == "plonk" and (
+        "proof" in obj or "pi_a" not in obj
+    ):
         return True
     if "proof" in obj and isinstance(obj["proof"], Mapping):
         return obj.get("protocol", "").lower() in ("plonk", "")
@@ -171,11 +180,13 @@ def is_plonk_proof(obj: Mapping[str, Any]) -> bool:
 # Groth16 normalization
 # -----------------------------------------------------------------------------
 
+
 def _norm_g1(pt: Iterable[Any]) -> List[int]:
     arr = list(pt)
     if len(arr) != 2:
         raise ValueError("G1 point must have 2 coordinates")
     return [int(_maybe_to_int(arr[0])), int(_maybe_to_int(arr[1]))]
+
 
 def _norm_g2(pt: Iterable[Iterable[Any]]) -> List[List[int]]:
     arr = [list(a) for a in pt]
@@ -185,6 +196,7 @@ def _norm_g2(pt: Iterable[Iterable[Any]]) -> List[List[int]]:
         [int(_maybe_to_int(arr[0][0])), int(_maybe_to_int(arr[0][1]))],
         [int(_maybe_to_int(arr[1][0])), int(_maybe_to_int(arr[1][1]))],
     ]
+
 
 def normalize_groth16_vk(vk: Mapping[str, Any]) -> Dict[str, Any]:
     """
@@ -201,7 +213,7 @@ def normalize_groth16_vk(vk: Mapping[str, Any]) -> Dict[str, Any]:
             out[meta_key] = str(vk[meta_key])
 
     out["vk_alpha_1"] = _norm_g1(vk["vk_alpha_1"])
-    out["vk_beta_2"]  = _norm_g2(vk["vk_beta_2"])
+    out["vk_beta_2"] = _norm_g2(vk["vk_beta_2"])
     out["vk_gamma_2"] = _norm_g2(vk["vk_gamma_2"])
     out["vk_delta_2"] = _norm_g2(vk["vk_delta_2"])
 
@@ -217,7 +229,10 @@ def normalize_groth16_vk(vk: Mapping[str, Any]) -> Dict[str, Any]:
 
     return out
 
-def normalize_groth16_proof(bundle_or_proof: Mapping[str, Any]) -> Tuple[Dict[str, Any], List[int]]:
+
+def normalize_groth16_proof(
+    bundle_or_proof: Mapping[str, Any],
+) -> Tuple[Dict[str, Any], List[int]]:
     """
     Accept either:
       - flat proof dict {pi_a, pi_b, pi_c, protocol?, curve?, publicSignals?}
@@ -233,7 +248,9 @@ def normalize_groth16_proof(bundle_or_proof: Mapping[str, Any]) -> Tuple[Dict[st
         proof = bundle_or_proof
         publics = bundle_or_proof.get("publicSignals", [])
 
-    if not is_groth16_proof({"proof": proof} if "proof" not in proof else proof):  # tolerant check
+    if not is_groth16_proof(
+        {"proof": proof} if "proof" not in proof else proof
+    ):  # tolerant check
         # Simplify: require pi_a/b/c after the extraction above
         for k in ("pi_a", "pi_b", "pi_c"):
             if k not in proof:
@@ -259,7 +276,9 @@ def normalize_groth16_proof(bundle_or_proof: Mapping[str, Any]) -> Tuple[Dict[st
     return out, public_signals
 
 
-def load_groth16(vk_source: JsonLike, proof_source: JsonLike) -> Tuple[Dict[str, Any], Dict[str, Any], List[int]]:
+def load_groth16(
+    vk_source: JsonLike, proof_source: JsonLike
+) -> Tuple[Dict[str, Any], Dict[str, Any], List[int]]:
     """
     Convenience loader:
       (vk_json, proof_json, public_inputs) = load_groth16("verification_key.json", "proof.json")
@@ -275,6 +294,7 @@ def load_groth16(vk_source: JsonLike, proof_source: JsonLike) -> Tuple[Dict[str,
 # PLONK normalization (light-weight; shapes differ across versions)
 # -----------------------------------------------------------------------------
 
+
 def normalize_plonk_vk(vk: Mapping[str, Any]) -> Dict[str, Any]:
     """
     Perform **number normalization only**, preserving keys as-is.
@@ -286,7 +306,10 @@ def normalize_plonk_vk(vk: Mapping[str, Any]) -> Dict[str, Any]:
         pass
     return normalize_numbers(vk)
 
-def normalize_plonk_proof(bundle: Mapping[str, Any]) -> Tuple[Dict[str, Any], List[int]]:
+
+def normalize_plonk_proof(
+    bundle: Mapping[str, Any],
+) -> Tuple[Dict[str, Any], List[int]]:
     """
     Similar to Groth16 handler: accept either a flat object with fields
     the downstream expects, or a SnarkJS bundle with
@@ -313,7 +336,10 @@ def normalize_plonk_proof(bundle: Mapping[str, Any]) -> Tuple[Dict[str, Any], Li
 
     return proof_n, publics_n
 
-def load_plonk(vk_source: JsonLike, proof_source: JsonLike) -> Tuple[Dict[str, Any], Dict[str, Any], List[int]]:
+
+def load_plonk(
+    vk_source: JsonLike, proof_source: JsonLike
+) -> Tuple[Dict[str, Any], Dict[str, Any], List[int]]:
     """
     Convenience loader for PLONK:
       (vk_json, proof_json, public_inputs) = load_plonk("vk_plonk.json", "proof_plonk.json")

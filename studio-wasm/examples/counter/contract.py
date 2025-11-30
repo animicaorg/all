@@ -11,9 +11,9 @@ Determinism/constraints:
   - Performs simple bounds checks via stdlib.abi.require.
 """
 
-from stdlib.storage import get_int, set_int
-from stdlib.events import emit
 from stdlib.abi import require
+from stdlib.events import emit
+from stdlib.storage import get_int, set_int
 
 # Storage key for the counter's value.
 STORAGE_KEY = b"counter/value"

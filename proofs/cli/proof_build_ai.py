@@ -38,10 +38,10 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
 import os
 import sys
-import hashlib
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -54,23 +54,22 @@ except Exception:  # pragma: no cover
 
 # Optional pretty output
 try:
-    from rich.console import Console  # type: ignore
-    from rich.table import Table  # type: ignore
-    from rich.panel import Panel  # type: ignore
     from rich import box  # type: ignore
+    from rich.console import Console  # type: ignore
+    from rich.panel import Panel  # type: ignore
+    from rich.table import Table  # type: ignore
 except Exception:  # pragma: no cover
     Console = None  # type: ignore
     Table = None  # type: ignore
     Panel = None  # type: ignore
     box = None  # type: ignore
 
+from proofs import cbor as proofs_cbor
+from proofs import nullifiers as nul
+from proofs import registry
+from proofs.types import ProofEnvelope  # type: ignore
 # Animica libs (internal)
 from proofs.version import __version__
-from proofs import cbor as proofs_cbor
-from proofs import registry
-from proofs import nullifiers as nul
-from proofs.types import ProofEnvelope  # type: ignore
-
 
 app = typer.Typer(
     name="proof-build-ai",
@@ -80,6 +79,7 @@ app = typer.Typer(
 )
 
 # ---------- helpers ----------
+
 
 def _b64(x: bytes) -> str:
     return base64.b64encode(x).decode("ascii")
@@ -160,6 +160,7 @@ def _encode_body(type_id: int, body: Dict[str, Any]) -> bytes:
     # Last resort: try cbor2 if installed
     try:
         import cbor2  # type: ignore
+
         return cbor2.dumps(body)
     except Exception as e:
         raise RuntimeError(
@@ -248,7 +249,9 @@ def _digest_from_args(out_file: Optional[Path], digest_hex: Optional[str]) -> by
     if digest_hex:
         return _parse_hex_bytes(digest_hex)
     if not out_file:
-        raise typer.BadParameter("Provide --out-file to hash OR --digest with a hex value")
+        raise typer.BadParameter(
+            "Provide --out-file to hash OR --digest with a hex value"
+        )
     return _sha3_256_bytes(_read_bytes(out_file))
 
 
@@ -270,11 +273,14 @@ def _save_outputs(
         except Exception:
             try:
                 import cbor2  # type: ignore
-                data = cbor2.dumps({
-                    "type_id": env.type_id,
-                    "body": env.body,
-                    "nullifier": env.nullifier,
-                })
+
+                data = cbor2.dumps(
+                    {
+                        "type_id": env.type_id,
+                        "body": env.body,
+                        "nullifier": env.nullifier,
+                    }
+                )
             except Exception as e:
                 raise RuntimeError(f"Failed to encode envelope CBOR: {e}")
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -283,13 +289,20 @@ def _save_outputs(
         # Make a JSON-safe view
         def b2h(b: bytes) -> str:
             return "0x" + b.hex()
+
         view = {
             "type_id": env.type_id,
             "body": env.body,
-            "nullifier": b2h(env.nullifier) if isinstance(env.nullifier, bytes) else env.nullifier,
+            "nullifier": (
+                b2h(env.nullifier)
+                if isinstance(env.nullifier, bytes)
+                else env.nullifier
+            ),
         }
         json_path.parent.mkdir(parents=True, exist_ok=True)
-        json_path.write_text(json.dumps(view, indent=2, sort_keys=True), encoding="utf-8")
+        json_path.write_text(
+            json.dumps(view, indent=2, sort_keys=True), encoding="utf-8"
+        )
 
 
 def _human_report(console: Any, env: ProofEnvelope) -> None:
@@ -297,7 +310,11 @@ def _human_report(console: Any, env: ProofEnvelope) -> None:
     t.add_column("Field")
     t.add_column("Value", overflow="fold")
     t.add_row("type_id", str(env.type_id))
-    nullifier_hex = ("0x" + env.nullifier.hex()) if isinstance(env.nullifier, bytes) else str(env.nullifier)
+    nullifier_hex = (
+        ("0x" + env.nullifier.hex())
+        if isinstance(env.nullifier, bytes)
+        else str(env.nullifier)
+    )
     t.add_row("nullifier", nullifier_hex)
     console.print(Panel(t, title="Assembled", expand=False))
 
@@ -326,9 +343,12 @@ def _human_report(console: Any, env: ProofEnvelope) -> None:
 
 # ---------- CLI ----------
 
+
 @app.callback()
 def _meta(
-    version: bool = typer.Option(False, "--version", "-V", help="Print version and exit", is_eager=True),
+    version: bool = typer.Option(
+        False, "--version", "-V", help="Print version and exit", is_eager=True
+    ),
 ) -> None:
     if version:
         typer.echo(f"animica-proofs {__version__}")
@@ -340,27 +360,42 @@ def build_ai_proof(
     # Attestation
     attest: str = typer.Option(..., "--attest", help="sgx | sev-snp | cca | json"),
     quote: Optional[Path] = typer.Option(None, "--quote", help="SGX quote (binary)"),
-    report: Optional[Path] = typer.Option(None, "--report", help="SEV-SNP report (binary)"),
-    token: Optional[Path] = typer.Option(None, "--token", help="Arm CCA Realm token (CBOR/COSE)"),
-    attest_json: Optional[Path] = typer.Option(None, "--attest-json", help="Pre-built attestation JSON bundle"),
-
+    report: Optional[Path] = typer.Option(
+        None, "--report", help="SEV-SNP report (binary)"
+    ),
+    token: Optional[Path] = typer.Option(
+        None, "--token", help="Arm CCA Realm token (CBOR/COSE)"
+    ),
+    attest_json: Optional[Path] = typer.Option(
+        None, "--attest-json", help="Pre-built attestation JSON bundle"
+    ),
     # Traps
     traps: Path = typer.Option(..., "--traps", help="Trap receipts JSON file"),
-
     # Output digest (one of)
-    out_file: Optional[Path] = typer.Option(None, "--out-file", help="Path to model output to hash with sha3-256"),
-    digest: Optional[str] = typer.Option(None, "--digest", help="Explicit output digest (hex)"),
-
+    out_file: Optional[Path] = typer.Option(
+        None, "--out-file", help="Path to model output to hash with sha3-256"
+    ),
+    digest: Optional[str] = typer.Option(
+        None, "--digest", help="Explicit output digest (hex)"
+    ),
     # Optional linkages
-    task_id: Optional[str] = typer.Option(None, "--task-id", help="Optional task id (hex) for correlation"),
-    job_hint: Optional[str] = typer.Option(None, "--job-hint", help="Free-form hint (non-consensus)"),
-
+    task_id: Optional[str] = typer.Option(
+        None, "--task-id", help="Optional task id (hex) for correlation"
+    ),
+    job_hint: Optional[str] = typer.Option(
+        None, "--job-hint", help="Free-form hint (non-consensus)"
+    ),
     # Outputs
-    out: Optional[Path] = typer.Option(None, "--out", "-o", help="Write CBOR envelope to this file"),
-    json_out: Optional[Path] = typer.Option(None, "--json", help="Also write JSON envelope to this file"),
-
+    out: Optional[Path] = typer.Option(
+        None, "--out", "-o", help="Write CBOR envelope to this file"
+    ),
+    json_out: Optional[Path] = typer.Option(
+        None, "--json", help="Also write JSON envelope to this file"
+    ),
     # Display
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="No pretty print; just OK line"),
+    quiet: bool = typer.Option(
+        False, "--quiet", "-q", help="No pretty print; just OK line"
+    ),
 ) -> None:
     """
     Build an AIProof envelope and write it to disk.
@@ -388,7 +423,7 @@ def build_ai_proof(
         "version": 1,
         "attestation": att_obj,
         "traps": traps_list,
-        "output_digest": od_bytes,     # raw bytes; CBOR encoder should tag as bstr
+        "output_digest": od_bytes,  # raw bytes; CBOR encoder should tag as bstr
     }
     if task_id_bytes is not None:
         body["task_id"] = task_id_bytes
@@ -411,11 +446,15 @@ def build_ai_proof(
 
     # 10) Report
     if quiet:
-        print(f"OK type_id={type_id} nullifier=0x{nullifier.hex()} cbor_out={out or '-'} json_out={json_out or '-'}")
+        print(
+            f"OK type_id={type_id} nullifier=0x{nullifier.hex()} cbor_out={out or '-'} json_out={json_out or '-'}"
+        )
         return
 
     if Console is None:
-        print(f"AIProof built.\n type_id={type_id}\n nullifier=0x{nullifier.hex()}\n out={out}\n json={json_out}")
+        print(
+            f"AIProof built.\n type_id={type_id}\n nullifier=0x{nullifier.hex()}\n out={out}\n json={json_out}"
+        )
         return
 
     console = Console()

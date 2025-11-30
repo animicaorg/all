@@ -29,7 +29,6 @@ from typing import Any, Dict, Iterable, List, Tuple
 from ..errors import ValidationError
 from . import hash_api
 
-
 # ---------------- Limits ----------------
 
 MAX_NAME_LEN = 64
@@ -39,6 +38,7 @@ MAX_EVENTS_DEFAULT = 10_000
 
 
 # ---------------- Helpers ----------------
+
 
 def _ensure_name(name: bytes) -> bytes:
     if not isinstance(name, (bytes, bytearray)) or len(name) == 0:
@@ -102,7 +102,9 @@ def _canonical_args_bytes(args_sorted: List[Tuple[str, Any]]) -> bytes:
     import json
 
     d = {k: v for (k, v) in args_sorted}
-    return json.dumps(d, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return json.dumps(
+        d, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
 
 
 def _hex(b: bytes) -> str:
@@ -110,6 +112,7 @@ def _hex(b: bytes) -> str:
 
 
 # ---------------- Data Types ----------------
+
 
 @dataclass(slots=True)
 class EventRecord:
@@ -124,11 +127,14 @@ class EventRecord:
             "index": self.index,
             "name": _hex(self.name),
             "topic": _hex(self.topic),
-            "args": {k: v for (k, v) in self.args_sorted},  # stable order preserved in Py>=3.7
+            "args": {
+                k: v for (k, v) in self.args_sorted
+            },  # stable order preserved in Py>=3.7
         }
 
 
 # ---------------- Sink ----------------
+
 
 class EventSink:
     """
@@ -159,8 +165,12 @@ class EventSink:
             raise ValidationError("event sink is full")
         name_b = _ensure_name(name)
         args_sorted = tuple(_canonical_args(args))
-        topic = hash_api.sha3_256(name_b + b"\x01" + _canonical_args_bytes(list(args_sorted)))
-        rec = EventRecord(index=len(self._events), name=name_b, args_sorted=args_sorted, topic=topic)
+        topic = hash_api.sha3_256(
+            name_b + b"\x01" + _canonical_args_bytes(list(args_sorted))
+        )
+        rec = EventRecord(
+            index=len(self._events), name=name_b, args_sorted=args_sorted, topic=topic
+        )
         self._events.append(rec)
         return rec
 
@@ -178,12 +188,14 @@ class EventSink:
             if len(self._events) >= self._max_events:
                 raise ValidationError("event sink is full")
             # Reindex to keep monotonic sequence in this sink
-            self._events.append(EventRecord(
-                index=len(self._events),
-                name=r.name,
-                args_sorted=r.args_sorted,
-                topic=r.topic,
-            ))
+            self._events.append(
+                EventRecord(
+                    index=len(self._events),
+                    name=r.name,
+                    args_sorted=r.args_sorted,
+                    topic=r.topic,
+                )
+            )
 
     # ---- Introspection ----
 

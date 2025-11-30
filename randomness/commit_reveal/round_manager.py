@@ -60,11 +60,15 @@ except Exception:  # pragma: no cover - fallback typing shim
         vdf_phase_s: int = 10
         reveal_grace_s: int = 0
 
+
 try:
-    from randomness.errors import CommitTooLate, RevealTooEarly, BadReveal
+    from randomness.errors import BadReveal, CommitTooLate, RevealTooEarly
 except Exception:  # pragma: no cover - define minimal shims for local tests
+
     class CommitTooLate(RuntimeError): ...
+
     class RevealTooEarly(RuntimeError): ...
+
     class BadReveal(RuntimeError): ...
 
 
@@ -73,7 +77,8 @@ RoundId = int
 
 class Phase(Enum):
     """High-level phase within a round."""
-    PRE = auto()      # before round start (for the given round-id)
+
+    PRE = auto()  # before round start (for the given round-id)
     COMMIT = auto()
     REVEAL = auto()
     VDF = auto()
@@ -83,6 +88,7 @@ class Phase(Enum):
 @dataclass(frozen=True, slots=True)
 class RoundBoundaries:
     """Absolute boundaries (UNIX seconds) for a round."""
+
     start_s: int
     commit_end_s: int
     reveal_end_s: int
@@ -123,9 +129,7 @@ class RoundManager:
     def __init__(self, cfg: RandConfig):
         self.cfg = cfg
         self._round_len = (
-            int(cfg.commit_phase_s)
-            + int(cfg.reveal_phase_s)
-            + int(cfg.vdf_phase_s)
+            int(cfg.commit_phase_s) + int(cfg.reveal_phase_s) + int(cfg.vdf_phase_s)
         )
         if self._round_len <= 0:
             raise ValueError("round length must be positive")
@@ -221,10 +225,14 @@ class RoundManager:
         return b.commit_end_s <= now_s < max(grace_end, b.commit_end_s)
 
     # Backwards-compatible aliases used in unit tests.
-    def can_commit(self, round_id: RoundId, now_s: int) -> bool:  # pragma: no cover - thin wrapper
+    def can_commit(
+        self, round_id: RoundId, now_s: int
+    ) -> bool:  # pragma: no cover - thin wrapper
         return self.can_accept_commit(now_s, round_id)
 
-    def can_reveal(self, round_id: RoundId, now_s: int, *, include_grace: bool = True) -> bool:  # pragma: no cover - thin wrapper
+    def can_reveal(
+        self, round_id: RoundId, now_s: int, *, include_grace: bool = True
+    ) -> bool:  # pragma: no cover - thin wrapper
         if include_grace:
             return self.can_accept_reveal(now_s, round_id)
         b = self.boundaries(round_id)
@@ -269,10 +277,14 @@ class RoundManager:
             )
 
     # Optional strict validators for compatibility with external callers/tests.
-    def ensure_can_commit(self, round_id: RoundId, now_s: int) -> None:  # pragma: no cover - delegates
+    def ensure_can_commit(
+        self, round_id: RoundId, now_s: int
+    ) -> None:  # pragma: no cover - delegates
         self.enforce_commit_timing(now_s, round_id)
 
-    def ensure_can_reveal(self, round_id: RoundId, now_s: int, *, include_grace: bool = True) -> None:  # pragma: no cover - delegates
+    def ensure_can_reveal(
+        self, round_id: RoundId, now_s: int, *, include_grace: bool = True
+    ) -> None:  # pragma: no cover - delegates
         if include_grace:
             self.enforce_reveal_timing(now_s, round_id)
         else:

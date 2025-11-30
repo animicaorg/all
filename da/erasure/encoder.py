@@ -36,33 +36,34 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Sequence, Tuple
 
-from .params import ErasureParams, DEFAULT_PARAMS
-from .partitioner import partition_blob, DataShard
-from .reedsolomon import rs_encode
-from ..nmt.namespace import normalize_namespace
 from ..nmt.codec import encode_leaf
-
+from ..nmt.namespace import normalize_namespace
+from .params import DEFAULT_PARAMS, ErasureParams
+from .partitioner import DataShard, partition_blob
+from .reedsolomon import rs_encode
 
 # --------------------------------------------------------------------------- #
 # Metadata returned by the encoder
 # --------------------------------------------------------------------------- #
+
 
 @dataclass(frozen=True)
 class ErasureEncodeInfo:
     """
     Describes how a blob was encoded into leaves.
     """
+
     params: ErasureParams
-    namespace: bytes               # normalized namespace (fixed length)
-    original_size: int             # input blob length in bytes
-    stripes: int                   # number of stripes
-    share_bytes: int               # bytes per shard payload
-    data_per_stripe: int           # k
-    parity_per_stripe: int         # p
-    leaves_per_stripe: int         # n = k + p
-    total_data_shards: int         # stripes * k
-    total_parity_shards: int       # stripes * p
-    total_leaves: int              # stripes * n
+    namespace: bytes  # normalized namespace (fixed length)
+    original_size: int  # input blob length in bytes
+    stripes: int  # number of stripes
+    share_bytes: int  # bytes per shard payload
+    data_per_stripe: int  # k
+    parity_per_stripe: int  # p
+    leaves_per_stripe: int  # n = k + p
+    total_data_shards: int  # stripes * k
+    total_parity_shards: int  # stripes * p
+    total_leaves: int  # stripes * n
     data_meaningful_lengths: List[int]  # len per data shard (for final stripe mostly)
 
     def leaf_index(self, stripe: int, position: int) -> int:
@@ -81,6 +82,7 @@ class ErasureEncodeInfo:
 # Encoder
 # --------------------------------------------------------------------------- #
 
+
 def _group_by_stripe(items: Sequence[DataShard], k: int) -> List[List[DataShard]]:
     """
     Turn a flat list of DataShard (already in stripe order) into
@@ -90,7 +92,7 @@ def _group_by_stripe(items: Sequence[DataShard], k: int) -> List[List[DataShard]
         return []
     if len(items) % k != 0:
         raise ValueError("data shard count not divisible by k")
-    return [list(items[i:i + k]) for i in range(0, len(items), k)]
+    return [list(items[i : i + k]) for i in range(0, len(items), k)]
 
 
 def encode_blob_to_leaves(
@@ -204,6 +206,7 @@ __all__ = [
 
 # Lightweight compatibility wrappers -------------------------------------------------
 
+
 def encode_leaves(blob: bytes, namespace: bytes) -> List[bytes]:
     """Alias for :func:`encode_blob_to_leaves` returning only the leaf list."""
     leaves, _info = encode_blob_to_leaves(blob, namespace)
@@ -211,5 +214,7 @@ def encode_leaves(blob: bytes, namespace: bytes) -> List[bytes]:
 
 
 # Some older callers look for a very short name; mirror ``encode_leaves``.
-def encode(blob: bytes, namespace: bytes) -> List[bytes]:  # pragma: no cover - thin alias
+def encode(
+    blob: bytes, namespace: bytes
+) -> List[bytes]:  # pragma: no cover - thin alias
     return encode_leaves(blob, namespace)

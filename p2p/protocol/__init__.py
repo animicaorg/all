@@ -61,6 +61,7 @@ def clear_handlers() -> None:
 # HELLO / IDENTIFY capabilities
 # -----------------------------
 
+
 class HelloCaps(TypedDict, total=False):
     # Version & identity
     family: str
@@ -69,23 +70,25 @@ class HelloCaps(TypedDict, total=False):
     minor: int
     wire: int
     node_version: str
-    impl: str      # python/<version> on <platform>
+    impl: str  # python/<version> on <platform>
     # Chain & role hints
     chain_id: int
     roles: list[str]  # e.g. ["full"], ["full","miner"], ["observer"]
     # Feature toggles (transport & protocol)
     transports: list[str]  # subset of ["tcp","quic","ws"]
-    compression: list[str] # subset of ["zstd","snappy"]
-    rpc: bool              # node exposes RPC (useful for peers to discover local RPC bridge)
+    compression: list[str]  # subset of ["zstd","snappy"]
+    rpc: bool  # node exposes RPC (useful for peers to discover local RPC bridge)
     # Optional product info
-    agent: str             # free-form "animicad/0.1 (+https://…)"
+    agent: str  # free-form "animicad/0.1 (+https://…)"
 
 
 class ProtocolError(Exception):
     pass
 
 
-def _safe_import_version(module: str, attr: str = "__version__", fallback: str = "unknown") -> str:
+def _safe_import_version(
+    module: str, attr: str = "__version__", fallback: str = "unknown"
+) -> str:
     try:
         mod = __import__(module, fromlist=[attr])
         return str(getattr(mod, attr))
@@ -99,7 +102,10 @@ def _node_version() -> str:
     cv = _safe_import_version("core.version")
     rv = _safe_import_version("rpc.version")
     # Compose a compact string
-    parts = [f"p2p/{pv}" if pv != "unknown" else "p2p", f"core/{cv}" if cv != "unknown" else "core"]
+    parts = [
+        f"p2p/{pv}" if pv != "unknown" else "p2p",
+        f"core/{cv}" if cv != "unknown" else "core",
+    ]
     if rv != "unknown":
         parts.append(f"rpc/{rv}")
     return ";".join(parts)
@@ -119,7 +125,8 @@ def _roles_from_env() -> list[str]:
     for r in roles:
         r = r.lower()
         if r in {"full", "miner", "observer"} and r not in seen:
-            out.append(r); seen.add(r)
+            out.append(r)
+            seen.add(r)
     return out or ["full"]
 
 
@@ -145,8 +152,8 @@ def build_hello_caps(
         "impl": _impl_string(),
         "chain_id": int(chain_id),
         "roles": _roles_from_env(),
-        "transports": transports or ["tcp", "ws"],     # QUIC optional
-        "compression": compression or ["zstd"],        # snappy optional
+        "transports": transports or ["tcp", "ws"],  # QUIC optional
+        "compression": compression or ["zstd"],  # snappy optional
         "rpc": bool(rpc_exposed),
         "agent": agent or os.getenv("ANIMICA_AGENT", "animicad/0.1"),
     }
@@ -163,7 +170,9 @@ def validate_hello_caps(remote: Dict[str, Any]) -> None:
     wire = remote.get("wire")
 
     if family != PROTOCOL_FAMILY:
-        raise ProtocolError(f"incompatible family: remote={family!r} local={PROTOCOL_FAMILY!r}")
+        raise ProtocolError(
+            f"incompatible family: remote={family!r} local={PROTOCOL_FAMILY!r}"
+        )
 
     if not isinstance(alpn, str) or not alpn.startswith(f"{PROTOCOL_FAMILY}/"):
         raise ProtocolError(f"bad ALPN: {alpn!r}")
@@ -174,15 +183,21 @@ def validate_hello_caps(remote: Dict[str, Any]) -> None:
         raise ProtocolError(f"unparsable ALPN {alpn!r}") from e
 
     if r_major != PROTOCOL_MAJOR:
-        raise ProtocolError(f"protocol major mismatch: remote={r_major} local={PROTOCOL_MAJOR}")
+        raise ProtocolError(
+            f"protocol major mismatch: remote={r_major} local={PROTOCOL_MAJOR}"
+        )
 
     if not isinstance(major, int) or major != PROTOCOL_MAJOR:
         # Redundant but helpful to detect inconsistent peers
-        raise ProtocolError(f"HELLO.major mismatch: remote={major} local={PROTOCOL_MAJOR}")
+        raise ProtocolError(
+            f"HELLO.major mismatch: remote={major} local={PROTOCOL_MAJOR}"
+        )
 
     if not isinstance(wire, int) or wire != WIRE_SCHEMA_VERSION:
         # For now require exact wire schema match; relax to range if/when we version payloads loosely.
-        raise ProtocolError(f"wire schema mismatch: remote={wire} local={WIRE_SCHEMA_VERSION}")
+        raise ProtocolError(
+            f"wire schema mismatch: remote={wire} local={WIRE_SCHEMA_VERSION}"
+        )
 
     # Optional sanity checks
     roles = remote.get("roles", [])
@@ -190,7 +205,9 @@ def validate_hello_caps(remote: Dict[str, Any]) -> None:
         raise ProtocolError("malformed roles list")
 
     transports = remote.get("transports", [])
-    if not isinstance(transports, list) or not all(isinstance(t, str) for t in transports):
+    if not isinstance(transports, list) or not all(
+        isinstance(t, str) for t in transports
+    ):
         raise ProtocolError("malformed transports list")
 
 

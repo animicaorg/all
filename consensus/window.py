@@ -25,6 +25,7 @@ PPM = 1_000_000
 
 # ------------------------------- Epoch helpers -------------------------------
 
+
 def epoch_index(height: int, epoch_len: int) -> int:
     """
     Zero-based epoch index for a given block height.
@@ -58,6 +59,7 @@ def epoch_bounds(index: int, epoch_len: int) -> Tuple[int, int]:
 
 # ---------------------------- Retarget window math ---------------------------
 
+
 @dataclass(frozen=True)
 class WindowSpec:
     """
@@ -72,6 +74,7 @@ class WindowSpec:
         If False, the window ends at tip-1 (useful when computing a window
         before the next block is sealed).
     """
+
     size_blocks: int
     include_tip: bool = True
 
@@ -98,6 +101,7 @@ def window_bounds_for_height(tip_height: int, spec: WindowSpec) -> Tuple[int, in
 
 # ----------------------------- Timestamp utilities ---------------------------
 
+
 def diffs_from_timestamps(ts: Sequence[int]) -> List[int]:
     """
     Convert a non-decreasing sequence of block timestamps (integers, seconds)
@@ -123,6 +127,7 @@ def diffs_from_timestamps(ts: Sequence[int]) -> List[int]:
 
 
 # -------------------------- Fixed-point rate estimators -----------------------
+
 
 def lambda_from_mean_interval(dt_list: Sequence[int]) -> int:
     """
@@ -217,6 +222,7 @@ def lambda_from_ema_interval(ema_scaled: int, shift: int) -> int:
 
 # ------------------------- Convenience end-to-end helpers --------------------
 
+
 def observed_lambda_from_timestamps(
     timestamps_sec: Sequence[int],
     method: str = "harmonic",
@@ -297,7 +303,9 @@ if __name__ == "__main__":  # pragma: no cover
     print("dts:", dts)
     lam_h = observed_lambda_from_timestamps(ts, "harmonic")
     lam_m = observed_lambda_from_timestamps(ts, "mean")
-    print(f"λ_harmonic={lam_h/SCALE:.6f} blocks/sec; λ_mean={lam_m/SCALE:.6f} blocks/sec")
+    print(
+        f"λ_harmonic={lam_h/SCALE:.6f} blocks/sec; λ_mean={lam_m/SCALE:.6f} blocks/sec"
+    )
 
     # EMA demo
     shift = 8

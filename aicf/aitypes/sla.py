@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 SLA dimensions and simple evaluation helpers.
 
@@ -13,13 +14,13 @@ evaluator and tests.
 """
 
 
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import Dict, Mapping, Optional
-
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Types
 # ────────────────────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class SlaDims:
@@ -33,15 +34,18 @@ class SlaDims:
 
     All ratios MUST be finite and within [0, 1]. latency_ms MUST be >= 0.
     """
+
     traps_ratio: float
     qos: float
     latency_ms: int
     availability: float
 
     def validate(self) -> None:
-        for name, val in (("traps_ratio", self.traps_ratio),
-                          ("qos", self.qos),
-                          ("availability", self.availability)):
+        for name, val in (
+            ("traps_ratio", self.traps_ratio),
+            ("qos", self.qos),
+            ("availability", self.availability),
+        ):
             if not isinstance(val, (int, float)) or not (0.0 <= float(val) <= 1.0):
                 raise ValueError(f"{name} must be a number in [0, 1]")
         if not isinstance(self.latency_ms, int) or self.latency_ms < 0:
@@ -80,15 +84,18 @@ class SlaThresholds:
 
     Defaults are intentionally conservative and should be overridden by network policy.
     """
+
     min_traps_ratio: float = 0.60
     min_qos: float = 0.80
     max_latency_ms: int = 30_000
     min_availability: float = 0.98
 
     def validate(self) -> None:
-        for name, val in (("min_traps_ratio", self.min_traps_ratio),
-                          ("min_qos", self.min_qos),
-                          ("min_availability", self.min_availability)):
+        for name, val in (
+            ("min_traps_ratio", self.min_traps_ratio),
+            ("min_qos", self.min_qos),
+            ("min_availability", self.min_availability),
+        ):
             if not isinstance(val, (int, float)) or not (0.0 <= float(val) <= 1.0):
                 raise ValueError(f"{name} must be a number in [0, 1]")
         if not isinstance(self.max_latency_ms, int) or self.max_latency_ms <= 0:
@@ -106,16 +113,19 @@ class SlaWeights:
 
     A higher weight makes a dimension contribute more to the final soft score.
     """
+
     traps: float = 1.0
     qos: float = 1.0
     latency: float = 1.0
     availability: float = 1.0
 
     def validate(self) -> None:
-        for name, val in (("traps", self.traps),
-                          ("qos", self.qos),
-                          ("latency", self.latency),
-                          ("availability", self.availability)):
+        for name, val in (
+            ("traps", self.traps),
+            ("qos", self.qos),
+            ("latency", self.latency),
+            ("availability", self.availability),
+        ):
             if not isinstance(val, (int, float)) or float(val) < 0.0:
                 raise ValueError(f"{name} weight must be a non-negative number")
 
@@ -142,22 +152,28 @@ class SlaEvaluation:
     violations:  Map of dimension -> human message for any failed threshold.
     score:       Soft score in [0,1] (weighted), useful for ranking / trend windows.
     """
+
     passed: bool
     violations: Dict[str, str]
     score: float
 
     def to_dict(self) -> Dict[str, object]:
-        return {"passed": bool(self.passed), "violations": dict(self.violations), "score": float(self.score)}
+        return {
+            "passed": bool(self.passed),
+            "violations": dict(self.violations),
+            "score": float(self.score),
+        }
 
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Evaluation helpers
 # ────────────────────────────────────────────────────────────────────────────────
 
+
 def evaluate_sla(
     dims: SlaDims,
     thresholds: SlaThresholds,
-    weights: Optional=SlaWeights(1.0, 1.0, 1.0, 1.0),
+    weights: Optional = SlaWeights(1.0, 1.0, 1.0, 1.0),
 ) -> SlaEvaluation:
     """
     Evaluate hard pass/fail and compute a soft score in [0,1].
@@ -180,13 +196,19 @@ def evaluate_sla(
 
     # Hard checks
     if dims.traps_ratio < thresholds.min_traps_ratio:
-        violations["traps_ratio"] = f"{dims.traps_ratio:.3f} < min {thresholds.min_traps_ratio:.3f}"
+        violations["traps_ratio"] = (
+            f"{dims.traps_ratio:.3f} < min {thresholds.min_traps_ratio:.3f}"
+        )
     if dims.qos < thresholds.min_qos:
         violations["qos"] = f"{dims.qos:.3f} < min {thresholds.min_qos:.3f}"
     if dims.latency_ms > thresholds.max_latency_ms:
-        violations["latency_ms"] = f"{dims.latency_ms}ms > max {thresholds.max_latency_ms}ms"
+        violations["latency_ms"] = (
+            f"{dims.latency_ms}ms > max {thresholds.max_latency_ms}ms"
+        )
     if dims.availability < thresholds.min_availability:
-        violations["availability"] = f"{dims.availability:.3f} < min {thresholds.min_availability:.3f}"
+        violations["availability"] = (
+            f"{dims.availability:.3f} < min {thresholds.min_availability:.3f}"
+        )
 
     passed = len(violations) == 0
 
@@ -210,6 +232,7 @@ def evaluate_sla(
 # ────────────────────────────────────────────────────────────────────────────────
 # Normalization helpers
 # ────────────────────────────────────────────────────────────────────────────────
+
 
 def _clamp01(x: float) -> float:
     return 0.0 if x < 0.0 else 1.0 if x > 1.0 else x

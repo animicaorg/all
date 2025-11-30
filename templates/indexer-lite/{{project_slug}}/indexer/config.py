@@ -49,13 +49,12 @@ True
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Final, Optional, Mapping
 import os
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Final, Mapping, Optional
 from urllib.parse import urlparse, urlunparse
-
 
 # ------------------------------- utilities --------------------------------- #
 
@@ -178,6 +177,7 @@ def _maybe_load_dotenv(dotenv_path: Path) -> None:
 
 # --------------------------------- config ---------------------------------- #
 
+
 @dataclass(frozen=True)
 class IndexerConfig:
     # Core connectivity
@@ -270,7 +270,9 @@ def from_env(env: Optional[Mapping[str, str]] = None) -> IndexerConfig:
 
     chain_id = parse_int(env.get("CHAIN_ID"), default=1337)
     if chain_id is None or chain_id < 0:
-        raise ValueError(f"CHAIN_ID must be a non-negative integer, got: {env.get('CHAIN_ID')!r}")
+        raise ValueError(
+            f"CHAIN_ID must be a non-negative integer, got: {env.get('CHAIN_ID')!r}"
+        )
 
     ws_subscribe = parse_bool(env.get("WS_SUBSCRIBE"), default=True)
 
@@ -296,7 +298,9 @@ def from_env(env: Optional[Mapping[str, str]] = None) -> IndexerConfig:
         raise ValueError("BACKFILL_FROM cannot be negative")
     if backfill_to is not None and backfill_to < 0:
         raise ValueError("BACKFILL_TO cannot be negative")
-    if (backfill_from is not None and backfill_to is not None) and (backfill_to < backfill_from):
+    if (backfill_from is not None and backfill_to is not None) and (
+        backfill_to < backfill_from
+    ):
         raise ValueError("BACKFILL_TO must be >= BACKFILL_FROM")
 
     max_batch_size = parse_int(env.get("MAX_BATCH_SIZE"), default=500) or 500

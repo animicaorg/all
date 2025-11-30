@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 Split rules: divide a job's total reward among provider / treasury / miner.
 
@@ -23,7 +24,7 @@ Example
 
 
 from dataclasses import dataclass
-from typing import Final,Tuple
+from typing import Final, Tuple
 
 from ..errors import AICFError
 
@@ -89,6 +90,7 @@ class SplitRule:
 @dataclass(frozen=True)
 class SplitPolicy:
     """Per-kind split policy."""
+
     ai: SplitRule
     quantum: SplitRule
 
@@ -97,8 +99,12 @@ class SplitPolicy:
 # - AI:    85% provider / 10% treasury / 5% miner
 # - Quantum: 80% provider / 15% treasury / 5% miner
 DEFAULT_SPLIT_POLICY: Final[SplitPolicy] = SplitPolicy(
-    ai=SplitRule(provider_bps=8_500, treasury_bps=1_000, miner_bps=500, residual_to="provider"),
-    quantum=SplitRule(provider_bps=8_000, treasury_bps=1_500, miner_bps=500, residual_to="provider"),
+    ai=SplitRule(
+        provider_bps=8_500, treasury_bps=1_000, miner_bps=500, residual_to="provider"
+    ),
+    quantum=SplitRule(
+        provider_bps=8_000, treasury_bps=1_500, miner_bps=500, residual_to="provider"
+    ),
 )
 
 
@@ -206,6 +212,7 @@ def policy_from_reward_splits(
 
     Raises SplitError on missing attributes or invalid totals.
     """
+
     def to_rule(obj, residual_to: ResidualTarget) -> SplitRule:
         # First try explicit *_bps attributes
         attrs = ("provider_bps", "treasury_bps", "miner_bps")

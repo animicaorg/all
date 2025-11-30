@@ -27,9 +27,10 @@ import sys
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional
 
-from .queue import SQLiteTaskQueue, Task
-from ..logging import get_logger  # structured logger (falls back to std logging)
 from .. import errors as svc_errors
+from ..logging import \
+    get_logger  # structured logger (falls back to std logging)
+from .queue import SQLiteTaskQueue, Task
 
 # The verification logic lives in studio_services.services.verify
 # We only depend on its public coroutine helpers. To stay resilient to minor
@@ -75,7 +76,11 @@ class VerifyWorker:
         """
         Main loop. Polls the queue, processes a task, and repeats until stop_event is set.
         """
-        self.log.info("verify_worker.start", kinds=self.config.kinds, lease=self.config.lease_seconds)
+        self.log.info(
+            "verify_worker.start",
+            kinds=self.config.kinds,
+            lease=self.config.lease_seconds,
+        )
         await self.queue.connect()
 
         # best-effort: periodically return expired leases (in case other processes died)
@@ -178,7 +183,9 @@ class VerifyWorker:
                 fn = getattr(service, fname, None)
                 if callable(fn):
                     return await fn(app=self.app, job_id=job_id)  # type: ignore[misc]
-            raise RuntimeError("Verification service does not expose a job-by-id runner")
+            raise RuntimeError(
+                "Verification service does not expose a job-by-id runner"
+            )
 
         # Pass-through payload path
         for fname, kw in (
@@ -197,6 +204,7 @@ class VerifyWorker:
         if verify_service is None:
             # Late import to avoid circular imports during app boot
             from ..services import verify as _verify  # type: ignore
+
             verify_service = _verify
         return verify_service
 
@@ -222,7 +230,9 @@ class VerifyWorker:
 import contextlib
 
 
-async def run_worker(app, queue: SQLiteTaskQueue, *, stop_event: Optional[asyncio.Event] = None) -> None:
+async def run_worker(
+    app, queue: SQLiteTaskQueue, *, stop_event: Optional[asyncio.Event] = None
+) -> None:
     """
     Run a single VerifyWorker until stop_event is set. If stop_event is None,
     a new Event is created and SIGINT/SIGTERM are wired to it.
@@ -260,7 +270,9 @@ if __name__ == "__main__":  # pragma: no cover
 
     async def _main():
         app = build_app()
-        q = SQLiteTaskQueue(db_path=os.environ.get("STUDIO_SVC_DB", "studio_services.sqlite"))
+        q = SQLiteTaskQueue(
+            db_path=os.environ.get("STUDIO_SVC_DB", "studio_services.sqlite")
+        )
         await run_worker(app, q)
 
     asyncio.run(_main())

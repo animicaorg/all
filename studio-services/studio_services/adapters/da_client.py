@@ -35,9 +35,10 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class PinResult:
     """Minimal DA pin result surfaced to higher layers."""
-    commitment: str         # 0x-prefixed NMT root / commitment
-    namespace: int          # numeric namespace id
-    size: int               # original blob size (bytes)
+
+    commitment: str  # 0x-prefixed NMT root / commitment
+    namespace: int  # numeric namespace id
+    size: int  # original blob size (bytes)
     receipt: Optional[dict] = None  # optional DA receipt payload
 
 
@@ -67,16 +68,23 @@ class DAAdapter:
         self._timeout_s = float(timeout_s)
 
         if self._enabled and DAClient is None:
-            logger.warning("DA enabled but omni_sdk.da.client is unavailable; disabling DA adapter.")
+            logger.warning(
+                "DA enabled but omni_sdk.da.client is unavailable; disabling DA adapter."
+            )
             self._enabled = False
 
         self._client: Optional[DAClient] = None
         if self._enabled:
             try:
                 self._client = DAClient(self._rpc_url, chain_id=self._chain_id, timeout_s=self._timeout_s)  # type: ignore[call-arg]
-                logger.info("DA adapter initialized", extra={"rpc_url": self._rpc_url, "chain_id": self._chain_id})
+                logger.info(
+                    "DA adapter initialized",
+                    extra={"rpc_url": self._rpc_url, "chain_id": self._chain_id},
+                )
             except Exception as e:  # pragma: no cover
-                logger.exception("Failed to initialize DA client; DA adapter will be disabled.")
+                logger.exception(
+                    "Failed to initialize DA client; DA adapter will be disabled."
+                )
                 self._enabled = False
                 self._client = None
 
@@ -102,7 +110,9 @@ class DAAdapter:
         timeout_s = float(getattr(settings, "DA_TIMEOUT_S", 15.0))
 
         if enabled and not rpc_url:
-            logger.warning("DA enabled but no DA_RPC_URL/RPC_URL provided; disabling DA.")
+            logger.warning(
+                "DA enabled but no DA_RPC_URL/RPC_URL provided; disabling DA."
+            )
             enabled = False
 
         return cls(
@@ -161,8 +171,13 @@ class DAAdapter:
             commitment = str(res.get("commitment") if isinstance(res, dict) else res.commitment)  # type: ignore[index,attr-defined]
             size = int(res.get("size") if isinstance(res, dict) else getattr(res, "size", len(data)))  # type: ignore[index]
             receipt = res.get("receipt") if isinstance(res, dict) else getattr(res, "receipt", None)  # type: ignore[index]
-            logger.info("DA pin ok", extra={"namespace": ns, "size": size, "commitment": commitment})
-            return PinResult(commitment=commitment, namespace=ns, size=size, receipt=receipt)
+            logger.info(
+                "DA pin ok",
+                extra={"namespace": ns, "size": size, "commitment": commitment},
+            )
+            return PinResult(
+                commitment=commitment, namespace=ns, size=size, receipt=receipt
+            )
         except Exception as e:
             logger.warning("DA pin failed", exc_info=True)
             if strict:
@@ -200,7 +215,9 @@ class DAAdapter:
                     return s.encode("utf-8")
             return None
         except Exception:
-            logger.warning("DA get_blob failed", exc_info=True, extra={"commitment": commitment})
+            logger.warning(
+                "DA get_blob failed", exc_info=True, extra={"commitment": commitment}
+            )
             if strict:
                 raise
             return None
@@ -224,7 +241,9 @@ class DAAdapter:
             # Best-effort normalize to dict for non-dict responses
             return {"proof": proof}
         except Exception:
-            logger.warning("DA get_proof failed", exc_info=True, extra={"commitment": commitment})
+            logger.warning(
+                "DA get_proof failed", exc_info=True, extra={"commitment": commitment}
+            )
             if strict:
                 raise
             return None

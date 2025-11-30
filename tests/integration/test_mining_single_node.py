@@ -47,10 +47,11 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 
 import pytest
 
-from tests.integration import env  # package-level RUN_INTEGRATION_TESTS gate lives there
-
+from tests.integration import \
+    env  # package-level RUN_INTEGRATION_TESTS gate lives there
 
 # -------------------------------- RPC helpers --------------------------------
+
 
 def _http_timeout() -> float:
     try:
@@ -59,13 +60,24 @@ def _http_timeout() -> float:
         return 5.0
 
 
-def _rpc_call(rpc_url: str, method: str, params: Optional[Sequence[Any] | Dict[str, Any]] = None, *, req_id: int = 1) -> Any:
+def _rpc_call(
+    rpc_url: str,
+    method: str,
+    params: Optional[Sequence[Any] | Dict[str, Any]] = None,
+    *,
+    req_id: int = 1,
+) -> Any:
     if params is None:
         params = []
     if isinstance(params, dict):
         payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
     else:
-        payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": list(params)}
+        payload = {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "method": method,
+            "params": list(params),
+        }
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         rpc_url,
@@ -81,7 +93,11 @@ def _rpc_call(rpc_url: str, method: str, params: Optional[Sequence[Any] | Dict[s
     return msg.get("result")
 
 
-def _rpc_try(rpc_url: str, methods: Sequence[str], params: Optional[Sequence[Any] | Dict[str, Any]] = None) -> Tuple[str, Any]:
+def _rpc_try(
+    rpc_url: str,
+    methods: Sequence[str],
+    params: Optional[Sequence[Any] | Dict[str, Any]] = None,
+) -> Tuple[str, Any]:
     last_exc: Optional[Exception] = None
     for i, m in enumerate(methods, start=1):
         try:
@@ -89,7 +105,9 @@ def _rpc_try(rpc_url: str, methods: Sequence[str], params: Optional[Sequence[Any
         except Exception as exc:
             last_exc = exc
             continue
-    raise AssertionError(f"All RPC spellings failed ({methods}). Last error: {last_exc}")
+    raise AssertionError(
+        f"All RPC spellings failed ({methods}). Last error: {last_exc}"
+    )
 
 
 def _parse_height(head: Any) -> int:
@@ -107,6 +125,7 @@ def _parse_height(head: Any) -> int:
 
 
 # ------------------------------- Miner helpers -------------------------------
+
 
 class MinerProc:
     def __init__(self, cmdline: str):
@@ -139,7 +158,10 @@ class MinerProc:
         if not self.proc:
             return
         # Drain available output (non-blocking because pipes are in text mode + bufsize=1)
-        for stream, buf in ((self.proc.stdout, self._stdout_buf), (self.proc.stderr, self._stderr_buf)):
+        for stream, buf in (
+            (self.proc.stdout, self._stdout_buf),
+            (self.proc.stderr, self._stderr_buf),
+        ):
             if stream is None:
                 continue
             while True:
@@ -178,7 +200,9 @@ class MinerProc:
     def logs(self, tail: int = 200) -> str:
         out = "\n".join(self._stdout_buf[-tail:])
         err = "\n".join(self._stderr_buf[-tail:])
-        return f"--- miner stdout (tail) ---\n{out}\n--- miner stderr (tail) ---\n{err}\n"
+        return (
+            f"--- miner stdout (tail) ---\n{out}\n--- miner stderr (tail) ---\n{err}\n"
+        )
 
 
 @pytest.mark.timeout(240)
@@ -186,7 +210,9 @@ def test_built_in_miner_finds_blocks_and_head_advances():
     rpc_url = env("ANIMICA_RPC_URL", "http://127.0.0.1:8545")
     miner_cmd = env("ANIMICA_MINER_CMD")  # REQUIRED
     if not miner_cmd:
-        pytest.skip("ANIMICA_MINER_CMD not set; provide a full miner command (e.g., 'python -m mining.cli.miner start --threads 1 --device cpu')")
+        pytest.skip(
+            "ANIMICA_MINER_CMD not set; provide a full miner command (e.g., 'python -m mining.cli.miner start --threads 1 --device cpu')"
+        )
 
     # Baseline head
     _, head0 = _rpc_try(rpc_url, ("chain.getHead", "chain.head", "getHead"), [])

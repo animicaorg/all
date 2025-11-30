@@ -55,17 +55,14 @@ from typing import Any, Dict, Optional
 
 try:
     # prometheus_client is an optional dependency. We provide graceful no-op fallback.
-    from prometheus_client import (
-        CollectorRegistry,
-        Counter,
-        Gauge,
-        Histogram,
-        Summary,
-        REGISTRY as _DEFAULT_REGISTRY,
-    )
+    from prometheus_client import REGISTRY as _DEFAULT_REGISTRY
+    from prometheus_client import (CollectorRegistry, Counter, Gauge,
+                                   Histogram, Summary)
+
     try:
         # Newer prometheus_client offers ASGI/Wsgi helpers
-        from prometheus_client import make_asgi_app as _make_asgi_app  # type: ignore
+        from prometheus_client import \
+            make_asgi_app as _make_asgi_app  # type: ignore
     except Exception:  # pragma: no cover - optional
         _make_asgi_app = None  # type: ignore
     _PROM_AVAILABLE = True
@@ -117,6 +114,7 @@ class _NoopHistogram(_NoopCounter):
 @dataclass(frozen=True)
 class _Labels:
     """Canonical label keys used across metrics."""
+
     method: str = "method"
     endpoint: str = "endpoint"
     status: str = "status"
@@ -125,7 +123,9 @@ class _Labels:
     cache: str = "cache"
 
 
-def _registry_or_default(registry: Optional["CollectorRegistry"]) -> Optional["CollectorRegistry"]:
+def _registry_or_default(
+    registry: Optional["CollectorRegistry"],
+) -> Optional["CollectorRegistry"]:
     if not _PROM_AVAILABLE:
         return None
     return registry or _DEFAULT_REGISTRY
@@ -299,7 +299,9 @@ class DAMetrics:
             _bytes_in: int = 0
             _bytes_out: int = 0
 
-            def set_result(self, *, status_code: int, bytes_in: int = 0, bytes_out: int = 0) -> None:
+            def set_result(
+                self, *, status_code: int, bytes_in: int = 0, bytes_out: int = 0
+            ) -> None:
                 self._status_code = status_code
                 self._bytes_in = max(0, int(bytes_in or 0))
                 self._bytes_out = max(0, int(bytes_out or 0))
@@ -438,6 +440,7 @@ class _NoopDAMetrics(DAMetrics):  # pragma: no cover - trivial
     """
     A no-op implementation used when prometheus_client is unavailable.
     """
+
     def __init__(self, registry: Optional["CollectorRegistry"] = None) -> None:
         super().__init__(registry=None)
 

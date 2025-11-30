@@ -39,12 +39,15 @@ except Exception:  # pragma: no cover
 try:
     from .errors import DeviceUnavailable  # type: ignore
 except Exception:  # pragma: no cover
+
     class DeviceUnavailable(RuntimeError):
         pass
+
 
 try:
     from .device import DeviceInfo, DeviceType  # type: ignore
 except Exception:  # pragma: no cover
+
     @dataclass(frozen=True)
     class DeviceInfo:
         type: str
@@ -61,9 +64,11 @@ except Exception:  # pragma: no cover
         GPU = "gpu"
         CPU = "cpu"
 
+
 # Reuse canonical math if available (for CPU fallback equivalence)
 try:
     from . import nonce_domain as nd  # type: ignore
+
     _HAS_ND = True
 except Exception:  # pragma: no cover
     _HAS_ND = False
@@ -91,7 +96,9 @@ def _uniform_from_digest(d: bytes) -> float:
     # Use first 16 bytes as big-endian 128-bit integer; map to (0,1]
     hi = int.from_bytes(d[0:8], "big")
     lo = int.from_bytes(d[8:16], "big")
-    u = (hi / 18446744073709551616.0) + ((lo + 1.0) / 340282366920938463463374607431768211456.0)
+    u = (hi / 18446744073709551616.0) + (
+        (lo + 1.0) / 340282366920938463463374607431768211456.0
+    )
     return u
 
 
@@ -301,6 +308,7 @@ __global__ void find_hashshares(
 # Backend object
 # ────────────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class _Prepared:
     header: bytes
@@ -311,7 +319,9 @@ class _Prepared:
 class CUDABackend:
     def __init__(self, device_index: int | None = None) -> None:
         if cuda is None:
-            raise DeviceUnavailable("PyCUDA not available; install pycuda or use CPU backend.")
+            raise DeviceUnavailable(
+                "PyCUDA not available; install pycuda or use CPU backend."
+            )
         try:
             cuda.init()
             ndev = cuda.Device.count()
@@ -361,7 +371,9 @@ class CUDABackend:
 
     def prepare_header(self, header_bytes: bytes, mix_seed: bytes) -> _Prepared:
         use_gpu = (len(header_bytes) + 32 + 8) <= 136
-        return _Prepared(header=bytes(header_bytes), mix_seed=bytes(mix_seed), use_gpu=use_gpu)
+        return _Prepared(
+            header=bytes(header_bytes), mix_seed=bytes(mix_seed), use_gpu=use_gpu
+        )
 
     def scan(
         self,
@@ -374,8 +386,13 @@ class CUDABackend:
         thread_id: int = 0,  # API compat, unused
     ) -> List[Dict[str, Any]]:
         if not prepared.use_gpu:
-            return self._scan_cpu(prepared, theta_micro=theta_micro, start_nonce=start_nonce,
-                                  iterations=iterations, max_found=max_found)
+            return self._scan_cpu(
+                prepared,
+                theta_micro=theta_micro,
+                start_nonce=start_nonce,
+                iterations=iterations,
+                max_found=max_found,
+            )
 
         cutoff = _exp_neg_theta(theta_micro)
 
@@ -419,8 +436,13 @@ class CUDABackend:
             cuda.Context.synchronize()
         except Exception:
             # Kernel failed → CPU fallback for this call
-            return self._scan_cpu(prepared, theta_micro=theta_micro, start_nonce=start_nonce,
-                                  iterations=iterations, max_found=max_found)
+            return self._scan_cpu(
+                prepared,
+                theta_micro=theta_micro,
+                start_nonce=start_nonce,
+                iterations=iterations,
+                max_found=max_found,
+            )
 
         # Read back
         counter_bytes = bytearray(4)
@@ -440,7 +462,14 @@ class CUDABackend:
                 (u_f32,) = struct.unpack_from("<f", host_u, i * 4)
                 digest = bytes(host_hashes[i * 32 : (i + 1) * 32])
                 d_ratio = (-math.log(max(u_f32, 1e-38))) / max(theta_micro / 1e6, 1e-12)
-                res.append({"nonce": int(nonce), "u": float(u_f32), "d_ratio": float(d_ratio), "hash": digest})
+                res.append(
+                    {
+                        "nonce": int(nonce),
+                        "u": float(u_f32),
+                        "d_ratio": float(d_ratio),
+                        "hash": digest,
+                    }
+                )
 
         res.sort(key=lambda x: x["nonce"])
         return res[:max_found]
@@ -465,13 +494,21 @@ class CUDABackend:
             u = _uniform_from_digest(d)
             if u <= cutoff:
                 d_ratio = (-math.log(u)) / max(theta_micro / 1e6, 1e-12)
-                out.append({"nonce": nonce, "u": float(u), "d_ratio": float(d_ratio), "hash": d})
+                out.append(
+                    {
+                        "nonce": nonce,
+                        "u": float(u),
+                        "d_ratio": float(d_ratio),
+                        "hash": d,
+                    }
+                )
         return out
 
 
 # ────────────────────────────────────────────────────────────────────────
 # Helpers
 # ────────────────────────────────────────────────────────────────────────
+
 
 def _u32(x: int) -> int:
     # PyCUDA will marshal ints by value; keep helper for symmetry
@@ -489,6 +526,7 @@ def _f64(x: float) -> float:
 # ────────────────────────────────────────────────────────────────────────
 # Public API
 # ────────────────────────────────────────────────────────────────────────
+
 
 def list_devices() -> List[DeviceInfo]:
     """Enumerate CUDA devices (best effort)."""
@@ -540,7 +578,9 @@ if __name__ == "__main__":  # pragma: no cover
         hdr = b"\x00" * 80
         mix = b"\x11" * 32
         prep = dev.prepare_header(hdr, mix)
-        res = dev.scan(prep, theta_micro=200000.0, start_nonce=0, iterations=500000, max_found=3)
+        res = dev.scan(
+            prep, theta_micro=200000.0, start_nonce=0, iterations=500000, max_found=3
+        )
         for r in res:
             print("  nonce=", r["nonce"], "u=", r["u"], "d_ratio=", r["d_ratio"])
     except Exception as e:

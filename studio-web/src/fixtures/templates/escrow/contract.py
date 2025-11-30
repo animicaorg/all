@@ -3,14 +3,16 @@
 # - Contract must be pre-funded (via a separate transfer) before calling lock().
 # - No wall clock, no randomness, no network I/O; all effects are deterministic.
 
-from stdlib import storage, events, abi, treasury  # type: ignore
+from stdlib import abi, events, storage, treasury  # type: ignore
 
 KEY_BENEFICIARY = b"beneficiary"
 KEY_AMOUNT = b"amount"
 
+
 def _require(cond: bool, msg: str) -> None:
     if not cond:
         abi.revert(msg.encode("utf-8"))
+
 
 def _get_amount() -> int:
     try:
@@ -20,17 +22,21 @@ def _get_amount() -> int:
         raw = storage.get(KEY_AMOUNT) or b""
         return int.from_bytes(raw, "big") if raw else 0
 
+
 def _set_amount(val: int) -> None:
     try:
         storage.set_int(KEY_AMOUNT, val)  # type: ignore[attr-defined]
     except AttributeError:
         storage.set(KEY_AMOUNT, int(val).to_bytes(32, "big"))
 
+
 def _get_beneficiary() -> bytes:
     return storage.get(KEY_BENEFICIARY) or b""
 
+
 def _set_beneficiary(addr: bytes) -> None:
     storage.set(KEY_BENEFICIARY, addr)
+
 
 def status() -> dict:
     """
@@ -46,6 +52,7 @@ def status() -> dict:
         "beneficiary": _get_beneficiary(),
         "contract_balance": treasury.balance(),
     }
+
 
 def lock(beneficiary: bytes, amount: int) -> int:
     """
@@ -67,6 +74,7 @@ def lock(beneficiary: bytes, amount: int) -> int:
 
     events.emit(b"Locked", {"to": beneficiary, "amount": amount})
     return amount
+
 
 def release() -> int:
     """
@@ -91,6 +99,7 @@ def release() -> int:
 
     events.emit(b"Released", {"to": beneficiary, "amount": amount})
     return amount
+
 
 def cancel(refund_to: bytes) -> int:
     """

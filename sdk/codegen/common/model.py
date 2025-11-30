@@ -19,13 +19,13 @@ The IR is deliberately simple and deterministic:
 Serialization helpers (`to_dict`) are provided for build metadata and caching.
 """
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
-
 
 # -----------------
 # Core type system
 # -----------------
+
 
 @dataclass
 class TypeRef:
@@ -41,6 +41,7 @@ class TypeRef:
       - "array": `array_item` (TypeRef) + optional `array_len` (None ⇒ dynamic)
       - "tuple": `tuple_elems` (List[TypeRef])
     """
+
     kind: str
     bits: Optional[int] = None
     array_item: Optional["TypeRef"] = None
@@ -78,7 +79,9 @@ class TypeRef:
             return True
         if self.kind == "array":
             # dynamic if length unknown or inner is dynamic
-            return self.array_len is None or (self.array_item and self.array_item.is_dynamic())
+            return self.array_len is None or (
+                self.array_item and self.array_item.is_dynamic()
+            )
         if self.kind == "tuple":
             return any(e.is_dynamic() for e in (self.tuple_elems or []))
         return True
@@ -90,6 +93,7 @@ class TypeRef:
 @dataclass
 class Param:
     """Named parameter for functions/events/errors."""
+
     name: str
     type: TypeRef
     # Events may set `indexed=True`; for others it's ignored.
@@ -107,15 +111,16 @@ class Param:
 # ABI components
 # ---------------
 
+
 @dataclass
 class FunctionIR:
     name: str
     inputs: List[Param] = field(default_factory=list)
     outputs: List[TypeRef] = field(default_factory=list)
     state_mutability: str = "nonpayable"  # "pure" | "view" | "nonpayable" | "payable"
-    signature: str = ""                   # e.g., "transfer(address,uint256)"
-    selector: str = ""                    # sha3-256 hex of signature (0x...)
-    discriminator: Optional[str] = None   # short stable suffix for overloads
+    signature: str = ""  # e.g., "transfer(address,uint256)"
+    selector: str = ""  # sha3-256 hex of signature (0x...)
+    discriminator: Optional[str] = None  # short stable suffix for overloads
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -134,8 +139,8 @@ class EventIR:
     name: str
     inputs: List[Param] = field(default_factory=list)
     anonymous: bool = False
-    signature: str = ""    # e.g., "Transfer(address,address,uint256)"
-    topic_id: str = ""     # sha3-256 hex of signature (0x...)
+    signature: str = ""  # e.g., "Transfer(address,address,uint256)"
+    topic_id: str = ""  # sha3-256 hex of signature (0x...)
     discriminator: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -154,7 +159,7 @@ class ErrorIR:
     name: str
     inputs: List[Param] = field(default_factory=list)
     signature: str = ""
-    selector: str = ""      # sha3-256 hex of signature (0x...)
+    selector: str = ""  # sha3-256 hex of signature (0x...)
     discriminator: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:

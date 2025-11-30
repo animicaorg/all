@@ -17,58 +17,82 @@ References (field offsets and signature coverage):
 """
 
 from __future__ import annotations
-from dataclasses import asdict
-from typing import Any, Dict, Optional, Tuple
+
 import binascii
 import hashlib
 import struct
+from dataclasses import asdict
+from typing import Any, Dict, Optional, Tuple
 
 try:
     # cryptography is optional; if missing we still parse, but cannot verify signature
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec, utils
+
     _HAS_CRYPTO = True
 except Exception:  # pragma: no cover
     _HAS_CRYPTO = False
 
 from ..errors import AttestationError
-from .common import TEEKind, TEEEvidence, TCBStatus
+from .common import TCBStatus, TEEEvidence, TEEKind
 
 # ---- Constants from AMD spec (Rev 1.58) ----
 
 REPORT_SIZE_MIN = 0x2A0  # bytes up to (and excluding) SIGNATURE
-SIGNATURE_OFFSET = 0x2A0 # signature starts here; runs to EOF
+SIGNATURE_OFFSET = 0x2A0  # signature starts here; runs to EOF
 # Field offsets/sizes (see Table 23)
-OFF_VERSION       = 0x00; SZ_VERSION = 4
-OFF_GUEST_SVN     = 0x04; SZ_GUEST_SVN = 4
-OFF_POLICY        = 0x08; SZ_POLICY = 8
-OFF_FAMILY_ID     = 0x10; SZ_FAMILY_ID = 16
-OFF_IMAGE_ID      = 0x20; SZ_IMAGE_ID = 16
-OFF_VMPL          = 0x30; SZ_VMPL = 4
-OFF_SIGNATURE_ALG = 0x34; SZ_SIGNATURE_ALG = 4
-OFF_CURRENT_TCB   = 0x38; SZ_CURRENT_TCB = 8
-OFF_PLATFORM_INFO = 0x40; SZ_PLATFORM_INFO = 8
-OFF_SIGNING_KEY   = 0x48  # bits 2:0 indicate key selection; upper bits reserved
-OFF_REPORT_DATA   = 0x50; SZ_REPORT_DATA = 64
-OFF_MEASUREMENT   = 0x90; SZ_MEASUREMENT = 48  # SHA-384
-OFF_HOST_DATA     = 0xC0; SZ_HOST_DATA = 32
-OFF_ID_KEY_DIGEST = 0xE0; SZ_ID_KEY_DIGEST = 48
-OFF_AUTHOR_DIGEST = 0x110; SZ_AUTHOR_DIGEST = 48
-OFF_REPORT_ID     = 0x140; SZ_REPORT_ID = 32
-OFF_REPORT_ID_MA  = 0x160; SZ_REPORT_ID_MA = 32
-OFF_REPORTED_TCB  = 0x180; SZ_REPORTED_TCB = 8
-OFF_CHIP_ID       = 0x1A0; SZ_CHIP_ID = 64
-OFF_COMMITTED_TCB = 0x1E0; SZ_COMMITTED_TCB = 8
+OFF_VERSION = 0x00
+SZ_VERSION = 4
+OFF_GUEST_SVN = 0x04
+SZ_GUEST_SVN = 4
+OFF_POLICY = 0x08
+SZ_POLICY = 8
+OFF_FAMILY_ID = 0x10
+SZ_FAMILY_ID = 16
+OFF_IMAGE_ID = 0x20
+SZ_IMAGE_ID = 16
+OFF_VMPL = 0x30
+SZ_VMPL = 4
+OFF_SIGNATURE_ALG = 0x34
+SZ_SIGNATURE_ALG = 4
+OFF_CURRENT_TCB = 0x38
+SZ_CURRENT_TCB = 8
+OFF_PLATFORM_INFO = 0x40
+SZ_PLATFORM_INFO = 8
+OFF_SIGNING_KEY = 0x48  # bits 2:0 indicate key selection; upper bits reserved
+OFF_REPORT_DATA = 0x50
+SZ_REPORT_DATA = 64
+OFF_MEASUREMENT = 0x90
+SZ_MEASUREMENT = 48  # SHA-384
+OFF_HOST_DATA = 0xC0
+SZ_HOST_DATA = 32
+OFF_ID_KEY_DIGEST = 0xE0
+SZ_ID_KEY_DIGEST = 48
+OFF_AUTHOR_DIGEST = 0x110
+SZ_AUTHOR_DIGEST = 48
+OFF_REPORT_ID = 0x140
+SZ_REPORT_ID = 32
+OFF_REPORT_ID_MA = 0x160
+SZ_REPORT_ID_MA = 32
+OFF_REPORTED_TCB = 0x180
+SZ_REPORTED_TCB = 8
+OFF_CHIP_ID = 0x1A0
+SZ_CHIP_ID = 64
+OFF_COMMITTED_TCB = 0x1E0
+SZ_COMMITTED_TCB = 8
 OFF_CURRENT_BUILD = 0x1E8
 OFF_CURRENT_MINOR = 0x1E9
 OFF_CURRENT_MAJOR = 0x1EA
-OFF_COMMIT_BUILD  = 0x1EC
-OFF_COMMIT_MINOR  = 0x1ED
-OFF_COMMIT_MAJOR  = 0x1EE
-OFF_LAUNCH_TCB    = 0x1F0; SZ_LAUNCH_TCB = 8
-OFF_LAUNCH_MITV   = 0x1F8; SZ_LAUNCH_MITV = 8
-OFF_CURR_MITV     = 0x200; SZ_CURR_MITV = 8
+OFF_COMMIT_BUILD = 0x1EC
+OFF_COMMIT_MINOR = 0x1ED
+OFF_COMMIT_MAJOR = 0x1EE
+OFF_LAUNCH_TCB = 0x1F0
+SZ_LAUNCH_TCB = 8
+OFF_LAUNCH_MITV = 0x1F8
+SZ_LAUNCH_MITV = 8
+OFF_CURR_MITV = 0x200
+SZ_CURR_MITV = 8
 
 # SIGNING_KEY selection (Table 23 @ 0x48 bits 2:0)
 SIGNING_KEY_VCEK = 0
@@ -76,27 +100,32 @@ SIGNING_KEY_VLEK = 1
 SIGNING_KEY_NONE = 7
 
 # PLATFORM_INFO bits (Table 24)
-PLAT_SMT_EN  = 1 << 0
+PLAT_SMT_EN = 1 << 0
 PLAT_TSME_EN = 1 << 1
-PLAT_ECC_EN  = 1 << 2
-PLAT_RAPL_DIS= 1 << 3
+PLAT_ECC_EN = 1 << 2
+PLAT_RAPL_DIS = 1 << 3
 PLAT_CIPH_DR = 1 << 4
-PLAT_ALIAS_OK= 1 << 5
-PLAT_TIO_EN  = 1 << 7
+PLAT_ALIAS_OK = 1 << 5
+PLAT_TIO_EN = 1 << 7
 
 # ---- Helpers ----
+
 
 def _u32(b: bytes, off: int) -> int:
     return struct.unpack_from("<I", b, off)[0]
 
+
 def _u64(b: bytes, off: int) -> int:
     return struct.unpack_from("<Q", b, off)[0]
 
+
 def _slice(b: bytes, off: int, n: int) -> bytes:
-    return memoryview(b)[off:off+n].tobytes()
+    return memoryview(b)[off : off + n].tobytes()
+
 
 def _hex(b: Optional[bytes]) -> Optional[str]:
     return None if b is None else binascii.hexlify(b).decode()
+
 
 def decode_platform_info(pi: int) -> Dict[str, bool]:
     return {
@@ -109,12 +138,15 @@ def decode_platform_info(pi: int) -> Dict[str, bool]:
         "tio_en": bool(pi & PLAT_TIO_EN),
     }
 
+
 def _signing_key_sel(b: bytes) -> int:
     # at 0x48, low 3 bits encode selection
     val = _u32(b, OFF_SIGNING_KEY)
     return val & 0b111
 
+
 # ---- Core parsing ----
+
 
 def parse_snp_report(report: bytes) -> Dict[str, Any]:
     """
@@ -128,38 +160,40 @@ def parse_snp_report(report: bytes) -> Dict[str, Any]:
 
     report = bytes(report)
     if len(report) < REPORT_SIZE_MIN:
-        raise AttestationError(f"SEV-SNP report too short: {len(report)} < {REPORT_SIZE_MIN}")
+        raise AttestationError(
+            f"SEV-SNP report too short: {len(report)} < {REPORT_SIZE_MIN}"
+        )
 
-    version        = _u32(report, OFF_VERSION)
-    guest_svn      = _u32(report, OFF_GUEST_SVN)
-    policy         = _u64(report, OFF_POLICY)
-    family_id      = _slice(report, OFF_FAMILY_ID, SZ_FAMILY_ID)
-    image_id       = _slice(report, OFF_IMAGE_ID, SZ_IMAGE_ID)
-    vmpl           = _u32(report, OFF_VMPL)
-    sig_alg        = _u32(report, OFF_SIGNATURE_ALG)
-    current_tcb    = _u64(report, OFF_CURRENT_TCB)
-    platform_info  = _u64(report, OFF_PLATFORM_INFO)
-    signing_key    = _signing_key_sel(report)
-    report_data    = _slice(report, OFF_REPORT_DATA, SZ_REPORT_DATA)
-    measurement    = _slice(report, OFF_MEASUREMENT, SZ_MEASUREMENT)
-    host_data      = _slice(report, OFF_HOST_DATA, SZ_HOST_DATA)
-    id_key_digest  = _slice(report, OFF_ID_KEY_DIGEST, SZ_ID_KEY_DIGEST)
-    author_digest  = _slice(report, OFF_AUTHOR_DIGEST, SZ_AUTHOR_DIGEST)
-    report_id      = _slice(report, OFF_REPORT_ID, SZ_REPORT_ID)
-    report_id_ma   = _slice(report, OFF_REPORT_ID_MA, SZ_REPORT_ID_MA)
-    reported_tcb   = _u64(report, OFF_REPORTED_TCB)
-    chip_id        = _slice(report, OFF_CHIP_ID, SZ_CHIP_ID)
-    committed_tcb  = _u64(report, OFF_COMMITTED_TCB)
-    current_build  = report[OFF_CURRENT_BUILD]
-    current_minor  = report[OFF_CURRENT_MINOR]
-    current_major  = report[OFF_CURRENT_MAJOR]
-    commit_build   = report[OFF_COMMIT_BUILD]
-    commit_minor   = report[OFF_COMMIT_MINOR]
-    commit_major   = report[OFF_COMMIT_MAJOR]
-    launch_tcb     = _u64(report, OFF_LAUNCH_TCB)
-    launch_mitvec  = _u64(report, OFF_LAUNCH_MITV)
+    version = _u32(report, OFF_VERSION)
+    guest_svn = _u32(report, OFF_GUEST_SVN)
+    policy = _u64(report, OFF_POLICY)
+    family_id = _slice(report, OFF_FAMILY_ID, SZ_FAMILY_ID)
+    image_id = _slice(report, OFF_IMAGE_ID, SZ_IMAGE_ID)
+    vmpl = _u32(report, OFF_VMPL)
+    sig_alg = _u32(report, OFF_SIGNATURE_ALG)
+    current_tcb = _u64(report, OFF_CURRENT_TCB)
+    platform_info = _u64(report, OFF_PLATFORM_INFO)
+    signing_key = _signing_key_sel(report)
+    report_data = _slice(report, OFF_REPORT_DATA, SZ_REPORT_DATA)
+    measurement = _slice(report, OFF_MEASUREMENT, SZ_MEASUREMENT)
+    host_data = _slice(report, OFF_HOST_DATA, SZ_HOST_DATA)
+    id_key_digest = _slice(report, OFF_ID_KEY_DIGEST, SZ_ID_KEY_DIGEST)
+    author_digest = _slice(report, OFF_AUTHOR_DIGEST, SZ_AUTHOR_DIGEST)
+    report_id = _slice(report, OFF_REPORT_ID, SZ_REPORT_ID)
+    report_id_ma = _slice(report, OFF_REPORT_ID_MA, SZ_REPORT_ID_MA)
+    reported_tcb = _u64(report, OFF_REPORTED_TCB)
+    chip_id = _slice(report, OFF_CHIP_ID, SZ_CHIP_ID)
+    committed_tcb = _u64(report, OFF_COMMITTED_TCB)
+    current_build = report[OFF_CURRENT_BUILD]
+    current_minor = report[OFF_CURRENT_MINOR]
+    current_major = report[OFF_CURRENT_MAJOR]
+    commit_build = report[OFF_COMMIT_BUILD]
+    commit_minor = report[OFF_COMMIT_MINOR]
+    commit_major = report[OFF_COMMIT_MAJOR]
+    launch_tcb = _u64(report, OFF_LAUNCH_TCB)
+    launch_mitvec = _u64(report, OFF_LAUNCH_MITV)
     current_mitvec = _u64(report, OFF_CURR_MITV)
-    signature      = report[SIGNATURE_OFFSET:]  # DER or raw r||s (96B)
+    signature = report[SIGNATURE_OFFSET:]  # DER or raw r||s (96B)
 
     return {
         "version": version,
@@ -184,8 +218,16 @@ def parse_snp_report(report: bytes) -> Dict[str, Any]:
         "chip_id": _hex(chip_id),
         "committed_tcb": committed_tcb,
         "fw_version": {
-            "current": {"major": current_major, "minor": current_minor, "build": current_build},
-            "committed": {"major": commit_major, "minor": commit_minor, "build": commit_build},
+            "current": {
+                "major": current_major,
+                "minor": current_minor,
+                "build": current_build,
+            },
+            "committed": {
+                "major": commit_major,
+                "minor": commit_minor,
+                "build": commit_build,
+            },
         },
         "launch": {"tcb": launch_tcb, "mitigation_vector": launch_mitvec},
         "current_mitigation_vector": current_mitvec,
@@ -194,7 +236,9 @@ def parse_snp_report(report: bytes) -> Dict[str, Any]:
         "_raw_report": report,  # retained for signature verification
     }
 
+
 # ---- Signature & chain verification ----
+
 
 def _ecdsa_verify_p384_sha384(pubkey, msg: bytes, sig: bytes) -> bool:
     """
@@ -216,6 +260,7 @@ def _ecdsa_verify_p384_sha384(pubkey, msg: bytes, sig: bytes) -> bool:
             return False
     return False
 
+
 def verify_report_signature(report: bytes, leaf_cert_pem: bytes) -> bool:
     if not _HAS_CRYPTO:
         raise AttestationError("cryptography is required to verify SEV-SNP signatures")
@@ -223,15 +268,27 @@ def verify_report_signature(report: bytes, leaf_cert_pem: bytes) -> bool:
     try:
         cert = x509.load_pem_x509_certificate(leaf_cert_pem)
         pub = cert.public_key()
-        if not isinstance(pub, ec.EllipticCurvePublicKey) or pub.curve.name != "secp384r1":
-            raise AttestationError("SEV-SNP VCEK/VLEK must be an ECDSA P-384 public key")
+        if (
+            not isinstance(pub, ec.EllipticCurvePublicKey)
+            or pub.curve.name != "secp384r1"
+        ):
+            raise AttestationError(
+                "SEV-SNP VCEK/VLEK must be an ECDSA P-384 public key"
+            )
     except Exception as e:
         raise AttestationError(f"Failed to load leaf certificate: {e}") from e
     msg = claims["_raw_report"][:SIGNATURE_OFFSET]
-    sig = bytes.fromhex(claims["signature_bytes"]) if isinstance(claims["signature_bytes"], str) else claims["signature_bytes"]
+    sig = (
+        bytes.fromhex(claims["signature_bytes"])
+        if isinstance(claims["signature_bytes"], str)
+        else claims["signature_bytes"]
+    )
     return _ecdsa_verify_p384_sha384(pub, msg, sig)
 
-def verify_chain_simple(leaf_pem: bytes, chain_pem: Optional[bytes], root_pem: Optional[bytes]) -> bool:
+
+def verify_chain_simple(
+    leaf_pem: bytes, chain_pem: Optional[bytes], root_pem: Optional[bytes]
+) -> bool:
     """
     Very small issuer->subject signature walk using cryptography only.
     Returns True if we can walk and verify signatures up to the provided root.
@@ -265,15 +322,20 @@ def verify_chain_simple(leaf_pem: bytes, chain_pem: Optional[bytes], root_pem: O
         curr = leaf
         while True:
             issuer = curr.issuer.rfc4514_string()
-            subj   = curr.subject.rfc4514_string()
+            subj = curr.subject.rfc4514_string()
             if issuer == subj:
                 # self-signed; accept only if matches provided root (when present)
-                if root and curr.fingerprint(hashes.SHA256()) != root.fingerprint(hashes.SHA256()):
+                if root and curr.fingerprint(hashes.SHA256()) != root.fingerprint(
+                    hashes.SHA256()
+                ):
                     return False
                 # Verify self-signature
                 try:
-                    curr.public_key().verify(curr.signature, curr.tbs_certificate_bytes,
-                                             ec.ECDSA(curr.signature_hash_algorithm))
+                    curr.public_key().verify(
+                        curr.signature,
+                        curr.tbs_certificate_bytes,
+                        ec.ECDSA(curr.signature_hash_algorithm),
+                    )
                 except Exception:
                     return False
                 return True
@@ -283,15 +345,20 @@ def verify_chain_simple(leaf_pem: bytes, chain_pem: Optional[bytes], root_pem: O
                 return root is None
             # Verify child with parent
             try:
-                parent.public_key().verify(curr.signature, curr.tbs_certificate_bytes,
-                                           ec.ECDSA(curr.signature_hash_algorithm))
+                parent.public_key().verify(
+                    curr.signature,
+                    curr.tbs_certificate_bytes,
+                    ec.ECDSA(curr.signature_hash_algorithm),
+                )
             except Exception:
                 return False
             curr = parent
     except Exception:
         return False
 
+
 # ---- High-level API ----
+
 
 def verify_sev_snp_attestation(
     report: bytes,
@@ -342,7 +409,11 @@ def verify_sev_snp_attestation(
 
     # Signing key selection hint → label
     key_sel = c["signing_key_sel"]
-    signing_key = "vcek" if key_sel == SIGNING_KEY_VCEK else "vlek" if key_sel == SIGNING_KEY_VLEK else "unknown"
+    signing_key = (
+        "vcek"
+        if key_sel == SIGNING_KEY_VCEK
+        else "vlek" if key_sel == SIGNING_KEY_VLEK else "unknown"
+    )
 
     # Build TCB status (very light; consumers can apply policy thresholds)
     tcb = {
@@ -389,6 +460,7 @@ def verify_sev_snp_attestation(
     )
     return evidence
 
+
 # Convenience: compute the transcript hash (not part of AMD spec; used by upper layers)
 def transcript_hash(report: bytes) -> str:
     """
@@ -396,6 +468,7 @@ def transcript_hash(report: bytes) -> str:
     """
     region = report[:SIGNATURE_OFFSET]
     return hashlib.sha3_256(region).hexdigest()
+
 
 __all__ = [
     "parse_snp_report",

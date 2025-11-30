@@ -32,9 +32,7 @@ Usage
 All adapters are import-time cheap and safe to use in hot paths.
 """
 
-from . import core_chain
-from . import consensus_view
-from . import proofs_view
+from . import consensus_view, core_chain, proofs_view
 
 __all__ = ["core_chain", "consensus_view", "proofs_view"]
 

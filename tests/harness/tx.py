@@ -33,13 +33,13 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Sequence, Tuple, Union
 
-# --- Required test-time transport (local harness) ---
-from tests.harness.clients import HttpRpcClient
-
 # --- SDK imports (builders/encoders) ---
 from omni_sdk.tx import build as tx_build
 from omni_sdk.tx import encode as tx_encode
 from omni_sdk.utils import hash as sdk_hash  # keccak helpers if available
+
+# --- Required test-time transport (local harness) ---
+from tests.harness.clients import HttpRpcClient
 
 # Optional address module for validation/normalization (best effort)
 try:  # pragma: no cover - optional convenience only
@@ -51,6 +51,7 @@ except Exception:  # pragma: no cover
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class SendResult:
@@ -64,6 +65,7 @@ class SendResult:
 # ---------------------------------------------------------------------------
 # Internal helpers (SDK function name shims + RPC helpers)
 # ---------------------------------------------------------------------------
+
 
 def _to_hex_qty(n: int) -> str:
     return hex(int(n))
@@ -81,7 +83,12 @@ def _sdk_sign_bytes(tx: Dict[str, Any]) -> bytes:
     """
     Locate the SDK sign-bytes function with a few tolerant aliases.
     """
-    for name in ("sign_bytes", "encode_sign_bytes", "encode_signing_bytes", "signing_bytes"):
+    for name in (
+        "sign_bytes",
+        "encode_sign_bytes",
+        "encode_signing_bytes",
+        "signing_bytes",
+    ):
         fn = getattr(tx_encode, name, None)
         if callable(fn):
             return fn(tx)
@@ -124,9 +131,12 @@ def _sdk_tx_hash(raw_tx_bytes: bytes) -> str:
         fn = getattr(sdk_hash, name, None)
         if callable(fn):
             h = fn(raw_tx_bytes)
-            return ("0x" + h) if isinstance(h, str) and not h.startswith("0x") else str(h)
+            return (
+                ("0x" + h) if isinstance(h, str) and not h.startswith("0x") else str(h)
+            )
     # Fallback: sha256 (tests that don't check txHash format)
     import hashlib
+
     return "0x" + hashlib.sha256(raw_tx_bytes).hexdigest()
 
 
@@ -207,6 +217,7 @@ def _scheme_of(signer: Any) -> Optional[str]:
 # Build helpers (delegate to omni_sdk.tx.build)
 # ---------------------------------------------------------------------------
 
+
 def build_transfer_tx(
     *,
     from_addr: str,
@@ -239,7 +250,14 @@ def build_transfer_tx(
     except TypeError:
         # Older order or names
         return tx_build.build_transfer(
-            from_addr, to_addr, int(amount), int(nonce), int(chain_id), gas_limit, gas_price, memo
+            from_addr,
+            to_addr,
+            int(amount),
+            int(nonce),
+            int(chain_id),
+            gas_limit,
+            gas_price,
+            memo,
         )
 
 
@@ -279,7 +297,14 @@ def build_call_tx(
         )
     except TypeError:
         return tx_build.build_call(
-            from_addr, to_addr, data_bytes, int(value), int(nonce), int(chain_id), gas_limit, gas_price
+            from_addr,
+            to_addr,
+            data_bytes,
+            int(value),
+            int(nonce),
+            int(chain_id),
+            gas_limit,
+            gas_price,
         )
 
 
@@ -298,8 +323,10 @@ def build_deploy_tx(
     Build a deploy tx (manifest + code). init_args are ABI-encoded by the SDK if supported.
     """
     from_addr = _normalize_address(from_addr)
-    code_bytes = bytes.fromhex(code[2:]) if isinstance(code, str) and code.startswith("0x") else (
-        code.encode("utf-8") if isinstance(code, str) else bytes(code)
+    code_bytes = (
+        bytes.fromhex(code[2:])
+        if isinstance(code, str) and code.startswith("0x")
+        else (code.encode("utf-8") if isinstance(code, str) else bytes(code))
     )
 
     try:
@@ -315,7 +342,14 @@ def build_deploy_tx(
         )
     except TypeError:
         return tx_build.build_deploy(
-            from_addr, manifest, code_bytes, list(init_args or []), int(nonce), int(chain_id), gas_limit, gas_price
+            from_addr,
+            manifest,
+            code_bytes,
+            list(init_args or []),
+            int(nonce),
+            int(chain_id),
+            gas_limit,
+            gas_price,
         )
 
 
@@ -323,7 +357,10 @@ def build_deploy_tx(
 # Sign / encode / send
 # ---------------------------------------------------------------------------
 
-def sign_tx(signer: Any, tx: Dict[str, Any]) -> Tuple[bytes, bytes, Optional[str], bytes]:
+
+def sign_tx(
+    signer: Any, tx: Dict[str, Any]
+) -> Tuple[bytes, bytes, Optional[str], bytes]:
     """
     Produce (raw_tx_bytes, signature, scheme, sign_bytes).
 
@@ -338,7 +375,13 @@ def sign_tx(signer: Any, tx: Dict[str, Any]) -> Tuple[bytes, bytes, Optional[str
     return raw, sig, scheme, sign_bytes
 
 
-def send_raw(rpc: HttpRpcClient, raw_tx_bytes: bytes, *, await_receipt: bool = True, timeout: float = 60.0) -> SendResult:
+def send_raw(
+    rpc: HttpRpcClient,
+    raw_tx_bytes: bytes,
+    *,
+    await_receipt: bool = True,
+    timeout: float = 60.0,
+) -> SendResult:
     raw_hex = "0x" + raw_tx_bytes.hex()
     tx_hash = rpc.send_raw_transaction(raw_hex)
     receipt = rpc.await_receipt(tx_hash, timeout=timeout) if await_receipt else None
@@ -348,6 +391,7 @@ def send_raw(rpc: HttpRpcClient, raw_tx_bytes: bytes, *, await_receipt: bool = T
 # ---------------------------------------------------------------------------
 # High-level convenience (transfer / call / deploy)
 # ---------------------------------------------------------------------------
+
 
 def send_transfer(
     rpc: HttpRpcClient,
@@ -476,6 +520,7 @@ def send_deploy(
 # Lightweight gas estimation helpers (fall back to node RPC when needed)
 # ---------------------------------------------------------------------------
 
+
 def estimate_gas_transfer(
     rpc: HttpRpcClient,
     *,
@@ -520,7 +565,9 @@ def estimate_gas_call(
     est = getattr(tx_build, "estimate_gas_call", None)
     if callable(est):
         try:
-            return int(est(from_addr=from_addr, to=to_addr, data=data, value=int(value)))
+            return int(
+                est(from_addr=from_addr, to=to_addr, data=data, value=int(value))
+            )
         except TypeError:
             return int(est(from_addr, to_addr, data, int(value)))  # type: ignore[misc]
         except Exception:

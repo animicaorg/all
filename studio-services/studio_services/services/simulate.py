@@ -20,18 +20,18 @@ import logging
 import os
 from typing import Any, Dict, Optional, Tuple
 
-from studio_services.errors import BadRequest, ApiError
 from studio_services import config as cfg_mod
-from studio_services.models.simulate import SimulateCall, SimulateResult
-
 # Adapters (resolved at runtime; we only rely on call-shape)
 from studio_services.adapters import vm_compile as vm_adapter  # type: ignore
 from studio_services.adapters import vm_hash as vm_hash_adapter  # type: ignore
+from studio_services.errors import ApiError, BadRequest
+from studio_services.models.simulate import SimulateCall, SimulateResult
 
 log = logging.getLogger(__name__)
 
 
 # ------------------------ helpers ------------------------
+
 
 def _cfg(name: str, default: Optional[str] = None) -> Optional[str]:
     getter = getattr(cfg_mod, "get", None)
@@ -51,6 +51,7 @@ def _default_env(chain_id: Optional[int] = None) -> Dict[str, Any]:
     small set of fields; we keep it permissive and let the adapter trim/augment.
     """
     from time import time
+
     return {
         "chainId": chain_id or int(_cfg("CHAIN_ID", "1") or "1"),
         "block": {
@@ -80,6 +81,7 @@ def _compute_code_hash(code: Optional[bytes]) -> Optional[str]:
     # Cheap fallback (SHA3-256 from hashlib might be used inside adapter too)
     try:
         import hashlib
+
         return hashlib.sha3_256(code).hexdigest()
     except Exception:  # pragma: no cover
         return None
@@ -95,9 +97,17 @@ def _normalize_run_result(res: Any) -> Tuple[Any, int, list]:
     """
     if isinstance(res, dict):
         if "return" in res or "gasUsed" in res or "logs" in res:
-            return res.get("return"), int(res.get("gasUsed") or 0), list(res.get("logs") or [])
+            return (
+                res.get("return"),
+                int(res.get("gasUsed") or 0),
+                list(res.get("logs") or []),
+            )
         if "result" in res or "gas" in res or "events" in res:
-            return res.get("result"), int(res.get("gas") or 0), list(res.get("events") or [])
+            return (
+                res.get("result"),
+                int(res.get("gas") or 0),
+                list(res.get("events") or []),
+            )
         # last resort: look for first int and list in values
         rv = res.get("result") or res.get("return")
         gas = res.get("gasUsed") or res.get("gas") or 0
@@ -110,6 +120,7 @@ def _normalize_run_result(res: Any) -> Tuple[Any, int, list]:
 
 
 # ------------------------ service ------------------------
+
 
 class SimulateService:
     """
@@ -163,7 +174,9 @@ class SimulateService:
                         if isinstance(comp, (bytes, bytearray)):
                             code = bytes(comp)
                         elif isinstance(comp, dict):
-                            if "code" in comp and isinstance(comp["code"], (bytes, bytearray)):
+                            if "code" in comp and isinstance(
+                                comp["code"], (bytes, bytearray)
+                            ):
                                 code = bytes(comp["code"])
                             irv = comp.get("ir")
                             if isinstance(irv, (bytes, bytearray)):
@@ -185,7 +198,9 @@ class SimulateService:
         # Optional gas estimate (best effort)
         gas_estimate: Optional[int] = None
         try:
-            est = getattr(self.vm, "estimate_gas", None) or getattr(self.vm, "gas_estimate", None)
+            est = getattr(self.vm, "estimate_gas", None) or getattr(
+                self.vm, "gas_estimate", None
+            )
             if callable(est):
                 ge = est(code, req.manifest, req.method, req.args or [], env=env)  # type: ignore[arg-type]
                 if isinstance(ge, dict) and "gas" in ge:
@@ -203,7 +218,9 @@ class SimulateService:
                 or getattr(self.vm, "run", None)
             )
             if not callable(runner):
-                raise ApiError("vm adapter has no runnable entrypoint (run_call/simulate_call/run)")
+                raise ApiError(
+                    "vm adapter has no runnable entrypoint (run_call/simulate_call/run)"
+                )
 
             run_res = runner(
                 code,

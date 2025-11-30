@@ -41,17 +41,13 @@ import logging
 import os
 import secrets
 import time
-from typing import Dict, Optional, Union, List
+from typing import Dict, List, Optional, Union
 
+from .models import JobRecord  # Pydantic model for storage/return
+from .models import \
+    JobStatus  # Enum[str]: "queued" | "running" | "done" | "failed"
+from .models import AIJobIn, AIResult, QuantumJobIn, QuantumResult
 from .quantum import run_quantum_job
-from .models import (
-    JobStatus,          # Enum[str]: "queued" | "running" | "done" | "failed"
-    JobRecord,          # Pydantic model for storage/return
-    QuantumJobIn,
-    QuantumResult,
-    AIJobIn,
-    AIResult,
-)
 
 # -----------------------------------------------------------------------------
 # Configuration (environment-driven for the template)
@@ -66,6 +62,7 @@ DEFAULT_PRUNE_INTERVAL_S = int(os.getenv("AICF_WORKER_PRUNE_INTERVAL_S", "30"))
 # -----------------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------------
+
 
 def _now_s() -> float:
     return time.time()
@@ -146,7 +143,7 @@ def _ai_demo_generate(job: AIJobIn) -> AIResult:
     duration_s = 0.010  # pretend it was instant
 
     return AIResult(
-        job_id="",                  # to be filled by caller
+        job_id="",  # to be filled by caller
         kind="ai",
         model=getattr(job, "model", None) or "template-echo/v1",
         text=out,
@@ -161,6 +158,7 @@ def _ai_demo_generate(job: AIJobIn) -> AIResult:
 # -----------------------------------------------------------------------------
 # Worker
 # -----------------------------------------------------------------------------
+
 
 class ProviderWorker:
     """
@@ -199,7 +197,9 @@ class ProviderWorker:
         for i in range(self.concurrency):
             t = asyncio.create_task(self._worker_loop(i), name=f"aicf-worker-{i}")
             self._workers.append(t)
-        self._pruner = asyncio.create_task(self._prune_loop(), name="aicf-worker-pruner")
+        self._pruner = asyncio.create_task(
+            self._prune_loop(), name="aicf-worker-pruner"
+        )
         self.log.info(
             "provider worker started",
             extra={"concurrency": self.concurrency, "queue_max": self._q.maxsize},
@@ -297,7 +297,7 @@ class ProviderWorker:
             if job.kind == "quantum":
                 result = run_quantum_job(job, job_id=job_id)  # type: ignore[arg-type]
             elif job.kind == "ai":
-                result = _ai_demo_generate(job)               # type: ignore[arg-type]
+                result = _ai_demo_generate(job)  # type: ignore[arg-type]
                 result.job_id = job_id
             else:
                 raise ValueError(f"unsupported job kind: {job.kind!r}")

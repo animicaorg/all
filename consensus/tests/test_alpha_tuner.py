@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import math
 import random
-from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Tuple, Union
+from typing import (Any, Dict, Iterable, List, Mapping, MutableMapping, Tuple,
+                    Union)
 
 import pytest
 
@@ -12,9 +13,11 @@ import consensus.alpha_tuner as at  # type: ignore
 # Optional proof-type enum (preferred); fall back to strings if unavailable.
 try:
     from consensus.types import ProofType  # type: ignore
+
     HAS_ENUM = True
 except Exception:
     HAS_ENUM = False
+
     class ProofType:  # minimal shim for tests; names match the spec order
         HASH = "HASH"
         AI = "AI"
@@ -24,6 +27,7 @@ except Exception:
 
 
 # ----------------------------- Flexible adapter layer -----------------------------
+
 
 def _alpha_bounds() -> Tuple[float, float]:
     """
@@ -54,7 +58,13 @@ def _proof_types() -> List[Any]:
             return list(v)
     # Fall back to enum members or spec default order
     if HAS_ENUM:
-        return [ProofType.HASH, ProofType.AI, ProofType.QUANTUM, ProofType.STORAGE, ProofType.VDF]
+        return [
+            ProofType.HASH,
+            ProofType.AI,
+            ProofType.QUANTUM,
+            ProofType.STORAGE,
+            ProofType.VDF,
+        ]
     return ["HASH", "AI", "QUANTUM", "STORAGE", "VDF"]
 
 
@@ -69,10 +79,11 @@ def _to_key(k: Union[str, Any]) -> Any:
 
 def _mk_obs(mapping: Mapping[Union[str, Any], float]) -> Dict[Any, float]:
     """Normalize an observation dict to module keys."""
-    return { _to_key(k): float(v) for k, v in mapping.items() }
+    return {_to_key(k): float(v) for k, v in mapping.items()}
 
 
 # Tuner constructors / step runners (handle multiple API shapes)
+
 
 def _new_tuner() -> Any:
     """
@@ -168,13 +179,16 @@ def _default_alphas(val: float = 1.0) -> Dict[Any, float]:
 
 # ------------------------------ Synthetic streams ------------------------------
 
+
 def _balanced_obs(total: float = 1.0) -> Dict[Any, float]:
     types = _proof_types()
     x = total / float(len(types))
     return {t: x for t in types}
 
 
-def _biased_obs(dominant: Any, dom_share: float = 0.7, total: float = 1.0) -> Dict[Any, float]:
+def _biased_obs(
+    dominant: Any, dom_share: float = 0.7, total: float = 1.0
+) -> Dict[Any, float]:
     types = _proof_types()
     dominant = _to_key(dominant)
     rest = [t for t in types if t != dominant]
@@ -188,6 +202,7 @@ def _biased_obs(dominant: Any, dom_share: float = 0.7, total: float = 1.0) -> Di
 
 
 # ------------------------------------ Tests ------------------------------------
+
 
 def test_bounds_and_nonnegativity_over_random_stream():
     lo, hi = _alpha_bounds()
@@ -207,7 +222,9 @@ def test_bounds_and_nonnegativity_over_random_stream():
         for t, a in alphas.items():
             assert math.isfinite(a), f"alpha for {t} should be finite"
             assert a > 0.0, f"alpha for {t} must be > 0"
-            assert lo - 1e-12 <= a <= hi + 1e-12, f"alpha {a} for {t} outside bounds [{lo},{hi}]"
+            assert (
+                lo - 1e-12 <= a <= hi + 1e-12
+            ), f"alpha {a} for {t} outside bounds [{lo},{hi}]"
 
 
 def test_fairness_correction_direction_under_sustained_bias():
@@ -231,9 +248,13 @@ def test_fairness_correction_direction_under_sustained_bias():
     eps = 1e-9
     for t, a in alphas.items():
         if t == dominant:
-            assert a <= base[t] + eps, f"dominant type {t} alpha should not increase under sustained dominance"
+            assert (
+                a <= base[t] + eps
+            ), f"dominant type {t} alpha should not increase under sustained dominance"
         else:
-            assert a >= base[t] - eps, f"underrepresented type {t} alpha should not decrease under dominance elsewhere"
+            assert (
+                a >= base[t] - eps
+            ), f"underrepresented type {t} alpha should not decrease under dominance elsewhere"
 
 
 def test_stability_under_balanced_stream_has_limited_spread():
@@ -254,8 +275,9 @@ def test_stability_under_balanced_stream_has_limited_spread():
     max_v, min_v = max(vals), min(vals)
     # Generous bound: ≤ 1.25× spread OR within module bounds if those are tighter.
     spread = max_v / (min_v or 1.0)
-    assert spread <= 1.25 + 1e-9 or (abs(max_v - hi) < 1e-8 and abs(min_v - lo) < 1e-8), \
-        f"balanced stream should not create large α spread (got {spread:.3f})"
+    assert spread <= 1.25 + 1e-9 or (
+        abs(max_v - hi) < 1e-8 and abs(min_v - lo) < 1e-8
+    ), f"balanced stream should not create large α spread (got {spread:.3f})"
 
 
 def test_correction_reduces_mix_error_over_time():
@@ -291,5 +313,6 @@ def test_correction_reduces_mix_error_over_time():
             medians.append(block[window // 2])
 
     # Expect a downward tendency (last median <= first median)
-    assert medians[-1] <= medians[0] + 1e-9, f"median mix error did not reduce: {medians}"
-
+    assert (
+        medians[-1] <= medians[0] + 1e-9
+    ), f"median mix error did not reduce: {medians}"

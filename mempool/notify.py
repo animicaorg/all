@@ -70,7 +70,8 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, TypedDict
+from typing import (Any, Callable, Dict, Iterable, List, Optional, Tuple,
+                    TypedDict)
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,7 @@ Subscriber = Callable[[str, JSONDict], None]
 # --------------------------------------------------------------------------------------
 # Utilities
 # --------------------------------------------------------------------------------------
+
 
 def _to_hex(v: Any) -> Optional[str]:
     """
@@ -117,8 +119,10 @@ def _now_ts() -> float:
 # Local Event Bus
 # --------------------------------------------------------------------------------------
 
+
 class Subscription:
     """Opaque handle returned to subscribers to allow unsubscription."""
+
     __slots__ = ("_bus", "_topic", "_cb", "_id")
 
     def __init__(self, bus: "LocalEventBus", topic: str, cb: Subscriber):
@@ -182,7 +186,9 @@ class LocalEventBus:
                 cb(topic, payload)
                 delivered += 1
             except Exception as e:
-                logger.warning("subscriber error on topic=%s: %s", topic, e, exc_info=True)
+                logger.warning(
+                    "subscriber error on topic=%s: %s", topic, e, exc_info=True
+                )
         return delivered
 
 
@@ -199,9 +205,16 @@ DROPPED_TX = "droppedTx"
 REPLACED_TX = "replacedTx"
 
 
-def notify_pending_tx(bus: LocalEventBus, tx_hash: Any, *, sender: Any = None,
-                      nonce: Optional[int] = None, effective_fee: Optional[int] = None,
-                      size: Optional[int] = None, meta: Optional[JSONDict] = None) -> int:
+def notify_pending_tx(
+    bus: LocalEventBus,
+    tx_hash: Any,
+    *,
+    sender: Any = None,
+    nonce: Optional[int] = None,
+    effective_fee: Optional[int] = None,
+    size: Optional[int] = None,
+    meta: Optional[JSONDict] = None,
+) -> int:
     payload: JSONDict = {
         "hash": _to_hex(tx_hash),
         "ts": _now_ts(),
@@ -219,8 +232,9 @@ def notify_pending_tx(bus: LocalEventBus, tx_hash: Any, *, sender: Any = None,
     return bus.publish(PENDING_TX, payload)
 
 
-def notify_dropped_tx(bus: LocalEventBus, tx_hash: Any, *, reason: str,
-                      meta: Optional[JSONDict] = None) -> int:
+def notify_dropped_tx(
+    bus: LocalEventBus, tx_hash: Any, *, reason: str, meta: Optional[JSONDict] = None
+) -> int:
     payload: JSONDict = {
         "hash": _to_hex(tx_hash),
         "reason": str(reason),
@@ -231,8 +245,14 @@ def notify_dropped_tx(bus: LocalEventBus, tx_hash: Any, *, reason: str,
     return bus.publish(DROPPED_TX, payload)
 
 
-def notify_replaced_tx(bus: LocalEventBus, old_hash: Any, new_hash: Any, *,
-                       reason: str = "rbf", meta: Optional[JSONDict] = None) -> int:
+def notify_replaced_tx(
+    bus: LocalEventBus,
+    old_hash: Any,
+    new_hash: Any,
+    *,
+    reason: str = "rbf",
+    meta: Optional[JSONDict] = None,
+) -> int:
     payload: JSONDict = {
         "old": _to_hex(old_hash),
         "new": _to_hex(new_hash),
@@ -248,6 +268,7 @@ def notify_replaced_tx(bus: LocalEventBus, old_hash: Any, new_hash: Any, *,
 # WebSocket Bridge
 # --------------------------------------------------------------------------------------
 
+
 class WSBridge:
     """
     Bridges LocalEventBus -> WebSocket hub.
@@ -262,8 +283,9 @@ class WSBridge:
     a short TTL to avoid spamming reconnecting clients.
     """
 
-    def __init__(self, sender: Callable[[str, JSONDict], None],
-                 *, dedupe_ttl_sec: float = 2.0):
+    def __init__(
+        self, sender: Callable[[str, JSONDict], None], *, dedupe_ttl_sec: float = 2.0
+    ):
         self._sender = sender
         self._subs: List[Subscription] = []
         self._dedupe_ttl = max(0.0, float(dedupe_ttl_sec))
@@ -279,7 +301,9 @@ class WSBridge:
                 send = fn
                 break
         if send is None:
-            raise TypeError("hub must provide .broadcast/.publish/.send(topic, payload)")
+            raise TypeError(
+                "hub must provide .broadcast/.publish/.send(topic, payload)"
+            )
         return cls(lambda t, p: send(t, p), **kw)
 
     # -- lifecycle -------------------------------------------------------------
@@ -291,9 +315,12 @@ class WSBridge:
         self._subs.append(bus.subscribe(PENDING_TX, self._forward))
         self._subs.append(bus.subscribe(DROPPED_TX, self._forward))
         self._subs.append(bus.subscribe(REPLACED_TX, self._forward))
-        logger.info("WSBridge attached to bus; subscribers now: %s/%s/%s",
-                    bus.subscribers(PENDING_TX), bus.subscribers(DROPPED_TX),
-                    bus.subscribers(REPLACED_TX))
+        logger.info(
+            "WSBridge attached to bus; subscribers now: %s/%s/%s",
+            bus.subscribers(PENDING_TX),
+            bus.subscribers(DROPPED_TX),
+            bus.subscribers(REPLACED_TX),
+        )
 
     def detach(self) -> None:
         """Unsubscribe from the bus."""

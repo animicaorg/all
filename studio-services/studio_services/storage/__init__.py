@@ -17,13 +17,13 @@ Backends implemented in sibling modules:
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, Optional, Protocol, runtime_checkable, Dict, Any
-import os
-
+from typing import Any, BinaryIO, Dict, Optional, Protocol, runtime_checkable
 
 # ----------------------------- Artifact Store API -----------------------------
+
 
 @runtime_checkable
 class ArtifactStore(Protocol):
@@ -58,6 +58,7 @@ class ArtifactStore(Protocol):
 @dataclass(frozen=True)
 class StorageConfig:
     """Resolved storage configuration used by the factory."""
+
     storage_dir: Path
     s3_bucket: Optional[str] = None
     s3_region: Optional[str] = None
@@ -116,11 +117,10 @@ def build_artifact_store(
         cfg = storage_config_from_env()
 
     # Local FS backend is always available
-    from .fs import FSArtifactStore  # local import to avoid cycles during packaging
+    from .fs import \
+        FSArtifactStore  # local import to avoid cycles during packaging
 
-    s3_wanted = (prefer_s3 is True) or (
-        prefer_s3 is None and cfg.s3_bucket is not None
-    )
+    s3_wanted = (prefer_s3 is True) or (prefer_s3 is None and cfg.s3_bucket is not None)
 
     if s3_wanted and cfg.s3_bucket:
         try:
@@ -149,6 +149,7 @@ def build_artifact_store(
 
 # ------------------------------ DB helper facades -----------------------------
 
+
 def get_db():
     """
     Acquire a DB connection/handle from sqlite backend.
@@ -156,6 +157,7 @@ def get_db():
     Imported lazily to avoid import-order issues while generating files.
     """
     from .sqlite import get_db as _get_db  # local import
+
     return _get_db()
 
 
@@ -164,6 +166,7 @@ def run_migrations():
     Apply pending migrations (idempotent). Safe to call at startup.
     """
     from .sqlite import run_migrations as _run_migrations  # local import
+
     return _run_migrations()
 
 

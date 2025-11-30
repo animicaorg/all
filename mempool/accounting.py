@@ -45,7 +45,7 @@ Callers
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Protocol, Tuple, Iterable, Any
+from typing import Any, Iterable, Optional, Protocol, Tuple
 
 # -----------------------------
 # Optional/guarded imports
@@ -54,6 +54,7 @@ from typing import Optional, Protocol, Tuple, Iterable, Any
 try:
     from core.types.tx import Tx  # type: ignore
 except Exception:  # pragma: no cover
+
     class Tx:  # type: ignore
         kind: str
         chain_id: int
@@ -70,9 +71,11 @@ except Exception:  # pragma: no cover
             for k, v in kw.items():
                 setattr(self, k, v)
 
+
 try:
     from core.types.params import ChainParams  # type: ignore
 except Exception:  # pragma: no cover
+
     @dataclass
     class ChainParams:  # type: ignore
         chain_id: int = 1
@@ -84,8 +87,10 @@ except Exception:  # pragma: no cover
 # State reader protocol
 # -----------------------------
 
+
 class BalanceReader(Protocol):
     """Minimal state view dependency used by this module."""
+
     def get_balance(self, address: bytes | str) -> int: ...
     def get_allowance(self, owner: bytes | str, spender: bytes | str) -> int: ...
 
@@ -93,6 +98,7 @@ class BalanceReader(Protocol):
 # -----------------------------
 # Gas schedule & config
 # -----------------------------
+
 
 @dataclass(frozen=True)
 class GasSchedule:
@@ -115,8 +121,10 @@ class AccountingConfig:
 # Errors
 # -----------------------------
 
+
 class AccountingError(Exception):
     """Raised when balance/allowance/gas accounting checks fail."""
+
     code: str
 
     def __init__(self, code: str, msg: str) -> None:
@@ -127,6 +135,7 @@ class AccountingError(Exception):
 # -----------------------------
 # Public API
 # -----------------------------
+
 
 @dataclass(frozen=True)
 class SpendEstimate:
@@ -291,6 +300,7 @@ def assert_allowance(
 # -----------------------------
 # Internal helpers
 # -----------------------------
+
 
 def _count_zero_nonzero(b: bytes) -> Tuple[int, int]:
     if not b:

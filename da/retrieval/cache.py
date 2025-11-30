@@ -42,20 +42,22 @@ Keys helpers
 
 import json
 import os
-import time
 import threading
-from dataclasses import dataclass
+import time
 from collections import OrderedDict
+from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Optional, Set, Tuple
 
-
 # -------------------------- Key helpers -------------------------------------
+
 
 def key_blob(commitment_hex: str) -> str:
     return f"blob:{commitment_hex.lower()}"
 
+
 def key_shard(commitment_hex: str, ns: int, index: int) -> str:
     return f"shard:{commitment_hex.lower()}:ns={int(ns)}:i={int(index)}"
+
 
 def key_proof(commitment_hex: str, samples: Iterable[int]) -> str:
     # Normalize samples deterministically
@@ -65,12 +67,14 @@ def key_proof(commitment_hex: str, samples: Iterable[int]) -> str:
 
 # ----------------------------- Entries & Stats ------------------------------
 
+
 @dataclass
 class CacheEntry:
     value: Any
     size: int
     expires_at: Optional[float]  # perf_counter timestamp or None
     tags: Set[str]
+
 
 @dataclass
 class CacheStats:
@@ -86,14 +90,15 @@ class CacheStats:
 
 # ----------------------------- LRU Cache ------------------------------------
 
+
 class LRUCache:
     """
     Thread-safe LRU cache with byte and item limits.
     """
 
-    def __init__(self, *,
-                 max_items: Optional[int] = None,
-                 max_bytes: Optional[int] = None):
+    def __init__(
+        self, *, max_items: Optional[int] = None, max_bytes: Optional[int] = None
+    ):
         env_items = os.getenv("DA_CACHE_MAX_ITEMS")
         env_bytes = os.getenv("DA_CACHE_MAX_BYTES")
         if max_items is None:
@@ -136,13 +141,24 @@ class LRUCache:
             self._stats.hits += 1
             return ce.value
 
-    def put(self, key: str, value: Any, *,
-            ttl: Optional[float] = None,
-            size_bytes: Optional[int] = None,
-            tags: Optional[Iterable[str]] = None) -> None:
-        size = size_bytes if (size_bytes is not None and size_bytes >= 0) else self._estimate_size(value)
+    def put(
+        self,
+        key: str,
+        value: Any,
+        *,
+        ttl: Optional[float] = None,
+        size_bytes: Optional[int] = None,
+        tags: Optional[Iterable[str]] = None,
+    ) -> None:
+        size = (
+            size_bytes
+            if (size_bytes is not None and size_bytes >= 0)
+            else self._estimate_size(value)
+        )
         expires_at = (time.perf_counter() + float(ttl)) if (ttl and ttl > 0) else None
-        norm_tags: Set[str] = {t.strip().lower() for t in (tags or []) if t and t.strip()}
+        norm_tags: Set[str] = {
+            t.strip().lower() for t in (tags or []) if t and t.strip()
+        }
 
         with self._lock:
             # replace existing?
@@ -157,7 +173,9 @@ class LRUCache:
                         if not keys:
                             self._tags.pop(t, None)
 
-            ce = CacheEntry(value=value, size=size, expires_at=expires_at, tags=norm_tags)
+            ce = CacheEntry(
+                value=value, size=size, expires_at=expires_at, tags=norm_tags
+            )
             self._map[key] = ce
             self._map.move_to_end(key, last=True)
             self._bytes += size
@@ -252,7 +270,9 @@ class LRUCache:
 
         # Enforce limits
         evicted = 0
-        while (self._bytes > self.max_bytes or len(self._map) > self.max_items) and self._map:
+        while (
+            self._bytes > self.max_bytes or len(self._map) > self.max_items
+        ) and self._map:
             # Pop LRU (first item)
             k, _ = self._map.popitem(last=False)
             # Remove from tags & bytes
@@ -265,7 +285,9 @@ class LRUCache:
             pass  # replaced below
 
         # Correct implementation (peek + pop)
-        while (self._bytes > self.max_bytes or len(self._map) > self.max_items) and self._map:
+        while (
+            self._bytes > self.max_bytes or len(self._map) > self.max_items
+        ) and self._map:
             # peek LRU key
             k = next(iter(self._map.keys()))
             self._delete_unlocked(k)
@@ -287,7 +309,11 @@ class LRUCache:
             return len(obj.encode("utf-8", errors="ignore"))
         # Common containers → rough JSON size (deterministic enough for budgeting)
         try:
-            return len(json.dumps(obj, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+            return len(
+                json.dumps(obj, separators=(",", ":"), ensure_ascii=False).encode(
+                    "utf-8"
+                )
+            )
         except Exception:
             # Fallback to repr length
             try:

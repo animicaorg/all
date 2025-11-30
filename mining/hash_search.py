@@ -49,18 +49,20 @@ MICRO = 1_000_000
 @dataclass(frozen=True)
 class FoundShare:
     """Result of a successful share trial."""
+
     nonce: int
-    digest: bytes                 # sha3_256(header_prefix || nonce_le8)
-    h_micro: int                  # H(u) in µ-nats (=-ln(u) * 1e6), computed for telemetry
-    target256: int                # 256-bit target used for predicate
-    theta_micro: Optional[int]    # Optional Θ used to compute d_ratio
-    d_ratio: Optional[float]      # H/Θ if theta provided; else None
-    ts: float                     # discovery timestamp (monotonic_seconds)
+    digest: bytes  # sha3_256(header_prefix || nonce_le8)
+    h_micro: int  # H(u) in µ-nats (=-ln(u) * 1e6), computed for telemetry
+    target256: int  # 256-bit target used for predicate
+    theta_micro: Optional[int]  # Optional Θ used to compute d_ratio
+    d_ratio: Optional[float]  # H/Θ if theta provided; else None
+    ts: float  # discovery timestamp (monotonic_seconds)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Numeric helpers (µ-nats thresholds ↔ 256-bit targets)
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def micro_to_nats(micro: int) -> float:
     return micro / MICRO
@@ -118,6 +120,7 @@ def h_micro_from_digest(digest: bytes) -> int:
 # Hashing utilities
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _make_hasher(algo: str, prefix: bytes) -> hashlib._hashlib.HASH:
     """
     Create a new hashlib object initialized with `prefix`.
@@ -144,6 +147,7 @@ def _make_hasher(algo: str, prefix: bytes) -> hashlib._hashlib.HASH:
 # ─────────────────────────────────────────────────────────────────────────────
 # Scanner
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class HashScanner:
     """
@@ -221,7 +225,11 @@ class HashScanner:
             # Hot-path predicate: int256(digest) ≤ T
             if _digest_to_int256(digest) <= T:
                 hµ = _h_micro(digest)
-                dR = (hµ / float(_theta)) if (_theta is not None and _theta > 0) else None
+                dR = (
+                    (hµ / float(_theta))
+                    if (_theta is not None and _theta > 0)
+                    else None
+                )
                 share = FoundShare(
                     nonce=nonce,
                     digest=digest,
@@ -290,8 +298,10 @@ class HashScanner:
 # Self-test / smoke
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _smoke() -> None:  # pragma: no cover
     import os
+
     # Fake header prefix (random), emulate domain-correct SignBytes w/o the 8B nonce.
     prefix = b"animica:header:signbytes:v1:" + os.urandom(48)
 
@@ -303,12 +313,23 @@ def _smoke() -> None:  # pragma: no cover
     theta_micro = nats_to_micro(24.0 * math.log(2.0))  # arbitrary Θ for d_ratio display
 
     scanner = HashScanner()
-    shares = scanner.scan_batch(prefix, t_micro, nonce_start=0, nonce_count=2_000_000, theta_micro=theta_micro)
-    print(f"Found {len(shares)} shares in 2M trials (expected ≈ {2_000_000 * pr_share_from_threshold(t_micro):.1f})")
+    shares = scanner.scan_batch(
+        prefix, t_micro, nonce_start=0, nonce_count=2_000_000, theta_micro=theta_micro
+    )
+    print(
+        f"Found {len(shares)} shares in 2M trials (expected ≈ {2_000_000 * pr_share_from_threshold(t_micro):.1f})"
+    )
     if shares:
         s0 = shares[0]
-        print("Example share:",
-              dict(nonce=s0.nonce, h_micro=s0.h_micro, d_ratio=s0.d_ratio, digest=s0.digest.hex()[:16] + "…"))
+        print(
+            "Example share:",
+            dict(
+                nonce=s0.nonce,
+                h_micro=s0.h_micro,
+                d_ratio=s0.d_ratio,
+                digest=s0.digest.hex()[:16] + "…",
+            ),
+        )
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -37,12 +37,14 @@ Determinism & Safety
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from threading import RLock
-from typing import Any, Callable, Dict, Iterable, Optional, Protocol, runtime_checkable
-import logging
+from typing import (Any, Callable, Dict, Iterable, Optional, Protocol,
+                    runtime_checkable)
 
-from ..errors import CapError, NotDeterministic, LimitExceeded, NoResultYet  # re-exported exceptions
+from ..errors import (CapError, LimitExceeded,  # re-exported exceptions
+                      NoResultYet, NotDeterministic)
 
 try:
     # Optional metrics; provider calls should best-effort bump these if available.
@@ -58,6 +60,7 @@ log = logging.getLogger("capabilities.host.provider")
 # Context & typing
 # ----------------------------
 
+
 @dataclass(frozen=True)
 class SyscallContext:
     """
@@ -70,6 +73,7 @@ class SyscallContext:
         caller:     32-byte address / account id (bytes).
         gas_left:   Optional gas-left hint for metering/logging (not authoritative).
     """
+
     chain_id: int
     height: int
     tx_hash: bytes
@@ -108,6 +112,7 @@ CANONICAL_KEYS: tuple[str, ...] = (
 # Registry
 # ----------------------------
 
+
 class ProviderRegistry:
     """
     Thread-safe registry keyed by canonical operation strings.
@@ -136,12 +141,17 @@ class ProviderRegistry:
         # Optional determinism hint: allow providers to set attribute `_deterministic = True`
         deterministic = getattr(fn, "_deterministic", None)
         if deterministic is not True:
-            log.warning("registering provider without explicit _deterministic=True",
-                        extra={"key": key, "fn": getattr(fn, "__qualname__", repr(fn))})
+            log.warning(
+                "registering provider without explicit _deterministic=True",
+                extra={"key": key, "fn": getattr(fn, "__qualname__", repr(fn))},
+            )
 
         with self._lock:
             self._handlers[key] = fn
-            log.info("provider_registered", extra={"key": key, "fn": getattr(fn, "__qualname__", repr(fn))})
+            log.info(
+                "provider_registered",
+                extra={"key": key, "fn": getattr(fn, "__qualname__", repr(fn))},
+            )
 
     def unregister(self, key: str) -> None:
         with self._lock:
@@ -201,8 +211,15 @@ class ProviderRegistry:
                     _metrics.host_call_failed.labels(key=key, kind="unexpected").inc()  # type: ignore[attr-defined]
                 except Exception:
                     pass
-            log.exception("host_call_unexpected_error",
-                          extra={"key": key, "error": repr(e), "chain_id": ctx.chain_id, "height": ctx.height})
+            log.exception(
+                "host_call_unexpected_error",
+                extra={
+                    "key": key,
+                    "error": repr(e),
+                    "chain_id": ctx.chain_id,
+                    "height": ctx.height,
+                },
+            )
             raise CapError(f"unexpected error in provider {key}: {e}") from e
 
     # ---- typed convenience wrappers (sugar) ----
@@ -210,17 +227,25 @@ class ProviderRegistry:
     def blob_pin(self, ctx: SyscallContext, namespace: int, data: bytes) -> Any:
         return self.call(BLOB_PIN, ctx, namespace=namespace, data=data)
 
-    def ai_enqueue(self, ctx: SyscallContext, model: str, prompt: bytes | str, **opts: Any) -> Any:
+    def ai_enqueue(
+        self, ctx: SyscallContext, model: str, prompt: bytes | str, **opts: Any
+    ) -> Any:
         return self.call(AI_ENQ, ctx, model=model, prompt=prompt, **opts)
 
-    def quantum_enqueue(self, ctx: SyscallContext, circuit: Any, shots: int, **opts: Any) -> Any:
+    def quantum_enqueue(
+        self, ctx: SyscallContext, circuit: Any, shots: int, **opts: Any
+    ) -> Any:
         return self.call(Q_ENQ, ctx, circuit=circuit, shots=shots, **opts)
 
     def result_read(self, ctx: SyscallContext, task_id: str | bytes) -> Any:
         return self.call(RESULT_READ, ctx, task_id=task_id)
 
-    def zk_verify(self, ctx: SyscallContext, circuit: Any, proof: Any, public_input: Any) -> bool:
-        out = self.call(ZK_VERIFY, ctx, circuit=circuit, proof=proof, public_input=public_input)
+    def zk_verify(
+        self, ctx: SyscallContext, circuit: Any, proof: Any, public_input: Any
+    ) -> bool:
+        out = self.call(
+            ZK_VERIFY, ctx, circuit=circuit, proof=proof, public_input=public_input
+        )
         if not isinstance(out, bool):
             raise CapError("zk.verify provider must return a boolean")
         return out
@@ -280,7 +305,10 @@ def _maybe_autoload_default_providers(reg: ProviderRegistry) -> None:
                 register_fn(reg)
         except Exception as e:  # pragma: no cover
             # Modules may be missing in a minimal build; log at DEBUG.
-            log.debug("autoload_provider_skipped", extra={"module": modname, "reason": repr(e)})
+            log.debug(
+                "autoload_provider_skipped",
+                extra={"module": modname, "reason": repr(e)},
+            )
 
 
 __all__ = [

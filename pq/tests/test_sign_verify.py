@@ -1,13 +1,13 @@
-import os
 import binascii
+import os
+
 import pytest
 
 # Uniform APIs
 from pq.py import keygen as PKG
+from pq.py import registry as REG
 from pq.py import sign as PQS
 from pq.py import verify as PQV
-from pq.py import registry as REG
-
 
 ALGS = ["dilithium3", "sphincs_shake_128s"]
 MSG = b"animica test message \xf0\x9f\xa6\x84"  # deterministic test payload
@@ -15,6 +15,7 @@ DOM = b"animica/test/v1"  # domain-separation tag used for all happy-path signs
 
 
 # --- small helpers -----------------------------------------------------------
+
 
 def _keypair(alg: str):
     """
@@ -87,6 +88,7 @@ def _expected_sig_len(alg: str) -> int | None:
 
 # --- tests -------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("alg", ALGS)
 def test_roundtrip_sign_verify(alg: str):
     pk, sk = _keypair(alg)
@@ -95,7 +97,9 @@ def test_roundtrip_sign_verify(alg: str):
     # Size sanity if registry exposes it
     exp = _expected_sig_len(alg)
     if exp is not None:
-        assert len(sig) == exp, f"{alg} signature length mismatch (got {len(sig)}, want {exp})"
+        assert (
+            len(sig) == exp
+        ), f"{alg} signature length mismatch (got {len(sig)}, want {exp})"
 
     ok = _verify(alg, pk, MSG, sig, DOM)
     assert ok is True, f"{alg} verify should pass for correct msg/domain"
@@ -103,7 +107,9 @@ def test_roundtrip_sign_verify(alg: str):
     # Negative: change one byte → must fail
     tampered = bytearray(sig)
     tampered[len(tampered) // 2] ^= 0x01
-    assert _verify(alg, pk, MSG, bytes(tampered), DOM) is False, f"{alg} verify must fail on tampered sig"
+    assert (
+        _verify(alg, pk, MSG, bytes(tampered), DOM) is False
+    ), f"{alg} verify must fail on tampered sig"
 
 
 @pytest.mark.parametrize("alg", ALGS)
@@ -124,12 +130,14 @@ def test_domain_separation_effect(alg: str):
 
     if sig_domA != sig_domB:
         # Distinct signatures strongly suggest domain is included in prehash; require failure under wrong domain.
-        assert _verify(alg, pk, MSG, sig_domB, DOM) is False, (
-            f"{alg} must fail verification when domain differs"
-        )
+        assert (
+            _verify(alg, pk, MSG, sig_domB, DOM) is False
+        ), f"{alg} must fail verification when domain differs"
     else:
         # Backend likely ignores domain (e.g., compatibility wrapper). Mark expected failure.
-        pytest.xfail(f"{alg} backend appears not to bind the domain; skipping strict domain test")
+        pytest.xfail(
+            f"{alg} backend appears not to bind the domain; skipping strict domain test"
+        )
 
 
 @pytest.mark.parametrize("alg", ALGS)
@@ -159,7 +167,9 @@ def test_vectors_present_and_well_formed():
     Ensure vector files exist and are parseable. We *do not* require cryptographic
     validity here, because vectors may be illustrative when oqs is missing.
     """
-    base = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "test_vectors"))
+    base = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "test_vectors")
+    )
     paths = [
         os.path.join(base, "dilithium3.json"),
         os.path.join(base, "sphincs_shake_128s.json"),

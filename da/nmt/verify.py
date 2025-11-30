@@ -28,21 +28,24 @@ Return value & errors
 All `verify_*` functions return a boolean True/False. Use the `*_checked`
 variants (internal) to raise NMTVerifyError on failure if you need diagnostics.
 """
+
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, Iterable, Iterator, List, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
 import hmac
+from dataclasses import dataclass
+from typing import (Dict, Iterable, Iterator, List, Mapping, MutableMapping,
+                    Optional, Sequence, Tuple, Union)
 
+from ..utils.hash import sha3_256
+from . import codec
 from .namespace import NamespaceId, NamespaceRange
 from .node import Node  # structural container (hash, ns_min, ns_max)
-from . import codec
 from .proofs import InclusionProof, RangeProof, SiblingStep
-from ..utils.hash import sha3_256
 
 # --------------------------------------------------------------------------- #
 # Errors
 # --------------------------------------------------------------------------- #
+
 
 class NMTVerifyError(ValueError):
     """Raised when a proof fails verification with details."""
@@ -66,7 +69,8 @@ except Exception:
         from .node import leaf as _leaf_fn  # type: ignore[attr-defined]
     except Exception:
         try:
-            from .node import leaf_node as _leaf_fn  # type: ignore[attr-defined]
+            from .node import \
+                leaf_node as _leaf_fn  # type: ignore[attr-defined]
         except Exception:
             _leaf_fn = None
 
@@ -74,16 +78,20 @@ try:
     from .node import parent as _parent_fn  # type: ignore[attr-defined]
 except Exception:
     try:
-        from .node import parent_node as _parent_fn  # type: ignore[attr-defined]
+        from .node import \
+            parent_node as _parent_fn  # type: ignore[attr-defined]
     except Exception:
         try:
-            from .node import combine as _parent_fn  # type: ignore[attr-defined]
+            from .node import \
+                combine as _parent_fn  # type: ignore[attr-defined]
         except Exception:
             try:
-                from .node import merge as _parent_fn  # type: ignore[attr-defined]
+                from .node import \
+                    merge as _parent_fn  # type: ignore[attr-defined]
             except Exception:
                 try:
-                    from .node import hash_parent as _parent_fn  # type: ignore[attr-defined]
+                    from .node import \
+                        hash_parent as _parent_fn  # type: ignore[attr-defined]
                 except Exception:
                     _parent_fn = None
 
@@ -121,7 +129,13 @@ def _fallback_parent(left: Node, right: Node) -> Node:
         (ns_min.bit_length() + 7) // 8 or 1,
         (ns_max.bit_length() + 7) // 8 or 1,
     )
-    h = sha3_256(b"NMT:node" + left.hash + right.hash + int(ns_min).to_bytes(width, "big") + int(ns_max).to_bytes(width, "big"))
+    h = sha3_256(
+        b"NMT:node"
+        + left.hash
+        + right.hash
+        + int(ns_min).to_bytes(width, "big")
+        + int(ns_max).to_bytes(width, "big")
+    )
     return Node(hash=h, ns_min=ns_min, ns_max=ns_max)
 
 
@@ -141,6 +155,7 @@ def _parent(left: Node, right: Node) -> Node:
 # Helpers
 # --------------------------------------------------------------------------- #
 
+
 def _ct_eq(a: bytes, b: bytes) -> bool:
     return hmac.compare_digest(a, b)
 
@@ -157,7 +172,13 @@ def _node_from_sibling_step(step: SiblingStep) -> Node:
 # Inclusion proof (single leaf)
 # --------------------------------------------------------------------------- #
 
-def _reconstruct_inclusion_root(proof: InclusionProof, *, leaf_ns: Optional[Union[int, NamespaceId]] = None, leaf_payload_hash: Optional[bytes] = None) -> bytes:
+
+def _reconstruct_inclusion_root(
+    proof: InclusionProof,
+    *,
+    leaf_ns: Optional[Union[int, NamespaceId]] = None,
+    leaf_payload_hash: Optional[bytes] = None,
+) -> bytes:
     ns = _ns_obj(leaf_ns if leaf_ns is not None else proof.leaf_ns)
     ph = leaf_payload_hash if leaf_payload_hash is not None else proof.leaf_payload_hash
     if not ph or len(ph) != 32:
@@ -172,7 +193,9 @@ def _reconstruct_inclusion_root(proof: InclusionProof, *, leaf_ns: Optional[Unio
         elif step.side == "L":
             cur = _parent(sib, cur)
         else:
-            raise NMTVerifyError(f"bad sibling side at level {step.level}: {step.side!r}")
+            raise NMTVerifyError(
+                f"bad sibling side at level {step.level}: {step.side!r}"
+            )
         # Optional: enforce level monotonicity if present
         if step.level != idx:
             # We tolerate mismatches but still enforce non-decreasing levels.
@@ -182,7 +205,13 @@ def _reconstruct_inclusion_root(proof: InclusionProof, *, leaf_ns: Optional[Unio
     return cur.hash
 
 
-def verify_inclusion(root: bytes, proof: InclusionProof, *, leaf_payload_hash: Optional[bytes] = None, leaf_ns: Optional[Union[int, NamespaceId]] = None) -> bool:
+def verify_inclusion(
+    root: bytes,
+    proof: InclusionProof,
+    *,
+    leaf_payload_hash: Optional[bytes] = None,
+    leaf_ns: Optional[Union[int, NamespaceId]] = None,
+) -> bool:
     """
     Verify a single-leaf inclusion proof.
 
@@ -192,19 +221,25 @@ def verify_inclusion(root: bytes, proof: InclusionProof, *, leaf_payload_hash: O
     try:
         if len(root) != ROOT_SIZE:
             raise NMTVerifyError("root must be 32 bytes")
-        cand = _reconstruct_inclusion_root(proof, leaf_ns=leaf_ns, leaf_payload_hash=leaf_payload_hash)
+        cand = _reconstruct_inclusion_root(
+            proof, leaf_ns=leaf_ns, leaf_payload_hash=leaf_payload_hash
+        )
         return _ct_eq(cand, root)
     except Exception:
         return False
 
 
-def verify_inclusion_from_encoded(root: bytes, proof: InclusionProof, encoded_leaf: bytes) -> bool:
+def verify_inclusion_from_encoded(
+    root: bytes, proof: InclusionProof, encoded_leaf: bytes
+) -> bool:
     """
     Verify inclusion using a fully encoded leaf (ns||len||data).
     """
     try:
         ns, payload = codec.decode_leaf(encoded_leaf)
-        ph = sha3_256(codec.write_uvarint(len(payload)) + payload)  # not exported; compute directly
+        ph = sha3_256(
+            codec.write_uvarint(len(payload)) + payload
+        )  # not exported; compute directly
     except AttributeError:
         # write_uvarint isn't exported; use helper that hashes payload portion directly
         ph = codec.payload_hash_from_encoded(encoded_leaf)
@@ -222,11 +257,20 @@ def verify_inclusion_from_encoded(root: bytes, proof: InclusionProof, encoded_le
 # Range proof (contiguous span)
 # --------------------------------------------------------------------------- #
 
-def _prepare_ns_per_leaf(count: int, leaf_namespaces: Optional[Union[int, NamespaceId, Sequence[Union[int, NamespaceId]]]], ns_range: NamespaceRange) -> List[NamespaceId]:
+
+def _prepare_ns_per_leaf(
+    count: int,
+    leaf_namespaces: Optional[
+        Union[int, NamespaceId, Sequence[Union[int, NamespaceId]]]
+    ],
+    ns_range: NamespaceRange,
+) -> List[NamespaceId]:
     if leaf_namespaces is None:
         # Require a degenerate namespace range (typical for namespace-range proofs).
         if int(ns_range.ns_min) != int(ns_range.ns_max):
-            raise NMTVerifyError("per-leaf namespaces required for mixed-namespace ranges")
+            raise NMTVerifyError(
+                "per-leaf namespaces required for mixed-namespace ranges"
+            )
         return [ns_range.ns_min] * count
     if isinstance(leaf_namespaces, (int, NamespaceId)):
         return [_ns_obj(leaf_namespaces)] * count
@@ -240,12 +284,16 @@ def _reconstruct_range_root(
     proof: RangeProof,
     leaf_payload_hashes: Sequence[bytes],
     *,
-    leaf_namespaces: Optional[Union[int, NamespaceId, Sequence[Union[int, NamespaceId]]]] = None,
+    leaf_namespaces: Optional[
+        Union[int, NamespaceId, Sequence[Union[int, NamespaceId]]]
+    ] = None,
 ) -> bytes:
     if any(len(h) != 32 for h in leaf_payload_hashes):
         raise NMTVerifyError("all leaf payload hashes must be 32 bytes")
     if proof.count != len(leaf_payload_hashes):
-        raise NMTVerifyError("proof.count does not match number of provided leaf hashes")
+        raise NMTVerifyError(
+            "proof.count does not match number of provided leaf hashes"
+        )
 
     # Build the active map of indices -> Node for the covered span at level 0.
     ns_per_leaf = _prepare_ns_per_leaf(proof.count, leaf_namespaces, proof.ns_range)
@@ -300,7 +348,9 @@ def _reconstruct_range_root(
                 step = steps[step_i]
                 step_i += 1
                 if step.side != side:
-                    raise NMTVerifyError(f"sibling side mismatch at level {step.level} (expected {side}, got {step.side})")
+                    raise NMTVerifyError(
+                        f"sibling side mismatch at level {step.level} (expected {side}, got {step.side})"
+                    )
                 sib = _node_from_sibling_step(step)
                 if side == "R":
                     pair = (active[i], sib)  # current is left, sibling right
@@ -326,7 +376,9 @@ def verify_range(
     proof: RangeProof,
     leaf_payload_hashes: Sequence[bytes],
     *,
-    leaf_namespaces: Optional[Union[int, NamespaceId, Sequence[Union[int, NamespaceId]]]] = None,
+    leaf_namespaces: Optional[
+        Union[int, NamespaceId, Sequence[Union[int, NamespaceId]]]
+    ] = None,
 ) -> bool:
     """
     Verify a contiguous-span range proof.
@@ -338,7 +390,9 @@ def verify_range(
     try:
         if len(root) != ROOT_SIZE:
             raise NMTVerifyError("root must be 32 bytes")
-        cand = _reconstruct_range_root(root, proof, leaf_payload_hashes, leaf_namespaces=leaf_namespaces)
+        cand = _reconstruct_range_root(
+            root, proof, leaf_payload_hashes, leaf_namespaces=leaf_namespaces
+        )
         return _ct_eq(cand, root)
     except Exception:
         return False
@@ -368,7 +422,10 @@ def verify_namespace_range(
 # Encoded-leaf convenience wrappers
 # --------------------------------------------------------------------------- #
 
-def _payload_hashes_from_encoded(encoded_leaves: Sequence[bytes]) -> Tuple[List[NamespaceId], List[bytes]]:
+
+def _payload_hashes_from_encoded(
+    encoded_leaves: Sequence[bytes],
+) -> Tuple[List[NamespaceId], List[bytes]]:
     ns_list: List[NamespaceId] = []
     ph_list: List[bytes] = []
     for enc in encoded_leaves:
@@ -379,7 +436,9 @@ def _payload_hashes_from_encoded(encoded_leaves: Sequence[bytes]) -> Tuple[List[
     return ns_list, ph_list
 
 
-def verify_range_from_encoded(root: bytes, proof: RangeProof, encoded_leaves: Sequence[bytes]) -> bool:
+def verify_range_from_encoded(
+    root: bytes, proof: RangeProof, encoded_leaves: Sequence[bytes]
+) -> bool:
     """
     Verify a range proof where the caller supplies the exact concatenated leaf
     encodings for the covered span.
@@ -391,7 +450,9 @@ def verify_range_from_encoded(root: bytes, proof: RangeProof, encoded_leaves: Se
         return False
 
 
-def verify_namespace_range_from_encoded(root: bytes, proof: RangeProof, encoded_leaves: Sequence[bytes]) -> bool:
+def verify_namespace_range_from_encoded(
+    root: bytes, proof: RangeProof, encoded_leaves: Sequence[bytes]
+) -> bool:
     """
     Verify a namespace-range proof using encoded leaves. Requires all leaves to
     share one namespace (will be checked).

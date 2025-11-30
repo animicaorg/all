@@ -4,9 +4,9 @@ import typing as t
 from urllib.parse import urlparse
 
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from starlette.middleware.cors import CORSMiddleware
 
 
 def _normalize_origin(origin: str) -> str:
@@ -84,9 +84,12 @@ def mount_strict_cors(app, cfg) -> None:
       - cors_allow_credentials                            : bool (default False)
       - cors_max_age                                      : int seconds (default 600)
     """
-    allowlist: list[str] = _get_cfg_attr(
-        cfg, "cors_allowlist", "cors_origins", "cors_allow_origins", default=[]
-    ) or []
+    allowlist: list[str] = (
+        _get_cfg_attr(
+            cfg, "cors_allowlist", "cors_origins", "cors_allow_origins", default=[]
+        )
+        or []
+    )
 
     if not isinstance(allowlist, (list, tuple)) or not allowlist:
         # Safe default: only same-origin dev hosts; adjust in config for prod.

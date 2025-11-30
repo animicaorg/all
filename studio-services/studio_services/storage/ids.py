@@ -126,7 +126,9 @@ def artifact_id(manifest: Any, code: Union[BytesLike, Path], abi: Any) -> str:
     return _to_0x(h)
 
 
-def verify_job_id(address: str | bytes, manifest: Any, code: Union[BytesLike, Path], abi: Any) -> str:
+def verify_job_id(
+    address: str | bytes, manifest: Any, code: Union[BytesLike, Path], abi: Any
+) -> str:
     """
     Deterministic id for a source verification job bound to a specific address.
 
@@ -143,7 +145,9 @@ def verify_job_id(address: str | bytes, manifest: Any, code: Union[BytesLike, Pa
     code_b = _as_bytes(code)
     abi_b = _as_bytes(abi)
 
-    h = _sha3_256(_DOMAIN_VERIFY + addr_b + _SEP + manifest_b + _SEP + code_b + _SEP + abi_b)
+    h = _sha3_256(
+        _DOMAIN_VERIFY + addr_b + _SEP + manifest_b + _SEP + code_b + _SEP + abi_b
+    )
     return _to_0x(h)
 
 
@@ -163,7 +167,9 @@ class BundleIds:
     address: str
 
 
-def bundle_ids(address: str | bytes, manifest: Any, code: Union[BytesLike, Path], abi: Any) -> BundleIds:
+def bundle_ids(
+    address: str | bytes, manifest: Any, code: Union[BytesLike, Path], abi: Any
+) -> BundleIds:
     """
     Convenience to compute all 3 ids consistently.
     """

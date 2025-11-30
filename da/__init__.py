@@ -24,10 +24,13 @@ except Exception:  # pragma: no cover
 __all__ = ["__version__"]
 
 try:
-    from .blob.types import BlobRef, BlobMeta, Commitment, Receipt  # type: ignore
+    from .blob.types import (BlobMeta, BlobRef, Commitment,  # type: ignore
+                             Receipt)
+
     __all__ += ["BlobRef", "BlobMeta", "Commitment", "Receipt"]
 except Exception:  # pragma: no cover
     pass
+
 
 def get_version() -> str:
     """Return the DA package version string."""

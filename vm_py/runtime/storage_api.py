@@ -40,18 +40,22 @@ try:
     # Soft imports; provide sane defaults if not defined.
     from vm_py.errors import VmError
 except Exception:  # pragma: no cover - during bootstrap
+
     class VmError(Exception):  # type: ignore
         pass
+
 
 try:
     import vm_py.config as _cfg
 except Exception:  # pragma: no cover
+
     class _cfg:  # type: ignore
         MAX_STORAGE_KEY_BYTES = 64
         MAX_STORAGE_VALUE_BYTES = 64 * 1024
 
 
 # ---------------------------- Backend API ---------------------------- #
+
 
 @runtime_checkable
 class StorageBackend(Protocol):
@@ -109,13 +113,16 @@ def reset_backend() -> None:
 
 # --------------------------- Validation helpers --------------------------- #
 
+
 def _check_key(key: bytes) -> None:
     if not isinstance(key, (bytes, bytearray)):
         raise VmError("storage key must be bytes")
     if len(key) == 0:
         raise VmError("storage key must be non-empty")
     if len(key) > getattr(_cfg, "MAX_STORAGE_KEY_BYTES", 64):
-        raise VmError(f"storage key too long (>{getattr(_cfg, 'MAX_STORAGE_KEY_BYTES', 64)} bytes)")
+        raise VmError(
+            f"storage key too long (>{getattr(_cfg, 'MAX_STORAGE_KEY_BYTES', 64)} bytes)"
+        )
 
 
 def _check_value(value: bytes) -> None:
@@ -127,6 +134,7 @@ def _check_value(value: bytes) -> None:
 
 
 # --------------------------- Contract-facing API --------------------------- #
+
 
 def get(key: bytes) -> Optional[bytes]:
     """Return the value for `key`, or None if not set."""
@@ -156,6 +164,7 @@ def exists(key: bytes) -> bool:
 # ------------------------------ Typed helpers ----------------------------- #
 
 _U256_MAX = (1 << 256) - 1
+
 
 def get_int(key: bytes) -> Optional[int]:
     """

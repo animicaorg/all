@@ -76,7 +76,9 @@ def _resolve_target(t: str) -> Tuple[ModuleType, Callable]:
         # Split on last dot
         parts = t.rsplit(".", 1)
         if len(parts) != 2:
-            raise ValueError(f"Invalid --target '{t}'. Use module:function or module.func")
+            raise ValueError(
+                f"Invalid --target '{t}'. Use module:function or module.func"
+            )
         mod_name, func_name = parts
     mod = importlib.import_module(mod_name)
     func = getattr(mod, func_name, None)
@@ -134,9 +136,13 @@ def _parse_ignored_excs(spec: str) -> Tuple[Type[BaseException], ...]:
             if isinstance(cls, type) and issubclass(cls, BaseException):
                 out.append(cls)
             else:
-                sys.stderr.write(f"[atheris_runner] Ignore list entry '{name}' is not an Exception type; skipping.\n")
+                sys.stderr.write(
+                    f"[atheris_runner] Ignore list entry '{name}' is not an Exception type; skipping.\n"
+                )
         except Exception:
-            sys.stderr.write(f"[atheris_runner] Could not resolve exception '{name}'; skipping.\n")
+            sys.stderr.write(
+                f"[atheris_runner] Could not resolve exception '{name}'; skipping.\n"
+            )
     return tuple(out)
 
 
@@ -146,7 +152,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         add_help=True,
         allow_abbrev=False,
     )
-    parser.add_argument("--target", default=_env("ANIMICA_FUZZ_TARGET"), help="module:function (or module.func)")
+    parser.add_argument(
+        "--target",
+        default=_env("ANIMICA_FUZZ_TARGET"),
+        help="module:function (or module.func)",
+    )
     parser.add_argument(
         "--strategy",
         choices=["auto", "bytes", "fdp"],
@@ -167,7 +177,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--coverage",
         action="store_true",
-        default=(_env("ANIMICA_FUZZ_COVERAGE", "1") not in ("0", "false", "False", "no")),
+        default=(
+            _env("ANIMICA_FUZZ_COVERAGE", "1") not in ("0", "false", "False", "no")
+        ),
         help="Enable Atheris Python coverage",
     )
     # All remaining args (including corpus dirs and Atheris flags) are passed through
@@ -215,7 +227,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # Atheris expects argv-like list: [prog, <corpus/flags...>]
     atheris_args = [sys.argv[0], *pass_through]
-    atheris.Setup(atheris_args, TestOneInput, enable_python_coverage=bool(args.coverage))
+    atheris.Setup(
+        atheris_args, TestOneInput, enable_python_coverage=bool(args.coverage)
+    )
     atheris.Fuzz()
     return 0
 

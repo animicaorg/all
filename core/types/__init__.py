@@ -23,42 +23,54 @@ Example
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 import importlib
+from typing import TYPE_CHECKING
 
 __all__ = [
     # submodules
-    "params", "tx", "receipt", "proof", "header", "block",
+    "params",
+    "tx",
+    "receipt",
+    "proof",
+    "header",
+    "block",
     # common re-exported symbols
     "ChainParams",
-    "Tx", "Receipt",
-    "HashShare", "AIProofRef", "QuantumProofRef", "StorageHeartbeat", "VDFProofRef",
-    "Header", "Block",
+    "Tx",
+    "Receipt",
+    "HashShare",
+    "AIProofRef",
+    "QuantumProofRef",
+    "StorageHeartbeat",
+    "VDFProofRef",
+    "Header",
+    "Block",
 ]
 
 # Map attribute → module path (for submodule-style access)
 _SUBMODULES = {
-    "params":  "core.types.params",
-    "tx":      "core.types.tx",
+    "params": "core.types.params",
+    "tx": "core.types.tx",
     "receipt": "core.types.receipt",
-    "proof":   "core.types.proof",
-    "header":  "core.types.header",
-    "block":   "core.types.block",
+    "proof": "core.types.proof",
+    "header": "core.types.header",
+    "block": "core.types.block",
 }
 
 # Map symbol → (module path, symbol name) for class-level re-exports
 _SYMBOLS = {
-    "ChainParams":        ("core.types.params",  "ChainParams"),
-    "Tx":                 ("core.types.tx",      "Tx"),
-    "Receipt":            ("core.types.receipt", "Receipt"),
-    "HashShare":          ("core.types.proof",   "HashShare"),
-    "AIProofRef":         ("core.types.proof",   "AIProofRef"),
-    "QuantumProofRef":    ("core.types.proof",   "QuantumProofRef"),
-    "StorageHeartbeat":   ("core.types.proof",   "StorageHeartbeat"),
-    "VDFProofRef":        ("core.types.proof",   "VDFProofRef"),
-    "Header":             ("core.types.header",  "Header"),
-    "Block":              ("core.types.block",   "Block"),
+    "ChainParams": ("core.types.params", "ChainParams"),
+    "Tx": ("core.types.tx", "Tx"),
+    "Receipt": ("core.types.receipt", "Receipt"),
+    "HashShare": ("core.types.proof", "HashShare"),
+    "AIProofRef": ("core.types.proof", "AIProofRef"),
+    "QuantumProofRef": ("core.types.proof", "QuantumProofRef"),
+    "StorageHeartbeat": ("core.types.proof", "StorageHeartbeat"),
+    "VDFProofRef": ("core.types.proof", "VDFProofRef"),
+    "Header": ("core.types.header", "Header"),
+    "Block": ("core.types.block", "Block"),
 }
+
 
 def __getattr__(name: str):
     # Lazy submodule import (e.g., core.types.tx)
@@ -71,17 +83,18 @@ def __getattr__(name: str):
         return getattr(mod, target[1])
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
+
 def __dir__():
     base = set(globals().keys())
     return sorted(base | set(_SUBMODULES.keys()) | set(_SYMBOLS.keys()))
 
+
 # Type-checker-only direct imports (no runtime side-effects)
 if TYPE_CHECKING:
+    from .block import Block  # noqa: F401
+    from .header import Header  # noqa: F401
     from .params import ChainParams  # noqa: F401
-    from .tx import Tx               # noqa: F401
-    from .receipt import Receipt     # noqa: F401
-    from .proof import (             # noqa: F401
-        HashShare, AIProofRef, QuantumProofRef, StorageHeartbeat, VDFProofRef
-    )
-    from .header import Header       # noqa: F401
-    from .block import Block         # noqa: F401
+    from .proof import (AIProofRef, HashShare, QuantumProofRef,  # noqa: F401
+                        StorageHeartbeat, VDFProofRef)
+    from .receipt import Receipt  # noqa: F401
+    from .tx import Tx  # noqa: F401

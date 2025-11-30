@@ -65,29 +65,30 @@ These come from vm_pkg.errors.
 """
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
-
-# Local runtime/stdlib
-from .gasmeter import GasMeter
-from . import storage_api, events_api, hash_api, random_api, abi
-from .context import BlockEnv, TxEnv
+from typing import (Any, Callable, Dict, Iterable, List, Optional, Sequence,
+                    Tuple, Union)
 
 # Errors
-from ..errors import VmError, ValidationError, OOG, Revert
-
+from ..errors import OOG, Revert, ValidationError, VmError
+from . import abi, events_api, hash_api, random_api, storage_api
+from .context import BlockEnv, TxEnv
+# Local runtime/stdlib
+from .gasmeter import GasMeter
 
 # ---------- Public result type ----------
 
+
 @dataclass
 class ExecResult:
-    status: str                 # "SUCCESS" | "REVERT" | "OOG" | "ERROR"
-    return_value: Any           # typically bytes/int/bool or None
+    status: str  # "SUCCESS" | "REVERT" | "OOG" | "ERROR"
+    return_value: Any  # typically bytes/int/bool or None
     gas_used: int
     events: List[events_api.Event]  # concrete event records from events_api
     # Reserved for future (e.g., logs bloom, storage diff)
 
 
 # ---------- Helpers for flexible IR intake ----------
+
 
 def _get_op(ins: Any) -> str:
     # Prefer dict-style
@@ -110,6 +111,7 @@ def _get_attr(ins: Any, name: str, default: Any = None) -> Any:
 
 
 # ---------- Engine ----------
+
 
 class Engine:
     """
@@ -140,7 +142,7 @@ class Engine:
             "UN": 3,
             "JUMP": 2,
             "JUMP_IF_FALSE": 3,
-            "CALL_EXTERN": 15,   # plus dynamic per-external overhead
+            "CALL_EXTERN": 15,  # plus dynamic per-external overhead
             "RETURN": 1,
         }
 
@@ -172,12 +174,16 @@ class Engine:
         tx_env = tx_env or TxEnv.dummy()
 
         # Scope for externs to access deterministic services
-        rt = _RuntimeView(storage=storage, events=event_sink, block=block_env, tx=tx_env)
+        rt = _RuntimeView(
+            storage=storage, events=event_sink, block=block_env, tx=tx_env
+        )
 
         try:
             fn = _resolve_function(module, fn_name)
         except Exception as e:
-            raise ValidationError(f"Function '{fn_name}' not found or invalid: {e}") from e
+            raise ValidationError(
+                f"Function '{fn_name}' not found or invalid: {e}"
+            ) from e
 
         stack: List[Any] = []
         locals_: List[Any] = [None] * int(_get_attr(fn, "n_locals", 0))
@@ -207,7 +213,9 @@ class Engine:
                 elif opcode == "PUSH_BOOL":
                     val = _get_attr(ins, "value")
                     if not isinstance(val, bool):
-                        raise ValidationError(f"PUSH_BOOL expects bool, got {type(val)}")
+                        raise ValidationError(
+                            f"PUSH_BOOL expects bool, got {type(val)}"
+                        )
                     stack.append(val)
                     pc += 1
 
@@ -289,12 +297,27 @@ class Engine:
                 steps += 1
 
             status = "SUCCESS"
-            return ExecResult(status=status, return_value=ret_value, gas_used=self.gas.used, events=event_sink.events)
+            return ExecResult(
+                status=status,
+                return_value=ret_value,
+                gas_used=self.gas.used,
+                events=event_sink.events,
+            )
 
         except Revert as r:
-            return ExecResult(status="REVERT", return_value=bytes(r.args[0]) if r.args else b"", gas_used=self.gas.used, events=event_sink.events)
+            return ExecResult(
+                status="REVERT",
+                return_value=bytes(r.args[0]) if r.args else b"",
+                gas_used=self.gas.used,
+                events=event_sink.events,
+            )
         except OOG:
-            return ExecResult(status="OOG", return_value=None, gas_used=self.gas.used, events=event_sink.events)
+            return ExecResult(
+                status="OOG",
+                return_value=None,
+                gas_used=self.gas.used,
+                events=event_sink.events,
+            )
         except ValidationError:
             # Propagate validation separately (often a user/dev error)
             raise
@@ -318,7 +341,9 @@ class Engine:
                 if isinstance(a, (bytes, bytearray)):
                     payload_bytes += len(a)
                 elif isinstance(a, dict):
-                    payload_bytes += sum(len(v) for v in a.values() if isinstance(v, (bytes, bytearray)))
+                    payload_bytes += sum(
+                        len(v) for v in a.values() if isinstance(v, (bytes, bytearray))
+                    )
             self.gas.debit(5 + payload_bytes // 128)
         # Storage set/get: charge on key/value sizes
         elif name.startswith("storage."):
@@ -332,6 +357,7 @@ class Engine:
 
 # ---------- Runtime view passed to externs ----------
 
+
 @dataclass
 class _RuntimeView:
     storage: storage_api.Storage
@@ -342,26 +368,26 @@ class _RuntimeView:
 
 # ---------- Externs mapping ----------
 
+
 def _default_externs() -> Dict[str, Callable[..., Any]]:
     return {
         # ABI helpers (raises Revert)
         "abi.revert": lambda rt, data=b"": abi.revert(_coerce_bytes(data)),
-
         # Storage (bytes-in, bytes-out)
         "storage.get": lambda rt, key: rt.storage.get(_coerce_bytes(key)),
-        "storage.set": lambda rt, key, value: rt.storage.set(_coerce_bytes(key), _coerce_bytes(value)),
-
+        "storage.set": lambda rt, key, value: rt.storage.set(
+            _coerce_bytes(key), _coerce_bytes(value)
+        ),
         # Events
-        "events.emit": lambda rt, name, args: rt.events.emit(_coerce_bytes(name), _coerce_event_args(args)),
-
+        "events.emit": lambda rt, name, args: rt.events.emit(
+            _coerce_bytes(name), _coerce_event_args(args)
+        ),
         # Hash
         "hash.keccak256": lambda rt, data: hash_api.keccak256(_coerce_bytes(data)),
         "hash.sha3_256": lambda rt, data: hash_api.sha3_256(_coerce_bytes(data)),
         "hash.sha3_512": lambda rt, data: hash_api.sha3_512(_coerce_bytes(data)),
-
         # Randomness (deterministic, PRNG seeded from tx hash within the worker)
         "random.bytes": lambda rt, n: random_api.random_bytes(int(n)),
-
         # Treasury (no-ops/inert in browser sim; kept for compatibility)
         "treasury.balance": lambda rt: 0,
         "treasury.transfer": lambda rt, to, amount: None,
@@ -413,6 +439,7 @@ def _to_bytes_value(v: Any) -> bytes:
 
 
 # ---------- Operators ----------
+
 
 def _bin_op(op: str, a: Any, b: Any) -> Any:
     if op in {"ADD", "SUB", "MUL", "DIV", "MOD"}:
@@ -474,6 +501,7 @@ def _un_op(op: str, a: Any) -> Any:
 
 # ---------- Coercions & guards ----------
 
+
 def _coerce_int(x: Any) -> int:
     if isinstance(x, bool):
         return 1 if x else 0
@@ -507,6 +535,7 @@ def _bounds_check(pc: int, length: int) -> None:
 
 
 # ---------- Function resolver ----------
+
 
 def _resolve_function(module: Any, fn_name: str) -> Any:
     """

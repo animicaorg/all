@@ -21,11 +21,11 @@ from ..version import __version__ as _p2p_version
 
 # Re-exports (these modules are provided by this package)
 try:  # Imports are resolved at runtime once files are present.
-    from .topics import Topics, topic_id, is_valid_topic
+    from .topics import Topics, is_valid_topic, topic_id
 except Exception:  # pragma: no cover
     # Deferred imports allow tooling to import package before files are generated.
-    Topics = None          # type: ignore
-    topic_id = None        # type: ignore
+    Topics = None  # type: ignore
+    topic_id = None  # type: ignore
     is_valid_topic = None  # type: ignore
 
 try:

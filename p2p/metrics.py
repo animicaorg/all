@@ -30,25 +30,21 @@ Mounting a /metrics endpoint (ASGI):
 If you already have a FastAPI app (e.g., in rpc/server.py), prefer to reuse its
 /metrics and only register P2P counters into the global registry.
 """
+
 from __future__ import annotations
 
 import os
 import time
-from typing import Optional, Iterable, Dict
+from typing import Dict, Iterable, Optional
 
-from prometheus_client import (
-    REGISTRY,
-    CollectorRegistry,
-    Counter,
-    Gauge,
-    Histogram,
-    generate_latest,
-    CONTENT_TYPE_LATEST,
-)
+from prometheus_client import (CONTENT_TYPE_LATEST, REGISTRY,
+                               CollectorRegistry, Counter, Gauge, Histogram,
+                               generate_latest)
 
 # --------------------------------------------------------------------------- #
 # Registry selection & default collectors
 # --------------------------------------------------------------------------- #
+
 
 def _pick_registry() -> CollectorRegistry:
     """
@@ -81,8 +77,21 @@ p2p_frame_size_bytes = Histogram(
     "Observed frame sizes (encrypted payload).",
     labelnames=("direction", "transport"),
     buckets=(
-        64, 128, 256, 512, 1024, 2048, 4096, 8192,
-        16384, 32768, 65536, 131072, 262144, 524288, 1048576
+        64,
+        128,
+        256,
+        512,
+        1024,
+        2048,
+        4096,
+        8192,
+        16384,
+        32768,
+        65536,
+        131072,
+        262144,
+        524288,
+        1048576,
     ),
     registry=REG,
 )
@@ -165,6 +174,7 @@ p2p_errors_total = Counter(
 # Public helpers (thin, allocation-light)
 # --------------------------------------------------------------------------- #
 
+
 def inc_bytes(direction: str, n: int, *, transport: str = "tcp") -> None:
     """Increment byte counters and observe frame size histogram."""
     if n <= 0:
@@ -213,6 +223,7 @@ def observe_rtt(peer_id: str, seconds: float) -> None:
 
 class _Timer:
     """Small context manager to time decode paths: with time_decode('INV'): ..."""
+
     __slots__ = ("msg", "start")
 
     def __init__(self, msg: str):
@@ -248,6 +259,7 @@ def inc_error(error_type: str) -> None:
 # ASGI app for /metrics
 # --------------------------------------------------------------------------- #
 
+
 def make_asgi_app(registry: CollectorRegistry = REG):
     """
     Return a minimal ASGI app that serves Prometheus metrics.
@@ -258,6 +270,7 @@ def make_asgi_app(registry: CollectorRegistry = REG):
 
     No extra dependencies required.
     """
+
     async def app(scope, receive, send):
         if scope["type"] != "http":
             await send({"type": "http.response.start", "status": 400, "headers": []})
@@ -287,8 +300,10 @@ def make_asgi_app(registry: CollectorRegistry = REG):
 # Export a simple facade (optional)
 # --------------------------------------------------------------------------- #
 
+
 class _Facade:
     """Namespace-like access for importers that prefer a single object."""
+
     registry = REG
     bytes_total = p2p_bytes_total
     frame_size_bytes = p2p_frame_size_bytes
@@ -302,6 +317,7 @@ class _Facade:
     msg_decode_seconds = p2p_msg_decode_seconds
     queue_depth = p2p_queue_depth
     errors_total = p2p_errors_total
+
 
 METRICS = _Facade()
 
@@ -318,11 +334,20 @@ def get_metrics(registry: Optional[CollectorRegistry] = None) -> _Facade:
         _METRICS_SINGLETON = METRICS
     return _METRICS_SINGLETON
 
+
 __all__ = [
-    "REG", "METRICS", "get_metrics",
-    "inc_bytes", "inc_msg", "inc_gossip",
-    "set_peers", "set_mesh_size",
-    "observe_handshake", "observe_rtt",
-    "time_decode", "set_queue_depth", "inc_error",
+    "REG",
+    "METRICS",
+    "get_metrics",
+    "inc_bytes",
+    "inc_msg",
+    "inc_gossip",
+    "set_peers",
+    "set_mesh_size",
+    "observe_handshake",
+    "observe_rtt",
+    "time_decode",
+    "set_queue_depth",
+    "inc_error",
     "make_asgi_app",
 ]

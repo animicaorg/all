@@ -29,10 +29,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Tuple
 
-from randomness.types.core import BeaconOut, VDFInput, VDFProof, RoundId
-from randomness.vdf.verifier import verify as vdf_verify
+from randomness.types.core import BeaconOut, RoundId, VDFInput, VDFProof
 from randomness.utils.hash import sha3_256
-
+from randomness.vdf.verifier import verify as vdf_verify
 
 # ---- Domain tags (kept local to avoid depending on external constants) ----
 BEACON_OUT_HASH_TAG = b"animica:beacon:out-hash:v1"
@@ -52,7 +51,9 @@ def hash_beacon_out_min(beacon: BeaconOut) -> bytes:
     # verifiable via the VDF proof carried by the next LightProof.
     if not hasattr(beacon, "output"):
         raise TypeError("BeaconOut missing required field 'output'")
-    return sha3_256(BEACON_OUT_HASH_TAG + _u64be(beacon.round_id) + bytes(beacon.output))
+    return sha3_256(
+        BEACON_OUT_HASH_TAG + _u64be(beacon.round_id) + bytes(beacon.output)
+    )
 
 
 @dataclass(frozen=True)
@@ -73,6 +74,7 @@ class LightProof:
     output         : bytes
         The beacon output value for `round_id` (post-VDF and any in-round mixing).
     """
+
     round_id: RoundId
     prev_out_hash: bytes
     vdf_input: VDFInput
@@ -161,7 +163,9 @@ class LightProof:
         be set to the known anchor hash out-of-band.
         """
         if prev is None:
-            raise ValueError("prev BeaconOut required (anchor hash must be explicit upstream)")
+            raise ValueError(
+                "prev BeaconOut required (anchor hash must be explicit upstream)"
+            )
         prev_hash = hash_beacon_out_min(prev)
         lp = LightProof(
             round_id=current.round_id,
@@ -175,6 +179,7 @@ class LightProof:
 
 
 # ----------------------------- verification -----------------------------
+
 
 def verify_light_proof(
     proof: LightProof,
@@ -254,7 +259,9 @@ def verify_chain_from_anchor(
             return (False, None, None)
 
         # Advance chain
-        last_hash = sha3_256(BEACON_OUT_HASH_TAG + _u64be(int(p.round_id)) + bytes(p.output))
+        last_hash = sha3_256(
+            BEACON_OUT_HASH_TAG + _u64be(int(p.round_id)) + bytes(p.output)
+        )
         expected_prev_hash = last_hash
         prev_round = int(p.round_id)
         last_round = prev_round

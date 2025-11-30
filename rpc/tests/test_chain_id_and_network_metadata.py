@@ -11,4 +11,3 @@ def test_chain_id_and_params_agree_with_config():
 
     assert chain_id_res["result"] == cfg.chain_id
     assert params_res["result"].get("chainId") == cfg.chain_id
-

@@ -57,10 +57,10 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, replace
-from typing import Iterable, Mapping, MutableMapping, Optional, Sequence, Tuple, List, Dict
+from typing import (Dict, Iterable, List, Mapping, MutableMapping, Optional,
+                    Sequence, Tuple)
 
 from .types import MicroNat  # alias for int
-
 
 # ---------------------------------------------------------------------------
 # Utilities
@@ -98,6 +98,7 @@ def _derive_alpha_from_half_life(half_life_blocks: float) -> float:
 # Params & State
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class RetargetParams:
     """
@@ -118,12 +119,13 @@ class RetargetParams:
     theta_max_micro : MicroNat
         Upper bound for Θ (do not exceed).
     """
+
     target_block_time_s: float = 12.0
     half_life_blocks: float = 24.0
     gain_beta: float = 0.75
-    step_clamp_micro: MicroNat = 400_000   # ~0.4 nats per step max
-    theta_min_micro: MicroNat = 500_000    # ~0.5 nats (very easy)
-    theta_max_micro: MicroNat = 30_000_000 # 30 nats (very hard)
+    step_clamp_micro: MicroNat = 400_000  # ~0.4 nats per step max
+    theta_min_micro: MicroNat = 500_000  # ~0.5 nats (very easy)
+    theta_max_micro: MicroNat = 30_000_000  # 30 nats (very hard)
 
 
 @dataclass(frozen=True)
@@ -144,6 +146,7 @@ class RetargetState:
     params : RetargetParams
         The parameter set used to evolve the state.
     """
+
     theta_micro: MicroNat
     tau_nats: float
     ema_log_dt_over_T: float
@@ -154,6 +157,7 @@ class RetargetState:
 # ---------------------------------------------------------------------------
 # Core API
 # ---------------------------------------------------------------------------
+
 
 def init_state(params: RetargetParams, theta_init_micro: MicroNat) -> RetargetState:
     """Initialize retarget state from params and initial Θ."""
@@ -224,7 +228,9 @@ def update_theta(
         theta_next = theta_target_micro
 
     # Global clamps
-    theta_next = max(int(p.theta_min_micro), min(int(p.theta_max_micro), int(theta_next)))
+    theta_next = max(
+        int(p.theta_min_micro), min(int(p.theta_max_micro), int(theta_next))
+    )
 
     return RetargetState(
         theta_micro=int(theta_next),
@@ -238,6 +244,7 @@ def update_theta(
 # ---------------------------------------------------------------------------
 # Share thresholds
 # ---------------------------------------------------------------------------
+
 
 def compute_share_micro(theta_micro: MicroNat, shares_per_block: float) -> MicroNat:
     """
@@ -302,6 +309,7 @@ def compute_share_tiers(
 # Convenience: multi-sample EMA update
 # ---------------------------------------------------------------------------
 
+
 def update_theta_multi(
     state: RetargetState,
     dt_seconds_samples: Sequence[float],
@@ -326,7 +334,7 @@ if __name__ == "__main__":
     # then 30% slower, and observe Θ react smoothly within clamps.
     params = RetargetParams(
         target_block_time_s=12.0,
-        half_life_blocks=24.0,   # ~smooth over a day at 12s blocks
+        half_life_blocks=24.0,  # ~smooth over a day at 12s blocks
         gain_beta=0.9,
         step_clamp_micro=500_000,
         theta_min_micro=800_000,
@@ -336,8 +344,10 @@ if __name__ == "__main__":
 
     def show(tag: str, st: RetargetState):
         tiers = compute_share_tiers(st.theta_micro, (4, 16, 64, 256))
-        print(f"{tag}: Θ={st.theta_micro/1e6:.6f} nats  r̂={st.ema_log_dt_over_T:+.4f}  "
-              f"K16 τ_share={tiers[1]['theta_share_micro']/1e6:.6f} nats")
+        print(
+            f"{tag}: Θ={st.theta_micro/1e6:.6f} nats  r̂={st.ema_log_dt_over_T:+.4f}  "
+            f"K16 τ_share={tiers[1]['theta_share_micro']/1e6:.6f} nats"
+        )
 
     # 40 blocks at 9.6s (fast)
     for i in range(40):
@@ -353,4 +363,10 @@ if __name__ == "__main__":
 
     # Print share tiers for the final Θ
     tiers = compute_share_tiers(s.theta_micro)
-    print("tiers(K, θ_share, d_ratio):", [(t['K'], round(t['theta_share_micro']/1e6, 4), round(t['d_ratio_min'], 3)) for t in tiers])
+    print(
+        "tiers(K, θ_share, d_ratio):",
+        [
+            (t["K"], round(t["theta_share_micro"] / 1e6, 4), round(t["d_ratio_min"], 3))
+            for t in tiers
+        ],
+    )

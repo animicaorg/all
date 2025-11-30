@@ -18,17 +18,17 @@ Design rules
 
 from __future__ import annotations
 
-from typing import Iterable, Union, Optional, Tuple
+from typing import Iterable, Optional, Tuple, Union
 
 # Try to use the canonical core hashing primitives when available.
 try:
-    from core.utils.hash import (
-        sha3_256 as _sha3_256,
-        sha3_512 as _sha3_512,
-    )
+    from core.utils.hash import sha3_256 as _sha3_256
+    from core.utils.hash import sha3_512 as _sha3_512
+
     # core.utils.hash may or may not expose blake3; we feature-detect below.
     try:
         from core.utils.hash import blake3_256 as _blake3_256  # type: ignore
+
         _HAS_BLAKE3 = True
     except Exception:
         _blake3_256 = None  # type: ignore
@@ -96,6 +96,7 @@ def domain_tag(name: str) -> bytes:
 # Safe concatenation
 # ------------------------------------------------------------------------------
 
+
 def _to_bytes(x: Union[bytes, bytearray, memoryview, str, int]) -> bytes:
     """
     Normalize various input types into bytes:
@@ -140,7 +141,9 @@ def concat_lp(parts: Iterable[Union[bytes, bytearray, memoryview, str, int]]) ->
     return bytes(out)
 
 
-def tag_bytes(tag: Union[str, bytes], *parts: Union[bytes, bytearray, memoryview, str, int]) -> bytes:
+def tag_bytes(
+    tag: Union[str, bytes], *parts: Union[bytes, bytearray, memoryview, str, int]
+) -> bytes:
     """
     Build a domain-separated, length-prefixed byte string:
         data = domain_tag(tag) || 0x00 || LP(part1) || LP(part2) || ...
@@ -158,6 +161,7 @@ def tag_bytes(tag: Union[str, bytes], *parts: Union[bytes, bytearray, memoryview
 # ------------------------------------------------------------------------------
 # Hash helpers (tagged)
 # ------------------------------------------------------------------------------
+
 
 def sha3_256(data: Union[bytes, bytearray, memoryview, str, int]) -> bytes:
     return _sha3_256(_to_bytes(data))
@@ -179,15 +183,21 @@ def has_blake3() -> bool:
     return _HAS_BLAKE3
 
 
-def sha3_256_tag(tag: Union[str, bytes], *parts: Union[bytes, bytearray, memoryview, str, int]) -> bytes:
+def sha3_256_tag(
+    tag: Union[str, bytes], *parts: Union[bytes, bytearray, memoryview, str, int]
+) -> bytes:
     return _sha3_256(tag_bytes(tag, *parts))
 
 
-def sha3_512_tag(tag: Union[str, bytes], *parts: Union[bytes, bytearray, memoryview, str, int]) -> bytes:
+def sha3_512_tag(
+    tag: Union[str, bytes], *parts: Union[bytes, bytearray, memoryview, str, int]
+) -> bytes:
     return _sha3_512(tag_bytes(tag, *parts))
 
 
-def blake3_256_tag(tag: Union[str, bytes], *parts: Union[bytes, bytearray, memoryview, str, int]) -> bytes:
+def blake3_256_tag(
+    tag: Union[str, bytes], *parts: Union[bytes, bytearray, memoryview, str, int]
+) -> bytes:
     data = tag_bytes(tag, *parts)
     if _blake3_256 is None:
         return _sha3_256(data)
@@ -197,6 +207,7 @@ def blake3_256_tag(tag: Union[str, bytes], *parts: Union[bytes, bytearray, memor
 # ------------------------------------------------------------------------------
 # Small utilities
 # ------------------------------------------------------------------------------
+
 
 def to_hex(data: Union[bytes, bytearray, memoryview], prefix: str = "0x") -> str:
     return prefix + bytes(data).hex()
@@ -209,7 +220,9 @@ def checksum32(data: Union[bytes, bytearray, memoryview, str, int]) -> bytes:
     return sha3_256(data)[:4]
 
 
-def merkle_pair(tag_name: str, left: Union[bytes, str], right: Union[bytes, str]) -> bytes:
+def merkle_pair(
+    tag_name: str, left: Union[bytes, str], right: Union[bytes, str]
+) -> bytes:
     """
     Simple pair hash used in compact receipt leaves:
         H = SHA3-256( Tag || 0x00 || LP(left) || LP(right) )
@@ -221,6 +234,7 @@ def merkle_pair(tag_name: str, left: Union[bytes, str], right: Union[bytes, str]
 # ------------------------------------------------------------------------------
 # High-level patterns used by proofs/* modules
 # ------------------------------------------------------------------------------
+
 
 def nullifier_from_body(body_cbor: bytes, subdomain: str) -> bytes:
     """

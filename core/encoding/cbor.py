@@ -38,12 +38,13 @@ Public API:
 These are re-exported from core.encoding.__init__.
 """
 
-from dataclasses import is_dataclass, asdict
-from typing import Any, Tuple, List, Dict, Iterable
+from dataclasses import asdict, is_dataclass
+from typing import Any, Dict, Iterable, List, Tuple
 
 # ------------------------
 # Low-level encode helpers
 # ------------------------
+
 
 def _ai_bytes(major: int, n: int) -> bytes:
     """Encode initial byte + additional-info for a non-negative integer length/value."""
@@ -62,27 +63,33 @@ def _ai_bytes(major: int, n: int) -> bytes:
         # Caller must use bignum tags 2/3; we never put >64-bit here.
         raise OverflowError("Length/value too large for additional-info field")
 
+
 def _encode_uint(n: int) -> bytes:
     assert n >= 0
     return _ai_bytes(0, n)
+
 
 def _encode_nint(n: int) -> bytes:
     # Negative integer x is encoded as major type 1 with argument -(x+1)
     assert n < 0
     return _ai_bytes(1, -1 - n)
 
+
 def _encode_bytes(data: bytes) -> bytes:
     return _ai_bytes(2, len(data)) + data
+
 
 def _encode_text(s: str) -> bytes:
     b = s.encode("utf-8", "strict")
     return _ai_bytes(3, len(b)) + b
+
 
 def _encode_array(items: Iterable[bytes], count: int) -> bytes:
     out = bytearray(_ai_bytes(4, count))
     for it in items:
         out += it
     return bytes(out)
+
 
 def _encode_map(pairs: Iterable[Tuple[bytes, bytes]], count: int) -> bytes:
     out = bytearray(_ai_bytes(5, count))
@@ -91,19 +98,24 @@ def _encode_map(pairs: Iterable[Tuple[bytes, bytes]], count: int) -> bytes:
         out += v
     return bytes(out)
 
+
 def _encode_tag(tag: int, payload: bytes) -> bytes:
     # major type 6 = tag
     return _ai_bytes(6, tag) + payload
+
 
 # ------------------------
 # Canonical encoder
 # ------------------------
 
+
 class EncodeError(TypeError):
     pass
 
+
 def _is_small_int(n: int) -> bool:
     return 0 <= n <= 0xFFFFFFFFFFFFFFFF
+
 
 def _to_bignum_bytes(n: int) -> bytes:
     """Magnitude to minimal big-endian bytes without leading zeros."""
@@ -118,9 +130,11 @@ def _to_bignum_bytes(n: int) -> bytes:
         i += 1
     return b[i:]
 
+
 def _canonical_key_order(key_bytes: bytes) -> bytes:
     """Identity — sorting by the encoded key bytes lexicographically."""
     return key_bytes
+
 
 def _encode_obj(obj: Any) -> bytes:
     # dataclasses become dicts
@@ -181,37 +195,45 @@ def _encode_obj(obj: Any) -> bytes:
     # Floats and others are not allowed in consensus encodings
     raise EncodeError(f"unsupported type for canonical CBOR: {type(obj).__name__}")
 
+
 def dumps(obj: Any) -> bytes:
     """
     Encode `obj` to canonical CBOR bytes with deterministic map ordering.
     """
     return _encode_obj(obj)
 
+
 # ------------------------
 # Minimal decoder (strict)
 # ------------------------
 
+
 class DecodeError(ValueError):
     pass
 
+
 class _Buf:
     __slots__ = ("b", "i", "n")
+
     def __init__(self, b: bytes):
         self.b = memoryview(b)
         self.i = 0
         self.n = len(b)
+
     def get(self, k: int) -> bytes:
         if self.i + k > self.n:
             raise DecodeError("truncated")
-        out = self.b[self.i:self.i+k].tobytes()
+        out = self.b[self.i : self.i + k].tobytes()
         self.i += k
         return out
+
     def get1(self) -> int:
         if self.i >= self.n:
             raise DecodeError("truncated")
         v = self.b[self.i]
         self.i += 1
         return int(v)
+
 
 def _read_ai(buf: _Buf) -> Tuple[int, int]:
     ib = buf.get1()
@@ -228,6 +250,7 @@ def _read_ai(buf: _Buf) -> Tuple[int, int]:
     if ai == 27:
         return major, int.from_bytes(buf.get(8), "big")
     raise DecodeError("indefinite lengths are not allowed (deterministic only)")
+
 
 def _decode(buf: _Buf) -> Any:
     major, ai = _read_ai(buf)
@@ -268,12 +291,16 @@ def _decode(buf: _Buf) -> Any:
             key_end = buf.i
             key_enc = buf.b[key_start:key_end].tobytes()
             if last_key_enc is not None and key_enc <= last_key_enc:
-                raise DecodeError("map keys not in deterministic (strictly increasing) order")
+                raise DecodeError(
+                    "map keys not in deterministic (strictly increasing) order"
+                )
             last_key_enc = key_enc
             val = _decode(buf)
             # Accept only int/bytes/str keys at runtime (mirrors encoder)
             if not isinstance(key, (int, bytes, str)):
-                raise DecodeError(f"unsupported map key type at decode: {type(key).__name__}")
+                raise DecodeError(
+                    f"unsupported map key type at decode: {type(key).__name__}"
+                )
             if key in out:
                 raise DecodeError("duplicate map key")
             out[key] = val
@@ -306,9 +333,12 @@ def _decode(buf: _Buf) -> Any:
         if ai == 22:
             return None
         # We do not accept floats/simple values beyond the above
-        raise DecodeError("floating point/simple values are not allowed in consensus CBOR")
+        raise DecodeError(
+            "floating point/simple values are not allowed in consensus CBOR"
+        )
 
     raise DecodeError(f"unknown major type: {major}")
+
 
 def loads(b: bytes) -> Any:
     """

@@ -12,13 +12,13 @@ by dashboards and explorers. It validates:
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Dict, Iterable, Mapping, Tuple
 
-import math
 import pytest
-from hypothesis import given, strategies as st
-
+from hypothesis import given
+from hypothesis import strategies as st
 
 # ------------------------------- Reference math -------------------------------
 
@@ -28,6 +28,7 @@ ProofType = str
 @dataclass(frozen=True)
 class PoiesParams:
     """Network configuration for PoIES aggregation."""
+
     weights: Mapping[ProofType, float]
     caps: Mapping[ProofType, float]
 
@@ -43,7 +44,9 @@ class PoiesParams:
             raise ValueError("weights and caps must have identical proof-type keys")
 
 
-def compute_psi(raw: Mapping[ProofType, float], caps: Mapping[ProofType, float]) -> Dict[ProofType, float]:
+def compute_psi(
+    raw: Mapping[ProofType, float], caps: Mapping[ProofType, float]
+) -> Dict[ProofType, float]:
     """
     ψ clipping per proof type: ψ_t = min(max(raw_t, 0), cap_t).
     Negative inputs are treated as 0 (defensive).
@@ -57,7 +60,9 @@ def compute_psi(raw: Mapping[ProofType, float], caps: Mapping[ProofType, float])
     return psi
 
 
-def compute_gamma(psi: Mapping[ProofType, float], weights: Mapping[ProofType, float]) -> float:
+def compute_gamma(
+    psi: Mapping[ProofType, float], weights: Mapping[ProofType, float]
+) -> float:
     """Γ = Σ_t w_t * ψ_t."""
     return sum(float(weights[t]) * float(psi.get(t, 0.0)) for t in weights.keys())
 
@@ -95,6 +100,7 @@ DEFAULT_PARAMS = PoiesParams(
 
 # --------------------------------- Unit cases ---------------------------------
 
+
 def test_gamma_and_mix_with_caps_and_overflow():
     """
     Synthetic raw contributions exceed several caps:
@@ -106,7 +112,9 @@ def test_gamma_and_mix_with_caps_and_overflow():
     """
     raw = {"hashshare": 1.40, "ai": 0.60, "quantum": 0.25, "storage": 0.40, "vdf": 0.05}
     psi = compute_psi(raw, DEFAULT_PARAMS.caps)
-    assert psi == pytest.approx({"hashshare": 1.00, "ai": 0.50, "quantum": 0.25, "storage": 0.30, "vdf": 0.05})
+    assert psi == pytest.approx(
+        {"hashshare": 1.00, "ai": 0.50, "quantum": 0.25, "storage": 0.30, "vdf": 0.05}
+    )
 
     gamma = compute_gamma(psi, DEFAULT_PARAMS.weights)
     assert gamma == pytest.approx(0.655, rel=1e-9, abs=1e-12)
@@ -130,9 +138,7 @@ def test_under_saturation_no_caps_triggered():
     assert psi == pytest.approx(raw)
 
     gamma = compute_gamma(psi, DEFAULT_PARAMS.weights)
-    expected = (
-        0.45 * 0.50 + 0.20 * 0.25 + 0.20 * 0.10 + 0.10 * 0.10 + 0.05 * 0.10
-    )
+    expected = 0.45 * 0.50 + 0.20 * 0.25 + 0.20 * 0.10 + 0.10 * 0.10 + 0.05 * 0.10
     assert gamma == pytest.approx(expected, rel=1e-9)
 
 
@@ -163,7 +169,9 @@ def test_single_type_saturates_cap_others_zero():
         assert psi.get(t, 0.0) <= DEFAULT_PARAMS.caps[t]
 
     gamma = compute_gamma(psi, DEFAULT_PARAMS.weights)
-    assert gamma == pytest.approx(DEFAULT_PARAMS.weights["hashshare"] * DEFAULT_PARAMS.caps["hashshare"])
+    assert gamma == pytest.approx(
+        DEFAULT_PARAMS.weights["hashshare"] * DEFAULT_PARAMS.caps["hashshare"]
+    )
 
     mix = compute_mix(psi)
     # Σψ equals hashshare cap; so its mix is 1.0 and others 0
@@ -179,7 +187,9 @@ def test_invariants_upper_bound_and_nonnegativity():
       - 0 ≤ ψ_t ≤ cap_t
       - Γ ≤ Σ_t w_t*cap_t
     """
-    cap_bound = sum(DEFAULT_PARAMS.weights[t] * DEFAULT_PARAMS.caps[t] for t in DEFAULT_TYPES)
+    cap_bound = sum(
+        DEFAULT_PARAMS.weights[t] * DEFAULT_PARAMS.caps[t] for t in DEFAULT_TYPES
+    )
 
     raw = {t: 10.0 for t in DEFAULT_TYPES}  # well above caps
     psi = compute_psi(raw, DEFAULT_PARAMS.caps)
@@ -193,7 +203,9 @@ def test_invariants_upper_bound_and_nonnegativity():
 
 # ------------------------------ Property tests --------------------------------
 
-_float_nonneg = st.floats(min_value=0.0, max_value=5.0, allow_nan=False, allow_infinity=False)
+_float_nonneg = st.floats(
+    min_value=0.0, max_value=5.0, allow_nan=False, allow_infinity=False
+)
 
 
 @given(
@@ -218,7 +230,9 @@ def test_properties_hold_under_random_inputs(hashshare, ai, quantum, storage, vd
         assert 0.0 <= psi[t] <= DEFAULT_PARAMS.caps[t]
 
     gamma = compute_gamma(psi, DEFAULT_PARAMS.weights)
-    cap_bound = sum(DEFAULT_PARAMS.weights[t] * DEFAULT_PARAMS.caps[t] for t in DEFAULT_TYPES)
+    cap_bound = sum(
+        DEFAULT_PARAMS.weights[t] * DEFAULT_PARAMS.caps[t] for t in DEFAULT_TYPES
+    )
     assert 0.0 <= gamma <= cap_bound + 1e-12
 
     mix = compute_mix(psi)
@@ -228,5 +242,3 @@ def test_properties_hold_under_random_inputs(hashshare, ai, quantum, storage, vd
         assert sum(mix.values()) == pytest.approx(1.0, abs=1e-9)
         for v in mix.values():
             assert 0.0 <= v <= 1.0 + 1e-12
-
-

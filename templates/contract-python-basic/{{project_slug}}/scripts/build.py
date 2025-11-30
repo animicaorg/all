@@ -29,7 +29,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-
 # ------------------------------ helpers -------------------------------------
 
 
@@ -74,6 +73,7 @@ def _rel_to(root: Path, path: Path) -> str:
 
 
 # ------------------------------ vm_py compile -------------------------------
+
 
 @dataclass
 class CompileResult:
@@ -146,6 +146,7 @@ def _write_stub_ir(ir_out: Path, source_bytes: bytes) -> None:
 
 # ------------------------------ package build -------------------------------
 
+
 def _build_package(
     project_root: Path,
     manifest: Dict[str, Any],
@@ -171,7 +172,9 @@ def _build_package(
         "paths": {
             "source": _rel_to(project_root, src_path),
             "ir": _rel_to(project_root, ir_path),
-            "manifest": _rel_to(project_root, project_root / "contracts" / "manifest.json"),
+            "manifest": _rel_to(
+                project_root, project_root / "contracts" / "manifest.json"
+            ),
         },
         "abi": abi,
         "metadata": meta,
@@ -204,8 +207,11 @@ def _write_lockfile(out_dir: Path, package: Dict[str, Any]) -> None:
 
 # ------------------------------ main ----------------------------------------
 
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build contract package (deterministic).")
+    parser = argparse.ArgumentParser(
+        description="Build contract package (deterministic)."
+    )
     parser.add_argument(
         "--manifest",
         type=Path,
@@ -267,12 +273,14 @@ def main() -> int:
     # Compile to IR (preferred) or emit stub IR
     vm_cli_used = False
     notes = ""
-    if not args.no-compile:
+    if not args.no - compile:
         if _vm_cli_available():
             ok, notes = _try_vm_compile(src_path, ir_path)
             vm_cli_used = ok
             if not ok:
-                print(f"[build] vm_py compile not available/failed; emitting stub IR. Details:\n{notes}")
+                print(
+                    f"[build] vm_py compile not available/failed; emitting stub IR. Details:\n{notes}"
+                )
                 _write_stub_ir(ir_path, source_bytes)
         else:
             print("[build] vm_py not available; emitting stub IR.")

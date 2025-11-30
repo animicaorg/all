@@ -49,8 +49,10 @@ from __future__ import annotations
 
 from typing import Final, Tuple
 
-from stdlib import abi, events, hash as _hash, storage  # type: ignore
-from stdlib import syscalls as _sys                     # type: ignore
+from stdlib import abi, events
+from stdlib import hash as _hash  # type: ignore
+from stdlib import storage
+from stdlib import syscalls as _sys  # type: ignore
 
 # -----------------------------------------------------------------------------
 # Bounds & constants (chosen to be safely below host/provider maxima)
@@ -81,6 +83,7 @@ MAX_RANDOM_BYTES: Final[int] = 4096
 # -----------------------------------------------------------------------------
 # Helpers
 # -----------------------------------------------------------------------------
+
 
 def _ensure_bytes(x: object) -> bytes:
     if not isinstance(x, (bytes, bytearray)):
@@ -116,6 +119,7 @@ def _h256(b: bytes) -> bytes:
 # Blob pinning
 # -----------------------------------------------------------------------------
 
+
 def blob_pin(ns: int, data: bytes) -> bytes:
     """
     Pin a blob (content-addressed) under a numeric namespace.
@@ -142,13 +146,21 @@ def blob_pin(ns: int, data: bytes) -> bytes:
     _ensure_nonempty(data_b)
 
     commit = _sys.blob_pin(ns, data_b)  # type: ignore[attr-defined]
-    events.emit(b"CAP:BlobPinned", {b"ns": ns.to_bytes(4, "big"), b"size": len(data_b).to_bytes(4, "big"), b"commitment": _ensure_bytes(commit)})
+    events.emit(
+        b"CAP:BlobPinned",
+        {
+            b"ns": ns.to_bytes(4, "big"),
+            b"size": len(data_b).to_bytes(4, "big"),
+            b"commitment": _ensure_bytes(commit),
+        },
+    )
     return _ensure_bytes(commit)
 
 
 # -----------------------------------------------------------------------------
 # AI enqueue
 # -----------------------------------------------------------------------------
+
 
 def ai_enqueue(model: bytes, prompt: bytes) -> bytes:
     """
@@ -174,13 +186,16 @@ def ai_enqueue(model: bytes, prompt: bytes) -> bytes:
 
     task_id = _sys.ai_enqueue(m, p)  # type: ignore[attr-defined]
     tid = _ensure_bytes(task_id)
-    events.emit(b"CAP:AIEnqueued", {b"model": m, b"prompt_hash": _h256(p), b"task_id": tid})
+    events.emit(
+        b"CAP:AIEnqueued", {b"model": m, b"prompt_hash": _h256(p), b"task_id": tid}
+    )
     return tid
 
 
 # -----------------------------------------------------------------------------
 # Quantum enqueue
 # -----------------------------------------------------------------------------
+
 
 def quantum_enqueue(circuit: bytes, shots: int) -> bytes:
     """
@@ -202,13 +217,21 @@ def quantum_enqueue(circuit: bytes, shots: int) -> bytes:
 
     task_id = _sys.quantum_enqueue(c, shots)  # type: ignore[attr-defined]
     tid = _ensure_bytes(task_id)
-    events.emit(b"CAP:QuantumEnqueued", {b"circuit_hash": _h256(c), b"shots": shots.to_bytes(4, "big"), b"task_id": tid})
+    events.emit(
+        b"CAP:QuantumEnqueued",
+        {
+            b"circuit_hash": _h256(c),
+            b"shots": shots.to_bytes(4, "big"),
+            b"task_id": tid,
+        },
+    )
     return tid
 
 
 # -----------------------------------------------------------------------------
 # Results (read-only, deterministic)
 # -----------------------------------------------------------------------------
+
 
 def read_result(task_id: bytes) -> Tuple[bytes, bytes]:
     """
@@ -239,13 +262,22 @@ def read_result(task_id: bytes) -> Tuple[bytes, bytes]:
     if len(s) == 0:
         abi.revert(b"CAP:NORESULT")
 
-    events.emit(b"CAP:ResultRead", {b"task_id": tid, b"status": s, b"output_hash": _h256(o), b"size": len(o).to_bytes(4, "big")})
+    events.emit(
+        b"CAP:ResultRead",
+        {
+            b"task_id": tid,
+            b"status": s,
+            b"output_hash": _h256(o),
+            b"size": len(o).to_bytes(4, "big"),
+        },
+    )
     return (s, o)
 
 
 # -----------------------------------------------------------------------------
 # zk.verify
 # -----------------------------------------------------------------------------
+
 
 def zk_verify(circuit: bytes, proof: bytes, public: bytes) -> bool:
     """
@@ -270,6 +302,7 @@ def zk_verify(circuit: bytes, proof: bytes, public: bytes) -> bool:
 # -----------------------------------------------------------------------------
 # Random
 # -----------------------------------------------------------------------------
+
 
 def random_bytes(n: int) -> bytes:
     """

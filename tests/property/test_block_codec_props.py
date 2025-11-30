@@ -21,7 +21,8 @@ import inspect
 from typing import Any, Dict, Optional, Tuple, get_args, get_origin
 
 import pytest
-from hypothesis import given, settings, strategies as st
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 # ---- Optional imports (guarded) ---------------------------------------------
 
@@ -60,30 +61,48 @@ except Exception:
 
 # ---- Helpers: type/codec/hash detection -------------------------------------
 
+
 def _get_header_type():
     return getattr(_hdr_mod, "Header", None) if _hdr_mod else None
 
+
 def _get_block_type():
     return getattr(_blk_mod, "Block", None) if _blk_mod else None
+
 
 def _has_cbor_codec() -> bool:
     if _cbor_mod and hasattr(_cbor_mod, "dumps") and hasattr(_cbor_mod, "loads"):
         return True
     return False
 
+
 def _has_header_codec() -> bool:
     if not _hdr_mod:
         return False
-    enc = any(hasattr(_hdr_mod, n) for n in ("encode_header", "to_cbor", "cbor_encode", "encode"))
-    dec = any(hasattr(_hdr_mod, n) for n in ("decode_header", "from_cbor", "cbor_decode", "decode"))
+    enc = any(
+        hasattr(_hdr_mod, n)
+        for n in ("encode_header", "to_cbor", "cbor_encode", "encode")
+    )
+    dec = any(
+        hasattr(_hdr_mod, n)
+        for n in ("decode_header", "from_cbor", "cbor_decode", "decode")
+    )
     return enc and dec
+
 
 def _has_block_codec() -> bool:
     if not _blk_mod:
         return False
-    enc = any(hasattr(_blk_mod, n) for n in ("encode_block", "to_cbor", "cbor_encode", "encode"))
-    dec = any(hasattr(_blk_mod, n) for n in ("decode_block", "from_cbor", "cbor_decode", "decode"))
+    enc = any(
+        hasattr(_blk_mod, n)
+        for n in ("encode_block", "to_cbor", "cbor_encode", "encode")
+    )
+    dec = any(
+        hasattr(_blk_mod, n)
+        for n in ("decode_block", "from_cbor", "cbor_decode", "decode")
+    )
     return enc and dec
+
 
 def _encode_bytes(obj: Any, kind: str) -> bytes:
     """
@@ -101,12 +120,17 @@ def _encode_bytes(obj: Any, kind: str) -> bytes:
             fn = getattr(mod, name, None)
             if fn:
                 out = fn(obj)  # type: ignore[misc]
-                assert isinstance(out, (bytes, bytearray)), f"{name} must return bytes-like"
+                assert isinstance(
+                    out, (bytes, bytearray)
+                ), f"{name} must return bytes-like"
                 return bytes(out)
     # Fallback to canonical CBOR (module should be deterministic)
     if _has_cbor_codec():
         return _cbor_mod.dumps(obj)  # type: ignore[attr-defined]
-    pytest.skip(f"No {kind} encoder available (module helper or core.encoding.cbor.dumps)")
+    pytest.skip(
+        f"No {kind} encoder available (module helper or core.encoding.cbor.dumps)"
+    )
+
 
 def _decode_obj(b: bytes, kind: str, T: Optional[type]) -> Any:
     mod = _hdr_mod if kind == "header" else _blk_mod
@@ -124,8 +148,10 @@ def _decode_obj(b: bytes, kind: str, T: Optional[type]) -> Any:
         # Some loaders accept a 'type' kwarg
         try:
             sig = inspect.signature(_cbor_mod.loads)  # type: ignore[attr-defined]
-            if any(p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY) and p.name == "type"
-                   for p in sig.parameters.values()):
+            if any(
+                p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY) and p.name == "type"
+                for p in sig.parameters.values()
+            ):
                 return _cbor_mod.loads(b, type=T)  # type: ignore[attr-defined]
         except Exception:
             pass
@@ -136,12 +162,16 @@ def _decode_obj(b: bytes, kind: str, T: Optional[type]) -> Any:
             except Exception:
                 return obj
         return obj
-    pytest.skip(f"No {kind} decoder available (module helper or core.encoding.cbor.loads)")
+    pytest.skip(
+        f"No {kind} decoder available (module helper or core.encoding.cbor.loads)"
+    )
+
 
 def _sha3_256(data: bytes) -> bytes:
     if _hash_mod and hasattr(_hash_mod, "sha3_256"):
         return _hash_mod.sha3_256(data)  # type: ignore[attr-defined]
     return hashlib.sha3_256(data).digest()
+
 
 def _hash_header(hdr: Any) -> bytes:
     # Try methods on the object
@@ -155,7 +185,13 @@ def _hash_header(hdr: Any) -> bytes:
 
     # Try free functions on the header module
     if _hdr_mod:
-        for fn_name in ("hash_header", "header_hash", "compute_hash", "calc_hash", "hash"):
+        for fn_name in (
+            "hash_header",
+            "header_hash",
+            "compute_hash",
+            "calc_hash",
+            "hash",
+        ):
             fn = getattr(_hdr_mod, fn_name, None)
             if fn:
                 out = fn(hdr)  # type: ignore[misc]
@@ -167,6 +203,7 @@ def _hash_header(hdr: Any) -> bytes:
         return _sha3_256(_cbor_mod.dumps(hdr))  # type: ignore[attr-defined]
 
     pytest.skip("No way to hash Header (no helper and CBOR missing)")
+
 
 def _hash_block(blk: Any) -> bytes:
     # Try methods on object
@@ -180,7 +217,13 @@ def _hash_block(blk: Any) -> bytes:
 
     # Try free functions on the block module
     if _blk_mod:
-        for fn_name in ("hash_block", "block_hash", "compute_hash", "calc_hash", "hash"):
+        for fn_name in (
+            "hash_block",
+            "block_hash",
+            "compute_hash",
+            "calc_hash",
+            "hash",
+        ):
             fn = getattr(_blk_mod, fn_name, None)
             if fn:
                 out = fn(blk)  # type: ignore[misc]
@@ -192,6 +235,7 @@ def _hash_block(blk: Any) -> bytes:
         return _sha3_256(_cbor_mod.dumps(blk))  # type: ignore[attr-defined]
 
     pytest.skip("No way to hash Block (no helper and CBOR missing)")
+
 
 def _normalize(obj: Any) -> Any:
     """Turn objects into plain structures for equality assertions."""
@@ -215,17 +259,22 @@ _U32 = st.integers(min_value=0, max_value=2**32 - 1)
 _U64 = st.integers(min_value=0, max_value=2**64 - 1)
 _U128 = st.integers(min_value=0, max_value=2**128 - 1)
 
+
 def _h256() -> st.SearchStrategy[bytes]:
     return st.binary(min_size=32, max_size=32)
+
 
 def _h160_or_h256() -> st.SearchStrategy[bytes]:
     return st.one_of(st.binary(min_size=20, max_size=20), _h256())
 
+
 def _maybe(t: st.SearchStrategy[Any]) -> st.SearchStrategy[Optional[Any]]:
     return st.one_of(st.none(), t)
 
+
 def _tiny_list(t: st.SearchStrategy[Any]) -> st.SearchStrategy[list]:
     return st.lists(t, min_size=0, max_size=3)
+
 
 def _infer_strategy_from_type(tp: Any) -> Optional[st.SearchStrategy[Any]]:
     origin = get_origin(tp)
@@ -237,11 +286,18 @@ def _infer_strategy_from_type(tp: Any) -> Optional[st.SearchStrategy[Any]]:
     if tp in (str, "str"):
         return st.from_regex(r"^(0x)?[0-9a-fA-F]{0,64}$")
     if origin is Optional or origin is type(Optional[bytes]):
-        return _maybe(_infer_strategy_from_type(args[0]) or st.binary(min_size=0, max_size=64))
+        return _maybe(
+            _infer_strategy_from_type(args[0]) or st.binary(min_size=0, max_size=64)
+        )
     if origin in (list, tuple):
-        base = _infer_strategy_from_type(args[0]) if args else st.binary(min_size=0, max_size=64)
+        base = (
+            _infer_strategy_from_type(args[0])
+            if args
+            else st.binary(min_size=0, max_size=64)
+        )
         return _tiny_list(base)
     return None
+
 
 def _header_strategy_dataclass(HdrType: type) -> st.SearchStrategy[Any]:
     # Heuristic per-field builders keyed by common names
@@ -291,11 +347,14 @@ def _header_strategy_dataclass(HdrType: type) -> st.SearchStrategy[Any]:
         kw[f.name] = strat
     return st.builds(HdrType, **kw)
 
+
 def _arb_header_strategy() -> Tuple[Optional[type], st.SearchStrategy[Any]]:
     HdrType = _get_header_type()
     if HdrType is not None:
         try:
-            from hypothesis.extra import dataclasses as hdataclasses  # type: ignore
+            from hypothesis.extra import \
+                dataclasses as hdataclasses  # type: ignore
+
             return HdrType, hdataclasses.from_type(HdrType)  # type: ignore
         except Exception:
             return HdrType, _header_strategy_dataclass(HdrType)
@@ -320,15 +379,20 @@ def _arb_header_strategy() -> Tuple[Optional[type], st.SearchStrategy[Any]]:
     )
     return None, mapping
 
-def _block_strategy_dataclass(BlkType: type, HdrType: Optional[type]) -> st.SearchStrategy[Any]:
+
+def _block_strategy_dataclass(
+    BlkType: type, HdrType: Optional[type]
+) -> st.SearchStrategy[Any]:
     # Identify field names; build with nested header strategy when possible
     try:
         fields = list(_dc.fields(BlkType))  # type: ignore[arg-type]
     except Exception:
         return st.nothing()
 
-    hdr_strat = _arb_header_strategy()[1] if HdrType is None else (
-        _header_strategy_dataclass(HdrType)
+    hdr_strat = (
+        _arb_header_strategy()[1]
+        if HdrType is None
+        else (_header_strategy_dataclass(HdrType))
     )
 
     kw: Dict[str, st.SearchStrategy[Any]] = {}
@@ -339,26 +403,43 @@ def _block_strategy_dataclass(BlkType: type, HdrType: Optional[type]) -> st.Sear
             strat = hdr_strat
         elif name in ("txs", "transactions"):
             # Keep small to avoid heavy object graphs
-            strat = st.lists(st.binary(min_size=0, max_size=256), min_size=0, max_size=3)
+            strat = st.lists(
+                st.binary(min_size=0, max_size=256), min_size=0, max_size=3
+            )
         elif name in ("proofs",):
-            strat = st.lists(st.binary(min_size=0, max_size=256), min_size=0, max_size=3)
+            strat = st.lists(
+                st.binary(min_size=0, max_size=256), min_size=0, max_size=3
+            )
         elif name in ("receipts",):
-            strat = st.lists(st.fixed_dictionaries({
-                "status": st.sampled_from([0, 1]),
-                "gasUsed": _U64,
-                "logs": st.lists(st.binary(min_size=0, max_size=64), min_size=0, max_size=2),
-            }), min_size=0, max_size=2)
+            strat = st.lists(
+                st.fixed_dictionaries(
+                    {
+                        "status": st.sampled_from([0, 1]),
+                        "gasUsed": _U64,
+                        "logs": st.lists(
+                            st.binary(min_size=0, max_size=64), min_size=0, max_size=2
+                        ),
+                    }
+                ),
+                min_size=0,
+                max_size=2,
+            )
         else:
-            strat = _infer_strategy_from_type(f.type) or st.binary(min_size=0, max_size=64)
+            strat = _infer_strategy_from_type(f.type) or st.binary(
+                min_size=0, max_size=64
+            )
         kw[f.name] = strat
     return st.builds(BlkType, **kw)
+
 
 def _arb_block_strategy() -> Tuple[Optional[type], st.SearchStrategy[Any]]:
     BlkType = _get_block_type()
     HdrType = _get_header_type()
     if BlkType is not None:
         try:
-            from hypothesis.extra import dataclasses as hdataclasses  # type: ignore
+            from hypothesis.extra import \
+                dataclasses as hdataclasses  # type: ignore
+
             return BlkType, hdataclasses.from_type(BlkType)  # type: ignore
         except Exception:
             return BlkType, _block_strategy_dataclass(BlkType, HdrType)
@@ -367,14 +448,20 @@ def _arb_block_strategy() -> Tuple[Optional[type], st.SearchStrategy[Any]]:
     mapping = st.fixed_dictionaries(
         {
             "header": hdr_strat,
-            "txs": st.lists(st.binary(min_size=0, max_size=256), min_size=0, max_size=3),
-            "proofs": st.lists(st.binary(min_size=0, max_size=256), min_size=0, max_size=3),
+            "txs": st.lists(
+                st.binary(min_size=0, max_size=256), min_size=0, max_size=3
+            ),
+            "proofs": st.lists(
+                st.binary(min_size=0, max_size=256), min_size=0, max_size=3
+            ),
             "receipts": st.lists(
                 st.fixed_dictionaries(
                     {
                         "status": st.sampled_from([0, 1]),
                         "gasUsed": _U64,
-                        "logs": st.lists(st.binary(min_size=0, max_size=64), min_size=0, max_size=2),
+                        "logs": st.lists(
+                            st.binary(min_size=0, max_size=64), min_size=0, max_size=2
+                        ),
                     }
                 ),
                 min_size=0,
@@ -387,7 +474,10 @@ def _arb_block_strategy() -> Tuple[Optional[type], st.SearchStrategy[Any]]:
 
 # ---- Tests: Header -----------------------------------------------------------
 
-@pytest.mark.skipif(not (_has_header_codec() or _has_cbor_codec()), reason="Header codec not available")
+
+@pytest.mark.skipif(
+    not (_has_header_codec() or _has_cbor_codec()), reason="Header codec not available"
+)
 @given(_arb_header_strategy()[1])
 @settings(max_examples=200)
 def test_header_roundtrip_and_hash_stability(hdr_any: Any):
@@ -412,7 +502,10 @@ def test_header_roundtrip_and_hash_stability(hdr_any: Any):
 
 # ---- Tests: Block ------------------------------------------------------------
 
-@pytest.mark.skipif(not (_has_block_codec() or _has_cbor_codec()), reason="Block codec not available")
+
+@pytest.mark.skipif(
+    not (_has_block_codec() or _has_cbor_codec()), reason="Block codec not available"
+)
 @given(_arb_block_strategy()[1])
 @settings(max_examples=120)
 def test_block_roundtrip_and_hash_stability(blk_any: Any):
@@ -432,7 +525,10 @@ def test_block_roundtrip_and_hash_stability(blk_any: Any):
 
 
 @pytest.mark.skipif(
-    not ((_has_block_codec() or _has_cbor_codec()) and (_has_header_codec() or _has_cbor_codec())),
+    not (
+        (_has_block_codec() or _has_cbor_codec())
+        and (_has_header_codec() or _has_cbor_codec())
+    ),
     reason="Header/Block codecs not available",
 )
 @given(_arb_block_strategy()[1])

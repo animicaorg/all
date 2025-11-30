@@ -1,14 +1,14 @@
-import json
-import os
 import copy
 import inspect
+import json
+import os
 from types import SimpleNamespace
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 import pytest
 
-
 # --- Helpers to discover runtime/adapters without locking exact APIs -------------
+
 
 def _import(mod: str):
     try:
@@ -24,7 +24,9 @@ def _find_apply_block():
         fn = getattr(rt_exec, name, None)
         if callable(fn):
             return fn
-    pytest.skip("No apply_block-style function exported from execution.runtime.executor")
+    pytest.skip(
+        "No apply_block-style function exported from execution.runtime.executor"
+    )
 
 
 def _find_apply_tx_optional():
@@ -39,7 +41,12 @@ def _find_apply_tx_optional():
 def _load_chain_params_optional():
     try:
         mod = __import__("execution.adapters.params", fromlist=["*"])
-        for name in ("load_chain_params", "get_chain_params", "ChainParams", "default_params"):
+        for name in (
+            "load_chain_params",
+            "get_chain_params",
+            "ChainParams",
+            "default_params",
+        ):
             v = getattr(mod, name, None)
             if callable(v):
                 try:
@@ -59,7 +66,12 @@ def _mk_state_from_genesis(genesis: Dict[str, Any]):
     """
     s_mod = _import("execution.adapters.state_db")
     candidates = [
-        "StateDB", "StateDb", "InMemoryState", "State", "StateAdapter", "StateDBAdapter"
+        "StateDB",
+        "StateDb",
+        "InMemoryState",
+        "State",
+        "StateAdapter",
+        "StateDBAdapter",
     ]
     cls = None
     for name in candidates:
@@ -234,6 +246,7 @@ def _extract_root(result) -> Optional[str]:
 
 # --- The test: apply a tiny bundle and assert determinism -----------------------
 
+
 def test_apply_block_roundtrip_stable_root():
     apply_block = _find_apply_block()
     params = _load_chain_params_optional()
@@ -263,15 +276,24 @@ def test_apply_block_roundtrip_stable_root():
     root1 = _extract_root(res1)
     root2 = _extract_root(res2)
 
-    assert isinstance(root1, str) and root1.lower().startswith("0x"), "first run did not return a hex root"
-    assert isinstance(root2, str) and root2.lower().startswith("0x"), "second run did not return a hex root"
-    assert len(bytes.fromhex(root1[2:])) == len(bytes.fromhex(root2[2:])), "root lengths mismatch"
-    assert root1 == root2, "state root must be stable/deterministic across identical runs"
+    assert isinstance(root1, str) and root1.lower().startswith(
+        "0x"
+    ), "first run did not return a hex root"
+    assert isinstance(root2, str) and root2.lower().startswith(
+        "0x"
+    ), "second run did not return a hex root"
+    assert len(bytes.fromhex(root1[2:])) == len(
+        bytes.fromhex(root2[2:])
+    ), "root lengths mismatch"
+    assert (
+        root1 == root2
+    ), "state root must be stable/deterministic across identical runs"
 
     # Optional: if apply_tx is available, applying txs one-by-one should yield the same root.
     apply_tx = _find_apply_tx_optional()
     if apply_tx:
         state3 = _mk_state_from_genesis(genesis)
+
         # Allow flexible signatures for apply_tx as well: (state, tx, params?) or (tx, state, params?)
         def call_apply_tx(tx):
             sig = inspect.signature(apply_tx)
@@ -299,7 +321,7 @@ def test_apply_block_roundtrip_stable_root():
                 v = getattr(state3, attr)
                 sr = v() if callable(v) else v
                 if isinstance(sr, str) and sr.lower().startswith("0x"):
-                    assert sr == root1, "sequential tx apply must arrive at the same final root"
+                    assert (
+                        sr == root1
+                    ), "sequential tx apply must arrive at the same final root"
                     break
-
-

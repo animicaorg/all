@@ -43,20 +43,26 @@ from typing import Any, Dict, Mapping, Optional, Tuple, Union
 # --- Utilities ---------------------------------------------------------------
 
 try:
-    from omni_sdk.utils.bytes import to_hex as _to_hex, from_hex as _from_hex  # type: ignore
+    from omni_sdk.utils.bytes import from_hex as _from_hex
+    from omni_sdk.utils.bytes import to_hex as _to_hex  # type: ignore
 except Exception:  # pragma: no cover
+
     def _to_hex(b: bytes) -> str:
         return "0x" + bytes(b).hex()
+
     def _from_hex(s: str) -> bytes:
         s = s[2:] if isinstance(s, str) and s.startswith("0x") else s
         return bytes.fromhex(s)
+
 
 try:
     from omni_sdk.utils.hash import sha3_256  # type: ignore
 except Exception:  # pragma: no cover
     import hashlib as _hashlib
+
     def sha3_256(data: bytes) -> bytes:
         return _hashlib.sha3_256(data).digest()
+
 
 # Try to use SDK's canonical CBOR; fall back to a minimal, stable encoding.
 try:
@@ -64,6 +70,7 @@ try:
 except Exception:  # pragma: no cover
     # Deterministic encoding fallback: key-sorted JSON-like bytes.
     import json as _json
+
     def cbor_dumps(obj: Any) -> bytes:
         return _json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
@@ -110,7 +117,9 @@ def _extract_header_hash(header: Mapping[str, Any]) -> bytes:
         if len(bb) != 32:
             raise HashShareError("header.hash_bytes must be 32 bytes")
         return bb
-    raise HashShareError("header must include 'hash' (0x...), 'headerHash', or 'raw' (CBOR hex)")
+    raise HashShareError(
+        "header must include 'hash' (0x...), 'headerHash', or 'raw' (CBOR hex)"
+    )
 
 
 def _material(header_hash: bytes, nonce: bytes, mix_seed: Optional[bytes]) -> bytes:
@@ -159,6 +168,7 @@ def _nullifier(header_hash: bytes, nonce: bytes) -> bytes:
 
 # --- Public shapes -----------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class HashShareBody:
     """
@@ -166,6 +176,7 @@ class HashShareBody:
 
     Fields are 0x-hex strings for easy JSON/CBOR transport.
     """
+
     headerHash: str
     nonce: str
     mixSeed: Optional[str]
@@ -180,12 +191,14 @@ class ProofEnvelope:
     """
     Non-consensus envelope shape for dev tools. Eases interop with node CLIs.
     """
-    type_id: str          # "hashshare.v1" (string to avoid guessing numeric ids)
+
+    type_id: str  # "hashshare.v1" (string to avoid guessing numeric ids)
     body: HashShareBody
-    nullifier: str        # 0x-hex
+    nullifier: str  # 0x-hex
 
 
 # --- Builders & Verifiers ----------------------------------------------------
+
 
 def build_hashshare(
     *,
@@ -222,7 +235,9 @@ def build_hashshare(
 
     sh = _share_hash(hh, nn, ms)
     u = _share_ratio(sh)
-    H_u = -math.log(u)  # informational; node consensus uses fixed-point µ-nats internally
+    H_u = -math.log(
+        u
+    )  # informational; node consensus uses fixed-point µ-nats internally
 
     body = HashShareBody(
         headerHash=_to_hex(hh),
@@ -297,7 +312,9 @@ def verify_hashshare(
             return False
 
         # Optional: check nullifier if present
-        nul_hex = proof_or_envelope.get("nullifier") if "body" in proof_or_envelope else None
+        nul_hex = (
+            proof_or_envelope.get("nullifier") if "body" in proof_or_envelope else None
+        )
         if isinstance(nul_hex, str) and nul_hex.startswith("0x"):
             if _nullifier(hh, nn) != _norm_bytes(nul_hex, field="nullifier"):
                 return False

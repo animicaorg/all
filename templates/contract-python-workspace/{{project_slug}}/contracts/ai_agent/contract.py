@@ -23,8 +23,8 @@ Determinism notes:
 - If no result is ready yet, `consume` returns (False) without mutating result state.
 """
 
-from stdlib import storage, events, abi
 from stdlib import syscalls  # exposes ai_enqueue(...) and read_result(...)
+from stdlib import abi, events, storage
 
 # ---- storage keys -----------------------------------------------------------
 
@@ -37,6 +37,7 @@ K_LAST_RESULT = b"\x04"
 
 # ---- helpers ----------------------------------------------------------------
 
+
 def _get_owner() -> bytes:
     owner = storage.get(K_OWNER)
     return owner if owner is not None else b""
@@ -47,6 +48,7 @@ def _only_owner(caller: bytes) -> None:
 
 
 # ---- public API --------------------------------------------------------------
+
 
 def init(owner_addr: bytes, model: bytes) -> None:
     """
@@ -83,7 +85,9 @@ def request(prompt: bytes) -> bytes:
     storage.set(K_LAST_PROMPT, prompt)
 
     # Emit an event for off-chain UIs/indexers.
-    events.emit(b"AIRequested", {b"task_id": task_id, b"model": model, b"prompt": prompt})
+    events.emit(
+        b"AIRequested", {b"task_id": task_id, b"model": model, b"prompt": prompt}
+    )
     return task_id
 
 
@@ -106,6 +110,7 @@ def consume(task_id: bytes) -> bool:
 
 
 # ---- views ------------------------------------------------------------------
+
 
 def owner() -> bytes:
     return _get_owner()

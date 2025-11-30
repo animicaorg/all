@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from da.adapters.core_chain import BlobInclusion, compute_da_root, validate_da_root
+from da.adapters.core_chain import (BlobInclusion, compute_da_root,
+                                    validate_da_root)
 from da.nmt.codec import encode_leaf
 
 
@@ -22,7 +23,9 @@ def test_da_root_mismatch_is_detected():
     da_root = compute_da_root([inclusion], mode="leaves")
 
     try:
-        validate_da_root(header_da_root=b"\x00" * len(da_root), inclusions=[inclusion], mode="leaves")
+        validate_da_root(
+            header_da_root=b"\x00" * len(da_root), inclusions=[inclusion], mode="leaves"
+        )
     except Exception as exc:
         assert "DA root mismatch" in str(exc)
     else:  # pragma: no cover - should not reach

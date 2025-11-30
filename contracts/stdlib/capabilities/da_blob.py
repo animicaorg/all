@@ -44,16 +44,16 @@ from __future__ import annotations
 
 from typing import Final
 
-from stdlib import abi, events, storage, hash as _hash  # type: ignore
+from stdlib import abi, events
+from stdlib import hash as _hash  # type: ignore
+from stdlib import storage
 
 # The package-local __init__.py exposes the validated low-level wrapper and
 # canonical bounds for namespaces and sizes. These mirrors host/provider rules.
-from . import (
-    blob_pin,        # (ns: int, data: bytes) -> bytes (commitment)
-    MIN_NAMESPACE,   # inclusive lower bound for namespace id
-    MAX_NAMESPACE,   # inclusive upper bound for namespace id
-    MAX_BLOB_LEN,    # maximum allowed blob length in bytes
-)
+from . import MAX_BLOB_LEN  # maximum allowed blob length in bytes
+from . import MAX_NAMESPACE  # inclusive upper bound for namespace id
+from . import MIN_NAMESPACE  # inclusive lower bound for namespace id
+from . import blob_pin  # (ns: int, data: bytes) -> bytes (commitment)
 
 # -----------------------------------------------------------------------------
 # Storage-tag utilities (bounded)
@@ -70,6 +70,7 @@ def _key_for(tag: bytes) -> bytes:
 # -----------------------------------------------------------------------------
 # Guards (type & range checks with deterministic reverts)
 # -----------------------------------------------------------------------------
+
 
 def _ensure_bytes(x: object) -> bytes:
     if not isinstance(x, (bytes, bytearray)):
@@ -105,6 +106,7 @@ def _ensure_len(data: bytes) -> None:
 # -----------------------------------------------------------------------------
 # Public API
 # -----------------------------------------------------------------------------
+
 
 def pin(*, ns: int, data: bytes) -> bytes:
     """

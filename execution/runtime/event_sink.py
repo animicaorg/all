@@ -23,28 +23,29 @@ The final on-wire encoding of receipts is owned by `execution/receipts/*`.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence, Tuple
-import hashlib
 
 # Types
 try:
     # Preferred: use the canonical LogEvent if available
     from ..types.events import LogEvent  # type: ignore
 except Exception:  # pragma: no cover - fallback struct for isolated tests
+
     @dataclass
     class LogEvent:  # type: ignore
         address: bytes
         topics: Sequence[bytes]
         data: bytes
 
+
 # Optional faster / canonical helpers
 try:  # pragma: no cover - exercised indirectly if module exists
-    from ..receipts.logs_hash import (  # type: ignore
-        logs_bloom_2048 as _canon_logs_bloom_2048,
-        logs_mroot as _canon_logs_mroot,
-        receipt_digest as _canon_receipt_digest,
-    )
+    from ..receipts.logs_hash import \
+        logs_bloom_2048 as _canon_logs_bloom_2048  # type: ignore
+    from ..receipts.logs_hash import logs_mroot as _canon_logs_mroot
+    from ..receipts.logs_hash import receipt_digest as _canon_receipt_digest
 except Exception:  # pragma: no cover
     _canon_logs_bloom_2048 = None
     _canon_logs_mroot = None
@@ -59,8 +60,10 @@ BLOOM_BITS = 2048
 BLOOM_BYTES = BLOOM_BITS // 8  # 256
 _HASH = hashlib.sha3_256  # project standard (distinct from Keccak-256)
 
+
 def _h(data: bytes) -> bytes:
     return _HASH(data).digest()
+
 
 def _u32(n: int) -> bytes:
     if n < 0:
@@ -72,6 +75,7 @@ def _u32(n: int) -> bytes:
 # Fallback implementations (used when canonical helpers are absent)
 # --------------------------------------------------------------------------------------
 
+
 def _bloom_map(bitarray: bytearray, x: bytes) -> None:
     """
     Ethereum-style 2048-bit bloom mapping (using SHA3-256 here).
@@ -82,6 +86,7 @@ def _bloom_map(bitarray: bytearray, x: bytes) -> None:
         # 11-bit value from two bytes
         idx = ((h[2 * i] << 8) | h[2 * i + 1]) & (BLOOM_BITS - 1)  # mod 2048
         bitarray[idx >> 3] |= 1 << (idx & 7)
+
 
 def _hash_log(log: LogEvent) -> bytes:
     """
@@ -98,8 +103,10 @@ def _hash_log(log: LogEvent) -> bytes:
     buf += _h(bytes(log.data))
     return _h(bytes(buf))
 
+
 def _merkle_pair(l: bytes, r: bytes) -> bytes:
     return _h(b"MR\0" + l + r)
+
 
 def _logs_mroot_fallback(logs: Sequence[LogEvent]) -> bytes:
     """
@@ -108,7 +115,7 @@ def _logs_mroot_fallback(logs: Sequence[LogEvent]) -> bytes:
     """
     if not logs:
         return _h(b"MR\0EMPTY")
-    level = [ _hash_log(log) for log in logs ]
+    level = [_hash_log(log) for log in logs]
     while len(level) > 1:
         nxt: List[bytes] = []
         it = iter(level)
@@ -119,6 +126,7 @@ def _logs_mroot_fallback(logs: Sequence[LogEvent]) -> bytes:
             nxt.append(_merkle_pair(a, b))
         level = nxt
     return level[0]
+
 
 def _logs_bloom_2048_fallback(logs: Sequence[LogEvent]) -> bytes:
     """
@@ -131,7 +139,10 @@ def _logs_bloom_2048_fallback(logs: Sequence[LogEvent]) -> bytes:
             _bloom_map(bits, bytes(t))
     return bytes(bits)
 
-def _receipt_digest_fallback(status: int, gas_used: int, logs_root: bytes, bloom: bytes) -> bytes:
+
+def _receipt_digest_fallback(
+    status: int, gas_used: int, logs_root: bytes, bloom: bytes
+) -> bytes:
     """
     Stable internal receipt digest:
     sha3_256("RCPT\0" || u8(status) || u64(gas_used) || logs_root(32) || bloom(256))
@@ -149,6 +160,7 @@ def _receipt_digest_fallback(status: int, gas_used: int, logs_root: bytes, bloom
 # --------------------------------------------------------------------------------------
 # Public API
 # --------------------------------------------------------------------------------------
+
 
 class EventSink:
     """
@@ -177,7 +189,13 @@ class EventSink:
         """
         Append a new log entry. Returns the index of the appended log.
         """
-        self._logs.append(LogEvent(address=bytes(address), topics=[bytes(t) for t in topics], data=bytes(data)))
+        self._logs.append(
+            LogEvent(
+                address=bytes(address),
+                topics=[bytes(t) for t in topics],
+                data=bytes(data),
+            )
+        )
         # Invalidate caches
         self._cached_bloom = None
         self._cached_root = None
@@ -188,7 +206,13 @@ class EventSink:
         Bulk-append preconstructed LogEvent entries.
         """
         for ev in entries:
-            self._logs.append(LogEvent(address=bytes(ev.address), topics=[bytes(t) for t in ev.topics], data=bytes(ev.data)))
+            self._logs.append(
+                LogEvent(
+                    address=bytes(ev.address),
+                    topics=[bytes(t) for t in ev.topics],
+                    data=bytes(ev.data),
+                )
+            )
         self._cached_bloom = None
         self._cached_root = None
 

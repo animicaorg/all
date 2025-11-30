@@ -41,7 +41,7 @@ import sqlite3
 import sys
 import time
 from dataclasses import dataclass, field
-from typing import Iterable, List, Optional, Sequence, Tuple, Dict
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 # ----------------------------- Models ------------------------------------- #
 
@@ -50,8 +50,12 @@ from typing import Iterable, List, Optional, Sequence, Tuple, Dict
 class RetentionPolicy:
     # Protection
     keep_pinned: bool = True
-    protect_tags: Optional[Sequence[str]] = None  # if set and keep_pinned=False, protect only these tags
-    protect_younger_than_secs: Optional[int] = None  # keep blobs newer than now - X seconds
+    protect_tags: Optional[Sequence[str]] = (
+        None  # if set and keep_pinned=False, protect only these tags
+    )
+    protect_younger_than_secs: Optional[int] = (
+        None  # keep blobs newer than now - X seconds
+    )
     # Minimum recency to keep
     keep_recent_global: int = 0  # keep N newest blobs overall
     keep_recent_per_namespace: int = 0  # keep N newest per namespace
@@ -267,7 +271,18 @@ def plan_deletions(db: sqlite3.Connection, policy: RetentionPolicy) -> DeletionP
     candidates: List[Candidate] = []
 
     # First pass: mark eligibility by protection flags
-    for root_b, skey, path, ns, size_b, created, protect_pin, protect_age, protect_overall, protect_per_ns in rows:
+    for (
+        root_b,
+        skey,
+        path,
+        ns,
+        size_b,
+        created,
+        protect_pin,
+        protect_age,
+        protect_overall,
+        protect_per_ns,
+    ) in rows:
         # Skip hard protections
         if protect_pin or protect_age or protect_overall or protect_per_ns:
             continue
@@ -317,7 +332,9 @@ def plan_deletions(db: sqlite3.Connection, policy: RetentionPolicy) -> DeletionP
                     reason.append("budget-bytes")
                 if need_free_count > 0:
                     reason.append("budget-count")
-                plan.append(Candidate(**{**c.__dict__, "reason": ",".join(reason) or c.reason}))
+                plan.append(
+                    Candidate(**{**c.__dict__, "reason": ",".join(reason) or c.reason})
+                )
                 freed_bytes += c.size_bytes
                 freed_count += 1
             if (need_free_bytes <= 0 or freed_bytes >= need_free_bytes) and (
@@ -372,7 +389,9 @@ def execute_plan(
         try:
             q = "DELETE FROM blobs WHERE root=?"
             for c in to_delete:
-                rb = bytes.fromhex(c.root_hex[2:] if c.root_hex.startswith("0x") else c.root_hex)
+                rb = bytes.fromhex(
+                    c.root_hex[2:] if c.root_hex.startswith("0x") else c.root_hex
+                )
                 db.execute(q, (sqlite3.Binary(rb),))
             db.execute("COMMIT")
         except Exception:
@@ -396,7 +415,9 @@ def vacuum(db: sqlite3.Connection, *, wal_checkpoint: bool = True) -> None:
     # Some platforms benefit from a page_size reset; we keep defaults for portability.
 
 
-def _prune_dirs(objects_root: str, file_paths: Sequence[str], *, max_up: int = 4) -> None:
+def _prune_dirs(
+    objects_root: str, file_paths: Sequence[str], *, max_up: int = 4
+) -> None:
     """
     Remove empty shard directories up to `objects_root`.
     """
@@ -418,14 +439,27 @@ def _prune_dirs(objects_root: str, file_paths: Sequence[str], *, max_up: int = 4
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Animica DA Blob GC")
-    p.add_argument("--root", required=True, help="Path to the blob store root directory")
+    p.add_argument(
+        "--root", required=True, help="Path to the blob store root directory"
+    )
     p.add_argument("--db", help="Path to SQLite DB (defaults to <root>/db.sqlite)")
-    p.add_argument("--dry-run", action="store_true", default=False, help="Compute and print plan only")
-    p.add_argument("--list-only", action="store_true", help="Only list candidates (no deletion)")
-    p.add_argument("--max-delete", type=int, default=1000, help="Max objects to delete in one run")
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Compute and print plan only",
+    )
+    p.add_argument(
+        "--list-only", action="store_true", help="Only list candidates (no deletion)"
+    )
+    p.add_argument(
+        "--max-delete", type=int, default=1000, help="Max objects to delete in one run"
+    )
 
     # Protection knobs
-    p.add_argument("--no-keep-pinned", action="store_true", help="Do not protect pinned blobs")
+    p.add_argument(
+        "--no-keep-pinned", action="store_true", help="Do not protect pinned blobs"
+    )
     p.add_argument(
         "--protect-tags",
         type=str,
@@ -436,9 +470,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         type=str,
         help="Protect blobs younger than duration (e.g. '7d', '24h', '30m')",
     )
-    p.add_argument("--keep-recent-global", type=int, default=0, help="Keep N newest blobs overall")
     p.add_argument(
-        "--keep-recent-per-ns", type=int, default=0, help="Keep N newest blobs per namespace"
+        "--keep-recent-global", type=int, default=0, help="Keep N newest blobs overall"
+    )
+    p.add_argument(
+        "--keep-recent-per-ns",
+        type=int,
+        default=0,
+        help="Keep N newest blobs per namespace",
     )
 
     # Budgets
@@ -446,9 +485,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-objects", type=int, help="Budget cap on total object count")
 
     # Vacuum & filesystem
-    p.add_argument("--vacuum", action="store_true", help="Run SQLite VACUUM after deletion")
     p.add_argument(
-        "--no-prune-dirs", action="store_true", help="Do not prune empty sharded directories"
+        "--vacuum", action="store_true", help="Run SQLite VACUUM after deletion"
+    )
+    p.add_argument(
+        "--no-prune-dirs",
+        action="store_true",
+        help="Do not prune empty sharded directories",
     )
 
     return p
@@ -457,11 +500,19 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 def _policy_from_args(args: argparse.Namespace) -> RetentionPolicy:
     return RetentionPolicy(
         keep_pinned=not args.no_keep_pinned,
-        protect_tags=[t.strip() for t in args.protect_tags.split(",")] if args.protect_tags else None,
-        protect_younger_than_secs=parse_duration(args.protect_younger) if args.protect_younger else None,
+        protect_tags=(
+            [t.strip() for t in args.protect_tags.split(",")]
+            if args.protect_tags
+            else None
+        ),
+        protect_younger_than_secs=(
+            parse_duration(args.protect_younger) if args.protect_younger else None
+        ),
         keep_recent_global=int(args.keep_recent_global or 0),
         keep_recent_per_namespace=int(args.keep_recent_per_ns or 0),
-        max_total_bytes=parse_size(args.max_total_bytes) if args.max_total_bytes else None,
+        max_total_bytes=(
+            parse_size(args.max_total_bytes) if args.max_total_bytes else None
+        ),
         max_objects=int(args.max_objects) if args.max_objects is not None else None,
         dry_run=bool(args.dry_run or args.list_only),
         max_delete=int(args.max_delete or 1000),
@@ -490,7 +541,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # Show plan
     for c in plan.candidates[: policy.max_delete]:
         ts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(c.created_at))
-        print(f"[gc] del {c.root_hex} ns={c.namespace} size={c.size_bytes}B at={ts} reason={c.reason}")
+        print(
+            f"[gc] del {c.root_hex} ns={c.namespace} size={c.size_bytes}B at={ts} reason={c.reason}"
+        )
 
     if args.list_only:
         return 0
@@ -503,7 +556,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         dry_run=policy.dry_run,
         prune_empty_dirs=not args.no_prune_dirs,
     )
-    print(f"[gc] removed {len(removed)} object(s){' (dry-run)' if policy.dry_run else ''}")
+    print(
+        f"[gc] removed {len(removed)} object(s){' (dry-run)' if policy.dry_run else ''}"
+    )
 
     if args.vacuum and not policy.dry_run:
         print("[gc] vacuuming database…")

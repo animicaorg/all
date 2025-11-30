@@ -13,19 +13,8 @@ as a wheel, but is imported in Python as ``animica_native._native`` via the
 package's ``__init__`` loader shim.
 """
 
-from typing import (
-    Any,
-    Dict,
-    Iterable,
-    List,
-    Mapping,
-    Optional,
-    Protocol,
-    Sequence,
-    Tuple,
-    TypedDict,
-    Union,
-)
+from typing import (Any, Dict, Iterable, List, Mapping, Optional, Protocol,
+                    Sequence, Tuple, TypedDict, Union)
 
 # ---------------------------------------------------------------------------
 # Common aliases
@@ -39,7 +28,6 @@ Buffer = Union[bytes, bytearray, memoryview]
 #: raw bytes and Python ``int`` for convenience.
 Namespace = Union[int, bytes]
 
-
 # ---------------------------------------------------------------------------
 # Version / top-level helpers
 # ---------------------------------------------------------------------------
@@ -51,11 +39,11 @@ def version() -> Tuple[int, int, int]:
 
 def version_tuple() -> Tuple[int, int, int]: ...
 def version_string() -> str: ...
+
 __version__: str
 
 # Some builds also export a convenience CPU features function at top-level.
 def cpu_features() -> "CpuFeatures": ...
-
 
 # ---------------------------------------------------------------------------
 # Hashing
@@ -75,24 +63,23 @@ class _StreamingHash(Protocol):
     def reset(self) -> None: ...
     def clone(self) -> "_StreamingHash": ...
 
-
 class Blake3Hasher(_StreamingHash, Protocol):
     """Streaming BLAKE3 hasher (32-byte digests)."""
+
     digest_size: int
     block_size: int
-
 
 class Keccak256Hasher(_StreamingHash, Protocol):
     """Streaming Keccak-256 hasher (32-byte digests)."""
+
     digest_size: int
     block_size: int
-
 
 class Sha256Hasher(_StreamingHash, Protocol):
     """Streaming SHA-256 hasher (32-byte digests)."""
+
     digest_size: int
     block_size: int
-
 
 class _HashModule(Protocol):
     """
@@ -109,10 +96,8 @@ class _HashModule(Protocol):
     def Keccak256(self) -> Keccak256Hasher: ...
     def Sha256(self) -> Sha256Hasher: ...
 
-
 # Available as attribute: ``_animica_native.hash``
 hash: _HashModule
-
 
 # ---------------------------------------------------------------------------
 # Namespaced Merkle Trees (NMT)
@@ -132,12 +117,12 @@ class NmtProof(TypedDict, total=False):
     - ``leaf_index``: Index of the proven leaf within the commitment.
     - ``namespace``: Namespace id for the proven leaf (bytes or int).
     """
+
     side_nodes: Sequence[bytes]
     start: int
     end: int
     leaf_index: int
     namespace: Namespace
-
 
 class _NmtModule(Protocol):
     """
@@ -177,7 +162,6 @@ class _NmtModule(Protocol):
         Verify a single-leaf NMT inclusion/range proof against ``root``.
         Returns ``True`` if valid.
         """
-
     # Some builds may also expose a range-opening helper:
     def nmt_open(
         self,
@@ -189,10 +173,8 @@ class _NmtModule(Protocol):
         ns_size: int = ...,
     ) -> NmtProof: ...
 
-
 # Available as attribute: ``_animica_native.nmt`` (may be absent if not built)
 nmt: _NmtModule
-
 
 # ---------------------------------------------------------------------------
 # Reed–Solomon (erasure coding)
@@ -203,7 +185,9 @@ class _RsModule(Protocol):
     Erasure coding helpers built atop optimized GF(2^8) implementations.
     """
 
-    def rs_encode(self, data: Buffer, data_shards: int, parity_shards: int, /) -> List[bytes]:
+    def rs_encode(
+        self, data: Buffer, data_shards: int, parity_shards: int, /
+    ) -> List[bytes]:
         """
         Split ``data`` into ``data_shards`` and produce ``parity_shards`` parity shards.
         Returns a list of length ``data_shards + parity_shards`` with fixed-size shards.
@@ -230,10 +214,8 @@ class _RsModule(Protocol):
     ) -> bool:
         """Return ``True`` if the provided shard set passes parity checks."""
 
-
 # Available as attribute: ``_animica_native.rs`` (may be absent if not built)
 rs: _RsModule
-
 
 # ---------------------------------------------------------------------------
 # CPU features
@@ -244,20 +226,18 @@ class CpuFeatures(TypedDict, total=False):
     CPU feature flags exposed by the native runtime detector.
     Keys may vary by platform/architecture.
     """
+
     x86_avx2: bool
     x86_sha: bool
     arm_neon: bool
     arm_sha3: bool
 
-
 class _CpuModule(Protocol):
     def features(self) -> CpuFeatures: ...
     def get_features(self) -> CpuFeatures: ...
 
-
 # Available as attribute: ``_animica_native.cpu`` (may be absent)
 cpu: _CpuModule
-
 
 # ---------------------------------------------------------------------------
 # Utils (rarely used directly; primarily for internal plumbing)
@@ -267,10 +247,8 @@ class _UtilsModule(Protocol):
     def cpu_features(self) -> CpuFeatures: ...
     # Additional zero-copy helpers may exist in some builds but are not typed here.
 
-
 # Available as attribute: ``_animica_native.utils`` (may be absent)
 utils: _UtilsModule
-
 
 # ---------------------------------------------------------------------------
 # Fallbacks / internal

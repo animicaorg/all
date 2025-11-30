@@ -40,6 +40,7 @@ _DOM = "animica|ir|v1"
 # Primary: msgspec (msgpack backend)
 try:  # pragma: no cover - codec choice is environment-dependent
     import msgspec as _msgspec
+
     _HAVE_MSGSPEC = True
 except Exception:  # pragma: no cover
     _HAVE_MSGSPEC = False
@@ -48,6 +49,7 @@ except Exception:  # pragma: no cover
 # Fallback: cbor2
 try:  # pragma: no cover
     import cbor2 as _cbor2
+
     _HAVE_CBOR2 = True
 except Exception:  # pragma: no cover
     _HAVE_CBOR2 = False
@@ -55,6 +57,7 @@ except Exception:  # pragma: no cover
 
 
 # ---------------- Public API ----------------
+
 
 def encode_ir(module: ir.Module) -> bytes:
     """
@@ -105,17 +108,22 @@ def decode_ir(blob: bytes | bytearray) -> ir.Module:
         try:
             text = blob.decode("utf-8", "strict")
             if text.startswith("[") and text.endswith("]"):
-                data = eval(text, {"__builtins__": {}}, {})  # noqa: S307 (no untrusted input expected)
+                data = eval(
+                    text, {"__builtins__": {}}, {}
+                )  # noqa: S307 (no untrusted input expected)
         except Exception as e:
             errs.append(f"repr:{e!s}")
 
     if data is None:
-        raise ValueError(f"IR decode failed via codecs: {', '.join(errs) or 'none available'}")
+        raise ValueError(
+            f"IR decode failed via codecs: {', '.join(errs) or 'none available'}"
+        )
 
     return _obj_to_module(data)
 
 
 # ---------------- Object <-> IR conversion ----------------
+
 
 def _module_to_obj(m: ir.Module) -> list:
     # Sort functions by name for determinism.
@@ -127,10 +135,7 @@ def _module_to_obj(m: ir.Module) -> list:
             [
                 fn.name,
                 int(fn.params),
-                [
-                    [ins.op, _args_to_list(ins.args)]
-                    for ins in fn.body
-                ],
+                [[ins.op, _args_to_list(ins.args)] for ins in fn.body],
             ]
             for fn in funcs
         ],
@@ -183,6 +188,7 @@ def _obj_to_module(data: Any) -> ir.Module:
 
 # ---------------- Helpers ----------------
 
+
 def _args_to_list(args: Sequence[ir.Operand]) -> list:
     out: list = []
     for a in args:
@@ -207,5 +213,3 @@ def _list_to_args(seq: Any) -> Tuple[ir.Operand, ...]:
         else:
             raise ValueError(f"unsupported operand scalar: {type(a).__name__}")
     return tuple(out)
-
-

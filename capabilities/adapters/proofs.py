@@ -48,14 +48,14 @@ except Exception:  # pragma: no cover
 
 # A loose dependency on the proofs registry/types for friendly type names.
 try:  # pragma: no cover
-    from proofs import registry as proofs_registry  # type: ignore[attr-defined]
+    from proofs import \
+        registry as proofs_registry  # type: ignore[attr-defined]
 except Exception:  # pragma: no cover
     proofs_registry = None
 
 # ---- Capabilities job/result types ----------------------------------------
 
 from capabilities.jobs.types import JobKind, ResultRecord
-
 
 __all__ = [
     "decode_envelope_any",
@@ -68,6 +68,7 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # Utilities
 # ---------------------------------------------------------------------------
+
 
 def _hex_to_bytes_maybe(x: Any) -> Optional[bytes]:
     """
@@ -105,6 +106,7 @@ def _dataclass_kwargs_safe(cls, data: Dict[str, Any]) -> Dict[str, Any]:
 # Envelope decoding
 # ---------------------------------------------------------------------------
 
+
 def decode_envelope_any(obj: Any) -> Optional[Dict[str, Any]]:
     """
     Decode a proof *envelope* from one of:
@@ -134,7 +136,9 @@ def decode_envelope_any(obj: Any) -> Optional[Dict[str, Any]]:
                         # normalize nullifier
                         if "nullifier" in env:
                             nb = _hex_to_bytes_maybe(env["nullifier"])
-                            env["nullifier"] = nb if nb is not None else env["nullifier"]
+                            env["nullifier"] = (
+                                nb if nb is not None else env["nullifier"]
+                            )
                         return env
                 except Exception:
                     pass  # try next decoder
@@ -145,6 +149,7 @@ def decode_envelope_any(obj: Any) -> Optional[Dict[str, Any]]:
         # Prefer msgspec if available (fast), else cbor2
         try:
             import msgspec  # type: ignore
+
             dec = msgspec.json.Decoder()  # dummy to ensure import ok
             # We actually want CBOR; msgspec provides msgspec.json/* only,
             # so skip and use cbor2 below if no dedicated CBOR.
@@ -152,6 +157,7 @@ def decode_envelope_any(obj: Any) -> Optional[Dict[str, Any]]:
         except Exception:
             try:
                 import cbor2  # type: ignore
+
                 env = cbor2.loads(raw)
                 if isinstance(env, dict) and "type_id" in env and "body" in env:
                     if "nullifier" in env:
@@ -167,6 +173,7 @@ def decode_envelope_any(obj: Any) -> Optional[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Classification / extraction
 # ---------------------------------------------------------------------------
+
 
 def classify_job_kind(env: Dict[str, Any]) -> Optional[JobKind]:
     """
@@ -197,7 +204,9 @@ def classify_job_kind(env: Dict[str, Any]) -> Optional[JobKind]:
     keys = {str(k).lower() for k in (body.keys() if isinstance(body, dict) else [])}
     if {"tee", "qos", "traps"}.intersection(keys) or "ai_metrics" in keys:
         return JobKind.AI
-    if {"trap", "circuit", "qpu", "shots"}.intersection(keys) or "quantum_metrics" in keys:
+    if {"trap", "circuit", "qpu", "shots"}.intersection(
+        keys
+    ) or "quantum_metrics" in keys:
         return JobKind.QUANTUM
 
     return None
@@ -260,6 +269,7 @@ def _extract_metrics(env: Dict[str, Any]) -> Dict[str, Any]:
 # Mapping to ResultRecord
 # ---------------------------------------------------------------------------
 
+
 def result_from_envelope(
     obj: Any,
     *,
@@ -292,7 +302,11 @@ def result_from_envelope(
         "height": int(height),
         "chain_id": int(chain_id) if chain_id is not None else None,
         "output_digest": output_digest,
-        "nullifier": nullifier if isinstance(nullifier, (bytes, bytearray, memoryview)) else _hex_to_bytes_maybe(nullifier),
+        "nullifier": (
+            nullifier
+            if isinstance(nullifier, (bytes, bytearray, memoryview))
+            else _hex_to_bytes_maybe(nullifier)
+        ),
         "metrics": metrics,
         "source": "proof",  # helpful provenance if the dataclass exposes it
     }

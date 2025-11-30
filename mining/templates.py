@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import os
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import Callable, Dict, Optional, Tuple
 
 from mining.hash_search import micro_threshold_to_target256
 
 from .nonce_domain import derive_mix_seed  # mixSeed evolution
+
 # We *prefer* the canonical header SignBytes encoder from core if present.
 try:
-    from core.encoding.canonical import encode_header_sign_bytes as _encode_header_sign_bytes  # type: ignore
+    from core.encoding.canonical import \
+        encode_header_sign_bytes as _encode_header_sign_bytes  # type: ignore
 except Exception:  # pragma: no cover
     _encode_header_sign_bytes = None  # fallback defined below
 
@@ -73,6 +75,7 @@ class HeaderTemplate:
 @dataclass(frozen=True)
 class WorkTemplate:
     """Pack a ready-to-scan unit for the miner."""
+
     header: HeaderTemplate
     sign_bytes: bytes
     theta_target_micro: int
@@ -168,7 +171,7 @@ class TemplateBuilder:
             parent_hash=parent_hash,
             number=height + 1,
             chain_id=chain_id,
-            state_root=parent_state_root,         # parent state root as starting point
+            state_root=parent_state_root,  # parent state root as starting point
             txs_root=self._txs_root(),
             receipts_root=self._receipts_root(),
             proofs_root=self._proofs_root(),
@@ -210,6 +213,7 @@ def _sign_bytes(body: Dict[str, object]) -> bytes:
     # Fallback path — try msgspec (CBOR-like) then JSON.
     try:  # pragma: no cover
         import msgspec  # type: ignore
+
         # CBOR canonical: maps sorted by key; msgspec.cbor uses stable ordering for dict keys
         return msgspec.dumps(body, enc_hook=_enc_hook_msgspec)
     except Exception:  # pragma: no cover
@@ -217,7 +221,10 @@ def _sign_bytes(body: Dict[str, object]) -> bytes:
 
         # Deterministic JSON (keys sorted, no spaces) with bytes→hex coercion so
         # the fallback path remains serializable even without msgspec installed.
-        norm = {k: (v.hex() if isinstance(v, (bytes, bytearray)) else v) for k, v in body.items()}
+        norm = {
+            k: (v.hex() if isinstance(v, (bytes, bytearray)) else v)
+            for k, v in body.items()
+        }
         return json.dumps(norm, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 

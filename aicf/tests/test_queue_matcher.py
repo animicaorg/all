@@ -3,12 +3,11 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from aicf.aitypes.provider import Capability, ProviderStatus
 from aicf.aitypes.job import JobKind, JobRecord
+from aicf.aitypes.provider import Capability, ProviderStatus
+from aicf.queue import assignment as qassign
 from aicf.queue import priority as qprio
 from aicf.queue import quotas as qquotas
-from aicf.queue import assignment as qassign
-
 
 # --------------------------------------------------------------------------------------
 # NOTE TO IMPLEMENTERS
@@ -42,7 +41,10 @@ from aicf.queue import assignment as qassign
 
 class _Provider:
     """Tiny provider test stub that mirrors the fields used by assignment.is_eligible."""
-    def __init__(self, provider_id: str, capabilities: Capability, status: ProviderStatus):
+
+    def __init__(
+        self, provider_id: str, capabilities: Capability, status: ProviderStatus
+    ):
         self.provider_id = provider_id
         self.capabilities = capabilities
         self.status = status
@@ -88,7 +90,9 @@ def test_eligibility_matches_only_capable_providers(monkeypatch):
 
     p_ai = _Provider("prov-ai", Capability.AI, ProviderStatus.ACTIVE)
     p_q = _Provider("prov-q", Capability.QUANTUM, ProviderStatus.ACTIVE)
-    p_both = _Provider("prov-both", Capability.AI | Capability.QUANTUM, ProviderStatus.ACTIVE)
+    p_both = _Provider(
+        "prov-both", Capability.AI | Capability.QUANTUM, ProviderStatus.ACTIVE
+    )
     providers = [p_ai, p_q, p_both]
 
     job_ai = _mk_job("job-ai-1", JobKind.AI, fee=10_000, created_at=now - 5)
@@ -99,7 +103,9 @@ def test_eligibility_matches_only_capable_providers(monkeypatch):
     # Perform a single matching pass for each job kind (order by priority first)
     ranked = qprio.rank([job_ai, job_q], now=now, seed=1234)
     # We call match_once with both and let the matcher assign to eligible providers.
-    assignments = qassign.match_once(providers, ranked, quotas, now=now, seed=42, lease_ttl_s=60)
+    assignments = qassign.match_once(
+        providers, ranked, quotas, now=now, seed=42, lease_ttl_s=60
+    )
 
     # Convert to dict job_id->provider_id for easy assertions
     amap = {j: p for (j, p) in assignments}
@@ -128,19 +134,29 @@ def test_quotas_limit_concurrent_leases_and_release_allows_more(monkeypatch):
     quotas = qquotas.QuotaTracker(default_concurrent=1)
 
     # First pass: should assign only one job to prov-ai
-    assignments_1 = qassign.match_once(providers, qprio.rank([job1, job2], now, seed=1), quotas, now, seed=1)
-    assert assignments_1 == [("job-ai-1", "prov-ai")] or assignments_1 == [("job-ai-2", "prov-ai")]
+    assignments_1 = qassign.match_once(
+        providers, qprio.rank([job1, job2], now, seed=1), quotas, now, seed=1
+    )
+    assert assignments_1 == [("job-ai-1", "prov-ai")] or assignments_1 == [
+        ("job-ai-2", "prov-ai")
+    ]
 
     # Second pass without releasing: no capacity, so no new assignment
-    assignments_2 = qassign.match_once(providers, qprio.rank([job1, job2], now, seed=1), quotas, now, seed=2)
+    assignments_2 = qassign.match_once(
+        providers, qprio.rank([job1, job2], now, seed=1), quotas, now, seed=2
+    )
     assert assignments_2 == []
 
     # Release the lease capacity for prov-ai and try again
     quotas.release("prov-ai", JobKind.AI)
-    assignments_3 = qassign.match_once(providers, qprio.rank([job1, job2], now, seed=1), quotas, now, seed=3)
+    assignments_3 = qassign.match_once(
+        providers, qprio.rank([job1, job2], now, seed=1), quotas, now, seed=3
+    )
     assert assignments_3, "Expected second job to be assigned after releasing quota"
     # Ensure the other (previously unassigned) job is now assigned
-    assigned_job_ids = {jid for (jid, _) in assignments_1} | {jid for (jid, _) in assignments_3}
+    assigned_job_ids = {jid for (jid, _) in assignments_1} | {
+        jid for (jid, _) in assignments_3
+    }
     assert assigned_job_ids == {"job-ai-1", "job-ai-2"}
 
 
@@ -151,11 +167,30 @@ def test_priority_tie_breaker_is_deterministic(monkeypatch):
     """
     base = _now_ts()
     # Same fee/size/age/tier; only IDs differ
-    j_a = _mk_job("job-0001", JobKind.AI, fee=10_000, size_bytes=2048, created_at=base - 7, tier="gold")
-    j_b = _mk_job("job-0002", JobKind.AI, fee=10_000, size_bytes=2048, created_at=base - 7, tier="gold")
+    j_a = _mk_job(
+        "job-0001",
+        JobKind.AI,
+        fee=10_000,
+        size_bytes=2048,
+        created_at=base - 7,
+        tier="gold",
+    )
+    j_b = _mk_job(
+        "job-0002",
+        JobKind.AI,
+        fee=10_000,
+        size_bytes=2048,
+        created_at=base - 7,
+        tier="gold",
+    )
 
-    ranked = qprio.rank([j_b, j_a], now=base, seed=999)  # order input oddly to ensure rank() normalizes
-    assert [j.job_id for j in ranked] == ["job-0001", "job-0002"], "Expected lexicographic ID tie-breaker"
+    ranked = qprio.rank(
+        [j_b, j_a], now=base, seed=999
+    )  # order input oddly to ensure rank() normalizes
+    assert [j.job_id for j in ranked] == [
+        "job-0001",
+        "job-0002",
+    ], "Expected lexicographic ID tie-breaker"
 
     # With a single-capacity provider, the matcher should pick job-0001 first.
     quotas = qquotas.QuotaTracker(default_concurrent=1)
@@ -187,7 +222,9 @@ def test_ineligible_providers_are_skipped_even_if_high_capacity(monkeypatch):
 
     ranked = qprio.rank([job], now, seed=123)
     assigns = qassign.match_once(providers, ranked, quotas, now, seed=123)
-    assert assigns == [("job-ai-1", "prov-ai")], "Only ACTIVE AI-capable provider should receive the job"
+    assert assigns == [
+        ("job-ai-1", "prov-ai")
+    ], "Only ACTIVE AI-capable provider should receive the job"
 
 
 def test_priority_prefers_higher_fee_then_older_age(monkeypatch):
@@ -197,13 +234,17 @@ def test_priority_prefers_higher_fee_then_older_age(monkeypatch):
     now = _now_ts()
 
     older = _mk_job("job-old", JobKind.AI, fee=10_000, created_at=now - 50)
-    newer_higher_fee = _mk_job("job-newer-pricier", JobKind.AI, fee=11_000, created_at=now - 5)
+    newer_higher_fee = _mk_job(
+        "job-newer-pricier", JobKind.AI, fee=11_000, created_at=now - 5
+    )
     newer_equal_fee = _mk_job("job-newer", JobKind.AI, fee=10_000, created_at=now - 5)
 
     r1 = qprio.rank([older, newer_higher_fee], now, seed=7)
-    assert [j.job_id for j in r1][0] == "job-newer-pricier", "Higher fee should outrank older age"
+    assert [j.job_id for j in r1][
+        0
+    ] == "job-newer-pricier", "Higher fee should outrank older age"
 
     r2 = qprio.rank([older, newer_equal_fee], now, seed=7)
-    assert [j.job_id for j in r2][0] == "job-old", "With equal fees, older job should outrank newer"
-
-
+    assert [j.job_id for j in r2][
+        0
+    ] == "job-old", "With equal fees, older job should outrank newer"

@@ -111,7 +111,12 @@ def test_ema_smoothing_avoids_wild_oscillation() -> None:
         floors.append(th.admit_floor_wei)
 
     # Then alternate low/high/low/high under moderate utilization.
-    for block_fees in ([low_fee] * 10, [high_fee] * 10, [low_fee] * 10, [high_fee] * 10):
+    for block_fees in (
+        [low_fee] * 10,
+        [high_fee] * 10,
+        [low_fee] * 10,
+        [high_fee] * 10,
+    ):
         wm.observe_block_inclusions(block_fees)
         th = wm.thresholds(pool_size=80, capacity=100)
         floors.append(th.admit_floor_wei)

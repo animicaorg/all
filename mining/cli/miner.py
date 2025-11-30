@@ -37,11 +37,10 @@ try:
 except Exception:  # pragma: no cover
     __version__ = "0.0.0-dev"
 
-from .. import errors as miner_errors
+# Orchestrator has async entrypoints; we support multiple shapes for forward-compat.
 from .. import config as miner_config
 from .. import device as miner_device
-
-# Orchestrator has async entrypoints; we support multiple shapes for forward-compat.
+from .. import errors as miner_errors
 from .. import orchestrator as miner_orchestrator
 
 
@@ -74,42 +73,96 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     start = sub.add_parser("start", help="start the miner")
-    start.add_argument("--threads", type=int, default=os.cpu_count() or 1,
-                       help="number of worker threads (default: CPU count)")
-    start.add_argument("--device", type=str, default=_env_default("ANIMICA_MINER_DEVICE", "auto"),
-                       choices=["auto", "cpu", "cuda", "rocm", "opencl", "metal"],
-                       help="compute backend")
-    start.add_argument("--rpc-url", type=str,
-                       default=_env_default("ANIMICA_RPC_URL", "http://127.0.0.1:8547"),
-                       help="node JSON-RPC base URL")
-    start.add_argument("--ws-url", type=str,
-                       default=_env_default("ANIMICA_WS_URL", "ws://127.0.0.1:8547/ws"),
-                       help="node WebSocket URL for newHeads/getwork")
-    start.add_argument("--stratum-listen", type=_parse_host_port,
-                       default=("0.0.0.0", int(_env_default("ANIMICA_STRATUM_PORT", "3333"))),
-                       help="bind address for Stratum server (HOST:PORT), default 0.0.0.0:3333")
-    start.add_argument("--getwork-enable", dest="getwork_enable", default=True, action=argparse.BooleanOptionalAction,
-                       help="enable WS getwork service mounted into RPC app (default: enabled)")
-    start.add_argument("--ai", action="store_true", default=True,
-                       help="enable AI proof worker (AICF enqueue) [default true]")
+    start.add_argument(
+        "--threads",
+        type=int,
+        default=os.cpu_count() or 1,
+        help="number of worker threads (default: CPU count)",
+    )
+    start.add_argument(
+        "--device",
+        type=str,
+        default=_env_default("ANIMICA_MINER_DEVICE", "auto"),
+        choices=["auto", "cpu", "cuda", "rocm", "opencl", "metal"],
+        help="compute backend",
+    )
+    start.add_argument(
+        "--rpc-url",
+        type=str,
+        default=_env_default("ANIMICA_RPC_URL", "http://127.0.0.1:8547"),
+        help="node JSON-RPC base URL",
+    )
+    start.add_argument(
+        "--ws-url",
+        type=str,
+        default=_env_default("ANIMICA_WS_URL", "ws://127.0.0.1:8547/ws"),
+        help="node WebSocket URL for newHeads/getwork",
+    )
+    start.add_argument(
+        "--stratum-listen",
+        type=_parse_host_port,
+        default=("0.0.0.0", int(_env_default("ANIMICA_STRATUM_PORT", "3333"))),
+        help="bind address for Stratum server (HOST:PORT), default 0.0.0.0:3333",
+    )
+    start.add_argument(
+        "--getwork-enable",
+        dest="getwork_enable",
+        default=True,
+        action=argparse.BooleanOptionalAction,
+        help="enable WS getwork service mounted into RPC app (default: enabled)",
+    )
+    start.add_argument(
+        "--ai",
+        action="store_true",
+        default=True,
+        help="enable AI proof worker (AICF enqueue) [default true]",
+    )
     start.add_argument("--no-ai", dest="ai", action="store_false")
-    start.add_argument("--quantum", action="store_true", default=True,
-                       help="enable Quantum proof worker (AICF enqueue) [default true]")
+    start.add_argument(
+        "--quantum",
+        action="store_true",
+        default=True,
+        help="enable Quantum proof worker (AICF enqueue) [default true]",
+    )
     start.add_argument("--no-quantum", dest="quantum", action="store_false")
-    start.add_argument("--storage", action="store_true", default=True,
-                       help="enable Storage heartbeat worker [default true]")
+    start.add_argument(
+        "--storage",
+        action="store_true",
+        default=True,
+        help="enable Storage heartbeat worker [default true]",
+    )
     start.add_argument("--no-storage", dest="storage", action="store_false")
-    start.add_argument("--vdf", action="store_true", default=True,
-                       help="enable VDF bonus worker [default true]")
+    start.add_argument(
+        "--vdf",
+        action="store_true",
+        default=True,
+        help="enable VDF bonus worker [default true]",
+    )
     start.add_argument("--no-vdf", dest="vdf", action="store_false")
-    start.add_argument("--target", type=float, default=float(_env_default("ANIMICA_SHARE_TARGET", "0.25")),
-                       help="share target as fraction of Θ (0<target<=1); lower => harder shares")
-    start.add_argument("--chain-id", type=int, default=int(_env_default("ANIMICA_CHAIN_ID", "1")),
-                       help="chain id (default: 1 animica main)")
-    start.add_argument("--metrics", type=str, default=_env_default("ANIMICA_METRICS", ""),
-                       help="Prometheus endpoint bind ':PORT' or 'HOST:PORT' (empty=disabled)")
-    start.add_argument("--log-level", type=str, default=_env_default("ANIMICA_LOG_LEVEL", "info"),
-                       help="logging level (debug, info, warning, error)")
+    start.add_argument(
+        "--target",
+        type=float,
+        default=float(_env_default("ANIMICA_SHARE_TARGET", "0.25")),
+        help="share target as fraction of Θ (0<target<=1); lower => harder shares",
+    )
+    start.add_argument(
+        "--chain-id",
+        type=int,
+        default=int(_env_default("ANIMICA_CHAIN_ID", "1")),
+        help="chain id (default: 1 animica main)",
+    )
+    start.add_argument(
+        "--metrics",
+        type=str,
+        default=_env_default("ANIMICA_METRICS", ""),
+        help="Prometheus endpoint bind ':PORT' or 'HOST:PORT' (empty=disabled)",
+    )
+    start.add_argument(
+        "--log-level",
+        type=str,
+        default=_env_default("ANIMICA_LOG_LEVEL", "info"),
+        help="logging level (debug, info, warning, error)",
+    )
     start.add_argument("--dry-run", action="store_true", help="print config then exit")
 
     return p
@@ -140,7 +193,10 @@ def _build_orchestrator_config(ns: argparse.Namespace) -> Dict[str, Any]:
         "device": device,
         "rpc_url": ns.rpc_url,
         "ws_url": ns.ws_url,
-        "stratum": {"listen_host": ns.stratum_listen[0], "listen_port": ns.stratum_listen[1]},
+        "stratum": {
+            "listen_host": ns.stratum_listen[0],
+            "listen_port": ns.stratum_listen[1],
+        },
         "getwork": {"enable": bool(ns.getwork_enable)},
         "enable_workers": {
             "ai": bool(ns.ai),

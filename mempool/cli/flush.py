@@ -32,8 +32,8 @@ import io
 import json
 import sys
 import typing as t
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-from urllib.error import URLError, HTTPError
 
 # Optional CBOR backend
 try:
@@ -99,7 +99,13 @@ def _rpc_call(url: str, method: str, params: list | dict | None = None) -> Json:
     return payload.get("result")
 
 
-def _fetch_from_rpc(url: str, limit: int | None, ready_only: bool, gas_limit: int | None, bytes_limit: int | None) -> list[dict]:
+def _fetch_from_rpc(
+    url: str,
+    limit: int | None,
+    ready_only: bool,
+    gas_limit: int | None,
+    bytes_limit: int | None,
+) -> list[dict]:
     # Prefer a purpose-built drain endpoint if present.
     params = {
         "limit": limit,
@@ -152,20 +158,48 @@ def _write_cbor(path: str, obj: Json) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Drain Animica mempool entries to stdout (JSON) and/or CBOR file.")
+    ap = argparse.ArgumentParser(
+        description="Drain Animica mempool entries to stdout (JSON) and/or CBOR file."
+    )
     src = ap.add_mutually_exclusive_group(required=True)
-    src.add_argument("--rpc", help="JSON-RPC endpoint (tries mempool.drain → mempool.inspect)")
-    src.add_argument("-i", "--input", help="Read entries from JSON file or '-' for stdin")
+    src.add_argument(
+        "--rpc", help="JSON-RPC endpoint (tries mempool.drain → mempool.inspect)"
+    )
+    src.add_argument(
+        "-i", "--input", help="Read entries from JSON file or '-' for stdin"
+    )
 
-    ap.add_argument("--limit", type=int, default=None, help="Max number of entries to fetch via RPC")
-    ap.add_argument("--ready-only", action="store_true", help="Ask RPC to return only 'ready' entries (if supported)")
-    ap.add_argument("--gas-limit", type=int, default=None, help="Optional gas budget hint for RPC drain")
-    ap.add_argument("--bytes-limit", type=int, default=None, help="Optional byte budget hint for RPC drain")
+    ap.add_argument(
+        "--limit", type=int, default=None, help="Max number of entries to fetch via RPC"
+    )
+    ap.add_argument(
+        "--ready-only",
+        action="store_true",
+        help="Ask RPC to return only 'ready' entries (if supported)",
+    )
+    ap.add_argument(
+        "--gas-limit",
+        type=int,
+        default=None,
+        help="Optional gas budget hint for RPC drain",
+    )
+    ap.add_argument(
+        "--bytes-limit",
+        type=int,
+        default=None,
+        help="Optional byte budget hint for RPC drain",
+    )
 
     ap.add_argument("--cbor-out", help="Path to write canonical CBOR snapshot")
-    ap.add_argument("--json-out", help="Optional path to also write canonical JSON (pretty)")
+    ap.add_argument(
+        "--json-out", help="Optional path to also write canonical JSON (pretty)"
+    )
 
-    ap.add_argument("--no-stdout", action="store_true", help="Do not print JSON to stdout (useful with --cbor-out)")
+    ap.add_argument(
+        "--no-stdout",
+        action="store_true",
+        help="Do not print JSON to stdout (useful with --cbor-out)",
+    )
     args = ap.parse_args(argv)
 
     # Load entries
@@ -194,12 +228,14 @@ def main(argv: list[str] | None = None) -> int:
         try:
             with open(args.json_out, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2, sort_keys=True)
-            print(f"[+] Wrote canonical JSON snapshot to {args.json_out}", file=sys.stderr)
+            print(
+                f"[+] Wrote canonical JSON snapshot to {args.json_out}", file=sys.stderr
+            )
         except Exception as e:
             raise SystemExit(f"Failed to write JSON to {args.json_out}: {e}") from e
 
     # Print to stdout unless suppressed
-    if not args.no-stdout:
+    if not args.no - stdout:
         json.dump(payload, sys.stdout, indent=2, sort_keys=True)
         sys.stdout.write("\n")
         sys.stdout.flush()

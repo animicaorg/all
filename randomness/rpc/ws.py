@@ -29,7 +29,7 @@ Publish example (from beacon code / adapters):
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, Set, Optional
+from typing import Any, Dict, Optional, Set
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field, validator
@@ -39,25 +39,38 @@ router = APIRouter()
 
 # -------------------- Event payload models --------------------
 
+
 class RoundOpened(BaseModel):
     round_id: int = Field(..., description="Opened round id.")
-    commit_open: int = Field(..., description="Unix timestamp (s) when commit window opened.")
-    commit_close: int = Field(..., description="Unix timestamp (s) when commit window closes.")
-    reveal_open: int = Field(..., description="Unix timestamp (s) when reveal window opens.")
-    reveal_close: int = Field(..., description="Unix timestamp (s) when reveal window closes.")
+    commit_open: int = Field(
+        ..., description="Unix timestamp (s) when commit window opened."
+    )
+    commit_close: int = Field(
+        ..., description="Unix timestamp (s) when commit window closes."
+    )
+    reveal_open: int = Field(
+        ..., description="Unix timestamp (s) when reveal window opens."
+    )
+    reveal_close: int = Field(
+        ..., description="Unix timestamp (s) when reveal window closes."
+    )
     now: Optional[int] = Field(None, description="Server timestamp (s) at emit time.")
 
 
 class RoundClosed(BaseModel):
     round_id: int = Field(..., description="Closed round id.")
-    closed_at: int = Field(..., description="Unix timestamp (s) when reveal window closed.")
+    closed_at: int = Field(
+        ..., description="Unix timestamp (s) when reveal window closed."
+    )
     reason: str = Field("reveal_closed", description="Closure reason label.")
 
 
 class BeaconFinalized(BaseModel):
     round_id: int = Field(..., description="Round id associated with this beacon.")
     beacon: str = Field(..., description="0x-hex beacon output.")
-    aggregate: Optional[str] = Field(None, description="0x-hex pre-VDF aggregate of reveals.")
+    aggregate: Optional[str] = Field(
+        None, description="0x-hex pre-VDF aggregate of reveals."
+    )
     vdf_input: Optional[str] = Field(None, description="0x-hex VDF input.")
     vdf_proof: Optional[str] = Field(None, description="0x-hex VDF proof (Wesolowski).")
     mixed_with_qrng: bool = Field(False, description="True if QRNG mixing applied.")
@@ -67,10 +80,15 @@ class BeaconFinalized(BaseModel):
     def _hex_prefix(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
             return v
-        return v if (isinstance(v, str) and (v.startswith("0x") or v.startswith("0X"))) else f"0x{v}"
+        return (
+            v
+            if (isinstance(v, str) and (v.startswith("0x") or v.startswith("0X")))
+            else f"0x{v}"
+        )
 
 
 # -------------------- Connection manager --------------------
+
 
 class _ConnectionManager:
     def __init__(self) -> None:
@@ -100,6 +118,7 @@ _manager = _ConnectionManager()
 
 
 # -------------------- Publisher --------------------
+
 
 class RandomnessWSPublisher:
     """
@@ -132,7 +151,9 @@ class RandomnessWSPublisher:
     def round_closed(self, payload: Dict[str, Any] | RoundClosed) -> None:
         asyncio.create_task(self.a_round_closed(payload))
 
-    async def a_beacon_finalized(self, payload: Dict[str, Any] | BeaconFinalized) -> None:
+    async def a_beacon_finalized(
+        self, payload: Dict[str, Any] | BeaconFinalized
+    ) -> None:
         model = payload if isinstance(payload, dict) else payload.dict()
         await self.a_emit("beaconFinalized", model)
 
@@ -144,6 +165,7 @@ publisher = RandomnessWSPublisher(_manager)
 
 
 # -------------------- WS endpoint --------------------
+
 
 @router.websocket("/ws/rand")
 async def randomness_ws(ws: WebSocket) -> None:

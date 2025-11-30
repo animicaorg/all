@@ -48,12 +48,20 @@ def auth_headers() -> Dict[str, str]:
 
 
 def post_json(url: str, payload: Dict[str, Any], **kwargs) -> requests.Response:
-    headers = {"content-type": "application/json", **auth_headers(), **kwargs.pop("headers", {})}
+    headers = {
+        "content-type": "application/json",
+        **auth_headers(),
+        **kwargs.pop("headers", {}),
+    }
     return requests.post(url, data=json.dumps(payload), headers=headers, **kwargs)
 
 
 def post_octet(url: str, blob: bytes, **kwargs) -> requests.Response:
-    headers = {"content-type": "application/octet-stream", **auth_headers(), **kwargs.pop("headers", {})}
+    headers = {
+        "content-type": "application/octet-stream",
+        **auth_headers(),
+        **kwargs.pop("headers", {}),
+    }
     return requests.post(url, data=blob, headers=headers, **kwargs)
 
 
@@ -110,7 +118,13 @@ def relay_deploy_tx(services: str, signed_cbor: bytes) -> str:
     return tx_hash
 
 
-def submit_verify_job(services: str, source: str, manifest: Dict[str, Any], tx_hash: Optional[str], address: Optional[str]) -> str:
+def submit_verify_job(
+    services: str,
+    source: str,
+    manifest: Dict[str, Any],
+    tx_hash: Optional[str],
+    address: Optional[str],
+) -> str:
     """
     POST /verify with source+manifest and either txHash or address.
     Returns a job id to poll.
@@ -136,7 +150,9 @@ def submit_verify_job(services: str, source: str, manifest: Dict[str, Any], tx_h
     return job_id
 
 
-def poll_verify(services: str, job_id: Optional[str], tx_hash: Optional[str], timeout_s: int) -> Dict[str, Any]:
+def poll_verify(
+    services: str, job_id: Optional[str], tx_hash: Optional[str], timeout_s: int
+) -> Dict[str, Any]:
     """
     Poll GET /verify/{jobId} (preferred), or fallback to /verify/{txHash} until status is terminal.
     Terminal statuses: success | failed.
@@ -167,20 +183,45 @@ def poll_verify(services: str, job_id: Optional[str], tx_hash: Optional[str], ti
         time.sleep(1.0)
 
     # timeout
-    raise SystemExit(f"Verification did not complete within {timeout_s}s; last={json.dumps(last, indent=2)}")
+    raise SystemExit(
+        f"Verification did not complete within {timeout_s}s; last={json.dumps(last, indent=2)}"
+    )
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Load sample artifacts & verify the Counter contract")
-    ap.add_argument("--services", default=os.getenv("SERVICES_URL", "http://localhost:8080"),
-                    help="Base URL for studio-services (default: %(default)s)")
-    ap.add_argument("--fixtures-dir", default="studio-services/fixtures/counter",
-                    help="Directory containing contract.py, manifest.json, deploy_signed_tx.cbor")
-    ap.add_argument("--no-deploy", action="store_true", help="Skip relaying the signed deploy tx")
+    ap = argparse.ArgumentParser(
+        description="Load sample artifacts & verify the Counter contract"
+    )
+    ap.add_argument(
+        "--services",
+        default=os.getenv("SERVICES_URL", "http://localhost:8080"),
+        help="Base URL for studio-services (default: %(default)s)",
+    )
+    ap.add_argument(
+        "--fixtures-dir",
+        default="studio-services/fixtures/counter",
+        help="Directory containing contract.py, manifest.json, deploy_signed_tx.cbor",
+    )
+    ap.add_argument(
+        "--no-deploy", action="store_true", help="Skip relaying the signed deploy tx"
+    )
     ap.add_argument("--no-verify", action="store_true", help="Skip verification")
-    ap.add_argument("--tx-hash", default=None, help="Use an existing tx hash for verification (implies --no-deploy)")
-    ap.add_argument("--address", default=None, help="Verify an already-deployed address (alternative to --tx-hash)")
-    ap.add_argument("--timeout", type=int, default=60, help="Seconds to wait for verification to complete")
+    ap.add_argument(
+        "--tx-hash",
+        default=None,
+        help="Use an existing tx hash for verification (implies --no-deploy)",
+    )
+    ap.add_argument(
+        "--address",
+        default=None,
+        help="Verify an already-deployed address (alternative to --tx-hash)",
+    )
+    ap.add_argument(
+        "--timeout",
+        type=int,
+        default=60,
+        help="Seconds to wait for verification to complete",
+    )
     args = ap.parse_args()
 
     services = args.services
@@ -210,10 +251,14 @@ def main() -> None:
     job_id: Optional[str] = None
     if tx_hash or args.address:
         print("→ Submitting verification job …")
-        job_id = submit_verify_job(services, src, manifest, tx_hash=tx_hash, address=args.address)
+        job_id = submit_verify_job(
+            services, src, manifest, tx_hash=tx_hash, address=args.address
+        )
         print(f"✓ Verify job submitted: jobId={job_id}")
         print("→ Waiting for verification result …")
-        result = poll_verify(services, job_id=job_id, tx_hash=tx_hash, timeout_s=args.timeout)
+        result = poll_verify(
+            services, job_id=job_id, tx_hash=tx_hash, timeout_s=args.timeout
+        )
         status = result.get("status", "").upper()
         addr = result.get("address") or result.get("contractAddress")
         code_hash = result.get("codeHash") or result.get("code_hash")
@@ -223,15 +268,20 @@ def main() -> None:
             raise SystemExit("Verification failed (see result above).")
         print(f"✓ Verified OK: address={addr} codeHash={code_hash}")
     else:
-        print("→ No tx hash or address available; skipping verification.\n"
-              "   You can run again with --tx-hash <hash> or --address <addr> to verify.")
+        print(
+            "→ No tx hash or address available; skipping verification.\n"
+            "   You can run again with --tx-hash <hash> or --address <addr> to verify."
+        )
 
     print("All done.")
     print("\nTips:")
     print(" - Set STUDIO_API_KEY if your instance requires auth.")
-    print(" - Override SERVICES_URL env var or use --services to target a remote instance.")
+    print(
+        " - Override SERVICES_URL env var or use --services to target a remote instance."
+    )
     print(" - Use --no-deploy with --tx-hash to verify an already-mined contract.")
     print(" - Logs include full JSON responses for troubleshooting.")
+
 
 if __name__ == "__main__":
     try:

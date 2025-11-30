@@ -43,7 +43,6 @@ from typing import Iterable, List, Optional, Sequence, Set, Tuple
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 
-
 # ------------------------------ config helpers --------------------------------
 
 
@@ -211,7 +210,11 @@ class RequireAllowedOrigin:
     """
 
     def __init__(self, allowed_origins: Optional[Sequence[str]] = None) -> None:
-        origins = list(allowed_origins) if allowed_origins is not None else load_allowed_origins_from_env()
+        origins = (
+            list(allowed_origins)
+            if allowed_origins is not None
+            else load_allowed_origins_from_env()
+        )
         self.allowed: List[str] = [o.rstrip("/") for o in origins]
 
     async def __call__(self, request: Request) -> None:
@@ -224,9 +227,14 @@ class RequireAllowedOrigin:
         if origin in self.allowed:
             return
         # Some proxies strip trailing slash or scheme nuances; allow http->https upgrade match if configured.
-        if origin.startswith("http://") and origin.replace("http://", "https://", 1) in self.allowed:
+        if (
+            origin.startswith("http://")
+            and origin.replace("http://", "https://", 1) in self.allowed
+        ):
             return
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Origin not allowed")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Origin not allowed"
+        )
 
 
 def setup_cors(app: FastAPI) -> None:
@@ -256,7 +264,9 @@ def setup_cors(app: FastAPI) -> None:
 
     # Note: Starlette prohibits allow_origins=["*"] when allow_credentials=True.
     if allow_credentials and allow_origins == ["*"]:
-        raise RuntimeError("CORS_ALLOW_CREDENTIALS=1 cannot be used with CORS_ALLOW_ORIGINS='*'")
+        raise RuntimeError(
+            "CORS_ALLOW_CREDENTIALS=1 cannot be used with CORS_ALLOW_ORIGINS='*'"
+        )
 
     app.add_middleware(
         CORSMiddleware,

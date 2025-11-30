@@ -94,24 +94,29 @@ _INIT_PREFIX: bytes = b"control:init:"
 
 # ---- Lazy stdlib accessors ---------------------------------------------------
 
+
 def _std_storage():
     from stdlib import storage  # type: ignore
+
     return storage
 
 
 def _std_events():
     from stdlib import events  # type: ignore
+
     return events
 
 
 def _std_abi():
     from stdlib import abi  # type: ignore
+
     return abi
 
 
 def _std_hash_optional():
     try:
         from stdlib import hash as _h  # type: ignore
+
         return _h
     except Exception:
         return None
@@ -119,10 +124,12 @@ def _std_hash_optional():
 
 # ---- Optional access/ownable integration ------------------------------------
 
+
 def _roles_optional():
     try:
         # Prefer same-package import to avoid global name clashes
         from ..access import roles as _roles  # type: ignore
+
         return _roles
     except Exception:
         return None
@@ -134,12 +141,14 @@ def _owner_optional() -> Optional[bytes]:
     """
     try:
         from ..access import ownable as _own  # type: ignore
+
         return _own.get_owner()
     except Exception:
         return None
 
 
 # ---- Helpers ----------------------------------------------------------------
+
 
 def _set_flag(key: bytes) -> None:
     _std_storage().set(key, b"1")
@@ -155,6 +164,7 @@ def _has_flag(key: bytes) -> bool:
 
 
 # ---- Pausable ---------------------------------------------------------------
+
 
 def get_pauser_role() -> bytes:
     """
@@ -221,6 +231,7 @@ def unpause(caller: bytes) -> None:
 
 # ---- Reentrancy Guard -------------------------------------------------------
 
+
 def _guard_key(scope: bytes) -> bytes:
     # Scope is an arbitrary (short) bytes tag. Empty is allowed but discouraged.
     return _REENT_PREFIX + scope
@@ -252,6 +263,7 @@ def guard_exit(scope: bytes = b"default") -> None:
 
 
 # ---- Initialize-once --------------------------------------------------------
+
 
 def is_initialized(flag: bytes = b"default") -> bool:
     return _has_flag(_INIT_PREFIX + flag)

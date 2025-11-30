@@ -19,7 +19,7 @@ Exports
 """
 
 from pathlib import Path
-from typing import Any, Optional, Mapping
+from typing import Any, Mapping, Optional
 
 GENESIS_DIR: Path = Path(__file__).resolve().parent
 GENESIS_JSON: Path = GENESIS_DIR / "genesis.json"

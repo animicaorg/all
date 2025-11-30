@@ -61,8 +61,8 @@ import os
 import sqlite3
 import threading
 import time
-from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Tuple
-
+from typing import (Any, Dict, Iterable, Iterator, List, Mapping, Optional,
+                    Tuple)
 
 # ---- errors ------------------------------------------------------------------
 
@@ -278,7 +278,9 @@ class AICFBlockDB:
         ).fetchall()
         return [self._row_claim(r) for r in rows]
 
-    def list_claims_in_range(self, start_height: int, end_height: int) -> List[Dict[str, Any]]:
+    def list_claims_in_range(
+        self, start_height: int, end_height: int
+    ) -> List[Dict[str, Any]]:
         rows = self._db.execute(
             "SELECT * FROM block_claims WHERE height BETWEEN ? AND ? ORDER BY height ASC, id ASC",
             (int(start_height), int(end_height)),
@@ -372,19 +374,22 @@ class AICFBlockDB:
 
     def list_settlements_at_height(self, height: int) -> List[Dict[str, Any]]:
         rows = self._db.execute(
-            "SELECT * FROM settlements WHERE height=? ORDER BY settlement_id ASC", (int(height),)
+            "SELECT * FROM settlements WHERE height=? ORDER BY settlement_id ASC",
+            (int(height),),
         ).fetchall()
         return [self._row_settlement(r) for r in rows]
 
     def list_settlements_by_epoch(self, epoch: int) -> List[Dict[str, Any]]:
         rows = self._db.execute(
-            "SELECT * FROM settlements WHERE epoch=? ORDER BY height ASC, settlement_id ASC", (int(epoch),)
+            "SELECT * FROM settlements WHERE epoch=? ORDER BY height ASC, settlement_id ASC",
+            (int(epoch),),
         ).fetchall()
         return [self._row_settlement(r) for r in rows]
 
     def list_settlement_items(self, settlement_id: str) -> List[Dict[str, Any]]:
         rows = self._db.execute(
-            "SELECT * FROM settlement_items WHERE settlement_id=? ORDER BY payout_id ASC", (settlement_id,)
+            "SELECT * FROM settlement_items WHERE settlement_id=? ORDER BY payout_id ASC",
+            (settlement_id,),
         ).fetchall()
         return [self._row_item(r) for r in rows]
 

@@ -16,9 +16,16 @@ def _free_port() -> int:
     return int(port)
 
 
-async def _start_stack(prefix: bytes, share_ratio: float, theta_micro: int, target_hex: str):
+async def _start_stack(
+    prefix: bytes, share_ratio: float, theta_micro: int, target_hex: str
+):
     port = _free_port()
-    server = StratumServer(host="127.0.0.1", port=port, default_share_target=share_ratio, default_theta_micro=theta_micro)
+    server = StratumServer(
+        host="127.0.0.1",
+        port=port,
+        default_share_target=share_ratio,
+        default_theta_micro=theta_micro,
+    )
     records = []
 
     async def hook(session, job, params, ok, reason, is_block, tx_count):
@@ -54,17 +61,23 @@ async def test_submit_valid_share_and_block_roundtrip():
     prefix = b"animica-stratum-cpu-test"
     t_share = int(theta_micro * share_ratio)
     scanner = HashScanner()
-    shares = scanner.scan_batch(prefix, t_share, nonce_start=0, nonce_count=10_000, theta_micro=theta_micro)
+    shares = scanner.scan_batch(
+        prefix, t_share, nonce_start=0, nonce_count=10_000, theta_micro=theta_micro
+    )
     assert shares, "expected to find at least one share in the test window"
     share = shares[0]
 
     block_target_hex = hex(micro_threshold_to_target256(t_share))
 
-    server, client, records = await _start_stack(prefix, share_ratio, theta_micro, "0x1")
+    server, client, records = await _start_stack(
+        prefix, share_ratio, theta_micro, "0x1"
+    )
 
     try:
         # Submit a standard share (should be accepted)
-        result = await client.submit_share("job-cpu", {"nonce": hex(share.nonce), "body": {"hMicro": share.h_micro}})
+        result = await client.submit_share(
+            "job-cpu", {"nonce": hex(share.nonce), "body": {"hMicro": share.h_micro}}
+        )
         assert result.get("accepted"), f"share rejected: {result}"
 
         # Wait for submit hook to fire
@@ -78,7 +91,11 @@ async def test_submit_valid_share_and_block_roundtrip():
         # Publish another job that reuses the same threshold but treats it as a block target
         block_job = StratumJob(
             job_id="job-block",
-            header={"signBytes": "0x" + prefix.hex(), "target": block_target_hex, "number": 2},
+            header={
+                "signBytes": "0x" + prefix.hex(),
+                "target": block_target_hex,
+                "number": 2,
+            },
             share_target=share_ratio,
             theta_micro=theta_micro,
             target=block_target_hex,
@@ -86,10 +103,11 @@ async def test_submit_valid_share_and_block_roundtrip():
             height=2,
         )
         await server.publish_job(block_job)
-        block_result = await client.submit_share("job-block", {"nonce": hex(share.nonce), "body": {"hMicro": share.h_micro}})
+        block_result = await client.submit_share(
+            "job-block", {"nonce": hex(share.nonce), "body": {"hMicro": share.h_micro}}
+        )
         assert block_result.get("accepted") is True
         assert block_result.get("isBlock") is True
     finally:
         await client.close()
         await server.stop()
-

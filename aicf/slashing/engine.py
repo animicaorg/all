@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 from typing import Any, Optional
+
 
 class Engine:
     """
@@ -25,7 +27,7 @@ class Engine:
 
     def __init__(self, thresholds: Any, penalties: Any) -> None:
         self.traps_min = float(getattr(thresholds, "traps_min", 0.98))
-        self.qos_min   = float(getattr(thresholds, "qos_min", 0.90))
+        self.qos_min = float(getattr(thresholds, "qos_min", 0.90))
         self.cooldown_blocks = int(getattr(penalties, "cooldown_blocks", 5))
         self.penalty_per_violation = int(getattr(penalties, "penalty_per_violation", 0))
         self.jail_after_violations = int(getattr(penalties, "jail_after_violations", 2))
@@ -38,7 +40,9 @@ class Engine:
 
     def _slash_soft(self, provider: Any) -> None:
         try:
-            provider.stake = max(0, int(getattr(provider, "stake", 0)) - self.penalty_per_violation)
+            provider.stake = max(
+                0, int(getattr(provider, "stake", 0)) - self.penalty_per_violation
+            )
         except Exception:
             pass
 
@@ -63,6 +67,10 @@ class Engine:
         if provider.violations >= self.jail_after_violations:
             provider.jailed = True
             provider.jail_until_height = height + self.cooldown_blocks
-            return {"event": "jail", "height": height, "until": provider.jail_until_height}
+            return {
+                "event": "jail",
+                "height": height,
+                "until": provider.jail_until_height,
+            }
 
         return {"event": "warn", "height": height, "violations": provider.violations}

@@ -39,6 +39,7 @@ def _require_nonneg(name: str, v: int) -> None:
 
 # ---- Records -----------------------------------------------------------------
 
+
 @dataclass(frozen=True, slots=True)
 class CommitRecord:
     """
@@ -49,6 +50,7 @@ class CommitRecord:
       participant — opaque participant identifier (e.g., 32-byte account id)
       commit   — commitment hash (domain-separated, 32 bytes)
     """
+
     round: RoundId
     participant: bytes
     commit: bytes
@@ -74,6 +76,7 @@ class RevealRecord:
       participant — opaque participant identifier (e.g., 32-byte account id)
       reveal   — preimage value (32 bytes) that should match the commitment
     """
+
     round: RoundId
     participant: bytes
     reveal: bytes
@@ -91,6 +94,7 @@ class RevealRecord:
 
 # ---- VDF inputs & proofs -----------------------------------------------------
 
+
 @dataclass(frozen=True, slots=True)
 class VDFInput:
     """
@@ -102,6 +106,7 @@ class VDFInput:
                     derived from the commit/reveal aggregate/mix
       iterations  — VDF work factor / time parameter (non-negative)
     """
+
     round: RoundId
     seed: bytes
     iterations: int
@@ -130,6 +135,7 @@ class VDFProof:
       iterations  — work factor used (must match VDFInput.iterations)
       verified    — optional cached verification result (None if unknown)
     """
+
     round: RoundId
     y: bytes
     pi: bytes
@@ -151,6 +157,7 @@ class VDFProof:
 
 # ---- Final beacon output -----------------------------------------------------
 
+
 @dataclass(frozen=True, slots=True)
 class BeaconOut:
     """
@@ -163,6 +170,7 @@ class BeaconOut:
       n_reveals   — number of reveal records included
       vdf_y       — VDF output included in the mix (optional if VDF disabled)
     """
+
     round: RoundId
     value: bytes
     n_commits: int

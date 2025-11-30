@@ -20,12 +20,12 @@ Design
 This is intentionally small; extend only as needed for studio-wasm usage.
 """
 
+import time
 from dataclasses import dataclass
 from typing import Dict, Generator, Iterable, Iterator, List, Optional, Tuple
-import time
-
 
 # ----------------------------- Data Types -----------------------------
+
 
 @dataclass(frozen=True)
 class FileStat:
@@ -36,6 +36,7 @@ class FileStat:
 
 
 # ----------------------------- Helpers -------------------------------
+
 
 def _now() -> float:
     try:
@@ -102,6 +103,7 @@ def _basename(path: str) -> str:
 
 # ----------------------------- MemFS ---------------------------------
 
+
 class MemFS:
     """
     A simple in-memory filesystem with a subset of POSIX-like operations.
@@ -111,9 +113,9 @@ class MemFS:
     """
 
     def __init__(self) -> None:
-        self._dirs: Dict[str, float] = {"/": _now()}   # dir path -> mtime
-        self._files: Dict[str, bytes] = {}             # file path -> content
-        self._mtimes: Dict[str, float] = {}            # file path -> mtime
+        self._dirs: Dict[str, float] = {"/": _now()}  # dir path -> mtime
+        self._files: Dict[str, bytes] = {}  # file path -> content
+        self._mtimes: Dict[str, float] = {}  # file path -> mtime
         self._cwd: str = "/"
 
     # ---- cwd ----
@@ -173,7 +175,9 @@ class MemFS:
         # touch parent mtime
         self._dirs[parent] = ts
 
-    def write_text(self, path: str, text: str, encoding: str = "utf-8", *, makedirs: bool = True) -> None:
+    def write_text(
+        self, path: str, text: str, encoding: str = "utf-8", *, makedirs: bool = True
+    ) -> None:
         self.write_bytes(path, text.encode(encoding), makedirs=makedirs)
 
     def read_bytes(self, path: str) -> bytes:
@@ -288,7 +292,15 @@ class MemFS:
             for f in to_del_files:
                 self.remove(f)
             # remove subdirs (deepest-first)
-            to_del_dirs = sorted([d for d in self._dirs if d != "/" and (d == p or d.startswith(p + "/"))], key=len, reverse=True)
+            to_del_dirs = sorted(
+                [
+                    d
+                    for d in self._dirs
+                    if d != "/" and (d == p or d.startswith(p + "/"))
+                ],
+                key=len,
+                reverse=True,
+            )
             for d in to_del_dirs:
                 if d in self._dirs:
                     del self._dirs[d]

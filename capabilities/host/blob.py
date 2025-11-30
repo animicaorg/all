@@ -24,12 +24,13 @@ Return shape (dict):
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
 import logging
+from typing import Any, Dict, Optional
 
-from .provider import SyscallContext, ProviderRegistry, get_registry, BLOB_PIN
-from ..errors import CapError
 from da.errors import NamespaceRangeError  # type: ignore
+
+from ..errors import CapError
+from .provider import BLOB_PIN, ProviderRegistry, SyscallContext, get_registry
 
 log = logging.getLogger("capabilities.host.blob")
 
@@ -45,8 +46,10 @@ except Exception:  # pragma: no cover
 
 # Namespace bounds: prefer da.nmt.namespace helpers; fall back to simple checks.
 try:
-    from da.nmt.namespace import validate_namespace_id as _validate_ns  # type: ignore
+    from da.nmt.namespace import \
+        validate_namespace_id as _validate_ns  # type: ignore
 except Exception:  # pragma: no cover
+
     def _validate_ns(ns: int) -> None:
         if not isinstance(ns, int):
             raise NamespaceRangeError("namespace must be an int")
@@ -60,11 +63,13 @@ except Exception:  # pragma: no cover
 _COMMIT_MODE: Optional[str] = None
 try:
     from da.blob.commitment import commit as _da_commit  # type: ignore
+
     _COMMIT_MODE = "da.commitment"
 except Exception:  # pragma: no cover
     _da_commit = None
     _COMMIT_MODE = "fallback.sha3_256"
-    import hashlib, struct
+    import hashlib
+    import struct
 
     def _fallback_commit(data: bytes, namespace: int) -> bytes:
         h = hashlib.sha3_256()
@@ -78,6 +83,7 @@ except Exception:  # pragma: no cover
 # Optional DA adapter bridge
 try:
     from ..adapters import da as _da_adapter  # type: ignore
+
     _HAS_ADAPTER = True
 except Exception:  # pragma: no cover
     _da_adapter = None
@@ -87,6 +93,7 @@ except Exception:  # pragma: no cover
 # ----------------------------
 # Provider implementation
 # ----------------------------
+
 
 def _blob_pin(ctx: SyscallContext, *, namespace: int, data: bytes) -> Dict[str, Any]:
     """
@@ -105,12 +112,16 @@ def _blob_pin(ctx: SyscallContext, *, namespace: int, data: bytes) -> Dict[str, 
     if size <= 0:
         raise CapError("blob_pin: empty data not allowed")
     if size > int(_MAX_BLOB_BYTES):
-        raise CapError(f"blob_pin: blob size {size} exceeds MAX_BLOB_BYTES={_MAX_BLOB_BYTES}")
+        raise CapError(
+            f"blob_pin: blob size {size} exceeds MAX_BLOB_BYTES={_MAX_BLOB_BYTES}"
+        )
 
     # Prefer the adapter (persists blob & returns canonical commitment)
     if _HAS_ADAPTER and hasattr(_da_adapter, "pin_blob"):
-        log.debug("blob_pin: delegating to capabilities.adapters.da.pin_blob",
-                  extra={"ns": namespace, "size": size, "height": ctx.height})
+        log.debug(
+            "blob_pin: delegating to capabilities.adapters.da.pin_blob",
+            extra={"ns": namespace, "size": size, "height": ctx.height},
+        )
         result = _da_adapter.pin_blob(ctx, namespace=namespace, data=bytes(data))  # type: ignore[attr-defined]
         # Expect at least commitment (bytes), namespace (int), size (int)
         commit = result.get("commitment")
@@ -134,8 +145,10 @@ def _blob_pin(ctx: SyscallContext, *, namespace: int, data: bytes) -> Dict[str, 
         }
     else:  # pragma: no cover - dev only
         commit_bytes = _fallback_commit(bytes(data), namespace)
-        log.warning("blob_pin: using NON-CANONICAL fallback commitment (dev-only)",
-                    extra={"ns": namespace, "size": size, "mode": _COMMIT_MODE})
+        log.warning(
+            "blob_pin: using NON-CANONICAL fallback commitment (dev-only)",
+            extra={"ns": namespace, "size": size, "mode": _COMMIT_MODE},
+        )
         return {
             "namespace": namespace,
             "size": size,

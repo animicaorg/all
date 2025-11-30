@@ -88,12 +88,14 @@ from __future__ import annotations
 
 from typing import Final, List, Tuple
 
+from stdlib import storage  # type: ignore
 from stdlib import abi, events  # type: ignore
 from stdlib import hash as _hash  # type: ignore
-from stdlib import storage  # type: ignore
 
 # Reuse treasury helpers from sibling
-from . import balance as _trez_balance, transfer as _trez_transfer, require_min_balance as _trez_require
+from . import balance as _trez_balance
+from . import require_min_balance as _trez_require
+from . import transfer as _trez_transfer
 
 # ---------- Constants ----------
 
@@ -113,10 +115,12 @@ _P_IX: Final[bytes] = b"ps:ix:"
 
 # ---------- Basic encoders ----------
 
+
 def _u256_to_bytes(x: int) -> bytes:
     if x < 0 or x > _U256_MAX:
         abi.revert(b"SPLIT:BAD_INPUT")
     return int(x).to_bytes(32, "big")
+
 
 def _bytes_to_u256(b: bytes) -> int:
     if len(b) == 0:
@@ -125,20 +129,26 @@ def _bytes_to_u256(b: bytes) -> int:
         abi.revert(b"SPLIT:NOT_FOUND")
     return int.from_bytes(b, "big")
 
+
 def _set_u256(k: bytes, x: int) -> None:
     storage.set(k, _u256_to_bytes(x))
+
 
 def _get_u256(k: bytes) -> int:
     return _bytes_to_u256(storage.get(k))
 
+
 def _setb(k: bytes, v: bytes) -> None:
     storage.set(k, bytes(v))
+
 
 def _getb(k: bytes) -> bytes:
     return storage.get(k)
 
+
 def _k(prefix: bytes, id_: bytes) -> bytes:
     return prefix + id_
+
 
 def _ki(prefix: bytes, id_: bytes, i: int) -> bytes:
     # store index as minimal big-endian (uvarint) to keep keys compact & ordered
@@ -152,12 +162,15 @@ def _ki(prefix: bytes, id_: bytes, i: int) -> bytes:
         idx = i.to_bytes(sz, "big")
     return prefix + id_ + idx
 
+
 def _exists(id_: bytes) -> bool:
     return storage.get(_k(_P_EX, id_)) == b"\x01"
+
 
 def _ensure_addr(a: bytes) -> None:
     if not isinstance(a, (bytes, bytearray)) or len(a) == 0:
         abi.revert(b"SPLIT:ZERO_ADDR")
+
 
 def _ensure_share(s: int) -> None:
     if s <= 0:
@@ -165,7 +178,9 @@ def _ensure_share(s: int) -> None:
     if s > _U256_MAX:
         abi.revert(b"SPLIT:BAD_INPUT")
 
+
 # ---------- Public views ----------
+
 
 def compute_id(payees: List[bytes], shares: List[int], nonce: bytes) -> bytes:
     """
@@ -187,26 +202,31 @@ def compute_id(payees: List[bytes], shares: List[int], nonce: bytes) -> bytes:
     buf += bytes(nonce)
     return _hash.keccak256(bytes(buf))
 
+
 def count(id_: bytes) -> int:
     """Number of payees N."""
     if not _exists(id_):
         abi.revert(b"SPLIT:NOT_FOUND")
     return _get_u256(_k(_P_N, id_))
 
+
 def total_shares(id_: bytes) -> int:
     if not _exists(id_):
         abi.revert(b"SPLIT:NOT_FOUND")
     return _get_u256(_k(_P_TS, id_))
+
 
 def total_received(id_: bytes) -> int:
     if not _exists(id_):
         abi.revert(b"SPLIT:NOT_FOUND")
     return _get_u256(_k(_P_TRCV, id_))
 
+
 def total_released(id_: bytes) -> int:
     if not _exists(id_):
         abi.revert(b"SPLIT:NOT_FOUND")
     return _get_u256(_k(_P_TREL, id_))
+
 
 def payee_at(id_: bytes, i: int) -> Tuple[bytes, int, int]:
     """
@@ -222,6 +242,7 @@ def payee_at(id_: bytes, i: int) -> Tuple[bytes, int, int]:
     r = _get_u256(_ki(_P_REL, id_, i))
     return p, s, r
 
+
 def shares_of(id_: bytes, payee: bytes) -> int:
     if not _exists(id_):
         abi.revert(b"SPLIT:NOT_FOUND")
@@ -230,6 +251,7 @@ def shares_of(id_: bytes, payee: bytes) -> int:
         return 0
     return _get_u256(_ki(_P_SHR, id_, idx1 - 1))
 
+
 def released_of(id_: bytes, payee: bytes) -> int:
     if not _exists(id_):
         abi.revert(b"SPLIT:NOT_FOUND")
@@ -237,6 +259,7 @@ def released_of(id_: bytes, payee: bytes) -> int:
     if idx1 == 0:
         return 0
     return _get_u256(_ki(_P_REL, id_, idx1 - 1))
+
 
 def pending_of(id_: bytes, payee: bytes) -> int:
     """
@@ -257,9 +280,13 @@ def pending_of(id_: bytes, payee: bytes) -> int:
     due = (tr * s) // ts
     return due - already if due >= already else 0
 
+
 # ---------- Mutations ----------
 
-def create(payees: List[bytes], shares: List[int], nonce: bytes, meta: bytes=b"") -> bytes:
+
+def create(
+    payees: List[bytes], shares: List[int], nonce: bytes, meta: bytes = b""
+) -> bytes:
     """
     Create a new splitter with immutable payees & shares. Returns `id`.
     """
@@ -295,13 +322,17 @@ def create(payees: List[bytes], shares: List[int], nonce: bytes, meta: bytes=b""
     _setb(_k(_P_META, id_), bytes(meta))
     _setb(_k(_P_EX, id_), b"\x01")
 
-    events.emit(b"SplitterCreated", {
-        b"id": id_,
-        b"n": _u256_to_bytes(n),
-        b"totalShares": _u256_to_bytes(ts),
-        b"meta": bytes(meta),
-    })
+    events.emit(
+        b"SplitterCreated",
+        {
+            b"id": id_,
+            b"n": _u256_to_bytes(n),
+            b"totalShares": _u256_to_bytes(ts),
+            b"meta": bytes(meta),
+        },
+    )
     return id_
+
 
 def deposit(id_: bytes, amount: int) -> None:
     """
@@ -320,11 +351,15 @@ def deposit(id_: bytes, amount: int) -> None:
         abi.revert(b"SPLIT:BAD_INPUT")
     _set_u256(_k(_P_TRCV, id_), new_tr)
 
-    events.emit(b"SplitterDeposit", {
-        b"id": id_,
-        b"amount": _u256_to_bytes(int(amount)),
-        b"totalReceived": _u256_to_bytes(new_tr),
-    })
+    events.emit(
+        b"SplitterDeposit",
+        {
+            b"id": id_,
+            b"amount": _u256_to_bytes(int(amount)),
+            b"totalReceived": _u256_to_bytes(new_tr),
+        },
+    )
+
 
 def release(id_: bytes, payee: bytes) -> int:
     """
@@ -364,13 +399,17 @@ def release(id_: bytes, payee: bytes) -> int:
     # Transfer
     _trez_transfer(payee, owed)
 
-    events.emit(b"SplitterReleased", {
-        b"id": id_,
-        b"payee": payee,
-        b"amount": _u256_to_bytes(owed),
-        b"releasedToDate": _u256_to_bytes(new_rel),
-    })
+    events.emit(
+        b"SplitterReleased",
+        {
+            b"id": id_,
+            b"payee": payee,
+            b"amount": _u256_to_bytes(owed),
+            b"releasedToDate": _u256_to_bytes(new_rel),
+        },
+    )
     return owed
+
 
 def release_all(id_: bytes, max_payees: int = 0) -> int:
     """
@@ -395,17 +434,31 @@ def release_all(id_: bytes, max_payees: int = 0) -> int:
             # will revert if insufficient funds
             distributed += release(id_, p)
 
-    events.emit(b"SplitterReleaseAll", {
-        b"id": id_,
-        b"distributed": _u256_to_bytes(distributed),
-        b"count": _u256_to_bytes(lim),
-    })
+    events.emit(
+        b"SplitterReleaseAll",
+        {
+            b"id": id_,
+            b"distributed": _u256_to_bytes(distributed),
+            b"count": _u256_to_bytes(lim),
+        },
+    )
     return distributed
+
 
 __all__ = [
     # views
-    "compute_id", "count", "total_shares", "total_received", "total_released",
-    "payee_at", "shares_of", "released_of", "pending_of",
+    "compute_id",
+    "count",
+    "total_shares",
+    "total_received",
+    "total_released",
+    "payee_at",
+    "shares_of",
+    "released_of",
+    "pending_of",
     # mutations
-    "create", "deposit", "release", "release_all",
+    "create",
+    "deposit",
+    "release",
+    "release_all",
 ]

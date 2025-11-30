@@ -41,8 +41,7 @@ from dataclasses import dataclass
 from typing import Literal, Optional, Sequence, Tuple
 
 # Types/dataclasses used on the client
-from omni_sdk.types.core import Tx, Address, ChainId  # type: ignore
-
+from omni_sdk.types.core import Address, ChainId, Tx  # type: ignore
 
 # -----------------------------------------------------------------------------
 # Gas estimation primitives
@@ -57,6 +56,7 @@ class GasParams:
     Parameters for intrinsic-gas estimation. Defaults are conservative and match
     the node's reference values (see execution/gas/intrinsic.py).
     """
+
     # Base costs by tx kind
     base_transfer: int = 21_000
     base_deploy: int = 53_000
@@ -186,6 +186,7 @@ def suggest_max_fee(
 # -----------------------------------------------------------------------------
 # Core builders
 # -----------------------------------------------------------------------------
+
 
 def _require_non_negative(name: str, value: int) -> None:
     if int(value) < 0:

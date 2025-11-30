@@ -20,6 +20,7 @@ class _HashLike(Protocol):
 # platforms/wheels provide it). If unavailable, we fall back to the `pysha3`
 # package which exposes `sha3.keccak_256()`.
 
+
 def _new_keccak256() -> _HashLike:
     # Try native hashlib provider (present on some platforms)
     if "keccak256" in hashlib.algorithms_available:
@@ -73,6 +74,7 @@ class Keccak256:
 
 # --- NIST SHA3 (FIPS-202) -----------------------------------------------------
 # These are always available via hashlib on Python 3.6+.
+
 
 def sha3_256(data: BytesLike) -> bytes:
     """Return SHA3-256 digest of *data* (NIST version, not Keccak padding)."""

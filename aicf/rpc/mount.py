@@ -33,6 +33,7 @@ from .methods import ServiceBundle, build_rest_router, make_methods
 
 class _JsonRpcDispatcherLike(Protocol):
     """Minimal protocol to support common JSON-RPC dispatchers."""
+
     def add(self, method: str, func: Any) -> None: ...
     def register(self, method: str, func: Any) -> None: ...
 
@@ -58,7 +59,9 @@ def mount_aicf(app: Any, service: ServiceBundle, *, prefix: str = "/aicf") -> No
         raise RuntimeError("Failed to mount AICF REST router") from exc
 
 
-def register_jsonrpc(dispatcher: _JsonRpcDispatcherLike, service: ServiceBundle) -> None:
+def register_jsonrpc(
+    dispatcher: _JsonRpcDispatcherLike, service: ServiceBundle
+) -> None:
     """
     Register JSON-RPC methods on a dispatcher.
 

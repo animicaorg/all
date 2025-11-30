@@ -52,22 +52,30 @@ the stdlib surface rather than adding ad-hoc Python features.
 
 NOTE: Contract authors never import this directly; the VM injects a `stdlib` API.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple, Union, Callable, cast
+from typing import (Any, Callable, Dict, Iterable, List, Mapping,
+                    MutableMapping, Optional, Sequence, Tuple, Union, cast)
 
 # Errors & config
 try:
-    from ..errors import VmError, ValidationError, OOG, Revert  # type: ignore
+    from ..errors import OOG, Revert, ValidationError, VmError  # type: ignore
 except Exception:  # pragma: no cover
+
     class VmError(Exception): ...
+
     class ValidationError(VmError): ...
+
     class OOG(VmError): ...
+
     class Revert(VmError): ...
+
 
 try:
     from .. import config as _cfg  # type: ignore
+
     NUMERIC_BIT_WIDTH: int = getattr(_cfg, "NUMERIC_BIT_WIDTH", 256)
     STEP_LIMIT: int = getattr(_cfg, "STEP_LIMIT", 1_000_000)
     GAS_TABLE: Mapping[str, int] = getattr(_cfg, "GAS_TABLE_RUNTIME", {})
@@ -76,13 +84,13 @@ except Exception:  # pragma: no cover
     STEP_LIMIT = 1_000_000
     GAS_TABLE = {}
 
-from .gasmeter import GasMeter  # type: ignore
-from . import storage_api as _storage  # type: ignore
+from . import abi as _abi  # type: ignore
 from . import events_api as _events  # type: ignore
 from . import hash_api as _hash  # type: ignore
-from . import abi as _abi  # type: ignore
-from . import treasury_api as _treasury  # type: ignore
+from . import storage_api as _storage  # type: ignore
 from . import syscalls_api as _syscalls  # type: ignore
+from . import treasury_api as _treasury  # type: ignore
+from .gasmeter import GasMeter  # type: ignore
 
 # ------------------------------- utilities -------------------------------- #
 
@@ -157,6 +165,7 @@ def _read_op(instr: Any) -> Tuple[str, Tuple[Any, ...], Optional[str]]:
 
 # ------------------------------- Engine ----------------------------------- #
 
+
 @dataclass
 class ExecResult:
     return_value: Optional[Any]
@@ -196,7 +205,9 @@ class Engine:
 
     # ---------- execution entrypoints ---------- #
 
-    def run(self, program: Mapping[str, Any], *, entry: Optional[str] = None) -> ExecResult:
+    def run(
+        self, program: Mapping[str, Any], *, entry: Optional[str] = None
+    ) -> ExecResult:
         """Run a program starting at its entry block. Returns ExecResult."""
         blocks = program.get("blocks")
         if not isinstance(blocks, Mapping):
@@ -227,8 +238,12 @@ class Engine:
                 raise VmError(f"Step limit exceeded ({self.step_limit})")
             if ip >= len(cur_block):
                 # Implicit return if we fall off the end of a block
-                return ExecResult(return_value=stack[-1] if stack else None,
-                                  gas_used=self.gas.used, steps=steps, logs=tuple(logs))
+                return ExecResult(
+                    return_value=stack[-1] if stack else None,
+                    gas_used=self.gas.used,
+                    steps=steps,
+                    logs=tuple(logs),
+                )
 
             instr = cur_block[ip]
             op, args, _label = _read_op(instr)
@@ -341,7 +356,9 @@ class Engine:
             # Storage (deterministic host)
             if op == "SLOAD":
                 if len(args) != 1:
-                    raise ValidationError("SLOAD expects 1 immediate arg: key source ('stack'|'imm')")
+                    raise ValidationError(
+                        "SLOAD expects 1 immediate arg: key source ('stack'|'imm')"
+                    )
                 mode = str(args[0])
                 if mode == "stack":
                     _require_len(stack, 1, "SLOAD")
@@ -359,7 +376,9 @@ class Engine:
 
             if op == "SSTORE":
                 if len(args) != 1:
-                    raise ValidationError("SSTORE expects 1 immediate arg: key source ('stack'|'imm')")
+                    raise ValidationError(
+                        "SSTORE expects 1 immediate arg: key source ('stack'|'imm')"
+                    )
                 mode = str(args[0])
                 _require_len(stack, 1, "SSTORE value")
                 value = _to_bytes(stack.pop())
@@ -378,7 +397,9 @@ class Engine:
             # CALL into stdlib: args = (module.func, argc)
             if op == "CALL":
                 if len(args) != 2:
-                    raise ValidationError("CALL expects (target: 'module.func', argc: int)")
+                    raise ValidationError(
+                        "CALL expects (target: 'module.func', argc: int)"
+                    )
                 target = str(args[0])
                 argc = int(args[1])
                 if argc < 0:
@@ -392,7 +413,9 @@ class Engine:
                     raise ValidationError(f"Unknown stdlib module '{mod_name}'")
                 fn = getattr(module, func_name, None)
                 if not callable(fn):
-                    raise ValidationError(f"Unknown stdlib function '{mod_name}.{func_name}'")
+                    raise ValidationError(
+                        f"Unknown stdlib function '{mod_name}.{func_name}'"
+                    )
                 # Execute host call deterministically
                 res = fn(*call_args)  # type: ignore
                 if res is not None:
@@ -429,8 +452,12 @@ class Engine:
                 continue
 
             if op == "RETURN":
-                return ExecResult(return_value=stack[-1] if stack else None,
-                                  gas_used=self.gas.used, steps=steps, logs=tuple(logs))
+                return ExecResult(
+                    return_value=stack[-1] if stack else None,
+                    gas_used=self.gas.used,
+                    steps=steps,
+                    logs=tuple(logs),
+                )
 
             # Unknown op
             raise ValidationError(f"Unknown opcode '{op}'")

@@ -48,8 +48,10 @@ __all__ = ["RandomnessClient", "__version__"]
 if TYPE_CHECKING:
     from .client import RandomnessClient  # type: ignore
 else:
+
     def __getattr__(name: str):
         if name == "RandomnessClient":
             from .client import RandomnessClient  # type: ignore
+
             return RandomnessClient
         raise AttributeError(name)

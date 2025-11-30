@@ -41,7 +41,6 @@ from typing import Any, Iterable, Mapping, Optional
 
 from ..types.context import BlockContext, TxContext  # canonical dataclasses
 
-
 # Public aliases (names used throughout the codebase)
 BlockEnv = BlockContext
 TxEnv = TxContext
@@ -50,6 +49,7 @@ TxEnv = TxContext
 # =============================================================================
 # Helpers: tolerant field access & coercions
 # =============================================================================
+
 
 def _get(obj: Any, *names: str, default: Any = None) -> Any:
     """
@@ -148,6 +148,7 @@ def _make_dataclass(cls, values: dict) -> Any:
 # Block / Tx env builders
 # =============================================================================
 
+
 def make_block_env(
     head: Any,
     chain_params: Any,
@@ -181,12 +182,32 @@ def make_block_env(
     -------
     BlockEnv (alias of BlockContext)
     """
-    height = _as_int(_first_present(head, ("height", "number", "block_height")), default=0)
-    ts = _as_int(timestamp if timestamp is not None else _first_present(head, ("timestamp", "time")), default=0)
-    bp = _as_int(base_price if base_price is not None else _first_present(head, ("base_price", "baseFee", "base_fee")), default=0)
+    height = _as_int(
+        _first_present(head, ("height", "number", "block_height")), default=0
+    )
+    ts = _as_int(
+        (
+            timestamp
+            if timestamp is not None
+            else _first_present(head, ("timestamp", "time"))
+        ),
+        default=0,
+    )
+    bp = _as_int(
+        (
+            base_price
+            if base_price is not None
+            else _first_present(head, ("base_price", "baseFee", "base_fee"))
+        ),
+        default=0,
+    )
 
     # Resolve coinbase
-    cb_src = coinbase if coinbase is not None else _first_present(head, ("coinbase", "miner", "proposer"))
+    cb_src = (
+        coinbase
+        if coinbase is not None
+        else _first_present(head, ("coinbase", "miner", "proposer"))
+    )
     cb = _as_bytes(cb_src, expect_len=20) if cb_src is not None else b"\x00" * 20
 
     chain_id = _as_int(_get(chain_params, "chain_id", "chainId"), default=0)
@@ -198,8 +219,12 @@ def make_block_env(
         "coinbase": cb,
         "chain_id": chain_id,
         # Optional/bonus info if the dataclass supports them:
-        "parent_hash": _as_bytes(_first_present(head, ("parent_hash", "parentHash")), expect_len=32),
-        "head_hash": _as_bytes(_first_present(head, ("hash", "block_hash")), expect_len=32),
+        "parent_hash": _as_bytes(
+            _first_present(head, ("parent_hash", "parentHash")), expect_len=32
+        ),
+        "head_hash": _as_bytes(
+            _first_present(head, ("hash", "block_hash")), expect_len=32
+        ),
     }
     return _make_dataclass(BlockContext, values)
 
@@ -244,21 +269,46 @@ def make_tx_env(
     TxEnv (alias of TxContext)
     """
     # Resolve prices
-    bp = _as_int(base_price if base_price is not None else getattr(block_env, "base_price", 0), default=0)
+    bp = _as_int(
+        base_price if base_price is not None else getattr(block_env, "base_price", 0),
+        default=0,
+    )
 
     # EIP-1559-ish candidate names
-    tx_tip = _as_int(_first_present(tx, ("maxPriorityFeePerGas", "tip_price")), default=0)
+    tx_tip = _as_int(
+        _first_present(tx, ("maxPriorityFeePerGas", "tip_price")), default=0
+    )
     tp = _as_int(tip_price if tip_price is not None else tx_tip, default=0)
 
     # If an explicit gas_price override was given, it wins.
-    gp_tx = _as_int(_first_present(tx, ("gas_price", "gasPrice", "maxFeePerGas")), default=bp + tp)
-    gp = _as_int(gas_price if gas_price is not None else (bp + tp if (tip_price is not None or "maxPriorityFeePerGas" in getattr(tx, "__dict__", {}) or (isinstance(tx, Mapping) and "maxPriorityFeePerGas" in tx)) else gp_tx))
+    gp_tx = _as_int(
+        _first_present(tx, ("gas_price", "gasPrice", "maxFeePerGas")), default=bp + tp
+    )
+    gp = _as_int(
+        gas_price
+        if gas_price is not None
+        else (
+            bp + tp
+            if (
+                tip_price is not None
+                or "maxPriorityFeePerGas" in getattr(tx, "__dict__", {})
+                or (isinstance(tx, Mapping) and "maxPriorityFeePerGas" in tx)
+            )
+            else gp_tx
+        )
+    )
 
     snd = _as_bytes(
-        sender if sender is not None else _first_present(tx, ("from", "sender", "from_address")),
+        (
+            sender
+            if sender is not None
+            else _first_present(tx, ("from", "sender", "from_address"))
+        ),
         expect_len=20,
     )
-    nn = _as_int(nonce if nonce is not None else _first_present(tx, ("nonce",)), default=0)
+    nn = _as_int(
+        nonce if nonce is not None else _first_present(tx, ("nonce",)), default=0
+    )
 
     values = {
         "chain_id": getattr(block_env, "chain_id", 0),

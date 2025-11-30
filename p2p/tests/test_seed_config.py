@@ -24,7 +24,9 @@ def test_default_seeds_when_unset(monkeypatch):
 
 
 def test_env_seeds_override(monkeypatch):
-    monkeypatch.setenv("ANIMICA_P2P_SEEDS", "/ip4/1.2.3.4/tcp/1234,/ip4/5.6.7.8/tcp/9876")
+    monkeypatch.setenv(
+        "ANIMICA_P2P_SEEDS", "/ip4/1.2.3.4/tcp/1234,/ip4/5.6.7.8/tcp/9876"
+    )
     cfg = p2p_config.load_config()
     assert cfg.seeds == ("/ip4/1.2.3.4/tcp/1234", "/ip4/5.6.7.8/tcp/9876")
 

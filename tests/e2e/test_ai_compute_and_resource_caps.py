@@ -10,7 +10,6 @@ The enforcement pipeline is not available yet, so this test is skipped.
 
 import pytest
 
-
 pytestmark = pytest.mark.skip(
     reason="Vertical 12 AI/quantum/zk resource caps scenario not yet implemented"
 )

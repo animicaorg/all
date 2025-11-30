@@ -10,7 +10,6 @@ aiosqlite = pytest.importorskip("aiosqlite")
 
 from studio_services.tasks.queue import SQLiteTaskQueue
 
-
 CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS queue (
   id TEXT PRIMARY KEY,
@@ -37,7 +36,9 @@ def test_poll_rolls_back_on_error(tmp_path, monkeypatch):
         db_path = tmp_path / "queue.sqlite"
         queue = SQLiteTaskQueue(str(db_path))
         await queue.connect()
-        assert queue._conn is not None  # noqa: SLF001 - test needs direct access for setup
+        assert (
+            queue._conn is not None
+        )  # noqa: SLF001 - test needs direct access for setup
         await queue._conn.execute(CREATE_SQL)
         await queue._conn.commit()
 
@@ -115,7 +116,8 @@ def test_requeue_recovers_from_open_transaction(tmp_path):
         assert moved == 1
 
         row = await queue._execute_fetchone(
-            "SELECT status, lease_owner, lease_until FROM queue WHERE id = ?;", ("task1",)
+            "SELECT status, lease_owner, lease_until FROM queue WHERE id = ?;",
+            ("task1",),
         )
         assert row is not None
         assert row["status"] == "queued"
@@ -125,4 +127,3 @@ def test_requeue_recovers_from_open_transaction(tmp_path):
         await queue.close()
 
     asyncio.run(_run())
-

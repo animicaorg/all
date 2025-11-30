@@ -17,24 +17,25 @@ fields (caller, kind, chain_id, height, created_at) for efficient queries.
 This module avoids heavy dependencies and keeps I/O deterministic.
 """
 
-from dataclasses import asdict, is_dataclass
-from typing import Iterable, List, Optional, Protocol, Tuple, Union
 import json
 import os
 import re
 import sqlite3
 import threading
 import time
+from dataclasses import asdict, is_dataclass
+from typing import Iterable, List, Optional, Protocol, Tuple, Union
 
 from capabilities.errors import CapError
-from capabilities.jobs.types import ResultRecord, JobKind
+from capabilities.jobs.types import JobKind, ResultRecord
 
 # -----------------------------------------------------------------------------
 # Canonical serialization helpers (CBOR-first, JSON fallback)
 # -----------------------------------------------------------------------------
 
 try:  # Prefer project-wide canonical CBOR
-    from capabilities.cbor.codec import dumps as _CBOR_DUMPS, loads as _CBOR_LOADS  # type: ignore
+    from capabilities.cbor.codec import dumps as _CBOR_DUMPS  # type: ignore
+    from capabilities.cbor.codec import loads as _CBOR_LOADS
 except Exception:  # pragma: no cover
     _CBOR_DUMPS = None  # type: ignore
     _CBOR_LOADS = None  # type: ignore
@@ -43,7 +44,9 @@ except Exception:  # pragma: no cover
 def _canon_dumps(obj) -> bytes:
     if _CBOR_DUMPS is not None:
         return _CBOR_DUMPS(obj)
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(
+        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
 
 
 def _canon_loads(b: bytes):
@@ -60,7 +63,11 @@ def _record_to_map(rec: ResultRecord) -> dict:
     if is_dataclass(rec):
         return asdict(rec)
     # Fall back to shallow dict of attributes (best-effort)
-    return {k: getattr(rec, k) for k in dir(rec) if not k.startswith("_") and not callable(getattr(rec, k))}
+    return {
+        k: getattr(rec, k)
+        for k in dir(rec)
+        if not k.startswith("_") and not callable(getattr(rec, k))
+    }
 
 
 def _map_to_record(m: dict) -> ResultRecord:
@@ -84,13 +91,16 @@ def _bytes_to_record(b: bytes) -> ResultRecord:
 # Store protocol & factory
 # -----------------------------------------------------------------------------
 
+
 class ResultStore(Protocol):
     def put(self, rec: ResultRecord) -> None: ...
     def get(self, task_id: bytes) -> Optional[ResultRecord]: ...
     def has(self, task_id: bytes) -> bool: ...
     def delete(self, task_id: bytes) -> bool: ...
     def list_recent(self, limit: int = 50, offset: int = 0) -> List[ResultRecord]: ...
-    def list_by_caller(self, caller: bytes, limit: int = 50, offset: int = 0) -> List[ResultRecord]: ...
+    def list_by_caller(
+        self, caller: bytes, limit: int = 50, offset: int = 0
+    ) -> List[ResultRecord]: ...
     def close(self) -> None: ...
 
 
@@ -123,21 +133,30 @@ def open_result_store(url: str) -> ResultStore:
 # Memory store
 # -----------------------------------------------------------------------------
 
+
 class MemoryResultStore(ResultStore):
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._by_id: dict[bytes, ResultRecord] = {}
         self._by_caller: dict[bytes, set[bytes]] = {}  # caller → {task_id}
-        self._by_height: dict[int, set[bytes]] = {}    # height → {task_id}
-        self._created_at: dict[bytes, int] = {}        # task_id → created_at
+        self._by_height: dict[int, set[bytes]] = {}  # height → {task_id}
+        self._created_at: dict[bytes, int] = {}  # task_id → created_at
 
     def put(self, rec: ResultRecord) -> None:
         with self._lock:
             m = _record_to_map(rec)
             task_id: bytes = m.get("task_id") or getattr(rec, "task_id")
             caller: bytes = m.get("caller") or getattr(rec, "caller")
-            height: int = int(m.get("height") if m.get("height") is not None else getattr(rec, "height", 0))
-            created_at: int = int(m.get("created_at") if m.get("created_at") is not None else int(time.time()))
+            height: int = int(
+                m.get("height")
+                if m.get("height") is not None
+                else getattr(rec, "height", 0)
+            )
+            created_at: int = int(
+                m.get("created_at")
+                if m.get("created_at") is not None
+                else int(time.time())
+            )
             if not isinstance(task_id, (bytes, bytearray)):
                 raise CapError("ResultRecord.task_id must be bytes")
             task_id = bytes(task_id)
@@ -162,7 +181,11 @@ class MemoryResultStore(ResultStore):
                 return False
             m = _record_to_map(rec)
             caller: bytes = m.get("caller") or getattr(rec, "caller")
-            height: int = int(m.get("height") if m.get("height") is not None else getattr(rec, "height", 0))
+            height: int = int(
+                m.get("height")
+                if m.get("height") is not None
+                else getattr(rec, "height", 0)
+            )
             self._created_at.pop(tid, None)
             if bytes(caller) in self._by_caller:
                 self._by_caller[bytes(caller)].discard(tid)
@@ -180,7 +203,11 @@ class MemoryResultStore(ResultStore):
             def key_fn(tid: bytes) -> Tuple[int, int]:
                 rec = self._by_id[tid]
                 m = _record_to_map(rec)
-                height = int(m.get("height") if m.get("height") is not None else getattr(rec, "height", 0))
+                height = int(
+                    m.get("height")
+                    if m.get("height") is not None
+                    else getattr(rec, "height", 0)
+                )
                 created = self._created_at.get(tid, 0)
                 return (height, created)
 
@@ -188,14 +215,21 @@ class MemoryResultStore(ResultStore):
             sel = tids[offset : offset + limit]
             return [self._by_id[tid] for tid in sel]
 
-    def list_by_caller(self, caller: bytes, limit: int = 50, offset: int = 0) -> List[ResultRecord]:
+    def list_by_caller(
+        self, caller: bytes, limit: int = 50, offset: int = 0
+    ) -> List[ResultRecord]:
         with self._lock:
             tids = list(self._by_caller.get(bytes(caller), set()))
+
             # same ordering heuristic as list_recent
             def key_fn(tid: bytes) -> Tuple[int, int]:
                 rec = self._by_id[tid]
                 m = _record_to_map(rec)
-                height = int(m.get("height") if m.get("height") is not None else getattr(rec, "height", 0))
+                height = int(
+                    m.get("height")
+                    if m.get("height") is not None
+                    else getattr(rec, "height", 0)
+                )
                 created = self._created_at.get(tid, 0)
                 return (height, created)
 
@@ -250,7 +284,9 @@ def _extract_index_fields(rec: ResultRecord) -> Tuple[bytes, bytes, int, int, in
 class SqliteResultStore(ResultStore):
     def __init__(self, path: str) -> None:
         self._path = os.path.abspath(path) if path != ":memory:" else ":memory:"
-        self._conn = sqlite3.connect(self._path, detect_types=0, check_same_thread=False)
+        self._conn = sqlite3.connect(
+            self._path, detect_types=0, check_same_thread=False
+        )
         self._conn.execute("PRAGMA foreign_keys=ON;")
         self._conn.executescript(_SQL_SCHEMA)
         self._conn.commit()
@@ -275,7 +311,9 @@ class SqliteResultStore(ResultStore):
 
     def get(self, task_id: bytes) -> Optional[ResultRecord]:
         with self._lock, self._conn:
-            cur = self._conn.execute("SELECT record FROM results WHERE task_id = ?", (bytes(task_id),))
+            cur = self._conn.execute(
+                "SELECT record FROM results WHERE task_id = ?", (bytes(task_id),)
+            )
             row = cur.fetchone()
             if not row:
                 return None
@@ -284,12 +322,16 @@ class SqliteResultStore(ResultStore):
 
     def has(self, task_id: bytes) -> bool:
         with self._lock, self._conn:
-            cur = self._conn.execute("SELECT 1 FROM results WHERE task_id = ? LIMIT 1", (bytes(task_id),))
+            cur = self._conn.execute(
+                "SELECT 1 FROM results WHERE task_id = ? LIMIT 1", (bytes(task_id),)
+            )
             return cur.fetchone() is not None
 
     def delete(self, task_id: bytes) -> bool:
         with self._lock, self._conn:
-            cur = self._conn.execute("DELETE FROM results WHERE task_id = ?", (bytes(task_id),))
+            cur = self._conn.execute(
+                "DELETE FROM results WHERE task_id = ?", (bytes(task_id),)
+            )
             return cur.rowcount > 0
 
     def list_recent(self, limit: int = 50, offset: int = 0) -> List[ResultRecord]:
@@ -300,7 +342,9 @@ class SqliteResultStore(ResultStore):
             )
             return [_bytes_to_record(row[0]) for row in cur.fetchall()]
 
-    def list_by_caller(self, caller: bytes, limit: int = 50, offset: int = 0) -> List[ResultRecord]:
+    def list_by_caller(
+        self, caller: bytes, limit: int = 50, offset: int = 0
+    ) -> List[ResultRecord]:
         with self._lock, self._conn:
             cur = self._conn.execute(
                 "SELECT record FROM results WHERE caller = ? ORDER BY height DESC, created_at DESC LIMIT ? OFFSET ?",

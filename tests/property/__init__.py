@@ -35,9 +35,11 @@ from hypothesis import strategies as st
 
 # ---- profile registry --------------------------------------------------------
 
+
 def _hc(*items: HealthCheck) -> Tuple[HealthCheck, ...]:
     # Small helper to placate type checkers
     return items
+
 
 # Reasonable defaults for this repo:
 # - Disable deadlines by default to reduce flakiness in slow CI machines.
@@ -97,27 +99,35 @@ settings.register_profile(
     ),
 )
 
+
 def _env_truthy(name: str) -> bool:
     v = os.getenv(name)
     return (v or "").lower() not in ("", "0", "false", "no", "off")
 
+
 # Choose active profile (env overrides CI detection)
-_active: Final[str] = os.getenv("HYPOTHESIS_PROFILE") or ("ci" if _env_truthy("CI") else "dev")
+_active: Final[str] = os.getenv("HYPOTHESIS_PROFILE") or (
+    "ci" if _env_truthy("CI") else "dev"
+)
 settings.load_profile(_active)
 
 # ---- small convenience exports ----------------------------------------------
+
 
 def is_ci() -> bool:
     """Return True if we appear to be running under CI."""
     return _env_truthy("CI")
 
+
 def active_profile() -> str:
     """Return the name of the active Hypothesis profile."""
     return _active
 
+
 def bytes_nonempty(max_size: int = 4096):
     """Common binary strategy used across tests: non-empty bytes up to max_size."""
     return st.binary(min_size=1, max_size=max_size)
+
 
 __all__ = [
     # hypothesis conveniences

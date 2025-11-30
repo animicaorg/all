@@ -38,7 +38,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, Optional, Tuple, Any
+from typing import Any, Dict, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parents[2]  # {{project_slug}}/
 DEFAULT_MANIFEST = ROOT / "contracts" / "manifest.json"
@@ -58,7 +58,7 @@ def load_env_file(dotenv_path: Path) -> Dict[str, str]:
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        m = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$', line)
+        m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$", line)
         if not m:
             continue
         key, val = m.group(1), m.group(2)
@@ -84,10 +84,9 @@ def resolve_config(
         or "http://127.0.0.1:8545"
     )
     chain_str = (
-        str(chain_flag) if chain_flag is not None else
-        os.environ.get("CHAIN_ID")
-        or file_env.get("CHAIN_ID")
-        or "1337"
+        str(chain_flag)
+        if chain_flag is not None
+        else os.environ.get("CHAIN_ID") or file_env.get("CHAIN_ID") or "1337"
     )
     try:
         chain_id = int(chain_str, 10)
@@ -114,18 +113,28 @@ def resolve_config(
 def _sdk_cli_available() -> bool:
     try:
         test_cmd = [sys.executable, "-m", "omni_sdk.cli.call", "--help"]
-        subprocess.run(test_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, text=True)
+        subprocess.run(
+            test_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+            text=True,
+        )
         return True
     except Exception:
         return False
 
 
 def _run_or_die(cmd, env: Optional[Dict[str, str]]) -> subprocess.CompletedProcess:
-    proc = subprocess.run(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    proc = subprocess.run(
+        cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
     if proc.returncode != 0:
         if proc.stderr.strip():
             sys.stderr.write(proc.stderr)
-        raise SystemExit(f"[call] Command failed (rc={proc.returncode}): {' '.join(cmd)}")
+        raise SystemExit(
+            f"[call] Command failed (rc={proc.returncode}): {' '.join(cmd)}"
+        )
     return proc
 
 
@@ -147,7 +156,11 @@ def load_last_deployed_address() -> Optional[str]:
         # Common shapes: {"result":{"address":"anim1..."}}
         # or {"address":"anim1..."}
         if isinstance(data, dict):
-            if "result" in data and isinstance(data["result"], dict) and "address" in data["result"]:
+            if (
+                "result" in data
+                and isinstance(data["result"], dict)
+                and "address" in data["result"]
+            ):
                 return data["result"]["address"]
             if "address" in data:
                 return data["address"]
@@ -179,19 +192,63 @@ def parse_args_json(s: Optional[str], file: Optional[Path]) -> Optional[str]:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Call a contract function using the Animica Python SDK.")
-    ap.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST, help="Path to contract manifest.json")
-    ap.add_argument("--address", type=str, default=None, help="Target contract address (bech32m anim1...)")
+    ap = argparse.ArgumentParser(
+        description="Call a contract function using the Animica Python SDK."
+    )
+    ap.add_argument(
+        "--manifest",
+        type=Path,
+        default=DEFAULT_MANIFEST,
+        help="Path to contract manifest.json",
+    )
+    ap.add_argument(
+        "--address",
+        type=str,
+        default=None,
+        help="Target contract address (bech32m anim1...)",
+    )
     ap.add_argument("--fn", type=str, required=True, help="Function name in ABI")
-    ap.add_argument("--args-json", type=str, default=None, help="JSON of args (array for positional, object for keyword)")
-    ap.add_argument("--args-file", type=Path, default=None, help="Read args JSON from file")
-    ap.add_argument("--write", action="store_true", help="Perform a state-changing call (sends a transaction)")
-    ap.add_argument("--value", type=str, default=None, help="Optional value to send (as decimal string)")
-    ap.add_argument("--wait", action="store_true", help="Wait for receipt on write calls")
-    ap.add_argument("--rpc", type=str, default=None, help="RPC URL (overrides .env RPC_URL)")
-    ap.add_argument("--chain", type=int, default=None, help="Chain ID (overrides .env CHAIN_ID)")
-    ap.add_argument("--mnemonic", type=str, default=None, help="Deployer mnemonic (needed for --write if not in .env)")
-    ap.add_argument("--account-index", type=int, default=0, help="Account index derived from mnemonic (default: 0)")
+    ap.add_argument(
+        "--args-json",
+        type=str,
+        default=None,
+        help="JSON of args (array for positional, object for keyword)",
+    )
+    ap.add_argument(
+        "--args-file", type=Path, default=None, help="Read args JSON from file"
+    )
+    ap.add_argument(
+        "--write",
+        action="store_true",
+        help="Perform a state-changing call (sends a transaction)",
+    )
+    ap.add_argument(
+        "--value",
+        type=str,
+        default=None,
+        help="Optional value to send (as decimal string)",
+    )
+    ap.add_argument(
+        "--wait", action="store_true", help="Wait for receipt on write calls"
+    )
+    ap.add_argument(
+        "--rpc", type=str, default=None, help="RPC URL (overrides .env RPC_URL)"
+    )
+    ap.add_argument(
+        "--chain", type=int, default=None, help="Chain ID (overrides .env CHAIN_ID)"
+    )
+    ap.add_argument(
+        "--mnemonic",
+        type=str,
+        default=None,
+        help="Deployer mnemonic (needed for --write if not in .env)",
+    )
+    ap.add_argument(
+        "--account-index",
+        type=int,
+        default=0,
+        help="Account index derived from mnemonic (default: 0)",
+    )
     args = ap.parse_args()
 
     if not args.manifest.is_file():
@@ -199,7 +256,9 @@ def main() -> int:
 
     target_addr = args.address or load_last_deployed_address()
     if not target_addr:
-        raise SystemExit("[call] No --address provided and no build/deploy_result.json found to infer address.")
+        raise SystemExit(
+            "[call] No --address provided and no build/deploy_result.json found to infer address."
+        )
 
     args_json = parse_args_json(args.args_json, args.args_file)
 
@@ -229,7 +288,9 @@ def main() -> int:
         "--fn",
         args.fn,
         "--account-index",
-        str(args.account-index if False else args.account_index),  # keep linter happy in static templates
+        str(
+            args.account - index if False else args.account_index
+        ),  # keep linter happy in static templates
     ]
 
     if args_json is not None:
@@ -241,14 +302,18 @@ def main() -> int:
         if args.value is not None:
             cmd += ["--value", str(args.value)]
 
-    print(f"[call] Calling {args.fn} on {target_addr} (RPC={rpc_url}, chainId={chain_id})")
+    print(
+        f"[call] Calling {args.fn} on {target_addr} (RPC={rpc_url}, chainId={chain_id})"
+    )
     proc = _run_or_die(cmd, env=env)
 
     if proc.stdout.strip():
         print(proc.stdout.strip())
 
     # Persist last result (best-effort JSON extraction)
-    result = _extract_json(proc.stdout) or {"message": "Call completed. See CLI output above."}
+    result = _extract_json(proc.stdout) or {
+        "message": "Call completed. See CLI output above."
+    }
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
     CALL_ARTIFACT.write_text(
         json.dumps(

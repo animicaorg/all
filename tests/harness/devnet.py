@@ -86,14 +86,10 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 try:
     # Reuse helpers if available
-    from tests.harness import (
-        REPO_ROOT,
-        TESTS_ROOT,
-        get_logger,
-        DEFAULT_CHAIN_ID as _DEFAULT_CHAIN_ID,
-        DEFAULT_HTTP_TIMEOUT as _DEFAULT_HTTP_TIMEOUT,
-        DEFAULT_WS_TIMEOUT as _DEFAULT_WS_TIMEOUT,
-    )
+    from tests.harness import DEFAULT_CHAIN_ID as _DEFAULT_CHAIN_ID
+    from tests.harness import DEFAULT_HTTP_TIMEOUT as _DEFAULT_HTTP_TIMEOUT
+    from tests.harness import DEFAULT_WS_TIMEOUT as _DEFAULT_WS_TIMEOUT
+    from tests.harness import REPO_ROOT, TESTS_ROOT, get_logger
 except Exception:  # pragma: no cover - fallback if imported standalone
     REPO_ROOT = Path(__file__).resolve().parents[2]
     TESTS_ROOT = REPO_ROOT / "tests"
@@ -169,8 +165,8 @@ def _http_request(
     headers: Optional[Dict[str, str]] = None,
     body: Optional[bytes] = None,
 ) -> Tuple[int, bytes]:
-    import urllib.request
     import urllib.error
+    import urllib.request
 
     req = urllib.request.Request(url=url, method=method, data=body or None)
     for k, v in (headers or {}).items():

@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import typing as t
 
-from rpc.methods import method
 from rpc import deps
 from rpc import errors as rpc_errors
+from rpc.methods import method
 
 HexStr = str
 
 
 # ——— Helpers ———
+
 
 def _is_hex(s: str) -> bool:
     s = s.lower()
@@ -74,6 +75,7 @@ def _pending_contains(tx_hash_hex: str) -> bool:
 
 # ——— Receipt lookup paths ———
 
+
 class _ReceiptLoc(t.TypedDict, total=False):
     height: int
     index: int
@@ -107,7 +109,9 @@ def _lookup_receipt_loc(tx_hash_b: bytes) -> _ReceiptLoc | None:
                     if isinstance(loc, (tuple, list)) and len(loc) >= 2:
                         return _ReceiptLoc(height=int(loc[0]), index=int(loc[1]))
                     if isinstance(loc, dict) and "height" in loc and "index" in loc:
-                        return _ReceiptLoc(height=int(loc["height"]), index=int(loc["index"]))
+                        return _ReceiptLoc(
+                            height=int(loc["height"]), index=int(loc["index"])
+                        )
                 except Exception:
                     pass
 
@@ -115,7 +119,9 @@ def _lookup_receipt_loc(tx_hash_b: bytes) -> _ReceiptLoc | None:
     return None
 
 
-def _fetch_block_and_receipt(loc: _ReceiptLoc, tx_hash_b: bytes) -> tuple[dict | t.Any, t.Any] | None:
+def _fetch_block_and_receipt(
+    loc: _ReceiptLoc, tx_hash_b: bytes
+) -> tuple[dict | t.Any, t.Any] | None:
     """
     Retrieve (block, receipt_obj) using block_db. Support multiple shapes.
     """
@@ -167,7 +173,11 @@ def _fetch_block_and_receipt(loc: _ReceiptLoc, tx_hash_b: bytes) -> tuple[dict |
 
     # Fallback: block may embed receipts or a tx→receipt map
     if isinstance(blk, dict):
-        if "receipts" in blk and isinstance(blk["receipts"], list) and 0 <= idx < len(blk["receipts"]):
+        if (
+            "receipts" in blk
+            and isinstance(blk["receipts"], list)
+            and 0 <= idx < len(blk["receipts"])
+        ):
             return (blk, blk["receipts"][idx])
 
     # Last resort: try a single-shot API by hash
@@ -191,7 +201,11 @@ def _extract_block_hash(blk: t.Any) -> bytes | None:
                 return bytes(v)
             if isinstance(v, str) and _is_hex(v):
                 return bytes.fromhex(v[2:] if v.startswith("0x") else v)
-        if "header" in blk and isinstance(blk["header"], dict) and "hash" in blk["header"]:
+        if (
+            "header" in blk
+            and isinstance(blk["header"], dict)
+            and "hash" in blk["header"]
+        ):
             v = blk["header"]["hash"]
             if isinstance(v, (bytes, bytearray, memoryview)):
                 return bytes(v)
@@ -294,8 +308,10 @@ def _normalize_receipt(
         "transactionIndex": index if index >= 0 else None,
         "blockNumber": height if height >= 0 else None,
         "blockHash": block_hash_hex,
-        "status": status,                    # e.g., "SUCCESS" | "REVERT" | 1/0 depending on execution layer
-        "gasUsed": int(gas_used) if isinstance(gas_used, int) and gas_used >= 0 else None,
+        "status": status,  # e.g., "SUCCESS" | "REVERT" | 1/0 depending on execution layer
+        "gasUsed": (
+            int(gas_used) if isinstance(gas_used, int) and gas_used >= 0 else None
+        ),
         "logs": _normalize_logs(logs),
     }
     if contract_addr:
@@ -310,6 +326,7 @@ def _normalize_receipt(
 
 
 # ——— RPC Method ———
+
 
 @method(
     "tx.getTransactionReceipt",

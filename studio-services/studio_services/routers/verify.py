@@ -19,11 +19,8 @@ from fastapi import APIRouter, Path, Query
 
 # Pydantic models
 try:
-    from studio_services.models.verify import (
-        VerifyRequest,
-        VerifyStatus,
-        VerifyResult,
-    )
+    from studio_services.models.verify import (VerifyRequest, VerifyResult,
+                                               VerifyStatus)
 except Exception as e:  # pragma: no cover
     raise RuntimeError(f"verify router missing models: {e}")
 
@@ -60,9 +57,15 @@ def _call_flexible(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
 
 
 # Resolve service-layer functions (primary name first; fallbacks allowed)
-_submit_verify = _resolve(("submit_verify", "verify_submit", "start_verify", "enqueue_verify"))
-_get_by_address = _resolve(("get_verify_by_address", "get_by_address", "result_by_address"))
-_get_by_txhash = _resolve(("get_verify_by_txhash", "get_by_tx", "result_by_txhash", "result_by_tx"))
+_submit_verify = _resolve(
+    ("submit_verify", "verify_submit", "start_verify", "enqueue_verify")
+)
+_get_by_address = _resolve(
+    ("get_verify_by_address", "get_by_address", "result_by_address")
+)
+_get_by_txhash = _resolve(
+    ("get_verify_by_txhash", "get_by_tx", "result_by_txhash", "result_by_tx")
+)
 
 
 @router.post(
@@ -109,7 +112,9 @@ def get_verify_by_tx(
     log.debug("GET /verify/{tx_hash} tx_hash=%s", tx_hash)
     res = _get_by_txhash(tx_hash)
     if not isinstance(res, VerifyResult):
-        log.warning("verify service returned unexpected type for tx lookup: %r", type(res))
+        log.warning(
+            "verify service returned unexpected type for tx lookup: %r", type(res)
+        )
     return res
 
 
@@ -130,7 +135,9 @@ def get_verify_by_address(
     log.debug("GET /verify/{address} address=%s", address)
     res = _get_by_address(address)
     if not isinstance(res, VerifyResult):
-        log.warning("verify service returned unexpected type for address lookup: %r", type(res))
+        log.warning(
+            "verify service returned unexpected type for address lookup: %r", type(res)
+        )
     return res
 
 

@@ -27,6 +27,7 @@ from typing import Any, Callable, Optional, Tuple
 
 # ---------------- optional import helper ----------------
 
+
 def _import_optional(modname: str):
     try:
         __import__(modname)
@@ -80,6 +81,7 @@ def _choose_cbor() -> Tuple[DecodeFn, EncodeFn, str]:
     for prov in (_get_project_cbor(), _get_cbor2(), _get_msgspec()):
         if prov:
             return prov
+
     # Extremely small stub so the target still imports
     def _loads_stub(b: bytes) -> Any:
         if b == b"\xa0":
@@ -101,6 +103,7 @@ def _choose_cbor() -> Tuple[DecodeFn, EncodeFn, str]:
 CBOR_LOADS, CBOR_DUMPS, CBOR_BACKEND = _choose_cbor()
 
 # ---------------- project IR enc/dec & validators ----------------
+
 
 def _get_project_ir_codec():
     """
@@ -170,6 +173,7 @@ if _ir_mod:
 
 # ---------------- utilities ----------------
 
+
 def _sha3_256(data: bytes) -> Optional[bytes]:
     h = _import_optional("core.utils.hash")
     if h and hasattr(h, "sha3_256"):
@@ -179,6 +183,7 @@ def _sha3_256(data: bytes) -> Optional[bytes]:
             pass
     try:
         import hashlib
+
         return hashlib.sha3_256(data).digest()
     except Exception:
         return None
@@ -205,7 +210,17 @@ def _is_ir_like(x: Any) -> bool:
     """
     if isinstance(x, dict):
         keys = {str(k) for k in x.keys()}
-        hints = {"blocks", "instrs", "instructions", "entry", "consts", "version", "types", "symbols", "module"}
+        hints = {
+            "blocks",
+            "instrs",
+            "instructions",
+            "entry",
+            "consts",
+            "version",
+            "types",
+            "symbols",
+            "module",
+        }
         return len(keys & hints) >= 2
     if isinstance(x, list):
         # Some encodings use a top-level list of blocks/instrs
@@ -214,6 +229,7 @@ def _is_ir_like(x: Any) -> bool:
 
 
 # ---------------- core round-trip & validate ----------------
+
 
 def _roundtrip_and_check_ir(ir_obj: Any) -> Any:
     """
@@ -274,6 +290,7 @@ def _validate_ir(ir_obj: Any) -> None:
 
 # ---------------- fuzz entry ----------------
 
+
 def fuzz(data: bytes) -> None:
     # Keep inputs bounded to avoid pathological allocations
     if len(data) > (1 << 20):  # 1 MiB
@@ -331,7 +348,9 @@ def fuzz(data: bytes) -> None:
                 enc2 = CBOR_DUMPS(ir2)
             h2 = _sha3_256(enc2)
             if h2 and h1 != h2:
-                raise AssertionError("IR canonical bytes hash unstable across encode/decode")
+                raise AssertionError(
+                    "IR canonical bytes hash unstable across encode/decode"
+                )
     except (RecursionError, MemoryError):
         return
     except Exception:
@@ -340,6 +359,7 @@ def fuzz(data: bytes) -> None:
 
 
 # ---------------- direct execution ----------------
+
 
 def _run_direct(argv: list[str]) -> int:  # pragma: no cover
     try:

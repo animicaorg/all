@@ -29,22 +29,14 @@ Env
 
 import os
 import time
-from typing import Optional, Callable, Awaitable, Dict, Any
-
-from starlette.requests import Request
-from starlette.responses import Response, PlainTextResponse
-from starlette.types import ASGIApp, Receive, Scope, Send
+from typing import Any, Awaitable, Callable, Dict, Optional
 
 from fastapi import APIRouter, FastAPI
-
-from prometheus_client import (
-    CollectorRegistry,
-    CONTENT_TYPE_LATEST,
-    generate_latest,
-    Counter,
-    Histogram,
-    Gauge,
-)
+from prometheus_client import (CONTENT_TYPE_LATEST, CollectorRegistry, Counter,
+                               Gauge, Histogram, generate_latest)
+from starlette.requests import Request
+from starlette.responses import PlainTextResponse, Response
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 try:
     # Optional: Info metric present in recent prometheus_client
@@ -54,7 +46,8 @@ except Exception:  # pragma: no cover
 
 # Multiprocess support (only imported/used if env set)
 try:  # pragma: no cover - exercised in multi-proc deployments
-    from prometheus_client import multiprocess, ProcessCollector, PlatformCollector
+    from prometheus_client import (PlatformCollector, ProcessCollector,
+                                   multiprocess)
 except Exception:  # pragma: no cover
     multiprocess = None  # type: ignore
     ProcessCollector = None  # type: ignore
@@ -69,7 +62,9 @@ class Metrics:
     Holder for registry and metric objects. Exposed via app.state.metrics.
     """
 
-    def __init__(self, service_name: str, service_version: Optional[str] = None) -> None:
+    def __init__(
+        self, service_name: str, service_version: Optional[str] = None
+    ) -> None:
         self.multiproc_dir = os.getenv("PROMETHEUS_MULTIPROC_DIR")
         self.registry = CollectorRegistry()
 
@@ -156,7 +151,9 @@ def _extract_path_template(scope: Scope) -> str:
             if isinstance(val, str) and val:
                 return val
     # Fallback to the literal path
-    raw = scope.get("path") or (scope.get("raw_path") or b"").decode("latin-1", "ignore")
+    raw = scope.get("path") or (scope.get("raw_path") or b"").decode(
+        "latin-1", "ignore"
+    )
     return raw if isinstance(raw, str) else raw.decode("latin-1", "ignore")
 
 
@@ -195,7 +192,9 @@ class PrometheusMiddleware:
             labels = (method, path_tmpl, str(status_code))
             try:
                 self.metrics.http_requests_total.labels(*labels).inc()
-                self.metrics.http_request_duration_seconds.labels(*labels).observe(duration)
+                self.metrics.http_request_duration_seconds.labels(*labels).observe(
+                    duration
+                )
             finally:
                 self.metrics.http_inprogress.labels(method, path_tmpl).dec()
 

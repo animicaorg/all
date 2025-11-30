@@ -47,6 +47,7 @@ class MempoolErrorCode:
 
     Range 1000–1199 is reserved for mempool.
     """
+
     ADMISSION = 1000
     FEE_TOO_LOW = 1001
     NONCE_GAP = 1002
@@ -71,6 +72,7 @@ class MempoolError(Exception):
     context : Dict[str, Any]
         Structured details safe for logs/telemetry and JSON-RPC data payloads.
     """
+
     code: int
     reason: str
     message: str
@@ -107,7 +109,10 @@ class AdmissionError(MempoolError):
     """
     Parent for all admission failures (policy/consistency).
     """
-    def __init__(self, message: str, *, context: Optional[Dict[str, Any]] = None) -> None:
+
+    def __init__(
+        self, message: str, *, context: Optional[Dict[str, Any]] = None
+    ) -> None:
         super().__init__(
             code=MempoolErrorCode.ADMISSION,
             reason="admission_failed",
@@ -121,6 +126,7 @@ class FeeTooLow(AdmissionError):
     """
     The transaction's offered gas price is below the current minimum admission threshold.
     """
+
     def __init__(
         self,
         *,
@@ -154,6 +160,7 @@ class NonceGap(AdmissionError):
 
     Typical handling is to classify as an orphan (short TTL) until the gap is filled.
     """
+
     def __init__(
         self,
         *,
@@ -181,6 +188,7 @@ class Oversize(AdmissionError):
     """
     The transaction is larger than the configured maximum size.
     """
+
     def __init__(
         self,
         *,
@@ -217,6 +225,7 @@ class ReplacementError(MempoolError):
       current_effective_gas_price_wei: price of the tx currently held.
       offered_effective_gas_price_wei: price of the replacement tx.
     """
+
     def __init__(
         self,
         *,
@@ -253,6 +262,7 @@ class DoSError(MempoolError):
     """
     Generic DoS/abuse related rejection (rate limit, quota exceeded, malformed bursts, etc.).
     """
+
     def __init__(
         self,
         message: str,
@@ -282,9 +292,11 @@ def err_payload(exc: MempoolError) -> Dict[str, Any]:
     """
     return exc.to_dict()
 
+
 # ---------------------------------------------------------------------------
 # Override Oversize with a simpler, explicit implementation
 # ---------------------------------------------------------------------------
+
 
 class Oversize(MempoolError):
     """
@@ -316,9 +328,11 @@ class Oversize(MempoolError):
             },
         )
 
+
 # ---------------------------------------------------------------------------
 # Override FeeTooLow with a simpler, explicit implementation
 # ---------------------------------------------------------------------------
+
 
 class FeeTooLow(MempoolError):
     """
@@ -354,9 +368,11 @@ class FeeTooLow(MempoolError):
             },
         )
 
+
 # ---------------------------------------------------------------------------
 # Override NonceGap with a simpler, explicit implementation
 # ---------------------------------------------------------------------------
+
 
 class NonceGap(MempoolError):
     """

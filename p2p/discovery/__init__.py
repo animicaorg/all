@@ -30,6 +30,7 @@ _modules: Dict[str, str] = {
     "nat": "p2p.discovery.nat",
 }
 
+
 def __getattr__(name: str) -> ModuleType:
     """
     Lazily import submodules on first access, keeping import side-effects

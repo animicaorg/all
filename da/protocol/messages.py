@@ -35,39 +35,42 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import ClassVar, Dict, List, Optional, Tuple, Type, Union
 
-
 # =============================================================================
 # Type IDs
 # =============================================================================
 
+
 class MsgType(IntEnum):
     # Announcements
-    INV_COMMITMENT = 0x01        # New blob commitment exists (namespace-scoped)
-    INV_SHARES     = 0x02        # Optional: share/range availability notice
+    INV_COMMITMENT = 0x01  # New blob commitment exists (namespace-scoped)
+    INV_SHARES = 0x02  # Optional: share/range availability notice
 
     # Requests
-    GET_BLOB       = 0x10        # Request blob (optionally a byte-range)
-    GET_PROOF      = 0x11        # Request DAS proof for sample indices
+    GET_BLOB = 0x10  # Request blob (optionally a byte-range)
+    GET_PROOF = 0x11  # Request DAS proof for sample indices
 
     # Responses
-    PROOF          = 0x20        # DAS proof response (indices + branches)
-    BLOB_CHUNK     = 0x21        # Blob bytes chunk (streamed/ranged)
+    PROOF = 0x20  # DAS proof response (indices + branches)
+    BLOB_CHUNK = 0x21  # Blob bytes chunk (streamed/ranged)
 
     # Error
-    ERROR          = 0xFF        # Error response
+    ERROR = 0xFF  # Error response
 
 
 # =============================================================================
 # Helpers
 # =============================================================================
 
+
 def _expect_len(name: str, b: bytes, n: int) -> None:
     if not isinstance(b, (bytes, bytearray)) or len(b) != n:
         raise ValueError(f"{name} must be {n} bytes")
 
+
 def _expect_u32(name: str, v: int) -> None:
     if not isinstance(v, int) or v < 0 or v > 0xFFFFFFFF:
         raise ValueError(f"{name} must be uint32")
+
 
 def _expect_nonneg(name: str, v: int) -> None:
     if not isinstance(v, int) or v < 0:
@@ -78,15 +81,17 @@ def _expect_nonneg(name: str, v: int) -> None:
 # Messages
 # =============================================================================
 
+
 @dataclass(slots=True, frozen=True)
 class InvCommitment:
     """Announcement that a blob with the given commitment is available."""
+
     type_id: ClassVar[int] = int(MsgType.INV_COMMITMENT)
 
     chain_id: int
     namespace: int
-    commitment: bytes           # 32 bytes (NMT root)
-    size: int                   # original blob size in bytes
+    commitment: bytes  # 32 bytes (NMT root)
+    size: int  # original blob size in bytes
 
     def __post_init__(self) -> None:
         _expect_len("commitment", self.commitment, 32)
@@ -100,6 +105,7 @@ class InvShares:
     Optional notice advertising availability of share ranges for a namespace.
     Mostly useful for specialized sampling relays; clients may ignore.
     """
+
     type_id: ClassVar[int] = int(MsgType.INV_SHARES)
 
     chain_id: int
@@ -108,7 +114,7 @@ class InvShares:
 
     def __post_init__(self) -> None:
         _expect_u32("namespace", self.namespace)
-        for (start, count) in self.ranges:
+        for start, count in self.ranges:
             _expect_nonneg("start_share", start)
             _expect_nonneg("count", count)
 
@@ -116,10 +122,11 @@ class InvShares:
 @dataclass(slots=True, frozen=True)
 class GetBlob:
     """Request the raw blob bytes (optionally a byte-range)."""
+
     type_id: ClassVar[int] = int(MsgType.GET_BLOB)
 
     chain_id: int
-    commitment: bytes               # 32 bytes
+    commitment: bytes  # 32 bytes
     range_start: Optional[int] = None
     range_len: Optional[int] = None
 
@@ -129,17 +136,18 @@ class GetBlob:
             raise ValueError("range_start and range_len must be both set or both None")
         if self.range_start is not None:
             _expect_nonneg("range_start", self.range_start)  # type: ignore[arg-type]
-            _expect_nonneg("range_len", self.range_len)      # type: ignore[arg-type]
+            _expect_nonneg("range_len", self.range_len)  # type: ignore[arg-type]
 
 
 @dataclass(slots=True, frozen=True)
 class GetProof:
     """Request DAS proof branches for the given sample indices."""
+
     type_id: ClassVar[int] = int(MsgType.GET_PROOF)
 
     chain_id: int
-    commitment: bytes               # 32 bytes
-    indices: List[int]              # sample leaf indices
+    commitment: bytes  # 32 bytes
+    indices: List[int]  # sample leaf indices
 
     def __post_init__(self) -> None:
         _expect_len("commitment", self.commitment, 32)
@@ -150,13 +158,14 @@ class GetProof:
 @dataclass(slots=True, frozen=True)
 class Proof:
     """DAS proof response with indices and corresponding proof branches."""
+
     type_id: ClassVar[int] = int(MsgType.PROOF)
 
     chain_id: int
-    commitment: bytes               # 32 bytes
+    commitment: bytes  # 32 bytes
     indices: List[int]
-    branches: List[bytes]           # per-index proof branch bytes (opaque to the wire layer)
-    root: Optional[bytes] = None    # optional NMT root echo (32 bytes) for convenience
+    branches: List[bytes]  # per-index proof branch bytes (opaque to the wire layer)
+    root: Optional[bytes] = None  # optional NMT root echo (32 bytes) for convenience
 
     def __post_init__(self) -> None:
         _expect_len("commitment", self.commitment, 32)
@@ -177,14 +186,15 @@ class BlobChunk:
     should reassemble by (offset, data) until eof=True. `total_size` is the
     full blob size (not just the range).
     """
+
     type_id: ClassVar[int] = int(MsgType.BLOB_CHUNK)
 
     chain_id: int
-    commitment: bytes               # 32 bytes
-    offset: int                     # byte offset within the blob
-    data: bytes                     # chunk payload
-    total_size: int                 # total blob size in bytes
-    eof: bool = False               # True for the final chunk of this transfer
+    commitment: bytes  # 32 bytes
+    offset: int  # byte offset within the blob
+    data: bytes  # chunk payload
+    total_size: int  # total blob size in bytes
+    eof: bool = False  # True for the final chunk of this transfer
 
     def __post_init__(self) -> None:
         _expect_len("commitment", self.commitment, 32)
@@ -200,9 +210,10 @@ class BlobChunk:
 @dataclass(slots=True, frozen=True)
 class Error:
     """Error response carrying a numeric code and message."""
+
     type_id: ClassVar[int] = int(MsgType.ERROR)
 
-    code: int                       # implementation-specific but stable per release
+    code: int  # implementation-specific but stable per release
     message: str
     relates_to: Optional[int] = None  # optional original type_id
 
@@ -217,16 +228,18 @@ class Error:
 # Registry (type_id -> class)
 # =============================================================================
 
-ProtocolMessage = Union[InvCommitment, InvShares, GetBlob, GetProof, Proof, BlobChunk, Error]
+ProtocolMessage = Union[
+    InvCommitment, InvShares, GetBlob, GetProof, Proof, BlobChunk, Error
+]
 
 MESSAGE_REGISTRY: Dict[int, Type[ProtocolMessage]] = {
     InvCommitment.type_id: InvCommitment,
-    InvShares.type_id:     InvShares,
-    GetBlob.type_id:       GetBlob,
-    GetProof.type_id:      GetProof,
-    Proof.type_id:         Proof,
-    BlobChunk.type_id:     BlobChunk,
-    Error.type_id:         Error,
+    InvShares.type_id: InvShares,
+    GetBlob.type_id: GetBlob,
+    GetProof.type_id: GetProof,
+    Proof.type_id: Proof,
+    BlobChunk.type_id: BlobChunk,
+    Error.type_id: Error,
 }
 
 __all__ = [

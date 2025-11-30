@@ -54,7 +54,10 @@ def _extract_bytes(obj: Any) -> Optional[bytes]:
 
 
 def _call_mix(
-    beacon: bytes, qrng: Optional[bytes], transcript: Optional[bytes], disabled: bool = False
+    beacon: bytes,
+    qrng: Optional[bytes],
+    transcript: Optional[bytes],
+    disabled: bool = False,
 ) -> Tuple[bool, Optional[bytes]]:
     """
     Try common function names and signatures:
@@ -117,7 +120,9 @@ def _call_mix(
         except TypeError as e:
             last_type_error = e
             continue
-    pytest.skip(f"Could not call QRNG mixer with any supported signature (last TypeError: {last_type_error})")
+    pytest.skip(
+        f"Could not call QRNG mixer with any supported signature (last TypeError: {last_type_error})"
+    )
     return False, None  # unreachable
 
 
@@ -149,10 +154,14 @@ def test_qrng_disabled_is_passthrough(beacon: bytes, transcript: bytes):
     called, out = _call_mix(beacon, qrng=None, transcript=transcript, disabled=True)
     assert called
     assert out is not None, "Mixer must return bytes"
-    assert out == beacon, "Disabled/no-QRNG mix should be a pure passthrough of the beacon"
+    assert (
+        out == beacon
+    ), "Disabled/no-QRNG mix should be a pure passthrough of the beacon"
 
 
-def test_qrng_enabled_is_deterministic(beacon: bytes, qrng_bytes: bytes, transcript: bytes):
+def test_qrng_enabled_is_deterministic(
+    beacon: bytes, qrng_bytes: bytes, transcript: bytes
+):
     # Same inputs → same outputs (determinism)
     called, out1 = _call_mix(beacon, qrng_bytes, transcript)
     assert called and out1 is not None
@@ -164,7 +173,9 @@ def test_qrng_enabled_is_deterministic(beacon: bytes, qrng_bytes: bytes, transcr
     assert len(out1) == len(beacon), "Mixed output length should match beacon length"
 
 
-def test_qrng_changes_with_transcript_and_bytes(beacon: bytes, qrng_bytes: bytes, transcript: bytes):
+def test_qrng_changes_with_transcript_and_bytes(
+    beacon: bytes, qrng_bytes: bytes, transcript: bytes
+):
     # Changing the QRNG bytes should (with overwhelming probability) change the output
     called, out_base = _call_mix(beacon, qrng_bytes, transcript)
     assert called and out_base is not None
@@ -172,7 +183,9 @@ def test_qrng_changes_with_transcript_and_bytes(beacon: bytes, qrng_bytes: bytes
     qrng_alt = bytes(reversed(qrng_bytes))
     called, out_alt_bytes = _call_mix(beacon, qrng_alt, transcript)
     assert called and out_alt_bytes is not None
-    assert out_alt_bytes != out_base, "Different QRNG bytes should produce different mixed outputs"
+    assert (
+        out_alt_bytes != out_base
+    ), "Different QRNG bytes should produce different mixed outputs"
 
     # Changing the transcript should change the output (transcript binding)
     transcript_alt = transcript + b"|alt"
@@ -188,7 +201,9 @@ def test_qrng_empty_bytes_is_passthrough(beacon: bytes, transcript: bytes):
     assert out == beacon, "Empty QRNG input should not alter the beacon"
 
 
-def test_qrng_idempotence_with_same_inputs(beacon: bytes, qrng_bytes: bytes, transcript: bytes):
+def test_qrng_idempotence_with_same_inputs(
+    beacon: bytes, qrng_bytes: bytes, transcript: bytes
+):
     # Apply mixer twice should be equivalent to once if mixer is extract-then-xor with same derived mask
     called, once = _call_mix(beacon, qrng_bytes, transcript)
     assert called and once is not None
@@ -200,4 +215,7 @@ def test_qrng_idempotence_with_same_inputs(beacon: bytes, qrng_bytes: bytes, tra
     # then reapplying it would revert to original beacon (mask XOR mask cancels out).
     # Some designs instead use transcript that evolves; in that case twice != beacon.
     # We accept BOTH patterns by asserting determinism and one of the two outcomes.
-    assert twice in (beacon, once), "Applying mixer twice should be either a no-op or invertible; got unexpected behavior"
+    assert twice in (
+        beacon,
+        once,
+    ), "Applying mixer twice should be either a no-op or invertible; got unexpected behavior"

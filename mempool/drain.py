@@ -42,9 +42,10 @@ Each tx/meta should provide:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Callable, Iterable, Iterator, List, Optional, Sequence, Tuple
 import time
+from dataclasses import dataclass
+from typing import (Any, Callable, Iterable, Iterator, List, Optional,
+                    Sequence, Tuple)
 
 # Optional coupling with mempool.priority
 try:
@@ -58,6 +59,7 @@ Clock = Callable[[], float]
 # -------------------------
 # Config & result types
 # -------------------------
+
 
 @dataclass
 class DrainConfig:
@@ -82,14 +84,18 @@ class DrainStats:
 @dataclass
 class DrainResult:
     """Selection plus stats and a note describing stop condition."""
+
     picked: List[Tuple[Any, Any]]
     stats: DrainStats
-    stop_reason: str  # "budget_exhausted" | "no_ready" | "scanned_all" | "pool_no_pop_api"
+    stop_reason: (
+        str  # "budget_exhausted" | "no_ready" | "scanned_all" | "pool_no_pop_api"
+    )
 
 
 # -------------------------
 # Helpers (duck-typed accessors)
 # -------------------------
+
 
 def _now() -> float:
     return time.monotonic()
@@ -138,7 +144,9 @@ def _effective_priority(tx: Any, meta: Any, now_s: float) -> float:
         except Exception:
             pass
     # Fallback: fee-per-byte with a small age boost (≤10%)
-    eff_fee = getattr(meta, "effective_fee_wei", getattr(tx, "effective_fee_wei", 0)) or 0
+    eff_fee = (
+        getattr(meta, "effective_fee_wei", getattr(tx, "effective_fee_wei", 0)) or 0
+    )
     size = _size_bytes(tx, meta) or 1
     first_seen = float(getattr(meta, "first_seen_s", now_s))
     age_boost = min(max(0.0, now_s - first_seen) / 600.0, 0.10)
@@ -148,6 +156,7 @@ def _effective_priority(tx: Any, meta: Any, now_s: float) -> float:
 # -------------------------
 # Pool adapter
 # -------------------------
+
 
 class _PoolAdapter:
     def __init__(self, pool: Any, clock: Clock):
@@ -218,6 +227,7 @@ class _PoolAdapter:
 # Core selection logic
 # -------------------------
 
+
 def select_for_block(
     pool: Any,
     cfg: DrainConfig,
@@ -269,12 +279,15 @@ def select_for_block(
         if cfg.early_exit_on_starvation and stats.considered > 32:
             # If remaining budgets are smaller than the *smallest seen* item,
             # further scanning is unlikely to change the outcome.
-            if (smallest_seen_size is not None and bytes_left < smallest_seen_size) and \
-               (smallest_seen_gas is not None and gas_left < smallest_seen_gas):
+            if (
+                smallest_seen_size is not None and bytes_left < smallest_seen_size
+            ) and (smallest_seen_gas is not None and gas_left < smallest_seen_gas):
                 break
 
-    stop_reason = "budget_exhausted" if (gas_left <= 0 or bytes_left <= 0) else (
-        "scanned_all" if stats.considered > 0 else "no_ready"
+    stop_reason = (
+        "budget_exhausted"
+        if (gas_left <= 0 or bytes_left <= 0)
+        else ("scanned_all" if stats.considered > 0 else "no_ready")
     )
     return DrainResult(picked=picked, stats=stats, stop_reason=stop_reason)
 
@@ -313,9 +326,12 @@ def drain_for_block(
 # Pretty-printers
 # -------------------------
 
+
 def format_selection(result: DrainResult) -> str:
     b = []
-    b.append(f"picked={result.stats.selected_count} gas={result.stats.selected_gas} bytes={result.stats.selected_bytes} reason={result.stop_reason}")
+    b.append(
+        f"picked={result.stats.selected_count} gas={result.stats.selected_gas} bytes={result.stats.selected_bytes} reason={result.stop_reason}"
+    )
     for tx, meta in result.picked:
         h = _tx_hash(meta, tx).hex()[:12]
         size = _size_bytes(tx, meta)

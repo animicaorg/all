@@ -157,6 +157,7 @@ def roles() -> Dict[str, bytes]:
     """
     Produce deterministic test addresses (32-byte payloads for the VM).
     """
+
     def addr(tag: str) -> bytes:
         # 32 bytes: sha3-like looking but deterministic small stub
         tag_b = tag.encode("utf-8")
@@ -173,8 +174,8 @@ def roles() -> Dict[str, bytes]:
 @pytest.fixture()
 def params() -> Dict[str, Any]:
     return {
-        "amount": 123_456,         # tiny unit for local tests
-        "deadline_height": 10_000, # far in the future unless we override
+        "amount": 123_456,  # tiny unit for local tests
+        "deadline_height": 10_000,  # far in the future unless we override
     }
 
 
@@ -188,7 +189,11 @@ def read_state(vm: VMContract) -> Dict[str, Any]:
         return ret["snapshot"]
     if isinstance(ret, dict):
         return ret
-    if isinstance(ret, (list, tuple)) and ret and isinstance(ret[0], (list, tuple, dict)):
+    if (
+        isinstance(ret, (list, tuple))
+        and ret
+        and isinstance(ret[0], (list, tuple, dict))
+    ):
         # unwrap one layer if needed
         snap = ret[0]
         if isinstance(snap, dict):
@@ -207,11 +212,19 @@ def find_event(evts: List[Dict[str, Any]], name: str) -> Optional[Dict[str, Any]
 # --- tests -------------------------------------------------------------------
 
 
-def test_init_and_snapshot(vm: VMContract, roles: Dict[str, bytes], params: Dict[str, Any]):
+def test_init_and_snapshot(
+    vm: VMContract, roles: Dict[str, bytes], params: Dict[str, Any]
+):
     # Call init exactly once
     vm.call(
         "init",
-        [roles["buyer"], roles["seller"], roles["arbiter"], params["amount"], params["deadline_height"]],
+        [
+            roles["buyer"],
+            roles["seller"],
+            roles["arbiter"],
+            params["amount"],
+            params["deadline_height"],
+        ],
         sender=roles["buyer"],
     )
     snap = read_state(vm)
@@ -226,7 +239,9 @@ def test_init_and_snapshot(vm: VMContract, roles: Dict[str, bytes], params: Dict
     assert snap.get("finalized") is False
 
 
-def test_deposit_then_release_to_seller(vm: VMContract, roles: Dict[str, bytes], params: Dict[str, Any]):
+def test_deposit_then_release_to_seller(
+    vm: VMContract, roles: Dict[str, bytes], params: Dict[str, Any]
+):
     # deposit by buyer
     _r, ev, _m = vm.call("deposit", [], sender=roles["buyer"])
     depos = find_event(ev, "Deposited")
@@ -250,19 +265,29 @@ def test_deposit_then_release_to_seller(vm: VMContract, roles: Dict[str, bytes],
     assert snap2.get("disputed") is False
 
 
-def test_refund_after_deadline(vm: VMContract, roles: Dict[str, bytes], params: Dict[str, Any]):
+def test_refund_after_deadline(
+    vm: VMContract, roles: Dict[str, bytes], params: Dict[str, Any]
+):
     # New instance per test module scope; we need a fresh contract to avoid finalized state.
     # If the loader uses persistent storage, we can re-init with a new deadline in the past.
     past_deadline = 42
     vm.call(
         "init",
-        [roles["buyer"], roles["seller"], roles["arbiter"], params["amount"], past_deadline],
+        [
+            roles["buyer"],
+            roles["seller"],
+            roles["arbiter"],
+            params["amount"],
+            past_deadline,
+        ],
         sender=roles["buyer"],
     )
     vm.call("deposit", [], sender=roles["buyer"])
 
     # Attempt refund with block height AFTER deadline
-    _r, ev, _m = vm.call("refund", [], sender=roles["buyer"], block_height=past_deadline + 1)
+    _r, ev, _m = vm.call(
+        "refund", [], sender=roles["buyer"], block_height=past_deadline + 1
+    )
     ref = find_event(ev, "Refunded")
     if ref is not None:
         assert isinstance(ref, dict)
@@ -271,11 +296,19 @@ def test_refund_after_deadline(vm: VMContract, roles: Dict[str, bytes], params: 
     assert snap.get("finalized") is True
 
 
-def test_dispute_and_arbiter_resolves_to_seller(vm: VMContract, roles: Dict[str, bytes], params: Dict[str, Any]):
+def test_dispute_and_arbiter_resolves_to_seller(
+    vm: VMContract, roles: Dict[str, bytes], params: Dict[str, Any]
+):
     # Re-init to clean state
     vm.call(
         "init",
-        [roles["buyer"], roles["seller"], roles["arbiter"], params["amount"], params["deadline_height"]],
+        [
+            roles["buyer"],
+            roles["seller"],
+            roles["arbiter"],
+            params["amount"],
+            params["deadline_height"],
+        ],
         sender=roles["buyer"],
     )
     vm.call("deposit", [], sender=roles["buyer"])
@@ -299,11 +332,19 @@ def test_dispute_and_arbiter_resolves_to_seller(vm: VMContract, roles: Dict[str,
     assert snap2.get("disputed") is False
 
 
-def test_cancel_before_deposit(vm: VMContract, roles: Dict[str, bytes], params: Dict[str, Any]):
+def test_cancel_before_deposit(
+    vm: VMContract, roles: Dict[str, bytes], params: Dict[str, Any]
+):
     # Re-init fresh; do NOT deposit
     vm.call(
         "init",
-        [roles["buyer"], roles["seller"], roles["arbiter"], params["amount"], params["deadline_height"]],
+        [
+            roles["buyer"],
+            roles["seller"],
+            roles["arbiter"],
+            params["amount"],
+            params["deadline_height"],
+        ],
         sender=roles["buyer"],
     )
     # Either party may cancel before deposit; use seller to exercise path
@@ -320,14 +361,22 @@ def test_cancel_before_deposit(vm: VMContract, roles: Dict[str, bytes], params: 
     assert snap.get("disputed") is False
 
 
-def test_only_buyer_can_deposit_and_release(vm: VMContract, roles: Dict[str, bytes], params: Dict[str, Any]):
+def test_only_buyer_can_deposit_and_release(
+    vm: VMContract, roles: Dict[str, bytes], params: Dict[str, Any]
+):
     """
     Negative-path sanity: depositing or releasing from a non-buyer should revert.
     We accept either an explicit error string or a structured revert.
     """
     vm.call(
         "init",
-        [roles["buyer"], roles["seller"], roles["arbiter"], params["amount"], params["deadline_height"]],
+        [
+            roles["buyer"],
+            roles["seller"],
+            roles["arbiter"],
+            params["amount"],
+            params["deadline_height"],
+        ],
         sender=roles["buyer"],
     )
 
@@ -341,5 +390,3 @@ def test_only_buyer_can_deposit_and_release(vm: VMContract, roles: Dict[str, byt
     # Non-buyer release
     with pytest.raises(Exception):
         vm.call("release", [], sender=roles["seller"])
-
-

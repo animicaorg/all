@@ -19,7 +19,9 @@ ShareEvent = Dict[str, object]
 class PoolMetrics:
     """Lightweight in-memory metrics aggregator for the Stratum pool."""
 
-    def __init__(self, config: PoolConfig, job_manager: JobManager, server: StratumServer) -> None:
+    def __init__(
+        self, config: PoolConfig, job_manager: JobManager, server: StratumServer
+    ) -> None:
         self._config = config
         self._job_manager = job_manager
         self._server = server
@@ -81,7 +83,11 @@ class PoolMetrics:
         tx_count: int,
     ) -> None:
         now = time.time()
-        difficulty = float(submit_params.get("d_ratio") or submit_params.get("shareTarget") or job.share_target)
+        difficulty = float(
+            submit_params.get("d_ratio")
+            or submit_params.get("shareTarget")
+            or job.share_target
+        )
         event: ShareEvent = {
             "timestamp": now,
             "session_id": session.session_id,
@@ -91,7 +97,9 @@ class PoolMetrics:
             "status": "accepted" if ok else "rejected",
             "reason": reason,
             "job_id": job.job_id,
-            "height": submit_params.get("height") or job.header.get("number") or job.header.get("height"),
+            "height": submit_params.get("height")
+            or job.header.get("number")
+            or job.header.get("height"),
         }
         self._share_events.append(event)
         self._persist_share(event, is_block=is_block, tx_count=tx_count)
@@ -106,7 +114,9 @@ class PoolMetrics:
                 }
             )
 
-    def _persist_share(self, event: ShareEvent, *, is_block: bool, tx_count: int) -> None:
+    def _persist_share(
+        self, event: ShareEvent, *, is_block: bool, tx_count: int
+    ) -> None:
         if self._db is None:
             return
 
@@ -147,11 +157,17 @@ class PoolMetrics:
     def _now_iso(self) -> str:
         return datetime.now(timezone.utc).isoformat()
 
-    def _hashrate_from_events(self, events: List[ShareEvent], window_seconds: float) -> float:
+    def _hashrate_from_events(
+        self, events: List[ShareEvent], window_seconds: float
+    ) -> float:
         if not events:
             return 0.0
         cutoff = time.time() - window_seconds
-        total = sum(float(ev.get("difficulty") or 0.0) for ev in events if ev["timestamp"] >= cutoff and ev["status"] == "accepted")
+        total = sum(
+            float(ev.get("difficulty") or 0.0)
+            for ev in events
+            if ev["timestamp"] >= cutoff and ev["status"] == "accepted"
+        )
         return total / window_seconds if window_seconds > 0 else 0.0
 
     def _hashrate_from_db(self, window_seconds: float) -> float:
@@ -208,7 +224,11 @@ class PoolMetrics:
                 return {
                     "height": height,
                     "hash": job_id,
-                    "timestamp": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat() if ts else None,
+                    "timestamp": (
+                        datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+                        if ts
+                        else None
+                    ),
                     "found_by_pool": bool(found),
                 }
 
@@ -217,9 +237,13 @@ class PoolMetrics:
             return {
                 "height": blk.get("height"),
                 "hash": blk.get("job_id"),
-                "timestamp": datetime.fromtimestamp(float(blk.get("timestamp")), tz=timezone.utc).isoformat()
-                if blk.get("timestamp")
-                else None,
+                "timestamp": (
+                    datetime.fromtimestamp(
+                        float(blk.get("timestamp")), tz=timezone.utc
+                    ).isoformat()
+                    if blk.get("timestamp")
+                    else None
+                ),
                 "found_by_pool": blk.get("found_by_pool", False),
             }
 
@@ -235,7 +259,9 @@ class PoolMetrics:
         stats = self._server.stats()
         job = self._job_manager.current_job()
         share_events = list(self._share_events)
-        pool_hashrate = self._hashrate_from_db(600) or self._hashrate_from_events(share_events, 600)
+        pool_hashrate = self._hashrate_from_db(600) or self._hashrate_from_events(
+            share_events, 600
+        )
         latest_block = self._latest_block()
         return {
             "pool_name": "Animica Stratum Pool",
@@ -244,9 +270,12 @@ class PoolMetrics:
             "last_block_hash": latest_block.get("hash") or "0x0",
             "pool_hashrate": pool_hashrate,
             "hashrate_series": self._hashrate_series(60),
-            "hashrate_1m": self._hashrate_from_db(60) or self._hashrate_from_events(share_events, 60),
-            "hashrate_15m": self._hashrate_from_db(900) or self._hashrate_from_events(share_events, 900),
-            "hashrate_1h": self._hashrate_from_db(3600) or self._hashrate_from_events(share_events, 3600),
+            "hashrate_1m": self._hashrate_from_db(60)
+            or self._hashrate_from_events(share_events, 60),
+            "hashrate_15m": self._hashrate_from_db(900)
+            or self._hashrate_from_events(share_events, 900),
+            "hashrate_1h": self._hashrate_from_db(3600)
+            or self._hashrate_from_events(share_events, 3600),
             "num_miners": stats.get("clients", 0),
             "num_workers": stats.get("clients", 0),
             "round_duration_seconds": self._config.poll_interval,
@@ -287,7 +316,16 @@ class PoolMetrics:
                     (cutoff_1m, cutoff_15m, cutoff_1h, cutoff_max),
                 ).fetchall()
             for row in rows:
-                worker_id, address, accepted, rejected, diff1, diff15, diff60, last_ts = row
+                (
+                    worker_id,
+                    address,
+                    accepted,
+                    rejected,
+                    diff1,
+                    diff15,
+                    diff60,
+                    last_ts,
+                ) = row
                 aggregates[str(worker_id)] = {
                     "address": address or "",
                     "shares_accepted": int(accepted or 0),
@@ -312,13 +350,20 @@ class PoolMetrics:
                     "worker_id": worker_id,
                     "worker_name": worker_id,
                     "address": agg.get("address") or session.get("address") or "",
-                    "hashrate_1m": agg.get("hashrate_1m") or self._hashrate_from_events(worker_events, 60),
-                    "hashrate_15m": agg.get("hashrate_15m") or self._hashrate_from_events(worker_events, 900),
-                    "hashrate_1h": agg.get("hashrate_1h") or self._hashrate_from_events(worker_events, 3600),
-                    "last_share_at": agg.get("last_share_at") or session.get("last_share_at"),
-                    "difficulty": session.get("current_difficulty") or session.get("share_target"),
-                    "shares_accepted": agg.get("shares_accepted") or session.get("shares_accepted", 0),
-                    "shares_rejected": agg.get("shares_rejected") or session.get("shares_rejected", 0),
+                    "hashrate_1m": agg.get("hashrate_1m")
+                    or self._hashrate_from_events(worker_events, 60),
+                    "hashrate_15m": agg.get("hashrate_15m")
+                    or self._hashrate_from_events(worker_events, 900),
+                    "hashrate_1h": agg.get("hashrate_1h")
+                    or self._hashrate_from_events(worker_events, 3600),
+                    "last_share_at": agg.get("last_share_at")
+                    or session.get("last_share_at"),
+                    "difficulty": session.get("current_difficulty")
+                    or session.get("share_target"),
+                    "shares_accepted": agg.get("shares_accepted")
+                    or session.get("shares_accepted", 0),
+                    "shares_rejected": agg.get("shares_rejected")
+                    or session.get("shares_rejected", 0),
                 }
             )
             seen_workers.add(worker_id)
@@ -333,9 +378,12 @@ class PoolMetrics:
                     "worker_id": worker_id,
                     "worker_name": worker_id,
                     "address": agg.get("address") or "",
-                    "hashrate_1m": agg.get("hashrate_1m") or self._hashrate_from_events(worker_events, 60),
-                    "hashrate_15m": agg.get("hashrate_15m") or self._hashrate_from_events(worker_events, 900),
-                    "hashrate_1h": agg.get("hashrate_1h") or self._hashrate_from_events(worker_events, 3600),
+                    "hashrate_1m": agg.get("hashrate_1m")
+                    or self._hashrate_from_events(worker_events, 60),
+                    "hashrate_15m": agg.get("hashrate_15m")
+                    or self._hashrate_from_events(worker_events, 900),
+                    "hashrate_1h": agg.get("hashrate_1h")
+                    or self._hashrate_from_events(worker_events, 3600),
                     "last_share_at": agg.get("last_share_at"),
                     "difficulty": None,
                     "shares_accepted": agg.get("shares_accepted") or 0,
@@ -347,7 +395,12 @@ class PoolMetrics:
 
     def miner_detail(self, worker_id: str) -> Dict[str, object]:
         session = next(
-            (s for s in self._server.session_snapshots() if str(s.get("worker") or s.get("session_id")) == worker_id), None
+            (
+                s
+                for s in self._server.session_snapshots()
+                if str(s.get("worker") or s.get("session_id")) == worker_id
+            ),
+            None,
         )
 
         cutoff = time.time() - 3600
@@ -406,7 +459,13 @@ class PoolMetrics:
             "worker_name": worker_id,
             "hashrate_timeseries": timeseries,
             "last_share": {
-                "time": datetime.fromtimestamp(latest["timestamp"], tz=timezone.utc).isoformat() if latest else None,
+                "time": (
+                    datetime.fromtimestamp(
+                        latest["timestamp"], tz=timezone.utc
+                    ).isoformat()
+                    if latest
+                    else None
+                ),
                 "difficulty": latest.get("difficulty") if latest else None,
                 "status": latest.get("status") if latest else None,
             },
@@ -414,7 +473,9 @@ class PoolMetrics:
             "shares_rejected": rejected,
             "current_difficulty": (latest.get("difficulty") if latest else 0) or 0,
             "connected_since": (
-                datetime.fromtimestamp(session["connected_since"], tz=timezone.utc).isoformat()
+                datetime.fromtimestamp(
+                    session["connected_since"], tz=timezone.utc
+                ).isoformat()
                 if session and session.get("connected_since")
                 else None
             ),
@@ -432,7 +493,13 @@ class PoolMetrics:
                     {
                         "height": height,
                         "hash": job_id,
-                        "timestamp": datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat() if ts else None,
+                        "timestamp": (
+                            datetime.fromtimestamp(
+                                float(ts), tz=timezone.utc
+                            ).isoformat()
+                            if ts
+                            else None
+                        ),
                         "found_by_pool": bool(found),
                         "reward": "0",
                         "tx_count": tx_count,
@@ -445,9 +512,13 @@ class PoolMetrics:
                 {
                     "height": blk.get("height"),
                     "hash": blk.get("job_id"),
-                    "timestamp": datetime.fromtimestamp(float(blk.get("timestamp")), tz=timezone.utc).isoformat()
-                    if blk.get("timestamp")
-                    else None,
+                    "timestamp": (
+                        datetime.fromtimestamp(
+                            float(blk.get("timestamp")), tz=timezone.utc
+                        ).isoformat()
+                        if blk.get("timestamp")
+                        else None
+                    ),
                     "found_by_pool": blk.get("found_by_pool", False),
                     "reward": "0",
                     "tx_count": blk.get("tx_count"),

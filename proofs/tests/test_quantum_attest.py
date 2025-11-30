@@ -6,19 +6,13 @@ from typing import Any
 
 import pytest
 
-# Under test
-from proofs.quantum_attest.provider_cert import (
-    ProviderCert,
-    parse_provider_cert,
-    compute_provider_id,
-)
-from proofs.quantum_attest.traps import (
-    trap_ratio,
-    wilson_lower_bound,
-    meets_threshold,
-)
 from proofs.quantum_attest.benchmarks import units_from_circuit
-
+# Under test
+from proofs.quantum_attest.provider_cert import (ProviderCert,
+                                                 compute_provider_id,
+                                                 parse_provider_cert)
+from proofs.quantum_attest.traps import (meets_threshold, trap_ratio,
+                                         wilson_lower_bound)
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
@@ -32,6 +26,7 @@ def _load_fixture_json(name: str) -> dict[str, Any]:
 
 # -------------------- Provider certificate --------------------
 
+
 def test_provider_cert_parse_and_shape():
     """
     Parses the sample QPU provider certificate and validates basic shape/fields.
@@ -42,16 +37,23 @@ def test_provider_cert_parse_and_shape():
 
     # Name & domains
     assert cert.name and isinstance(cert.name, str)
-    assert isinstance(cert.domains, list) and all(isinstance(d, str) for d in cert.domains)
+    assert isinstance(cert.domains, list) and all(
+        isinstance(d, str) for d in cert.domains
+    )
     # Algorithm for identity key and key material presence
     assert cert.algo in {"ed25519", "dilithium3", "sphincs-shake-128s"}
-    assert isinstance(cert.pubkey_bytes, (bytes, bytearray)) and len(cert.pubkey_bytes) >= 16
+    assert (
+        isinstance(cert.pubkey_bytes, (bytes, bytearray))
+        and len(cert.pubkey_bytes) >= 16
+    )
     # Validity window is sane
     assert cert.not_before < cert.not_after
 
     # Root details present (may be a friendly name + fingerprint string in the fixture)
     assert isinstance(cert.root_name, str) and cert.root_name
-    assert isinstance(cert.root_fingerprint, str) and len(cert.root_fingerprint) >= 8  # e.g., "SHA256:…"
+    assert (
+        isinstance(cert.root_fingerprint, str) and len(cert.root_fingerprint) >= 8
+    )  # e.g., "SHA256:…"
 
 
 def test_provider_cert_provider_id_stability():
@@ -72,14 +74,15 @@ def test_provider_cert_provider_id_stability():
 
 # -------------------- Trap-circuit verification math --------------------
 
+
 @pytest.mark.parametrize(
     ("passes", "total", "thr", "expect"),
     [
-        (980, 1000, 0.95, True),   # clearly good
-        (950, 1000, 0.95, True),   # good
+        (980, 1000, 0.95, True),  # clearly good
+        (950, 1000, 0.95, True),  # good
         (920, 1000, 0.95, False),  # not enough
         (880, 1000, 0.95, False),  # clearly bad
-        (96, 100, 0.90, True),     # small sample, good
+        (96, 100, 0.90, True),  # small sample, good
     ],
 )
 def test_trap_threshold_decision(passes: int, total: int, thr: float, expect: bool):
@@ -113,12 +116,13 @@ def test_trap_lcb_increases_with_sample_size_for_same_ratio():
 
 # -------------------- Benchmark scaling (depth×width×shots → units) --------------------
 
+
 def test_units_from_circuit_monotonicity_and_reasonable_scale():
     """
     Reference scaling should increase with depth, width, and shots, and be roughly linear in shots.
     """
     u1 = units_from_circuit(depth=10, width=8, shots=100)
-    u2 = units_from_circuit(depth=20, width=8, shots=100)   # deeper
+    u2 = units_from_circuit(depth=20, width=8, shots=100)  # deeper
     u3 = units_from_circuit(depth=10, width=16, shots=100)  # wider
     u4 = units_from_circuit(depth=10, width=8, shots=1000)  # more shots
 

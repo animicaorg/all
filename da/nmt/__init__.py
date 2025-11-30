@@ -30,6 +30,7 @@ Typical usage
 
 This package lazily loads its submodules to keep imports lightweight.
 """
+
 from __future__ import annotations
 
 from importlib import import_module
@@ -53,6 +54,7 @@ _SUBMODULES = (
     "indices",
 )
 
+
 def __getattr__(name: str) -> Any:
     """
     Lazily resolve well-known submodules, e.g. `da.nmt.tree`.
@@ -66,7 +68,9 @@ def __getattr__(name: str) -> Any:
             ) from e
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
+
 def __dir__() -> list[str]:
     return sorted(list(globals().keys()) + list(_SUBMODULES))
+
 
 __all__ = list(_SUBMODULES)

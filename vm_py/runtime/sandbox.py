@@ -35,10 +35,11 @@ import sys
 import types
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple
-
+from typing import (Dict, Iterable, Iterator, List, Mapping, Optional,
+                    Sequence, Tuple)
 
 # ----------------------------- errors ------------------------------ #
+
 
 class SandboxError(Exception):
     """Base class for sandbox-related failures."""
@@ -105,7 +106,9 @@ def _ensure_stdlib_root() -> types.ModuleType:
     root = types.ModuleType("stdlib")
     root.__path__ = []  # mark as package
     root.__package__ = "stdlib"
-    root.__doc__ = "Synthetic, deterministic contract stdlib (injected by vm_py.runtime.sandbox)"
+    root.__doc__ = (
+        "Synthetic, deterministic contract stdlib (injected by vm_py.runtime.sandbox)"
+    )
     sys.modules["stdlib"] = root
     return root
 
@@ -139,6 +142,7 @@ def uninstall_stdlib_proxy() -> None:
 
 
 # ------------------------- import guard hook ----------------------- #
+
 
 @dataclass(frozen=True)
 class _GuardConfig:
@@ -181,7 +185,9 @@ class _ContractImportGuard(importlib.abc.MetaPathFinder):
 
 
 @contextmanager
-def contract_import_guard(allowed_prefixes: Sequence[str] = ("stdlib",)) -> Iterator[None]:
+def contract_import_guard(
+    allowed_prefixes: Sequence[str] = ("stdlib",)
+) -> Iterator[None]:
     """
     Context manager that:
       - Installs/refreshes the synthetic stdlib proxies

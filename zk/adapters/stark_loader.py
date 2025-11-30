@@ -91,11 +91,12 @@ License: MIT
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Union
 import os
 import re
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Union
 
-from .snarkjs_loader import load_json, normalize_numbers  # re-exported utilities
+from .snarkjs_loader import (load_json,  # re-exported utilities
+                             normalize_numbers)
 
 JsonLike = Union[str, bytes, os.PathLike, Mapping[str, Any]]
 
@@ -106,11 +107,13 @@ JsonLike = Union[str, bytes, os.PathLike, Mapping[str, Any]]
 _HEX_RE_PLAIN = re.compile(r"^[0-9A-Fa-f]+$")
 _INT_TOKEN_RE = re.compile(r"^\s*([+-]?(?:0x[0-9a-fA-F]+|\d+))n?\s*$")
 
+
 def _is_hex_like(s: Any) -> bool:
     if not isinstance(s, str):
         return False
     t = s.strip()
     return t.startswith(("0x", "0X")) or bool(_HEX_RE_PLAIN.fullmatch(t))
+
 
 def _int_try(x: Any) -> Optional[int]:
     """Try to parse a scalar number (decimal, hex string, JS BigInt), else None."""
@@ -129,11 +132,13 @@ def _int_try(x: Any) -> Optional[int]:
                 return None
     return None
 
+
 def _int_to_hex(i: int) -> str:
     if i == 0:
         return "0x0"
     width = (i.bit_length() + 7) // 8
     return "0x" + i.to_bytes(width, "big").hex()
+
 
 def _as_hex(x: Any) -> str:
     """
@@ -153,13 +158,16 @@ def _as_hex(x: Any) -> str:
     # Fallback: treat as string payload (ensure prefix to satisfy consumers)
     return f"0x{str(x).strip().lower()}"
 
+
 def _as_int(x: Any, *, default: Optional[int] = None) -> Optional[int]:
     v = _int_try(x)
     return v if v is not None else default
 
+
 # -----------------------------------------------------------------------------
 # Commitments (layer roots)
 # -----------------------------------------------------------------------------
+
 
 def _extract_commitments(obj: Mapping[str, Any]) -> Optional[List[str]]:
     # Try common keys at top-level or under "fri"/"layers"
@@ -189,7 +197,9 @@ def _extract_commitments(obj: Mapping[str, Any]) -> Optional[List[str]]:
 
     if arr is None:
         # Sometimes single root appears as 'root'
-        single = obj.get("root") or (fri.get("root") if isinstance(fri, Mapping) else None)
+        single = obj.get("root") or (
+            fri.get("root") if isinstance(fri, Mapping) else None
+        )
         if single is not None:
             return [_as_hex(single)]
         return None
@@ -202,9 +212,11 @@ def _extract_commitments(obj: Mapping[str, Any]) -> Optional[List[str]]:
             roots.append(_as_hex(item))
     return roots
 
+
 # -----------------------------------------------------------------------------
 # Queries & auth paths
 # -----------------------------------------------------------------------------
+
 
 def _extract_layer_paths(layer_obj: Any) -> List[str]:
     """
@@ -221,6 +233,7 @@ def _extract_layer_paths(layer_obj: Any) -> List[str]:
                 return [_as_hex(x) for x in layer_obj[k]]
     # Fallback: treat as single element
     return [_as_hex(layer_obj)]
+
 
 def _extract_layer_values(layer_obj: Any) -> List[Union[int, str]]:
     """
@@ -254,24 +267,44 @@ def _extract_layer_values(layer_obj: Any) -> List[Union[int, str]]:
         values.append(xi if xi is not None else _as_hex(x))
     return values
 
+
 def _extract_queries(obj: Mapping[str, Any]) -> Optional[List[Dict[str, Any]]]:
     # Collect possible query arrays from several places
     qsrc: Optional[List[Any]] = None
-    for k in ("queries", "queryRounds", "query_rounds", "openings", "decommitments", "query_proofs"):
+    for k in (
+        "queries",
+        "queryRounds",
+        "query_rounds",
+        "openings",
+        "decommitments",
+        "query_proofs",
+    ):
         v = obj.get(k)
         if isinstance(v, list):
             qsrc = v
             break
     if qsrc is None and isinstance(obj.get("proof"), Mapping):
         pv = obj["proof"]
-        for k in ("queries", "queryRounds", "openings", "decommitments", "query_proofs"):
+        for k in (
+            "queries",
+            "queryRounds",
+            "openings",
+            "decommitments",
+            "query_proofs",
+        ):
             v = pv.get(k)
             if isinstance(v, list):
                 qsrc = v
                 break
     if qsrc is None and isinstance(obj.get("fri"), Mapping):
         fv = obj["fri"]
-        for k in ("queries", "queryRounds", "openings", "decommitments", "query_proofs"):
+        for k in (
+            "queries",
+            "queryRounds",
+            "openings",
+            "decommitments",
+            "query_proofs",
+        ):
             v = fv.get(k)
             if isinstance(v, list):
                 qsrc = v
@@ -292,11 +325,11 @@ def _extract_queries(obj: Mapping[str, Any]) -> Optional[List[Dict[str, Any]]]:
 
         # Position / index
         pos = (
-            _as_int(q.get("position")) or
-            _as_int(q.get("index")) or
-            _as_int(q.get("idx")) or
-            _as_int(q.get("i")) or
-            _as_int(q.get("x"))
+            _as_int(q.get("position"))
+            or _as_int(q.get("index"))
+            or _as_int(q.get("idx"))
+            or _as_int(q.get("i"))
+            or _as_int(q.get("x"))
         )
         if pos is None:
             # Some formats nest the position per-layer; keep None if not present
@@ -335,9 +368,11 @@ def _extract_queries(obj: Mapping[str, Any]) -> Optional[List[Dict[str, Any]]]:
 
     return out
 
+
 # -----------------------------------------------------------------------------
 # Final polynomial (remainder)
 # -----------------------------------------------------------------------------
+
 
 def _extract_final_poly(obj: Mapping[str, Any]) -> Optional[List[int]]:
     # Try common names at top-level / nested
@@ -371,9 +406,11 @@ def _extract_final_poly(obj: Mapping[str, Any]) -> Optional[List[int]]:
             return out
     return None
 
+
 # -----------------------------------------------------------------------------
 # FRI params
 # -----------------------------------------------------------------------------
+
 
 def _extract_params(obj: Mapping[str, Any]) -> Optional[Dict[str, int]]:
     srcs: List[Mapping[str, Any]] = []
@@ -426,9 +463,11 @@ def _extract_params(obj: Mapping[str, Any]) -> Optional[Dict[str, int]]:
 
     return out if out else None
 
+
 # -----------------------------------------------------------------------------
 # Public IO for toy Merkle AIR
 # -----------------------------------------------------------------------------
+
 
 def normalize_public_io(public: Mapping[str, Any]) -> Dict[str, Any]:
     """
@@ -445,9 +484,9 @@ def normalize_public_io(public: Mapping[str, Any]) -> Dict[str, Any]:
     if root is None:
         raise ValueError("public requires 'root' (or alias 'commitment'/'hash')")
     idx = (
-        _as_int(public.get("index")) or
-        _as_int(public.get("idx")) or
-        _as_int(public.get("position"))
+        _as_int(public.get("index"))
+        or _as_int(public.get("idx"))
+        or _as_int(public.get("position"))
     )
     if idx is None:
         raise ValueError("public requires 'index' (or alias 'idx'/'position')")
@@ -464,16 +503,30 @@ def normalize_public_io(public: Mapping[str, Any]) -> Dict[str, Any]:
         "index": int(idx),
     }
 
+
 # -----------------------------------------------------------------------------
 # Top-level API
 # -----------------------------------------------------------------------------
 
+
 def is_fri_proof(obj: Mapping[str, Any]) -> bool:
     """Heuristic: presence of FRI commitments/queries/final_poly in common layouts."""
     keys = set(obj.keys())
-    if keys & {"commitments", "roots", "layerRoots", "final_poly", "remainder", "coefficients"}:
+    if keys & {
+        "commitments",
+        "roots",
+        "layerRoots",
+        "final_poly",
+        "remainder",
+        "coefficients",
+    }:
         return True
-    if "queries" in keys or "queryRounds" in keys or "openings" in keys or "decommitments" in keys:
+    if (
+        "queries" in keys
+        or "queryRounds" in keys
+        or "openings" in keys
+        or "decommitments" in keys
+    ):
         return True
     # Nested under "fri" or "proof"
     for k in ("fri", "proof"):
@@ -481,6 +534,7 @@ def is_fri_proof(obj: Mapping[str, Any]) -> bool:
         if isinstance(v, Mapping) and is_fri_proof(v):
             return True
     return False
+
 
 def normalize_fri_proof(obj: Mapping[str, Any]) -> Dict[str, Any]:
     """
@@ -514,7 +568,10 @@ def normalize_fri_proof(obj: Mapping[str, Any]) -> Dict[str, Any]:
         raise ValueError("Object did not resemble a FRI proof")
     return out
 
-def load_fri(proof_source: JsonLike, public_source: Optional[JsonLike] = None) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+
+def load_fri(
+    proof_source: JsonLike, public_source: Optional[JsonLike] = None
+) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
     """
     Convenience loader:
         proof, pub = load_fri("fri_proof.json", "public.json")
@@ -531,6 +588,7 @@ def load_fri(proof_source: JsonLike, public_source: Optional[JsonLike] = None) -
         pub_norm = normalize_public_io(raw_pub)
 
     return proof, pub_norm
+
 
 # -----------------------------------------------------------------------------
 # Public exports

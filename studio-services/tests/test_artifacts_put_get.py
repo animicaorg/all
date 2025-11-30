@@ -42,10 +42,15 @@ SAMPLE_ABI: dict = {
         },
     ],
     "events": [
-        {"name": "Inc", "inputs": [{"name": "by", "type": "int"}, {"name": "v", "type": "int"}]}
+        {
+            "name": "Inc",
+            "inputs": [{"name": "by", "type": "int"}, {"name": "v", "type": "int"}],
+        }
     ],
 }
-SAMPLE_BYTES: bytes = json.dumps(SAMPLE_ABI, separators=(",", ":"), sort_keys=True).encode("utf-8")
+SAMPLE_BYTES: bytes = json.dumps(
+    SAMPLE_ABI, separators=(",", ":"), sort_keys=True
+).encode("utf-8")
 SAMPLE_MEDIA: str = "application/json"
 SAMPLE_KIND: str = "abi"
 
@@ -75,7 +80,11 @@ def _decode_payload_content(payload: dict) -> bytes | None:
         if enc == "base64":
             return base64.b64decode(content)
         # Accept 0x-hex or plain hex
-        if enc == "hex" or content.startswith("0x") or all(c in "0123456789abcdefABCDEF" for c in content):
+        if (
+            enc == "hex"
+            or content.startswith("0x")
+            or all(c in "0123456789abcdefABCDEF" for c in content)
+        ):
             hx = content[2:] if content.startswith("0x") else content
             return bytes.fromhex(hx)
     # Sometimes payload nests result
@@ -85,7 +94,9 @@ def _decode_payload_content(payload: dict) -> bytes | None:
     return None
 
 
-async def _try_put_variants(aclient: AsyncClient, *, bytes_in: bytes) -> Response | None:
+async def _try_put_variants(
+    aclient: AsyncClient, *, bytes_in: bytes
+) -> Response | None:
     b64 = base64.b64encode(bytes_in).decode("ascii")
     hex_ = "0x" + bytes_in.hex()
     text_ = bytes_in.decode("utf-8", errors="ignore")
@@ -137,7 +148,9 @@ async def _try_put_variants(aclient: AsyncClient, *, bytes_in: bytes) -> Respons
 
 def _assert_same_bytes(got: bytes | None, expected: bytes) -> None:
     assert got is not None, "Failed to decode response content"
-    assert got == expected, f"Byte content mismatch (len got={len(got)}, expected={len(expected)})"
+    assert (
+        got == expected
+    ), f"Byte content mismatch (len got={len(got)}, expected={len(expected)})"
 
 
 @pytest.mark.asyncio
@@ -149,14 +162,22 @@ async def test_artifacts_put_and_get_roundtrip(aclient: AsyncClient):
     assert created.status_code in (200, 201), created.text
     created_payload = created.json()
     artifact_id = _extract_id(created_payload)
-    assert isinstance(artifact_id, str) and len(artifact_id) > 6, f"Could not find artifact id in {created_payload}"
+    assert (
+        isinstance(artifact_id, str) and len(artifact_id) > 6
+    ), f"Could not find artifact id in {created_payload}"
 
     # Idempotency: re-upload same bytes returns same id (or 409/200 with same id)
     again = await _try_put_variants(aclient, bytes_in=SAMPLE_BYTES)
     if again is not None and again.status_code in (200, 201, 409):
-        payload2 = again.json() if again.headers.get("content-type", "").startswith("application/json") else {}
+        payload2 = (
+            again.json()
+            if again.headers.get("content-type", "").startswith("application/json")
+            else {}
+        )
         artifact_id2 = _extract_id(payload2) or artifact_id
-        assert artifact_id2 == artifact_id, "Content-addressed ID should be stable across identical uploads"
+        assert (
+            artifact_id2 == artifact_id
+        ), "Content-addressed ID should be stable across identical uploads"
 
     # Fetch by id
     got = await aclient.get(f"/artifacts/{artifact_id}")
@@ -171,7 +192,9 @@ async def test_artifacts_put_and_get_roundtrip(aclient: AsyncClient):
         _assert_same_bytes(got.content, SAMPLE_BYTES)
 
     # (Soft) echo checks for metadata if present
-    meta_like = created_payload.get("meta") or created_payload.get("result") or created_payload
+    meta_like = (
+        created_payload.get("meta") or created_payload.get("result") or created_payload
+    )
     mt = meta_like.get("mediaType") or meta_like.get("media_type")
     if isinstance(mt, str):
         assert "json" in mt, f"Unexpected mediaType echo: {mt}"
@@ -181,5 +204,3 @@ async def test_artifacts_put_and_get_roundtrip(aclient: AsyncClient):
 async def test_artifacts_returns_404_for_unknown_id(aclient: AsyncClient):
     resp = await aclient.get("/artifacts/does-not-exist-123")
     assert resp.status_code in (400, 404), "Unknown artifacts should not return 200"
-
-

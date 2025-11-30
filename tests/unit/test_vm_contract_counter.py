@@ -44,6 +44,7 @@ except Exception as e:  # pragma: no cover
 
 # --- Helpers ------------------------------------------------------------------
 
+
 def _read_counter_sources() -> Tuple[bytes, str]:
     if not COUNTER_SRC.exists() or not COUNTER_MANIFEST.exists():
         pytest.skip(
@@ -80,7 +81,12 @@ def compiled_counter() -> Dict[str, Any]:
     return artifact
 
 
-def _call(artifact: Dict[str, Any], fn: str, args: list[Any] | None = None, state: Dict[str, Any] | None = None):
+def _call(
+    artifact: Dict[str, Any],
+    fn: str,
+    args: list[Any] | None = None,
+    state: Dict[str, Any] | None = None,
+):
     """
     Thin wrapper around bridge.entry.run_call with stable defaults.
     Returns (retval, new_state, gas_used) where fields may be None if not provided.
@@ -98,6 +104,7 @@ def _call(artifact: Dict[str, Any], fn: str, args: list[Any] | None = None, stat
 
 # --- Tests --------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("steps", [[1], [2, 3], [5, 7, 11]])
 def test_counter_inc_and_get_roundtrip(compiled_counter: Dict[str, Any], steps):
     """
@@ -110,7 +117,9 @@ def test_counter_inc_and_get_roundtrip(compiled_counter: Dict[str, Any], steps):
     for n in steps:
         ret, state, gas_inc = _call(artifact, "inc", [int(n)], state)
         # inc usually returns the new value or None; tolerate either but assert no error
-        assert "error" not in (ret if isinstance(ret, dict) else {}), f"inc({n}) returned error: {ret}"
+        assert "error" not in (
+            ret if isinstance(ret, dict) else {}
+        ), f"inc({n}) returned error: {ret}"
         total += n
 
     ret, state, gas_get = _call(artifact, "get", [], state)
@@ -120,7 +129,9 @@ def test_counter_inc_and_get_roundtrip(compiled_counter: Dict[str, Any], steps):
         ret_val = ret[0]
     else:
         ret_val = ret
-    assert int(ret_val) == total, f"counter value mismatch: expected {total}, got {ret_val}"
+    assert (
+        int(ret_val) == total
+    ), f"counter value mismatch: expected {total}, got {ret_val}"
 
     # Optional: basic gas sanity (only if VM reports it)
     if gas_get is not None:
@@ -170,5 +181,3 @@ def test_counter_storage_persists_across_calls(compiled_counter: Dict[str, Any])
     if isinstance(ret, list):
         ret = ret[0]
     assert int(ret) == 42, f"Expected counter to persist to 42, got {ret}"
-
-

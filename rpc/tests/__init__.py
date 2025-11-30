@@ -14,6 +14,7 @@ Usage in tests:
         res = rpc_call(client, "chain.getChainId")
         assert res["result"] == cfg.chain_id
 """
+
 from __future__ import annotations
 
 import json
@@ -58,7 +59,9 @@ def make_test_config(tmpdir: str | None = None) -> tuple[rpc_config.Config, str]
     return cfg, tmp
 
 
-def new_test_client(tmpdir: str | None = None) -> tuple[TestClient, rpc_config.Config, str]:
+def new_test_client(
+    tmpdir: str | None = None,
+) -> tuple[TestClient, rpc_config.Config, str]:
     """
     Create a TestClient bound to a fresh app with a temporary SQLite DB.
     Returns (client, cfg, tmpdir).

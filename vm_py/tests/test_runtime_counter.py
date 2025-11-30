@@ -7,7 +7,6 @@ from typing import Any, Dict, Iterable, Optional, Tuple
 
 import pytest
 
-
 # --- paths & fixtures ---------------------------------------------------------
 
 HERE = Path(__file__).resolve().parent
@@ -24,6 +23,7 @@ def have_examples() -> bool:
 
 # --- resilient loader/engine helpers -----------------------------------------
 
+
 def _load_module_from_manifest(manifest_path: Path, source_path: Path) -> Any:
     """
     Try hard to compile/link the example contract into a runnable module/IR bytes.
@@ -32,6 +32,7 @@ def _load_module_from_manifest(manifest_path: Path, source_path: Path) -> Any:
     # 1) Preferred: loader helpers
     try:
         from vm_py.runtime import loader as ldr  # type: ignore
+
         # common loader entrypoints (first that works wins)
         candidates = [
             ("load_and_link", {"manifest_path": str(manifest_path)}),
@@ -158,10 +159,21 @@ def _engine_new_session(module_or_bytes: Any) -> Tuple[Any, Dict[str, Any]]:
                 continue
 
     # If no instance API, fall back to module-level call helpers
-    return eng, {"module": module_or_bytes, "state": shared_state} if shared_state is not None else {"module": module_or_bytes}
+    return eng, (
+        {"module": module_or_bytes, "state": shared_state}
+        if shared_state is not None
+        else {"module": module_or_bytes}
+    )
 
 
-def _engine_call(runner: Any, fn_name: str, *, args: Optional[list] = None, gas_limit: int = 1_000_000, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def _engine_call(
+    runner: Any,
+    fn_name: str,
+    *,
+    args: Optional[list] = None,
+    gas_limit: int = 1_000_000,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """
     Execute a contract function and normalize the result into a dict with:
       {'return': Any, 'logs': list, 'gas_used': int}
@@ -240,7 +252,9 @@ def _engine_call(runner: Any, fn_name: str, *, args: Optional[list] = None, gas_
             last_err = e
             continue
 
-    raise RuntimeError(f"Could not execute function '{fn_name}' via engine API variants; last error: {last_err}")
+    raise RuntimeError(
+        f"Could not execute function '{fn_name}' via engine API variants; last error: {last_err}"
+    )
 
 
 def _normalize_result(res: Any) -> Dict[str, Any]:
@@ -250,25 +264,45 @@ def _normalize_result(res: Any) -> Dict[str, Any]:
     # If already a dict, try to extract fields
     if isinstance(res, dict):
         out = {
-            "return": res.get("return") or res.get("ret") or res.get("value") or res.get("result"),
+            "return": res.get("return")
+            or res.get("ret")
+            or res.get("value")
+            or res.get("result"),
             "logs": res.get("logs") or res.get("events") or [],
-            "gas_used": res.get("gas_used") or res.get("gas") or res.get("used_gas") or 0,
+            "gas_used": res.get("gas_used")
+            or res.get("gas")
+            or res.get("used_gas")
+            or 0,
         }
         # sometimes nested 'stats'/'metrics' hold gas
         if not out["gas_used"]:
             stats = res.get("stats") or res.get("metrics")
             if isinstance(stats, dict):
-                out["gas_used"] = stats.get("gas_used") or stats.get("gas") or stats.get("used") or 0
+                out["gas_used"] = (
+                    stats.get("gas_used") or stats.get("gas") or stats.get("used") or 0
+                )
         return out
 
     # Object with attributes
     for getter in (
-        lambda o: {"return": getattr(o, "return_", None), "logs": getattr(o, "logs", None), "gas_used": getattr(o, "gas_used", None)},
-        lambda o: {"return": getattr(o, "result", None), "logs": getattr(o, "events", None), "gas_used": getattr(o, "gas", None)},
+        lambda o: {
+            "return": getattr(o, "return_", None),
+            "logs": getattr(o, "logs", None),
+            "gas_used": getattr(o, "gas_used", None),
+        },
+        lambda o: {
+            "return": getattr(o, "result", None),
+            "logs": getattr(o, "events", None),
+            "gas_used": getattr(o, "gas", None),
+        },
     ):
         try:
             cand = getter(res)
-            if cand["return"] is not None or cand["logs"] is not None or cand["gas_used"] is not None:
+            if (
+                cand["return"] is not None
+                or cand["logs"] is not None
+                or cand["gas_used"] is not None
+            ):
                 return {
                     "return": cand["return"],
                     "logs": cand["logs"] or [],
@@ -293,6 +327,7 @@ def _logs_count(obj: Any) -> int:
 
 
 # --- the actual test ----------------------------------------------------------
+
 
 @pytest.mark.usefixtures("have_examples")
 def test_counter_inc_get_roundtrip(have_examples: bool) -> None:
@@ -327,4 +362,6 @@ def test_counter_inc_get_roundtrip(have_examples: bool) -> None:
     # gas shape sanity: inc should generally cost >= get
     gas_get1 = int(r1["gas_used"]) if r1["gas_used"] is not None else 0
     if gas_get0 and gas_inc:
-        assert gas_inc >= gas_get1, f"inc gas ({gas_inc}) should be >= get gas ({gas_get1}) in typical implementations"
+        assert (
+            gas_inc >= gas_get1
+        ), f"inc gas ({gas_inc}) should be >= get gas ({gas_get1}) in typical implementations"

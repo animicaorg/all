@@ -1,19 +1,20 @@
 import os
 import time
 import types
-import pytest
 
+import pytest
+from omni_sdk.address import Address
 # Import SDK pieces under test
 from omni_sdk.tx.build import build_transfer_tx
 from omni_sdk.tx.encode import encode_tx_cbor
-from omni_sdk.tx.send import send_raw_transaction, await_receipt
-from omni_sdk.address import Address
+from omni_sdk.tx.send import await_receipt, send_raw_transaction
 
 
 class FakeRpc:
     """
     Minimal in-memory JSON-RPC stub implementing only the methods exercised in this test.
     """
+
     def __init__(self) -> None:
         self.calls = []
         self._receipt_counter = 0
@@ -49,7 +50,9 @@ def test_transfer_send_and_await_receipt():
     rpc = FakeRpc()
 
     # Construct deterministic sender/recipient addresses from fixed bytes
-    sender = _addr_from_bytes(b"\x11" * 48)   # 48 bytes ~ typical PQ pk size (ok for hashing)
+    sender = _addr_from_bytes(
+        b"\x11" * 48
+    )  # 48 bytes ~ typical PQ pk size (ok for hashing)
     recipient = _addr_from_bytes(b"\x22" * 48)
 
     # Build a simple transfer tx (avoid any RPC-dependent estimates by passing explicit values)

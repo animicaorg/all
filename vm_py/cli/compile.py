@@ -32,11 +32,14 @@ from typing import Any, Dict, Tuple
 
 # ---------------------- small utils ---------------------- #
 
+
 def eprint(*a: Any, **k: Any) -> None:
     if not _CTX.get("quiet", False):
         print(*a, file=sys.stderr, **k)
 
+
 _CTX: Dict[str, Any] = {}
+
 
 def _safe_json(obj: Any) -> Any:
     """Make objects JSON-serializable for metadata."""
@@ -49,6 +52,7 @@ def _safe_json(obj: Any) -> Any:
     if isinstance(obj, dict):
         return {str(k): _safe_json(v) for k, v in obj.items()}
     return obj
+
 
 def _call_first(module, names, *args, **kwargs):
     last_err = None
@@ -64,9 +68,13 @@ def _call_first(module, names, *args, **kwargs):
         raise last_err
     raise AttributeError(f"None of {names!r} found in {module!r}")
 
+
 # ---------------------- compilation paths ---------------------- #
 
-def compile_via_runtime_loader(src: str, filename: str = "<stdin>") -> Tuple[bytes, Dict[str, Any]]:
+
+def compile_via_runtime_loader(
+    src: str, filename: str = "<stdin>"
+) -> Tuple[bytes, Dict[str, Any]]:
     """
     Preferred path: use vm_py.runtime.loader if available.
 
@@ -85,7 +93,11 @@ def compile_via_runtime_loader(src: str, filename: str = "<stdin>") -> Tuple[byt
         fn = getattr(loader, names[0], None)
         if callable(fn):
             res = fn(src) if fn.__code__.co_argcount <= 1 else fn(src, filename=filename)  # type: ignore[arg-type]
-            if isinstance(res, tuple) and len(res) == 2 and isinstance(res[0], (bytes, bytearray)):
+            if (
+                isinstance(res, tuple)
+                and len(res) == 2
+                and isinstance(res[0], (bytes, bytearray))
+            ):
                 return bytes(res[0]), dict(res[1])
             if isinstance(res, (bytes, bytearray)):
                 return bytes(res), {}
@@ -96,12 +108,19 @@ def compile_via_runtime_loader(src: str, filename: str = "<stdin>") -> Tuple[byt
 
     # If text compile not present, try file-based helper by temporarily writing to a temp file
     import tempfile
-    with tempfile.NamedTemporaryFile("w", suffix=os.path.splitext(filename)[1] or ".py", delete=True) as tf:
+
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=os.path.splitext(filename)[1] or ".py", delete=True
+    ) as tf:
         tf.write(src)
         tf.flush()
         if hasattr(loader, "compile_file"):
             res = loader.compile_file(tf.name)  # type: ignore[attr-defined]
-            if isinstance(res, tuple) and len(res) == 2 and isinstance(res[0], (bytes, bytearray)):
+            if (
+                isinstance(res, tuple)
+                and len(res) == 2
+                and isinstance(res[0], (bytes, bytearray))
+            ):
                 return bytes(res[0]), dict(res[1])
             if isinstance(res, (bytes, bytearray)):
                 return bytes(res), {}
@@ -111,11 +130,13 @@ def compile_via_runtime_loader(src: str, filename: str = "<stdin>") -> Tuple[byt
 
     raise RuntimeError("No suitable compile_* entry found in vm_py.runtime.loader")
 
+
 def encode_ir_flex(ir_obj: Any) -> Tuple[bytes, Dict[str, Any]]:
     """
     Try a variety of encoder functions to turn an IR object into bytes.
     """
     from importlib import import_module
+
     enc = import_module("vm_py.compiler.encode")
     # Try common function names
     for name in ("dumps", "encode", "encode_module", "to_bytes"):
@@ -129,9 +150,14 @@ def encode_ir_flex(ir_obj: Any) -> Tuple[bytes, Dict[str, Any]]:
                 meta = out[1] if len(out) > 1 and isinstance(out[1], dict) else {}
                 if isinstance(b, (bytes, bytearray)):
                     return bytes(b), meta
-    raise RuntimeError("Could not encode IR object; vm_py.compiler.encode lacks known functions")
+    raise RuntimeError(
+        "Could not encode IR object; vm_py.compiler.encode lacks known functions"
+    )
 
-def compile_via_lower_pipeline(src: str, filename: str = "<stdin>") -> Tuple[bytes, Dict[str, Any]]:
+
+def compile_via_lower_pipeline(
+    src: str, filename: str = "<stdin>"
+) -> Tuple[bytes, Dict[str, Any]]:
     """
     Fallback path: AST → IR → typecheck → encode.
     """
@@ -159,7 +185,9 @@ def compile_via_lower_pipeline(src: str, filename: str = "<stdin>") -> Tuple[byt
     gas_meta: Dict[str, Any] = {}
     try:
         ge = import_module("vm_py.compiler.gas_estimator")
-        estimate = _call_first(ge, ("estimate", "estimate_module", "estimate_upper_bound"), ir_mod)
+        estimate = _call_first(
+            ge, ("estimate", "estimate_module", "estimate_upper_bound"), ir_mod
+        )
         gas_meta["gas_estimate"] = _safe_json(estimate)
     except Exception:
         pass
@@ -168,7 +196,10 @@ def compile_via_lower_pipeline(src: str, filename: str = "<stdin>") -> Tuple[byt
     meta = {"pipeline": "lower", **gas_meta, **enc_meta}
     return ir_bytes, meta
 
-def compile_source_to_ir(src: str, filename: str = "<stdin>") -> Tuple[bytes, Dict[str, Any]]:
+
+def compile_source_to_ir(
+    src: str, filename: str = "<stdin>"
+) -> Tuple[bytes, Dict[str, Any]]:
     """
     Try runtime-loader path first; fall back to lower pipeline.
     """
@@ -195,21 +226,43 @@ def compile_manifest(manifest_path: str) -> Tuple[bytes, Dict[str, Any]]:
     meta = {"compiled_from": "manifest", **meta}
     return ir_bytes, meta
 
+
 # ---------------------- CLI ---------------------- #
 
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    p = argparse.ArgumentParser(prog="omni-vm-compile", description="Compile Python contract to Animica VM IR.")
-    src_group = p.add_mutually_exclusive_group(required=True)
-    src_group.add_argument("source", nargs="?", help="Path to contract.py (use '-' for stdin)")
-    src_group.add_argument("--stdin", action="store_true", help="Read contract source from stdin")
-    src_group.add_argument(
-        "--manifest", help="Compile from a contract manifest.json (uses its entry/source field)"
+    p = argparse.ArgumentParser(
+        prog="omni-vm-compile", description="Compile Python contract to Animica VM IR."
     )
-    p.add_argument("--out", "-o", required=True, help="Output file path for IR (e.g., out.ir or out.json)")
-    p.add_argument("--format", choices=("cbor", "json"), default="cbor", help="IR output format (default: cbor)")
+    src_group = p.add_mutually_exclusive_group(required=True)
+    src_group.add_argument(
+        "source", nargs="?", help="Path to contract.py (use '-' for stdin)"
+    )
+    src_group.add_argument(
+        "--stdin", action="store_true", help="Read contract source from stdin"
+    )
+    src_group.add_argument(
+        "--manifest",
+        help="Compile from a contract manifest.json (uses its entry/source field)",
+    )
+    p.add_argument(
+        "--out",
+        "-o",
+        required=True,
+        help="Output file path for IR (e.g., out.ir or out.json)",
+    )
+    p.add_argument(
+        "--format",
+        choices=("cbor", "json"),
+        default="cbor",
+        help="IR output format (default: cbor)",
+    )
     p.add_argument("--meta", help="Write compile metadata to this JSON file")
-    p.add_argument("--quiet", action="store_true", help="Silence informational logs on stderr")
+    p.add_argument(
+        "--quiet", action="store_true", help="Silence informational logs on stderr"
+    )
     return p.parse_args(argv)
+
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
@@ -245,7 +298,9 @@ def main(argv: list[str] | None = None) -> int:
         # JSON: attempt to also dump a JSON view of IR if encode module provides one; otherwise base64
         # Since we only have bytes reliably, emit a small JSON wrapper.
         with open(args.out, "w", encoding="utf-8") as f:
-            json.dump({"ir_cbor_hex": ir_bytes.hex(), "code_hash": code_hash}, f, indent=2)
+            json.dump(
+                {"ir_cbor_hex": ir_bytes.hex(), "code_hash": code_hash}, f, indent=2
+            )
         eprint(f"[vm-compile] wrote IR (JSON wrapper) → {args.out}  hash={code_hash}")
 
     # Write metadata if requested
@@ -255,6 +310,7 @@ def main(argv: list[str] | None = None) -> int:
         eprint(f"[vm-compile] wrote metadata → {args.meta}")
 
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

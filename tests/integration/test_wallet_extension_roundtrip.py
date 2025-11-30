@@ -26,17 +26,17 @@ import queue
 import socket
 import threading
 import time
+import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, Dict, Optional, Tuple
-import urllib.request
-import urllib.parse
 
 import pytest
 
 from tests.integration import env  # gating helper
 
-
 # ----------------------------- JSON-RPC stub node -----------------------------
+
 
 def _pick_free_port() -> int:
     s = socket.socket()
@@ -84,8 +84,14 @@ class _RpcHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802 (http.server method)
         doc = self._read_json()
         if not doc or doc.get("jsonrpc") != "2.0" or "method" not in doc:
-            return self._send_json({"jsonrpc": "2.0", "id": doc.get("id") if isinstance(doc, dict) else None,
-                                    "error": {"code": -32600, "message": "Invalid Request"}}, 400)
+            return self._send_json(
+                {
+                    "jsonrpc": "2.0",
+                    "id": doc.get("id") if isinstance(doc, dict) else None,
+                    "error": {"code": -32600, "message": "Invalid Request"},
+                },
+                400,
+            )
 
         mid = doc.get("id")
         method = str(doc.get("method"))
@@ -93,16 +99,37 @@ class _RpcHandler(BaseHTTPRequestHandler):
 
         # Minimal router
         if method == "chain.getChainId":
-            return self._send_json({"jsonrpc": "2.0", "id": mid, "result": self.rec.chain_id})
+            return self._send_json(
+                {"jsonrpc": "2.0", "id": mid, "result": self.rec.chain_id}
+            )
 
         if method == "tx.sendRawTransaction":
             if not isinstance(params, list) or not params:
-                return self._send_json({"jsonrpc": "2.0", "id": mid,
-                                        "error": {"code": -32602, "message": "Missing raw tx param"}}, 400)
+                return self._send_json(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": mid,
+                        "error": {"code": -32602, "message": "Missing raw tx param"},
+                    },
+                    400,
+                )
             raw_hex = params[0]
-            if not (isinstance(raw_hex, str) and raw_hex.startswith("0x") and len(raw_hex) > 2):
-                return self._send_json({"jsonrpc": "2.0", "id": mid,
-                                        "error": {"code": -32602, "message": "raw tx must be hex string"}}, 400)
+            if not (
+                isinstance(raw_hex, str)
+                and raw_hex.startswith("0x")
+                and len(raw_hex) > 2
+            ):
+                return self._send_json(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": mid,
+                        "error": {
+                            "code": -32602,
+                            "message": "raw tx must be hex string",
+                        },
+                    },
+                    400,
+                )
             # Deterministic tx hash = keccak-like (sha3_256 for test) of raw bytes
             try:
                 payload = bytes.fromhex(raw_hex[2:])
@@ -121,22 +148,36 @@ class _RpcHandler(BaseHTTPRequestHandler):
 
         if method == "tx.getTransactionReceipt":
             if not isinstance(params, list) or not params:
-                return self._send_json({"jsonrpc": "2.0", "id": mid,
-                                        "error": {"code": -32602, "message": "Missing tx hash"}}, 400)
+                return self._send_json(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": mid,
+                        "error": {"code": -32602, "message": "Missing tx hash"},
+                    },
+                    400,
+                )
             h = str(params[0])
             rec = self.rec.sent_hashes.get(h)
             return self._send_json({"jsonrpc": "2.0", "id": mid, "result": rec})
 
         # Unknown method
-        return self._send_json({"jsonrpc": "2.0", "id": mid,
-                                "error": {"code": -32601, "message": f"Method not found: {method}"}}, 404)
+        return self._send_json(
+            {
+                "jsonrpc": "2.0",
+                "id": mid,
+                "error": {"code": -32601, "message": f"Method not found: {method}"},
+            },
+            404,
+        )
 
     # Silence default noisy logs in tests
     def log_message(self, fmt: str, *args: Any) -> None:  # noqa: A003
         return
 
 
-def _start_mock_node(chain_id: int) -> Tuple[str, HTTPServer, threading.Thread, _RpcRecorder]:
+def _start_mock_node(
+    chain_id: int,
+) -> Tuple[str, HTTPServer, threading.Thread, _RpcRecorder]:
     port = _pick_free_port()
     server = HTTPServer(("127.0.0.1", port), _RpcHandler)
     recorder = _RpcRecorder(chain_id=chain_id)
@@ -149,6 +190,7 @@ def _start_mock_node(chain_id: int) -> Tuple[str, HTTPServer, threading.Thread, 
 
 
 # ----------------------------- Extension mock (headless) ----------------------
+
 
 class MockExtensionProvider:
     """
@@ -197,7 +239,9 @@ class MockExtensionProvider:
         """
         domain = {"domain": "animica/tx-sign", "chainId": chain_id}
         # Deterministic JSON: sorted keys, minimal whitespace
-        payload = json.dumps({"domain": domain, "tx": tx}, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        payload = json.dumps(
+            {"domain": domain, "tx": tx}, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
         return payload
 
     def _sign(self, sign_bytes: bytes) -> bytes:
@@ -214,6 +258,7 @@ class MockExtensionProvider:
         Pack a toy "raw" blob: b"RAW" || uvarint(len(sign_bytes)) || sign_bytes || uvarint(len(sig)) || sig
         and hex-encode it. The mock node only checks that it's hex; we keep it structured for sanity.
         """
+
         def uvar(n: int) -> bytes:
             out = bytearray()
             x = n
@@ -244,10 +289,13 @@ class MockExtensionProvider:
 
 # ------------------------------------ test ------------------------------------
 
+
 @pytest.mark.timeout(120)
 def test_wallet_extension_headless_roundtrip_via_mock_provider():
     if env("RUN_INTEGRATION_TESTS") != "1":
-        pytest.skip("Set RUN_INTEGRATION_TESTS=1 to run headless wallet-extension mock test.")
+        pytest.skip(
+            "Set RUN_INTEGRATION_TESTS=1 to run headless wallet-extension mock test."
+        )
 
     chain_id = int(env("EXT_MOCK_CHAIN_ID", "1337"))
     base, server, thread, recorder = _start_mock_node(chain_id)
@@ -260,7 +308,9 @@ def test_wallet_extension_headless_roundtrip_via_mock_provider():
         # Connect (accounts + chainId)
         meta = provider.connect()
         assert isinstance(meta.get("accounts"), list) and len(meta["accounts"]) == 1
-        assert meta["accounts"][0].startswith("0x") and len(meta["accounts"][0]) == 42  # 20-byte hex
+        assert (
+            meta["accounts"][0].startswith("0x") and len(meta["accounts"][0]) == 42
+        )  # 20-byte hex
         assert int(meta["chainId"]) == chain_id
 
         # Build a tiny transfer-like tx shape (not consensus-critical here)
@@ -277,7 +327,9 @@ def test_wallet_extension_headless_roundtrip_via_mock_provider():
 
         tx_hash, receipt = provider.send_transaction(tx)
         # Hash looks hex-like and non-empty
-        assert isinstance(tx_hash, str) and tx_hash.startswith("0x") and len(tx_hash) == 66
+        assert (
+            isinstance(tx_hash, str) and tx_hash.startswith("0x") and len(tx_hash) == 66
+        )
 
         # Receipt came back and indicates success from our mock
         assert isinstance(receipt, dict)
@@ -286,16 +338,25 @@ def test_wallet_extension_headless_roundtrip_via_mock_provider():
 
         # Inspect the last JSON-RPC body captured by the mock node
         body = recorder.last_body or {}
-        assert body.get("method") in ("tx.sendRawTransaction", "tx.getTransactionReceipt")
+        assert body.get("method") in (
+            "tx.sendRawTransaction",
+            "tx.getTransactionReceipt",
+        )
         if body.get("method") == "tx.sendRawTransaction":
             params = body.get("params") or []
-            assert isinstance(params, list) and params and isinstance(params[0], str) and params[0].startswith("0x")
+            assert (
+                isinstance(params, list)
+                and params
+                and isinstance(params[0], str)
+                and params[0].startswith("0x")
+            )
             # a tiny sanity check: our toy raw format starts with 0x524157 (ASCII "RAW")
             raw_hex = params[0]
             raw_bytes = bytes.fromhex(raw_hex[2:])
-            assert raw_bytes[:3] == b"RAW", "Raw-transaction envelope did not start with sentinel b'RAW'"
+            assert (
+                raw_bytes[:3] == b"RAW"
+            ), "Raw-transaction envelope did not start with sentinel b'RAW'"
 
     finally:
         server.shutdown()
         server.server_close()
-

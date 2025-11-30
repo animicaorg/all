@@ -21,7 +21,7 @@ Events:
 """
 from __future__ import annotations
 
-from stdlib import storage, events, abi  # provided by vm_py runtime
+from stdlib import abi, events, storage  # provided by vm_py runtime
 
 # ---- storage layout ---------------------------------------------------------
 

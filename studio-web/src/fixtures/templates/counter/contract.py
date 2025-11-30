@@ -1,14 +1,16 @@
 # Counter contract (Python-VM)
 # Deterministic, no external I/O. Uses stdlib storage/events/abi helpers.
 
-from stdlib import storage, events, abi
+from stdlib import abi, events, storage
 
 # Storage key
 KEY_COUNT = b"count"
 
+
 def _read() -> int:
     """Internal: read current counter value (defaults to 0)."""
     return storage.get_int(KEY_COUNT, 0)
+
 
 def get() -> int:
     """
@@ -18,6 +20,7 @@ def get() -> int:
         int: Current stored counter value.
     """
     return _read()
+
 
 def inc(by: int = 1) -> int:
     """
@@ -40,6 +43,7 @@ def inc(by: int = 1) -> int:
     events.emit(b"Inc", {b"by": by, b"value": new_value})
 
     return new_value
+
 
 def reset(to: int = 0) -> int:
     """

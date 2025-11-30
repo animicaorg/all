@@ -63,7 +63,11 @@ class BuildResult:
 
     @property
     def ok(self) -> bool:
-        return self.ir_path is not None and self.code_hash_hex is not None and not self.errors
+        return (
+            self.ir_path is not None
+            and self.code_hash_hex is not None
+            and not self.errors
+        )
 
 
 # ---------- Discovery ---------------------------------------------------------
@@ -97,8 +101,8 @@ def _compile_via_api(src_dir: Path) -> Tuple[Optional[bytes], Optional[int], Lis
     try:
         # Prefer the high-level loader if available
         # Expected to expose something like: loader.compile(manifest_path, source_path) -> (ir_bytes, meta)
-        from vm_py.runtime import loader as vm_loader  # type: ignore
         from vm_py.compiler import gas_estimator  # type: ignore
+        from vm_py.runtime import loader as vm_loader  # type: ignore
 
         manifest_path = src_dir / "manifest.json"
         source_path = src_dir / "contract.py"
@@ -135,7 +139,9 @@ def _compile_via_api(src_dir: Path) -> Tuple[Optional[bytes], Optional[int], Lis
         # Optional static gas upper bound if available
         if hasattr(gas_estimator, "estimate_upper_bound"):
             try:
-                meta_gas = int(gas_estimator.estimate_upper_bound(source_path.read_text("utf-8")))
+                meta_gas = int(
+                    gas_estimator.estimate_upper_bound(source_path.read_text("utf-8"))
+                )
             except Exception:
                 meta_gas = None
 
@@ -143,7 +149,9 @@ def _compile_via_api(src_dir: Path) -> Tuple[Optional[bytes], Optional[int], Lis
     except ImportError as e:
         warnings.append(f"vm_py import failed (will try CLI): {e}")
         return None, None, warnings
-    except Exception as e:  # pragma: no cover - defensive paths for varied vm_py versions
+    except (
+        Exception
+    ) as e:  # pragma: no cover - defensive paths for varied vm_py versions
         warnings.append(f"vm_py API compile failed: {e}")
         return None, None, warnings
 
@@ -159,7 +167,14 @@ def _compile_via_cli(src_dir: Path) -> Tuple[Optional[bytes], List[str]]:
 
     candidates = [
         # Preferred: explicit manifest
-        [sys.executable, "-m", "vm_py.cli.compile", "--manifest", str(manifest_path), "--out"],
+        [
+            sys.executable,
+            "-m",
+            "vm_py.cli.compile",
+            "--manifest",
+            str(manifest_path),
+            "--out",
+        ],
         # Fallback: direct source path
         [sys.executable, "-m", "vm_py.cli.compile", str(source_path), "--out"],
         # Alternate executable name (if installed as console script)
@@ -245,7 +260,9 @@ def write_artifacts(
     ir_path.write_bytes(ir_bytes)
 
     manifest_out = out_dir / "manifest.json"
-    manifest_out.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    manifest_out.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
     code_hash_hex = compute_code_hash(ir_bytes)
 
@@ -264,7 +281,9 @@ def write_artifacts(
     }
 
     pkg_out = out_dir / "package.json"
-    pkg_out.write_text(json.dumps(pkg, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    pkg_out.write_text(
+        json.dumps(pkg, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
     return out_dir, ir_path, manifest_out, code_hash_hex
 
@@ -273,7 +292,9 @@ def write_artifacts(
 
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Compile and package all contracts in the workspace.")
+    p = argparse.ArgumentParser(
+        description="Compile and package all contracts in the workspace."
+    )
     p.add_argument(
         "--contracts-dir",
         type=Path,
@@ -305,7 +326,9 @@ def load_manifest(src_dir: Path) -> Dict:
     try:
         return json.loads(manifest_path.read_text(encoding="utf-8"))
     except Exception as e:
-        raise RuntimeError(f"Failed to read/parse manifest at {manifest_path}: {e}") from e
+        raise RuntimeError(
+            f"Failed to read/parse manifest at {manifest_path}: {e}"
+        ) from e
 
 
 def print_summary(results: List[BuildResult], mode: str = "table") -> None:
@@ -332,7 +355,9 @@ def print_summary(results: List[BuildResult], mode: str = "table") -> None:
     print("=" * cols)
     print("Build Summary".center(cols))
     print("=" * cols)
-    header = f"{'CONTRACT':20}  {'STATUS':8}  {'CODE_HASH (sha3-256)':66}  {'GAS_UPPER'}"
+    header = (
+        f"{'CONTRACT':20}  {'STATUS':8}  {'CODE_HASH (sha3-256)':66}  {'GAS_UPPER'}"
+    )
     print(header)
     print("-" * len(header))
     for r in results:

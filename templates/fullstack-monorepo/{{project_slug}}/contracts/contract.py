@@ -15,7 +15,6 @@
 
 from typing import Final, Optional, Tuple
 
-
 # -------------------------
 # Storage keys (namespaced)
 # -------------------------
@@ -205,26 +204,30 @@ def _set_version(ctx, version: int) -> None:
 # Keep these minimal and deterministic. Little-endian for u32/u64.
 # -------------------------
 def _encode_u32(x: int) -> bytes:
-    return bytes((
-        x & 0xFF,
-        (x >> 8) & 0xFF,
-        (x >> 16) & 0xFF,
-        (x >> 24) & 0xFF,
-    ))
+    return bytes(
+        (
+            x & 0xFF,
+            (x >> 8) & 0xFF,
+            (x >> 16) & 0xFF,
+            (x >> 24) & 0xFF,
+        )
+    )
 
 
 def _encode_u64(x: int) -> bytes:
     # 8 bytes little-endian
-    return bytes((
-        x & 0xFF,
-        (x >> 8) & 0xFF,
-        (x >> 16) & 0xFF,
-        (x >> 24) & 0xFF,
-        (x >> 32) & 0xFF,
-        (x >> 40) & 0xFF,
-        (x >> 48) & 0xFF,
-        (x >> 56) & 0xFF,
-    ))
+    return bytes(
+        (
+            x & 0xFF,
+            (x >> 8) & 0xFF,
+            (x >> 16) & 0xFF,
+            (x >> 24) & 0xFF,
+            (x >> 32) & 0xFF,
+            (x >> 40) & 0xFF,
+            (x >> 48) & 0xFF,
+            (x >> 56) & 0xFF,
+        )
+    )
 
 
 def _decode_u64(b: bytes) -> int:

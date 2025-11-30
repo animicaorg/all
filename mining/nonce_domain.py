@@ -119,7 +119,9 @@ class UDrawResult:
     h_micro: int
 
     @classmethod
-    def from_preimage(cls, header_sign_bytes: bytes, mix_seed: bytes, nonce: bytes) -> "UDrawResult":
+    def from_preimage(
+        cls, header_sign_bytes: bytes, mix_seed: bytes, nonce: bytes
+    ) -> "UDrawResult":
         pre = build_nonce_preimage(header_sign_bytes, mix_seed, nonce)
         digest = sha3_256(DOMAIN_U_DRAW + pre)
         u = u_from_digest(digest)

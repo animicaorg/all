@@ -28,6 +28,7 @@ class DAError(Exception):
 
     Subclasses should set `default_code` and `default_status`.
     """
+
     default_code = "da_error"
     default_status = 400
 
@@ -64,7 +65,13 @@ class DAError(Exception):
         }
 
     @classmethod
-    def from_exc(cls, exc: BaseException, *, code: Optional[str] = None, status: Optional[int] = None) -> "DAError":
+    def from_exc(
+        cls,
+        exc: BaseException,
+        *,
+        code: Optional[str] = None,
+        status: Optional[int] = None,
+    ) -> "DAError":
         """
         Wrap an arbitrary exception into a DAError with a best-effort message.
         """
@@ -76,6 +83,7 @@ class NotFound(DAError):
     """
     The requested blob/commitment/namespace was not found.
     """
+
     default_code = "not_found"
     default_status = 404
 
@@ -84,6 +92,7 @@ class InvalidProof(DAError):
     """
     Provided proof failed to verify (NMT branch, inclusion/range proof, or DAS proof).
     """
+
     default_code = "invalid_proof"
     default_status = 422  # Unprocessable Entity
 
@@ -92,6 +101,7 @@ class NamespaceRangeError(DAError):
     """
     Namespace identifier is out of allowed range or hits a reserved span.
     """
+
     default_code = "namespace_out_of_range"
     default_status = 400
 

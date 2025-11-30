@@ -25,14 +25,13 @@ import os
 import secrets
 import sqlite3
 import sys
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Optional
 
-
 DEFAULT_DB = Path(os.getenv("STORAGE_DIR", "./.storage")) / "studio_services.sqlite"
 DEFAULT_PREFIX = "ssk_"  # studio-services key
-DEFAULT_NBYTES = 32      # -> 64 hex chars
+DEFAULT_NBYTES = 32  # -> 64 hex chars
 
 
 @dataclass
@@ -60,7 +59,9 @@ def generate_key(prefix: str, nbytes: int) -> str:
     return f"{prefix}{secrets.token_hex(nbytes)}"
 
 
-def insert_key(conn: sqlite3.Connection, key: str, label: Optional[str]) -> ApiKeyRecord:
+def insert_key(
+    conn: sqlite3.Connection, key: str, label: Optional[str]
+) -> ApiKeyRecord:
     # Try insert; if collision ( astronomically unlikely ), regenerate once.
     try:
         conn.execute(
@@ -102,12 +103,34 @@ def insert_key(conn: sqlite3.Connection, key: str, label: Optional[str]) -> ApiK
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Create & print a studio-services API key")
-    ap.add_argument("--db", type=Path, default=DEFAULT_DB, help=f"Path to SQLite DB (default: {DEFAULT_DB})")
-    ap.add_argument("--label", type=str, default=None, help="Optional label to help identify this key")
-    ap.add_argument("--prefix", type=str, default=DEFAULT_PREFIX, help=f"Key prefix (default: {DEFAULT_PREFIX})")
-    ap.add_argument("--bytes", type=int, default=DEFAULT_NBYTES, dest="nbytes",
-                    help=f"Random bytes for key body (default: {DEFAULT_NBYTES} → 64 hex chars)")
-    ap.add_argument("--json", action="store_true", help="Print JSON payload instead of a plain key")
+    ap.add_argument(
+        "--db",
+        type=Path,
+        default=DEFAULT_DB,
+        help=f"Path to SQLite DB (default: {DEFAULT_DB})",
+    )
+    ap.add_argument(
+        "--label",
+        type=str,
+        default=None,
+        help="Optional label to help identify this key",
+    )
+    ap.add_argument(
+        "--prefix",
+        type=str,
+        default=DEFAULT_PREFIX,
+        help=f"Key prefix (default: {DEFAULT_PREFIX})",
+    )
+    ap.add_argument(
+        "--bytes",
+        type=int,
+        default=DEFAULT_NBYTES,
+        dest="nbytes",
+        help=f"Random bytes for key body (default: {DEFAULT_NBYTES} → 64 hex chars)",
+    )
+    ap.add_argument(
+        "--json", action="store_true", help="Print JSON payload instead of a plain key"
+    )
     args = ap.parse_args()
 
     db_path: Path = args.db
@@ -135,10 +158,12 @@ def main() -> None:
             # Print the key alone for easy capture
             print(record.key)
             # Helpful usage hints
-            print("\n# Example usage:\n"
-                  "export STUDIO_API_KEY=\"%s\"\n"
-                  "curl -H \"Authorization: Bearer $STUDIO_API_KEY\" \\\n"
-                  "     http://localhost:8080/healthz" % record.key)
+            print(
+                "\n# Example usage:\n"
+                'export STUDIO_API_KEY="%s"\n'
+                'curl -H "Authorization: Bearer $STUDIO_API_KEY" \\\n'
+                "     http://localhost:8080/healthz" % record.key
+            )
     finally:
         conn.close()
 

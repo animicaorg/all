@@ -129,10 +129,26 @@ def main(argv: Optional[list[str]] = None) -> int:
                 fp.close()
 
         # Normalize response
-        commitment = resp.get("commitment") if isinstance(resp, dict) else getattr(resp, "commitment", None)
-        receipt = resp.get("receipt") if isinstance(resp, dict) else getattr(resp, "receipt", None)
-        size = resp.get("size", size_hint) if isinstance(resp, dict) else getattr(resp, "size", size_hint)
-        namespace = resp.get("namespace", args.ns) if isinstance(resp, dict) else getattr(resp, "namespace", args.ns)
+        commitment = (
+            resp.get("commitment")
+            if isinstance(resp, dict)
+            else getattr(resp, "commitment", None)
+        )
+        receipt = (
+            resp.get("receipt")
+            if isinstance(resp, dict)
+            else getattr(resp, "receipt", None)
+        )
+        size = (
+            resp.get("size", size_hint)
+            if isinstance(resp, dict)
+            else getattr(resp, "size", size_hint)
+        )
+        namespace = (
+            resp.get("namespace", args.ns)
+            if isinstance(resp, dict)
+            else getattr(resp, "namespace", args.ns)
+        )
 
         out = {
             "namespace": int(namespace),
@@ -179,7 +195,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         import requests  # type: ignore
     except Exception:  # pragma: no cover
         # urllib fallback
-        from urllib import request, parse
+        from urllib import parse, request
 
         url = args.url.rstrip("/") + "/da/blob"
         req = request.Request(url, method="POST")
@@ -211,7 +227,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         if fname:
             headers["X-Animica-Name"] = fname
         try:
-            r = requests.post(url, data=payload_bytes, headers=headers, timeout=args.timeout)
+            r = requests.post(
+                url, data=payload_bytes, headers=headers, timeout=args.timeout
+            )
             r.raise_for_status()
             resp = r.json()
         except Exception as e:

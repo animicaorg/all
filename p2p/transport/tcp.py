@@ -5,19 +5,6 @@ import struct
 from dataclasses import dataclass
 from typing import AsyncIterator, Optional, Tuple
 
-from .base import (
-    Transport,
-    Conn,
-    Stream,
-    ListenConfig,
-    ConnInfo,
-    CloseCode,
-    MAX_FRAME_DEFAULT,
-    HandshakeError,
-    TransportError,
-    StreamClosed,
-)
-
 # Cryptographic handshake → AEAD keys
 # Expected API (from p2p.crypto.handshake):
 #   perform_handshake_tcp(reader, writer, is_outbound: bool, *,
@@ -27,7 +14,12 @@ from .base import (
 # where TxAead/RxAead expose:
 #   seal(plaintext: bytes, aad: bytes, nonce: int) -> bytes
 #   open(ciphertext: bytes, aad: bytes, nonce: int) -> bytes
-from p2p.crypto.handshake import perform_handshake_tcp  # type: ignore[attr-defined]
+from p2p.crypto.handshake import \
+    perform_handshake_tcp  # type: ignore[attr-defined]
+
+from .base import (MAX_FRAME_DEFAULT, CloseCode, Conn, ConnInfo,
+                   HandshakeError, ListenConfig, Stream, StreamClosed,
+                   Transport, TransportError)
 
 # Frame header: 4 bytes ciphertext length (network order)
 LEN_HDR = struct.Struct("!I")
@@ -212,7 +204,9 @@ class TcpTransport(Transport):
 
     name = "tcp"
 
-    def __init__(self, *, handshake_prologue: bytes | None = None, chain_id: int | None = None):
+    def __init__(
+        self, *, handshake_prologue: bytes | None = None, chain_id: int | None = None
+    ):
         self._server: Optional[asyncio.AbstractServer] = None
         self._incoming: "asyncio.Queue[TcpConn]" = asyncio.Queue()
         self._listen_cfg: Optional[ListenConfig] = None
@@ -245,7 +239,9 @@ class TcpTransport(Transport):
         host, port = self._parse_tcp_addr(config.addr)
         self._listen_cfg = config
 
-        async def _on_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        async def _on_client(
+            reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+        ):
             # Handshake as responder (inbound)
             try:
                 tx_aead, rx_aead, info = await perform_handshake_tcp(
@@ -315,8 +311,14 @@ class TcpTransport(Transport):
             except Exception:
                 pass
             info.is_outbound = True
-            max_frame = self._listen_cfg.max_frame_bytes if self._listen_cfg else MAX_FRAME_DEFAULT
-            return TcpConn(reader, writer, tx_aead, rx_aead, info=info, max_frame=max_frame)
+            max_frame = (
+                self._listen_cfg.max_frame_bytes
+                if self._listen_cfg
+                else MAX_FRAME_DEFAULT
+            )
+            return TcpConn(
+                reader, writer, tx_aead, rx_aead, info=info, max_frame=max_frame
+            )
 
         try:
             if timeout is not None and timeout > 0:

@@ -1,5 +1,6 @@
 from __future__ import annotations
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Set
+
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 from weakref import WeakKeyDictionary
 
 from aicf.aitypes.job import JobRecord
@@ -10,49 +11,61 @@ from aicf.queue.jobkind import JobKind
 _STATE: "WeakKeyDictionary[Any, Dict[str, Any]]" = WeakKeyDictionary()
 _CUR: Optional[Dict[str, Any]] = None  # currently bound state (last used quotas)
 
+
 def _state_for(quotas: Any) -> Dict[str, Any]:
     st = _STATE.get(quotas)
     if st is None:
         st = {
-            "leases": {},      # type: Dict[str, Tuple[str, float]]  # job_id -> (provider_id, expires_at)
-            "jobs": {},        # type: Dict[str, JobRecord]
-            "completed": set() # type: Set[str]
+            "leases": {},  # type: Dict[str, Tuple[str, float]]  # job_id -> (provider_id, expires_at)
+            "jobs": {},  # type: Dict[str, JobRecord]
+            "completed": set(),  # type: Set[str]
         }
         _STATE[quotas] = st
     return st
+
 
 def _bind_quotas(quotas: Any) -> None:
     global _CUR
     _CUR = _state_for(quotas)
 
+
 def _prov_id(p: Any) -> str:
     return getattr(p, "id", None) or getattr(p, "provider_id", None) or str(p)
+
 
 def _prov_caps(p: Any) -> Capability:
     return getattr(p, "capabilities", Capability(0))
 
+
 def _prov_status(p: Any) -> ProviderStatus:
     return getattr(p, "status", ProviderStatus.ACTIVE)
+
 
 def _required_cap(kind: JobKind) -> Capability:
     return Capability.AI if kind == JobKind.AI else Capability.QUANTUM
 
-def _provider_busy(leases: Dict[str, Tuple[str, float]], provider_id: str, now: float) -> bool:
+
+def _provider_busy(
+    leases: Dict[str, Tuple[str, float]], provider_id: str, now: float
+) -> bool:
     for _, (pid, exp) in leases.items():
         if pid == provider_id and exp > now:
             return True
     return False
+
 
 def _eligible(p: Any, job: JobRecord) -> bool:
     if _prov_status(p) != ProviderStatus.ACTIVE:
         return False
     return bool(_prov_caps(p) & _required_cap(job.kind))
 
+
 def match_once(
     providers: Iterable[Any],
     ranked_jobs: Iterable[JobRecord],
     quotas: Any,
-    now: float, *,
+    now: float,
+    *,
     seed: int = 0,
     lease_ttl_s: int = 60,
 ) -> List[Tuple[str, str]]:
@@ -101,12 +114,14 @@ def match_once(
 
     return assigns
 
+
 def get_lease(job_id: str) -> Tuple[Optional[str], Optional[float]]:
     st = _CUR
     if not st:
         return (None, None)
     rec = st["leases"].get(job_id)
     return (rec[0], rec[1]) if rec else (None, None)
+
 
 def renew_lease(job_id: str, provider_id: str, *, extend_s: int, now: float) -> float:
     st = _CUR
@@ -121,6 +136,7 @@ def renew_lease(job_id: str, provider_id: str, *, extend_s: int, now: float) -> 
     leases[job_id] = (provider_id, new_exp)
     return new_exp
 
+
 def cancel_lease(job_id: str, provider_id: str, quotas: Any) -> bool:
     _bind_quotas(quotas)
     st = _CUR  # type: ignore[assignment]
@@ -130,6 +146,7 @@ def cancel_lease(job_id: str, provider_id: str, quotas: Any) -> bool:
         return False
     leases.pop(job_id, None)
     return True  # re-queued (not completed)
+
 
 def expire_leases(quotas: Any, *, now: float) -> List[str]:
     _bind_quotas(quotas)
@@ -142,7 +159,9 @@ def expire_leases(quotas: Any, *, now: float) -> List[str]:
             expired.append(jid)
     return expired
 
+
 # ---- compatibility hooks used by quotas.release(...) ----
+
 
 def _release_by_provider_for(quotas: Any, provider_id: str) -> Optional[str]:
     """
@@ -162,13 +181,17 @@ def _release_by_provider_for(quotas: Any, provider_id: str) -> Optional[str]:
             return jid
     return None
 
+
 # Legacy form (falls back to the currently bound quotas state, if any)
 def _release_by_provider(provider_id: str) -> Optional[str]:
     st = _CUR
     if not st:
         return None
+
     # Fabricate a minimal quotas proxy to reuse the helper
-    class _Q: pass
+    class _Q:
+        pass
+
     # Not used because we go via st directly:
     leases: Dict[str, Tuple[str, float]] = st["leases"]
     completed: Set[str] = st["completed"]

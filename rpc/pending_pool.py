@@ -22,25 +22,25 @@ accept buffer used by `rpc/methods/tx.py` so clients get immediate feedback.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
 
-# Local RPC helpers
-from .types import HashHex32, Address, ensure_hash32_hex, is_address
-from .models import TxView
-
 # Core / encoding (canonical SignBytes)
 from core.encoding import canonical as canonical_enc
 from core.encoding import cbor as cbor_enc
-from core.utils.hash import sha3_256_hex, sha3_256
-from core.types.tx import Tx  # structured Tx object (matches spec/tx_format.cddl)
-
+from core.types.tx import \
+    Tx  # structured Tx object (matches spec/tx_format.cddl)
+from core.utils.hash import sha3_256, sha3_256_hex
 # PQ primitives (address & signature verification)
-from pq.py.address import encode_address as pq_encode_address, decode_address as pq_decode_address
+from pq.py.address import decode_address as pq_decode_address
+from pq.py.address import encode_address as pq_encode_address
 from pq.py.verify import verify as pq_verify
 
-import logging
+from .models import TxView
+# Local RPC helpers
+from .types import Address, HashHex32, ensure_hash32_hex, is_address
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +48,7 @@ log = logging.getLogger(__name__)
 # --------------------------------------------------------------------------------------
 # Errors & results
 # --------------------------------------------------------------------------------------
+
 
 class PendingPoolError(Exception):
     """Base class for pending pool errors."""
@@ -68,6 +69,7 @@ class AddressMismatch(PendingPoolError):
 @dataclass(frozen=True)
 class AddResult:
     """Outcome of adding a tx to the pending pool."""
+
     hash: HashHex32
     accepted: bool
     duplicate: bool = False
@@ -77,6 +79,7 @@ class AddResult:
 # --------------------------------------------------------------------------------------
 # Internal entry
 # --------------------------------------------------------------------------------------
+
 
 @dataclass
 class _Entry:
@@ -94,6 +97,7 @@ class _Entry:
 # --------------------------------------------------------------------------------------
 # Pending Pool
 # --------------------------------------------------------------------------------------
+
 
 class PendingPool:
     """
@@ -132,13 +136,20 @@ class PendingPool:
             self._purge_locked()
 
             if tx_hash in self._entries:
-                return AddResult(hash=tx_hash, accepted=False, duplicate=True, reason="duplicate")
+                return AddResult(
+                    hash=tx_hash, accepted=False, duplicate=True, reason="duplicate"
+                )
 
             if len(self._entries) >= self._max:
                 # Evict oldest expired first, then refuse if still full
                 self._purge_locked()
                 if len(self._entries) >= self._max:
-                    return AddResult(hash=tx_hash, accepted=False, duplicate=False, reason="pool_full")
+                    return AddResult(
+                        hash=tx_hash,
+                        accepted=False,
+                        duplicate=False,
+                        reason="pool_full",
+                    )
 
             # PQ Precheck (signature + address linkage)
             self._pq_precheck(tx, raw_cbor)
@@ -151,7 +162,9 @@ class PendingPool:
                 expires_at=now + self._ttl,
             )
             self._entries[tx_hash] = ent
-            log.debug("pending_pool: accepted tx %s (entries=%d)", tx_hash, len(self._entries))
+            log.debug(
+                "pending_pool: accepted tx %s (entries=%d)", tx_hash, len(self._entries)
+            )
             return AddResult(hash=tx_hash, accepted=True, duplicate=False, reason=None)
 
     async def add_tx(self, tx: Tx, raw_cbor: Optional[bytes] = None) -> AddResult:
@@ -236,9 +249,9 @@ class PendingPool:
 
         # 2) Extract signature triplet (alg_id, pubkey, sig) from Tx
         try:
-            alg_id: int = int(tx.sig.alg_id)          # e.g., 0x31 for Dilithium3
-            pubkey: bytes = bytes(tx.sig.pk)          # raw public key bytes
-            signature: bytes = bytes(tx.sig.sig)      # raw signature bytes
+            alg_id: int = int(tx.sig.alg_id)  # e.g., 0x31 for Dilithium3
+            pubkey: bytes = bytes(tx.sig.pk)  # raw public key bytes
+            signature: bytes = bytes(tx.sig.sig)  # raw signature bytes
         except Exception as e:
             raise MalformedTx(f"missing signature fields: {e}") from e
 
@@ -259,7 +272,13 @@ class PendingPool:
             # try decoding then re-encoding with the same HRP as the provided `from`.
             try:
                 hrp, _alg2, _pkhash = pq_decode_address(tx.from_addr)
-                expected_with_hrp: Address = pq_encode_address(alg_id, pubkey) if hrp == "anim" else pq_encode_address(alg_id, pubkey).replace("anim1", f"{hrp}1", 1)
+                expected_with_hrp: Address = (
+                    pq_encode_address(alg_id, pubkey)
+                    if hrp == "anim"
+                    else pq_encode_address(alg_id, pubkey).replace(
+                        "anim1", f"{hrp}1", 1
+                    )
+                )
             except Exception:
                 expected_with_hrp = expected_addr
 
@@ -269,7 +288,9 @@ class PendingPool:
     def _purge_locked(self) -> int:
         """Remove expired entries. Caller must hold _lock."""
         now = time.time()
-        to_del: List[HashHex32] = [h for h, ent in self._entries.items() if ent.expires_at <= now]
+        to_del: List[HashHex32] = [
+            h for h, ent in self._entries.items() if ent.expires_at <= now
+        ]
         for h in to_del:
             self._entries.pop(h, None)
         if to_del:
@@ -301,35 +322,48 @@ class PendingPool:
             items = []
             for it in tx.access_list:
                 addr = it.address if isinstance(it.address, str) else str(it.address)
-                storage_keys = [k if isinstance(k, str) else f"0x{k.hex()}" for k in it.storage_keys]
+                storage_keys = [
+                    k if isinstance(k, str) else f"0x{k.hex()}" for k in it.storage_keys
+                ]
                 items.append({"address": addr, "storageKeys": storage_keys})
             access_list = items
 
         # Build the pydantic TxView
-        tv = TxView.model_validate({
-            "hash": tx_hash_hex,
-            "chainId": tx.chain_id,
-            "from": tx.from_addr,
-            "to": getattr(tx, "to_addr", None),
-            "nonce": tx.nonce,
-            "gasLimit": tx.gas_limit,
-            "gasPrice": tx.gas_price,
-            "value": getattr(tx, "value_hex", "0x00") if hasattr(tx, "value_hex") else getattr(tx, "value", "0x00"),
-            "type": tx.type,  # "transfer" | "deploy" | "call"
-            "data": getattr(tx, "data_hex", "0x") if hasattr(tx, "data_hex") else getattr(tx, "data", "0x"),
-            "accessList": access_list,
-            "algId": int(tx.sig.alg_id),
-            "sig": "0x" + bytes(tx.sig.sig).hex(),
-            "blockHash": None,
-            "blockNumber": None,
-            "transactionIndex": None,
-        })
+        tv = TxView.model_validate(
+            {
+                "hash": tx_hash_hex,
+                "chainId": tx.chain_id,
+                "from": tx.from_addr,
+                "to": getattr(tx, "to_addr", None),
+                "nonce": tx.nonce,
+                "gasLimit": tx.gas_limit,
+                "gasPrice": tx.gas_price,
+                "value": (
+                    getattr(tx, "value_hex", "0x00")
+                    if hasattr(tx, "value_hex")
+                    else getattr(tx, "value", "0x00")
+                ),
+                "type": tx.type,  # "transfer" | "deploy" | "call"
+                "data": (
+                    getattr(tx, "data_hex", "0x")
+                    if hasattr(tx, "data_hex")
+                    else getattr(tx, "data", "0x")
+                ),
+                "accessList": access_list,
+                "algId": int(tx.sig.alg_id),
+                "sig": "0x" + bytes(tx.sig.sig).hex(),
+                "blockHash": None,
+                "blockNumber": None,
+                "transactionIndex": None,
+            }
+        )
         return tv
 
 
 # --------------------------------------------------------------------------------------
 # Convenience (sync wrapper)
 # --------------------------------------------------------------------------------------
+
 
 def new_pool(ttl_seconds: int = 300, max_items: int = 50_000) -> PendingPool:
     """

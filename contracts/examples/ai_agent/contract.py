@@ -25,13 +25,14 @@ Notes:
   simply surfaces the result via `read(task_id)`.
 """
 
-from stdlib import storage, events, hash, abi, syscalls  # type: ignore[reportMissingImports]
+from stdlib import (abi, events, hash,  # type: ignore[reportMissingImports]
+                    storage, syscalls)
 
 # ---- caps & prefixes ---------------------------------------------------------
 
 # Conservative caps to bound per-tx cost. Tweak to your chain policy.
-_MAX_MODEL_LEN = 96        # bytes (e.g., b"gemma-2b-instruct" or catalog id)
-_MAX_PROMPT_LEN = 4096     # bytes (UTF-8 text OK)
+_MAX_MODEL_LEN = 96  # bytes (e.g., b"gemma-2b-instruct" or catalog id)
+_MAX_PROMPT_LEN = 4096  # bytes (UTF-8 text OK)
 
 _P_PREFIX = b"p:"  # prompts
 _M_PREFIX = b"m:"  # model tag
@@ -40,6 +41,7 @@ _S_PREFIX = b"s:"  # seen/consumed flag (b"1")
 
 
 # ---- helpers -----------------------------------------------------------------
+
 
 def _clamp_model_tag(model: bytes) -> bytes:
     """
@@ -72,6 +74,7 @@ def _key(prefix: bytes, task_id: bytes) -> bytes:
 
 
 # ---- public interface ---------------------------------------------------------
+
 
 def request(model: bytes, prompt: bytes) -> bytes:
     """
@@ -160,6 +163,7 @@ def read(task_id: bytes) -> tuple:
 
 
 # ---- optional view helpers (read-only) ---------------------------------------
+
 
 def get_prompt(task_id: bytes) -> bytes:
     """

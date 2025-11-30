@@ -26,13 +26,15 @@ except Exception:  # noqa: BLE001
     rocksdb = None  # type: ignore
 
 from capabilities.jobs.id import derive_task_id, derive_task_id_hex
-from capabilities.jobs.types import JobKind, JobRequest, JobReceipt, ResultRecord
+from capabilities.jobs.types import (JobKind, JobReceipt, JobRequest,
+                                     ResultRecord)
 
 # Prefer canonical CBOR used across the project; fallback to stable JSON.
 _CBOR_DUMPS = None
 _CBOR_LOADS = None
 try:  # pragma: no cover - exercised by higher-level tests
-    from capabilities.cbor.codec import dumps as _CBOR_DUMPS, loads as _CBOR_LOADS  # type: ignore
+    from capabilities.cbor.codec import dumps as _CBOR_DUMPS  # type: ignore
+    from capabilities.cbor.codec import loads as _CBOR_LOADS
 except Exception:  # noqa: BLE001
     _CBOR_DUMPS = None  # type: ignore
     _CBOR_LOADS = None  # type: ignore
@@ -41,7 +43,9 @@ except Exception:  # noqa: BLE001
 def _b_dumps(obj: Any) -> bytes:
     if _CBOR_DUMPS is not None:
         return _CBOR_DUMPS(obj)
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(
+        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
 
 
 def _b_loads(b: bytes) -> Any:
@@ -139,9 +143,17 @@ class JobQueue:
         Max number of hot entries to keep in a simple in-process cache.
     """
 
-    def __init__(self, sqlite_path: str, *, rocks_path: Optional[str] = None, cache_size: int = 1024):
+    def __init__(
+        self,
+        sqlite_path: str,
+        *,
+        rocks_path: Optional[str] = None,
+        cache_size: int = 1024,
+    ):
         self.sqlite_path = sqlite_path
-        self.conn = sqlite3.connect(self.sqlite_path, timeout=30, isolation_level=None)  # autocommit mode
+        self.conn = sqlite3.connect(
+            self.sqlite_path, timeout=30, isolation_level=None
+        )  # autocommit mode
         self.conn.row_factory = sqlite3.Row
         self._init_schema()
 
@@ -149,7 +161,9 @@ class JobQueue:
         self._cache_size = max(64, int(cache_size))
         self._cache: Dict[str, Dict[str, Any]] = {}  # task_id -> row dict
 
-        self._rocks = _RocksCache(rocks_path) if rocks_path else _RocksCache("")  # disabled if no path or no lib
+        self._rocks = (
+            _RocksCache(rocks_path) if rocks_path else _RocksCache("")
+        )  # disabled if no path or no lib
 
     # -------------------- schema --------------------
 
@@ -253,28 +267,36 @@ class JobQueue:
             )
 
             # Fetch row to return canonical receipt
-            row = self.conn.execute("SELECT * FROM jobs WHERE task_id = ?", (task_id_hex,)).fetchone()
+            row = self.conn.execute(
+                "SELECT * FROM jobs WHERE task_id = ?", (task_id_hex,)
+            ).fetchone()
             if row is None:
                 raise RuntimeError("enqueue failed to insert or fetch row")
 
             # update cache
             self._cache_put(task_id_hex, self._row_to_dict(row))
 
-        return JobReceipt(task_id=bytes.fromhex(task_id_hex), chain_id=chain_id, height=height)
+        return JobReceipt(
+            task_id=bytes.fromhex(task_id_hex), chain_id=chain_id, height=height
+        )
 
     def get(self, task_id_hex: str) -> Optional[Dict[str, Any]]:
         """Return the raw row dict for a task (or None)."""
         cached = self._cache_get(task_id_hex)
         if cached is not None:
             return cached
-        row = self.conn.execute("SELECT * FROM jobs WHERE task_id = ?", (task_id_hex,)).fetchone()
+        row = self.conn.execute(
+            "SELECT * FROM jobs WHERE task_id = ?", (task_id_hex,)
+        ).fetchone()
         if row is None:
             return None
         d = self._row_to_dict(row)
         self._cache_put(task_id_hex, d)
         return d
 
-    def pop_next(self, *, kind: Optional[JobKind] = None) -> Optional[Tuple[str, JobRequest]]:
+    def pop_next(
+        self, *, kind: Optional[JobKind] = None
+    ) -> Optional[Tuple[str, JobRequest]]:
         """
         Atomically claim the next job: set status=IN_PROGRESS and return (task_id_hex, JobRequest).
 
@@ -321,7 +343,9 @@ class JobQueue:
 
         req = JobRequest(kind=JobKind[row["kind"]], payload=_b_loads(row["payload"]))
         # Update caches
-        self._cache_put(task_id, self._row_to_dict(row) | {"status": JobStatus.IN_PROGRESS})
+        self._cache_put(
+            task_id, self._row_to_dict(row) | {"status": JobStatus.IN_PROGRESS}
+        )
         return task_id, req
 
     def requeue(self, task_id_hex: str, *, backoff_seconds: int = 0) -> None:
@@ -350,7 +374,12 @@ class JobQueue:
                 SET status = ?, result = ?, updated_at_s = ?
                 WHERE task_id = ?
                 """,
-                (JobStatus.COMPLETED, sqlite3.Binary(result_b), self._now(), task_id_hex),
+                (
+                    JobStatus.COMPLETED,
+                    sqlite3.Binary(result_b),
+                    self._now(),
+                    task_id_hex,
+                ),
             )
             if cur.rowcount == 0:
                 raise KeyError(f"task not found: {task_id_hex}")
@@ -401,7 +430,13 @@ class JobQueue:
         rows = self.conn.execute(
             "SELECT status, COUNT(*) as c FROM jobs GROUP BY status"
         ).fetchall()
-        out: Dict[str, int] = {JobStatus.QUEUED: 0, JobStatus.IN_PROGRESS: 0, JobStatus.COMPLETED: 0, JobStatus.FAILED: 0, JobStatus.EXPIRED: 0}
+        out: Dict[str, int] = {
+            JobStatus.QUEUED: 0,
+            JobStatus.IN_PROGRESS: 0,
+            JobStatus.COMPLETED: 0,
+            JobStatus.FAILED: 0,
+            JobStatus.EXPIRED: 0,
+        }
         for r in rows:
             out[str(r["status"])] = int(r["c"])
         return out
@@ -455,6 +490,7 @@ class JobQueue:
 
 
 # -------------------- convenience helpers --------------------
+
 
 def enqueue_and_receipt(
     queue: JobQueue,

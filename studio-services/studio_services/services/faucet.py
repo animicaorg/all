@@ -20,20 +20,21 @@ import logging
 import os
 import time
 from dataclasses import asdict
-from typing import Any, Optional, Tuple, Dict, Callable
+from typing import Any, Callable, Dict, Optional, Tuple
 
+from studio_services import config as cfg_mod
+from studio_services.adapters import \
+    pq_addr as addr_adapter  # address validation
+from studio_services.adapters.node_rpc import NodeRPC
 from studio_services.errors import ApiError, BadRequest
 from studio_services.models.faucet import FaucetRequest, FaucetResponse
-from studio_services.adapters.node_rpc import NodeRPC
-from studio_services.adapters import pq_addr as addr_adapter  # address validation
-from studio_services import config as cfg_mod
-
 # storage
 from studio_services.storage import sqlite as storage_sqlite  # type: ignore
 
 log = logging.getLogger(__name__)
 
 # ------------------------ Config helpers ------------------------
+
 
 def _get_faucet_cfg():
     """
@@ -49,6 +50,7 @@ def _get_faucet_cfg():
     """
     # Prefer config module attributes; fall back to environment.
     get = getattr(cfg_mod, "get", None)
+
     def _cfg(name: str, default: Optional[str] = None) -> Optional[str]:
         if callable(get):
             try:
@@ -71,6 +73,7 @@ def _get_faucet_cfg():
 
 
 # ------------------------ Rate limiting ------------------------
+
 
 class _RateStore:
     """
@@ -108,7 +111,11 @@ class _RateStore:
         # Preferred API
         if hasattr(self._store, "consume"):
             ok, remaining, reset_ts = self._store.consume(  # type: ignore
-                bucket, tokens=tokens, window_seconds=window_seconds, capacity=capacity, now=now_i
+                bucket,
+                tokens=tokens,
+                window_seconds=window_seconds,
+                capacity=capacity,
+                now=now_i,
             )
             return bool(ok), int(remaining), int(reset_ts)
         # Fallback: bump/count
@@ -138,6 +145,7 @@ def _rate_bucket_ip(ip: str) -> str:
 
 # ------------------------ Signing & send helpers ------------------------
 
+
 def _make_signer(secret: str):
     """
     Return a tuple (addr_fn, sign_fn, pubkey_fn, alg_id_fn) built on omni_sdk,
@@ -150,8 +158,9 @@ def _make_signer(secret: str):
     Raises BadRequest if omni_sdk is unavailable or secret invalid.
     """
     try:
-        from omni_sdk.wallet.signer import DilithiumSigner, SphincsSigner  # type: ignore
         from omni_sdk.address import address_from_pubkey  # type: ignore
+        from omni_sdk.wallet.signer import (DilithiumSigner,  # type: ignore
+                                            SphincsSigner)
     except Exception as e:  # pragma: no cover
         raise BadRequest(f"Server missing omni_sdk for faucet signing: {e}")
 
@@ -165,7 +174,11 @@ def _make_signer(secret: str):
     if algo not in ("dilithium3", "sphincs", "sphincs_shake_128s", "sphincs+"):
         raise BadRequest(f"Unsupported faucet key algo '{algo}'")
 
-    signer = DilithiumSigner.from_seed_hex(seed_hex) if algo == "dilithium3" else SphincsSigner.from_seed_hex(seed_hex)
+    signer = (
+        DilithiumSigner.from_seed_hex(seed_hex)
+        if algo == "dilithium3"
+        else SphincsSigner.from_seed_hex(seed_hex)
+    )
 
     def addr_fn() -> str:
         return address_from_pubkey(signer.alg_id(), signer.public_key())
@@ -194,9 +207,13 @@ def _sdk_send_transfer(
     Build+sign+send a transfer using omni_sdk if the NodeRPC does not offer a convenience API.
     """
     try:
-        from omni_sdk.tx.build import transfer as build_transfer  # type: ignore
-        from omni_sdk.tx.encode import sign_bytes as tx_sign_bytes, encode_signed as encode_signed_tx  # type: ignore
-        from omni_sdk.utils.cbor import to_bytes as _to_cbor_bytes  # type: ignore
+        from omni_sdk.tx.build import \
+            transfer as build_transfer  # type: ignore
+        from omni_sdk.tx.encode import encode_signed as encode_signed_tx
+        from omni_sdk.tx.encode import \
+            sign_bytes as tx_sign_bytes  # type: ignore
+        from omni_sdk.utils.cbor import \
+            to_bytes as _to_cbor_bytes  # type: ignore
     except Exception as e:  # pragma: no cover
         raise ApiError(f"Cannot send faucet transfer without SDK support: {e}")
 
@@ -244,7 +261,9 @@ def _sdk_send_transfer(
         signature=sig,
     )
     # Submit
-    send_raw = getattr(node, "send_raw_transaction", None) or getattr(node, "tx_sendRawTransaction", None)
+    send_raw = getattr(node, "send_raw_transaction", None) or getattr(
+        node, "tx_sendRawTransaction", None
+    )
     if not callable(send_raw):
         raise ApiError("NodeRPC lacks send_raw_transaction method")
     tx_hash = send_raw(raw)
@@ -252,6 +271,7 @@ def _sdk_send_transfer(
 
 
 # ------------------------ Faucet service ------------------------
+
 
 def drip(
     node: NodeRPC,
@@ -274,6 +294,7 @@ def drip(
         # Surface a typed error if the project defines FaucetOff
         try:
             from studio_services.errors import FaucetOff  # type: ignore
+
             raise FaucetOff("Faucet is disabled")
         except Exception:
             raise BadRequest("Faucet is disabled (no FAUCET_KEY configured)")
@@ -282,7 +303,9 @@ def drip(
     if not req.address:
         raise BadRequest("address is required")
     try:
-        validator = getattr(addr_adapter, "validate", None) or getattr(addr_adapter, "validate_address", None)
+        validator = getattr(addr_adapter, "validate", None) or getattr(
+            addr_adapter, "validate_address", None
+        )
         if callable(validator):
             validator(req.address)
     except Exception as e:
@@ -303,16 +326,25 @@ def drip(
     max_per_ip = int(fc["FAUCET_MAX_PER_IP"])
 
     rs = _RateStore()
-    ok_addr, remaining_addr, reset_addr = rs.consume(_rate_bucket_addr(req.address), window_seconds=window, capacity=max_per_addr)
+    ok_addr, remaining_addr, reset_addr = rs.consume(
+        _rate_bucket_addr(req.address), window_seconds=window, capacity=max_per_addr
+    )
     if not ok_addr:
         raise BadRequest(f"address quota exceeded; try again after {reset_addr}")
 
     if client_ip:
-        ok_ip, remaining_ip, reset_ip = rs.consume(_rate_bucket_ip(client_ip), window_seconds=window, capacity=max_per_ip)
+        ok_ip, remaining_ip, reset_ip = rs.consume(
+            _rate_bucket_ip(client_ip), window_seconds=window, capacity=max_per_ip
+        )
         if not ok_ip:
             # Roll back address token (best-effort) if IP fails
             try:
-                rs.consume(_rate_bucket_addr(req.address), window_seconds=window, capacity=max_per_addr, tokens=-1)
+                rs.consume(
+                    _rate_bucket_addr(req.address),
+                    window_seconds=window,
+                    capacity=max_per_addr,
+                    tokens=-1,
+                )
             except Exception:
                 pass
             raise BadRequest(f"ip quota exceeded; try again after {reset_ip}")
@@ -322,9 +354,15 @@ def drip(
     try:
         send_from_secret = getattr(node, "send_transfer_from_secret", None)
         if callable(send_from_secret):
-            tx_hash = str(send_from_secret(secret, req.address, int(amount), chain_id=fc["CHAIN_ID"]))
+            tx_hash = str(
+                send_from_secret(
+                    secret, req.address, int(amount), chain_id=fc["CHAIN_ID"]
+                )
+            )
     except Exception as e:
-        log.info("NodeRPC send_transfer_from_secret path failed, falling back to SDK: %s", e)
+        log.info(
+            "NodeRPC send_transfer_from_secret path failed, falling back to SDK: %s", e
+        )
 
     if not tx_hash:
         tx_hash = _sdk_send_transfer(

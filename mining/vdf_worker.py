@@ -62,14 +62,17 @@ try:
     from proofs.utils.hash import sha3_256  # type: ignore
 except Exception:  # pragma: no cover
     import hashlib
+
     def sha3_256(b: bytes) -> bytes:
         return hashlib.sha3_256(b).digest()
+
 
 # Try to import the reference prover from the randomness module
 _wes: t.Any
 try:
+    from randomness.vdf.wesolowski import Proof as WesProof  # (y, pi, l)
     from randomness.vdf.wesolowski import prove as wes_prove  # type: ignore
-    from randomness.vdf.wesolowski import Proof as WesProof   # (y, pi, l)
+
     _wes = ("ok",)
 except Exception as _e:  # pragma: no cover
     _wes = None
@@ -78,12 +81,13 @@ except Exception as _e:  # pragma: no cover
 
 # ---------------- Types ----------------
 
+
 @dataclass(frozen=True)
 class VDFJobSpec:
-    modulus_n_hex: str        # hex string (no 0x)
-    base_g_hex: str           # hex string (no 0x)
-    iterations: int           # t (number of squarings)
-    label: bytes              # domain-binding label (bytes, included in H)
+    modulus_n_hex: str  # hex string (no 0x)
+    base_g_hex: str  # hex string (no 0x)
+    iterations: int  # t (number of squarings)
+    label: bytes  # domain-binding label (bytes, included in H)
     # optional tuning
     max_seconds: float | None = None  # soft cap (to avoid runaway t in dev)
 
@@ -92,7 +96,7 @@ class VDFJobSpec:
 class VDFResult:
     task_id: str
     proof_body: dict[str, t.Any]  # matches proofs/schemas/vdf.cddl fields
-    metrics: dict[str, t.Any]     # {"vdf_seconds": float, "iterations": int}
+    metrics: dict[str, t.Any]  # {"vdf_seconds": float, "iterations": int}
 
 
 @dataclass
@@ -104,6 +108,7 @@ class _Pending:
 
 # ---------------- Worker ----------------
 
+
 class VDFWorker:
     """
     Small async orchestrator:
@@ -111,6 +116,7 @@ class VDFWorker:
       - background task runs prove() in a thread executor
       - results land in an in-memory queue; pop_ready() retrieves them
     """
+
     def __init__(self, *, poll_interval_s: float = 0.25, queue_limit: int = 64) -> None:
         self._poll = float(poll_interval_s)
         self._limit = int(queue_limit)
@@ -172,7 +178,9 @@ class VDFWorker:
         async with self._lock:
             if not self._pending:
                 return
-            task_id, pend = next(iter(sorted(self._pending.items(), key=lambda kv: kv[1].enqueued_at)))
+            task_id, pend = next(
+                iter(sorted(self._pending.items(), key=lambda kv: kv[1].enqueued_at))
+            )
             # mark started to avoid duplicate picks
             if pend.started_at is None:
                 pend.started_at = time.time()
@@ -206,16 +214,20 @@ class VDFWorker:
     # deterministic task id tied to inputs (for idempotency)
     def _derive_task_id(self, spec: VDFJobSpec) -> str:
         h = sha3_256(
-            b"animica.task.vdf\0" +
-            bytes.fromhex(spec.modulus_n_hex) + b"\0" +
-            bytes.fromhex(spec.base_g_hex) + b"\0" +
-            spec.iterations.to_bytes(8, "big") + b"\0" +
-            spec.label
+            b"animica.task.vdf\0"
+            + bytes.fromhex(spec.modulus_n_hex)
+            + b"\0"
+            + bytes.fromhex(spec.base_g_hex)
+            + b"\0"
+            + spec.iterations.to_bytes(8, "big")
+            + b"\0"
+            + spec.label
         )
         return "vdf-" + h.hex()[:32]
 
 
 # ---------------- Prover wrapper ----------------
+
 
 def _prove_and_package(spec: VDFJobSpec) -> dict[str, t.Any]:
     """
@@ -264,6 +276,7 @@ def _prove_and_package(spec: VDFJobSpec) -> dict[str, t.Any]:
 
 # ---------------- Utilities ----------------
 
+
 def _normalize_hex(h: str) -> str:
     h = h.strip().lower()
     if h.startswith("0x"):
@@ -279,6 +292,7 @@ def _normalize_hex(h: str) -> str:
 
 
 # ---------------- Demo CLI ----------------
+
 
 async def _demo() -> None:  # pragma: no cover
     """
@@ -320,9 +334,11 @@ async def _demo() -> None:  # pragma: no cover
         print("[vdf_worker] timed out waiting for proof")
     else:
         r = got[0]
-        print(f"[vdf_worker] done {r.task_id} "
-              f"seconds={r.metrics['vdf_seconds']:.3f} "
-              f"y[:8]={r.proof_body['y'][:8]} l={r.proof_body['l']}")
+        print(
+            f"[vdf_worker] done {r.task_id} "
+            f"seconds={r.metrics['vdf_seconds']:.3f} "
+            f"y[:8]={r.proof_body['y'][:8]} l={r.proof_body['l']}"
+        )
 
     await w.stop()
 

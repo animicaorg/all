@@ -59,17 +59,18 @@ from typing import Any, Dict, Optional, Tuple
 
 # Local helpers shared by tools (added in contracts/tools/__init__.py)
 try:
-    from contracts.tools import (  # type: ignore
-        atomic_write_text,
-        canonical_json_str,
-        ensure_dir,
-        find_project_root as _maybe_find_project_root,  # optional alias
-        project_root as _project_root,
-    )
+    from contracts.tools import (atomic_write_text, canonical_json_str,
+                                 ensure_dir)
+    from contracts.tools import \
+        find_project_root as \
+        _maybe_find_project_root  # type: ignore; optional alias
+    from contracts.tools import project_root as _project_root
 except Exception:
     # Minimal fallbacks in case tools/__init__.py isn't available at runtime
     def canonical_json_str(obj: Any) -> str:
-        return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return json.dumps(
+            obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        )
 
     def atomic_write_text(path: Path, data: str) -> None:
         tmp = path.with_suffix(path.suffix + ".tmp")
@@ -89,6 +90,7 @@ except Exception:
 # ---------------------------------------------------------------------------
 # Lightweight .env loader (no external dependency)
 # ---------------------------------------------------------------------------
+
 
 def _load_env_dotenv() -> None:
     """
@@ -130,6 +132,7 @@ def _load_env_dotenv() -> None:
 # omni_sdk adapters (resilient to small API differences)
 # ---------------------------------------------------------------------------
 
+
 class _SdkError(RuntimeError):
     pass
 
@@ -138,6 +141,7 @@ class _Rpc:
     """
     Minimal wrapper over omni_sdk.rpc.http or a tiny built-in JSON-RPC client.
     """
+
     def __init__(self, url: str, timeout: float = 10.0):
         self.url = url
         self.timeout = timeout
@@ -146,7 +150,9 @@ class _Rpc:
         # Try omni_sdk if present, else fallback to requests
         self._client = None
         try:
-            from omni_sdk.rpc.http import HttpClient as _HttpClient  # type: ignore
+            from omni_sdk.rpc.http import \
+                HttpClient as _HttpClient  # type: ignore
+
             self._client = _HttpClient(url, timeout=timeout)
         except Exception:
             try:
@@ -160,12 +166,19 @@ class _Rpc:
 
                     def call(self, method: str, params: Any = None) -> Any:
                         self._id += 1
-                        payload = {"jsonrpc": "2.0", "id": self._id, "method": method, "params": params or []}
+                        payload = {
+                            "jsonrpc": "2.0",
+                            "id": self._id,
+                            "method": method,
+                            "params": params or [],
+                        }
                         r = requests.post(self.url, json=payload, timeout=self.timeout)
                         r.raise_for_status()
                         data = r.json()
                         if "error" in data and data["error"]:
-                            raise _SdkError(f"RPC error {data['error'].get('code')}: {data['error'].get('message')}")
+                            raise _SdkError(
+                                f"RPC error {data['error'].get('code')}: {data['error'].get('message')}"
+                            )
                         return data["result"]
 
                 self._client = _ReqWrapper(url, timeout)
@@ -185,6 +198,7 @@ class _Signer:
       - Dilithium3 (default)
       - SPHINCS+ SHAKE-128s
     """
+
     def __init__(self, algo: str, account_index: int = 0):
         self.algo = (algo or "dilithium3").lower()
         self.account_index = account_index
@@ -195,26 +209,39 @@ class _Signer:
         # Try generic Signer class first
         try:
             from omni_sdk.wallet.signer import Signer  # type: ignore
+
             if hasattr(Signer, "from_mnemonic"):
-                return Signer.from_mnemonic(mnemonic, alg=algo, account_index=account_index)
+                return Signer.from_mnemonic(
+                    mnemonic, alg=algo, account_index=account_index
+                )
         except Exception:
             pass
 
         # Specific classes
         try:
             if algo.startswith("dilithium"):
-                from omni_sdk.wallet.signer import Dilithium3Signer  # type: ignore
-                return Dilithium3Signer.from_mnemonic(mnemonic, account_index=account_index)
+                from omni_sdk.wallet.signer import \
+                    Dilithium3Signer  # type: ignore
+
+                return Dilithium3Signer.from_mnemonic(
+                    mnemonic, account_index=account_index
+                )
             if algo.startswith("sphincs"):
-                from omni_sdk.wallet.signer import SphincsShake128sSigner  # type: ignore
-                return SphincsShake128sSigner.from_mnemonic(mnemonic, account_index=account_index)
+                from omni_sdk.wallet.signer import \
+                    SphincsShake128sSigner  # type: ignore
+
+                return SphincsShake128sSigner.from_mnemonic(
+                    mnemonic, account_index=account_index
+                )
         except Exception as exc:
             raise _SdkError(f"Could not initialize signer ({algo}): {exc}") from exc
 
         raise _SdkError("No compatible signer in omni_sdk.wallet.signer")
 
     @classmethod
-    def from_mnemonic(cls, mnemonic: str, algo: str = "dilithium3", account_index: int = 0) -> "_Signer":
+    def from_mnemonic(
+        cls, mnemonic: str, algo: str = "dilithium3", account_index: int = 0
+    ) -> "_Signer":
         s = cls(algo=algo, account_index=account_index)
         s._signer = cls._from_mnemonic_via_sdk(mnemonic, algo, account_index)
         return s
@@ -230,16 +257,23 @@ class _Signer:
         # derive from pubkey if needed
         try:
             from omni_sdk.address import address_from_pubkey  # type: ignore
+
             pub = self.public_key_bytes()
             return address_from_pubkey(self.algo, pub)
         except Exception:
-            raise _SdkError("Signer does not expose an address property and address_from_pubkey is not available")
+            raise _SdkError(
+                "Signer does not expose an address property and address_from_pubkey is not available"
+            )
 
     def public_key_bytes(self) -> bytes:
         for attr in ("public_key", "pubkey", "pub_key"):
             if hasattr(self._signer, attr):
                 v = getattr(self._signer, attr)
-                return v if isinstance(v, (bytes, bytearray)) else (v() if callable(v) else bytes(v))
+                return (
+                    v
+                    if isinstance(v, (bytes, bytearray))
+                    else (v() if callable(v) else bytes(v))
+                )
         if hasattr(self._signer, "export_public_key"):
             return self._signer.export_public_key()
         raise _SdkError("Cannot obtain public key bytes from signer")
@@ -259,19 +293,28 @@ class _Signer:
             # fallthrough: some signers return (sig, pubkey)
             if isinstance(res, (tuple, list)) and len(res) == 2:
                 sig, pub = res
-                return {"alg_id": getattr(s, "alg_id", self.algo), "pubkey": pub, "signature": sig}
+                return {
+                    "alg_id": getattr(s, "alg_id", self.algo),
+                    "pubkey": pub,
+                    "signature": sig,
+                }
         # Known method names
         for meth in ("sign_detached", "sign_message"):
             if hasattr(s, meth):
                 sig = getattr(s, meth)(sign_bytes)
                 pub = self.public_key_bytes()
-                return {"alg_id": getattr(s, "alg_id", self.algo), "pubkey": pub, "signature": sig}
+                return {
+                    "alg_id": getattr(s, "alg_id", self.algo),
+                    "pubkey": pub,
+                    "signature": sig,
+                }
         raise _SdkError("Signer lacks a compatible sign(sign_bytes) method")
 
 
 # ---------------------------------------------------------------------------
 # Package I/O
 # ---------------------------------------------------------------------------
+
 
 def _load_manifest(pkg_dir: Path) -> Dict[str, Any]:
     mpath = pkg_dir / "manifest.json"
@@ -283,7 +326,9 @@ def _load_manifest(pkg_dir: Path) -> Dict[str, Any]:
         raise _SdkError(f"Failed to parse manifest.json: {exc}") from exc
 
 
-def _resolve_code_blob(pkg_dir: Path, manifest: Dict[str, Any]) -> Tuple[Optional[Path], Optional[bytes]]:
+def _resolve_code_blob(
+    pkg_dir: Path, manifest: Dict[str, Any]
+) -> Tuple[Optional[Path], Optional[bytes]]:
     # Expect manifest["code"] to describe the code object
     code = manifest.get("code") or {}
     path_hint = code.get("path") or code.get("file") or code.get("blob")
@@ -296,11 +341,13 @@ def _resolve_code_blob(pkg_dir: Path, manifest: Dict[str, Any]) -> Tuple[Optiona
     if "bytes" in code and isinstance(code["bytes"], str):
         try:
             import binascii
+
             # Try hex first; if fails, try base64
             try:
                 return None, binascii.unhexlify(code["bytes"].removeprefix("0x"))
             except Exception:
                 import base64
+
                 return None, base64.b64decode(code["bytes"])
         except Exception as exc:
             raise _SdkError(f"Unable to decode embedded code bytes: {exc}") from exc
@@ -310,6 +357,7 @@ def _resolve_code_blob(pkg_dir: Path, manifest: Dict[str, Any]) -> Tuple[Optiona
 # ---------------------------------------------------------------------------
 # High-level deploy via omni_sdk.contracts.deployer (if available)
 # ---------------------------------------------------------------------------
+
 
 def _sdk_deploy_via_deployer(
     rpc: _Rpc,
@@ -322,10 +370,13 @@ def _sdk_deploy_via_deployer(
     timeout: float,
 ) -> Dict[str, Any]:
     try:
-        from omni_sdk.contracts.deployer import deploy_package, Deployer  # type: ignore
+        from omni_sdk.contracts.deployer import (Deployer,  # type: ignore
+                                                 deploy_package)
     except Exception:
         # Fallback to generic path
-        return _sdk_deploy_fallback(rpc, chain_id, signer, pkg_dir, gas_price, gas_limit, wait, timeout)
+        return _sdk_deploy_fallback(
+            rpc, chain_id, signer, pkg_dir, gas_price, gas_limit, wait, timeout
+        )
 
     manifest = _load_manifest(pkg_dir)
     code_path, code_bytes = _resolve_code_blob(pkg_dir, manifest)
@@ -336,9 +387,14 @@ def _sdk_deploy_via_deployer(
             # Common signature variants:
             # deploy_package(rpc_url, chain_id, pkg_dir, signer=..., gas_price=..., gas_limit=..., wait=True, timeout=...)
             return deploy_package(  # type: ignore
-                rpc.url, chain_id, str(pkg_dir),
-                signer=signer._signer, gas_price=gas_price, gas_limit=gas_limit,
-                wait=wait, timeout=timeout,
+                rpc.url,
+                chain_id,
+                str(pkg_dir),
+                signer=signer._signer,
+                gas_price=gas_price,
+                gas_limit=gas_limit,
+                wait=wait,
+                timeout=timeout,
             )
     except TypeError:
         pass
@@ -350,21 +406,36 @@ def _sdk_deploy_via_deployer(
         d = Deployer(rpc_url=rpc.url, chain_id=chain_id, signer=signer._signer)  # type: ignore
         if hasattr(d, "deploy_dir"):
             # deploy_dir(pkg_dir, gas_price=?, gas_limit=?, wait=?, timeout=?)
-            return d.deploy_dir(str(pkg_dir), gas_price=gas_price, gas_limit=gas_limit, wait=wait, timeout=timeout)
+            return d.deploy_dir(
+                str(pkg_dir),
+                gas_price=gas_price,
+                gas_limit=gas_limit,
+                wait=wait,
+                timeout=timeout,
+            )
         if hasattr(d, "deploy"):
-            return d.deploy(manifest=manifest, code_path=str(code_path) if code_path else None,
-                            code_bytes=code_bytes, gas_price=gas_price, gas_limit=gas_limit,
-                            wait=wait, timeout=timeout)
+            return d.deploy(
+                manifest=manifest,
+                code_path=str(code_path) if code_path else None,
+                code_bytes=code_bytes,
+                gas_price=gas_price,
+                gas_limit=gas_limit,
+                wait=wait,
+                timeout=timeout,
+            )
     except Exception as exc:
         raise _SdkError(f"Deployer API failed: {exc}") from exc
 
     # Fall back
-    return _sdk_deploy_fallback(rpc, chain_id, signer, pkg_dir, gas_price, gas_limit, wait, timeout)
+    return _sdk_deploy_fallback(
+        rpc, chain_id, signer, pkg_dir, gas_price, gas_limit, wait, timeout
+    )
 
 
 # ---------------------------------------------------------------------------
 # Fallback builder path (SDK primitives: build → encode → sign → send)
 # ---------------------------------------------------------------------------
+
 
 def _sdk_deploy_fallback(
     rpc: _Rpc,
@@ -393,6 +464,7 @@ def _sdk_deploy_fallback(
     try:
         # Prefer omni_sdk.tx.build API
         from omni_sdk.tx import build as tx_build  # type: ignore
+
         # Common variants:
         # build.deploy(manifest, code_bytes|code_path, sender, nonce, chain_id, gas_price=?, gas_limit=?)
         build_fn = None
@@ -405,25 +477,48 @@ def _sdk_deploy_fallback(
         tx_obj = None
         try:
             if code_bytes is not None:
-                tx_obj = build_fn(manifest=manifest, code_bytes=code_bytes,
-                                  sender=sender, nonce=nonce, chain_id=chain_id,
-                                  gas_price=gas_price, gas_limit=gas_limit)
+                tx_obj = build_fn(
+                    manifest=manifest,
+                    code_bytes=code_bytes,
+                    sender=sender,
+                    nonce=nonce,
+                    chain_id=chain_id,
+                    gas_price=gas_price,
+                    gas_limit=gas_limit,
+                )
             else:
-                tx_obj = build_fn(manifest=manifest, code_path=str(code_path) if code_path else None,
-                                  sender=sender, nonce=nonce, chain_id=chain_id,
-                                  gas_price=gas_price, gas_limit=gas_limit)
+                tx_obj = build_fn(
+                    manifest=manifest,
+                    code_path=str(code_path) if code_path else None,
+                    sender=sender,
+                    nonce=nonce,
+                    chain_id=chain_id,
+                    gas_price=gas_price,
+                    gas_limit=gas_limit,
+                )
         except TypeError:
             # Try positional signature fallback
             if code_bytes is not None:
-                tx_obj = build_fn(manifest, code_bytes, sender, nonce, chain_id, gas_price, gas_limit)
+                tx_obj = build_fn(
+                    manifest, code_bytes, sender, nonce, chain_id, gas_price, gas_limit
+                )
             else:
-                tx_obj = build_fn(manifest, str(code_path) if code_path else None, sender, nonce, chain_id, gas_price, gas_limit)
+                tx_obj = build_fn(
+                    manifest,
+                    str(code_path) if code_path else None,
+                    sender,
+                    nonce,
+                    chain_id,
+                    gas_price,
+                    gas_limit,
+                )
     except Exception as exc:
         raise _SdkError(f"Failed to build deploy tx: {exc}") from exc
 
     # 3) Encode SignBytes and sign
     try:
         from omni_sdk.tx import encode as tx_encode  # type: ignore
+
         get_sign_bytes = None
         for name in ("sign_bytes", "get_sign_bytes", "encode_sign_bytes"):
             if hasattr(tx_encode, name):
@@ -468,6 +563,7 @@ def _sdk_deploy_fallback(
     try:
         # Most nodes expose tx.sendRawTransaction(hex|base64|bin). Prefer hex.
         import binascii
+
         raw_hex = "0x" + binascii.hexlify(tx_bytes).decode()
         tx_hash = rpc.call("tx.sendRawTransaction", [raw_hex])
     except Exception as exc:
@@ -481,7 +577,9 @@ def _sdk_deploy_fallback(
             try:
                 receipt = rpc.call("tx.getTransactionReceipt", [tx_hash])
                 if receipt:
-                    contract_addr = receipt.get("contractAddress") or receipt.get("contract_address")
+                    contract_addr = receipt.get("contractAddress") or receipt.get(
+                        "contract_address"
+                    )
                     break
             except Exception:
                 pass
@@ -503,7 +601,10 @@ def _sdk_deploy_fallback(
 # Registry writer
 # ---------------------------------------------------------------------------
 
-def _write_deploy_registry(chain_id: int, result: Dict[str, Any], manifest: Dict[str, Any]) -> Path:
+
+def _write_deploy_registry(
+    chain_id: int, result: Dict[str, Any], manifest: Dict[str, Any]
+) -> Path:
     root = _maybe_find_project_root() if _maybe_find_project_root else _project_root()
     reg_dir = root / "contracts" / "build" / "deployments"
     ensure_dir(reg_dir)
@@ -538,26 +639,66 @@ def _write_deploy_registry(chain_id: int, result: Dict[str, Any], manifest: Dict
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def _parse_args(argv=None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="contracts.tools.deploy",
         description="Deploy a compiled contract package via omni_sdk (Animica).",
     )
-    p.add_argument("--package", type=Path, required=True, help="Path to package directory (contains manifest.json)")
-    p.add_argument("--rpc", type=str, default=None, help="RPC URL (e.g., http://127.0.0.1:8545)")
+    p.add_argument(
+        "--package",
+        type=Path,
+        required=True,
+        help="Path to package directory (contains manifest.json)",
+    )
+    p.add_argument(
+        "--rpc", type=str, default=None, help="RPC URL (e.g., http://127.0.0.1:8545)"
+    )
     p.add_argument("--chain-id", type=int, default=None, help="Chain ID (e.g., 1337)")
-    p.add_argument("--mnemonic", type=str, default=None, help="Deployer mnemonic (can also come from DEPLOYER_MNEMONIC)")
-    p.add_argument("--alg", type=str, default=None, help="PQ alg: dilithium3 (default) or sphincs_shake_128s")
-    p.add_argument("--account-index", type=int, default=0, help="HD account index (default: 0)")
+    p.add_argument(
+        "--mnemonic",
+        type=str,
+        default=None,
+        help="Deployer mnemonic (can also come from DEPLOYER_MNEMONIC)",
+    )
+    p.add_argument(
+        "--alg",
+        type=str,
+        default=None,
+        help="PQ alg: dilithium3 (default) or sphincs_shake_128s",
+    )
+    p.add_argument(
+        "--account-index", type=int, default=0, help="HD account index (default: 0)"
+    )
 
-    p.add_argument("--gas-price", type=int, default=None, help="Override gas price (wei-like units)")
+    p.add_argument(
+        "--gas-price",
+        type=int,
+        default=None,
+        help="Override gas price (wei-like units)",
+    )
     p.add_argument("--gas-limit", type=int, default=None, help="Override gas limit")
 
-    p.add_argument("--wait", action="store_true", help="Wait for receipt and contract address")
-    p.add_argument("--timeout", type=float, default=120.0, help="Wait timeout seconds (default: 120)")
+    p.add_argument(
+        "--wait", action="store_true", help="Wait for receipt and contract address"
+    )
+    p.add_argument(
+        "--timeout",
+        type=float,
+        default=120.0,
+        help="Wait timeout seconds (default: 120)",
+    )
 
-    p.add_argument("--no-registry", action="store_true", help="Do not write deployments registry file")
-    p.add_argument("--json", action="store_true", help="Print machine-readable JSON result to stdout")
+    p.add_argument(
+        "--no-registry",
+        action="store_true",
+        help="Do not write deployments registry file",
+    )
+    p.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON result to stdout",
+    )
 
     return p.parse_args(argv)
 
@@ -568,16 +709,23 @@ def main(argv=None) -> int:
 
     pkg_dir = args.package.resolve()
     if not pkg_dir.is_dir():
-        print(f"[deploy] ERROR: package directory not found: {pkg_dir}", file=sys.stderr)
+        print(
+            f"[deploy] ERROR: package directory not found: {pkg_dir}", file=sys.stderr
+        )
         return 2
 
     rpc_url = args.rpc or os.environ.get("RPC_URL")
     if not rpc_url:
-        print("[deploy] ERROR: RPC URL not provided (use --rpc or RPC_URL)", file=sys.stderr)
+        print(
+            "[deploy] ERROR: RPC URL not provided (use --rpc or RPC_URL)",
+            file=sys.stderr,
+        )
         return 2
 
     # Chain ID: CLI > ENV > RPC (chain.getChainId or chain.getParams)
-    chain_id: Optional[int] = args.chain_id or (int(os.environ.get("CHAIN_ID", "0")) or None)
+    chain_id: Optional[int] = args.chain_id or (
+        int(os.environ.get("CHAIN_ID", "0")) or None
+    )
     rpc = _Rpc(rpc_url, timeout=15.0)
 
     if chain_id is None:
@@ -587,19 +735,29 @@ def main(argv=None) -> int:
             try:
                 params = rpc.call("chain.getParams", [])
                 # Common nests: params["chainId"] or params["chain"]["id"]
-                chain_id = int(params.get("chainId") or (params.get("chain") or {}).get("id"))
+                chain_id = int(
+                    params.get("chainId") or (params.get("chain") or {}).get("id")
+                )
             except Exception as exc:
-                print(f"[deploy] ERROR: could not determine chainId via RPC: {exc}", file=sys.stderr)
+                print(
+                    f"[deploy] ERROR: could not determine chainId via RPC: {exc}",
+                    file=sys.stderr,
+                )
                 return 2
 
     mnemonic = args.mnemonic or os.environ.get("DEPLOYER_MNEMONIC")
     if not mnemonic:
-        print("[deploy] ERROR: mnemonic not provided (use --mnemonic or DEPLOYER_MNEMONIC)", file=sys.stderr)
+        print(
+            "[deploy] ERROR: mnemonic not provided (use --mnemonic or DEPLOYER_MNEMONIC)",
+            file=sys.stderr,
+        )
         return 2
 
     alg = (args.alg or os.environ.get("PQ_ALG") or "dilithium3").lower()
     try:
-        signer = _Signer.from_mnemonic(mnemonic, algo=alg, account_index=args.account_index)
+        signer = _Signer.from_mnemonic(
+            mnemonic, algo=alg, account_index=args.account_index
+        )
     except Exception as exc:
         print(f"[deploy] ERROR: failed to init signer: {exc}", file=sys.stderr)
         return 2
@@ -637,7 +795,11 @@ def main(argv=None) -> int:
     txh = result.get("txHash")
     addr = result.get("contractAddress")
     if args.json:
-        print(canonical_json_str({"txHash": txh, "contractAddress": addr, "result": result}))
+        print(
+            canonical_json_str(
+                {"txHash": txh, "contractAddress": addr, "result": result}
+            )
+        )
     else:
         print(f"txHash: {txh}")
         if addr:

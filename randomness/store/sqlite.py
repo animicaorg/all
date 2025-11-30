@@ -29,7 +29,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Generator, Iterable, Optional, Tuple
 
-
 # --- KeyValue Protocol (imported only for typing to avoid runtime coupling) --
 
 try:  # Prefer the shared Protocol from randomness.store if present.
@@ -48,6 +47,7 @@ except Exception:  # pragma: no cover
 
 
 # --- Helpers -----------------------------------------------------------------
+
 
 def _ensure_dir(path: str) -> None:
     d = os.path.dirname(os.path.abspath(path))
@@ -96,6 +96,7 @@ def _next_prefix(prefix: bytes) -> Optional[bytes]:
 
 
 # --- Implementation -----------------------------------------------------------
+
 
 @dataclass
 class SQLiteKeyValue(KeyValue):
@@ -155,9 +156,14 @@ class SQLiteKeyValue(KeyValue):
     # --- KV API --------------------------------------------------------------
 
     def put(self, key: bytes, value: bytes) -> None:
-        if not isinstance(key, (bytes, bytearray)) or not isinstance(value, (bytes, bytearray)):
+        if not isinstance(key, (bytes, bytearray)) or not isinstance(
+            value, (bytes, bytearray)
+        ):
             raise TypeError("key and value must be bytes")
-        self._conn.execute("INSERT OR REPLACE INTO kv(key, value) VALUES(?, ?)", (bytes(key), bytes(value)))
+        self._conn.execute(
+            "INSERT OR REPLACE INTO kv(key, value) VALUES(?, ?)",
+            (bytes(key), bytes(value)),
+        )
 
     def get(self, key: bytes) -> Optional[bytes]:
         cur = self._conn.execute("SELECT value FROM kv WHERE key = ?", (key,))
@@ -177,7 +183,9 @@ class SQLiteKeyValue(KeyValue):
         """
         upper = _next_prefix(prefix)
         if upper is not None:
-            sql = "SELECT key, value FROM kv WHERE key >= ? AND key < ? ORDER BY key ASC"
+            sql = (
+                "SELECT key, value FROM kv WHERE key >= ? AND key < ? ORDER BY key ASC"
+            )
             args = (prefix, upper)
         else:
             sql = "SELECT key, value FROM kv WHERE key >= ? ORDER BY key ASC"

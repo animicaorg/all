@@ -36,6 +36,7 @@ IntoBytes = Union[BytesLike, HexStr, int, bool]
 # Errors
 # ---------------------------------------------------------------------------
 
+
 class BytesError(ValueError):
     """Raised on invalid hex/bytes conversions or size violations."""
 
@@ -43,6 +44,7 @@ class BytesError(ValueError):
 # ---------------------------------------------------------------------------
 # Core predicates and small utilities
 # ---------------------------------------------------------------------------
+
 
 def is_byteslike(v: object) -> bool:
     """Return True if *v* is bytes or bytearray."""
@@ -64,7 +66,9 @@ def add_0x(s: str) -> str:
     return s if has_0x_prefix(s) else "0x" + s
 
 
-def is_hex_str(s: str, *, allow_prefix: bool = True, even: Optional[bool] = None) -> bool:
+def is_hex_str(
+    s: str, *, allow_prefix: bool = True, even: Optional[bool] = None
+) -> bool:
     """
     Heuristically validate a hex string.
 
@@ -97,6 +101,7 @@ def is_hex_str(s: str, *, allow_prefix: bool = True, even: Optional[bool] = None
 # ---------------------------------------------------------------------------
 # Hex <-> bytes canonical converters
 # ---------------------------------------------------------------------------
+
 
 def normalize_hex(
     h: HexStr,
@@ -158,7 +163,9 @@ def hex_to_bytes(h: HexStr, *, allow_odd: bool = True) -> bytes:
         raise BytesError(f"hex_to_bytes: {e}") from e
 
 
-def bytes_to_hex(b: BytesLike, *, prefix: bool = True, lowercase: bool = True) -> HexStr:
+def bytes_to_hex(
+    b: BytesLike, *, prefix: bool = True, lowercase: bool = True
+) -> HexStr:
     """
     Convert bytes/bytearray to hex string with canonical options.
     """
@@ -173,6 +180,7 @@ def bytes_to_hex(b: BytesLike, *, prefix: bool = True, lowercase: bool = True) -
 # ---------------------------------------------------------------------------
 # Integer <-> bytes (minimal big-endian, unsigned)
 # ---------------------------------------------------------------------------
+
 
 def int_to_be(n: int, *, min_len: int = 1) -> bytes:
     """
@@ -204,6 +212,7 @@ def be_to_int(b: BytesLike) -> int:
 # ---------------------------------------------------------------------------
 # High-level normalizers (primary entrypoints for ABI args)
 # ---------------------------------------------------------------------------
+
 
 def bool_flag(v: bool) -> bytes:
     """Return b'\\x01' for True and b'\\x00' for False."""
@@ -287,7 +296,10 @@ def to_fixed_bytes(
 # Size guards & composition helpers
 # ---------------------------------------------------------------------------
 
-def ensure_len(b: BytesLike, *, min_len: int = 0, max_len: Optional[int] = None) -> None:
+
+def ensure_len(
+    b: BytesLike, *, min_len: int = 0, max_len: Optional[int] = None
+) -> None:
     """
     Validate that *b* length is within [min_len, max_len] (if provided).
 

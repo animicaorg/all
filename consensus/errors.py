@@ -30,10 +30,11 @@ from typing import Any, Dict, Mapping, Optional
 
 class ErrorCode(IntEnum):
     """Stable error codes for consensus-layer exceptions."""
+
     CONSENSUS_GENERIC = 2000
-    POLICY            = 2001
-    THETA_SCHEDULE    = 2002
-    NULLIFIER         = 2003
+    POLICY = 2001
+    THETA_SCHEDULE = 2002
+    NULLIFIER = 2003
 
 
 class ConsensusError(Exception):
@@ -188,10 +189,14 @@ class ThetaScheduleError(ConsensusError):
             base["height"] = height
         if context:
             base.update(context)
-        super().__init__(message, code=ErrorCode.THETA_SCHEDULE, context=base, cause=cause)
+        super().__init__(
+            message, code=ErrorCode.THETA_SCHEDULE, context=base, cause=cause
+        )
 
     @classmethod
-    def invalid_window(cls, *, window: int, height: Optional[int] = None) -> "ThetaScheduleError":
+    def invalid_window(
+        cls, *, window: int, height: Optional[int] = None
+    ) -> "ThetaScheduleError":
         return cls(
             "Theta retarget window must be > 0",
             window=window,

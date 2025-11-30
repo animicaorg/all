@@ -4,24 +4,12 @@ import asyncio
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import (
-    AsyncIterator,
-    Callable,
-    Deque,
-    Dict,
-    Iterable,
-    List,
-    Optional,
-    Protocol,
-    Sequence,
-    Set,
-    Tuple,
-    runtime_checkable,
-)
+from typing import (AsyncIterator, Callable, Deque, Dict, Iterable, List,
+                    Optional, Protocol, Sequence, Set, Tuple,
+                    runtime_checkable)
 
 # Shared knobs & types expected to be exported by p2p/sync/__init__.py
 from . import DEFAULT_MAX_IN_FLIGHT, DEFAULT_REQUEST_TIMEOUT_SEC, Hash
-
 
 # ======================================================================================
 # Shares sync overview
@@ -41,17 +29,19 @@ from . import DEFAULT_MAX_IN_FLIGHT, DEFAULT_REQUEST_TIMEOUT_SEC, Hash
 # Protocols / adapter integration
 # --------------------------------
 
+
 @runtime_checkable
 class ShareLike(Protocol):
     """Minimal shape a share object must have if materialized locally."""
-    share_id: Hash   # canonical identifier (e.g., sha3-256 over envelope)
-    raw: bytes       # canonical CBOR bytes (or wire form)
+
+    share_id: Hash  # canonical identifier (e.g., sha3-256 over envelope)
+    raw: bytes  # canonical CBOR bytes (or wire form)
 
 
 class ShareAdmissionResult:
-    ADDED = "added"          # newly admitted share
+    ADDED = "added"  # newly admitted share
     DUPLICATE = "duplicate"  # already known
-    REJECTED = "rejected"    # structurally invalid, expired, wrong header, etc.
+    REJECTED = "rejected"  # structurally invalid, expired, wrong header, etc.
 
 
 @runtime_checkable
@@ -62,6 +52,7 @@ class SharePoolAdapter(Protocol):
       • Maintain a small rolling window keyed by share_id/nullifier
       • Optionally expose recent local shares for announces
     """
+
     async def has_share(self, share_id: Hash) -> bool: ...
     async def admit_share(self, raw: bytes) -> Tuple[str, Optional[Hash]]:
         """
@@ -69,6 +60,7 @@ class SharePoolAdapter(Protocol):
         status ∈ {ShareAdmissionResult.ADDED, DUPLICATE, REJECTED}.
         """
         ...
+
     async def iter_local_announces(self) -> AsyncIterator[Hash]:
         """Yield share_ids of locally-originated shares to announce (may stream indefinitely)."""
         ...
@@ -80,13 +72,16 @@ class ShareFetcher(Protocol):
     Transport-agnostic fetcher. Implementations choose peers, issue GETDATA/SHARES,
     handle timeouts, and return bytes keyed by share_id for the subset it could fetch.
     """
-    async def get_shares(self, share_ids: Sequence[Hash], timeout_sec: float) -> Dict[Hash, bytes]:
-        ...
+
+    async def get_shares(
+        self, share_ids: Sequence[Hash], timeout_sec: float
+    ) -> Dict[Hash, bytes]: ...
 
 
 # ---------------------------
 # Utilities (TTL structures)
 # ---------------------------
+
 
 @dataclass(slots=True)
 class TTLSet:
@@ -143,6 +138,7 @@ class PerPeerRecentlySent:
 # Config & Stats
 # ---------------------------
 
+
 @dataclass(slots=True)
 class ShareSyncConfig:
     request_timeout_sec: float = DEFAULT_REQUEST_TIMEOUT_SEC
@@ -150,8 +146,12 @@ class ShareSyncConfig:
     fetch_batch_size: int = 128
     inv_batch_size: int = 1024
     max_retries: int = 2
-    seen_ttl_sec: float = 2 * 60        # suppress re-fetching for 2 minutes (shares are short-lived)
-    per_peer_suppress_sec: float = 20.0 # don't re-announce same share to same peer for 20s
+    seen_ttl_sec: float = (
+        2 * 60
+    )  # suppress re-fetching for 2 minutes (shares are short-lived)
+    per_peer_suppress_sec: float = (
+        20.0  # don't re-announce same share to same peer for 20s
+    )
     per_peer_cap: int = 4096
     rebroadcast_interval_sec: float = 2.0
     max_rebroadcast_batch: int = 1024
@@ -176,6 +176,7 @@ class ShareSyncStats:
 # ---------------------------
 # Core: ShareSync
 # ---------------------------
+
 
 class ShareSync:
     """
@@ -265,20 +266,26 @@ class ShareSync:
     def unregister_peer(self, peer_id: str) -> None:
         self._peers.discard(peer_id)
 
-    async def rebroadcast_task(self, send_inv: Callable[[str, Sequence[Hash]], "asyncio.Future[None]"]) -> None:
+    async def rebroadcast_task(
+        self, send_inv: Callable[[str, Sequence[Hash]], "asyncio.Future[None]"]
+    ) -> None:
         """
         Periodically polls the share pool for local announces and sends INV to peers.
         """
         try:
             while not self._stop.is_set():
                 batch: List[Hash] = []
-                async for sid in self._bounded_iter(self.pool.iter_local_announces(), self.cfg.max_rebroadcast_batch):
+                async for sid in self._bounded_iter(
+                    self.pool.iter_local_announces(), self.cfg.max_rebroadcast_batch
+                ):
                     batch.append(sid)
 
                 if batch and self._peers:
                     await self._broadcast_batch(batch, send_inv)
 
-                await asyncio.wait_for(self._stop.wait(), timeout=self.cfg.rebroadcast_interval_sec)
+                await asyncio.wait_for(
+                    self._stop.wait(), timeout=self.cfg.rebroadcast_interval_sec
+                )
         except asyncio.TimeoutError:
             # periodic wake-up
             return await self.rebroadcast_task(send_inv)
@@ -398,7 +405,9 @@ class ShareSync:
     # --------- Helpers ---------
 
     @staticmethod
-    async def _bounded_iter(ait: AsyncIterator[Hash], limit: int) -> AsyncIterator[Hash]:
+    async def _bounded_iter(
+        ait: AsyncIterator[Hash], limit: int
+    ) -> AsyncIterator[Hash]:
         i = 0
         async for x in ait:
             yield x
@@ -412,6 +421,7 @@ class ShareSync:
 # ---------------------------
 
 if __name__ == "__main__":
+
     class _StubPool:
         def __init__(self) -> None:
             self._set: Set[Hash] = set()
@@ -436,7 +446,9 @@ if __name__ == "__main__":
                 yield self._local.popleft()
 
     class _StubFetcher:
-        async def get_shares(self, ids: Sequence[Hash], timeout_sec: float) -> Dict[Hash, bytes]:
+        async def get_shares(
+            self, ids: Sequence[Hash], timeout_sec: float
+        ) -> Dict[Hash, bytes]:
             await asyncio.sleep(0.01)
             # Echo back "raw" body == id for demo
             return {sid: sid for sid in ids}

@@ -6,18 +6,29 @@ from typing import Any, Iterable, Optional
 import pytest
 
 pool_mod = pytest.importorskip("mempool.pool", reason="mempool.pool module not found")
-reorg_mod = pytest.importorskip("mempool.reorg", reason="mempool.reorg module not found")
+reorg_mod = pytest.importorskip(
+    "mempool.reorg", reason="mempool.reorg module not found"
+)
 
 
 # -------------------------
 # Helpers & scaffolding
 # -------------------------
 
+
 class FakeTx:
     """
     Minimal tx object for mempool tests.
     """
-    def __init__(self, sender: bytes, nonce: int, fee: int, gas: int = 21_000, size_bytes: int = 120):
+
+    def __init__(
+        self,
+        sender: bytes,
+        nonce: int,
+        fee: int,
+        gas: int = 21_000,
+        size_bytes: int = 120,
+    ):
         self.sender = sender
         self.nonce = nonce
         self.fee = fee
@@ -28,11 +39,11 @@ class FakeTx:
         # encoded size
         self.size_bytes = size_bytes
         # a stable-ish hash for lookups
-        self.hash = (sender + nonce.to_bytes(8, "big"))[:32] or b"\xF1" * 32
+        self.hash = (sender + nonce.to_bytes(8, "big"))[:32] or b"\xf1" * 32
         self.tx_hash = self.hash  # common alias
 
     def __bytes__(self) -> bytes:
-        return b"\xEE" * self.size_bytes
+        return b"\xee" * self.size_bytes
 
 
 ALICE = b"A" * 20
@@ -54,15 +65,32 @@ def _monkeypatch_validation_and_priority(monkeypatch: pytest.MonkeyPatch) -> Non
     try:
         validate = pytest.importorskip("mempool.validate")
         for name in (
-            "validate_tx", "fast_stateless_check", "stateless_validate", "validate",
-            "check_size", "check_chain_id", "check_gas_limits",
+            "validate_tx",
+            "fast_stateless_check",
+            "stateless_validate",
+            "validate",
+            "check_size",
+            "check_chain_id",
+            "check_gas_limits",
         ):
             if hasattr(validate, name):
                 monkeypatch.setattr(validate, name, lambda *a, **k: True, raising=True)
-        for name in ("estimate_encoded_size", "encoded_size", "tx_encoded_size", "get_encoded_size"):
+        for name in (
+            "estimate_encoded_size",
+            "encoded_size",
+            "tx_encoded_size",
+            "get_encoded_size",
+        ):
             if hasattr(validate, name):
-                monkeypatch.setattr(validate, name, lambda tx: len(bytes(tx)), raising=True)
-        for name in ("precheck_pq_signature", "pq_precheck_verify", "verify_pq_signature", "pq_verify"):
+                monkeypatch.setattr(
+                    validate, name, lambda tx: len(bytes(tx)), raising=True
+                )
+        for name in (
+            "precheck_pq_signature",
+            "pq_precheck_verify",
+            "verify_pq_signature",
+            "pq_verify",
+        ):
             if hasattr(validate, name):
                 monkeypatch.setattr(validate, name, lambda *a, **k: True, raising=True)
     except Exception:
@@ -72,7 +100,9 @@ def _monkeypatch_validation_and_priority(monkeypatch: pytest.MonkeyPatch) -> Non
         priority = pytest.importorskip("mempool.priority")
         for name in ("effective_priority", "priority_of", "calc_effective_priority"):
             if hasattr(priority, name):
-                monkeypatch.setattr(priority, name, lambda tx: getattr(tx, "fee", 0), raising=True)
+                monkeypatch.setattr(
+                    priority, name, lambda tx: getattr(tx, "fee", 0), raising=True
+                )
     except Exception:
         pass
 
@@ -84,8 +114,14 @@ def _make_config(*, max_txs: int | None = None, max_bytes: int | None = None) ->
         mp_config = None
 
     fields = {
-        "max_txs": max_txs, "max_pool_txs": max_txs, "max_items": max_txs, "capacity": max_txs,
-        "max_bytes": max_bytes, "max_pool_bytes": max_bytes, "capacity_bytes": max_bytes, "max_mem_bytes": max_bytes,
+        "max_txs": max_txs,
+        "max_pool_txs": max_txs,
+        "max_items": max_txs,
+        "capacity": max_txs,
+        "max_bytes": max_bytes,
+        "max_pool_bytes": max_bytes,
+        "capacity_bytes": max_bytes,
+        "max_mem_bytes": max_bytes,
     }
 
     if mp_config:
@@ -148,13 +184,16 @@ def _pool_items(pool: Any) -> list[FakeTx]:
             out: list[FakeTx] = []
             for item in seq:
                 if isinstance(item, FakeTx):
-                    out.append(item); continue
+                    out.append(item)
+                    continue
                 if hasattr(item, "tx") and isinstance(item.tx, FakeTx):
-                    out.append(item.tx); continue
+                    out.append(item.tx)
+                    continue
                 if isinstance(item, (tuple, list)):
                     for x in item:
                         if isinstance(x, FakeTx):
-                            out.append(x); break
+                            out.append(x)
+                            break
             if out:
                 return out
     except Exception:
@@ -170,13 +209,16 @@ def _pool_items(pool: Any) -> list[FakeTx]:
             out: list[FakeTx] = []
             for item in data:
                 if isinstance(item, FakeTx):
-                    out.append(item); continue
+                    out.append(item)
+                    continue
                 if hasattr(item, "tx") and isinstance(item.tx, FakeTx):
-                    out.append(item.tx); continue
+                    out.append(item.tx)
+                    continue
                 if isinstance(item, (tuple, list)):
                     for x in item:
                         if isinstance(x, FakeTx):
-                            out.append(x); break
+                            out.append(x)
+                            break
             return out
     pytest.skip("Could not enumerate items from pool; unknown API")
     return []  # pragma: no cover
@@ -236,7 +278,13 @@ def _reinject(pool: Any, reverted_txs: list[FakeTx]) -> None:
     blk = _make_block_like(reverted_txs)
 
     # Module-level functions with pool + txs
-    for name in ("reinject_txs", "reinject", "restore_txs", "readd_txs", "reinject_transactions"):
+    for name in (
+        "reinject_txs",
+        "reinject",
+        "restore_txs",
+        "readd_txs",
+        "reinject_transactions",
+    ):
         fn = _get_attr_any(reorg_mod, [name])
         if callable(fn):
             try:
@@ -305,6 +353,7 @@ def _reinject(pool: Any, reverted_txs: list[FakeTx]) -> None:
 # Tests
 # -------------------------
 
+
 def test_reorg_reinject_basic(monkeypatch: pytest.MonkeyPatch):
     """
     Reorg reinjects reverted transactions back into the pool (no duplicates).
@@ -322,8 +371,12 @@ def test_reorg_reinject_basic(monkeypatch: pytest.MonkeyPatch):
 
     _reinject(pool, [a0, b0])
 
-    assert _contains_sender_nonce(pool, ALICE, 0), "ALICE/0 should be back after reorg reinject"
-    assert _contains_sender_nonce(pool, BOB, 0), "BOB/0 should be back after reorg reinject"
+    assert _contains_sender_nonce(
+        pool, ALICE, 0
+    ), "ALICE/0 should be back after reorg reinject"
+    assert _contains_sender_nonce(
+        pool, BOB, 0
+    ), "BOB/0 should be back after reorg reinject"
 
     # No duplicate entries per (sender, nonce)
     counts = _count_by_sender_nonce(pool)
@@ -353,11 +406,15 @@ def test_reorg_does_not_downgrade_replacements(monkeypatch: pytest.MonkeyPatch):
 
     # The pool should still reflect the higher fee for (ALICE, 0)
     fee_now = _present_fee_for(pool, ALICE, 0)
-    assert fee_now is not None and fee_now >= high.fee, f"replacement downgraded: had {high.fee}, now {fee_now}"
+    assert (
+        fee_now is not None and fee_now >= high.fee
+    ), f"replacement downgraded: had {high.fee}, now {fee_now}"
 
     # Also ensure we don't end up with two entries for the same (sender, nonce)
     counts = _count_by_sender_nonce(pool)
-    assert counts.get((ALICE, 0), 0) == 1, f"duplicate entries for ALICE/0 after reinject: {counts.get((ALICE,0),0)}"
+    assert (
+        counts.get((ALICE, 0), 0) == 1
+    ), f"duplicate entries for ALICE/0 after reinject: {counts.get((ALICE,0),0)}"
 
 
 def test_reorg_reinject_multiple_blocks_and_conflicts(monkeypatch: pytest.MonkeyPatch):

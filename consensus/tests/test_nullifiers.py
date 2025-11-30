@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import typing as t
+
 import pytest
 
 import consensus.nullifiers as mod
 
-
 # ------------------------------- Adaptive Adaptor -------------------------------
+
 
 class _Adaptor:
     """
@@ -28,7 +29,7 @@ class _Adaptor:
             if hasattr(mod, name):
                 cls = getattr(mod, name)
                 # Try ctor(window=) or ctor(ttl=) or bare
-                for kwargs in ({'window': window}, {'ttl': window}, {}):
+                for kwargs in ({"window": window}, {"ttl": window}, {}):
                     try:
                         self.obj = cls(**kwargs)
                         break
@@ -167,11 +168,13 @@ class _Adaptor:
 
 # ------------------------------- Test Utilities ---------------------------------
 
+
 def _hex(i: int) -> str:
     return "0x" + i.to_bytes(8, "big").hex()
 
 
 # ------------------------------------ Tests -------------------------------------
+
 
 def test_reuse_rejected_within_ttl():
     """
@@ -187,7 +190,9 @@ def test_reuse_rejected_within_ttl():
 
     # Immediate reuse at same height must be rejected
     ok2 = A.add(n, 1000)
-    assert not ok2 or A.seen(n), "duplicate insertion should be rejected (ok=False) or already seen"
+    assert not ok2 or A.seen(
+        n
+    ), "duplicate insertion should be rejected (ok=False) or already seen"
 
     # Within window, still rejected
     for h in (1001, 1005, 1031):  # up to h = 1000 + ttl - 1
@@ -238,10 +243,11 @@ def test_window_slides_and_old_entries_drop_out():
         n = _hex(h)
         # advance to end to ensure pruning has a chance
         A.advance(end)
-        assert not A.seen(n), f"nullifier at h={h} should be pruned after sliding beyond TTL"
+        assert not A.seen(
+            n
+        ), f"nullifier at h={h} should be pruned after sliding beyond TTL"
 
     # But the most recent ttl heights should still be present
     for h in range(cutoff + 1, end + 1):
         n = _hex(h)
         assert A.seen(n), f"recent nullifier at h={h} must still be present"
-

@@ -32,12 +32,12 @@ Typical usage
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple, Union, Any
+from typing import Any, Optional, Tuple, Union
 
 # --- Try to use the shared hashing helpers; fall back to local best-effort ----
 try:
-    from ..utils.hash import sha3_256 as _sha3_256  # type: ignore
     from ..utils.hash import domain_hash as _domain_hash  # type: ignore
+    from ..utils.hash import sha3_256 as _sha3_256  # type: ignore
 except Exception:  # pragma: no cover - fallback for standalone usage
     import hashlib
 
@@ -63,6 +63,7 @@ except Exception:  # pragma: no cover - fallback for standalone usage
 try:  # consensus params (iterations, modulus fingerprint)
     from .params import VDFParams, get_params  # type: ignore
 except Exception:  # pragma: no cover
+
     @dataclass(frozen=True)
     class VDFParams:  # minimal stub for type hints
         iterations: int
@@ -75,7 +76,7 @@ except Exception:  # pragma: no cover
 
 
 try:  # round/beacon types
-    from ..types.core import RoundId, BeaconOut  # type: ignore
+    from ..types.core import BeaconOut, RoundId  # type: ignore
 except Exception:  # pragma: no cover
     RoundId = int  # type: ignore
 
@@ -95,6 +96,7 @@ except Exception:  # pragma: no cover
 
 # --- Helpers ------------------------------------------------------------------
 
+
 def _be_u64(n: int) -> bytes:
     return int(n).to_bytes(8, "big", signed=False)
 
@@ -113,13 +115,16 @@ def _params_fingerprint(p: VDFParams) -> bytes:
     """
     # We avoid hashing the raw modulus (it can be big); instead hash its digest.
     mod_fp = _sha3_256(_be_nat(p.modulus_n))
-    return _domain_hash(b"vdf_params",
-                        _be_u64(p.iterations),
-                        mod_fp,
-                        p.backend.encode("ascii", errors="ignore"))
+    return _domain_hash(
+        b"vdf_params",
+        _be_u64(p.iterations),
+        mod_fp,
+        p.backend.encode("ascii", errors="ignore"),
+    )
 
 
 # --- Public API ----------------------------------------------------------------
+
 
 def build_input_seed(
     round_id: RoundId,

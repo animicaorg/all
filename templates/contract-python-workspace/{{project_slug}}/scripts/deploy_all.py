@@ -225,7 +225,9 @@ def read_deployments_index(build_dir: Path) -> Dict[str, Dict[str, object]]:
         return {}
 
 
-def write_deployments_index(build_dir: Path, index: Dict[str, Dict[str, object]]) -> None:
+def write_deployments_index(
+    build_dir: Path, index: Dict[str, Dict[str, object]]
+) -> None:
     idx_path = build_dir / "deployments.json"
     tmp = json.dumps(index, indent=2, sort_keys=True) + "\n"
     idx_path.write_text(tmp, encoding="utf-8")
@@ -242,6 +244,7 @@ def make_signer_from_mnemonic(mnemonic: str, alg: str):
     # Newer SDKs may expose a convenience factory:
     try:
         from omni_sdk.wallet.signer import from_mnemonic  # type: ignore
+
         return from_mnemonic(mnemonic, alg=alg)
     except Exception:
         pass
@@ -285,10 +288,14 @@ def deploy_via_python_sdk(
     # Try several possible public interfaces for compatibility.
     # Preferred: a Deployer class with deploy(manifest, ir_bytes, ...)
     try:
-        from omni_sdk.rpc.http import HttpClient  # type: ignore
         from omni_sdk.contracts.deployer import Deployer  # type: ignore
+        from omni_sdk.rpc.http import HttpClient  # type: ignore
 
-        client = HttpClient(rpc_url) if "http" in HttpClient.__name__.lower() else HttpClient(rpc_url)
+        client = (
+            HttpClient(rpc_url)
+            if "http" in HttpClient.__name__.lower()
+            else HttpClient(rpc_url)
+        )
         with pkg.ir_path.open("rb") as fh:
             ir_bytes = fh.read()
 
@@ -299,7 +306,11 @@ def deploy_via_python_sdk(
             wait=wait_for_receipt,
         )
         # Flexible extraction:
-        tx_hash = getattr(result, "tx_hash", None) or getattr(result, "txHash", None) or result.get("tx_hash")
+        tx_hash = (
+            getattr(result, "tx_hash", None)
+            or getattr(result, "txHash", None)
+            or result.get("tx_hash")
+        )
         address = getattr(result, "address", None) or result.get("address")
         return tx_hash, address, warnings
     except Exception as e:
@@ -308,6 +319,7 @@ def deploy_via_python_sdk(
     # Alternate shape: functional helper deploy_package(...)
     try:
         from omni_sdk.contracts.deployer import deploy_package  # type: ignore
+
         tx_hash, address = deploy_package(
             rpc_url=rpc_url,
             signer=signer,
@@ -324,7 +336,12 @@ def deploy_via_python_sdk(
 
 
 def deploy_via_cli(
-    pkg: PackageInfo, rpc_url: str, chain_id: int, mnemonic: str, alg: str, wait_for_receipt: bool
+    pkg: PackageInfo,
+    rpc_url: str,
+    chain_id: int,
+    mnemonic: str,
+    alg: str,
+    wait_for_receipt: bool,
 ) -> Tuple[Optional[str], Optional[str], List[str]]:
     """
     Fallback path: shell out to the omni-sdk CLI.
@@ -418,7 +435,9 @@ def print_summary(results: List[DeployResult], mode: str = "table") -> None:
     print("=" * cols)
     print("Deployment Summary".center(cols))
     print("=" * cols)
-    header = f"{'CONTRACT':20}  {'STATUS':8}  {'CODE_HASH (sha3-256)':66}  {'ADDRESS':42}"
+    header = (
+        f"{'CONTRACT':20}  {'STATUS':8}  {'CODE_HASH (sha3-256)':66}  {'ADDRESS':42}"
+    )
     print(header)
     print("-" * len(header))
     for r in results:
@@ -449,7 +468,10 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     # Discover packages
     packages = discover_packages(args.build_dir)
     if not packages:
-        print(f"No packages found under {args.build_dir}. Run scripts/build_all.py first.", file=sys.stderr)
+        print(
+            f"No packages found under {args.build_dir}. Run scripts/build_all.py first.",
+            file=sys.stderr,
+        )
         return 1
 
     # Read (or create) deployments index
@@ -476,7 +498,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             and isinstance(prior, dict)
             and str(prior.get("chain_id")) == str(chain_id)
             and isinstance(prior.get("code_hash"), str)
-            and prior["code_hash"].lower().removeprefix("0x") == pkg.code_hash_hex.lower()
+            and prior["code_hash"].lower().removeprefix("0x")
+            == pkg.code_hash_hex.lower()
             and not args.force
         ):
             results.append(
@@ -500,7 +523,11 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         if signer is not None:
             try:
                 tx_hash, address, warns = deploy_via_python_sdk(
-                    pkg, rpc_url=rpc_url, chain_id=chain_id, signer=signer, wait_for_receipt=(not args.no_wait)
+                    pkg,
+                    rpc_url=rpc_url,
+                    chain_id=chain_id,
+                    signer=signer,
+                    wait_for_receipt=(not args.no_wait),
                 )
                 warnings.extend(warns)
             except Exception as e:

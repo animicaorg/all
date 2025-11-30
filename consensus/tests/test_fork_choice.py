@@ -7,8 +7,8 @@ import pytest
 
 import consensus.fork_choice as fc
 
-
 # -------- tolerant pick/extract helpers (handle naming & signature drift) --------
+
 
 def _pick(mod, name: str, alts: list[str]):
     if hasattr(mod, name):
@@ -100,10 +100,13 @@ def _call_choose(prev, candidates, **kwargs):
                     except TypeError:
                         pass
 
-    raise RuntimeError("Could not call fork choice: no compatible entrypoint/signature found")
+    raise RuntimeError(
+        "Could not call fork choice: no compatible entrypoint/signature found"
+    )
 
 
 # --------------------------------- header stub ----------------------------------
+
 
 @dc.dataclass(frozen=True)
 class Hdr:
@@ -129,6 +132,7 @@ class Hdr:
 
 
 # ------------------------------------ tests -------------------------------------
+
 
 def test_longest_chain_wins_basic():
     """Higher height should win when weight difference is not decisive."""
@@ -171,7 +175,9 @@ def _supports_reorg_limits() -> bool:
     return any("reorg" in n.lower() for n in names)
 
 
-@pytest.mark.skipif(not _supports_reorg_limits(), reason="fork_choice reorg-depth controls not exposed")
+@pytest.mark.skipif(
+    not _supports_reorg_limits(), reason="fork_choice reorg-depth controls not exposed"
+)
 def test_reorg_depth_limit_if_supported():
     """
     If implementation exposes a reorg-depth limit, prefer a slightly shorter
@@ -188,11 +194,15 @@ def test_reorg_depth_limit_if_supported():
 
     # Use a strict bound (e.g., 10) so depth=20 is forbidden
     head = _call_choose(prev, [extend, deep_reorg], max_reorg_depth=10)
-    assert head == extend, f"deep reorg beyond limit should be rejected; expected extend, got {head}"
+    assert (
+        head == extend
+    ), f"deep reorg beyond limit should be rejected; expected extend, got {head}"
 
     # With a relaxed bound (e.g., 40), the deeper but taller/weightier candidate may now win
     head2 = _call_choose(prev, [extend, deep_reorg], max_reorg_depth=40)
-    assert head2 == deep_reorg or head2.height == 105, "when allowed, higher candidate should be eligible"
+    assert (
+        head2 == deep_reorg or head2.height == 105
+    ), "when allowed, higher candidate should be eligible"
 
 
 def test_idempotence_and_order_independence():
@@ -208,4 +218,6 @@ def test_idempotence_and_order_independence():
     pick1 = _call_choose(prev, cands)
     pick2 = _call_choose(prev, list(reversed(cands)))
     pick3 = _call_choose(prev, sorted(cands, key=lambda h: (h.height, h.weight)))
-    assert pick1 == pick2 == pick3, f"order independence violated: {pick1}, {pick2}, {pick3}"
+    assert (
+        pick1 == pick2 == pick3
+    ), f"order independence violated: {pick1}, {pick2}, {pick3}"

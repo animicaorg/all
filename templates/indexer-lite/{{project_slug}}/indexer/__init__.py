@@ -42,8 +42,10 @@ from typing import Final
 # --------------------------------------------------------------------------- #
 
 try:  # Python 3.8+ stdlib
-    from importlib.metadata import PackageNotFoundError, version  # type: ignore
+    from importlib.metadata import (PackageNotFoundError,  # type: ignore
+                                    version)
 except Exception:  # pragma: no cover - extremely defensive, older environments
+
     class PackageNotFoundError(Exception):
         pass
 
@@ -82,9 +84,7 @@ def get_version() -> str:
 # Logging helpers
 # --------------------------------------------------------------------------- #
 
-_DEFAULT_LOG_FORMAT: Final[str] = (
-    "%(asctime)s %(levelname)s %(name)s — %(message)s"
-)
+_DEFAULT_LOG_FORMAT: Final[str] = "%(asctime)s %(levelname)s %(name)s — %(message)s"
 
 
 def get_logger(name: str = "indexer") -> logging.Logger:

@@ -32,6 +32,7 @@ These helpers are used by:
 • da.nmt.verify      (to stitch together inclusion checks)
 • da.sampling.verify (to verify sets of samples)
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -44,6 +45,7 @@ Hash = bytes  # convention: 32-byte digests unless caller overrides
 # --------------------------------------------------------------------------- #
 # Hash combiner
 # --------------------------------------------------------------------------- #
+
 
 def default_combine(left: Hash, right: Hash) -> Hash:
     """
@@ -61,6 +63,7 @@ def default_combine(left: Hash, right: Hash) -> Hash:
 # Proof step data structures
 # --------------------------------------------------------------------------- #
 
+
 @dataclass(frozen=True)
 class ProofStep:
     """
@@ -70,6 +73,7 @@ class ProofStep:
          1 if the current hash was on the right (sibling is left).
     sibling: the sibling node's hash bytes.
     """
+
     dir: int  # 0 = current-left, 1 = current-right
     sibling: Hash
 
@@ -88,6 +92,7 @@ class PathStepRef:
     dir: 0 if current hash was left (sibling on right), 1 if current was right.
     ref: index into the `nodes` array (shared across proofs).
     """
+
     dir: int
     ref: int
 
@@ -101,6 +106,7 @@ class PathStepRef:
 # --------------------------------------------------------------------------- #
 # Root / tree building
 # --------------------------------------------------------------------------- #
+
 
 def merkle_root(
     leaf_hashes: Sequence[Hash],
@@ -151,6 +157,7 @@ def merkle_root(
 # Classic (non-compact) proofs
 # --------------------------------------------------------------------------- #
 
+
 def build_proof(
     leaf_hashes: Sequence[Hash],
     index: int,
@@ -194,7 +201,7 @@ def build_proof(
             if i == idx or i + 1 == idx:
                 if idx == i:  # current at left
                     proof.append(ProofStep(dir=0, sibling=right))
-                else:          # current at right
+                else:  # current at right
                     proof.append(ProofStep(dir=1, sibling=left))
 
             next_layer.append(combine(left, right))
@@ -224,7 +231,7 @@ def verify_proof(
     for step in proof:
         if step.dir == 0:  # current at left, sibling at right
             acc = combine(acc, _b(step.sibling))
-        else:              # current at right, sibling at left
+        else:  # current at right, sibling at left
             acc = combine(_b(step.sibling), acc)
         idx //= 2
     return acc == root
@@ -233,6 +240,7 @@ def verify_proof(
 # --------------------------------------------------------------------------- #
 # Compact multi-proof builder / verifier
 # --------------------------------------------------------------------------- #
+
 
 def build_compact_proofs(
     leaf_hashes: Sequence[Hash],
@@ -357,6 +365,7 @@ def verify_compact_proof(
 # --------------------------------------------------------------------------- #
 # Utilities
 # --------------------------------------------------------------------------- #
+
 
 def _b(x: bytes | bytearray | memoryview) -> bytes:
     if isinstance(x, bytes):

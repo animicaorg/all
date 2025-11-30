@@ -51,7 +51,10 @@ __all__ = [
 _LAZY_MAP: Dict[str, tuple[str, str]] = {
     # state_root
     "compute_state_root": ("core.chain.state_root", "compute_state_root"),
-    "compute_state_root_from_items": ("core.chain.state_root", "compute_state_root_from_items"),
+    "compute_state_root_from_items": (
+        "core.chain.state_root",
+        "compute_state_root_from_items",
+    ),
     # fork_choice
     "ForkChoiceParams": ("core.chain.fork_choice", "ForkChoiceParams"),
     "fork_choice": ("core.chain.fork_choice", "fork_choice"),

@@ -112,15 +112,23 @@ def _root(
     lazily-imported subcommands share the same settings).
     """
     effective_rpc = rpc or _env_default("OMNI_SDK_RPC_URL", "http://127.0.0.1:8545")
-    effective_chain = int(chain_id if chain_id is not None else int(_env_default("OMNI_CHAIN_ID", "1")))
-    effective_timeout = float(timeout if timeout is not None else float(_env_default("OMNI_SDK_HTTP_TIMEOUT", "10.0")))
+    effective_chain = int(
+        chain_id if chain_id is not None else int(_env_default("OMNI_CHAIN_ID", "1"))
+    )
+    effective_timeout = float(
+        timeout
+        if timeout is not None
+        else float(_env_default("OMNI_SDK_HTTP_TIMEOUT", "10.0"))
+    )
 
     # Persist to env for submodules that consult env vars
     os.environ["OMNI_SDK_RPC_URL"] = effective_rpc
     os.environ["OMNI_CHAIN_ID"] = str(effective_chain)
     os.environ["OMNI_SDK_HTTP_TIMEOUT"] = str(effective_timeout)
 
-    ctx.obj = Ctx(rpc=effective_rpc, chain_id=effective_chain, timeout=effective_timeout)
+    ctx.obj = Ctx(
+        rpc=effective_rpc, chain_id=effective_chain, timeout=effective_timeout
+    )
 
 
 def _client(ctx: typer.Context) -> RpcClient:
@@ -129,6 +137,7 @@ def _client(ctx: typer.Context) -> RpcClient:
 
 
 # --- Built-in lightweight commands -------------------------------------------
+
 
 @app.command("version")
 def version() -> None:
@@ -140,7 +149,14 @@ def version() -> None:
 def env(ctx: typer.Context) -> None:
     """Show effective RPC URL, chain ID, and timeout."""
     c: Ctx = ctx.obj
-    _print_json({"rpc": c.rpc, "chain_id": c.chain_id, "timeout": c.timeout, "sdk_version": SDK_VERSION})
+    _print_json(
+        {
+            "rpc": c.rpc,
+            "chain_id": c.chain_id,
+            "timeout": c.timeout,
+            "sdk_version": SDK_VERSION,
+        }
+    )
 
 
 @app.command("head")
@@ -158,7 +174,10 @@ def params(ctx: typer.Context) -> None:
 
 
 @app.command("tx")
-def tx(ctx: typer.Context, tx_hash: str = typer.Argument(..., help="Transaction hash (0x...)")) -> None:
+def tx(
+    ctx: typer.Context,
+    tx_hash: str = typer.Argument(..., help="Transaction hash (0x...)"),
+) -> None:
     """
     Look up a transaction by hash.
     """
@@ -167,7 +186,10 @@ def tx(ctx: typer.Context, tx_hash: str = typer.Argument(..., help="Transaction 
 
 
 @app.command("receipt")
-def receipt(ctx: typer.Context, tx_hash: str = typer.Argument(..., help="Transaction hash (0x...)")) -> None:
+def receipt(
+    ctx: typer.Context,
+    tx_hash: str = typer.Argument(..., help="Transaction hash (0x...)"),
+) -> None:
     """Fetch a transaction receipt by hash."""
     res = _client(ctx).call("tx.getTransactionReceipt", [tx_hash])
     _print_json(res)
@@ -176,10 +198,18 @@ def receipt(ctx: typer.Context, tx_hash: str = typer.Argument(..., help="Transac
 @app.command("block")
 def block(
     ctx: typer.Context,
-    number: Optional[int] = typer.Option(None, "--number", "-n", help="Block number (decimal)."),
-    block_hash: Optional[str] = typer.Option(None, "--hash", "-h", help="Block hash (0x...)."),
-    include_txs: bool = typer.Option(False, "--txs", help="Include transactions in the response."),
-    include_receipts: bool = typer.Option(False, "--receipts", help="Include receipts (if available)."),
+    number: Optional[int] = typer.Option(
+        None, "--number", "-n", help="Block number (decimal)."
+    ),
+    block_hash: Optional[str] = typer.Option(
+        None, "--hash", "-h", help="Block hash (0x...)."
+    ),
+    include_txs: bool = typer.Option(
+        False, "--txs", help="Include transactions in the response."
+    ),
+    include_receipts: bool = typer.Option(
+        False, "--receipts", help="Include receipts (if available)."
+    ),
 ) -> None:
     """
     Fetch a block by number or hash. One of --number or --hash is required.
@@ -188,9 +218,13 @@ def block(
     if (number is None) == (block_hash is None):
         raise typer.BadParameter("Provide exactly one of --number or --hash")
     if number is not None:
-        res = client.call("chain.getBlockByNumber", [number, include_txs, include_receipts])
+        res = client.call(
+            "chain.getBlockByNumber", [number, include_txs, include_receipts]
+        )
     else:
-        res = client.call("chain.getBlockByHash", [block_hash, include_txs, include_receipts])
+        res = client.call(
+            "chain.getBlockByHash", [block_hash, include_txs, include_receipts]
+        )
     _print_json(res)
 
 
@@ -203,7 +237,9 @@ def ws_heads(ctx: typer.Context) -> None:
     try:
         from ..rpc.ws import WsClient  # type: ignore
     except Exception as e:  # pragma: no cover
-        raise typer.BadParameter("WebSocket client not available. Install websockets and omni_sdk.rpc.ws.") from e
+        raise typer.BadParameter(
+            "WebSocket client not available. Install websockets and omni_sdk.rpc.ws."
+        ) from e
 
     c: Ctx = ctx.obj
     ws_url = c.rpc.replace("http://", "ws://").replace("https://", "wss://")
@@ -224,6 +260,7 @@ def ws_heads(ctx: typer.Context) -> None:
 
 
 # --- Optional subcommand wiring (attached if module is present) ---------------
+
 
 def _attach_optional_subapp(module: str, attr: str, name: str, help_text: str) -> None:
     """
@@ -256,13 +293,21 @@ def _attach_optional_subapp(module: str, attr: str, name: str, help_text: str) -
 
     app.add_typer(stub, name=name, help=f"{help_text} (module not installed)")
 
+
 # Attach known sub-apps if present
-_attach_optional_subapp("omni_sdk.cli.deploy", "app", "deploy", "Deploy contracts and packages")
-_attach_optional_subapp("omni_sdk.cli.call", "app", "call", "Call contract functions (read/write)")
-_attach_optional_subapp("omni_sdk.cli.subscribe", "app", "subscribe", "Subscribe to heads/events via WS")
+_attach_optional_subapp(
+    "omni_sdk.cli.deploy", "app", "deploy", "Deploy contracts and packages"
+)
+_attach_optional_subapp(
+    "omni_sdk.cli.call", "app", "call", "Call contract functions (read/write)"
+)
+_attach_optional_subapp(
+    "omni_sdk.cli.subscribe", "app", "subscribe", "Subscribe to heads/events via WS"
+)
 
 
 # --- Entrypoints --------------------------------------------------------------
+
 
 def main(argv: Optional[list[str]] = None) -> int:
     """

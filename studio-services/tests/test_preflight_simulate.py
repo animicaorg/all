@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import json
-import pytest
 
+import pytest
 
 # These tests cover two endpoints exposed by studio-services:
 #   - POST /preflight : dry-run checks before sending a deploy/tx (e.g., compile & estimate)
@@ -35,11 +35,22 @@ COUNTER_MANIFEST = {
     "name": "Counter",
     "abi": {
         "functions": [
-            {"name": "inc", "inputs": [{"name": "amount", "type": "int"}], "outputs": []},
-            {"name": "get", "inputs": [], "outputs": [{"name": "value", "type": "int"}]},
+            {
+                "name": "inc",
+                "inputs": [{"name": "amount", "type": "int"}],
+                "outputs": [],
+            },
+            {
+                "name": "get",
+                "inputs": [],
+                "outputs": [{"name": "value", "type": "int"}],
+            },
         ],
         "events": [
-            {"name": "Inc", "inputs": [{"name": "by", "type": "int"}, {"name": "v", "type": "int"}]},
+            {
+                "name": "Inc",
+                "inputs": [{"name": "by", "type": "int"}, {"name": "v", "type": "int"}],
+            },
         ],
     },
 }
@@ -64,7 +75,10 @@ async def test_simulate_rejects_dangerous_source(aclient):
     resp = await aclient.post("/simulate", json=payload)
 
     # Strong guarantee: no crashes
-    assert resp.status_code in (400, 422), f"Unexpected status {resp.status_code}: {resp.text}"
+    assert resp.status_code in (
+        400,
+        422,
+    ), f"Unexpected status {resp.status_code}: {resp.text}"
 
 
 @pytest.mark.asyncio
@@ -83,7 +97,11 @@ async def test_preflight_handles_minimal_payload(aclient):
     }
     resp = await aclient.post("/preflight", json=payload)
 
-    assert resp.status_code in (200, 400, 422), f"Unexpected status {resp.status_code}: {resp.text}"
+    assert resp.status_code in (
+        200,
+        400,
+        422,
+    ), f"Unexpected status {resp.status_code}: {resp.text}"
     if resp.status_code == 200:
         data = resp.json()
         assert isinstance(data, dict)
@@ -118,7 +136,9 @@ async def test_simulate_counter_happy_path_if_available(aclient):
 
     if resp1.status_code not in (200,):
         # If the simulator toolchain isn't present, treat as optional.
-        pytest.skip(f"/simulate not available for happy-path (status {resp1.status_code})")
+        pytest.skip(
+            f"/simulate not available for happy-path (status {resp1.status_code})"
+        )
 
     data1 = resp1.json()
     assert isinstance(data1, dict)

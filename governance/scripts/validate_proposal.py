@@ -58,7 +58,8 @@ else:
 
 _jsonschema_spec = importlib.util.find_spec("jsonschema")
 if _jsonschema_spec is not None:
-    from jsonschema import Draft202012Validator, RefResolver, exceptions as js_exceptions
+    from jsonschema import Draft202012Validator, RefResolver
+    from jsonschema import exceptions as js_exceptions
 else:  # pragma: no cover - exercised when dependency missing locally
     Draft202012Validator = None  # type: ignore[assignment]
     RefResolver = None  # type: ignore[assignment]
@@ -154,11 +155,15 @@ def load_schema(schemas_dir: Path, fname: str) -> Dict[str, Any]:
 
 def make_validator(schema: Dict[str, Any], base_uri: str) -> Draft202012Validator:
     _ensure_jsonschema_available()
-    resolver = RefResolver(base_uri=base_uri, referrer=schema)  # support $ref within the schemas dir
+    resolver = RefResolver(
+        base_uri=base_uri, referrer=schema
+    )  # support $ref within the schemas dir
     return Draft202012Validator(schema, resolver=resolver)
 
 
-def validate_against_schema(payload: Dict[str, Any], schemas_dir: Path, strict: bool) -> Tuple[bool, List[str], str]:
+def validate_against_schema(
+    payload: Dict[str, Any], schemas_dir: Path, strict: bool
+) -> Tuple[bool, List[str], str]:
     fname = guess_schema_filename(payload)
     schema = load_schema(schemas_dir, fname)
     validator = make_validator(schema, base_uri=f"file://{schemas_dir.as_posix()}/")
@@ -176,7 +181,9 @@ def validate_against_schema(payload: Dict[str, Any], schemas_dir: Path, strict: 
         if allowed:
             extra = set(payload.keys()) - allowed
             if extra:
-                msgs.append(f"[schema(strict)] unexpected top-level keys: {sorted(extra)}")
+                msgs.append(
+                    f"[schema(strict)] unexpected top-level keys: {sorted(extra)}"
+                )
 
     return (len(msgs) == 0), msgs, fname
 
@@ -185,12 +192,15 @@ def validate_against_schema(payload: Dict[str, Any], schemas_dir: Path, strict: 
 # Bounds validation for params
 # ----------------------------
 
+
 @dataclass
 class BoundRule:
     min: Optional[float] = None
     max: Optional[float] = None
-    step: Optional[float] = None  # enforce value % step == 0 (for ints) or near-multiple for floats
-    type: Optional[str] = None    # "int" | "float" | "number" | "string" | "bool"
+    step: Optional[float] = (
+        None  # enforce value % step == 0 (for ints) or near-multiple for floats
+    )
+    type: Optional[str] = None  # "int" | "float" | "number" | "string" | "bool"
     enum: Optional[List[Any]] = None
 
 
@@ -264,13 +274,17 @@ def validate_bounds(payload: Dict[str, Any], rules: Dict[str, BoundRule]) -> Lis
 
     changes = _flatten_changes(payload)
     if not changes:
-        msgs.append("[bounds] No parameter changes found (expected 'changes' array or 'params' object).")
+        msgs.append(
+            "[bounds] No parameter changes found (expected 'changes' array or 'params' object)."
+        )
         return msgs
 
     for key, value in changes:
         rule = rules.get(key)
         if rule is None:
-            msgs.append(f"[bounds] WARNING: No bound rule for '{key}'. (Not failing; add to params_bounds.json)")
+            msgs.append(
+                f"[bounds] WARNING: No bound rule for '{key}'. (Not failing; add to params_bounds.json)"
+            )
             continue
 
         # Enum constraint
@@ -283,7 +297,9 @@ def validate_bounds(payload: Dict[str, Any], rules: Dict[str, BoundRule]) -> Lis
         num = _coerce_number(value, rule.type)
         if (rule.type in ("int", "float", "number", None)) and (rule.enum is None):
             if num is None:
-                msgs.append(f"[bounds] {key}: value {value!r} is not a valid {rule.type or 'number'}")
+                msgs.append(
+                    f"[bounds] {key}: value {value!r} is not a valid {rule.type or 'number'}"
+                )
                 continue
             if rule.min is not None and num < float(rule.min):
                 msgs.append(f"[bounds] {key}: {num} < min {rule.min}")
@@ -292,18 +308,26 @@ def validate_bounds(payload: Dict[str, Any], rules: Dict[str, BoundRule]) -> Lis
             if rule.step:
                 # For ints, enforce exact modulo; for floats, allow small epsilon.
                 if (rule.type == "int") and (int(num) % int(rule.step) != 0):
-                    msgs.append(f"[bounds] {key}: {int(num)} not a multiple of step {int(rule.step)}")
+                    msgs.append(
+                        f"[bounds] {key}: {int(num)} not a multiple of step {int(rule.step)}"
+                    )
                 elif rule.type in (None, "float", "number"):
                     eps = 1e-9
                     rem = (num / float(rule.step)) % 1.0
                     if min(rem, 1.0 - rem) > eps:
-                        msgs.append(f"[bounds] {key}: {num} not aligned to step {rule.step}")
+                        msgs.append(
+                            f"[bounds] {key}: {num} not aligned to step {rule.step}"
+                        )
         elif rule.type == "bool":
             if not isinstance(value, bool):
-                msgs.append(f"[bounds] {key}: expected boolean, got {type(value).__name__}")
+                msgs.append(
+                    f"[bounds] {key}: expected boolean, got {type(value).__name__}"
+                )
         elif rule.type == "string":
             if not isinstance(value, str):
-                msgs.append(f"[bounds] {key}: expected string, got {type(value).__name__}")
+                msgs.append(
+                    f"[bounds] {key}: expected string, got {type(value).__name__}"
+                )
         # else: unknown type → no-op
 
     return msgs
@@ -313,12 +337,25 @@ def validate_bounds(payload: Dict[str, Any], rules: Dict[str, BoundRule]) -> Lis
 # CLI
 # ----------------------------
 
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Validate Animica governance proposals.")
     ap.add_argument("proposal", help="Path to proposal file (.json|.yaml|.yml|.md)")
-    ap.add_argument("--schemas-dir", default="governance/schemas", help="Directory containing JSON Schemas")
-    ap.add_argument("--bounds", default="governance/registries/params_bounds.json", help="Param bounds JSON")
-    ap.add_argument("--strict", action="store_true", help="Enable extra strict checks for unknown top-level keys")
+    ap.add_argument(
+        "--schemas-dir",
+        default="governance/schemas",
+        help="Directory containing JSON Schemas",
+    )
+    ap.add_argument(
+        "--bounds",
+        default="governance/registries/params_bounds.json",
+        help="Param bounds JSON",
+    )
+    ap.add_argument(
+        "--strict",
+        action="store_true",
+        help="Enable extra strict checks for unknown top-level keys",
+    )
     args = ap.parse_args(argv)
 
     proposal_path = Path(args.proposal)
@@ -334,7 +371,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     # Schema validation
     ok_schema, schema_msgs, schema_file = False, [], ""
     try:
-        ok_schema, schema_msgs, schema_file = validate_against_schema(payload, schemas_dir, strict=args.strict)
+        ok_schema, schema_msgs, schema_file = validate_against_schema(
+            payload, schemas_dir, strict=args.strict
+        )
     except Exception as e:
         print(f"ERROR during schema validation: {e}", file=sys.stderr)
         return 2
@@ -351,7 +390,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     report = {
         "proposal": str(proposal_path),
         "type": payload.get("type"),
-        "schema": str((Path(args.schemas_dir) / (schema_file or "<unknown>")).as_posix()),
+        "schema": str(
+            (Path(args.schemas_dir) / (schema_file or "<unknown>")).as_posix()
+        ),
         "schemaValid": ok_schema and len(schema_msgs) == 0,
         "boundsFile": str(bounds_path.as_posix()),
         "boundsIssues": bounds_msgs,

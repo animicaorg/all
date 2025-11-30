@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 ProofClaim: link an on-chain Proof* record to an AICF JobRecord.
 
@@ -40,18 +41,11 @@ structure for settlement.
 """
 
 
-from dataclasses import dataclass, asdict
-from typing import Dict,Mapping,Optional
+from dataclasses import asdict, dataclass
+from typing import Dict, Mapping, Optional
 
-from . import (
-    ProviderId,
-    JobId,
-    TaskId,
-    BlockHeight,
-    Timestamp,
-    TokenAmount,  # may be used by callers; kept for consistency
-    is_hex_id,
-)
+from . import TokenAmount  # may be used by callers; kept for consistency
+from . import BlockHeight, JobId, ProviderId, TaskId, Timestamp, is_hex_id
 
 ProofKind = Literal["ai", "quantum"]
 
@@ -61,6 +55,7 @@ class ProofClaim:
     """
     Canonical linkage between an on-chain proof and an AICF job/task.
     """
+
     kind: ProofKind
     task_id: TaskId
     nullifier: str
@@ -116,7 +111,9 @@ class ProofClaim:
             job_id=(JobId(str(d["job_id"])) if d.get("job_id") else None),
             proof_digest=(str(d["proof_digest"]) if d.get("proof_digest") else None),
             work_units=int(d.get("work_units", 0)),
-            included_at=(Timestamp(int(d["included_at"])) if d.get("included_at") else None),
+            included_at=(
+                Timestamp(int(d["included_at"])) if d.get("included_at") else None
+            ),
         )
         claim.validate()
         return claim
@@ -126,6 +123,11 @@ class ProofClaim:
 # Helpers
 # ────────────────────────────────────────────────────────────────────────────────
 
+
 def _require_hex_digest(v: str, label: str) -> None:
-    if not isinstance(v, str) or len(v) != 64 or not all(c in "0123456789abcdef" for c in v):
+    if (
+        not isinstance(v, str)
+        or len(v) != 64
+        or not all(c in "0123456789abcdef" for c in v)
+    ):
         raise ValueError(f"{label} must be 64-char lowercase hex (sha3-256)")

@@ -4,16 +4,17 @@ from typing import Dict, List, Optional, Tuple
 
 import pytest
 
-
 # ===================================================
 # Helpers: deterministic "state root" for assertions
 # ===================================================
+
 
 def _state_root(state: Dict[str, object]) -> bytes:
     """
     Deterministic commitment of a tiny KV state using SHA3-256.
     Values are normalized to integers or UTF-8 strings for stability.
     """
+
     def norm(v: object) -> bytes:
         if isinstance(v, int):
             return int(v).to_bytes(16, "big", signed=True)
@@ -36,6 +37,7 @@ def _state_root(state: Dict[str, object]) -> bytes:
 
 _MISSING = object()
 
+
 @dataclass
 class _Checkpoint:
     id: int
@@ -49,6 +51,7 @@ class ModelJournal:
     On commit(child) → merge child's first-write log into parent (without overwriting parent's entries).
     On revert(child) → restore previous values in reverse first-touch order.
     """
+
     def __init__(self, state: Optional[Dict[str, object]] = None) -> None:
         self.state: Dict[str, object] = dict(state or {})
         self._stack: List[_Checkpoint] = []
@@ -117,15 +120,16 @@ class ModelJournal:
 # Tests against the model
 # ===================================================
 
+
 def test_basic_checkpoint_revert_restores_exact_state():
     base = {"a": 1, "b": 2}
     j = ModelJournal(base)
     root0 = _state_root(j.state)
 
     cid = j.checkpoint()
-    j.put("a", 100)         # modify
-    j.put("c", "hello")     # add
-    j.delete("b")           # delete
+    j.put("a", 100)  # modify
+    j.put("c", "hello")  # add
+    j.delete("b")  # delete
     assert j.state == {"a": 100, "c": "hello"}
 
     j.revert(cid)
@@ -148,9 +152,9 @@ def test_basic_commit_persists_changes():
 def test_nested_checkpoints_commit_and_revert():
     j = ModelJournal({"a": 1, "b": 2, "c": 3})
     outer = j.checkpoint()
-    j.put("a", 10)          # touched in outer
+    j.put("a", 10)  # touched in outer
     inner = j.checkpoint()
-    j.put("b", 20)          # touched in inner
+    j.put("b", 20)  # touched in inner
     j.put("d", 40)
 
     # Revert inner → only inner's first-writes roll back
@@ -222,6 +226,7 @@ def test_diff_equivalence_via_commit_vs_revert_roundtrip():
 # Optional smoke against project implementation (if present)
 # ===================================================
 
+
 def test_project_snapshots_smoke_if_available():
     """
     Try to exercise execution.state.snapshots if the project exposes a compatible API.
@@ -249,7 +254,7 @@ def test_project_snapshots_smoke_if_available():
             mgr = Manager(state=state)  # common signature
         except TypeError:
             try:
-                mgr = Manager(state)    # alt signature
+                mgr = Manager(state)  # alt signature
             except TypeError:
                 mgr = Manager()
 
@@ -261,10 +266,18 @@ def test_project_snapshots_smoke_if_available():
         delete = getattr(mgr, "delete", getattr(mgr, "remove", None))
         get_state = getattr(mgr, "state", None)
 
-        if not callable(cp) or not callable(commit) or not callable(revert) or not callable(put) or not callable(delete):
+        if (
+            not callable(cp)
+            or not callable(commit)
+            or not callable(revert)
+            or not callable(put)
+            or not callable(delete)
+        ):
             pytest.skip("snapshot manager found but missing required methods")
 
-        root0 = _state_root(state if isinstance(get_state, dict) else getattr(mgr, "state", state))
+        root0 = _state_root(
+            state if isinstance(get_state, dict) else getattr(mgr, "state", state)
+        )
 
         cid = cp()
         put("a", 10) if callable(put) else put.__call__("a", 10)
@@ -290,7 +303,9 @@ def test_project_snapshots_smoke_if_available():
     delete = getattr(mod, "delete", getattr(mod, "remove", None))
     get_state = getattr(mod, "get_state", None)
 
-    if not all(callable(f) for f in (begin, commit, revert, put, delete)) or not callable(get_state):
+    if not all(
+        callable(f) for f in (begin, commit, revert, put, delete)
+    ) or not callable(get_state):
         pytest.skip("execution.state.snapshots present but API not recognized")
 
     root0 = _state_root(get_state())

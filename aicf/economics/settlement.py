@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 Batch settlements for the AI Compute Fund (AICF).
 
@@ -44,10 +45,10 @@ This module does not perform any IO or database mutations.
 
 
 from dataclasses import dataclass, replace
-from typing import Dict,Iterable,List,Mapping,MutableMapping,Optional,Tuple
+from typing import (Dict, Iterable, List, Mapping, MutableMapping, Optional,
+                    Tuple)
 
 from aicf.economics.epochs import EpochAccounting, try_reserve
-
 
 # ------------------------------- Data types --------------------------------- #
 
@@ -59,6 +60,7 @@ class TransferInstruction:
     """
     An outbound transfer from the AICF treasury account to a payee.
     """
+
     source_account: str
     to_kind: PayeeKind
     to_address: str
@@ -71,16 +73,18 @@ class SettlementPlan:
     """
     A concrete settlement plan for an epoch window.
     """
+
     epoch_idx: int
     accepted: List[TransferInstruction]
     rejected: List[TransferInstruction]
     treasury_accrual: int  # sum of `amount_treasury` from payouts (no outbound)
-    total_requested: int   # sum of requested outbound amounts (provider + miner)
-    total_accepted: int    # sum(amount) over `accepted`
-    total_rejected: int    # sum(amount) over `rejected`
+    total_requested: int  # sum of requested outbound amounts (provider + miner)
+    total_accepted: int  # sum(amount) over `accepted`
+    total_rejected: int  # sum(amount) over `rejected`
 
 
 # ----------------------------- Accessor helpers ----------------------------- #
+
 
 def _payout_get(payout: object, name: str, default: object = 0) -> object:
     """
@@ -130,6 +134,7 @@ def _amount_treasury(payout: object) -> int:
 
 
 # ----------------------------- Core aggregation ----------------------------- #
+
 
 def aggregate_by_payee(
     payouts: Iterable[object],
@@ -218,6 +223,7 @@ def _mk_transfer_list(
 
 # ------------------------------ Budget enforcement -------------------------- #
 
+
 def enforce_epoch_budget(
     epoch_state: EpochAccounting,
     transfers: Iterable[TransferInstruction],
@@ -247,6 +253,7 @@ def enforce_epoch_budget(
 
 
 # --------------------------------- Planning --------------------------------- #
+
 
 def build_settlement_plan(
     epoch_idx: int,
@@ -306,6 +313,7 @@ def build_settlement_plan(
 
 
 # ------------------------------ Pretty utilities ---------------------------- #
+
 
 def summarize_plan(plan: SettlementPlan) -> str:
     """

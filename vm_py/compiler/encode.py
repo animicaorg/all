@@ -31,6 +31,7 @@ We expose helpers for both IR layers:
   - Instruction IR (Prog/Block/Instr): encode_prog / decode_prog
   - Structured IR (Module/Function/Stmt/Expr): encode_module / decode_module
 """
+
 from __future__ import annotations
 
 from dataclasses import is_dataclass
@@ -56,47 +57,12 @@ try:
 except Exception:  # pragma: no cover
     _MSGSPEC_AVAILABLE = False
 
-from .ir import (
-    # Structured IR
-    Expr,
-    Const,
-    Name,
-    BinOp,
-    BoolOp,
-    UnaryOp,
-    Compare,
-    Attribute,
-    Subscript,
-    Call,
-    Stmt,
-    Assign,
-    ExprStmt,
-    Return,
-    If,
-    While,
-    Function,
-    Module,
-    # Instruction IR
-    Instr,
-    ILoadConst,
-    ILoadName,
-    IStoreName,
-    IAttrGet,
-    ISubscriptGet,
-    IBinOp,
-    IUnaryOp,
-    ICompare,
-    ICall,
-    IPop,
-    IDup,
-    IReturn,
-    IJump,
-    IJumpIfTrue,
-    IJumpIfFalse,
-    INop,
-    Block,
-    Prog,
-)
+from .ir import (Assign, Attribute, BinOp,  # Structured IR; Instruction IR
+                 Block, BoolOp, Call, Compare, Const, Expr, ExprStmt, Function,
+                 IAttrGet, IBinOp, ICall, ICompare, IDup, If, IJump,
+                 IJumpIfFalse, IJumpIfTrue, ILoadConst, ILoadName, INop, Instr,
+                 IPop, IReturn, IStoreName, ISubscriptGet, IUnaryOp, Module,
+                 Name, Prog, Return, Stmt, Subscript, UnaryOp, While)
 
 MAGIC = b"ACIR"
 VERSION = 1
@@ -106,6 +72,7 @@ FMT_MSGPACK = 0x02
 # -----------------------------------------------------------------------------
 # Encoding helpers (format wrappers)
 # -----------------------------------------------------------------------------
+
 
 class IRCodecError(ValueError):
     pass
@@ -160,6 +127,7 @@ def _unwrap_header(blob: bytes) -> Tuple[int, bytes]:
         except Exception:
             continue
     raise IRCodecError("Unrecognized IR blob (bad header and decode attempts failed)")
+
 
 # -----------------------------------------------------------------------------
 # Instruction IR encoding
@@ -299,9 +267,13 @@ def encode_prog(prog: Prog, *, prefer: str = "cbor") -> bytes:
     """
     if not isinstance(prog, Prog):
         raise TypeError("encode_prog expects a Prog")
-    fmt = FMT_CBOR if (prefer == "cbor" and _CBOR_AVAILABLE) else (
-        FMT_MSGPACK if _MSGSPEC_AVAILABLE else (
-            FMT_CBOR if _CBOR_AVAILABLE else None
+    fmt = (
+        FMT_CBOR
+        if (prefer == "cbor" and _CBOR_AVAILABLE)
+        else (
+            FMT_MSGPACK
+            if _MSGSPEC_AVAILABLE
+            else (FMT_CBOR if _CBOR_AVAILABLE else None)
         )
     )
     if fmt is None:
@@ -310,7 +282,7 @@ def encode_prog(prog: Prog, *, prefer: str = "cbor") -> bytes:
     # Deterministic order: sort blocks by label
     blocks_sorted = sorted(prog.blocks.items(), key=lambda kv: kv[0])
     payload = [
-        "IR1",                    # schema id
+        "IR1",  # schema id
         str(prog.entry),
         [_enc_block(b) for _, b in blocks_sorted],
     ]
@@ -330,6 +302,7 @@ def decode_prog(blob: bytes) -> Prog:
         b = _dec_block(blk)
         blocks[b.label] = b
     return Prog(entry=entry, blocks=blocks)
+
 
 # -----------------------------------------------------------------------------
 # Structured IR encoding
@@ -373,7 +346,12 @@ def _enc_expr(e: Expr) -> list:
     if isinstance(e, Subscript):
         return [E_SUB, _enc_expr(e.value), _enc_expr(e.index)]
     if isinstance(e, Call):
-        return [E_CALL, _enc_expr(e.func), [_enc_expr(a) for a in e.args], [[k, _enc_expr(v)] for k, v in e.kwargs]]
+        return [
+            E_CALL,
+            _enc_expr(e.func),
+            [_enc_expr(a) for a in e.args],
+            [[k, _enc_expr(v)] for k, v in e.kwargs],
+        ]
     raise IRCodecError(f"Unknown Expr node: {type(e).__name__}")
 
 
@@ -411,7 +389,12 @@ def _enc_stmt(s: Stmt) -> list:
     if isinstance(s, Return):
         return [S_RETURN, None if s.value is None else _enc_expr(s.value)]
     if isinstance(s, If):
-        return [S_IF, _enc_expr(s.cond), [_enc_stmt(x) for x in s.then], [_enc_stmt(x) for x in s.orelse]]
+        return [
+            S_IF,
+            _enc_expr(s.cond),
+            [_enc_stmt(x) for x in s.then],
+            [_enc_stmt(x) for x in s.orelse],
+        ]
     if isinstance(s, While):
         return [S_WHILE, _enc_expr(s.cond), [_enc_stmt(x) for x in s.body]]
     raise IRCodecError(f"Unknown Stmt node: {type(s).__name__}")
@@ -427,7 +410,9 @@ def _dec_stmt(n: Sequence[Any]) -> Stmt:
         val = None if n[1] is None else _dec_expr(n[1])
         return Return(val)
     if tag == S_IF:
-        return If(_dec_expr(n[1]), [_dec_stmt(x) for x in n[2]], [_dec_stmt(x) for x in n[3]])
+        return If(
+            _dec_expr(n[1]), [_dec_stmt(x) for x in n[2]], [_dec_stmt(x) for x in n[3]]
+        )
     if tag == S_WHILE:
         return While(_dec_expr(n[1]), [_dec_stmt(x) for x in n[2]])
     raise IRCodecError(f"Unknown Stmt tag: {tag}")
@@ -440,16 +425,22 @@ def _enc_function(fn: Function) -> list:
 def _dec_function(n: Sequence[Any]) -> Function:
     if int(n[0]) != F_FUNCTION:
         raise IRCodecError("Function tag mismatch")
-    return Function(name=str(n[1]), params=[str(p) for p in n[2]], body=[_dec_stmt(s) for s in n[3]])
+    return Function(
+        name=str(n[1]), params=[str(p) for p in n[2]], body=[_dec_stmt(s) for s in n[3]]
+    )
 
 
 def encode_module(mod: Module, *, prefer: str = "cbor") -> bytes:
     """Encode a structured IR Module with header."""
     if not isinstance(mod, Module):
         raise TypeError("encode_module expects a Module")
-    fmt = FMT_CBOR if (prefer == "cbor" and _CBOR_AVAILABLE) else (
-        FMT_MSGPACK if _MSGSPEC_AVAILABLE else (
-            FMT_CBOR if _CBOR_AVAILABLE else None
+    fmt = (
+        FMT_CBOR
+        if (prefer == "cbor" and _CBOR_AVAILABLE)
+        else (
+            FMT_MSGPACK
+            if _MSGSPEC_AVAILABLE
+            else (FMT_CBOR if _CBOR_AVAILABLE else None)
         )
     )
     if fmt is None:
@@ -476,9 +467,11 @@ def decode_module(blob: bytes) -> Module:
         functions[str(name)] = _dec_function(fn_node)
     return Module(filename=filename, functions=functions)
 
+
 # -----------------------------------------------------------------------------
 # Utilities
 # -----------------------------------------------------------------------------
+
 
 def is_cbor_available() -> bool:
     return _CBOR_AVAILABLE
@@ -505,6 +498,7 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # Backwards-compatible adapter helpers for CLI & compiler helpers
 # ---------------------------------------------------------------------------
+
 
 def to_bytes(ir_module) -> bytes:
     """

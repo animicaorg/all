@@ -60,6 +60,7 @@ except Exception:
 # Lazy ABI accessor & revert helper
 # ---------------------------------------------------------------------------
 
+
 def _abi():
     global _abi_mod
     if _abi_mod is None:
@@ -80,10 +81,10 @@ U128_MAX: Final[int] = (1 << 128) - 1
 I256_MIN: Final[int] = -(1 << 255)
 I256_MAX: Final[int] = (1 << 255) - 1
 
-BPS_DEN: Final[int] = 10_000            # basis points denominator
-PPM_DEN: Final[int] = 1_000_000         # parts per million
-WAD: Final[int] = 10**18                # 1e18 fixed-point
-RAY: Final[int] = 10**27                # 1e27 (optional higher precision)
+BPS_DEN: Final[int] = 10_000  # basis points denominator
+PPM_DEN: Final[int] = 1_000_000  # parts per million
+WAD: Final[int] = 10**18  # 1e18 fixed-point
+RAY: Final[int] = 10**27  # 1e27 (optional higher precision)
 
 # Rounding modes
 ROUND_DOWN: Final[int] = 0
@@ -95,6 +96,7 @@ ROUND_HALF_EVEN: Final[int] = 3
 # ---------------------------------------------------------------------------
 # Guard & clamp helpers
 # ---------------------------------------------------------------------------
+
 
 def clamp(x: int, lo: int, hi: int) -> int:
     """Return x clamped into [lo, hi]."""
@@ -129,6 +131,7 @@ def require_divisor(d: int) -> None:
 # ---------------------------------------------------------------------------
 # Rounding primitives
 # ---------------------------------------------------------------------------
+
 
 def div_round(n: int, d: int, mode: int = ROUND_DOWN) -> int:
     """
@@ -186,6 +189,7 @@ def average_floor(a: int, b: int) -> int:
 # Saturating U256 arithmetic
 # ---------------------------------------------------------------------------
 
+
 def u256_add_sat(x: int, y: int) -> int:
     """Saturating add in [0, U256_MAX]."""
     require_u256(x, y)
@@ -230,6 +234,7 @@ def u256_mul_div_up(x: int, y: int, d: int) -> int:
 # Fixed-point helpers (wad/ray & generic scale)
 # ---------------------------------------------------------------------------
 
+
 def fp_mul(x: int, y: int, scale: int) -> int:
     """Return floor((x * y) / scale)."""
     require_nonneg(scale)
@@ -266,6 +271,7 @@ def wad_div_up(x: int, y: int) -> int:
 # ---------------------------------------------------------------------------
 # Percentages & fees (BPS / PPM)
 # ---------------------------------------------------------------------------
+
 
 def check_bps(bps: int) -> None:
     if bps < 0 or bps > BPS_DEN:
@@ -311,12 +317,14 @@ def fee_split(amount: int, bps_fee: int) -> Tuple[int, int]:
 # Means, roots, distance, ratios
 # ---------------------------------------------------------------------------
 
+
 def isqrt(n: int) -> int:
     """Integer floor square root (exact & deterministic)."""
     if n < 0:
         _revert(b"MATH:NEGATIVE_SQRT")
     # Using math.isqrt is ok (exact for ints)
     import math  # local import; we only use isqrt
+
     return math.isqrt(n)
 
 
@@ -352,6 +360,7 @@ def ratio_ppm(numer: int, denom: int) -> int:
 # EMA (Exponential Moving Average) in integer PPM
 # ---------------------------------------------------------------------------
 
+
 def ema_ppm(prev: int, sample: int, alpha_ppm: int) -> int:
     """
     Integer EMA update with alpha in PPM (0..1_000_000).
@@ -371,6 +380,7 @@ def ema_ppm(prev: int, sample: int, alpha_ppm: int) -> int:
 # ---------------------------------------------------------------------------
 # Signed helpers (clamp & saturating add/sub)
 # ---------------------------------------------------------------------------
+
 
 def s256_add_sat(x: int, y: int) -> int:
     """Saturating add in signed 256-bit range."""
@@ -398,25 +408,55 @@ def s256_sub_sat(x: int, y: int) -> int:
 
 __all__ = [
     # envelopes
-    "U256_MAX", "U128_MAX", "I256_MIN", "I256_MAX",
-    "BPS_DEN", "PPM_DEN", "WAD", "RAY",
+    "U256_MAX",
+    "U128_MAX",
+    "I256_MIN",
+    "I256_MAX",
+    "BPS_DEN",
+    "PPM_DEN",
+    "WAD",
+    "RAY",
     # rounding
-    "ROUND_DOWN", "ROUND_UP", "ROUND_HALF_UP", "ROUND_HALF_EVEN",
-    "div_round", "mul_div_down", "mul_div_up", "average_floor",
+    "ROUND_DOWN",
+    "ROUND_UP",
+    "ROUND_HALF_UP",
+    "ROUND_HALF_EVEN",
+    "div_round",
+    "mul_div_down",
+    "mul_div_up",
+    "average_floor",
     # guards
-    "clamp", "require_nonneg", "require_u256", "require_divisor",
+    "clamp",
+    "require_nonneg",
+    "require_u256",
+    "require_divisor",
     # u256 ops
-    "u256_add_sat", "u256_sub_floor", "u256_mul_sat",
-    "u256_mul_div_down", "u256_mul_div_up",
+    "u256_add_sat",
+    "u256_sub_floor",
+    "u256_mul_sat",
+    "u256_mul_div_down",
+    "u256_mul_div_up",
     # fixed-point
-    "fp_mul", "fp_div", "wad_mul", "wad_div", "wad_mul_up", "wad_div_up",
+    "fp_mul",
+    "fp_div",
+    "wad_mul",
+    "wad_div",
+    "wad_mul_up",
+    "wad_div_up",
     # percentages
-    "check_bps", "check_ppm", "apply_bps", "apply_bps_up",
-    "apply_ppm", "fee_split",
+    "check_bps",
+    "check_ppm",
+    "apply_bps",
+    "apply_bps_up",
+    "apply_ppm",
+    "fee_split",
     # ratios & roots
-    "isqrt", "ratio_bps", "ratio_ppm",
+    "isqrt",
+    "ratio_bps",
+    "ratio_ppm",
     # ema
     "ema_ppm",
     # signed
-    "s256_add_sat", "s256_sub_sat",
+    "s256_add_sat",
+    "s256_sub_sat",
 ]

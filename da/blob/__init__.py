@@ -24,7 +24,7 @@ from ..version import __version__  # re-export package version
 
 if TYPE_CHECKING:
     # These are imported only for typing to keep import-time lean.
-    from .types import BlobRef, BlobMeta, Commitment, Receipt  # noqa: F401
+    from .types import BlobMeta, BlobRef, Commitment, Receipt  # noqa: F401
 
 __all__ = [
     "__version__",

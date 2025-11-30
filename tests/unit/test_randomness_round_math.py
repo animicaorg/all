@@ -15,7 +15,6 @@ from typing import Any, Dict, Optional
 
 import pytest
 
-
 # ---- helpers ----------------------------------------------------------------
 
 _CANDIDATE_FILES = [
@@ -209,9 +208,9 @@ def test_vdf_params_sanity_relative_to_round():
     )
     if target_secs is not None:
         ts = float(target_secs)
-        assert 0 < ts <= float(total), (
-            f"VDF target eval time ({ts}s) must be within the round length ({total}s)"
-        )
+        assert (
+            0 < ts <= float(total)
+        ), f"VDF target eval time ({ts}s) must be within the round length ({total}s)"
 
     # Iterations sanity (if specified): must be positive; if a 'seconds_per_iter' hint
     # exists, the implied seconds should also fit within the round.
@@ -227,8 +226,6 @@ def test_vdf_params_sanity_relative_to_round():
         if sec_per_iter:
             implied = float(sec_per_iter) * iters
             # allow implied to be up to the round length (some designs peg near total)
-            assert implied <= float(total) * 1.05, (
-                f"VDF implied eval time ({implied:.2f}s) exceeds round length ({total}s)"
-            )
-
-
+            assert (
+                implied <= float(total) * 1.05
+            ), f"VDF implied eval time ({implied:.2f}s) exceeds round length ({total}s)"

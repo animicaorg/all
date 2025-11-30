@@ -21,25 +21,24 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Optional, Tuple
 
-from studio_services.errors import ApiError, BadRequest
-from studio_services.models.verify import (
-    VerifyRequest,
-    VerifyStatus,
-    VerifyResult,
-)
 from studio_services.adapters.node_rpc import NodeRPC
-from studio_services.adapters.vm_compile import compile_package, code_hash_bytes
-from studio_services.adapters.vm_hash import artifact_digest as compute_artifact_digest
-
+from studio_services.adapters.vm_compile import (code_hash_bytes,
+                                                 compile_package)
+from studio_services.adapters.vm_hash import \
+    artifact_digest as compute_artifact_digest
+from studio_services.errors import ApiError, BadRequest
+from studio_services.models.verify import (VerifyRequest, VerifyResult,
+                                           VerifyStatus)
 # Storage layers (the concrete APIs are kept flexible via helpers below)
-from studio_services.storage import sqlite as storage_sqlite  # type: ignore
 from studio_services.storage import fs as storage_fs  # type: ignore
 from studio_services.storage import ids as storage_ids  # type: ignore
+from studio_services.storage import sqlite as storage_sqlite  # type: ignore
 
 log = logging.getLogger(__name__)
 
 
 # ---------- Introspection helpers (keep coupling loose across modules) ----------
+
 
 def _pick_first_attr(obj: Any, *names: str):
     """Return the first present attribute with one of 'names' on obj; else raise."""
@@ -49,7 +48,9 @@ def _pick_first_attr(obj: Any, *names: str):
     raise AttributeError(f"{type(obj).__name__} missing any of {names!r}")
 
 
-def _resolve_expected_onchain_hash(node: NodeRPC, *, address: Optional[str], tx_hash: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+def _resolve_expected_onchain_hash(
+    node: NodeRPC, *, address: Optional[str], tx_hash: Optional[str]
+) -> Tuple[Optional[str], Optional[str]]:
     """
     Resolve the expected on-chain code-hash using either an address or a tx hash.
     Returns (resolved_address, expected_code_hash_hex) where values may be None.
@@ -71,12 +72,16 @@ def _resolve_expected_onchain_hash(node: NodeRPC, *, address: Optional[str], tx_
             resolved_address = address
         elif tx_hash:
             # Fetch receipt and infer contract/address if present
-            get_receipt = _pick_first_attr(node, "get_transaction_receipt", "get_receipt")
+            get_receipt = _pick_first_attr(
+                node, "get_transaction_receipt", "get_receipt"
+            )
             r = get_receipt(tx_hash) or {}
             addr = r.get("contractAddress") or r.get("contract_address")
             if not addr:
                 # Try tx lookup as a fallback to recover 'to'/'creates'
-                get_tx = _pick_first_attr(node, "get_transaction_by_hash", "get_transaction")
+                get_tx = _pick_first_attr(
+                    node, "get_transaction_by_hash", "get_transaction"
+                )
                 t = get_tx(tx_hash) or {}
                 addr = t.get("creates") or t.get("contractAddress") or t.get("to")
             if addr:
@@ -89,8 +94,14 @@ def _resolve_expected_onchain_hash(node: NodeRPC, *, address: Optional[str], tx_
                 )
                 expected_hex = get_code_hash(addr)
                 resolved_address = addr
-    except Exception as e:  # Pragmatic: surface as debug; not fatal for local match-only flows
-        log.warning("resolve_expected_onchain_hash failed: %s", e, exc_info=log.isEnabledFor(logging.DEBUG))
+    except (
+        Exception
+    ) as e:  # Pragmatic: surface as debug; not fatal for local match-only flows
+        log.warning(
+            "resolve_expected_onchain_hash failed: %s",
+            e,
+            exc_info=log.isEnabledFor(logging.DEBUG),
+        )
 
     return resolved_address, expected_hex
 
@@ -111,11 +122,17 @@ def _open_verification_store():
     return storage_sqlite
 
 
-def _persist_verification(store, *, req: VerifyRequest, computed_hash_hex: str,
-                          onchain_hash_hex: Optional[str], matched: bool,
-                          resolved_address: Optional[str],
-                          artifact_id: Optional[str],
-                          diagnostics: Optional[Dict[str, Any]]) -> str:
+def _persist_verification(
+    store,
+    *,
+    req: VerifyRequest,
+    computed_hash_hex: str,
+    onchain_hash_hex: Optional[str],
+    matched: bool,
+    resolved_address: Optional[str],
+    artifact_id: Optional[str],
+    diagnostics: Optional[Dict[str, Any]],
+) -> str:
     """
     Persist verification outcome; return a stable job/id string.
 
@@ -143,7 +160,11 @@ def _persist_verification(store, *, req: VerifyRequest, computed_hash_hex: str,
         "matched": bool(matched),
         "artifact_id": artifact_id,
         "diagnostics": diagnostics or None,
-        "status": VerifyStatus.COMPLETED.value if hasattr(VerifyStatus, "COMPLETED") else "COMPLETED",
+        "status": (
+            VerifyStatus.COMPLETED.value
+            if hasattr(VerifyStatus, "COMPLETED")
+            else "COMPLETED"
+        ),
     }
 
     if hasattr(store, "record_verification"):
@@ -170,10 +191,14 @@ def _persist_verification(store, *, req: VerifyRequest, computed_hash_hex: str,
             status=payload["status"],
         )  # type: ignore
 
-    raise ApiError("Verification storage API not found; expected a store with record/insert/upsert methods.")
+    raise ApiError(
+        "Verification storage API not found; expected a store with record/insert/upsert methods."
+    )
 
 
-def _maybe_store_artifact(*, manifest: Dict[str, Any], source: Optional[str], code_bytes: Optional[bytes]) -> Optional[str]:
+def _maybe_store_artifact(
+    *, manifest: Dict[str, Any], source: Optional[str], code_bytes: Optional[bytes]
+) -> Optional[str]:
     """
     Optionally create a content-addressed artifact in storage.fs and return its id.
 
@@ -194,16 +219,23 @@ def _maybe_store_artifact(*, manifest: Dict[str, Any], source: Optional[str], co
                 blob = {
                     "manifest": manifest,
                     "source": source,
-                    "code_bytes_hex": code_bytes.hex() if isinstance(code_bytes, (bytes, bytearray)) else None,
+                    "code_bytes_hex": (
+                        code_bytes.hex()
+                        if isinstance(code_bytes, (bytes, bytearray))
+                        else None
+                    ),
                 }
                 storage_fs.put_blob(artifact_id, blob)  # type: ignore
         return artifact_id
     except Exception as e:
-        log.warning("Artifact store skipped: %s", e, exc_info=log.isEnabledFor(logging.DEBUG))
+        log.warning(
+            "Artifact store skipped: %s", e, exc_info=log.isEnabledFor(logging.DEBUG)
+        )
         return None
 
 
 # ---------- Public API ----------
+
 
 def verify_source_and_store(
     node: NodeRPC,
@@ -245,7 +277,9 @@ def verify_source_and_store(
         node, address=req.address, tx_hash=getattr(req, "tx_hash", None)
     )
 
-    matched = (expected_onchain is not None) and (computed_code_hash_hex.lower() == str(expected_onchain).lower())
+    matched = (expected_onchain is not None) and (
+        computed_code_hash_hex.lower() == str(expected_onchain).lower()
+    )
 
     # 4) Persist artifacts (optional) + verification record
     artifact_id: Optional[str] = None
@@ -269,10 +303,16 @@ def verify_source_and_store(
     )
 
     # 5) Return structured result
-    status = VerifyStatus.SUCCESS if matched else VerifyStatus.MISMATCH if expected_onchain else VerifyStatus.LOCAL_ONLY
+    status = (
+        VerifyStatus.SUCCESS
+        if matched
+        else VerifyStatus.MISMATCH if expected_onchain else VerifyStatus.LOCAL_ONLY
+    )
     artifact_digest = None
     try:
-        artifact_digest = compute_artifact_digest(manifest=req.manifest, source=req.source, code_bytes=req.code_bytes)
+        artifact_digest = compute_artifact_digest(
+            manifest=req.manifest, source=req.source, code_bytes=req.code_bytes
+        )
     except Exception:  # non-fatal
         pass
 

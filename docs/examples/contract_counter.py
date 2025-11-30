@@ -25,9 +25,9 @@ Notes
 - The contract is intentionally minimal: no constructor, no access control.
 """
 
-from typing import Dict, Any
+from typing import Any, Dict
 
-from stdlib import storage, events, abi  # Provided by the Animica Python-VM
+from stdlib import abi, events, storage  # Provided by the Animica Python-VM
 
 # Signed 256-bit bounds (portable deterministic range)
 INT256_MIN = -(1 << 255)
@@ -38,6 +38,7 @@ KEY_COUNTER = b"counter"
 
 
 # ---------- Internal helpers ----------
+
 
 def _clamp_int256(x: int) -> int:
     if x < INT256_MIN or x > INT256_MAX:
@@ -71,6 +72,7 @@ def _save_counter(v: int) -> None:
 
 
 # ---------- Public contract API ----------
+
 
 def get() -> int:
     """
@@ -136,15 +138,31 @@ def reset(to: int) -> int:
 
 # ---------- Optional: metadata helpers (no-op for VM, useful for tooling) ----------
 
+
 def __abi__() -> Dict[str, Any]:
     """Optional hint for off-chain tooling/tests; the chain uses the manifest/ABI file."""
     return {
         "name": "Counter",
         "version": "1.0.0",
         "functions": [
-            {"name": "get", "inputs": [], "outputs": ["int"], "stateMutability": "view"},
-            {"name": "inc", "inputs": ["int"], "outputs": ["int"], "stateMutability": "nonpayable"},
-            {"name": "reset", "inputs": ["int"], "outputs": ["int"], "stateMutability": "nonpayable"},
+            {
+                "name": "get",
+                "inputs": [],
+                "outputs": ["int"],
+                "stateMutability": "view",
+            },
+            {
+                "name": "inc",
+                "inputs": ["int"],
+                "outputs": ["int"],
+                "stateMutability": "nonpayable",
+            },
+            {
+                "name": "reset",
+                "inputs": ["int"],
+                "outputs": ["int"],
+                "stateMutability": "nonpayable",
+            },
         ],
         "events": [
             {"name": "Incremented", "inputs": ["int", "int"]},

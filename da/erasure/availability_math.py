@@ -57,10 +57,10 @@ from typing import Optional
 
 from .params import ErasureParams
 
-
 # --------------------------------------------------------------------------- #
 # Combinatorics
 # --------------------------------------------------------------------------- #
+
 
 def _comb(n: int, k: int) -> int:
     """Safe math.comb wrapper with small guards."""
@@ -145,6 +145,7 @@ def samples_for_p_fail_hypergeom(total: int, bad: int, target_p_fail: float) -> 
 # Adversary models (minimal withholding to break stripes)
 # --------------------------------------------------------------------------- #
 
+
 def min_withheld_per_broken_stripe(params: ErasureParams) -> int:
     """
     Minimal number of leaves to withhold **in a single stripe** to make it
@@ -152,7 +153,7 @@ def min_withheld_per_broken_stripe(params: ErasureParams) -> int:
     """
     n = params.total_shards
     k = params.data_shards
-    return (n - k + 1)
+    return n - k + 1
 
 
 def worst_case_bad_leaves(
@@ -185,7 +186,9 @@ def bad_fraction_for_broken_stripes(
     """
     Global fraction of bad leaves under the worst-case minimal-withholding model.
     """
-    B = worst_case_bad_leaves(params=params, stripes=stripes, stripes_broken=stripes_broken)
+    B = worst_case_bad_leaves(
+        params=params, stripes=stripes, stripes_broken=stripes_broken
+    )
     T = stripes * params.total_shards
     return 0.0 if T == 0 else (B / T)
 
@@ -194,11 +197,13 @@ def bad_fraction_for_broken_stripes(
 # Sizing helpers: given target p_fail, compute samples
 # --------------------------------------------------------------------------- #
 
+
 @dataclass(frozen=True)
 class SamplePlan:
     """
     Result of a sample sizing computation.
     """
+
     samples: int
     p_fail_model: str  # "binomial" or "hypergeom"
     bad_leaves: int
@@ -241,7 +246,9 @@ def plan_samples_for_target(
         raise ValueError("target_p_fail must be in (0,1)")
 
     T = stripes * params.total_shards
-    B = worst_case_bad_leaves(params=params, stripes=stripes, stripes_broken=stripes_broken)
+    B = worst_case_bad_leaves(
+        params=params, stripes=stripes, stripes_broken=stripes_broken
+    )
     if T <= 0 or B <= 0:
         return SamplePlan(
             samples=0,
@@ -276,6 +283,7 @@ def plan_samples_for_target(
 # Convenience: compute p_fail for a given s under a worst-case model
 # --------------------------------------------------------------------------- #
 
+
 def p_fail_for_samples(
     *,
     params: ErasureParams,
@@ -292,7 +300,9 @@ def p_fail_for_samples(
     if samples < 0:
         raise ValueError("samples must be non-negative")
     T = stripes * params.total_shards
-    B = worst_case_bad_leaves(params=params, stripes=stripes, stripes_broken=stripes_broken)
+    B = worst_case_bad_leaves(
+        params=params, stripes=stripes, stripes_broken=stripes_broken
+    )
     if T <= 0 or B <= 0:
         return 1.0  # nothing to detect ⇒ vacuous miss
     if with_replacement:
@@ -310,6 +320,11 @@ if __name__ == "__main__":  # pragma: no cover
     ep = ErasureParams(data_shards=8, total_shards=16, share_bytes=4096)
     stripes = 256
     target = 1e-9
-    plan = plan_samples_for_target(params=ep, stripes=stripes, target_p_fail=target, stripes_broken=1)
+    plan = plan_samples_for_target(
+        params=ep, stripes=stripes, target_p_fail=target, stripes_broken=1
+    )
     print("Plan:", plan)
-    print("p_fail at s:", p_fail_for_samples(params=ep, stripes=stripes, samples=plan.samples))
+    print(
+        "p_fail at s:",
+        p_fail_for_samples(params=ep, stripes=stripes, samples=plan.samples),
+    )

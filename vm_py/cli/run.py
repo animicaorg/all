@@ -28,11 +28,14 @@ from typing import Any, Dict, List, Tuple
 
 # ---------------------- small utils ---------------------- #
 
+
 def eprint(*a: Any, **k: Any) -> None:
     if not _CTX.get("quiet", False):
         print(*a, file=sys.stderr, **k)
 
+
 _CTX: Dict[str, Any] = {}
+
 
 def _safe_json(obj: Any) -> Any:
     if is_dataclass(obj):
@@ -45,13 +48,17 @@ def _safe_json(obj: Any) -> Any:
         return {str(k): _safe_json(v) for k, v in obj.items()}
     return obj
 
+
 def _parse_args_json(s: str | None) -> List[Any]:
     if not s or not s.strip():
         return []
     val = json.loads(s)
     if isinstance(val, list):
         return val
-    raise SystemExit("--args must be a JSON array, e.g. --args '[1, \"hello\", \"0xdead\"]'")
+    raise SystemExit(
+        '--args must be a JSON array, e.g. --args \'[1, "hello", "0xdead"]\''
+    )
+
 
 def _maybe_hex_to_bytes(x: Any) -> Any:
     # Convenience: strings like "0x…" become bytes; leave others intact.
@@ -66,12 +73,17 @@ def _maybe_hex_to_bytes(x: Any) -> Any:
         return {k: _maybe_hex_to_bytes(v) for k, v in x.items()}
     return x
 
+
 def _manifest_dir(path: str) -> str:
     return os.path.dirname(os.path.abspath(path)) or "."
 
+
 # ---------------------- loader-first path ---------------------- #
 
-def try_run_via_loader(manifest_path: str, func: str, args: List[Any]) -> Tuple[Any, Dict[str, Any]]:
+
+def try_run_via_loader(
+    manifest_path: str, func: str, args: List[Any]
+) -> Tuple[Any, Dict[str, Any]]:
     """
     If vm_py.runtime.loader offers a direct 'run_call' or similar helper, use it.
     Expected flexible signatures (we attempt a few):
@@ -102,6 +114,7 @@ def try_run_via_loader(manifest_path: str, func: str, args: List[Any]) -> Tuple[
                 return _normalize_loader_result(out)
     raise RuntimeError("No suitable run_call() in vm_py.runtime.loader")
 
+
 def _normalize_loader_result(out: Any) -> Tuple[Any, Dict[str, Any]]:
     """
     Accept:
@@ -115,9 +128,13 @@ def _normalize_loader_result(out: Any) -> Tuple[Any, Dict[str, Any]]:
         return out["result"], out
     return out, {}
 
+
 # ---------------------- compile helpers (fallback) ---------------------- #
 
-def compile_manifest_to_ir(manifest_path: str) -> Tuple[bytes, Dict[str, Any], Dict[str, Any]]:
+
+def compile_manifest_to_ir(
+    manifest_path: str,
+) -> Tuple[bytes, Dict[str, Any], Dict[str, Any]]:
     """
     Return (ir_bytes, abi_dict, meta)
     Tries runtime.loader.compile_manifest or equivalent; falls back to reading source and compiling.
@@ -132,14 +149,27 @@ def compile_manifest_to_ir(manifest_path: str) -> Tuple[bytes, Dict[str, Any], D
     # Prefer loader.compile_manifest if present
     try:
         from vm_py.runtime import loader
-        for name in ("compile_manifest", "compile_from_manifest", "build_ir_from_manifest"):
+
+        for name in (
+            "compile_manifest",
+            "compile_from_manifest",
+            "build_ir_from_manifest",
+        ):
             fn = getattr(loader, name, None)
             if callable(fn):
                 out = fn(manifest) if fn.__code__.co_argcount >= 1 else fn()  # type: ignore[misc]
                 # Accept flexible returns
                 if isinstance(out, tuple):
-                    if len(out) == 3 and isinstance(out[0], (bytes, bytearray)) and isinstance(out[1], dict):
-                        return bytes(out[0]), dict(out[1]), dict(out[2]) if isinstance(out[2], dict) else {}
+                    if (
+                        len(out) == 3
+                        and isinstance(out[0], (bytes, bytearray))
+                        and isinstance(out[1], dict)
+                    ):
+                        return (
+                            bytes(out[0]),
+                            dict(out[1]),
+                            dict(out[2]) if isinstance(out[2], dict) else {},
+                        )
                     if len(out) == 2 and isinstance(out[0], (bytes, bytearray)):
                         if isinstance(out[1], dict) and "abi" in out[1] and not abi:
                             abi = out[1]["abi"]
@@ -152,7 +182,9 @@ def compile_manifest_to_ir(manifest_path: str) -> Tuple[bytes, Dict[str, Any], D
     # Else: compile from 'source' field
     source_rel = manifest.get("source") or manifest.get("code") or manifest.get("path")
     if not source_rel:
-        raise RuntimeError("Manifest missing 'source' (path to .py) and no loader.compile path available.")
+        raise RuntimeError(
+            "Manifest missing 'source' (path to .py) and no loader.compile path available."
+        )
     source_path = os.path.join(mdir, source_rel)
 
     with open(source_path, "r", encoding="utf-8") as f:
@@ -161,12 +193,21 @@ def compile_manifest_to_ir(manifest_path: str) -> Tuple[bytes, Dict[str, Any], D
     # Try high-level loader text compile first
     try:
         from vm_py.runtime import loader as rloader
+
         for name in ("compile_source", "compile_text"):
             fn = getattr(rloader, name, None)
             if callable(fn):
                 res = fn(src) if fn.__code__.co_argcount <= 1 else fn(src, filename=source_path)  # type: ignore[misc]
-                if isinstance(res, tuple) and len(res) == 2 and isinstance(res[0], (bytes, bytearray)):
-                    return bytes(res[0]), abi if isinstance(abi, dict) else {}, dict(res[1]) if isinstance(res[1], dict) else {}
+                if (
+                    isinstance(res, tuple)
+                    and len(res) == 2
+                    and isinstance(res[0], (bytes, bytearray))
+                ):
+                    return (
+                        bytes(res[0]),
+                        abi if isinstance(abi, dict) else {},
+                        dict(res[1]) if isinstance(res[1], dict) else {},
+                    )
                 if isinstance(res, (bytes, bytearray)):
                     return bytes(res), abi if isinstance(abi, dict) else {}, {}
                 # If object, try to encode below
@@ -189,8 +230,10 @@ def compile_manifest_to_ir(manifest_path: str) -> Tuple[bytes, Dict[str, Any], D
     ir_bytes = _compile_lower_pipeline(src, source_path)
     return ir_bytes, abi if isinstance(abi, dict) else {}, {}
 
+
 def _encode_ir_bytes(ir_obj: Any) -> bytes:
     from importlib import import_module
+
     enc = import_module("vm_py.compiler.encode")
     try:
         ir_types = import_module("vm_py.compiler.ir")
@@ -207,17 +250,28 @@ def _encode_ir_bytes(ir_obj: Any) -> bytes:
             out = fn(ir_obj)  # type: ignore[misc]
             if isinstance(out, (bytes, bytearray)):
                 return bytes(out)
-            if isinstance(out, tuple) and len(out) >= 1 and isinstance(out[0], (bytes, bytearray)):
+            if (
+                isinstance(out, tuple)
+                and len(out) >= 1
+                and isinstance(out[0], (bytes, bytearray))
+            ):
                 return bytes(out[0])
     raise RuntimeError("Could not encode IR object to bytes")
+
 
 def _compile_lower_pipeline(src: str, filename: str) -> bytes:
     import ast
     from importlib import import_module
+
     lower = import_module("vm_py.compiler.ast_lower")
     ir_mod = getattr(lower, "lower", None)
     if not callable(ir_mod):
-        for alt in ("lower_module", "lower_from_ast", "lower_from_source", "lower_to_ir"):
+        for alt in (
+            "lower_module",
+            "lower_from_ast",
+            "lower_from_source",
+            "lower_to_ir",
+        ):
             ir_mod = getattr(lower, alt, None)
             if callable(ir_mod):
                 break
@@ -232,9 +286,13 @@ def _compile_lower_pipeline(src: str, filename: str) -> bytes:
 
     return _encode_ir_bytes(ir)
 
+
 # ---------------------- engine fallback runner ---------------------- #
 
-def run_via_engine(ir_bytes: bytes, abi: Dict[str, Any], func: str, args: List[Any]) -> Tuple[Any, Dict[str, Any]]:
+
+def run_via_engine(
+    ir_bytes: bytes, abi: Dict[str, Any], func: str, args: List[Any]
+) -> Tuple[Any, Dict[str, Any]]:
     """
     Execute a call against the interpreter engine.
     """
@@ -278,7 +336,9 @@ def run_via_engine(ir_bytes: bytes, abi: Dict[str, Any], func: str, args: List[A
                 return _normalize_engine_result(out)
 
     if engine_obj is None:
-        raise RuntimeError("Could not construct engine or find a run function in vm_py.runtime.engine")
+        raise RuntimeError(
+            "Could not construct engine or find a run function in vm_py.runtime.engine"
+        )
 
     # Try common instance methods
     for meth_name in ("run_call", "call", "execute_call"):
@@ -293,19 +353,30 @@ def run_via_engine(ir_bytes: bytes, abi: Dict[str, Any], func: str, args: List[A
         out = run_any(func, args, block_env, tx_env)  # type: ignore[misc]
         return _normalize_engine_result(out)
 
-    raise RuntimeError("Engine constructed, but no runnable method (run_call/call/execute_call/run) was found")
+    raise RuntimeError(
+        "Engine constructed, but no runnable method (run_call/call/execute_call/run) was found"
+    )
 
 
-def run_via_pyexec(manifest_path: str, func: str, args: List[Any]) -> Tuple[Any, Dict[str, Any]]:
+def run_via_pyexec(
+    manifest_path: str, func: str, args: List[Any]
+) -> Tuple[Any, Dict[str, Any]]:
     """Last-resort fallback: exec the contract source and call the function directly."""
 
     with open(manifest_path, "r", encoding="utf-8") as f:
         manifest = json.load(f)
 
     mdir = _manifest_dir(manifest_path)
-    source_rel = manifest.get("source") or manifest.get("code") or manifest.get("path") or manifest.get("entry")
+    source_rel = (
+        manifest.get("source")
+        or manifest.get("code")
+        or manifest.get("path")
+        or manifest.get("entry")
+    )
     if not source_rel:
-        raise RuntimeError("Manifest missing 'source' and 'entry'; cannot exec contract source")
+        raise RuntimeError(
+            "Manifest missing 'source' and 'entry'; cannot exec contract source"
+        )
     source_path = os.path.join(mdir, source_rel)
 
     with open(source_path, "r", encoding="utf-8") as f:
@@ -319,6 +390,7 @@ def run_via_pyexec(manifest_path: str, func: str, args: List[Any]) -> Tuple[Any,
 
     result = fn(*args)
     return result, {"executed_via": "pyexec", "source": os.path.abspath(source_path)}
+
 
 def _normalize_engine_result(out: Any) -> Tuple[Any, Dict[str, Any]]:
     """
@@ -337,25 +409,51 @@ def _normalize_engine_result(out: Any) -> Tuple[Any, Dict[str, Any]]:
         return out["result"], out
     return out, {}
 
+
 # ---------------------- CLI ---------------------- #
 
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    p = argparse.ArgumentParser(prog="omni-vm-run", description="Run a contract call using the Animica Python VM.")
-    p.add_argument("--manifest", "-m", required=True, help="Path to contract manifest.json")
+    p = argparse.ArgumentParser(
+        prog="omni-vm-run",
+        description="Run a contract call using the Animica Python VM.",
+    )
+    p.add_argument(
+        "--manifest", "-m", required=True, help="Path to contract manifest.json"
+    )
     p.add_argument("--call", "-c", required=True, help="Function name to call")
-    p.add_argument("--args", help="JSON array of arguments, e.g. --args '[1, \"0xdead\"]'")
-    p.add_argument("--hex-as-bytes", action="store_true", default=True, help="Interpret '0x..' strings as bytes (default ON)")
-    p.add_argument("--no-hex-as-bytes", dest="hex_as_bytes", action="store_false", help="Disable hex→bytes conversion")
-    p.add_argument("--format", choices=("text", "json"), default="json", help="Output format")
-    p.add_argument("--quiet", action="store_true", help="Silence informational logs on stderr")
+    p.add_argument(
+        "--args", help="JSON array of arguments, e.g. --args '[1, \"0xdead\"]'"
+    )
+    p.add_argument(
+        "--hex-as-bytes",
+        action="store_true",
+        default=True,
+        help="Interpret '0x..' strings as bytes (default ON)",
+    )
+    p.add_argument(
+        "--no-hex-as-bytes",
+        dest="hex_as_bytes",
+        action="store_false",
+        help="Disable hex→bytes conversion",
+    )
+    p.add_argument(
+        "--format", choices=("text", "json"), default="json", help="Output format"
+    )
+    p.add_argument(
+        "--quiet", action="store_true", help="Silence informational logs on stderr"
+    )
     return p.parse_args(argv)
+
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     _CTX["quiet"] = bool(args.quiet)
 
     call_args_raw = _parse_args_json(args.args)
-    call_args = _maybe_hex_to_bytes(call_args_raw) if args.hex_as_bytes else call_args_raw
+    call_args = (
+        _maybe_hex_to_bytes(call_args_raw) if args.hex_as_bytes else call_args_raw
+    )
 
     # 1) Try direct loader-run
     try:
@@ -372,7 +470,9 @@ def main(argv: list[str] | None = None) -> int:
         try:
             result, emeta = run_via_engine(ir_bytes, abi, args.call, call_args)
         except Exception as e_engine:
-            eprint(f"[vm-run] engine path failed: {e_engine}; falling back to direct exec …")
+            eprint(
+                f"[vm-run] engine path failed: {e_engine}; falling back to direct exec …"
+            )
             result, emeta = run_via_pyexec(args.manifest, args.call, call_args)
         meta = {"code_hash": code_hash, **cmeta, **emeta}
 
@@ -387,6 +487,7 @@ def main(argv: list[str] | None = None) -> int:
             for k, v in meta.items():
                 print(f"  - {k}: {_safe_json(v)}")
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

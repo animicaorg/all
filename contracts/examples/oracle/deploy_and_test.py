@@ -57,7 +57,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-
 # --------------------------------------------------------------------------------------
 # Config & helpers
 # --------------------------------------------------------------------------------------
@@ -96,6 +95,7 @@ def _addr_from_byte(b: int) -> bytes:
 # Tolerant imports for omni_sdk (names may evolve slightly; we try several)
 # --------------------------------------------------------------------------------------
 
+
 @dataclass
 class Sdk:
     RpcClient: Any
@@ -126,14 +126,15 @@ def _import_sdk() -> Sdk:
 
     # builders (optional; we can deploy via Deployer instead)
     try:
-        from omni_sdk.tx.build import build_deploy, build_call
+        from omni_sdk.tx.build import build_call, build_deploy
     except Exception:
         build_deploy = None
         build_call = None
 
     # higher-level deployer & client (optional)
     try:
-        from omni_sdk.contracts.deployer import deploy_package as Deployer  # function
+        from omni_sdk.contracts.deployer import \
+            deploy_package as Deployer  # function
     except Exception:
         Deployer = None
 
@@ -147,18 +148,22 @@ def _import_sdk() -> Sdk:
         # Try Dilithium3 first, fall back to SPHINCS+
         try:
             from omni_sdk.wallet.signer import Dilithium3Signer
+
             return Dilithium3Signer.from_mnemonic(mnemonic)  # type: ignore[attr-defined]
         except Exception:
             from omni_sdk.wallet.signer import SphincsSigner  # type: ignore
+
             return SphincsSigner.from_mnemonic(mnemonic)  # type: ignore
 
     # address derivation
     def derive_address(pubkey: bytes) -> str:
         try:
             from omni_sdk.address import address_from_public_key
+
             return address_from_public_key(pubkey)  # type: ignore
         except Exception:
             from omni_sdk.address import derive_address as _d
+
             return _d(pubkey)  # type: ignore
 
     # utils
@@ -170,6 +175,7 @@ def _import_sdk() -> Sdk:
     try:
         from omni_sdk.utils.bytes import to_hex as hex_bytes
     except Exception:
+
         def hex_bytes(b: bytes) -> str:  # type: ignore
             return "0x" + b.hex()
 
@@ -190,6 +196,7 @@ def _import_sdk() -> Sdk:
 # --------------------------------------------------------------------------------------
 # Optional build step: contracts/tools/build_package.py
 # --------------------------------------------------------------------------------------
+
 
 def _optional_build_package() -> Optional[Path]:
     """
@@ -212,13 +219,16 @@ def _optional_build_package() -> Optional[Path]:
         # build_package may return str
         return Path(pkg_path)
     except Exception as exc:
-        print(f"[build] build_package failed (continuing with direct deploy path): {exc}")
+        print(
+            f"[build] build_package failed (continuing with direct deploy path): {exc}"
+        )
         return None
 
 
 # --------------------------------------------------------------------------------------
 # ABI loader and basic client call helper
 # --------------------------------------------------------------------------------------
+
 
 def _load_abi() -> Dict[str, Any]:
     with MANIFEST.open("r", encoding="utf-8") as f:
@@ -229,8 +239,9 @@ def _load_abi() -> Dict[str, Any]:
     return abi
 
 
-def _invoke_contract(sdk: Sdk, address: str, abi: Dict[str, Any], rpc: Any,
-                     method: str, **kwargs) -> Any:
+def _invoke_contract(
+    sdk: Sdk, address: str, abi: Dict[str, Any], rpc: Any, method: str, **kwargs
+) -> Any:
     """
     Try to call a contract method using whatever client the SDK exposes.
     """
@@ -254,8 +265,15 @@ def _invoke_contract(sdk: Sdk, address: str, abi: Dict[str, Any], rpc: Any,
 # Deploy flows
 # --------------------------------------------------------------------------------------
 
-def _deploy_via_deployer(sdk: Sdk, rpc_url: str, chain_id: int, signer: Any,
-                         package_path: Path, gas_price: Optional[int]) -> Tuple[str, str]:
+
+def _deploy_via_deployer(
+    sdk: Sdk,
+    rpc_url: str,
+    chain_id: int,
+    signer: Any,
+    package_path: Path,
+    gas_price: Optional[int],
+) -> Tuple[str, str]:
     """
     Deploy a pre-built package via omni_sdk.contracts.deployer (function).
     Returns (address, tx_hash hex).
@@ -269,11 +287,21 @@ def _deploy_via_deployer(sdk: Sdk, rpc_url: str, chain_id: int, signer: Any,
 
     # Some builds accept raw bytes, others a file path.
     try:
-        result = sdk.Deployer(rpc=rpc, chain_id=chain_id, signer=signer,
-                              package=package_bytes, gas_price=gas_price)  # type: ignore
+        result = sdk.Deployer(
+            rpc=rpc,
+            chain_id=chain_id,
+            signer=signer,
+            package=package_bytes,
+            gas_price=gas_price,
+        )  # type: ignore
     except TypeError:
-        result = sdk.Deployer(rpc=rpc, chain_id=chain_id, signer=signer,
-                              package_path=str(package_path), gas_price=gas_price)  # type: ignore
+        result = sdk.Deployer(
+            rpc=rpc,
+            chain_id=chain_id,
+            signer=signer,
+            package_path=str(package_path),
+            gas_price=gas_price,
+        )  # type: ignore
 
     # Expected shape: {"address": "anim1…", "tx_hash": "0x…"} or tuple
     if isinstance(result, dict):
@@ -294,14 +322,17 @@ def _deploy_via_deployer(sdk: Sdk, rpc_url: str, chain_id: int, signer: Any,
     return addr, txh
 
 
-def _deploy_direct_build(sdk: Sdk, rpc_url: str, chain_id: int, signer: Any,
-                         gas_price: Optional[int]) -> Tuple[str, str]:
+def _deploy_direct_build(
+    sdk: Sdk, rpc_url: str, chain_id: int, signer: Any, gas_price: Optional[int]
+) -> Tuple[str, str]:
     """
     Build a deploy transaction directly via sdk.tx.build (if available).
     Returns (address, tx_hash hex).
     """
     if sdk.build_deploy is None:
-        _die("omni_sdk.tx.build.build_deploy not available; try the packager + deployer path.")
+        _die(
+            "omni_sdk.tx.build.build_deploy not available; try the packager + deployer path."
+        )
 
     rpc = sdk.RpcClient(rpc_url)
     with MANIFEST.open("rb") as f:
@@ -339,12 +370,17 @@ def _deploy_direct_build(sdk: Sdk, rpc_url: str, chain_id: int, signer: Any,
 # Main
 # --------------------------------------------------------------------------------------
 
+
 def main() -> None:
     if not MANIFEST.is_file() or not SOURCE.is_file():
-        _die("Missing manifest.json or contract.py in examples/oracle/. Generate them first.")
+        _die(
+            "Missing manifest.json or contract.py in examples/oracle/. Generate them first."
+        )
 
     if not MNEMONIC:
-        _die("Set DEPLOYER_MNEMONIC (or MNEMONIC) in your environment with a funded devnet account.")
+        _die(
+            "Set DEPLOYER_MNEMONIC (or MNEMONIC) in your environment with a funded devnet account."
+        )
 
     gas_price: Optional[int] = None
     if os.environ.get("GAS_PRICE"):
@@ -391,13 +427,22 @@ def main() -> None:
 
     # 1) init(owner)
     print("[call] init(owner)")
-    call("init", owner=bytes.fromhex(owner_addr[4:]) if owner_addr.startswith("0x") else owner_addr)
+    call(
+        "init",
+        owner=(
+            bytes.fromhex(owner_addr[4:]) if owner_addr.startswith("0x") else owner_addr
+        ),
+    )
 
     # 2) set_feeder(owner, allowed=True)
     print("[call] set_feeder(owner, True)")
-    call("set_feeder",
-         addr=bytes.fromhex(owner_addr[4:]) if owner_addr.startswith("0x") else owner_addr,
-         allowed=True)
+    call(
+        "set_feeder",
+        addr=(
+            bytes.fromhex(owner_addr[4:]) if owner_addr.startswith("0x") else owner_addr
+        ),
+        allowed=True,
+    )
 
     # 3) set_pair_decimals("ETH/USD", 8)
     pair = _b32_from_label("ETH/USD")
@@ -408,9 +453,11 @@ def main() -> None:
     ts = int(time.time())
     value = 3250_12345678  # 8 decimals
     source = b"COINBASE".ljust(32, b"\x00")
-    commitment = b"\xAA" * 32
+    commitment = b"\xaa" * 32
     print("[call] submit ETH/USD value")
-    round_id = call("submit", pair=pair, value=value, ts=ts, source=source, commitment=commitment)
+    round_id = call(
+        "submit", pair=pair, value=value, ts=ts, source=source, commitment=commitment
+    )
     print(f"[ok] round_id={round_id}")
 
     # 5) read latest

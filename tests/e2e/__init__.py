@@ -32,7 +32,8 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import (Any, Dict, Iterable, Iterator, List, Mapping, Optional,
+                    Sequence, Tuple, Union)
 
 import pytest
 
@@ -44,6 +45,7 @@ except Exception:  # pragma: no cover - fallback if integration not present
 
 
 # ------------------------------- configuration -------------------------------
+
 
 def env(key: str, default: Optional[str] = None) -> Optional[str]:
     """Fetch an environment variable (delegating to integration helper when available)."""
@@ -75,6 +77,7 @@ def repo_root() -> Path:
 
 # --------------------------------- networking --------------------------------
 
+
 def random_free_port() -> int:
     s = socket.socket()
     s.bind(("127.0.0.1", 0))
@@ -83,7 +86,9 @@ def random_free_port() -> int:
     return port
 
 
-def wait_for_port(host: str, port: int, *, timeout: float | None = None, interval: float = 0.25) -> None:
+def wait_for_port(
+    host: str, port: int, *, timeout: float | None = None, interval: float = 0.25
+) -> None:
     """Wait until a TCP port accepts connections."""
     deadline = time.time() + (timeout or default_timeout())
     last_err: Optional[Exception] = None
@@ -94,10 +99,14 @@ def wait_for_port(host: str, port: int, *, timeout: float | None = None, interva
         except Exception as exc:  # pragma: no cover - timing dependent
             last_err = exc
             time.sleep(interval)
-    raise TimeoutError(f"Timed out waiting for {host}:{port} to accept connections; last error: {last_err!r}")
+    raise TimeoutError(
+        f"Timed out waiting for {host}:{port} to accept connections; last error: {last_err!r}"
+    )
 
 
-def wait_for_http_ok(url: str, *, timeout: float | None = None, interval: float = 0.5) -> Dict[str, Any]:
+def wait_for_http_ok(
+    url: str, *, timeout: float | None = None, interval: float = 0.5
+) -> Dict[str, Any]:
     """
     Poll a URL until it returns HTTP 200 and JSON decodes (returns parsed JSON or empty dict).
     If body is not JSON, returns {} on success.
@@ -106,7 +115,9 @@ def wait_for_http_ok(url: str, *, timeout: float | None = None, interval: float 
     last_err: Optional[Exception] = None
     while time.time() < dl:
         try:
-            req = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
+            req = urllib.request.Request(
+                url, headers={"Accept": "application/json"}, method="GET"
+            )
             with urllib.request.urlopen(req, timeout=5) as resp:
                 if resp.status == 200:
                     raw = resp.read()
@@ -117,10 +128,13 @@ def wait_for_http_ok(url: str, *, timeout: float | None = None, interval: float 
         except Exception as exc:  # pragma: no cover - timing dependent
             last_err = exc
             time.sleep(interval)
-    raise TimeoutError(f"Timed out waiting for HTTP 200 at {url}; last error: {last_err!r}")
+    raise TimeoutError(
+        f"Timed out waiting for HTTP 200 at {url}; last error: {last_err!r}"
+    )
 
 
 # --------------------------------- processes ---------------------------------
+
 
 @dataclass
 class ProcSpec:
@@ -152,7 +166,9 @@ def started_process(spec: ProcSpec) -> Iterator[subprocess.Popen]:
         time.sleep(0.2)
         if proc.poll() is not None and proc.returncode not in (0, None):
             out, err = proc.communicate(timeout=1)
-            raise RuntimeError(f"Process {spec.cmd} exited early with code {proc.returncode}\nSTDOUT:\n{out}\nSTDERR:\n{err}")
+            raise RuntimeError(
+                f"Process {spec.cmd} exited early with code {proc.returncode}\nSTDOUT:\n{out}\nSTDERR:\n{err}"
+            )
         yield proc
     finally:
         with contextlib.suppress(Exception):
@@ -164,8 +180,14 @@ def started_process(spec: ProcSpec) -> Iterator[subprocess.Popen]:
                 proc.kill()
 
 
-def run(cmd: Sequence[str], *, timeout: Optional[float] = None, check: bool = True,
-        cwd: Optional[Path] = None, env_extra: Optional[Mapping[str, str]] = None) -> subprocess.CompletedProcess:
+def run(
+    cmd: Sequence[str],
+    *,
+    timeout: Optional[float] = None,
+    check: bool = True,
+    cwd: Optional[Path] = None,
+    env_extra: Optional[Mapping[str, str]] = None,
+) -> subprocess.CompletedProcess:
     """Run a command and capture output; raises on non-zero if check=True."""
     proc_env = os.environ.copy()
     if env_extra:
@@ -189,15 +211,21 @@ def run(cmd: Sequence[str], *, timeout: Optional[float] = None, check: bool = Tr
 
 # -------------------------------- assertions ---------------------------------
 
+
 def assert_hex(s: Any, *, prefix: str = "0x", min_nibbles: int = 2) -> None:
     """Assert string is hex-like with given prefix and min length."""
-    assert isinstance(s, str) and s.startswith(prefix) and len(s) >= len(prefix) + min_nibbles
-    int(s[len(prefix):], 16)  # will raise if not hex
+    assert (
+        isinstance(s, str)
+        and s.startswith(prefix)
+        and len(s) >= len(prefix) + min_nibbles
+    )
+    int(s[len(prefix) :], 16)  # will raise if not hex
 
 
 def require_cmd(binary: str) -> None:
     """Skip if an external binary is not available on PATH."""
     from shutil import which
+
     if which(binary) is None:
         pytest.skip(f"Required binary not found on PATH: {binary}")
 

@@ -3,6 +3,7 @@
 The API deliberately keeps imports lazy to avoid forcing optional
 quantum dependencies on consumers who do not opt into the feature.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -57,7 +58,14 @@ class QuantumExperiment:
         )
 
 
-def simulate_from_pow_input(block_hash: str, nonce: int, difficulty: int = 1, *, prefer_qiskit: bool = False, seed: Optional[int] = None) -> QuantumResult:
+def simulate_from_pow_input(
+    block_hash: str,
+    nonce: int,
+    difficulty: int = 1,
+    *,
+    prefer_qiskit: bool = False,
+    seed: Optional[int] = None,
+) -> QuantumResult:
     """Helper for PoW-like caller data.
 
     The payload is a light representation of block header fields and a

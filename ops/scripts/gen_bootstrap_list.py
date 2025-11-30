@@ -45,7 +45,7 @@ import time
 import urllib.request
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
-from urllib.error import URLError, HTTPError
+from urllib.error import HTTPError, URLError
 
 CANDIDATE_METHODS: Tuple[str, ...] = (
     "p2p.listPeers",
@@ -74,7 +74,9 @@ def _log(msg: str, *, verbose: bool = False) -> None:
         print(msg, file=sys.stderr)
 
 
-def _jsonrpc(url: str, method: str, params: Optional[list] = None, timeout: float = 4.0) -> Any:
+def _jsonrpc(
+    url: str, method: str, params: Optional[list] = None, timeout: float = 4.0
+) -> Any:
     body = {
         "jsonrpc": "2.0",
         "id": JSONRPC_ID,
@@ -121,7 +123,9 @@ def _extract_addr_from_obj(obj: Dict[str, Any]) -> Tuple[Optional[str], Optional
     # host/port form
     host = obj.get("host") or obj.get("ip")
     port = obj.get("port") or obj.get("p2p_port") or obj.get("tcp_port")
-    if isinstance(host, str) and (isinstance(port, int) or (isinstance(port, str) and port.isdigit())):
+    if isinstance(host, str) and (
+        isinstance(port, int) or (isinstance(port, str) and port.isdigit())
+    ):
         return f"{host}:{int(port)}", _extract_peer_id(obj)
 
     return None, _extract_peer_id(obj)
@@ -191,7 +195,14 @@ def _tcp_probe(addr: str, timeout: float) -> bool:
         else:
             # No port: infer from scheme
             host = hostport
-            defaults = {"http": 80, "ws": 80, "https": 443, "wss": 443, "quic": 443, "tcp": 0}
+            defaults = {
+                "http": 80,
+                "ws": 80,
+                "https": 443,
+                "wss": 443,
+                "quic": 443,
+                "tcp": 0,
+            }
             port = defaults.get(scheme or "tcp", 0)
 
         if port <= 0:
@@ -203,7 +214,9 @@ def _tcp_probe(addr: str, timeout: float) -> bool:
         return False
 
 
-def discover_peers_from_rpc(rpc_url: str, *, timeout: float, verbose: bool) -> List[PeerAddr]:
+def discover_peers_from_rpc(
+    rpc_url: str, *, timeout: float, verbose: bool
+) -> List[PeerAddr]:
     peers: List[PeerAddr] = []
     last_err: Optional[Exception] = None
     for method in CANDIDATE_METHODS:
@@ -222,7 +235,9 @@ def discover_peers_from_rpc(rpc_url: str, *, timeout: float, verbose: bool) -> L
                 elif isinstance(item, dict):
                     addr_raw, pid = _extract_addr_from_obj(item)
                     if addr_raw:
-                        peers.append(PeerAddr(address=_normalize_addr(addr_raw), peer_id=pid))
+                        peers.append(
+                            PeerAddr(address=_normalize_addr(addr_raw), peer_id=pid)
+                        )
         elif isinstance(res, dict):
             # sometimes wrapped like {"peers": [...]}
             for key in ("peers", "result", "list"):
@@ -234,14 +249,21 @@ def discover_peers_from_rpc(rpc_url: str, *, timeout: float, verbose: bool) -> L
                         elif isinstance(item, dict):
                             addr_raw, pid = _extract_addr_from_obj(item)
                             if addr_raw:
-                                peers.append(PeerAddr(address=_normalize_addr(addr_raw), peer_id=pid))
+                                peers.append(
+                                    PeerAddr(
+                                        address=_normalize_addr(addr_raw), peer_id=pid
+                                    )
+                                )
         # if we managed to parse anything, stop trying further methods
         if peers:
             _log(f"[info] {rpc_url} {method} → {len(peers)} peers", verbose=verbose)
             break
 
     if not peers and last_err:
-        _log(f"[warn] No peers discovered from {rpc_url}: last error: {last_err}", verbose=verbose)
+        _log(
+            f"[warn] No peers discovered from {rpc_url}: last error: {last_err}",
+            verbose=verbose,
+        )
     return peers
 
 
@@ -257,15 +279,41 @@ def unique_by_address(peers: Iterable[PeerAddr]) -> List[PeerAddr]:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Generate seeds/bootstrap_nodes.json from live RPC nodes.")
+    ap = argparse.ArgumentParser(
+        description="Generate seeds/bootstrap_nodes.json from live RPC nodes."
+    )
     ap.add_argument("--rpc", "-r", action="append", help="JSON-RPC URL (repeatable)")
-    ap.add_argument("--from-file", type=str, help="Path to file with RPC URLs (one per line)")
-    ap.add_argument("--out", "-o", type=str, default="seeds/bootstrap_nodes.json", help="Output JSON path")
-    ap.add_argument("--timeout", type=float, default=4.0, help="Per-request timeout in seconds")
-    ap.add_argument("--probe-timeout", type=float, default=1.0, help="TCP probe timeout per node in seconds")
-    ap.add_argument("--expected-chain-id", type=int, default=None, help="Fail if discovered chainId mismatches")
-    ap.add_argument("--drop-unreachable", action="store_true", help="Drop nodes that fail TCP probe")
-    ap.add_argument("--no-probe", action="store_true", help="Skip TCP reachability probes")
+    ap.add_argument(
+        "--from-file", type=str, help="Path to file with RPC URLs (one per line)"
+    )
+    ap.add_argument(
+        "--out",
+        "-o",
+        type=str,
+        default="seeds/bootstrap_nodes.json",
+        help="Output JSON path",
+    )
+    ap.add_argument(
+        "--timeout", type=float, default=4.0, help="Per-request timeout in seconds"
+    )
+    ap.add_argument(
+        "--probe-timeout",
+        type=float,
+        default=1.0,
+        help="TCP probe timeout per node in seconds",
+    )
+    ap.add_argument(
+        "--expected-chain-id",
+        type=int,
+        default=None,
+        help="Fail if discovered chainId mismatches",
+    )
+    ap.add_argument(
+        "--drop-unreachable", action="store_true", help="Drop nodes that fail TCP probe"
+    )
+    ap.add_argument(
+        "--no-probe", action="store_true", help="Skip TCP reachability probes"
+    )
     ap.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     args = ap.parse_args()
 
@@ -281,7 +329,10 @@ def main() -> int:
                         continue
                     rpc_urls.append(s)
         except OSError as exc:
-            print(f"ERROR: could not read --from-file {args.from_file}: {exc}", file=sys.stderr)
+            print(
+                f"ERROR: could not read --from-file {args.from_file}: {exc}",
+                file=sys.stderr,
+            )
             return 2
     if not rpc_urls:
         env_rpc = os.getenv("RPC_HTTP_URL")
@@ -289,7 +340,9 @@ def main() -> int:
             rpc_urls.append(env_rpc)
 
     if not rpc_urls:
-        print("ERROR: no RPC URLs provided (use --rpc or RPC_HTTP_URL).", file=sys.stderr)
+        print(
+            "ERROR: no RPC URLs provided (use --rpc or RPC_HTTP_URL).", file=sys.stderr
+        )
         return 2
 
     # Discover chain id (best-effort) and check consistency
@@ -307,9 +360,16 @@ def main() -> int:
         counts = Counter(discovered_chain_ids)
         chain_id, _ = counts.most_common(1)[0]
         if args.verbose:
-            print(f"[info] chainId votes: {dict(counts)}; selected={chain_id}", file=sys.stderr)
+            print(
+                f"[info] chainId votes: {dict(counts)}; selected={chain_id}",
+                file=sys.stderr,
+            )
 
-    if args.expected_chain_id is not None and chain_id is not None and chain_id != args.expected_chain_id:
+    if (
+        args.expected_chain_id is not None
+        and chain_id is not None
+        and chain_id != args.expected_chain_id
+    ):
         print(
             f"ERROR: expected chainId {args.expected_chain_id} but discovered {chain_id}",
             file=sys.stderr,
@@ -338,7 +398,10 @@ def main() -> int:
             before = len(uniq)
             uniq = [p for p in uniq if p.reachable]
             if args.verbose:
-                print(f"[info] dropped {before - len(uniq)} unreachable nodes", file=sys.stderr)
+                print(
+                    f"[info] dropped {before - len(uniq)} unreachable nodes",
+                    file=sys.stderr,
+                )
 
     # Assemble output doc
     out_doc: Dict[str, Any] = {
@@ -346,7 +409,11 @@ def main() -> int:
         "sources": rpc_urls,
         "chain_id": chain_id,
         "nodes": [
-            {"address": p.address, **({"peer_id": p.peer_id} if p.peer_id else {}), **({"reachable": p.reachable} if p.reachable is not None else {})}
+            {
+                "address": p.address,
+                **({"peer_id": p.peer_id} if p.peer_id else {}),
+                **({"reachable": p.reachable} if p.reachable is not None else {}),
+            }
             for p in sorted(uniq, key=lambda x: x.address)
         ],
     }

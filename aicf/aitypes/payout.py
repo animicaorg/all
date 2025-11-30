@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 Payout and RewardSplit types.
 
@@ -11,18 +12,11 @@ This module is intentionally small and pure (no DB/IO).
 """
 
 
-from dataclasses import dataclass, asdict
-from typing import Iterable, List, Mapping, Dict, Optional, Tuple
+from dataclasses import asdict, dataclass
+from typing import Dict, Iterable, List, Mapping, Optional, Tuple
 
-from . import (
-    ProviderId,
-    TaskId,
-    BlockHeight,
-    Timestamp,
-    TokenAmount,
-    is_hex_id,
-)
-
+from . import (BlockHeight, ProviderId, TaskId, Timestamp, TokenAmount,
+               is_hex_id)
 
 BPS_DENOM = 10_000  # basis points denominator (100.00%)
 
@@ -33,6 +27,7 @@ class RewardSplit:
     Reward split in basis points (bps). All fields are integers in [0, 10_000]
     and must sum exactly to 10_000.
     """
+
     provider_bps: int
     treasury_bps: int
     miner_bps: int
@@ -49,7 +44,9 @@ class RewardSplit:
         if total != BPS_DENOM:
             raise ValueError(f"split bps must sum to {BPS_DENOM}, got {total}")
 
-    def apply(self, amount_total: TokenAmount) -> Tuple[TokenAmount, TokenAmount, TokenAmount]:
+    def apply(
+        self, amount_total: TokenAmount
+    ) -> Tuple[TokenAmount, TokenAmount, TokenAmount]:
         """
         Deterministically split a total amount into (provider, treasury, miner).
         Remainders from integer division are assigned to miner to ensure:
@@ -96,6 +93,7 @@ class Payout:
     height_settled: Block height at which this payout is recorded.
     settled_at: Optional UNIX seconds when settlement was finalized.
     """
+
     provider_id: ProviderId
     amount_total: TokenAmount
     split: RewardSplit
@@ -156,9 +154,20 @@ class Payout:
     def validate(self) -> None:
         _require_hex_id(self.provider_id, "provider_id")
         self.split.validate()
-        if any(x < 0 for x in (self.amount_total, self.amount_provider, self.amount_treasury, self.amount_miner)):
+        if any(
+            x < 0
+            for x in (
+                self.amount_total,
+                self.amount_provider,
+                self.amount_treasury,
+                self.amount_miner,
+            )
+        ):
             raise ValueError("amounts must be >= 0")
-        if self.amount_provider + self.amount_treasury + self.amount_miner != self.amount_total:
+        if (
+            self.amount_provider + self.amount_treasury + self.amount_miner
+            != self.amount_total
+        ):
             raise ValueError("split amounts must sum to amount_total")
         if not self.claims:
             raise ValueError("claims must not be empty")
@@ -186,7 +195,9 @@ class Payout:
 
     @staticmethod
     def from_dict(d: Mapping[str, object]) -> "Payout":
-        split = RewardSplit.from_dict(d.get("split", {}) if isinstance(d.get("split"), Mapping) else {})
+        split = RewardSplit.from_dict(
+            d.get("split", {}) if isinstance(d.get("split"), Mapping) else {}
+        )
         payout = Payout(
             provider_id=ProviderId(str(d.get("provider_id", ""))),
             amount_total=TokenAmount(int(d.get("amount_total", 0))),
@@ -197,7 +208,11 @@ class Payout:
             claims=[TaskId(str(x)) for x in (d.get("claims") or [])],
             height_settled=BlockHeight(int(d.get("height_settled", 0))),
             epoch=(int(d["epoch"]) if d.get("epoch") is not None else None),
-            settled_at=(Timestamp(int(d["settled_at"])) if d.get("settled_at") is not None else None),
+            settled_at=(
+                Timestamp(int(d["settled_at"]))
+                if d.get("settled_at") is not None
+                else None
+            ),
         )
         payout.validate()
         return payout
@@ -206,6 +221,7 @@ class Payout:
 # ────────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ────────────────────────────────────────────────────────────────────────────────
+
 
 def _require_hex_id(v: str, label: str) -> None:
     if not is_hex_id(v):

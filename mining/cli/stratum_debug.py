@@ -13,7 +13,6 @@ import json
 import logging
 from typing import Any, List
 
-
 log = logging.getLogger("stratum_debug")
 
 
@@ -66,7 +65,9 @@ def main(argv: List[str] | None = None) -> None:
     parser.add_argument("--password", default="x")
     args = parser.parse_args(argv)
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
+    )
     try:
         asyncio.run(run_client(args.host, args.port, args.worker, args.password))
     except KeyboardInterrupt:

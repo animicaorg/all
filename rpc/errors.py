@@ -22,6 +22,7 @@ Notes:
 - `data` SHOULD be small, stable, and safe to expose. Avoid raw tracebacks in prod.
 - All custom codes live in -32000..-32099 and are stable across releases.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -40,6 +41,7 @@ except Exception:  # pragma: no cover
 # JSON-RPC 2.0 codes (spec)
 # ───────────────────────────────────────────────────────────────────────────────
 
+
 class JsonRpcCode(IntEnum):
     PARSE_ERROR = -32700
     INVALID_REQUEST = -32600
@@ -53,6 +55,7 @@ class JsonRpcCode(IntEnum):
 # Animica server codes (-32000..-32099)
 # Keep these stable; append new codes at the end to avoid collisions.
 # ───────────────────────────────────────────────────────────────────────────────
+
 
 class AnimicaCode(IntEnum):
     SERVER_ERROR = -32000
@@ -73,7 +76,9 @@ class AnimicaCode(IntEnum):
     FEE_TOO_LOW = -32017
     TX_TOO_LARGE = -32018
     MEMPOOL_FULL = -32019
-    DUPLICATE_TX = -3201_0  # -32010 is used; we’ll map duplicate specially below (see _CANON_MAP)
+    DUPLICATE_TX = (
+        -3201_0
+    )  # -32010 is used; we’ll map duplicate specially below (see _CANON_MAP)
 
     # Consensus/Proofs
     BAD_PROOF = -32030
@@ -88,6 +93,7 @@ class AnimicaCode(IntEnum):
     RAND_WINDOW_ERROR = -32050
     VDF_INVALID = -32051
 
+
 # Back-compat: fix typo for DUPLICATE_TX (ensure distinct code)
 if not hasattr(AnimicaCode, "DUPLICATE_TX"):
     AnimicaCode.DUPLICATE_TX = IntEnum("AnimicaCode", {"DUPLICATE_TX": -32020})(-32020)  # type: ignore[attr-defined]
@@ -96,6 +102,7 @@ if not hasattr(AnimicaCode, "DUPLICATE_TX"):
 # ───────────────────────────────────────────────────────────────────────────────
 # Error dataclass & base exception
 # ───────────────────────────────────────────────────────────────────────────────
+
 
 @dataclass(frozen=True)
 class RpcError(Exception):
@@ -117,30 +124,39 @@ class RpcError(Exception):
 # Concrete exception types (nice to catch in handlers)
 # ───────────────────────────────────────────────────────────────────────────────
 
+
 class ParseError(RpcError):
     def __init__(self, detail: str = "Parse error", **data: Any) -> None:
         super().__init__(JsonRpcCode.PARSE_ERROR, detail, data or None)
+
 
 class InvalidRequest(RpcError):
     def __init__(self, detail: str = "Invalid request", **data: Any) -> None:
         super().__init__(JsonRpcCode.INVALID_REQUEST, detail, data or None)
 
+
 class MethodNotFound(RpcError):
     def __init__(self, method: str) -> None:
-        super().__init__(JsonRpcCode.METHOD_NOT_FOUND, "Method not found", {"method": method})
+        super().__init__(
+            JsonRpcCode.METHOD_NOT_FOUND, "Method not found", {"method": method}
+        )
+
 
 class InvalidParams(RpcError):
     def __init__(self, detail: str = "Invalid params", **data: Any) -> None:
         super().__init__(JsonRpcCode.INVALID_PARAMS, detail, data or None)
 
+
 class InternalError(RpcError):
     def __init__(self, detail: str = "Internal error", **data: Any) -> None:
         super().__init__(JsonRpcCode.INTERNAL_ERROR, detail, data or None)
+
 
 # Server errors
 class ServerError(RpcError):
     def __init__(self, detail: str = "Server error", **data: Any) -> None:
         super().__init__(AnimicaCode.SERVER_ERROR, detail, data or None)
+
 
 class RateLimited(RpcError):
     def __init__(self, retry_after_ms: Optional[int] = None, **data: Any) -> None:
@@ -149,93 +165,159 @@ class RateLimited(RpcError):
             payload["retryAfterMs"] = int(retry_after_ms)
         super().__init__(AnimicaCode.RATE_LIMITED, "Too many requests", payload or None)
 
+
 class TemporarilyUnavailable(RpcError):
     def __init__(self, detail: str = "Temporarily unavailable", **data: Any) -> None:
         super().__init__(AnimicaCode.TEMPORARILY_UNAVAILABLE, detail, data or None)
+
 
 class AccessDenied(RpcError):
     def __init__(self, detail: str = "Access denied", **data: Any) -> None:
         super().__init__(AnimicaCode.ACCESS_DENIED, detail, data or None)
 
+
 class NotFound(RpcError):
     def __init__(self, what: str = "resource", **data: Any) -> None:
         super().__init__(AnimicaCode.NOT_FOUND, f"{what} not found", data or None)
 
+
 class AlreadyExists(RpcError):
     def __init__(self, what: str = "resource", **data: Any) -> None:
-        super().__init__(AnimicaCode.ALREADY_EXISTS, f"{what} already exists", data or None)
+        super().__init__(
+            AnimicaCode.ALREADY_EXISTS, f"{what} already exists", data or None
+        )
+
 
 # Tx & state
 class InvalidTx(RpcError):
     def __init__(self, reason: str = "Invalid transaction", **data: Any) -> None:
         super().__init__(AnimicaCode.INVALID_TX, reason, data or None)
 
+
 class ChainIdMismatch(RpcError):
     def __init__(self, got: int, expected: int) -> None:
-        super().__init__(AnimicaCode.CHAIN_ID_MISMATCH, "Chain ID mismatch", {"got": got, "expected": expected})
+        super().__init__(
+            AnimicaCode.CHAIN_ID_MISMATCH,
+            "Chain ID mismatch",
+            {"got": got, "expected": expected},
+        )
+
 
 class BadSignature(RpcError):
-    def __init__(self, detail: str = "Bad or unsupported signature", **data: Any) -> None:
+    def __init__(
+        self, detail: str = "Bad or unsupported signature", **data: Any
+    ) -> None:
         super().__init__(AnimicaCode.BAD_SIGNATURE, detail, data or None)
+
 
 class InsufficientFunds(RpcError):
     def __init__(self, required: int, available: int) -> None:
-        super().__init__(AnimicaCode.INSUFFICIENT_FUNDS, "Insufficient funds", {"required": str(required), "available": str(available)})
+        super().__init__(
+            AnimicaCode.INSUFFICIENT_FUNDS,
+            "Insufficient funds",
+            {"required": str(required), "available": str(available)},
+        )
+
 
 class NonceTooLow(RpcError):
     def __init__(self, got: int, expected: int) -> None:
-        super().__init__(AnimicaCode.NONCE_TOO_LOW, "Nonce too low", {"got": got, "expected": expected})
+        super().__init__(
+            AnimicaCode.NONCE_TOO_LOW,
+            "Nonce too low",
+            {"got": got, "expected": expected},
+        )
+
 
 class NonceTooHigh(RpcError):
     def __init__(self, got: int, highest: int) -> None:
-        super().__init__(AnimicaCode.NONCE_TOO_HIGH, "Nonce too high", {"got": got, "highest": highest})
+        super().__init__(
+            AnimicaCode.NONCE_TOO_HIGH,
+            "Nonce too high",
+            {"got": got, "highest": highest},
+        )
+
 
 class GasTooLow(RpcError):
     def __init__(self, got: int, min_required: int) -> None:
-        super().__init__(AnimicaCode.GAS_TOO_LOW, "Gas too low", {"got": got, "minRequired": min_required})
+        super().__init__(
+            AnimicaCode.GAS_TOO_LOW,
+            "Gas too low",
+            {"got": got, "minRequired": min_required},
+        )
+
 
 class FeeTooLow(RpcError):
     def __init__(self, got: int, floor: int) -> None:
-        super().__init__(AnimicaCode.FEE_TOO_LOW, "Fee too low", {"got": str(got), "floor": str(floor)})
+        super().__init__(
+            AnimicaCode.FEE_TOO_LOW,
+            "Fee too low",
+            {"got": str(got), "floor": str(floor)},
+        )
+
 
 class TxTooLarge(RpcError):
     def __init__(self, got_bytes: int, max_bytes: int) -> None:
-        super().__init__(AnimicaCode.TX_TOO_LARGE, "Transaction too large", {"gotBytes": got_bytes, "maxBytes": max_bytes})
+        super().__init__(
+            AnimicaCode.TX_TOO_LARGE,
+            "Transaction too large",
+            {"gotBytes": got_bytes, "maxBytes": max_bytes},
+        )
+
 
 class MempoolFull(RpcError):
     def __init__(self, limit: int) -> None:
         super().__init__(AnimicaCode.MEMPOOL_FULL, "Mempool full", {"limit": limit})
 
+
 class DuplicateTx(RpcError):
     def __init__(self, tx_hash: str) -> None:
-        super().__init__(AnimicaCode.DUPLICATE_TX, "Duplicate transaction", {"hash": tx_hash})
+        super().__init__(
+            AnimicaCode.DUPLICATE_TX, "Duplicate transaction", {"hash": tx_hash}
+        )
+
 
 # Consensus/Proofs
 class BadProof(RpcError):
     def __init__(self, kind: str, detail: str = "Invalid proof") -> None:
         super().__init__(AnimicaCode.BAD_PROOF, detail, {"kind": kind})
 
+
 class PoIESRejected(RpcError):
     def __init__(self, score: float, theta: float) -> None:
-        super().__init__(AnimicaCode.POIES_REJECTED, "Block below acceptance threshold", {"score": score, "theta": theta})
+        super().__init__(
+            AnimicaCode.POIES_REJECTED,
+            "Block below acceptance threshold",
+            {"score": score, "theta": theta},
+        )
+
 
 class PqPolicyViolation(RpcError):
     def __init__(self, detail: str = "PQ policy violation", **data: Any) -> None:
         super().__init__(AnimicaCode.PQ_POLICY_VIOLATION, detail, data or None)
+
 
 # DA
 class DaError(RpcError):
     def __init__(self, detail: str = "Data-availability error", **data: Any) -> None:
         super().__init__(AnimicaCode.DA_ERROR, detail, data or None)
 
+
 class DaNotAvailable(RpcError):
     def __init__(self, commitment: str) -> None:
-        super().__init__(AnimicaCode.DA_NOT_AVAILABLE, "Blob not available", {"commitment": commitment})
+        super().__init__(
+            AnimicaCode.DA_NOT_AVAILABLE,
+            "Blob not available",
+            {"commitment": commitment},
+        )
+
 
 # Randomness
 class RandWindowError(RpcError):
-    def __init__(self, detail: str = "Commit/reveal outside window", **data: Any) -> None:
+    def __init__(
+        self, detail: str = "Commit/reveal outside window", **data: Any
+    ) -> None:
         super().__init__(AnimicaCode.RAND_WINDOW_ERROR, detail, data or None)
+
 
 class VdfInvalid(RpcError):
     def __init__(self, detail: str = "Invalid VDF proof", **data: Any) -> None:
@@ -245,6 +327,7 @@ class VdfInvalid(RpcError):
 # ───────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ───────────────────────────────────────────────────────────────────────────────
+
 
 def error_response(req_id: Optional[Union[str, int]], err: RpcError) -> Dict[str, Any]:
     """
@@ -284,7 +367,11 @@ def http_status_hint(code: int) -> int:
     Optional mapping to HTTP status for JSON-RPC-over-HTTP gateways.
     (This is advisory; JSON-RPC spec is transport-agnostic.)
     """
-    if code in (JsonRpcCode.PARSE_ERROR, JsonRpcCode.INVALID_REQUEST, JsonRpcCode.INVALID_PARAMS):
+    if code in (
+        JsonRpcCode.PARSE_ERROR,
+        JsonRpcCode.INVALID_REQUEST,
+        JsonRpcCode.INVALID_PARAMS,
+    ):
         return 400
     if code == JsonRpcCode.METHOD_NOT_FOUND:
         return 404
@@ -324,7 +411,9 @@ def _mempool_to_rpc(exc: Exception) -> RpcError:
     exact failure reasons (fee too low, nonce gap, oversize, etc.).
     """
 
-    if MempoolError is None or MempoolErrorCode is None:  # pragma: no cover - import guard
+    if (
+        MempoolError is None or MempoolErrorCode is None
+    ):  # pragma: no cover - import guard
         return InvalidTx(str(exc))
 
     assert isinstance(exc, MempoolError)
@@ -337,7 +426,13 @@ def _mempool_to_rpc(exc: Exception) -> RpcError:
         MempoolErrorCode.DOS: AnimicaCode.MEMPOOL_FULL,
     }
     rpc_code = code_map.get(getattr(exc, "code", None), AnimicaCode.INVALID_TX)
-    data = {"mempoolError": exc.to_dict() if hasattr(exc, "to_dict") else {"code": getattr(exc, "code", None)}}
+    data = {
+        "mempoolError": (
+            exc.to_dict()
+            if hasattr(exc, "to_dict")
+            else {"code": getattr(exc, "code", None)}
+        )
+    }
     message = exc.message if hasattr(exc, "message") else str(exc)
     return RpcError(code=int(rpc_code), message=message, data=data)
 

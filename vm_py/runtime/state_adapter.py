@@ -51,12 +51,12 @@ If a capability is missing, we gracefully degrade to a no-op for that feature.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional, Tuple, List
-
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # --------------------------------------------------------------------------- #
 # Utilities                                                                   #
 # --------------------------------------------------------------------------- #
+
 
 def _first_call(obj: Any, candidates: List[str], *args, **kwargs):
     """Call the first present attribute name on obj; return (found, result)."""
@@ -65,6 +65,7 @@ def _first_call(obj: Any, candidates: List[str], *args, **kwargs):
         if callable(fn):
             return True, fn(*args, **kwargs)
     return False, None
+
 
 def _first_attr(obj: Any, candidates: List[str]):
     """Return the first callable attribute or None."""
@@ -79,6 +80,7 @@ def _first_attr(obj: Any, candidates: List[str]):
 # Backend adapter                                                              #
 # --------------------------------------------------------------------------- #
 
+
 @dataclass
 class ExecutionStateBackend:
     """
@@ -88,6 +90,7 @@ class ExecutionStateBackend:
     not exist, so the VM won't crash if, for example, balance operations are
     not wired for a local-simulation run.
     """
+
     state: Any
 
     # --- Storage ------------------------------------------------------------ #
@@ -97,9 +100,15 @@ class ExecutionStateBackend:
         if ok:
             return bytes(out or b"")
         # Some implementations might expect hex strings; attempt fallback
-        ok, out = _first_call(self.state, ["get_storage", "read_storage"], address.hex(), key.hex())
+        ok, out = _first_call(
+            self.state, ["get_storage", "read_storage"], address.hex(), key.hex()
+        )
         if ok:
-            return bytes.fromhex(out[2:]) if isinstance(out, str) and out.startswith("0x") else bytes(out or b"")
+            return (
+                bytes.fromhex(out[2:])
+                if isinstance(out, str) and out.startswith("0x")
+                else bytes(out or b"")
+            )
         return b""
 
     def set_storage(self, address: bytes, key: bytes, value: bytes) -> None:
@@ -197,6 +206,7 @@ class ExecutionStateBackend:
 # Install / Monkey-patch helpers                                              #
 # --------------------------------------------------------------------------- #
 
+
 def _install_storage_backend(backend: ExecutionStateBackend) -> None:
     """
     Wire the VM's storage_api to use the provided backend.
@@ -216,9 +226,7 @@ def _install_storage_backend(backend: ExecutionStateBackend) -> None:
     # Prefer official hook if present
     if callable(getattr(storage_api, "set_backend", None)):
         try:
-            storage_api.set_backend(
-                type("Backend", (), {"get": _get, "set": _set})()
-            )
+            storage_api.set_backend(type("Backend", (), {"get": _get, "set": _set})())
             return
         except Exception:
             pass

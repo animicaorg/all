@@ -10,10 +10,10 @@ Usage:
 
 from __future__ import annotations
 
-from functools import lru_cache
-from datetime import datetime, timezone
 import os
 import subprocess
+from datetime import datetime, timezone
+from functools import lru_cache
 from typing import Dict
 
 # Bump this when making a tagged release. Use semver (major.minor.patch).

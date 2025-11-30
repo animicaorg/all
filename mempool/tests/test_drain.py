@@ -6,18 +6,29 @@ from typing import Any, Iterable, Optional
 import pytest
 
 pool_mod = pytest.importorskip("mempool.pool", reason="mempool.pool module not found")
-drain_mod = pytest.importorskip("mempool.drain", reason="mempool.drain module not found")
+drain_mod = pytest.importorskip(
+    "mempool.drain", reason="mempool.drain module not found"
+)
 
 # -------------------------
 # Helpers & test scaffolding
 # -------------------------
+
 
 class FakeTx:
     """
     Minimal tx object sufficient for pool + drain selection.
     Attributes include multiple common synonyms to maximize compatibility.
     """
-    def __init__(self, sender: bytes, nonce: int, fee: int, gas: int = 21_000, size_bytes: int = 120):
+
+    def __init__(
+        self,
+        sender: bytes,
+        nonce: int,
+        fee: int,
+        gas: int = 21_000,
+        size_bytes: int = 120,
+    ):
         self.sender = sender
         self.nonce = nonce
         self.fee = fee
@@ -29,11 +40,11 @@ class FakeTx:
         # Encoded size
         self.size_bytes = size_bytes
         # a stable-ish hash for membership lookups in some pools
-        self.hash = (sender + nonce.to_bytes(8, "big"))[:32] or b"\xDA" * 32
+        self.hash = (sender + nonce.to_bytes(8, "big"))[:32] or b"\xda" * 32
         self.tx_hash = self.hash  # common alias
 
     def __bytes__(self) -> bytes:  # used by size checks
-        return b"\xEE" * self.size_bytes
+        return b"\xee" * self.size_bytes
 
 
 ALICE = b"A" * 20
@@ -57,15 +68,32 @@ def _monkeypatch_validation_and_priority(monkeypatch: pytest.MonkeyPatch) -> Non
     try:
         validate = pytest.importorskip("mempool.validate")
         for name in (
-            "validate_tx", "fast_stateless_check", "stateless_validate", "validate",
-            "check_size", "check_chain_id", "check_gas_limits",
+            "validate_tx",
+            "fast_stateless_check",
+            "stateless_validate",
+            "validate",
+            "check_size",
+            "check_chain_id",
+            "check_gas_limits",
         ):
             if hasattr(validate, name):
                 monkeypatch.setattr(validate, name, lambda *a, **k: True, raising=True)
-        for name in ("estimate_encoded_size", "encoded_size", "tx_encoded_size", "get_encoded_size"):
+        for name in (
+            "estimate_encoded_size",
+            "encoded_size",
+            "tx_encoded_size",
+            "get_encoded_size",
+        ):
             if hasattr(validate, name):
-                monkeypatch.setattr(validate, name, lambda tx: len(bytes(tx)), raising=True)
-        for name in ("precheck_pq_signature", "pq_precheck_verify", "verify_pq_signature", "pq_verify"):
+                monkeypatch.setattr(
+                    validate, name, lambda tx: len(bytes(tx)), raising=True
+                )
+        for name in (
+            "precheck_pq_signature",
+            "pq_precheck_verify",
+            "verify_pq_signature",
+            "pq_verify",
+        ):
             if hasattr(validate, name):
                 monkeypatch.setattr(validate, name, lambda *a, **k: True, raising=True)
     except Exception:
@@ -75,7 +103,9 @@ def _monkeypatch_validation_and_priority(monkeypatch: pytest.MonkeyPatch) -> Non
         priority = pytest.importorskip("mempool.priority")
         for name in ("effective_priority", "priority_of", "calc_effective_priority"):
             if hasattr(priority, name):
-                monkeypatch.setattr(priority, name, lambda tx: getattr(tx, "fee", 0), raising=True)
+                monkeypatch.setattr(
+                    priority, name, lambda tx: getattr(tx, "fee", 0), raising=True
+                )
     except Exception:
         pass
 
@@ -90,8 +120,14 @@ def _make_config(*, max_txs: int | None = None, max_bytes: int | None = None) ->
         mp_config = None
 
     field_map = {
-        "max_txs": max_txs, "max_pool_txs": max_txs, "max_items": max_txs, "capacity": max_txs,
-        "max_bytes": max_bytes, "max_pool_bytes": max_bytes, "capacity_bytes": max_bytes, "max_mem_bytes": max_bytes,
+        "max_txs": max_txs,
+        "max_pool_txs": max_txs,
+        "max_items": max_txs,
+        "capacity": max_txs,
+        "max_bytes": max_bytes,
+        "max_pool_bytes": max_bytes,
+        "capacity_bytes": max_bytes,
+        "max_mem_bytes": max_bytes,
     }
 
     if mp_config:
@@ -165,7 +201,11 @@ def _extract_txs(selection: Any) -> list[FakeTx]:
         return [selection]
 
     # If selection is a tuple where second element is list
-    if isinstance(selection, (tuple, list)) and selection and isinstance(selection[0], list):
+    if (
+        isinstance(selection, (tuple, list))
+        and selection
+        and isinstance(selection[0], list)
+    ):
         selection = selection[0]
 
     try:
@@ -198,6 +238,7 @@ def _sum_gas(txs: list[FakeTx]) -> int:
             if isinstance(v, int):
                 return v
         return 21_000
+
     return sum(gas_of(tx) for tx in txs)
 
 
@@ -280,6 +321,7 @@ def _drain(pool: Any, gas_budget: int, byte_budget: int) -> list[FakeTx]:
 # Tests
 # -------------------------
 
+
 def test_drain_respects_gas_and_bytes_budgets(monkeypatch: pytest.MonkeyPatch):
     """
     With uniform gas/size, selection should pick the highest-priority txs up to the budget.
@@ -291,10 +333,10 @@ def test_drain_respects_gas_and_bytes_budgets(monkeypatch: pytest.MonkeyPatch):
     # Five independent senders, uniform gas/size; fees vary
     txs = [
         FakeTx(ALICE, 0, fee=10, gas=10_000, size_bytes=100),
-        FakeTx(BOB,   0, fee=50, gas=10_000, size_bytes=100),
-        FakeTx(CARL,  0, fee=30, gas=10_000, size_bytes=100),
-        FakeTx(DANA,  0, fee=70, gas=10_000, size_bytes=100),
-        FakeTx(ELLA,  0, fee=20, gas=10_000, size_bytes=100),
+        FakeTx(BOB, 0, fee=50, gas=10_000, size_bytes=100),
+        FakeTx(CARL, 0, fee=30, gas=10_000, size_bytes=100),
+        FakeTx(DANA, 0, fee=70, gas=10_000, size_bytes=100),
+        FakeTx(ELLA, 0, fee=20, gas=10_000, size_bytes=100),
     ]
     for tx in txs:
         _admit(pool, tx)
@@ -308,12 +350,15 @@ def test_drain_respects_gas_and_bytes_budgets(monkeypatch: pytest.MonkeyPatch):
     # Expect top-3 fees chosen: 70, 50, 30
     top3 = sorted((t.fee for t in txs), reverse=True)[:3]
     got_fees = sorted((_priority(t) for t in selected), reverse=True)
-    assert sorted(got_fees, reverse=True) == sorted(top3, reverse=True), f"expected top3 {top3}, got {got_fees}"
+    assert sorted(got_fees, reverse=True) == sorted(
+        top3, reverse=True
+    ), f"expected top3 {top3}, got {got_fees}"
 
     # If an order is returned, ensure non-increasing by priority
     if isinstance(selected, list) and len(selected) >= 2:
-        assert all(_priority(a) >= _priority(b) for a, b in zip(selected, selected[1:])), \
-            "selection order is not non-increasing by priority"
+        assert all(
+            _priority(a) >= _priority(b) for a, b in zip(selected, selected[1:])
+        ), "selection order is not non-increasing by priority"
 
 
 def test_drain_respects_sender_sequence(monkeypatch: pytest.MonkeyPatch):
@@ -342,8 +387,12 @@ def test_drain_respects_sender_sequence(monkeypatch: pytest.MonkeyPatch):
     assert _sum_size(selected) <= 200 + 1
 
     # Must include BOB(800) and ALICE(10); must NOT include ALICE(1000)
-    assert 800 in fees and 10 in fees, f"expected to include BOB(800) and ALICE(10), got {fees}"
-    assert 1000 not in fees, "nonce=1 should not be selected without nonce=0 within budget"
+    assert (
+        800 in fees and 10 in fees
+    ), f"expected to include BOB(800) and ALICE(10), got {fees}"
+    assert (
+        1000 not in fees
+    ), "nonce=1 should not be selected without nonce=0 within budget"
 
 
 def test_drain_ordering_when_all_ready(monkeypatch: pytest.MonkeyPatch):
@@ -357,17 +406,20 @@ def test_drain_ordering_when_all_ready(monkeypatch: pytest.MonkeyPatch):
 
     seq = [
         FakeTx(ALICE, 0, fee=40, gas=5_000),
-        FakeTx(BOB,   0, fee=90, gas=5_000),
-        FakeTx(CARL,  0, fee=10, gas=5_000),
-        FakeTx(DANA,  0, fee=70, gas=5_000),
+        FakeTx(BOB, 0, fee=90, gas=5_000),
+        FakeTx(CARL, 0, fee=10, gas=5_000),
+        FakeTx(DANA, 0, fee=70, gas=5_000),
     ]
     for tx in seq:
         _admit(pool, tx)
 
     selected = _drain(pool, gas_budget=50_000, byte_budget=10_000)
-    assert len(selected) == 4 or len(selected) >= 3, "expected all (or nearly all) to fit generous budgets"
+    assert (
+        len(selected) == 4 or len(selected) >= 3
+    ), "expected all (or nearly all) to fit generous budgets"
 
     # If results are ordered, verify monotone non-increasing by priority
     if isinstance(selected, list) and len(selected) >= 2:
-        assert all(_priority(a) >= _priority(b) for a, b in zip(selected, selected[1:])), \
-            f"selection order not by priority: {[(_priority(t), getattr(t,'sender',b'')) for t in selected]}"
+        assert all(
+            _priority(a) >= _priority(b) for a, b in zip(selected, selected[1:])
+        ), f"selection order not by priority: {[(_priority(t), getattr(t,'sender',b'')) for t in selected]}"

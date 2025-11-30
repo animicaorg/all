@@ -25,13 +25,16 @@ from typing import Dict, Optional
 try:
     from vm_py.errors import VmError
 except Exception:  # pragma: no cover - bootstrap path
+
     class VmError(Exception):  # type: ignore
         pass
+
 
 # Config with safe defaults if vm_py.config isn't present yet.
 try:
     import vm_py.config as _cfg  # type: ignore
 except Exception:  # pragma: no cover
+
     class _cfg:  # type: ignore
         ADDRESS_LEN = 32
         MAX_BALANCE_BITS = 256
@@ -45,6 +48,7 @@ _DEFAULT_SELF = b"\x00" * int(getattr(_cfg, "ADDRESS_LEN", 32))
 
 
 # ------------------------------ Addr & Amount ------------------------------ #
+
 
 def _check_addr(addr: bytes) -> None:
     if not isinstance(addr, (bytes, bytearray)):
@@ -79,6 +83,7 @@ def _add_checked(a: int, b: int) -> int:
 
 # ---------------------------- Self Address Hook ---------------------------- #
 
+
 def _resolve_self_address() -> bytes:
     """
     Try to obtain the current contract's address from runtime.context if available.
@@ -103,6 +108,7 @@ def _resolve_self_address() -> bytes:
 
 
 # ------------------------------- Public API -------------------------------- #
+
 
 def balance(addr: Optional[bytes] = None) -> int:
     """
@@ -174,6 +180,7 @@ def transfer(to: bytes, amount: int) -> None:
 
 
 # ------------------------------- Test Hooks -------------------------------- #
+
 
 def _reset_ledger() -> None:
     """Clear the in-memory ledger (tests only)."""

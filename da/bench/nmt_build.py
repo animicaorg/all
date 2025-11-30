@@ -26,6 +26,7 @@ from typing import Any, Callable, Iterable, List, Optional, Sequence, Tuple
 # Helpers to locate NMT builder
 # -----------------------------
 
+
 def _import(mod: str):
     return __import__(mod, fromlist=["*"])
 
@@ -57,7 +58,9 @@ def _get_commit_fn() -> Optional[Callable[[Iterable[Any]], bytes]]:
     return None
 
 
-def _new_tree_builder() -> Tuple[str, Callable[[], Any], Callable[[Any, Any], None], Callable[[Any], bytes]]:
+def _new_tree_builder() -> (
+    Tuple[str, Callable[[], Any], Callable[[Any, Any], None], Callable[[Any], bytes]]
+):
     """
     Returns:
       - label for the detected API
@@ -83,29 +86,51 @@ def _new_tree_builder() -> Tuple[str, Callable[[], Any], Callable[[Any, Any], No
                     fin_name = nm
                     break
             if append_name and fin_name:
+
                 def ctor() -> Any:
                     try:
                         return C()
                     except TypeError:
                         # Some implementations require params; try no-arg variant only
                         return C  # type: ignore[return-value]
+
                 def append_fn(b, x):
-                    getattr(b, append_name)(*x) if isinstance(x, tuple) else getattr(b, append_name)(x)
+                    (
+                        getattr(b, append_name)(*x)
+                        if isinstance(x, tuple)
+                        else getattr(b, append_name)(x)
+                    )
+
                 def finalize_fn(b) -> bytes:
                     r = getattr(b, fin_name)()
                     return r if isinstance(r, (bytes, bytearray)) else bytes(r)
-                return (f"{cls_name}.{append_name}/{fin_name}", ctor, append_fn, finalize_fn)
+
+                return (
+                    f"{cls_name}.{append_name}/{fin_name}",
+                    ctor,
+                    append_fn,
+                    finalize_fn,
+                )
 
     # Module-level functions (build from leaves)
-    for fn_name in ("build", "build_tree", "build_and_root", "compute_root_from_leaves"):
+    for fn_name in (
+        "build",
+        "build_tree",
+        "build_and_root",
+        "compute_root_from_leaves",
+    ):
         if hasattr(tree_mod, fn_name):
             fn = getattr(tree_mod, fn_name)
+
             def ctor():  # stateless
                 return fn
+
             def append_fn(_builder, _x):  # not used
                 raise RuntimeError("append called on functional builder")
+
             def finalize_fn(fnlike) -> bytes:
                 raise RuntimeError("finalize called on functional builder")
+
             # We'll detect functional builder in call site
             return (fn_name, ctor, append_fn, finalize_fn)
 
@@ -116,7 +141,10 @@ def _new_tree_builder() -> Tuple[str, Callable[[], Any], Callable[[Any, Any], No
 # Data generation & bench utilities
 # ---------------------------------
 
-def _gen_leaves(n: int, ns_bits: int, min_bytes: int, max_bytes: int, seed: int) -> Tuple[List[Tuple[int, bytes]], int]:
+
+def _gen_leaves(
+    n: int, ns_bits: int, min_bytes: int, max_bytes: int, seed: int
+) -> Tuple[List[Tuple[int, bytes]], int]:
     rnd = random.Random(seed)
     ns_max = (1 << ns_bits) - 1
     leaves: List[Tuple[int, bytes]] = []
@@ -127,7 +155,11 @@ def _gen_leaves(n: int, ns_bits: int, min_bytes: int, max_bytes: int, seed: int)
         # Bias towards smaller payloads for a more realistic distribution
         if ln > min_bytes and rnd.random() < 0.6:
             ln = int(min_bytes + (ln - min_bytes) * rnd.random() ** 2)
-        data = rnd.randbytes(ln) if hasattr(rnd, "randbytes") else bytes(rnd.getrandbits(8) for _ in range(ln))
+        data = (
+            rnd.randbytes(ln)
+            if hasattr(rnd, "randbytes")
+            else bytes(rnd.getrandbits(8) for _ in range(ln))
+        )
         leaves.append((ns, data))
         total += ln
     return leaves, total
@@ -141,14 +173,24 @@ def _sizeof(data_bytes: int) -> str:
 # Main benchmark
 # -------------
 
-def run_round(leaves: Sequence[Tuple[int, bytes]],
-              leaf_encoder: Optional[Callable[[int, bytes], bytes]],
-              builder_pack: Tuple[str, Callable[[], Any], Callable[[Any, Any], None], Callable[[Any], bytes]]) -> Tuple[float, bytes]:
+
+def run_round(
+    leaves: Sequence[Tuple[int, bytes]],
+    leaf_encoder: Optional[Callable[[int, bytes], bytes]],
+    builder_pack: Tuple[
+        str, Callable[[], Any], Callable[[Any, Any], None], Callable[[Any], bytes]
+    ],
+) -> Tuple[float, bytes]:
     label, ctor, append_fn, finalize_fn = builder_pack
     builder = ctor()
 
     # Functional builder form: ctor() returned a function that takes leaves and returns root
-    if callable(builder) and not hasattr(builder, "__self__") and label in ("build", "build_tree", "build_and_root", "compute_root_from_leaves"):
+    if (
+        callable(builder)
+        and not hasattr(builder, "__self__")
+        and label
+        in ("build", "build_tree", "build_and_root", "compute_root_from_leaves")
+    ):
         fn = builder  # type: ignore[assignment]
         t0 = time.perf_counter()
         root = fn(leaves)  # type: ignore[misc]
@@ -172,13 +214,31 @@ def run_round(leaves: Sequence[Tuple[int, bytes]],
 
 def main():
     p = argparse.ArgumentParser(description="NMT build throughput benchmark")
-    p.add_argument("--leaves", type=int, default=32768, help="Number of leaves to build (default: 32768)")
-    p.add_argument("--min-bytes", type=int, default=192, help="Minimum payload size per leaf")
-    p.add_argument("--max-bytes", type=int, default=512, help="Maximum payload size per leaf")
+    p.add_argument(
+        "--leaves",
+        type=int,
+        default=32768,
+        help="Number of leaves to build (default: 32768)",
+    )
+    p.add_argument(
+        "--min-bytes", type=int, default=192, help="Minimum payload size per leaf"
+    )
+    p.add_argument(
+        "--max-bytes", type=int, default=512, help="Maximum payload size per leaf"
+    )
     p.add_argument("--ns-bits", type=int, default=24, help="Namespace id bit width")
-    p.add_argument("--rounds", type=int, default=3, help="Number of timed rounds (roots should match)")
-    p.add_argument("--seed", type=int, default=0xDA5EED, help="PRNG seed for leaf generation")
-    p.add_argument("--warmup", type=int, default=1, help="Warm-up iterations (not measured)")
+    p.add_argument(
+        "--rounds",
+        type=int,
+        default=3,
+        help="Number of timed rounds (roots should match)",
+    )
+    p.add_argument(
+        "--seed", type=int, default=0xDA5EED, help="PRNG seed for leaf generation"
+    )
+    p.add_argument(
+        "--warmup", type=int, default=1, help="Warm-up iterations (not measured)"
+    )
     args = p.parse_args()
 
     try:
@@ -189,8 +249,12 @@ def main():
     leaf_encoder = _get_leaf_encoder()
     commit_fn = _get_commit_fn()
 
-    leaves, total_bytes = _gen_leaves(args.leaves, args.ns_bits, args.min_bytes, args.max_bytes, args.seed)
-    print(f"[bench] N={args.leaves} leaves, payload ≈ {_sizeof(total_bytes)}, ns_bits={args.ns_bits}")
+    leaves, total_bytes = _gen_leaves(
+        args.leaves, args.ns_bits, args.min_bytes, args.max_bytes, args.seed
+    )
+    print(
+        f"[bench] N={args.leaves} leaves, payload ≈ {_sizeof(total_bytes)}, ns_bits={args.ns_bits}"
+    )
     print(f"[bench] Builder API: {label}{' + encoder' if leaf_encoder else ''}")
 
     # Optional: verify that repeated builds produce the same root (and match commit fn if available)
@@ -202,7 +266,9 @@ def main():
     last_root: Optional[bytes] = None
 
     for i in range(args.rounds):
-        dt, root = run_round(leaves, leaf_encoder, (label, ctor, append_fn, finalize_fn))
+        dt, root = run_round(
+            leaves, leaf_encoder, (label, ctor, append_fn, finalize_fn)
+        )
         times.append(dt)
         if last_root is None:
             last_root = root
@@ -211,7 +277,9 @@ def main():
                 raise SystemExit("[bench] ERROR: root mismatch across rounds")
         mbps = (total_bytes / (1024 * 1024)) / dt if dt > 0 else float("inf")
         lps = args.leaves / dt if dt > 0 else float("inf")
-        print(f"[round {i+1}/{args.rounds}] {dt*1000:.1f} ms  |  {mbps:8.2f} MiB/s  |  {lps:9.0f} leaves/s")
+        print(
+            f"[round {i+1}/{args.rounds}] {dt*1000:.1f} ms  |  {mbps:8.2f} MiB/s  |  {lps:9.0f} leaves/s"
+        )
 
     if commit_fn is not None:
         try:
@@ -223,8 +291,14 @@ def main():
                 if leaf_encoder:
                     enc = [leaf_encoder(ns, data) for ns, data in leaves]
                     ref = commit_fn(enc)  # type: ignore[misc]
-            if isinstance(ref, (bytes, bytearray)) and last_root is not None and bytes(ref) != last_root:
-                print("[bench] WARNING: commit() root != builder root (APIs may differ on input form)")
+            if (
+                isinstance(ref, (bytes, bytearray))
+                and last_root is not None
+                and bytes(ref) != last_root
+            ):
+                print(
+                    "[bench] WARNING: commit() root != builder root (APIs may differ on input form)"
+                )
         except Exception as e:
             print(f"[bench] NOTE: commit cross-check failed ({e!r})")
 
@@ -241,6 +315,7 @@ def main():
     )
     if last_root is not None:
         print(f"[root] 0x{last_root.hex()}")
+
 
 if __name__ == "__main__":
     main()

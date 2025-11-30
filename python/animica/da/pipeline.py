@@ -125,8 +125,14 @@ def reconstruct_blob_from_da(
       3. If the root differs, raise an error (data corruption or mismatch).
       4. Concatenate shards and trim to original_len.
     """
-    if "namespace" not in commitment or "root" not in commitment or "params" not in commitment:
-        raise ValueError("commitment is missing required keys ('namespace', 'root', 'params')")
+    if (
+        "namespace" not in commitment
+        or "root" not in commitment
+        or "params" not in commitment
+    ):
+        raise ValueError(
+            "commitment is missing required keys ('namespace', 'root', 'params')"
+        )
 
     ns = _to_bytes(commitment["namespace"])
     root_expected = _to_bytes(commitment["root"])
@@ -149,7 +155,9 @@ def reconstruct_blob_from_da(
 
     root_actual = _compute_root(ns, shard_list)
     if root_actual != root_expected:
-        raise ValueError("DA commitment root mismatch; shards may be corrupted or mismatched")
+        raise ValueError(
+            "DA commitment root mismatch; shards may be corrupted or mismatched"
+        )
 
     blob_concat = b"".join(shard_list)
     if len(blob_concat) < original_len:

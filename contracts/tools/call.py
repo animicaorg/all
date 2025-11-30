@@ -65,14 +65,16 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 # Shared local helpers (contracts/tools/__init__.py)
 try:
-    from contracts.tools import (  # type: ignore
-        canonical_json_str,
-        find_project_root as _maybe_find_project_root,
-        project_root as _project_root,
-    )
+    from contracts.tools import canonical_json_str
+    from contracts.tools import \
+        find_project_root as _maybe_find_project_root  # type: ignore
+    from contracts.tools import project_root as _project_root
 except Exception:
+
     def canonical_json_str(obj: Any) -> str:
-        return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return json.dumps(
+            obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        )
 
     def _project_root() -> Path:
         return Path(__file__).resolve().parents[2]
@@ -82,6 +84,7 @@ except Exception:
 
 
 # ------------------------------ .env loader ------------------------------- #
+
 
 def _load_env() -> None:
     """
@@ -117,6 +120,7 @@ def _load_env() -> None:
 
 # ----------------------------- SDK wrappers ------------------------------ #
 
+
 class _SdkError(RuntimeError):
     pass
 
@@ -127,7 +131,9 @@ class _Rpc:
         self.timeout = timeout
         self._client = None
         try:
-            from omni_sdk.rpc.http import HttpClient as _HttpClient  # type: ignore
+            from omni_sdk.rpc.http import \
+                HttpClient as _HttpClient  # type: ignore
+
             self._client = _HttpClient(url, timeout=timeout)
         except Exception:
             try:
@@ -141,17 +147,26 @@ class _Rpc:
 
                     def call(self, method: str, params: Any = None) -> Any:
                         self._id += 1
-                        payload = {"jsonrpc": "2.0", "id": self._id, "method": method, "params": params or []}
+                        payload = {
+                            "jsonrpc": "2.0",
+                            "id": self._id,
+                            "method": method,
+                            "params": params or [],
+                        }
                         r = requests.post(self.url, json=payload, timeout=self.timeout)
                         r.raise_for_status()
                         data = r.json()
                         if "error" in data and data["error"]:
-                            raise _SdkError(f"RPC error {data['error'].get('code')}: {data['error'].get('message')}")
+                            raise _SdkError(
+                                f"RPC error {data['error'].get('code')}: {data['error'].get('message')}"
+                            )
                         return data["result"]
 
                 self._client = _ReqWrapper(url, timeout)
             except Exception as exc:
-                raise _SdkError(f"RPC init failed (install omni-sdk or requests): {exc}") from exc
+                raise _SdkError(
+                    f"RPC init failed (install omni-sdk or requests): {exc}"
+                ) from exc
 
     def call(self, method: str, params: Any = None) -> Any:
         return self._client.call(method, params or [])
@@ -164,24 +179,37 @@ class _Signer:
         self._signer = None
 
     @classmethod
-    def from_mnemonic(cls, mnemonic: str, algo: str = "dilithium3", account_index: int = 0) -> "_Signer":
+    def from_mnemonic(
+        cls, mnemonic: str, algo: str = "dilithium3", account_index: int = 0
+    ) -> "_Signer":
         s = cls(algo=algo, account_index=account_index)
         # generic
         try:
             from omni_sdk.wallet.signer import Signer  # type: ignore
+
             if hasattr(Signer, "from_mnemonic"):
-                s._signer = Signer.from_mnemonic(mnemonic, alg=algo, account_index=account_index)
+                s._signer = Signer.from_mnemonic(
+                    mnemonic, alg=algo, account_index=account_index
+                )
                 return s
         except Exception:
             pass
         # specific
         try:
             if algo.startswith("dilithium"):
-                from omni_sdk.wallet.signer import Dilithium3Signer  # type: ignore
-                s._signer = Dilithium3Signer.from_mnemonic(mnemonic, account_index=account_index)
+                from omni_sdk.wallet.signer import \
+                    Dilithium3Signer  # type: ignore
+
+                s._signer = Dilithium3Signer.from_mnemonic(
+                    mnemonic, account_index=account_index
+                )
             else:
-                from omni_sdk.wallet.signer import SphincsShake128sSigner  # type: ignore
-                s._signer = SphincsShake128sSigner.from_mnemonic(mnemonic, account_index=account_index)
+                from omni_sdk.wallet.signer import \
+                    SphincsShake128sSigner  # type: ignore
+
+                s._signer = SphincsShake128sSigner.from_mnemonic(
+                    mnemonic, account_index=account_index
+                )
         except Exception as exc:
             raise _SdkError(f"Signer init failed: {exc}") from exc
         return s
@@ -202,16 +230,25 @@ class _Signer:
                 return out
             if isinstance(out, (tuple, list)) and len(out) == 2:
                 sig, pub = out
-                return {"alg_id": getattr(s, "alg_id", self.algo), "pubkey": pub, "signature": sig}
+                return {
+                    "alg_id": getattr(s, "alg_id", self.algo),
+                    "pubkey": pub,
+                    "signature": sig,
+                }
         for name in ("sign_detached", "sign_message"):
             if hasattr(s, name):
                 sig = getattr(s, name)(sign_bytes)
                 pub = getattr(s, "export_public_key", lambda: b"")()
-                return {"alg_id": getattr(s, "alg_id", self.algo), "pubkey": pub, "signature": sig}
+                return {
+                    "alg_id": getattr(s, "alg_id", self.algo),
+                    "pubkey": pub,
+                    "signature": sig,
+                }
         raise _SdkError("Signer lacks compatible sign()")
 
 
 # ----------------------------- ABI / Manifest ---------------------------- #
+
 
 def _load_json(path: Path) -> Dict[str, Any]:
     try:
@@ -220,7 +257,9 @@ def _load_json(path: Path) -> Dict[str, Any]:
         raise _SdkError(f"Failed to read JSON: {path}: {exc}") from exc
 
 
-def _load_abi(manifest_path: Optional[Path], abi_path: Optional[Path]) -> Dict[str, Any]:
+def _load_abi(
+    manifest_path: Optional[Path], abi_path: Optional[Path]
+) -> Dict[str, Any]:
     if manifest_path:
         m = _load_json(manifest_path)
         abi = m.get("abi")
@@ -236,7 +275,10 @@ def _load_abi(manifest_path: Optional[Path], abi_path: Optional[Path]) -> Dict[s
 
 # ----------------------------- Args parsing ------------------------------ #
 
-def _parse_args_obj(args_json: Optional[str], kv_pairs: Sequence[str], pos_json: Optional[str]) -> Tuple[List[Any], Dict[str, Any]]:
+
+def _parse_args_obj(
+    args_json: Optional[str], kv_pairs: Sequence[str], pos_json: Optional[str]
+) -> Tuple[List[Any], Dict[str, Any]]:
     # Priority: --pos (JSON array) and --args-json (object) first;
     # then add any --arg k=v pairs.
     pos: List[Any] = []
@@ -275,7 +317,12 @@ def _lex_value(s: str) -> Any:
     # Best-effort literal parser: try JSON, hex→bytes, int, float; else string.
     s = s.strip()
     # JSON object/array/number/bool/null
-    if (s.startswith("{") and s.endswith("}")) or (s.startswith("[") and s.endswith("]")) or s in ("true","false","null") or s.replace(".","",1).isdigit():
+    if (
+        (s.startswith("{") and s.endswith("}"))
+        or (s.startswith("[") and s.endswith("]"))
+        or s in ("true", "false", "null")
+        or s.replace(".", "", 1).isdigit()
+    ):
         try:
             return json.loads(s)
         except Exception:
@@ -300,7 +347,7 @@ def _lex_value(s: str) -> Any:
         pass
     # float
     try:
-        if any(c in s for c in (".","e","E")):
+        if any(c in s for c in (".", "e", "E")):
             return float(s)
     except Exception:
         pass
@@ -309,6 +356,7 @@ def _lex_value(s: str) -> Any:
 
 
 # ------------------------------ Read-only call --------------------------- #
+
 
 def _readonly_call(
     rpc: _Rpc,
@@ -328,7 +376,10 @@ def _readonly_call(
     # Try ContractClient
     try:
         from omni_sdk.contracts.client import ContractClient  # type: ignore
-        client = ContractClient(rpc_url=rpc.url, chain_id=chain_id, address=address, abi=abi)
+
+        client = ContractClient(
+            rpc_url=rpc.url, chain_id=chain_id, address=address, abi=abi
+        )
         # Try common call method variations
         for name in ("call_readonly", "view", "call"):
             if hasattr(client, name):
@@ -339,11 +390,21 @@ def _readonly_call(
                         res = method(fn_name, *pos_args, **kw_args)
                     else:
                         res = method(fn_name, *pos_args)
-                    return {"ok": True, "address": address, "function": fn_name, "return": res}
+                    return {
+                        "ok": True,
+                        "address": address,
+                        "function": fn_name,
+                        "return": res,
+                    }
                 except TypeError:
                     # Some clients expect {"args": {...}}
                     res = method(fn_name, {"args": kw_args or list(pos_args)})
-                    return {"ok": True, "address": address, "function": fn_name, "return": res}
+                    return {
+                        "ok": True,
+                        "address": address,
+                        "function": fn_name,
+                        "return": res,
+                    }
     except Exception as exc:
         # keep trying fallback paths
         last_err = exc
@@ -363,7 +424,12 @@ def _readonly_call(
         for m in ("state.simulateCall", "call.simulate", "contracts.simulate"):
             try:
                 res = rpc.call(m, [payload])
-                return {"ok": True, "address": address, "function": fn_name, "return": res}
+                return {
+                    "ok": True,
+                    "address": address,
+                    "function": fn_name,
+                    "return": res,
+                }
             except Exception:
                 continue
     except Exception:
@@ -376,6 +442,7 @@ def _readonly_call(
 
 
 # ------------------------------ Send (write) ----------------------------- #
+
 
 def _send_call(
     rpc: _Rpc,
@@ -404,6 +471,7 @@ def _send_call(
     # 2) Build call tx via omni_sdk.tx.build
     try:
         from omni_sdk.tx import build as tx_build  # type: ignore
+
         build_fn = None
         for name in ("call", "build_call", "make_call"):
             if hasattr(tx_build, name):
@@ -435,13 +503,25 @@ def _send_call(
                 value=value,
             )
         except TypeError:
-            tx_obj = build_fn(address, abi, fn_name, args_payload, sender, nonce, chain_id, gas_price, gas_limit, value)
+            tx_obj = build_fn(
+                address,
+                abi,
+                fn_name,
+                args_payload,
+                sender,
+                nonce,
+                chain_id,
+                gas_price,
+                gas_limit,
+                value,
+            )
     except Exception as exc:
         raise _SdkError(f"Failed to build call tx: {exc}") from exc
 
     # 3) Encode sign-bytes, sign, attach sig, encode CBOR
     try:
         from omni_sdk.tx import encode as tx_encode  # type: ignore
+
         get_sign_bytes = None
         for name in ("sign_bytes", "get_sign_bytes", "encode_sign_bytes"):
             if hasattr(tx_encode, name):
@@ -513,37 +593,98 @@ def _send_call(
 
 # ----------------------------------- CLI --------------------------------- #
 
+
 def _parse_cli(argv=None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="contracts.tools.call",
         description="Call a contract method (read-only by default; use --send for a state-changing call).",
     )
     # Where/how
-    p.add_argument("--rpc", type=str, default=None, help="RPC URL (e.g., http://127.0.0.1:8545)")
+    p.add_argument(
+        "--rpc", type=str, default=None, help="RPC URL (e.g., http://127.0.0.1:8545)"
+    )
     p.add_argument("--chain-id", type=int, default=None, help="Chain ID (e.g., 1337)")
-    p.add_argument("--address", type=str, required=True, help="Contract address (bech32m anim1… or hex)")
+    p.add_argument(
+        "--address",
+        type=str,
+        required=True,
+        help="Contract address (bech32m anim1… or hex)",
+    )
 
     # ABI / Manifest
-    p.add_argument("--manifest", type=Path, default=None, help="Path to manifest.json (preferred)")
-    p.add_argument("--abi", type=Path, default=None, help="Path to abi.json (if no manifest)")
+    p.add_argument(
+        "--manifest", type=Path, default=None, help="Path to manifest.json (preferred)"
+    )
+    p.add_argument(
+        "--abi", type=Path, default=None, help="Path to abi.json (if no manifest)"
+    )
 
     # Which function + args
-    p.add_argument("--fn", "--function", dest="fn", type=str, required=True, help="Function name to call")
-    p.add_argument("--args-json", type=str, default=None, help='JSON object of named args, e.g. \'{"to":"anim1..","amount":1}\'')
-    p.add_argument("--arg", action="append", default=[], help='Repeatable key=value or positional (no "=") to append (e.g. --arg 5 --arg to=anim1...)')
-    p.add_argument("--pos", type=str, default=None, help="JSON array of positional args (alternative to --arg without '=')")
+    p.add_argument(
+        "--fn",
+        "--function",
+        dest="fn",
+        type=str,
+        required=True,
+        help="Function name to call",
+    )
+    p.add_argument(
+        "--args-json",
+        type=str,
+        default=None,
+        help='JSON object of named args, e.g. \'{"to":"anim1..","amount":1}\'',
+    )
+    p.add_argument(
+        "--arg",
+        action="append",
+        default=[],
+        help='Repeatable key=value or positional (no "=") to append (e.g. --arg 5 --arg to=anim1...)',
+    )
+    p.add_argument(
+        "--pos",
+        type=str,
+        default=None,
+        help="JSON array of positional args (alternative to --arg without '=')",
+    )
 
     # Read-only vs send
-    p.add_argument("--send", action="store_true", help="Send a state-changing transaction instead of read-only simulation")
-    p.add_argument("--value", type=int, default=None, help="Optional value to transfer (if supported by runtime)")
+    p.add_argument(
+        "--send",
+        action="store_true",
+        help="Send a state-changing transaction instead of read-only simulation",
+    )
+    p.add_argument(
+        "--value",
+        type=int,
+        default=None,
+        help="Optional value to transfer (if supported by runtime)",
+    )
     p.add_argument("--gas-price", type=int, default=None, help="Override gas price")
     p.add_argument("--gas-limit", type=int, default=None, help="Override gas limit")
 
     # Signing (for --send)
-    p.add_argument("--from", dest="from_addr", type=str, default=None, help="Sender address override (defaults to signer address)")
-    p.add_argument("--mnemonic", type=str, default=None, help="Deployer mnemonic for signing (or DEPLOYER_MNEMONIC)")
-    p.add_argument("--alg", type=str, default=None, help="PQ alg: dilithium3 (default) or sphincs_shake_128s")
-    p.add_argument("--account-index", type=int, default=0, help="HD account index (default: 0)")
+    p.add_argument(
+        "--from",
+        dest="from_addr",
+        type=str,
+        default=None,
+        help="Sender address override (defaults to signer address)",
+    )
+    p.add_argument(
+        "--mnemonic",
+        type=str,
+        default=None,
+        help="Deployer mnemonic for signing (or DEPLOYER_MNEMONIC)",
+    )
+    p.add_argument(
+        "--alg",
+        type=str,
+        default=None,
+        help="PQ alg: dilithium3 (default) or sphincs_shake_128s",
+    )
+    p.add_argument(
+        "--account-index", type=int, default=0, help="HD account index (default: 0)"
+    )
 
     # Wait/Output
     p.add_argument("--wait", action="store_true", help="Wait for receipt (when --send)")
@@ -571,9 +712,14 @@ def main(argv=None) -> int:
         except Exception:
             try:
                 params = rpc.call("chain.getParams", [])
-                chain_id = int(params.get("chainId") or (params.get("chain") or {}).get("id"))
+                chain_id = int(
+                    params.get("chainId") or (params.get("chain") or {}).get("id")
+                )
             except Exception as exc:
-                print(f"[call] ERROR: could not determine chainId via RPC: {exc}", file=sys.stderr)
+                print(
+                    f"[call] ERROR: could not determine chainId via RPC: {exc}",
+                    file=sys.stderr,
+                )
                 return 2
 
     # ABI / manifest
@@ -616,18 +762,26 @@ def main(argv=None) -> int:
     # --send path
     mnemonic = args.mnemonic or os.environ.get("DEPLOYER_MNEMONIC")
     if not mnemonic:
-        print("[call] ERROR: --send requires --mnemonic or DEPLOYER_MNEMONIC", file=sys.stderr)
+        print(
+            "[call] ERROR: --send requires --mnemonic or DEPLOYER_MNEMONIC",
+            file=sys.stderr,
+        )
         return 2
     alg = (args.alg or os.environ.get("PQ_ALG") or "dilithium3").lower()
     try:
-        signer = _Signer.from_mnemonic(mnemonic, algo=alg, account_index=args.account_index)
+        signer = _Signer.from_mnemonic(
+            mnemonic, algo=alg, account_index=args.account_index
+        )
     except Exception as exc:
         print(f"[call] ERROR: signer init failed: {exc}", file=sys.stderr)
         return 2
 
     # Optional consistency: if --from provided and differs from signer, warn (stderr)
     if args.from_addr and args.from_addr != signer.address:
-        print(f"[call] WARN: --from differs from signer address; using signer={signer.address}", file=sys.stderr)
+        print(
+            f"[call] WARN: --from differs from signer address; using signer={signer.address}",
+            file=sys.stderr,
+        )
 
     try:
         res = _send_call(
@@ -655,7 +809,9 @@ def main(argv=None) -> int:
         print(f"txHash: {res.get('txHash')}")
         rcpt = res.get("receipt")
         if rcpt:
-            print(f"status: {rcpt.get('status')}  gasUsed: {rcpt.get('gasUsed')}  block: {rcpt.get('blockNumber')}")
+            print(
+                f"status: {rcpt.get('status')}  gasUsed: {rcpt.get('gasUsed')}  block: {rcpt.get('blockNumber')}"
+            )
 
     return 0
 

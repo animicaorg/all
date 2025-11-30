@@ -14,14 +14,17 @@ checksum or chain-specific rules) are performed downstream in adapters.
 """
 
 import re
-from typing import Optional, Annotated
+from typing import Annotated, Optional
 
 try:
     # Pydantic v2
-    from pydantic import BaseModel, Field, AfterValidator, PositiveInt
+    from pydantic import AfterValidator, BaseModel, Field, PositiveInt
+
     _IS_PYDANTIC_V2 = True
 except Exception:  # pragma: no cover - fallback for v1 users
-    from pydantic.v1 import BaseModel, Field, PositiveInt, validator  # type: ignore
+    from pydantic.v1 import (BaseModel, Field, PositiveInt,  # type: ignore
+                             validator)
+
     AfterValidator = None  # type: ignore
     _IS_PYDANTIC_V2 = False
 
@@ -123,9 +126,15 @@ class Pagination(BaseModel):
         1-based page index (fallback when cursor is absent). Ignored when `cursor` is set.
     """
 
-    cursor: Optional[str] = Field(default=None, description="Opaque cursor; if set, ignores `page`.")
-    limit: int = Field(default=50, ge=1, le=1000, description="Max items to return (1..1000).")
-    page: Optional[int] = Field(default=None, ge=1, description="1-based page index; ignored if cursor is set.")
+    cursor: Optional[str] = Field(
+        default=None, description="Opaque cursor; if set, ignores `page`."
+    )
+    limit: int = Field(
+        default=50, ge=1, le=1000, description="Max items to return (1..1000)."
+    )
+    page: Optional[int] = Field(
+        default=None, ge=1, description="1-based page index; ignored if cursor is set."
+    )
 
     if not _IS_PYDANTIC_V2:  # pragma: no cover - v1 validation hooks
         # pydantic v1 validators for Hex/Hash/Address are not defined here because

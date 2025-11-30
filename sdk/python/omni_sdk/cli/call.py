@@ -35,17 +35,18 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import typer
 
-from ..rpc.http import RpcClient
-from ..wallet.signer import Signer
 from ..address import Address
-from ..tx.send import await_receipt, send_raw_transaction
-from ..tx.encode import encode_tx_cbor
+from ..rpc.http import RpcClient
 from ..tx.build import build_call_tx, estimate_call_gas
+from ..tx.encode import encode_tx_cbor
+from ..tx.send import await_receipt, send_raw_transaction
+from ..wallet.signer import Signer
 
 # Prefer to use the high-level Contract client if available.
 _ContractClient = None
 try:  # lazy/optional
     from ..contracts.client import ContractClient  # type: ignore
+
     _ContractClient = ContractClient
 except Exception:
     pass
@@ -110,7 +111,9 @@ def _parse_kv_args(items: List[str]) -> Dict[str, Any]:
     return out
 
 
-def _resolve_args(args_json: Optional[str], args_kv: List[str]) -> Union[List[Any], Dict[str, Any], None]:
+def _resolve_args(
+    args_json: Optional[str], args_kv: List[str]
+) -> Union[List[Any], Dict[str, Any], None]:
     """
     Merge/resolve args from --args-json and repeated --arg key=value.
     - If JSON is a list → positional args (list).
@@ -134,7 +137,9 @@ def _resolve_args(args_json: Optional[str], args_kv: List[str]) -> Union[List[An
             parsed.update(kv)
         else:
             # parsed is a list; kv cannot merge, so error
-            raise typer.BadParameter("Cannot mix positional --args-json (array) with named --arg key=value")
+            raise typer.BadParameter(
+                "Cannot mix positional --args-json (array) with named --arg key=value"
+            )
     return parsed
 
 
@@ -142,26 +147,43 @@ def _make_signer(alg: str, seed_hex: Optional[str]) -> Signer:
     if not seed_hex:
         seed_hex = os.environ.get("OMNI_SDK_SEED_HEX")
     if not seed_hex:
-        seed_hex = typer.prompt("Enter signer seed as hex (dev/test only!)", hide_input=True, confirmation_prompt=False)
+        seed_hex = typer.prompt(
+            "Enter signer seed as hex (dev/test only!)",
+            hide_input=True,
+            confirmation_prompt=False,
+        )
     try:
         seed = bytes.fromhex(seed_hex.strip().replace("0x", ""))
     except Exception as e:
-        raise typer.BadParameter("seed-hex must be raw hex bytes (with or without 0x)") from e
+        raise typer.BadParameter(
+            "seed-hex must be raw hex bytes (with or without 0x)"
+        ) from e
     return Signer.from_seed(seed, alg=alg)  # type: ignore[attr-defined]
 
 
 # ------------------------------ read (simulate) -------------------------------
 
+
 @app.command("read")
 def call_read(
     ctx: typer.Context,
-    address: str = typer.Option(..., "--address", "-a", help="Contract address (bech32m anim1...)"),
-    abi: Path = typer.Option(..., "--abi", help="Path to ABI JSON (or full manifest including ABI)"),
+    address: str = typer.Option(
+        ..., "--address", "-a", help="Contract address (bech32m anim1...)"
+    ),
+    abi: Path = typer.Option(
+        ..., "--abi", help="Path to ABI JSON (or full manifest including ABI)"
+    ),
     func: str = typer.Option(..., "--func", "-f", help="Function name to call"),
-    args_json: Optional[str] = typer.Option(None, "--args-json", help="Arguments as JSON array/object"),
+    args_json: Optional[str] = typer.Option(
+        None, "--args-json", help="Arguments as JSON array/object"
+    ),
     arg: List[str] = typer.Option([], "--arg", help="Repeated named args: key=value"),
-    sender: Optional[str] = typer.Option(None, "--from", help="Optional caller address (for view that reads sender)"),
-    block: Optional[str] = typer.Option(None, "--block", help="Optional block tag/number (if node supports)"),
+    sender: Optional[str] = typer.Option(
+        None, "--from", help="Optional caller address (for view that reads sender)"
+    ),
+    block: Optional[str] = typer.Option(
+        None, "--block", help="Optional block tag/number (if node supports)"
+    ),
 ) -> None:
     """
     Simulate a contract call and print the decoded return value as JSON.
@@ -194,13 +216,35 @@ def call_read(
     try:
         from ..abi.encoding import encode_call  # type: ignore
     except Exception as e:  # pragma: no cover
-        raise typer.BadParameter("ABI encoder not available; install omni_sdk.abi") from e
+        raise typer.BadParameter(
+            "ABI encoder not available; install omni_sdk.abi"
+        ) from e
 
     call_payload = encode_call(abi_def, func, args_payload)  # returns bytes
     params_candidates = [
         # method, params
-        ("execution.simulateCall", [{"to": address, "data": "0x" + call_payload.hex(), "from": sender, "block": block}]),
-        ("state.call", [{"to": address, "data": "0x" + call_payload.hex(), "from": sender, "block": block}]),
+        (
+            "execution.simulateCall",
+            [
+                {
+                    "to": address,
+                    "data": "0x" + call_payload.hex(),
+                    "from": sender,
+                    "block": block,
+                }
+            ],
+        ),
+        (
+            "state.call",
+            [
+                {
+                    "to": address,
+                    "data": "0x" + call_payload.hex(),
+                    "from": sender,
+                    "block": block,
+                }
+            ],
+        ),
         ("vm.simulateCall", [address, "0x" + call_payload.hex(), sender, block]),
     ]
 
@@ -213,6 +257,7 @@ def call_read(
             if isinstance(raw, str) and raw.startswith("0x"):
                 try:
                     from ..abi.decoding import decode_return  # type: ignore
+
                     decoded = decode_return(abi_def, func, bytes.fromhex(raw[2:]))
                     typer.echo(json.dumps(decoded, indent=2, ensure_ascii=False))
                     return
@@ -223,25 +268,50 @@ def call_read(
         except Exception as e:
             last_err = e
             continue
-    raise typer.BadParameter(f"Call simulation not supported by node RPC (tried methods); last error: {last_err}")
+    raise typer.BadParameter(
+        f"Call simulation not supported by node RPC (tried methods); last error: {last_err}"
+    )
 
 
 # ------------------------------ write (send tx) -------------------------------
 
+
 @app.command("write")
 def call_write(
     ctx: typer.Context,
-    address: str = typer.Option(..., "--address", "-a", help="Contract address (bech32m anim1...)"),
-    abi: Path = typer.Option(..., "--abi", help="Path to ABI JSON (or manifest containing ABI)"),
+    address: str = typer.Option(
+        ..., "--address", "-a", help="Contract address (bech32m anim1...)"
+    ),
+    abi: Path = typer.Option(
+        ..., "--abi", help="Path to ABI JSON (or manifest containing ABI)"
+    ),
     func: str = typer.Option(..., "--func", "-f", help="Function name to invoke"),
-    args_json: Optional[str] = typer.Option(None, "--args-json", help="Arguments as JSON array/object"),
+    args_json: Optional[str] = typer.Option(
+        None, "--args-json", help="Arguments as JSON array/object"
+    ),
     arg: List[str] = typer.Option([], "--arg", help="Repeated named args: key=value"),
-    seed_hex: Optional[str] = typer.Option(None, "--seed-hex", help="Signer seed as hex (dev/test only; can use OMNI_SDK_SEED_HEX)"),
-    alg: str = typer.Option("dilithium3", "--alg", help="PQ signature algorithm: dilithium3 | sphincs_shake_128s"),
-    gas_price: Optional[int] = typer.Option(None, "--gas-price", help="Optional gas price override"),
-    gas_limit: Optional[int] = typer.Option(None, "--gas-limit", help="Optional gas limit override"),
-    nonce: Optional[int] = typer.Option(None, "--nonce", help="Optional sender nonce override"),
-    wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for transaction receipt."),
+    seed_hex: Optional[str] = typer.Option(
+        None,
+        "--seed-hex",
+        help="Signer seed as hex (dev/test only; can use OMNI_SDK_SEED_HEX)",
+    ),
+    alg: str = typer.Option(
+        "dilithium3",
+        "--alg",
+        help="PQ signature algorithm: dilithium3 | sphincs_shake_128s",
+    ),
+    gas_price: Optional[int] = typer.Option(
+        None, "--gas-price", help="Optional gas price override"
+    ),
+    gas_limit: Optional[int] = typer.Option(
+        None, "--gas-limit", help="Optional gas limit override"
+    ),
+    nonce: Optional[int] = typer.Option(
+        None, "--nonce", help="Optional sender nonce override"
+    ),
+    wait: bool = typer.Option(
+        True, "--wait/--no-wait", help="Wait for transaction receipt."
+    ),
 ) -> None:
     """
     Build, sign, and send a contract call transaction. Prints JSON summary.
@@ -251,7 +321,9 @@ def call_write(
 
     # Load ABI (supports manifest that contains {"abi": [...]})
     abi_obj = _load_json_file(abi)
-    abi_def = abi_obj["abi"] if isinstance(abi_obj, dict) and "abi" in abi_obj else abi_obj
+    abi_def = (
+        abi_obj["abi"] if isinstance(abi_obj, dict) and "abi" in abi_obj else abi_obj
+    )
 
     args_payload = _resolve_args(args_json, arg)
 
@@ -289,9 +361,16 @@ def call_write(
 
         receipt: Optional[Dict[str, Any]] = None
         if wait:
-            receipt = await_receipt(client, tx_hash, timeout_seconds=max(c.timeout, 60.0))
+            receipt = await_receipt(
+                client, tx_hash, timeout_seconds=max(c.timeout, 60.0)
+            )
 
-        summary = {"txHash": tx_hash, "sender": sender_addr, "to": address, "func": func}
+        summary = {
+            "txHash": tx_hash,
+            "sender": sender_addr,
+            "to": address,
+            "func": func,
+        }
         if receipt:
             summary.update(
                 {
@@ -308,15 +387,23 @@ def call_write(
     try:
         from ..abi.encoding import encode_call  # type: ignore
     except Exception as e:  # pragma: no cover
-        raise typer.BadParameter("ABI encoder not available; install omni_sdk.abi") from e
+        raise typer.BadParameter(
+            "ABI encoder not available; install omni_sdk.abi"
+        ) from e
 
     call_data = encode_call(abi_def, func, args_payload)  # bytes
 
     # Estimate gas if needed
     if gas_limit is None:
         try:
-            gas_est = estimate_call_gas(client, to=address, data=call_data, sender=sender_addr)
-            gas_limit = int(gas_est["gasLimit"]) if isinstance(gas_est, dict) and "gasLimit" in gas_est else int(gas_est)
+            gas_est = estimate_call_gas(
+                client, to=address, data=call_data, sender=sender_addr
+            )
+            gas_limit = (
+                int(gas_est["gasLimit"])
+                if isinstance(gas_est, dict) and "gasLimit" in gas_est
+                else int(gas_est)
+            )
         except Exception:
             gas_limit = 500_000
 

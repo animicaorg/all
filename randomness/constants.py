@@ -21,22 +21,22 @@ from __future__ import annotations
 DOMAIN_PREFIX: bytes = b"animica.rand."
 
 # Commit/reveal phases
-DOMAIN_COMMIT: bytes      = DOMAIN_PREFIX + b"commit.v1"
-DOMAIN_REVEAL: bytes      = DOMAIN_PREFIX + b"reveal.v1"
+DOMAIN_COMMIT: bytes = DOMAIN_PREFIX + b"commit.v1"
+DOMAIN_REVEAL: bytes = DOMAIN_PREFIX + b"reveal.v1"
 
 # VDF derivation
-DOMAIN_VDF_INPUT: bytes   = DOMAIN_PREFIX + b"vdf.input.v1"
-DOMAIN_VDF_OUTPUT: bytes  = DOMAIN_PREFIX + b"vdf.output.v1"
+DOMAIN_VDF_INPUT: bytes = DOMAIN_PREFIX + b"vdf.input.v1"
+DOMAIN_VDF_OUTPUT: bytes = DOMAIN_PREFIX + b"vdf.output.v1"
 
 # Beacon finalization (post-aggregation / post-VDF)
 DOMAIN_BEACON_VDF_INPUT: bytes = DOMAIN_PREFIX + b"beacon.vdf_input.v1"
-DOMAIN_BEACON_FINAL: bytes     = DOMAIN_PREFIX + b"beacon.final.v1"
+DOMAIN_BEACON_FINAL: bytes = DOMAIN_PREFIX + b"beacon.final.v1"
 
 # Final beacon mixing (post VDF, optional QRNG mix)
-DOMAIN_BEACON_MIX: bytes  = DOMAIN_PREFIX + b"mix.v1"
+DOMAIN_BEACON_MIX: bytes = DOMAIN_PREFIX + b"mix.v1"
 
 # Stable round/anchor labeling (for schedulers/light clients)
-DOMAIN_ROUND_ID: bytes    = DOMAIN_PREFIX + b"round.id.v1"
+DOMAIN_ROUND_ID: bytes = DOMAIN_PREFIX + b"round.id.v1"
 
 # Hash function identifiers used alongside the domains (documentation aid)
 HASH_FN_COMMIT_REVEAL: str = "sha3_256"
@@ -65,15 +65,15 @@ VDF_RECOMMENDED_MODULUS_BITS: int = 2048
 # Buffer sizes / record limits
 # -----------------------------
 # Chunk sizes used for local file I/O; keep power-of-two for efficiency.
-FILE_IO_CHUNK_SIZE: int = 64 * 1024     # 64 KiB
+FILE_IO_CHUNK_SIZE: int = 64 * 1024  # 64 KiB
 # Chunk sizes for network-bound reads (QRNG, remote stores)
-NET_IO_CHUNK_SIZE: int = 32 * 1024      # 32 KiB
+NET_IO_CHUNK_SIZE: int = 32 * 1024  # 32 KiB
 
 # Upper bounds for small payloads used in the randomness pipeline.
 # These are guard-rails, not protocol limits.
-QRNG_FETCH_MAX_BYTES: int = 4096        # max bytes pulled per QRNG request
-BEACON_RECORD_MAX_BYTES: int = 4096     # max serialized beacon record kept hot
-TRANSCRIPT_MAX_BYTES: int = 8192        # defensive cap for transcript blobs
+QRNG_FETCH_MAX_BYTES: int = 4096  # max bytes pulled per QRNG request
+BEACON_RECORD_MAX_BYTES: int = 4096  # max serialized beacon record kept hot
+TRANSCRIPT_MAX_BYTES: int = 8192  # defensive cap for transcript blobs
 
 __all__ = [
     # Domains

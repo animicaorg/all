@@ -40,24 +40,24 @@ import logging
 import os
 import time
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, Optional, Tuple, List
+from typing import Any, Dict, List, Optional, Tuple
 
-from studio_services.errors import ApiError, BadRequest
-from studio_services.models.artifacts import ArtifactPut, ArtifactMeta
 from studio_services import config as cfg_mod
-
-# storage/adapters
-from studio_services.storage import sqlite as storage_sqlite  # type: ignore
-from studio_services.storage import fs as storage_fs  # type: ignore
-from studio_services.storage import ids as storage_ids  # type: ignore
-from studio_services.adapters import vm_hash as vm_hash_adapter  # type: ignore
 from studio_services.adapters import da_client as da_adapter  # type: ignore
 from studio_services.adapters import pq_addr as addr_adapter  # type: ignore
+from studio_services.adapters import vm_hash as vm_hash_adapter  # type: ignore
+from studio_services.errors import ApiError, BadRequest
+from studio_services.models.artifacts import ArtifactMeta, ArtifactPut
+# storage/adapters
+from studio_services.storage import fs as storage_fs  # type: ignore
+from studio_services.storage import ids as storage_ids  # type: ignore
+from studio_services.storage import sqlite as storage_sqlite  # type: ignore
 
 log = logging.getLogger(__name__)
 
 
 # ------------------------ Config helpers ------------------------
+
 
 def _cfg(name: str, default: Optional[str] = None) -> Optional[str]:
     getter = getattr(cfg_mod, "get", None)
@@ -73,7 +73,9 @@ def _cfg(name: str, default: Optional[str] = None) -> Optional[str]:
 
 def _get_limits() -> Dict[str, int]:
     return {
-        "ARTIFACT_MAX_BYTES": int(_cfg("ARTIFACT_MAX_BYTES", "4194304") or "4194304"),  # 4 MiB default
+        "ARTIFACT_MAX_BYTES": int(
+            _cfg("ARTIFACT_MAX_BYTES", "4194304") or "4194304"
+        ),  # 4 MiB default
     }
 
 
@@ -82,6 +84,7 @@ def _da_enabled() -> bool:
 
 
 # ------------------------ Hashing helpers ------------------------
+
 
 def _sha3_256(data: bytes) -> str:
     return hashlib.sha3_256(data).hexdigest()
@@ -110,7 +113,9 @@ def _compute_digest_and_code_hash(kind: str, data: bytes) -> Tuple[str, Optional
     # Code hash (conditional)
     if kind.lower() in ("code", "bytecode", "program", "ir"):
         try:
-            ckh = getattr(vm_hash_adapter, "compute_code_hash", None) or getattr(vm_hash_adapter, "code_hash", None)
+            ckh = getattr(vm_hash_adapter, "compute_code_hash", None) or getattr(
+                vm_hash_adapter, "code_hash", None
+            )
             if callable(ckh):
                 code_hash = str(ckh(data))
             else:
@@ -125,20 +130,27 @@ def _compute_digest_and_code_hash(kind: str, data: bytes) -> Tuple[str, Optional
 
 # ------------------------ ID helper ------------------------
 
+
 def _derive_artifact_id(meta: ArtifactPut, digest_hex: str) -> str:
     """
     Prefer deterministic id from storage.ids; otherwise derive from fields.
     """
     try:
-        mk = getattr(storage_ids, "artifact_id", None) or getattr(storage_ids, "compute_artifact_id", None)
+        mk = getattr(storage_ids, "artifact_id", None) or getattr(
+            storage_ids, "compute_artifact_id", None
+        )
         if callable(mk):
-            return str(mk({
-                "kind": meta.kind,
-                "address": (meta.address or "").lower(),
-                "media_type": meta.media_type or "",
-                "label": meta.label or "",
-                "digest": digest_hex,
-            }))
+            return str(
+                mk(
+                    {
+                        "kind": meta.kind,
+                        "address": (meta.address or "").lower(),
+                        "media_type": meta.media_type or "",
+                        "label": meta.label or "",
+                        "digest": digest_hex,
+                    }
+                )
+            )
     except Exception:  # pragma: no cover
         pass
 
@@ -149,11 +161,14 @@ def _derive_artifact_id(meta: ArtifactPut, digest_hex: str) -> str:
 
 # ------------------------ Blob store adapter ------------------------
 
+
 class _BlobStore:
     def __init__(self) -> None:
         self.fs = storage_fs
 
-    def put(self, artifact_id: str, data: bytes, *, media_type: Optional[str] = None) -> Dict[str, Any]:
+    def put(
+        self, artifact_id: str, data: bytes, *, media_type: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Store blob idempotently. Returns a descriptor with at least:
             {"id": artifact_id, "size": len(data), "path": <optional>, "media_type": media_type}
@@ -166,11 +181,21 @@ class _BlobStore:
                 try:
                     desc = fn(artifact_id, data, media_type=media_type)  # type: ignore
                     if isinstance(desc, dict):
-                        return {"id": artifact_id, "size": size, "media_type": media_type, **desc}
+                        return {
+                            "id": artifact_id,
+                            "size": size,
+                            "media_type": media_type,
+                            **desc,
+                        }
                 except TypeError:
                     # maybe signature without media_type
                     path = fn(artifact_id, data)  # type: ignore
-                    return {"id": artifact_id, "size": size, "media_type": media_type, "path": path}
+                    return {
+                        "id": artifact_id,
+                        "size": size,
+                        "media_type": media_type,
+                        "path": path,
+                    }
                 except Exception as e:  # pragma: no cover
                     raise ApiError(f"artifact blob store failed: {e}")
         # Last resort: try to place under a conventional path
@@ -193,7 +218,9 @@ class _BlobStore:
                         return bytes(out)
                     if hasattr(out, "read"):
                         return out.read()
-                    if isinstance(out, tuple) and isinstance(out[0], (bytes, bytearray)):
+                    if isinstance(out, tuple) and isinstance(
+                        out[0], (bytes, bytearray)
+                    ):
                         return bytes(out[0])
                 except Exception as e:  # pragma: no cover
                     raise ApiError(f"artifact blob fetch failed: {e}")
@@ -207,6 +234,7 @@ class _BlobStore:
 
 
 # ------------------------ SQLite metadata store adapter ------------------------
+
 
 class _MetaStore:
     """
@@ -229,7 +257,12 @@ class _MetaStore:
         self.db = storage_sqlite
 
     def insert(self, row: Dict[str, Any]) -> None:
-        for fname in ("insert_artifact", "upsert_artifact", "put_artifact_meta", "record_artifact"):
+        for fname in (
+            "insert_artifact",
+            "upsert_artifact",
+            "put_artifact_meta",
+            "record_artifact",
+        ):
             fn = getattr(self.db, fname, None)
             if callable(fn):
                 fn(row)
@@ -238,6 +271,7 @@ class _MetaStore:
         conn = getattr(self.db, "connect", None)
         if callable(conn):
             import sqlite3
+
             cx = conn()  # type: ignore
             with cx:
                 cx.execute(
@@ -252,7 +286,12 @@ class _MetaStore:
         raise ApiError("No usable artifact metadata persistence available")
 
     def get(self, artifact_id: str) -> Dict[str, Any]:
-        for fname in ("get_artifact", "get_artifact_meta", "fetch_artifact", "fetch_artifact_meta"):
+        for fname in (
+            "get_artifact",
+            "get_artifact_meta",
+            "fetch_artifact",
+            "fetch_artifact_meta",
+        ):
             fn = getattr(self.db, fname, None)
             if callable(fn):
                 row = fn(artifact_id)
@@ -273,7 +312,11 @@ class _MetaStore:
         raise ApiError("No usable artifact metadata reader available")
 
     def list_by_address(self, address: str) -> List[Dict[str, Any]]:
-        for fname in ("list_artifacts_by_address", "fetch_artifacts_by_address", "list_by_address"):
+        for fname in (
+            "list_artifacts_by_address",
+            "fetch_artifacts_by_address",
+            "list_by_address",
+        ):
             fn = getattr(self.db, fname, None)
             if callable(fn):
                 res = fn(address.lower())
@@ -296,7 +339,11 @@ class _MetaStore:
 
     def link(self, address: str, artifact_id: str) -> Dict[str, Any]:
         # Prefer helper if present
-        for fname in ("link_artifact_address", "set_artifact_address", "update_artifact_address"):
+        for fname in (
+            "link_artifact_address",
+            "set_artifact_address",
+            "update_artifact_address",
+        ):
             fn = getattr(self.db, fname, None)
             if callable(fn):
                 return fn(address.lower(), artifact_id)
@@ -318,6 +365,7 @@ class _MetaStore:
 
 # ------------------------ DA client adapter ------------------------
 
+
 class _DAClient:
     def __init__(self) -> None:
         self.client = da_adapter
@@ -335,6 +383,7 @@ class _DAClient:
 
 # ------------------------ Public service ------------------------
 
+
 class ArtifactService:
     def __init__(self) -> None:
         self.blobs = _BlobStore()
@@ -345,7 +394,9 @@ class ArtifactService:
     def _validate_address(self, address: Optional[str]) -> None:
         if not address:
             return
-        validator = getattr(addr_adapter, "validate", None) or getattr(addr_adapter, "validate_address", None)
+        validator = getattr(addr_adapter, "validate", None) or getattr(
+            addr_adapter, "validate_address", None
+        )
         if callable(validator):
             try:
                 validator(address)
@@ -382,7 +433,9 @@ class ArtifactService:
                 if hasattr(meta, "namespace") and meta.namespace is not None:  # type: ignore[attr-defined]
                     ns_val = int(meta.namespace)  # type: ignore[attr-defined]
                 da_res = self._da.post(bytes(data), namespace=ns_val)
-                da_commitment = str(da_res.get("commitment") or da_res.get("root") or "")
+                da_commitment = str(
+                    da_res.get("commitment") or da_res.get("root") or ""
+                )
                 if not da_commitment:
                     da_commitment = None
             except Exception as e:

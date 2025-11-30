@@ -18,12 +18,8 @@ See `randomness.adapters.rpc_mount` for the concrete interfaces.
 
 from __future__ import annotations
 
-from ..adapters.rpc_mount import (
-    mount_randomness_rpc,
-    get_router,
-    RandomnessService,
-    EventSource,
-)
+from ..adapters.rpc_mount import (EventSource, RandomnessService, get_router,
+                                  mount_randomness_rpc)
 
 __all__ = [
     "mount_randomness_rpc",

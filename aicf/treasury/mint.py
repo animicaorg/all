@@ -30,16 +30,18 @@ Typical use
 
 """
 
-from dataclasses import dataclass, asdict
-from typing import Optional, Dict
+from dataclasses import asdict, dataclass
+from typing import Dict, Optional
 
-from aicf.treasury.state import TreasuryState
 from aicf.aitypes.provider import ProviderId  # type: ignore
+from aicf.treasury.state import TreasuryState
 
 # Optional import: use canonical epoch helper if present
 try:  # pragma: no cover - trivial import fallback
-    from aicf.economics.epochs import epoch_index_for_height as _epoch_for_height  # type: ignore
+    from aicf.economics.epochs import \
+        epoch_index_for_height as _epoch_for_height  # type: ignore
 except Exception:  # pragma: no cover - fallback
+
     def _epoch_for_height(height: int, epoch_len: int) -> int:
         if epoch_len <= 0:
             raise ValueError("epoch_len must be > 0")
@@ -68,6 +70,7 @@ class MintConfig:
                      Useful when combining per_block and per_epoch.
     - treasury_provider_id: destination account inside TreasuryState
     """
+
     per_block: int = 0
     per_epoch: int = 0
     epoch_length: int = 0
@@ -95,6 +98,7 @@ class MintTracker:
     - last_epoch_minted: epoch index where the per-epoch mint was last emitted
     - minted_in_epoch: total minted so far in the current epoch (for caps)
     """
+
     last_height_processed: Optional[int] = None
     last_epoch_minted: Optional[int] = None
     minted_in_epoch: int = 0
@@ -121,7 +125,12 @@ class AICFMinter:
 
     __slots__ = ("cfg", "treasury", "_t")
 
-    def __init__(self, cfg: MintConfig, treasury: TreasuryState, tracker: Optional[MintTracker] = None) -> None:
+    def __init__(
+        self,
+        cfg: MintConfig,
+        treasury: TreasuryState,
+        tracker: Optional[MintTracker] = None,
+    ) -> None:
         cfg.validate()
         self.cfg = cfg
         self.treasury = treasury
@@ -152,7 +161,10 @@ class AICFMinter:
             raise ValueError("height must be >= 0")
 
         # enforce monotonicity to keep tracker sane
-        if self._t.last_height_processed is not None and height < self._t.last_height_processed:
+        if (
+            self._t.last_height_processed is not None
+            and height < self._t.last_height_processed
+        ):
             raise ValueError(
                 f"on_block called out of order: got {height}, last={self._t.last_height_processed}"
             )
@@ -167,7 +179,11 @@ class AICFMinter:
         minted = 0
 
         # Epoch accounting (for per-epoch mint and caps)
-        epoch_idx = _epoch_for_height(height - self.cfg.start_height, self.cfg.epoch_length) if self.cfg.epoch_length else 0
+        epoch_idx = (
+            _epoch_for_height(height - self.cfg.start_height, self.cfg.epoch_length)
+            if self.cfg.epoch_length
+            else 0
+        )
         first_block_of_epoch = False
         if self.cfg.epoch_length:
             # Detect epoch boundary vs tracker
@@ -185,7 +201,9 @@ class AICFMinter:
                 epoch_amount = self._per_epoch_amount_after_decay(epoch_idx)
                 epoch_amount = self._apply_epoch_cap(epoch_amount)
                 if epoch_amount > 0:
-                    self._credit_treasury(epoch_amount, height, reason=f"mint-epoch-{epoch_idx}")
+                    self._credit_treasury(
+                        epoch_amount, height, reason=f"mint-epoch-{epoch_idx}"
+                    )
                     minted += epoch_amount
                     self._t.last_epoch_minted = epoch_idx
                     self._t.minted_in_epoch += epoch_amount
@@ -205,7 +223,9 @@ class AICFMinter:
     # --- helpers ---
 
     def _credit_treasury(self, amount: int, height: int, *, reason: str) -> None:
-        self.treasury.credit(self.cfg.treasury_provider_id, amount, height=height, reason=reason)
+        self.treasury.credit(
+            self.cfg.treasury_provider_id, amount, height=height, reason=reason
+        )
 
     def _per_epoch_amount_after_decay(self, epoch_idx: int) -> int:
         """Apply integer decay on the per-epoch amount using PPM; epoch_idx starts at 0."""

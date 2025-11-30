@@ -33,8 +33,8 @@ import pytest
 
 from tests.integration import env  # gating helper
 
-
 # ------------------------------ HTTP/RPC helpers ------------------------------
+
 
 def _http_timeout() -> float:
     try:
@@ -43,12 +43,20 @@ def _http_timeout() -> float:
         return 5.0
 
 
-def _rpc_call(rpc_url: str, method: str, params: Optional[Sequence[Any] | Dict[str, Any]] = None, *, req_id: int = 1) -> Any:
+def _rpc_call(
+    rpc_url: str,
+    method: str,
+    params: Optional[Sequence[Any] | Dict[str, Any]] = None,
+    *,
+    req_id: int = 1,
+) -> Any:
     if params is None:
         params = []
     payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(rpc_url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+    req = urllib.request.Request(
+        rpc_url, data=data, headers={"Content-Type": "application/json"}, method="POST"
+    )
     with urllib.request.urlopen(req, timeout=_http_timeout()) as resp:
         raw = resp.read()
     msg = json.loads(raw.decode("utf-8"))
@@ -59,7 +67,11 @@ def _rpc_call(rpc_url: str, method: str, params: Optional[Sequence[Any] | Dict[s
     return msg["result"]
 
 
-def _rpc_try(rpc_url: str, methods: Sequence[str], params: Optional[Sequence[Any] | Dict[str, Any]] = None) -> Tuple[str, Any]:
+def _rpc_try(
+    rpc_url: str,
+    methods: Sequence[str],
+    params: Optional[Sequence[Any] | Dict[str, Any]] = None,
+) -> Tuple[str, Any]:
     last_exc: Optional[Exception] = None
     for i, m in enumerate(methods, start=1):
         try:
@@ -81,6 +93,7 @@ def _base_http(rpc_url: str) -> str:
 
 # ------------------------------ DA client helpers -----------------------------
 
+
 def _read_blob_bytes() -> bytes:
     p = pathlib.Path(env("ANIMICA_BLOB_FIXTURE", "da/fixtures/blob_small.bin"))
     if p.is_file():
@@ -100,7 +113,9 @@ def _hex(b: bytes) -> str:
     return "0x" + b.hex()
 
 
-def _post_blob_rpc(rpc_url: str, namespace: int, data: bytes) -> Optional[Dict[str, Any]]:
+def _post_blob_rpc(
+    rpc_url: str, namespace: int, data: bytes
+) -> Optional[Dict[str, Any]]:
     """
     Try a variety of JSON-RPC shapes for posting a blob.
     Expected 'result' to include at least a commitment/root string.
@@ -117,8 +132,13 @@ def _post_blob_rpc(rpc_url: str, namespace: int, data: bytes) -> Optional[Dict[s
     ]
     for method, params in candidates:
         try:
-            res = _rpc_call(rpc_url, method, params if isinstance(params, list) else [params])
-            if isinstance(res, dict) and any(isinstance(res.get(k), str) for k in ("commitment", "root", "nmtRoot", "hash")):
+            res = _rpc_call(
+                rpc_url, method, params if isinstance(params, list) else [params]
+            )
+            if isinstance(res, dict) and any(
+                isinstance(res.get(k), str)
+                for k in ("commitment", "root", "nmtRoot", "hash")
+            ):
                 return res
             if isinstance(res, str) and res.startswith("0x"):
                 return {"commitment": res, "namespace": namespace, "size": len(data)}
@@ -127,21 +147,33 @@ def _post_blob_rpc(rpc_url: str, namespace: int, data: bytes) -> Optional[Dict[s
     return None
 
 
-def _post_blob_rest(rpc_url: str, namespace: int, data: bytes) -> Optional[Dict[str, Any]]:
+def _post_blob_rest(
+    rpc_url: str, namespace: int, data: bytes
+) -> Optional[Dict[str, Any]]:
     """
     REST fallback: POST /da/blob with JSON body.
     """
     base = _base_http(rpc_url)
     paths = ["/da/blob", "/api/da/blob"]
-    payload = json.dumps({"namespace": namespace, "data": base64.b64encode(data).decode("ascii")}).encode("utf-8")
+    payload = json.dumps(
+        {"namespace": namespace, "data": base64.b64encode(data).decode("ascii")}
+    ).encode("utf-8")
     for path in paths:
         try:
             url = urllib.parse.urljoin(base, path)
-            req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+            req = urllib.request.Request(
+                url,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
             with urllib.request.urlopen(req, timeout=_http_timeout()) as resp:
                 raw = resp.read()
             doc = json.loads(raw.decode("utf-8"))
-            if isinstance(doc, dict) and any(isinstance(doc.get(k), str) for k in ("commitment", "root", "nmtRoot", "hash")):
+            if isinstance(doc, dict) and any(
+                isinstance(doc.get(k), str)
+                for k in ("commitment", "root", "nmtRoot", "hash")
+            ):
                 return doc
         except Exception:
             continue
@@ -170,7 +202,12 @@ def _get_blob_or_meta(rpc_url: str, commitment: str) -> Optional[Dict[str, Any]]
                 return res
             if isinstance(res, (bytes, str)):
                 # Some nodes might return the data directly; treat as present.
-                return {"exists": True, "data_len": len(res) if isinstance(res, (bytes, bytearray)) else len(res)}
+                return {
+                    "exists": True,
+                    "data_len": (
+                        len(res) if isinstance(res, (bytes, bytearray)) else len(res)
+                    ),
+                }
         except Exception:
             continue
     # REST GET fallback for meta
@@ -205,7 +242,9 @@ def _get_proof(rpc_url: str, commitment: str) -> Optional[Dict[str, Any]]:
     for method, params in candidates:
         try:
             res = _rpc_call(rpc_url, method, params)
-            if isinstance(res, dict) and ("samples" in res or "branches" in res or "proof" in res):
+            if isinstance(res, dict) and (
+                "samples" in res or "branches" in res or "proof" in res
+            ):
                 return res
         except Exception:
             continue
@@ -246,6 +285,7 @@ def _extract_counters(stats: Dict[str, Any]) -> Tuple[Optional[int], Optional[in
     """
     Extract (stored_unique, duplicates) if present.
     """
+
     def _as_int(v: Any) -> Optional[int]:
         if isinstance(v, bool) or v is None:
             return None
@@ -288,12 +328,15 @@ def _extract_counters(stats: Dict[str, Any]) -> Tuple[Optional[int], Optional[in
 
 # ------------------------------------ Test ------------------------------------
 
+
 @pytest.mark.timeout(900)
 def test_da_p2p_gossip_commitment_and_dedupe():
     rpc_a = env("ANIMICA_RPC_URL", "http://127.0.0.1:8545")
     rpc_b = env("ANIMICA_PEER_RPC_URL")
     if not rpc_b:
-        pytest.skip("ANIMICA_PEER_RPC_URL is not set — need a second node to validate P2P gossip.")
+        pytest.skip(
+            "ANIMICA_PEER_RPC_URL is not set — need a second node to validate P2P gossip."
+        )
 
     wait_secs = float(env("ANIMICA_RESULT_WAIT_SECS", "240"))
     namespace = _ns()
@@ -306,7 +349,9 @@ def test_da_p2p_gossip_commitment_and_dedupe():
         uniq0, dup0 = _extract_counters(stats_before)
 
     # 1) Post blob on A (RPC first; REST fallback).
-    posted = _post_blob_rpc(rpc_a, namespace, blob) or _post_blob_rest(rpc_a, namespace, blob)
+    posted = _post_blob_rpc(rpc_a, namespace, blob) or _post_blob_rest(
+        rpc_a, namespace, blob
+    )
     if not posted:
         pytest.skip("DA post not available via RPC/REST on node A.")
 
@@ -316,7 +361,9 @@ def test_da_p2p_gossip_commitment_and_dedupe():
         or posted.get("nmtRoot")
         or posted.get("hash")
     )
-    assert isinstance(commitment, str) and commitment.startswith("0x"), f"Invalid commitment from A: {posted}"
+    assert isinstance(commitment, str) and commitment.startswith(
+        "0x"
+    ), f"Invalid commitment from A: {posted}"
 
     # 2) Wait for gossip: B should know about the commitment (meta or GET works).
     deadline = time.time() + wait_secs
@@ -329,7 +376,9 @@ def test_da_p2p_gossip_commitment_and_dedupe():
         time.sleep(1.0)
 
     if not seen_on_b:
-        pytest.skip("Node B did not learn the commitment via gossip within wait window.")
+        pytest.skip(
+            "Node B did not learn the commitment via gossip within wait window."
+        )
 
     # 3) Ask B for an availability proof for that commitment (best-effort).
     proof = _get_proof(rpc_b, commitment)
@@ -338,8 +387,12 @@ def test_da_p2p_gossip_commitment_and_dedupe():
 
     # 4) Re-post the same blob (idempotence & dedupe).
     #    Try posting again to A; if that fails due to idempotency rules, try B.
-    repost = _post_blob_rpc(rpc_a, namespace, blob) or _post_blob_rpc(rpc_b, namespace, blob) \
-             or _post_blob_rest(rpc_a, namespace, blob) or _post_blob_rest(rpc_b, namespace, blob)
+    repost = (
+        _post_blob_rpc(rpc_a, namespace, blob)
+        or _post_blob_rpc(rpc_b, namespace, blob)
+        or _post_blob_rest(rpc_a, namespace, blob)
+        or _post_blob_rest(rpc_b, namespace, blob)
+    )
     # If all re-post attempts fail, we still verify idempotence via commitment equality above.
 
     if repost:
@@ -350,7 +403,9 @@ def test_da_p2p_gossip_commitment_and_dedupe():
             or repost.get("hash")
         )
         assert isinstance(commitment2, str) and commitment2.startswith("0x")
-        assert commitment2.lower() == commitment.lower(), "Re-post returned a different commitment — expected idempotence."
+        assert (
+            commitment2.lower() == commitment.lower()
+        ), "Re-post returned a different commitment — expected idempotence."
 
     # 5) If stats are available, ensure duplicates counter increased but unique count did not,
     #    or that unique increased by exactly 1 (first ingest) and duplicates did not explode.
@@ -361,7 +416,9 @@ def test_da_p2p_gossip_commitment_and_dedupe():
         if uniq0 is not None and uniq1 is not None:
             assert uniq1 >= uniq0, "Unique stored count decreased unexpectedly."
         if dup0 is not None and dup1 is not None and repost:
-            assert dup1 >= dup0, "Duplicate counter did not increase after re-post (if exposed)."
+            assert (
+                dup1 >= dup0
+            ), "Duplicate counter did not increase after re-post (if exposed)."
 
     # Final sanity: B can still serve meta or content for the commitment.
     meta_b = _get_blob_or_meta(rpc_b, commitment)
@@ -369,5 +426,6 @@ def test_da_p2p_gossip_commitment_and_dedupe():
 
     # Optional sanity: if a proof was available, it should be non-empty.
     if proof is not None:
-        assert isinstance(proof, dict) and len(proof) > 0, "Proof object from B is empty."
-
+        assert (
+            isinstance(proof, dict) and len(proof) > 0
+        ), "Proof object from B is empty."

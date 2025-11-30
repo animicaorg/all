@@ -16,6 +16,7 @@ Design notes
 - Method dispatch is a pure compile-time registry. The runtime can later bind these to actual
   implementations or ABIs; the IDs computed here are stable hashes for cross-referencing.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -23,8 +24,8 @@ from enum import Enum, auto
 from hashlib import sha3_256
 from typing import Dict, List, Mapping, MutableMapping, Optional, Tuple
 
-
 # ------------------------------- Symbol Kinds -------------------------------- #
+
 
 class SymbolKind(Enum):
     VAR = auto()
@@ -36,6 +37,7 @@ class SymbolKind(Enum):
 
 
 # --------------------------------- Symbols ---------------------------------- #
+
 
 @dataclass(frozen=True)
 class Symbol:
@@ -121,6 +123,7 @@ def _hash_storage_key(contract: str, symbol: str) -> bytes:
 
 # ----------------------------- Method Dispatch Map --------------------------- #
 
+
 class MethodDispatch:
     """
     Method registry keyed by (owner_type, method_name) → MethodSymbol.
@@ -128,6 +131,7 @@ class MethodDispatch:
     Provides deterministic lookups and a compact `.index` that can be embedded into
     IR metadata or debugging info.
     """
+
     def __init__(self) -> None:
         self._by_type: Dict[str, Dict[str, MethodSymbol]] = {}
 
@@ -161,6 +165,7 @@ class MethodDispatch:
 
 # -------------------------------- Symbol Table ------------------------------- #
 
+
 class SymbolTable:
     """
     A compact symbol table with single lexical scope for contract source units.
@@ -168,7 +173,10 @@ class SymbolTable:
     If you need nested scopes later, layer small child tables with a `.parent`
     pointer and override `declare/resolve` to fall back into parent on misses.
     """
-    def __init__(self, *, contract_name: str = "Contract", parent: Optional["SymbolTable"] = None) -> None:
+
+    def __init__(
+        self, *, contract_name: str = "Contract", parent: Optional["SymbolTable"] = None
+    ) -> None:
         self.contract_name = contract_name
         self.parent = parent
         self._symbols: Dict[str, Symbol] = {}
@@ -177,39 +185,87 @@ class SymbolTable:
 
     # ---- Declarations ---- #
 
-    def declare_var(self, name: str, *, type_hint: Optional[str] = None, storage: bool = False,
-                    exported: bool = False) -> Symbol:
+    def declare_var(
+        self,
+        name: str,
+        *,
+        type_hint: Optional[str] = None,
+        storage: bool = False,
+        exported: bool = False,
+    ) -> Symbol:
         if name in self._symbols:
             raise ValueError(f"Symbol already declared: {name}")
-        sym = Symbol(name=name, kind=SymbolKind.VAR, type_hint=type_hint, is_storage=storage, is_exported=exported)
+        sym = Symbol(
+            name=name,
+            kind=SymbolKind.VAR,
+            type_hint=type_hint,
+            is_storage=storage,
+            is_exported=exported,
+        )
         self._symbols[name] = sym
         if storage:
             self._storage_hints[name] = StorageKeyHint(self.contract_name, name)
         return sym
 
-    def declare_const(self, name: str, *, type_hint: Optional[str] = None, exported: bool = False) -> Symbol:
+    def declare_const(
+        self, name: str, *, type_hint: Optional[str] = None, exported: bool = False
+    ) -> Symbol:
         if name in self._symbols:
             raise ValueError(f"Symbol already declared: {name}")
-        sym = Symbol(name=name, kind=SymbolKind.CONST, type_hint=type_hint, is_storage=False, is_exported=exported)
+        sym = Symbol(
+            name=name,
+            kind=SymbolKind.CONST,
+            type_hint=type_hint,
+            is_storage=False,
+            is_exported=exported,
+        )
         self._symbols[name] = sym
         return sym
 
-    def declare_func(self, name: str, params: List[str], returns: Optional[str] = None,
-                     *, exported: bool = False) -> FunctionSymbol:
+    def declare_func(
+        self,
+        name: str,
+        params: List[str],
+        returns: Optional[str] = None,
+        *,
+        exported: bool = False,
+    ) -> FunctionSymbol:
         if name in self._symbols:
             raise ValueError(f"Symbol already declared: {name}")
-        fs = FunctionSymbol(name=name, kind=SymbolKind.FUNC, params=tuple(params), returns=returns,
-                            is_exported=exported)
+        fs = FunctionSymbol(
+            name=name,
+            kind=SymbolKind.FUNC,
+            params=tuple(params),
+            returns=returns,
+            is_exported=exported,
+        )
         self._symbols[name] = fs
         return fs
 
-    def declare_method(self, owner_type: str, name: str, params: List[str],
-                       returns: Optional[str] = None, *, exported: bool = True) -> MethodSymbol:
-        ms = MethodSymbol(name=name, kind=SymbolKind.METHOD, params=tuple(params),
-                          returns=returns, owner_type=owner_type, is_exported=exported)
+    def declare_method(
+        self,
+        owner_type: str,
+        name: str,
+        params: List[str],
+        returns: Optional[str] = None,
+        *,
+        exported: bool = True,
+    ) -> MethodSymbol:
+        ms = MethodSymbol(
+            name=name,
+            kind=SymbolKind.METHOD,
+            params=tuple(params),
+            returns=returns,
+            owner_type=owner_type,
+            is_exported=exported,
+        )
         # Methods are also addressable by plain name in the table if unique.
-        if name in self._symbols and not isinstance(self._symbols[name], (FunctionSymbol, MethodSymbol)):
-            raise ValueError(f"Cannot declare method; symbol name taken by non-callable: {name}")
+        if name in self._symbols and not isinstance(
+            self._symbols[name], (FunctionSymbol, MethodSymbol)
+        ):
+            raise ValueError(
+                f"Cannot declare method; symbol name taken by non-callable: {name}"
+            )
         # Allow shadowing a plain function with a method of the same name; method dispatch uses (owner_type, name).
         self._dispatch.register(ms)
         self._symbols[name] = ms
@@ -225,7 +281,9 @@ class SymbolTable:
             return self.parent.resolve(name)
         return None
 
-    def resolve_method(self, owner_type: str, method_name: str) -> Optional[MethodSymbol]:
+    def resolve_method(
+        self, owner_type: str, method_name: str
+    ) -> Optional[MethodSymbol]:
         m = self._dispatch.get(owner_type, method_name)
         if m:
             return m

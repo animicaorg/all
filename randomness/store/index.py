@@ -118,7 +118,10 @@ def _parse_addr_key_round(kind: Kind, addr: bytes, key: bytes) -> Tuple[int, byt
 
 # ---- Public API: index maintenance -----------------------------------------
 
-def index_commit(kv: KeyValue, *, round_id: int, addr: bytes, primary_key: bytes) -> None:
+
+def index_commit(
+    kv: KeyValue, *, round_id: int, addr: bytes, primary_key: bytes
+) -> None:
     """
     Add commit record to both round and address indexes.
     Call from within the same transaction that writes the primary record.
@@ -127,7 +130,9 @@ def index_commit(kv: KeyValue, *, round_id: int, addr: bytes, primary_key: bytes
     kv.put(_addr_key("commit", addr, round_id, primary_key), primary_key)
 
 
-def index_reveal(kv: KeyValue, *, round_id: int, addr: bytes, primary_key: bytes) -> None:
+def index_reveal(
+    kv: KeyValue, *, round_id: int, addr: bytes, primary_key: bytes
+) -> None:
     """
     Add reveal record to both round and address indexes.
     Call from within the same transaction that writes the primary record.
@@ -136,19 +141,24 @@ def index_reveal(kv: KeyValue, *, round_id: int, addr: bytes, primary_key: bytes
     kv.put(_addr_key("reveal", addr, round_id, primary_key), primary_key)
 
 
-def deindex_commit(kv: KeyValue, *, round_id: int, addr: bytes, primary_key: bytes) -> None:
+def deindex_commit(
+    kv: KeyValue, *, round_id: int, addr: bytes, primary_key: bytes
+) -> None:
     """Remove commit entry from both indexes (idempotent)."""
     kv.delete(_round_key("commit", round_id, primary_key))
     kv.delete(_addr_key("commit", addr, round_id, primary_key))
 
 
-def deindex_reveal(kv: KeyValue, *, round_id: int, addr: bytes, primary_key: bytes) -> None:
+def deindex_reveal(
+    kv: KeyValue, *, round_id: int, addr: bytes, primary_key: bytes
+) -> None:
     """Remove reveal entry from both indexes (idempotent)."""
     kv.delete(_round_key("reveal", round_id, primary_key))
     kv.delete(_addr_key("reveal", addr, round_id, primary_key))
 
 
 # ---- Public API: iteration --------------------------------------------------
+
 
 def iter_commits_by_round(kv: KeyValue, round_id: int) -> Iterator[bytes]:
     """
@@ -183,7 +193,9 @@ def iter_commits_by_address(
     prefix = _addr_prefix("commit", addr)
     for k, v in kv.iter_prefix(prefix):
         r, _pk_from_key = _parse_addr_key_round("commit", addr, k)
-        if (start_round is not None and r < start_round) or (end_round is not None and r > end_round):
+        if (start_round is not None and r < start_round) or (
+            end_round is not None and r > end_round
+        ):
             continue
         # v is the primary key; prefer that (saves parsing)
         yield (r, v)
@@ -203,7 +215,9 @@ def iter_reveals_by_address(
     prefix = _addr_prefix("reveal", addr)
     for k, v in kv.iter_prefix(prefix):
         r, _pk_from_key = _parse_addr_key_round("reveal", addr, k)
-        if (start_round is not None and r < start_round) or (end_round is not None and r > end_round):
+        if (start_round is not None and r < start_round) or (
+            end_round is not None and r > end_round
+        ):
             continue
         yield (r, v)
 

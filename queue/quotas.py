@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 from typing import Dict, Set
+
 
 class QuotaTracker:
     def __init__(self, default_concurrent: int = 1) -> None:

@@ -9,10 +9,11 @@ In production, replace polling with an event subscription (WS) or indexer-backed
 """
 from __future__ import annotations
 
-import time
 import json
-import requests
+import time
 from typing import Any, Dict
+
+import requests
 
 
 class RpcClient:
@@ -27,10 +28,15 @@ class RpcClient:
 
     def get_logs(self, from_block: int, to_block: int):
         # Example RPC method: rpc_getLogs
-        return self.post("rpc_getLogs", {"from_block": from_block, "to_block": to_block})
+        return self.post(
+            "rpc_getLogs", {"from_block": from_block, "to_block": to_block}
+        )
 
     def call_contract(self, contract_address: str, action: str, params: Dict[str, Any]):
-        return self.post("rpc_call_contract", {"address": contract_address, "action": action, "params": params})
+        return self.post(
+            "rpc_call_contract",
+            {"address": contract_address, "action": action, "params": params},
+        )
 
 
 class PayoutRelayer:
@@ -46,7 +52,9 @@ class PayoutRelayer:
         if head_block <= self.last_block:
             return
         # Get logs (use RPC post for compatibility with test mocks)
-        logs = self.rpc.post("rpc_getLogs", {"from_block": self.last_block + 1, "to_block": head_block})
+        logs = self.rpc.post(
+            "rpc_getLogs", {"from_block": self.last_block + 1, "to_block": head_block}
+        )
         # Expect logs in logs['result'] list with entries containing 'event' name and data
         for ev in logs.get("result", []):
             if ev.get("event") == "PayoutRequested":
@@ -54,11 +62,24 @@ class PayoutRelayer:
                 worker_id = ev.get("data", [])[1]
                 amount = ev.get("data", [])[2]
                 token_addr = ev.get("data", [])[3]
-                print(f"PayoutRequested: job={job_id} worker={worker_id} amount={amount} token={token_addr}")
+                print(
+                    f"PayoutRequested: job={job_id} worker={worker_id} amount={amount} token={token_addr}"
+                )
                 # Perform payout via token contract (assumes role_mint or similar)
                 try:
                     # Use generic post RPC to call contract to be compatible with test mocks
-                    res = self.rpc.post("rpc_call_contract", {"address": self.token_contract, "action": "role_mint", "params": {"caller": "relayer", "to": worker_id, "amount": amount}})
+                    res = self.rpc.post(
+                        "rpc_call_contract",
+                        {
+                            "address": self.token_contract,
+                            "action": "role_mint",
+                            "params": {
+                                "caller": "relayer",
+                                "to": worker_id,
+                                "amount": amount,
+                            },
+                        },
+                    )
                     print("Payout executed:", res)
                 except Exception as e:
                     print("Failed to execute payout:", e)
@@ -75,6 +96,7 @@ class PayoutRelayer:
 
 if __name__ == "__main__":
     import argparse
+
     p = argparse.ArgumentParser()
     p.add_argument("--rpc", default="http://127.0.0.1:8545")
     p.add_argument("--token-contract", required=True)

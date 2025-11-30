@@ -23,35 +23,30 @@ from __future__ import annotations
 
 from typing import Final
 
-from stdlib import events, abi, storage  # type: ignore
+from stdlib import abi, events, storage  # type: ignore
 
-# Token package utilities (stable keys & checks)
-from . import (  # type: ignore
-    key_balance,
-    require_address,
-    require_amount,
-    EVT_TRANSFER,
-)
-
-# Base fungible implementation and internals we need to update totals atomically
-from .fungible import (  # type: ignore
-    owner as token_owner,
-    total_supply,
-    _mint_to,            # internal, safe to reuse (validates inputs)
-    _get_u256, _set_u256,  # u256 <-> storage helpers
-    K_TOTAL,             # total supply key
-    ZERO_ADDR,           # event "from" sentinel for mint/burn
-)
 from ..math.safe_uint import u256_sub  # type: ignore
+# Token package utilities (stable keys & checks)
+from . import (EVT_TRANSFER, key_balance, require_address,  # type: ignore
+               require_amount)
+# Base fungible implementation and internals we need to update totals atomically
+from .fungible import K_TOTAL  # total supply key
+from .fungible import ZERO_ADDR  # event "from" sentinel for mint/burn
+from .fungible import _mint_to  # internal, safe to reuse (validates inputs)
+from .fungible import _set_u256  # u256 <-> storage helpers
+from .fungible import _get_u256
+from .fungible import owner as token_owner  # type: ignore
+from .fungible import total_supply
 
 # Roles/RBAC (optional richer admin model)
 try:
-    from ..access.roles import (  # type: ignore
-        has_role,          # (role_id: bytes, account: bytes) -> bool
-        grant_role,        # (caller: bytes, role_id: bytes, account: bytes) -> None
-        revoke_role,       # (caller: bytes, role_id: bytes, account: bytes) -> None
-        DEFAULT_ADMIN_ROLE # bytes32
-    )
+    from ..access.roles import DEFAULT_ADMIN_ROLE  # bytes32
+    from ..access.roles import \
+        grant_role  # (caller: bytes, role_id: bytes, account: bytes) -> None
+    from ..access.roles import \
+        has_role  # (role_id: bytes, account: bytes) -> bool
+    from ..access.roles import \
+        revoke_role  # type: ignore; (caller: bytes, role_id: bytes, account: bytes) -> None
 except Exception:  # pragma: no cover
     # Lightweight compatibility fallbacks if the roles module is not linked yet.
     # These degrade to "owner-only" control; role checks always return False.
@@ -78,6 +73,7 @@ BURNER_ROLE: Final[bytes] = b"tok:role:burner".ljust(32, b"\x00")
 # ------------------------------------------------------------------------------
 # Local guards
 # ------------------------------------------------------------------------------
+
 
 def _is_owner(addr: bytes) -> bool:
     o = token_owner()
@@ -106,6 +102,7 @@ def _require_owner_or_admin(caller: bytes) -> None:
 # Introspection
 # ------------------------------------------------------------------------------
 
+
 def is_minter(account: bytes) -> bool:
     require_address(account)
     # Owner always acts as a minter; explicit role is optional.
@@ -121,6 +118,7 @@ def is_burner(account: bytes) -> bool:
 # ------------------------------------------------------------------------------
 # Admin helpers (owner OR DEFAULT_ADMIN_ROLE)
 # ------------------------------------------------------------------------------
+
 
 def grant_minter(caller: bytes, account: bytes) -> None:
     _require_owner_or_admin(caller)
@@ -149,6 +147,7 @@ def revoke_burner(caller: bytes, account: bytes) -> None:
 # ------------------------------------------------------------------------------
 # Role-gated mint/burn entrypoints
 # ------------------------------------------------------------------------------
+
 
 def role_mint(caller: bytes, to: bytes, amount: int) -> bool:
     """
@@ -190,12 +189,16 @@ def role_burn_from(caller: bytes, owner: bytes, amount: int) -> bool:
     # Fallback: enforce allowance path by delegating to the base logic.
     # Import here to avoid a circular import at module load time.
     from .fungible import burn_from as base_burn_from  # type: ignore
-    return base_burn_from(caller, owner, owner, amount)  # spender=caller, to=owner (burn-to-zero)
+
+    return base_burn_from(
+        caller, owner, owner, amount
+    )  # spender=caller, to=owner (burn-to-zero)
 
 
 # ------------------------------------------------------------------------------
 # Internals (balance+total update, no allowance checks)
 # ------------------------------------------------------------------------------
+
 
 def _burn_balance_only(owner_addr: bytes, amount: int) -> None:
     """
@@ -215,20 +218,29 @@ def _burn_balance_only(owner_addr: bytes, amount: int) -> None:
     # total supply
     _set_u256(K_TOTAL, u256_sub(total_supply(), amount))
 
-    events.emit(EVT_TRANSFER, {
-        b"from": owner_addr,
-        b"to": ZERO_ADDR,
-        b"value": amount,
-    })
+    events.emit(
+        EVT_TRANSFER,
+        {
+            b"from": owner_addr,
+            b"to": ZERO_ADDR,
+            b"value": amount,
+        },
+    )
 
 
 __all__ = [
     # role ids
-    "MINTER_ROLE", "BURNER_ROLE",
+    "MINTER_ROLE",
+    "BURNER_ROLE",
     # role checks
-    "is_minter", "is_burner",
+    "is_minter",
+    "is_burner",
     # admin
-    "grant_minter", "revoke_minter", "grant_burner", "revoke_burner",
+    "grant_minter",
+    "revoke_minter",
+    "grant_burner",
+    "revoke_burner",
     # actions
-    "role_mint", "role_burn_from",
+    "role_mint",
+    "role_burn_from",
 ]

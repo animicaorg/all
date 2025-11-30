@@ -6,7 +6,6 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
-
 HERE = Path(__file__).resolve()
 # .../animica/vm_py/tests/test_manifest_contract_metadata.py
 REPO_ROOT = HERE.parents[2]
@@ -103,6 +102,7 @@ def _resolve_entry_path(rel_manifest: str, manifest: Dict[str, Any]) -> Optional
 # Escrow manifest: slightly stronger expectations, since it's our canonical.
 # ---------------------------------------------------------------------------
 
+
 def test_escrow_manifest_core_metadata_fields() -> None:
     """
     The Escrow example manifest should have sane core fields and a resolvable
@@ -167,7 +167,9 @@ def test_example_manifests_metadata_and_abi(rel_path: str) -> None:
     name = m.get("name")
     version = m.get("version")
     assert isinstance(name, str) and name, f"{rel_path}: name must be non-empty string"
-    assert isinstance(version, str) and version, f"{rel_path}: version must be non-empty string"
+    assert (
+        isinstance(version, str) and version
+    ), f"{rel_path}: version must be non-empty string"
 
     # Optional manifestVersion
     mv = m.get("manifestVersion")
@@ -176,7 +178,9 @@ def test_example_manifests_metadata_and_abi(rel_path: str) -> None:
 
     # Optional language
     if "language" in m:
-        assert isinstance(m["language"], str) and m["language"], f"{rel_path}: language must be non-empty string"
+        assert (
+            isinstance(m["language"], str) and m["language"]
+        ), f"{rel_path}: language must be non-empty string"
 
     # ABI shape: some manifests have abi: {functions: [...]}, others abi: [...function/event...]
     abi = m.get("abi")
@@ -204,10 +208,16 @@ def test_example_manifests_metadata_and_abi(rel_path: str) -> None:
         ("entry" in m)
         or ("entrypoint" in m)
         or ("source" in m)
-        or ("sources" in m and isinstance(m["sources"], dict) and "main" in m["sources"])
+        or (
+            "sources" in m and isinstance(m["sources"], dict) and "main" in m["sources"]
+        )
     ):
-        assert entry_path is not None, f"{rel_path}: manifest declares an entry but it could not be resolved"
-        assert entry_path.is_file(), f"{rel_path}: resolved entry path does not exist: {entry_path}"
+        assert (
+            entry_path is not None
+        ), f"{rel_path}: manifest declares an entry but it could not be resolved"
+        assert (
+            entry_path.is_file()
+        ), f"{rel_path}: resolved entry path does not exist: {entry_path}"
 
     # Code hash sanity (if present).
     _assert_code_hash_sane(_maybe_get_code_hash(m))
@@ -239,14 +249,18 @@ def test_vm_py_example_manifests_have_metadata_and_sources(rel_path: str) -> Non
     name = m.get("name")
     version = m.get("version")
     assert isinstance(name, str) and name, f"{rel_path}: name must be non-empty string"
-    assert isinstance(version, str) and version, f"{rel_path}: version must be non-empty string"
+    assert (
+        isinstance(version, str) and version
+    ), f"{rel_path}: version must be non-empty string"
 
     mv = m.get("manifestVersion")
     if mv is not None:
         assert mv == 1, f"{rel_path}: manifestVersion, when present, must be 1"
 
     lang = m.get("language")
-    assert isinstance(lang, str) and lang, f"{rel_path}: language must be non-empty string"
+    assert (
+        isinstance(lang, str) and lang
+    ), f"{rel_path}: language must be non-empty string"
 
     abi = m.get("abi")
     assert abi is not None, f"{rel_path}: abi must be present"
@@ -269,9 +283,15 @@ def test_vm_py_example_manifests_have_metadata_and_sources(rel_path: str) -> Non
         ("entry" in m)
         or ("entrypoint" in m)
         or ("source" in m)
-        or ("sources" in m and isinstance(m["sources"], dict) and "main" in m["sources"])
+        or (
+            "sources" in m and isinstance(m["sources"], dict) and "main" in m["sources"]
+        )
     ):
-        assert entry_path is not None, f"{rel_path}: declared contract path could not be resolved"
-        assert entry_path.is_file(), f"{rel_path}: resolved contract path does not exist: {entry_path}"
+        assert (
+            entry_path is not None
+        ), f"{rel_path}: declared contract path could not be resolved"
+        assert (
+            entry_path.is_file()
+        ), f"{rel_path}: resolved contract path does not exist: {entry_path}"
 
     _assert_code_hash_sane(_maybe_get_code_hash(m))

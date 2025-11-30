@@ -17,6 +17,7 @@ validate_source(source: str, *, filename: str = "<contract>") -> ast.AST
 This module does **not** execute code. It is purely syntactic/semantic validation
 for the VM's compiler/runtime to consume safely.
 """
+
 from __future__ import annotations
 
 import ast
@@ -24,13 +25,14 @@ import builtins as _py_builtins
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
-from .errors import ValidationError, ForbiddenImport
+from .errors import ForbiddenImport, ValidationError
 
 # --- Config (with safe fallbacks if config values evolve) ---------------------
 
 try:
     from . import config as _cfg  # type: ignore
 except Exception:  # pragma: no cover - defensive
+
     class _cfg:
         STRICT_MODE = True
         MAX_SOURCE_BYTES = 64 * 1024
@@ -85,7 +87,7 @@ _ALLOWED_AST_NODES: Tuple[type, ...] = (
     ast.Name,
     ast.Load,
     ast.Store,
-    ast.Del,       # we still prevent 'del' via explicit check; included to parse
+    ast.Del,  # we still prevent 'del' via explicit check; included to parse
     ast.BinOp,
     ast.UnaryOp,
     ast.BoolOp,
@@ -142,6 +144,7 @@ _DISALLOWED_NODE_TYPES: Tuple[type, ...] = (
 @dataclass
 class _Scope:
     """Tracks local/defined names for builtin resolution."""
+
     locals: Set[str]
 
 
@@ -203,7 +206,9 @@ class _Validator(ast.NodeVisitor):
     def visit_Module(self, node: ast.Module) -> None:  # type: ignore[override]
         # Only allow: docstring, allowed imports, constant assignments, function defs.
         for idx, stmt in enumerate(node.body):
-            if isinstance(stmt, ast.Expr) and isinstance(getattr(stmt, "value", None), ast.Constant):
+            if isinstance(stmt, ast.Expr) and isinstance(
+                getattr(stmt, "value", None), ast.Constant
+            ):
                 # docstring or harmless constant at top; allowed anywhere but does nothing
                 continue
             if isinstance(stmt, ast.ImportFrom):
@@ -289,7 +294,9 @@ class _Validator(ast.NodeVisitor):
                 return len(node.value) <= self.max_lit_bytes
             return True
         if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
-            return all(self._is_constant_like(elt, depth=depth + 1) for elt in node.elts)
+            return all(
+                self._is_constant_like(elt, depth=depth + 1) for elt in node.elts
+            )
         if isinstance(node, ast.Dict):
             return all(
                 (k is None or self._is_constant_like(k, depth=depth + 1))
@@ -350,12 +357,17 @@ class _Validator(ast.NodeVisitor):
             )
         if node.returns is not None:
             # Type annotations are fine but we don't interpret them; allow simple names/attributes only
-            if not isinstance(node.returns, (ast.Name, ast.Attribute, ast.Subscript, ast.Constant)):
+            if not isinstance(
+                node.returns, (ast.Name, ast.Attribute, ast.Subscript, ast.Constant)
+            ):
                 raise ValidationError(
                     "Unsupported return annotation",
                     phase="ast",
                     reason="annotation_unsupported",
-                    context={"function": node.name, "anno": type(node.returns).__name__},
+                    context={
+                        "function": node.name,
+                        "anno": type(node.returns).__name__,
+                    },
                 )
 
         # Args limits
@@ -373,7 +385,11 @@ class _Validator(ast.NodeVisitor):
                 "Too many function arguments",
                 phase="ast",
                 reason="arg_limit",
-                context={"function": node.name, "args": total_args, "limit": self.max_func_args},
+                context={
+                    "function": node.name,
+                    "args": total_args,
+                    "limit": self.max_func_args,
+                },
             )
 
         # Enter function scope
@@ -409,17 +425,31 @@ class _Validator(ast.NodeVisitor):
             context={"filename": self.filename},
         )
 
-    def visit_Raise(self, node: ast.Raise) -> None:  # pragma: no cover - guarded earlier
-        raise ValidationError("raise is not allowed", phase="ast", reason="raise_forbidden")
+    def visit_Raise(
+        self, node: ast.Raise
+    ) -> None:  # pragma: no cover - guarded earlier
+        raise ValidationError(
+            "raise is not allowed", phase="ast", reason="raise_forbidden"
+        )
 
     def visit_Try(self, node: ast.Try) -> None:  # pragma: no cover - guarded earlier
-        raise ValidationError("try/except is not allowed", phase="ast", reason="try_forbidden")
+        raise ValidationError(
+            "try/except is not allowed", phase="ast", reason="try_forbidden"
+        )
 
-    def visit_Global(self, node: ast.Global) -> None:  # pragma: no cover - guarded earlier
-        raise ValidationError("global is not allowed", phase="ast", reason="global_forbidden")
+    def visit_Global(
+        self, node: ast.Global
+    ) -> None:  # pragma: no cover - guarded earlier
+        raise ValidationError(
+            "global is not allowed", phase="ast", reason="global_forbidden"
+        )
 
-    def visit_Nonlocal(self, node: ast.Nonlocal) -> None:  # pragma: no cover - guarded earlier
-        raise ValidationError("nonlocal is not allowed", phase="ast", reason="nonlocal_forbidden")
+    def visit_Nonlocal(
+        self, node: ast.Nonlocal
+    ) -> None:  # pragma: no cover - guarded earlier
+        raise ValidationError(
+            "nonlocal is not allowed", phase="ast", reason="nonlocal_forbidden"
+        )
 
     def visit_Import(self, node: ast.Import) -> None:  # type: ignore[override]
         self._check_import(node)
@@ -441,7 +471,9 @@ class _Validator(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:  # type: ignore[override]
         # Forbid star-args and kw-expansion to keep static analyzability crisp
-        if any(isinstance(a, ast.Starred) for a in node.args) or any(k.arg is None for k in node.keywords):
+        if any(isinstance(a, ast.Starred) for a in node.args) or any(
+            k.arg is None for k in node.keywords
+        ):
             raise ValidationError(
                 "Star-args and kwargs expansion are not allowed",
                 phase="ast",
@@ -481,7 +513,11 @@ class _Validator(ast.NodeVisitor):
             parts = callee_desc.split(".")
             if parts[0] == "stdlib":
                 # Expect stdlib.<module>.<func>
-                if len(parts) != 3 or parts[1] not in ALLOWED_STDLIB_NAMES or parts[2].startswith("_"):
+                if (
+                    len(parts) != 3
+                    or parts[1] not in ALLOWED_STDLIB_NAMES
+                    or parts[2].startswith("_")
+                ):
                     raise ValidationError(
                         "Only stdlib.<module>.<func> calls are allowed",
                         phase="ast",
@@ -554,7 +590,10 @@ class _Validator(ast.NodeVisitor):
         return not self._is_defined(name)
 
     def _is_defined(self, name: str) -> bool:
-        return any(name in scope.locals for scope in reversed(self.scopes)) or name in self.defined_funcs
+        return (
+            any(name in scope.locals for scope in reversed(self.scopes))
+            or name in self.defined_funcs
+        )
 
     def _push_scope(self) -> None:
         self.scopes.append(_Scope(locals=set()))
@@ -598,7 +637,11 @@ def validate_source(source: str, *, filename: str = "<contract>") -> ast.AST:
             "Syntax error",
             phase="ast",
             reason="syntax",
-            context={"lineno": getattr(e, "lineno", None), "offset": getattr(e, "offset", None), "msg": e.msg},
+            context={
+                "lineno": getattr(e, "lineno", None),
+                "offset": getattr(e, "offset", None),
+                "msg": e.msg,
+            },
         ) from None
 
     validator = _Validator(filename=filename)

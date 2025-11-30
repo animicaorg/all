@@ -52,20 +52,15 @@ from __future__ import annotations
 
 from typing import Final, Tuple
 
-from stdlib import abi, events, storage, hash as _hash  # type: ignore
+from stdlib import abi, events
+from stdlib import hash as _hash  # type: ignore
+from stdlib import storage
 
 # The package-local __init__.py exposes the validated low-level wrappers and
 # canonical bounds. These wrappers are deterministic and emit base events.
-from . import (
-    quantum_enqueue,
-    read_result,
-    # bounds (provided by lower layer; re-exported below for callers/tests)
-    MAX_CIRCUIT_LEN,
-    MIN_SHOTS,
-    MAX_SHOTS,
-    MIN_TRAPS_BPS,
-    MAX_TRAPS_BPS,
-)
+from . import (  # bounds (provided by lower layer; re-exported below for callers/tests)
+    MAX_CIRCUIT_LEN, MAX_SHOTS, MAX_TRAPS_BPS, MIN_SHOTS, MIN_TRAPS_BPS,
+    quantum_enqueue, read_result)
 
 # -----------------------------------------------------------------------------
 # Bounded constants for tag usage
@@ -77,6 +72,7 @@ MAX_TAG_LEN: Final[int] = 32  # small, indexer-friendly
 # -----------------------------------------------------------------------------
 # Internal guards
 # -----------------------------------------------------------------------------
+
 
 def _ensure_bytes(x: object) -> bytes:
     if not isinstance(x, (bytes, bytearray)):
@@ -108,6 +104,7 @@ def _key_for(tag: bytes) -> bytes:
 # Public API
 # -----------------------------------------------------------------------------
 
+
 def request(circuit: bytes, *, shots: int, traps_bps: int) -> bytes:
     """
     Enqueue a Quantum job (circuit + params) and return its deterministic task id.
@@ -137,7 +134,9 @@ def request(circuit: bytes, *, shots: int, traps_bps: int) -> bytes:
     if len(cbytes) == 0 or len(cbytes) > int(MAX_CIRCUIT_LEN):
         abi.revert(b"CAP:LEN")
     s = _ensure_int_in_range(b"shots", shots, int(MIN_SHOTS), int(MAX_SHOTS))
-    t = _ensure_int_in_range(b"traps_bps", traps_bps, int(MIN_TRAPS_BPS), int(MAX_TRAPS_BPS))
+    t = _ensure_int_in_range(
+        b"traps_bps", traps_bps, int(MIN_TRAPS_BPS), int(MAX_TRAPS_BPS)
+    )
     return quantum_enqueue(cbytes, s, t)
 
 

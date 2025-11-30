@@ -58,8 +58,8 @@ from __future__ import annotations
 
 from typing import Final
 
+from stdlib import storage  # type: ignore
 from stdlib import abi, events  # type: ignore
-from stdlib import storage      # type: ignore
 from stdlib import hash as _hash  # type: ignore
 
 # ---------------------------------------------------------------------------
@@ -76,6 +76,7 @@ _IMPL_KEY: Final[bytes] = b"upg:impl"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def proxiable_uuid() -> bytes:
     """
     Return a 32-byte UUID derived from :data:`UPGRADE_NAMESPACE`.
@@ -84,6 +85,7 @@ def proxiable_uuid() -> bytes:
     to ensure compatibility before switching implementations.
     """
     return _hash.keccak256(UPGRADE_NAMESPACE)
+
 
 def implementation() -> bytes:
     """
@@ -95,6 +97,7 @@ def implementation() -> bytes:
         The stored value; empty bytes if unset.
     """
     return storage.get(__IMPL_KEY)
+
 
 def set_implementation(new_impl: bytes) -> None:
     """
@@ -127,10 +130,14 @@ def set_implementation(new_impl: bytes) -> None:
 
     storage.set(__IMPL_KEY, bytes(new_impl))
 
-    events.emit(b"UPG:ImplementationSet", {
-        b"old": bytes(old),
-        b"new": bytes(new_impl),
-    })
+    events.emit(
+        b"UPG:ImplementationSet",
+        {
+            b"old": bytes(old),
+            b"new": bytes(new_impl),
+        },
+    )
+
 
 __all__ = [
     "UPGRADE_NAMESPACE",

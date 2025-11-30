@@ -41,8 +41,8 @@ import tracemalloc
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Sequence, Tuple
 
-
 # -------------------------- Utilities --------------------------
+
 
 def parse_qty(s: str) -> int:
     """Parse integers with k/m/g suffixes (1k=1_000, 1m=1_000_000, 1g=1_000_000_000)."""
@@ -77,6 +77,7 @@ def human_mb(nbytes: int) -> float:
 
 # -------------------------- Data model --------------------------
 
+
 @dataclass(slots=True, frozen=True)
 class PayoutItem:
     provider_id: int
@@ -86,9 +87,16 @@ class PayoutItem:
 
 # -------------------------- Generation --------------------------
 
-def generate_payouts(n: int, providers: int, rng: random.Random,
-                     hotset_frac: float, hotset_share: float,
-                     min_amount: int = 1, max_amount: int = 1000) -> List[PayoutItem]:
+
+def generate_payouts(
+    n: int,
+    providers: int,
+    rng: random.Random,
+    hotset_frac: float,
+    hotset_share: float,
+    min_amount: int = 1,
+    max_amount: int = 1000,
+) -> List[PayoutItem]:
     """
     Generate `n` payout items across `providers` with optional skew:
       - `hotset_frac` of providers receive ~`hotset_share` of total items.
@@ -112,12 +120,15 @@ def generate_payouts(n: int, providers: int, rng: random.Random,
             pid = rng.randrange(providers) if not cold_ids else rng.choice(cold_ids)
         amt = rng.randint(min_amount, max_amount)
         t_share = amt // 10  # 10% to treasury for the bench
-        items_append(PayoutItem(provider_id=pid, amount=amt - t_share, treasury_share=t_share))
+        items_append(
+            PayoutItem(provider_id=pid, amount=amt - t_share, treasury_share=t_share)
+        )
 
     return items
 
 
 # -------------------------- Aggregators --------------------------
+
 
 def aggregate_dict(items: Sequence[PayoutItem]) -> Tuple[Dict[int, int], int]:
     """Hash-map accumulation per provider and sum treasury."""
@@ -158,13 +169,16 @@ def aggregate_sort(items: Sequence[PayoutItem]) -> Tuple[Dict[int, int], int]:
 
 # -------------------------- Benchmark runner --------------------------
 
-def run_once(n_items: int,
-             providers: int,
-             mode: str,
-             seed: int,
-             hotset_frac: float,
-             hotset_share: float,
-             simulate_write: bool) -> Tuple[float, int, int]:
+
+def run_once(
+    n_items: int,
+    providers: int,
+    mode: str,
+    seed: int,
+    hotset_frac: float,
+    hotset_share: float,
+    simulate_write: bool,
+) -> Tuple[float, int, int]:
     """
     Run a single aggregation with tracemalloc; returns (elapsed_s, peak_bytes, groups).
     """
@@ -206,20 +220,53 @@ def run_once(n_items: int,
 
 
 def main(argv: List[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Benchmark settlement aggregation: batch size vs runtime/memory.")
-    parser.add_argument("--sizes", type=str, default=None,
-                        help="Comma list of batch sizes (supports k/m/g suffix). Default: 10k,50k,200k,1m")
-    parser.add_argument("--providers", type=int, default=4096, help="Total distinct providers in the registry.")
-    parser.add_argument("--mode", choices=["dict", "sort"], default="dict", help="Aggregation strategy.")
-    parser.add_argument("--hotset", type=float, default=0.05,
-                        help="Fraction of providers constituting the hot set (0..1).")
-    parser.add_argument("--hotset-share", type=float, default=0.80,
-                        help="Fraction of items routed to the hot set (0..1).")
-    parser.add_argument("--seed", type=int, default=None, help="PRNG seed (default env AICF_BENCH_SEED or 42).")
-    parser.add_argument("--simulate-write", action="store_true",
-                        help="Simulate committing per-provider totals to a ledger.")
-    parser.add_argument("--no-header", action="store_true", help="Do not print the header row.")
-    parser.add_argument("--json", action="store_true", help="Emit JSON lines for each run.")
+    parser = argparse.ArgumentParser(
+        description="Benchmark settlement aggregation: batch size vs runtime/memory."
+    )
+    parser.add_argument(
+        "--sizes",
+        type=str,
+        default=None,
+        help="Comma list of batch sizes (supports k/m/g suffix). Default: 10k,50k,200k,1m",
+    )
+    parser.add_argument(
+        "--providers",
+        type=int,
+        default=4096,
+        help="Total distinct providers in the registry.",
+    )
+    parser.add_argument(
+        "--mode", choices=["dict", "sort"], default="dict", help="Aggregation strategy."
+    )
+    parser.add_argument(
+        "--hotset",
+        type=float,
+        default=0.05,
+        help="Fraction of providers constituting the hot set (0..1).",
+    )
+    parser.add_argument(
+        "--hotset-share",
+        type=float,
+        default=0.80,
+        help="Fraction of items routed to the hot set (0..1).",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="PRNG seed (default env AICF_BENCH_SEED or 42).",
+    )
+    parser.add_argument(
+        "--simulate-write",
+        action="store_true",
+        help="Simulate committing per-provider totals to a ledger.",
+    )
+    parser.add_argument(
+        "--no-header", action="store_true", help="Do not print the header row."
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Emit JSON lines for each run."
+    )
     args = parser.parse_args(argv)
 
     warmup_items = int(os.getenv("AICF_BENCH_WARMUP", "0") or "0")
@@ -233,10 +280,20 @@ def main(argv: List[str] | None = None) -> int:
     # Optional warmup at median size
     if warmup_items > 0:
         mid = total_sizes[len(total_sizes) // 2]
-        run_once(mid, args.providers, args.mode, seed, args.hotset, args.hotset_share, args.simulate_write)
+        run_once(
+            mid,
+            args.providers,
+            args.mode,
+            seed,
+            args.hotset,
+            args.hotset_share,
+            args.simulate_write,
+        )
 
     if not args.no_header and not args.json:
-        print("batch      providers  mode   hotset%  share%  groups   elapsed_s    items/s      ns/item  peak_mem_MB   B/item")
+        print(
+            "batch      providers  mode   hotset%  share%  groups   elapsed_s    items/s      ns/item  peak_mem_MB   B/item"
+        )
 
     for n in total_sizes:
         elapsed, peak_bytes, groups = run_once(
@@ -254,26 +311,33 @@ def main(argv: List[str] | None = None) -> int:
 
         if args.json:
             import json
-            print(json.dumps({
-                "batch": n,
-                "providers": args.providers,
-                "mode": args.mode,
-                "hotset_frac": args.hotset,
-                "hotset_share": args.hotset_share,
-                "groups": groups,
-                "elapsed_s": elapsed,
-                "items_per_s": items_per_s,
-                "ns_per_item": ns_per,
-                "peak_mem_bytes": peak_bytes,
-                "bytes_per_item": b_per_item,
-                "seed": seed,
-                "simulate_write": args.simulate_write,
-            }))
+
+            print(
+                json.dumps(
+                    {
+                        "batch": n,
+                        "providers": args.providers,
+                        "mode": args.mode,
+                        "hotset_frac": args.hotset,
+                        "hotset_share": args.hotset_share,
+                        "groups": groups,
+                        "elapsed_s": elapsed,
+                        "items_per_s": items_per_s,
+                        "ns_per_item": ns_per,
+                        "peak_mem_bytes": peak_bytes,
+                        "bytes_per_item": b_per_item,
+                        "seed": seed,
+                        "simulate_write": args.simulate_write,
+                    }
+                )
+            )
         else:
-            print(f"{n:10d}  {args.providers:9d}  {args.mode:5s}  "
-                  f"{args.hotset*100:7.2f}  {args.hotset_share*100:6.2f}  "
-                  f"{groups:6d}  {elapsed:10.6f}  {items_per_s:10.0f}  {ns_per:11.1f}  "
-                  f"{human_mb(peak_bytes):11.2f}  {b_per_item:8.1f}")
+            print(
+                f"{n:10d}  {args.providers:9d}  {args.mode:5s}  "
+                f"{args.hotset*100:7.2f}  {args.hotset_share*100:6.2f}  "
+                f"{groups:6d}  {elapsed:10.6f}  {items_per_s:10.0f}  {ns_per:11.1f}  "
+                f"{human_mb(peak_bytes):11.2f}  {b_per_item:8.1f}"
+            )
 
     return 0
 

@@ -111,8 +111,15 @@ def _combine_regexes(regexes: List[str]) -> Optional[str]:
 
 def load_cors_config_from_env() -> CORSConfig:
     allow_origins_raw = _split_csv(os.getenv("CORS_ALLOW_ORIGINS"))
-    allow_methods = _split_csv(os.getenv("CORS_ALLOW_METHODS")) or ["GET", "POST", "OPTIONS"]
-    allow_headers = _split_csv(os.getenv("CORS_ALLOW_HEADERS")) or ["Authorization", "Content-Type"]
+    allow_methods = _split_csv(os.getenv("CORS_ALLOW_METHODS")) or [
+        "GET",
+        "POST",
+        "OPTIONS",
+    ]
+    allow_headers = _split_csv(os.getenv("CORS_ALLOW_HEADERS")) or [
+        "Authorization",
+        "Content-Type",
+    ]
     expose_headers = _split_csv(os.getenv("CORS_EXPOSE_HEADERS")) or [
         "X-Request-Id",
         "X-RateLimit-Limit",
@@ -131,7 +138,9 @@ def load_cors_config_from_env() -> CORSConfig:
     # Special-case wildcard "*"
     if allow_origins_raw == ["*"]:
         if allow_credentials:
-            raise ValueError('CORS_ALLOW_ORIGINS="*" is incompatible with CORS_ALLOW_CREDENTIALS=true')
+            raise ValueError(
+                'CORS_ALLOW_ORIGINS="*" is incompatible with CORS_ALLOW_CREDENTIALS=true'
+            )
         # starlette will treat allow_origins=["*"] correctly (no credentials)
         return CORSConfig(
             allow_origins=["*"],

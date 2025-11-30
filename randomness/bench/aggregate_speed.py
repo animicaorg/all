@@ -37,7 +37,7 @@ import os
 import statistics as stats
 import sys
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from hashlib import sha3_256
 from typing import Callable, Iterable, List
 
@@ -46,11 +46,15 @@ _agg_err = None
 agg_fn: Callable[[List[bytes]], bytes]
 
 try:
-    from randomness.commit_reveal.aggregate import aggregate as _aggregate  # type: ignore
+    from randomness.commit_reveal.aggregate import \
+        aggregate as _aggregate  # type: ignore
+
     agg_fn = _aggregate
 except Exception as e1:
     try:
-        from randomness.commit_reveal.aggregate import aggregate_reveals as _aggregate_reveals  # type: ignore
+        from randomness.commit_reveal.aggregate import \
+            aggregate_reveals as _aggregate_reveals  # type: ignore
+
         agg_fn = _aggregate_reveals
     except Exception as e2:
         _agg_err = (e1, e2)
@@ -88,7 +92,9 @@ def _seeded_bytes(seed_int: int, *tags: int, length: int = 32) -> bytes:
     return sha3_256(b).digest()[:length]
 
 
-def _synthesize_reveals(n: int, payload_len: int, seed: int, missing_frac: float, round_no: int) -> list[bytes]:
+def _synthesize_reveals(
+    n: int, payload_len: int, seed: int, missing_frac: float, round_no: int
+) -> list[bytes]:
     """
     Build a deterministic list of payload bytes. Optionally drop a fraction
     to simulate missing reveals (they simply won't be included).
@@ -149,15 +155,19 @@ def _fmt_table(points: list[BenchPoint]) -> str:
     for r in rows:
         for i, cell in enumerate(r):
             widths[i] = max(widths[i], len(str(cell)))
+
     def fmt_row(r: list[object]) -> str:
         return "  ".join(str(cell).rjust(widths[i]) for i, cell in enumerate(r))
+
     out = [fmt_row(headers), "  ".join("-" * w for w in widths)]
     out.extend(fmt_row(r) for r in rows)
     return "\n".join(out)
 
 
 # ---- Benchmark core ----------------------------------------------------------
-def bench_one(participants: int, payload_bytes: int, rounds: int, seed: int, missing: float) -> BenchPoint:
+def bench_one(
+    participants: int, payload_bytes: int, rounds: int, seed: int, missing: float
+) -> BenchPoint:
     if agg_fn is None:  # pragma: no cover
         e1, e2 = _agg_err if _agg_err else (None, None)
         msg = (
@@ -173,7 +183,9 @@ def bench_one(participants: int, payload_bytes: int, rounds: int, seed: int, mis
 
     # Pre-synthesize per round to avoid timing generation
     synthesized = [
-        _synthesize_reveals(participants, payload_bytes, seed=seed, missing_frac=missing, round_no=r)
+        _synthesize_reveals(
+            participants, payload_bytes, seed=seed, missing_frac=missing, round_no=r
+        )
         for r in range(rounds)
     ]
 
@@ -189,7 +201,11 @@ def bench_one(participants: int, payload_bytes: int, rounds: int, seed: int, mis
 
     mean_ms = stats.fmean(latencies_ms)
     median_ms = stats.median(latencies_ms)
-    p95_ms = stats.quantiles(latencies_ms, n=20)[18] if len(latencies_ms) >= 20 else max(latencies_ms)
+    p95_ms = (
+        stats.quantiles(latencies_ms, n=20)[18]
+        if len(latencies_ms) >= 20
+        else max(latencies_ms)
+    )
 
     aggs_per_sec = 1000.0 / mean_ms if mean_ms > 0 else float("inf")
     reveals_per_sec = (total_reveals / rounds) * aggs_per_sec
@@ -211,37 +227,86 @@ def bench_one(participants: int, payload_bytes: int, rounds: int, seed: int, mis
 
 # ---- CLI --------------------------------------------------------------------
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Aggregate many reveals and measure throughput.")
-    ap.add_argument("--participants", type=str, default="10k", help="Comma-separated counts, supports k/m suffixes.")
-    ap.add_argument("--payload-bytes", type=int, default=32, help="Reveal payload size in bytes (default 32).")
-    ap.add_argument("--rounds", type=int, default=10, help="Repetitions per participants point.")
-    ap.add_argument("--missing", type=float, default=0.0, help="Fraction [0,1) of missing reveals to simulate.")
-    ap.add_argument("--seed", type=lambda x: int(x, 0), default=0xA61CE, help="Deterministic seed (int, 0x… ok).")
-    ap.add_argument("--csv", type=str, default="", help="Optional path to write CSV results.")
-    ap.add_argument("--json", type=str, default="", help="Optional path to write JSON results.")
+    ap = argparse.ArgumentParser(
+        description="Aggregate many reveals and measure throughput."
+    )
+    ap.add_argument(
+        "--participants",
+        type=str,
+        default="10k",
+        help="Comma-separated counts, supports k/m suffixes.",
+    )
+    ap.add_argument(
+        "--payload-bytes",
+        type=int,
+        default=32,
+        help="Reveal payload size in bytes (default 32).",
+    )
+    ap.add_argument(
+        "--rounds", type=int, default=10, help="Repetitions per participants point."
+    )
+    ap.add_argument(
+        "--missing",
+        type=float,
+        default=0.0,
+        help="Fraction [0,1) of missing reveals to simulate.",
+    )
+    ap.add_argument(
+        "--seed",
+        type=lambda x: int(x, 0),
+        default=0xA61CE,
+        help="Deterministic seed (int, 0x… ok).",
+    )
+    ap.add_argument(
+        "--csv", type=str, default="", help="Optional path to write CSV results."
+    )
+    ap.add_argument(
+        "--json", type=str, default="", help="Optional path to write JSON results."
+    )
     args = ap.parse_args(argv)
 
     parts_list = _parse_num_list(args.participants)
 
     points: list[BenchPoint] = []
     for n in parts_list:
-        points.append(bench_one(n, args.payload_bytes, args.rounds, args.seed, args.missing))
+        points.append(
+            bench_one(n, args.payload_bytes, args.rounds, args.seed, args.missing)
+        )
 
     print(_fmt_table(points))
 
     if args.csv:
         with open(args.csv, "w", newline="") as f:
             w = csv.writer(f)
-            w.writerow([
-                "participants","payload_bytes","rounds","missing_frac",
-                "mean_ms","median_ms","p95_ms","aggs_per_sec","reveals_per_sec","mb_per_sec"
-            ])
+            w.writerow(
+                [
+                    "participants",
+                    "payload_bytes",
+                    "rounds",
+                    "missing_frac",
+                    "mean_ms",
+                    "median_ms",
+                    "p95_ms",
+                    "aggs_per_sec",
+                    "reveals_per_sec",
+                    "mb_per_sec",
+                ]
+            )
             for p in points:
-                w.writerow([
-                    p.participants, p.payload_bytes, p.rounds, f"{p.missing_frac:.6f}",
-                    f"{p.agg_mean_ms:.6f}", f"{p.agg_median_ms:.6f}", f"{p.agg_p95_ms:.6f}",
-                    f"{p.aggs_per_sec:.6f}", f"{p.reveals_per_sec:.6f}", f"{p.mb_per_sec:.6f}",
-                ])
+                w.writerow(
+                    [
+                        p.participants,
+                        p.payload_bytes,
+                        p.rounds,
+                        f"{p.missing_frac:.6f}",
+                        f"{p.agg_mean_ms:.6f}",
+                        f"{p.agg_median_ms:.6f}",
+                        f"{p.agg_p95_ms:.6f}",
+                        f"{p.aggs_per_sec:.6f}",
+                        f"{p.reveals_per_sec:.6f}",
+                        f"{p.mb_per_sec:.6f}",
+                    ]
+                )
         print(f"\nWrote CSV: {args.csv}")
 
     if args.json:

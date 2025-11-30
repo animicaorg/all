@@ -7,17 +7,8 @@ import ssl
 from dataclasses import dataclass
 from typing import AsyncIterator, Dict, Optional, Tuple
 
-from .base import (
-    Transport,
-    Conn,
-    Stream,
-    ListenConfig,
-    ConnInfo,
-    CloseCode,
-    MAX_FRAME_DEFAULT,
-    TransportError,
-    StreamClosed,
-)
+from .base import (MAX_FRAME_DEFAULT, CloseCode, Conn, ConnInfo, ListenConfig,
+                   Stream, StreamClosed, Transport, TransportError)
 
 ALPN = "animica/1"
 
@@ -39,6 +30,7 @@ else:
 
 # --- certificate helper (prefers repo's self-signed node cert) ----------------
 
+
 def _ensure_quic_cert() -> Tuple[str, str]:
     """
     Try to locate/generate a self-signed certificate for QUIC dev usage.
@@ -49,17 +41,19 @@ def _ensure_quic_cert() -> Tuple[str, str]:
     # 1) Preferred: repo helper
     with contextlib.suppress(Exception):
         from p2p.crypto.cert import ensure_node_cert  # type: ignore
+
         cert, key = ensure_node_cert()
         if os.path.exists(cert) and os.path.exists(key):
             return cert, key
 
     # 2) Fallback: generate ephemeral self-signed (dev only)
     try:
+        import datetime as _dt
+
         from cryptography import x509
         from cryptography.hazmat.primitives import hashes, serialization
         from cryptography.hazmat.primitives.asymmetric import rsa
         from cryptography.x509.oid import NameOID
-        import datetime as _dt
     except Exception as e:  # pragma: no cover - rare path
         raise RuntimeError(
             "QUIC requires a certificate. "
@@ -67,7 +61,9 @@ def _ensure_quic_cert() -> Tuple[str, str]:
         ) from e
 
     priv = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, u"animica-quic-dev")])
+    subject = issuer = x509.Name(
+        [x509.NameAttribute(NameOID.COMMON_NAME, "animica-quic-dev")]
+    )
     now = _dt.datetime.utcnow()
     cert_obj = (
         x509.CertificateBuilder()
@@ -77,7 +73,9 @@ def _ensure_quic_cert() -> Tuple[str, str]:
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - _dt.timedelta(days=1))
         .not_valid_after(now + _dt.timedelta(days=3650))
-        .add_extension(x509.SubjectAlternativeName([x509.DNSName(u"localhost")]), critical=False)
+        .add_extension(
+            x509.SubjectAlternativeName([x509.DNSName("localhost")]), critical=False
+        )
         .sign(priv, hashes.SHA256())
     )
 
@@ -153,7 +151,9 @@ class _SingleStreamQuicProto(QuicConnectionProtocol):
     def _ensure_stream_state(self, stream_id: int) -> _StreamQueues:
         st = self._streams.get(stream_id)
         if st is None:
-            st = _StreamQueues(rx_queue=asyncio.Queue(), rx_buf=bytearray(), send_lock=asyncio.Lock())
+            st = _StreamQueues(
+                rx_queue=asyncio.Queue(), rx_buf=bytearray(), send_lock=asyncio.Lock()
+            )
             self._streams[stream_id] = st
         return st
 
@@ -243,6 +243,7 @@ class _SingleStreamQuicProto(QuicConnectionProtocol):
 
 # --- Stream / Conn wrappers ----------------------------------------------------
 
+
 class QuicStream(Stream):
     __slots__ = ("_conn", "_id")
 
@@ -306,6 +307,7 @@ class QuicConn(Conn):
 
 
 # --- Transport ----------------------------------------------------------------
+
 
 class QuicTransport(Transport):
     """
@@ -383,7 +385,11 @@ class QuicTransport(Transport):
             await proto.wait_connected()
             info = ConnInfo(
                 local_addr=f"{host}:{port}",
-                remote_addr=str(getattr(proto._transport, 'get_extra_info', lambda *_: None)('peername')),
+                remote_addr=str(
+                    getattr(proto._transport, "get_extra_info", lambda *_: None)(
+                        "peername"
+                    )
+                ),
                 is_outbound=False,
             )
             conn = QuicConn(proto, info=info, max_frame=config.max_frame_bytes)
@@ -438,15 +444,33 @@ class QuicTransport(Transport):
             pass
 
         async def _dial() -> QuicConn:
-            async with quic_connect(host, port, configuration=cfg, create_protocol=_ClientProto) as client:
+            async with quic_connect(
+                host, port, configuration=cfg, create_protocol=_ClientProto
+            ) as client:
                 proto: _SingleStreamQuicProto = client  # type: ignore[assignment]
                 await proto.wait_connected()
                 info = ConnInfo(
-                    local_addr=str(getattr(proto._transport, 'get_extra_info', lambda *_: None)('sockname')),
-                    remote_addr=str(getattr(proto._transport, 'get_extra_info', lambda *_: None)('peername')),
+                    local_addr=str(
+                        getattr(proto._transport, "get_extra_info", lambda *_: None)(
+                            "sockname"
+                        )
+                    ),
+                    remote_addr=str(
+                        getattr(proto._transport, "get_extra_info", lambda *_: None)(
+                            "peername"
+                        )
+                    ),
                     is_outbound=True,
                 )
-                return QuicConn(proto, info=info, max_frame=(self._listen_cfg.max_frame_bytes if self._listen_cfg else MAX_FRAME_DEFAULT))
+                return QuicConn(
+                    proto,
+                    info=info,
+                    max_frame=(
+                        self._listen_cfg.max_frame_bytes
+                        if self._listen_cfg
+                        else MAX_FRAME_DEFAULT
+                    ),
+                )
 
         try:
             if timeout and timeout > 0:

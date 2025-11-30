@@ -21,11 +21,11 @@ from typing import Dict, Iterator, Optional, Tuple
 # Reuse common errors from the trimmed VM package
 from ..errors import ValidationError
 
-
 # ---------------- Constants & Helpers ----------------
 
-DEFAULT_MAX_KEY = 64            # bytes
+DEFAULT_MAX_KEY = 64  # bytes
 DEFAULT_MAX_VALUE = 256 * 1024  # 256 KiB for browser sims
+
 
 def _ensure_bytes(name: str, v: bytes, *, allow_empty: bool = False) -> bytes:
     if not isinstance(v, (bytes, bytearray)):
@@ -48,6 +48,7 @@ def _ns_prefix(ns: bytes) -> bytes:
 
 # ---------------- Storage Core ----------------
 
+
 class Storage:
     """
     Storage(limit_key=64, limit_value=256KiB)
@@ -64,7 +65,9 @@ class Storage:
 
     __slots__ = ("_kv", "_max_key", "_max_value")
 
-    def __init__(self, *, limit_key: int = DEFAULT_MAX_KEY, limit_value: int = DEFAULT_MAX_VALUE) -> None:
+    def __init__(
+        self, *, limit_key: int = DEFAULT_MAX_KEY, limit_value: int = DEFAULT_MAX_VALUE
+    ) -> None:
         if not isinstance(limit_key, int) or limit_key <= 0:
             raise ValidationError("limit_key must be positive int")
         if not isinstance(limit_value, int) or limit_value <= 0:
@@ -122,6 +125,7 @@ class Storage:
 
 # ---------------- Namespaced View ----------------
 
+
 class NamespaceView:
     """
     A namespaced view onto a Storage. All operations transparently prefix keys
@@ -170,10 +174,11 @@ class NamespaceView:
         # Expose unprefixed keys to the caller
         p = self._ns + _ensure_bytes("prefix", prefix, allow_empty=True)
         for k, v in self._store.items(prefix=p):
-            yield k[len(self._ns):], v
+            yield k[len(self._ns) :], v
 
 
 # ---------------- Convenience (U256 encode/decode) ----------------
+
 
 def u256_encode(n: int) -> bytes:
     """Encode a non-negative int into a fixed 32-byte big-endian representation."""

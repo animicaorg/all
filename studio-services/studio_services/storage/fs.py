@@ -34,11 +34,12 @@ from io import BufferedReader, BytesIO, IOBase
 from pathlib import Path
 from typing import Iterator, Optional
 
-from studio_services.storage.sqlite import transaction, get_db
+from studio_services.storage.sqlite import get_db, transaction
 
 # -----------------------------------------------------------------------------#
 # Config
 # -----------------------------------------------------------------------------#
+
 
 def _storage_root() -> Path:
     base = os.getenv("STORAGE_DIR", "./.studio-services/storage")
@@ -56,14 +57,15 @@ CHUNK = 1 << 20  # 1 MiB
 # Types & errors
 # -----------------------------------------------------------------------------#
 
+
 @dataclass(frozen=True)
 class ArtifactMeta:
-    content_hash: str        # 0x + hex
+    content_hash: str  # 0x + hex
     size: int
     mime: Optional[str]
     filename: Optional[str]
-    storage_backend: str     # 'fs'
-    storage_locator: str     # relative path within ROOT (posix style)
+    storage_backend: str  # 'fs'
+    storage_locator: str  # relative path within ROOT (posix style)
 
     @property
     def abs_path(self) -> Path:
@@ -81,6 +83,7 @@ class ArtifactNotFound(FileNotFoundError):
 # -----------------------------------------------------------------------------#
 # Hashing & layout
 # -----------------------------------------------------------------------------#
+
 
 def _hex_hash_sha3_256() -> "hashlib._Hash":
     return hashlib.sha3_256()
@@ -111,6 +114,7 @@ def exists(content_hash: str) -> bool:
 # -----------------------------------------------------------------------------#
 # DB helpers
 # -----------------------------------------------------------------------------#
+
 
 def _upsert_artifact_row(meta: ArtifactMeta) -> None:
     with transaction() as db:
@@ -158,6 +162,7 @@ def get_meta(content_hash: str) -> Optional[ArtifactMeta]:
 # -----------------------------------------------------------------------------#
 # Write paths (bytes / file / fileobj)
 # -----------------------------------------------------------------------------#
+
 
 @contextmanager
 def _temp_under(path: Path) -> Iterator[Path]:
@@ -272,6 +277,7 @@ def store_file(path: Path | str, mime: Optional[str] = None) -> ArtifactMeta:
 # Read path
 # -----------------------------------------------------------------------------#
 
+
 def open_stream(content_hash: str, chunk_size: int = CHUNK) -> Iterator[bytes]:
     p = file_path(content_hash)
     if not p.exists():
@@ -294,6 +300,7 @@ def read_bytes(content_hash: str) -> bytes:
 # -----------------------------------------------------------------------------#
 # Integrity helpers
 # -----------------------------------------------------------------------------#
+
 
 def rehash_verify(content_hash: str) -> bool:
     """

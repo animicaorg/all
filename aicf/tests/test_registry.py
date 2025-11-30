@@ -1,15 +1,12 @@
 import pytest
 
-from aicf.errors import RegistryError
-from aicf.registry.registry import Registry
-from aicf.registry.allowlist import Allowlist
-
 # Types/enums used by the registry
-from aicf.aitypes.provider import (
-    ProviderId,
-    ProviderStatus,
-    Capability,  # IntFlag: Capability.AI | Capability.QUANTUM
-)
+from aicf.aitypes.provider import \
+    Capability  # IntFlag: Capability.AI | Capability.QUANTUM
+from aicf.aitypes.provider import ProviderId, ProviderStatus
+from aicf.errors import RegistryError
+from aicf.registry.allowlist import Allowlist
+from aicf.registry.registry import Registry
 
 
 def _mk_registry(allow: Allowlist | None = None) -> Registry:

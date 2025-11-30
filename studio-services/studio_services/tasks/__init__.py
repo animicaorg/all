@@ -100,7 +100,9 @@ def mount_background_tasks(app: FastAPI) -> None:
             log.exception("tasks: failed to start scheduler: %s", e)
 
         # Faucet pacer (optional)
-        FaucetPacer = _get_obj("studio_services.tasks.faucet_pacer", "FaucetPacer", "Pacer")
+        FaucetPacer = _get_obj(
+            "studio_services.tasks.faucet_pacer", "FaucetPacer", "Pacer"
+        )
         try:
             pacer = None
             if FaucetPacer:

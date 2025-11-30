@@ -43,9 +43,11 @@ from pathlib import Path
 
 # ---- local imports (lazy patterns for resiliency) ---------------------------
 
+
 def _import(path: str):
     """Import a module by dotted path with a crisp error if it fails."""
     import importlib
+
     try:
         return importlib.import_module(path)
     except Exception as e:
@@ -54,6 +56,7 @@ def _import(path: str):
 
 # ---- repo root & spec loading ----------------------------------------------
 
+
 def _repo_root() -> Path:
     # repo_root/rpc/deps.py → repo_root
     return Path(__file__).resolve().parents[1]
@@ -61,6 +64,7 @@ def _repo_root() -> Path:
 
 def _load_yaml(path: Path) -> t.Dict[str, t.Any]:
     import yaml  # runtime dep present in this repo
+
     with path.open("rt", encoding="utf-8") as fh:
         return t.cast(dict, yaml.safe_load(fh) or {})
 
@@ -123,6 +127,7 @@ def _params_from_spec(chain_id: int | None = None) -> t.Dict[str, t.Any]:
 
 # ---- Config glue ------------------------------------------------------------
 
+
 @dataclass
 class _ConfigView:
     db_uri: str
@@ -164,6 +169,7 @@ def _load_rpc_config() -> _ConfigView:
 
 # ---- KV open helpers --------------------------------------------------------
 
+
 def _parse_sqlite_uri(db_uri: str) -> str:
     """
     sqlite:///absolute/path.db  → /absolute/path.db
@@ -174,6 +180,7 @@ def _parse_sqlite_uri(db_uri: str) -> str:
         raise ValueError(f"Unsupported DB URI (expected sqlite:///…): {db_uri}")
     path = m.group(1)
     return path if path == ":memory:" else os.path.expanduser(path)
+
 
 def _open_kv(db_uri: str):
     """
@@ -203,10 +210,13 @@ def _open_kv(db_uri: str):
         return db_sqlite.SQLiteKV(conn)  # type: ignore[arg-type]
     if hasattr(db_sqlite, "SqliteKV"):
         return db_sqlite.SqliteKV(path)  # type: ignore[attr-defined]
-    raise RuntimeError("core.db.sqlite does not export open_kv/open_sqlite_kv/SQLiteKV/SqliteKV")
+    raise RuntimeError(
+        "core.db.sqlite does not export open_kv/open_sqlite_kv/SQLiteKV/SqliteKV"
+    )
 
 
 # ---- DB facades & head access ----------------------------------------------
+
 
 @dataclass
 class _DbBundle:
@@ -214,6 +224,7 @@ class _DbBundle:
     state_db: t.Any
     block_db: t.Any
     tx_index: t.Any
+
 
 def _build_db_facades(kv: t.Any) -> _DbBundle:
     db_state = _import("core.db.state_db")
@@ -247,6 +258,7 @@ class _HeadAccessor:
     Small compatibility wrapper over core.chain.head & core.db.block_db to
     retrieve the canonical head, its height, and header object.
     """
+
     def __init__(self, bundle: _DbBundle) -> None:
         self._bundle = bundle
         self._head_mod = _import("core.chain.head")
@@ -268,7 +280,11 @@ class _HeadAccessor:
                     return {"height": None, "hash": None, "header": None}
                 # Common header shape: {'height': int, 'hash': '0x..', 'obj': header}
                 if isinstance(head, dict) and "height" in head:
-                    return {"height": head.get("height"), "hash": head.get("hash"), "header": head.get("header") or head}
+                    return {
+                        "height": head.get("height"),
+                        "hash": head.get("hash"),
+                        "header": head.get("header") or head,
+                    }
                 if isinstance(head, (tuple, list)) and len(head) >= 2:
                     height_val, hash_val = head[0], head[1]
                     header_obj = None
@@ -278,7 +294,11 @@ class _HeadAccessor:
                             header_obj = getter(hash_val)
                         except Exception:
                             header_obj = None
-                    return {"height": height_val, "hash": hash_val, "header": header_obj}
+                    return {
+                        "height": height_val,
+                        "hash": hash_val,
+                        "header": header_obj,
+                    }
                 # Fallback: try to decode via BlockDB if head is a hash/height
             # Fallback path via block_db facade:
             if hasattr(self._block_db_mod, "get_canonical_head"):
@@ -301,8 +321,12 @@ class _HeadAccessor:
 
 # ---- Genesis bootstrap (best-effort) ---------------------------------------
 
+
 def _maybe_bootstrap_genesis(
-    bundle: _DbBundle, chain_id: int, genesis_path: Path | None, db_uri: str | None = None
+    bundle: _DbBundle,
+    chain_id: int,
+    genesis_path: Path | None,
+    db_uri: str | None = None,
 ) -> None:
     """
     Light-touch genesis bootstrap: if the DB appears empty (no head), try to
@@ -330,7 +354,9 @@ def _maybe_bootstrap_genesis(
         loader = _import("core.genesis.loader")
         head_mod = _import("core.chain.head")
         if hasattr(loader, "load_genesis"):
-            params, header = loader.load_genesis(genesis_path, kv=bundle.kv, block_db=bundle.block_db)
+            params, header = loader.load_genesis(
+                genesis_path, kv=bundle.kv, block_db=bundle.block_db
+            )
             if hasattr(head_mod, "finalize_genesis"):
                 head_mod.finalize_genesis(bundle.block_db, params, header)  # type: ignore[arg-type]
             return
@@ -366,13 +392,17 @@ def _maybe_bootstrap_genesis(
                 pq_alg_policy_root=ZERO32,
                 theta_micro=0,
             )
-            writer = getattr(bundle.block_db, "write_header", None) or getattr(bundle.block_db, "put_header", None)
+            writer = getattr(bundle.block_db, "write_header", None) or getattr(
+                bundle.block_db, "put_header", None
+            )
             if callable(writer):
                 try:
                     writer(0, header)  # type: ignore[misc]
                 except Exception:
                     pass
-            set_head = getattr(bundle.block_db, "set_head", None) or getattr(bundle.block_db, "set_canonical_head", None)
+            set_head = getattr(bundle.block_db, "set_head", None) or getattr(
+                bundle.block_db, "set_canonical_head", None
+            )
             if callable(set_head):
                 try:
                     set_head(0, header.hash())  # type: ignore[misc]
@@ -383,6 +413,7 @@ def _maybe_bootstrap_genesis(
 
 
 # ---- Runtime context (singleton) -------------------------------------------
+
 
 @dataclass
 class RpcContext:
@@ -434,7 +465,9 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
     params = _params_from_spec(cfg_view.chain_id)
     kv = _open_kv(cfg_view.db_uri)
     bundle = _build_db_facades(kv)
-    _maybe_bootstrap_genesis(bundle, cfg_view.chain_id, cfg_view.genesis_path, cfg_view.db_uri)
+    _maybe_bootstrap_genesis(
+        bundle, cfg_view.chain_id, cfg_view.genesis_path, cfg_view.db_uri
+    )
     head = _HeadAccessor(bundle)
     return RpcContext(
         cfg=cfg_view,
@@ -450,7 +483,9 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
 def get_ctx() -> RpcContext:
     with _CTX_LOCK:
         if _CTX is None:
-            raise RuntimeError("RPC context not initialized. Call attach_lifecycle(...), or build_context() first.")
+            raise RuntimeError(
+                "RPC context not initialized. Call attach_lifecycle(...), or build_context() first."
+            )
         return _CTX
 
 
@@ -502,10 +537,15 @@ async def ready() -> tuple[bool, dict[str, t.Any]]:
         return False, {"error": str(e)}
 
     head = ctx.get_head()
-    return True, {"height": head.get("height"), "hash": head.get("hash"), "db": ctx.cfg.db_uri}
+    return True, {
+        "height": head.get("height"),
+        "hash": head.get("hash"),
+        "db": ctx.cfg.db_uri,
+    }
 
 
 # ---- FastAPI lifecycle wiring ----------------------------------------------
+
 
 def attach_lifecycle(app, cfg: _ConfigView | None = None) -> None:
     """
@@ -572,6 +612,7 @@ def get_head() -> dict[str, t.Any]:
     """Return the current head snapshot (height/hash/header view)."""
 
     return ensure_started().get_head()
+
 
 def cbor_dumps(obj: t.Any) -> bytes:
     """Expose core.encoding.cbor.dumps for handlers (with a safe fallback)."""

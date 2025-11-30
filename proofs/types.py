@@ -23,22 +23,29 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Optional, Union, NewType, Dict, Any
+from typing import Any, Dict, NewType, Optional, Union
 
 # --- Sized bytes helpers -----------------------------------------------------
 
 Bytes32 = NewType("Bytes32", bytes)
 Bytes8 = NewType("Bytes8", bytes)
 
+
 def b32(x: bytes) -> Bytes32:
     if not isinstance(x, (bytes, bytearray)) or len(x) != 32:
-        raise ValueError(f"Bytes32 required (len=32), got len={len(x) if isinstance(x, (bytes, bytearray)) else 'n/a'}")
+        raise ValueError(
+            f"Bytes32 required (len=32), got len={len(x) if isinstance(x, (bytes, bytearray)) else 'n/a'}"
+        )
     return Bytes32(bytes(x))
+
 
 def b8(x: bytes) -> Bytes8:
     if not isinstance(x, (bytes, bytearray)) or len(x) != 8:
-        raise ValueError(f"Bytes8 required (len=8), got len={len(x) if isinstance(x, (bytes, bytearray)) else 'n/a'}")
+        raise ValueError(
+            f"Bytes8 required (len=8), got len={len(x) if isinstance(x, (bytes, bytearray)) else 'n/a'}"
+        )
     return Bytes8(bytes(x))
+
 
 # Application-visible address type (bech32m anim1... string) for clarity.
 Address = NewType("Address", str)
@@ -49,6 +56,7 @@ Nullifier = Bytes32
 
 # --- Canonical type ids (must match consensus/types.ProofType) ---------------
 
+
 class ProofType(IntEnum):
     HASH_SHARE = 0x01
     AI = 0x02
@@ -58,6 +66,7 @@ class ProofType(IntEnum):
 
 
 # --- Proof bodies ------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class HashShareBody:
@@ -71,6 +80,7 @@ class HashShareBody:
       miner:         bech32m address (anim1...) credited for the share/block
       algo_hint:     optional string for hash engine hint ("cpu", "cuda", etc.) — not consensus-critical
     """
+
     header_hash: Bytes32
     mix_seed: Bytes32
     nonce: Bytes8
@@ -93,6 +103,7 @@ class AIProofBody:
       qos_ms:           observed latency in milliseconds (provider → receipt)
       ai_units:         abstract units charged/credited (used by AICF and ψ mapping)
     """
+
     attestation: bytes
     output_digest: Bytes32
     model_id: str
@@ -119,6 +130,7 @@ class QuantumProofBody:
       qos_ms:          job latency in milliseconds
       quantum_units:   abstract units charged/credited
     """
+
     provider_cert: bytes
     circuit_digest: Bytes32
     depth: int
@@ -143,6 +155,7 @@ class StorageHeartbeatBody:
       size_bytes:     claimed size of the sector or aggregate data covered
       qos_ms:         latency to produce the heartbeat proof
     """
+
     provider_id: str
     sector_id: Bytes32
     epoch: int
@@ -163,6 +176,7 @@ class VDFProofBody:
       iterations:     number of iterations (difficulty/time parameter)
       seconds:        wall-clock seconds-equivalent observed by prover (advisory; not consensus-critical)
     """
+
     input_digest: Bytes32
     y: bytes
     pi: bytes
@@ -171,10 +185,13 @@ class VDFProofBody:
 
 
 # Union of all body types (useful for type hints)
-AnyProofBody = Union[HashShareBody, AIProofBody, QuantumProofBody, StorageHeartbeatBody, VDFProofBody]
+AnyProofBody = Union[
+    HashShareBody, AIProofBody, QuantumProofBody, StorageHeartbeatBody, VDFProofBody
+]
 
 
 # --- Envelope ----------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class ProofEnvelope:
@@ -191,6 +208,7 @@ class ProofEnvelope:
       - body schema validity (proofs/cbor.py + per-proof verifiers).
       - consistency with header roots and policy roots (handled by consensus/validator.py).
     """
+
     type_id: ProofType
     body: AnyProofBody
     nullifier: Nullifier
@@ -238,6 +256,7 @@ class ProofEnvelope:
             }
         return {"type": f"unknown({int(self.type_id)})"}
 
+
 # Convenience: map python-body type → ProofType
 _BODY_TO_TYPE: Dict[type, ProofType] = {
     HashShareBody: ProofType.HASH_SHARE,
@@ -247,11 +266,13 @@ _BODY_TO_TYPE: Dict[type, ProofType] = {
     VDFProofBody: ProofType.VDF,
 }
 
+
 def infer_type_id_from_body(body: AnyProofBody) -> ProofType:
     t = _BODY_TO_TYPE.get(type(body))
     if t is None:
         raise TypeError(f"Unrecognized proof body type: {type(body)}")
     return t
+
 
 def mk_envelope(body: AnyProofBody, nullifier: bytes) -> ProofEnvelope:
     """

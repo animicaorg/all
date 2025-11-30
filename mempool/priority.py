@@ -93,6 +93,7 @@ __all__ = [
 # Policies
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class PriorityPolicy:
     """
@@ -116,9 +117,10 @@ class PriorityPolicy:
     min_tip_wei:
         Hard floor on tip (Wei) at the current base fee for admission.
     """
-    tip_log_scale_wei: int = 1_000_000_000         # 1 gwei
+
+    tip_log_scale_wei: int = 1_000_000_000  # 1 gwei
     tip_weight: float = 1.0
-    age_halflife_s: float = 120.0                  # ~2 minutes half-life
+    age_halflife_s: float = 120.0  # ~2 minutes half-life
     age_weight: float = 0.35
     size_weight: float = 0.20
     min_effective_gas_price_wei: int = 0
@@ -137,6 +139,7 @@ class RBFPolicy:
         If True, replacement must not relax denylisted properties (not enforced here;
         reserved for higher-level checks like access lists, caps, etc.).
     """
+
     rel_bump: float = 0.10
     abs_bump_wei: int = 2_000_000_000  # 2 gwei
     require_gas_limit_ge: bool = True
@@ -146,6 +149,7 @@ class RBFPolicy:
 # ---------------------------------------------------------------------------
 # Core computations
 # ---------------------------------------------------------------------------
+
 
 def compute_tip_and_effective_price(
     fee: EffectiveFee,
@@ -243,6 +247,7 @@ def effective_priority(
 # RBF (Replace-By-Fee) checks
 # ---------------------------------------------------------------------------
 
+
 def should_replace(
     *,
     existing: PoolTx,
@@ -264,8 +269,12 @@ def should_replace(
     """
     R = rbf or RBFPolicy()
 
-    old_tip, old_eff = compute_tip_and_effective_price(existing.fee, base_fee_wei=base_fee_wei)
-    new_tip, new_eff = compute_tip_and_effective_price(candidate_fee, base_fee_wei=base_fee_wei)
+    old_tip, old_eff = compute_tip_and_effective_price(
+        existing.fee, base_fee_wei=base_fee_wei
+    )
+    new_tip, new_eff = compute_tip_and_effective_price(
+        candidate_fee, base_fee_wei=base_fee_wei
+    )
 
     if R.require_gas_limit_ge and int(candidate_gas_limit) < int(existing.gas_limit):
         return (False, "gas_limit_too_low")
@@ -291,12 +300,13 @@ def should_replace(
 # Helpers for pool integration
 # ---------------------------------------------------------------------------
 
+
 def refresh_pooltx_priority(
     entry: PoolTx,
     *,
     base_fee_wei: Optional[int],
     policy: Optional[PriorityPolicy] = None,
-    now: Optional[float] = None
+    now: Optional[float] = None,
 ) -> float:
     """
     Recompute and store the priority score on a PoolTx (and rekey ordering

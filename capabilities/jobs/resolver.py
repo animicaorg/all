@@ -26,27 +26,28 @@ Typical usage (during block import/finalization):
     )
 """
 
-from dataclasses import asdict
-from typing import Iterable, Optional, Any, Dict, List, Tuple, Callable
+import hashlib
 import logging
 import time
-import hashlib
+from dataclasses import asdict
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from capabilities.errors import CapError
-from capabilities.jobs.types import ResultRecord, JobKind
 from capabilities.jobs.result_store import ResultStore
+from capabilities.jobs.types import JobKind, ResultRecord
 
 # Optional, canonical mapping if the adapter is present
 try:
-    from capabilities.adapters.proofs import (  # type: ignore
-        map_proofs_to_result_records as _map_proofs_to_result_records,
-    )
+    from capabilities.adapters.proofs import \
+        map_proofs_to_result_records as \
+        _map_proofs_to_result_records  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     _map_proofs_to_result_records = None  # type: ignore[assignment]
 
 # Optional, canonical task-id derivation
 try:
-    from capabilities.jobs.id import derive_task_id as _derive_task_id  # type: ignore
+    from capabilities.jobs.id import \
+        derive_task_id as _derive_task_id  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     _derive_task_id = None  # type: ignore[assignment]
 
@@ -176,15 +177,24 @@ class ResultResolver:
                 )
                 used_adapter = True
             except Exception as e:  # fall back gracefully
-                log.warning("adapter mapping failed; falling back to best-effort coercion", exc_info=e)
+                log.warning(
+                    "adapter mapping failed; falling back to best-effort coercion",
+                    exc_info=e,
+                )
 
         if not used_adapter:
             # Best-effort coercion
             for item in proofs:
                 try:
-                    rec = self._coerce_to_record(item, height=int(height), block_hash=bh, timestamp=ts)
+                    rec = self._coerce_to_record(
+                        item, height=int(height), block_hash=bh, timestamp=ts
+                    )
                 except Exception as e:
-                    log.error("failed to coerce proof into ResultRecord; skipping", exc_info=e, extra={"proof": str(item)[:512]})
+                    log.error(
+                        "failed to coerce proof into ResultRecord; skipping",
+                        exc_info=e,
+                        extra={"proof": str(item)[:512]},
+                    )
                     continue
                 if rec is not None:
                     records.append(rec)
@@ -247,7 +257,15 @@ class ResultResolver:
             m = proof
         else:
             m = {}
-            for k in ("kind", "caller", "payload_digest", "units", "task_id", "tx_hash", "nullifier"):
+            for k in (
+                "kind",
+                "caller",
+                "payload_digest",
+                "units",
+                "task_id",
+                "tx_hash",
+                "nullifier",
+            ):
                 if hasattr(proof, k):
                     m[k] = getattr(proof, k)
 

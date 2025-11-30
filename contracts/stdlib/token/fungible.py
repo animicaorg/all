@@ -54,41 +54,35 @@ from __future__ import annotations
 
 from typing import Final, Optional
 
-from stdlib import storage, events, abi  # type: ignore
+from stdlib import abi, events, storage  # type: ignore
 
 # Local stdlib helpers
-from ..math.safe_uint import u256_add, u256_sub  # type: ignore  # relative import within package
-from . import (  # type: ignore
-    key_balance,
-    key_allow,
-    EVT_TRANSFER,
-    EVT_APPROVAL,
-    DEFAULT_DECIMALS,
-    require_address,
-    require_amount,
-    require_symbol,
-    require_name,
-    normalize_symbol,
-    clamp_decimals,
-    ERR_BAD_AMOUNT,
-)
+from ..math.safe_uint import (  # type: ignore  # relative import within package
+    u256_add, u256_sub)
+from . import (DEFAULT_DECIMALS, ERR_BAD_AMOUNT, EVT_APPROVAL,  # type: ignore
+               EVT_TRANSFER, clamp_decimals, key_allow, key_balance,
+               normalize_symbol, require_address, require_amount, require_name,
+               require_symbol)
 
 # ------------------------------------------------------------------------------
 # Storage keys (metadata & owner). Values are raw bytes unless noted.
 # ------------------------------------------------------------------------------
 
-K_NAME: Final[bytes] = b"tok:meta:name"        # bytes (ASCII)
-K_SYMBOL: Final[bytes] = b"tok:meta:symbol"    # bytes (ASCII, typically uppercase)
-K_DECIMALS: Final[bytes] = b"tok:meta:dec"     # 1-byte or small int encoded as 32B
-K_TOTAL: Final[bytes] = b"tok:meta:total"      # u256 (32B big-endian)
-K_OWNER: Final[bytes] = b"tok:meta:owner"      # bytes (address)
-K_INIT: Final[bytes] = b"tok:meta:inited"      # presence flag (b"1")
+K_NAME: Final[bytes] = b"tok:meta:name"  # bytes (ASCII)
+K_SYMBOL: Final[bytes] = b"tok:meta:symbol"  # bytes (ASCII, typically uppercase)
+K_DECIMALS: Final[bytes] = b"tok:meta:dec"  # 1-byte or small int encoded as 32B
+K_TOTAL: Final[bytes] = b"tok:meta:total"  # u256 (32B big-endian)
+K_OWNER: Final[bytes] = b"tok:meta:owner"  # bytes (address)
+K_INIT: Final[bytes] = b"tok:meta:inited"  # presence flag (b"1")
 
-ZERO_ADDR: Final[bytes] = b"\x00"  # non-empty sentinel used in mint/burn Transfer events
+ZERO_ADDR: Final[bytes] = (
+    b"\x00"  # non-empty sentinel used in mint/burn Transfer events
+)
 
 # ------------------------------------------------------------------------------
 # Internal IO helpers (u256 <-> storage)
 # ------------------------------------------------------------------------------
+
 
 def _get_u256(k: bytes) -> int:
     v = storage.get(k)
@@ -141,6 +135,7 @@ def _require_owner(caller: bytes) -> None:
 # Metadata (pure)
 # ------------------------------------------------------------------------------
 
+
 def name() -> bytes:
     return _get_bytes(K_NAME)
 
@@ -162,11 +157,10 @@ def total_supply() -> int:
 # Init (one-time)
 # ------------------------------------------------------------------------------
 
-def init(name: bytes,
-         symbol: bytes,
-         decimals: int,
-         initial_owner: bytes,
-         initial_supply: int) -> None:
+
+def init(
+    name: bytes, symbol: bytes, decimals: int, initial_owner: bytes, initial_supply: int
+) -> None:
     """
     One-time initializer. Fails if already initialized.
     """
@@ -193,16 +187,20 @@ def init(name: bytes,
     if initial_supply > 0:
         _mint_to(initial_owner, initial_supply)
         # Emit Transfer from ZERO_ADDR to owner
-        events.emit(EVT_TRANSFER, {
-            b"from": ZERO_ADDR,
-            b"to": initial_owner,
-            b"value": initial_supply,
-        })
+        events.emit(
+            EVT_TRANSFER,
+            {
+                b"from": ZERO_ADDR,
+                b"to": initial_owner,
+                b"value": initial_supply,
+            },
+        )
 
 
 # ------------------------------------------------------------------------------
 # Views
 # ------------------------------------------------------------------------------
+
 
 def balance_of(addr: bytes) -> int:
     require_address(addr)
@@ -218,6 +216,7 @@ def allowance(owner: bytes, spender: bytes) -> int:
 # ------------------------------------------------------------------------------
 # Mutations (explicit caller)
 # ------------------------------------------------------------------------------
+
 
 def transfer(caller: bytes, to: bytes, amount: int) -> bool:
     require_address(caller)
@@ -255,11 +254,14 @@ def approve(caller: bytes, spender: bytes, amount: int) -> bool:
     allow_key = key_allow(caller, spender)
     _set_u256(allow_key, amount)
 
-    events.emit(EVT_APPROVAL, {
-        b"owner": caller,
-        b"spender": spender,
-        b"value": amount,
-    })
+    events.emit(
+        EVT_APPROVAL,
+        {
+            b"owner": caller,
+            b"spender": spender,
+            b"value": amount,
+        },
+    )
     return True
 
 
@@ -309,11 +311,14 @@ def increase_allowance(caller: bytes, spender: bytes, added: int) -> Bool:
     cur = _get_u256(allow_key)
     _set_u256(allow_key, u256_add(cur, added))
 
-    events.emit(EVT_APPROVAL, {
-        b"owner": caller,
-        b"spender": spender,
-        b"value": _get_u256(allow_key),
-    })
+    events.emit(
+        EVT_APPROVAL,
+        {
+            b"owner": caller,
+            b"spender": spender,
+            b"value": _get_u256(allow_key),
+        },
+    )
     return True
 
 
@@ -328,17 +333,21 @@ def decrease_allowance(caller: bytes, spender: bytes, subtracted: int) -> bool:
         abi.revert(b"TOKEN:ALLOWANCE_LOW")
     _set_u256(allow_key, u256_sub(cur, subtracted))
 
-    events.emit(EVT_APPROVAL, {
-        b"owner": caller,
-        b"spender": spender,
-        b"value": _get_u256(allow_key),
-    })
+    events.emit(
+        EVT_APPROVAL,
+        {
+            b"owner": caller,
+            b"spender": spender,
+            b"value": _get_u256(allow_key),
+        },
+    )
     return True
 
 
 # ------------------------------------------------------------------------------
 # Owner-gated supply control (optional)
 # ------------------------------------------------------------------------------
+
 
 def mint(caller: bytes, to: bytes, amount: int) -> bool:
     _require_owner(caller)
@@ -403,6 +412,7 @@ def burn_from(caller: bytes, owner: bytes, amount: int) -> bool:
 # Internals
 # ------------------------------------------------------------------------------
 
+
 def _mint_to(to: bytes, amount: int) -> None:
     """
     Unsafe mint (no owner check). Validates inputs & updates total+balance.
@@ -424,6 +434,7 @@ def _mint_to(to: bytes, amount: int) -> None:
 # Convenience: metadata bootstrappers (pure reads)
 # ------------------------------------------------------------------------------
 
+
 def is_initialized() -> bool:
     return bool(storage.get(K_INIT))
 
@@ -436,12 +447,24 @@ def owner() -> bytes:
 # Explicit public symbols
 __all__ = [
     # metadata
-    "name", "symbol", "decimals", "total_supply", "is_initialized", "owner",
+    "name",
+    "symbol",
+    "decimals",
+    "total_supply",
+    "is_initialized",
+    "owner",
     # views
-    "balance_of", "allowance",
+    "balance_of",
+    "allowance",
     # mutations
-    "init", "transfer", "approve", "transfer_from",
-    "increase_allowance", "decrease_allowance",
+    "init",
+    "transfer",
+    "approve",
+    "transfer_from",
+    "increase_allowance",
+    "decrease_allowance",
     # supply control
-    "mint", "burn", "burn_from",
+    "mint",
+    "burn",
+    "burn_from",
 ]

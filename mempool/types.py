@@ -18,9 +18,9 @@ safe for mypy/pyright. Convert to JSON via `.to_dict()` where needed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Tuple, Literal
 import time
+from dataclasses import dataclass, field
+from typing import Any, Dict, Literal, Optional, Tuple
 
 try:
     # Core transaction type (defined in core/types/tx.py)
@@ -38,6 +38,7 @@ except Exception:  # pragma: no cover - allow tools to import without core prese
         max_fee_per_gas: Optional[int] = None
         max_priority_fee_per_gas: Optional[int] = None
 
+
 __all__ = [
     "EffectiveFee",
     "TxMeta",
@@ -54,6 +55,7 @@ TxHash = str
 # ---------------------------------------------------------------------------
 # Fees
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class EffectiveFee:
@@ -73,6 +75,7 @@ class EffectiveFee:
       * If `mode == "eip1559"`, both `max_fee_per_gas_wei` and
         `max_priority_fee_per_gas_wei` are set.
     """
+
     mode: Literal["legacy", "eip1559"]
     gas_price_wei: Optional[Wei] = None
     max_fee_per_gas_wei: Optional[Wei] = None
@@ -85,7 +88,10 @@ class EffectiveFee:
         EIP-1559-style fee fields.
         """
         # Prefer explicit EIP-1559-style fields if both are present.
-        if getattr(tx, "max_fee_per_gas", None) is not None or getattr(tx, "max_priority_fee_per_gas", None) is not None:
+        if (
+            getattr(tx, "max_fee_per_gas", None) is not None
+            or getattr(tx, "max_priority_fee_per_gas", None) is not None
+        ):
             max_fee = int(getattr(tx, "max_fee_per_gas", 0) or 0)
             max_tip = int(getattr(tx, "max_priority_fee_per_gas", 0) or 0)
             return EffectiveFee(
@@ -102,7 +108,9 @@ class EffectiveFee:
         return EffectiveFee(mode="legacy", gas_price_wei=int(gas_price_wei))
 
     @staticmethod
-    def from_eip1559(max_fee_per_gas_wei: Wei, max_priority_fee_per_gas_wei: Wei) -> "EffectiveFee":
+    def from_eip1559(
+        max_fee_per_gas_wei: Wei, max_priority_fee_per_gas_wei: Wei
+    ) -> "EffectiveFee":
         return EffectiveFee(
             mode="eip1559",
             max_fee_per_gas_wei=int(max_fee_per_gas_wei),
@@ -155,6 +163,7 @@ class EffectiveFee:
 # Transaction metadata & pool entry
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class TxMeta:
     """
@@ -183,6 +192,7 @@ class TxMeta:
     priority_score : float
         Dynamic score used by eviction/scheduling (higher is better).
     """
+
     sender: Address
     nonce: int
     gas_limit: int
@@ -206,7 +216,9 @@ class TxMeta:
             "size_bytes": int(self.size_bytes),
             "first_seen": float(self.first_seen),
             "last_seen": float(self.last_seen),
-            "expires_at": float(self.expires_at) if self.expires_at is not None else None,
+            "expires_at": (
+                float(self.expires_at) if self.expires_at is not None else None
+            ),
             "local": bool(self.local),
             "pinned": bool(self.pinned),
             "priority_score": float(self.priority_score),
@@ -228,6 +240,7 @@ class PoolTx:
     by the pool (0 if unknown). Update `sort_index` via `rekey_for_base_fee()`
     when base fee moves.
     """
+
     # Sorting key (not part of the public API)
     sort_index: Tuple[float, float, int] = field(init=False, repr=False, compare=True)
 
@@ -243,7 +256,11 @@ class PoolTx:
 
     def __post_init__(self) -> None:
         # Initialize ordering key
-        self.sort_index = (-float(self.meta.priority_score), float(self.meta.first_seen), int(self._cached_effective_price_wei))
+        self.sort_index = (
+            -float(self.meta.priority_score),
+            float(self.meta.first_seen),
+            int(self._cached_effective_price_wei),
+        )
 
     @property
     def sender(self) -> Address:
@@ -273,15 +290,27 @@ class PoolTx:
         """
         Update cached effective price & ordering key to reflect a new base fee.
         """
-        self._cached_effective_price_wei = int(self.fee.effective_gas_price(base_fee_wei))
-        self.sort_index = (-float(self.meta.priority_score), float(self.meta.first_seen), int(self._cached_effective_price_wei))
+        self._cached_effective_price_wei = int(
+            self.fee.effective_gas_price(base_fee_wei)
+        )
+        self.sort_index = (
+            -float(self.meta.priority_score),
+            float(self.meta.first_seen),
+            int(self._cached_effective_price_wei),
+        )
 
     def bump_priority(self, delta: float) -> None:
         """Increase dynamic priority score and refresh ordering key."""
         self.meta.priority_score += float(delta)
-        self.sort_index = (-float(self.meta.priority_score), float(self.meta.first_seen), int(self._cached_effective_price_wei))
+        self.sort_index = (
+            -float(self.meta.priority_score),
+            float(self.meta.first_seen),
+            int(self._cached_effective_price_wei),
+        )
 
-    def to_dict(self, *, include_raw: bool = False, base_fee_wei: Optional[Wei] = None) -> Dict[str, Any]:
+    def to_dict(
+        self, *, include_raw: bool = False, base_fee_wei: Optional[Wei] = None
+    ) -> Dict[str, Any]:
         d: Dict[str, Any] = {
             "hash": self.tx_hash,
             "sender": self.meta.sender,
@@ -300,6 +329,7 @@ class PoolTx:
 # ---------------------------------------------------------------------------
 # Pool statistics snapshot
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class PoolStats:
@@ -323,6 +353,7 @@ class PoolStats:
     newest_first_seen : Optional[UnixTime]
         Newest first_seen timestamp among entries.
     """
+
     total_txs: int
     total_bytes: int
     total_gas: int
@@ -348,8 +379,24 @@ class PoolStats:
             "totalTxs": int(self.total_txs),
             "totalBytes": int(self.total_bytes),
             "totalGas": int(self.total_gas),
-            "minGasPriceWei": int(self.min_gas_price_wei) if self.min_gas_price_wei is not None else None,
-            "maxGasPriceWei": int(self.max_gas_price_wei) if self.max_gas_price_wei is not None else None,
-            "oldestFirstSeen": float(self.oldest_first_seen) if self.oldest_first_seen is not None else None,
-            "newestFirstSeen": float(self.newest_first_seen) if self.newest_first_seen is not None else None,
+            "minGasPriceWei": (
+                int(self.min_gas_price_wei)
+                if self.min_gas_price_wei is not None
+                else None
+            ),
+            "maxGasPriceWei": (
+                int(self.max_gas_price_wei)
+                if self.max_gas_price_wei is not None
+                else None
+            ),
+            "oldestFirstSeen": (
+                float(self.oldest_first_seen)
+                if self.oldest_first_seen is not None
+                else None
+            ),
+            "newestFirstSeen": (
+                float(self.newest_first_seen)
+                if self.newest_first_seen is not None
+                else None
+            ),
         }

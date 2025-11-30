@@ -21,38 +21,47 @@ License: MIT
 
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping, MutableMapping, Optional, Sequence, Union, Dict, Tuple
+from typing import (Any, Callable, Dict, Mapping, MutableMapping, Optional,
+                    Sequence, Tuple, Union)
+
+# Groth16 (BN254), PLONK(KZG), STARK(Toy Merkle)
+from ..verifiers.groth16_bn254 import \
+    verify_groth16 as _verify_groth16_bn254  # type: ignore
+# KZG core + curve utils
+from ..verifiers.kzg_bn254 import VerifyingKey as _KZGVK  # type: ignore
+from ..verifiers.kzg_bn254 import kzg_verify as _kzg_verify
+# Merkle utilities
+from ..verifiers.merkle import (blake2s_256, merkle_root, merkle_verify,
+                                sha2_256, sha3_256)
+from ..verifiers.pairing_bn254 import curve_order as _curve_order
+from ..verifiers.pairing_bn254 import g1_generator as _g1_gen  # type: ignore
+from ..verifiers.pairing_bn254 import g2_generator as _g2_gen
+from ..verifiers.plonk_kzg_bn254 import \
+    verify_plonk_kzg as _verify_plonk_kzg_bn254  # type: ignore
+# Poseidon + Fiat–Shamir transcript
+from ..verifiers.poseidon import Poseidon, poseidon_hash  # type: ignore
+from ..verifiers.stark_fri import \
+    verify_toy_stark_merkle as _verify_stark_toy_merkle  # type: ignore
+from ..verifiers.transcript_fs import Transcript  # type: ignore
 
 # --- Re-export user-facing helpers from verifiers ----------------------------
 
-# Groth16 (BN254), PLONK(KZG), STARK(Toy Merkle)
-from ..verifiers.groth16_bn254 import verify_groth16 as _verify_groth16_bn254  # type: ignore
-from ..verifiers.plonk_kzg_bn254 import verify_plonk_kzg as _verify_plonk_kzg_bn254  # type: ignore
-from ..verifiers.stark_fri import verify_toy_stark_merkle as _verify_stark_toy_merkle  # type: ignore
 
-# KZG core + curve utils
-from ..verifiers.kzg_bn254 import VerifyingKey as _KZGVK, kzg_verify as _kzg_verify  # type: ignore
-from ..verifiers.pairing_bn254 import g1_generator as _g1_gen, g2_generator as _g2_gen, curve_order as _curve_order  # type: ignore
 
-# Merkle utilities
-from ..verifiers.merkle import (
-    merkle_verify,
-    merkle_root,
-    sha3_256,
-    sha2_256,
-    blake2s_256,
-)
 
-# Poseidon + Fiat–Shamir transcript
-from ..verifiers.poseidon import Poseidon, poseidon_hash  # type: ignore
-from ..verifiers.transcript_fs import Transcript  # type: ignore
 
 # py_ecc field/point builders (optimized preferred)
 try:  # pragma: no cover
-    from py_ecc.optimized_bn128 import FQ, FQ2, add as _add, is_on_curve as _is_on_curve  # type: ignore
+    from py_ecc.optimized_bn128 import FQ, FQ2
+    from py_ecc.optimized_bn128 import add as _add  # type: ignore
+    from py_ecc.optimized_bn128 import is_on_curve as _is_on_curve
+
     _BACKEND = "py_ecc.optimized_bn128"
 except Exception:  # pragma: no cover
-    from py_ecc.bn128 import FQ, FQ2, add as _add, is_on_curve as _is_on_curve  # type: ignore
+    from py_ecc.bn128 import FQ, FQ2
+    from py_ecc.bn128 import add as _add  # type: ignore
+    from py_ecc.bn128 import is_on_curve as _is_on_curve
+
     _BACKEND = "py_ecc.bn128"
 
 
@@ -62,6 +71,7 @@ except Exception:  # pragma: no cover
 
 _Fr = int(_curve_order())
 
+
 def _to_int(z: Union[int, str]) -> int:
     if isinstance(z, int):
         return z
@@ -70,8 +80,10 @@ def _to_int(z: Union[int, str]) -> int:
         return int(s, 16)
     return int(s)
 
+
 def _fr(z: Union[int, str]) -> int:
     return _to_int(z) % _Fr
+
 
 def _g1_xy(pt: Sequence[Union[int, str]]) -> tuple:
     if not (isinstance(pt, (list, tuple)) and len(pt) == 2):
@@ -82,8 +94,14 @@ def _g1_xy(pt: Sequence[Union[int, str]]) -> tuple:
         return (FQ(1), FQ(1), FQ(0))
     return (FQ(x), FQ(y), FQ(1))
 
+
 def _g2_xy(pt: Sequence[Sequence[Union[int, str]]]) -> tuple:
-    if not (isinstance(pt, (list, tuple)) and len(pt) == 2 and len(pt[0]) == 2 and len(pt[1]) == 2):
+    if not (
+        isinstance(pt, (list, tuple))
+        and len(pt) == 2
+        and len(pt[0]) == 2
+        and len(pt[1]) == 2
+    ):
         raise ValueError("G2 point must be [[x0,x1],[y0,y1]]")
     x = FQ2([_to_int(pt[0][0]), _to_int(pt[0][1])])
     y = FQ2([_to_int(pt[1][0]), _to_int(pt[1][1])])
@@ -96,6 +114,7 @@ def _g2_xy(pt: Sequence[Sequence[Union[int, str]]]) -> tuple:
 # -----------------------------------------------------------------------------
 # KZG opening (BN254) — JSON adapter
 # -----------------------------------------------------------------------------
+
 
 def verify_kzg_opening_bn254_json(
     vk_json: Mapping[str, Any],
@@ -128,7 +147,11 @@ def verify_kzg_opening_bn254_json(
         Cj = opening_json.get("commitment") or opening_json.get("C")
         zj = opening_json.get("z") or opening_json.get("x")
         vj = opening_json.get("value") or opening_json.get("y") or opening_json.get("v")
-        pij = opening_json.get("proof") or opening_json.get("opening_proof") or opening_json.get("pi")
+        pij = (
+            opening_json.get("proof")
+            or opening_json.get("opening_proof")
+            or opening_json.get("pi")
+        )
         if Cj is None or zj is None or vj is None or pij is None:
             return False
 
@@ -139,7 +162,9 @@ def verify_kzg_opening_bn254_json(
 
         # Optional curve checks
         if validate_points:
-            if not _is_on_curve(C, b"\x00"):  # py_ecc ignores this 'b' arg for optimized; harmless
+            if not _is_on_curve(
+                C, b"\x00"
+            ):  # py_ecc ignores this 'b' arg for optimized; harmless
                 return False
             if not _is_on_curve(pi, b"\x00"):
                 return False
@@ -153,21 +178,34 @@ def verify_kzg_opening_bn254_json(
 # Scheme-specific wrappers (stable names)
 # -----------------------------------------------------------------------------
 
-def verify_groth16_bn254(vk_json: Mapping[str, Any], proof_json: Mapping[str, Any], public_inputs: Sequence[Union[int, str]] = ()) -> bool:
+
+def verify_groth16_bn254(
+    vk_json: Mapping[str, Any],
+    proof_json: Mapping[str, Any],
+    public_inputs: Sequence[Union[int, str]] = (),
+) -> bool:
     """Groth16(BN254) — snarkjs-compatible JSON verifier."""
     try:
         return bool(_verify_groth16_bn254(vk_json, proof_json, public_inputs))  # type: ignore[arg-type]
     except Exception:
         return False
 
-def verify_plonk_kzg_bn254(vk_json: Mapping[str, Any], proof_json: Mapping[str, Any], public_inputs: Sequence[Union[int, str]] = ()) -> bool:
+
+def verify_plonk_kzg_bn254(
+    vk_json: Mapping[str, Any],
+    proof_json: Mapping[str, Any],
+    public_inputs: Sequence[Union[int, str]] = (),
+) -> bool:
     """PLONK(KZG, BN254) — final single-opening pairing check (see module doc for scope)."""
     try:
         return bool(_verify_plonk_kzg_bn254(vk_json, proof_json, public_inputs))  # type: ignore[arg-type]
     except Exception:
         return False
 
-def verify_stark_toy_merkle(proof: Mapping[str, Any], public: Mapping[str, Any], *, with_fri: bool = True) -> bool:
+
+def verify_stark_toy_merkle(
+    proof: Mapping[str, Any], public: Mapping[str, Any], *, with_fri: bool = True
+) -> bool:
     """Tiny STARK (Toy Merkle AIR + minimal FRI) — **educational** only."""
     try:
         return bool(_verify_stark_toy_merkle(proof, public, with_fri=with_fri))
@@ -190,6 +228,7 @@ VERIFIERS: Dict[str, VerifierFn] = {
     "stark-toy-merkle": verify_stark_toy_merkle,
 }
 
+
 def resolve(name: str) -> VerifierFn:
     """
     Resolve a verifier by registry key.
@@ -199,6 +238,7 @@ def resolve(name: str) -> VerifierFn:
     if key not in VERIFIERS:
         raise KeyError(f"unknown verifier '{name}'")
     return VERIFIERS[key]
+
 
 def verify(name: str, *args: Any, **kwargs: Any) -> bool:
     """

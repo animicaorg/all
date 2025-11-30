@@ -126,7 +126,9 @@ def test_docs_package_manifest_examples_validate_against_schema(rel_path: Path) 
     in sync with the canonical docs manifest schema used by tooling.
     """
     if not EXAMPLE_PATHS:
-        pytest.skip("No docs-level package manifest examples found for configured globs")
+        pytest.skip(
+            "No docs-level package manifest examples found for configured globs"
+        )
 
     root = _repo_root()
     schema = _load_package_manifest_schema()

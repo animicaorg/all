@@ -43,24 +43,25 @@ from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
+from core.db.kv import KV
+from core.db.sqlite import SQLiteKV  # default backend
+from core.encoding import cbor as cbor
 # --- Core imports (stable surfaces) ---
 from core.utils import hash as uhash
 from core.utils import merkle as umerkle
 from core.utils.serialization import to_canonical_json
-from core.encoding import cbor as cbor
-from core.db.kv import KV
-from core.db.sqlite import SQLiteKV  # default backend
+
 try:
-    from core.db.rocksdb import RocksDBKV  # optional, used if db_uri startswith rocksdb://
+    from core.db.rocksdb import \
+        RocksDBKV  # optional, used if db_uri startswith rocksdb://
 except Exception:  # pragma: no cover - optional
     RocksDBKV = None  # type: ignore
 
-from core.db.state_db import StateDB
 from core.db.block_db import BlockDB
-from core.types.header import Header
+from core.db.state_db import StateDB
 from core.types.block import Block
+from core.types.header import Header
 from core.types.params import ChainParams, default_params_path
-
 
 # -------------------------
 # Helpers & canonical rules
@@ -104,6 +105,7 @@ def _normalize_address(addr: str) -> str:
 # -------------------------
 # Genesis validation
 # -------------------------
+
 
 class GenesisError(RuntimeError):
     pass
@@ -150,6 +152,7 @@ def _validate_genesis(g: Dict[str, Any], override_chain_id: int | None = None) -
 # State root computation
 # -------------------------
 
+
 def _account_leaf_hash(address: str, nonce: int, balance: int) -> bytes:
     """
     Canonical leaf hash for state root:
@@ -182,6 +185,7 @@ def compute_state_root_from_alloc(alloc: Iterable[Dict[str, Any]]) -> bytes:
 # -------------------------
 # DB boot
 # -------------------------
+
 
 def _open_kv(db_uri: str) -> KV:
     """
@@ -227,6 +231,7 @@ def _init_state_from_alloc(state: StateDB, alloc: Iterable[Dict[str, Any]]) -> N
 # Header/Block builders
 # -------------------------
 
+
 def _build_genesis_header(
     genesis: Dict[str, Any],
     state_root: bytes,
@@ -239,7 +244,9 @@ def _build_genesis_header(
     da_root = empty_root()
 
     theta_micro = int(genesis["consensus"].get("initialThetaMicro", 1_000_000))
-    mix_seed = bytes.fromhex(genesis.get("beacon", {}).get("seed", "00" * 32).removeprefix("0x"))
+    mix_seed = bytes.fromhex(
+        genesis.get("beacon", {}).get("seed", "00" * 32).removeprefix("0x")
+    )
     if len(mix_seed) != 32:
         mix_seed = ZERO32
 
@@ -280,7 +287,9 @@ def _build_genesis_block(h: Header) -> Block:
 # -------------------------
 
 
-def _load_chain_params(genesis: Dict[str, Any], params_override: Optional[Mapping[str, Any]]) -> ChainParams:
+def _load_chain_params(
+    genesis: Dict[str, Any], params_override: Optional[Mapping[str, Any]]
+) -> ChainParams:
     """
     Resolve and load ChainParams referenced by the genesis file.
 
@@ -346,11 +355,10 @@ def load_genesis(
         _init_state_from_alloc(state, genesis["alloc"])
 
     if log:
-        print(
-            "[genesis] chainId=%s stateRoot=%s", genesis["chainId"], state_root.hex()
-        )
+        print("[genesis] chainId=%s stateRoot=%s", genesis["chainId"], state_root.hex())
 
     return params, header
+
 
 def load_and_init_genesis(
     genesis_path: str,
@@ -443,6 +451,7 @@ def load_and_init_genesis(
 # -------------------------
 # CLI
 # -------------------------
+
 
 def _main() -> None:  # pragma: no cover - tiny CLI
     ap = argparse.ArgumentParser(description="Animica genesis loader")

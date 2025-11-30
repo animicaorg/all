@@ -4,13 +4,8 @@ from typing import Any, Dict
 
 import pytest
 
-from vm_py.runtime.events_api import (
-    VmError,
-    clear_events,
-    emit,
-    events_for_receipt,
-    get_events,
-)
+from vm_py.runtime.events_api import (VmError, clear_events, emit,
+                                      events_for_receipt, get_events)
 
 
 def _args_to_dict(args: Any) -> Dict[str, Any]:

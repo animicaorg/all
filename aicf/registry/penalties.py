@@ -46,30 +46,32 @@ Notes
 - Consecutive offenses inside `offense_window_seconds` increase penalties.
 """
 
+import math
+import time as _time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
-import math
-import time as _time
-
 
 # ---- Reason codes ------------------------------------------------------------
 
+
 class SlashReason(str, Enum):
     """Stable reason codes for slashing/jailing decisions."""
-    INVALID_PROOF = "INVALID_PROOF"           # proof doesn't verify / forged
-    MISSED_DEADLINE = "MISSED_DEADLINE"       # exceeded SLA time window
-    LEASE_VIOLATION = "LEASE_VIOLATION"       # lost lease / double-work issues
-    DOUBLE_SUBMIT = "DOUBLE_SUBMIT"           # duplicate/conflicting claim
-    BAD_ATTESTATION = "BAD_ATTESTATION"       # attestation invalid / mismatched
-    MALFORMED_RESULT = "MALFORMED_RESULT"     # cannot parse / deviates from schema
+
+    INVALID_PROOF = "INVALID_PROOF"  # proof doesn't verify / forged
+    MISSED_DEADLINE = "MISSED_DEADLINE"  # exceeded SLA time window
+    LEASE_VIOLATION = "LEASE_VIOLATION"  # lost lease / double-work issues
+    DOUBLE_SUBMIT = "DOUBLE_SUBMIT"  # duplicate/conflicting claim
+    BAD_ATTESTATION = "BAD_ATTESTATION"  # attestation invalid / mismatched
+    MALFORMED_RESULT = "MALFORMED_RESULT"  # cannot parse / deviates from schema
     UNAUTHORIZED_REGION = "UNAUTHORIZED_REGION"  # violated geo policy
-    DOS_ABUSE = "DOS_ABUSE"                   # spam / abusive behavior
-    HEALTH_TIMEOUT = "HEALTH_TIMEOUT"         # repeated heartbeat timeouts
-    OTHER = "OTHER"                           # reserved / future use
+    DOS_ABUSE = "DOS_ABUSE"  # spam / abusive behavior
+    HEALTH_TIMEOUT = "HEALTH_TIMEOUT"  # repeated heartbeat timeouts
+    OTHER = "OTHER"  # reserved / future use
 
 
 # ---- Configuration -----------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class PenaltyConfig:
@@ -80,6 +82,7 @@ class PenaltyConfig:
     is provided by the caller (rare). Results are clamped to [min_slash, max_slash].
     Jail/cooldown durations increase with consecutive offenses.
     """
+
     # Base slash ratios by reason (fraction of stake_total)
     slash_ratio_by_reason: Dict[SlashReason, float] = field(
         default_factory=lambda: {
@@ -145,6 +148,7 @@ class PenaltyConfig:
 
 # ---- Internal state ----------------------------------------------------------
 
+
 @dataclass
 class PenaltyRecord:
     provider_id: str
@@ -180,6 +184,7 @@ SlashHook = Callable[[str, float], None]
 
 # ---- Engine -----------------------------------------------------------------
 
+
 class PenaltyEngine:
     """
     Stateless policy + small state tracker for jailing/cooldowns.
@@ -189,7 +194,9 @@ class PenaltyEngine:
     staking module using `slash_hook`.
     """
 
-    def __init__(self, config: PenaltyConfig, *, clock: Callable[[], float] | None = None) -> None:
+    def __init__(
+        self, config: PenaltyConfig, *, clock: Callable[[], float] | None = None
+    ) -> None:
         self.config = config
         self._clock = clock or _time.time
         self._records: Dict[str, PenaltyRecord] = {}
@@ -213,7 +220,9 @@ class PenaltyEngine:
 
     # --- Mutations ------------------------------------------------------------
 
-    def jail(self, provider_id: str, seconds: int, *, now: Optional[float] = None) -> float:
+    def jail(
+        self, provider_id: str, seconds: int, *, now: Optional[float] = None
+    ) -> float:
         now = self._now(now)
         rec = self.record_for(provider_id)
         rec.jailed_until = max(rec.jailed_until, self._cap_jail(now + float(seconds)))
@@ -222,10 +231,14 @@ class PenaltyEngine:
     def unjail(self, provider_id: str) -> None:
         self.record_for(provider_id).jailed_until = 0.0
 
-    def set_cooldown(self, provider_id: str, seconds: int, *, now: Optional[float] = None) -> float:
+    def set_cooldown(
+        self, provider_id: str, seconds: int, *, now: Optional[float] = None
+    ) -> float:
         now = self._now(now)
         rec = self.record_for(provider_id)
-        rec.cooldown_until = max(rec.cooldown_until, self._cap_cooldown(now + float(seconds)))
+        rec.cooldown_until = max(
+            rec.cooldown_until, self._cap_cooldown(now + float(seconds))
+        )
         return rec.cooldown_until
 
     def clear_cooldown(self, provider_id: str) -> None:
@@ -265,8 +278,14 @@ class PenaltyEngine:
         # Slash calculation
         base_ratio = cfg.slash_ratio_by_reason.get(reason, 0.0)
         stake = max(0.0, float(stake_reader(provider_id)))
-        raw = explicit_slash_amount if explicit_slash_amount is not None else stake * base_ratio
-        scaled = self._scale_by_consecutive(raw, consecutive, cfg.consecutive_multiplier)
+        raw = (
+            explicit_slash_amount
+            if explicit_slash_amount is not None
+            else stake * base_ratio
+        )
+        scaled = self._scale_by_consecutive(
+            raw, consecutive, cfg.consecutive_multiplier
+        )
         slashed = self._clamp(scaled, cfg.min_slash, cfg.max_slash)
 
         # Apply slash via hook (caller handles persistence/ledger)
@@ -276,12 +295,24 @@ class PenaltyEngine:
 
         # Jail & cooldown
         jail_base = cfg.jail_seconds_by_reason.get(reason, 0)
-        jail_seconds = self._scale_duration(jail_base, consecutive, cfg.consecutive_multiplier, cfg.max_jail_seconds)
-        jailed_until = self.jail(provider_id, jail_seconds, now=now) if jail_seconds > 0 else rec.jailed_until
+        jail_seconds = self._scale_duration(
+            jail_base, consecutive, cfg.consecutive_multiplier, cfg.max_jail_seconds
+        )
+        jailed_until = (
+            self.jail(provider_id, jail_seconds, now=now)
+            if jail_seconds > 0
+            else rec.jailed_until
+        )
 
         cd_base = cfg.cooldown_seconds_by_reason.get(reason, 0)
-        cooldown_seconds = self._scale_duration(cd_base, consecutive, cfg.consecutive_multiplier, cfg.max_cooldown_seconds)
-        cooldown_until = self.set_cooldown(provider_id, cooldown_seconds, now=now) if cooldown_seconds > 0 else rec.cooldown_until
+        cooldown_seconds = self._scale_duration(
+            cd_base, consecutive, cfg.consecutive_multiplier, cfg.max_cooldown_seconds
+        )
+        cooldown_until = (
+            self.set_cooldown(provider_id, cooldown_seconds, now=now)
+            if cooldown_seconds > 0
+            else rec.cooldown_until
+        )
 
         notes = f"stake={stake:.6f}, base_ratio={base_ratio:.4f}, consecutive={consecutive}, jail={jail_seconds}s, cooldown={cooldown_seconds}s"
         return SlashOutcome(
@@ -300,13 +331,17 @@ class PenaltyEngine:
         return float(now) if now is not None else float(self._clock())
 
     @staticmethod
-    def _scale_by_consecutive(amount: float, consecutive: int, multiplier: float) -> float:
+    def _scale_by_consecutive(
+        amount: float, consecutive: int, multiplier: float
+    ) -> float:
         if consecutive <= 1:
             return amount
         return amount * (multiplier ** (consecutive - 1))
 
     @staticmethod
-    def _scale_duration(base_seconds: int, consecutive: int, multiplier: float, max_cap: int) -> int:
+    def _scale_duration(
+        base_seconds: int, consecutive: int, multiplier: float, max_cap: int
+    ) -> int:
         if base_seconds <= 0:
             return 0
         if consecutive <= 1:

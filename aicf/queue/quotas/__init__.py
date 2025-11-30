@@ -1,17 +1,23 @@
 from __future__ import annotations
-from aicf.queue.jobkind import JobKind
+
 from dataclasses import dataclass
 from threading import Lock
 from typing import Dict
+
+from aicf.queue.jobkind import JobKind
+
 from ..jobkind import JobKind
 
+
 class QuotaError(Exception): ...
+
 
 @dataclass
 class QuotaConfig:
     ai_units_per_epoch: int = 10**9
     quantum_units_per_epoch: int = 10**9
     max_concurrent: int = 1
+
 
 @dataclass
 class Usage:
@@ -22,6 +28,7 @@ class Usage:
     quantum_reserved: int = 0
     concurrent: int = 0
 
+
 @dataclass(frozen=True)
 class Reservation:
     rid: int
@@ -30,15 +37,22 @@ class Reservation:
     epoch: int
     units: int
 
+
 class QuotaTracker:
-    def __init__(self, *, default_concurrent: int = 1,
-                       default_ai_units: int = 10**9,
-                       default_quantum_units: int = 10**9) -> None:
+    def __init__(
+        self,
+        *,
+        default_concurrent: int = 1,
+        default_ai_units: int = 10**9,
+        default_quantum_units: int = 10**9,
+    ) -> None:
         self._lock = Lock()
         self._cfg: Dict[str, QuotaConfig] = {}
-        self._u: Dict[tuple[str,int], Usage] = {}
+        self._u: Dict[tuple[str, int], Usage] = {}
         self._rid = 0
-        self._default = QuotaConfig(default_ai_units, default_quantum_units, default_concurrent)
+        self._default = QuotaConfig(
+            default_ai_units, default_quantum_units, default_concurrent
+        )
 
     def set_config(self, provider: str, cfg: QuotaConfig) -> None:
         with self._lock:
@@ -64,11 +78,15 @@ class QuotaTracker:
         u = self._usage(provider, epoch)
         return {
             "ai": max(0, cfg.ai_units_per_epoch - (u.ai_used + u.ai_reserved)),
-            "quantum": max(0, cfg.quantum_units_per_epoch - (u.quantum_used + u.quantum_reserved)),
+            "quantum": max(
+                0, cfg.quantum_units_per_epoch - (u.quantum_used + u.quantum_reserved)
+            ),
             "concurrent": max(0, cfg.max_concurrent - u.concurrent),
         }
 
-    def reserve(self, provider: str, kind: JobKind, epoch: int, units: int) -> Reservation:
+    def reserve(
+        self, provider: str, kind: JobKind, epoch: int, units: int
+    ) -> Reservation:
         if units <= 0:
             raise QuotaError("units must be > 0")
         cfg = self.get_config(provider)
@@ -77,11 +95,13 @@ class QuotaTracker:
             raise QuotaError("concurrent_exhausted")
         if kind is JobKind.AI:
             rem = cfg.ai_units_per_epoch - (u.ai_used + u.ai_reserved)
-            if rem < units: raise QuotaError("ai_units_exhausted")
+            if rem < units:
+                raise QuotaError("ai_units_exhausted")
             u.ai_reserved += units
         elif kind is JobKind.QUANTUM:
             rem = cfg.quantum_units_per_epoch - (u.quantum_used + u.quantum_reserved)
-            if rem < units: raise QuotaError("quantum_units_exhausted")
+            if rem < units:
+                raise QuotaError("quantum_units_exhausted")
             u.quantum_reserved += units
         else:
             raise QuotaError("unknown_kind")

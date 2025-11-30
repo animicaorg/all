@@ -40,14 +40,18 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 # --- Errors -----------------------------------------------------------------
 
 try:
-    from vm_py.errors import VmError, ValidationError, CompileError
+    from vm_py.errors import CompileError, ValidationError, VmError
 except Exception:  # pragma: no cover
+
     class VmError(Exception):  # type: ignore
         pass
+
     class ValidationError(VmError):  # type: ignore
         pass
+
     class CompileError(VmError):  # type: ignore
         pass
+
 
 # --- Optional sandbox/stdlib activation -------------------------------------
 
@@ -84,10 +88,10 @@ except Exception:  # pragma: no cover
 # Lowering / IR / encoding
 try:
     from vm_py.compiler import ast_lower as _lower
-    from vm_py.compiler import typecheck as _typecheck
     from vm_py.compiler import encode as _ir_encode
-    from vm_py.compiler import ir as _ir_types
     from vm_py.compiler import gas_estimator as _gas
+    from vm_py.compiler import ir as _ir_types
+    from vm_py.compiler import typecheck as _typecheck
 except Exception:  # pragma: no cover
     _lower = _typecheck = _ir_encode = _ir_types = _gas = None  # type: ignore
 
@@ -106,6 +110,7 @@ except Exception:  # pragma: no cover
 # Hashing (sha3-256)
 try:
     import hashlib
+
     _sha3_256 = getattr(hashlib, "sha3_256")
 except Exception:  # pragma: no cover
     _sha3_256 = None  # type: ignore
@@ -129,13 +134,14 @@ def _call_first(obj: Any, names: Iterable[str], *args, **kwargs):
 
 # --- Data classes ------------------------------------------------------------
 
+
 @dataclass
 class CompileResult:
     name: str
     ir_bytes: bytes
-    code_hash: str         # 0x-prefixed hex (sha3-256 over ir_bytes)
-    gas_upper_bound: int   # static estimate (best-effort)
-    exports: List[str]     # function names (best-effort)
+    code_hash: str  # 0x-prefixed hex (sha3-256 over ir_bytes)
+    gas_upper_bound: int  # static estimate (best-effort)
+    exports: List[str]  # function names (best-effort)
     abi: Optional[Dict[str, Any]]
 
 
@@ -154,10 +160,15 @@ class EngineFacade:
         if callable(self._inst):
             self._inst = self._inst()  # type: ignore
 
-    def call(self, ir_bytes: bytes, method: str, args: List[Any],
-             gas_limit: Optional[int] = None,
-             block_env: Optional[Dict[str, Any]] = None,
-             tx_env: Optional[Dict[str, Any]] = None) -> Any:
+    def call(
+        self,
+        ir_bytes: bytes,
+        method: str,
+        args: List[Any],
+        gas_limit: Optional[int] = None,
+        block_env: Optional[Dict[str, Any]] = None,
+        tx_env: Optional[Dict[str, Any]] = None,
+    ) -> Any:
         eng = self._engine
         inst = self._inst
 
@@ -166,15 +177,27 @@ class EngineFacade:
             for nm in ("run_call", "call", "invoke"):
                 fn = getattr(inst, nm, None)
                 if callable(fn):
-                    return fn(ir_bytes, method, args, gas_limit=gas_limit,
-                              block_env=block_env, tx_env=tx_env)  # type: ignore
+                    return fn(
+                        ir_bytes,
+                        method,
+                        args,
+                        gas_limit=gas_limit,
+                        block_env=block_env,
+                        tx_env=tx_env,
+                    )  # type: ignore
 
         # Module-level helpers (functional style)
         for nm in ("run_call", "call", "invoke"):
             fn = getattr(eng, nm, None)
             if callable(fn):
-                return fn(ir_bytes, method, args, gas_limit=gas_limit,
-                          block_env=block_env, tx_env=tx_env)  # type: ignore
+                return fn(
+                    ir_bytes,
+                    method,
+                    args,
+                    gas_limit=gas_limit,
+                    block_env=block_env,
+                    tx_env=tx_env,
+                )  # type: ignore
 
         # As a last resort, try a generic 'run' signature.
         fn = getattr(eng, "run", None)
@@ -187,6 +210,7 @@ class EngineFacade:
 @dataclass
 class ContractRuntime:
     """Runtime wrapper for a compiled contract."""
+
     compiled: CompileResult
     _engine: EngineFacade
 
@@ -206,41 +230,62 @@ class ContractRuntime:
     def exports(self) -> List[str]:
         return list(self.compiled.exports)
 
-    def call(self, method: str, args: List[Any],
-             *, gas_limit: Optional[int] = None,
-             block_env: Optional[Dict[str, Any]] = None,
-             tx_env: Optional[Dict[str, Any]] = None) -> Any:
+    def call(
+        self,
+        method: str,
+        args: List[Any],
+        *,
+        gas_limit: Optional[int] = None,
+        block_env: Optional[Dict[str, Any]] = None,
+        tx_env: Optional[Dict[str, Any]] = None,
+    ) -> Any:
         """Invoke a method with decoded arguments; returns a Python value."""
         if method not in self.compiled.exports and self.compiled.exports:
             # Keep permissive if exports unknown; otherwise guard.
             raise ValidationError(f"method '{method}' not exported by {self.name}")
         return self._engine.call(
-            self.compiled.ir_bytes, method, args,
-            gas_limit=gas_limit, block_env=block_env, tx_env=tx_env,
+            self.compiled.ir_bytes,
+            method,
+            args,
+            gas_limit=gas_limit,
+            block_env=block_env,
+            tx_env=tx_env,
         )
 
-    def call_bytes(self, payload: bytes,
-                   *, gas_limit: Optional[int] = None,
-                   block_env: Optional[Dict[str, Any]] = None,
-                   tx_env: Optional[Dict[str, Any]] = None) -> bytes:
+    def call_bytes(
+        self,
+        payload: bytes,
+        *,
+        gas_limit: Optional[int] = None,
+        block_env: Optional[Dict[str, Any]] = None,
+        tx_env: Optional[Dict[str, Any]] = None,
+    ) -> bytes:
         """Invoke using ABI-encoded call bytes; returns ABI-encoded return bytes."""
         if _abi_dispatch is None:
             raise ValidationError("ABI dispatcher not available")
+
         # Decode→invoke→encode is handled by runtime.abi.dispatch_call,
         # but it needs a 'contract-like' object with exported methods.
         # Build a lightweight shim whose attributes call back into the engine.
         class _Shim:
             __slots__ = ("_rt",)
+
             def __init__(self, rt: ContractRuntime) -> None:
                 self._rt = rt
+
             def __getattr__(self, name: str):
                 if self._rt.exports and name not in self._rt.exports:
                     raise ValidationError(f"unknown method '{name}'")
+
                 def _fn(*args):
-                    return self._rt.call(name, list(args),
-                                         gas_limit=gas_limit,
-                                         block_env=block_env,
-                                         tx_env=tx_env)
+                    return self._rt.call(
+                        name,
+                        list(args),
+                        gas_limit=gas_limit,
+                        block_env=block_env,
+                        tx_env=tx_env,
+                    )
+
                 return _fn
 
         return _abi_dispatch(_Shim(self), payload)
@@ -249,6 +294,7 @@ class ContractRuntime:
 # --- Loading & compiling -----------------------------------------------------
 
 ManifestLike = Union[str, Path, Dict[str, Any]]
+
 
 def load_manifest(m: ManifestLike) -> Dict[str, Any]:
     """Load a manifest from path or return a shallow-copied dict."""
@@ -268,7 +314,9 @@ def load_manifest(m: ManifestLike) -> Dict[str, Any]:
     raise ValidationError(f"unsupported manifest input: {type(m).__name__}")
 
 
-def _read_sources(manifest: Dict[str, Any], base: Optional[Path]) -> Tuple[str, List[Path]]:
+def _read_sources(
+    manifest: Dict[str, Any], base: Optional[Path]
+) -> Tuple[str, List[Path]]:
     """
     Returns (concatenated_source, file_list). If multiple files are provided,
     they are concatenated in the given order with file markers (non-semantic).
@@ -292,7 +340,9 @@ def _read_sources(manifest: Dict[str, Any], base: Optional[Path]) -> Tuple[str, 
             paths.append(p)
             srcs.append(p.read_text(encoding="utf-8"))
     else:
-        raise ValidationError("manifest must contain 'source' (str) or 'sources' (list) or 'code' (str)")
+        raise ValidationError(
+            "manifest must contain 'source' (str) or 'sources' (list) or 'code' (str)"
+        )
 
     if len(srcs) == 1:
         return srcs[0], paths
@@ -333,7 +383,9 @@ def _best_effort_exports(manifest: Dict[str, Any], ir_module: Any) -> List[str]:
     return []
 
 
-def compile_source_to_ir(source: str, name_hint: str = "contract") -> Tuple[bytes, Any, int]:
+def compile_source_to_ir(
+    source: str, name_hint: str = "contract"
+) -> Tuple[bytes, Any, int]:
     """
     Run the compile pipeline and return (ir_bytes, ir_module_object, gas_upper_bound).
     """
@@ -347,7 +399,9 @@ def compile_source_to_ir(source: str, name_hint: str = "contract") -> Tuple[byte
                 fn(source)  # may raise ValidationError
                 break
     # 2) Lower to IR
-    ir_mod = _call_first(_lower, ("lower", "lower_ast", "compile"), source, name=name_hint)
+    ir_mod = _call_first(
+        _lower, ("lower", "lower_ast", "compile"), source, name=name_hint
+    )
     # 3) Typecheck (if present)
     if _typecheck is not None:
         _call_first(_typecheck, ("typecheck", "check", "validate"), ir_mod)
@@ -362,19 +416,29 @@ def compile_source_to_ir(source: str, name_hint: str = "contract") -> Tuple[byte
     gas_ub = 0
     if _gas is not None:
         try:
-            gas_ub = _call_first(_gas, ("estimate", "estimate_upper_bound", "upper_bound"), ir_mod)
+            gas_ub = _call_first(
+                _gas, ("estimate", "estimate_upper_bound", "upper_bound"), ir_mod
+            )
             gas_ub = int(gas_ub)
         except Exception:
             gas_ub = 0
     return ir_bytes, ir_mod, gas_ub
 
 
-def compile_from_manifest(manifest: ManifestLike, base_dir: Optional[Union[str, Path]] = None) -> CompileResult:
+def compile_from_manifest(
+    manifest: ManifestLike, base_dir: Optional[Union[str, Path]] = None
+) -> CompileResult:
     """
     High-level compile: manifest → CompileResult
     """
     man = load_manifest(manifest)
-    base_path = Path(base_dir) if base_dir is not None else (Path(manifest).parent if isinstance(manifest, (str, Path)) else Path.cwd())
+    base_path = (
+        Path(base_dir)
+        if base_dir is not None
+        else (
+            Path(manifest).parent if isinstance(manifest, (str, Path)) else Path.cwd()
+        )
+    )
     source, files = _read_sources(man, base_path)
 
     _activate_sandbox()
@@ -401,8 +465,9 @@ def make_runtime(compiled: CompileResult) -> ContractRuntime:
     return ContractRuntime(compiled=compiled, _engine=EngineFacade())
 
 
-def load_from_manifest(manifest: ManifestLike,
-                       base_dir: Optional[Union[str, Path]] = None) -> ContractRuntime:
+def load_from_manifest(
+    manifest: ManifestLike, base_dir: Optional[Union[str, Path]] = None
+) -> ContractRuntime:
     """
     Convenience: compile_from_manifest + make_runtime.
     """

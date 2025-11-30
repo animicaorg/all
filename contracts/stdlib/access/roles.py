@@ -90,30 +90,36 @@ ROLE_ADMIN_PREFIX: bytes = b"access:role:admin:"
 
 # ---- Lazy stdlib accessors (VM import guard friendly) ------------------------
 
+
 def _std_storage():
     from stdlib import storage  # type: ignore
+
     return storage
 
 
 def _std_events():
     from stdlib import events  # type: ignore
+
     return events
 
 
 def _std_abi():
     from stdlib import abi  # type: ignore
+
     return abi
 
 
 def _std_hash_or_none():
     try:
         from stdlib import hash as _h  # type: ignore
+
         return _h
     except Exception:
         return None
 
 
 # ---- Optional owner superadmin bridge ---------------------------------------
+
 
 def _owner_is(caller: bytes) -> bool:
     """
@@ -122,6 +128,7 @@ def _owner_is(caller: bytes) -> bool:
     """
     try:
         from . import ownable as _own  # type: ignore
+
         owner = _own.get_owner()
         return owner is not None and owner == caller
     except Exception:
@@ -129,6 +136,7 @@ def _owner_is(caller: bytes) -> bool:
 
 
 # ---- Internal key helpers ----------------------------------------------------
+
 
 def _key_member(role: bytes, account: bytes) -> bytes:
     return ROLE_MEMBER_PREFIX + role + b":" + account
@@ -147,6 +155,7 @@ def _clear_key(key: bytes) -> None:
 
 
 # ---- Role id helpers ---------------------------------------------------------
+
 
 def normalize_role(role: bytes) -> bytes:
     """
@@ -170,6 +179,7 @@ def derive_role_id(name: bytes) -> bytes:
 
 
 # ---- Queries ----------------------------------------------------------------
+
 
 def has_role(role: bytes, account: bytes) -> bool:
     role = normalize_role(role)
@@ -211,6 +221,7 @@ def require_role(role: bytes, caller: bytes) -> None:
 
 
 # ---- Mutations ---------------------------------------------------------------
+
 
 def grant_role(caller: bytes, role: bytes, account: bytes) -> None:
     """

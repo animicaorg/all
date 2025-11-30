@@ -65,18 +65,20 @@ MICRO = 1_000_000  # micro-nats scale for Θ and ψ
 
 # ------------------------------ Data structures ------------------------------ #
 
+
 @dataclass
 class SimCaps:
     """Simple per-type cap for generating ψ values (µ-nats)."""
+
     cap_micro: int
 
 
 DEFAULT_TYPE_CAPS: Dict[str, SimCaps] = {
-    "hash":    SimCaps(cap_micro=150_000),
-    "ai":      SimCaps(cap_micro=800_000),
+    "hash": SimCaps(cap_micro=150_000),
+    "ai": SimCaps(cap_micro=800_000),
     "quantum": SimCaps(cap_micro=1_200_000),
     "storage": SimCaps(cap_micro=120_000),
-    "vdf":     SimCaps(cap_micro=90_000),
+    "vdf": SimCaps(cap_micro=90_000),
 }
 
 
@@ -132,7 +134,11 @@ def load_policy_caps(path: Optional[str]) -> Dict[str, SimCaps]:
         caps: Dict[str, SimCaps] = {}
         for t, obj in types.items():
             if isinstance(obj, dict):
-                v = obj.get("psi_cap_micro") or obj.get("cap_micro") or obj.get("psiCapMicro")
+                v = (
+                    obj.get("psi_cap_micro")
+                    or obj.get("cap_micro")
+                    or obj.get("psiCapMicro")
+                )
                 if isinstance(v, int) and v > 0:
                     caps[str(t)] = SimCaps(cap_micro=int(v))
         # Merge defaults for any missing types
@@ -146,6 +152,7 @@ def load_policy_caps(path: Optional[str]) -> Dict[str, SimCaps]:
 
 # ------------------------------ Scoring helpers ------------------------------ #
 
+
 def H_u_micro(rng: random.Random) -> int:
     """
     Compute H(u) in micro-nats where u ~ Uniform(0,1].
@@ -156,7 +163,9 @@ def H_u_micro(rng: random.Random) -> int:
     return int(round(-math.log(u) * MICRO))
 
 
-def draw_psi_micro_for_type(t: str, caps: Dict[str, SimCaps], rng: random.Random) -> int:
+def draw_psi_micro_for_type(
+    t: str, caps: Dict[str, SimCaps], rng: random.Random
+) -> int:
     """
     Draw a ψ value (µ-nats) for a given proof type using a light-tailed distribution
     bounded by the cap. We bias towards smaller ψ with a square of U to emulate
@@ -228,11 +237,17 @@ def score_batch_random(
         sum_psi += psi
     Hmicro = H_u_micro(rng)
     accepted = (Hmicro + sum_psi) >= theta_micro
-    return BatchResult(accepted=accepted, H_micro=Hmicro, sum_psi_micro=sum_psi, per_type_psi=per_type)
+    return BatchResult(
+        accepted=accepted, H_micro=Hmicro, sum_psi_micro=sum_psi, per_type_psi=per_type
+    )
 
 
 def score_batches_from_list(
-    theta_micro: int, entries: List[Dict], batch_size: int, rng: random.Random, psi_field: str = "psi_micro"
+    theta_micro: int,
+    entries: List[Dict],
+    batch_size: int,
+    rng: random.Random,
+    psi_field: str = "psi_micro",
 ) -> List[BatchResult]:
     """
     entries: list of { "type": str, "psi_micro": int } (extra fields ignored)
@@ -272,7 +287,10 @@ def summarize(results: List[BatchResult]) -> Dict:
         for t, v in r.per_type_psi.items():
             per_type_total[t] = per_type_total.get(t, 0) + v
     total_psi = sum(per_type_total.values()) or 1
-    per_type_share = {t: v / total_psi for t, v in sorted(per_type_total.items(), key=lambda kv: -kv[1])}
+    per_type_share = {
+        t: v / total_psi
+        for t, v in sorted(per_type_total.items(), key=lambda kv: -kv[1])
+    }
     return {
         "batches": total,
         "accepted": acc,
@@ -309,28 +327,61 @@ def _percentile(xs: List[int], p: float) -> float:
 
 # ---------------------------------- CLI ------------------------------------- #
 
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(prog="bench_poies", description="PoIES scoring bench")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    sim = sub.add_parser("simulate", help="simulate random batches and print acceptance %")
-    sim.add_argument("--theta", type=int, help="Θ (micro-nats). If omitted, try --params")
+    sim = sub.add_parser(
+        "simulate", help="simulate random batches and print acceptance %"
+    )
+    sim.add_argument(
+        "--theta", type=int, help="Θ (micro-nats). If omitted, try --params"
+    )
     sim.add_argument("--params", type=str, help="Path to spec/params.yaml (to read Θ)")
-    sim.add_argument("--policy", type=str, help="Path to spec/poies_policy.yaml (for caps)")
-    sim.add_argument("--blocks", type=int, default=5000, help="number of simulated batches (default: 5000)")
-    sim.add_argument("--batch-size", type=int, default=32, help="proofs per batch (default: 32)")
-    sim.add_argument("--mix", type=str,
-                     default="hash=0.65,ai=0.20,quantum=0.10,storage=0.04,vdf=0.01",
-                     help="type weights (comma sep), normalized if needed")
+    sim.add_argument(
+        "--policy", type=str, help="Path to spec/poies_policy.yaml (for caps)"
+    )
+    sim.add_argument(
+        "--blocks",
+        type=int,
+        default=5000,
+        help="number of simulated batches (default: 5000)",
+    )
+    sim.add_argument(
+        "--batch-size", type=int, default=32, help="proofs per batch (default: 32)"
+    )
+    sim.add_argument(
+        "--mix",
+        type=str,
+        default="hash=0.65,ai=0.20,quantum=0.10,storage=0.04,vdf=0.01",
+        help="type weights (comma sep), normalized if needed",
+    )
     sim.add_argument("--seed", type=int, default=1, help="PRNG seed (default: 1)")
     sim.add_argument("--json-out", type=str, help="write summary JSON to this path")
 
-    fj = sub.add_parser("from-json", help="score batches from a JSON array of proof entries")
-    fj.add_argument("--file", type=str, required=True, help="JSON file with array of {type, psi_micro}")
-    fj.add_argument("--psi-field", type=str, default="psi_micro", help="field name for ψ values (default: psi_micro)")
-    fj.add_argument("--theta", type=int, help="Θ (micro-nats). If omitted, try --params")
+    fj = sub.add_parser(
+        "from-json", help="score batches from a JSON array of proof entries"
+    )
+    fj.add_argument(
+        "--file",
+        type=str,
+        required=True,
+        help="JSON file with array of {type, psi_micro}",
+    )
+    fj.add_argument(
+        "--psi-field",
+        type=str,
+        default="psi_micro",
+        help="field name for ψ values (default: psi_micro)",
+    )
+    fj.add_argument(
+        "--theta", type=int, help="Θ (micro-nats). If omitted, try --params"
+    )
     fj.add_argument("--params", type=str, help="Path to spec/params.yaml (to read Θ)")
-    fj.add_argument("--batch-size", type=int, default=32, help="proofs per batch (default: 32)")
+    fj.add_argument(
+        "--batch-size", type=int, default=32, help="proofs per batch (default: 32)"
+    )
     fj.add_argument("--seed", type=int, default=2, help="PRNG seed (default: 2)")
     fj.add_argument("--json-out", type=str, help="write summary JSON to this path")
 
@@ -339,7 +390,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.cmd == "simulate":
         theta = args.theta or load_params_theta(args.params)
         if not theta:
-            print("[error] Θ is required (use --theta or --params pointing to spec/params.yaml)", file=sys.stderr)
+            print(
+                "[error] Θ is required (use --theta or --params pointing to spec/params.yaml)",
+                file=sys.stderr,
+            )
             return 2
 
         caps = load_policy_caps(args.policy)
@@ -361,13 +415,24 @@ def main(argv: Optional[List[str]] = None) -> int:
         _print_summary(theta, args.batch_size, summary)
         if args.json_out:
             with open(args.json_out, "w", encoding="utf-8") as f:
-                json.dump({"theta_micro": theta, "batch_size": args.batch_size, "summary": summary}, f, indent=2)
+                json.dump(
+                    {
+                        "theta_micro": theta,
+                        "batch_size": args.batch_size,
+                        "summary": summary,
+                    },
+                    f,
+                    indent=2,
+                )
         return 0
 
     if args.cmd == "from-json":
         theta = args.theta or load_params_theta(args.params)
         if not theta:
-            print("[error] Θ is required (use --theta or --params pointing to spec/params.yaml)", file=sys.stderr)
+            print(
+                "[error] Θ is required (use --theta or --params pointing to spec/params.yaml)",
+                file=sys.stderr,
+            )
             return 2
         with open(args.file, "r", encoding="utf-8") as f:
             entries = json.load(f)
@@ -375,18 +440,32 @@ def main(argv: Optional[List[str]] = None) -> int:
                 raise SystemExit("[error] JSON must be an array of entries")
 
         rng = random.Random(args.seed)
-        results = score_batches_from_list(theta, entries, args.batch_size, rng, psi_field=args.psi_field)
+        results = score_batches_from_list(
+            theta, entries, args.batch_size, rng, psi_field=args.psi_field
+        )
         summary = summarize(results)
-        _print_summary(theta, args.batch_size, summary, label=os.path.basename(args.file))
+        _print_summary(
+            theta, args.batch_size, summary, label=os.path.basename(args.file)
+        )
         if args.json_out:
             with open(args.json_out, "w", encoding="utf-8") as f:
-                json.dump({"theta_micro": theta, "batch_size": args.batch_size, "summary": summary}, f, indent=2)
+                json.dump(
+                    {
+                        "theta_micro": theta,
+                        "batch_size": args.batch_size,
+                        "summary": summary,
+                    },
+                    f,
+                    indent=2,
+                )
         return 0
 
     return 0
 
 
-def _print_summary(theta_micro: int, batch_size: int, s: Dict, label: Optional[str] = None) -> None:
+def _print_summary(
+    theta_micro: int, batch_size: int, s: Dict, label: Optional[str] = None
+) -> None:
     hdr = f"PoIES Bench — Θ={theta_micro:,} µnats, batch={batch_size}"
     if label:
         hdr += f", source={label}"
@@ -395,8 +474,12 @@ def _print_summary(theta_micro: int, batch_size: int, s: Dict, label: Optional[s
     print(f"Acceptance: {s['accepted']}/{s['batches']}  ({s['acceptance_pct']:.2f}%)")
     sp = s["sum_psi_micro"]
     hp = s["H_micro"]
-    print(f"Σψ (µnats):  avg={sp['avg']:.1f}  p50={sp['p50']:.1f}  p95={sp['p95']:.1f}  max={sp['max']:,}")
-    print(f"H(u) (µnats): avg={hp['avg']:.1f}  p50={hp['p50']:.1f}  p95={hp['p95']:.1f}  max={hp['max']:,}")
+    print(
+        f"Σψ (µnats):  avg={sp['avg']:.1f}  p50={sp['p50']:.1f}  p95={sp['p95']:.1f}  max={sp['max']:,}"
+    )
+    print(
+        f"H(u) (µnats): avg={hp['avg']:.1f}  p50={hp['p50']:.1f}  p95={hp['p95']:.1f}  max={hp['max']:,}"
+    )
     if s["per_type_share"]:
         print("Per-type ψ share:")
         for t, share in s["per_type_share"].items():

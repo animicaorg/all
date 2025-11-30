@@ -5,13 +5,13 @@ from typing import Dict
 
 import pytest
 
-
 # Try to use the project's Account dataclass if available; otherwise fall back
 # to a minimal local definition so this test remains runnable while wiring lands.
 try:
     # type: ignore[import-not-found]
     from execution.state.accounts import Account  # noqa: F401
 except Exception:  # pragma: no cover
+
     @dataclass
     class Account:  # type: ignore[no-redef]
         nonce: int = 0
@@ -76,7 +76,7 @@ def apply_transfer(
     if s.balance < value + fee:
         raise RuntimeError("InsufficientBalance")
 
-    s.balance -= (value + fee)
+    s.balance -= value + fee
     s.nonce += 1
 
     state[to].balance += value
@@ -94,7 +94,9 @@ def test_debit_credit_and_nonce_increment() -> None:
     apply_transfer(state, ALICE, BOB, value, gas_limit, gas_price, COINBASE)
 
     # Balances
-    assert state[ALICE].balance == GENESIS_BALANCES[ALICE] - value - gas_limit * gas_price
+    assert (
+        state[ALICE].balance == GENESIS_BALANCES[ALICE] - value - gas_limit * gas_price
+    )
     assert state[BOB].balance == GENESIS_BALANCES[BOB] + value
     assert state[COINBASE].balance == gas_limit * gas_price
 
@@ -126,4 +128,12 @@ def test_insufficient_balance_raises() -> None:
     # Ask for more than Alice can cover (value + fee)
     too_much = GENESIS_BALANCES[ALICE] + 1
     with pytest.raises(RuntimeError, match="InsufficientBalance"):
-        apply_transfer(state, ALICE, BOB, too_much, gas_limit=21_000, gas_price=1, coinbase=COINBASE)
+        apply_transfer(
+            state,
+            ALICE,
+            BOB,
+            too_much,
+            gas_limit=21_000,
+            gas_price=1,
+            coinbase=COINBASE,
+        )

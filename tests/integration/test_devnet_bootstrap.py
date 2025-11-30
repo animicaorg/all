@@ -31,8 +31,8 @@ import pytest
 
 from tests.integration import env, require_env
 
-
 # ------------------------------- RPC helpers ---------------------------------
+
 
 def _http_timeout() -> float:
     try:
@@ -41,14 +41,25 @@ def _http_timeout() -> float:
         return 5.0
 
 
-def _rpc_call(rpc_url: str, method: str, params: Optional[Union[Dict[str, Any], Sequence[Any]]] = None, *, req_id: int = 1) -> Any:
+def _rpc_call(
+    rpc_url: str,
+    method: str,
+    params: Optional[Union[Dict[str, Any], Sequence[Any]]] = None,
+    *,
+    req_id: int = 1,
+) -> Any:
     if params is None:
         params = []
     if isinstance(params, dict):
         # JSON-RPC 2.0 supports named params; keep as-is
         payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
     else:
-        payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": list(params)}
+        payload = {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "method": method,
+            "params": list(params),
+        }
 
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
@@ -68,7 +79,11 @@ def _rpc_call(rpc_url: str, method: str, params: Optional[Union[Dict[str, Any], 
     return msg["result"]
 
 
-def _rpc_try(rpc_url: str, methods: Sequence[str], params: Optional[Union[Dict[str, Any], Sequence[Any]]] = None) -> Tuple[str, Any]:
+def _rpc_try(
+    rpc_url: str,
+    methods: Sequence[str],
+    params: Optional[Union[Dict[str, Any], Sequence[Any]]] = None,
+) -> Tuple[str, Any]:
     last_exc: Optional[Exception] = None
     for i, m in enumerate(methods, start=1):
         try:
@@ -76,10 +91,13 @@ def _rpc_try(rpc_url: str, methods: Sequence[str], params: Optional[Union[Dict[s
         except Exception as exc:  # try next spelling
             last_exc = exc
             continue
-    raise AssertionError(f"All RPC method spellings failed ({methods}). Last error: {last_exc}")
+    raise AssertionError(
+        f"All RPC method spellings failed ({methods}). Last error: {last_exc}"
+    )
 
 
 # ------------------------------- Parsing utils -------------------------------
+
 
 def _parse_chain_id(result: Any) -> Optional[int]:
     """
@@ -88,6 +106,7 @@ def _parse_chain_id(result: Any) -> Optional[int]:
       - {"chain": {"id": 1}} or {"params": {"chainId": 1}}
       - {"chainId": "0x1"} or {"chainId": "animica:1"} (CAIP-2-like)
     """
+
     # dig helpers
     def dig(d: Dict[str, Any], *keys: str) -> Optional[Any]:
         cur: Any = d
@@ -154,6 +173,7 @@ def _parse_height(head: Any) -> int:
 
 # ----------------------------------- Tests -----------------------------------
 
+
 @pytest.mark.timeout(20)
 def test_chain_params_and_id():
     rpc_url = env("ANIMICA_RPC_URL", "http://127.0.0.1:8545")
@@ -161,23 +181,34 @@ def test_chain_params_and_id():
 
     method, params = _rpc_try(
         rpc_url,
-        methods=("chain.getParams", "chain.get_parameters", "chain.params", "getParams"),
+        methods=(
+            "chain.getParams",
+            "chain.get_parameters",
+            "chain.params",
+            "getParams",
+        ),
         params=[],
     )
     # Minimal sanity: it's a dict with at least one known subkey or non-empty.
-    assert isinstance(params, dict) and len(params) > 0, f"{method} returned unexpected shape: {params!r}"
+    assert (
+        isinstance(params, dict) and len(params) > 0
+    ), f"{method} returned unexpected shape: {params!r}"
 
     expected = env("ANIMICA_CHAIN_ID")
     if expected is not None:
         # normalize expected
         exp_norm = _parse_chain_id({"chainId": expected})
-        assert exp_norm is not None, f"Could not parse expected ANIMICA_CHAIN_ID={expected!r}"
+        assert (
+            exp_norm is not None
+        ), f"Could not parse expected ANIMICA_CHAIN_ID={expected!r}"
         got = _parse_chain_id(params)
         assert got == exp_norm, f"chainId mismatch: got {got}, expected {exp_norm}"
     else:
         # If no expectation provided, at least ensure we can parse a positive id.
         got = _parse_chain_id(params)
-        assert got is None or got > 0, f"chainId should be positive if present, got {got!r}"
+        assert (
+            got is None or got > 0
+        ), f"chainId should be positive if present, got {got!r}"
 
 
 @pytest.mark.timeout(90)
@@ -200,7 +231,9 @@ def test_head_advances_within_timeout():
     last_height = h0
     while time.time() < deadline:
         time.sleep(interval_s)
-        _, head = _rpc_try(rpc_url, methods=("chain.getHead", "chain.head", "getHead"), params=[])
+        _, head = _rpc_try(
+            rpc_url, methods=("chain.getHead", "chain.head", "getHead"), params=[]
+        )
         h = _parse_height(head)
         # allow monotonic non-decreasing; break when strictly greater
         if h > last_height:

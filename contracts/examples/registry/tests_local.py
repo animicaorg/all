@@ -14,18 +14,20 @@ Assumptions:
 """
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-import hashlib
 import pytest
 
 # vm_py runtime imports (kept minimal to remain stable across refactors)
 try:
     from vm_py.runtime import loader as vm_loader
 except Exception as exc:  # pragma: no cover
-    raise RuntimeError("vm_py.runtime.loader not available; ensure vm_py is installed") from exc
+    raise RuntimeError(
+        "vm_py.runtime.loader not available; ensure vm_py is installed"
+    ) from exc
 
 
 HERE = Path(__file__).parent.resolve()
@@ -34,6 +36,7 @@ SOURCE = HERE / "contract.py"
 
 
 # ---------- helpers -----------------------------------------------------------
+
 
 def h256(data: bytes) -> bytes:
     """sha3_256 -> 32 bytes."""
@@ -60,6 +63,7 @@ class ContractHandle:
     across tiny API variations (some builds expose .call; others .invoke).
     Also exposes an optional event sink if present.
     """
+
     def __init__(self, handle: Any):
         self._h = handle
 
@@ -108,12 +112,14 @@ def load_contract() -> ContractHandle:
 
 # ---------- fixtures ----------------------------------------------------------
 
+
 @pytest.fixture()
 def reg() -> ContractHandle:
     return load_contract()
 
 
 # ---------- tests: core behavior ---------------------------------------------
+
 
 def test_set_get_has_remove_roundtrip(reg: ContractHandle):
     alice = name32("alice")
@@ -177,6 +183,7 @@ def test_change_value_updates(reg: ContractHandle):
 
 # ---------- tests: validation & errors ---------------------------------------
 
+
 def test_reject_bad_name_length(reg: ContractHandle):
     # 31-byte (too short) or 33-byte (too long)
     bad_short = b"x" * 31
@@ -206,6 +213,7 @@ def test_remove_unset_raises(reg: ContractHandle):
 
 # ---------- tests: determinism & stability -----------------------------------
 
+
 def test_get_determinism_and_idempotence(reg: ContractHandle):
     nm = name32("determinism")
     ad = addr32("stable")
@@ -232,6 +240,7 @@ def test_multi_keys_isolation(reg: ContractHandle):
 
 # ---------- optional: event payload shapes -----------------------------------
 
+
 def test_event_payload_shape_if_available(reg: ContractHandle):
     nm = name32("events")
     ad = addr32("payload")
@@ -257,11 +266,10 @@ def test_event_payload_shape_if_available(reg: ContractHandle):
     assert "NameSet" in names and "NameRemoved" in names
 
     # Check one payload has expected keys and types
-    for (n, args) in normed:
+    for n, args in normed:
         if n == "NameSet":
             assert isinstance(args.get("name"), (bytes, bytearray))
             assert isinstance(args.get("addr"), (bytes, bytearray))
             break
     else:
         pytest.fail("NameSet payload not found")
-

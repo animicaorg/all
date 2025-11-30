@@ -38,6 +38,7 @@ from typing import Any, Dict, Optional, Tuple
 
 # -------- Logging -------------------------------------------------------------
 
+
 def _setup_logging(level: str) -> None:
     lvl = getattr(logging, level.upper(), logging.INFO)
     logging.basicConfig(
@@ -46,13 +47,16 @@ def _setup_logging(level: str) -> None:
         datefmt="%H:%M:%S",
     )
 
+
 log = logging.getLogger("stratum.proxy")
 
 # -------- Utilities -----------------------------------------------------------
 
+
 def _env_default(name: str, fallback: Optional[str] = None) -> Optional[str]:
     v = os.environ.get(name)
     return v if v is not None and v != "" else fallback
+
 
 def _parse_host_port(value: str) -> Tuple[str, int]:
     if ":" not in value:
@@ -63,18 +67,23 @@ def _parse_host_port(value: str) -> Tuple[str, int]:
     except ValueError as e:
         raise argparse.ArgumentTypeError("invalid port") from e
 
+
 # -------- JSON-RPC HTTP/WS client helpers ------------------------------------
+
 
 class JsonRpcClient:
     """Tiny JSON-RPC over HTTP client with retries."""
+
     def __init__(self, url: str, timeout: float = 5.0) -> None:
         self.url = url.rstrip("/")
         self.timeout = timeout
         self._id = 0
 
-    async def call(self, method: str, params: Any | None = None, retries: int = 3) -> Any:
+    async def call(
+        self, method: str, params: Any | None = None, retries: int = 3
+    ) -> Any:
         import urllib.request
-        from urllib.error import URLError, HTTPError
+        from urllib.error import HTTPError, URLError
 
         payload = {
             "jsonrpc": "2.0",
@@ -108,7 +117,9 @@ class JsonRpcClient:
 
         raise RuntimeError("unreachable: retries loop exited unexpectedly")
 
+
 # -------- Work backend (talks to node RPC/WS) --------------------------------
+
 
 @dataclass
 class RpcWorkBackend:
@@ -167,10 +178,12 @@ class RpcWorkBackend:
                             self._current_work = payload
                             self._current_job_id = payload.get("jobId")
                             self._updated_at = time.time()
-                            log.debug("WS new work job=%s height=%s Θ=%.3f",
-                                      payload.get("jobId"),
-                                      payload.get("height"),
-                                      payload.get("theta", 0))
+                            log.debug(
+                                "WS new work job=%s height=%s Θ=%.3f",
+                                payload.get("jobId"),
+                                payload.get("height"),
+                                payload.get("theta", 0),
+                            )
             except Exception as e:
                 log.warning("WS watch error: %s; retrying in 2s", e)
                 await asyncio.sleep(2.0)
@@ -178,12 +191,22 @@ class RpcWorkBackend:
     async def _poll_loop(self) -> None:
         while not self._stop.is_set():
             try:
-                work = await self._rpc.call("miner.getWork", [{"chainId": self.chain_id}])
-                if isinstance(work, dict) and work.get("jobId") and work != self._current_work:
+                work = await self._rpc.call(
+                    "miner.getWork", [{"chainId": self.chain_id}]
+                )
+                if (
+                    isinstance(work, dict)
+                    and work.get("jobId")
+                    and work != self._current_work
+                ):
                     self._current_work = work
                     self._current_job_id = work.get("jobId")
                     self._updated_at = time.time()
-                    log.debug("poll new work job=%s height=%s", work.get("jobId"), work.get("height"))
+                    log.debug(
+                        "poll new work job=%s height=%s",
+                        work.get("jobId"),
+                        work.get("height"),
+                    )
             except Exception as e:
                 log.debug("poll getWork error: %s", e)
             await asyncio.sleep(self.poll_interval)
@@ -200,11 +223,16 @@ class RpcWorkBackend:
         """
         try:
             res = await self._rpc.call("miner.submitShare", [share])
-            return {"accepted": bool(res.get("accepted", False)), "reason": res.get("reason")}
+            return {
+                "accepted": bool(res.get("accepted", False)),
+                "reason": res.get("reason"),
+            }
         except Exception as e:
             return {"accepted": False, "reason": str(e)}
 
+
 # -------- Fallback mini Stratum server (if mining.stratum_server is missing) --
+
 
 class MiniStratumServer:
     """
@@ -217,6 +245,7 @@ class MiniStratumServer:
     This is a compatibility fallback; the full featured server in mining/stratum_server
     should be preferred.
     """
+
     def __init__(self, backend: RpcWorkBackend, host: str, port: int) -> None:
         self.backend = backend
         self.host = host
@@ -233,7 +262,9 @@ class MiniStratumServer:
         async with server:
             await server.serve_forever()
 
-    async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def _handle_client(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         peer = writer.get_extra_info("peername")
         self.clients.add(writer)
         log.info("Stratum client connected %s", peer)
@@ -274,13 +305,25 @@ class MiniStratumServer:
             # Params shape is miner-dependent; we accept a dict as first param,
             # or a legacy tuple and map to a dict.
             share = params[0] if params else {}
-            if not isinstance(share, dict) and isinstance(params, list) and len(params) >= 3:
+            if (
+                not isinstance(share, dict)
+                and isinstance(params, list)
+                and len(params) >= 3
+            ):
                 # Legacy: [worker, job_id, nonce, ...]
                 share = {"jobId": params[1], "nonce": params[2]}
             result = await self.backend.submit_share(share)
-            return {"id": mid, "result": bool(result.get("accepted", False)), "error": None}
+            return {
+                "id": mid,
+                "result": bool(result.get("accepted", False)),
+                "error": None,
+            }
         # Unknown method
-        return {"id": mid, "result": None, "error": {"code": -32601, "message": "Method not found"}}
+        return {
+            "id": mid,
+            "result": None,
+            "error": {"code": -32601, "message": "Method not found"},
+        }
 
     async def _notify_loop(self) -> None:
         while True:
@@ -302,15 +345,28 @@ class MiniStratumServer:
                 for w in stale:
                     self.clients.discard(w)
                 if self.clients:
-                    await asyncio.gather(*(c.drain() for c in self.clients), return_exceptions=True)
+                    await asyncio.gather(
+                        *(c.drain() for c in self.clients), return_exceptions=True
+                    )
             await asyncio.sleep(0.25)
+
 
 # -------- Proxy runner --------------------------------------------------------
 
-async def run_proxy(rpc_url: str, ws_url: Optional[str], listen_host: str, listen_port: int,
-                    chain_id: int, poll_interval: float, log_level: str) -> None:
+
+async def run_proxy(
+    rpc_url: str,
+    ws_url: Optional[str],
+    listen_host: str,
+    listen_port: int,
+    chain_id: int,
+    poll_interval: float,
+    log_level: str,
+) -> None:
     _setup_logging(log_level)
-    backend = RpcWorkBackend(rpc_url=rpc_url, ws_url=ws_url, poll_interval=poll_interval, chain_id=chain_id)
+    backend = RpcWorkBackend(
+        rpc_url=rpc_url, ws_url=ws_url, poll_interval=poll_interval, chain_id=chain_id
+    )
     await backend.start()
 
     # Try to use the full-featured server if available
@@ -358,26 +414,56 @@ async def run_proxy(rpc_url: str, ws_url: Optional[str], listen_host: str, liste
     mini = MiniStratumServer(backend, listen_host, listen_port)
     await mini.start()
 
+
 # -------- CLI -----------------------------------------------------------------
 
+
 def _build_arg_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="omni stratum-proxy", description="Animica Stratum proxy")
+    p = argparse.ArgumentParser(
+        prog="omni stratum-proxy", description="Animica Stratum proxy"
+    )
     sub = p.add_subparsers(dest="cmd", required=True)
     start = sub.add_parser("start", help="start the Stratum proxy")
-    start.add_argument("--rpc-url", type=str, default=_env_default("ANIMICA_RPC_URL", "http://127.0.0.1:8547"),
-                       help="node JSON-RPC base (http://host:port)")
-    start.add_argument("--ws-url", type=str, default=_env_default("ANIMICA_WS_URL", "ws://127.0.0.1:8547/ws"),
-                       help="node WebSocket hub (ws://host:port/ws)")
-    start.add_argument("--listen", type=_parse_host_port,
-                       default=_parse_host_port(_env_default("ANIMICA_STRATUM_LISTEN", "0.0.0.0:3333") or "0.0.0.0:3333"),
-                       help="Stratum listen HOST:PORT (default 0.0.0.0:3333)")
-    start.add_argument("--chain-id", type=int, default=int(_env_default("ANIMICA_CHAIN_ID", "1") or "1"),
-                       help="chain id (default 1)")
-    start.add_argument("--poll-interval", type=float, default=1.5,
-                       help="HTTP poll interval seconds for getWork (WS used when available)")
-    start.add_argument("--log-level", type=str, default=_env_default("ANIMICA_LOG_LEVEL", "info"),
-                       help="logging level (debug, info, warning, error)")
+    start.add_argument(
+        "--rpc-url",
+        type=str,
+        default=_env_default("ANIMICA_RPC_URL", "http://127.0.0.1:8547"),
+        help="node JSON-RPC base (http://host:port)",
+    )
+    start.add_argument(
+        "--ws-url",
+        type=str,
+        default=_env_default("ANIMICA_WS_URL", "ws://127.0.0.1:8547/ws"),
+        help="node WebSocket hub (ws://host:port/ws)",
+    )
+    start.add_argument(
+        "--listen",
+        type=_parse_host_port,
+        default=_parse_host_port(
+            _env_default("ANIMICA_STRATUM_LISTEN", "0.0.0.0:3333") or "0.0.0.0:3333"
+        ),
+        help="Stratum listen HOST:PORT (default 0.0.0.0:3333)",
+    )
+    start.add_argument(
+        "--chain-id",
+        type=int,
+        default=int(_env_default("ANIMICA_CHAIN_ID", "1") or "1"),
+        help="chain id (default 1)",
+    )
+    start.add_argument(
+        "--poll-interval",
+        type=float,
+        default=1.5,
+        help="HTTP poll interval seconds for getWork (WS used when available)",
+    )
+    start.add_argument(
+        "--log-level",
+        type=str,
+        default=_env_default("ANIMICA_LOG_LEVEL", "info"),
+        help="logging level (debug, info, warning, error)",
+    )
     return p
+
 
 async def _amain(argv: list[str]) -> int:
     args = _build_arg_parser().parse_args(argv)
@@ -419,12 +505,14 @@ async def _amain(argv: list[str]) -> int:
         pass
     return 0
 
+
 def main() -> None:
     try:
         rc = asyncio.run(_amain(sys.argv[1:]))
     except KeyboardInterrupt:
         rc = 130
     sys.exit(rc)
+
 
 if __name__ == "__main__":
     main()

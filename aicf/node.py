@@ -1,11 +1,19 @@
 from __future__ import annotations
-import argparse, json, threading, time, hashlib, signal, os
-from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+
+import argparse
+import hashlib
+import json
+import os
+import signal
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 state = {"height": 0, "chain_id": "0xa11ca", "auto_mine": False}
 lock = threading.Lock()
 state_file: Path | None = None
+
 
 def load_state(datadir: str) -> None:
     global state_file
@@ -20,8 +28,10 @@ def load_state(datadir: str) -> None:
         except Exception:
             pass
 
+
 def save_state() -> None:
-    if state_file is None: return
+    if state_file is None:
+        return
     payload = json.dumps({"height": state["height"], "chain_id": state["chain_id"]})
     if lock.locked():
         state_file.write_text(payload)
@@ -29,9 +39,14 @@ def save_state() -> None:
         with lock:
             state_file.write_text(payload)
 
+
 def make_block(n: int) -> dict:
-    parent = "0x" + "0"*64 if n <= 0 else "0x" + hashlib.sha256(f"{n-1}".encode()).hexdigest()
-    hsh    = "0x" + hashlib.sha256(f"{n}".encode()).hexdigest()
+    parent = (
+        "0x" + "0" * 64
+        if n <= 0
+        else "0x" + hashlib.sha256(f"{n-1}".encode()).hexdigest()
+    )
+    hsh = "0x" + hashlib.sha256(f"{n}".encode()).hexdigest()
     return {
         "number": hex(n),
         "hash": hsh,
@@ -39,9 +54,10 @@ def make_block(n: int) -> dict:
         "timestamp": hex(int(time.time())),
         "difficulty": "0x1",
         "nonce": "0x0",
-        "miner": "0x" + "0"*40,
+        "miner": "0x" + "0" * 40,
         "transactions": [],
     }
+
 
 class Handler(BaseHTTPRequestHandler):
     def _send(self, obj: dict, code: int = 200):
@@ -59,37 +75,76 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("content-length", "0"))
             body = self.rfile.read(length)
         except Exception:
-            self._send({"jsonrpc":"2.0","id":None,"error":{"code":-32700,"message":"Parse error"}}, 400); return
+            self._send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32700, "message": "Parse error"},
+                },
+                400,
+            )
+            return
         try:
             req = json.loads(body or b"{}")
         except Exception:
-            self._send({"jsonrpc":"2.0","id":None,"error":{"code":-32700,"message":"Parse error"}}, 400); return
+            self._send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32700, "message": "Parse error"},
+                },
+                400,
+            )
+            return
 
         if not isinstance(req, dict):
-            self._send({"jsonrpc":"2.0","id":None,"error":{"code":-32600,"message":"Invalid Request"}}, 400); return
+            self._send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32600, "message": "Invalid Request"},
+                },
+                400,
+            )
+            return
 
-        mid    = req.get("id", 1)
+        mid = req.get("id", 1)
         method = req.get("method")
         params = req.get("params", []) or []
-        ok  = lambda result: self._send({"jsonrpc":"2.0","id":mid,"result":result})
-        err = lambda code,msg: self._send({"jsonrpc":"2.0","id":mid,"error":{"code":code,"message":msg}}, 200)
+        ok = lambda result: self._send({"jsonrpc": "2.0", "id": mid, "result": result})
+        err = lambda code, msg: self._send(
+            {"jsonrpc": "2.0", "id": mid, "error": {"code": code, "message": msg}}, 200
+        )
 
         try:
             with lock:
-                if method in ("eth_blockNumber","animica_blockNumber"): ok(hex(state["height"])); return
-                if method in ("net_version","eth_chainId","animica_chainId"): ok(state["chain_id"]); return
-                if method in ("getblockcount", "animica_blockCount"): ok(state["height"]); return
+                if method in ("eth_blockNumber", "animica_blockNumber"):
+                    ok(hex(state["height"]))
+                    return
+                if method in ("net_version", "eth_chainId", "animica_chainId"):
+                    ok(state["chain_id"])
+                    return
+                if method in ("getblockcount", "animica_blockCount"):
+                    ok(state["height"])
+                    return
                 if method == "evm_mine":
                     n = 1
                     if params:
                         v = params[0]
                         try:
-                            if isinstance(v,int): n = v
-                            elif isinstance(v,str) and v.startswith("0x"): n = int(v,16)
-                            else: n = int(v)
-                        except Exception: n = 1
-                    n = max(1,n)
-                    state["height"] += n; save_state(); ok(hex(state["height"])); return
+                            if isinstance(v, int):
+                                n = v
+                            elif isinstance(v, str) and v.startswith("0x"):
+                                n = int(v, 16)
+                            else:
+                                n = int(v)
+                        except Exception:
+                            n = 1
+                    n = max(1, n)
+                    state["height"] += n
+                    save_state()
+                    ok(hex(state["height"]))
+                    return
                 if method == "animica_generate":
                     n = 1
                     if params:
@@ -103,20 +158,40 @@ class Handler(BaseHTTPRequestHandler):
                     n = max(1, n)
                     state["height"] += n
                     save_state()
-                    ok({"height": state["height"], "mined": n}); return
-                if method == "miner_start": state["auto_mine"] = True; ok(True); return
-                if method == "miner_stop":  state["auto_mine"] = False; ok(True); return
+                    ok({"height": state["height"], "mined": n})
+                    return
+                if method == "miner_start":
+                    state["auto_mine"] = True
+                    ok(True)
+                    return
+                if method == "miner_stop":
+                    state["auto_mine"] = False
+                    ok(True)
+                    return
                 if method in ("animica_status", "getblockchaininfo"):
-                    ok({"height": state["height"], "chainId": state["chain_id"], "autoMine": state["auto_mine"]}); return
+                    ok(
+                        {
+                            "height": state["height"],
+                            "chainId": state["chain_id"],
+                            "autoMine": state["auto_mine"],
+                        }
+                    )
+                    return
                 if method == "eth_getBlockByNumber":
                     tag = params[0] if params else "latest"
-                    if isinstance(tag,str):
-                        if tag in ("latest","finalized","safe","pending"): n = state["height"]
-                        elif tag == "earliest": n = 0
-                        elif tag.startswith("0x"): n = int(tag,16)
-                        else: n = int(tag)
-                    else: n = state["height"]
-                    ok(make_block(max(0,n))); return
+                    if isinstance(tag, str):
+                        if tag in ("latest", "finalized", "safe", "pending"):
+                            n = state["height"]
+                        elif tag == "earliest":
+                            n = 0
+                        elif tag.startswith("0x"):
+                            n = int(tag, 16)
+                        else:
+                            n = int(tag)
+                    else:
+                        n = state["height"]
+                    ok(make_block(max(0, n)))
+                    return
                 if method in ("getblock", "animica_getBlock"):
                     try:
                         n = int(params[0]) if params else state["height"]
@@ -125,7 +200,8 @@ class Handler(BaseHTTPRequestHandler):
                             n = int(str(params[0]), 16)
                         except Exception:
                             n = state["height"]
-                    ok(make_block(max(0, n))); return
+                    ok(make_block(max(0, n)))
+                    return
                 if method == "getblockhash":
                     try:
                         n = int(params[0]) if params else state["height"]
@@ -134,25 +210,39 @@ class Handler(BaseHTTPRequestHandler):
                             n = int(str(params[0]), 16)
                         except Exception:
                             n = state["height"]
-                    ok(make_block(max(0, n))["hash"]); return
-                if method == "web3_clientVersion": ok("animica-dev/0.0.0 (stub)"); return
+                    ok(make_block(max(0, n))["hash"])
+                    return
+                if method == "web3_clientVersion":
+                    ok("animica-dev/0.0.0 (stub)")
+                    return
         except Exception as exc:
-            self._send({"jsonrpc":"2.0","id":mid,"error":{"code":-32000,"message":str(exc)}}, 500); return
+            self._send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": mid,
+                    "error": {"code": -32000, "message": str(exc)},
+                },
+                500,
+            )
+            return
 
-        err(-32601,"Method not found")
+        err(-32601, "Method not found")
+
 
 def auto_miner():
     while True:
         time.sleep(1)
         with lock:
             if state["auto_mine"]:
-                state["height"] += 1; save_state()
+                state["height"] += 1
+                save_state()
+
 
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--network", default="testnet")
     p.add_argument("--chain-id", dest="chain_id", default="0xa11ca")
-    p.add_argument("--datadir", default=str(Path.home()/".animica"/"testnet"))
+    p.add_argument("--datadir", default=str(Path.home() / ".animica" / "testnet"))
     p.add_argument("--rpc-addr", default="0.0.0.0")
     p.add_argument("--rpc-port", type=int, default=8545)
     p.add_argument("--ws-port", type=int, default=8546)
@@ -164,18 +254,23 @@ def parse_args():
     p.add_argument("--nat", default=None, help="public IP (accepted & ignored by shim)")
     return p.parse_args()
 
+
 def main():
     args = parse_args()
     with lock:
         state["chain_id"] = args.chain_id
         state["auto_mine"] = bool(args.auto_mine)
     load_state(args.datadir)
-    t = threading.Thread(target=auto_miner, daemon=True); t.start()
+    t = threading.Thread(target=auto_miner, daemon=True)
+    t.start()
     httpd = ThreadingHTTPServer((args.rpc_addr, args.rpc_port), Handler)
     for s in (signal.SIGINT, signal.SIGTERM):
         signal.signal(s, lambda *_: os._exit(0))
-    print(f"[shim] RPC http://{args.rpc_addr}:{args.rpc_port} chainId={state['chain_id']} height={state['height']}")
+    print(
+        f"[shim] RPC http://{args.rpc_addr}:{args.rpc_port} chainId={state['chain_id']} height={state['height']}"
+    )
     httpd.serve_forever()
+
 
 if __name__ == "__main__":
     main()

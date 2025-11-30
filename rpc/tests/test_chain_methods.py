@@ -42,7 +42,10 @@ def test_get_block_by_number_genesis_no_txs():
     blk = res0["result"]
     assert blk["header"]["number"] == 0
     assert blk["header"]["chainId"] == cfg.chain_id
-    assert blk.get("transactions") in ([], None)  # some servers may omit when includeTx=False
+    assert blk.get("transactions") in (
+        [],
+        None,
+    )  # some servers may omit when includeTx=False
 
     # includeTx true (should be empty list for genesis)
     res1 = rpc_call(

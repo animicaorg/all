@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-
 # --- helpers -----------------------------------------------------------------
+
 
 def _validate_source(src: str):
     """
@@ -18,10 +18,10 @@ def _validate_source(src: str):
         import vm_py.validate as v  # type: ignore
 
         for name in (
-            "validate_source",   # def validate_source(src: str) -> None
-            "validate",          # def validate(src: str) -> None
-            "check_source",      # def check_source(src: str) -> None
-            "check",             # def check(src: str) -> None
+            "validate_source",  # def validate_source(src: str) -> None
+            "validate",  # def validate(src: str) -> None
+            "check_source",  # def check_source(src: str) -> None
+            "check",  # def check(src: str) -> None
         ):
             fn = getattr(v, name, None)
             if callable(fn):
@@ -35,6 +35,7 @@ def _validate_source(src: str):
     # Fallback: compiler lower should raise on forbidden imports too
     try:
         from vm_py.compiler import ast_lower as lower  # type: ignore
+
         for name in ("lower_source", "lower", "compile"):
             fn = getattr(lower, name, None)
             if callable(fn):
@@ -47,7 +48,9 @@ def _validate_source(src: str):
 
     # If we reach here without raising, the validator API surface wasn't found
     # or it did not reject. Make that explicit so the test isn't silently passing.
-    raise AssertionError(f"Validator API not found or did not reject source. Last error: {last_err}")
+    raise AssertionError(
+        f"Validator API not found or did not reject source. Last error: {last_err}"
+    )
 
 
 def _assert_forbidden(src: str):
@@ -55,7 +58,12 @@ def _assert_forbidden(src: str):
     Assert that validating the given source raises a ForbiddenImport/ValidationError-like exception.
     """
     # Accept any of these exception types (names, to avoid import coupling)
-    EXPECTED_NAMES = {"ForbiddenImport", "ValidationError", "ForbiddenBuiltin", "SandboxError"}
+    EXPECTED_NAMES = {
+        "ForbiddenImport",
+        "ValidationError",
+        "ForbiddenBuiltin",
+        "SandboxError",
+    }
     try:
         _validate_source(src)
     except Exception as e:
@@ -65,7 +73,10 @@ def _assert_forbidden(src: str):
             return
         # Some implementations wrap the inner error; check args
         msg = str(e).lower()
-        indicative = any(k in msg for k in ("forbidden", "disallow", "import", "builtin", "network", "io"))
+        indicative = any(
+            k in msg
+            for k in ("forbidden", "disallow", "import", "builtin", "network", "io")
+        )
         if indicative:
             return
         raise
@@ -75,36 +86,31 @@ def _assert_forbidden(src: str):
 
 # --- tests -------------------------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "src",
     [
         # OS / filesystem
         "import os\nx = os.getenv('HOME')",
         "from os import path\np = path.abspath('.')",
-        "import builtins\nf = builtins.open('x.txt', 'w')\n",   # direct builtin I/O
-        "open('x.txt', 'w')\n",                                 # implicit builtin I/O
-
+        "import builtins\nf = builtins.open('x.txt', 'w')\n",  # direct builtin I/O
+        "open('x.txt', 'w')\n",  # implicit builtin I/O
         # Time / nondeterminism
         "import time\nx = time.time()",
         "from time import sleep\nsleep(1)",
-
         # Randomness (nondeterministic)
         "import random\nx = random.random()",
         "from random import randint\nx = randint(0, 10)",
-
         # Network
         "import socket\ns = socket.socket()",
         "from urllib import request\nu = request.urlopen('http://example.com')",
         "import http.client\nc = http.client.HTTPConnection('example.com')",
-
         # System/process
         "import sys\nsys.stdout.write('hi')",
         "import subprocess\nsubprocess.run(['echo','hi'])",
-
         # Eval/exec dynamic code
         "eval('1+2')",
         "exec('print(42)')",
-
         # Wildcard imports / unknown external libraries (should be disallowed)
         "from math import *\n# allow-list typically forbids star-imports in contracts",
         "import requests\nresp = requests.get('http://example.com')",

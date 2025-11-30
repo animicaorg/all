@@ -29,9 +29,9 @@ Notes
 from dataclasses import dataclass
 from typing import Iterator, List, Optional, Tuple
 
-from .kv import KV, Batch
 from ..encoding.cbor import cbor_dumps, cbor_loads
 from ..utils.bytes import to_hex
+from .kv import KV, Batch
 
 # ---------------------------------------------------------------------------
 # Constants & key helpers
@@ -40,35 +40,43 @@ from ..utils.bytes import to_hex
 PFX_TXI = b"\x20"
 PFX_BTI = b"\x21"
 
+
 def _u64be(n: int) -> bytes:
     if n < 0 or n > 0xFFFFFFFFFFFFFFFF:
         raise ValueError("u64 out of range")
     return n.to_bytes(8, "big")
+
 
 def _from_u64be(b: bytes) -> int:
     if len(b) != 8:
         raise ValueError("expected 8 bytes for u64")
     return int.from_bytes(b, "big")
 
+
 def _u32be(n: int) -> bytes:
     if n < 0 or n > 0xFFFFFFFF:
         raise ValueError("u32 out of range")
     return n.to_bytes(4, "big")
+
 
 def _from_u32be(b: bytes) -> int:
     if len(b) != 4:
         raise ValueError("expected 4 bytes for u32")
     return int.from_bytes(b, "big")
 
+
 def k_txi(tx_hash: bytes) -> bytes:
     return PFX_TXI + tx_hash
+
 
 def k_bti(height: int, index: int) -> bytes:
     return PFX_BTI + _u64be(height) + _u32be(index)
 
+
 # ---------------------------------------------------------------------------
 # Data model
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class TxPointer:
@@ -84,9 +92,11 @@ class TxPointer:
         d = cbor_loads(b)
         return TxPointer(int(d["h"]), int(d["i"]), bytes(d["b"]))
 
+
 # ---------------------------------------------------------------------------
 # Index API
 # ---------------------------------------------------------------------------
+
 
 class TxIndex:
     """
@@ -98,7 +108,9 @@ class TxIndex:
 
     # --- Writes ---
 
-    def index_block(self, height: int, block_hash: bytes, tx_hashes: List[bytes]) -> None:
+    def index_block(
+        self, height: int, block_hash: bytes, tx_hashes: List[bytes]
+    ) -> None:
         """
         Index all txs of a canonical block at `height`. Idempotent for the same data.
         """
@@ -173,6 +185,7 @@ class TxIndex:
 
     def __repr__(self) -> str:
         return "<TxIndex fwd=0x20 rev=0x21>"
+
 
 __all__ = [
     "TxIndex",

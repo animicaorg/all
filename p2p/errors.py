@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, Optional, Mapping, Union
+from dataclasses import asdict, dataclass, field
+from typing import Any, Dict, Mapping, Optional, Union
 
 __all__ = [
     "P2PError",
@@ -18,6 +18,7 @@ class P2PErrorCode:
     Canonical string codes for P2P errors.
     Kept stable for logs/metrics and cross-process handling.
     """
+
     GENERIC = "P2P_ERROR"
     HANDSHAKE_FAILED = "HANDSHAKE_FAILED"
     RATE_LIMITED = "RATE_LIMITED"
@@ -39,6 +40,7 @@ class P2PError(Exception):
         cause: Underlying exception (not serialized by default).
         details: Extra structured context (topic, msg_id, frame_seq, etc.).
     """
+
     message: str
     code: str = P2PErrorCode.GENERIC
     retryable: bool = False
@@ -80,7 +82,9 @@ class P2PError(Exception):
         return d
 
     # Fluent helpers to enrich context
-    def with_peer(self, peer_id: Optional[str] = None, remote: Optional[str] = None) -> "P2PError":
+    def with_peer(
+        self, peer_id: Optional[str] = None, remote: Optional[str] = None
+    ) -> "P2PError":
         self.peer_id = peer_id or self.peer_id
         self.remote = remote or self.remote
         return self
@@ -101,6 +105,7 @@ class HandshakeError(P2PError):
     (e.g., Kyber KEM / HKDF key schedule, identity proof, policy/chain mismatch).
     Almost always a disconnect; retryability depends on reason.
     """
+
     code: str = P2PErrorCode.HANDSHAKE_FAILED
     disconnect: bool = True
 
@@ -113,8 +118,12 @@ class HandshakeError(P2PError):
         )
 
     @staticmethod
-    def chain_or_policy_mismatch(peer_chain: Union[int, str], expected_chain: Union[int, str],
-                                 peer_alg_policy_root: str, expected_alg_policy_root: str) -> "HandshakeError":
+    def chain_or_policy_mismatch(
+        peer_chain: Union[int, str],
+        expected_chain: Union[int, str],
+        peer_alg_policy_root: str,
+        expected_alg_policy_root: str,
+    ) -> "HandshakeError":
         return HandshakeError(
             message="Peer chainId/alg-policy mismatch",
             retryable=False,
@@ -148,6 +157,7 @@ class RateLimitError(P2PError):
     Raised when per-peer, per-topic, or global token buckets are exceeded.
     Typically not a disconnect; caller SHOULD back off for `retry_after_seconds`.
     """
+
     code: str = P2PErrorCode.RATE_LIMITED
     retryable: bool = True
     disconnect: bool = False
@@ -176,6 +186,7 @@ class ProtocolError(P2PError):
     unexpected message in state machine, checksum failures, etc.
     These are typically fatal for the connection.
     """
+
     code: str = P2PErrorCode.PROTOCOL_VIOLATION
     disconnect: bool = True
 
@@ -187,7 +198,9 @@ class ProtocolError(P2PError):
         return err
 
     @staticmethod
-    def invalid_message(msg_id: int, reason: str, topic: Optional[str] = None) -> "ProtocolError":
+    def invalid_message(
+        msg_id: int, reason: str, topic: Optional[str] = None
+    ) -> "ProtocolError":
         err = ProtocolError(message=f"Invalid message {msg_id}: {reason}")
         if topic:
             err.details["topic"] = topic

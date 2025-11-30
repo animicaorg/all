@@ -20,7 +20,8 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequence, Tuple
+from typing import (Dict, Iterable, List, Mapping, MutableMapping, Optional,
+                    Sequence, Tuple)
 
 # ----------------------------- Data Structures ------------------------------
 
@@ -28,6 +29,7 @@ from typing import Dict, Iterable, List, Mapping, MutableMapping, Optional, Sequ
 @dataclass
 class ValidationReport:
     """Outcome of applying/validating variables against a schema."""
+
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     applied_defaults: Dict[str, str] = field(default_factory=dict)
@@ -226,9 +228,7 @@ def apply_schema(
         enum = spec.get("enum")
         if isinstance(enum, list) and enum:
             if coerced not in enum and str(coerced) not in [str(x) for x in enum]:
-                report.errors.append(
-                    f"{name}: value {val!r} not in enum {enum}"
-                )
+                report.errors.append(f"{name}: value {val!r} not in enum {enum}")
 
         # Strings: pattern, length
         if t == "string":
@@ -239,15 +239,21 @@ def apply_schema(
                     if not re.fullmatch(pat, s):
                         report.errors.append(f"{name}: does not match pattern {pat!r}")
                 except re.error as re_err:
-                    report.warnings.append(f"{name}: invalid pattern in schema: {re_err}")
+                    report.warnings.append(
+                        f"{name}: invalid pattern in schema: {re_err}"
+                    )
             for key, fn in (("minLength", int), ("maxLength", int)):
                 if key in spec:
                     try:
                         lim = fn(spec[key])
                         if key == "minLength" and len(s) < lim:
-                            report.errors.append(f"{name}: length {len(s)} < minLength {lim}")
+                            report.errors.append(
+                                f"{name}: length {len(s)} < minLength {lim}"
+                            )
                         if key == "maxLength" and len(s) > lim:
-                            report.errors.append(f"{name}: length {len(s)} > maxLength {lim}")
+                            report.errors.append(
+                                f"{name}: length {len(s)} > maxLength {lim}"
+                            )
                     except Exception:
                         report.warnings.append(f"{name}: invalid {key} in schema")
 

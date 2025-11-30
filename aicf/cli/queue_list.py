@@ -43,6 +43,7 @@ app = typer.Typer(
 
 # -------------------- utils --------------------
 
+
 def _now_ms() -> int:
     return int(time.time() * 1000)
 
@@ -125,7 +126,9 @@ def _fmt_num(n: Optional[float]) -> str:
     return f"{n:.3f}".rstrip("0").rstrip(".")
 
 
-def _call_first(obj: Any, names: Sequence[str], *args, **kwargs) -> Tuple[Optional[str], Any]:
+def _call_first(
+    obj: Any, names: Sequence[str], *args, **kwargs
+) -> Tuple[Optional[str], Any]:
     last_exc: Optional[Exception] = None
     for nm in names:
         fn = getattr(obj, nm, None)
@@ -148,6 +151,7 @@ def _import_queue_backend(db_uri: Optional[str]) -> Optional[Any]:
     # Primary: aicf.queue.storage
     try:
         from aicf.queue import storage as qmod  # type: ignore
+
         for cls_name in ("JobQueue", "Queue", "Storage", "QueueStorage"):
             cls = getattr(qmod, cls_name, None)
             if cls is None:
@@ -172,12 +176,14 @@ def _import_queue_backend(db_uri: Optional[str]) -> Optional[Any]:
     # Fallback: any integration dispatcher/receiver exposing list helpers
     try:
         from aicf.queue import dispatcher as dmod  # type: ignore
+
         return dmod
     except ModuleNotFoundError:
         pass
 
     try:
         from aicf.queue import assignment as amod  # type: ignore
+
         return amod
     except ModuleNotFoundError:
         pass
@@ -193,6 +199,7 @@ def _compute_priority(record: Dict[str, Any]) -> float:
     # Try official scorer if present
     try:
         from aicf.queue.priority import compute_priority  # type: ignore
+
         return float(compute_priority(record))
     except Exception:
         pass
@@ -213,17 +220,32 @@ def _normalize_job(obj: Any) -> Dict[str, Any]:
     if isinstance(kind, str):
         kind = kind.upper()
     d["kind"] = kind
-    d["requester_id"] = d.get("requester_id") or d.get("requestor_id") or d.get("owner") or d.get("account")
+    d["requester_id"] = (
+        d.get("requester_id")
+        or d.get("requestor_id")
+        or d.get("owner")
+        or d.get("account")
+    )
     d["fee"] = d.get("fee") or d.get("tip") or d.get("reward")
     d["priority"] = d.get("priority") or d.get("prio") or 1.0
-    d["created_ms"] = d.get("created_ms") or d.get("ts_ms") or d.get("created_at_ms") or d.get("created") or 0
+    d["created_ms"] = (
+        d.get("created_ms")
+        or d.get("ts_ms")
+        or d.get("created_at_ms")
+        or d.get("created")
+        or 0
+    )
     d["ttl_ms"] = d.get("ttl_ms") or d.get("ttl") or 0
     d["status"] = d.get("status") or d.get("state") or "PENDING"
     d["spec"] = d.get("spec") or {}
     d["requirements"] = d.get("requirements") or {}
     # compute fields
     d["_age_ms"] = max(0, _now_ms() - int(d["created_ms"] or 0))
-    d["_expires_in_ms"] = max(0, (int(d["created_ms"] or 0) + int(d["ttl_ms"] or 0)) - _now_ms()) if d.get("ttl_ms") else 0
+    d["_expires_in_ms"] = (
+        max(0, (int(d["created_ms"] or 0) + int(d["ttl_ms"] or 0)) - _now_ms())
+        if d.get("ttl_ms")
+        else 0
+    )
     d["_score"] = _compute_priority(d)
     return d
 
@@ -240,7 +262,9 @@ def _normalize_lease(obj: Any) -> Dict[str, Any]:
     return d
 
 
-def _fetch_jobs(backend: Any, limit: int, kinds: Optional[List[str]]) -> List[Dict[str, Any]]:
+def _fetch_jobs(
+    backend: Any, limit: int, kinds: Optional[List[str]]
+) -> List[Dict[str, Any]]:
     # Try common list methods in order
     candidates = (
         ("list_pending", {"limit": limit}),
@@ -378,13 +402,21 @@ def _ensure_backend(db: Optional[str]) -> Any:
         raise typer.Exit(2)
     return backend
 
+
 # -------------------- commands --------------------
+
 
 @app.command("jobs")
 def list_jobs(
-    db: Optional[str] = typer.Option(None, "--db", help="Queue DB URI (e.g., sqlite:///aicf_dev.db)."),
-    limit: int = typer.Option(100, min=1, max=10000, help="Max number of jobs to show."),
-    kind: List[str] = typer.Option(None, "--kind", help="Filter by kind, e.g. AI or QUANTUM (repeatable)."),
+    db: Optional[str] = typer.Option(
+        None, "--db", help="Queue DB URI (e.g., sqlite:///aicf_dev.db)."
+    ),
+    limit: int = typer.Option(
+        100, min=1, max=10000, help="Max number of jobs to show."
+    ),
+    kind: List[str] = typer.Option(
+        None, "--kind", help="Filter by kind, e.g. AI or QUANTUM (repeatable)."
+    ),
     json_out: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     backend = _ensure_backend(db)
@@ -397,8 +429,12 @@ def list_jobs(
 
 @app.command("leases")
 def list_leases(
-    db: Optional[str] = typer.Option(None, "--db", help="Queue DB URI (e.g., sqlite:///aicf_dev.db)."),
-    limit: int = typer.Option(100, min=1, max=10000, help="Max number of leases to show."),
+    db: Optional[str] = typer.Option(
+        None, "--db", help="Queue DB URI (e.g., sqlite:///aicf_dev.db)."
+    ),
+    limit: int = typer.Option(
+        100, min=1, max=10000, help="Max number of leases to show."
+    ),
     json_out: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
     backend = _ensure_backend(db)
@@ -412,7 +448,9 @@ def list_leases(
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
-    db: Optional[str] = typer.Option(None, "--db", help="Queue DB URI (e.g., sqlite:///aicf_dev.db)."),
+    db: Optional[str] = typer.Option(
+        None, "--db", help="Queue DB URI (e.g., sqlite:///aicf_dev.db)."
+    ),
     limit: int = typer.Option(50, min=1, max=10000, help="Max rows per section."),
     json_out: bool = typer.Option(False, "--json", help="Output as JSON."),
 ) -> None:
@@ -426,7 +464,9 @@ def main(
     leases = _fetch_leases(backend, limit=limit)
 
     if json_out:
-        typer.echo(json.dumps({"jobs": jobs, "leases": leases}, indent=2, sort_keys=True))
+        typer.echo(
+            json.dumps({"jobs": jobs, "leases": leases}, indent=2, sort_keys=True)
+        )
         return
 
     typer.secho("Queued jobs (by priority):", bold=True)

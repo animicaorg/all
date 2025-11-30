@@ -14,11 +14,8 @@ from __future__ import annotations
 from typing import Any, Iterable, Optional, Tuple
 
 from randomness.commit_reveal.aggregate import hash_xor_fold
-from randomness.constants import (
-    DOMAIN_BEACON_FINAL,
-    DOMAIN_BEACON_MIX,
-    DOMAIN_BEACON_VDF_INPUT,
-)
+from randomness.constants import (DOMAIN_BEACON_FINAL, DOMAIN_BEACON_MIX,
+                                  DOMAIN_BEACON_VDF_INPUT)
 from randomness.errors import VDFInvalid
 from randomness.utils.hash import dsha3_256, sha3_256, sha3_512
 
@@ -33,9 +30,9 @@ from randomness.types.core import BeaconOut, RevealRecord, RoundId, VDFProof
 try:  # pragma: no cover - metrics are optional
     from randomness.metrics import VDF_VERIFY_SECONDS
 except Exception:  # pragma: no cover
+
     class _Null:
-        def observe(self, *_a: Any, **_k: Any) -> None:
-            ...
+        def observe(self, *_a: Any, **_k: Any) -> None: ...
 
     VDF_VERIFY_SECONDS = _Null()  # type: ignore
 
@@ -61,7 +58,9 @@ def _as_bytes(x: Any) -> bytes:
     raise TypeError(f"unsupported bytes-like value: {type(x)}")
 
 
-def _normalize_vdf_bundle(vdf: Any, proof: Any) -> Tuple[bytes, bytes, Optional[int], Optional[int]]:
+def _normalize_vdf_bundle(
+    vdf: Any, proof: Any
+) -> Tuple[bytes, bytes, Optional[int], Optional[int]]:
     """
     Extract (output_bytes, proof_bytes, iterations, modulus) from mixed inputs.
     """
@@ -140,7 +139,9 @@ def finalize_round(*args: Any, **kwargs: Any) -> BeaconOut:
     round_id = kwargs.pop("round_id", None)
     aggregate = kwargs.pop("aggregate", None)
     reveals = kwargs.pop("reveals", None)
-    prev_output = kwargs.pop("prev_output", kwargs.pop("previous", kwargs.pop("prev", b"")))
+    prev_output = kwargs.pop(
+        "prev_output", kwargs.pop("previous", kwargs.pop("prev", b""))
+    )
     vdf_bundle = kwargs.pop("vdf", None)
     vdf_proof = kwargs.pop("vdf_proof", kwargs.pop("proof", None))
     qrng_bytes = kwargs.pop("qrng_bytes", kwargs.pop("qrng", None))
@@ -197,10 +198,7 @@ def finalize_round(*args: Any, **kwargs: Any) -> BeaconOut:
         vdf_input = provided_input
     else:
         vdf_input = sha3_256(
-            DOMAIN_BEACON_VDF_INPUT
-            + int(rid).to_bytes(8, "big")
-            + prev_out_b
-            + agg
+            DOMAIN_BEACON_VDF_INPUT + int(rid).to_bytes(8, "big") + prev_out_b + agg
         )
 
     # Normalize VDF proof/output bundle
@@ -230,8 +228,15 @@ def finalize_round(*args: Any, **kwargs: Any) -> BeaconOut:
     # Optional QRNG mix; tests expect the raw VDF output by default.
     final_bytes = vdf_out or vdf_input
     if qrng_bytes:
-        transcript = dsha3_256(DOMAIN_BEACON_MIX, int(rid).to_bytes(8, "big"), vdf_input, final_bytes)
-        final_bytes = sha3_512(DOMAIN_BEACON_FINAL + int(rid).to_bytes(8, "big") + transcript + _as_bytes(qrng_bytes))
+        transcript = dsha3_256(
+            DOMAIN_BEACON_MIX, int(rid).to_bytes(8, "big"), vdf_input, final_bytes
+        )
+        final_bytes = sha3_512(
+            DOMAIN_BEACON_FINAL
+            + int(rid).to_bytes(8, "big")
+            + transcript
+            + _as_bytes(qrng_bytes)
+        )
 
     # Compose BeaconOut using the stable fields from types.core.BeaconOut
     try:

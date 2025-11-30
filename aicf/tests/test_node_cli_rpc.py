@@ -9,14 +9,21 @@ from aicf.node import make_block
 
 
 def _run_cli(cmd: list[str]) -> str:
-    proc = subprocess.run([sys.executable, "-m", "aicf.cli.node_pipeline", *cmd], check=True, capture_output=True, text=True)
+    proc = subprocess.run(
+        [sys.executable, "-m", "aicf.cli.node_pipeline", *cmd],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     return proc.stdout.strip()
 
 
 class _RpcHandler(BaseHTTPRequestHandler):
     state = {"height": 0, "chainId": 0xA11CA, "auto": False}
 
-    def log_message(self, fmt: str, *args) -> None:  # pragma: no cover - silence server logs in tests
+    def log_message(
+        self, fmt: str, *args
+    ) -> None:  # pragma: no cover - silence server logs in tests
         return
 
     def _send(self, payload: dict) -> None:
@@ -82,7 +89,11 @@ class _RpcHandler(BaseHTTPRequestHandler):
                 height = int(tag)
             result = make_block(max(0, height))
         else:
-            payload = {"jsonrpc": "2.0", "id": req.get("id"), "error": {"code": -32601, "message": "Method not found"}}
+            payload = {
+                "jsonrpc": "2.0",
+                "id": req.get("id"),
+                "error": {"code": -32601, "message": "Method not found"},
+            }
             self._send(payload)
             return
 
@@ -90,7 +101,9 @@ class _RpcHandler(BaseHTTPRequestHandler):
         self._send(payload)
 
 
-def _start_rpc_server(tmp_path: Path, handler_cls: type[BaseHTTPRequestHandler] = _RpcHandler) -> tuple[HTTPServer, str]:
+def _start_rpc_server(
+    tmp_path: Path, handler_cls: type[BaseHTTPRequestHandler] = _RpcHandler
+) -> tuple[HTTPServer, str]:
     server = HTTPServer(("127.0.0.1", 0), handler_cls)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -101,7 +114,9 @@ def _start_rpc_server(tmp_path: Path, handler_cls: type[BaseHTTPRequestHandler] 
 class _GenerateOnlyHandler(BaseHTTPRequestHandler):
     state = {"height": 0, "chainId": 0xA11CA, "auto": False}
 
-    def log_message(self, fmt: str, *args) -> None:  # pragma: no cover - silence server logs in tests
+    def log_message(
+        self, fmt: str, *args
+    ) -> None:  # pragma: no cover - silence server logs in tests
         return
 
     def _send(self, payload: dict, code: int = 200) -> None:
@@ -134,9 +149,17 @@ class _GenerateOnlyHandler(BaseHTTPRequestHandler):
             self.state["height"] += max(1, count)
             result = {"height": self.state["height"], "mined": max(1, count)}
         elif method == "animica_status":
-            result = {"height": self.state["height"], "chainId": self.state["chainId"], "autoMine": self.state["auto"]}
+            result = {
+                "height": self.state["height"],
+                "chainId": self.state["chainId"],
+                "autoMine": self.state["auto"],
+            }
         else:
-            payload = {"jsonrpc": "2.0", "id": req.get("id"), "error": {"code": -32601, "message": "Method not found"}}
+            payload = {
+                "jsonrpc": "2.0",
+                "id": req.get("id"),
+                "error": {"code": -32601, "message": "Method not found"},
+            }
             self._send(payload)
             return
 
@@ -147,7 +170,9 @@ class _GenerateOnlyHandler(BaseHTTPRequestHandler):
 class _AnvilMineHandler(BaseHTTPRequestHandler):
     state = {"height": 0, "chainId": 0xA11CA, "auto": False}
 
-    def log_message(self, fmt: str, *args) -> None:  # pragma: no cover - silence server logs in tests
+    def log_message(
+        self, fmt: str, *args
+    ) -> None:  # pragma: no cover - silence server logs in tests
         return
 
     def _send(self, payload: dict, code: int = 200) -> None:
@@ -184,7 +209,11 @@ class _AnvilMineHandler(BaseHTTPRequestHandler):
         elif method == "eth_chainId":
             result = hex(self.state["chainId"])
         else:
-            payload = {"jsonrpc": "2.0", "id": req.get("id"), "error": {"code": -32601, "message": "Method not found"}}
+            payload = {
+                "jsonrpc": "2.0",
+                "id": req.get("id"),
+                "error": {"code": -32601, "message": "Method not found"},
+            }
             self._send(payload)
             return
 
@@ -195,7 +224,9 @@ class _AnvilMineHandler(BaseHTTPRequestHandler):
 class _MinerOnlyHandler(BaseHTTPRequestHandler):
     state = {"height": 0, "chainId": 0xA11CA, "auto": False}
 
-    def log_message(self, fmt: str, *args) -> None:  # pragma: no cover - silence server logs in tests
+    def log_message(
+        self, fmt: str, *args
+    ) -> None:  # pragma: no cover - silence server logs in tests
         return
 
     def _send(self, payload: dict, code: int = 200) -> None:
@@ -218,7 +249,11 @@ class _MinerOnlyHandler(BaseHTTPRequestHandler):
             return
 
         if method == "chain.getHead":
-            result = {"height": self.state["height"], "chainId": self.state["chainId"], "autoMine": self.state["auto"]}
+            result = {
+                "height": self.state["height"],
+                "chainId": self.state["chainId"],
+                "autoMine": self.state["auto"],
+            }
         elif method == "miner.mine":
             count = int(params[0]) if params else 1
             mined = max(1, count)
@@ -231,7 +266,11 @@ class _MinerOnlyHandler(BaseHTTPRequestHandler):
             self.state["auto"] = False
             result = False
         else:
-            payload = {"jsonrpc": "2.0", "id": req.get("id"), "error": {"code": -32601, "message": "Method not found"}}
+            payload = {
+                "jsonrpc": "2.0",
+                "id": req.get("id"),
+                "error": {"code": -32601, "message": "Method not found"},
+            }
             self._send(payload)
             return
 

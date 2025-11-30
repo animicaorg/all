@@ -32,7 +32,6 @@ from typing import Any, Dict, Optional
 # Local hash helper for deterministic defaults
 from . import hash_api
 
-
 __all__ = ["BlockEnv", "TxEnv"]
 
 
@@ -67,9 +66,9 @@ def _unhex(x: Optional[str]) -> Optional[bytes]:
 class BlockEnv:
     chain_id: int
     height: int
-    timestamp: int       # seconds since epoch, deterministic in sims
-    coinbase: bytes      # miner/validator address bytes (length flexible)
-    base_fee: int = 0    # optional; used by gas accounting if enabled
+    timestamp: int  # seconds since epoch, deterministic in sims
+    coinbase: bytes  # miner/validator address bytes (length flexible)
+    base_fee: int = 0  # optional; used by gas accounting if enabled
 
     # ---- Constructors ----
 
@@ -84,7 +83,13 @@ class BlockEnv:
         seed = f"{chain_id}:{height}".encode("utf-8")
         ts = int.from_bytes(hash_api.sha3_256(seed)[:8], "big") % (2**31)
         coinbase = hash_api.sha3_256(b"coinbase|" + seed)[:20]  # 20-byte preview
-        return BlockEnv(chain_id=chain_id, height=height, timestamp=ts, coinbase=coinbase, base_fee=0)
+        return BlockEnv(
+            chain_id=chain_id,
+            height=height,
+            timestamp=ts,
+            coinbase=coinbase,
+            base_fee=0,
+        )
 
     @staticmethod
     def from_dict(obj: Dict[str, Any]) -> "BlockEnv":
@@ -92,7 +97,14 @@ class BlockEnv:
             chain_id=_ensure_int("chain_id", int(obj.get("chain_id", 0))),
             height=_ensure_int("height", int(obj.get("height", 0))),
             timestamp=_ensure_int("timestamp", int(obj.get("timestamp", 0))),
-            coinbase=_ensure_bytes("coinbase", _unhex(obj.get("coinbase")) if isinstance(obj.get("coinbase"), str) else bytes(obj.get("coinbase", b""))),
+            coinbase=_ensure_bytes(
+                "coinbase",
+                (
+                    _unhex(obj.get("coinbase"))
+                    if isinstance(obj.get("coinbase"), str)
+                    else bytes(obj.get("coinbase", b""))
+                ),
+            ),
             base_fee=_ensure_int("base_fee", int(obj.get("base_fee", 0))),
         )
 
@@ -111,12 +123,12 @@ class BlockEnv:
 @dataclass(slots=True)
 class TxEnv:
     sender: bytes
-    to: Optional[bytes]          # None for deploy
-    value: int                   # native value to transfer
-    gas_price: int               # unit price (ignored by default in sims)
-    gas_limit: int               # soft limit for simulation
+    to: Optional[bytes]  # None for deploy
+    value: int  # native value to transfer
+    gas_price: int  # unit price (ignored by default in sims)
+    gas_limit: int  # soft limit for simulation
     nonce: int
-    tx_hash: bytes               # stable seed for PRNG & tracing
+    tx_hash: bytes  # stable seed for PRNG & tracing
 
     # ---- Constructors ----
 
@@ -145,12 +157,14 @@ class TxEnv:
         _ensure_int("nonce", nonce)
 
         if seed is None:
-            m = b"|".join([
-                sender,
-                to_b if to_b is not None else b"",
-                nonce.to_bytes(8, "big"),
-                value.to_bytes(8, "big"),
-            ])
+            m = b"|".join(
+                [
+                    sender,
+                    to_b if to_b is not None else b"",
+                    nonce.to_bytes(8, "big"),
+                    value.to_bytes(8, "big"),
+                ]
+            )
             seed = hash_api.sha3_256(b"txseed" + m)
         tx_hash = hash_api.sha3_256(b"txhash" + seed)
 
@@ -169,13 +183,27 @@ class TxEnv:
         sender = obj.get("sender")
         to = obj.get("to")
         return TxEnv(
-            sender=_ensure_bytes("sender", _unhex(sender) if isinstance(sender, str) else bytes(sender or b"")),
-            to=_unhex(to) if isinstance(to, str) else (bytes(to) if to is not None else None),
+            sender=_ensure_bytes(
+                "sender",
+                _unhex(sender) if isinstance(sender, str) else bytes(sender or b""),
+            ),
+            to=(
+                _unhex(to)
+                if isinstance(to, str)
+                else (bytes(to) if to is not None else None)
+            ),
             value=_ensure_int("value", int(obj.get("value", 0))),
             gas_price=_ensure_int("gas_price", int(obj.get("gas_price", 0))),
             gas_limit=_ensure_int("gas_limit", int(obj.get("gas_limit", 0))),
             nonce=_ensure_int("nonce", int(obj.get("nonce", 0))),
-            tx_hash=_ensure_bytes("tx_hash", _unhex(obj.get("tx_hash")) if isinstance(obj.get("tx_hash"), str) else bytes(obj.get("tx_hash", b""))),
+            tx_hash=_ensure_bytes(
+                "tx_hash",
+                (
+                    _unhex(obj.get("tx_hash"))
+                    if isinstance(obj.get("tx_hash"), str)
+                    else bytes(obj.get("tx_hash", b""))
+                ),
+            ),
         )
 
     # ---- Serialization ----

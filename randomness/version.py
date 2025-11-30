@@ -8,22 +8,26 @@ This module tries, in order:
 
 All returned versions are normalized to PEP 440.
 """
+
 from __future__ import annotations
 
-from dataclasses import dataclass
-from functools import lru_cache
-from pathlib import Path
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from typing import Optional
 
 try:  # Python 3.8+
-    from importlib.metadata import PackageNotFoundError, version as _pkg_version  # type: ignore
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as _pkg_version  # type: ignore
 except Exception:  # pragma: no cover
     PackageNotFoundError = Exception  # type: ignore
+
     def _pkg_version(_: str) -> str:  # type: ignore
         raise PackageNotFoundError  # type: ignore
+
 
 # Bump this when making intentional, source-level releases.
 BASE_VERSION = "0.1.0"
@@ -80,8 +84,8 @@ def _git_describe() -> Optional[GitInfo]:
                 "--long",
                 "--dirty",
                 "--always",
-                '--match',
-                'v*',
+                "--match",
+                "v*",
             ],
             stderr=subprocess.DEVNULL,
             text=True,

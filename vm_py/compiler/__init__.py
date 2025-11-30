@@ -13,6 +13,7 @@ This package groups the compiler pipeline:
 User-facing convenience helpers are provided here and import lazily so merely
 importing `vm_py.compiler` has no heavy side-effects.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
@@ -42,18 +43,40 @@ __all__ = [
 # ----- Lazy submodule access (PEP 562 style) ---------------------------------
 # This lets `from vm_py.compiler import ir` work without importing everything up front.
 
+
 def __getattr__(name: str) -> Any:  # pragma: no cover - thin dispatch
-    if name in {"ast_lower", "ir", "typecheck", "gas_estimator", "encode", "symbols", "builtins_allowlist"}:
+    if name in {
+        "ast_lower",
+        "ir",
+        "typecheck",
+        "gas_estimator",
+        "encode",
+        "symbols",
+        "builtins_allowlist",
+    }:
         import importlib
+
         return importlib.import_module(f"{__name__}.{name}")
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
+
 def __dir__() -> list[str]:  # pragma: no cover
-    return sorted(list(globals().keys()) + [
-        "ast_lower", "ir", "typecheck", "gas_estimator", "encode", "symbols", "builtins_allowlist"
-    ])
+    return sorted(
+        list(globals().keys())
+        + [
+            "ast_lower",
+            "ir",
+            "typecheck",
+            "gas_estimator",
+            "encode",
+            "symbols",
+            "builtins_allowlist",
+        ]
+    )
+
 
 # ----- Convenience helpers ----------------------------------------------------
+
 
 def compile_source_to_ir(source: str, *, filename: str = "<contract>"):
     """
@@ -73,19 +96,24 @@ def compile_source_to_ir(source: str, *, filename: str = "<contract>"):
     ir_mod = ast_lower.lower_to_ir(tree, filename=filename)
     return ir_mod
 
+
 def encode_ir(ir_module) -> bytes:
     """
     Encode an IR module into the canonical binary representation.
     """
     from . import encode  # type: ignore
+
     return encode.encode(ir_module)
+
 
 def decode_ir(data: bytes):
     """
     Decode bytes into an IR module (inverse of encode_ir).
     """
     from . import encode  # type: ignore
+
     return encode.decode(data)
+
 
 def compile_and_encode(source: str, *, filename: str = "<contract>") -> bytes:
     """

@@ -27,7 +27,7 @@ Notes
 """
 
 from dataclasses import dataclass
-from typing import Optional, List
+from typing import List, Optional
 
 from pq.py.registry import ALG_ID, ALG_NAME
 from pq.py.utils import rng as rng_utils
@@ -36,18 +36,30 @@ from pq.py.utils import rng as rng_utils
 try:
     # Preferred unified interface
     from pq.py.utils.hkdf import hkdf as _hkdf
-    def _hkdf_bytes(ikm: bytes, *, salt: bytes = b"", info: bytes = b"", length: int = 32) -> bytes:
+
+    def _hkdf_bytes(
+        ikm: bytes, *, salt: bytes = b"", info: bytes = b"", length: int = 32
+    ) -> bytes:
         return _hkdf(ikm, salt=salt, info=info, length=length)
+
 except Exception:  # pragma: no cover - defensive fallback
     try:
-        from pq.py.utils.hkdf import hkdf_extract, hkdf_expand  # type: ignore
-        def _hkdf_bytes(ikm: bytes, *, salt: bytes = b"", info: bytes = b"", length: int = 32) -> bytes:
+        from pq.py.utils.hkdf import hkdf_expand, hkdf_extract  # type: ignore
+
+        def _hkdf_bytes(
+            ikm: bytes, *, salt: bytes = b"", info: bytes = b"", length: int = 32
+        ) -> bytes:
             prk = hkdf_extract(salt, ikm)
             return hkdf_expand(prk, info, length)
+
     except Exception:
         # Local minimal HKDF-SHA3-256 (RFC 5869-style) fallback.
-        import hashlib, math
-        def _hkdf_bytes(ikm: bytes, *, salt: bytes = b"", info: bytes = b"", length: int = 32) -> bytes:  # pragma: no cover
+        import hashlib
+        import math
+
+        def _hkdf_bytes(
+            ikm: bytes, *, salt: bytes = b"", info: bytes = b"", length: int = 32
+        ) -> bytes:  # pragma: no cover
             if not salt:
                 salt = b"\x00" * 32
             prk = hashlib.sha3_256(salt + ikm).digest()
@@ -58,6 +70,7 @@ except Exception:  # pragma: no cover - defensive fallback
                 t = hashlib.sha3_256(t + info + bytes([i])).digest()
                 okm += t
             return okm[:length]
+
 
 __all__ = [
     "KEM_ALG_NAME",
@@ -77,6 +90,7 @@ KEM_ALG_ID: int = ALG_ID[KEM_ALG_NAME]  # canonical id from registry
 # Backend loader
 # --------------------------------------------------------------------------------------
 
+
 def _backend():
     """
     Load the Kyber768 backend module.
@@ -95,13 +109,16 @@ def _backend():
         ) from e
     for fn in ("keypair", "encapsulate", "decapsulate"):
         if not hasattr(kyb, fn):
-            raise NotImplementedError(f"Kyber768 backend missing required function: {fn}")
+            raise NotImplementedError(
+                f"Kyber768 backend missing required function: {fn}"
+            )
     return kyb
 
 
 # --------------------------------------------------------------------------------------
 # KEM primitives
 # --------------------------------------------------------------------------------------
+
 
 def keygen(seed: Optional[bytes] = None) -> tuple[bytes, bytes]:
     """
@@ -183,6 +200,7 @@ def decapsulate(
 # Key schedule (HKDF-SHA3-256)
 # --------------------------------------------------------------------------------------
 
+
 def _lp(x: bytes) -> bytes:
     """2-byte big-endian length prefix helper (length ≤ 65535 enforced by callers)."""
     if len(x) > 0xFFFF:
@@ -237,14 +255,17 @@ def derive_symmetric_keys(
 # CLI (dev helper)
 # --------------------------------------------------------------------------------------
 
+
 def _hex(b: bytes) -> str:
     return b.hex()
+
 
 def _parse_hex(arg: str) -> bytes:
     s = arg.strip().lower()
     if s.startswith("hex:"):
         s = s[4:]
     return bytes.fromhex(s.replace("_", "").replace(" ", ""))
+
 
 def _print_usage() -> None:
     print(
@@ -260,8 +281,10 @@ def _print_usage() -> None:
         "    derive AEAD keys with derive_symmetric_keys().\n"
     )
 
+
 def _main() -> None:
     import sys
+
     args = sys.argv[1:]
     if not args or args[0] in ("-h", "--help"):
         _print_usage()
@@ -296,6 +319,7 @@ def _main() -> None:
 
     _print_usage()
     sys.exit(2)
+
 
 if __name__ == "__main__":
     _main()

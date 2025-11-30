@@ -13,20 +13,21 @@ interpreter. It is intentionally simple:
 Refunds in the VM are typically minimal (most refund logic lives in the
 execution layer). We still provide the hooks for completeness.
 """
+
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Tuple, Optional
 from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import Optional, Tuple
 
 try:
     # Reuse VM error types if available.
-    from ..errors import VmError, OOG  # type: ignore
+    from ..errors import OOG, VmError  # type: ignore
 except Exception:  # pragma: no cover
-    class VmError(Exception):
-        ...
-    class OOG(VmError):
-        ...
+
+    class VmError(Exception): ...
+
+    class OOG(VmError): ...
 
 
 @dataclass(frozen=True)
@@ -89,9 +90,7 @@ class GasMeter:
         new_used = self._used + amt
         if new_used > self._limit:
             # Do not mutate state; fail deterministically.
-            raise OOG(
-                f"OutOfGas: need {amt} (used {self._used}, limit {self._limit})"
-            )
+            raise OOG(f"OutOfGas: need {amt} (used {self._used}, limit {self._limit})")
         self._used = new_used
 
     def refund(self, amount: int) -> None:
@@ -131,7 +130,9 @@ class GasMeter:
         if not isinstance(snap, GasSnapshot):
             raise VmError("Invalid gas snapshot")
         self._used = self._require_int_ge(snap.used, 0, "snapshot.used")
-        self._refund_pool = self._require_int_ge(snap.refund_pool, 0, "snapshot.refund_pool")
+        self._refund_pool = self._require_int_ge(
+            snap.refund_pool, 0, "snapshot.refund_pool"
+        )
 
     @contextmanager
     def checkpoint(self):

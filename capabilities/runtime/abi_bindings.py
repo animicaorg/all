@@ -27,6 +27,7 @@ __all__ = ["build_stdlib_bindings"]
 
 # -------- internal helpers (lazy import determinism/state cache) --------
 
+
 def _det_mod():
     """Lazy import to avoid heavy deps at import time."""
     try:
@@ -40,9 +41,14 @@ def _cache():
         sc = import_module("capabilities.runtime.state_cache")
         return sc.get_cache()  # type: ignore[attr-defined]
     except Exception:  # pragma: no cover
+
         class _NullCache:
-            def get(self, *_a, **_k): return None
-            def set(self, *_a, **_k): return None
+            def get(self, *_a, **_k):
+                return None
+
+            def set(self, *_a, **_k):
+                return None
+
         return _NullCache()
 
 
@@ -62,7 +68,13 @@ def _ensure_int(x: Any, *, name: str) -> int:
     return x
 
 
-def _apply_limits(name: str, payloads: Mapping[str, Any], *, strict: bool, limits: Optional[Mapping[str, Any]]):
+def _apply_limits(
+    name: str,
+    payloads: Mapping[str, Any],
+    *,
+    strict: bool,
+    limits: Optional[Mapping[str, Any]],
+):
     """
     Apply deterministic size/shape checks if strict=True. Falls back to simple checks
     if the determinism module isn't available yet.
@@ -94,7 +106,9 @@ def _apply_limits(name: str, payloads: Mapping[str, Any], *, strict: bool, limit
 
     def _limit(b: bytes, k: str):
         if len(b) > cap[k]:
-            raise ValueError(f"{name}: payload '{k}' exceeds limit ({len(b)} > {cap[k]})")
+            raise ValueError(
+                f"{name}: payload '{k}' exceeds limit ({len(b)} > {cap[k]})"
+            )
 
     if name == "blob_pin":
         _limit(payloads["data"], "max_blob_bytes")
@@ -112,6 +126,7 @@ def _apply_limits(name: str, payloads: Mapping[str, Any], *, strict: bool, limit
 
 
 # -------- public factory --------
+
 
 def build_stdlib_bindings(
     *,
@@ -154,7 +169,9 @@ def build_stdlib_bindings(
             circ_b: bytes | Mapping[str, Any] = bytes(circuit)
         else:
             circ_b = circuit  # assume JSON-like mapping already
-        _apply_limits("quantum_enqueue", {"circuit": circ_b}, strict=strict, limits=limits)
+        _apply_limits(
+            "quantum_enqueue", {"circuit": circ_b}, strict=strict, limits=limits
+        )
         return provider.quantum_enqueue(circ_b, shots_i, **kw)
 
     # --- read_result(task_id) -> result | None (cached within a block)
@@ -178,14 +195,27 @@ def build_stdlib_bindings(
             circuit_b = circuit
         proof_b = _to_bytes(proof)
         pub_b = _to_bytes(public_input)
-        _apply_limits("zk_verify", {"proof": proof_b, "public_input": pub_b}, strict=strict, limits=limits)
+        _apply_limits(
+            "zk_verify",
+            {"proof": proof_b, "public_input": pub_b},
+            strict=strict,
+            limits=limits,
+        )
         ok, units = provider.zk_verify(circuit_b, proof_b, pub_b)
         return {"ok": bool(ok), "units": int(units)}
 
     # --- random(n) -> bytes
     def random(n: Any) -> bytes:
         n_i = _ensure_int(n, name="n")
-        if strict and (n_i < 0 or n_i > (limits.get("max_read_bytes", 2 * 1024 * 1024) if limits else 2 * 1024 * 1024)):
+        if strict and (
+            n_i < 0
+            or n_i
+            > (
+                limits.get("max_read_bytes", 2 * 1024 * 1024)
+                if limits
+                else 2 * 1024 * 1024
+            )
+        ):
             raise ValueError(f"random: requested {n_i} bytes exceeds limit")
         return provider.random_bytes(n_i)
 

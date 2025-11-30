@@ -16,9 +16,9 @@ falls back to no-op shims so production code can run without optional deps.
 
 from __future__ import annotations
 
+import logging
 import os
 import time
-import logging
 from contextlib import contextmanager
 from typing import Iterable, Optional
 
@@ -27,14 +27,18 @@ log = logging.getLogger(__name__)
 # --- Optional Prometheus dependency -------------------------------------------------
 
 try:
-    from prometheus_client import Counter, Histogram, Gauge, start_http_server  # type: ignore
+    from prometheus_client import (Counter, Gauge, Histogram,  # type: ignore
+                                   start_http_server)
+
     _PROM_AVAILABLE = True
 except Exception:  # pragma: no cover - exercised only when prometheus_client is absent
     _PROM_AVAILABLE = False
 
     class _NoopMetric:  # minimal shim
         def __init__(self, *_, **__): ...
-        def labels(self, *_, **__): return self
+        def labels(self, *_, **__):
+            return self
+
         def inc(self, *_: float): ...
         def observe(self, *_: float): ...
         def set(self, *_: float): ...
@@ -51,13 +55,16 @@ except Exception:  # pragma: no cover - exercised only when prometheus_client is
     def start_http_server(*_, **__):  # type: ignore
         log.info("prometheus_client not available; metrics HTTP server disabled")
 
+
 # --- Namespacing --------------------------------------------------------------------
 
 _NS = "animica"
 _SUB = "capabilities"
 
+
 def _m(name: str) -> str:
     return f"{_NS}_{_SUB}_{name}"
+
 
 # --- Metric declarations ------------------------------------------------------------
 
@@ -95,7 +102,18 @@ BLOB_BYTES_TOTAL = Counter(
 # Histograms (latencies)
 # Use conservative, low-cardinality buckets (seconds).
 _LAT_BUCKETS_FAST = (
-    0.001, 0.003, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0
+    0.001,
+    0.003,
+    0.005,
+    0.01,
+    0.025,
+    0.05,
+    0.1,
+    0.25,
+    0.5,
+    1.0,
+    2.5,
+    5.0,
 )
 
 ENQUEUE_LATENCY_SECONDS = Histogram(
@@ -134,7 +152,14 @@ INFLIGHT_JOBS = Gauge(
 
 # --- Helper API ---------------------------------------------------------------------
 
-def record_enqueue(kind: str, *, accepted: bool, reason: str | None = None, latency_s: float | None = None) -> None:
+
+def record_enqueue(
+    kind: str,
+    *,
+    accepted: bool,
+    reason: str | None = None,
+    latency_s: float | None = None,
+) -> None:
     """
     Record an enqueue attempt.
 
@@ -163,7 +188,9 @@ def record_read_result(kind: str, *, hit: bool, latency_s: float | None = None) 
     """
     READ_RESULT_TOTAL.labels(outcome=("hit" if hit else "miss"), kind=kind).inc()
     if latency_s is not None:
-        READ_RESULT_LATENCY_SECONDS.labels(kind=kind).observe(max(0.0, float(latency_s)))
+        READ_RESULT_LATENCY_SECONDS.labels(kind=kind).observe(
+            max(0.0, float(latency_s))
+        )
 
 
 def record_zk_verify(scheme: str, *, ok: bool, latency_s: float | None = None) -> None:
@@ -186,7 +213,9 @@ def add_blob_bytes(n: int, *, direction: str) -> None:
     direction : str
         'in' for pin/enqueue inputs, 'out' for reads/gets.
     """
-    BLOB_BYTES_TOTAL.labels(direction=("in" if direction != "out" else "out")).inc(max(0, int(n)))
+    BLOB_BYTES_TOTAL.labels(direction=("in" if direction != "out" else "out")).inc(
+        max(0, int(n))
+    )
 
 
 @contextmanager
@@ -210,6 +239,7 @@ def time_observe(histogram: Histogram, **label_kwargs):
 
 
 _server_started = False
+
 
 def ensure_metrics_server(port: int | None = None, addr: str = "0.0.0.0") -> bool:
     """
@@ -236,7 +266,9 @@ def ensure_metrics_server(port: int | None = None, addr: str = "0.0.0.0") -> boo
         try:
             chosen_port = int(env_port)
         except ValueError:
-            log.warning("Invalid ANIMICA_METRICS_PORT=%r; metrics server disabled", env_port)
+            log.warning(
+                "Invalid ANIMICA_METRICS_PORT=%r; metrics server disabled", env_port
+            )
             chosen_port = None
     else:
         chosen_port = 9109 if _PROM_AVAILABLE else None

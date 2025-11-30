@@ -29,10 +29,9 @@ Notes
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional, Literal, Tuple, Any, Dict
-
 import hmac
+from dataclasses import dataclass
+from typing import Any, Dict, Literal, Optional, Tuple
 
 # Public algorithm names we support here (match pq registry naming)
 AlgName = Literal["dilithium3", "sphincs_shake_128s"]
@@ -59,8 +58,8 @@ def _import_pq() -> Tuple[Any, Any, Any, Any]:
     """
     try:
         # Package layout: pq/py/...
-        from pq.py import registry as pq_registry
         from pq.py import keygen as pq_keygen
+        from pq.py import registry as pq_registry
         from pq.py import sign as pq_sign
         from pq.py import verify as pq_verify
     except Exception as e:  # pragma: no cover - import-time environment specific
@@ -143,6 +142,7 @@ def _derive_address(alg_id: int, public_key: bytes, hrp: str = "anim") -> Option
     # Path A: omni_sdk.address (preferred)
     try:
         from omni_sdk import address as sdk_address  # type: ignore
+
         # Try common helper shapes
         if hasattr(sdk_address, "from_pubkey"):
             return sdk_address.from_pubkey(public_key, alg_id=alg_id, hrp=hrp)  # type: ignore[attr-defined]
@@ -156,6 +156,7 @@ def _derive_address(alg_id: int, public_key: bytes, hrp: str = "anim") -> Option
     # Path B: pq.py.address
     try:
         from pq.py import address as pq_address  # type: ignore
+
         # Common helpers in crypto libs:
         for fn_name in ("from_pubkey", "encode", "pubkey_to_address"):
             fn = getattr(pq_address, fn_name, None)
@@ -171,7 +172,9 @@ def _derive_address(alg_id: int, public_key: bytes, hrp: str = "anim") -> Option
     return None
 
 
-def _call_uniform_sign(pq_sign: Any, *, alg_name: str, sk: bytes, msg: bytes, domain: Optional[bytes]) -> bytes:
+def _call_uniform_sign(
+    pq_sign: Any, *, alg_name: str, sk: bytes, msg: bytes, domain: Optional[bytes]
+) -> bytes:
     """
     Call pq.py.sign.sign with a variety of tolerated signatures for resilience across
     minor library changes.
@@ -202,11 +205,19 @@ def _call_uniform_sign(pq_sign: Any, *, alg_name: str, sk: bytes, msg: bytes, do
             return pq_sign.sign(*args)  # type: ignore[misc]
         except TypeError:
             continue
-    raise RuntimeError("pq.sign.sign API not recognized; please update the SDK or pq module.")
+    raise RuntimeError(
+        "pq.sign.sign API not recognized; please update the SDK or pq module."
+    )
 
 
 def _call_uniform_verify(
-    pq_verify: Any, *, alg_name: str, pk: bytes, msg: bytes, sig: bytes, domain: Optional[bytes]
+    pq_verify: Any,
+    *,
+    alg_name: str,
+    pk: bytes,
+    msg: bytes,
+    sig: bytes,
+    domain: Optional[bytes],
 ) -> bool:
     # Preferred keyword form
     try:
@@ -235,7 +246,9 @@ def _call_uniform_verify(
             return bool(pq_verify.verify(*args))  # type: ignore[misc]
         except TypeError:
             continue
-    raise RuntimeError("pq.verify.verify API not recognized; please update the SDK or pq module.")
+    raise RuntimeError(
+        "pq.verify.verify API not recognized; please update the SDK or pq module."
+    )
 
 
 def _uniform_keygen(alg_name: AlgName, seed: Optional[bytes]) -> Tuple[bytes, bytes]:
@@ -261,7 +274,9 @@ def _uniform_keygen(alg_name: AlgName, seed: Optional[bytes]) -> Tuple[bytes, by
         if callable(fn):
             try:
                 sk, pk = fn(**kwargs)  # type: ignore[misc]
-                if isinstance(sk, (bytes, bytearray)) and isinstance(pk, (bytes, bytearray)):
+                if isinstance(sk, (bytes, bytearray)) and isinstance(
+                    pk, (bytes, bytearray)
+                ):
                     return bytes(sk), bytes(pk)
             except TypeError:
                 continue
@@ -273,12 +288,16 @@ def _uniform_keygen(alg_name: AlgName, seed: Optional[bytes]) -> Tuple[bytes, by
             for args in ((alg_name, seed), (alg_name,), (None, alg_name)):
                 try:
                     sk, pk = fn(*[a for a in args if a is not None])  # type: ignore[misc]
-                    if isinstance(sk, (bytes, bytearray)) and isinstance(pk, (bytes, bytearray)):
+                    if isinstance(sk, (bytes, bytearray)) and isinstance(
+                        pk, (bytes, bytearray)
+                    ):
                         return bytes(sk), bytes(pk)
                 except TypeError:
                     continue
 
-    raise RuntimeError("pq.keygen API not recognized; please update the SDK or pq module.")
+    raise RuntimeError(
+        "pq.keygen API not recognized; please update the SDK or pq module."
+    )
 
 
 # --- Main signer -------------------------------------------------------------
@@ -295,7 +314,9 @@ class PQSigner:
         - create_signer_from_keypair(...) convenience
     """
 
-    def __init__(self, *, alg_name: AlgName, secret_key: bytes, public_key: bytes) -> None:
+    def __init__(
+        self, *, alg_name: AlgName, secret_key: bytes, public_key: bytes
+    ) -> None:
         self._alg_name: AlgName = _normalize_alg_name(alg_name)
         self._sk: bytes = bytes(secret_key)
         self._pk: bytes = bytes(public_key)
@@ -325,7 +346,9 @@ class PQSigner:
         return cls(alg_name=name, secret_key=sk, public_key=pk)
 
     @classmethod
-    def from_keypair(cls, alg_name: str, secret_key: bytes, public_key: bytes) -> "PQSigner":
+    def from_keypair(
+        cls, alg_name: str, secret_key: bytes, public_key: bytes
+    ) -> "PQSigner":
         """
         Construct a signer from an existing keypair.
         """
@@ -357,7 +380,10 @@ class PQSigner:
 
     def info(self) -> SignerInfo:
         return SignerInfo(
-            alg_name=self._alg_name, alg_id=self._alg_id, public_key=self._pk, address=self._address
+            alg_name=self._alg_name,
+            alg_id=self._alg_id,
+            public_key=self._pk,
+            address=self._address,
         )
 
     # ---- Operations ----
@@ -380,16 +406,25 @@ class PQSigner:
             Raw signature bytes for the algorithm.
         """
         _, _, pq_sign, _ = _import_pq()
-        return _call_uniform_sign(pq_sign, alg_name=self._alg_name, sk=self._sk, msg=message, domain=domain)
+        return _call_uniform_sign(
+            pq_sign, alg_name=self._alg_name, sk=self._sk, msg=message, domain=domain
+        )
 
-    def verify(self, message: bytes, signature: bytes, *, domain: Optional[bytes] = None) -> bool:
+    def verify(
+        self, message: bytes, signature: bytes, *, domain: Optional[bytes] = None
+    ) -> bool:
         """
         Verify a signature over a message with optional domain separation.
         """
         _, _, _, pq_verify = _import_pq()
         try:
             ok = _call_uniform_verify(
-                pq_verify, alg_name=self._alg_name, pk=self._pk, msg=message, sig=signature, domain=domain
+                pq_verify,
+                alg_name=self._alg_name,
+                pk=self._pk,
+                msg=message,
+                sig=signature,
+                domain=domain,
             )
             # Use constant-time compare if verify returns a recomputed sig (some libs do),
             # otherwise accept boolean True from the verifier.
@@ -410,7 +445,9 @@ def create_signer_from_seed(alg_name: str, seed: Optional[bytes] = None) -> PQSi
     return PQSigner.from_seed(alg_name, seed)
 
 
-def create_signer_from_keypair(alg_name: str, secret_key: bytes, public_key: bytes) -> PQSigner:
+def create_signer_from_keypair(
+    alg_name: str, secret_key: bytes, public_key: bytes
+) -> PQSigner:
     """
     Convenience factory that forwards to PQSigner.from_keypair with name normalization.
     """
@@ -427,6 +464,8 @@ if __name__ == "__main__":  # pragma: no cover - lightweight sanity check
             msg = b"hello animica"
             sig = s.sign(msg, domain=None)
             ok = s.verify(msg, sig, domain=None)
-            print(f"[{name}] addr={s.address!r} verify={ok} pk_len={len(s.public_key)} sig_len={len(sig)}")
+            print(
+                f"[{name}] addr={s.address!r} verify={ok} pk_len={len(s.public_key)} sig_len={len(sig)}"
+            )
         except Exception as e:
             print(f"[{name}] FAILED: {e}")

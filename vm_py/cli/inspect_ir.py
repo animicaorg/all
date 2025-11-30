@@ -33,18 +33,43 @@ from typing import Any, Dict, Iterable, Tuple, Union
 
 # ---------------------- argparse ---------------------- #
 
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    p = argparse.ArgumentParser(prog="omni-vm-inspect-ir", description="Inspect Animica VM IR and report a static gas estimate.")
+    p = argparse.ArgumentParser(
+        prog="omni-vm-inspect-ir",
+        description="Inspect Animica VM IR and report a static gas estimate.",
+    )
     g = p.add_mutually_exclusive_group(required=True)
     g.add_argument("--ir", help="Path to a compiled IR bytes file")
     g.add_argument("--manifest", help="Path to a contract manifest.json (will compile)")
     g.add_argument("--source", help="Path to a contract .py source file (will compile)")
 
-    p.add_argument("--format", choices=("text", "json"), default="text", help="Output format (default: text)")
-    p.add_argument("--max-depth", type=int, default=4, help="Max depth for pretty IR print (default: 4)")
-    p.add_argument("--max-bytes", type=int, default=64, help="Max bytes to show inline for byte blobs (default: 64)")
-    p.add_argument("--show-ir-bytes", action="store_true", help="Include raw IR bytes (hex, truncated) in output")
-    p.add_argument("--quiet", action="store_true", help="Suppress non-essential logs to stderr")
+    p.add_argument(
+        "--format",
+        choices=("text", "json"),
+        default="text",
+        help="Output format (default: text)",
+    )
+    p.add_argument(
+        "--max-depth",
+        type=int,
+        default=4,
+        help="Max depth for pretty IR print (default: 4)",
+    )
+    p.add_argument(
+        "--max-bytes",
+        type=int,
+        default=64,
+        help="Max bytes to show inline for byte blobs (default: 64)",
+    )
+    p.add_argument(
+        "--show-ir-bytes",
+        action="store_true",
+        help="Include raw IR bytes (hex, truncated) in output",
+    )
+    p.add_argument(
+        "--quiet", action="store_true", help="Suppress non-essential logs to stderr"
+    )
     return p.parse_args(argv)
 
 
@@ -52,9 +77,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 _CTX: Dict[str, Any] = {}
 
+
 def eprint(*a: Any, **k: Any) -> None:
     if not _CTX.get("quiet", False):
         print(*a, file=sys.stderr, **k)
+
 
 def _hex(b: Union[bytes, bytearray], limit: int | None = None) -> str:
     hx = bytes(b).hex()
@@ -62,8 +89,10 @@ def _hex(b: Union[bytes, bytearray], limit: int | None = None) -> str:
         return f"0x{hx[:2*limit]}…(+{len(hx)//2 - limit}B)"
     return "0x" + hx
 
+
 def _manifest_dir(path: str) -> str:
     return os.path.dirname(os.path.abspath(path)) or "."
+
 
 def _safe_jsonable(obj: Any, *, max_bytes: int, depth: int) -> Any:
     """
@@ -80,28 +109,44 @@ def _safe_jsonable(obj: Any, *, max_bytes: int, depth: int) -> Any:
         return _hex(obj, limit=max_bytes)
     if is_dataclass(obj):
         try:
-            return {k: _safe_jsonable(v, max_bytes=max_bytes, depth=depth - 1) for k, v in asdict(obj).items()}
+            return {
+                k: _safe_jsonable(v, max_bytes=max_bytes, depth=depth - 1)
+                for k, v in asdict(obj).items()
+            }
         except Exception:
             # asdict can recurse; fallback to vars
-            return {k: _safe_jsonable(v, max_bytes=max_bytes, depth=depth - 1) for k, v in vars(obj).items()}
+            return {
+                k: _safe_jsonable(v, max_bytes=max_bytes, depth=depth - 1)
+                for k, v in vars(obj).items()
+            }
     if isinstance(obj, dict):
-        return {str(k): _safe_jsonable(v, max_bytes=max_bytes, depth=depth - 1) for k, v in obj.items()}
+        return {
+            str(k): _safe_jsonable(v, max_bytes=max_bytes, depth=depth - 1)
+            for k, v in obj.items()
+        }
     if isinstance(obj, (list, tuple)):
         return [_safe_jsonable(x, max_bytes=max_bytes, depth=depth - 1) for x in obj]
     # Namedtuple / objects with __dict__
     if hasattr(obj, "_asdict"):
         try:
             d = obj._asdict()  # type: ignore[attr-defined]
-            return {k: _safe_jsonable(v, max_bytes=max_bytes, depth=depth - 1) for k, v in d.items()}
+            return {
+                k: _safe_jsonable(v, max_bytes=max_bytes, depth=depth - 1)
+                for k, v in d.items()
+            }
         except Exception:
             pass
     if hasattr(obj, "__dict__"):
-        return {k: _safe_jsonable(v, max_bytes=max_bytes, depth=depth - 1) for k, v in vars(obj).items()}
+        return {
+            k: _safe_jsonable(v, max_bytes=max_bytes, depth=depth - 1)
+            for k, v in vars(obj).items()
+        }
     # Fallback to repr
     return repr(obj)
 
 
 # ---------------------- compile paths ---------------------- #
+
 
 def compile_from_manifest(manifest_path: str) -> Tuple[bytes, Dict[str, Any]]:
     """
@@ -109,19 +154,29 @@ def compile_from_manifest(manifest_path: str) -> Tuple[bytes, Dict[str, Any]]:
     Returns (ir_bytes, meta)
     """
     import json as _json
+
     with open(manifest_path, "r", encoding="utf-8") as f:
         manifest = _json.load(f)
 
     # Try runtime.loader helpers
     try:
         from vm_py.runtime import loader
-        for name in ("compile_manifest", "compile_from_manifest", "build_ir_from_manifest"):
+
+        for name in (
+            "compile_manifest",
+            "compile_from_manifest",
+            "build_ir_from_manifest",
+        ):
             fn = getattr(loader, name, None)
             if callable(fn):
                 out = fn(manifest)
                 if isinstance(out, (bytes, bytearray)):
                     return bytes(out), {"source": "loader.compile_manifest"}
-                if isinstance(out, tuple) and out and isinstance(out[0], (bytes, bytearray)):
+                if (
+                    isinstance(out, tuple)
+                    and out
+                    and isinstance(out[0], (bytes, bytearray))
+                ):
                     meta = {}
                     if len(out) > 1 and isinstance(out[1], dict):
                         meta = dict(out[1])
@@ -132,7 +187,9 @@ def compile_from_manifest(manifest_path: str) -> Tuple[bytes, Dict[str, Any]]:
     # Else compile via source path from manifest
     src_rel = manifest.get("source") or manifest.get("code") or manifest.get("path")
     if not src_rel:
-        raise RuntimeError("Manifest missing 'source' field and loader.compile_manifest not available.")
+        raise RuntimeError(
+            "Manifest missing 'source' field and loader.compile_manifest not available."
+        )
     src_path = os.path.join(_manifest_dir(manifest_path), src_rel)
     return compile_from_source(src_path)
 
@@ -144,13 +201,18 @@ def compile_from_source(source_path: str) -> Tuple[bytes, Dict[str, Any]]:
     # Prefer runtime.loader.compile_source if available
     try:
         from vm_py.runtime import loader
+
         for name in ("compile_source", "compile_text"):
             fn = getattr(loader, name, None)
             if callable(fn):
                 out = fn(src) if fn.__code__.co_argcount <= 1 else fn(src, filename=source_path)  # type: ignore[misc]
                 if isinstance(out, (bytes, bytearray)):
                     return bytes(out), {"source": name}
-                if isinstance(out, tuple) and out and isinstance(out[0], (bytes, bytearray)):
+                if (
+                    isinstance(out, tuple)
+                    and out
+                    and isinstance(out[0], (bytes, bytearray))
+                ):
                     meta = {}
                     if len(out) > 1 and isinstance(out[1], dict):
                         meta = dict(out[1])
@@ -163,6 +225,7 @@ def compile_from_source(source_path: str) -> Tuple[bytes, Dict[str, Any]]:
     # Fallback: lower pipeline
     import ast
     from importlib import import_module
+
     lower = import_module("vm_py.compiler.ast_lower")
     lower_fn = getattr(lower, "lower", None)
     if not callable(lower_fn):
@@ -179,8 +242,10 @@ def compile_from_source(source_path: str) -> Tuple[bytes, Dict[str, Any]]:
 
 # ---------------------- encode/decode ---------------------- #
 
+
 def encode_ir_object(ir_obj: Any) -> bytes:
     from importlib import import_module
+
     enc = import_module("vm_py.compiler.encode")
     for name in ("dumps", "encode", "encode_module", "to_bytes"):
         fn = getattr(enc, name, None)
@@ -188,12 +253,18 @@ def encode_ir_object(ir_obj: Any) -> bytes:
             out = fn(ir_obj)  # type: ignore[misc]
             if isinstance(out, (bytes, bytearray)):
                 return bytes(out)
-            if isinstance(out, tuple) and out and isinstance(out[0], (bytes, bytearray)):
+            if (
+                isinstance(out, tuple)
+                and out
+                and isinstance(out[0], (bytes, bytearray))
+            ):
                 return bytes(out[0])
     raise RuntimeError("Unable to encode IR object to bytes (vm_py.compiler.encode)")
 
+
 def decode_ir_bytes(ir_bytes: bytes) -> Any:
     from importlib import import_module
+
     enc = import_module("vm_py.compiler.encode")
     for name in ("loads", "decode", "decode_module", "from_bytes"):
         fn = getattr(enc, name, None)
@@ -208,12 +279,14 @@ def decode_ir_bytes(ir_bytes: bytes) -> Any:
 
 # ---------------------- stats & gas ---------------------- #
 
+
 def estimate_static_gas(ir_bytes: bytes, ir_obj: Any | None) -> int | None:
     """
     Try various estimator function names. Returns an integer upper bound (or None if unavailable).
     """
     try:
         from importlib import import_module
+
         est = import_module("vm_py.compiler.gas_estimator")
         candidates = [
             ("estimate", (ir_obj,) if ir_obj is not None else (ir_bytes,)),
@@ -228,11 +301,16 @@ def estimate_static_gas(ir_bytes: bytes, ir_obj: Any | None) -> int | None:
                 val = fn(*args)  # type: ignore[misc]
                 if isinstance(val, int):
                     return val
-                if isinstance(val, dict) and "gas_upper_bound" in val and isinstance(val["gas_upper_bound"], int):
+                if (
+                    isinstance(val, dict)
+                    and "gas_upper_bound" in val
+                    and isinstance(val["gas_upper_bound"], int)
+                ):
                     return val["gas_upper_bound"]
     except Exception as e:
         eprint(f"[inspect] static gas estimate failed: {e}")
     return None
+
 
 def count_blocks_and_instrs(ir_obj: Any | None) -> Tuple[int | None, int | None]:
     """
@@ -245,7 +323,8 @@ def count_blocks_and_instrs(ir_obj: Any | None) -> Tuple[int | None, int | None]
         return None, None
 
     def is_instr(x: Any) -> bool:
-        if x is None: return False
+        if x is None:
+            return False
         if isinstance(x, dict) and "op" in x:
             return True
         # dataclass/object with 'op' attribute
@@ -263,10 +342,13 @@ def count_blocks_and_instrs(ir_obj: Any | None) -> Tuple[int | None, int | None]
         return False
 
     def children(x: Any) -> Iterable[Any]:
-        if x is None: return ()
-        if isinstance(x, dict): return x.values()
-        if isinstance(x, (list, tuple)): return x
-        if is_dataclass(x): 
+        if x is None:
+            return ()
+        if isinstance(x, dict):
+            return x.values()
+        if isinstance(x, (list, tuple)):
+            return x
+        if is_dataclass(x):
             try:
                 return vars(x).values()
             except Exception:
@@ -314,6 +396,7 @@ def count_blocks_and_instrs(ir_obj: Any | None) -> Tuple[int | None, int | None]
 
     # Generic recursive scan
     seen: set[int] = set()
+
     def walk(x: Any) -> None:
         nonlocal instrs, blocks
         if x is None:
@@ -330,7 +413,9 @@ def count_blocks_and_instrs(ir_obj: Any | None) -> Tuple[int | None, int | None]
                 walk(y)
             return
         if isinstance(x, dict):
-            if x.get("kind") == "block" or ("instrs" in x and isinstance(x["instrs"], list)):
+            if x.get("kind") == "block" or (
+                "instrs" in x and isinstance(x["instrs"], list)
+            ):
                 blocks += 1
             for y in x.values():
                 if is_instr(y):
@@ -354,6 +439,7 @@ def count_blocks_and_instrs(ir_obj: Any | None) -> Tuple[int | None, int | None]
 
 # ---------------------- main ---------------------- #
 
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     _CTX["quiet"] = bool(args.quiet)
@@ -366,10 +452,18 @@ def main(argv: list[str] | None = None) -> int:
         meta_compile = {"compiled_from": "file", "path": os.path.abspath(args.ir)}
     elif args.manifest:
         ir_bytes, meta = compile_from_manifest(args.manifest)
-        meta_compile = {"compiled_from": "manifest", "path": os.path.abspath(args.manifest), **meta}
+        meta_compile = {
+            "compiled_from": "manifest",
+            "path": os.path.abspath(args.manifest),
+            **meta,
+        }
     else:
         ir_bytes, meta = compile_from_source(args.source)
-        meta_compile = {"compiled_from": "source", "path": os.path.abspath(args.source), **meta}
+        meta_compile = {
+            "compiled_from": "source",
+            "path": os.path.abspath(args.source),
+            **meta,
+        }
 
     code_hash = "0x" + sha3_256(ir_bytes).hexdigest()
     size_bytes = len(ir_bytes)
@@ -394,7 +488,9 @@ def main(argv: list[str] | None = None) -> int:
         out["ir_bytes"] = _hex(ir_bytes, limit=args.max_bytes)
 
     if ir_obj is not None:
-        out["ir"] = _safe_jsonable(ir_obj, max_bytes=args.max_bytes, depth=args.max_depth)
+        out["ir"] = _safe_jsonable(
+            ir_obj, max_bytes=args.max_bytes, depth=args.max_depth
+        )
     else:
         out["ir"] = "(decoder not available)"
 
@@ -410,7 +506,9 @@ def main(argv: list[str] | None = None) -> int:
         if blocks is not None or instrs is not None:
             print(f"  blocks       : {blocks if blocks is not None else '?'}")
             print(f"  instructions : {instrs if instrs is not None else '?'}")
-        print(f"  compiled from: {meta_compile.get('compiled_from')} ({meta_compile.get('path')})")
+        print(
+            f"  compiled from: {meta_compile.get('compiled_from')} ({meta_compile.get('path')})"
+        )
         if args.show_ir_bytes:
             print(f"  ir bytes     : {out['ir_bytes']}")
         print("\nPretty IR (truncated):")

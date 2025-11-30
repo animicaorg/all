@@ -6,15 +6,17 @@ development HMAC-based shim used for local testing.
 
 Production: replace the fallback with a native, audited precompile that performs real PQ verification.
 """
+
 from __future__ import annotations
 
-import hmac
 import hashlib
+import hmac
 import typing as t
 
 try:
     # Optional prototype precompile wrapper that calls python-oqs if installed
     from vm_py.precompiles import pq_precompile  # type: ignore
+
     _HAS_PRECOMPILE = True
 except Exception:
     pq_precompile = None  # type: ignore
@@ -27,7 +29,12 @@ def _to_bytes(x: t.Union[bytes, str]) -> bytes:
     return bytes.fromhex(x)
 
 
-def verify(pubkey_hex: bytes | str, message: bytes, sig_hex: bytes | str, scheme: str = "Dilithium3") -> bool:
+def verify(
+    pubkey_hex: bytes | str,
+    message: bytes,
+    sig_hex: bytes | str,
+    scheme: str = "Dilithium3",
+) -> bool:
     """Verify a message signed by a PQ scheme.
 
     Tries the native precompile first; falls back to HMAC shim for development.
@@ -36,12 +43,16 @@ def verify(pubkey_hex: bytes | str, message: bytes, sig_hex: bytes | str, scheme
     try:
         pubkey = _to_bytes(pubkey_hex)
     except Exception:
-        pubkey = pubkey_hex if isinstance(pubkey_hex, bytes) else bytes(str(pubkey_hex), 'utf8')
+        pubkey = (
+            pubkey_hex
+            if isinstance(pubkey_hex, bytes)
+            else bytes(str(pubkey_hex), "utf8")
+        )
 
     try:
         sig = _to_bytes(sig_hex)
     except Exception:
-        sig = sig_hex if isinstance(sig_hex, bytes) else bytes(str(sig_hex), 'utf8')
+        sig = sig_hex if isinstance(sig_hex, bytes) else bytes(str(sig_hex), "utf8")
 
     # Try native/prototype precompile
     if _HAS_PRECOMPILE:

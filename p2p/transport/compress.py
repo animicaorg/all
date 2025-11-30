@@ -43,12 +43,11 @@ This module is intentionally dependency-light; all optional modules are loaded
 gracefully. You can replace or extend codecs later without changing callers.
 """
 
-from dataclasses import dataclass
-from typing import Dict, Iterator, List, Optional, Tuple, Union
-
 import io
 import struct
 import zlib
+from dataclasses import dataclass
+from typing import Dict, Iterator, List, Optional, Tuple, Union
 
 # ------------------------------ Optional deps --------------------------------
 
@@ -57,12 +56,14 @@ _has_snappy = False
 
 try:
     import zstandard as _zstd  # type: ignore
+
     _has_zstd = True
 except Exception:
     _zstd = None  # type: ignore
 
 try:
     import snappy as _snappy  # type: ignore
+
     _has_snappy = True
 except Exception:
     _snappy = None  # type: ignore
@@ -156,7 +157,9 @@ class Frame:
     crc32: Optional[int]  # uncompressed CRC32 if present
 
     def codec_name(self) -> str:
-        return CODEC_ID_TO_NAME.get(self.header.codec_id, f"unknown({self.header.codec_id})")
+        return CODEC_ID_TO_NAME.get(
+            self.header.codec_id, f"unknown({self.header.codec_id})"
+        )
 
 
 # ------------------------------- Codec utils ---------------------------------
@@ -186,7 +189,9 @@ def _check_codec_available(name: str) -> None:
     if name == "zstd" and not _has_zstd:
         raise CompressionError("zstd requested but 'zstandard' module not available")
     if name == "snappy" and not _has_snappy:
-        raise CompressionError("snappy requested but 'python-snappy' module not available")
+        raise CompressionError(
+            "snappy requested but 'python-snappy' module not available"
+        )
     if name not in CODEC_NAME_TO_ID:
         raise CompressionError(f"unknown codec: {name}")
 
@@ -208,16 +213,24 @@ def _decompress(data: bytes, codec_id: int, expected_raw_len: Optional[int]) -> 
         raw = data
     elif codec_id == CODEC_ZSTD:
         if not _has_zstd:
-            raise DecompressionError("zstd frame received but 'zstandard' not available")
+            raise DecompressionError(
+                "zstd frame received but 'zstandard' not available"
+            )
         d = _zstd.ZstdDecompressor()  # type: ignore[attr-defined]
         raw = d.decompress(data, max_output_size=expected_raw_len or 0)
     elif codec_id == CODEC_SNAPPY:
         if not _has_snappy:
-            raise DecompressionError("snappy frame received but 'python-snappy' not available")
+            raise DecompressionError(
+                "snappy frame received but 'python-snappy' not available"
+            )
         raw = _snappy.decompress(data)  # type: ignore[attr-defined]
     else:
         raise DecompressionError(f"unknown codec id {codec_id}")
-    if expected_raw_len is not None and expected_raw_len >= 0 and len(raw) != expected_raw_len:
+    if (
+        expected_raw_len is not None
+        and expected_raw_len >= 0
+        and len(raw) != expected_raw_len
+    ):
         # Don't hard-fail: many codecs may not preserve exact RLEN hints. Make it a soft check.
         # We still warn via exception type for callers that choose to enforce.
         pass
@@ -347,7 +360,9 @@ class Compressor:
         self._buf = bytearray()
 
     def write(self, chunk: Union[bytes, bytearray, memoryview]) -> int:
-        frame = compress_frame(chunk, codec=self.codec, level=self.level, checksum=self.checksum)
+        frame = compress_frame(
+            chunk, codec=self.codec, level=self.level, checksum=self.checksum
+        )
         if self._sink is not None:
             self._sink.write(frame)
         else:
@@ -356,7 +371,9 @@ class Compressor:
 
     def getvalue(self) -> bytes:
         if self._sink is not None:
-            raise RuntimeError("Compressor with sink does not buffer; use the sink directly")
+            raise RuntimeError(
+                "Compressor with sink does not buffer; use the sink directly"
+            )
         return bytes(self._buf)
 
 
@@ -449,4 +466,6 @@ if __name__ == "__main__":
         dec.feed(stream)
         for i, raw in enumerate(dec, 1):
             total += len(raw)
-        print(f"[ok] {codec}: {len(stream)} bytes framed, {total} bytes raw across {len(payloads)} frames")
+        print(
+            f"[ok] {codec}: {len(stream)} bytes framed, {total} bytes raw across {len(payloads)} frames"
+        )

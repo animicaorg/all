@@ -67,11 +67,11 @@ Notes
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional, Protocol, Mapping, Any, Dict
 import hashlib
 import json
 import logging
+from dataclasses import dataclass
+from typing import Any, Dict, Mapping, Optional, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -80,8 +80,10 @@ logger = logging.getLogger(__name__)
 # Minimal KV protocol & helpers
 # -----------------------------
 
+
 class MetaKV(Protocol):
     """Tiny KV protocol expected from the core block DB layer."""
+
     def get(self, key: bytes) -> Optional[bytes]: ...
     def put(self, key: bytes, value: bytes) -> None: ...
 
@@ -118,6 +120,7 @@ def _loads_stable(data: bytes) -> Dict[str, Any]:
 # -----------------------------
 # Public API
 # -----------------------------
+
 
 @dataclass(frozen=True)
 class PointerRecord:
@@ -219,7 +222,10 @@ class RandomnessCoreDB:
             if not overwrite:
                 # Idempotent accept if identical; otherwise, refuse.
                 if prev == new_rec:
-                    logger.debug("Randomness pointer already recorded (idempotent): height=%s", height)
+                    logger.debug(
+                        "Randomness pointer already recorded (idempotent): height=%s",
+                        height,
+                    )
                     return prev
                 raise ValueError(
                     f"randomness pointer already exists at height {height} and differs; "
@@ -227,13 +233,19 @@ class RandomnessCoreDB:
                 )
             logger.warning(
                 "Overwriting randomness pointer at height=%s (prev=%s, new=%s)",
-                height, prev, new_rec
+                height,
+                prev,
+                new_rec,
             )
 
         self._kv.put(key, new_rec.to_json_bytes())
         logger.info(
             "Recorded randomness pointer: height=%s round=%s vdf_ok=%s commits=%s reveals=%s",
-            height, round_id, vdf_verified, commit_count, reveal_count
+            height,
+            round_id,
+            vdf_verified,
+            commit_count,
+            reveal_count,
         )
         return new_rec
 
@@ -247,8 +259,10 @@ class RandomnessCoreDB:
 # In-memory KV (for testing / CLI tools)
 # -----------------------------
 
+
 class _DictKV(MetaKV):
     """Simple in-memory KV useful for unit tests or tooling."""
+
     def __init__(self) -> None:
         self._d: dict[bytes, bytes] = {}
 

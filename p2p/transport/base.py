@@ -4,13 +4,7 @@ import abc
 import asyncio
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum, auto
-from typing import (
-    AsyncIterator,
-    Optional,
-    Protocol,
-    Union,
-    runtime_checkable,
-)
+from typing import AsyncIterator, Optional, Protocol, Union, runtime_checkable
 
 __all__ = [
     "Transport",
@@ -30,6 +24,7 @@ __all__ = [
 # --------------------------- #
 # Errors & small base types   #
 # --------------------------- #
+
 
 class TransportError(Exception):
     """Base class for transport-level errors."""
@@ -53,6 +48,7 @@ MAX_FRAME_DEFAULT = 1 << 20  # 1 MiB sane default
 
 class CloseCode(IntEnum):
     """Reason codes for orderly shutdown; carried as hints across layers."""
+
     NORMAL = 1000
     GOING_AWAY = 1001
     PROTOCOL_ERROR = 1002
@@ -72,6 +68,7 @@ class ListenConfig:
     max_frame_bytes: maximum payload size per frame (unencrypted).
     backlog:  OS listen backlog (if applicable).
     """
+
     addr: str
     max_frame_bytes: int = MAX_FRAME_DEFAULT
     backlog: int = 128
@@ -82,8 +79,9 @@ class ConnInfo:
     """
     Metadata about a live connection after handshake.
     """
-    peer_id: Optional[bytes] = None           # p2p.crypto.peer_id bytes (sha3-256(...))
-    alpn: Optional[str] = None                # "animica/1" for QUIC/TLS-based transports
+
+    peer_id: Optional[bytes] = None  # p2p.crypto.peer_id bytes (sha3-256(...))
+    alpn: Optional[str] = None  # "animica/1" for QUIC/TLS-based transports
     local_addr: Optional[str] = None
     remote_addr: Optional[str] = None
     is_outbound: bool = False
@@ -96,6 +94,7 @@ class ConnInfo:
 # --------------------------- #
 # Abstract streaming API      #
 # --------------------------- #
+
 
 class Stream(abc.ABC):
     """

@@ -55,7 +55,9 @@ class RenderAction:
     src: Path
     dst: Path
     will_write: bool
-    reason: str  # "create", "overwrite", "skip-exists", "skip-ignored", "noop-binary", etc.
+    reason: (
+        str  # "create", "overwrite", "skip-exists", "skip-ignored", "noop-binary", etc.
+    )
 
 
 @dataclass(frozen=True)
@@ -83,7 +85,13 @@ class TemplateEngine:
         self,
         templates_root: Path | str = "templates",
         *,
-        ignore_dirs: Sequence[str] = (".git", ".svn", ".hg", "node_modules", "__pycache__"),
+        ignore_dirs: Sequence[str] = (
+            ".git",
+            ".svn",
+            ".hg",
+            "node_modules",
+            "__pycache__",
+        ),
         text_file_extensions: Sequence[str] = (
             ".md",
             ".txt",
@@ -158,7 +166,9 @@ class TemplateEngine:
             if cand.exists():
                 return cand
 
-        raise FileNotFoundError(f"Template not found: {spec!r} (checked path and registry)")
+        raise FileNotFoundError(
+            f"Template not found: {spec!r} (checked path and registry)"
+        )
 
     def load_template_defaults(self, template_dir: Path) -> Dict[str, str]:
         defaults: Dict[str, str] = {}
@@ -168,7 +178,9 @@ class TemplateEngine:
                 data = json.loads(f.read_text(encoding="utf-8"))
                 if isinstance(data, dict):
                     for k, v in data.items():
-                        if isinstance(k, str) and isinstance(v, (str, int, float, bool)):
+                        if isinstance(k, str) and isinstance(
+                            v, (str, int, float, bool)
+                        ):
                             defaults[k] = str(v)
             except Exception:
                 pass
@@ -232,7 +244,9 @@ class TemplateEngine:
         template_dir = self.resolve_template_path(template_spec)
         out = Path(out_dir).resolve()
         vars_all = {}
-        vars_all.update({k: str(v) for k, v in self.load_template_defaults(template_dir).items()})
+        vars_all.update(
+            {k: str(v) for k, v in self.load_template_defaults(template_dir).items()}
+        )
         if variables:
             vars_all.update({k: _coerce_var(v) for k, v in variables.items()})
         self.validate_variables(vars_all)
@@ -255,7 +269,9 @@ class TemplateEngine:
                 continue
 
             # substitute in relative path (each part)
-            dst_rel = Path("/".join(substitute_placeholders(part, vars_all) for part in rel.parts))
+            dst_rel = Path(
+                "/".join(substitute_placeholders(part, vars_all) for part in rel.parts)
+            )
             dst = out / dst_rel
 
             if dst.exists() and not overwrite:
@@ -266,7 +282,9 @@ class TemplateEngine:
             reason = "create" if not dst.exists() else "overwrite"
             actions.append(RenderAction(src, dst, True, reason))
 
-        return RenderPlan(template_root=template_dir, out_dir=out, actions=tuple(actions))
+        return RenderPlan(
+            template_root=template_dir, out_dir=out, actions=tuple(actions)
+        )
 
     def render(
         self,
@@ -299,7 +317,12 @@ class TemplateEngine:
             if self._is_text_like(act.src):
                 try:
                     content = act.src.read_text(encoding="utf-8")
-                    rendered = substitute_placeholders(content, _vars_to_str_map(variables, self.load_template_defaults(plan.template_root)))
+                    rendered = substitute_placeholders(
+                        content,
+                        _vars_to_str_map(
+                            variables, self.load_template_defaults(plan.template_root)
+                        ),
+                    )
                     act.dst.write_text(rendered, encoding="utf-8", newline="\n")
                     if verbose:
                         print(f"[WRITE] {act.reason:12}  {act.dst} (text)")
@@ -358,6 +381,7 @@ class TemplateEngine:
 
 # ---------- Standalone helpers ----------------------------------------------
 
+
 def substitute_placeholders(text: str, variables: Mapping[str, object]) -> str:
     """
     Replace {{var}}, ${var}, and __VAR__ placeholders with stringified values.
@@ -380,6 +404,7 @@ def substitute_placeholders(text: str, variables: Mapping[str, object]) -> str:
 
     text = RE_MUSTACHE.sub(_mustache_sub, text)
     text = RE_DOLLAR_BRACED.sub(_dollar_sub, text)
+
     # For __VAR__, lookup prefers exact key first, then UPPER fallback
     def _screaming_sub_with_fallback(m: re.Match[str]) -> str:
         key = m.group(1)
@@ -447,7 +472,9 @@ def _coerce_var(v: object) -> str:
     return str(v)
 
 
-def _vars_to_str_map(user_vars: Optional[Mapping[str, object]], defaults: Mapping[str, str]) -> Dict[str, str]:
+def _vars_to_str_map(
+    user_vars: Optional[Mapping[str, object]], defaults: Mapping[str, str]
+) -> Dict[str, str]:
     merged = dict(defaults)
     if user_vars:
         for k, v in user_vars.items():
@@ -460,6 +487,7 @@ def _vars_to_str_map(user_vars: Optional[Mapping[str, object]], defaults: Mappin
 
 
 # ---------- CLI --------------------------------------------------------------
+
 
 def _parse_vars(items: Sequence[str]) -> Dict[str, str]:
     m: Dict[str, str] = {}
@@ -476,11 +504,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         prog="python -m templates.engine",
         description="Render a template directory with simple placeholder substitution.",
     )
-    ap.add_argument("--template", required=True, help="Template name (from index.json) or path to directory")
+    ap.add_argument(
+        "--template",
+        required=True,
+        help="Template name (from index.json) or path to directory",
+    )
     ap.add_argument("--out", required=True, help="Destination directory")
-    ap.add_argument("--var", action="append", default=[], help="Variable assignment key=value (repeatable)")
-    ap.add_argument("--overwrite", action="store_true", help="Allow overwriting existing files")
-    ap.add_argument("--include-hidden", action="store_true", help="Include dotfiles/directories")
+    ap.add_argument(
+        "--var",
+        action="append",
+        default=[],
+        help="Variable assignment key=value (repeatable)",
+    )
+    ap.add_argument(
+        "--overwrite", action="store_true", help="Allow overwriting existing files"
+    )
+    ap.add_argument(
+        "--include-hidden", action="store_true", help="Include dotfiles/directories"
+    )
     ap.add_argument("--dry-run", action="store_true", help="Plan only; do not write")
     ap.add_argument("--quiet", action="store_true", help="Less verbose output")
     args = ap.parse_args(argv)
@@ -489,10 +530,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     vars_map = _parse_vars(args.var)
 
     if args.dry_run:
-        plan = engine.plan(args.template, args.out, vars_map, overwrite=args.overwrite, include_hidden=args.include_hidden)
+        plan = engine.plan(
+            args.template,
+            args.out,
+            vars_map,
+            overwrite=args.overwrite,
+            include_hidden=args.include_hidden,
+        )
         for a in plan.actions:
-            print(f"{'[WRITE]' if a.will_write else '[SKIP ]'} {a.reason:12}  {a.src} -> {a.dst}")
-        print(f"\nPlanned {sum(1 for a in plan.actions if a.will_write)} writes, {sum(1 for a in plan.actions if not a.will_write)} skips.")
+            print(
+                f"{'[WRITE]' if a.will_write else '[SKIP ]'} {a.reason:12}  {a.src} -> {a.dst}"
+            )
+        print(
+            f"\nPlanned {sum(1 for a in plan.actions if a.will_write)} writes, {sum(1 for a in plan.actions if not a.will_write)} skips."
+        )
         return 0
 
     plan = engine.render(

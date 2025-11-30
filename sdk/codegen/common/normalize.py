@@ -19,9 +19,9 @@ language-agnostic IR consumed by all codegen backends. It performs:
 The returned object is an instance of AbiIR (from .model).
 """
 
+import hashlib
 import json
 import re
-import hashlib
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
@@ -32,20 +32,13 @@ try:
 except Exception:  # pragma: no cover - import is optional
     jsonschema = None  # type: ignore
 
-from .model import (
-    AbiIR,
-    EventIR,
-    ErrorIR,
-    FunctionIR,
-    Param,
-    TypeRef,
-)
 from . import __version__ as IR_VERSION
-
+from .model import AbiIR, ErrorIR, EventIR, FunctionIR, Param, TypeRef
 
 # ----------------------------
 # Public API & Error Handling
 # ----------------------------
+
 
 class AbiNormalizationError(Exception):
     """Raised when ABI normalization fails."""
@@ -155,6 +148,7 @@ def compute_abi_hash(abi_ir: Union[AbiIR, Dict[str, Any], str]) -> str:
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _NON_ID_CHAR = re.compile(r"[^A-Za-z0-9_]")
 
+
 def _sanitize_identifier(name: str) -> str:
     name = (name or "").strip()
     if not name:
@@ -187,7 +181,9 @@ def _load_json(obj: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
                 raise AbiNormalizationError("ABI top-level must be an object")
             return val
         # We avoid file IO by default to keep the function pure.
-        raise AbiNormalizationError("Expected ABI object or JSON string, not a file path")
+        raise AbiNormalizationError(
+            "Expected ABI object or JSON string, not a file path"
+        )
     raise AbiNormalizationError(f"Unsupported ABI input type: {type(obj)}")
 
 
@@ -233,6 +229,7 @@ def _expect_array(obj: Dict[str, Any], keys: Iterable[str]) -> List[Dict[str, An
 
 
 # ---- Type normalization ----
+
 
 def _normalize_type(typ: Any) -> TypeRef:
     """
@@ -384,6 +381,7 @@ def _assert_not_none(x: Optional[Any], label: str) -> Any:
 
 # ---- Functions, Events, Errors ----
 
+
 def _normalize_params(params_in: Any, *, allow_indexed: bool = False) -> List[Param]:
     if params_in is None:
         return []
@@ -519,14 +517,21 @@ def _apply_overload_discriminators(items: List[Any]) -> None:
 
 # ---- Hash projection helpers (deterministic & minimal) ----
 
-def _fn_hash_tuple_like(fn: Dict[str, Any]) -> Tuple[str, Tuple[str, ...], Tuple[str, ...]]:
+
+def _fn_hash_tuple_like(
+    fn: Dict[str, Any],
+) -> Tuple[str, Tuple[str, ...], Tuple[str, ...]]:
     name = _sanitize_identifier(str(fn.get("name", "")))
     ins = _expect_array(fn, ["inputs"])
     outs = fn.get("outputs") or []
     return (
         name,
         tuple(_canonical_type_str(_normalize_type(p.get("type"))) for p in ins),
-        tuple(_canonical_type_str(_normalize_type(t)) for t in outs) if isinstance(outs, list) else tuple(),
+        (
+            tuple(_canonical_type_str(_normalize_type(t)) for t in outs)
+            if isinstance(outs, list)
+            else tuple()
+        ),
     )
 
 
@@ -566,5 +571,3 @@ def _projection_for_hash(abi_ir: AbiIR) -> Dict[str, Any]:
     for er in abi_ir.errors:
         r.append((er.name, tuple(_canonical_type_str(p.type) for p in er.inputs)))
     return {"f": f, "e": e, "r": r, "v": IR_VERSION}
-
-

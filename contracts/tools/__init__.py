@@ -16,10 +16,10 @@ import errno
 import hashlib
 import json
 import os
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any, Final, Optional, Union
-import subprocess
 
 __all__ = [
     "__version__",
@@ -42,6 +42,7 @@ __all__ = [
 # Version detection
 # ---------------------------------------------------------------------------
 
+
 def _git_describe_version() -> Optional[str]:
     """
     Try to derive a human-friendly version from `git describe --always --dirty`.
@@ -59,7 +60,9 @@ def _git_describe_version() -> Optional[str]:
         return None
 
 
-__version__: Final[str] = _git_describe_version() or os.getenv("CONTRACTS_VERSION", "0.0.0")
+__version__: Final[str] = _git_describe_version() or os.getenv(
+    "CONTRACTS_VERSION", "0.0.0"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +132,7 @@ def sha3_256_bytes(data: Union[str, _BytesLike, Any]) -> bytes:
 # Filesystem helpers
 # ---------------------------------------------------------------------------
 
+
 def ensure_dir(p: Union[str, os.PathLike[str]]) -> Path:
     """
     mkdir -p for a directory path; returns Path. No error if exists.
@@ -174,6 +178,7 @@ def read_text(path: Union[str, os.PathLike[str]]) -> str:
 # ---------------------------------------------------------------------------
 # Env/config helpers
 # ---------------------------------------------------------------------------
+
 
 def env(name: str, default: Optional[str] = None) -> Optional[str]:
     """

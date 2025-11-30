@@ -1,4 +1,5 @@
 """Node inspection CLI for Animica developers."""
+
 from __future__ import annotations
 
 import asyncio
@@ -8,7 +9,6 @@ from typing import Any, Dict, Optional
 
 import httpx
 import typer
-
 from animica.config import load_network_config
 
 DEFAULT_RPC_URL = load_network_config().rpc_url
@@ -17,8 +17,15 @@ RPC_ENV = "ANIMICA_RPC_URL"
 app = typer.Typer(help="Query Animica node JSON-RPC endpoints.")
 
 
-async def rpc_call(method: str, params: Optional[list[Any]] = None, *, rpc_url: str) -> Any:
-    payload: Dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or []}
+async def rpc_call(
+    method: str, params: Optional[list[Any]] = None, *, rpc_url: str
+) -> Any:
+    payload: Dict[str, Any] = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": params or [],
+    }
     async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.post(rpc_url, json=payload)
         data = response.json()
@@ -36,7 +43,11 @@ def _pretty(obj: Any) -> str:
 
 
 @app.command()
-async def status(rpc_url: Optional[str] = typer.Option(None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV)) -> None:
+async def status(
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
+    )
+) -> None:
     """Show chain head, block info and sync state."""
     url = _resolve_rpc_url(rpc_url)
     head = await rpc_call("chain.getHead", [], rpc_url=url)
@@ -70,7 +81,11 @@ async def status(rpc_url: Optional[str] = typer.Option(None, "--rpc-url", help="
 
 
 @app.command()
-async def head(rpc_url: Optional[str] = typer.Option(None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV)) -> None:
+async def head(
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
+    )
+) -> None:
     """Print the current chain head summary."""
     url = _resolve_rpc_url(rpc_url)
     head_info = await rpc_call("chain.getHead", [], rpc_url=url)
@@ -81,7 +96,9 @@ async def head(rpc_url: Optional[str] = typer.Option(None, "--rpc-url", help="JS
 async def block(
     height: Optional[int] = typer.Option(None, "--height", help="Block height"),
     hash: Optional[str] = typer.Option(None, "--hash", help="Block hash"),
-    rpc_url: Optional[str] = typer.Option(None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV),
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
+    ),
 ) -> None:
     """Fetch and display a block by height or hash."""
     if not height and not hash:
@@ -89,8 +106,14 @@ async def block(
     url = _resolve_rpc_url(rpc_url)
     if height is not None:
         result = await rpc_call("chain.getBlockByHeight", [height], rpc_url=url)
-        if isinstance(result, dict) and "transactions" not in result and result.get("hash"):
-            result = await rpc_call("chain.getBlockByHash", [result["hash"]], rpc_url=url)
+        if (
+            isinstance(result, dict)
+            and "transactions" not in result
+            and result.get("hash")
+        ):
+            result = await rpc_call(
+                "chain.getBlockByHash", [result["hash"]], rpc_url=url
+            )
     else:
         result = await rpc_call("chain.getBlockByHash", [hash], rpc_url=url)
     typer.echo(_pretty(result))
@@ -99,7 +122,9 @@ async def block(
 @app.command()
 async def tx(
     hash: str = typer.Option(..., "--hash", help="Transaction hash"),
-    rpc_url: Optional[str] = typer.Option(None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV),
+    rpc_url: Optional[str] = typer.Option(
+        None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
+    ),
 ) -> None:
     """Fetch and display a transaction by hash."""
     url = _resolve_rpc_url(rpc_url)

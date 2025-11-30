@@ -134,7 +134,9 @@ def is_truthy(val: Optional[str]) -> bool:
 
 
 # Common test configuration (with sensible defaults for a local devnet)
-DEFAULT_RPC_URL: str = env_str("RPC_URL", "http://127.0.0.1:8545") or "http://127.0.0.1:8545"
+DEFAULT_RPC_URL: str = (
+    env_str("RPC_URL", "http://127.0.0.1:8545") or "http://127.0.0.1:8545"
+)
 DEFAULT_CHAIN_ID: int = env_int("CHAIN_ID", 1337) or 1337
 
 # Timeouts (seconds) used by HTTP/WS clients in tests
@@ -142,7 +144,9 @@ DEFAULT_HTTP_TIMEOUT: float = env_float("HTTP_TIMEOUT", 30.0) or 30.0
 DEFAULT_WS_TIMEOUT: float = env_float("WS_TIMEOUT", 30.0) or 30.0
 
 
-def get_logger(name: str = "tests.harness", level: int = logging.INFO) -> logging.Logger:
+def get_logger(
+    name: str = "tests.harness", level: int = logging.INFO
+) -> logging.Logger:
     """
     Return a module-level logger with a concise formatter.
     Honors LOG_LEVEL if set (DEBUG/INFO/WARN/ERROR).

@@ -47,10 +47,10 @@ from typing import Any, Dict, Optional, Tuple
 
 import pytest
 
-from tests.e2e import env, skip_unless_e2e, default_timeout
-
+from tests.e2e import default_timeout, env, skip_unless_e2e
 
 # ----------------------------- JSON-RPC mock node -----------------------------
+
 
 def _pick_free_port() -> int:
     s = socket.socket()
@@ -88,11 +88,24 @@ class _RpcHandler(BaseHTTPRequestHandler):
             raw = self.rfile.read(length) if length > 0 else b""
             doc = json.loads(raw.decode("utf-8"))
         except Exception:
-            return self._send({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}, 400)
+            return self._send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32700, "message": "Parse error"},
+                },
+                400,
+            )
 
         if not isinstance(doc, dict) or doc.get("jsonrpc") != "2.0":
-            return self._send({"jsonrpc": "2.0", "id": doc.get("id") if isinstance(doc, dict) else None,
-                               "error": {"code": -32600, "message": "Invalid Request"}}, 400)
+            return self._send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": doc.get("id") if isinstance(doc, dict) else None,
+                    "error": {"code": -32600, "message": "Invalid Request"},
+                },
+                400,
+            )
 
         mid = doc.get("id")
         method = str(doc.get("method"))
@@ -100,12 +113,25 @@ class _RpcHandler(BaseHTTPRequestHandler):
         self.rec.last_method = method
 
         if method == "chain.getChainId":
-            return self._send({"jsonrpc": "2.0", "id": mid, "result": self.rec.chain_id})
+            return self._send(
+                {"jsonrpc": "2.0", "id": mid, "result": self.rec.chain_id}
+            )
 
         if method == "tx.sendRawTransaction":
-            if not (isinstance(params, list) and params and isinstance(params[0], str) and params[0].startswith("0x")):
-                return self._send({"jsonrpc": "2.0", "id": mid,
-                                   "error": {"code": -32602, "message": "raw tx hex required"}}, 400)
+            if not (
+                isinstance(params, list)
+                and params
+                and isinstance(params[0], str)
+                and params[0].startswith("0x")
+            ):
+                return self._send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": mid,
+                        "error": {"code": -32602, "message": "raw tx hex required"},
+                    },
+                    400,
+                )
             raw_hex = params[0]
             try:
                 payload = bytes.fromhex(raw_hex[2:])
@@ -123,19 +149,33 @@ class _RpcHandler(BaseHTTPRequestHandler):
 
         if method == "tx.getTransactionReceipt":
             if not (isinstance(params, list) and params and isinstance(params[0], str)):
-                return self._send({"jsonrpc": "2.0", "id": mid,
-                                   "error": {"code": -32602, "message": "tx hash required"}}, 400)
+                return self._send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": mid,
+                        "error": {"code": -32602, "message": "tx hash required"},
+                    },
+                    400,
+                )
             rec = self.rec.sent.get(params[0])
             return self._send({"jsonrpc": "2.0", "id": mid, "result": rec})
 
-        return self._send({"jsonrpc": "2.0", "id": mid,
-                           "error": {"code": -32601, "message": f"Method not found: {method}"}}, 404)
+        return self._send(
+            {
+                "jsonrpc": "2.0",
+                "id": mid,
+                "error": {"code": -32601, "message": f"Method not found: {method}"},
+            },
+            404,
+        )
 
     def log_message(self, fmt: str, *args: Any) -> None:  # quieter test logs
         return
 
 
-def _start_mock_node(chain_id: int) -> Tuple[str, HTTPServer, threading.Thread, _Recorder]:
+def _start_mock_node(
+    chain_id: int,
+) -> Tuple[str, HTTPServer, threading.Thread, _Recorder]:
     port = _pick_free_port()
     server = HTTPServer(("127.0.0.1", port), _RpcHandler)
     server.recorder = _Recorder(chain_id=chain_id)  # type: ignore[attr-defined]
@@ -145,6 +185,7 @@ def _start_mock_node(chain_id: int) -> Tuple[str, HTTPServer, threading.Thread, 
 
 
 # ---------------------------------- the test ----------------------------------
+
 
 @pytest.mark.timeout(300)
 def test_run_wallet_extension_e2e_with_playwright_headless():
@@ -284,11 +325,17 @@ def test_run_wallet_extension_e2e_with_playwright_headless():
             assert "txHash:" in out2 and "status: 1" in out2
 
             # Also exercise direct programmatic calls (dapp-less)
-            res = page.evaluate("""async () => {
+            res = page.evaluate(
+                """async () => {
               const tx = { from: "0x" + "33".repeat(20), to: "0x" + "44".repeat(20), value: "0x2", gasLimit: 21000, gasPrice: "0x3b9aca00", nonce: 0, tip: 0, data: "0x" };
               return await window.animica.request({method:"animica_sendTransaction", params:[tx]});
-            }""")
-            assert isinstance(res, dict) and isinstance(res.get("txHash"), str) and res["txHash"].startswith("0x")
+            }"""
+            )
+            assert (
+                isinstance(res, dict)
+                and isinstance(res.get("txHash"), str)
+                and res["txHash"].startswith("0x")
+            )
             assert res.get("receipt", {}).get("status") == 1
 
             ctx.close()

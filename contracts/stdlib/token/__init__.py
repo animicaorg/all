@@ -102,6 +102,7 @@ ERR_BAD_NAME: Final[bytes] = b"TOKEN:BAD_NAME"
 # Key derivation helpers (no storage I/O here)
 # -----------------------------------------------------------------------------
 
+
 def key_balance(addr: bytes) -> bytes:
     """
     Derive the canonical balance key for an address.
@@ -125,6 +126,7 @@ def key_allow(owner: bytes, spender: bytes) -> bytes:
 # -----------------------------------------------------------------------------
 # Validation helpers (deterministic, float-free)
 # -----------------------------------------------------------------------------
+
 
 def require_address(addr: bytes) -> None:
     """
@@ -176,6 +178,7 @@ def require_name(name: bytes) -> None:
 # Normalizers (pure helpers; do not revert)
 # -----------------------------------------------------------------------------
 
+
 def normalize_symbol(sym: bytes) -> bytes:
     """
     Return an uppercased version of `sym` if printable; otherwise return `sym`
@@ -205,18 +208,28 @@ def clamp_decimals(n: int) -> int:
 
 __all__ = [
     # prefixes
-    "BAL_PREFIX", "ALLOW_PREFIX",
+    "BAL_PREFIX",
+    "ALLOW_PREFIX",
     # events
-    "EVT_TRANSFER", "EVT_APPROVAL",
+    "EVT_TRANSFER",
+    "EVT_APPROVAL",
     # defaults/limits
     "DEFAULT_DECIMALS",
     # errors
-    "ERR_BAD_ADDR", "ERR_BAD_AMOUNT", "ERR_BAD_SYMBOL", "ERR_BAD_NAME",
+    "ERR_BAD_ADDR",
+    "ERR_BAD_AMOUNT",
+    "ERR_BAD_SYMBOL",
+    "ERR_BAD_NAME",
     # key derivation
-    "key_balance", "key_allow",
+    "key_balance",
+    "key_allow",
     # validators
-    "require_address", "require_amount", "require_symbol", "require_name",
+    "require_address",
+    "require_amount",
+    "require_symbol",
+    "require_name",
     "is_printable_ascii",
     # helpers
-    "normalize_symbol", "clamp_decimals",
+    "normalize_symbol",
+    "clamp_decimals",
 ]

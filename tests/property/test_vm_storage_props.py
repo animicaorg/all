@@ -23,8 +23,8 @@ import inspect
 from typing import Any, Callable, Dict, Optional, Tuple
 
 import pytest
-from hypothesis import given, settings, strategies as st
-
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 # -----------------------------------------------------------------------------
 # Utilities: bytes keys/values, small maps
@@ -36,7 +36,9 @@ MAP_SMALL = st.dictionaries(keys=HKEY, values=HVAL, min_size=0, max_size=16)
 MAP_NONEMPTY = st.dictionaries(keys=HKEY, values=HVAL, min_size=1, max_size=16)
 
 
-def _merge_last_wins(base: Dict[bytes, bytes], upd: Dict[bytes, bytes]) -> Dict[bytes, bytes]:
+def _merge_last_wins(
+    base: Dict[bytes, bytes], upd: Dict[bytes, bytes]
+) -> Dict[bytes, bytes]:
     out = dict(base)
     out.update(upd)
     return out
@@ -181,11 +183,28 @@ class _JournalAdapter:
                 raise RuntimeError(f"Failed to construct journal: {exc}") from exc
 
         # Discover method names
-        self._set_name = next((n for n in ("set", "put", "write", "set_bytes") if hasattr(self._obj, n)), None)
-        self._get_name = next((n for n in ("get", "load", "read", "get_bytes") if hasattr(self._obj, n)), None)
-        self._cp_name = next((n for n in ("checkpoint", "begin", "start") if hasattr(self._obj, n)), None)
-        self._rv_name = next((n for n in ("revert", "rollback", "abort") if hasattr(self._obj, n)), None)
-        self._cm_name = next((n for n in ("commit", "commit_checkpoint", "end") if hasattr(self._obj, n)), None)
+        self._set_name = next(
+            (n for n in ("set", "put", "write", "set_bytes") if hasattr(self._obj, n)),
+            None,
+        )
+        self._get_name = next(
+            (n for n in ("get", "load", "read", "get_bytes") if hasattr(self._obj, n)),
+            None,
+        )
+        self._cp_name = next(
+            (n for n in ("checkpoint", "begin", "start") if hasattr(self._obj, n)), None
+        )
+        self._rv_name = next(
+            (n for n in ("revert", "rollback", "abort") if hasattr(self._obj, n)), None
+        )
+        self._cm_name = next(
+            (
+                n
+                for n in ("commit", "commit_checkpoint", "end")
+                if hasattr(self._obj, n)
+            ),
+            None,
+        )
 
         for attr, nm in {
             "set": self._set_name,
@@ -202,7 +221,11 @@ class _JournalAdapter:
         try:
             sig = inspect.signature(getattr(self._obj, self._cm_name))
             # If there is at least one non-vararg parameter other than self, assume it takes a token
-            params = [p for p in sig.parameters.values() if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+            params = [
+                p
+                for p in sig.parameters.values()
+                if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+            ]
             # first param likely 'self'; count beyond
             self._commit_takes_token = len(params) >= 2
         except Exception:
@@ -246,7 +269,11 @@ def _has_journal() -> bool:
 # Tests: vm_py storage put/get invariants
 # -----------------------------------------------------------------------------
 
-@pytest.mark.skipif(not _has_vm_store(), reason="vm_py.runtime.storage_api not available or lacks get/set")
+
+@pytest.mark.skipif(
+    not _has_vm_store(),
+    reason="vm_py.runtime.storage_api not available or lacks get/set",
+)
 @given(MAP_SMALL)
 @settings(max_examples=150)
 def test_vm_storage_put_then_get_roundtrip(m: Dict[bytes, bytes]):
@@ -260,10 +287,15 @@ def test_vm_storage_put_then_get_roundtrip(m: Dict[bytes, bytes]):
         assert got == v, f"expected exact round-trip for key={k!r}"
 
 
-@pytest.mark.skipif(not _has_vm_store(), reason="vm_py.runtime.storage_api not available or lacks get/set")
+@pytest.mark.skipif(
+    not _has_vm_store(),
+    reason="vm_py.runtime.storage_api not available or lacks get/set",
+)
 @given(MAP_NONEMPTY, MAP_SMALL)
 @settings(max_examples=150)
-def test_vm_storage_overwrite_last_wins(initial: Dict[bytes, bytes], updates: Dict[bytes, bytes]):
+def test_vm_storage_overwrite_last_wins(
+    initial: Dict[bytes, bytes], updates: Dict[bytes, bytes]
+):
     """Overwriting the same key is last-wins."""
     store = _VmStoreAdapter()
     # Apply initial writes
@@ -284,10 +316,15 @@ def test_vm_storage_overwrite_last_wins(initial: Dict[bytes, bytes], updates: Di
 # Tests: execution.state.journal revert/commit laws
 # -----------------------------------------------------------------------------
 
-@pytest.mark.skipif(not _has_journal(), reason="execution.state.journal not available or incompatible")
+
+@pytest.mark.skipif(
+    not _has_journal(), reason="execution.state.journal not available or incompatible"
+)
 @given(MAP_SMALL, MAP_SMALL)
 @settings(max_examples=120)
-def test_journal_revert_restores_baseline(baseline: Dict[bytes, bytes], changes: Dict[bytes, bytes]):
+def test_journal_revert_restores_baseline(
+    baseline: Dict[bytes, bytes], changes: Dict[bytes, bytes]
+):
     """checkpoint → changes → revert ⇒ state equals baseline."""
     j = _JournalAdapter()
     # Establish baseline
@@ -306,10 +343,14 @@ def test_journal_revert_restores_baseline(baseline: Dict[bytes, bytes], changes:
         assert j.get(k) == baseline.get(k)
 
 
-@pytest.mark.skipif(not _has_journal(), reason="execution.state.journal not available or incompatible")
+@pytest.mark.skipif(
+    not _has_journal(), reason="execution.state.journal not available or incompatible"
+)
 @given(MAP_SMALL, MAP_SMALL)
 @settings(max_examples=120)
-def test_journal_commit_accumulates_changes(baseline: Dict[bytes, bytes], changes: Dict[bytes, bytes]):
+def test_journal_commit_accumulates_changes(
+    baseline: Dict[bytes, bytes], changes: Dict[bytes, bytes]
+):
     """checkpoint → changes → commit ⇒ state equals baseline ∪ changes (last-wins)."""
     j = _JournalAdapter()
     for k, v in baseline.items():
@@ -325,7 +366,9 @@ def test_journal_commit_accumulates_changes(baseline: Dict[bytes, bytes], change
         assert j.get(k) == model.get(k)
 
 
-@pytest.mark.skipif(not _has_journal(), reason="execution.state.journal not available or incompatible")
+@pytest.mark.skipif(
+    not _has_journal(), reason="execution.state.journal not available or incompatible"
+)
 @given(MAP_SMALL, MAP_SMALL, MAP_SMALL)
 @settings(max_examples=100)
 def test_journal_nested_checkpoints_stack_law(
@@ -359,5 +402,3 @@ def test_journal_nested_checkpoints_stack_law(
     keys = set(base) | set(outer_changes) | set(inner_changes)
     for k in keys:
         assert j.get(k) == model.get(k), "Nested revert/commit stack law violated"
-
-

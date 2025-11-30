@@ -12,6 +12,7 @@ Aliases:
 - encode = dumps
 - decode = loads
 """
+
 from .codec import dumps, loads
 
 # Friendly aliases

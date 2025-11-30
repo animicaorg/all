@@ -43,7 +43,7 @@ import logging
 import time
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Optional, Dict, Tuple, Any
+from typing import Any, Dict, Optional, Tuple
 
 log = logging.getLogger(__name__)
 
@@ -64,12 +64,14 @@ except Exception:  # pragma: no cover
 # Token bucket
 # --------------------------------------------------------------------------------------
 
+
 class TokenBucket:
     """
     Simple token bucket with wall-clock refill.
     - capacity: maximum burst.
     - refill_rate: tokens per second.
     """
+
     __slots__ = ("capacity", "refill_rate", "_tokens", "_last")
 
     def __init__(self, capacity: float, refill_rate: float) -> None:
@@ -95,10 +97,12 @@ class TokenBucket:
 # TTL set for dedupe with O(log n) expiration
 # --------------------------------------------------------------------------------------
 
+
 class TTLSet:
     """
     TTL-backed membership set with O(1) check/insert and O(log n) eviction of stale entries.
     """
+
     def __init__(self, ttl_seconds: int = 300) -> None:
         self.ttl = int(ttl_seconds)
         self._entries: Dict[bytes, float] = {}
@@ -130,6 +134,7 @@ class TTLSet:
 # Verdicts
 # --------------------------------------------------------------------------------------
 
+
 class DropReason(str, Enum):
     RATELIMIT_GLOBAL = "ratelimit_global"
     RATELIMIT_PEER = "ratelimit_peer"
@@ -156,6 +161,7 @@ class Verdict:
 # --------------------------------------------------------------------------------------
 # Admission gate
 # --------------------------------------------------------------------------------------
+
 
 class P2PAdmission:
     """
@@ -191,34 +197,54 @@ class P2PAdmission:
 
     # Public API -----------------------------------------------------------------------
 
-    def check(self, *, peer_id: bytes, raw_cbor: bytes, now: Optional[float] = None) -> Verdict:
+    def check(
+        self, *, peer_id: bytes, raw_cbor: bytes, now: Optional[float] = None
+    ) -> Verdict:
         """
         Perform pre-admission checks. Returns a Verdict. On success, includes tx_hash.
         """
         # Size guard
         if len(raw_cbor) <= 0 or len(raw_cbor) > self.max_tx_bytes:
-            return Verdict(False, drop_reason=DropReason.OVERSIZE, info=f"bytes={len(raw_cbor)} > cap={self.max_tx_bytes}")
+            return Verdict(
+                False,
+                drop_reason=DropReason.OVERSIZE,
+                info=f"bytes={len(raw_cbor)} > cap={self.max_tx_bytes}",
+            )
 
         # Hash early (for dedupe and tracking); ultra-cheap
         h = self._hash_raw(raw_cbor)
 
         # Dedupe (before ratelimit to avoid burning tokens on repeats)
         if h in self._seen:
-            return Verdict(False, drop_reason=DropReason.DUPLICATE, info="seen_recently")
+            return Verdict(
+                False, drop_reason=DropReason.DUPLICATE, info="seen_recently"
+            )
 
         # Global ratelimit
         if not self._global_bucket.allow(now):
-            return Verdict(False, drop_reason=DropReason.RATELIMIT_GLOBAL, info="global_bucket")
+            return Verdict(
+                False, drop_reason=DropReason.RATELIMIT_GLOBAL, info="global_bucket"
+            )
 
         # Peer ratelimit
         if not self._peer_bucket(peer_id).allow(now):
-            return Verdict(False, drop_reason=DropReason.RATELIMIT_PEER, info="peer_bucket")
+            return Verdict(
+                False, drop_reason=DropReason.RATELIMIT_PEER, info="peer_bucket"
+            )
 
         # Minimal decode / chainId sanity (best-effort)
         if self.chain_id_expected is not None:
             ok, err = self._cheap_chain_id_check(raw_cbor, self.chain_id_expected)
             if not ok:
-                return Verdict(False, drop_reason=DropReason.WRONG_CHAIN if err == "mismatch" else DropReason.DECODE_ERROR, info=err)
+                return Verdict(
+                    False,
+                    drop_reason=(
+                        DropReason.WRONG_CHAIN
+                        if err == "mismatch"
+                        else DropReason.DECODE_ERROR
+                    ),
+                    info=err,
+                )
 
         # Mark as seen *after* success path so that downstream replays from the same
         # peer or others are naturally suppressed for TTL.
@@ -231,7 +257,9 @@ class P2PAdmission:
     def _peer_bucket(self, peer_id: bytes) -> TokenBucket:
         b = self._peer_buckets.get(peer_id)
         if b is None:
-            b = TokenBucket(capacity=self._per_peer_capacity, refill_rate=self._per_peer_rate)
+            b = TokenBucket(
+                capacity=self._per_peer_capacity, refill_rate=self._per_peer_rate
+            )
             self._peer_buckets[peer_id] = b
         return b
 
@@ -279,9 +307,11 @@ class P2PAdmission:
             return False, "mismatch"
         return True, ""
 
+
 # --------------------------------------------------------------------------------------
 # Convenience factory with sensible defaults drawn from mempool.config (if present)
 # --------------------------------------------------------------------------------------
+
 
 def from_config(
     *,
@@ -301,8 +331,13 @@ def from_config(
     seen_ttl = fallback_seen_ttl
 
     try:
-        from mempool.config import MAX_TX_BYTES, P2P_PER_PEER_TPS, P2P_GLOBAL_TPS, RELAY_SEEN_TTL_S  # type: ignore
-        max_bytes = int(getattr(MAX_TX_BYTES, "value", MAX_TX_BYTES))  # allow simple constants or enums
+        from mempool.config import (MAX_TX_BYTES,  # type: ignore
+                                    P2P_GLOBAL_TPS, P2P_PER_PEER_TPS,
+                                    RELAY_SEEN_TTL_S)
+
+        max_bytes = int(
+            getattr(MAX_TX_BYTES, "value", MAX_TX_BYTES)
+        )  # allow simple constants or enums
         per_peer_tps = float(P2P_PER_PEER_TPS)
         global_tps = float(P2P_GLOBAL_TPS)
         seen_ttl = int(RELAY_SEEN_TTL_S)

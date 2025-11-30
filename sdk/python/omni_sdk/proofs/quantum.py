@@ -41,26 +41,33 @@ from typing import Any, Dict, Mapping, Optional, Union
 # --- Utilities & fallbacks ---------------------------------------------------
 
 try:
-    from omni_sdk.utils.bytes import from_hex as _from_hex, to_hex as _to_hex  # type: ignore
+    from omni_sdk.utils.bytes import from_hex as _from_hex  # type: ignore
+    from omni_sdk.utils.bytes import to_hex as _to_hex
 except Exception:  # pragma: no cover
+
     def _from_hex(s: str) -> bytes:
         s = s[2:] if isinstance(s, str) and s.startswith("0x") else s
         return bytes.fromhex(s)
+
     def _to_hex(b: bytes) -> str:
         return "0x" + bytes(b).hex()
+
 
 try:
     from omni_sdk.utils.hash import sha3_256  # type: ignore
 except Exception:  # pragma: no cover
     import hashlib as _hashlib
+
     def sha3_256(data: bytes) -> bytes:
         return _hashlib.sha3_256(data).digest()
+
 
 # Deterministic JSON-like bytes as a last-resort encoder (kept tiny)
 try:
     from omni_sdk.utils.cbor import dumps as cbor_dumps  # type: ignore
 except Exception:  # pragma: no cover
     import json as _json
+
     def cbor_dumps(obj: Any) -> bytes:
         return _json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
@@ -78,7 +85,9 @@ DOMAIN_OUTCOME_DIGEST = b"animica:quantum.outcome.digest.v1"
 DOMAIN_NULLIFIER = b"animica:proof.nullifier.quantum.v1"
 
 
-def _norm_bytes(x: Union[str, bytes, bytearray, memoryview, None], *, field: str) -> Optional[bytes]:
+def _norm_bytes(
+    x: Union[str, bytes, bytearray, memoryview, None], *, field: str
+) -> Optional[bytes]:
     if x is None:
         return None
     if isinstance(x, (bytes, bytearray, memoryview)):
@@ -208,9 +217,12 @@ def _norm_benchmarks(bench: Optional[Mapping[str, Any]], circuits: Any) -> Json:
         pass
 
     out: Json = {}
-    if depth is not None: out["depth"] = int(depth)
-    if width is not None: out["width"] = int(width)
-    if shots is not None: out["shots"] = int(shots)
+    if depth is not None:
+        out["depth"] = int(depth)
+    if width is not None:
+        out["width"] = int(width)
+    if shots is not None:
+        out["shots"] = int(shots)
     return out
 
 
@@ -252,10 +264,14 @@ def _nullifier(
         H(DOMAIN_NULLIFIER || task_id? || header_hash? || circuit_digest? || outcome_digest?)
     """
     parts = [DOMAIN_NULLIFIER]
-    if task_id_b: parts.append(task_id_b)
-    if header_hash: parts.append(header_hash)
-    if circuit_digest: parts.append(circuit_digest)
-    if outcome_digest: parts.append(outcome_digest)
+    if task_id_b:
+        parts.append(task_id_b)
+    if header_hash:
+        parts.append(header_hash)
+    if circuit_digest:
+        parts.append(circuit_digest)
+    if outcome_digest:
+        parts.append(outcome_digest)
     return sha3_256(b"".join(parts))
 
 
@@ -316,8 +332,16 @@ def assemble_quantum_proof(
           "metrics": {"quantum_units": float, "traps_ratio": float, "qos": float}
         }
     """
-    circuit_digest: Optional[bytes] = _digest(circuits, domain=DOMAIN_CIRCUIT_DIGEST) if circuits is not None else None
-    outcome_digest: Optional[bytes] = _digest(outcomes, domain=DOMAIN_OUTCOME_DIGEST) if outcomes is not None else None
+    circuit_digest: Optional[bytes] = (
+        _digest(circuits, domain=DOMAIN_CIRCUIT_DIGEST)
+        if circuits is not None
+        else None
+    )
+    outcome_digest: Optional[bytes] = (
+        _digest(outcomes, domain=DOMAIN_OUTCOME_DIGEST)
+        if outcomes is not None
+        else None
+    )
 
     traps_n = _norm_traps(traps)
     qos_n = _norm_qos(qos)
@@ -331,7 +355,9 @@ def assemble_quantum_proof(
         outcome_len = 0
     else:
         outcome_len = len(cbor_dumps(outcomes))
-    units = _compute_quantum_units(quantum_units=quantum_units, benchmarks=bench_n, outcome_len_bytes=outcome_len)
+    units = _compute_quantum_units(
+        quantum_units=quantum_units, benchmarks=bench_n, outcome_len_bytes=outcome_len
+    )
 
     # Optional bindings
     header_hash = _extract_header_hash(header)

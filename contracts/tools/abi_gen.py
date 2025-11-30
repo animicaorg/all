@@ -79,12 +79,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from contracts.tools import (  # type: ignore
-    atomic_write_text,
-    canonical_json_str,
-    ensure_dir,
-    project_root,
-)
+from contracts.tools import (atomic_write_text,  # type: ignore
+                             canonical_json_str, ensure_dir, project_root)
 
 # ------------------------------------------------------------------------------
 # Small helpers

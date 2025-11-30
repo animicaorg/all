@@ -19,8 +19,8 @@ Example
 from __future__ import annotations
 
 from importlib import import_module
-from typing import Dict, List, Optional
 from types import ModuleType
+from typing import Dict, List, Optional
 
 # Canonical short-name → module path mapping
 _ADAPTERS: Dict[str, str] = {
@@ -32,6 +32,7 @@ _ADAPTERS: Dict[str, str] = {
     "proofs": "capabilities.adapters.proofs",
 }
 
+
 def load(name_or_module: str) -> ModuleType:
     """
     Dynamically import an adapter by short name (e.g. 'da', 'aicf') or full module path.
@@ -41,7 +42,10 @@ def load(name_or_module: str) -> ModuleType:
     try:
         return import_module(module_path)
     except Exception as e:  # pragma: no cover - environment/import specific
-        raise ImportError(f"Failed to load adapter '{name_or_module}' ({module_path}): {e}") from e
+        raise ImportError(
+            f"Failed to load adapter '{name_or_module}' ({module_path}): {e}"
+        ) from e
+
 
 def available() -> List[str]:
     """
@@ -57,6 +61,7 @@ def available() -> List[str]:
             pass
     return ok
 
+
 def has(name_or_module: str) -> bool:
     """
     Fast check whether an adapter can be imported.
@@ -66,5 +71,6 @@ def has(name_or_module: str) -> bool:
         return True
     except ImportError:
         return False
+
 
 __all__ = ["load", "available", "has", "_ADAPTERS"]

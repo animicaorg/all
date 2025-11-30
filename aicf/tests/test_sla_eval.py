@@ -6,17 +6,17 @@ from typing import Any, Dict, Optional
 
 import pytest
 
+from aicf.aitypes import sla as sla_types
 # Under test
 from aicf.sla import evaluator as ev
-from aicf.aitypes import sla as sla_types
-
 
 # --------------------------- Helpers & Adapters ---------------------------
 
+
 @dataclass
 class Thresholds:
-    traps_min: float = 0.98       # e.g., ≥98% trap receipts must pass (lower bound)
-    qos_min: float = 0.90         # e.g., ≥90% QoS good
+    traps_min: float = 0.98  # e.g., ≥98% trap receipts must pass (lower bound)
+    qos_min: float = 0.90  # e.g., ≥90% QoS good
     # Note: For this test file we only exercise traps & QoS thresholds.
 
 
@@ -62,7 +62,9 @@ def _z_from_conf(conf: float) -> float:
     return table[closest]
 
 
-def _evaluate_with_module(stats: Dict[str, int | float], thresholds: Thresholds, conf: float) -> Dict[str, bool]:
+def _evaluate_with_module(
+    stats: Dict[str, int | float], thresholds: Thresholds, conf: float
+) -> Dict[str, bool]:
     """
     Try to evaluate via aicf.sla.evaluator using a variety of likely APIs.
     Returns a dict with keys: 'traps', 'qos', 'overall'.
@@ -129,10 +131,16 @@ def _extract_results(res: Any) -> Optional[Dict[str, bool]]:
 
     # If res already a dict of booleans
     if isinstance(res, dict):
-        keys = {k.lower(): bool(v) for k, v in res.items() if isinstance(v, (bool, int))}
+        keys = {
+            k.lower(): bool(v) for k, v in res.items() if isinstance(v, (bool, int))
+        }
         if {"traps", "qos"} <= keys.keys():
             overall = keys.get("overall", keys["traps"] and keys["qos"])
-            return {"traps": keys["traps"], "qos": keys["qos"], "overall": bool(overall)}
+            return {
+                "traps": keys["traps"],
+                "qos": keys["qos"],
+                "overall": bool(overall),
+            }
 
     # Dataclass/obj with attributes
     for dim_name in ("traps", "qos"):
@@ -180,7 +188,9 @@ def _extract_results(res: Any) -> Optional[Dict[str, bool]]:
     return None
 
 
-def _evaluate_locally(stats: Dict[str, int | float], thresholds: Thresholds, conf: float) -> Dict[str, bool]:
+def _evaluate_locally(
+    stats: Dict[str, int | float], thresholds: Thresholds, conf: float
+) -> Dict[str, bool]:
     """
     Local policy mirror:
       - traps: Wilson lower bound of traps_ok/total >= traps_min
@@ -207,6 +217,7 @@ def _evaluate_locally(stats: Dict[str, int | float], thresholds: Thresholds, con
 
 # --------------------------- Tests ---------------------------
 
+
 def test_traps_threshold_respects_confidence_window():
     thresholds = _get_thresholds()
     conf = 0.95
@@ -214,8 +225,13 @@ def test_traps_threshold_respects_confidence_window():
     # Window: 200 samples, 199 trap checks passed => very strong lower bound, should pass for traps_min≈0.98
     stats = {"total": 200, "traps_ok": 199, "qos_ok": 200}  # Make QoS trivially pass
     res = _evaluate_with_module(stats, thresholds, conf)
-    assert res["traps"] is True, f"Expected traps to pass at 199/200 with conf={conf}, got {res}"
-    assert res["overall"] in (True, res["qos"]), "Overall should reflect conjunction of dimensions"
+    assert (
+        res["traps"] is True
+    ), f"Expected traps to pass at 199/200 with conf={conf}, got {res}"
+    assert res["overall"] in (
+        True,
+        res["qos"],
+    ), "Overall should reflect conjunction of dimensions"
 
 
 def test_traps_fail_below_threshold():
@@ -225,7 +241,9 @@ def test_traps_fail_below_threshold():
     # Window: 200 samples, only 190 traps OK (95%) → should fail traps for traps_min≈0.98
     stats = {"total": 200, "traps_ok": 190, "qos_ok": 200}
     res = _evaluate_with_module(stats, thresholds, conf)
-    assert res["traps"] is False, f"Expected traps to FAIL at 190/200 with conf={conf}, got {res}"
+    assert (
+        res["traps"] is False
+    ), f"Expected traps to FAIL at 190/200 with conf={conf}, got {res}"
     assert res["overall"] is False, "Overall must fail if any dimension fails"
 
 
@@ -236,12 +254,16 @@ def test_qos_threshold_and_confidence_window():
     # Pass case: 185/200 QoS good (92.5%) >= 0.90 with CI buffer; traps perfect.
     stats_pass = {"total": 200, "traps_ok": 200, "qos_ok": 185}
     res_pass = _evaluate_with_module(stats_pass, thresholds, conf)
-    assert res_pass["qos"] is True, f"QoS should pass at 185/200 with conf={conf}, got {res_pass}"
+    assert (
+        res_pass["qos"] is True
+    ), f"QoS should pass at 185/200 with conf={conf}, got {res_pass}"
 
     # Fail case: 150/200 (75%) < 0.90 → should fail
     stats_fail = {"total": 200, "traps_ok": 200, "qos_ok": 150}
     res_fail = _evaluate_with_module(stats_fail, thresholds, conf)
-    assert res_fail["qos"] is False, f"QoS should FAIL at 150/200 with conf={conf}, got {res_fail}"
+    assert (
+        res_fail["qos"] is False
+    ), f"QoS should FAIL at 150/200 with conf={conf}, got {res_fail}"
     assert res_fail["overall"] is False, "Overall must fail if QoS fails"
 
 
@@ -252,7 +274,9 @@ def test_combined_overall_requires_all_dimensions_to_pass():
     # Traps pass comfortably, QoS just below threshold → overall should be False.
     total = 200
     traps_ok = 199
-    qos_ok = int(math.floor((thresholds.qos_min - 0.01) * total))  # 1% below required QoS
+    qos_ok = int(
+        math.floor((thresholds.qos_min - 0.01) * total)
+    )  # 1% below required QoS
     stats = {"total": total, "traps_ok": traps_ok, "qos_ok": qos_ok}
 
     res = _evaluate_with_module(stats, thresholds, conf)

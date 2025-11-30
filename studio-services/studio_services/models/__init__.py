@@ -93,9 +93,10 @@ def __dir__() -> list[str]:  # pragma: no cover - tiny introspection helper
 
 if TYPE_CHECKING:
     # For static type checkers, import eagerly
+    from .artifacts import ArtifactMeta, ArtifactPut
     from .common import Address, ChainId, Hash, Hex, Pagination
-    from .deploy import DeployRequest, DeployResponse, PreflightRequest, PreflightResponse
-    from .verify import VerifyRequest, VerifyStatus, VerifyResult
+    from .deploy import (DeployRequest, DeployResponse, PreflightRequest,
+                         PreflightResponse)
     from .faucet import FaucetRequest, FaucetResponse
-    from .artifacts import ArtifactPut, ArtifactMeta
     from .simulate import SimulateCall, SimulateResult
+    from .verify import VerifyRequest, VerifyResult, VerifyStatus

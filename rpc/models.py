@@ -20,21 +20,15 @@ from __future__ import annotations
 
 from typing import Any, List, Literal, Optional, Sequence, Union
 
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .types import (
-    HexStr,
-    HashHex32,
-    Address,
-    ensure_hex,
-    ensure_hash32_hex,
-    is_address,
-    decode_address,
-)
+from .types import (Address, HashHex32, HexStr, decode_address,
+                    ensure_hash32_hex, ensure_hex, is_address)
 
 # -----------------------------------------------------------------------------
 # JSON-RPC envelopes
 # -----------------------------------------------------------------------------
+
 
 class JsonRpcRequest(BaseModel):
     model_config = ConfigDict(frozen=True, str_max_length=1_000_000)
@@ -63,10 +57,12 @@ class JsonRpcResponse(BaseModel):
 # Common sub-views
 # -----------------------------------------------------------------------------
 
+
 class LogView(BaseModel):
     """
     Contract/event log entry.
     """
+
     model_config = ConfigDict(populate_by_name=True, frozen=True)
     address: Address
     topics: List[HashHex32]
@@ -94,20 +90,28 @@ class LogView(BaseModel):
 # Head & Header
 # -----------------------------------------------------------------------------
 
+
 class Head(BaseModel):
     """
     Lightweight chain head snapshot.
     """
-    model_config = ConfigDict(populate_by_name=True, frozen=True, json_schema_extra={
-        "examples": [{
-            "chainId": 1,
-            "number": 1024,
-            "hash": "0x" + "11"*32,
-            "parentHash": "0x" + "22"*32,
-            "timestamp": 1_700_000_000,
-            "thetaMicro": 1_500_000,  # micro-nats threshold
-        }]
-    })
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        frozen=True,
+        json_schema_extra={
+            "examples": [
+                {
+                    "chainId": 1,
+                    "number": 1024,
+                    "hash": "0x" + "11" * 32,
+                    "parentHash": "0x" + "22" * 32,
+                    "timestamp": 1_700_000_000,
+                    "thetaMicro": 1_500_000,  # micro-nats threshold
+                }
+            ]
+        },
+    )
     chain_id: int = Field(alias="chainId")
     number: int = Field(alias="number")
     hash: HashHex32 = Field(alias="hash")
@@ -125,6 +129,7 @@ class HeaderView(BaseModel):
     """
     Full block header view (mirrors spec/header_format.cddl field names).
     """
+
     model_config = ConfigDict(populate_by_name=True, frozen=True)
 
     chain_id: int = Field(alias="chainId")
@@ -172,10 +177,12 @@ class HeaderView(BaseModel):
 # Transactions & Receipts
 # -----------------------------------------------------------------------------
 
+
 class AccessListItem(BaseModel):
     """
     Optional access-list element for deterministic access predeclaration.
     """
+
     model_config = ConfigDict(populate_by_name=True, frozen=True)
     address: Address
     storage_keys: List[HashHex32] = Field(alias="storageKeys")
@@ -197,25 +204,29 @@ class TxView(BaseModel):
     """
     Transaction view suitable for REST/JSON-RPC responses.
     """
-    model_config = ConfigDict(populate_by_name=True, frozen=True, json_schema_extra={
-        "examples": [{
-            "hash": "0x" + "aa"*32,
-            "chainId": 1,
-            "from": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqz3y9k8",
-            "to": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqm2k8sy",
-            "nonce": 7,
-            "gasLimit": 120000,
-            "gasPrice": 1,
-            "value": "0x00",
-            "type": "transfer",
-            "data": "0x",
-            "accessList": [],
-            "signature": {
-                "algId": 0x31,        # Dilithium3
-                "sig": "0x" + "bb"*96
-            }
-        }]
-    })
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        frozen=True,
+        json_schema_extra={
+            "examples": [
+                {
+                    "hash": "0x" + "aa" * 32,
+                    "chainId": 1,
+                    "from": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqz3y9k8",
+                    "to": "anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqm2k8sy",
+                    "nonce": 7,
+                    "gasLimit": 120000,
+                    "gasPrice": 1,
+                    "value": "0x00",
+                    "type": "transfer",
+                    "data": "0x",
+                    "accessList": [],
+                    "signature": {"algId": 0x31, "sig": "0x" + "bb" * 96},  # Dilithium3
+                }
+            ]
+        },
+    )
 
     # identity & meta
     hash: HashHex32 = Field(alias="hash")
@@ -228,13 +239,17 @@ class TxView(BaseModel):
     # economics & execution
     nonce: int = Field(alias="nonce")
     gas_limit: int = Field(alias="gasLimit")
-    gas_price: int = Field(alias="gasPrice")  # simple model; base/tip split lives server-side
+    gas_price: int = Field(
+        alias="gasPrice"
+    )  # simple model; base/tip split lives server-side
     value: HexStr = Field(default="0x00", alias="value")
 
     # kind & payload
     type: Literal["transfer", "deploy", "call"] = Field(alias="type")
     data: HexStr = Field(default="0x", alias="data")
-    access_list: Optional[List[AccessListItem]] = Field(default=None, alias="accessList")
+    access_list: Optional[List[AccessListItem]] = Field(
+        default=None, alias="accessList"
+    )
 
     # signature (PQ)
     alg_id: int = Field(alias="algId")
@@ -271,19 +286,26 @@ class ReceiptView(BaseModel):
     """
     Transaction receipt (post-execution summary).
     """
-    model_config = ConfigDict(populate_by_name=True, frozen=True, json_schema_extra={
-        "examples": [{
-            "status": "SUCCESS",
-            "gasUsed": 52311,
-            "cumulativeGasUsed": 52311,
-            "logs": [],
-            "txHash": "0x" + "aa"*32,
-            "transactionIndex": 0,
-            "blockHash": "0x" + "bb"*32,
-            "blockNumber": 1024,
-            "contractAddress": None
-        }]
-    })
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        frozen=True,
+        json_schema_extra={
+            "examples": [
+                {
+                    "status": "SUCCESS",
+                    "gasUsed": 52311,
+                    "cumulativeGasUsed": 52311,
+                    "logs": [],
+                    "txHash": "0x" + "aa" * 32,
+                    "transactionIndex": 0,
+                    "blockHash": "0x" + "bb" * 32,
+                    "blockNumber": 1024,
+                    "contractAddress": None,
+                }
+            ]
+        },
+    )
 
     status: Literal["SUCCESS", "REVERT", "OOG"] = Field(alias="status")
     gas_used: int = Field(alias="gasUsed")
@@ -315,11 +337,13 @@ class ReceiptView(BaseModel):
 # Blocks
 # -----------------------------------------------------------------------------
 
+
 class BlockView(BaseModel):
     """
     Block view. `transactions` can be either full TxView objects *or* just tx-hash strings,
     depending on RPC method parameters.
     """
+
     model_config = ConfigDict(populate_by_name=True, frozen=True)
 
     hash: HashHex32 = Field(alias="hash")
@@ -349,7 +373,9 @@ class BlockView(BaseModel):
         all_str = all(isinstance(t, str) for t in v_list)
         all_obj = all(isinstance(t, TxView) for t in v_list)
         if not (all_str or all_obj):
-            raise ValueError("transactions must be either all hashes or all TxView objects")
+            raise ValueError(
+                "transactions must be either all hashes or all TxView objects"
+            )
         if all_str:
             return [ensure_hash32_hex(t) for t in v_list]  # type: ignore[return-value]
         return v_list  # type: ignore[return-value]
@@ -358,6 +384,7 @@ class BlockView(BaseModel):
 # -----------------------------------------------------------------------------
 # Helper: decoding-friendly aliases to map from core objects (optional)
 # -----------------------------------------------------------------------------
+
 
 def address_hrp(addr: Address) -> str:
     """

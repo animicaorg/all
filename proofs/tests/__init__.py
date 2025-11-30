@@ -7,6 +7,7 @@ Import from tests like:
 
 This module deliberately avoids heavy deps so it can be imported very early.
 """
+
 from __future__ import annotations
 
 import json
@@ -40,31 +41,39 @@ __all__ = [
 
 # ---------- path helpers ----------
 
+
 def data_path(*parts: str) -> Path:
     """Return an absolute path under test_vectors/."""
     return (VECTORS_DIR / Path(*parts)).resolve()
+
 
 def fixture_path(*parts: str) -> Path:
     """Return an absolute path under fixtures/."""
     return (FIXTURES_DIR / Path(*parts)).resolve()
 
+
 def schema_path(name: str) -> Path:
     """Return an absolute path to a schema under schemas/."""
     return (SCHEMAS_DIR / name).resolve()
 
+
 # ---------- file readers ----------
+
 
 def read_json(path: Path | str) -> Any:
     p = Path(path)
     with p.open("r", encoding="utf-8") as f:
         return json.load(f)
 
+
 def read_bytes(path: Path | str) -> bytes:
     p = Path(path)
     with p.open("rb") as f:
         return f.read()
 
+
 # ---------- environment helpers ----------
+
 
 def liboqs_available() -> bool:
     """
@@ -81,10 +90,12 @@ def liboqs_available() -> bool:
     except Exception:
         return False
 
+
 def skip_if_no_liboqs(pytest) -> None:
     """pytest helper: skip test if liboqs is not available."""
     if not liboqs_available():
         pytest.skip("liboqs backend not available (optional)")
+
 
 def require_env(key: str, default: Optional[str] = None) -> str:
     """
@@ -95,6 +106,7 @@ def require_env(key: str, default: Optional[str] = None) -> str:
     if val is None:
         raise RuntimeError(f"Required environment variable {key!r} is not set")
     return val
+
 
 # Make sure canonical directories exist when running tests in isolation
 for _d in (VECTORS_DIR, FIXTURES_DIR, SCHEMAS_DIR):

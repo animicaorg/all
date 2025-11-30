@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 
 # Models
 try:
-    from studio_services.models.artifacts import ArtifactPut, ArtifactMeta
+    from studio_services.models.artifacts import ArtifactMeta, ArtifactPut
 except Exception as e:  # pragma: no cover
     raise RuntimeError(f"artifacts router missing models: {e}")
 
@@ -44,9 +44,16 @@ def _resolve(func_names: Sequence[str]) -> Callable[..., Any]:
 
 # Resolve service functions (primary names first; allow common aliases)
 _put_artifact = _resolve(("put_artifact", "store_artifact", "create_artifact"))
-_get_artifact = _resolve(("get_artifact", "fetch_artifact", "read_artifact", "artifact_by_id"))
+_get_artifact = _resolve(
+    ("get_artifact", "fetch_artifact", "read_artifact", "artifact_by_id")
+)
 _list_by_addr = _resolve(
-    ("list_artifacts_by_address", "list_by_address", "artifacts_for_address", "get_by_address")
+    (
+        "list_artifacts_by_address",
+        "list_by_address",
+        "artifacts_for_address",
+        "get_by_address",
+    )
 )
 
 
@@ -56,7 +63,8 @@ def _maybe_guard_dep() -> List[Any]:
     If `require_api_key` isn't available, returns empty list.
     """
     try:  # pragma: no cover - optional import
-        from studio_services.security.auth import require_api_key  # type: ignore
+        from studio_services.security.auth import \
+            require_api_key  # type: ignore
 
         return [Depends(require_api_key)]
     except Exception:
@@ -78,7 +86,12 @@ def post_artifact(req: ArtifactPut) -> ArtifactMeta:
       - Enforcing write-once semantics.
       - Optionally pinning content to DA and linking to address/tx if provided.
     """
-    log.debug("POST /artifacts: kind=%s size=%s addr=%s", getattr(req, "kind", None), getattr(req, "size", None), getattr(req, "address", None))
+    log.debug(
+        "POST /artifacts: kind=%s size=%s addr=%s",
+        getattr(req, "kind", None),
+        getattr(req, "size", None),
+        getattr(req, "address", None),
+    )
     meta = _put_artifact(req)
     if not isinstance(meta, ArtifactMeta):
         log.warning("service returned unexpected type for put_artifact: %r", type(meta))
@@ -131,14 +144,21 @@ def list_address_artifacts(
     """
     List artifacts linked to an address. Supports simple cursor pagination via service layer.
     """
-    log.debug("GET /address/{address}/artifacts addr=%s limit=%d cursor=%s", address, limit, cursor)
+    log.debug(
+        "GET /address/{address}/artifacts addr=%s limit=%d cursor=%s",
+        address,
+        limit,
+        cursor,
+    )
     items = _list_by_addr(address, limit=limit, cursor=cursor)
     # Be lenient: accept list-like iterables and coerce to list for response_model
     if not isinstance(items, list):
         try:
             items = list(items)  # type: ignore[assignment]
         except Exception:
-            log.warning("service returned non-iterable for list_by_address: %r", type(items))
+            log.warning(
+                "service returned non-iterable for list_by_address: %r", type(items)
+            )
             items = []
     # Best-effort type check
     for it in items:

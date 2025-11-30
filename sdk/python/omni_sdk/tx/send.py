@@ -35,22 +35,28 @@ from typing import Any, Dict, Optional, Protocol
 try:
     from omni_sdk.errors import RpcError, TxError  # type: ignore
 except Exception:
+
     class RpcError(RuntimeError):
         pass
+
     class TxError(RuntimeError):
         pass
+
 
 # Small utils
 try:
     from omni_sdk.utils.bytes import to_hex as _to_hex  # type: ignore
 except Exception:
+
     def _to_hex(b: bytes) -> str:
         return "0x" + bytes(b).hex()
+
 
 try:
     from omni_sdk.utils.hash import sha3_256 as _sha3_256  # type: ignore
 except Exception:
     import hashlib
+
     def _sha3_256(x: bytes) -> bytes:
         return hashlib.sha3_256(x).digest()
 
@@ -59,10 +65,12 @@ except Exception:
 # Minimal client protocols to avoid tight coupling with concrete implementations
 # -----------------------------------------------------------------------------
 
+
 class _RpcClient(Protocol):
     """
     Minimal interface expected from omni_sdk.rpc.http client.
     """
+
     def call(self, method: str, params: Optional[dict | list] = None) -> Any: ...
 
 
@@ -76,7 +84,9 @@ class _WsClient(Protocol):
     Minimal interface expected from omni_sdk.rpc.ws client.
     We try .subscribe(topic) first; as a fallback we try .subscribe_sync(topic).
     """
+
     def subscribe(self, topic: str) -> _WsSubscription: ...
+
     # Optional alternative name used by some clients
     def subscribe_sync(self, topic: str) -> _WsSubscription: ...  # type: ignore[empty-body]
 
@@ -84,6 +94,7 @@ class _WsClient(Protocol):
 # -----------------------------------------------------------------------------
 # Core RPC calls
 # -----------------------------------------------------------------------------
+
 
 def submit_raw(rpc: _RpcClient, raw_tx: bytes) -> str:
     """
@@ -128,7 +139,11 @@ def get_transaction_receipt(rpc: _RpcClient, tx_hash: str) -> Optional[Dict[str,
         return None
     if not isinstance(res, dict):
         # Some nodes may wrap as {"receipt": {...}}; unwrap if present.
-        if isinstance(res, dict) and "receipt" in res and isinstance(res["receipt"], dict):
+        if (
+            isinstance(res, dict)
+            and "receipt" in res
+            and isinstance(res["receipt"], dict)
+        ):
             return res["receipt"]
         raise TxError(f"unexpected receipt payload: {type(res)!r}")
     return res
@@ -137,6 +152,7 @@ def get_transaction_receipt(rpc: _RpcClient, tx_hash: str) -> Optional[Dict[str,
 # -----------------------------------------------------------------------------
 # Polling waiters
 # -----------------------------------------------------------------------------
+
 
 def wait_for_receipt(
     rpc: _RpcClient,
@@ -163,7 +179,9 @@ def wait_for_receipt(
             return rec
 
         if time.monotonic() >= deadline:
-            raise TimeoutError(f"timeout waiting for receipt (tx={tx_hash}, timeout_s={timeout_s})")
+            raise TimeoutError(
+                f"timeout waiting for receipt (tx={tx_hash}, timeout_s={timeout_s})"
+            )
 
         time.sleep(interval)
         interval = min(interval * float(backoff), float(max_interval_s))
@@ -191,6 +209,7 @@ def submit_and_wait(
 # -----------------------------------------------------------------------------
 # WebSocket-assisted waiters (optional)
 # -----------------------------------------------------------------------------
+
 
 def _sub(ws: _WsClient, topic: str) -> _WsSubscription:
     if hasattr(ws, "subscribe"):
@@ -238,7 +257,9 @@ def wait_for_receipt_ws(
             last_check = now
 
         if now >= deadline:
-            raise TimeoutError(f"timeout waiting for receipt (tx={tx_hash}, timeout_s={timeout_s})")
+            raise TimeoutError(
+                f"timeout waiting for receipt (tx={tx_hash}, timeout_s={timeout_s})"
+            )
 
     # If the iterator ends unexpectedly, do one last poll then raise
     rec = get_transaction_receipt(rpc, tx_hash)
@@ -263,7 +284,9 @@ def submit_and_wait_ws(
     `submit_and_wait` on failure.
     """
     txh = submit_raw(rpc, raw_tx)
-    return wait_for_receipt_ws(rpc, ws, txh, timeout_s=timeout_s, idle_check_s=idle_check_s)
+    return wait_for_receipt_ws(
+        rpc, ws, txh, timeout_s=timeout_s, idle_check_s=idle_check_s
+    )
 
 
 __all__ = [

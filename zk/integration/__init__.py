@@ -45,20 +45,10 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 # Re-export registry surface
-from zk.registry import (
-    VerifierSpec,
-    RegistryError,
-    AlreadyRegistered,
-    NotRegistered,
-    ImportFailure,
-    MissingField,
-    register,
-    unregister,
-    get,
-    list_kinds,
-    resolve,
-    verify as verify_by_kind,
-)
+from zk.registry import (AlreadyRegistered, ImportFailure, MissingField,
+                         NotRegistered, RegistryError, VerifierSpec, get,
+                         list_kinds, register, resolve, unregister)
+from zk.registry import verify as verify_by_kind
 
 # Envelope bridge (canonical ProofEnvelope → specific verifier inputs)
 try:
@@ -97,6 +87,7 @@ __version__ = "0.1.0"
 # -----------------------------------------------------------------------------
 # Public API
 # -----------------------------------------------------------------------------
+
 
 def verify(
     *,
@@ -138,6 +129,7 @@ def verify(
 # Helpers
 # -----------------------------------------------------------------------------
 
+
 def load_registry_snapshot(
     registry_path: Optional[Path] = None,
     vk_cache_path: Optional[Path] = None,
@@ -163,9 +155,12 @@ def load_registry_snapshot(
 
     # Lazy import yaml (optional)
     try:
-        import json, yaml  # type: ignore
+        import json  # type: ignore
+
+        import yaml
     except Exception:
         import json
+
         yaml = None  # type: ignore
 
     # registry.yaml: accept JSON or YAML
@@ -187,6 +182,7 @@ def load_registry_snapshot(
     vk_cache: Dict[str, Any] = {}
     if vk_cache_path.exists():
         import json
+
         with vk_cache_path.open("r", encoding="utf-8") as f:
             vk_cache = json.load(f)
     else:

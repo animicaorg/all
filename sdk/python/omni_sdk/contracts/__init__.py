@@ -47,9 +47,9 @@ from __future__ import annotations
 
 # Re-export submodule namespaces
 from . import client as client
+from . import codegen as codegen
 from . import deployer as deployer
 from . import events as events
-from . import codegen as codegen
 
 __all__ = ["client", "deployer", "events", "codegen", "contracts"]
 

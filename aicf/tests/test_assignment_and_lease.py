@@ -3,12 +3,11 @@ from datetime import datetime, timezone
 
 import pytest
 
-from aicf.aitypes.provider import Capability, ProviderStatus
 from aicf.aitypes.job import JobKind, JobRecord
+from aicf.aitypes.provider import Capability, ProviderStatus
+from aicf.queue import assignment as qassign
 from aicf.queue import priority as qprio
 from aicf.queue import quotas as qquotas
-from aicf.queue import assignment as qassign
-
 
 # --------------------------------------------------------------------------------------
 # Assumed lease API (behavioral contract for the assignment subsystem)
@@ -39,7 +38,10 @@ from aicf.queue import assignment as qassign
 
 class _Provider:
     """Minimal provider stub with fields used by assignment.is_eligible()."""
-    def __init__(self, provider_id: str, capabilities: Capability, status: ProviderStatus):
+
+    def __init__(
+        self, provider_id: str, capabilities: Capability, status: ProviderStatus
+    ):
         self.provider_id = provider_id
         self.capabilities = capabilities
         self.status = status
@@ -81,11 +83,15 @@ def test_lease_expiry_frees_capacity_and_allows_reassignment():
 
     # Initial assignment with a short lease
     ranked = qprio.rank([job], now=now, seed=123)
-    assigns = qassign.match_once([prov], ranked, quotas, now=now, seed=123, lease_ttl_s=3)
+    assigns = qassign.match_once(
+        [prov], ranked, quotas, now=now, seed=123, lease_ttl_s=3
+    )
     assert assigns == [("job-ai-1", "prov-ai")]
 
     # The job has an active lease; trying to assign again before expiry should yield nothing.
-    assigns_early = qassign.match_once([prov], ranked, quotas, now=now + 1, seed=124, lease_ttl_s=3)
+    assigns_early = qassign.match_once(
+        [prov], ranked, quotas, now=now + 1, seed=124, lease_ttl_s=3
+    )
     assert assigns_early == [], "Job with active lease must not be re-assigned"
 
     # Let the lease expire and make sure capacity is released
@@ -93,7 +99,9 @@ def test_lease_expiry_frees_capacity_and_allows_reassignment():
     assert "job-ai-1" in expired
 
     # Now the job can be assigned again (new lease)
-    assigns_again = qassign.match_once([prov], ranked, quotas, now=now + 4, seed=125, lease_ttl_s=3)
+    assigns_again = qassign.match_once(
+        [prov], ranked, quotas, now=now + 4, seed=125, lease_ttl_s=3
+    )
     assert assigns_again == [("job-ai-1", "prov-ai")]
 
 
@@ -107,7 +115,9 @@ def test_lease_renewal_delays_expiry_and_preserves_capacity():
     ranked = qprio.rank([job], now=now, seed=77)
 
     # Assign with ttl=5
-    assigns = qassign.match_once([prov], ranked, quotas, now=now, seed=77, lease_ttl_s=5)
+    assigns = qassign.match_once(
+        [prov], ranked, quotas, now=now, seed=77, lease_ttl_s=5
+    )
     assert assigns == [("job-ai-2", "prov-ai")]
 
     holder, exp = qassign.get_lease("job-ai-2")
@@ -125,8 +135,12 @@ def test_lease_renewal_delays_expiry_and_preserves_capacity():
     # No capacity yet; a second job should not be assigned
     other_job = _mk_job("job-ai-3", JobKind.AI, fee=8_000, created_at=now - 1)
     ranked2 = qprio.rank([other_job], now=old_exp + 1)
-    assigns_blocked = qassign.match_once([prov], ranked2, quotas, now=old_exp + 1, seed=88)
-    assert assigns_blocked == [], "Capacity remains consumed while renewed lease is active"
+    assigns_blocked = qassign.match_once(
+        [prov], ranked2, quotas, now=old_exp + 1, seed=88
+    )
+    assert (
+        assigns_blocked == []
+    ), "Capacity remains consumed while renewed lease is active"
 
     # After the renewed expiry passes, lease should expire and capacity free
     expired_final = qassign.expire_leases(quotas, now=new_exp + 1)
@@ -148,7 +162,9 @@ def test_cancel_lease_requeues_job_and_frees_quota():
     job = _mk_job("job-ai-cancel", JobKind.AI, fee=12_000, created_at=now - 3)
     ranked = qprio.rank([job], now=now, seed=5)
 
-    assigns = qassign.match_once(providers, ranked, quotas, now=now, seed=5, lease_ttl_s=60)
+    assigns = qassign.match_once(
+        providers, ranked, quotas, now=now, seed=5, lease_ttl_s=60
+    )
     assert len(assigns) == 1
     jid, assigned_pid = assigns[0]
     assert jid == "job-ai-cancel"
@@ -158,7 +174,7 @@ def test_cancel_lease_requeues_job_and_frees_quota():
     wrong_cancel_ok = False
     try:
         rc = qassign.cancel_lease(jid, wrong_pid, quotas)
-        wrong_cancel_ok = (rc is False)
+        wrong_cancel_ok = rc is False
     except Exception:
         wrong_cancel_ok = True
     assert wrong_cancel_ok, "cancel_lease should not succeed for non-holder provider"
@@ -168,7 +184,9 @@ def test_cancel_lease_requeues_job_and_frees_quota():
     assert (rc2 is True) or (rc2 is None)
 
     # The job is still in our ranked list; it should be assignable again immediately.
-    reassign = qassign.match_once(providers, ranked, quotas, now=now + 1, seed=6, lease_ttl_s=60)
+    reassign = qassign.match_once(
+        providers, ranked, quotas, now=now + 1, seed=6, lease_ttl_s=60
+    )
     assert len(reassign) == 1
     # It may assign to either provider; we only assert that it reassigns at all.
     assert reassign[0][0] == "job-ai-cancel"
@@ -185,8 +203,12 @@ def test_renewal_by_non_holder_is_rejected():
     job = _mk_job("job-renew-deny", JobKind.AI, fee=7_000, created_at=now - 1)
     ranked = qprio.rank([job], now=now, seed=101)
 
-    assigns = qassign.match_once([p1, p2], ranked, quotas, now=now, seed=101, lease_ttl_s=30)
-    assert assigns == [("job-renew-deny", "prov-1")] or assigns == [("job-renew-deny", "prov-2")]
+    assigns = qassign.match_once(
+        [p1, p2], ranked, quotas, now=now, seed=101, lease_ttl_s=30
+    )
+    assert assigns == [("job-renew-deny", "prov-1")] or assigns == [
+        ("job-renew-deny", "prov-2")
+    ]
     holder = assigns[0][1]
     non_holder = "prov-1" if holder == "prov-2" else "prov-2"
 

@@ -35,15 +35,15 @@ import math
 import statistics as stats
 import sys
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from hashlib import sha3_256
 
 # --- Attempt imports from project modules ------------------------------------
 try:
     # Reference prover & helpers
-    from randomness.vdf.wesolowski import dev_modulus, prove  # type: ignore
     # Verifier (consensus check)
     from randomness.vdf.verifier import verify  # type: ignore
+    from randomness.vdf.wesolowski import dev_modulus, prove  # type: ignore
 except Exception as e:  # pragma: no cover - graceful message for missing deps
     print(
         "ERROR: Could not import VDF modules. "
@@ -126,7 +126,9 @@ def bench_verify(bits: int, T: int, seed: int, reps: int, warmup: int) -> BenchP
     seed_bytes = seed.to_bytes((seed.bit_length() + 7) // 8 or 1, "big")
 
     # Derive modulus deterministically from seed+bits (devnet helper).
-    N = dev_modulus(bits=bits, seed=sha3_256(seed_bytes + b"|mod|" + str(bits).encode()).digest())
+    N = dev_modulus(
+        bits=bits, seed=sha3_256(seed_bytes + b"|mod|" + str(bits).encode()).digest()
+    )
 
     # Deterministic base element x in QR_N (we'll rely on implementation details to map to a valid base)
     x = _sha3_int(seed_bytes, b"x") % N
@@ -156,7 +158,9 @@ def bench_verify(bits: int, T: int, seed: int, reps: int, warmup: int) -> BenchP
 
     mean_ms = stats.fmean(times_ms)
     median_ms = stats.median(times_ms)
-    p95_ms = stats.quantiles(times_ms, n=20)[18] if len(times_ms) >= 20 else max(times_ms)
+    p95_ms = (
+        stats.quantiles(times_ms, n=20)[18] if len(times_ms) >= 20 else max(times_ms)
+    )
     vps = 1000.0 / mean_ms if mean_ms > 0 else float("inf")
 
     return BenchPoint(
@@ -174,7 +178,18 @@ def bench_verify(bits: int, T: int, seed: int, reps: int, warmup: int) -> BenchP
 
 
 def print_table(points: list[BenchPoint]) -> None:
-    cols = ["bits", "T", "reps", "warmup", "ok", "fail", "mean_ms", "median_ms", "p95_ms", "verifies/sec"]
+    cols = [
+        "bits",
+        "T",
+        "reps",
+        "warmup",
+        "ok",
+        "fail",
+        "mean_ms",
+        "median_ms",
+        "p95_ms",
+        "verifies/sec",
+    ]
     rows = [p.to_row() for p in points]
 
     widths = [len(c) for c in cols]
@@ -193,7 +208,9 @@ def print_table(points: list[BenchPoint]) -> None:
 
 # --- CLI ---------------------------------------------------------------------
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Benchmark Wesolowski VDF verification throughput")
+    ap = argparse.ArgumentParser(
+        description="Benchmark Wesolowski VDF verification throughput"
+    )
     ap.add_argument(
         "--bits",
         type=str,
@@ -206,11 +223,30 @@ def main(argv: list[str] | None = None) -> int:
         default="5m",
         help="Comma-separated iteration counts T (supports k/m/e notation; e.g. '2e6,5m')",
     )
-    ap.add_argument("--reps", type=int, default=15, help="Verification repetitions per point (timed)")
-    ap.add_argument("--warmup", type=int, default=3, help="Warmup verifications per point (not timed)")
-    ap.add_argument("--seed", type=lambda x: int(x, 0), default=0xA11CE, help="Deterministic seed (int, 0x… ok)")
-    ap.add_argument("--csv", type=str, default="", help="Optional path to write CSV results")
-    ap.add_argument("--json", type=str, default="", help="Optional path to write JSON results")
+    ap.add_argument(
+        "--reps",
+        type=int,
+        default=15,
+        help="Verification repetitions per point (timed)",
+    )
+    ap.add_argument(
+        "--warmup",
+        type=int,
+        default=3,
+        help="Warmup verifications per point (not timed)",
+    )
+    ap.add_argument(
+        "--seed",
+        type=lambda x: int(x, 0),
+        default=0xA11CE,
+        help="Deterministic seed (int, 0x… ok)",
+    )
+    ap.add_argument(
+        "--csv", type=str, default="", help="Optional path to write CSV results"
+    )
+    ap.add_argument(
+        "--json", type=str, default="", help="Optional path to write JSON results"
+    )
     args = ap.parse_args(argv)
 
     bits_list = [int(b.strip()) for b in args.bits.split(",") if b.strip()]
@@ -219,7 +255,9 @@ def main(argv: list[str] | None = None) -> int:
     points: list[BenchPoint] = []
     for bits in bits_list:
         for T in iters_list:
-            p = bench_verify(bits=bits, T=T, seed=args.seed, reps=args.reps, warmup=args.warmup)
+            p = bench_verify(
+                bits=bits, T=T, seed=args.seed, reps=args.reps, warmup=args.warmup
+            )
             points.append(p)
 
     print_table(points)
@@ -227,9 +265,35 @@ def main(argv: list[str] | None = None) -> int:
     if args.csv:
         with open(args.csv, "w", newline="") as f:
             w = csv.writer(f)
-            w.writerow(["bits", "T", "reps", "warmup", "ok", "fail", "mean_ms", "median_ms", "p95_ms", "verifies_per_sec"])
+            w.writerow(
+                [
+                    "bits",
+                    "T",
+                    "reps",
+                    "warmup",
+                    "ok",
+                    "fail",
+                    "mean_ms",
+                    "median_ms",
+                    "p95_ms",
+                    "verifies_per_sec",
+                ]
+            )
             for p in points:
-                w.writerow([p.bits, p.T, p.reps, p.warmup, p.ok, p.fail, f"{p.mean_ms:.6f}", f"{p.median_ms:.6f}", f"{p.p95_ms:.6f}", f"{p.vps:.6f}"])
+                w.writerow(
+                    [
+                        p.bits,
+                        p.T,
+                        p.reps,
+                        p.warmup,
+                        p.ok,
+                        p.fail,
+                        f"{p.mean_ms:.6f}",
+                        f"{p.median_ms:.6f}",
+                        f"{p.p95_ms:.6f}",
+                        f"{p.vps:.6f}",
+                    ]
+                )
         print(f"\nWrote CSV: {args.csv}")
 
     if args.json:

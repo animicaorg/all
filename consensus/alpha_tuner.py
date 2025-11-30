@@ -61,12 +61,13 @@ All math is integer and deterministic.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, Mapping, Tuple, List
+from typing import Dict, Iterable, List, Mapping, Tuple
 
 try:
     from consensus.types import ProofType  # canonical enum
 except Exception:  # pragma: no cover - allow standalone tests
     from enum import IntEnum
+
     class ProofType(IntEnum):
         HASH = 0
         AI = 1
@@ -74,15 +75,21 @@ except Exception:  # pragma: no cover - allow standalone tests
         STORAGE = 3
         VDF = 4
 
+
 # ----------------------------- Fixed-point scales ----------------------------
 
-SCALE = 10**9              # α fixed-point scale: 1.0 == 1_000_000_000
-PPM   = 1_000_000          # shares in parts-per-million
+SCALE = 10**9  # α fixed-point scale: 1.0 == 1_000_000_000
+PPM = 1_000_000  # shares in parts-per-million
 DEFAULT_TYPES: Tuple[ProofType, ...] = (
-    ProofType.HASH, ProofType.AI, ProofType.QUANTUM, ProofType.STORAGE, ProofType.VDF
+    ProofType.HASH,
+    ProofType.AI,
+    ProofType.QUANTUM,
+    ProofType.STORAGE,
+    ProofType.VDF,
 )
 
 # ------------------------------- Configuration ------------------------------
+
 
 @dataclass(frozen=True)
 class AlphaTunerConfig:
@@ -93,20 +100,22 @@ class AlphaTunerConfig:
     COOLDOWN: int = 32
 
     # Target mix in ppm (must sum to 1_000_000). Missing types get 0.
-    target_mix_ppm: Mapping[ProofType, int] = field(default_factory=lambda: {
-        ProofType.HASH:    600_000,  # 60%
-        ProofType.AI:      200_000,  # 20%
-        ProofType.QUANTUM: 120_000,  # 12%
-        ProofType.STORAGE:  50_000,  # 5%
-        ProofType.VDF:      30_000,  # 3%
-    })
+    target_mix_ppm: Mapping[ProofType, int] = field(
+        default_factory=lambda: {
+            ProofType.HASH: 600_000,  # 60%
+            ProofType.AI: 200_000,  # 20%
+            ProofType.QUANTUM: 120_000,  # 12%
+            ProofType.STORAGE: 50_000,  # 5%
+            ProofType.VDF: 30_000,  # 3%
+        }
+    )
 
     # Small floor to avoid division blow-ups when a type is nearly absent.
     epsilon_share_ppm: int = 10  # 0.001%
 
     # Global clamps for alpha (in SCALE units)
-    min_alpha: int = SCALE // 4     # 0.25x
-    max_alpha: int = SCALE * 4      # 4.00x
+    min_alpha: int = SCALE // 4  # 0.25x
+    max_alpha: int = SCALE * 4  # 4.00x
 
     # Per-update multiplicative clamps in ppm (e.g., 1.05x up, 0.95x down)
     step_up_ppm: int = 1_050_000
@@ -118,12 +127,17 @@ class AlphaTunerConfig:
 
 # ------------------------------- State object --------------------------------
 
+
 @dataclass
 class AlphaTunerState:
     # α weights per type in SCALE units
-    alphas: Dict[ProofType, int] = field(default_factory=lambda: {t: SCALE for t in DEFAULT_TYPES})
+    alphas: Dict[ProofType, int] = field(
+        default_factory=lambda: {t: SCALE for t in DEFAULT_TYPES}
+    )
     # EMA accumulator per type, scaled by 1<<SHIFT
-    ema_units_scaled: Dict[ProofType, int] = field(default_factory=lambda: {t: 0 for t in DEFAULT_TYPES})
+    ema_units_scaled: Dict[ProofType, int] = field(
+        default_factory=lambda: {t: 0 for t in DEFAULT_TYPES}
+    )
     # Last height we successfully applied an update
     last_update_height: int = -1
 
@@ -136,6 +150,7 @@ class AlphaTunerState:
 
 
 # ------------------------------- Tuner logic ---------------------------------
+
 
 class AlphaTuner:
     """
@@ -194,7 +209,13 @@ class AlphaTuner:
         if shares_ppm is None:
             # No signal yet; keep α unchanged
             self.state.last_update_height = height
-            return AlphaDelta(height=height, before={}, after={}, normalized_factor=SCALE, shares_ppm={})
+            return AlphaDelta(
+                height=height,
+                before={},
+                after={},
+                normalized_factor=SCALE,
+                shares_ppm={},
+            )
 
         before = dict(self.state.alphas)
 
@@ -206,7 +227,9 @@ class AlphaTuner:
             observed_ppm = max(self.cfg.epsilon_share_ppm, shares_ppm.get(t, 0))
 
             # ratio_ppm = target / observed, in ppm scale (i.e., 1.0 == 1_000_000)
-            ratio_ppm = _div_ppm(target_ppm, observed_ppm)  # == (target_ppm * 1e6) // observed_ppm
+            ratio_ppm = _div_ppm(
+                target_ppm, observed_ppm
+            )  # == (target_ppm * 1e6) // observed_ppm
 
             # Clamp the multiplicative step
             up = self.cfg.step_up_ppm
@@ -226,7 +249,10 @@ class AlphaTuner:
                 # But our α are already in SCALE; multiplying by PPM/norm keeps them in SCALE.
                 tentative = {t: _mul_div(a, PPM, norm) for t, a in tentative.items()}
                 # Re-apply global clamps after normalization
-                tentative = {t: _clamp(a, self.cfg.min_alpha, self.cfg.max_alpha) for t, a in tentative.items()}
+                tentative = {
+                    t: _clamp(a, self.cfg.min_alpha, self.cfg.max_alpha)
+                    for t, a in tentative.items()
+                }
             normalized_factor = _mul_div(SCALE, PPM, norm)  # informational
         else:
             normalized_factor = SCALE
@@ -235,8 +261,13 @@ class AlphaTuner:
         self.state.alphas.update(tentative)
         self.state.last_update_height = height
 
-        return AlphaDelta(height=height, before=before, after=dict(self.state.alphas),
-                          normalized_factor=normalized_factor, shares_ppm=shares_ppm)
+        return AlphaDelta(
+            height=height,
+            before=before,
+            after=dict(self.state.alphas),
+            normalized_factor=normalized_factor,
+            shares_ppm=shares_ppm,
+        )
 
     # --- helpers ---
 
@@ -282,24 +313,29 @@ class AlphaTuner:
                         break
                     tgt[t] += 1 if d > 0 else -1
                     d += -1 if d > 0 else 1
-            object.__setattr__(self.cfg, "target_mix_ppm", tgt)  # frozen dataclass override
+            object.__setattr__(
+                self.cfg, "target_mix_ppm", tgt
+            )  # frozen dataclass override
 
 
 # ------------------------------- Delta record --------------------------------
 
+
 @dataclass(frozen=True)
 class AlphaDelta:
     height: int
-    before: Dict[ProofType, int]             # α before update (SCALE units)
-    after: Dict[ProofType, int]              # α after update (SCALE units)
-    normalized_factor: int                   # informational: factor used in normalization (SCALE units)
-    shares_ppm: Dict[ProofType, int]         # observed shares used for this update (ppm)
+    before: Dict[ProofType, int]  # α before update (SCALE units)
+    after: Dict[ProofType, int]  # α after update (SCALE units)
+    normalized_factor: int  # informational: factor used in normalization (SCALE units)
+    shares_ppm: Dict[ProofType, int]  # observed shares used for this update (ppm)
 
 
 # ------------------------------- Math helpers --------------------------------
 
+
 def _clamp(x: int, lo: int, hi: int) -> int:
     return lo if x < lo else hi if x > hi else x
+
 
 def _mul_div(a: int, num: int, den: int) -> int:
     """
@@ -309,6 +345,7 @@ def _mul_div(a: int, num: int, den: int) -> int:
     if den <= 0:
         raise ValueError("den must be > 0")
     return (a * num) // den
+
 
 def _div_ppm(num_ppm: int, den_ppm: int) -> int:
     """
@@ -320,8 +357,10 @@ def _div_ppm(num_ppm: int, den_ppm: int) -> int:
         return 10_000_000  # 10x as a sentinel; will be clamped by step limits.
     return (num_ppm * PPM) // den_ppm
 
-def _target_weighted_avg_ppm(alphas: Mapping[ProofType, int],
-                             targets_ppm: Mapping[ProofType, int]) -> int:
+
+def _target_weighted_avg_ppm(
+    alphas: Mapping[ProofType, int], targets_ppm: Mapping[ProofType, int]
+) -> int:
     """
     Compute target-weighted average of α, expressed in ppm of SCALE, i.e.,
     avg_ppm = floor( 1e6 * ( Σ_t α_t * w_t ) / (SCALE * 1e6) ) where Σ w_t = 1e6.
@@ -338,6 +377,7 @@ def _target_weighted_avg_ppm(alphas: Mapping[ProofType, int],
 
 # ------------------------------- Serialization -------------------------------
 
+
 def export_state(state: AlphaTunerState) -> Dict[str, Dict[str, int] | int]:
     """Serialize the tuner state to a plain dict (for KV/JSON storage)."""
     return {
@@ -346,12 +386,15 @@ def export_state(state: AlphaTunerState) -> Dict[str, Dict[str, int] | int]:
         "last_update_height": state.last_update_height,
     }
 
+
 def import_state(d: Mapping[str, object]) -> AlphaTunerState:
     """Inverse of export_state (lenient to missing fields)."""
+
     def _pt(k: str) -> ProofType:
         return ProofType(int(k))
-    alphas = { _pt(k): int(v) for k, v in dict(d.get("alphas", {})).items() }  # type: ignore[arg-type]
-    ema = { _pt(k): int(v) for k, v in dict(d.get("ema_units_scaled", {})).items() }  # type: ignore[arg-type]
+
+    alphas = {_pt(k): int(v) for k, v in dict(d.get("alphas", {})).items()}  # type: ignore[arg-type]
+    ema = {_pt(k): int(v) for k, v in dict(d.get("ema_units_scaled", {})).items()}  # type: ignore[arg-type]
     last = int(d.get("last_update_height", -1))  # type: ignore[arg-type]
     # Fill missing types with defaults to keep arrays dense and stable
     for t in DEFAULT_TYPES:
@@ -369,14 +412,15 @@ if __name__ == "__main__":  # pragma: no cover
 
     # Simulate 1000 blocks where HASH dominates (90%), AI (8%), QUANTUM (2%)
     import random
+
     rng = random.Random(42)
     for h in range(1, 1001):
         units = {
-            ProofType.HASH:    900 + rng.randrange(0, 5),
-            ProofType.AI:       80 + rng.randrange(0, 3),
-            ProofType.QUANTUM:  20 + (rng.randrange(0, 2) if (h % 10) == 0 else 0),
-            ProofType.STORAGE:   0,
-            ProofType.VDF:       0,
+            ProofType.HASH: 900 + rng.randrange(0, 5),
+            ProofType.AI: 80 + rng.randrange(0, 3),
+            ProofType.QUANTUM: 20 + (rng.randrange(0, 2) if (h % 10) == 0 else 0),
+            ProofType.STORAGE: 0,
+            ProofType.VDF: 0,
         }
         tuner.record_block(units)
         if tuner.ready_to_update(h):
@@ -385,6 +429,7 @@ if __name__ == "__main__":  # pragma: no cover
             aH = delta.after[ProofType.HASH] / SCALE
             aA = delta.after[ProofType.AI] / SCALE
             aQ = delta.after[ProofType.QUANTUM] / SCALE
-            print(f"h={h:4d} shares(H/A/Q)={delta.shares_ppm[ProofType.HASH]}/{delta.shares_ppm[ProofType.AI]}/{delta.shares_ppm[ProofType.QUANTUM]}  "
-                  f"alpha(H/A/Q)={aH:.3f}/{aA:.3f}/{aQ:.3f}")
-
+            print(
+                f"h={h:4d} shares(H/A/Q)={delta.shares_ppm[ProofType.HASH]}/{delta.shares_ppm[ProofType.AI]}/{delta.shares_ppm[ProofType.QUANTUM]}  "
+                f"alpha(H/A/Q)={aH:.3f}/{aA:.3f}/{aQ:.3f}"
+            )

@@ -18,12 +18,11 @@ from __future__ import annotations
 
 import json
 import os
+from hashlib import sha3_256
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 
 import pytest
-from hashlib import sha3_256
-
 
 # ---------------------------------------------------------------------------
 # Paths / fixtures
@@ -36,6 +35,7 @@ MANIFEST = HERE / "manifest.json"
 # ---------------------------------------------------------------------------
 # Helpers: deterministic, self-contained "SignBytes" builder
 # ---------------------------------------------------------------------------
+
 
 def _uvarint(n: int) -> bytes:
     """Unsigned varint (LE 7-bit) like protobuf/cborish style; simple and deterministic."""
@@ -133,6 +133,7 @@ PERMIT_DOMAIN = sha3_256(b"ANIMICA::MULTISIG::PERMIT::V1").digest()  # 32 bytes
 # Approval aggregation helpers (host-side mirror of expected contract logic)
 # ---------------------------------------------------------------------------
 
+
 def aggregate_approvals(
     threshold: int,
     owners: Iterable[bytes],
@@ -163,6 +164,7 @@ def aggregate_approvals(
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 def test_manifest_exists_and_has_required_abi():
     assert MANIFEST.is_file(), f"manifest not found at {MANIFEST}"
@@ -257,7 +259,7 @@ def test_signbytes_determinism_and_sensitivity():
         contract_addr=contract_addr,
         to=to_addr,
         value=value,
-        data=b"\xFF" + data,
+        data=b"\xff" + data,
         gas_limit=gas_limit,
         nonce=nonce,
         expiry_height=expiry_height,
@@ -357,18 +359,21 @@ def test_action_hash_drift_resistance():
     assert digest_signbytes(sb_flip) != h
 
 
-@pytest.mark.parametrize("owners_count,threshold,valid", [
-    (1, 1, True),
-    (3, 2, True),
-    (3, 3, True),
-    (3, 4, False),
-    (0, 0, False),
-    (2, 0, False),
-])
+@pytest.mark.parametrize(
+    "owners_count,threshold,valid",
+    [
+        (1, 1, True),
+        (3, 2, True),
+        (3, 3, True),
+        (3, 4, False),
+        (0, 0, False),
+        (2, 0, False),
+    ],
+)
 def test_threshold_bounds(owners_count: int, threshold: int, valid: bool):
     """Pure sanity: threshold must be in [1, len(owners)] under normal policy."""
     owners = [os.urandom(20) for _ in range(owners_count)]
-    ok = (1 <= threshold <= len(owners))
+    ok = 1 <= threshold <= len(owners)
     assert ok == valid
 
 
@@ -381,5 +386,3 @@ def test_manifest_metadata_tags_and_language():
     # Minimal expectations
     for t in ("multisig", "pq", "security"):
         assert t in tags, f"missing expected tag '{t}'"
-
-

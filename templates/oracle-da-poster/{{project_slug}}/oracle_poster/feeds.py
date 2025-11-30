@@ -61,6 +61,7 @@ _LOG = get_logger("oracle_poster.feeds")
 # Data types
 # --------------------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class FeedSample:
     """
@@ -78,6 +79,7 @@ class FeedSample:
                  (I.e., we don't suppress in the absence of a usable numeric.)
         meta: Free-form details (e.g., hints about how `value` was inferred).
     """
+
     payload: bytes
     size: int
     content_type: str
@@ -94,6 +96,7 @@ class FeedError(RuntimeError):
 # --------------------------------------------------------------------------------------
 # Utilities
 # --------------------------------------------------------------------------------------
+
 
 def _commitment_hex(payload: bytes) -> str:
     return "0x" + sha256(payload).hexdigest()
@@ -164,7 +167,11 @@ def _infer_numeric_from_json(data: Any) -> Tuple[Optional[float], Dict[str, Any]
     for k, v in flat.items():
         last = k.split(".")[-1]
         base = last.split("[", 1)[0]
-        if base.lower() in _NUMERIC_HINT_KEYS and isinstance(v, (int, float)) and not isinstance(v, bool):
+        if (
+            base.lower() in _NUMERIC_HINT_KEYS
+            and isinstance(v, (int, float))
+            and not isinstance(v, bool)
+        ):
             meta["strategy"] = "hint_key"
             meta["key"] = k
             return float(v), meta
@@ -199,7 +206,9 @@ def _infer_numeric_from_text(text: str) -> Tuple[Optional[float], Dict[str, Any]
         return None, meta
 
 
-def _infer_value_and_content_type(payload: bytes) -> Tuple[Optional[float], Dict[str, Any], str]:
+def _infer_value_and_content_type(
+    payload: bytes,
+) -> Tuple[Optional[float], Dict[str, Any], str]:
     """
     Inspect bytes and return (numeric_value, meta, content_type).
     """
@@ -225,7 +234,9 @@ def _infer_value_and_content_type(payload: bytes) -> Tuple[Optional[float], Dict
     return None, meta, "application/octet-stream"
 
 
-def _bps_changed(prev: Optional[float], curr: Optional[float], min_change_bps: Optional[int]) -> bool:
+def _bps_changed(
+    prev: Optional[float], curr: Optional[float], min_change_bps: Optional[int]
+) -> bool:
     """
     Basis-points (1/100 of a percent) threshold. If either value is None,
     return True so we don't suppress updates blindly.
@@ -252,6 +263,7 @@ def _enforce_size(payload: bytes, max_bytes: int) -> None:
 # --------------------------------------------------------------------------------------
 # Feed base & implementations
 # --------------------------------------------------------------------------------------
+
 
 class BaseFeed:
     """
@@ -352,7 +364,9 @@ class CommandFeed(BaseFeed):
     def _read_bytes(self, timeout_sec: int) -> bytes:
         # We use shell for convenience; projects can switch to a list/execve form as needed.
         try:
-            _LOG.debug("CommandFeed executing: %s (timeout=%ss)", self.command, timeout_sec)
+            _LOG.debug(
+                "CommandFeed executing: %s (timeout=%ss)", self.command, timeout_sec
+            )
             # text=False -> bytes
             proc = subprocess.run(
                 ["/bin/sh", "-c", self.command],
@@ -362,13 +376,17 @@ class CommandFeed(BaseFeed):
                 text=False,
             )
         except subprocess.TimeoutExpired as e:
-            raise FeedError(f"Command timed out after {timeout_sec}s: {self.command}") from e
+            raise FeedError(
+                f"Command timed out after {timeout_sec}s: {self.command}"
+            ) from e
         except OSError as e:
             raise FeedError(f"Failed to execute command: {self.command} ({e})") from e
 
         if proc.returncode != 0:
             stderr = (proc.stderr or b"").decode("utf-8", errors="replace")
-            raise FeedError(f"Command exited with code {proc.returncode}: {self.command}\n{stderr}")
+            raise FeedError(
+                f"Command exited with code {proc.returncode}: {self.command}\n{stderr}"
+            )
 
         out = proc.stdout or b""
         _LOG.debug("CommandFeed captured %d bytes from stdout", len(out))
@@ -378,6 +396,7 @@ class CommandFeed(BaseFeed):
 # --------------------------------------------------------------------------------------
 # Builder
 # --------------------------------------------------------------------------------------
+
 
 def build_feed(cfg: PosterEnv) -> BaseFeed:
     """
@@ -400,5 +419,7 @@ def build_feed(cfg: PosterEnv) -> BaseFeed:
         _LOG.info("Using CommandFeed: %s", cfg.source_command)
         return CommandFeed(cfg, cfg.source_command)
 
-    _LOG.warning("No source configured; using a stub CommandFeed that emits empty payloads.")
+    _LOG.warning(
+        "No source configured; using a stub CommandFeed that emits empty payloads."
+    )
     return CommandFeed(cfg, "printf ''")

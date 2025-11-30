@@ -42,6 +42,7 @@ BytesLike = Union[bytes, bytearray, memoryview]
 # Basic bytes/hex helpers
 # -----------------------
 
+
 def is_byteslike(x: object) -> bool:
     return isinstance(x, (bytes, bytearray, memoryview))
 
@@ -107,6 +108,7 @@ def b(x: Union[BytesLike, str, int]) -> bytes:
 # Length/shape guarding
 # ---------------------
 
+
 def ensure_len(data: BytesLike, n: int, *, name: str = "bytes") -> bytes:
     data_b = b(data)
     if len(data_b) != n:
@@ -140,6 +142,7 @@ def expect_len(data: BytesLike, n: int, *, name: str = "bytes") -> bytes:
 # Integer ↔ big-endian bytes
 # -------------------------
 
+
 def int_to_be(x: int, *, length: int | None = None) -> bytes:
     if x < 0:
         raise ValueError("int_to_be: negative not supported")
@@ -160,10 +163,10 @@ def be_to_int(data: BytesLike) -> int:
 _BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 _CHARSET_REV = {c: i for i, c in enumerate(_BECH32_CHARSET)}
 # polymod constants
-_GENERATORS = (0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3)
+_GENERATORS = (0x3B6A57B2, 0x26508E6D, 0x1EA119FA, 0x3D4233DD, 0x2A1462B3)
 # Checksums
 _CONST_BECH32 = 1
-_CONST_BECH32M = 0x2bc830a3
+_CONST_BECH32M = 0x2BC830A3
 
 
 def _hrp_expand(hrp: str) -> Iterable[int]:
@@ -174,7 +177,7 @@ def _polymod(values: Iterable[int]) -> int:
     chk = 1
     for v in values:
         b_ = (chk >> 25) & 0xFF
-        chk = ((chk & 0x1ffffff) << 5) ^ v
+        chk = ((chk & 0x1FFFFFF) << 5) ^ v
         for i in range(5):
             chk ^= _GENERATORS[i] if ((b_ >> i) & 1) else 0
     return chk
@@ -198,7 +201,9 @@ def _check_hrp(hrp: str) -> None:
             raise ValueError("HRP contains invalid character")
 
 
-def _convertbits(data: Iterable[int], from_bits: int, to_bits: int, pad: bool) -> Tuple[bytes, bool]:
+def _convertbits(
+    data: Iterable[int], from_bits: int, to_bits: int, pad: bool
+) -> Tuple[bytes, bool]:
     """General power-of-2 base conversion. Returns (out, success)."""
     acc = 0
     bits = 0
@@ -257,7 +262,7 @@ def bech32m_decode(s: str) -> Tuple[str, bytes]:
         raise ValueError("separator position invalid")
     hrp = s[:pos]
     _check_hrp(hrp)
-    data_part = s[pos + 1:]
+    data_part = s[pos + 1 :]
     data = []
     try:
         for c in data_part:
@@ -303,7 +308,7 @@ def bech32_decode_raw(s: str) -> Tuple[str, list[int]]:
     _check_hrp(hrp)
     data = []
     try:
-        for c in s[pos + 1:]:
+        for c in s[pos + 1 :]:
             data.append(_CHARSET_REV[c])
     except KeyError:
         raise ValueError("invalid character in data part")

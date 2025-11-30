@@ -12,8 +12,8 @@ local VM fixture provided in contracts/tests/conftest.py.
 from __future__ import annotations
 
 from pathlib import Path
-import pytest
 
+import pytest
 
 # ----------------------- inline registry contract (deterministic) -----------------------
 
@@ -75,6 +75,7 @@ def _write_contract(tmp_path: Path) -> Path:
 
 # ------------------------------------------- tests -------------------------------------------
 
+
 def test_set_get_roundtrip(tmp_path: Path, compile_contract):
     c = compile_contract(_write_contract(tmp_path))
     c.call("init")
@@ -105,8 +106,8 @@ def test_overwrite_updates_both_maps(tmp_path: Path, compile_contract):
     c.call("init")
 
     name = b"service.api"
-    addr1 = b"\xAA" * 32
-    addr2 = b"\xBB" * 32
+    addr1 = b"\xaa" * 32
+    addr2 = b"\xbb" * 32
 
     # First set
     c.call("set_name", name, addr1)
@@ -130,13 +131,15 @@ def test_overwrite_updates_both_maps(tmp_path: Path, compile_contract):
 @pytest.mark.parametrize(
     "bad_name,bad_addr,expect_which",
     [
-        (b"", b"\x01"*32, "name"),
-        (b"x"*65, b"\x01"*32, "name"),  # too long
+        (b"", b"\x01" * 32, "name"),
+        (b"x" * 65, b"\x01" * 32, "name"),  # too long
         (b"ok", b"", "addr"),
-        (b"ok", b"y"*65, "addr"),       # too long
+        (b"ok", b"y" * 65, "addr"),  # too long
     ],
 )
-def test_input_validation(tmp_path: Path, compile_contract, bad_name, bad_addr, expect_which):
+def test_input_validation(
+    tmp_path: Path, compile_contract, bad_name, bad_addr, expect_which
+):
     c = compile_contract(_write_contract(tmp_path))
     c.call("init")
 
@@ -148,8 +151,8 @@ def test_multiple_names_can_point_to_distinct_addrs(tmp_path: Path, compile_cont
     c = compile_contract(_write_contract(tmp_path))
     c.call("init")
 
-    n1, a1 = b"a.anim", b"\x10"*20
-    n2, a2 = b"b.anim", b"\x20"*20
+    n1, a1 = b"a.anim", b"\x10" * 20
+    n2, a2 = b"b.anim", b"\x20" * 20
     c.call("set_name", n1, a1)
     c.call("set_name", n2, a2)
 
@@ -163,7 +166,7 @@ def test_repeated_set_same_value_is_idempotent(tmp_path: Path, compile_contract)
     c = compile_contract(_write_contract(tmp_path))
     c.call("init")
 
-    name, addr = b"idempotent.anim", b"\x33"*32
+    name, addr = b"idempotent.anim", b"\x33" * 32
     c.call("set_name", name, addr)
     first_events = len(c.events)
 

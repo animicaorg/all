@@ -27,6 +27,7 @@ Canonical bytes fed to SHA3-256:
 Namespace byte width is derived from NAMESPACE_BITS (defaults to 32 if
 da.constants is not available). All hashes are 32-byte digests by default.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -39,9 +40,9 @@ except Exception:  # pragma: no cover
 
 _NS_BYTES = (_NAMESPACE_BITS + 7) // 8
 
-from .namespace import NamespaceId, NamespaceRange
-from ..utils.hash import sha3_256
 from ..utils.bytes import bytes_to_hex
+from ..utils.hash import sha3_256
+from .namespace import NamespaceId, NamespaceRange
 
 LEAF_TAG = b"\x00"
 NODE_TAG = b"\x01"
@@ -51,6 +52,7 @@ NODE_TAG = b"\x01"
 # Errors
 # --------------------------------------------------------------------------- #
 
+
 class NMTNodeError(ValueError):
     """Raised for malformed node inputs (hash sizes, ranges, etc.)."""
 
@@ -59,11 +61,14 @@ class NMTNodeError(ValueError):
 # Hash helpers
 # --------------------------------------------------------------------------- #
 
+
 def _ns_to_be(ns: int | NamespaceId) -> bytes:
     """Encode namespace id as fixed-width big-endian bytes."""
     n = int(ns)
     if n < 0 or n >= (1 << _NAMESPACE_BITS):
-        raise NMTNodeError(f"namespace {n} out of range for NAMESPACE_BITS={_NAMESPACE_BITS}")
+        raise NMTNodeError(
+            f"namespace {n} out of range for NAMESPACE_BITS={_NAMESPACE_BITS}"
+        )
     return n.to_bytes(_NS_BYTES, "big")
 
 
@@ -97,6 +102,7 @@ def inner_hash(
 # Node type
 # --------------------------------------------------------------------------- #
 
+
 @dataclass(frozen=True)
 class Node:
     """
@@ -112,6 +118,7 @@ class Node:
     for left/right to avoid recursion; verifiers usually only need `hash` and
     `ns_range`.
     """
+
     hash: bytes
     ns_range: NamespaceRange
     left: Optional[int] = None
@@ -139,6 +146,7 @@ class Node:
 # --------------------------------------------------------------------------- #
 # Constructors
 # --------------------------------------------------------------------------- #
+
 
 def make_leaf(ns: int | NamespaceId, leaf_payload_hash: bytes) -> Node:
     """
@@ -182,6 +190,7 @@ def make_parent(
 # --------------------------------------------------------------------------- #
 # Utilities
 # --------------------------------------------------------------------------- #
+
 
 def _coerce_hash32(h: bytes, *, where: str = "hash") -> bytes:
     if not isinstance(h, (bytes, bytearray, memoryview)):

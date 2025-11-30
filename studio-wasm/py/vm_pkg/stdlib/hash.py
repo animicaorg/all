@@ -26,6 +26,7 @@ def _as_bytes(name: str, v: Any) -> bytes:
 
 # ------------ Core digests ------------
 
+
 def keccak256(data: bytes | bytearray) -> bytes:
     """Return 32-byte Keccak-256 digest."""
     return hash_api.keccak256(_as_bytes("data", data))
@@ -42,6 +43,7 @@ def sha3_512(data: bytes | bytearray) -> bytes:
 
 
 # ------------ Hex helpers ------------
+
 
 def keccak256_hex(data: bytes | bytearray) -> str:
     """Hex-encoded Keccak-256 digest."""

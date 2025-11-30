@@ -45,7 +45,6 @@ from hashlib import sha3_256
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-
 # ------------------------------------------------------------------------------------
 # Paths
 # ------------------------------------------------------------------------------------
@@ -59,6 +58,7 @@ REPO_ROOT = HERE.parents[3]  # add repo root to sys.path for `contracts.tools` i
 # ------------------------------------------------------------------------------------
 # Helpers: robust imports (SDK, builder, VM)
 # ------------------------------------------------------------------------------------
+
 
 def _import_sdk():
     try:
@@ -83,8 +83,8 @@ def _import_sdk():
         ) from e
 
     try:
-        from omni_sdk.contracts.deployer import Deployer
         from omni_sdk.contracts.client import ContractClient
+        from omni_sdk.contracts.deployer import Deployer
     except Exception as e:  # pragma: no cover
         raise SystemExit(
             "Could not import omni_sdk contracts helpers (Deployer/ContractClient). "
@@ -106,14 +106,15 @@ def _import_builder_or_vm():
     sys.path.insert(0, str(REPO_ROOT))
     try:
         from contracts.tools.build_package import build_package  # type: ignore
+
         return ("builder", build_package)
     except Exception:
         pass
 
     try:
         # Fallback: compile & package via vm_py loader
-        from vm_py.runtime.loader import load as vm_load  # type: ignore
         from vm_py.compiler.encode import encode as ir_encode  # type: ignore
+        from vm_py.runtime.loader import load as vm_load  # type: ignore
 
         def _vm_builder(src_path: Path, manifest_path: Path) -> Dict[str, Any]:
             # Minimal, example-grade bundle builder using vm_py directly
@@ -124,7 +125,9 @@ def _import_builder_or_vm():
             # Expect loader_out to give us IR/module bytes and a normalized manifest dict
             code_bytes = loader_out.get("code_bytes")
             manifest = loader_out.get("manifest")
-            if not isinstance(code_bytes, (bytes, bytearray)) or not isinstance(manifest, dict):
+            if not isinstance(code_bytes, (bytes, bytearray)) or not isinstance(
+                manifest, dict
+            ):
                 raise RuntimeError("vm_py loader returned unexpected structure")
             # Tie a code hash (sha3_256) for content-addressed deploys
             code_hash = sha3_256(code_bytes).hexdigest()
@@ -215,6 +218,7 @@ def build_permit_signbytes(
 # Configuration / CLI
 # ------------------------------------------------------------------------------------
 
+
 @dataclass
 class Config:
     rpc_url: str
@@ -255,10 +259,13 @@ def load_config() -> Config:
 # Main flow
 # ------------------------------------------------------------------------------------
 
+
 def main() -> None:
     # 0) Load config & libs
     cfg = load_config()
-    RpcClient, Mnemonic, Signer, Deployer, ContractClient, tx_build, tx_send = _import_sdk()
+    RpcClient, Mnemonic, Signer, Deployer, ContractClient, tx_build, tx_send = (
+        _import_sdk()
+    )
     builder_kind, builder_fn = _import_builder_or_vm()
 
     print(f"[i] RPC_URL={cfg.rpc_url}  CHAIN_ID={cfg.chain_id}")
@@ -273,20 +280,28 @@ def main() -> None:
     if isinstance(pkg, tuple) and len(pkg) == 2:
         # Some builders might return (package_dict, out_path)
         pkg = pkg[0]
-    assert isinstance(pkg, dict) and "manifest" in pkg and "code" in pkg, "invalid package"
+    assert (
+        isinstance(pkg, dict) and "manifest" in pkg and "code" in pkg
+    ), "invalid package"
     code_hash = pkg.get("code_hash") or ("0x" + sha3_256(pkg["code"]).hexdigest())
 
     print(f"[i] Package ready. code_hash={code_hash}")
 
     # 2) Initialize SDK client & signer
     rpc = RpcClient(cfg.rpc_url, chain_id=cfg.chain_id)  # type: ignore[arg-type]
-    wallet = Mnemonic.from_phrase(cfg.mnemonic)  # must expose deterministic seed derivation
+    wallet = Mnemonic.from_phrase(
+        cfg.mnemonic
+    )  # must expose deterministic seed derivation
     if cfg.pq_alg not in ("dilithium3", "sphincs_shake_128s"):
         raise SystemExit("PQ_ALG must be one of: dilithium3, sphincs_shake_128s")
     signer = Signer.from_mnemonic(wallet, alg=cfg.pq_alg)  # type: ignore[attr-defined]
 
-    deployer_addr = signer.address()  # 20-byte (raw) or bech32m; ContractClient accepts either
-    print(f"[i] Deployer address: {getattr(deployer_addr, 'hex', lambda: str(deployer_addr))()}")
+    deployer_addr = (
+        signer.address()
+    )  # 20-byte (raw) or bech32m; ContractClient accepts either
+    print(
+        f"[i] Deployer address: {getattr(deployer_addr, 'hex', lambda: str(deployer_addr))()}"
+    )
 
     # 3) Deploy
     print("[i] Sending deploy tx...")
@@ -296,14 +311,18 @@ def main() -> None:
     if (deploy_receipt or {}).get("status") != "SUCCESS":
         raise SystemExit(f"Deploy failed: {json.dumps(deploy_receipt, indent=2)}")
 
-    contract_addr = deploy_receipt.get("contractAddress") or deploy_receipt.get("address")
+    contract_addr = deploy_receipt.get("contractAddress") or deploy_receipt.get(
+        "address"
+    )
     if not contract_addr:
         raise SystemExit("Deploy receipt did not include contract address.")
     print(f"[✓] Deployed at: {contract_addr}")
 
     # 4) Basic reads via ContractClient
     c = ContractClient(rpc, abi=pkg["manifest"]["abi"], address=contract_addr)  # type: ignore[call-arg]
-    cfg_out = c.call("get_config", {})  # expects owners (List[bytes20]), threshold (u16)
+    cfg_out = c.call(
+        "get_config", {}
+    )  # expects owners (List[bytes20]), threshold (u16)
     owners = cfg_out.get("owners", [])
     threshold = cfg_out.get("threshold", 0)
     print(f"[i] get_config → owners={len(owners)} threshold={threshold}")
@@ -330,6 +349,7 @@ def main() -> None:
             # if bech32m, rely on sdk utils
             try:
                 from omni_sdk.utils.bech32 import decode  # type: ignore
+
                 hrp, data = decode(a)
                 if len(data) == 20:
                     return data
@@ -358,7 +378,9 @@ def main() -> None:
     # as approvals keyed by signer address. In hardened setups, off-chain signatures
     # over `sb` would accompany each approval (and be verified host-side or via a precompile).
     if len(owners) < max(2, threshold):
-        raise SystemExit("The deployed config has too few owners to demonstrate threshold.")
+        raise SystemExit(
+            "The deployed config has too few owners to demonstrate threshold."
+        )
     permit_list: List[Dict[str, Any]] = [
         {"signer_addr": owners[0], "sig": b"DEMO_SIG_0", "alg_id": 0x0001},
         {"signer_addr": owners[1], "sig": b"DEMO_SIG_1", "alg_id": 0x0001},

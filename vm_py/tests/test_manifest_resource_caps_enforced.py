@@ -169,5 +169,3 @@ def test_defaults_are_zero_caps_and_zero_limits() -> None:
     with pytest.raises(VmError) as excinfo2:
         guard.use_zk_verify()
     assert getattr(excinfo2.value, "code", None) == "capability_denied"
-
-

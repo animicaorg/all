@@ -20,6 +20,7 @@ _BASE_SEMVER = "0.1.0"
 # Public version string (may be augmented by Git metadata at import time)
 __version__ = os.environ.get("ANIMICA_VERSION") or _BASE_SEMVER
 
+
 # Parsed version info (major, minor, patch) from the base semver only.
 def _parse_semver(v: str) -> Tuple[int, int, int]:
     m = re.match(r"^\s*v?(\d+)\.(\d+)\.(\d+)", v)

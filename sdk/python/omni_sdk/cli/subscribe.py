@@ -38,6 +38,7 @@ from ..rpc.http import RpcClient
 _EventDecoder = None
 try:
     from ..contracts.events import EventDecoder  # type: ignore
+
     _EventDecoder = EventDecoder
 except Exception:
     pass
@@ -53,6 +54,7 @@ __all__ = ["app"]
 
 
 # --------------------------- utilities ---------------------------------------
+
 
 def _print_json(obj: Any, compact: bool = False) -> None:
     if compact:
@@ -89,11 +91,16 @@ def _iter_blocks_from(start: int, stop_inclusive: int) -> Iterable[int]:
 
 # --------------------------- heads -------------------------------------------
 
+
 @app.command("heads")
 def heads(
     ctx: typer.Context,
-    compact: bool = typer.Option(False, "--compact", help="Compact one-line JSON output"),
-    throttle_ms: int = typer.Option(50, "--throttle-ms", help="Min ms between prints to reduce spam"),
+    compact: bool = typer.Option(
+        False, "--compact", help="Compact one-line JSON output"
+    ),
+    throttle_ms: int = typer.Option(
+        50, "--throttle-ms", help="Min ms between prints to reduce spam"
+    ),
 ) -> None:
     """
     Subscribe to `newHeads` via WebSocket and print each head.
@@ -101,7 +108,9 @@ def heads(
     try:
         from ..rpc.ws import WsClient  # type: ignore
     except Exception as e:  # pragma: no cover
-        raise typer.BadParameter("WebSocket client not available. Install the WS dependencies.") from e
+        raise typer.BadParameter(
+            "WebSocket client not available. Install the WS dependencies."
+        ) from e
 
     c: Ctx = ctx.obj  # type: ignore[assignment]
     ws_url = _ws_url_from_http(c.rpc)
@@ -123,11 +132,16 @@ def heads(
 
 # --------------------------- pending -----------------------------------------
 
+
 @app.command("pending")
 def pending(
     ctx: typer.Context,
-    compact: bool = typer.Option(True, "--compact/--pretty", help="Compact one-line JSON (default on)"),
-    throttle_ms: int = typer.Option(0, "--throttle-ms", help="Min ms between prints (0 = unthrottled)"),
+    compact: bool = typer.Option(
+        True, "--compact/--pretty", help="Compact one-line JSON (default on)"
+    ),
+    throttle_ms: int = typer.Option(
+        0, "--throttle-ms", help="Min ms between prints (0 = unthrottled)"
+    ),
 ) -> None:
     """
     Subscribe to `pendingTxs` via WebSocket (if supported by the node).
@@ -135,7 +149,9 @@ def pending(
     try:
         from ..rpc.ws import WsClient  # type: ignore
     except Exception as e:  # pragma: no cover
-        raise typer.BadParameter("WebSocket client not available. Install the WS dependencies.") from e
+        raise typer.BadParameter(
+            "WebSocket client not available. Install the WS dependencies."
+        ) from e
 
     c: Ctx = ctx.obj  # type: ignore[assignment]
     ws_url = _ws_url_from_http(c.rpc)
@@ -157,13 +173,22 @@ def pending(
 
 # --------------------------- events ------------------------------------------
 
+
 @app.command("events")
 def events(
     ctx: typer.Context,
-    address: str = typer.Option(..., "--address", "-a", help="Contract address (bech32m) to filter logs"),
-    abi: Path = typer.Option(..., "--abi", help="Path to ABI JSON (or manifest containing 'abi')"),
-    event: Optional[str] = typer.Option(None, "--event", "-e", help="Filter by event name (requires ABI)"),
-    from_block: Optional[int] = typer.Option(None, "--from-block", help="Start block number (default: current head)"),
+    address: str = typer.Option(
+        ..., "--address", "-a", help="Contract address (bech32m) to filter logs"
+    ),
+    abi: Path = typer.Option(
+        ..., "--abi", help="Path to ABI JSON (or manifest containing 'abi')"
+    ),
+    event: Optional[str] = typer.Option(
+        None, "--event", "-e", help="Filter by event name (requires ABI)"
+    ),
+    from_block: Optional[int] = typer.Option(
+        None, "--from-block", help="Start block number (default: current head)"
+    ),
     compact: bool = typer.Option(False, "--compact", help="Compact JSON output"),
 ) -> None:
     """
@@ -178,7 +203,9 @@ def events(
     try:
         from ..rpc.ws import WsClient  # type: ignore
     except Exception as e:  # pragma: no cover
-        raise typer.BadParameter("WebSocket client not available. Install the WS dependencies.") from e
+        raise typer.BadParameter(
+            "WebSocket client not available. Install the WS dependencies."
+        ) from e
 
     c: Ctx = ctx.obj  # type: ignore[assignment]
     http = RpcClient(c.rpc, timeout=c.timeout)
@@ -186,7 +213,9 @@ def events(
 
     # Load ABI (supports manifest with {"abi": [...]})
     abi_obj = _load_json_file(abi)
-    abi_def = abi_obj["abi"] if isinstance(abi_obj, dict) and "abi" in abi_obj else abi_obj
+    abi_def = (
+        abi_obj["abi"] if isinstance(abi_obj, dict) and "abi" in abi_obj else abi_obj
+    )
 
     # Prepare decoder if available
     decoder = None
@@ -207,7 +236,9 @@ def events(
     # Helper: process a single block number
     def process_block(n: int) -> None:
         try:
-            block = http.call("chain.getBlockByNumber", [n, False, True])  # include_receipts=True
+            block = http.call(
+                "chain.getBlockByNumber", [n, False, True]
+            )  # include_receipts=True
         except Exception as e:
             typer.echo(f"warn: failed to fetch block {n}: {e}", err=True)
             return
@@ -217,7 +248,11 @@ def events(
             for lg in logs:
                 if _normalize_addr(lg.get("address")) != addr_norm:
                     continue
-                out: Dict[str, Any] = {"blockNumber": n, "txHash": r.get("transactionHash"), "address": lg.get("address")}
+                out: Dict[str, Any] = {
+                    "blockNumber": n,
+                    "txHash": r.get("transactionHash"),
+                    "address": lg.get("address"),
+                }
                 decoded_ok = False
                 if decoder:
                     try:
@@ -240,7 +275,9 @@ def events(
 
     # Follow future heads
     client = WsClient(ws_url, timeout=c.timeout)
-    typer.echo(f"Tailing events at {addr_norm} from block {from_block} via {ws_url} … (Ctrl+C to exit)")
+    typer.echo(
+        f"Tailing events at {addr_norm} from block {from_block} via {ws_url} … (Ctrl+C to exit)"
+    )
     last_seen = from_block
     try:
         with client:
@@ -258,4 +295,3 @@ def events(
 
 
 # --------------------------- module end ---------------------------------------
-

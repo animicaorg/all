@@ -16,7 +16,9 @@ async def test_p2pservice_start_stop():
     from p2p.node.service import P2PService
 
     port = _free_port()
-    svc = P2PService(listen_addrs=[f"/ip4/127.0.0.1/tcp/{port}"], seeds=[], chain_id=1337)
+    svc = P2PService(
+        listen_addrs=[f"/ip4/127.0.0.1/tcp/{port}"], seeds=[], chain_id=1337
+    )
 
     await svc.start()
     # Allow accept loop to spin once

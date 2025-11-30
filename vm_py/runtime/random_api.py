@@ -33,11 +33,12 @@ from typing import Optional
 try:
     from vm_py.errors import VmError
 except Exception:  # pragma: no cover
+
     class VmError(Exception):  # type: ignore
         pass
 
-from . import hash_api as _h
 
+from . import hash_api as _h
 
 _DOMAIN_INIT = b"vm/random/init/v1"
 _DOMAIN_BLOCK = b"vm/random/block/v1"
@@ -50,7 +51,9 @@ def _ensure_bytes(x: object, name: str) -> bytes:
     raise VmError(f"{name} must be bytes-like, got {type(x).__name__}")
 
 
-def _ensure_int(x: object, name: str, *, min_: int = 0, max_: Optional[int] = None) -> int:
+def _ensure_int(
+    x: object, name: str, *, min_: int = 0, max_: Optional[int] = None
+) -> int:
     if not isinstance(x, int):
         raise VmError(f"{name} must be int, got {type(x).__name__}")
     if x < min_:
@@ -68,6 +71,7 @@ class DRBG:
     state = SHA3-256(domain=_DOMAIN_INIT, seed || "|" || nonce || "|" || info)
     block_i = SHA3-256(domain=_DOMAIN_BLOCK, state || LE64(counter))
     """
+
     _state: bytes
     _counter: int = 0
     _buf: bytes = b""
@@ -85,7 +89,9 @@ class DRBG:
 
     def _refill(self) -> None:
         # Produce the next 32-byte block
-        block = _h.sha3_256(self._state + int.to_bytes(self._counter, 8, "little"), domain=_DOMAIN_BLOCK)
+        block = _h.sha3_256(
+            self._state + int.to_bytes(self._counter, 8, "little"), domain=_DOMAIN_BLOCK
+        )
         self._counter += 1
         self._buf = block
         self._pos = 0
@@ -131,17 +137,24 @@ class DRBG:
     def fork(self, *, label: bytes) -> "DRBG":
         """Derive a new DRBG instance from this one with a label."""
         label_b = _ensure_bytes(label, "label")
-        child_state = _h.sha3_256(self._state + b"|fork|" + label_b, domain=_DOMAIN_INIT)
+        child_state = _h.sha3_256(
+            self._state + b"|fork|" + label_b, domain=_DOMAIN_INIT
+        )
         return DRBG(_state=child_state)
 
 
 # ------------------------------- Public helpers -------------------------------
 
-def random_bytes(n: int, seed: bytes, *, nonce: bytes = b"", info: bytes = b"") -> bytes:
+
+def random_bytes(
+    n: int, seed: bytes, *, nonce: bytes = b"", info: bytes = b""
+) -> bytes:
     """
     Convenience one-shot: derive from (seed, nonce, info) and read n bytes.
     """
-    return DRBG.new(seed, nonce=nonce, info=info).read(_ensure_int(n, "n", min_=0, max_=_MAX_REQUEST))
+    return DRBG.new(seed, nonce=nonce, info=info).read(
+        _ensure_int(n, "n", min_=0, max_=_MAX_REQUEST)
+    )
 
 
 def from_tx_seed(*, tx_hash: bytes, caller: bytes = b"", salt: bytes = b"") -> DRBG:

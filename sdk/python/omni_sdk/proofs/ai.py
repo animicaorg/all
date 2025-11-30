@@ -44,26 +44,33 @@ from typing import Any, Dict, Mapping, MutableMapping, Optional, Union
 # --- Utilities & fallbacks ---------------------------------------------------
 
 try:
-    from omni_sdk.utils.bytes import from_hex as _from_hex, to_hex as _to_hex  # type: ignore
+    from omni_sdk.utils.bytes import from_hex as _from_hex  # type: ignore
+    from omni_sdk.utils.bytes import to_hex as _to_hex
 except Exception:  # pragma: no cover
+
     def _from_hex(s: str) -> bytes:
         s = s[2:] if isinstance(s, str) and s.startswith("0x") else s
         return bytes.fromhex(s)
+
     def _to_hex(b: bytes) -> str:
         return "0x" + bytes(b).hex()
+
 
 try:
     from omni_sdk.utils.hash import sha3_256  # type: ignore
 except Exception:  # pragma: no cover
     import hashlib as _hashlib
+
     def sha3_256(data: bytes) -> bytes:
         return _hashlib.sha3_256(data).digest()
+
 
 # Deterministic JSON-like bytes as a last-resort encoder (kept tiny)
 try:
     from omni_sdk.utils.cbor import dumps as cbor_dumps  # type: ignore
 except Exception:  # pragma: no cover
     import json as _json
+
     def cbor_dumps(obj: Any) -> bytes:
         return _json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
@@ -222,7 +229,9 @@ def _compute_ai_units(
     return max(1.0, float(output_bytes_len) / 1024.0)
 
 
-def _nullifier(*, task_id_b: Optional[bytes], output_digest: bytes, header_hash: Optional[bytes]) -> bytes:
+def _nullifier(
+    *, task_id_b: Optional[bytes], output_digest: bytes, header_hash: Optional[bytes]
+) -> bytes:
     """
     Deterministic nullifier to de-duplicate references in client tools.
 
@@ -316,7 +325,9 @@ def assemble_ai_proof(
     header_hash = _extract_header_hash(header)
     task_id_b = _norm_bytes(task_id, field="task_id") if task_id is not None else None
 
-    nul = _nullifier(task_id_b=task_id_b, output_digest=out_digest, header_hash=header_hash)
+    nul = _nullifier(
+        task_id_b=task_id_b, output_digest=out_digest, header_hash=header_hash
+    )
 
     body: Json = {
         "outputDigest": _to_hex(out_digest),

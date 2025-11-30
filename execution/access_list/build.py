@@ -38,13 +38,15 @@ Sorting rules:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Iterator, List, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
+from typing import (Any, Dict, Iterable, Iterator, List, Mapping,
+                    MutableMapping, Optional, Sequence, Tuple, Union)
 
 # Prefer the project's canonical types, but provide a lightweight fallback to
 # keep early bring-up smooth.
 try:
     from execution.types.access_list import AccessListEntry  # type: ignore
 except Exception:  # pragma: no cover
+
     @dataclass(frozen=True)
     class AccessListEntry:  # type: ignore
         address: bytes
@@ -53,8 +55,10 @@ except Exception:  # pragma: no cover
 
 # ------------------------------- byte helpers --------------------------------
 
+
 def _is_bytes_like(x: Any) -> bool:
     return isinstance(x, (bytes, bytearray, memoryview))
+
 
 def _to_bytes(x: Any) -> bytes:
     if isinstance(x, bytes):
@@ -70,14 +74,16 @@ def _to_bytes(x: Any) -> bytes:
         return bytes.fromhex(h)
     raise TypeError(f"expected bytes-like or 0x-hex string, got {type(x)!r}")
 
+
 # ------------------------------- core builder --------------------------------
 
-_EVENT_ACCOUNT_READ  = {"account_read", "acct_read", "account-get", "account-load"}
+_EVENT_ACCOUNT_READ = {"account_read", "acct_read", "account-get", "account-load"}
 _EVENT_ACCOUNT_WRITE = {"account_write", "acct_write", "account-put", "account-store"}
-_EVENT_STORAGE_READ  = {"storage_read", "sread", "storage-get", "slot-get"}
+_EVENT_STORAGE_READ = {"storage_read", "sread", "storage-get", "slot-get"}
 _EVENT_STORAGE_WRITE = {"storage_write", "swrite", "storage-put", "slot-put"}
-_EVENT_CALL          = {"call", "delegate_call", "static_call"}
-_EVENT_CREATE        = {"create", "contract_create"}
+_EVENT_CALL = {"call", "delegate_call", "static_call"}
+_EVENT_CREATE = {"create", "contract_create"}
+
 
 def _normalize_tracker_storage(
     obj: Any,
@@ -101,11 +107,14 @@ def _normalize_tracker_storage(
                 # Assume iterable of tuples
                 for item in val:
                     if not isinstance(item, (tuple, list)) or len(item) != 2:
-                        raise TypeError(f"{name} must be Mapping[addr->keys] or Iterable[(addr,key)], got {type(val)!r}")
+                        raise TypeError(
+                            f"{name} must be Mapping[addr->keys] or Iterable[(addr,key)], got {type(val)!r}"
+                        )
                     a, k = item
                     yield _to_bytes(a), _to_bytes(k)
             return
     # If none present, nothing to yield.
+
 
 def _normalize_tracker_accounts(
     obj: Any,
@@ -117,6 +126,7 @@ def _normalize_tracker_accounts(
             for a in val:
                 yield _to_bytes(a)
             return
+
 
 def _ingest_event(
     ev: Any,
@@ -131,11 +141,11 @@ def _ingest_event(
         if not etype:
             raise ValueError("event dict missing 'type'")
         addr = ev.get("address")
-        key  = ev.get("key", None)
+        key = ev.get("key", None)
     elif isinstance(ev, (tuple, list)) and ev:
         etype = str(ev[0]).lower()
         addr = ev[1] if len(ev) > 1 else None
-        key  = ev[2] if len(ev) > 2 else None
+        key = ev[2] if len(ev) > 2 else None
     else:
         raise TypeError(f"unsupported event shape: {type(ev)!r}")
 
@@ -147,12 +157,14 @@ def _ingest_event(
             addrs.add(_to_bytes(addr))
     elif etype in _EVENT_STORAGE_READ:
         if include_reads:
-            a_b = _to_bytes(addr); k_b = _to_bytes(key)
+            a_b = _to_bytes(addr)
+            k_b = _to_bytes(key)
             slots.setdefault(a_b, set()).add(k_b)
             addrs.add(a_b)
     elif etype in _EVENT_STORAGE_WRITE:
         if include_writes:
-            a_b = _to_bytes(addr); k_b = _to_bytes(key)
+            a_b = _to_bytes(addr)
+            k_b = _to_bytes(key)
             slots.setdefault(a_b, set()).add(k_b)
             addrs.add(a_b)
     elif etype in _EVENT_CALL or etype in _EVENT_CREATE:
@@ -162,6 +174,7 @@ def _ingest_event(
     else:
         # Unknown types are ignored to make the builder forward-compatible.
         return
+
 
 def build_access_list(
     trace_or_tracker: Any,
@@ -187,31 +200,49 @@ def build_access_list(
     slots: Dict[bytes, set[bytes]] = {}
 
     # Path A: tracker object with attributes
-    if not isinstance(trace_or_tracker, (list, tuple)) and not hasattr(trace_or_tracker, "__iter__"):
+    if not isinstance(trace_or_tracker, (list, tuple)) and not hasattr(
+        trace_or_tracker, "__iter__"
+    ):
         # Non-iterable → treat as tracker object
         tracker = trace_or_tracker
 
         # Accounts
         if include_reads:
-            for a in _normalize_tracker_accounts(tracker, ("accounts_read", "account_reads", "acct_reads", "accounts_get")):
+            for a in _normalize_tracker_accounts(
+                tracker,
+                ("accounts_read", "account_reads", "acct_reads", "accounts_get"),
+            ):
                 addrs.add(a)
         if include_writes:
-            for a in _normalize_tracker_accounts(tracker, ("accounts_written", "account_writes", "acct_writes", "accounts_put")):
+            for a in _normalize_tracker_accounts(
+                tracker,
+                ("accounts_written", "account_writes", "acct_writes", "accounts_put"),
+            ):
                 addrs.add(a)
 
         # Storage (reads/writes)
         if include_reads:
-            for a, k in _normalize_tracker_storage(tracker, ("storage_reads", "storage_read", "slots_read", "slot_reads")):
+            for a, k in _normalize_tracker_storage(
+                tracker, ("storage_reads", "storage_read", "slots_read", "slot_reads")
+            ):
                 addrs.add(a)
                 slots.setdefault(a, set()).add(k)
         if include_writes:
-            for a, k in _normalize_tracker_storage(tracker, ("storage_writes", "storage_write", "slots_write", "slot_writes")):
+            for a, k in _normalize_tracker_storage(
+                tracker,
+                ("storage_writes", "storage_write", "slots_write", "slot_writes"),
+            ):
                 addrs.add(a)
                 slots.setdefault(a, set()).add(k)
 
         # Optional call/creation targets
         if include_calls:
-            for name in ("call_targets", "called_addresses", "create_addresses", "created_addresses"):
+            for name in (
+                "call_targets",
+                "called_addresses",
+                "create_addresses",
+                "created_addresses",
+            ):
                 if hasattr(tracker, name):
                     for a in getattr(tracker, name):
                         addrs.add(_to_bytes(a))
@@ -219,7 +250,9 @@ def build_access_list(
     else:
         # Path B: iterable of events
         for ev in trace_or_tracker:  # type: ignore[assignment]
-            _ingest_event(ev, addrs, slots, include_reads, include_writes, include_calls)
+            _ingest_event(
+                ev, addrs, slots, include_reads, include_writes, include_calls
+            )
 
     # Canonicalize: ensure every address with storage appears in addrs
     for a in list(slots.keys()):
@@ -232,5 +265,6 @@ def build_access_list(
         entries.append(AccessListEntry(address=addr, storage_keys=keys))
 
     return entries
+
 
 __all__ = ["build_access_list"]

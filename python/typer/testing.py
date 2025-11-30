@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import io
-from contextlib import redirect_stdout, redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from typing import Any, Callable, List, Optional
 
 from . import Exit
@@ -14,7 +14,11 @@ class Result:
 
 
 class CliRunner:
-    def invoke(self, app: Callable[[Optional[List[str]]], Any], args: Optional[List[str]] = None) -> Result:
+    def invoke(
+        self,
+        app: Callable[[Optional[List[str]]], Any],
+        args: Optional[List[str]] = None,
+    ) -> Result:
         stdout = io.StringIO()
         stderr = io.StringIO()
         exit_code = 0

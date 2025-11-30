@@ -34,15 +34,16 @@ backing storage (e.g., to avoid holding onto large originals).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Generator, Iterable, IO, Optional, Union, overload
 import io
 import os
+from dataclasses import dataclass
+from typing import IO, Generator, Iterable, Optional, Union, overload
 
 
 @dataclass(frozen=True)
 class Chunk:
     """A single contiguous chunk from a larger payload."""
+
     idx: int
     offset: int
     data: memoryview
@@ -56,7 +57,9 @@ class Chunk:
 # Core dispatcher
 # --------------------------------------------------------------------------- #
 
-Source = Union[bytes, bytearray, memoryview, str, os.PathLike, IO[bytes], Iterable[bytes]]
+Source = Union[
+    bytes, bytearray, memoryview, str, os.PathLike, IO[bytes], Iterable[bytes]
+]
 
 
 def iter_chunks(
@@ -86,7 +89,9 @@ def iter_chunks(
 
     # In-memory zero-copy path
     if isinstance(source, (bytes, bytearray, memoryview)):
-        yield from _chunk_byteslike(source, chunk_size, max_bytes=max_bytes, start=start)
+        yield from _chunk_byteslike(
+            source, chunk_size, max_bytes=max_bytes, start=start
+        )
         return
 
     # File path → open
@@ -112,6 +117,7 @@ def iter_chunks(
 # --------------------------------------------------------------------------- #
 # Implementations
 # --------------------------------------------------------------------------- #
+
 
 def _chunk_byteslike(
     buf: Union[bytes, bytearray, memoryview],
@@ -209,7 +215,12 @@ def _chunk_iterable(
         while len(buf) >= chunk_size:
             mv = take_from_buf(chunk_size)
             # If remaining == 0 here we still may have buffered extra, but we respect max_bytes.
-            yield Chunk(idx=idx, offset=offset, data=mv, is_last=(remaining == 0 and len(buf) == 0))
+            yield Chunk(
+                idx=idx,
+                offset=offset,
+                data=mv,
+                is_last=(remaining == 0 and len(buf) == 0),
+            )
             idx += 1
             offset += len(mv)
 
@@ -224,6 +235,7 @@ def _chunk_iterable(
 # --------------------------------------------------------------------------- #
 # Convenience wrappers
 # --------------------------------------------------------------------------- #
+
 
 def chunk_bytes(
     data: Union[bytes, bytearray, memoryview],
@@ -263,6 +275,7 @@ def chunk_iter(
 # --------------------------------------------------------------------------- #
 # Utilities
 # --------------------------------------------------------------------------- #
+
 
 def _tell_safe(f: IO[bytes]) -> int:
     try:

@@ -1,7 +1,7 @@
 import json
 import os
 import time
-from binascii import unhexlify, hexlify
+from binascii import hexlify, unhexlify
 from typing import Any, Dict, Optional
 
 import pytest
@@ -33,7 +33,13 @@ def _mount_app() -> FastAPI:
         pytest.skip(f"randomness.adapters.rpc_mount not available: {e}")
 
     mounted = False
-    for name in ("mount", "mount_randomness", "mount_endpoints", "mount_app", "mount_routes"):
+    for name in (
+        "mount",
+        "mount_randomness",
+        "mount_endpoints",
+        "mount_app",
+        "mount_routes",
+    ):
         if hasattr(rpc_mount, name):
             try:
                 getattr(rpc_mount, name)(app)  # type: ignore[arg-type]
@@ -50,7 +56,9 @@ def _mount_app() -> FastAPI:
             except Exception:
                 pass
     if not mounted:
-        pytest.skip("Could not mount randomness RPC/WS endpoints (no suitable mount_* function).")
+        pytest.skip(
+            "Could not mount randomness RPC/WS endpoints (no suitable mount_* function)."
+        )
     return app
 
 
@@ -66,7 +74,9 @@ def _rpc_call(client: TestClient, method: str, params: Dict[str, Any]) -> Any:
                 return resp.json()["result"]
         except Exception as e:
             last_err = str(e)
-    pytest.skip(f"JSON-RPC endpoint not reachable for method {method} (last error: {last_err})")
+    pytest.skip(
+        f"JSON-RPC endpoint not reachable for method {method} (last error: {last_err})"
+    )
     return None  # unreachable
 
 
@@ -94,6 +104,7 @@ def _cli_reveal(salt_hex: str, payload_hex: str, rpc_url: str) -> None:
         # Typer-based CLI?
         import typer  # type: ignore
         from typer.testing import CliRunner  # type: ignore
+
         # Try to find the Typer app
         import randomness.cli.reveal as reveal_cli  # type: ignore
 
@@ -107,14 +118,19 @@ def _cli_reveal(salt_hex: str, payload_hex: str, rpc_url: str) -> None:
             runner = CliRunner(mix_stderr=False)
             # Try common flags for RPC URL
             for flag in ("--rpc", "--url", "--endpoint", "--rpc-url"):
-                res = runner.invoke(app_obj, [flag, rpc_url, "--salt", salt_hex, "--payload", payload_hex])
+                res = runner.invoke(
+                    app_obj,
+                    [flag, rpc_url, "--salt", salt_hex, "--payload", payload_hex],
+                )
                 if res.exit_code == 0:
                     return
             # As a last resort, try env var
             env = os.environ.copy()
             for key in ("OMNI_RPC", "ANIMICA_RPC", "RANDOMNESS_RPC_URL"):
                 env[key] = rpc_url
-            res = runner.invoke(app_obj, ["--salt", salt_hex, "--payload", payload_hex], env=env)
+            res = runner.invoke(
+                app_obj, ["--salt", salt_hex, "--payload", payload_hex], env=env
+            )
             if res.exit_code == 0:
                 return
         # Fallback to a callable main(*args)
@@ -154,14 +170,18 @@ def test_commit_reveal_roundtrip_emits_beacon_event(test_client: TestClient):
         pytest.skip("No websocket endpoint for randomness events found")
 
     # Commit via RPC
-    commit_result = _rpc_call(client, "rand.commit", {"salt": salt_hex, "payload": payload_hex})
+    commit_result = _rpc_call(
+        client, "rand.commit", {"salt": salt_hex, "payload": payload_hex}
+    )
     assert commit_result is not None
 
     # Reveal via CLI if available; otherwise, use RPC
     try:
         _cli_reveal(salt_hex, payload_hex, rpc_url="http://testserver")
     except RuntimeError:
-        reveal_result = _rpc_call(client, "rand.reveal", {"salt": salt_hex, "payload": payload_hex})
+        reveal_result = _rpc_call(
+            client, "rand.reveal", {"salt": salt_hex, "payload": payload_hex}
+        )
         assert reveal_result is not None
 
     # Some implementations may finalize automatically; others need an explicit "prove/verify VDF" step.
@@ -196,28 +216,42 @@ def test_commit_reveal_roundtrip_emits_beacon_event(test_client: TestClient):
             if not isinstance(msg, dict):
                 continue
             topic = msg.get("event") or msg.get("type") or msg.get("topic")
-            if isinstance(topic, str) and topic.lower() in {"beaconfinalized", "beacon_finalized", "rand.beacon"}:
+            if isinstance(topic, str) and topic.lower() in {
+                "beaconfinalized",
+                "beacon_finalized",
+                "rand.beacon",
+            }:
                 event = msg
                 break
             # Some servers nest data
             if "event" in msg and isinstance(msg["event"], dict):
                 inner = msg["event"]
                 t2 = inner.get("name") or inner.get("type")
-                if isinstance(t2, str) and t2.lower() in {"beaconfinalized", "beacon_finalized", "rand.beacon"}:
+                if isinstance(t2, str) and t2.lower() in {
+                    "beaconfinalized",
+                    "beacon_finalized",
+                    "rand.beacon",
+                }:
                     event = inner
                     break
             # Otherwise keep listening
             time.sleep(0.05)
 
     if event is None:
-        pytest.xfail("Did not observe a 'beaconFinalized' websocket event (implementation may require external VDF prover)")
+        pytest.xfail(
+            "Did not observe a 'beaconFinalized' websocket event (implementation may require external VDF prover)"
+        )
 
     # Minimal sanity on payload shape
     # Accept a variety of shapes: {"event":"beaconFinalized","beacon":{"round":..,"output":"0x.."}}
     beacon = None
     if "beacon" in event and isinstance(event["beacon"], dict):
         beacon = event["beacon"]
-    elif "data" in event and isinstance(event["data"], dict) and "beacon" in event["data"]:
+    elif (
+        "data" in event
+        and isinstance(event["data"], dict)
+        and "beacon" in event["data"]
+    ):
         beacon = event["data"]["beacon"]
     else:
         # Maybe the event is the beacon itself

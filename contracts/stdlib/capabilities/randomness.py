@@ -59,9 +59,11 @@ If you want to remember a commitment for later reveal:
 """
 from __future__ import annotations
 
-from typing import Final, Optional, Tuple, Union, Dict, Any
+from typing import Any, Dict, Final, Optional, Tuple, Union
 
-from stdlib import abi, events, storage, hash as _hash  # type: ignore
+from stdlib import abi, events
+from stdlib import hash as _hash  # type: ignore
+from stdlib import storage
 
 # The VM provides a syscalls surface in runtime; we try to import it.
 try:  # pragma: no cover - import path depends on the runtime
@@ -78,9 +80,9 @@ except Exception:  # pragma: no cover
 DOMAIN_COMMIT: Final[bytes] = b"RAND:COMMIT:v1"
 
 # Contract-visible bounds / encoding sizes
-ADDRESS_LEN: Final[int] = 32       # addresses encoded as 32 bytes (canonical)
-SALT_LEN: Final[int] = 32          # 32 bytes salt (producer-chosen)
-MAX_PAYLOAD_LEN: Final[int] = 1024 # hard cap to keep commit bodies small
+ADDRESS_LEN: Final[int] = 32  # addresses encoded as 32 bytes (canonical)
+SALT_LEN: Final[int] = 32  # 32 bytes salt (producer-chosen)
+MAX_PAYLOAD_LEN: Final[int] = 1024  # hard cap to keep commit bodies small
 
 # Optional local storage namespace (for commitment tags)
 _TAG_PREFIX: Final[bytes] = b"cap:rand:"
@@ -91,14 +93,16 @@ MAX_TAG_LEN: Final[int] = 32
 # Internal helpers — deterministic guards & utilities
 # -----------------------------------------------------------------------------
 
+
 def _ensure_bytes(x: object) -> bytes:
     if not isinstance(x, (bytes, bytearray)):
         abi.revert(b"RAND:TYPE")
     return bytes(x)
 
 
-def _ensure_len(name: bytes, x: bytes, *, exact: Optional[int] = None,
-                max_len: Optional[int] = None) -> None:
+def _ensure_len(
+    name: bytes, x: bytes, *, exact: Optional[int] = None, max_len: Optional[int] = None
+) -> None:
     if exact is not None:
         if len(x) != exact:
             abi.revert(b"RAND:LEN")
@@ -160,7 +164,11 @@ def _try_beacon_syscall() -> Tuple[bytes, Optional[int]]:
 
         # Or a dict-like with "beacon" field + optional round id
         if isinstance(res, dict):
-            bkey = b"beacon" if b"beacon" in res else ("beacon" if "beacon" in res else None)
+            bkey = (
+                b"beacon"
+                if b"beacon" in res
+                else ("beacon" if "beacon" in res else None)
+            )
             if bkey is not None:
                 beacon_val = res[bkey]  # type: ignore[index]
                 if isinstance(beacon_val, (bytes, bytearray)) and len(beacon_val) > 0:
@@ -174,6 +182,7 @@ def _try_beacon_syscall() -> Tuple[bytes, Optional[int]]:
 # -----------------------------------------------------------------------------
 # Public API — Beacon read
 # -----------------------------------------------------------------------------
+
 
 def beacon(*, emit_event: bool = True) -> bytes:
     """
@@ -206,6 +215,7 @@ def beacon(*, emit_event: bool = True) -> bytes:
 # -----------------------------------------------------------------------------
 # Public API — Commit/Reveal helpers (pure, deterministic)
 # -----------------------------------------------------------------------------
+
 
 def build_commitment(*, participant: bytes, salt: bytes, payload: bytes) -> bytes:
     """
@@ -253,7 +263,9 @@ def build_commitment(*, participant: bytes, salt: bytes, payload: bytes) -> byte
     return commitment
 
 
-def verify_reveal(commitment: bytes, *, participant: bytes, salt: bytes, payload: bytes) -> bool:
+def verify_reveal(
+    commitment: bytes, *, participant: bytes, salt: bytes, payload: bytes
+) -> bool:
     """
     Check that (participant, salt, payload) opens the given commitment.
 
@@ -264,7 +276,7 @@ def verify_reveal(commitment: bytes, *, participant: bytes, salt: bytes, payload
     """
     C = _ensure_bytes(commitment)
     built = build_commitment(participant=participant, salt=salt, payload=payload)
-    ok = (built == C)
+    ok = built == C
     if ok:
         events.emit(
             b"CAP:RAND:RevealReady",
@@ -278,7 +290,9 @@ def verify_reveal(commitment: bytes, *, participant: bytes, salt: bytes, payload
     return ok
 
 
-def random_salt_from(beacon_bytes: Optional[bytes] = None, *, context: Optional[bytes] = None) -> bytes:
+def random_salt_from(
+    beacon_bytes: Optional[bytes] = None, *, context: Optional[bytes] = None
+) -> bytes:
     """
     Derive a 32-byte salt from the latest beacon (or provided bytes) and optional context.
 
@@ -304,6 +318,7 @@ def random_salt_from(beacon_bytes: Optional[bytes] = None, *, context: Optional[
 # -----------------------------------------------------------------------------
 # Optional — Store/load/clear commitments by tag (bounded)
 # -----------------------------------------------------------------------------
+
 
 def save_commitment(tag: bytes, commitment: bytes) -> None:
     """

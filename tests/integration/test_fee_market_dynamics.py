@@ -49,8 +49,8 @@ import pytest
 
 from tests.integration import env  # gating + helpers
 
-
 # ------------------------------ HTTP helpers ---------------------------------
+
 
 def _http_timeout() -> float:
     try:
@@ -59,7 +59,13 @@ def _http_timeout() -> float:
         return 5.0
 
 
-def _rpc_call(rpc_url: str, method: str, params: Optional[Sequence[Any] | Dict[str, Any]] = None, *, req_id: int = 1) -> Any:
+def _rpc_call(
+    rpc_url: str,
+    method: str,
+    params: Optional[Sequence[Any] | Dict[str, Any]] = None,
+    *,
+    req_id: int = 1,
+) -> Any:
     if params is None:
         params = []
     payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
@@ -77,17 +83,24 @@ def _rpc_call(rpc_url: str, method: str, params: Optional[Sequence[Any] | Dict[s
     return msg["result"]
 
 
-def _rpc_try(rpc_url: str, methods: Sequence[str], params: Optional[Sequence[Any] | Dict[str, Any]] = None) -> Tuple[str, Any]:
+def _rpc_try(
+    rpc_url: str,
+    methods: Sequence[str],
+    params: Optional[Sequence[Any] | Dict[str, Any]] = None,
+) -> Tuple[str, Any]:
     last_exc: Optional[Exception] = None
     for i, m in enumerate(methods, start=1):
         try:
             return m, _rpc_call(rpc_url, m, params, req_id=i)
         except Exception as exc:
             last_exc = exc
-    raise AssertionError(f"All tried methods failed ({methods}); last error: {last_exc}")
+    raise AssertionError(
+        f"All tried methods failed ({methods}); last error: {last_exc}"
+    )
 
 
 # ------------------------------ Stats helpers --------------------------------
+
 
 def _parse_num(x: Any) -> Optional[int]:
     if isinstance(x, bool) or x is None:
@@ -113,7 +126,7 @@ def _get_mempool_stats(rpc_url: str) -> Optional[Dict[str, Any]]:
         "mempool.stats",
         "mempool_info",
         "mempool.get_info",
-        "txpool_status",         # eth-ish fallback
+        "txpool_status",  # eth-ish fallback
         "txpool.status",
     ]
     for m in candidates:
@@ -128,7 +141,14 @@ def _get_mempool_stats(rpc_url: str) -> Optional[Dict[str, Any]]:
 
 def _get_watermark_from_stats(stats: Dict[str, Any]) -> Optional[int]:
     # Accept many possible field spellings
-    for k in ("watermark", "minFee", "minGasPrice", "floor", "rollingMin", "effective_min_fee"):
+    for k in (
+        "watermark",
+        "minFee",
+        "minGasPrice",
+        "floor",
+        "rollingMin",
+        "effective_min_fee",
+    ):
         v = stats.get(k)
         n = _parse_num(v)
         if n is not None:
@@ -144,6 +164,7 @@ def _get_watermark_from_stats(stats: Dict[str, Any]) -> Optional[int]:
 
 
 # ------------------------------- Tx helpers ----------------------------------
+
 
 def _read_bytes(path: str) -> Optional[bytes]:
     try:
@@ -197,6 +218,7 @@ def _tx_receipt(rpc_url: str, tx_hash: str) -> Optional[Dict[str, Any]]:
 
 # ---------------------------- Debug inject helpers ---------------------------
 
+
 def _debug_fill(rpc_url: str, count: int, fee: int) -> bool:
     """
     Try to instruct the node to synthesize `count` txs at ~`fee`.
@@ -231,7 +253,9 @@ def _debug_inject_one(rpc_url: str, fee: int) -> Optional[str]:
     ]
     for method, params in payloads:
         try:
-            res = _rpc_call(rpc_url, method, params if isinstance(params, list) else [params])
+            res = _rpc_call(
+                rpc_url, method, params if isinstance(params, list) else [params]
+            )
             # Some methods may return a hash or an object containing it.
             if isinstance(res, str) and res.startswith("0x"):
                 return res
@@ -247,6 +271,7 @@ def _debug_inject_one(rpc_url: str, fee: int) -> Optional[str]:
 
 # ---------------------------------- Test -------------------------------------
 
+
 @pytest.mark.timeout(900)
 def test_fee_market_surge_raises_watermark_and_evicts_low_fee():
     rpc = env("ANIMICA_RPC_URL", "http://127.0.0.1:8545")
@@ -261,20 +286,28 @@ def test_fee_market_surge_raises_watermark_and_evicts_low_fee():
         pytest.skip("No mempool stats method exposed; cannot observe watermark.")
     wm0 = _get_watermark_from_stats(stats0)
     if wm0 is None:
-        pytest.skip("Mempool stats present but no recognizable watermark/min-fee field.")
+        pytest.skip(
+            "Mempool stats present but no recognizable watermark/min-fee field."
+        )
 
     # 1) Stage a low-fee tx (L) into mempool (either via debug inject or fixture CBOR).
     low_hash: Optional[str] = _debug_inject_one(rpc, low_fee)
     if not low_hash:
         # Fallback to signed CBOR fixture if debug inject is unavailable.
-        p_low = env("ANIMICA_TX_FIXTURE_LOW", "mempool/fixtures/txs_cbor/tx_low_fee.cbor")
+        p_low = env(
+            "ANIMICA_TX_FIXTURE_LOW", "mempool/fixtures/txs_cbor/tx_low_fee.cbor"
+        )
         raw = _read_bytes(p_low)
         if not raw:
-            pytest.skip("No debug inject and missing low-fee CBOR fixture; cannot stage scenario.")
+            pytest.skip(
+                "No debug inject and missing low-fee CBOR fixture; cannot stage scenario."
+            )
         low_hash = _send_raw_tx(rpc, raw)
         if not low_hash:
             # As a last fallback, try a normal tx fixture (may still be admitted if fee policy is permissive).
-            p_base = env("ANIMICA_TX_FIXTURE_BASE", "mempool/fixtures/txs_cbor/tx1.cbor")
+            p_base = env(
+                "ANIMICA_TX_FIXTURE_BASE", "mempool/fixtures/txs_cbor/tx1.cbor"
+            )
             raw2 = _read_bytes(p_base)
             if not raw2 or not _send_raw_tx(rpc, raw2):
                 pytest.skip("Could not get a (low-fee) tx into mempool via fixtures.")
@@ -293,7 +326,9 @@ def test_fee_market_surge_raises_watermark_and_evicts_low_fee():
                 break
             time.sleep(0.5)
         if not pending_ok:
-            pytest.skip("Could not confirm the low-fee tx is pending; pool policy may have rejected it.")
+            pytest.skip(
+                "Could not confirm the low-fee tx is pending; pool policy may have rejected it."
+            )
 
     # 2) Create a surge of high-fee txs.
     filled = _debug_fill(rpc, surge_n, high_fee)
@@ -309,7 +344,9 @@ def test_fee_market_surge_raises_watermark_and_evicts_low_fee():
                 # If no debug inject available at all, we cannot surge.
                 break
         if injected < max(10, surge_n // 5):
-            pytest.skip("Unable to generate a meaningful surge without mempool debug helpers.")
+            pytest.skip(
+                "Unable to generate a meaningful surge without mempool debug helpers."
+            )
 
     # 3) Wait for watermark to rise.
     wm_raised = False
@@ -327,7 +364,9 @@ def test_fee_market_surge_raises_watermark_and_evicts_low_fee():
         time.sleep(1.0)
 
     if not wm_raised:
-        pytest.skip("Watermark/min-fee did not rise within wait window (policy may be disabled).")
+        pytest.skip(
+            "Watermark/min-fee did not rise within wait window (policy may be disabled)."
+        )
 
     # 4) Verify L was evicted OR included.
     if low_hash:
@@ -348,10 +387,11 @@ def test_fee_market_surge_raises_watermark_and_evicts_low_fee():
             time.sleep(0.5)
 
         # Expect either eviction (preferred in surge) or inclusion (if miner picked it anyway).
-        assert evicted or included, (
-            "Low-fee tx still pending after watermark increase; expected eviction or unlikely inclusion."
-        )
+        assert (
+            evicted or included
+        ), "Low-fee tx still pending after watermark increase; expected eviction or unlikely inclusion."
 
     # Final assert for watermark visibility.
-    assert wm_raised and (wm1_val is None or wm1_val >= wm0), "Watermark did not increase as expected."
-
+    assert wm_raised and (
+        wm1_val is None or wm1_val >= wm0
+    ), "Watermark did not increase as expected."

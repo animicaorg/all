@@ -5,7 +5,6 @@ from typing import Dict, List, Tuple
 
 import pytest
 
-
 # ------------------------------------------------------------------------------
 # Test-local fallback ledger for epoch caps, rollover, and settlement.
 #
@@ -19,6 +18,7 @@ import pytest
 # and aicf.economics.settlement), but will fall back to this ledger so the
 # invariants are still validated during scaffolding/refactors.
 # ------------------------------------------------------------------------------
+
 
 @dataclasses.dataclass
 class EpochSettlement:
@@ -83,10 +83,12 @@ class FallbackEpochLedger:
 # adapter so the test runs against either the project code or the fallback.
 # ------------------------------------------------------------------------------
 
+
 def _discover_real_epoch_api():
     try:
         from aicf.economics import epochs as real_epochs  # type: ignore
-        from aicf.economics import settlement as real_settlement  # type: ignore
+        from aicf.economics import \
+            settlement as real_settlement  # type: ignore
 
         # Heuristic adapter:
         class RealAdapter:
@@ -114,7 +116,9 @@ def _discover_real_epoch_api():
                         setattr(self._mgr, "epoch_len", epoch_len)
 
                 # Settlement entrypoint (function or method)
-                self._settle_fn = getattr(real_settlement, "settle_epoch", None) or getattr(self._mgr, "settle_epoch", None)
+                self._settle_fn = getattr(
+                    real_settlement, "settle_epoch", None
+                ) or getattr(self._mgr, "settle_epoch", None)
                 if not callable(self._settle_fn):
                     raise AttributeError("No settle_epoch entrypoint found")
 
@@ -131,12 +135,21 @@ def _discover_real_epoch_api():
                 return int(getattr(self._mgr, self._carry_attr, 0))
 
             def epoch_of(self, height: int) -> int:
-                epoch_len = getattr(self._mgr, "epoch_len", None) or getattr(self._mgr, "EPOCH_LEN", None) or 1
+                epoch_len = (
+                    getattr(self._mgr, "epoch_len", None)
+                    or getattr(self._mgr, "EPOCH_LEN", None)
+                    or 1
+                )
                 return int(height) // int(epoch_len)
 
             def submit_claim(self, *, height: int, amount: int) -> None:
                 # Try common ingestion shapes
-                for name in ("submit_claim", "add_claim", "record_claim", "enqueue_claim"):
+                for name in (
+                    "submit_claim",
+                    "add_claim",
+                    "record_claim",
+                    "enqueue_claim",
+                ):
                     fn = getattr(self._mgr, name, None)
                     if callable(fn):
                         try:
@@ -177,7 +190,9 @@ def _discover_real_epoch_api():
                     paid_total=int(_get(res, "paid_total", "total_paid", default=0)),
                     paid_from_deferred=int(_get(res, "paid_from_deferred", default=0)),
                     paid_from_current=int(_get(res, "paid_from_current", default=0)),
-                    deferred_out=int(_get(res, "deferred_out", "deferred", default=self.deferred)),
+                    deferred_out=int(
+                        _get(res, "deferred_out", "deferred", default=self.deferred)
+                    ),
                     carry_out=int(_get(res, "carry_out", "carry", default=self.carry)),
                 )
 
@@ -200,6 +215,7 @@ def _make_epoch_api(gamma_cap: int, epoch_len: int):
 # Tests
 # ------------------------------------------------------------------------------
 
+
 def test_epoch_cap_overflow_defers_and_next_epoch_pays() -> None:
     """
     Scenario:
@@ -213,8 +229,8 @@ def test_epoch_cap_overflow_defers_and_next_epoch_pays() -> None:
     api = _make_epoch_api(gamma_cap=1000, epoch_len=10)
 
     # Submit claims at heights mapping to epochs 0 and 1
-    api.submit_claim(height=0, amount=700)   # epoch 0
-    api.submit_claim(height=5, amount=600)   # epoch 0
+    api.submit_claim(height=0, amount=700)  # epoch 0
+    api.submit_claim(height=5, amount=600)  # epoch 0
     api.submit_claim(height=12, amount=200)  # epoch 1
 
     # Settle epoch 0
@@ -271,9 +287,9 @@ def test_unused_budget_rolls_forward_and_accumulates() -> None:
 @pytest.mark.parametrize(
     "gamma_cap,epoch_len,claims_e0,claims_e1",
     [
-        (500, 5, [200, 50], [100]),      # under cap then under cap
-        (600, 8, [400, 400], [0, 50]),   # over cap then small claim
-        (1000, 10, [1000], [1000, 1]),   # exact cap then tiny overflow next epoch
+        (500, 5, [200, 50], [100]),  # under cap then under cap
+        (600, 8, [400, 400], [0, 50]),  # over cap then small claim
+        (1000, 10, [1000], [1000, 1]),  # exact cap then tiny overflow next epoch
     ],
 )
 def test_invariants_budget_conservation_and_ordering(

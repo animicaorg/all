@@ -10,18 +10,28 @@ rpc_submit_mod = pytest.importorskip(
     "mempool.adapters.rpc_submit", reason="mempool.adapters.rpc_submit module not found"
 )
 p2p_admission_mod = pytest.importorskip(
-    "mempool.adapters.p2p_admission", reason="mempool.adapters.p2p_admission module not found"
+    "mempool.adapters.p2p_admission",
+    reason="mempool.adapters.p2p_admission module not found",
 )
 
 # -------------------------
 # Helpers & scaffolding
 # -------------------------
 
+
 class FakeTx:
     """
     Minimal tx object that many pool/adapters can accept.
     """
-    def __init__(self, sender: bytes, nonce: int, fee: int, gas: int = 21_000, size_bytes: int = 120):
+
+    def __init__(
+        self,
+        sender: bytes,
+        nonce: int,
+        fee: int,
+        gas: int = 21_000,
+        size_bytes: int = 120,
+    ):
         self.sender = sender
         self.nonce = nonce
         self.fee = fee
@@ -32,15 +42,15 @@ class FakeTx:
         # encoded size (as bytes(tx))
         self.size_bytes = size_bytes
         # stable-ish hash for lookups
-        self.hash = (sender + nonce.to_bytes(8, "big"))[:32] or b"\xAD" * 32
+        self.hash = (sender + nonce.to_bytes(8, "big"))[:32] or b"\xad" * 32
         self.tx_hash = self.hash  # common alias
 
     def __bytes__(self) -> bytes:
-        return b"\xEE" * self.size_bytes
+        return b"\xee" * self.size_bytes
 
 
 class FakePeer:
-    def __init__(self, peer_id: bytes = b"P"*32, addr: str = "127.0.0.1:0"):
+    def __init__(self, peer_id: bytes = b"P" * 32, addr: str = "127.0.0.1:0"):
         self.id = peer_id
         self.peer_id = peer_id
         self.address = addr
@@ -51,7 +61,8 @@ class FakePeer:
 
 
 ALICE = b"A" * 20
-BOB   = b"B" * 20
+BOB = b"B" * 20
+
 
 def _get_attr_any(obj: Any, names: Iterable[str]) -> Optional[Any]:
     for n in names:
@@ -67,15 +78,32 @@ def _monkeypatch_validation_and_priority(monkeypatch: pytest.MonkeyPatch) -> Non
     try:
         validate = pytest.importorskip("mempool.validate")
         for name in (
-            "validate_tx", "fast_stateless_check", "stateless_validate", "validate",
-            "check_size", "check_chain_id", "check_gas_limits",
+            "validate_tx",
+            "fast_stateless_check",
+            "stateless_validate",
+            "validate",
+            "check_size",
+            "check_chain_id",
+            "check_gas_limits",
         ):
             if hasattr(validate, name):
                 monkeypatch.setattr(validate, name, lambda *a, **k: True, raising=True)
-        for name in ("estimate_encoded_size", "encoded_size", "tx_encoded_size", "get_encoded_size"):
+        for name in (
+            "estimate_encoded_size",
+            "encoded_size",
+            "tx_encoded_size",
+            "get_encoded_size",
+        ):
             if hasattr(validate, name):
-                monkeypatch.setattr(validate, name, lambda tx: len(bytes(tx)), raising=True)
-        for name in ("precheck_pq_signature", "pq_precheck_verify", "verify_pq_signature", "pq_verify"):
+                monkeypatch.setattr(
+                    validate, name, lambda tx: len(bytes(tx)), raising=True
+                )
+        for name in (
+            "precheck_pq_signature",
+            "pq_precheck_verify",
+            "verify_pq_signature",
+            "pq_verify",
+        ):
             if hasattr(validate, name):
                 monkeypatch.setattr(validate, name, lambda *a, **k: True, raising=True)
     except Exception:
@@ -85,7 +113,9 @@ def _monkeypatch_validation_and_priority(monkeypatch: pytest.MonkeyPatch) -> Non
         priority = pytest.importorskip("mempool.priority")
         for name in ("effective_priority", "priority_of", "calc_effective_priority"):
             if hasattr(priority, name):
-                monkeypatch.setattr(priority, name, lambda tx: getattr(tx, "fee", 0), raising=True)
+                monkeypatch.setattr(
+                    priority, name, lambda tx: getattr(tx, "fee", 0), raising=True
+                )
     except Exception:
         pass
 
@@ -97,8 +127,14 @@ def _make_config(*, max_txs: int | None = None, max_bytes: int | None = None) ->
         mp_config = None
 
     fields = {
-        "max_txs": max_txs, "max_pool_txs": max_txs, "max_items": max_txs, "capacity": max_txs,
-        "max_bytes": max_bytes, "max_pool_bytes": max_bytes, "capacity_bytes": max_bytes, "max_mem_bytes": max_bytes,
+        "max_txs": max_txs,
+        "max_pool_txs": max_txs,
+        "max_items": max_txs,
+        "capacity": max_txs,
+        "max_bytes": max_bytes,
+        "max_pool_bytes": max_bytes,
+        "capacity_bytes": max_bytes,
+        "max_mem_bytes": max_bytes,
     }
 
     if mp_config:
@@ -256,7 +292,9 @@ def _rpc_submit(pool: Any, tx: FakeTx) -> None:
                     return
                 except Exception:
                     continue
-    pytest.skip("No matching RPC submit API signature found in mempool.adapters.rpc_submit")
+    pytest.skip(
+        "No matching RPC submit API signature found in mempool.adapters.rpc_submit"
+    )
 
 
 def _p2p_admit(pool: Any, tx: FakeTx, peer: FakePeer) -> None:
@@ -320,12 +358,15 @@ def _p2p_admit(pool: Any, tx: FakeTx, peer: FakePeer) -> None:
                     return
                 except Exception:
                     continue
-    pytest.skip("No matching P2P admission API signature found in mempool.adapters.p2p_admission")
+    pytest.skip(
+        "No matching P2P admission API signature found in mempool.adapters.p2p_admission"
+    )
 
 
 # -------------------------
 # Tests
 # -------------------------
+
 
 def test_rpc_submit_roundtrip_adds_to_pool(monkeypatch: pytest.MonkeyPatch):
     """
@@ -337,7 +378,7 @@ def test_rpc_submit_roundtrip_adds_to_pool(monkeypatch: pytest.MonkeyPatch):
     pool = _new_pool(config=_make_config(max_txs=100, max_bytes=10_000_000))
 
     t1 = FakeTx(ALICE, 0, fee=100)
-    t2 = FakeTx(BOB,   0, fee=200)
+    t2 = FakeTx(BOB, 0, fee=200)
 
     _rpc_submit(pool, t1)
     _rpc_submit(pool, t2)
@@ -362,16 +403,21 @@ def test_p2p_admission_roundtrip_and_dedupe(monkeypatch: pytest.MonkeyPatch):
     _monkeypatch_validation_and_priority(monkeypatch)
 
     pool = _new_pool(config=_make_config(max_txs=100, max_bytes=10_000_000))
-    peer1 = FakePeer(b"P"*32, "10.0.0.1:1111")
-    peer2 = FakePeer(b"Q"*32, "10.0.0.2:2222")
+    peer1 = FakePeer(b"P" * 32, "10.0.0.1:1111")
+    peer2 = FakePeer(b"Q" * 32, "10.0.0.2:2222")
 
-    low  = FakeTx(ALICE, 0, fee=10)
+    low = FakeTx(ALICE, 0, fee=10)
     high = FakeTx(ALICE, 0, fee=500)
 
     # First admit from peer1
     _p2p_admit(pool, low, peer1)
-    assert _contains_sender_nonce(pool, ALICE, 0), "ALICE/0 not present after first P2P admit"
-    assert _present_fee_for(pool, ALICE, 0) in (10, 500)  # depending on immediate replacement below
+    assert _contains_sender_nonce(
+        pool, ALICE, 0
+    ), "ALICE/0 not present after first P2P admit"
+    assert _present_fee_for(pool, ALICE, 0) in (
+        10,
+        500,
+    )  # depending on immediate replacement below
 
     # Repeated admit of same tx should not duplicate
     _p2p_admit(pool, low, peer1)
@@ -380,4 +426,6 @@ def test_p2p_admission_roundtrip_and_dedupe(monkeypatch: pytest.MonkeyPatch):
     # Higher-fee replacement from a different peer should win (pool policy)
     _p2p_admit(pool, high, peer2)
     fee_now = _present_fee_for(pool, ALICE, 0)
-    assert fee_now is not None and fee_now >= 500, f"expected replacement with higher fee, got {fee_now}"
+    assert (
+        fee_now is not None and fee_now >= 500
+    ), f"expected replacement with higher fee, got {fee_now}"

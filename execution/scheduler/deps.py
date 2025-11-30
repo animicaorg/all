@@ -56,13 +56,13 @@ from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 
 from .lockset import LockSet, lockset_from_access_list, normalize_key
 
-
 # ------------------------------ Data model ----------------------------------
 
 
 @dataclass
 class DepGraph:
     """Directed acyclic graph over indices [0..n-1] with adjacency lists."""
+
     n: int
     edges: Dict[int, Set[int]] = field(default_factory=dict)  # i -> {j,...}
     indeg: List[int] = field(default_factory=list)
@@ -134,7 +134,9 @@ def build_graph_from_locksets(locksets: Sequence[Optional[LockSet]]) -> DepGraph
     n = len(locksets)
     edges: Dict[int, Set[int]] = {i: set() for i in range(n)}
     # Pre-normalize: replace None with full-write wildcard
-    norm: List[LockSet] = [ls if ls is not None else _full_write_lockset() for ls in locksets]
+    norm: List[LockSet] = [
+        ls if ls is not None else _full_write_lockset() for ls in locksets
+    ]
 
     for i in range(n):
         for j in range(i + 1, n):
@@ -223,13 +225,17 @@ def topo_layers(graph: DepGraph) -> List[List[int]]:
 # ------------------------------ Diagnostics ---------------------------------
 
 
-def conflicts_matrix_from_locksets(locksets: Sequence[Optional[LockSet]]) -> Set[Tuple[int, int]]:
+def conflicts_matrix_from_locksets(
+    locksets: Sequence[Optional[LockSet]],
+) -> Set[Tuple[int, int]]:
     """
     Return the set of conflict pairs (i, j) for i<j using locksets.
     """
     n = len(locksets)
     pairs: Set[Tuple[int, int]] = set()
-    norm: List[LockSet] = [ls if ls is not None else _full_write_lockset() for ls in locksets]
+    norm: List[LockSet] = [
+        ls if ls is not None else _full_write_lockset() for ls in locksets
+    ]
     for i in range(n):
         for j in range(i + 1, n):
             if _conflict_locksets(norm[i], norm[j]):
@@ -252,7 +258,11 @@ def conflicts_matrix_from_access_lists(
         ]
     else:
         locksets = [
-            _full_write_lockset() if acc is None else _lockset_from_read_only_access_list(acc)
+            (
+                _full_write_lockset()
+                if acc is None
+                else _lockset_from_read_only_access_list(acc)
+            )
             for acc in access_lists
         ]
     return conflicts_matrix_from_locksets(locksets)

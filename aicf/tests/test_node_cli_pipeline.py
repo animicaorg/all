@@ -5,7 +5,12 @@ from pathlib import Path
 
 
 def _run_cli(cmd: list[str]) -> str:
-    proc = subprocess.run([sys.executable, "-m", "aicf.cli.node_pipeline", *cmd], check=True, capture_output=True, text=True)
+    proc = subprocess.run(
+        [sys.executable, "-m", "aicf.cli.node_pipeline", *cmd],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
     return proc.stdout.strip()
 
 
@@ -23,9 +28,13 @@ def test_cli_pipeline_roundtrip(tmp_path: Path) -> None:
     toggled_off = _run_cli(["auto", "false", "--datadir", str(datadir)])
     assert toggled_off == "off"
 
-    block_one = json.loads(_run_cli(["block", "1", "--datadir", str(datadir), "--json"]))
+    block_one = json.loads(
+        _run_cli(["block", "1", "--datadir", str(datadir), "--json"])
+    )
     assert block_one["number"] == hex(1)
 
-    summary = json.loads(_run_cli(["pipeline", "--datadir", str(datadir), "--mine", "1", "--json"]))
+    summary = json.loads(
+        _run_cli(["pipeline", "--datadir", str(datadir), "--mine", "1", "--json"])
+    )
     assert summary["endHeight"] >= new_height + 1
     assert summary["headHash"]

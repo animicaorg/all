@@ -17,17 +17,12 @@ All arithmetic is u256-bounded and deterministic.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import MutableMapping, Optional
 
-import hashlib
-
-from execution.errors import StateConflict, ExecError
-from execution.types.gas import (
-    U256_MAX,
-    is_u256,
-    saturating_add,
-)
+from execution.errors import ExecError, StateConflict
+from execution.types.gas import U256_MAX, is_u256, saturating_add
 
 # --------------------------------------------------------------------------- #
 # Constants & helpers
@@ -63,6 +58,7 @@ def compute_code_hash(code: bytes | bytearray | memoryview) -> bytes:
 # Account
 # --------------------------------------------------------------------------- #
 
+
 @dataclass(slots=True)
 class Account:
     """
@@ -72,6 +68,7 @@ class Account:
     - nonce and balance are u256
     - code_hash is exactly 32 bytes
     """
+
     nonce: int = 0
     balance: int = 0
     code_hash: bytes = EMPTY_CODE_HASH
@@ -145,7 +142,9 @@ class Account:
             nonce = int(data["nonce"])
             balance = int(data["balance"])
             ch_hex = data["code_hash"]
-            code_hash = bytes.fromhex(ch_hex) if isinstance(ch_hex, str) else bytes(ch_hex)
+            code_hash = (
+                bytes.fromhex(ch_hex) if isinstance(ch_hex, str) else bytes(ch_hex)
+            )
         except Exception as e:  # pragma: no cover - defensive
             raise ValueError(f"bad account dict: {e}") from e
         return cls(nonce=nonce, balance=balance, code_hash=code_hash)
@@ -155,11 +154,14 @@ class Account:
 # Lifecycle helpers (pure, mapping-based)
 # --------------------------------------------------------------------------- #
 
-def create_account(store: MutableMapping[bytes, Account],
-                   address: bytes,
-                   *,
-                   initial_balance: int = 0,
-                   code_hash: Optional[bytes] = None) -> Account:
+
+def create_account(
+    store: MutableMapping[bytes, Account],
+    address: bytes,
+    *,
+    initial_balance: int = 0,
+    code_hash: Optional[bytes] = None,
+) -> Account:
     """
     Create a new account in `store` at `address`.
 
@@ -180,8 +182,9 @@ def create_account(store: MutableMapping[bytes, Account],
     return acc
 
 
-def destroy_account(store: MutableMapping[bytes, Account],
-                    address: bytes) -> Optional[Account]:
+def destroy_account(
+    store: MutableMapping[bytes, Account], address: bytes
+) -> Optional[Account]:
     """
     Remove and return the account at `address` if present; otherwise None.
 

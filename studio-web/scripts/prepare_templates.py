@@ -43,7 +43,7 @@ import hashlib
 import json
 import os
 import sys
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -56,11 +56,11 @@ class TemplateEntry:
     id: str
     name: str
     description: str
-    manifest: str             # relative path from templates root
-    source: str               # relative path from templates root
-    abi: str                  # relative path, or "manifest.json#abi" marker
-    code_hash: str            # 0x-prefixed sha3_256 hex of source
-    bytes: int                # size of source file in bytes
+    manifest: str  # relative path from templates root
+    source: str  # relative path from templates root
+    abi: str  # relative path, or "manifest.json#abi" marker
+    code_hash: str  # 0x-prefixed sha3_256 hex of source
+    bytes: int  # size of source file in bytes
 
 
 class ValidationError(Exception):
@@ -87,16 +87,22 @@ def detect_source_file(root: Path, manifest: Dict[str, Any]) -> Path:
         cand = root / manifest["source"]
         if cand.is_file():
             return cand
-        raise ValidationError(f'specified source "{manifest["source"]}" not found in {root}')
+        raise ValidationError(
+            f'specified source "{manifest["source"]}" not found in {root}'
+        )
     if (root / "contract.py").is_file():
         return root / "contract.py"
     py_files = sorted(root.glob("*.py"))
     if py_files:
         return py_files[0]
-    raise ValidationError(f"No Python source found in {root} (looked for contract.py or *.py)")
+    raise ValidationError(
+        f"No Python source found in {root} (looked for contract.py or *.py)"
+    )
 
 
-def resolve_abi_reference(root: Path, manifest: Dict[str, Any]) -> Tuple[str, Optional[Path]]:
+def resolve_abi_reference(
+    root: Path, manifest: Dict[str, Any]
+) -> Tuple[str, Optional[Path]]:
     """
     Returns (abi_ref, abi_path_if_file).
     If ABI is embedded in manifest as array/object, we point to "manifest.json#abi".
@@ -119,12 +125,18 @@ def resolve_abi_reference(root: Path, manifest: Dict[str, Any]) -> Tuple[str, Op
         if not p.is_file():
             raise ValidationError(f'ABI file "{abi_val}" does not exist under {root}')
         return abi_val, p
-    raise ValidationError(f'Unexpected type for "{abi_key}" in manifest: {type(abi_val).__name__}')
+    raise ValidationError(
+        f'Unexpected type for "{abi_key}" in manifest: {type(abi_val).__name__}'
+    )
 
 
 def light_validate_manifest(manifest: Dict[str, Any], location: Path) -> None:
     # Minimal required fields: name (string). Optional: description (string), version (string), abi (any of accepted forms)
-    if "name" not in manifest or not isinstance(manifest["name"], str) or not manifest["name"].strip():
+    if (
+        "name" not in manifest
+        or not isinstance(manifest["name"], str)
+        or not manifest["name"].strip()
+    ):
         raise ValidationError(f'Manifest at {location} must include a non-empty "name"')
     if "description" in manifest and not isinstance(manifest["description"], str):
         raise ValidationError(f'"description" must be a string in {location}')
@@ -151,7 +163,11 @@ def build_entry(templates_root: Path, dir_path: Path) -> TemplateEntry:
     # Relative paths in index (relative to templates root)
     manifest_rel = str(manifest_path.relative_to(templates_root).as_posix())
     source_rel = str(src_path.relative_to(templates_root).as_posix())
-    abi_rel = abi_ref if abi_ref == "manifest.json#abi" else str((dir_path / abi_ref).relative_to(templates_root).as_posix())
+    abi_rel = (
+        abi_ref
+        if abi_ref == "manifest.json#abi"
+        else str((dir_path / abi_ref).relative_to(templates_root).as_posix())
+    )
 
     name = manifest.get("name") or dir_path.name
     description = manifest.get("description") or ""
@@ -168,7 +184,9 @@ def build_entry(templates_root: Path, dir_path: Path) -> TemplateEntry:
     )
 
 
-def scan_templates(templates_root: Path, verbose: bool = False) -> Tuple[List[TemplateEntry], List[str]]:
+def scan_templates(
+    templates_root: Path, verbose: bool = False
+) -> Tuple[List[TemplateEntry], List[str]]:
     entries: List[TemplateEntry] = []
     warnings: List[str] = []
 
@@ -205,7 +223,9 @@ def write_index(out_path: Path, entries: List[TemplateEntry], pretty: bool) -> N
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Generate studio template index.json with sanity checks.")
+    parser = argparse.ArgumentParser(
+        description="Generate studio template index.json with sanity checks."
+    )
     parser.add_argument(
         "--templates-dir",
         type=Path,
@@ -218,8 +238,14 @@ def main() -> int:
         default=DEFAULT_OUT,
         help=f"Output index.json path (default: {DEFAULT_OUT})",
     )
-    parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON with indentation.")
-    parser.add_argument("--strict", action="store_true", help="Exit non-zero if any template is skipped.")
+    parser.add_argument(
+        "--pretty", action="store_true", help="Pretty-print JSON with indentation."
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit non-zero if any template is skipped.",
+    )
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output.")
     args = parser.parse_args()
 

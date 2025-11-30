@@ -24,6 +24,7 @@ GWEI = 10**9
 
 # ---------- Config & State ----------
 
+
 @dataclass(frozen=True)
 class FeeMarketConfig:
     # Target utilization (fraction of gas limit). Common value: 0.5
@@ -56,6 +57,7 @@ class FeeMarketState:
     """
     Keep a rolling estimate of the base fee floor & utilization pressure.
     """
+
     height: int = 0
     ema_floor: int = 1 * GWEI
     ema_util: float = 0.50
@@ -72,11 +74,13 @@ class FeeMarketState:
 
 # ---------- Mempool pressure snapshot ----------
 
+
 @dataclass(frozen=True)
 class MempoolPressure:
     """
     Pending gas and counts at the moment of admission/suggestion.
     """
+
     pending_txs: int
     pending_gas: int  # total gas of all pending txs
     # Gas limit of *current parent* (used to normalize pending gas)
@@ -84,6 +88,7 @@ class MempoolPressure:
 
 
 # ---------- Helpers ----------
+
 
 def _ema(prev: float, obs: float, alpha: float) -> float:
     return (1.0 - alpha) * prev + alpha * obs
@@ -105,6 +110,7 @@ def _clamp_change(prev: int, nxt: int, limit_frac: float) -> int:
 
 
 # ---------- Core update ----------
+
 
 def update_on_block(
     state: FeeMarketState,
@@ -155,6 +161,7 @@ def update_on_block(
 
 # ---------- Surge multiplier ----------
 
+
 def surge_multiplier(pressure: MempoolPressure, cfg: FeeMarketConfig) -> float:
     """
     Convert pending gas into a multiplicative surge factor.
@@ -172,15 +179,16 @@ def surge_multiplier(pressure: MempoolPressure, cfg: FeeMarketConfig) -> float:
 
 # ---------- Floor computation & suggestions ----------
 
+
 @dataclass(frozen=True)
 class FeeSuggestion:
-    base_fee: int          # suggested base fee (floor before surge)
+    base_fee: int  # suggested base fee (floor before surge)
     surge_multiplier: float
     floor_with_surge: int  # admission floor after surge
-    min_tip: int           # tip floor (cfg.min_tip)
-    recommended_tip: int   # heuristic: higher of tip floor or ~10% of base
+    min_tip: int  # tip floor (cfg.min_tip)
+    recommended_tip: int  # heuristic: higher of tip floor or ~10% of base
     # Convenience for UX
-    min_total_price: int   # floor_with_surge + min_tip
+    min_total_price: int  # floor_with_surge + min_tip
     suggested_legacy_gas_price: int  # for legacy txs (gasPrice)
 
 
@@ -191,7 +199,9 @@ def suggest_fees(
 ) -> FeeSuggestion:
     base = int(state.ema_floor)
     mult = surge_multiplier(pressure, cfg)
-    surged = int(_clamp_int(int(round(base * mult)), cfg.min_base_fee, cfg.max_base_fee))
+    surged = int(
+        _clamp_int(int(round(base * mult)), cfg.min_base_fee, cfg.max_base_fee)
+    )
     tip_floor = int(cfg.min_tip)
     tip_suggest = max(tip_floor, max(1, base // 10))  # ~10% of base
     return FeeSuggestion(
@@ -206,6 +216,7 @@ def suggest_fees(
 
 
 # ---------- Base/Tip split & admission ----------
+
 
 def effective_gas_price(tx, *, base_fee: int) -> Tuple[int, int, int]:
     """
@@ -269,19 +280,26 @@ def admission_check(
     """
     eff, base_paid, tip_paid = effective_gas_price(tx, base_fee=base_fee_floor)
     if eff <= 0:
-        return AdmissionResult(False, "NoFeeFields", base_fee_floor, base_paid, tip_paid, eff)
+        return AdmissionResult(
+            False, "NoFeeFields", base_fee_floor, base_paid, tip_paid, eff
+        )
 
     # Hard floors
     if eff < (base_fee_floor + min_tip):
-        return AdmissionResult(False, "BelowFloor", base_fee_floor, base_paid, tip_paid, eff)
+        return AdmissionResult(
+            False, "BelowFloor", base_fee_floor, base_paid, tip_paid, eff
+        )
 
     if tip_paid < min_tip:
-        return AdmissionResult(False, "TipTooLow", base_fee_floor, base_paid, tip_paid, eff)
+        return AdmissionResult(
+            False, "TipTooLow", base_fee_floor, base_paid, tip_paid, eff
+        )
 
     return AdmissionResult(True, "OK", base_fee_floor, base_paid, tip_paid, eff)
 
 
 # ---------- Convenience wrapper for callers ----------
+
 
 def decide_and_suggest(
     state: FeeMarketState,
@@ -299,6 +317,7 @@ def decide_and_suggest(
 
 # ---------- Pretty printing (debug/metrics hooks) ----------
 
+
 def summarize(state: FeeMarketState, cfg: FeeMarketConfig) -> str:
     return (
         f"height={state.height} ema_floor={state.ema_floor} "
@@ -315,7 +334,9 @@ if __name__ == "__main__":
     st = FeeMarketState(ema_floor=3 * GWEI, ema_util=0.5)
     gas_limit = 30_000_000
 
-    for h, used in enumerate([14_000_000, 16_000_000, 18_000_000, 20_000_000, 22_000_000], start=1):
+    for h, used in enumerate(
+        [14_000_000, 16_000_000, 18_000_000, 20_000_000, 22_000_000], start=1
+    ):
         st = update_on_block(
             st,
             height=h,
@@ -326,7 +347,9 @@ if __name__ == "__main__":
         )
         print("upd:", summarize(st, cfg))
 
-    pressure = MempoolPressure(pending_txs=120_000, pending_gas=160_000_000, block_gas_limit=gas_limit)
+    pressure = MempoolPressure(
+        pending_txs=120_000, pending_gas=160_000_000, block_gas_limit=gas_limit
+    )
     sug = suggest_fees(st, pressure, cfg)
     print(
         "suggest:",
@@ -345,5 +368,7 @@ if __name__ == "__main__":
         max_priority_fee_per_gas = 3 * GWEI
         gas_price = None
 
-    res = admission_check(_T(), base_fee_floor=sug.floor_with_surge, min_tip=sug.min_tip)
+    res = admission_check(
+        _T(), base_fee_floor=sug.floor_with_surge, min_tip=sug.min_tip
+    )
     print("admission:", res)

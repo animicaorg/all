@@ -8,8 +8,7 @@ import pytest
 
 from proofs.errors import ProofError
 from proofs.metrics import ProofMetrics
-from proofs.vdf import verify_vdf, estimate_seconds
-
+from proofs.vdf import estimate_seconds, verify_vdf
 
 VECTORS = Path(__file__).resolve().parents[1] / "test_vectors" / "vdf.json"
 
@@ -23,11 +22,14 @@ def _load_vectors() -> List[Dict[str, Any]]:
 
 
 def _as_metrics(x: Any) -> ProofMetrics:
-    assert isinstance(x, ProofMetrics), f"verify_vdf must return ProofMetrics, got {type(x)}"
+    assert isinstance(
+        x, ProofMetrics
+    ), f"verify_vdf must return ProofMetrics, got {type(x)}"
     return x
 
 
 # ----------------------------- Vector-driven correctness -----------------------------
+
 
 @pytest.mark.parametrize("vec", _load_vectors())
 def test_vdf_vectors(vec: Dict[str, Any]):
@@ -57,6 +59,7 @@ def test_vdf_vectors(vec: Dict[str, Any]):
 
 # ----------------------------- Tamper detection --------------------------------------
 
+
 def test_vdf_tamper_changes_rejected():
     """
     Take a known-good vector and flip a bit in y; verifier must reject.
@@ -78,6 +81,7 @@ def test_vdf_tamper_changes_rejected():
 
 
 # ----------------------------- Estimation properties ---------------------------------
+
 
 def test_estimate_seconds_monotonic_in_iterations():
     """
@@ -105,6 +109,7 @@ def test_estimate_seconds_monotonic_in_modulus_bits():
 
 # ----------------------------- Input validation --------------------------------------
 
+
 def test_zero_or_negative_iterations_rejected():
     """
     A proof with zero/negative iterations must be rejected by the verifier.
@@ -131,16 +136,19 @@ def test_malformed_hex_inputs_rejected():
     base = dict(ok_vecs[0]["proof"])
 
     # Corrupt N
-    p1 = dict(base); p1["N"] = "not-hex"
+    p1 = dict(base)
+    p1["N"] = "not-hex"
     with pytest.raises(ProofError):
         verify_vdf(p1)
 
     # Truncated x
-    p2 = dict(base); p2["x"] = "0x1234"
+    p2 = dict(base)
+    p2["x"] = "0x1234"
     with pytest.raises(ProofError):
         verify_vdf(p2)
 
     # Truncated pi
-    p3 = dict(base); p3["pi"] = "0xdead"
+    p3 = dict(base)
+    p3["pi"] = "0xdead"
     with pytest.raises(ProofError):
         verify_vdf(p3)

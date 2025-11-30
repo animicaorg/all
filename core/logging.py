@@ -49,7 +49,7 @@ import types
 import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import is_dataclass, asdict
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 
@@ -61,12 +61,20 @@ from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
 _LOG_CONTEXT: ContextVar[Dict[str, Any]] = ContextVar("_LOG_CONTEXT", default={})
 
 DEFAULT_CONTEXT_KEYS = (
-    "trace_id", "chain_id", "component", "peer", "node_id", "height", "topic"
+    "trace_id",
+    "chain_id",
+    "component",
+    "peer",
+    "node_id",
+    "height",
+    "topic",
 )
+
 
 def context() -> Dict[str, Any]:
     """Return a *copy* of the active logging context."""
     return dict(_LOG_CONTEXT.get())
+
 
 def bind(**fields: Any) -> None:
     """Merge fields into the active context."""
@@ -74,14 +82,17 @@ def bind(**fields: Any) -> None:
     cur.update({k: _coerce_value(v) for k, v in fields.items()})
     _LOG_CONTEXT.set(cur)
 
+
 def unbind(*keys: str) -> None:
     cur = dict(_LOG_CONTEXT.get())
     for k in keys:
         cur.pop(k, None)
     _LOG_CONTEXT.set(cur)
 
+
 def clear_context() -> None:
     _LOG_CONTEXT.set({})
+
 
 def ensure_trace_id() -> str:
     cur = _LOG_CONTEXT.get()
@@ -90,6 +101,7 @@ def ensure_trace_id() -> str:
         tid = short_uuid()
         bind(trace_id=tid)
     return tid
+
 
 @contextmanager
 def trace_scope(trace_id: Optional[str] = None):
@@ -104,6 +116,7 @@ def trace_scope(trace_id: Optional[str] = None):
     finally:
         _LOG_CONTEXT.set(prev)
 
+
 def short_uuid() -> str:
     # 12 hex chars (48 bits of randomness) is human-friendly and unique enough for tracing.
     return uuid.uuid4().hex[:12]
@@ -113,14 +126,15 @@ def short_uuid() -> str:
 # JSON & Text formatters
 # ----------------------------
 
+
 class _SafeJSONEncoder(json.JSONEncoder):
     def default(self, o: Any) -> Any:  # type: ignore[override]
         try:
             if isinstance(o, (bytes, bytearray)):
                 return o.hex()
-            if isinstance(o, (Path, )):
+            if isinstance(o, (Path,)):
                 return str(o)
-            if isinstance(o, (_dt.datetime, )):
+            if isinstance(o, (_dt.datetime,)):
                 if o.tzinfo is None:
                     o = o.replace(tzinfo=_dt.timezone.utc)
                 return o.isoformat()
@@ -134,8 +148,14 @@ class _SafeJSONEncoder(json.JSONEncoder):
         except Exception:
             return f"<nonserializable:{type(o).__name__}>"
 
+
 def _utcnow_iso() -> str:
-    return _dt.datetime.utcnow().replace(tzinfo=_dt.timezone.utc).isoformat(timespec="milliseconds")
+    return (
+        _dt.datetime.utcnow()
+        .replace(tzinfo=_dt.timezone.utc)
+        .isoformat(timespec="milliseconds")
+    )
+
 
 _LEVEL_TO_INT = {
     "CRITICAL": logging.CRITICAL,
@@ -147,10 +167,10 @@ _LEVEL_TO_INT = {
 }
 
 ANSI = types.SimpleNamespace(
-    RESET = "\x1b[0m",
-    DIM   = "\x1b[2m",
-    BOLD  = "\x1b[1m",
-    FG = types.SimpleNamespace(
+    RESET="\x1b[0m",
+    DIM="\x1b[2m",
+    BOLD="\x1b[1m",
+    FG=types.SimpleNamespace(
         RED="\x1b[31m",
         GREEN="\x1b[32m",
         YELLOW="\x1b[33m",
@@ -159,7 +179,7 @@ ANSI = types.SimpleNamespace(
         CYAN="\x1b[36m",
         GREY="\x1b[90m",
         WHITE="\x1b[37m",
-    )
+    ),
 )
 
 _LEVEL_COLOR = {
@@ -170,11 +190,13 @@ _LEVEL_COLOR = {
     logging.CRITICAL: ANSI.BOLD + ANSI.FG.MAGENTA,
 }
 
+
 def _supports_color(stream: io.TextIOBase) -> bool:
     try:
         return stream.isatty() and os.environ.get("NO_COLOR") is None
     except Exception:
         return False
+
 
 def _coerce_value(v: Any) -> Any:
     # Keep basic JSON types as-is; coerce objects to readable forms.
@@ -184,7 +206,7 @@ def _coerce_value(v: Any) -> Any:
         return v.hex()
     if isinstance(v, Path):
         return str(v)
-    if isinstance(v, (_dt.datetime, )):
+    if isinstance(v, (_dt.datetime,)):
         if v.tzinfo is None:
             v = v.replace(tzinfo=_dt.timezone.utc)
         return v.isoformat()
@@ -193,6 +215,7 @@ def _coerce_value(v: Any) -> Any:
     if is_dataclass(v):
         return asdict(v)
     return str(v)
+
 
 class JSONFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
@@ -209,21 +232,42 @@ class JSONFormatter(logging.Formatter):
 
         # Collect structured extras (fields passed via LoggerAdapter or log(..., extra={...}))
         for k, v in record.__dict__.items():
-            if k.startswith("_"):          # internals
+            if k.startswith("_"):  # internals
                 continue
-            if k in ("name","msg","args","levelname","levelno","pathname","filename",
-                     "module","exc_info","exc_text","stack_info","lineno","funcName",
-                     "created","msecs","relativeCreated","thread","threadName",
-                     "processName","process"):
+            if k in (
+                "name",
+                "msg",
+                "args",
+                "levelname",
+                "levelno",
+                "pathname",
+                "filename",
+                "module",
+                "exc_info",
+                "exc_text",
+                "stack_info",
+                "lineno",
+                "funcName",
+                "created",
+                "msecs",
+                "relativeCreated",
+                "thread",
+                "threadName",
+                "processName",
+                "process",
+            ):
                 continue
             if k in payload:
                 continue
             payload[k] = _coerce_value(v)
 
         if record.exc_info:
-            payload["err"] = "".join(traceback.format_exception(*record.exc_info)).rstrip()
+            payload["err"] = "".join(
+                traceback.format_exception(*record.exc_info)
+            ).rstrip()
 
         return json.dumps(payload, cls=_SafeJSONEncoder, separators=(",", ":"))
+
 
 class TextFormatter(logging.Formatter):
     """
@@ -231,6 +275,7 @@ class TextFormatter(logging.Formatter):
       2025-01-05T12:34:56.789Z | INFO  | core.rpc.server   | trace=abc123 node=Qm.. | serving on :8547
     With colors when supported.
     """
+
     def __init__(self, stream: io.TextIOBase):
         super().__init__()
         self._color = _supports_color(stream)
@@ -252,10 +297,28 @@ class TextFormatter(logging.Formatter):
         # Inline selected extras (beyond context)
         extras_parts: list[str] = []
         for k, v in record.__dict__.items():
-            if k.startswith("_") or k in ("name","msg","args","levelname","levelno","pathname","filename",
-                                          "module","exc_info","exc_text","stack_info","lineno","funcName",
-                                          "created","msecs","relativeCreated","thread","threadName",
-                                          "processName","process"):
+            if k.startswith("_") or k in (
+                "name",
+                "msg",
+                "args",
+                "levelname",
+                "levelno",
+                "pathname",
+                "filename",
+                "module",
+                "exc_info",
+                "exc_text",
+                "stack_info",
+                "lineno",
+                "funcName",
+                "created",
+                "msecs",
+                "relativeCreated",
+                "thread",
+                "threadName",
+                "processName",
+                "process",
+            ):
                 continue
             if k in DEFAULT_CONTEXT_KEYS or k in ctx:
                 continue
@@ -291,6 +354,7 @@ class TextFormatter(logging.Formatter):
 # ----------------------------
 # Public setup API
 # ----------------------------
+
 
 def configure(
     *,
@@ -385,6 +449,7 @@ def setup_logging(
         propagate_existing=propagate_existing,
     )
 
+
 def configure_from_core_config(cfg: Any) -> None:
     """
     Convenience wrapper to configure logging based on `core.config.Config`.
@@ -399,15 +464,19 @@ def configure_from_core_config(cfg: Any) -> None:
         file_path=log_file,
     )
 
+
 def get_logger(name: Optional[str] = None) -> logging.Logger:
     """
     Get a standard logger (root child). To add constant per-logger fields, use `with_fields`.
     """
     return logging.getLogger(name or "animica")
 
+
 def with_fields(logger: logging.Logger, **fields: Any) -> "ContextAdapter":
     """Return a logger adapter that injects constant fields on each call."""
-    return ContextAdapter(logger, extra={k: _coerce_value(v) for k, v in fields.items()})
+    return ContextAdapter(
+        logger, extra={k: _coerce_value(v) for k, v in fields.items()}
+    )
 
 
 class ContextAdapter(logging.LoggerAdapter):
@@ -417,11 +486,14 @@ class ContextAdapter(logging.LoggerAdapter):
       - Adapter's .extra (constant fields)
       - kwargs passed via log(..., extra={'k': 'v'})
     """
+
     def process(self, msg: Any, kwargs: Dict[str, Any]) -> Tuple[Any, Dict[str, Any]]:
         # Ensure extra dict exists
         extra = kwargs.get("extra") or {}
         # Merge adapter extras without clobbering call-site extras
-        merged = {**self.extra, **extra} if isinstance(extra, dict) else dict(self.extra)
+        merged = (
+            {**self.extra, **extra} if isinstance(extra, dict) else dict(self.extra)
+        )
         kwargs["extra"] = merged
         return msg, kwargs
 
@@ -430,10 +502,12 @@ class ContextAdapter(logging.LoggerAdapter):
 # Internals
 # ----------------------------
 
+
 def _coerce_level(level: str | int) -> int:
     if isinstance(level, int):
         return level
     return _LEVEL_TO_INT.get(level.upper(), logging.INFO)
+
 
 def _decide_json(json_flag: Optional[bool], stream: io.TextIOBase) -> bool:
     if json_flag is not None:
@@ -443,6 +517,7 @@ def _decide_json(json_flag: Optional[bool], stream: io.TextIOBase) -> bool:
         return env == "json"
     # Default: JSON in non-tty (services), text when interactive TTY
     return not _supports_color(stream)
+
 
 def _env_json_override() -> Optional[bool]:
     env = os.environ.get("ANIMICA_LOG_FORMAT", "").strip().lower()
@@ -462,7 +537,7 @@ if __name__ == "__main__":
         log.debug("debug line", counter=1)
         log.info("hello", user="alice")
         try:
-            1/0
+            1 / 0
         except Exception:
             log.exception("boom")
         unbind("user")

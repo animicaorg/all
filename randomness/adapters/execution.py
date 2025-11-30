@@ -39,15 +39,16 @@ Errors
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional, Protocol, Mapping
 import hashlib
 import logging
+from dataclasses import dataclass
+from typing import Mapping, Optional, Protocol
 
 try:
     # Prefer importing the real pointer types if available.
     from randomness.adapters.core_db import PointerRecord
 except Exception:  # pragma: no cover - soft fallback for isolated use
+
     @dataclass(frozen=True)
     class PointerRecord:  # type: ignore[override]
         height: int
@@ -68,6 +69,7 @@ DOMAIN_BEACON_DERIVE = b"animica.rand.contract.v1"
 
 class PointerSource(Protocol):
     """Protocol satisfied by RandomnessCoreDB (or a test double)."""
+
     def get_block_randomness(self, height: int) -> Optional[PointerRecord]: ...
 
 
@@ -180,6 +182,7 @@ class ExecutionRandomness:
 
 
 # ---------------- Convenience top-level helpers ----------------
+
 
 def get_beacon_digest(
     *,

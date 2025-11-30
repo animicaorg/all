@@ -17,16 +17,19 @@ Notes
 
 from __future__ import annotations
 
-from dataclasses import is_dataclass, asdict
+from dataclasses import asdict, is_dataclass
 from enum import IntEnum
-from typing import Any, Dict, Iterable, Mapping, MutableMapping, Optional, Tuple, Union
+from typing import (Any, Dict, Iterable, Mapping, MutableMapping, Optional,
+                    Tuple, Union)
 
 # Canonical CBOR used across the project
-from core.encoding.cbor import dumps as cbor_dumps, loads as cbor_loads  # type: ignore
+from core.encoding.cbor import dumps as cbor_dumps  # type: ignore
+from core.encoding.cbor import loads as cbor_loads
 from core.utils.hash import sha3_256  # type: ignore
 
 try:  # Optional acceleration / struct typing
     import msgspec  # type: ignore
+
     _HAVE_MSGSPEC = True
 except Exception:  # pragma: no cover - optional
     msgspec = None
@@ -39,7 +42,9 @@ except Exception:  # pragma: no cover - optional
 
 # Hard limit to protect allocs; frames layer also enforces its own ceilings.
 MAX_PAYLOAD_BYTES: int = 8 * 1024 * 1024  # 8 MiB (tunable)
-CHECKSUM_BYTES: int = 16  # SHA3-256 truncated to 128 bits (collision-resistant for framing)
+CHECKSUM_BYTES: int = (
+    16  # SHA3-256 truncated to 128 bits (collision-resistant for framing)
+)
 DEFAULT_WIRE: "WireFormat" = None  # set below after WireFormat is defined
 
 
@@ -71,7 +76,17 @@ DEFAULT_WIRE = WireFormat.CBOR
 # Canonicalization helpers
 # ------------------------------------------
 
-JSONLike = Union[Mapping[str, Any], MutableMapping[str, Any], list, tuple, str, int, float, bool, None]
+JSONLike = Union[
+    Mapping[str, Any],
+    MutableMapping[str, Any],
+    list,
+    tuple,
+    str,
+    int,
+    float,
+    bool,
+    None,
+]
 
 
 def _dataclass_to_plain(obj: Any) -> Any:
@@ -113,6 +128,7 @@ def canonicalize(obj: JSONLike) -> JSONLike:
 # Varint (u64) helpers (LEB128-like)
 # ------------------------------------------
 
+
 def varu64_encode(n: int) -> bytes:
     """Unsigned LEB128 encoding for non-negative integers."""
     if n < 0:
@@ -152,6 +168,7 @@ def varu64_decode(data: bytes, *, offset: int = 0) -> Tuple[int, int]:
 # Checksums
 # ------------------------------------------
 
+
 def checksum(data: bytes, *, size: int = CHECKSUM_BYTES) -> bytes:
     """
     Compute truncated SHA3-256 checksum.
@@ -172,7 +189,7 @@ def verify_checksum(data: bytes, digest: bytes) -> bool:
         return False
     acc = 0
     for x, y in zip(c, digest):
-        acc |= (x ^ y)
+        acc |= x ^ y
     return acc == 0
 
 
@@ -180,7 +197,10 @@ def verify_checksum(data: bytes, digest: bytes) -> bool:
 # Encoding / decoding
 # ------------------------------------------
 
-def encode_payload(obj: Any, *, fmt: WireFormat = DEFAULT_WIRE, max_bytes: int = MAX_PAYLOAD_BYTES) -> bytes:
+
+def encode_payload(
+    obj: Any, *, fmt: WireFormat = DEFAULT_WIRE, max_bytes: int = MAX_PAYLOAD_BYTES
+) -> bytes:
     """
     Encode a Python object to wire bytes using the selected format.
 
@@ -268,6 +288,7 @@ def decode_with_checksum(
 # ------------------------------------------
 # Length-prefixing helpers (used by stream readers)
 # ------------------------------------------
+
 
 def prefix_length(data: bytes) -> bytes:
     """Return varu64 length prefix + data."""

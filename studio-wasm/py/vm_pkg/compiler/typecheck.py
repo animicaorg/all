@@ -41,7 +41,9 @@ def validate_module(m: ir.Module) -> None:
         if not isinstance(fn, ir.Function):
             raise ValidationError(f"function {name!r} is not ir.Function")
         if fn.name != name:
-            raise ValidationError(f"function name mismatch: key {name!r} != fn.name {fn.name!r}")
+            raise ValidationError(
+                f"function name mismatch: key {name!r} != fn.name {fn.name!r}"
+            )
 
     if m.entry not in m.functions:
         raise ValidationError(f"entry function {m.entry!r} not found")
@@ -104,6 +106,7 @@ def _is_simple_ident(s: str) -> bool:
 
 # -------- Operand validation & stack effect helpers --------
 
+
 def _validate_args_shape(fn_name: str, idx: int, ins: ir.Instr, m: ir.Module) -> None:
     op, args = ins.op, ins.args
 
@@ -112,12 +115,27 @@ def _validate_args_shape(fn_name: str, idx: int, ins: ir.Instr, m: ir.Module) ->
 
     # Opcodes with zero immediates
     if op in {
-        "POP", "DUP", "SWAP",
-        "ADD", "SUB", "MUL", "DIV", "MOD",
-        "EQ", "LT", "GT", "NOT", "AND", "OR",
-        "RET", "REVERT",
-        "SHA3_256", "SHA3_512", "KECCAK256",
-        "SLOAD", "SSTORE",
+        "POP",
+        "DUP",
+        "SWAP",
+        "ADD",
+        "SUB",
+        "MUL",
+        "DIV",
+        "MOD",
+        "EQ",
+        "LT",
+        "GT",
+        "NOT",
+        "AND",
+        "OR",
+        "RET",
+        "REVERT",
+        "SHA3_256",
+        "SHA3_512",
+        "KECCAK256",
+        "SLOAD",
+        "SSTORE",
         "EMIT",
     }:
         if len(args) != 0:
@@ -173,7 +191,9 @@ def _validate_args_shape(fn_name: str, idx: int, ins: ir.Instr, m: ir.Module) ->
         raise err("unsupported opcode")
 
 
-def _stack_effect(fn_name: str, idx: int, ins: ir.Instr, m: ir.Module) -> Tuple[int, int]:
+def _stack_effect(
+    fn_name: str, idx: int, ins: ir.Instr, m: ir.Module
+) -> Tuple[int, int]:
     """
     Return (consume, produce) for a single instruction.
     Uses OP_SPECS as baseline, with special handling for CALL/EXTCALL.

@@ -57,6 +57,7 @@ __all__ = [
 
 # ---------- Paths & discovery ----------
 
+
 def _repo_root_from_here() -> Path:
     # proofs/quantum_attest/__init__.py -> proofs/quantum_attest -> proofs -> repo root
     return Path(__file__).resolve().parents[2]
@@ -88,18 +89,20 @@ def qpu_registry_path() -> Path:
 
 # ---------- Models & helpers ----------
 
+
 @dataclass(frozen=True)
 class QPUKeyRef:
     """Minimal reference for a JWKS public key."""
-    slug: str                 # provider slug (e.g., 'ibm_quantum')
-    kid: str                  # key id
-    alg: Optional[str]        # 'RS256', 'ES256', etc.
-    kty: str                  # 'RSA', 'EC', 'OKP', ...
-    crv: Optional[str] = None # for EC/OKP
-    n: Optional[str] = None   # RSA modulus (base64url)
-    e: Optional[str] = None   # RSA exponent (base64url)
-    x: Optional[str] = None   # EC/OKP x (base64url)
-    y: Optional[str] = None   # EC y (base64url)
+
+    slug: str  # provider slug (e.g., 'ibm_quantum')
+    kid: str  # key id
+    alg: Optional[str]  # 'RS256', 'ES256', etc.
+    kty: str  # 'RSA', 'EC', 'OKP', ...
+    crv: Optional[str] = None  # for EC/OKP
+    n: Optional[str] = None  # RSA modulus (base64url)
+    e: Optional[str] = None  # RSA exponent (base64url)
+    x: Optional[str] = None  # EC/OKP x (base64url)
+    y: Optional[str] = None  # EC y (base64url)
 
     @staticmethod
     def from_jwk(slug: str, jwk: Dict[str, Any]) -> "QPUKeyRef":
@@ -157,7 +160,9 @@ def get_jwks_for(slug: str) -> List[QPUKeyRef]:
     return [QPUKeyRef.from_jwk(slug, k) for k in jwks.get("keys", [])]
 
 
-def jwks_iter_keys(slug_patterns: Optional[Iterable[str]] = None) -> Iterable[QPUKeyRef]:
+def jwks_iter_keys(
+    slug_patterns: Optional[Iterable[str]] = None,
+) -> Iterable[QPUKeyRef]:
     """
     Iterate keys across one or many providers. If slug_patterns is None,
     iterate all cache entries.
@@ -178,7 +183,9 @@ def jwks_iter_keys(slug_patterns: Optional[Iterable[str]] = None) -> Iterable[QP
                 continue
 
 
-def find_key(kid: Optional[str], alg: Optional[str] = None, slugs: Optional[Iterable[str]] = None) -> Optional[QPUKeyRef]:
+def find_key(
+    kid: Optional[str], alg: Optional[str] = None, slugs: Optional[Iterable[str]] = None
+) -> Optional[QPUKeyRef]:
     """
     Find the first key that matches `kid` (and optionally `alg`) across the cache (or the given slugs).
     Returns QPUKeyRef or None.
@@ -197,6 +204,7 @@ def find_key(kid: Optional[str], alg: Optional[str] = None, slugs: Optional[Iter
 
 
 # ---------- JWT header parsing (no verification here) ----------
+
 
 def _b64url_pad(s: str) -> str:
     return s + "=" * ((4 - len(s) % 4) % 4)
@@ -218,6 +226,7 @@ def parse_jwt_header(token: str) -> Dict[str, Any]:
 
 
 # ---------- Cache refresh (invokes the installer script) ----------
+
 
 def refresh_jwks_cache(extra_jwks: Optional[List[str]] = None) -> None:
     """

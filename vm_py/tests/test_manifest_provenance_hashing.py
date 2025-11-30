@@ -4,9 +4,7 @@ from copy import deepcopy
 from typing import Any, Dict
 
 from vm_py.runtime.manifest_provenance import (
-    compute_manifest_hash_for_provenance,
-    is_provenance_hash_valid,
-)
+    compute_manifest_hash_for_provenance, is_provenance_hash_valid)
 
 
 def _base_manifest() -> Dict[str, Any]:

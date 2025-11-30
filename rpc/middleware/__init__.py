@@ -37,7 +37,7 @@ You can also import concrete middleware classes directly:
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 __all__ = [
     "apply_middleware",
@@ -55,12 +55,15 @@ if TYPE_CHECKING:
 def __getattr__(name: str):  # pragma: no cover - thin shim
     if name == "LoggingMiddleware":
         from .logging import LoggingMiddleware
+
         return LoggingMiddleware
     if name == "RateLimitMiddleware":
         from .rate_limit import RateLimitMiddleware
+
         return RateLimitMiddleware
     if name == "StrictCORSMiddleware":
         from .cors import StrictCORSMiddleware
+
         return StrictCORSMiddleware
     raise AttributeError(name)
 
@@ -124,9 +127,9 @@ def apply_middleware(app: "FastAPI", config: Any) -> None:
     >>> apply_middleware(app, cfg)
     """
     # Lazy imports to avoid import cycles during early wiring
+    from .cors import StrictCORSMiddleware
     from .logging import LoggingMiddleware
     from .rate_limit import RateLimitMiddleware
-    from .cors import StrictCORSMiddleware
 
     logging_cfg = _extract_logging(config)
     rate_cfg = _extract_rate_limits(config)

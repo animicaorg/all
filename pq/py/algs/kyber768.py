@@ -18,7 +18,7 @@ Uniform surface exposed to higher layers (see pq/py/algs/__init__.py):
 """
 
 import os
-from typing import Optional, Tuple, Dict
+from typing import Dict, Optional, Tuple
 
 # --------------------------------------------------------------------------------------
 # Try python-oqs first
@@ -47,10 +47,10 @@ try:
     if _OQS_MECH:
         with oqs.KEM(_OQS_MECH) as _probe:  # type: ignore[arg-type]
             _sizes = {
-                "pk": _probe.length_public_key,      # type: ignore[attr-defined]
-                "sk": _probe.length_secret_key,      # type: ignore[attr-defined]
-                "ct": _probe.length_ciphertext,      # type: ignore[attr-defined]
-                "ss": _probe.length_shared_secret,   # type: ignore[attr-defined]
+                "pk": _probe.length_public_key,  # type: ignore[attr-defined]
+                "sk": _probe.length_secret_key,  # type: ignore[attr-defined]
+                "ct": _probe.length_ciphertext,  # type: ignore[attr-defined]
+                "ss": _probe.length_shared_secret,  # type: ignore[attr-defined]
             }
         _OQS_OK = True
 except Exception:
@@ -65,6 +65,7 @@ if not _OQS_OK and os.environ.get("ANIMICA_UNSAFE_PQ_FAKE", "") == "1":
     _DEV_FAKE_OK = True
     # Chosen arbitrarily for local-only operation
     _sizes = {"pk": 32, "sk": 32, "ct": 48, "ss": 32}
+
 
 # Local SHA3 helpers for the fake mode (avoid importing our higher-level utils here)
 def _sha3_256(data: bytes) -> bytes:
@@ -82,7 +83,9 @@ def _sha3_512(data: bytes) -> bytes:
 # --------------------------------------------------------------------------------------
 # Helpers to cope with python-oqs API differences
 # --------------------------------------------------------------------------------------
-def _oqs_encapsulate(kem_obj, pk: bytes) -> Tuple[bytes, bytes]:  # pragma: no cover - tiny shim
+def _oqs_encapsulate(
+    kem_obj, pk: bytes
+) -> Tuple[bytes, bytes]:  # pragma: no cover - tiny shim
     """
     python-oqs historically used 'encap_secret'/'decap_secret'. Some builds expose
     'encapsulate'/'decapsulate'. Try both.

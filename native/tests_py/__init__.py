@@ -45,7 +45,11 @@ from typing import Optional
 
 # ---------- Environment flags ----------
 
-SKIP_HEAVY: bool = os.getenv("ANIMICA_NATIVE_SKIP_HEAVY", "0").lower() in {"1", "true", "yes"}
+SKIP_HEAVY: bool = os.getenv("ANIMICA_NATIVE_SKIP_HEAVY", "0").lower() in {
+    "1",
+    "true",
+    "yes",
+}
 TEST_SEED_RAW: str = os.getenv("ANIMICA_TEST_SEED", "").strip()
 try:
     TEST_SEED: Optional[int] = int(TEST_SEED_RAW) if TEST_SEED_RAW else None
@@ -53,9 +57,13 @@ except ValueError:
     # Non-integer seeds are ignored; tests that need determinism will fall back.
     TEST_SEED = None
 
+
 def is_ci() -> bool:
     """Return True when running under CI (GitHub Actions / generic CI env)."""
-    return os.getenv("CI", "").lower() == "true" or os.getenv("GITHUB_ACTIONS", "").lower() == "true"
+    return (
+        os.getenv("CI", "").lower() == "true"
+        or os.getenv("GITHUB_ACTIONS", "").lower() == "true"
+    )
 
 
 # ---------- Native import & package-wide skip ----------
@@ -68,6 +76,7 @@ except Exception:
 
 try:
     import animica_native as _native  # Provided by pyo3 module; __init__ re-exports the Rust impl
+
     _HAVE_NATIVE = True
     _IMPORT_ERROR = None
 except Exception as _e:  # noqa: N816 (intentional constant-like name)

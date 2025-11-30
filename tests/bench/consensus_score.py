@@ -36,6 +36,7 @@ except Exception:  # pragma: no cover
 
 # --------------------------- Synthetic Data Gen -------------------------------
 
+
 def _rng(seed: Optional[int]) -> random.Random:
     if seed is None:
         # Stable default if PYTHONHASHSEED provided; else fixed constant.
@@ -68,14 +69,15 @@ def _gen_batch_uniform(
         for _ in range(batch):
             tot = (theta - spread) + (2.0 * spread) * r.random()
             # Dirichlet via K exponential(1.0)
-            weights = [ -math.log(max(1e-12, 1.0 - r.random())) for _ in range(kinds) ]
+            weights = [-math.log(max(1e-12, 1.0 - r.random())) for _ in range(kinds)]
             s = sum(weights) or 1.0
-            row = [ (w / s) * tot for w in weights ]
+            row = [(w / s) * tot for w in weights]
             data.append(row)
         return None, data
 
 
 # ------------------------------ Scorers ---------------------------------------
+
 
 def _minimal_scorer_python(rows: List[List[float]], theta: float) -> int:
     """Pure-Python acceptance: accept if Σψ >= θ."""
@@ -101,7 +103,12 @@ def _maybe_consensus_scorer() -> Optional[Callable]:
 
         mod = importlib.import_module("consensus.scorer")
         # Candidate callables we might expose in that module
-        for name in ("score_batch", "score_batch_poies", "accept_batch", "benchmark_scorer"):
+        for name in (
+            "score_batch",
+            "score_batch_poies",
+            "accept_batch",
+            "benchmark_scorer",
+        ):
             fn = getattr(mod, name, None)
             if callable(fn):
                 return fn
@@ -111,6 +118,7 @@ def _maybe_consensus_scorer() -> Optional[Callable]:
 
 
 # ------------------------------ Benchmark -------------------------------------
+
 
 def _timeit(fn: Callable[[], int], repeats: int) -> Tuple[List[float], int]:
     """
@@ -156,16 +164,21 @@ def run_bench(
             # Try to pass numpy arrays if supported; otherwise, convert to list
             data = arr if arr is not None else rows
             return int(scorer_fn_real(data=data, theta=theta))  # type: ignore
+
         bench_fn = call_real
         scorer_label = "consensus"
     else:
         if arr is not None:
+
             def bench_fn() -> int:
                 return _minimal_scorer_numpy(arr, theta)
+
             scorer_label = "minimal.numpy"
         else:
+
             def bench_fn() -> int:
                 return _minimal_scorer_python(rows, theta)
+
             scorer_label = "minimal.python"
 
     # Warmup
@@ -177,9 +190,11 @@ def run_bench(
 
     # Stats
     median_s = statistics.median(timings)
-    p90_s = statistics.quantiles(timings, n=10)[8] if len(timings) >= 10 else max(timings)
+    p90_s = (
+        statistics.quantiles(timings, n=10)[8] if len(timings) >= 10 else max(timings)
+    )
     total_ops = batch * repeat
-    ops_per_s = (total_ops / median_s) if median_s > 0 else float('inf')
+    ops_per_s = (total_ops / median_s) if median_s > 0 else float("inf")
 
     result = {
         "case": f"consensus.score_poies(batch={batch},kinds={kinds})",
@@ -191,33 +206,65 @@ def run_bench(
             "repeat": repeat,
             "warmup": warmup,
             "scorer": scorer_label,
-            "seed": seed if seed is not None else int(os.environ.get("PYTHONHASHSEED", "0") or "1337"),
+            "seed": (
+                seed
+                if seed is not None
+                else int(os.environ.get("PYTHONHASHSEED", "0") or "1337")
+            ),
         },
         "result": {
             "ops_per_s": ops_per_s,
             "median_s": median_s,
             "p90_s": p90_s,
-            "accepted_last_run": last_result
-        }
+            "accepted_last_run": last_result,
+        },
     }
     return result
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description="PoIES scoring ops/sec on synthetic batches.")
-    ap.add_argument("--batch", type=int, default=100_000, help="Number of ψ-vectors per run (default: 100000)")
-    ap.add_argument("--kinds", type=int, default=4, help="Number of proof kinds composing ψ (default: 4)")
-    ap.add_argument("--theta", type=float, default=1.0, help="Acceptance threshold Θ (default: 1.0)")
-    ap.add_argument("--spread", type=float, default=0.5, help="Uniform spread around Θ for totals (default: 0.5)")
-    ap.add_argument("--warmup", type=int, default=1, help="Warmup iterations (default: 1)")
-    ap.add_argument("--repeat", type=int, default=5, help="Measured iterations (default: 5)")
+    ap = argparse.ArgumentParser(
+        description="PoIES scoring ops/sec on synthetic batches."
+    )
+    ap.add_argument(
+        "--batch",
+        type=int,
+        default=100_000,
+        help="Number of ψ-vectors per run (default: 100000)",
+    )
+    ap.add_argument(
+        "--kinds",
+        type=int,
+        default=4,
+        help="Number of proof kinds composing ψ (default: 4)",
+    )
+    ap.add_argument(
+        "--theta", type=float, default=1.0, help="Acceptance threshold Θ (default: 1.0)"
+    )
+    ap.add_argument(
+        "--spread",
+        type=float,
+        default=0.5,
+        help="Uniform spread around Θ for totals (default: 0.5)",
+    )
+    ap.add_argument(
+        "--warmup", type=int, default=1, help="Warmup iterations (default: 1)"
+    )
+    ap.add_argument(
+        "--repeat", type=int, default=5, help="Measured iterations (default: 5)"
+    )
     ap.add_argument(
         "--scorer",
         choices=("auto", "minimal", "consensus"),
         default="auto",
-        help="Use minimal scorer or attempt to import consensus.scorer (default: auto)"
+        help="Use minimal scorer or attempt to import consensus.scorer (default: auto)",
     )
-    ap.add_argument("--seed", type=int, default=None, help="PRNG seed (default: from PYTHONHASHSEED or 1337)")
+    ap.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="PRNG seed (default: from PYTHONHASHSEED or 1337)",
+    )
     args = ap.parse_args(argv)
 
     # Normalize scorer mode

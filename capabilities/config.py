@@ -72,7 +72,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-
 # -----------------------------
 # Helpers: parsing & validation
 # -----------------------------
@@ -216,22 +215,22 @@ class GasCosts:
 
 @dataclass(frozen=True)
 class QueueLimits:
-    max_inflight: int = 2_048                 # total jobs in queue (pending+leased)
-    max_per_caller: int = 128                 # per-caller outstanding jobs
+    max_inflight: int = 2_048  # total jobs in queue (pending+leased)
+    max_per_caller: int = 128  # per-caller outstanding jobs
     enqueue_timeout_s: float = 5.0
     result_read_timeout_s: float = 2.0
-    backpressure_target: float = 0.80         # fraction utilization to start shedding
+    backpressure_target: float = 0.80  # fraction utilization to start shedding
 
 
 @dataclass(frozen=True)
 class ResultPolicy:
-    ttl_blocks: int = 720                     # ~one day at 2-min blocks; network-specific
-    max_result_bytes: int = 1_048_576         # 1 MiB result ceiling
+    ttl_blocks: int = 720  # ~one day at 2-min blocks; network-specific
+    max_result_bytes: int = 1_048_576  # 1 MiB result ceiling
 
 
 @dataclass(frozen=True)
 class SecurityLimits:
-    max_payload_bytes: int = 1_048_576        # 1 MiB input ceiling per syscall
+    max_payload_bytes: int = 1_048_576  # 1 MiB input ceiling per syscall
     # Future: per-kind ceilings could be added here (e.g., max circuits/ops for quantum)
 
 
@@ -273,7 +272,9 @@ def _apply_overrides(base: Dict[str, Any], overrides: Dict[str, Any]) -> Dict[st
     return out
 
 
-def load_config(file_path: Optional[Path] = None, overrides: Optional[Dict[str, Any]] = None) -> Config:
+def load_config(
+    file_path: Optional[Path] = None, overrides: Optional[Dict[str, Any]] = None
+) -> Config:
     """
     Build a Config from (defaults) ← file (JSON/YAML) ← environment ← overrides.
     """
@@ -297,49 +298,100 @@ def load_config(file_path: Optional[Path] = None, overrides: Optional[Dict[str, 
 
     features.update(
         {
-            "blob": _parse_bool(_env("ANIMICA_CAP_ENABLE_BLOB"), features.get("blob", True)),
+            "blob": _parse_bool(
+                _env("ANIMICA_CAP_ENABLE_BLOB"), features.get("blob", True)
+            ),
             "ai": _parse_bool(_env("ANIMICA_CAP_ENABLE_AI"), features.get("ai", True)),
-            "quantum": _parse_bool(_env("ANIMICA_CAP_ENABLE_QUANTUM"), features.get("quantum", True)),
+            "quantum": _parse_bool(
+                _env("ANIMICA_CAP_ENABLE_QUANTUM"), features.get("quantum", True)
+            ),
             "zk": _parse_bool(_env("ANIMICA_CAP_ENABLE_ZK"), features.get("zk", True)),
-            "random": _parse_bool(_env("ANIMICA_CAP_ENABLE_RANDOM"), features.get("random", True)),
+            "random": _parse_bool(
+                _env("ANIMICA_CAP_ENABLE_RANDOM"), features.get("random", True)
+            ),
         }
     )
 
     gas.update(
         {
-            "blob_pin_base": _parse_int(_env("ANIMICA_CAP_GAS_BLOB_PIN_BASE"), gas.get("blob_pin_base", GasCosts.blob_pin_base)),
-            "blob_pin_per_kb": _parse_int(_env("ANIMICA_CAP_GAS_BLOB_PIN_PER_KB"), gas.get("blob_pin_per_kb", GasCosts.blob_pin_per_kb)),
-            "ai_enqueue_base": _parse_int(_env("ANIMICA_CAP_GAS_AI_ENQUEUE_BASE"), gas.get("ai_enqueue_base", GasCosts.ai_enqueue_base)),
-            "ai_unit": _parse_int(_env("ANIMICA_CAP_GAS_AI_UNIT"), gas.get("ai_unit", GasCosts.ai_unit)),
-            "quantum_unit": _parse_int(_env("ANIMICA_CAP_GAS_QUANTUM_UNIT"), gas.get("quantum_unit", GasCosts.quantum_unit)),
-            "zk_verify_base": _parse_int(_env("ANIMICA_CAP_GAS_ZK_VERIFY_BASE"), gas.get("zk_verify_base", GasCosts.zk_verify_base)),
-            "zk_verify_per_byte": _parse_int(_env("ANIMICA_CAP_GAS_ZK_VERIFY_PER_BYTE"), gas.get("zk_verify_per_byte", GasCosts.zk_verify_per_byte)),
-            "random_bytes_per_32": _parse_int(_env("ANIMICA_CAP_GAS_RANDOM_BYTES_PER_32"), gas.get("random_bytes_per_32", GasCosts.random_bytes_per_32)),
+            "blob_pin_base": _parse_int(
+                _env("ANIMICA_CAP_GAS_BLOB_PIN_BASE"),
+                gas.get("blob_pin_base", GasCosts.blob_pin_base),
+            ),
+            "blob_pin_per_kb": _parse_int(
+                _env("ANIMICA_CAP_GAS_BLOB_PIN_PER_KB"),
+                gas.get("blob_pin_per_kb", GasCosts.blob_pin_per_kb),
+            ),
+            "ai_enqueue_base": _parse_int(
+                _env("ANIMICA_CAP_GAS_AI_ENQUEUE_BASE"),
+                gas.get("ai_enqueue_base", GasCosts.ai_enqueue_base),
+            ),
+            "ai_unit": _parse_int(
+                _env("ANIMICA_CAP_GAS_AI_UNIT"), gas.get("ai_unit", GasCosts.ai_unit)
+            ),
+            "quantum_unit": _parse_int(
+                _env("ANIMICA_CAP_GAS_QUANTUM_UNIT"),
+                gas.get("quantum_unit", GasCosts.quantum_unit),
+            ),
+            "zk_verify_base": _parse_int(
+                _env("ANIMICA_CAP_GAS_ZK_VERIFY_BASE"),
+                gas.get("zk_verify_base", GasCosts.zk_verify_base),
+            ),
+            "zk_verify_per_byte": _parse_int(
+                _env("ANIMICA_CAP_GAS_ZK_VERIFY_PER_BYTE"),
+                gas.get("zk_verify_per_byte", GasCosts.zk_verify_per_byte),
+            ),
+            "random_bytes_per_32": _parse_int(
+                _env("ANIMICA_CAP_GAS_RANDOM_BYTES_PER_32"),
+                gas.get("random_bytes_per_32", GasCosts.random_bytes_per_32),
+            ),
         }
     )
 
     queue.update(
         {
-            "max_inflight": _parse_int(_env("ANIMICA_CAP_QUEUE_MAX_INFLIGHT"), queue.get("max_inflight", QueueLimits.max_inflight)),
-            "max_per_caller": _parse_int(_env("ANIMICA_CAP_QUEUE_MAX_PER_CALLER"), queue.get("max_per_caller", QueueLimits.max_per_caller)),
-            "enqueue_timeout_s": _parse_duration_seconds(_env("ANIMICA_CAP_ENQUEUE_TIMEOUT"), queue.get("enqueue_timeout_s", QueueLimits.enqueue_timeout_s)),
-            "result_read_timeout_s": _parse_duration_seconds(
-                _env("ANIMICA_CAP_RESULT_READ_TIMEOUT"), queue.get("result_read_timeout_s", QueueLimits.result_read_timeout_s)
+            "max_inflight": _parse_int(
+                _env("ANIMICA_CAP_QUEUE_MAX_INFLIGHT"),
+                queue.get("max_inflight", QueueLimits.max_inflight),
             ),
-            "backpressure_target": _parse_fraction(_env("ANIMICA_CAP_QUEUE_BACKPRESSURE_TARGET"), queue.get("backpressure_target", QueueLimits.backpressure_target)),
+            "max_per_caller": _parse_int(
+                _env("ANIMICA_CAP_QUEUE_MAX_PER_CALLER"),
+                queue.get("max_per_caller", QueueLimits.max_per_caller),
+            ),
+            "enqueue_timeout_s": _parse_duration_seconds(
+                _env("ANIMICA_CAP_ENQUEUE_TIMEOUT"),
+                queue.get("enqueue_timeout_s", QueueLimits.enqueue_timeout_s),
+            ),
+            "result_read_timeout_s": _parse_duration_seconds(
+                _env("ANIMICA_CAP_RESULT_READ_TIMEOUT"),
+                queue.get("result_read_timeout_s", QueueLimits.result_read_timeout_s),
+            ),
+            "backpressure_target": _parse_fraction(
+                _env("ANIMICA_CAP_QUEUE_BACKPRESSURE_TARGET"),
+                queue.get("backpressure_target", QueueLimits.backpressure_target),
+            ),
         }
     )
 
     results.update(
         {
-            "ttl_blocks": _parse_int(_env("ANIMICA_CAP_RESULT_TTL_BLOCKS"), results.get("ttl_blocks", ResultPolicy.ttl_blocks)),
-            "max_result_bytes": _parse_bytes(_env("ANIMICA_CAP_MAX_RESULT_BYTES"), results.get("max_result_bytes", ResultPolicy.max_result_bytes)),
+            "ttl_blocks": _parse_int(
+                _env("ANIMICA_CAP_RESULT_TTL_BLOCKS"),
+                results.get("ttl_blocks", ResultPolicy.ttl_blocks),
+            ),
+            "max_result_bytes": _parse_bytes(
+                _env("ANIMICA_CAP_MAX_RESULT_BYTES"),
+                results.get("max_result_bytes", ResultPolicy.max_result_bytes),
+            ),
         }
     )
 
     limits.update(
         {
-            "max_payload_bytes": _parse_bytes(_env("ANIMICA_CAP_MAX_PAYLOAD_BYTES"), limits.get("max_payload_bytes", SecurityLimits.max_payload_bytes)),
+            "max_payload_bytes": _parse_bytes(
+                _env("ANIMICA_CAP_MAX_PAYLOAD_BYTES"),
+                limits.get("max_payload_bytes", SecurityLimits.max_payload_bytes),
+            ),
         }
     )
 

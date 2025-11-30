@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from aicf.queue.jobkind import JobKind
 
 """
@@ -30,18 +31,21 @@ Usage:
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Dict, Iterable, List, Optional, Protocol, Tuple, TypedDict, Union
+from typing import (Any, Callable, Dict, Iterable, List, Optional, Protocol,
+                    Tuple, TypedDict, Union)
 
 # ---- Optional imports from aicf.* (graceful fallbacks if not present) ----
 
 try:
     from aicf.errors import AICFError  # type: ignore
 except Exception:  # pragma: no cover - fallback if package not wired yet
+
     class AICFError(Exception):
         """Generic AICF error (fallback)."""
 
 
 # ---- Public DTOs (transport-facing) ----------------------------------------
+
 
 class Capability(str, Enum):
     AI = "AI"
@@ -112,6 +116,7 @@ class PayoutClaimResult:
 
 # ---- Service protocol (integration surface) --------------------------------
 
+
 class RegistryService(Protocol):
     def list_providers(self, *, offset: int, limit: int) -> Iterable[ProviderView]: ...
     def get_provider(self, provider_id: str) -> ProviderView: ...
@@ -141,12 +146,14 @@ class TreasuryService(Protocol):
 @dataclass
 class ServiceBundle:
     """Minimal bundle the methods need. Your mount/wiring should provide this."""
+
     registry: RegistryService
     queue: QueueService
     treasury: TreasuryService
 
 
 # ---- Helpers ---------------------------------------------------------------
+
 
 def _coerce_int(value: Any, name: str) -> int:
     try:
@@ -158,7 +165,9 @@ def _coerce_int(value: Any, name: str) -> int:
         raise AICFError(f"invalid {name}: must be a non-negative integer") from e
 
 
-def _coerce_enum(value: Optional[str], enum_cls: Union[type[JobKind], type[JobStatus]]) -> Optional[Enum]:
+def _coerce_enum(
+    value: Optional[str], enum_cls: Union[type[JobKind], type[JobStatus]]
+) -> Optional[Enum]:
     if value is None:
         return None
     try:
@@ -169,6 +178,7 @@ def _coerce_enum(value: Optional[str], enum_cls: Union[type[JobKind], type[JobSt
 
 
 # ---- JSON-RPC method factory ----------------------------------------------
+
 
 def make_methods(service: ServiceBundle) -> Dict[str, Callable[..., Any]]:
     """
@@ -183,7 +193,9 @@ def make_methods(service: ServiceBundle) -> Dict[str, Callable[..., Any]]:
     ) -> Dict[str, Any]:
         off = _coerce_int(offset, "offset")
         lim = _coerce_int(limit, "limit")
-        items = [pv.__dict__ for pv in service.registry.list_providers(offset=off, limit=lim)]
+        items = [
+            pv.__dict__ for pv in service.registry.list_providers(offset=off, limit=lim)
+        ]
         next_offset = off + len(items)
         return {"items": items, "nextOffset": next_offset}
 
@@ -209,7 +221,12 @@ def make_methods(service: ServiceBundle) -> Dict[str, Callable[..., Any]]:
         items = [
             jv.__dict__
             for jv in service.queue.list_jobs(
-                kind=k, status=st, provider_id=providerId, requester=requester, offset=off, limit=lim
+                kind=k,
+                status=st,
+                provider_id=providerId,
+                requester=requester,
+                offset=off,
+                limit=lim,
             )
         ]
         next_offset = off + len(items)
@@ -221,7 +238,9 @@ def make_methods(service: ServiceBundle) -> Dict[str, Callable[..., Any]]:
         jv = service.queue.get_job(jobId)
         return jv.__dict__
 
-    def aicf_claim_payout(*, providerId: str, uptoEpoch: Optional[int] = None) -> Dict[str, Any]:
+    def aicf_claim_payout(
+        *, providerId: str, uptoEpoch: Optional[int] = None
+    ) -> Dict[str, Any]:
         if not providerId:
             raise AICFError("providerId is required")
         upto = None if uptoEpoch is None else _coerce_int(uptoEpoch, "uptoEpoch")
@@ -263,6 +282,7 @@ def make_methods(service: ServiceBundle) -> Dict[str, Callable[..., Any]]:
 # This is a convenience for projects that also want simple REST endpoints.
 # It is safe to import even if FastAPI is not installed (no hard dependency).
 
+
 def build_rest_router(service: ServiceBundle):
     """
     Return a FastAPI APIRouter exposing read/write-safe endpoints.
@@ -281,7 +301,9 @@ def build_rest_router(service: ServiceBundle):
         limit: int = Query(100, ge=1, le=500),
     ):
         try:
-            return make_methods(service)["aicf.listProviders"](offset=offset, limit=limit)
+            return make_methods(service)["aicf.listProviders"](
+                offset=offset, limit=limit
+            )
         except AICFError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
@@ -303,7 +325,12 @@ def build_rest_router(service: ServiceBundle):
     ):
         try:
             return make_methods(service)["aicf.listJobs"](
-                kind=kind, status=status, providerId=providerId, requester=requester, offset=offset, limit=limit
+                kind=kind,
+                status=status,
+                providerId=providerId,
+                requester=requester,
+                offset=offset,
+                limit=limit,
             )
         except AICFError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -318,7 +345,9 @@ def build_rest_router(service: ServiceBundle):
     @router.post("/providers/{provider_id}/claim")
     def http_claim_payout(provider_id: str, uptoEpoch: Optional[int] = None):
         try:
-            return make_methods(service)["aicf.claimPayout"](providerId=provider_id, uptoEpoch=uptoEpoch)
+            return make_methods(service)["aicf.claimPayout"](
+                providerId=provider_id, uptoEpoch=uptoEpoch
+            )
         except AICFError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 

@@ -18,7 +18,7 @@ Uniform surface exposed to higher layers (see pq/py/algs/__init__.py):
 """
 
 import os
-from typing import Optional, Tuple, Dict
+from typing import Dict, Optional, Tuple
 
 # --------------------------------------------------------------------------------------
 # Try python-oqs first
@@ -46,9 +46,9 @@ try:
     if _OQS_MECH:
         with oqs.Signature(_OQS_MECH) as _probe:  # type: ignore[arg-type]
             _sizes = {
-                "pk": _probe.length_public_key,   # type: ignore[attr-defined]
-                "sk": _probe.length_secret_key,   # type: ignore[attr-defined]
-                "sig": _probe.length_signature,   # type: ignore[attr-defined]
+                "pk": _probe.length_public_key,  # type: ignore[attr-defined]
+                "sk": _probe.length_secret_key,  # type: ignore[attr-defined]
+                "sig": _probe.length_signature,  # type: ignore[attr-defined]
             }
         _OQS_OK = True
 except Exception:
@@ -63,6 +63,7 @@ if not _OQS_OK and os.environ.get("ANIMICA_UNSAFE_PQ_FAKE", "") == "1":
     _DEV_FAKE_OK = True
     # Chosen arbitrarily for local-only operation
     _sizes = {"pk": 32, "sk": 32, "sig": 64}
+
 
 # Local SHA3 helpers for the fake mode (avoid importing our higher-level utils here)
 def _sha3_256(data: bytes) -> bytes:

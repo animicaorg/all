@@ -69,9 +69,10 @@ from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence, Tuple, Union
 
 from da.errors import DAError
-from da.utils.bytes import hex_to_bytes, bytes_to_hex
-from da.utils.merkle import merkle_root
+from da.utils.bytes import bytes_to_hex, hex_to_bytes
 from da.utils.hash import sha3_256
+from da.utils.merkle import merkle_root
+
 try:
     from da.nmt.codec import leaf_encode  # type: ignore
 except ImportError:  # fallback for newer codec API
@@ -79,12 +80,14 @@ except ImportError:  # fallback for newer codec API
 try:
     from da.nmt.commit import compute_nmt_root  # root over encoded leaves
 except ImportError:  # fallback to newer API name
-    from da.nmt.commit import root_from_encoded_leaves as compute_nmt_root  # type: ignore
+    from da.nmt.commit import \
+        root_from_encoded_leaves as compute_nmt_root  # type: ignore
 
 
 # --------------------------------------------------------------------------------------
 # Data model for block DA inclusions
 # --------------------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class BlobInclusion:
@@ -99,6 +102,7 @@ class BlobInclusion:
                 for this blob. If provided for *all* blobs, the adapter can build
                 a single block-wide NMT over shares ("leaves" mode).
     """
+
     namespace: int
     commitment: bytes
     size: int
@@ -108,6 +112,7 @@ class BlobInclusion:
 # --------------------------------------------------------------------------------------
 # Root computation
 # --------------------------------------------------------------------------------------
+
 
 def compute_da_root(
     inclusions: Iterable[BlobInclusion],
@@ -149,7 +154,10 @@ def compute_da_root(
     # Build NMT leaves where the "data" is the 32-byte commitment itself.
     enc: List[bytes] = []
     for inc in items:
-        if not isinstance(inc.commitment, (bytes, bytearray)) or len(inc.commitment) == 0:
+        if (
+            not isinstance(inc.commitment, (bytes, bytearray))
+            or len(inc.commitment) == 0
+        ):
             raise DAError("Invalid commitment in inclusion")
         enc.append(leaf_encode(inc.namespace, bytes(inc.commitment)))
     return compute_nmt_root(enc)
@@ -159,12 +167,14 @@ def compute_da_root(
 # Validation helpers
 # --------------------------------------------------------------------------------------
 
+
 def _as_bytes(x: Union[bytes, bytearray, str]) -> bytes:
     if isinstance(x, (bytes, bytearray)):
         return bytes(x)
     if isinstance(x, str):
         return hex_to_bytes(x)
     raise TypeError("header_da_root must be bytes or 0x-hex str")
+
 
 def validate_da_root(
     *,
@@ -189,6 +199,7 @@ def validate_da_root(
 # Convenience builders
 # --------------------------------------------------------------------------------------
 
+
 def build_inclusions_from_commitments(
     entries: Iterable[Tuple[int, Union[bytes, str], int]],
 ) -> List[BlobInclusion]:
@@ -202,7 +213,9 @@ def build_inclusions_from_commitments(
             c = hex_to_bytes(commit)
         else:
             c = bytes(commit)
-        out.append(BlobInclusion(namespace=int(ns), commitment=c, size=int(size), leaves=None))
+        out.append(
+            BlobInclusion(namespace=int(ns), commitment=c, size=int(size), leaves=None)
+        )
     return out
 
 
@@ -219,7 +232,11 @@ def build_inclusions_from_leaves(
             c = hex_to_bytes(commit)
         else:
             c = bytes(commit)
-        out.append(BlobInclusion(namespace=int(ns), commitment=c, size=int(size), leaves=list(leaves)))
+        out.append(
+            BlobInclusion(
+                namespace=int(ns), commitment=c, size=int(size), leaves=list(leaves)
+            )
+        )
     return out
 
 

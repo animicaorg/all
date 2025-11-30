@@ -1,32 +1,33 @@
 import hashlib
 from dataclasses import dataclass
-from typing import List, Sequence, Optional, Any, Dict
+from typing import Any, Dict, List, Optional, Sequence
 
 import pytest
-
 
 # -----------------------------
 # Minimal local data structures
 # -----------------------------
 
+
 @dataclass
 class LogEvent:
-    address: bytes        # 32 bytes
-    topics: List[bytes]   # variable length; each topic is bytes
-    data: bytes           # arbitrary bytes
+    address: bytes  # 32 bytes
+    topics: List[bytes]  # variable length; each topic is bytes
+    data: bytes  # arbitrary bytes
 
 
 @dataclass
 class Receipt:
-    status: int           # 0=SUCCESS, 1=REVERT, 2=OOG (example mapping)
+    status: int  # 0=SUCCESS, 1=REVERT, 2=OOG (example mapping)
     gas_used: int
-    logs_bloom: bytes     # 2048-bit bloom, 256 bytes
+    logs_bloom: bytes  # 2048-bit bloom, 256 bytes
     logs: List[LogEvent]
 
 
 # -----------------------------
 # Spec-aligned helper functions
 # -----------------------------
+
 
 def _sha3_256(x: bytes) -> bytes:
     return hashlib.sha3_256(x).digest()
@@ -70,12 +71,14 @@ def _compute_bloom(logs: Sequence[LogEvent]) -> bytes:
     Positions derived from SHA3-256 (three 11-bit slices).
     """
     bloom = 0
+
     def _add(x: bytes) -> None:
         nonlocal bloom
         h = _sha3_256(x)
         for off in (0, 2, 4):
             bit = ((h[off] << 8) | h[off + 1]) & 2047
-            bloom |= (1 << bit)
+            bloom |= 1 << bit
+
     for e in logs:
         _add(e.address)
         for t in e.topics:
@@ -121,6 +124,7 @@ def spec_receipt_hash(r: Receipt) -> bytes:
 # Optional: hook into project implementation
 # ----------------------------------------
 
+
 def _try_module_hooks() -> Dict[str, Any]:
     """
     Attempt to import project-provided types/encoders.
@@ -128,7 +132,9 @@ def _try_module_hooks() -> Dict[str, Any]:
     """
     hooks: Dict[str, Any] = {}
     try:  # project types
-        from execution.types.receipt import Receipt as ModReceipt  # type: ignore
+        from execution.types.receipt import \
+            Receipt as ModReceipt  # type: ignore
+
         hooks["ModReceipt"] = ModReceipt
     except Exception:
         pass
@@ -162,7 +168,9 @@ def _maybe_build_mod_receipt(hooks: Dict[str, Any], r: Receipt) -> Optional[Any]
 
     # Try common field names; fall back if constructor raises.
     candidates = [
-        dict(status=r.status, gas_used=r.gas_used, logs_bloom=r.logs_bloom, logs=r.logs),
+        dict(
+            status=r.status, gas_used=r.gas_used, logs_bloom=r.logs_bloom, logs=r.logs
+        ),
         dict(status=r.status, gasUsed=r.gas_used, logsBloom=r.logs_bloom, logs=r.logs),
     ]
     for kwargs in candidates:
@@ -176,6 +184,7 @@ def _maybe_build_mod_receipt(hooks: Dict[str, Any], r: Receipt) -> Optional[Any]
 # -----------------
 # Test fixtures
 # -----------------
+
 
 def _addr(byte: int) -> bytes:
     return bytes([byte]) * 32
@@ -210,6 +219,7 @@ def receipt_vectors() -> List[Receipt]:
 # The tests
 # ------------
 
+
 def test_spec_encoding_is_stable_and_ordered(receipt_vectors: List[Receipt]) -> None:
     # Encode twice → identical bytes and hash; changing any field → hash changes.
     r1, r2, r3 = receipt_vectors
@@ -233,7 +243,9 @@ def test_spec_encoding_is_stable_and_ordered(receipt_vectors: List[Receipt]) -> 
     assert spec_receipt_hash(r2) != spec_receipt_hash(r3)
 
 
-def test_module_encoding_matches_spec_if_available(receipt_vectors: List[Receipt]) -> None:
+def test_module_encoding_matches_spec_if_available(
+    receipt_vectors: List[Receipt],
+) -> None:
     hooks = _try_module_hooks()
     mod_encode = hooks.get("encode")
     if mod_encode is None:
@@ -256,7 +268,9 @@ def test_module_encoding_matches_spec_if_available(receipt_vectors: List[Receipt
         # Primary assertion: bytes exactly match our spec encoding
         assert isinstance(mod_bytes, (bytes, bytearray))
         mod_bytes = bytes(mod_bytes)
-        assert mod_bytes == spec_bytes, "Project encoding must match spec-defined layout"
+        assert (
+            mod_bytes == spec_bytes
+        ), "Project encoding must match spec-defined layout"
 
         # Hash must also match (domain separated by our encoder)
         assert hashlib.sha3_256(mod_bytes).digest() == spec_hash
@@ -266,8 +280,12 @@ def test_hash_changes_when_logs_change() -> None:
     # Two receipts identical except a single topic byte → hashes differ.
     logs_a = [_ev(0xCC, [b"K"], b"D")]
     logs_b = [_ev(0xCC, [b"L"], b"D")]  # topic differs
-    r_a = Receipt(status=0, gas_used=30_000, logs_bloom=_compute_bloom(logs_a), logs=logs_a)
-    r_b = Receipt(status=0, gas_used=30_000, logs_bloom=_compute_bloom(logs_b), logs=logs_b)
+    r_a = Receipt(
+        status=0, gas_used=30_000, logs_bloom=_compute_bloom(logs_a), logs=logs_a
+    )
+    r_b = Receipt(
+        status=0, gas_used=30_000, logs_bloom=_compute_bloom(logs_b), logs=logs_b
+    )
 
     h_a = spec_receipt_hash(r_a)
     h_b = spec_receipt_hash(r_b)

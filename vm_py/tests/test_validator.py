@@ -1,8 +1,9 @@
 import textwrap
+
 import pytest
 
-from vm_py.errors import ValidationError, ForbiddenImport
 from vm_py import validate as vm_validate
+from vm_py.errors import ForbiddenImport, ValidationError
 
 
 def validate_ok(src: str) -> None:
@@ -19,6 +20,7 @@ def validate_bad(src: str, exc=ValidationError, match: str | None = None) -> Non
 
 
 # --- Forbidden imports -------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "stmt",
@@ -47,6 +49,7 @@ def test_import_with_alias() -> None:
 
 # --- Forbidden builtins / side-effecting calls -------------------------------
 
+
 @pytest.mark.parametrize(
     "call",
     [
@@ -68,6 +71,7 @@ def test_forbidden_builtins(call: str) -> None:
 
 # --- Disallowed attributes that are proxies to dangerous ops -----------------
 
+
 def test_builtins_attribute_hack() -> None:
     # Attempt to reach forbidden builtin via attribute access
     src = """
@@ -83,6 +87,7 @@ def test_builtins_attribute_hack() -> None:
 
 
 # --- Structural / AST node checks --------------------------------------------
+
 
 @pytest.mark.parametrize(
     "snippet",
@@ -108,6 +113,7 @@ def test_disallowed_ast_nodes(snippet: str) -> None:
 
 # --- Recursion / depth limits (synthetic) ------------------------------------
 
+
 def test_self_recursion_hint() -> None:
     # Even if recursion is not strictly forbidden, validator may flag direct self recursion.
     src = """
@@ -118,6 +124,7 @@ def test_self_recursion_hint() -> None:
 
 
 # --- Allowed minimal program (should pass) -----------------------------------
+
 
 def test_minimal_contract_like_code_passes() -> None:
     # A tiny, side-effect-free subset should be accepted.
@@ -140,6 +147,7 @@ def test_minimal_contract_like_code_passes() -> None:
 
 
 # --- Idempotence: validating twice should behave the same --------------------
+
 
 def test_validate_is_deterministic() -> None:
     src = "def ok():\n    return 42\n"

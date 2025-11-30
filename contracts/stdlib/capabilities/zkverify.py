@@ -59,9 +59,10 @@ Example
 """
 from __future__ import annotations
 
-from typing import Final, Optional, Tuple, Dict, Any
+from typing import Any, Dict, Final, Optional, Tuple
 
-from stdlib import abi, events, hash as _hash  # type: ignore
+from stdlib import abi, events
+from stdlib import hash as _hash  # type: ignore
 
 try:  # pragma: no cover - runtime-dependent
     from stdlib import syscalls as _syscalls  # type: ignore
@@ -77,14 +78,15 @@ except Exception:  # pragma: no cover
 DOMAIN_VERIFY: Final[bytes] = b"ZK:VERIFY:v1"
 
 # Deterministic, conservative per-call size limits (tune per-network if needed)
-MAX_CIRCUIT_LEN: Final[int] = 256 * 1024     # 256 KiB
-MAX_PROOF_LEN:   Final[int] = 512 * 1024     # 512 KiB
-MAX_PUBLIC_LEN:  Final[int] =  64 * 1024     #  64 KiB
+MAX_CIRCUIT_LEN: Final[int] = 256 * 1024  # 256 KiB
+MAX_PROOF_LEN: Final[int] = 512 * 1024  # 512 KiB
+MAX_PUBLIC_LEN: Final[int] = 64 * 1024  #  64 KiB
 
 
 # -----------------------------------------------------------------------------
 # Local guards & utilities
 # -----------------------------------------------------------------------------
+
 
 def _ensure_bytes(x: object) -> bytes:
     if not isinstance(x, (bytes, bytearray)):
@@ -101,20 +103,23 @@ def _ok_flag(ok: bool) -> bytes:
     return b"\x01" if ok else b"\x00"
 
 
-def _emit_verify_event(*, ok: bool, circuit: bytes, proof: bytes, public: bytes,
-                       units: Optional[int]) -> None:
+def _emit_verify_event(
+    *, ok: bool, circuit: bytes, proof: bytes, public: bytes, units: Optional[int]
+) -> None:
     fields: Dict[bytes, bytes] = {
         b"ok": _ok_flag(ok),
         b"circuit_hash": _hash.sha3_256(circuit),
-        b"proof_hash":   _hash.sha3_256(proof),
-        b"public_hash":  _hash.sha3_256(public),
+        b"proof_hash": _hash.sha3_256(proof),
+        b"public_hash": _hash.sha3_256(public),
     }
     if isinstance(units, int) and units >= 0:
         fields[b"units"] = units.to_bytes(8, "big", signed=False)
     events.emit(b"CAP:ZK:Verify", fields)
 
 
-def _call_host_verify(circuit: bytes, proof: bytes, public: bytes) -> Tuple[bool, Optional[int]]:
+def _call_host_verify(
+    circuit: bytes, proof: bytes, public: bytes
+) -> Tuple[bool, Optional[int]]:
     """
     Try several syscall spellings and signatures. Return (ok, units?).
     Revert with b"ZK:SYS" if none are available or usable.
@@ -186,8 +191,10 @@ def _interpret_host_result(res: Any) -> Tuple[bool, Optional[int]]:
 # Public API
 # -----------------------------------------------------------------------------
 
-def verify_proof(*, circuit: bytes, proof: bytes, public: bytes,
-                 emit_event: bool = True) -> bool:
+
+def verify_proof(
+    *, circuit: bytes, proof: bytes, public: bytes, emit_event: bool = True
+) -> bool:
     """
     Verify a zk proof via the host syscall surface.
 

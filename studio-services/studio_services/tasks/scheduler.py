@@ -28,7 +28,8 @@ import signal
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from ..logging import get_logger  # structured logger; falls back to std logging in worker if absent
+from ..logging import \
+    get_logger  # structured logger; falls back to std logging in worker if absent
 from .queue import SQLiteTaskQueue, create_queue_from_app
 from .worker import VerifyWorker, WorkerConfig
 
@@ -85,7 +86,9 @@ class TaskScheduler:
                 config=self.config.worker_config,
             )
             self._workers.append(worker)
-            t = asyncio.create_task(worker.run_forever(self._stop), name=f"verify-worker-{i}")
+            t = asyncio.create_task(
+                worker.run_forever(self._stop), name=f"verify-worker-{i}"
+            )
             t.add_done_callback(self._on_worker_done(i))
             self._tasks.append(t)
 
@@ -98,14 +101,19 @@ class TaskScheduler:
             except asyncio.CancelledError:
                 self.log.info("worker.cancelled", index=index)
             except Exception as e:
-                self.log.exception("worker.crashed", index=index, error=f"{type(e).__name__}: {e}")
+                self.log.exception(
+                    "worker.crashed", index=index, error=f"{type(e).__name__}: {e}"
+                )
                 if self._restarts_enabled and not self._stop.is_set():
                     self.log.warning("worker.restarting", index=index)
                     # Restart the crashed worker
                     worker = self._workers[index]
-                    t = asyncio.create_task(worker.run_forever(self._stop), name=f"verify-worker-{index}")
+                    t = asyncio.create_task(
+                        worker.run_forever(self._stop), name=f"verify-worker-{index}"
+                    )
                     t.add_done_callback(self._on_worker_done(index))
                     self._tasks[index] = t
+
         return _cb
 
     async def stop(self) -> None:
@@ -116,7 +124,10 @@ class TaskScheduler:
 
         # First, let tasks wind down naturally
         try:
-            await asyncio.wait_for(asyncio.gather(*self._tasks, return_exceptions=True), timeout=self.config.shutdown_timeout)
+            await asyncio.wait_for(
+                asyncio.gather(*self._tasks, return_exceptions=True),
+                timeout=self.config.shutdown_timeout,
+            )
         except asyncio.TimeoutError:
             self.log.warning("scheduler.stop.timeout_cancel")
             for t in self._tasks:
@@ -167,7 +178,9 @@ class TaskScheduler:
 import contextlib
 
 
-async def run_scheduler(app, *, queue: SQLiteTaskQueue, config: SchedulerConfig | None = None) -> None:
+async def run_scheduler(
+    app, *, queue: SQLiteTaskQueue, config: SchedulerConfig | None = None
+) -> None:
     """
     Run a scheduler with signal handling until stopped.
     """
@@ -175,7 +188,9 @@ async def run_scheduler(app, *, queue: SQLiteTaskQueue, config: SchedulerConfig 
     await scheduler.run_until_stopped()
 
 
-def create_default_scheduler(app, *, config: SchedulerConfig | None = None) -> TaskScheduler:
+def create_default_scheduler(
+    app, *, config: SchedulerConfig | None = None
+) -> TaskScheduler:
     """
     Build a scheduler using defaults inferred from the FastAPI app.
 

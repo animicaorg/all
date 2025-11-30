@@ -31,8 +31,8 @@ except Exception:  # pragma: no cover
 
 # Re-export primary entry points for convenience.
 from .api import create_app
-from .service import RetrievalService
 from .client import DAClient
+from .service import RetrievalService
 
 __all__ = [
     "__version__",

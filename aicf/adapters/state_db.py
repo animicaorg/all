@@ -51,15 +51,15 @@ Example
     job = db.get_job(job_id)
 """
 
-from dataclasses import asdict, is_dataclass
-from typing import Any, Dict, Iterable, Iterator, List, Mapping, MutableMapping, Optional, Tuple
 import contextlib
 import json
 import os
 import sqlite3
 import threading
 import time
-
+from dataclasses import asdict, is_dataclass
+from typing import (Any, Dict, Iterable, Iterator, List, Mapping,
+                    MutableMapping, Optional, Tuple)
 
 # ---- Errors -----------------------------------------------------------------
 
@@ -297,7 +297,19 @@ class AICFStateDB:
                 info_json=excluded.info_json,
                 updated_at=excluded.updated_at
             """,
-            (p_id, status, caps_ai, caps_quant, stake, balance, escrow, endpoints, info_json, now, now),
+            (
+                p_id,
+                status,
+                caps_ai,
+                caps_quant,
+                stake,
+                balance,
+                escrow,
+                endpoints,
+                info_json,
+                now,
+                now,
+            ),
         )
 
     def get_provider(self, provider_id: str) -> Dict[str, Any]:
@@ -345,7 +357,10 @@ class AICFStateDB:
     def adjust_stake(self, provider_id: str, delta: int) -> int:
         """Add (or subtract) stake, returning the new stake."""
         now = _now_s()
-        self._db.execute("UPDATE providers SET stake=stake+? WHERE provider_id=?", (int(delta), provider_id))
+        self._db.execute(
+            "UPDATE providers SET stake=stake+? WHERE provider_id=?",
+            (int(delta), provider_id),
+        )
         cur = self._db.execute(
             "UPDATE providers SET updated_at=? WHERE provider_id=? RETURNING stake",
             (now, provider_id),
@@ -355,7 +370,9 @@ class AICFStateDB:
             raise NotFound(f"provider {provider_id} not found")
         return int(row["stake"])
 
-    def credit_balance(self, provider_id: str, delta: int, *, escrow: bool = False) -> Tuple[int, int]:
+    def credit_balance(
+        self, provider_id: str, delta: int, *, escrow: bool = False
+    ) -> Tuple[int, int]:
         """
         Credit/debit provider balances. Returns (balance, escrow).
         """
@@ -405,13 +422,27 @@ class AICFStateDB:
                 INSERT INTO jobs(job_id,kind,status,requester,provider_id,units,fee,priority,payload_hash,meta_json,enqueued_at,updated_at)
                 VALUES(?,?,?,?,NULL,?,?,?,?,?,?,?)
                 """,
-                (job_id, kind, "queued", requester, units, fee, priority, payload_hash, meta_json, now, now),
+                (
+                    job_id,
+                    kind,
+                    "queued",
+                    requester,
+                    units,
+                    fee,
+                    priority,
+                    payload_hash,
+                    meta_json,
+                    now,
+                    now,
+                ),
             )
         except sqlite3.IntegrityError as e:
             raise Conflict(f"job {job_id} already exists") from e
 
     def get_job(self, job_id: str) -> Dict[str, Any]:
-        row = self._db.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+        row = self._db.execute(
+            "SELECT * FROM jobs WHERE job_id=?", (job_id,)
+        ).fetchone()
         if not row:
             raise NotFound(f"job {job_id} not found")
         return self._row_job(row)
@@ -449,7 +480,9 @@ class AICFStateDB:
         """
         now = _now_s()
         # Sanity: job must be queued
-        row = self._db.execute("SELECT status FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+        row = self._db.execute(
+            "SELECT status FROM jobs WHERE job_id=?", (job_id,)
+        ).fetchone()
         if not row:
             raise NotFound(f"job {job_id} not found")
         if row["status"] != "queued":
@@ -475,12 +508,15 @@ class AICFStateDB:
         return lease_id
 
     def renew_lease(self, lease_id: str, extend_secs: int) -> None:
-        row = self._db.execute("SELECT expires_at FROM leases WHERE lease_id=?", (lease_id,)).fetchone()
+        row = self._db.execute(
+            "SELECT expires_at FROM leases WHERE lease_id=?", (lease_id,)
+        ).fetchone()
         if not row:
             raise NotFound(f"lease {lease_id} not found")
         new_exp = int(row["expires_at"]) + int(extend_secs)
         self._db.execute(
-            "UPDATE leases SET expires_at=?, renewed=renewed+1 WHERE lease_id=?", (new_exp, lease_id)
+            "UPDATE leases SET expires_at=?, renewed=renewed+1 WHERE lease_id=?",
+            (new_exp, lease_id),
         )
 
     def expire_overdue_leases(self, *, now: Optional[int] = None) -> int:
@@ -490,7 +526,9 @@ class AICFStateDB:
         Returns count of expired jobs.
         """
         now_s = _now_s() if now is None else int(now)
-        rows = self._db.execute("SELECT job_id FROM leases WHERE expires_at < ?", (now_s,)).fetchall()
+        rows = self._db.execute(
+            "SELECT job_id FROM leases WHERE expires_at < ?", (now_s,)
+        ).fetchall()
         job_ids = [r["job_id"] for r in rows]
         if not job_ids:
             return 0
@@ -506,7 +544,8 @@ class AICFStateDB:
         now = _now_s()
         self._db.execute("DELETE FROM leases WHERE job_id=?", (job_id,))
         cur = self._db.execute(
-            "UPDATE jobs SET status='completed', updated_at=? WHERE job_id=?", (now, job_id)
+            "UPDATE jobs SET status='completed', updated_at=? WHERE job_id=?",
+            (now, job_id),
         )
         if cur.rowcount == 0:
             raise NotFound(f"job {job_id} not found")
@@ -515,13 +554,16 @@ class AICFStateDB:
         now = _now_s()
         self._db.execute("DELETE FROM leases WHERE job_id=?", (job_id,))
         cur = self._db.execute(
-            "UPDATE jobs SET status='failed', updated_at=? WHERE job_id=?", (now, job_id)
+            "UPDATE jobs SET status='failed', updated_at=? WHERE job_id=?",
+            (now, job_id),
         )
         if cur.rowcount == 0:
             raise NotFound(f"job {job_id} not found")
         if reason:
             # Append reason into meta_json
-            row = self._db.execute("SELECT meta_json FROM jobs WHERE job_id=?", (job_id,)).fetchone()
+            row = self._db.execute(
+                "SELECT meta_json FROM jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
             meta = _from_json_blob(row["meta_json"]) or {}
             meta = dict(meta)
             meta["failure_reason"] = reason
@@ -548,7 +590,15 @@ class AICFStateDB:
             INSERT INTO payouts(payout_id,provider_id,job_id,epoch,amount,status,created_at,settled_at,meta_json)
             VALUES(?,?,?,?,?,'pending',?,NULL,?)
             """,
-            (payout_id, provider_id, job_id, int(epoch), int(amount), now, _to_json_blob(meta or {})),
+            (
+                payout_id,
+                provider_id,
+                job_id,
+                int(epoch),
+                int(amount),
+                now,
+                _to_json_blob(meta or {}),
+            ),
         )
 
     def list_payouts(
@@ -622,7 +672,9 @@ class AICFStateDB:
             "amount": int(row["amount"]),
             "status": row["status"],
             "created_at": int(row["created_at"]),
-            "settled_at": int(row["settled_at"]) if row["settled_at"] is not None else None,
+            "settled_at": (
+                int(row["settled_at"]) if row["settled_at"] is not None else None
+            ),
             "meta": _from_json_blob(row["meta_json"]),
         }
 

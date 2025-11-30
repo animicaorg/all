@@ -26,8 +26,9 @@ from enum import IntEnum
 from typing import Any, Mapping, Sequence, Tuple
 
 from core.encoding.cbor import cbor_dumps, cbor_loads
+from core.types.tx import \
+    ADDRESS_LEN  # single-direction import (tx doesn't import receipts)
 from core.utils.bytes import expect_len
-from core.types.tx import ADDRESS_LEN  # single-direction import (tx doesn't import receipts)
 
 TOPIC_LEN = 32  # 32-byte topic elements (keccak-like), configurable at higher layers
 
@@ -47,14 +48,24 @@ class Log:
     - topics : tuple of 32-byte opaque selectors (0..N)
     - data   : unstructured bytes payload (ABI-encoded by higher layers)
     """
+
     address: bytes
     topics: Tuple[bytes, ...] = field(default_factory=tuple)
     data: bytes = b""
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "address", expect_len(self.address, ADDRESS_LEN, name="Log.address"))
+        object.__setattr__(
+            self, "address", expect_len(self.address, ADDRESS_LEN, name="Log.address")
+        )
         for i, t in enumerate(self.topics):
-            object.__setattr__(self, "topics", tuple(expect_len(x, TOPIC_LEN, name=f"Log.topics[{i}]") for x in self.topics))
+            object.__setattr__(
+                self,
+                "topics",
+                tuple(
+                    expect_len(x, TOPIC_LEN, name=f"Log.topics[{i}]")
+                    for x in self.topics
+                ),
+            )
         if not isinstance(self.data, (bytes, bytearray)):
             raise TypeError("Log.data must be bytes")
 
@@ -79,6 +90,7 @@ class Receipt:
     """
     Minimal receipt: status + gasUsed + logs.
     """
+
     status: ReceiptStatus
     gas_used: int
     logs: Tuple[Log, ...] = field(default_factory=tuple)
@@ -126,10 +138,13 @@ class Receipt:
         return self.status == ReceiptStatus.SUCCESS
 
     def __str__(self) -> str:
-        return f"Receipt<{self.status.name} gasUsed={self.gas_used} logs={len(self.logs)}>"
+        return (
+            f"Receipt<{self.status.name} gasUsed={self.gas_used} logs={len(self.logs)}>"
+        )
 
 
 # ---- utilities: light validation helpers (pure, testable) ----
+
 
 def validate_logs_shape(logs: Sequence[Log]) -> None:
     """
@@ -146,6 +161,7 @@ def validate_logs_shape(logs: Sequence[Log]) -> None:
 # Self-check
 if __name__ == "__main__":  # pragma: no cover
     import secrets
+
     addr = secrets.token_bytes(ADDRESS_LEN)
     lg = Log(address=addr, topics=(secrets.token_bytes(TOPIC_LEN),), data=b"hello")
     rc = Receipt(status=ReceiptStatus.SUCCESS, gas_used=42_000, logs=(lg,))

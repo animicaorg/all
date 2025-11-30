@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Protocol, Tuple
-
+from typing import (Any, Dict, Iterable, List, Mapping, Optional, Protocol,
+                    Tuple)
 
 __all__ = [
     "PeerView",
@@ -18,6 +18,7 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # Lightweight protocols to decouple from concrete implementations
 # ---------------------------------------------------------------------------
+
 
 class PPeer(Protocol):
     id: str
@@ -46,6 +47,7 @@ class PConnManager(Protocol):
 class PGossipEngine(Protocol):
     def topics(self) -> Iterable[str]: ...
     def topic_stats(self, topic: str) -> Mapping[str, Any]: ...
+
     # topic_stats example keys:
     #   subscribers:int, fanout:int, mesh:int, in_q:int, out_q:int, dropped:int
 
@@ -53,6 +55,7 @@ class PGossipEngine(Protocol):
 # ---------------------------------------------------------------------------
 # Views
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class PeerView:
@@ -107,6 +110,7 @@ class HealthSnapshot:
 # ---------------------------------------------------------------------------
 # Monitor
 # ---------------------------------------------------------------------------
+
 
 class HealthMonitor:
     """
@@ -217,6 +221,7 @@ class HealthMonitor:
 # Convenience
 # ---------------------------------------------------------------------------
 
+
 def health_snapshot(
     *,
     peerstore: PPeerStore,
@@ -225,7 +230,11 @@ def health_snapshot(
     extra: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """One-shot helper that returns a dict (JSON-ready)."""
-    return HealthMonitor(peerstore=peerstore, connmgr=connmgr, gossip=gossip, extra=extra).sample().to_dict()
+    return (
+        HealthMonitor(peerstore=peerstore, connmgr=connmgr, gossip=gossip, extra=extra)
+        .sample()
+        .to_dict()
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -253,18 +262,36 @@ if __name__ == "__main__":
             return [_Peer(i) for i in range(5)]
 
     class _ConnMgr:
-        def num_dialing(self) -> int: return 1
-        def num_open(self) -> int: return 5
-        def num_backoff(self) -> int: return 0
+        def num_dialing(self) -> int:
+            return 1
+
+        def num_open(self) -> int:
+            return 5
+
+        def num_backoff(self) -> int:
+            return 0
 
     class _Gossip:
         def topics(self) -> Iterable[str]:
             return ["blocks", "headers", "txs"]
+
         def topic_stats(self, topic: str) -> Mapping[str, Any]:
-            base = {"subscribers": 4, "fanout": 2, "mesh": 3, "in_q": 1, "out_q": 0, "dropped": 0}
+            base = {
+                "subscribers": 4,
+                "fanout": 2,
+                "mesh": 3,
+                "in_q": 1,
+                "out_q": 0,
+                "dropped": 0,
+            }
             if topic == "txs":
                 base.update(in_q=3, out_q=2)
             return base
 
-    snap = health_snapshot(peerstore=_PeerStore(), connmgr=_ConnMgr(), gossip=_Gossip(), extra={"chainId": 1})
+    snap = health_snapshot(
+        peerstore=_PeerStore(),
+        connmgr=_ConnMgr(),
+        gossip=_Gossip(),
+        extra={"chainId": 1},
+    )
     print(json.dumps(snap, indent=2, sort_keys=True))

@@ -27,10 +27,10 @@ capabilities/cli/__init__.py.
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import sys
-import inspect
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -74,7 +74,8 @@ def _call_with_supported_kwargs(fn, **kwargs):
         accepted = {
             k: v
             for k, v in kwargs.items()
-            if k in sig.parameters or any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values())
+            if k in sig.parameters
+            or any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values())
         }
         return fn(**accepted)
     except Exception:
@@ -91,7 +92,9 @@ def _pretty_print(obj: Dict[str, Any], as_json: bool) -> None:
     typer.echo(txt)
 
 
-def _enqueue_via_host(model: str, payload: bytes, caller: Optional[str]) -> Dict[str, Any]:
+def _enqueue_via_host(
+    model: str, payload: bytes, caller: Optional[str]
+) -> Dict[str, Any]:
     """
     capabilities.host.compute.ai_enqueue(...)
     """
@@ -101,7 +104,9 @@ def _enqueue_via_host(model: str, payload: bytes, caller: Optional[str]) -> Dict
     fn = getattr(compute, "ai_enqueue", None)
     if not callable(fn):
         raise RuntimeError("capabilities.host.compute.ai_enqueue not available")
-    receipt = _call_with_supported_kwargs(fn, model=model, prompt=payload, caller=caller)
+    receipt = _call_with_supported_kwargs(
+        fn, model=model, prompt=payload, caller=caller
+    )
     # Normalize to dict
     if hasattr(receipt, "__dict__"):
         return dict(receipt.__dict__)  # type: ignore
@@ -111,7 +116,9 @@ def _enqueue_via_host(model: str, payload: bytes, caller: Optional[str]) -> Dict
     return {"ok": True, "receipt": str(receipt)}
 
 
-def _enqueue_via_aicf(model: str, payload: bytes, caller: Optional[str]) -> Dict[str, Any]:
+def _enqueue_via_aicf(
+    model: str, payload: bytes, caller: Optional[str]
+) -> Dict[str, Any]:
     """
     capabilities.adapters.aicf.enqueue_ai(...)
     """
@@ -121,7 +128,9 @@ def _enqueue_via_aicf(model: str, payload: bytes, caller: Optional[str]) -> Dict
     fn = getattr(aicf, "enqueue_ai", None)
     if not callable(fn):
         raise RuntimeError("capabilities.adapters.aicf.enqueue_ai not available")
-    receipt = _call_with_supported_kwargs(fn, model=model, prompt=payload, caller=caller)
+    receipt = _call_with_supported_kwargs(
+        fn, model=model, prompt=payload, caller=caller
+    )
     if hasattr(receipt, "__dict__"):
         return dict(receipt.__dict__)  # type: ignore
     if isinstance(receipt, dict):
@@ -150,9 +159,13 @@ def _enqueue_via_queue(
         open_q = getattr(queue_mod, "open_queue", None)
         enqueue_ai = getattr(queue_mod, "enqueue_ai", None)
         if not callable(open_q) or not callable(enqueue_ai):
-            raise RuntimeError("Queue backend not available (JobQueue/open_queue missing)")
+            raise RuntimeError(
+                "Queue backend not available (JobQueue/open_queue missing)"
+            )
         q = open_q(str(db_path))
-        receipt = _call_with_supported_kwargs(enqueue_ai, q=q, model=model, prompt=payload, caller=caller)
+        receipt = _call_with_supported_kwargs(
+            enqueue_ai, q=q, model=model, prompt=payload, caller=caller
+        )
 
     if hasattr(receipt, "__dict__"):
         return dict(receipt.__dict__)  # type: ignore
@@ -163,25 +176,43 @@ def _enqueue_via_queue(
 
 @app.command("enqueue-ai")
 def enqueue_ai_cmd(
-    model: str = typer.Option(..., "--model", "-m", help="Model id/name (e.g., tiny-llama, instruct)."),
+    model: str = typer.Option(
+        ..., "--model", "-m", help="Model id/name (e.g., tiny-llama, instruct)."
+    ),
     prompt: Optional[str] = typer.Option(
-        None, "--prompt", "-p", help="Prompt string (mutually exclusive with --prompt-file)."
+        None,
+        "--prompt",
+        "-p",
+        help="Prompt string (mutually exclusive with --prompt-file).",
     ),
     prompt_file: Optional[Path] = typer.Option(
-        None, "--prompt-file", "-f", exists=True, file_okay=True, dir_okay=False, readable=True, help="Prompt file."
+        None,
+        "--prompt-file",
+        "-f",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help="Prompt file.",
     ),
     caller: Optional[str] = typer.Option(
-        None, "--caller", help="Optional caller address (anim1…). Used for attribution/policies if backend supports it."
+        None,
+        "--caller",
+        help="Optional caller address (anim1…). Used for attribution/policies if backend supports it.",
     ),
     backend: Optional[str] = typer.Option(
-        None, "--backend", help="Force backend: host | aicf | queue (default: auto-detect)."
+        None,
+        "--backend",
+        help="Force backend: host | aicf | queue (default: auto-detect).",
     ),
     queue_db: Path = typer.Option(
         Path(os.getenv("CAP_QUEUE_DB", "./capabilities_jobs.db")),
         "--queue-db",
         help="Queue DB path for 'queue' backend.",
     ),
-    json_out: bool = typer.Option(False, "--json", help="Emit machine-readable JSON only."),
+    json_out: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON only."
+    ),
 ) -> None:
     """
     Enqueue an AI job and print the receipt (task id, status, etc.).
@@ -212,23 +243,37 @@ def enqueue_ai_cmd(
         if res is None:
             msg = f"enqueue failed using backend '{backend}': {error_last}"
             if json_out:
-                _pretty_print({"ok": False, "error": str(error_last), "tried": tried}, as_json=True)
+                _pretty_print(
+                    {"ok": False, "error": str(error_last), "tried": tried},
+                    as_json=True,
+                )
             else:
                 typer.echo(msg)
             raise typer.Exit(1)
-        _pretty_print({"ok": True, "backend": backend, "receipt": res}, as_json=json_out)
+        _pretty_print(
+            {"ok": True, "backend": backend, "receipt": res}, as_json=json_out
+        )
         return
 
     # Auto-detect path
     for name in ("host", "aicf", "queue"):
         res = try_backend(name)
         if res is not None:
-            _pretty_print({"ok": True, "backend": name, "receipt": res}, as_json=json_out)
+            _pretty_print(
+                {"ok": True, "backend": name, "receipt": res}, as_json=json_out
+            )
             return
 
     # None succeeded
     if json_out:
-        _pretty_print({"ok": False, "error": str(error_last or 'no backends available'), "tried": tried}, as_json=True)
+        _pretty_print(
+            {
+                "ok": False,
+                "error": str(error_last or "no backends available"),
+                "tried": tried,
+            },
+            as_json=True,
+        )
     else:
         typer.echo("enqueue failed; tried backends:\n  - " + "\n  - ".join(tried))
     raise typer.Exit(2)

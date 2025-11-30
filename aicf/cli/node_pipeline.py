@@ -49,7 +49,12 @@ def _rpc_call(rpc_url: str, method: str, params: Optional[list[Any]] = None) -> 
             with urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read().decode())
             break
-        except (HTTPError, URLError, TimeoutError, ValueError) as exc:  # pragma: no cover - handled by caller
+        except (
+            HTTPError,
+            URLError,
+            TimeoutError,
+            ValueError,
+        ) as exc:  # pragma: no cover - handled by caller
             errors.append(f"{target}: {exc}")
             continue
     else:  # pragma: no cover - loop always breaks or raises
@@ -94,7 +99,13 @@ def _write_local_state(state: Dict[str, Any]) -> None:
     path = state.get("_path")
     if isinstance(path, Path):
         path.write_text(
-            json.dumps({"height": state["height"], "chain_id": state["chainId"], "auto_mine": state["autoMine"]})
+            json.dumps(
+                {
+                    "height": state["height"],
+                    "chain_id": state["chainId"],
+                    "auto_mine": state["autoMine"],
+                }
+            )
         )
 
 
@@ -154,7 +165,9 @@ def _mine(rpc_url: str, count: int, datadir: Optional[Path]) -> int:
     try:
         for _ in range(count):
             work = _rpc_call(rpc_url, "miner.getWork")
-            payload: Dict[str, Any] = {"jobId": work.get("jobId") if isinstance(work, dict) else None}
+            payload: Dict[str, Any] = {
+                "jobId": work.get("jobId") if isinstance(work, dict) else None
+            }
             if isinstance(work, dict) and "header" in work:
                 payload["header"] = work["header"]
             payload.setdefault("nonce", hex(int(time.time() * 1000) & 0xFFFFFFFF))
@@ -232,7 +245,9 @@ def cmd_status(args: argparse.Namespace) -> None:
     if args.json:
         print(json.dumps(info, indent=2))
     else:
-        print(f"chainId={info['chainId']} height={info['height']} autoMine={info['autoMine']}")
+        print(
+            f"chainId={info['chainId']} height={info['height']} autoMine={info['autoMine']}"
+        )
 
 
 def cmd_mine(args: argparse.Namespace) -> None:
@@ -286,13 +301,24 @@ def cmd_pipeline(args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Pipeline helper for Animica's bitcoin-style node shim")
+    parser = argparse.ArgumentParser(
+        description="Pipeline helper for Animica's bitcoin-style node shim"
+    )
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--rpc-url", "-r", default=DEFAULT_RPC, help="JSON-RPC endpoint")
-    common.add_argument("--datadir", "-d", type=Path, help="Operate directly on a local datadir (offline mode)")
+    common.add_argument(
+        "--rpc-url", "-r", default=DEFAULT_RPC, help="JSON-RPC endpoint"
+    )
+    common.add_argument(
+        "--datadir",
+        "-d",
+        type=Path,
+        help="Operate directly on a local datadir (offline mode)",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_status = sub.add_parser("status", parents=[common], help="Show chain id and height")
+    p_status = sub.add_parser(
+        "status", parents=[common], help="Show chain id and height"
+    )
     p_status.add_argument("--json", action="store_true", help="Emit JSON")
     p_status.set_defaults(func=cmd_status)
 
@@ -309,9 +335,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_auto.add_argument("enable", type=str, help="true/false")
     p_auto.set_defaults(func=cmd_auto)
 
-    p_pipeline = sub.add_parser("pipeline", parents=[common], help="Run status → mine → head fetch")
+    p_pipeline = sub.add_parser(
+        "pipeline", parents=[common], help="Run status → mine → head fetch"
+    )
     p_pipeline.add_argument("--mine", "-m", type=int, default=1, help="Blocks to mine")
-    p_pipeline.add_argument("--wait", type=float, default=0.2, help="Delay between stages")
+    p_pipeline.add_argument(
+        "--wait", type=float, default=0.2, help="Delay between stages"
+    )
     p_pipeline.add_argument("--json", action="store_true", help="Emit JSON")
     p_pipeline.set_defaults(func=cmd_pipeline)
 

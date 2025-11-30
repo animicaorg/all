@@ -34,14 +34,13 @@ can be tracked externally and mirrored into this module when a payout is due.
 
 """
 
-from dataclasses import dataclass, field, asdict
-from typing import Dict,List,Optional,Tuple,Iterable
+from dataclasses import asdict, dataclass, field
 from threading import RLock
+from typing import Dict, Iterable, List, Optional, Tuple
 
-from aicf.errors import AICFError, InsufficientStake  # type: ignore
-from aicf.aitypes.provider import ProviderId  # type: ignore
 from aicf.aitypes.job import JobRecord  # type: ignore
-
+from aicf.aitypes.provider import ProviderId  # type: ignore
+from aicf.errors import AICFError, InsufficientStake  # type: ignore
 
 Amount = int
 Height = int
@@ -101,6 +100,7 @@ class EscrowId:
     when escrows are job-scoped (recommended). For custom escrows, the caller may
     construct a string value that is stable across nodes.
     """
+
     value: str
 
     def __str__(self) -> str:  # pragma: no cover - trivial
@@ -250,7 +250,14 @@ class TreasuryState:
 
     # --- mutations (all locked) ---
 
-    def credit(self, provider_id: ProviderId, amount: Amount, *, height: Height, reason: str = "credit") -> JournalEntry:
+    def credit(
+        self,
+        provider_id: ProviderId,
+        amount: Amount,
+        *,
+        height: Height,
+        reason: str = "credit",
+    ) -> JournalEntry:
         _ensure_nonneg(amount, "amount")
         with self._lock:
             acct = self.get_account(provider_id)
@@ -270,7 +277,14 @@ class TreasuryState:
             self._journal.append(je)
             return je
 
-    def debit(self, provider_id: ProviderId, amount: Amount, *, height: Height, reason: str = "debit") -> JournalEntry:
+    def debit(
+        self,
+        provider_id: ProviderId,
+        amount: Amount,
+        *,
+        height: Height,
+        reason: str = "debit",
+    ) -> JournalEntry:
         _ensure_nonneg(amount, "amount")
         with self._lock:
             acct = self.get_account(provider_id)
@@ -310,7 +324,9 @@ class TreasuryState:
             acct.available = _safe_sub(acct.available, amount)
             acct.escrowed = _safe_add(acct.escrowed, amount)
 
-            eid = escrow_id or EscrowId(job.job_id if job else f"custom:{acct.journal_seq+1}")
+            eid = escrow_id or EscrowId(
+                job.job_id if job else f"custom:{acct.journal_seq+1}"
+            )
             key = eid.value
             if key in acct.escrows and not acct.escrows[key].closed:
                 raise TreasuryError(f"escrow '{key}' already exists and is open")
@@ -334,7 +350,11 @@ class TreasuryState:
                     op="hold_escrow",
                     amount=amount,
                     height=height,
-                    meta={"escrow_id": key, "reason": reason, "job_id": rec.job_id or ""},
+                    meta={
+                        "escrow_id": key,
+                        "reason": reason,
+                        "job_id": rec.job_id or "",
+                    },
                     available_after=acct.available,
                     escrowed_after=acct.escrowed,
                     staked_after=acct.staked,
@@ -380,7 +400,11 @@ class TreasuryState:
                 op="release_escrow",
                 amount=rec.amount,
                 height=height,
-                meta={"escrow_id": key, "reason": reason, "to": "available" if to_available else "sink"},
+                meta={
+                    "escrow_id": key,
+                    "reason": reason,
+                    "to": "available" if to_available else "sink",
+                },
                 available_after=acct.available,
                 escrowed_after=acct.escrowed,
                 staked_after=acct.staked,
@@ -431,7 +455,14 @@ class TreasuryState:
             self._journal.append(je)
             return je
 
-    def stake_lock(self, provider_id: ProviderId, amount: Amount, *, height: Height, reason: str = "stake") -> JournalEntry:
+    def stake_lock(
+        self,
+        provider_id: ProviderId,
+        amount: Amount,
+        *,
+        height: Height,
+        reason: str = "stake",
+    ) -> JournalEntry:
         """Move funds from available → staked."""
         _ensure_nonneg(amount, "amount")
         with self._lock:
@@ -453,7 +484,14 @@ class TreasuryState:
             self._journal.append(je)
             return je
 
-    def stake_unlock(self, provider_id: ProviderId, amount: Amount, *, height: Height, reason: str = "unstake") -> JournalEntry:
+    def stake_unlock(
+        self,
+        provider_id: ProviderId,
+        amount: Amount,
+        *,
+        height: Height,
+        reason: str = "unstake",
+    ) -> JournalEntry:
         """
         Move funds from staked → available (policy on lock periods is enforced upstream).
         """
@@ -477,7 +515,14 @@ class TreasuryState:
             self._journal.append(je)
             return je
 
-    def slash(self, provider_id: ProviderId, amount: Amount, *, height: Height, reason: str = "slash") -> JournalEntry:
+    def slash(
+        self,
+        provider_id: ProviderId,
+        amount: Amount,
+        *,
+        height: Height,
+        reason: str = "slash",
+    ) -> JournalEntry:
         """
         Apply a slash against staked funds (preferred). If insufficient stake, the remainder is
         taken from available. Escrowed funds are *not* touched here.
@@ -502,7 +547,11 @@ class TreasuryState:
                 op="slash",
                 amount=amount,
                 height=height,
-                meta={"reason": reason, "from_stake": str(take_from_stake), "from_available": str(remainder)},
+                meta={
+                    "reason": reason,
+                    "from_stake": str(take_from_stake),
+                    "from_available": str(remainder),
+                },
                 available_after=acct.available,
                 escrowed_after=acct.escrowed,
                 staked_after=acct.staked,

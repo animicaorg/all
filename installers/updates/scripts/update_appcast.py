@@ -100,17 +100,16 @@ def _load_ed25519_key(private_key_pem: Path, passphrase: Optional[str]) -> objec
     pem_bytes = private_key_pem.read_bytes()
     # Try cryptography
     try:
-        from cryptography.hazmat.primitives.serialization import (
-            load_pem_private_key,
-        )
+        from cryptography.hazmat.primitives.serialization import \
+            load_pem_private_key
+
         key = load_pem_private_key(
             pem_bytes,
             password=None if passphrase is None else passphrase.encode("utf-8"),
         )
         # Ensure correct type
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-            Ed25519PrivateKey,
-        )
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import \
+            Ed25519PrivateKey
 
         if not isinstance(key, Ed25519PrivateKey):
             raise TypeError("PEM is not an Ed25519 private key")
@@ -165,9 +164,13 @@ def _sign_ed25519(signer: object, blob: memoryview) -> bytes:
         raise RuntimeError(f"Ed25519 signing failed: {e}")
 
 
-def _compute_ed25519_signature(artifact: Path, private_key_pem: Path, passphrase: Optional[str]) -> str:
+def _compute_ed25519_signature(
+    artifact: Path, private_key_pem: Path, passphrase: Optional[str]
+) -> str:
     signer = _load_ed25519_key(private_key_pem, passphrase)
-    with artifact.open("rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+    with artifact.open("rb") as f, mmap.mmap(
+        f.fileno(), 0, access=mmap.ACCESS_READ
+    ) as mm:
         sig_bytes = _sign_ed25519(signer, memoryview(mm))
     return base64.b64encode(sig_bytes).decode("ascii")
 
@@ -202,7 +205,9 @@ def _build_item(
     pub_date: Optional[str] = None,
 ) -> ET.Element:
     item = ET.Element("item")
-    ET.SubElement(item, "title").text = f"Animica {'Wallet' if 'wallet' in artifact_url.lower() else 'Explorer'} {version}"
+    ET.SubElement(item, "title").text = (
+        f"Animica {'Wallet' if 'wallet' in artifact_url.lower() else 'Explorer'} {version}"
+    )
     ET.SubElement(item, f"{{{SPARKLE_NS}}}releaseNotesLink").text = notes_url
     ET.SubElement(item, "pubDate").text = pub_date or _rfc2822_now()
 
@@ -223,14 +228,16 @@ def _build_item(
     return item
 
 
-def _insert_item_at_top(tree: ET.ElementTree, new_item: ET.Element, version: str) -> None:
+def _insert_item_at_top(
+    tree: ET.ElementTree, new_item: ET.Element, version: str
+) -> None:
     ch = tree.getroot().find("./channel")
     if ch is None:
         raise ValueError("Invalid appcast: missing <channel>")
     # Remove any existing item with same version (by matching title suffix or enclosure@version)
     to_remove = []
     for item in ch.findall("./item"):
-        title = (item.findtext("title") or "")
+        title = item.findtext("title") or ""
         enc = item.find("./enclosure")
         v_match = False
         if title.strip().endswith(version):
@@ -266,7 +273,9 @@ def update_appcast(
     if app not in {"wallet", "explorer"}:
         raise SystemExit(f"Unsupported --app '{app}' (expected wallet|explorer)")
     if channel not in {"stable", "beta", "dev"}:
-        raise SystemExit(f"Unsupported --channel '{channel}' (expected stable|beta|dev)")
+        raise SystemExit(
+            f"Unsupported --channel '{channel}' (expected stable|beta|dev)"
+        )
     if not artifact_path.is_file():
         raise SystemExit(f"Artifact not found: {artifact_path}")
 
@@ -277,7 +286,9 @@ def update_appcast(
     ed_sig_b64 = ""
     if private_key:
         try:
-            ed_sig_b64 = _compute_ed25519_signature(artifact_path, private_key, pem_passphrase)
+            ed_sig_b64 = _compute_ed25519_signature(
+                artifact_path, private_key, pem_passphrase
+            )
         except Exception as e:
             print(f"[!] Signing failed: {e}", file=sys.stderr)
             raise SystemExit(3)
@@ -290,7 +301,9 @@ def update_appcast(
 
     # Determine artifact URL if not provided
     if not artifact_url:
-        artifact_url = f"https://updates.animica.dev/{app}/{channel}/{artifact_path.name}"
+        artifact_url = (
+            f"https://updates.animica.dev/{app}/{channel}/{artifact_path.name}"
+        )
 
     # Ensure skeleton
     title = f"Animica {'Wallet' if app=='wallet' else 'Explorer'} Updates ({channel})"
@@ -334,17 +347,47 @@ def update_appcast(
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    p = argparse.ArgumentParser(description="Update Sparkle appcast with latest release.")
-    p.add_argument("--app", required=True, choices=["wallet", "explorer"], help="App name")
-    p.add_argument("--channel", required=True, choices=["stable", "beta", "dev"], help="Release channel")
-    p.add_argument("--version", required=True, help="Version string (e.g., 1.4.3 or 1.5.0-beta.2)")
-    p.add_argument("--artifact", required=True, type=Path, help="Path to DMG/PKG to publish")
+    p = argparse.ArgumentParser(
+        description="Update Sparkle appcast with latest release."
+    )
+    p.add_argument(
+        "--app", required=True, choices=["wallet", "explorer"], help="App name"
+    )
+    p.add_argument(
+        "--channel",
+        required=True,
+        choices=["stable", "beta", "dev"],
+        help="Release channel",
+    )
+    p.add_argument(
+        "--version", required=True, help="Version string (e.g., 1.4.3 or 1.5.0-beta.2)"
+    )
+    p.add_argument(
+        "--artifact", required=True, type=Path, help="Path to DMG/PKG to publish"
+    )
     p.add_argument("--notes", required=True, help="Release notes URL")
-    p.add_argument("--feed-root", type=Path, default=Path("installers/updates"), help="Root dir where appcast.xml lives")
-    p.add_argument("--artifact-url", help="Override artifact URL; defaults to https://updates.animica.dev/{app}/{channel}/{filename}")
-    p.add_argument("--private-key", type=Path, help="Path to Sparkle Ed25519 private key PEM (optional)")
-    p.add_argument("--pem-passphrase", help="Passphrase for encrypted PEM (optional; will prompt if needed)")
-    p.add_argument("--min-os", default="11.0", help="sparkle:minimumSystemVersion (default: 11.0)")
+    p.add_argument(
+        "--feed-root",
+        type=Path,
+        default=Path("installers/updates"),
+        help="Root dir where appcast.xml lives",
+    )
+    p.add_argument(
+        "--artifact-url",
+        help="Override artifact URL; defaults to https://updates.animica.dev/{app}/{channel}/{filename}",
+    )
+    p.add_argument(
+        "--private-key",
+        type=Path,
+        help="Path to Sparkle Ed25519 private key PEM (optional)",
+    )
+    p.add_argument(
+        "--pem-passphrase",
+        help="Passphrase for encrypted PEM (optional; will prompt if needed)",
+    )
+    p.add_argument(
+        "--min-os", default="11.0", help="sparkle:minimumSystemVersion (default: 11.0)"
+    )
     args = p.parse_args(argv)
 
     pem_pw = args.pem_passphrase or os.getenv("SPARKLE_PRIV_PASSPHRASE")

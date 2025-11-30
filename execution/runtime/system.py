@@ -18,9 +18,9 @@ Notes
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from enum import Enum
-import hashlib
 from typing import Any, Mapping, Optional, Union
 
 # --------------------------------------------------------------------------------------
@@ -32,10 +32,12 @@ ADDRESS_SIZE: int = 32
 
 ZERO_ADDRESS: bytes = b"\x00" * ADDRESS_SIZE
 
+
 class SystemId(str, Enum):
     TREASURY = "treasury"
     BURN_SINK = "burn_sink"
     ZERO = "zero"
+
 
 # Burn is *accountless* in fee settlement (nothing is credited), but some subsystems
 # may want a stable, obviously-unspendable sink for testing or special flows.
@@ -45,6 +47,7 @@ BURN_SINK: bytes = hashlib.sha3_256(b"animica/burn_sink/v1").digest()
 # --------------------------------------------------------------------------------------
 # Helpers
 # --------------------------------------------------------------------------------------
+
 
 def _sha3_256(data: bytes) -> bytes:
     return hashlib.sha3_256(data).digest()
@@ -70,7 +73,9 @@ def ensure_address(addr: bytes, *, name: str = "address") -> bytes:
     return b
 
 
-def parse_hex_address(value: Union[str, bytes, bytearray], *, name: str = "address") -> bytes:
+def parse_hex_address(
+    value: Union[str, bytes, bytearray], *, name: str = "address"
+) -> bytes:
     """
     Parse an address from hex (with or without '0x' prefix) or pass-through bytes.
     """
@@ -99,11 +104,13 @@ def to_hex(addr: bytes) -> str:
 # System accounts bundle
 # --------------------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class SystemAccounts:
     """
     Collected system addresses used during execution and settlement.
     """
+
     chain_id: int
     treasury: bytes
     burn_sink: bytes = BURN_SINK
@@ -150,6 +157,7 @@ def load_system_accounts(
 # --------------------------------------------------------------------------------------
 # Coinbase access
 # --------------------------------------------------------------------------------------
+
 
 def coinbase_from_block_env(block_env: Any) -> bytes:
     """

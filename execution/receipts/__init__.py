@@ -30,17 +30,21 @@ except Exception:  # pragma: no cover
 
 # Support either naming style in encoding module.
 try:
-    from .encoding import receipt_to_cbor, receipt_from_cbor  # type: ignore[F401]
+    from .encoding import (receipt_from_cbor,  # type: ignore[F401]
+                           receipt_to_cbor)
 except Exception:  # pragma: no cover
     # Fallback to alternative names if the module exposes encode_/decode_ variants.
     try:
-        from .encoding import encode_receipt as receipt_to_cbor  # type: ignore[F401]
-        from .encoding import decode_receipt as receipt_from_cbor  # type: ignore[F401]
+        from .encoding import \
+            decode_receipt as receipt_from_cbor  # type: ignore[F401]
+        from .encoding import \
+            encode_receipt as receipt_to_cbor  # type: ignore[F401]
     except Exception:
         pass
 
 try:
-    from .logs_hash import compute_logs_bloom, compute_logs_root  # type: ignore[F401]
+    from .logs_hash import (compute_logs_bloom,  # type: ignore[F401]
+                            compute_logs_root)
 except Exception:  # pragma: no cover
     pass
 

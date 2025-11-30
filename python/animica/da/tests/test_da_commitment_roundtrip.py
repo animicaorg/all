@@ -26,10 +26,10 @@ def _random_blob(length: int, seed: int = 1337) -> bytes:
 @pytest.mark.parametrize(
     "blob_len",
     [
-        1,          # tiniest non-empty blob
-        137,        # odd, non-aligned length
-        4096,       # typical "page" sized blob
-        32_768,     # larger multi-chunk blob
+        1,  # tiniest non-empty blob
+        137,  # odd, non-aligned length
+        4096,  # typical "page" sized blob
+        32_768,  # larger multi-chunk blob
     ],
 )
 def test_da_commitment_roundtrip(blob_len: int) -> None:

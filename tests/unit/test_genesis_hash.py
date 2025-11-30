@@ -51,11 +51,13 @@ try:  # pragma: no cover
 except Exception:  # pragma: no cover
     cbor2 = None
 
+
 # keccak providers (try several)
 def _keccak256(data: bytes) -> Optional[bytes]:
     # pysha3
     try:  # pragma: no cover
         import sha3  # type: ignore
+
         k = sha3.keccak_256()
         k.update(data)
         return k.digest()
@@ -64,6 +66,7 @@ def _keccak256(data: bytes) -> Optional[bytes]:
     # eth-hash
     try:  # pragma: no cover
         from eth_hash.auto import keccak  # type: ignore
+
         return keccak(data)
     except Exception:
         pass
@@ -74,6 +77,7 @@ def _keccak256(data: bytes) -> Optional[bytes]:
 def _blake3(data: bytes) -> Optional[bytes]:
     try:  # pragma: no cover
         import blake3  # type: ignore
+
         return blake3.blake3(data).digest()
     except Exception:
         return None
@@ -85,7 +89,11 @@ CANDIDATE_FILES = [
     # explicit env path
     os.getenv("GENESIS_PATH") or "",
     # env dir
-    (Path(os.getenv("GENESIS_DIR")) / "genesis.json").as_posix() if os.getenv("GENESIS_DIR") else "",
+    (
+        (Path(os.getenv("GENESIS_DIR")) / "genesis.json").as_posix()
+        if os.getenv("GENESIS_DIR")
+        else ""
+    ),
     "spec/chain/genesis.json",
     "spec/test_vectors/genesis.json",
     "tests/fixtures/genesis.json",
@@ -129,15 +137,20 @@ def _scan_for_genesis() -> Optional[Path]:
 
 # ------------------------------ Canonicalization ------------------------------
 
+
 def _canonicalize_json_bytes(p: Path) -> bytes:
     obj = json.loads(p.read_text(encoding="utf-8"))
     # RFC 8785-inspired minimal canonicalization:
-    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return json.dumps(
+        obj, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
 
 
 def _canonicalize_cbor_bytes(p: Path) -> bytes:
     if cbor2 is None:
-        pytest.skip("CBOR fixture present but 'cbor2' is not installed. Install cbor2 or provide JSON genesis.")
+        pytest.skip(
+            "CBOR fixture present but 'cbor2' is not installed. Install cbor2 or provide JSON genesis."
+        )
     obj = cbor2.loads(p.read_bytes())
     # cbor2 supports canonical serialization for deterministic bytes
     return cbor2.dumps(obj, canonical=True)  # type: ignore[arg-type]
@@ -155,10 +168,11 @@ def _canonical_genesis_bytes(p: Path) -> bytes:
 
 # ------------------------------ Expected hash ---------------------------------
 
+
 @dataclass
 class ExpectedHash:
     algo: str  # "sha256" | "keccak256" | "blake3"
-    hex: str   # lowercase, no 0x
+    hex: str  # lowercase, no 0x
 
 
 def _norm_hex(s: str) -> str:
@@ -198,7 +212,9 @@ def _load_expected_from_sidecars(genesis_path: Path) -> Optional[ExpectedHash]:
                     pytest.fail(f"Expected-hash JSON sidecar {c} is invalid JSON: {e}")
                 # Accept either {"algo":"sha256","hex":"..."} or {"sha256":"..."} forms
                 if "hex" in data and "algo" in data:
-                    return ExpectedHash(algo=str(data["algo"]).lower(), hex=_norm_hex(str(data["hex"])))
+                    return ExpectedHash(
+                        algo=str(data["algo"]).lower(), hex=_norm_hex(str(data["hex"]))
+                    )
                 for k, v in data.items():
                     kk = str(k).lower()
                     if kk in ("sha256", "keccak256", "blake3"):
@@ -224,9 +240,13 @@ def _expected_hash(genesis_path: Path) -> Optional[ExpectedHash]:
         try:
             data = json.loads(json_sidecar.read_text(encoding="utf-8"))
             if "hex" in data and "algo" in data:
-                return ExpectedHash(algo=str(data["algo"]).lower(), hex=_norm_hex(str(data["hex"])))
+                return ExpectedHash(
+                    algo=str(data["algo"]).lower(), hex=_norm_hex(str(data["hex"]))
+                )
         except Exception as e:
-            pytest.fail(f"Expected-hash JSON sidecar {json_sidecar} is invalid JSON: {e}")
+            pytest.fail(
+                f"Expected-hash JSON sidecar {json_sidecar} is invalid JSON: {e}"
+            )
 
     # Plain sidecars
     s = _load_expected_from_sidecars(genesis_path)
@@ -242,6 +262,7 @@ def _expected_hash(genesis_path: Path) -> Optional[ExpectedHash]:
 
 
 # ------------------------------ Hashing ---------------------------------------
+
 
 def _compute_hash(algo: str, data: bytes) -> Tuple[str, Optional[str]]:
     """
@@ -265,6 +286,7 @@ def _compute_hash(algo: str, data: bytes) -> Tuple[str, Optional[str]]:
 
 # ---------------------------------- Test --------------------------------------
 
+
 def test_genesis_hash_is_reproducible_and_matches_expected():
     genesis = _scan_for_genesis()
     if not genesis:
@@ -279,7 +301,7 @@ def test_genesis_hash_is_reproducible_and_matches_expected():
             f"No expected-hash sidecar or env found for {genesis}.\n"
             "Provide one of:\n"
             f"  - {genesis}.sha256 | .keccak256 | .blake3 | .hash\n"
-            f"  - {genesis}.hash.json with {{\"algo\":\"sha256\",\"hex\":\"...\"}}\n"
+            f'  - {genesis}.hash.json with {{"algo":"sha256","hex":"..."}}\n'
             "  - GENESIS_EXPECTED_HASH (+ optional GENESIS_HASH_ALGO)."
         )
 
@@ -300,4 +322,3 @@ def test_genesis_hash_is_reproducible_and_matches_expected():
         f"  got:      {got}\n"
         "If you intentionally changed the genesis, update the expected-hash sidecar."
     )
-

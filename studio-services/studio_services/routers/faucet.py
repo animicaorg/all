@@ -24,6 +24,7 @@ _dependencies = []
 try:  # pragma: no cover - optional import
     from fastapi import Depends
     from studio_services.security.auth import require_api_key  # type: ignore
+
     _dependencies = [Depends(require_api_key)]
 except Exception:  # pragma: no cover
     # No-op: faucet can still be protected by global middleware / network firewalls.

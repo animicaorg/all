@@ -18,11 +18,13 @@ try:  # pragma: no cover
         return _json.dumps(obj).decode("utf-8")
 
 except Exception:  # pragma: no cover
+
     def _dumps(obj: t.Any) -> str:
         return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
 
 
 # ------------------------ token bucket ---------------------------
+
 
 @dataclass
 class TokenBucket:
@@ -62,6 +64,7 @@ class TokenBucket:
 
 
 # ---------------------- middleware core --------------------------
+
 
 def _get_client_ip(request: Request) -> str:
     xff = request.headers.get("x-forwarded-for")
@@ -217,7 +220,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             mbucket = self._get_method_bucket(ip, method_name)
             ok, retry_after = mbucket.take(cost)
             if not ok:
-                return self._reject(ip, path, method_name, retry_after, g, mbucket, body)
+                return self._reject(
+                    ip, path, method_name, retry_after, g, mbucket, body
+                )
 
         return await call_next(request)
 
@@ -242,7 +247,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if method_name and method_bucket is not None:
             headers["X-RateLimit-Method"] = method_name
             # We don't expose the exact capacity per-method by default (could, if desired)
-            headers["X-RateLimit-Method-Remaining"] = str(int(method_bucket.remaining()))
+            headers["X-RateLimit-Method-Remaining"] = str(
+                int(method_bucket.remaining())
+            )
 
         detail: dict[str, t.Any] = {
             "error": {
@@ -272,6 +279,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
 
 # ------------------------ convenience factory ------------------------
+
 
 def build_default_ratelimiter(app) -> RateLimitMiddleware:
     """

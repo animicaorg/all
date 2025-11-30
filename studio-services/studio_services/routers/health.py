@@ -77,7 +77,8 @@ def _check_rpc(cfg: Any) -> Tuple[bool, Dict[str, Any]]:
     # Prefer the internal adapter if available; otherwise do a tiny raw POST.
     try:
         try:
-            from studio_services.adapters.node_rpc import NodeRPC  # type: ignore
+            from studio_services.adapters.node_rpc import \
+                NodeRPC  # type: ignore
 
             client = NodeRPC(rpc_url, timeout=getattr(cfg, "RPC_TIMEOUT", 2.0))
             head = client.get_head()  # expected to be cheap
@@ -85,7 +86,9 @@ def _check_rpc(cfg: Any) -> Tuple[bool, Dict[str, Any]]:
             if not isinstance(head, dict):
                 info.update(error="unexpected head shape")
                 return False, info
-            info["head"] = {k: head.get(k) for k in ("height", "hash", "number") if k in head}
+            info["head"] = {
+                k: head.get(k) for k in ("height", "hash", "number") if k in head
+            }
             return True, info
         except Exception as adapter_err:
             # Fallback to raw HTTP if requests is available
@@ -108,7 +111,11 @@ def _check_rpc(cfg: Any) -> Tuple[bool, Dict[str, Any]]:
                     info.update(error="no result in payload")
                     return False, info
                 res = payload["result"]
-                info["head"] = {k: res.get(k) for k in ("height", "hash", "number") if isinstance(res, dict)}
+                info["head"] = {
+                    k: res.get(k)
+                    for k in ("height", "hash", "number")
+                    if isinstance(res, dict)
+                }
                 return True, info
     except Exception as e:  # pragma: no cover
         info.update(error=str(e))
@@ -131,7 +138,9 @@ def _version_blob() -> Dict[str, Any]:
             "version": "{}.{}.{}".format(*os.sys.version_info[:3]),
             "impl": os.sys.implementation.name,
         },
-        "started_at": datetime.fromtimestamp(_PROCESS_START, tz=timezone.utc).isoformat(),
+        "started_at": datetime.fromtimestamp(
+            _PROCESS_START, tz=timezone.utc
+        ).isoformat(),
         "now": _utcnow_iso(),
         "uptime_seconds": round(_uptime_seconds(), 3),
     }

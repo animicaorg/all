@@ -5,10 +5,10 @@ from typing import List, Optional, Tuple
 import pytest
 
 # test utilities (provided in native/tests_py/__init__.py)
-from . import native, SKIP_HEAVY, TEST_SEED, is_ci  # type: ignore
-
+from . import SKIP_HEAVY, TEST_SEED, is_ci, native  # type: ignore
 
 # --------- Helpers ---------
+
 
 def _rng() -> random.Random:
     return random.Random(TEST_SEED)
@@ -70,6 +70,7 @@ if not (SKIP_HEAVY or is_ci()):
 
 # --------- Tests ---------
 
+
 @pytest.mark.parametrize("k,m", BASIC_KM)
 @pytest.mark.parametrize("nbytes", DATA_LENS)
 def test_encode_deterministic(k: int, m: int, nbytes: int):
@@ -106,7 +107,9 @@ def test_encode_reconstruct_roundtrip(k: int, m: int, losses, nbytes: int):
     repaired = _rs_reconstruct(damaged)
     assert len(repaired) == total
     recovered = _join_data(repaired, k, len(data))
-    assert recovered == data, f"recovered data mismatch (k={k}, m={m}, losses={loss_cnt}, drop={drop})"
+    assert (
+        recovered == data
+    ), f"recovered data mismatch (k={k}, m={m}, losses={loss_cnt}, drop={drop})"
 
 
 @pytest.mark.parametrize("k,m", [(4, 2), (8, 4)])
@@ -162,4 +165,6 @@ def test_randomized_many_patterns():
         loss_cnt = r.randrange(0, m + 1)
         drop = sorted(r.sample(range(total), loss_cnt))
         repaired = _rs_reconstruct(_lose(shards, drop))
-        assert _join_data(repaired, k, len(data)) == data, f"failed recovery k={k} m={m} n={n} drop={drop}"
+        assert (
+            _join_data(repaired, k, len(data)) == data
+        ), f"failed recovery k={k} m={m} n={n} drop={drop}"

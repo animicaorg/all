@@ -24,7 +24,9 @@ from typing import Optional
 DEFAULT_VERSION = "0.1.0"
 
 # Accept tags like v1.2.3 or 1.2.3 (semantic version core)
-_SEMVER_TAG = re.compile(r"^v?(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)(?:[-+].*)?$")
+_SEMVER_TAG = re.compile(
+    r"^v?(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)(?:[-+].*)?$"
+)
 
 
 @dataclass(frozen=True)
@@ -79,12 +81,30 @@ def _parse_git_describe(desc: str) -> GitInfo:
         tag = "-".join(parts[:-2])
         distance = int(parts[-2])
         commit = parts[-1][1:]
-        return GitInfo(tag=tag or None, distance=distance, commit=commit, dirty=dirty, describe=desc + ("-dirty" if dirty else ""))
+        return GitInfo(
+            tag=tag or None,
+            distance=distance,
+            commit=commit,
+            dirty=dirty,
+            describe=desc + ("-dirty" if dirty else ""),
+        )
     # Plain hash or something else
     if re.fullmatch(r"[0-9a-f]{7,}", parts[-1]):
-        return GitInfo(tag=None, distance=None, commit=parts[-1], dirty=dirty, describe=desc + ("-dirty" if dirty else ""))
+        return GitInfo(
+            tag=None,
+            distance=None,
+            commit=parts[-1],
+            dirty=dirty,
+            describe=desc + ("-dirty" if dirty else ""),
+        )
     # Unknown form
-    return GitInfo(tag=None, distance=None, commit=None, dirty=dirty, describe=desc + ("-dirty" if dirty else ""))
+    return GitInfo(
+        tag=None,
+        distance=None,
+        commit=None,
+        dirty=dirty,
+        describe=desc + ("-dirty" if dirty else ""),
+    )
 
 
 def _pep440_from_git(info: GitInfo) -> Optional[str]:

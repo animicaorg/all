@@ -55,7 +55,7 @@ def load_env_file(dotenv_path: Path) -> Dict[str, str]:
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        m = re.match(r'^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$', line)
+        m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$", line)
         if not m:
             continue
         key, val = m.group(1), m.group(2)
@@ -82,10 +82,9 @@ def resolve_config(
         or "http://127.0.0.1:8545"
     )
     chain_str = (
-        str(chain_flag) if chain_flag is not None else
-        os.environ.get("CHAIN_ID")
-        or file_env.get("CHAIN_ID")
-        or "1337"
+        str(chain_flag)
+        if chain_flag is not None
+        else os.environ.get("CHAIN_ID") or file_env.get("CHAIN_ID") or "1337"
     )
     try:
         chain_id = int(chain_str, 10)
@@ -117,7 +116,12 @@ def ensure_built(manifest_path: Path, no_build: bool) -> None:
             f"[deploy] --no-build set but {PKG_PATH} not found. Run scripts/build.py first."
         )
     print("[deploy] No package.json found; running deterministic build...")
-    cmd = [sys.executable, str(ROOT / "scripts" / "build.py"), "--manifest", str(manifest_path)]
+    cmd = [
+        sys.executable,
+        str(ROOT / "scripts" / "build.py"),
+        "--manifest",
+        str(manifest_path),
+    ]
     _run_or_die(cmd, env=None)
 
 
@@ -132,7 +136,11 @@ def _sdk_cli_available() -> bool:
         # `python -m omni_sdk.cli.deploy --help` should succeed
         test_cmd = [sys.executable, "-m", "omni_sdk.cli.deploy", "--help"]
         subprocess.run(
-            test_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, text=True
+            test_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+            text=True,
         )
         return True
     except Exception:
@@ -145,14 +153,23 @@ def _run_or_die(cmd, env: Optional[Dict[str, str]]) -> subprocess.CompletedProce
     )
     if proc.returncode != 0:
         sys.stderr.write(proc.stderr)
-        raise SystemExit(f"[deploy] Command failed (rc={proc.returncode}): {' '.join(cmd)}")
+        raise SystemExit(
+            f"[deploy] Command failed (rc={proc.returncode}): {' '.join(cmd)}"
+        )
     return proc
 
 
 # ------------------------------ deploy --------------------------------------
 
 
-def run_deploy(manifest_path: Path, rpc_url: str, chain_id: int, mnemonic: str, account_index: int, wait: bool) -> Dict:
+def run_deploy(
+    manifest_path: Path,
+    rpc_url: str,
+    chain_id: int,
+    mnemonic: str,
+    account_index: int,
+    wait: bool,
+) -> Dict:
     """
     Invoke the SDK CLI deploy command. We pass config via flags where possible,
     and also provide standard environment variables for compatibility.
@@ -179,8 +196,12 @@ def run_deploy(manifest_path: Path, rpc_url: str, chain_id: int, mnemonic: str, 
     if wait:
         cmd.append("--wait")  # SDK CLI usually supports waiting for receipt
 
-    print(f"[deploy] Deploying with RPC={rpc_url} chainId={chain_id} account_index={account_index}")
-    proc = subprocess.run(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    print(
+        f"[deploy] Deploying with RPC={rpc_url} chainId={chain_id} account_index={account_index}"
+    )
+    proc = subprocess.run(
+        cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
 
     # Show CLI output verbatim for transparency
     if proc.stdout.strip():
@@ -218,7 +239,10 @@ def write_artifact(deploy_info: Dict, rpc_url: str, chain_id: int) -> None:
         "chain_id": chain_id,
         "result": deploy_info,
     }
-    DEPLOY_ARTIFACT.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+    DEPLOY_ARTIFACT.write_text(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
     print(f"[deploy] Wrote deploy artifact: {DEPLOY_ARTIFACT}")
 
 
@@ -227,13 +251,40 @@ def write_artifact(deploy_info: Dict, rpc_url: str, chain_id: int) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Deploy the contract from this template.")
-    ap.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST, help="Path to contract manifest.json")
-    ap.add_argument("--rpc", type=str, default=None, help="RPC URL (overrides .env RPC_URL)")
-    ap.add_argument("--chain", type=int, default=None, help="Chain ID (overrides .env CHAIN_ID)")
-    ap.add_argument("--mnemonic", type=str, default=None, help="Deployer mnemonic (overrides .env DEPLOYER_MNEMONIC)")
-    ap.add_argument("--account-index", type=int, default=0, help="Account index derived from mnemonic (default: 0)")
-    ap.add_argument("--no-build", action="store_true", help="Skip building if package.json missing (error if absent)")
-    ap.add_argument("--no-wait", action="store_true", help="Do not wait for receipt (fire-and-forget)")
+    ap.add_argument(
+        "--manifest",
+        type=Path,
+        default=DEFAULT_MANIFEST,
+        help="Path to contract manifest.json",
+    )
+    ap.add_argument(
+        "--rpc", type=str, default=None, help="RPC URL (overrides .env RPC_URL)"
+    )
+    ap.add_argument(
+        "--chain", type=int, default=None, help="Chain ID (overrides .env CHAIN_ID)"
+    )
+    ap.add_argument(
+        "--mnemonic",
+        type=str,
+        default=None,
+        help="Deployer mnemonic (overrides .env DEPLOYER_MNEMONIC)",
+    )
+    ap.add_argument(
+        "--account-index",
+        type=int,
+        default=0,
+        help="Account index derived from mnemonic (default: 0)",
+    )
+    ap.add_argument(
+        "--no-build",
+        action="store_true",
+        help="Skip building if package.json missing (error if absent)",
+    )
+    ap.add_argument(
+        "--no-wait",
+        action="store_true",
+        help="Do not wait for receipt (fire-and-forget)",
+    )
     args = ap.parse_args()
 
     if not args.manifest.is_file():

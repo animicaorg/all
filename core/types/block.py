@@ -24,21 +24,17 @@ This module provides:
 """
 
 from dataclasses import dataclass
-from typing import Any, Iterable, List, Mapping, Optional, Sequence, Tuple, Union, cast
+from typing import (Any, Iterable, List, Mapping, Optional, Sequence, Tuple,
+                    Union, cast)
 
-from core.utils.hash import sha3_256, ZERO32
-from core.utils.merkle import merkle_root
 from core.encoding.cbor import cbor_dumps, cbor_loads
 from core.types.header import Header
-from core.types.tx import Tx
+from core.types.proof import (AIProofRef, HashShare, QuantumProofRef,
+                              StorageHeartbeat, VDFProofRef)
 from core.types.receipt import Receipt
-from core.types.proof import (
-    HashShare,
-    AIProofRef,
-    QuantumProofRef,
-    StorageHeartbeat,
-    VDFProofRef,
-)
+from core.types.tx import Tx
+from core.utils.hash import ZERO32, sha3_256
+from core.utils.merkle import merkle_root
 
 # Union of all proof envelope types included in a block
 ProofLike = Union[HashShare, AIProofRef, QuantumProofRef, StorageHeartbeat, VDFProofRef]
@@ -127,9 +123,15 @@ class Block:
     def from_obj(o: Mapping[str, Any]) -> "Block":
         header = Header.from_obj(cast(Mapping[str, Any], o["header"]))
         txs = tuple(Tx.from_obj(x) for x in cast(Sequence[Mapping[str, Any]], o["txs"]))
-        proofs = tuple(_proof_from_obj(x) for x in cast(Sequence[Mapping[str, Any]], o["proofs"]))
+        proofs = tuple(
+            _proof_from_obj(x) for x in cast(Sequence[Mapping[str, Any]], o["proofs"])
+        )
         receipts_field = cast(Optional[Sequence[Mapping[str, Any]]], o.get("receipts"))
-        receipts = tuple(Receipt.from_obj(x) for x in receipts_field) if receipts_field is not None else None
+        receipts = (
+            tuple(Receipt.from_obj(x) for x in receipts_field)
+            if receipts_field is not None
+            else None
+        )
 
         blk = Block(header=header, txs=txs, proofs=proofs, receipts=receipts)
         blk.verify_against_header()
@@ -184,12 +186,14 @@ class Block:
 
 # ---------- internal helpers for proof envelopes ----------
 
+
 def _proof_to_obj(p: ProofLike) -> Mapping[str, Any]:
     # Each proof dataclass is expected to implement to_obj(); fall back to to_cbor + tag if needed.
     if hasattr(p, "to_obj"):
         return cast(Mapping[str, Any], getattr(p, "to_obj")())
     # Fallback: wrap raw CBOR with a minimal tagged envelope (should not happen in normal flow).
     return {"_rawCbor": _proof_to_cbor(p)}
+
 
 def _proof_from_obj(o: Mapping[str, Any]) -> ProofLike:
     # Dispatch by a discriminant key present in each proof ref's object form.
@@ -212,6 +216,7 @@ def _proof_from_obj(o: Mapping[str, Any]) -> ProofLike:
     # Try to decode by probing the 'type' inside the CBOR map again after load:
     inner = cast(Mapping[str, Any], cbor_loads(raw))
     return _proof_from_obj(inner)
+
 
 def _proof_to_cbor(p: ProofLike) -> bytes:
     if hasattr(p, "to_cbor"):
@@ -241,5 +246,7 @@ if __name__ == "__main__":  # pragma: no cover
         extra=b"",
     )
 
-    blk = Block.from_components(header=hdr, txs=(), proofs=(), receipts=None, verify=True)
+    blk = Block.from_components(
+        header=hdr, txs=(), proofs=(), receipts=None, verify=True
+    )
     print("block ok:", blk.id().hex()[:16], blk.counts(), "size=", blk.encoded_size())

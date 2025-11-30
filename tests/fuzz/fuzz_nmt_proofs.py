@@ -28,8 +28,8 @@ import copy
 import sys
 from typing import Any, Callable, Optional, Sequence, Tuple
 
-
 # ---------------- optional import helper ----------------
+
 
 def _import_optional(modname: str):
     try:
@@ -84,6 +84,7 @@ def _choose_cbor() -> Tuple[DecodeFn, EncodeFn, str]:
     for prov in (_get_project_cbor(), _get_cbor2(), _get_msgspec()):
         if prov:
             return prov
+
     # Minimal stub for import-time survival
     def _loads_stub(b: bytes) -> Any:
         if b == b"\xa0":
@@ -140,6 +141,7 @@ if _codec:
             _LEAF_ENCODE = fn
             break
 
+
 # Hash helper (best-effort)
 def _sha3_256(data: bytes) -> Optional[bytes]:
     h = _import_optional("da.utils.hash") or _import_optional("core.utils.hash")
@@ -151,6 +153,7 @@ def _sha3_256(data: bytes) -> Optional[bytes]:
                 pass
     try:
         import hashlib
+
         return hashlib.sha3_256(data).digest()
     except Exception:
         return None
@@ -163,6 +166,7 @@ LEAF_KEYS = ("leaf", "data", "value", "payload")
 BRANCH_KEYS = ("proof", "branch", "siblings", "path", "nodes")
 NS_KEYS = ("namespace", "ns", "ns_id", "id")
 NS_RANGE_KEYS = (("start", "end"), ("start_ns", "end_ns"))
+
 
 def _normalize_for_eq(x: Any) -> Any:
     if isinstance(x, dict):
@@ -203,10 +207,11 @@ def _is_nmt_proof_like(obj: Any) -> bool:
     has_leaf = _pick_key(obj, LEAF_KEYS) is not None
     has_ns = _pick_key(obj, NS_KEYS) is not None
     has_range = any(a in obj and b in obj for (a, b) in NS_RANGE_KEYS)
-    return has_root and has_branch and ( (has_leaf and has_ns) or has_range )
+    return has_root and has_branch and ((has_leaf and has_ns) or has_range)
 
 
 # ---------------- verifier adapter ----------------
+
 
 def _boolish(x: Any) -> Optional[bool]:
     if isinstance(x, bool):
@@ -219,7 +224,9 @@ def _boolish(x: Any) -> Optional[bool]:
     return None
 
 
-def _try_calls(fn: Callable[..., Any], calls: list[tuple[tuple, dict]]) -> Optional[bool]:
+def _try_calls(
+    fn: Callable[..., Any], calls: list[tuple[tuple, dict]]
+) -> Optional[bool]:
     for args, kwargs in calls:
         try:
             res = fn(*args, **kwargs)
@@ -263,17 +270,29 @@ def _verify_adapter(proof_obj: dict) -> Optional[bool]:
     calls.append(((root, proof_obj), {}))
     calls.append(((proof_obj, root), {}))
     # verify_inclusion(root=root, proof=proof_obj, leaf=leaf, namespace=ns, index=..., total=...)
-    calls.append(((), {"root": root, "proof": proof_obj, "leaf": leaf, "namespace": ns}))
+    calls.append(
+        ((), {"root": root, "proof": proof_obj, "leaf": leaf, "namespace": ns})
+    )
     calls.append(((), {"commitment": root, "proof": proof_obj, "leaf": leaf, "ns": ns}))
 
     # Range verify: verify_range(root, proof_obj, ns) / kw variants / explicit start,end
     calls.append(((root, proof_obj, ns), {}))
     calls.append(((), {"root": root, "proof": proof_obj, "namespace": ns}))
     # If explicit range keys exist, try those too
-    for (a, b) in NS_RANGE_KEYS:
+    for a, b in NS_RANGE_KEYS:
         if a in proof_obj and b in proof_obj:
             calls.append(((root, proof_obj, proof_obj[a], proof_obj[b]), {}))
-            calls.append(((), {"root": root, "proof": proof_obj, "start": proof_obj[a], "end": proof_obj[b]}))
+            calls.append(
+                (
+                    (),
+                    {
+                        "root": root,
+                        "proof": proof_obj,
+                        "start": proof_obj[a],
+                        "end": proof_obj[b],
+                    },
+                )
+            )
 
     for fn in VERIFY_FUNCS:
         out = _try_calls(fn, calls)
@@ -283,6 +302,7 @@ def _verify_adapter(proof_obj: dict) -> Optional[bool]:
 
 
 # ---------------- mutations ----------------
+
 
 def _flip_bit(b: bytes) -> bytes:
     if not b:
@@ -309,14 +329,14 @@ def _mutate_branch(branch: Any) -> Any:
         if not branch:
             return [b"\x00"]
         # drop middle element
-        return branch[: len(branch)//2] + branch[len(branch)//2 + 1 :]
+        return branch[: len(branch) // 2] + branch[len(branch) // 2 + 1 :]
     if isinstance(branch, dict):
         out = dict(branch)
         # drop any key that looks like "siblings" or "path"
         key = _pick_key(out, BRANCH_KEYS)
         if key and isinstance(out[key], list) and out[key]:
             lst = out[key]
-            out[key] = lst[: len(lst)//2] + lst[len(lst)//2 + 1 :]
+            out[key] = lst[: len(lst) // 2] + lst[len(lst) // 2 + 1 :]
         else:
             # flip any bytes value found
             for k, v in list(out.items()):
@@ -345,7 +365,7 @@ def _mutate_proof(proof_obj: dict, which: str) -> dict:
         if k:
             m[k] = _mutate_bytes(m[k])
         # range keys
-        for (a, b) in NS_RANGE_KEYS:
+        for a, b in NS_RANGE_KEYS:
             if a in m:
                 m[a] = _mutate_bytes(m[a])
             if b in m:
@@ -360,6 +380,7 @@ def _mutate_proof(proof_obj: dict, which: str) -> dict:
 
 
 # ---------------- fuzz entry ----------------
+
 
 def fuzz(data: bytes) -> None:
     # guard pathological inputs
@@ -402,7 +423,11 @@ def fuzz(data: bytes) -> None:
         try:
             mut = _mutate_proof(proof_obj, kind)
             mut_ok = _verify_adapter(mut)
-            if base_ok is True and mut_ok is True and kind in ("root", "leaf", "branch"):
+            if (
+                base_ok is True
+                and mut_ok is True
+                and kind in ("root", "leaf", "branch")
+            ):
                 # Strong invariant: flipping root/leaf/branch should break a valid proof.
                 raise AssertionError(f"NMT verify still True after {kind} mutation")
         except (RecursionError, MemoryError):
@@ -430,11 +455,14 @@ def fuzz(data: bytes) -> None:
 
 # ---------------- direct execution ----------------
 
+
 def _run_direct(argv: list[str]) -> int:  # pragma: no cover
     try:
         import atheris  # type: ignore
     except Exception:
-        sys.stderr.write("[fuzz_nmt_proofs] atheris not installed. pip install atheris\n")
+        sys.stderr.write(
+            "[fuzz_nmt_proofs] atheris not installed. pip install atheris\n"
+        )
         return 2
     atheris.instrument_all()
     corpus = [p for p in argv if not p.startswith("-")] or ["tests/fuzz/corpus_blocks"]

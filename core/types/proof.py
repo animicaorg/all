@@ -38,7 +38,7 @@ envelopes can still be used in mempool/mining flows before sealing.
 
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import Any, Mapping, Tuple, Type, TypeVar, Union, Iterable
+from typing import Any, Iterable, Mapping, Tuple, Type, TypeVar, Union
 
 from core.encoding.cbor import cbor_dumps, cbor_loads
 from core.utils.bytes import expect_len
@@ -60,18 +60,24 @@ class ProofType(IntEnum):
 
 # ---- generic envelope ----
 
+
 @dataclass(frozen=True)
 class ProofEnvelope:
     """
     The canonical, typed-agnostic envelope that is hashed, signed (when needed),
     gossiped, and sealed in blocks.
     """
+
     type_id: ProofType
     nullifier: bytes  # 32 bytes
-    body: bytes       # CBOR blob for the specific proof type
+    body: bytes  # CBOR blob for the specific proof type
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "nullifier", expect_len(self.nullifier, NULLIFIER_LEN, name="ProofEnvelope.nullifier"))
+        object.__setattr__(
+            self,
+            "nullifier",
+            expect_len(self.nullifier, NULLIFIER_LEN, name="ProofEnvelope.nullifier"),
+        )
         if not isinstance(self.body, (bytes, bytearray)):
             raise TypeError("ProofEnvelope.body must be bytes")
 
@@ -115,6 +121,7 @@ class ProofEnvelope:
 
 # ---- typed wrappers (lightweight) ----
 
+
 @dataclass(frozen=True)
 class _BaseRef:
     envelope: ProofEnvelope
@@ -155,6 +162,7 @@ class HashShare(_BaseRef):
     PoW share envelope. The body is CBOR as defined in proofs/schemas/hashshare.cddl.
     The *full* verification (header binding, u-draw target) lives in proofs/hashshare.py.
     """
+
     def __post_init__(self) -> None:
         if self.envelope.type_id != ProofType.HASH_SHARE:
             raise TypeError("HashShare must wrap type_id=HASH_SHARE")
@@ -163,6 +171,7 @@ class HashShare(_BaseRef):
 @dataclass(frozen=True)
 class AIProofRef(_BaseRef):
     """Reference to an AI proof body (TEE attestation + redundancy + traps receipts)."""
+
     def __post_init__(self) -> None:
         if self.envelope.type_id != ProofType.AI:
             raise TypeError("AIProofRef must wrap type_id=AI")
@@ -171,6 +180,7 @@ class AIProofRef(_BaseRef):
 @dataclass(frozen=True)
 class QuantumProofRef(_BaseRef):
     """Reference to a Quantum proof body (provider attest + trap-circuit outcomes)."""
+
     def __post_init__(self) -> None:
         if self.envelope.type_id != ProofType.QUANTUM:
             raise TypeError("QuantumProofRef must wrap type_id=QUANTUM")
@@ -179,6 +189,7 @@ class QuantumProofRef(_BaseRef):
 @dataclass(frozen=True)
 class StorageHeartbeat(_BaseRef):
     """Reference to a storage Proof-of-Spacetime heartbeat body."""
+
     def __post_init__(self) -> None:
         if self.envelope.type_id != ProofType.STORAGE:
             raise TypeError("StorageHeartbeat must wrap type_id=STORAGE")
@@ -187,6 +198,7 @@ class StorageHeartbeat(_BaseRef):
 @dataclass(frozen=True)
 class VDFProofRef(_BaseRef):
     """Reference to a Wesolowski VDF proof body (or metadata) used for randomness/beacon."""
+
     def __post_init__(self) -> None:
         if self.envelope.type_id != ProofType.VDF:
             raise TypeError("VDFProofRef must wrap type_id=VDF")
@@ -212,7 +224,9 @@ def make_envelope(type_id: ProofType, nullifier: bytes, body: bytes) -> ProofEnv
     return ProofEnvelope(type_id=type_id, nullifier=nullifier, body=body)
 
 
-def wrap(envelope: ProofEnvelope) -> Union[HashShare, AIProofRef, QuantumProofRef, StorageHeartbeat, VDFProofRef]:
+def wrap(
+    envelope: ProofEnvelope,
+) -> Union[HashShare, AIProofRef, QuantumProofRef, StorageHeartbeat, VDFProofRef]:
     """
     Wrap a generic envelope into the appropriate typed view.
     """
@@ -222,12 +236,18 @@ def wrap(envelope: ProofEnvelope) -> Union[HashShare, AIProofRef, QuantumProofRe
     return cls(envelope=envelope)  # type: ignore[call-arg]
 
 
-def unwrap(ref: Union[HashShare, AIProofRef, QuantumProofRef, StorageHeartbeat, VDFProofRef]) -> ProofEnvelope:
+def unwrap(
+    ref: Union[HashShare, AIProofRef, QuantumProofRef, StorageHeartbeat, VDFProofRef],
+) -> ProofEnvelope:
     """Return the underlying generic envelope."""
     return ref.to_envelope()
 
 
-def batch_to_cbor(proofs: Iterable[Union[HashShare, AIProofRef, QuantumProofRef, StorageHeartbeat, VDFProofRef]]) -> bytes:
+def batch_to_cbor(
+    proofs: Iterable[
+        Union[HashShare, AIProofRef, QuantumProofRef, StorageHeartbeat, VDFProofRef]
+    ],
+) -> bytes:
     """
     Deterministic CBOR encoding of a sequence of envelopes (used in block assembly).
     """
@@ -236,7 +256,11 @@ def batch_to_cbor(proofs: Iterable[Union[HashShare, AIProofRef, QuantumProofRef,
     return cbor_dumps({"v": 1, "proofs": objs})
 
 
-def batch_from_cbor(b: bytes) -> Tuple[Union[HashShare, AIProofRef, QuantumProofRef, StorageHeartbeat, VDFProofRef], ...]:
+def batch_from_cbor(
+    b: bytes,
+) -> Tuple[
+    Union[HashShare, AIProofRef, QuantumProofRef, StorageHeartbeat, VDFProofRef], ...
+]:
     o = cbor_loads(b)
     if int(o.get("v", 1)) != 1:
         raise ValueError("Unsupported proofs batch version")
@@ -248,6 +272,7 @@ def batch_from_cbor(b: bytes) -> Tuple[Union[HashShare, AIProofRef, QuantumProof
 
 
 # ---- IDs & hashing helpers (non-consensus, convenience) ----
+
 
 def envelope_id(env: ProofEnvelope) -> bytes:
     """
@@ -262,7 +287,7 @@ def envelope_id(env: ProofEnvelope) -> bytes:
 # Self-check (dev-only)
 if __name__ == "__main__":  # pragma: no cover
     # Construct a fake hashshare envelope and round-trip
-    dummy_body = b"\xa2fheaderX \x00"*1  # pretend CBOR
+    dummy_body = b"\xa2fheaderX \x00" * 1  # pretend CBOR
     dummy_null = b"\x11" * 32
     env = make_envelope(ProofType.HASH_SHARE, dummy_null, dummy_body)
     ref = wrap(env)

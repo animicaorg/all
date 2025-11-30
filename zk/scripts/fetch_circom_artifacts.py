@@ -40,10 +40,10 @@ from typing import Iterable, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-
 # -----------------------
 # Manifest
 # -----------------------
+
 
 @dataclass(frozen=True)
 class FileItem:
@@ -53,7 +53,7 @@ class FileItem:
 
 @dataclass(frozen=True)
 class Artifact:
-    system: str   # "groth16" | "plonk_kzg"
+    system: str  # "groth16" | "plonk_kzg"
     circuit: str  # e.g. "embedding"
     files: tuple[FileItem, ...]
 
@@ -96,6 +96,7 @@ ARTIFACTS: tuple[Artifact, ...] = (
 # Utils
 # -----------------------
 
+
 def human_size(n: int) -> str:
     units = ["B", "KB", "MB", "GB"]
     for u in units:
@@ -135,6 +136,7 @@ def _default_base_url() -> str:
 # Downloader
 # -----------------------
 
+
 def download_with_retries(url: str, dst: Path, retries: int, timeout: int) -> None:
     last_err: Optional[Exception] = None
     headers = {"User-Agent": "animica-fetcher/1.0 (+https://animica.example)"}
@@ -158,7 +160,9 @@ def download_with_retries(url: str, dst: Path, retries: int, timeout: int) -> No
             shutil.move(tmp_name, dst)
             size_str = human_size(dst.stat().st_size)
             if total and total != copied:
-                print(f"  ⚠ size mismatch: expected {human_size(total)}, got {size_str}")
+                print(
+                    f"  ⚠ size mismatch: expected {human_size(total)}, got {size_str}"
+                )
             else:
                 print(f"  ↓ saved {size_str}")
             return
@@ -166,7 +170,7 @@ def download_with_retries(url: str, dst: Path, retries: int, timeout: int) -> No
             last_err = e
             print(f"  attempt {attempt}/{retries} failed: {e}")
             if attempt < retries:
-                time.sleep(min(2 ** attempt, 10))
+                time.sleep(min(2**attempt, 10))
     raise RuntimeError(f"Failed to download {url}: {last_err}")
 
 
@@ -183,6 +187,7 @@ def verify_checksum_if_any(path: Path, expected: Optional[str]) -> None:
 # -----------------------
 # Main logic
 # -----------------------
+
 
 def assemble_url(base: str, a: Artifact, fi: FileItem) -> str:
     base = base.rstrip("/")
@@ -212,7 +217,9 @@ def ensure_artifact(
                 print(f"  checksum revalidate failed for {out}: {e}; will re-download")
 
         if not base_url:
-            print(f"✖ No --base-url and ANIMICA_CIRCOM_BASE not set; cannot fetch {out.name}")
+            print(
+                f"✖ No --base-url and ANIMICA_CIRCOM_BASE not set; cannot fetch {out.name}"
+            )
             continue
 
         url = assemble_url(base_url, a, fi)
@@ -252,9 +259,7 @@ def parse_args(argv: Iterable[str]) -> argparse.Namespace:
         action="store_true",
         help="Re-download even if the file exists and passes checksum (if any).",
     )
-    p.add_argument(
-        "--retries", type=int, default=3, help="Network retries per file."
-    )
+    p.add_argument("--retries", type=int, default=3, help="Network retries per file.")
     p.add_argument(
         "--timeout", type=int, default=20, help="Download timeout (seconds)."
     )
@@ -291,7 +296,9 @@ def main(argv: Iterable[str]) -> int:
             return 2
 
     if not any_written:
-        print("No files written (they may already be present, or base-url was not set).")
+        print(
+            "No files written (they may already be present, or base-url was not set)."
+        )
     else:
         print("\nDone.")
     return 0
@@ -299,4 +306,3 @@ def main(argv: Iterable[str]) -> int:
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))
-

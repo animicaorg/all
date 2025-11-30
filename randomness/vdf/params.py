@@ -38,13 +38,13 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Dict, Literal, Optional
 
-
 BackendKind = Literal["rsa", "classgroup"]
 
 
 @dataclass(frozen=True)
 class VDFParams:
     """Container for VDF configuration."""
+
     name: str
     iterations: int
     security_bits: int
@@ -115,8 +115,8 @@ _TESTNET_RSA_MODULUS_HEX = (
 DEVNET = VDFParams(
     name="devnet",
     backend="rsa",
-    iterations=2**16,           # keep snappy for local runs/CI
-    security_bits=96,           # indicative only
+    iterations=2**16,  # keep snappy for local runs/CI
+    security_bits=96,  # indicative only
     modulus_hex=_DEVNET_RSA_MODULUS_HEX,
     description="Fast local profile with a 1024-bit placeholder RSA modulus.",
 )
@@ -124,7 +124,7 @@ DEVNET = VDFParams(
 TESTNET = VDFParams(
     name="testnet",
     backend="rsa",
-    iterations=2**20,           # slower, but still testable
+    iterations=2**20,  # slower, but still testable
     security_bits=110,
     modulus_hex=_TESTNET_RSA_MODULUS_HEX,
     description="Testnet profile with a 2048-bit placeholder RSA modulus.",
@@ -139,6 +139,7 @@ DEFAULT_PROFILES: Dict[str, VDFParams] = {
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def profile_names() -> list[str]:
     """Return available profile names."""

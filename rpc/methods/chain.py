@@ -3,13 +3,15 @@ from __future__ import annotations
 import dataclasses as _dc
 import typing as t
 
-from rpc.methods import method
 from rpc import deps
-from rpc.methods.block import _fallback_block, _resolve_block_by_number, _block_view
+from rpc.methods import method
+from rpc.methods.block import (_block_view, _fallback_block,
+                               _resolve_block_by_number)
 
 # Optional/loose imports: we compute the head hash using canonical bytes if available.
 try:  # preferred, if provided by core
-    from core.encoding.canonical import header_sign_bytes as _header_sign_bytes  # type: ignore
+    from core.encoding.canonical import \
+        header_sign_bytes as _header_sign_bytes  # type: ignore
 except Exception:  # fallback: CBOR
     _header_sign_bytes = None  # type: ignore
     try:
@@ -87,7 +89,9 @@ def _fallback_header(chain_id: int) -> dict[str, t.Any]:
     }
 
 
-def _header_view(height: int | None, header: t.Any, chain_id_fallback: int | None = None) -> dict[str, t.Any]:
+def _header_view(
+    height: int | None, header: t.Any, chain_id_fallback: int | None = None
+) -> dict[str, t.Any]:
     """Project a header dataclass/object into a JSON-friendly view."""
     # Try to read common fields defensively.
     chain_id = getattr(header, "chain_id", getattr(header, "chainId", None))
@@ -101,13 +105,21 @@ def _header_view(height: int | None, header: t.Any, chain_id_fallback: int | Non
         mix_seed = header.get("mixSeed", mix_seed)
         nonce = header.get("nonce", nonce)
 
-    roots = getattr(header, "roots", None) or ({
-        "stateRoot": header.get("stateRoot") if isinstance(header, dict) else None,
-        "txsRoot": header.get("txsRoot") if isinstance(header, dict) else None,
-        "receiptsRoot": header.get("receiptsRoot") if isinstance(header, dict) else None,
-        "proofsRoot": header.get("proofsRoot") if isinstance(header, dict) else None,
-        "daRoot": header.get("daRoot") if isinstance(header, dict) else None,
-    } if isinstance(header, dict) else {})
+    roots = getattr(header, "roots", None) or (
+        {
+            "stateRoot": header.get("stateRoot") if isinstance(header, dict) else None,
+            "txsRoot": header.get("txsRoot") if isinstance(header, dict) else None,
+            "receiptsRoot": (
+                header.get("receiptsRoot") if isinstance(header, dict) else None
+            ),
+            "proofsRoot": (
+                header.get("proofsRoot") if isinstance(header, dict) else None
+            ),
+            "daRoot": header.get("daRoot") if isinstance(header, dict) else None,
+        }
+        if isinstance(header, dict)
+        else {}
+    )
     # Roots may themselves be bytes; map to hex where relevant
     roots_view: dict[str, t.Any] = {}
     if isinstance(roots, dict):
@@ -134,7 +146,9 @@ def _header_view(height: int | None, header: t.Any, chain_id_fallback: int | Non
         "hash": computed_hash,
         "chainId": int(chain_id) if chain_id is not None else None,
         "thetaMicro": int(theta_micro) if theta_micro is not None else None,
-        "mixSeed": _hex(mix_seed) if isinstance(mix_seed, (bytes, bytearray)) else mix_seed,
+        "mixSeed": (
+            _hex(mix_seed) if isinstance(mix_seed, (bytes, bytearray)) else mix_seed
+        ),
         "nonce": _hex(nonce) if isinstance(nonce, (bytes, bytearray)) else nonce,
         "roots": roots_view or roots,
     }
@@ -190,7 +204,13 @@ def chain_get_head() -> dict:
         if blk is None:
             blk = _fallback_block(chain_id_val)
             h = 0
-        block_view = _block_view(blk, h, include_txs=False, include_receipts=False, chain_id_fallback=chain_id_val)
+        block_view = _block_view(
+            blk,
+            h,
+            include_txs=False,
+            include_receipts=False,
+            chain_id_fallback=chain_id_val,
+        )
         header_view = block_view.get("header", block_view)
         if isinstance(header_view, dict):
             roots = header_view.get("roots")
@@ -204,7 +224,9 @@ def chain_get_head() -> dict:
     try:
         from rpc.methods import miner as miner_methods
 
-        view["autoMine"] = bool(getattr(miner_methods, "auto_mine_enabled", lambda: False)())
+        view["autoMine"] = bool(
+            getattr(miner_methods, "auto_mine_enabled", lambda: False)()
+        )
     except Exception:
         pass
     return view

@@ -145,8 +145,16 @@ class PeerStore:
                     float(peer.connected_at_s or now),
                     float(now),
                     float(peer.connected_at_s or now),
-                    float(peer.last_disconnect_s or 0.0) if peer.last_disconnect_s else None,
-                    float(peer.rtt_ms_ewma or 0.0) if peer.rtt_ms_ewma is not None else None,
+                    (
+                        float(peer.last_disconnect_s or 0.0)
+                        if peer.last_disconnect_s
+                        else None
+                    ),
+                    (
+                        float(peer.rtt_ms_ewma or 0.0)
+                        if peer.rtt_ms_ewma is not None
+                        else None
+                    ),
                     score,
                     snapshot,
                 ),
@@ -191,17 +199,23 @@ class PeerStore:
                 (PeerStatus.DISCONNECTED.value, now, now, peer_id),
             )
 
-    def note_rtt_sample(self, peer_id: str, sample_ms: float, alpha: float = 0.2) -> None:
+    def note_rtt_sample(
+        self, peer_id: str, sample_ms: float, alpha: float = 0.2
+    ) -> None:
         """Update the EWMA RTT stored for a peer."""
         with self._locked_conn() as conn:
-            row = conn.execute("SELECT rtt_ms FROM peers WHERE peer_id=?", (peer_id,)).fetchone()
+            row = conn.execute(
+                "SELECT rtt_ms FROM peers WHERE peer_id=?", (peer_id,)
+            ).fetchone()
             if row is None:
                 return
             current = row["rtt_ms"]
             if current is None or current <= 0.0:
                 new_rtt = float(sample_ms)
             else:
-                new_rtt = float((1.0 - alpha) * float(current) + alpha * float(sample_ms))
+                new_rtt = float(
+                    (1.0 - alpha) * float(current) + alpha * float(sample_ms)
+                )
             conn.execute(
                 "UPDATE peers SET rtt_ms=?, last_seen=? WHERE peer_id=?",
                 (new_rtt, _now(), peer_id),
@@ -209,15 +223,24 @@ class PeerStore:
 
     def update_score_snapshot(self, peer_id: str, score: float) -> None:
         with self._locked_conn() as conn:
-            conn.execute("UPDATE peers SET score=?, last_seen=? WHERE peer_id=?", (float(score), _now(), peer_id))
+            conn.execute(
+                "UPDATE peers SET score=?, last_seen=? WHERE peer_id=?",
+                (float(score), _now(), peer_id),
+            )
 
     def update_head_height(self, peer_id: str, height: int) -> None:
         with self._locked_conn() as conn:
-            conn.execute("UPDATE peers SET head_height=?, last_seen=? WHERE peer_id=?", (int(height), _now(), peer_id))
+            conn.execute(
+                "UPDATE peers SET head_height=?, last_seen=? WHERE peer_id=?",
+                (int(height), _now(), peer_id),
+            )
 
     def ban(self, peer_id: str) -> None:
         with self._locked_conn() as conn:
-            conn.execute("UPDATE peers SET status=?, last_seen=? WHERE peer_id=?", (PeerStatus.BANNED.value, _now(), peer_id))
+            conn.execute(
+                "UPDATE peers SET status=?, last_seen=? WHERE peer_id=?",
+                (PeerStatus.BANNED.value, _now(), peer_id),
+            )
 
     def forget(self, peer_id: str) -> None:
         with self._locked_conn() as conn:
@@ -229,7 +252,9 @@ class PeerStore:
 
     def get(self, peer_id: str) -> Optional[Peer]:
         with self._locked_conn() as conn:
-            row = conn.execute("SELECT * FROM peers WHERE peer_id=?", (peer_id,)).fetchone()
+            row = conn.execute(
+                "SELECT * FROM peers WHERE peer_id=?", (peer_id,)
+            ).fetchone()
             if row is None:
                 return None
             return self._row_to_peer(row)
@@ -237,7 +262,8 @@ class PeerStore:
     def find_by_address(self, address: str) -> List[str]:
         with self._locked_conn() as conn:
             rows = conn.execute(
-                "SELECT peer_id FROM peer_addresses WHERE address=? ORDER BY last_seen DESC", (address,)
+                "SELECT peer_id FROM peer_addresses WHERE address=? ORDER BY last_seen DESC",
+                (address,),
             ).fetchall()
         return [r["peer_id"] for r in rows]
 
@@ -259,9 +285,11 @@ class PeerStore:
             where.append(f"status IN ({placeholders})")
             args.extend([s.value for s in status_in])
         where_sql = ("WHERE " + " AND ".join(where)) if where else ""
-        order_sql = {"score": "score DESC NULLS LAST, last_seen DESC",
-                     "last_seen": "last_seen DESC",
-                     "rtt_ms": "rtt_ms ASC NULLS LAST, score DESC"}.get(order_by, "score DESC")
+        order_sql = {
+            "score": "score DESC NULLS LAST, last_seen DESC",
+            "last_seen": "last_seen DESC",
+            "rtt_ms": "rtt_ms ASC NULLS LAST, score DESC",
+        }.get(order_by, "score DESC")
         sql = f"SELECT * FROM peers {where_sql} ORDER BY {order_sql} LIMIT ?"
         args.append(int(limit))
 
@@ -269,7 +297,9 @@ class PeerStore:
             rows = conn.execute(sql, tuple(args)).fetchall()
             return [self._row_to_peer(r) for r in rows]
 
-    def list_addresses(self, *, limit: int = 200, since: Optional[float] = None) -> List[Tuple[str, str, float]]:
+    def list_addresses(
+        self, *, limit: int = 200, since: Optional[float] = None
+    ) -> List[Tuple[str, str, float]]:
         where = "WHERE 1=1"
         args: list = []
         if since is not None:
@@ -285,7 +315,12 @@ class PeerStore:
     # GC & maintenance
     # ------------------------------------------------------------------ #
 
-    def prune(self, *, older_than_s: float, statuses: Iterable[PeerStatus] = (PeerStatus.BANNED,)) -> int:
+    def prune(
+        self,
+        *,
+        older_than_s: float,
+        statuses: Iterable[PeerStatus] = (PeerStatus.BANNED,),
+    ) -> int:
         """
         Remove peers with status in `statuses` whose last_seen is older than the given threshold.
         Returns number of rows removed.
@@ -331,7 +366,9 @@ class PeerStore:
                 p.status = PeerStatus(status)
                 p.connected_at_s = snap.get("connected_at_s") or row["connected_at"]
                 p.last_seen_s = snap.get("last_seen_s") or row["last_seen"]
-                p.last_disconnect_s = snap.get("last_disconnect_s") or row["last_disconnect"]
+                p.last_disconnect_s = (
+                    snap.get("last_disconnect_s") or row["last_disconnect"]
+                )
                 # Restore RTT if present
                 rtt = snap.get("rtt_ms_ewma")
                 if rtt is None:

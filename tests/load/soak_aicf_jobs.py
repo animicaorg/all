@@ -69,16 +69,39 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
-
 # ---------------------------------------------------------------------------
 # Utilities
 # ---------------------------------------------------------------------------
 
+
 class Hist:
     """Fixed buckets in milliseconds with simple percentile summaries."""
+
     def __init__(self, bounds_ms: Optional[List[float]] = None) -> None:
         if bounds_ms is None:
-            bounds_ms = [5,10,20,30,50,75,100,150,200,300,400,600,800,1000,1500,2000,3000,5000,8000,12000,20000]
+            bounds_ms = [
+                5,
+                10,
+                20,
+                30,
+                50,
+                75,
+                100,
+                150,
+                200,
+                300,
+                400,
+                600,
+                800,
+                1000,
+                1500,
+                2000,
+                3000,
+                5000,
+                8000,
+                12000,
+                20000,
+            ]
         self.bounds = list(bounds_ms)
         self.counts = [0] * len(self.bounds)
         self.overflow = 0
@@ -104,14 +127,24 @@ class Hist:
         return float(self.bounds[-1] * 1.5)
 
     def summary(self) -> Dict[str, float]:
-        return {"p50_ms": self._quantile(0.50), "p90_ms": self._quantile(0.90), "p99_ms": self._quantile(0.99)}
+        return {
+            "p50_ms": self._quantile(0.50),
+            "p90_ms": self._quantile(0.90),
+            "p99_ms": self._quantile(0.99),
+        }
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"bounds_ms": self.bounds, "counts": self.counts, "overflow": self.overflow, "n": self.n} | self.summary()
+        return {
+            "bounds_ms": self.bounds,
+            "counts": self.counts,
+            "overflow": self.overflow,
+            "n": self.n,
+        } | self.summary()
 
 
 class LCG:
     """Deterministic 64-bit LCG for generating prompts/circuits."""
+
     def __init__(self, seed: int = 0xA1CFFACE) -> None:
         self.x = (seed & ((1 << 64) - 1)) or 1
 
@@ -153,7 +186,13 @@ def get_path(d: Any, path: Optional[str]) -> Any:
 def extract_task_id(obj: Any, id_path: Optional[str]) -> Optional[str]:
     cand = None
     if isinstance(obj, dict):
-        cand = obj.get("task_id") or obj.get("id") or obj.get("job_id") or obj.get("taskId") or obj.get("jobId")
+        cand = (
+            obj.get("task_id")
+            or obj.get("id")
+            or obj.get("job_id")
+            or obj.get("taskId")
+            or obj.get("jobId")
+        )
         if cand is None and id_path:
             cand = get_path(obj, id_path)
     return str(cand) if cand is not None else None
@@ -162,6 +201,7 @@ def extract_task_id(obj: Any, id_path: Optional[str]) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # Backends
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class RpcConfig:
@@ -180,9 +220,16 @@ class RpcClient:
         self.http = http
         self._rid = cfg.request_id_base
 
-    async def call(self, method: str, params: Any) -> Tuple[Optional[Any], Optional[Dict[str, Any]], float]:
+    async def call(
+        self, method: str, params: Any
+    ) -> Tuple[Optional[Any], Optional[Dict[str, Any]], float]:
         self._rid += 1
-        payload = {"jsonrpc": "2.0", "id": self._rid, "method": method, "params": params}
+        payload = {
+            "jsonrpc": "2.0",
+            "id": self._rid,
+            "method": method,
+            "params": params,
+        }
         t0 = time.perf_counter()
         r = await self.http.post(self.cfg.url, json=payload, timeout=None)
         dt = (time.perf_counter() - t0) * 1000.0
@@ -191,25 +238,39 @@ class RpcClient:
             return None, jd.get("error"), dt
         return jd.get("result"), None, dt
 
-    async def enqueue_ai(self, model: str, prompt: str) -> Tuple[Optional[str], Optional[Dict[str, Any]], float, Any]:
-        res, err, dt = await self.call(self.cfg.method_ai, {"model": model, "prompt": prompt})
+    async def enqueue_ai(
+        self, model: str, prompt: str
+    ) -> Tuple[Optional[str], Optional[Dict[str, Any]], float, Any]:
+        res, err, dt = await self.call(
+            self.cfg.method_ai, {"model": model, "prompt": prompt}
+        )
         tid = extract_task_id(res, None)
         if tid is None and isinstance(res, dict):
             tid = extract_task_id(res.get("receipt") or res.get("job") or {}, None)
         return tid, err, dt, res
 
-    async def enqueue_quantum(self, circuit: Dict[str, Any], shots: int) -> Tuple[Optional[str], Optional[Dict[str, Any]], float, Any]:
-        res, err, dt = await self.call(self.cfg.method_quantum, {"circuit": circuit, "shots": shots})
+    async def enqueue_quantum(
+        self, circuit: Dict[str, Any], shots: int
+    ) -> Tuple[Optional[str], Optional[Dict[str, Any]], float, Any]:
+        res, err, dt = await self.call(
+            self.cfg.method_quantum, {"circuit": circuit, "shots": shots}
+        )
         tid = extract_task_id(res, None)
         if tid is None and isinstance(res, dict):
             tid = extract_task_id(res.get("receipt") or res.get("job") or {}, None)
         return tid, err, dt, res
 
-    async def get_result(self, task_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], float]:
-        res, err, dt = await self.call(self.cfg.method_result, {self.cfg.result_param_name: task_id})
+    async def get_result(
+        self, task_id: str
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], float]:
+        res, err, dt = await self.call(
+            self.cfg.method_result, {self.cfg.result_param_name: task_id}
+        )
         return (res if isinstance(res, dict) else None), err, dt
 
-    async def list_providers(self) -> Tuple[Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]], float]:
+    async def list_providers(
+        self,
+    ) -> Tuple[Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]], float]:
         res, err, dt = await self.call(self.cfg.method_list_providers, {})
         if isinstance(res, list):
             return res, err, dt
@@ -231,9 +292,15 @@ class RestClient:
         self.cfg = cfg
         self.http = http
 
-    async def enqueue_ai(self, model: str, prompt: str) -> Tuple[Optional[str], Optional[Dict[str, Any]], float, Any]:
+    async def enqueue_ai(
+        self, model: str, prompt: str
+    ) -> Tuple[Optional[str], Optional[Dict[str, Any]], float, Any]:
         t0 = time.perf_counter()
-        r = await self.http.post(f"{self.cfg.base}{self.cfg.post_ai}", json={"model": model, "prompt": prompt}, timeout=None)
+        r = await self.http.post(
+            f"{self.cfg.base}{self.cfg.post_ai}",
+            json={"model": model, "prompt": prompt},
+            timeout=None,
+        )
         dt = (time.perf_counter() - t0) * 1000.0
         if r.status_code != 200:
             return None, {"code": r.status_code, "message": r.text}, dt, None
@@ -241,9 +308,15 @@ class RestClient:
         tid = extract_task_id(jd, self.cfg.id_path)
         return tid, None, dt, jd
 
-    async def enqueue_quantum(self, circuit: Dict[str, Any], shots: int) -> Tuple[Optional[str], Optional[Dict[str, Any]], float, Any]:
+    async def enqueue_quantum(
+        self, circuit: Dict[str, Any], shots: int
+    ) -> Tuple[Optional[str], Optional[Dict[str, Any]], float, Any]:
         t0 = time.perf_counter()
-        r = await self.http.post(f"{self.cfg.base}{self.cfg.post_quantum}", json={"circuit": circuit, "shots": shots}, timeout=None)
+        r = await self.http.post(
+            f"{self.cfg.base}{self.cfg.post_quantum}",
+            json={"circuit": circuit, "shots": shots},
+            timeout=None,
+        )
         dt = (time.perf_counter() - t0) * 1000.0
         if r.status_code != 200:
             return None, {"code": r.status_code, "message": r.text}, dt, None
@@ -251,7 +324,9 @@ class RestClient:
         tid = extract_task_id(jd, self.cfg.id_path)
         return tid, None, dt, jd
 
-    async def get_result(self, task_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], float]:
+    async def get_result(
+        self, task_id: str
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], float]:
         url = f"{self.cfg.base}{self.cfg.get_result}".replace("{task_id}", task_id)
         t0 = time.perf_counter()
         r = await self.http.get(url, timeout=None)
@@ -263,7 +338,9 @@ class RestClient:
             return jd, None, dt
         return None, {"code": 500, "message": "invalid JSON result"}, dt
 
-    async def list_providers(self) -> Tuple[Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]], float]:
+    async def list_providers(
+        self,
+    ) -> Tuple[Optional[List[Dict[str, Any]]], Optional[Dict[str, Any]], float]:
         url = f"{self.cfg.base}{self.cfg.get_providers}"
         t0 = time.perf_counter()
         r = await self.http.get(url, timeout=None)
@@ -280,6 +357,7 @@ class RestClient:
 # Load state & workload
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class EnqueueRecord:
     task_id: Optional[str]
@@ -291,7 +369,28 @@ class EnqueueRecord:
 class SoakState:
     def __init__(self) -> None:
         self.enqueue_hist = Hist()
-        self.complete_hist = Hist(bounds_ms=[50,100,150,200,300,400,600,800,1000,1500,2000,3000,5000,8000,12000,20000,30000,60000])
+        self.complete_hist = Hist(
+            bounds_ms=[
+                50,
+                100,
+                150,
+                200,
+                300,
+                400,
+                600,
+                800,
+                1000,
+                1500,
+                2000,
+                3000,
+                5000,
+                8000,
+                12000,
+                20000,
+                30000,
+                60000,
+            ]
+        )
         self.enqueue_ok = 0
         self.enqueue_err = 0
         self.completed_ok = 0
@@ -307,6 +406,7 @@ class SoakState:
 # Work generation
 # ---------------------------------------------------------------------------
 
+
 def make_ai_payload(rng: LCG, min_len: int, max_len: int) -> Tuple[str, str]:
     model = rng.choice(["tiny-demo", "echo", "embed-mini", "classify"])
     n = min_len + (rng.rand_u32() % max(1, (max_len - min_len + 1)))
@@ -314,7 +414,9 @@ def make_ai_payload(rng: LCG, min_len: int, max_len: int) -> Tuple[str, str]:
     return model, prompt
 
 
-def make_quantum_payload(rng: LCG, depth_min: int, depth_max: int, width_min: int, width_max: int) -> Tuple[Dict[str, Any], int]:
+def make_quantum_payload(
+    rng: LCG, depth_min: int, depth_max: int, width_min: int, width_max: int
+) -> Tuple[Dict[str, Any], int]:
     depth = depth_min + (rng.rand_u32() % max(1, (depth_max - depth_min + 1)))
     width = width_min + (rng.rand_u32() % max(1, (width_max - width_min + 1)))
     shots = 128 + (rng.rand_u32() % 256)
@@ -322,7 +424,10 @@ def make_quantum_payload(rng: LCG, depth_min: int, depth_max: int, width_min: in
         "name": "demo_chain_of_h",
         "depth": int(depth),
         "width": int(width),
-        "ops": [{"op": "h", "q": int(i % max(1, width))} for i in range(depth * max(1, width // 4 or 1))]
+        "ops": [
+            {"op": "h", "q": int(i % max(1, width))}
+            for i in range(depth * max(1, width // 4 or 1))
+        ],
     }
     return circuit, int(shots)
 
@@ -374,6 +479,7 @@ async def wait_for_result(
 # Runner
 # ---------------------------------------------------------------------------
 
+
 async def run_soak(
     *,
     rpc: Optional[RpcClient],
@@ -419,7 +525,9 @@ async def run_soak(
                     else:
                         tid, err, dt, _ = await rest.enqueue_ai(model, prompt)  # type: ignore
                 else:
-                    circuit, shots = make_quantum_payload(rng, q_depth_min, q_depth_max, q_width_min, q_width_max)
+                    circuit, shots = make_quantum_payload(
+                        rng, q_depth_min, q_depth_max, q_width_min, q_width_max
+                    )
                     if use_backend == "rpc":
                         tid, err, dt, _ = await rpc.enqueue_quantum(circuit, shots)  # type: ignore
                     else:
@@ -430,12 +538,26 @@ async def run_soak(
                 if err is None and tid:
                     state.enqueue_ok += 1
                     if poll_results:
-                        rec = EnqueueRecord(task_id=tid, kind=kind, t_enqueue_ms=dt, t_submit=time.perf_counter())
+                        rec = EnqueueRecord(
+                            task_id=tid,
+                            kind=kind,
+                            t_enqueue_ms=dt,
+                            t_submit=time.perf_counter(),
+                        )
                         state.inflight[tid] = rec
+
                         async def waiter(task_id: str) -> None:
-                            get_fn = (rpc.get_result if use_backend == "rpc" else rest.get_result)  # type: ignore
-                            await wait_for_result(get_fn, task_id, state, rec.t_submit, poll_every_s, result_timeout_s)
+                            get_fn = rpc.get_result if use_backend == "rpc" else rest.get_result  # type: ignore
+                            await wait_for_result(
+                                get_fn,
+                                task_id,
+                                state,
+                                rec.t_submit,
+                                poll_every_s,
+                                result_timeout_s,
+                            )
                             state.inflight.pop(task_id, None)
+
                         awaiter = asyncio.create_task(waiter(tid))
                         inflight_tasks.add(awaiter)
                         awaiter.add_done_callback(inflight_tasks.discard)
@@ -456,7 +578,11 @@ async def run_soak(
             now = time.perf_counter()
 
             # Emit work
-            while next_emit <= now and now < deadline and (len(inflight_tasks) < max_inflight):
+            while (
+                next_emit <= now
+                and now < deadline
+                and (len(inflight_tasks) < max_inflight)
+            ):
                 state.emitted += 1
                 kind = "ai" if (rng.rand_float() < ai_ratio) else "quantum"
                 task = asyncio.create_task(do_enqueue(kind))
@@ -474,7 +600,12 @@ async def run_soak(
                     else:
                         provs = None
                     if isinstance(provs, list):
-                        active = [p for p in provs if str(p.get("status", "")).lower() in {"active", "online", "ready"}]
+                        active = [
+                            p
+                            for p in provs
+                            if str(p.get("status", "")).lower()
+                            in {"active", "online", "ready"}
+                        ]
                         state.last_provider_snapshot = {
                             "total": len(provs),
                             "active": len(active),
@@ -546,48 +677,173 @@ async def run_soak(
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Enqueue AI/Quantum jobs against AICF; monitor completion and basic SLAs.")
+    ap = argparse.ArgumentParser(
+        description="Enqueue AI/Quantum jobs against AICF; monitor completion and basic SLAs."
+    )
     g_backend = ap.add_mutually_exclusive_group(required=True)
-    g_backend.add_argument("--rpc-url", help="JSON-RPC endpoint (enqueues via RPC methods)")
+    g_backend.add_argument(
+        "--rpc-url", help="JSON-RPC endpoint (enqueues via RPC methods)"
+    )
     g_backend.add_argument("--rest-base", help="REST base URL for helper endpoints")
 
     # RPC method names
-    ap.add_argument("--rpc-method-ai", default="cap.enqueueAI", help="RPC method for AI enqueue (default: cap.enqueueAI)")
-    ap.add_argument("--rpc-method-quantum", default="cap.enqueueQuantum", help="RPC method for Quantum enqueue (default: cap.enqueueQuantum)")
-    ap.add_argument("--rpc-method-result", default="cap.getResult", help="RPC method to fetch a result (default: cap.getResult)")
-    ap.add_argument("--rpc-method-list-providers", default="aicf.listProviders", help="RPC method to list providers (default: aicf.listProviders)")
-    ap.add_argument("--rpc-result-param", default="task_id", help="Param name for result lookup (default: task_id)")
+    ap.add_argument(
+        "--rpc-method-ai",
+        default="cap.enqueueAI",
+        help="RPC method for AI enqueue (default: cap.enqueueAI)",
+    )
+    ap.add_argument(
+        "--rpc-method-quantum",
+        default="cap.enqueueQuantum",
+        help="RPC method for Quantum enqueue (default: cap.enqueueQuantum)",
+    )
+    ap.add_argument(
+        "--rpc-method-result",
+        default="cap.getResult",
+        help="RPC method to fetch a result (default: cap.getResult)",
+    )
+    ap.add_argument(
+        "--rpc-method-list-providers",
+        default="aicf.listProviders",
+        help="RPC method to list providers (default: aicf.listProviders)",
+    )
+    ap.add_argument(
+        "--rpc-result-param",
+        default="task_id",
+        help="Param name for result lookup (default: task_id)",
+    )
 
     # REST paths
-    ap.add_argument("--rest-post-ai", default="/cap/enqueue/ai", help="REST path for AI enqueue (default: /cap/enqueue/ai)")
-    ap.add_argument("--rest-post-quantum", default="/cap/enqueue/quantum", help="REST path for Quantum enqueue (default: /cap/enqueue/quantum)")
-    ap.add_argument("--rest-get-result", default="/cap/result/{task_id}", help="REST path for result lookup (default: /cap/result/{task_id})")
-    ap.add_argument("--rest-get-providers", default="/aicf/providers", help="REST path to list providers (default: /aicf/providers)")
-    ap.add_argument("--id-path", default=None, help="Dotted path to task id in REST enqueue response (fallback if no common field found)")
+    ap.add_argument(
+        "--rest-post-ai",
+        default="/cap/enqueue/ai",
+        help="REST path for AI enqueue (default: /cap/enqueue/ai)",
+    )
+    ap.add_argument(
+        "--rest-post-quantum",
+        default="/cap/enqueue/quantum",
+        help="REST path for Quantum enqueue (default: /cap/enqueue/quantum)",
+    )
+    ap.add_argument(
+        "--rest-get-result",
+        default="/cap/result/{task_id}",
+        help="REST path for result lookup (default: /cap/result/{task_id})",
+    )
+    ap.add_argument(
+        "--rest-get-providers",
+        default="/aicf/providers",
+        help="REST path to list providers (default: /aicf/providers)",
+    )
+    ap.add_argument(
+        "--id-path",
+        default=None,
+        help="Dotted path to task id in REST enqueue response (fallback if no common field found)",
+    )
 
     # Load shape
-    ap.add_argument("--rps", type=float, default=10.0, help="Target enqueues per second (default: 10)")
-    ap.add_argument("--duration", type=float, default=60.0, help="Test duration seconds (default: 60)")
-    ap.add_argument("--max-inflight", type=int, default=512, help="Max concurrent waiter tasks (default: 512)")
+    ap.add_argument(
+        "--rps",
+        type=float,
+        default=10.0,
+        help="Target enqueues per second (default: 10)",
+    )
+    ap.add_argument(
+        "--duration",
+        type=float,
+        default=60.0,
+        help="Test duration seconds (default: 60)",
+    )
+    ap.add_argument(
+        "--max-inflight",
+        type=int,
+        default=512,
+        help="Max concurrent waiter tasks (default: 512)",
+    )
 
-    ap.add_argument("--poll-results", type=int, default=1, help="Whether to poll for results (1/0, default: 1)")
-    ap.add_argument("--poll-every", type=float, default=1.0, help="Polling cadence seconds (default: 1.0)")
-    ap.add_argument("--result-timeout", type=float, default=90.0, help="Timeout seconds per job result (default: 90)")
+    ap.add_argument(
+        "--poll-results",
+        type=int,
+        default=1,
+        help="Whether to poll for results (1/0, default: 1)",
+    )
+    ap.add_argument(
+        "--poll-every",
+        type=float,
+        default=1.0,
+        help="Polling cadence seconds (default: 1.0)",
+    )
+    ap.add_argument(
+        "--result-timeout",
+        type=float,
+        default=90.0,
+        help="Timeout seconds per job result (default: 90)",
+    )
 
     # Mix & payload knobs
-    ap.add_argument("--ai-ratio", type=float, default=0.7, help="Fraction of AI jobs (0..1); remainder Quantum (default: 0.7)")
-    ap.add_argument("--seed", type=int, default=20240913, help="Deterministic seed for prompts/circuits (default: 20240913)")
-    ap.add_argument("--ai-len-min", type=int, default=64, help="Min prompt length (chars) (default: 64)")
-    ap.add_argument("--ai-len-max", type=int, default=256, help="Max prompt length (chars) (default: 256)")
-    ap.add_argument("--q-depth-min", type=int, default=8, help="Quantum circuit min depth (default: 8)")
-    ap.add_argument("--q-depth-max", type=int, default=32, help="Quantum circuit max depth (default: 32)")
-    ap.add_argument("--q-width-min", type=int, default=4, help="Quantum circuit min width (default: 4)")
-    ap.add_argument("--q-width-max", type=int, default=12, help="Quantum circuit max width (default: 12)")
+    ap.add_argument(
+        "--ai-ratio",
+        type=float,
+        default=0.7,
+        help="Fraction of AI jobs (0..1); remainder Quantum (default: 0.7)",
+    )
+    ap.add_argument(
+        "--seed",
+        type=int,
+        default=20240913,
+        help="Deterministic seed for prompts/circuits (default: 20240913)",
+    )
+    ap.add_argument(
+        "--ai-len-min",
+        type=int,
+        default=64,
+        help="Min prompt length (chars) (default: 64)",
+    )
+    ap.add_argument(
+        "--ai-len-max",
+        type=int,
+        default=256,
+        help="Max prompt length (chars) (default: 256)",
+    )
+    ap.add_argument(
+        "--q-depth-min",
+        type=int,
+        default=8,
+        help="Quantum circuit min depth (default: 8)",
+    )
+    ap.add_argument(
+        "--q-depth-max",
+        type=int,
+        default=32,
+        help="Quantum circuit max depth (default: 32)",
+    )
+    ap.add_argument(
+        "--q-width-min",
+        type=int,
+        default=4,
+        help="Quantum circuit min width (default: 4)",
+    )
+    ap.add_argument(
+        "--q-width-max",
+        type=int,
+        default=12,
+        help="Quantum circuit max width (default: 12)",
+    )
 
     # Telemetry
-    ap.add_argument("--progress-every", type=float, default=5.0, help="Progress print cadence seconds (default: 5)")
-    ap.add_argument("--providers-every", type=float, default=15.0, help="Provider snapshot cadence seconds (default: 15)")
+    ap.add_argument(
+        "--progress-every",
+        type=float,
+        default=5.0,
+        help="Progress print cadence seconds (default: 5)",
+    )
+    ap.add_argument(
+        "--providers-every",
+        type=float,
+        default=15.0,
+        help="Provider snapshot cadence seconds (default: 15)",
+    )
 
     return ap.parse_args(argv)
 
@@ -607,7 +863,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     rpc_client: Optional[RpcClient] = None
     rest_client: Optional[RestClient] = None
-    dummy_http = httpx.AsyncClient()  # replaced in run_soak with a tuned client; we close it immediately
+    dummy_http = (
+        httpx.AsyncClient()
+    )  # replaced in run_soak with a tuned client; we close it immediately
     try:
         if args.rpc_url:
             rpc_client = RpcClient(

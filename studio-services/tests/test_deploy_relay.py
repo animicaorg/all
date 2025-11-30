@@ -6,7 +6,6 @@ from typing import Any, Optional
 
 import pytest
 
-
 # Notes:
 # - We monkeypatch the NodeRPC adapter used by the deploy service so no real
 #   network calls happen.
@@ -76,7 +75,12 @@ async def test_deploy_relay_sends_raw_tx(aclient, monkeypatch):
     except Exception as e:  # pragma: no cover - test environment mismatch
         pytest.skip(f"node_rpc adapter not importable: {e}")
 
-    monkeypatch.setattr(node_rpc, "NodeRPC", lambda *a, **kw: FakeNodeRPC(*a, _log=call_log, **kw), raising=True)
+    monkeypatch.setattr(
+        node_rpc,
+        "NodeRPC",
+        lambda *a, **kw: FakeNodeRPC(*a, _log=call_log, **kw),
+        raising=True,
+    )
 
     # Fire request (no receipt wait)
     payload = {
@@ -105,7 +109,12 @@ async def test_deploy_relay_waits_for_receipt(aclient, monkeypatch):
     except Exception as e:  # pragma: no cover
         pytest.skip(f"node_rpc adapter not importable: {e}")
 
-    monkeypatch.setattr(node_rpc, "NodeRPC", lambda *a, **kw: FakeNodeRPC(*a, _log=call_log, **kw), raising=True)
+    monkeypatch.setattr(
+        node_rpc,
+        "NodeRPC",
+        lambda *a, **kw: FakeNodeRPC(*a, _log=call_log, **kw),
+        raising=True,
+    )
 
     payload = {
         "tx": HEX_TX,

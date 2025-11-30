@@ -42,28 +42,37 @@ from typing import Any, Dict, List, Optional
 # ---- Optional faster event loop -------------------------------------------------------
 try:  # pragma: no cover - optional
     import uvloop  # type: ignore
+
     uvloop.install()
 except Exception:
     pass
+
 
 # ---- Logging --------------------------------------------------------------------------
 def _setup_logging(level: str = "INFO") -> None:
     try:
         # Prefer project logger if available
         from core.logging import setup_logging  # type: ignore
+
         setup_logging(level=level, fmt="text")
         return
     except Exception:
-        import logging, sys
+        import logging
+        import sys
+
         logging.basicConfig(
             level=getattr(logging, level.upper(), logging.INFO),
             stream=sys.stdout,
             format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
         )
 
+
 # ---- Config ---------------------------------------------------------------------------
 DEFAULT_HOME = Path(os.environ.get("ANIMICA_HOME", Path.home() / ".animica"))
-DEFAULT_DB_URI = os.environ.get("ANIMICA_DB", f"sqlite:///{DEFAULT_HOME / 'animica.db'}")
+DEFAULT_DB_URI = os.environ.get(
+    "ANIMICA_DB", f"sqlite:///{DEFAULT_HOME / 'animica.db'}"
+)
+
 
 @dataclass
 class ListenConfig:
@@ -75,6 +84,7 @@ class ListenConfig:
     enable_ws: bool
     nat: bool
     log_level: str
+
 
 def _load_default_listen_config(args: argparse.Namespace) -> ListenConfig:
     # Attempt to import richer config (optional)
@@ -108,8 +118,16 @@ def _load_default_listen_config(args: argparse.Namespace) -> ListenConfig:
             chain_id=int(args.chain_id or getattr(cfg, "chain_id", 1)),
             listen_addrs=list(args.listen or getattr(cfg, "listen_addrs", [])),
             seeds=seeds or list(getattr(cfg, "seeds", [])),
-            enable_quic=bool(args.enable_quic if args.enable_quic is not None else getattr(cfg, "enable_quic", False)),
-            enable_ws=bool(args.enable_ws if args.enable_ws is not None else getattr(cfg, "enable_ws", False)),
+            enable_quic=bool(
+                args.enable_quic
+                if args.enable_quic is not None
+                else getattr(cfg, "enable_quic", False)
+            ),
+            enable_ws=bool(
+                args.enable_ws
+                if args.enable_ws is not None
+                else getattr(cfg, "enable_ws", False)
+            ),
             nat=bool(args.nat if args.nat is not None else getattr(cfg, "nat", False)),
             log_level=args.log_level or getattr(cfg, "log_level", "INFO"),
         )
@@ -146,10 +164,12 @@ def _load_devnet_seeds() -> List[str]:
     except Exception:
         return []
 
+
 # ---- Minimal deps wiring --------------------------------------------------------------
 @dataclass
 class _Deps:
     """Minimal dependency bundle passed to the P2P service."""
+
     db_uri: str
     chain_id: int
     # Optional handles; the P2P service may only need a subset
@@ -158,17 +178,19 @@ class _Deps:
     tx_index: Any = None
     params: Any = None
 
+
 def _build_deps(db_uri: str, chain_id: int) -> _Deps:
     """
     Try to instantiate the project's DB views; degrade gracefully if modules are missing.
     """
     deps = _Deps(db_uri=db_uri, chain_id=chain_id)
     try:
+        from core.db.block_db import BlockDB  # type: ignore
         from core.db.sqlite import SQLiteKV  # type: ignore
         from core.db.state_db import StateDB  # type: ignore
-        from core.db.block_db import BlockDB  # type: ignore
         from core.db.tx_index import TxIndex  # type: ignore
         from core.types.params import ChainParams  # type: ignore
+
         # Open common KV and layer views
         kv = SQLiteKV(db_uri)
         deps.state_db = StateDB(kv)
@@ -177,7 +199,10 @@ def _build_deps(db_uri: str, chain_id: int) -> _Deps:
         # Load chain params from genesis/meta if possible
         try:
             from core.genesis.loader import load_genesis  # type: ignore
-            params, _gen_hdr = load_genesis(None, kv)  # tolerant: genesis path optional if DB already init
+
+            params, _gen_hdr = load_genesis(
+                None, kv
+            )  # tolerant: genesis path optional if DB already init
             deps.params = params if isinstance(params, ChainParams) else None
         except Exception:
             deps.params = None
@@ -187,6 +212,7 @@ def _build_deps(db_uri: str, chain_id: int) -> _Deps:
     # If a richer P2P deps builder exists, prefer it.
     try:
         from p2p.deps import build_deps as _p2p_build  # type: ignore
+
         maybe = _p2p_build(db_uri=db_uri, chain_id=chain_id)
         # If the builder returns something truthy, wrap/replace
         if maybe:
@@ -197,6 +223,7 @@ def _build_deps(db_uri: str, chain_id: int) -> _Deps:
     except Exception:
         pass
     return deps
+
 
 # ---- Minimal TCP shim (fallback if full P2P service unavailable) ---------------------
 
@@ -209,11 +236,11 @@ class _MinimalTcpNode:
         self._running = False
 
     async def start(self) -> None:
-        from p2p.transport.tcp import TcpTransport  # type: ignore
+        import logging
+
         from p2p.transport.base import ListenConfig
         from p2p.transport.multiaddr import parse_multiaddr
-
-        import logging
+        from p2p.transport.tcp import TcpTransport  # type: ignore
 
         self.transport = TcpTransport()
         for ma in self.listen_addrs:
@@ -245,7 +272,8 @@ class _MinimalTcpNode:
                     log.warning("minimal TCP accept error: %s", e)
                 break
             log.info(
-                "Accepted TCP peer", extra={"remote": getattr(conn, "remote_addr", None)}
+                "Accepted TCP peer",
+                extra={"remote": getattr(conn, "remote_addr", None)},
             )
             with contextlib.suppress(Exception):
                 await conn.close()
@@ -260,12 +288,14 @@ class _MinimalTcpNode:
             with contextlib.suppress(Exception):
                 await self.transport.close()  # type: ignore[attr-defined]
 
+
 # ---- P2P Service bootstrap ------------------------------------------------------------
 class _ServiceBridge:
     """
     Tiny adapter that normalizes service construction across versions:
     prefers p2p.node.service.P2PService(config=..., deps=...), but supports fallbacks.
     """
+
     def __init__(self, cfg: ListenConfig, deps: _Deps):
         self.cfg = cfg
         self.deps = deps
@@ -275,6 +305,7 @@ class _ServiceBridge:
         # Preferred API
         try:
             from p2p.node.service import P2PService  # type: ignore
+
             self.impl = P2PService(
                 listen_addrs=self.cfg.listen_addrs,
                 seeds=self.cfg.seeds,
@@ -294,7 +325,10 @@ class _ServiceBridge:
         except Exception as e:
             # Fallback to a minimal TCP-only server if full service unavailable
             import logging
-            logging.getLogger("p2p.cli.listen").warning("Falling back to minimal TCP listener: %s", e)
+
+            logging.getLogger("p2p.cli.listen").warning(
+                "Falling back to minimal TCP listener: %s", e
+            )
             self.impl = _MinimalTcpNode(self.cfg.listen_addrs)
             await self.impl.start()
 
@@ -303,21 +337,43 @@ class _ServiceBridge:
             if self.impl and hasattr(self.impl, "stop"):
                 await self.impl.stop()
 
+
 # ---- CLI -----------------------------------------------------------------------------
 def _build_argparser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="animica-p2p listen", add_help=True)
-    p.add_argument("--db", default=DEFAULT_DB_URI, help=f"DB URI (default: {DEFAULT_DB_URI})")
+    p.add_argument(
+        "--db", default=DEFAULT_DB_URI, help=f"DB URI (default: {DEFAULT_DB_URI})"
+    )
     p.add_argument("--chain-id", type=int, default=1, help="Chain ID (default: 1)")
     p.add_argument(
-        "--listen", action="append", default=[],
+        "--listen",
+        action="append",
+        default=[],
         help="Listen multiaddr (repeatable), e.g. /ip4/0.0.0.0/tcp/42069",
     )
-    p.add_argument("--seed", action="append", default=[], help="Seed multiaddr (repeatable)")
-    p.add_argument("--enable-quic", action="store_true", help="Enable QUIC transport (if available)")
-    p.add_argument("--enable-ws", action="store_true", help="Enable WebSocket transport (if available)")
-    p.add_argument("--nat", action="store_true", help="Attempt NAT traversal (UPnP/NAT-PMP) if available")
-    p.add_argument("--log-level", default="INFO", help="Logging level (DEBUG, INFO, WARN, ERROR)")
+    p.add_argument(
+        "--seed", action="append", default=[], help="Seed multiaddr (repeatable)"
+    )
+    p.add_argument(
+        "--enable-quic",
+        action="store_true",
+        help="Enable QUIC transport (if available)",
+    )
+    p.add_argument(
+        "--enable-ws",
+        action="store_true",
+        help="Enable WebSocket transport (if available)",
+    )
+    p.add_argument(
+        "--nat",
+        action="store_true",
+        help="Attempt NAT traversal (UPnP/NAT-PMP) if available",
+    )
+    p.add_argument(
+        "--log-level", default="INFO", help="Logging level (DEBUG, INFO, WARN, ERROR)"
+    )
     return p
+
 
 async def _amain(args: argparse.Namespace) -> int:
     cfg = _load_default_listen_config(args)
@@ -359,6 +415,7 @@ async def _amain(args: argparse.Namespace) -> int:
     await bridge.stop()
     return 0
 
+
 def main(argv: Optional[List[str]] = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
@@ -367,6 +424,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _asyncio.run(_amain(args))
     except KeyboardInterrupt:
         return 130
+
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())

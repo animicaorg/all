@@ -100,7 +100,7 @@ def p_fail_approx(n: int, m: int, s: int) -> float:
     if m >= n:
         return 0.0
     good = (n - m) / n
-    return max(0.0, min(1.0, good ** s))
+    return max(0.0, min(1.0, good**s))
 
 
 def solve_samples_for_target(
@@ -129,7 +129,7 @@ def solve_samples_for_target(
         if good <= 0.0:
             return 1
         if target <= 0.0:
-            return (max_s or n)
+            return max_s or n
         if target >= 1.0:
             return 0
         s = math.log(target) / math.log(good)
@@ -267,9 +267,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.explain:
         print()
         print("Notes:")
-        print("- p_fail is the probability that sampling DOES NOT detect unavailability.")
-        print("- For RS(n,k), any m >= n-k+1 makes the blob unrecoverable; we default to this minimal case.")
-        print("- 'hyper' uses exact hypergeometric (no replacement); 'approx' assumes independent draws.")
+        print(
+            "- p_fail is the probability that sampling DOES NOT detect unavailability."
+        )
+        print(
+            "- For RS(n,k), any m >= n-k+1 makes the blob unrecoverable; we default to this minimal case."
+        )
+        print(
+            "- 'hyper' uses exact hypergeometric (no replacement); 'approx' assumes independent draws."
+        )
     return 0
 
 

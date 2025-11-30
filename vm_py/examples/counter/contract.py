@@ -17,7 +17,7 @@ Public functions:
 
 from typing import Final
 
-from stdlib import storage, events, abi
+from stdlib import abi, events, storage
 
 # Storage key for the counter value
 K_COUNTER: Final[bytes] = b"counter:value"

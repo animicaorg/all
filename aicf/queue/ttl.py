@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 aicf.queue.ttl
 ==============
@@ -29,21 +30,20 @@ Design goals
 - Soft integration with Prometheus metrics (no dependency required).
 """
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Protocol, Optional, Dict, Any, Iterable, Tuple
-import logging
+from typing import Any, Dict, Iterable, Optional, Protocol, Tuple
 
 log = logging.getLogger(__name__)
 
 # ────────────────────────────── Optional metrics ──────────────────────────────
 try:
-    from aicf.metrics import (  # type: ignore
-        COUNTER_TTL_EXPIRED as _C_TTL_EXPIRED,
-        COUNTER_TTL_PURGED as _C_TTL_PURGED,
-        GAUGE_TTL_LAST_SWEEP_TS as _G_TTL_LAST_SWEEP_TS,
-        HISTOGRAM_TTL_SWEEP_SECONDS as _H_TTL_SWEEP_SEC,
-    )
+    from aicf.metrics import \
+        COUNTER_TTL_EXPIRED as _C_TTL_EXPIRED  # type: ignore
+    from aicf.metrics import COUNTER_TTL_PURGED as _C_TTL_PURGED
+    from aicf.metrics import GAUGE_TTL_LAST_SWEEP_TS as _G_TTL_LAST_SWEEP_TS
+    from aicf.metrics import HISTOGRAM_TTL_SWEEP_SECONDS as _H_TTL_SWEEP_SEC
 except Exception:  # pragma: no cover - metrics are optional
 
     class _Noop:
@@ -114,9 +114,12 @@ class _TtlStorage(Protocol):
             Optional; only used if provided together with find_active_lease.
     """
 
-    def iter_expirable(self, cutoffs: Dict[str, datetime]) -> Iterable[Dict[str, Any]]: ...
+    def iter_expirable(
+        self, cutoffs: Dict[str, datetime]
+    ) -> Iterable[Dict[str, Any]]: ...
     def mark_expired(self, job_id: str, reason: str, now: datetime) -> None: ...
     def purge_job(self, job_id: str, reason: str, now: datetime) -> None: ...
+
     # Optional extras:
     def find_active_lease(self, job_id: str) -> Optional[str]: ...  # type: ignore[override]
     def release_lease(self, lease_id: str, now: datetime) -> None: ...  # type: ignore[override]
@@ -149,6 +152,7 @@ class TTLPolicy:
     - All durations are applied relative to their respective reference times.
     - If multiple rules apply, the strongest action wins (PURGE > EXPIRE > KEEP).
     """
+
     queued_ttl: timedelta = timedelta(minutes=30)
     leased_grace: timedelta = timedelta(minutes=10)
     completed_retention: timedelta = timedelta(hours=1)
@@ -167,7 +171,9 @@ class TTLGc:
     *candidates* based on coarse cutoffs, then validates each row precisely.
     """
 
-    def __init__(self, storage: _TtlStorage, policy: Optional[TTLPolicy] = None) -> None:
+    def __init__(
+        self, storage: _TtlStorage, policy: Optional[TTLPolicy] = None
+    ) -> None:
         self.storage = storage
         self.policy = policy or TTLPolicy()
 
@@ -217,7 +223,9 @@ class TTLGc:
                         except Exception:
                             pass
 
-                    self.storage.mark_expired(job_id, reason="ttl.expired", now=start_ts)
+                    self.storage.mark_expired(
+                        job_id, reason="ttl.expired", now=start_ts
+                    )
                     expired += 1
                     _C_TTL_EXPIRED.inc(1)  # type: ignore
                     log.info("ttl: expired job_id=%s", job_id)
@@ -255,7 +263,12 @@ class TTLGc:
 
         # Absolute age cap (wins over other rules)
         if enq and (now - enq) > p.max_total_age:
-            if status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.TOMBSTONED, JobStatus.EXPIRED):
+            if status in (
+                JobStatus.COMPLETED,
+                JobStatus.FAILED,
+                JobStatus.TOMBSTONED,
+                JobStatus.EXPIRED,
+            ):
                 return "PURGE"
             return "EXPIRE"
 

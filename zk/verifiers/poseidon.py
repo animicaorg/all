@@ -59,10 +59,10 @@ License: MIT
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, List, Sequence, Optional, Any, Iterable, Tuple, Union
 import json
 import os
+from dataclasses import dataclass
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 # Use the BN254 scalar field modulus via pairing module (keeps a single source of truth)
 try:
@@ -70,7 +70,9 @@ try:
 except Exception:  # pragma: no cover
     # Fallback literal (BN254 group order r) to avoid import cycles during bootstraps.
     # Keeping this here guards against early import ordering; the canonical source is pairing_bn254.
-    curve_order = lambda: int(21888242871839275222246405745257275088548364400416034343698204186575808495617)  # noqa: E731
+    curve_order = lambda: int(
+        21888242871839275222246405745257275088548364400416034343698204186575808495617
+    )  # noqa: E731
 
 
 # ---------------------------
@@ -79,17 +81,22 @@ except Exception:  # pragma: no cover
 
 _MOD = int(curve_order())
 
+
 def _fadd(a: int, b: int) -> int:
     return (int(a) + int(b)) % _MOD
+
 
 def _fsub(a: int, b: int) -> int:
     return (int(a) - int(b)) % _MOD
 
+
 def _fmul(a: int, b: int) -> int:
     return (int(a) * int(b)) % _MOD
 
+
 def _fexp(a: int, e: int) -> int:
     return pow(int(a) % _MOD, int(e), _MOD)
+
 
 def _fpow_alpha(x: int, alpha: int) -> int:
     # Fast path for alpha=5 (x^5 = x * x^2 * x^2)
@@ -104,27 +111,33 @@ def _fpow_alpha(x: int, alpha: int) -> int:
 # Parameters & registry
 # ---------------------------
 
+
 @dataclass(frozen=True)
 class PoseidonParams:
-    t: int                 # state width
-    R_F: int               # number of full rounds
-    R_P: int               # number of partial rounds
-    alpha: int             # S-box exponent (odd >= 3, commonly 5)
-    mds: List[List[int]]   # MDS matrix, shape t x t
-    rc: List[List[int]]    # round constants, shape (R_F + R_P) x t
+    t: int  # state width
+    R_F: int  # number of full rounds
+    R_P: int  # number of partial rounds
+    alpha: int  # S-box exponent (odd >= 3, commonly 5)
+    mds: List[List[int]]  # MDS matrix, shape t x t
+    rc: List[List[int]]  # round constants, shape (R_F + R_P) x t
 
     def validate(self) -> None:
         if self.t < 2:
             raise ValueError("t must be >= 2")
         if self.R_F % 2 != 0:
-            raise ValueError("R_F must be even (split half-before/after partial rounds)")
+            raise ValueError(
+                "R_F must be even (split half-before/after partial rounds)"
+            )
         if self.alpha < 3 or self.alpha % 2 == 0:
             raise ValueError("alpha must be an odd integer >= 3")
         if len(self.mds) != self.t or any(len(row) != self.t for row in self.mds):
             raise ValueError("mds must be t x t")
         expected_rounds = self.R_F + self.R_P
-        if len(self.rc) != expected_rounds or any(len(row) != self.t for row in self.rc):
+        if len(self.rc) != expected_rounds or any(
+            len(row) != self.t for row in self.rc
+        ):
             raise ValueError(f"rc must be (R_F+R_P) x t = {expected_rounds} x {self.t}")
+
 
 # Global registry keyed by a short name (e.g., "bn254_t3")
 _PARAMS_REGISTRY: Dict[str, PoseidonParams] = {}
@@ -176,7 +189,7 @@ def load_params_json(path: str, name: Optional[str] = None) -> PoseidonParams:
     alpha = int(raw.get("alpha", 5))
 
     mds = [[_to_int(v) for v in row] for row in raw["mds"]]
-    rc  = [[_to_int(v) for v in row] for row in raw["rc"]]
+    rc = [[_to_int(v) for v in row] for row in raw["rc"]]
 
     params = PoseidonParams(t=t, R_F=R_F, R_P=R_P, alpha=alpha, mds=mds, rc=rc)
     params.validate()
@@ -189,6 +202,7 @@ def load_params_json(path: str, name: Optional[str] = None) -> PoseidonParams:
 # ---------------------------
 # Permutation
 # ---------------------------
+
 
 def _apply_mds(state: List[int], mds: List[List[int]]) -> List[int]:
     t = len(state)
@@ -215,7 +229,12 @@ def poseidon_permute(state: Sequence[int], params: PoseidonParams) -> List[int]:
     Returns a new list with the permuted state.
     """
     t, R_F, R_P, alpha, mds, rc = (
-        params.t, params.R_F, params.R_P, params.alpha, params.mds, params.rc
+        params.t,
+        params.R_F,
+        params.R_P,
+        params.alpha,
+        params.mds,
+        params.rc,
     )
     if len(state) != t:
         raise ValueError(f"state length {len(state)} != t={t}")
@@ -261,6 +280,7 @@ def poseidon_permute(state: Sequence[int], params: PoseidonParams) -> List[int]:
 # ---------------------------
 # Sponge / Hash interface
 # ---------------------------
+
 
 def poseidon_hash(
     inputs: Sequence[int],
@@ -329,8 +349,10 @@ def poseidon_hash_many(
 # without external files. Replace it in real deployments by calling
 # `load_params_json("path/to/your/circuit_params.json", name="bn254_t3")`.
 
+
 def _derive_placeholder_params(name: str = "bn254_t3") -> None:
     import hashlib
+
     t = 3
     R_F = 8
     R_P = 57
@@ -351,12 +373,17 @@ def _derive_placeholder_params(name: str = "bn254_t3") -> None:
     for r in range(total_rounds):
         row = []
         for i in range(t):
-            h = hashlib.sha3_256(f"poseidon/placeholder/bn254/t={t}/r={r}/i={i}".encode()).digest()
+            h = hashlib.sha3_256(
+                f"poseidon/placeholder/bn254/t={t}/r={r}/i={i}".encode()
+            ).digest()
             v = int.from_bytes(h, "big") % _MOD
             row.append(v)
         rc.append(row)
 
-    register_params(name, PoseidonParams(t=t, R_F=R_F, R_P=R_P, alpha=alpha, mds=mds, rc=rc))
+    register_params(
+        name, PoseidonParams(t=t, R_F=R_F, R_P=R_P, alpha=alpha, mds=mds, rc=rc)
+    )
+
 
 # Register the placeholder so local smoke tests work immediately.
 # Overwrite this by loading your *actual* circuit params at startup.
@@ -373,7 +400,9 @@ except Exception:  # pragma: no cover
 if __name__ == "__main__":  # pragma: no cover
     print("[poseidon] BN254 Fr modulus =", _MOD)
     p = get_params()  # placeholder unless you've loaded real params
-    print(f"[poseidon] params name='bn254_t3' t={p.t} R_F={p.R_F} R_P={p.R_P} alpha={p.alpha}")
+    print(
+        f"[poseidon] params name='bn254_t3' t={p.t} R_F={p.R_F} R_P={p.R_P} alpha={p.alpha}"
+    )
 
     # Determinism & basic properties smoke test
     x = [1, 2]

@@ -20,12 +20,23 @@ SCHEMA_PATH = REPO_ROOT / "contracts" / "schemas" / "manifest.schema.json"
 def _pick_example() -> Tuple[Path, Path]:
     """Choose a manifest+source pair that exists in this checkout."""
     candidates = [
-        (REPO_ROOT / "vm_py" / "examples" / "escrow" / "manifest.json",
-         REPO_ROOT / "vm_py" / "examples" / "escrow" / "contract.py"),
-        (REPO_ROOT / "tests" / "fixtures" / "contracts" / "counter" / "manifest.json",
-         REPO_ROOT / "tests" / "fixtures" / "contracts" / "counter" / "contract.py"),
-        (REPO_ROOT / "contracts" / "examples" / "token" / "manifest.json",
-         REPO_ROOT / "contracts" / "examples" / "token" / "contract.py"),
+        (
+            REPO_ROOT / "vm_py" / "examples" / "escrow" / "manifest.json",
+            REPO_ROOT / "vm_py" / "examples" / "escrow" / "contract.py",
+        ),
+        (
+            REPO_ROOT
+            / "tests"
+            / "fixtures"
+            / "contracts"
+            / "counter"
+            / "manifest.json",
+            REPO_ROOT / "tests" / "fixtures" / "contracts" / "counter" / "contract.py",
+        ),
+        (
+            REPO_ROOT / "contracts" / "examples" / "token" / "manifest.json",
+            REPO_ROOT / "contracts" / "examples" / "token" / "contract.py",
+        ),
     ]
     for manifest, source in candidates:
         if manifest.exists() and source.exists():
@@ -81,7 +92,11 @@ def test_build_manifest_from_source(tmp_path: Path) -> None:
 
     assert manifest_path.exists() and ir_path.exists()
     assert pkg_dir.exists()
-    assert isinstance(code_hash, str) and code_hash.startswith("0x") and len(code_hash) == 66
+    assert (
+        isinstance(code_hash, str)
+        and code_hash.startswith("0x")
+        and len(code_hash) == 66
+    )
 
     # Recompute hash from IR bytes
     ir_bytes = ir_path.read_bytes()

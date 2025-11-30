@@ -39,7 +39,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-
 # --------------------------- paths & constants -------------------------------
 
 ROOT = Path(__file__).resolve().parents[3]  # repo root (…/contracts/examples/token/…)
@@ -50,6 +49,7 @@ BUILD_DIR = ROOT / "contracts" / "build"
 
 
 # --------------------------- small utils ------------------------------------
+
 
 def eprint(*args: Any, **kw: Any) -> None:
     print(*args, file=sys.stderr, **kw)
@@ -102,7 +102,9 @@ def find_built_package() -> Optional[Path]:
     if not BUILD_DIR.is_dir():
         return None
     # Prefer a deterministic file name if it exists
-    candidates = sorted(BUILD_DIR.glob("token.pkg.json")) + sorted(BUILD_DIR.glob("*.pkg.json"))
+    candidates = sorted(BUILD_DIR.glob("token.pkg.json")) + sorted(
+        BUILD_DIR.glob("*.pkg.json")
+    )
     return candidates[0] if candidates else None
 
 
@@ -148,6 +150,7 @@ def build_package_if_needed() -> Path:
 
 # --------------------------- SDK adapters (tolerant) -------------------------
 
+
 @dataclass
 class SdkCtx:
     rpc: Any
@@ -161,15 +164,19 @@ def _sdk_http_client(rpc_url: str) -> Any:
     """
     try:
         from omni_sdk.rpc.http import HttpClient  # type: ignore
+
         return HttpClient(rpc_url)
     except Exception:
         pass
     # Fallback: sometimes exposed as omni_sdk.rpc.http.Client
     try:
         from omni_sdk.rpc.http import Client  # type: ignore
+
         return Client(rpc_url)
     except Exception:
-        fail("omni_sdk.rpc.http client not found; install the Python SDK (see sdk/python/README.md)")
+        fail(
+            "omni_sdk.rpc.http client not found; install the Python SDK (see sdk/python/README.md)"
+        )
 
 
 def _sdk_signer_from_mnemonic(mnemonic: str, alg: str = "dilithium3") -> Any:
@@ -179,6 +186,7 @@ def _sdk_signer_from_mnemonic(mnemonic: str, alg: str = "dilithium3") -> Any:
     # Primary: omni_sdk.wallet.signer.make_signer(alg="dilithium3", mnemonic="…")
     try:
         from omni_sdk.wallet.signer import make_signer  # type: ignore
+
         return make_signer(alg=alg, mnemonic=mnemonic)
     except Exception:
         pass
@@ -186,6 +194,7 @@ def _sdk_signer_from_mnemonic(mnemonic: str, alg: str = "dilithium3") -> Any:
     # Alt: omni_sdk.wallet.signer.Signer.from_mnemonic(…)
     try:
         from omni_sdk.wallet.signer import Signer  # type: ignore
+
         if hasattr(Signer, "from_mnemonic"):
             return Signer.from_mnemonic(mnemonic=mnemonic, alg=alg)
     except Exception:
@@ -194,6 +203,7 @@ def _sdk_signer_from_mnemonic(mnemonic: str, alg: str = "dilithium3") -> Any:
     # Alt: derive seed then pass to signer
     try:
         from omni_sdk.wallet import mnemonic as mmod  # type: ignore
+
         seed = None
         for fn in ("to_seed", "mnemonic_to_seed", "derive_seed"):
             if hasattr(mmod, fn):
@@ -201,6 +211,7 @@ def _sdk_signer_from_mnemonic(mnemonic: str, alg: str = "dilithium3") -> Any:
                 break
         if seed is not None:
             from omni_sdk.wallet.signer import make_signer  # type: ignore
+
             return make_signer(alg=alg, seed=seed)
     except Exception:
         pass
@@ -226,6 +237,7 @@ def _sdk_address_of(signer: Any) -> str:
     if pub is not None:
         try:
             from omni_sdk.address import to_address  # type: ignore
+
             return to_address(pub)
         except Exception:
             pass
@@ -245,7 +257,9 @@ def _sdk_deploy_package(ctx: SdkCtx, package_path: Path) -> str:
     # Try dep.deploy_package(client, signer, package_path, chain_id=?)
     try:
         if hasattr(dep, "deploy_package"):
-            res = dep.deploy_package(ctx.rpc, ctx.signer, str(package_path), chain_id=ctx.chain_id)
+            res = dep.deploy_package(
+                ctx.rpc, ctx.signer, str(package_path), chain_id=ctx.chain_id
+            )
             # Common returns: {"address": "anim1…", "txHash": "0x…"}
             if isinstance(res, dict) and "address" in res:
                 return str(res["address"])
@@ -261,7 +275,11 @@ def _sdk_deploy_package(ctx: SdkCtx, package_path: Path) -> str:
     # Try class-based
     try:
         if hasattr(dep, "Deployer"):
-            d = dep.Deployer(ctx.rpc, ctx.chain_id) if ctx.chain_id else dep.Deployer(ctx.rpc)
+            d = (
+                dep.Deployer(ctx.rpc, ctx.chain_id)
+                if ctx.chain_id
+                else dep.Deployer(ctx.rpc)
+            )
             if hasattr(d, "deploy"):
                 res = d.deploy(ctx.signer, str(package_path))
                 if isinstance(res, dict) and "address" in res:
@@ -280,17 +298,21 @@ def _sdk_contract_client(address: str, abi: Dict[str, Any], rpc: Any) -> Optiona
     """
     try:
         from omni_sdk.contracts.client import Contract  # type: ignore
+
         return Contract(rpc=rpc, address=address, abi=abi)
     except Exception:
         pass
     try:
         from omni_sdk.contracts.client import make_client  # type: ignore
+
         return make_client(rpc, address, abi)
     except Exception:
         return None
 
 
-def _sdk_send_tx_transfer(address: str, to_addr: bytes, amount: int, ctx: SdkCtx, abi: Dict[str, Any]) -> Dict[str, Any]:
+def _sdk_send_tx_transfer(
+    address: str, to_addr: bytes, amount: int, ctx: SdkCtx, abi: Dict[str, Any]
+) -> Dict[str, Any]:
     """
     Build and send a transfer(tx) to the deployed token using the SDK's
     tx/build & tx/send helpers or the contract client if available.
@@ -302,14 +324,21 @@ def _sdk_send_tx_transfer(address: str, to_addr: bytes, amount: int, ctx: SdkCtx
         for meth in ("write", "call_write", "send", "transfer"):
             if hasattr(client, meth):
                 try:
-                    res = getattr(client, meth)("transfer", [to_addr, amount], signer=ctx.signer, chain_id=ctx.chain_id)
+                    res = getattr(client, meth)(
+                        "transfer",
+                        [to_addr, amount],
+                        signer=ctx.signer,
+                        chain_id=ctx.chain_id,
+                    )
                     if isinstance(res, dict) and "txHash" in res:
                         return res
                     if isinstance(res, dict):
                         return res
                 except Exception as exc:
                     eprint(f"[warn] contract client {meth} failed: {exc}")
-        eprint("[warn] contract client present but no suitable write method found; falling back")
+        eprint(
+            "[warn] contract client present but no suitable write method found; falling back"
+        )
 
     # Manual path through tx.build/encode/send
     try:
@@ -317,7 +346,10 @@ def _sdk_send_tx_transfer(address: str, to_addr: bytes, amount: int, ctx: SdkCtx
         from omni_sdk.tx.encode import encode_sign_bytes  # type: ignore
         from omni_sdk.tx.send import send_and_wait  # type: ignore
     except Exception as exc:
-        fail("Required SDK tx helpers not found (build_contract_call/encode_sign_bytes/send_and_wait): " + str(exc))
+        fail(
+            "Required SDK tx helpers not found (build_contract_call/encode_sign_bytes/send_and_wait): "
+            + str(exc)
+        )
 
     # Encode the ABI call
     # Try to find the ABI item for "transfer"
@@ -348,16 +380,47 @@ def _sdk_send_tx_transfer(address: str, to_addr: bytes, amount: int, ctx: SdkCtx
 
 # --------------------------- CLI & main logic --------------------------------
 
+
 def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Deploy example token via SDK and run checks")
-    ap.add_argument("--rpc", default=os.getenv("RPC_URL", "http://127.0.0.1:8545"), help="HTTP JSON-RPC url")
-    ap.add_argument("--chain-id", type=int, default=int(os.getenv("CHAIN_ID", "1337")), help="Chain ID")
-    ap.add_argument("--mnemonic", default=os.getenv("DEPLOYER_MNEMONIC") or maybe_read_seed_wallet(), help="BIP39-like mnemonic for deployer (Dilithium3/Sphincs signer derived)")
-    ap.add_argument("--name", default="Animica Token", help="Token name (bytes/str acceptable)")
-    ap.add_argument("--symbol", default="AMK", help="Token symbol (<= 8 chars recommended)")
-    ap.add_argument("--decimals", type=int, default=6, help="Token decimals (0..18 typical)")
-    ap.add_argument("--initial-supply", type=int, default=1_000_000, help="Initial supply minted to deployer")
-    ap.add_argument("--receiver-label", default="alice", help="Label to derive a deterministic receiver address (for test transfer)")
+    ap = argparse.ArgumentParser(
+        description="Deploy example token via SDK and run checks"
+    )
+    ap.add_argument(
+        "--rpc",
+        default=os.getenv("RPC_URL", "http://127.0.0.1:8545"),
+        help="HTTP JSON-RPC url",
+    )
+    ap.add_argument(
+        "--chain-id",
+        type=int,
+        default=int(os.getenv("CHAIN_ID", "1337")),
+        help="Chain ID",
+    )
+    ap.add_argument(
+        "--mnemonic",
+        default=os.getenv("DEPLOYER_MNEMONIC") or maybe_read_seed_wallet(),
+        help="BIP39-like mnemonic for deployer (Dilithium3/Sphincs signer derived)",
+    )
+    ap.add_argument(
+        "--name", default="Animica Token", help="Token name (bytes/str acceptable)"
+    )
+    ap.add_argument(
+        "--symbol", default="AMK", help="Token symbol (<= 8 chars recommended)"
+    )
+    ap.add_argument(
+        "--decimals", type=int, default=6, help="Token decimals (0..18 typical)"
+    )
+    ap.add_argument(
+        "--initial-supply",
+        type=int,
+        default=1_000_000,
+        help="Initial supply minted to deployer",
+    )
+    ap.add_argument(
+        "--receiver-label",
+        default="alice",
+        help="Label to derive a deterministic receiver address (for test transfer)",
+    )
     return ap.parse_args()
 
 
@@ -371,11 +434,15 @@ def main() -> int:
     ensure_example_files()
 
     if not args.mnemonic:
-        fail("no mnemonic provided (use --mnemonic or export DEPLOYER_MNEMONIC); for devnet try tests/devnet/seed_wallets.json")
+        fail(
+            "no mnemonic provided (use --mnemonic or export DEPLOYER_MNEMONIC); for devnet try tests/devnet/seed_wallets.json"
+        )
 
     # Load ABI (for read/write helpers) and package (build if missing)
     manifest = load_json(MANIFEST_PATH)
-    abi = manifest.get("abi") or load_json(EXAMPLE_DIR / "manifest.json").get("abi") or {}
+    abi = (
+        manifest.get("abi") or load_json(EXAMPLE_DIR / "manifest.json").get("abi") or {}
+    )
     package_path = build_package_if_needed()
 
     # Wire up SDK
@@ -401,10 +468,20 @@ def main() -> int:
     client = _sdk_contract_client(address, abi, rpc)
     if client is not None:
         try:
-            owner_addr = getattr(signer, "address")() if callable(getattr(signer, "address", None)) else _sdk_address_of(signer)
+            owner_addr = (
+                getattr(signer, "address")()
+                if callable(getattr(signer, "address", None))
+                else _sdk_address_of(signer)
+            )
             _ = client.write(
                 "init",
-                [args.name.encode("utf-8"), args.symbol.encode("utf-8"), args.decimals, owner_addr, args.initial_supply],
+                [
+                    args.name.encode("utf-8"),
+                    args.symbol.encode("utf-8"),
+                    args.decimals,
+                    owner_addr,
+                    args.initial_supply,
+                ],
                 signer=signer,
                 chain_id=args.chain_id,
             )
@@ -446,6 +523,7 @@ def main() -> int:
     logs = receipt.get("logs") or []
 
     print(f"transfer tx sent: hash={tx_hash}, status={status}")
+
     # Validate Transfer event presence (tolerant to naming)
     def has_transfer(logs: Any) -> bool:
         try:
@@ -460,7 +538,9 @@ def main() -> int:
             return False
 
     if not has_transfer(logs):
-        eprint("[warn] Transfer event not found in receipt logs; continuing (node may not emit logs in this mode)")
+        eprint(
+            "[warn] Transfer event not found in receipt logs; continuing (node may not emit logs in this mode)"
+        )
 
     print("✅ quick checks passed (deployment + transfer path exercised)")
     return 0

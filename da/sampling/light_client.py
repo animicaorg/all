@@ -34,25 +34,28 @@ Contract
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Iterable, List, Mapping, Optional, Sequence, Tuple, Callable, Dict, Set
 import binascii
+from dataclasses import dataclass, field
+from typing import (Any, Callable, Dict, Iterable, List, Mapping, Optional,
+                    Sequence, Set, Tuple)
 
 VerifyFn = Callable[[bytes, Mapping[str, Any]], Any]  # returns shapes normalized below
 
 
 # ------------------------------- Config & Report ----------------------------
 
+
 @dataclass(frozen=True)
 class LightVerifyConfig:
     """
     Tuning parameters for the light verification decision.
     """
+
     target_p_fail: float = 1e-9
     without_replacement: bool = True
-    require_no_bad: bool = True          # any bad sample ⇒ unavailable
-    min_ok_ratio: float = 1.0            # fraction of checked samples that must be OK (≤1.0)
-    require_min_unique: int = 1          # require at least this many unique sample indices
+    require_no_bad: bool = True  # any bad sample ⇒ unavailable
+    min_ok_ratio: float = 1.0  # fraction of checked samples that must be OK (≤1.0)
+    require_min_unique: int = 1  # require at least this many unique sample indices
 
 
 @dataclass
@@ -60,6 +63,7 @@ class LightVerifyReport:
     """
     Result of a light-verify pass.
     """
+
     commitment: bytes
     population_size: int
     total_samples: int
@@ -77,6 +81,7 @@ class LightVerifyReport:
 
 
 # ------------------------------- Public API --------------------------------
+
 
 def light_verify(
     *,
@@ -145,7 +150,9 @@ def light_verify(
         reasons.append(f"ok_ratio {ok_ratio:.6f} < required {cfg.min_ok_ratio:.6f}")
 
     if unique_samples < cfg.require_min_unique:
-        reasons.append(f"unique_samples {unique_samples} < required {cfg.require_min_unique}")
+        reasons.append(
+            f"unique_samples {unique_samples} < required {cfg.require_min_unique}"
+        )
 
     if p_fail > cfg.target_p_fail:
         reasons.append(f"p_fail {p_fail:.3e} > target {cfg.target_p_fail:.3e}")
@@ -167,6 +174,7 @@ def light_verify(
 
 # ------------------------------- Internals ---------------------------------
 
+
 def _as_bytes(x: bytes | str) -> bytes:
     if isinstance(x, bytes):
         return x
@@ -179,7 +187,9 @@ def _as_bytes(x: bytes | str) -> bytes:
         raise ValueError("commitment must be raw bytes or hex string") from e
 
 
-def _normalize_verify_result(v: Any, payload: Mapping[str, Any]) -> Tuple[List[int], List[int]]:
+def _normalize_verify_result(
+    v: Any, payload: Mapping[str, Any]
+) -> Tuple[List[int], List[int]]:
     """
     Accept result shapes from `verify_samples`:
 
@@ -221,7 +231,7 @@ def _estimate_p_fail(
         est(
             population_size=int(population_size),
             sample_count=int(total_samples),
-            assumed_corrupt_fraction=None,      # implies "≥ 1 bad share"
+            assumed_corrupt_fraction=None,  # implies "≥ 1 bad share"
             without_replacement=bool(without_replacement),
         )
     )
@@ -229,6 +239,7 @@ def _estimate_p_fail(
 
 def _lazy_import(module: str, attr: str) -> Any:
     import importlib
+
     mod = importlib.import_module(module)
     try:
         return getattr(mod, attr)

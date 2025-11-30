@@ -16,14 +16,13 @@ template remains portable. Extend freely in your project.
 from __future__ import annotations
 
 import json
-import sys
 import subprocess
+import sys
 from hashlib import sha3_256
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Paths & helpers
@@ -96,10 +95,13 @@ def _normalize(name: str) -> str:
 # Tests
 # ---------------------------------------------------------------------------
 
+
 def test_sources_exist():
     """Escrow source and manifest must exist in the template tree."""
     assert ESCROW_SRC.exists(), f"Missing escrow source: {ESCROW_SRC}"
-    assert ESCROW_MANIFEST_SRC.exists(), f"Missing escrow manifest: {ESCROW_MANIFEST_SRC}"
+    assert (
+        ESCROW_MANIFEST_SRC.exists()
+    ), f"Missing escrow manifest: {ESCROW_MANIFEST_SRC}"
 
 
 def test_build_outputs_and_code_hash_match():
@@ -129,7 +131,11 @@ def test_build_outputs_and_code_hash_match():
 
     if pkg_path.exists():
         pkg = _jload(pkg_path)
-        recorded = (pkg.get("code_hash") or pkg.get("codeHash") or "").lower().removeprefix("0x")
+        recorded = (
+            (pkg.get("code_hash") or pkg.get("codeHash") or "")
+            .lower()
+            .removeprefix("0x")
+        )
         assert recorded == computed, (
             "package.json code_hash mismatch\n"
             f" recorded: 0x{recorded}\n"
@@ -137,7 +143,11 @@ def test_build_outputs_and_code_hash_match():
         )
 
     manifest = _jload(manifest_path)
-    m_hash = (manifest.get("code_hash") or manifest.get("codeHash") or "").lower().removeprefix("0x")
+    m_hash = (
+        (manifest.get("code_hash") or manifest.get("codeHash") or "")
+        .lower()
+        .removeprefix("0x")
+    )
     if m_hash:
         assert m_hash == computed, (
             "manifest.json code_hash mismatch\n"
@@ -152,7 +162,9 @@ def test_manifest_minimum_shape():
     assert out_dir, "Escrow build dir missing (did build step run?)"
     manifest = _jload(out_dir / "manifest.json")
 
-    assert isinstance(manifest.get("name"), str) and manifest["name"].strip(), "manifest.name must be non-empty"
+    assert (
+        isinstance(manifest.get("name"), str) and manifest["name"].strip()
+    ), "manifest.name must be non-empty"
     assert isinstance(manifest.get("abi"), list), "manifest.abi must be a list"
 
 
@@ -186,9 +198,7 @@ def test_abi_includes_core_escrow_functions_and_events():
         if e.get("type") in (None, "function", "func", "method")
     }
     ev_names: Set[str] = {
-        _normalize(e.get("name", ""))
-        for e in abi
-        if e.get("type") in ("event",)
+        _normalize(e.get("name", "")) for e in abi if e.get("type") in ("event",)
     }
 
     # Required primitives
@@ -208,7 +218,13 @@ def test_abi_includes_core_escrow_functions_and_events():
     # Events: warn via assertion message only if *none* of the core events exist
     core_events_present = any(
         n in ev_names
-        for n in ("deposited", "released", "refunded", "disputeopened", "disputeresolved")
+        for n in (
+            "deposited",
+            "released",
+            "refunded",
+            "disputeopened",
+            "disputeresolved",
+        )
     )
     assert core_events_present, (
         "ABI is missing recognizable escrow events "
@@ -244,6 +260,7 @@ def test_build_idempotence_by_code_hash():
 # Optional: VM smoke (skipped unless a local VM is importable)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.skipif(
     not any(
         __import__(m, globals(), locals(), [], 0) or True
@@ -263,7 +280,8 @@ def test_optional_vm_deposit_then_release_flow():
     import importlib
 
     vm_mod_name = next(
-        m for m in ["animica_vm_py", "vm_py", "animica.vm_py"]
+        m
+        for m in ["animica_vm_py", "vm_py", "animica.vm_py"]
         if importlib.util.find_spec(m) is not None
     )
     vm = importlib.import_module(vm_mod_name)

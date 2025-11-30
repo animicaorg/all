@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 from aicf.queue.jobkind import JobKind
+
 """
 Internal AICF event types.
 
@@ -18,19 +20,19 @@ Timestamps use UNIX milliseconds. IDs are deterministic strings (see queue/ids.p
 """
 
 
-from dataclasses import dataclass, asdict
-from enum import Enum
-from typing import Dict, Any, Optional, Union, Mapping
 import time
+from dataclasses import asdict, dataclass
+from enum import Enum
+from typing import Any, Dict, Mapping, Optional, Union
 
-from .provider import ProviderId
 from .job import JobKind, JobStatus
 from .payout import Payout
-
+from .provider import ProviderId
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Common helpers
 # ────────────────────────────────────────────────────────────────────────────────
+
 
 def now_ms() -> int:
     """Current UNIX time in milliseconds (int)."""
@@ -47,6 +49,7 @@ class EventType(str, Enum):
 
 class SlashReason(str, Enum):
     """Enumerates common slash reasons (policy may map these to magnitudes)."""
+
     MISSED_DEADLINE = "missed_deadline"
     BAD_ATTESTATION = "bad_attestation"
     LOW_TRAPS = "low_traps_ratio"
@@ -60,6 +63,7 @@ class SlashReason(str, Enum):
 # Event payloads
 # ────────────────────────────────────────────────────────────────────────────────
 
+
 @dataclass
 class Enqueued:
     etype: EventType
@@ -67,13 +71,18 @@ class Enqueued:
     job_id: str
     kind: JobKind
     requester: Optional[str] = None  # bech32m address (if known)
-    units: Optional[int] = None      # normalized job units (AI/Quantum-specific)
+    units: Optional[int] = None  # normalized job units (AI/Quantum-specific)
     status: JobStatus = JobStatus.QUEUED
     priority_score: Optional[float] = None
 
     @staticmethod
-    def new(job_id: str, kind: JobKind, requester: Optional[str] = None,
-            units: Optional[int] = None, priority_score: Optional[float] = None) -> "Enqueued":
+    def new(
+        job_id: str,
+        kind: JobKind,
+        requester: Optional[str] = None,
+        units: Optional[int] = None,
+        priority_score: Optional[float] = None,
+    ) -> "Enqueued":
         return Enqueued(
             etype=EventType.ENQUEUED,
             ts_ms=now_ms(),
@@ -102,7 +111,11 @@ class Enqueued:
             requester=d.get("requester"),
             units=int(d["units"]) if d.get("units") is not None else None,
             status=JobStatus(d.get("status", JobStatus.QUEUED.value)),
-            priority_score=float(d["priority_score"]) if d.get("priority_score") is not None else None,
+            priority_score=(
+                float(d["priority_score"])
+                if d.get("priority_score") is not None
+                else None
+            ),
         )
 
 
@@ -118,8 +131,13 @@ class Assigned:
     previous_attempts: int = 0
 
     @staticmethod
-    def new(job_id: str, provider_id: ProviderId, lease_id: str,
-            lease_expires_ms: int, previous_attempts: int = 0) -> "Assigned":
+    def new(
+        job_id: str,
+        provider_id: ProviderId,
+        lease_id: str,
+        lease_expires_ms: int,
+        previous_attempts: int = 0,
+    ) -> "Assigned":
         return Assigned(
             etype=EventType.ASSIGNED,
             ts_ms=now_ms(),
@@ -157,17 +175,23 @@ class Completed:
     provider_id: ProviderId
     success: bool
     # References & telemetry (hashes/ids are hex strings; metrics are small JSON numbers)
-    task_id: Optional[str] = None          # capabilities/jobs deterministic id
-    proof_type: Optional[str] = None       # "AIProof" | "QuantumProof" | ...
+    task_id: Optional[str] = None  # capabilities/jobs deterministic id
+    proof_type: Optional[str] = None  # "AIProof" | "QuantumProof" | ...
     proof_nullifier: Optional[str] = None  # domain-separated nullifier (hex)
     metrics: Optional[Dict[str, float]] = None  # traps_ratio, qos, latency_ms, etc.
     note: Optional[str] = None
 
     @staticmethod
-    def ok(job_id: str, provider_id: ProviderId, *,
-           task_id: Optional[str] = None, proof_type: Optional[str] = None,
-           proof_nullifier: Optional[str] = None,
-           metrics: Optional[Dict[str, float]] = None, note: Optional[str] = None) -> "Completed":
+    def ok(
+        job_id: str,
+        provider_id: ProviderId,
+        *,
+        task_id: Optional[str] = None,
+        proof_type: Optional[str] = None,
+        proof_nullifier: Optional[str] = None,
+        metrics: Optional[Dict[str, float]] = None,
+        note: Optional[str] = None,
+    ) -> "Completed":
         return Completed(
             etype=EventType.COMPLETED,
             ts_ms=now_ms(),
@@ -182,8 +206,13 @@ class Completed:
         )
 
     @staticmethod
-    def fail(job_id: str, provider_id: ProviderId, *,
-             note: Optional[str] = None, metrics: Optional[Dict[str, float]] = None) -> "Completed":
+    def fail(
+        job_id: str,
+        provider_id: ProviderId,
+        *,
+        note: Optional[str] = None,
+        metrics: Optional[Dict[str, float]] = None,
+    ) -> "Completed":
         return Completed(
             etype=EventType.COMPLETED,
             ts_ms=now_ms(),
@@ -242,14 +271,22 @@ class Settled:
         d["etype"] = self.etype.value
         d["provider_id"] = str(self.provider_id)
         # ensure payout is JSON-y
-        d["payout"] = self.payout.to_dict() if hasattr(self.payout, "to_dict") else asdict(self.payout)
+        d["payout"] = (
+            self.payout.to_dict()
+            if hasattr(self.payout, "to_dict")
+            else asdict(self.payout)
+        )
         return d
 
     @staticmethod
     def from_dict(d: Mapping[str, Any]) -> "Settled":
         # Payout has a from_dict in aicf/types/payout.py
         payout_dict = d["payout"]
-        payout = Payout.from_dict(payout_dict) if hasattr(Payout, "from_dict") else Payout(**payout_dict)
+        payout = (
+            Payout.from_dict(payout_dict)
+            if hasattr(Payout, "from_dict")
+            else Payout(**payout_dict)
+        )
         return Settled(
             etype=EventType(d["etype"]),
             ts_ms=int(d["ts_ms"]),
@@ -270,8 +307,13 @@ class Slashed:
     note: Optional[str] = None
 
     @staticmethod
-    def new(provider_id: ProviderId, reason: SlashReason, amount: int,
-            job_id: Optional[str] = None, note: Optional[str] = None) -> "Slashed":
+    def new(
+        provider_id: ProviderId,
+        reason: SlashReason,
+        amount: int,
+        job_id: Optional[str] = None,
+        note: Optional[str] = None,
+    ) -> "Slashed":
         if amount < 0:
             raise ValueError("slash amount must be >= 0")
         return Slashed(
@@ -311,6 +353,7 @@ AicfEvent = Union[Enqueued, Assigned, Completed, Settled, Slashed]
 # ────────────────────────────────────────────────────────────────────────────────
 # Generic (de)serialization
 # ────────────────────────────────────────────────────────────────────────────────
+
 
 def serialize_event(ev: AicfEvent) -> Dict[str, Any]:
     """Serialize any AICF event to a JSON-serializable dict."""

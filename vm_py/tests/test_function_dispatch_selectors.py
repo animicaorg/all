@@ -21,13 +21,13 @@ from typing import Any, Dict, List
 
 import pytest
 
-from vm_py.runtime import abi as runtime_abi
 from vm_py.errors import ValidationError
-
+from vm_py.runtime import abi as runtime_abi
 
 # ---------------------------------------------------------------------------
 # Helpers for reading manifests & computing selectors
 # ---------------------------------------------------------------------------
+
 
 def _counter_manifest_path() -> Path:
     """
@@ -81,6 +81,7 @@ EXPECTED_COUNTER_SELECTORS_HEX: Dict[str, str] = {
 # Fixtures: stub stdlib & force fallback ABI
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def inject_stdlib() -> None:
     """
@@ -117,6 +118,7 @@ def force_fallback_abi(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------------
 # Tests: function selectors from manifest
 # ---------------------------------------------------------------------------
+
 
 def test_counter_manifest_selectors_are_stable_and_unique() -> None:
     manifest = _load_counter_manifest()
@@ -159,6 +161,7 @@ def test_counter_manifest_selectors_are_stable_and_unique() -> None:
 # Tests: dispatch table mapping for contracts
 # ---------------------------------------------------------------------------
 
+
 def test_get_dispatch_table_matches_counter_manifest_functions() -> None:
     """
     The Counter example is written as top-level functions in a module.
@@ -181,7 +184,9 @@ def test_get_dispatch_table_matches_counter_manifest_functions() -> None:
     # Private helpers (starting with "_") must not be exported
     for attr in dir(counter_mod):
         if attr.startswith("_"):
-            assert attr not in table, f"private attribute {attr!r} leaked into dispatch table"
+            assert (
+                attr not in table
+            ), f"private attribute {attr!r} leaked into dispatch table"
 
     # Dispatch table values must be callables
     for name, fn in table.items():
@@ -248,6 +253,7 @@ def test_dispatcher_invokes_methods_and_raises_on_errors() -> None:
 # Optional integration: encode a fallback call envelope and run dispatch_call
 # ---------------------------------------------------------------------------
 
+
 def _encode_fallback_call(method: str, args: List[Any]) -> bytes:
     """
     Build a call envelope compatible with vm_py.runtime.abi._fallback_decode_call:
@@ -256,7 +262,7 @@ def _encode_fallback_call(method: str, args: List[Any]) -> bytes:
     """
     # Access internal helpers deliberately; tests are allowed to touch these.
     _uvarint_encode = runtime_abi._uvarint_encode  # type: ignore[attr-defined]
-    _enc_value = runtime_abi._enc_value            # type: ignore[attr-defined]
+    _enc_value = runtime_abi._enc_value  # type: ignore[attr-defined]
 
     m_bytes = method.encode("utf8")
     buf = bytearray()
@@ -288,7 +294,7 @@ def test_dispatch_call_roundtrip_with_fallback_codec() -> None:
 
     # decode_return isn't exposed; re-use the internal value decoder via
     # _fallback_decode_call on a synthetic "return" envelope: one anonymous arg.
-    _dec_value = runtime_abi._dec_value          # type: ignore[attr-defined]
+    _dec_value = runtime_abi._dec_value  # type: ignore[attr-defined]
 
     val, offset = _dec_value(out, 0)
     assert offset == len(out)

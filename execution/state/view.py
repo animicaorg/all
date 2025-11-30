@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterator, Mapping, Optional, Tuple
 
-from .accounts import Account, EMPTY_CODE_HASH
+from .accounts import EMPTY_CODE_HASH, Account
 from .storage import StorageView
 
 
@@ -38,6 +38,7 @@ class StateView:
     storage :
         StorageView providing per-account key/value access.
     """
+
     accounts: Mapping[bytes, Account]
     storage: StorageView
 
@@ -72,10 +73,12 @@ class StateView:
 
     # ------------------------------ storage ----------------------------------
 
-    def storage_at(self,
-                   address: bytes | bytearray | memoryview,
-                   key: bytes | bytearray | memoryview,
-                   default: bytes = b"") -> bytes:
+    def storage_at(
+        self,
+        address: bytes | bytearray | memoryview,
+        key: bytes | bytearray | memoryview,
+        default: bytes = b"",
+    ) -> bytes:
         """
         Return the value for (address, key) or `default` if absent.
 
@@ -83,13 +86,17 @@ class StateView:
         """
         return self.storage.get(address, key, default=default)
 
-    def has_storage_key(self,
-                        address: bytes | bytearray | memoryview,
-                        key: bytes | bytearray | memoryview) -> bool:
+    def has_storage_key(
+        self,
+        address: bytes | bytearray | memoryview,
+        key: bytes | bytearray | memoryview,
+    ) -> bool:
         """True if a storage key exists for `address`."""
         return self.storage.has(address, key)
 
-    def storage_items(self, address: bytes | bytearray | memoryview) -> Iterator[Tuple[bytes, bytes]]:
+    def storage_items(
+        self, address: bytes | bytearray | memoryview
+    ) -> Iterator[Tuple[bytes, bytes]]:
         """Iterate (key, value) pairs for `address` in lexicographic key order."""
         return self.storage.items(address)
 
@@ -97,7 +104,9 @@ class StateView:
         """Iterate keys for `address` in lexicographic order."""
         return self.storage.keys(address)
 
-    def storage_values(self, address: bytes | bytearray | memoryview) -> Iterator[bytes]:
+    def storage_values(
+        self, address: bytes | bytearray | memoryview
+    ) -> Iterator[bytes]:
         """Iterate values for `address` ordered by their keys."""
         return self.storage.values(address)
 

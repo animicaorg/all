@@ -36,13 +36,12 @@ default gas-table path. It does not parse or validate the gas JSON itself.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+import os
+import re
+from dataclasses import asdict, dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Dict, Mapping, Optional, Tuple, Union
-import os
-import re
-
 
 # ----------------------------- helpers -------------------------------------
 
@@ -158,13 +157,13 @@ class FeatureFlags:
 
 @dataclass(frozen=True)
 class Limits:
-    max_tx_size_bytes: int = 128 * 1024         # 128 KiB
-    max_code_size_bytes: int = 64 * 1024        # 64 KiB
+    max_tx_size_bytes: int = 128 * 1024  # 128 KiB
+    max_code_size_bytes: int = 64 * 1024  # 64 KiB
     max_logs_per_tx: int = 128
     max_event_topics: int = 4
-    max_event_data_bytes: int = 64 * 1024       # 64 KiB
+    max_event_data_bytes: int = 64 * 1024  # 64 KiB
     max_access_list_len: int = 1024
-    refund_ratio_cap: float = 0.20              # ≤ 20% of gas used
+    refund_ratio_cap: float = 0.20  # ≤ 20% of gas used
 
 
 @dataclass(frozen=True)
@@ -224,7 +223,9 @@ def load_config(
     ).expanduser()
 
     features = FeatureFlags(
-        strict_vm=_bool_env(env.get("ANIMICA_EXEC_STRICT"), bool(overrides.get("strict_vm", True))),
+        strict_vm=_bool_env(
+            env.get("ANIMICA_EXEC_STRICT"), bool(overrides.get("strict_vm", True))
+        ),
         optimistic_scheduler=_bool_env(
             env.get("ANIMICA_EXEC_OPTIMISTIC"),
             bool(overrides.get("optimistic_scheduler", False)),
@@ -241,30 +242,47 @@ def load_config(
 
     limits = Limits(
         max_tx_size_bytes=_parse_size_bytes(
-            overrides.get("max_tx_size_bytes", env.get("ANIMICA_EXEC_MAX_TX_BYTES", 128 * 1024))
+            overrides.get(
+                "max_tx_size_bytes", env.get("ANIMICA_EXEC_MAX_TX_BYTES", 128 * 1024)
+            )
         ),
         max_code_size_bytes=_parse_size_bytes(
-            overrides.get("max_code_size_bytes", env.get("ANIMICA_EXEC_MAX_CODE_BYTES", 64 * 1024))
+            overrides.get(
+                "max_code_size_bytes", env.get("ANIMICA_EXEC_MAX_CODE_BYTES", 64 * 1024)
+            )
         ),
         max_logs_per_tx=int(
-            overrides.get("max_logs_per_tx", env.get("ANIMICA_EXEC_MAX_LOGS_PER_TX", 128))
+            overrides.get(
+                "max_logs_per_tx", env.get("ANIMICA_EXEC_MAX_LOGS_PER_TX", 128)
+            )
         ),
         max_event_topics=int(
-            overrides.get("max_event_topics", env.get("ANIMICA_EXEC_MAX_EVENT_TOPICS", 4))
+            overrides.get(
+                "max_event_topics", env.get("ANIMICA_EXEC_MAX_EVENT_TOPICS", 4)
+            )
         ),
         max_event_data_bytes=_parse_size_bytes(
-            overrides.get("max_event_data_bytes", env.get("ANIMICA_EXEC_MAX_EVENT_DATA", 64 * 1024))
+            overrides.get(
+                "max_event_data_bytes",
+                env.get("ANIMICA_EXEC_MAX_EVENT_DATA", 64 * 1024),
+            )
         ),
         max_access_list_len=int(
-            overrides.get("max_access_list_len", env.get("ANIMICA_EXEC_MAX_ACCESSLIST_LEN", 1024))
+            overrides.get(
+                "max_access_list_len", env.get("ANIMICA_EXEC_MAX_ACCESSLIST_LEN", 1024)
+            )
         ),
         refund_ratio_cap=float(
-            overrides.get("refund_ratio_cap", env.get("ANIMICA_EXEC_REFUND_RATIO_CAP", 0.20))
+            overrides.get(
+                "refund_ratio_cap", env.get("ANIMICA_EXEC_REFUND_RATIO_CAP", 0.20)
+            )
         ),
     )
     limits = _validate_limits(limits)
 
-    return ExecutionConfig(gas_table_path=gas_table_path, features=features, limits=limits)
+    return ExecutionConfig(
+        gas_table_path=gas_table_path, features=features, limits=limits
+    )
 
 
 @lru_cache(maxsize=1)

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import math
 import time
-from dataclasses import dataclass, field, asdict
-from enum import IntFlag, Enum
+from dataclasses import asdict, dataclass, field
+from enum import Enum, IntFlag
 from typing import Dict, Optional, Set, Tuple
 
 
@@ -16,14 +16,15 @@ class PeerStatus(str, Enum):
 
 class PeerRole(IntFlag):
     """Bitflags describing peer roles/capabilities (can be combined)."""
+
     NONE = 0
-    FULL = 1 << 0               # full node (validates/serves blocks)
-    LIGHT = 1 << 1              # light client (headers/queries only)
-    MINER = 1 << 2              # produces blocks / useful-work shares
-    DA_ONLY = 1 << 3            # data-availability service focus
-    PROVIDER_AI = 1 << 4        # AI compute provider (AICF)
-    PROVIDER_QPU = 1 << 5       # Quantum provider (trap circuits)
-    RELAY = 1 << 6              # high-fanout relay node
+    FULL = 1 << 0  # full node (validates/serves blocks)
+    LIGHT = 1 << 1  # light client (headers/queries only)
+    MINER = 1 << 2  # produces blocks / useful-work shares
+    DA_ONLY = 1 << 3  # data-availability service focus
+    PROVIDER_AI = 1 << 4  # AI compute provider (AICF)
+    PROVIDER_QPU = 1 << 5  # Quantum provider (trap circuits)
+    RELAY = 1 << 6  # high-fanout relay node
 
 
 @dataclass
@@ -32,29 +33,30 @@ class ScoreParams:
     Tunable weights for the peer scoring model. Keep this in-sync with p2p/gossip/engine.py
     and p2p/peer/ratelimit.py (topic caps & penalties).
     """
+
     # Base & time-decay
     base: float = 10.0
-    decay_half_life_s: float = 120.0   # seconds to halve positive contributions
+    decay_half_life_s: float = 120.0  # seconds to halve positive contributions
 
     # Latency (RTT) penalties (ms → score impact)
-    rtt_ref_ms: float = 150.0          # reference RTT with zero penalty
-    rtt_slope: float = 0.015           # score penalty per % over reference
+    rtt_ref_ms: float = 150.0  # reference RTT with zero penalty
+    rtt_slope: float = 0.015  # score penalty per % over reference
 
     # Delivery & quality
-    good_msg_weight: float = 0.002     # + score per valid gossip message delivered
-    bad_msg_penalty: float = 0.2       # - score per invalid/ignored message
-    dupe_penalty: float = 0.05         # - score for duplicate spam
+    good_msg_weight: float = 0.002  # + score per valid gossip message delivered
+    bad_msg_penalty: float = 0.2  # - score per invalid/ignored message
+    dupe_penalty: float = 0.05  # - score for duplicate spam
 
     # Per-topic normalization cap (prevents single-topic gaming)
     topic_cap: float = 15.0
 
     # Explicit application penalties (DoS, rate, misbehavior)
     penalty_decay_half_life_s: float = 600.0
-    ban_threshold: float = -10.0       # if total score dips below → move to BANNED
+    ban_threshold: float = -10.0  # if total score dips below → move to BANNED
 
     # Uptime bonus (bounded)
     uptime_bonus_max: float = 20.0
-    uptime_bonus_rate: float = 0.002   # per-second small bonus, bounded
+    uptime_bonus_rate: float = 0.002  # per-second small bonus, bounded
 
     # Recent disconnect penalty (short-term instability)
     flap_penalty: float = 2.0
@@ -64,6 +66,7 @@ class ScoreParams:
 @dataclass
 class TopicScore:
     """Rolling per-topic counters used to compute quality contributions."""
+
     valid_msgs: int = 0
     invalid_msgs: int = 0
     duplicate_msgs: int = 0
@@ -71,9 +74,11 @@ class TopicScore:
     bytes_out: int = 0
 
     def quality_score(self, params: ScoreParams) -> float:
-        s = (self.valid_msgs * params.good_msg_weight
-             - self.invalid_msgs * params.bad_msg_penalty
-             - self.duplicate_msgs * params.dupe_penalty)
+        s = (
+            self.valid_msgs * params.good_msg_weight
+            - self.invalid_msgs * params.bad_msg_penalty
+            - self.duplicate_msgs * params.dupe_penalty
+        )
         # Bound per topic to prevent gaming through a single hot topic.
         return max(-params.topic_cap, min(params.topic_cap, s))
 
@@ -81,6 +86,7 @@ class TopicScore:
 @dataclass
 class TokenBucket:
     """Simple per-topic token bucket used to throttle publish rate."""
+
     rate_per_s: float
     burst: float
     tokens: float = field(default=0.0)
@@ -108,14 +114,15 @@ class Peer:
     Transport/connection-specific details are carried externally and referenced
     here as opaque ids if needed.
     """
+
     # Identity & negotiated handshake
     peer_id: str
-    address: str                                    # multiaddr-like string
+    address: str  # multiaddr-like string
     roles: PeerRole
     chain_id: int
-    alg_policy_root: bytes                          # expected alg-policy root
+    alg_policy_root: bytes  # expected alg-policy root
     head_height: int = 0
-    caps: Set[str] = field(default_factory=set)     # string capability flags
+    caps: Set[str] = field(default_factory=set)  # string capability flags
 
     # Lifecycle
     status: PeerStatus = PeerStatus.DIALING
@@ -136,7 +143,9 @@ class Peer:
 
     # Scoring
     topic_scores: Dict[str, TopicScore] = field(default_factory=dict)
-    penalties: Dict[str, float] = field(default_factory=dict)  # reason -> points (negative)
+    penalties: Dict[str, float] = field(
+        default_factory=dict
+    )  # reason -> points (negative)
     uptime_origin_s: float = field(default_factory=lambda: time.time())
     score_params: ScoreParams = field(default_factory=ScoreParams)
 
@@ -156,7 +165,10 @@ class Peer:
         self.connected_at_s = now
         self.last_seen_s = now
         # Small flap penalty if this peer reconnected within the recent window.
-        if self.last_disconnect_s and (now - self.last_disconnect_s) < self.score_params.flap_window_s:
+        if (
+            self.last_disconnect_s
+            and (now - self.last_disconnect_s) < self.score_params.flap_window_s
+        ):
             self.apply_penalty("flap", self.score_params.flap_penalty)
 
     def on_disconnected(self, now: Optional[float] = None) -> None:
@@ -176,12 +188,16 @@ class Peer:
         if self.rtt_ms_ewma is None:
             self.rtt_ms_ewma = sample_ms
         else:
-            self.rtt_ms_ewma = (1.0 - self.rtt_alpha) * self.rtt_ms_ewma + self.rtt_alpha * sample_ms
+            self.rtt_ms_ewma = (
+                1.0 - self.rtt_alpha
+            ) * self.rtt_ms_ewma + self.rtt_alpha * sample_ms
         self.rtt_samples += 1
 
     # ----- Traffic accounting -------------------------------------------
 
-    def record_in(self, topic: str, nbytes: int, valid: bool, duplicate: bool = False) -> None:
+    def record_in(
+        self, topic: str, nbytes: int, valid: bool, duplicate: bool = False
+    ) -> None:
         self.seen_now()
         self.bytes_in += max(0, nbytes)
         self.msgs_in += 1
@@ -251,7 +267,7 @@ class Peer:
             self.penalties[k] = self._decay(
                 self.penalties[k],
                 self.score_params.penalty_decay_half_life_s,
-                dt_s=1.0  # minor smoothing each call; larger dt handled by compute_score()
+                dt_s=1.0,  # minor smoothing each call; larger dt handled by compute_score()
             )
             if abs(self.penalties[k]) < 1e-6:
                 del self.penalties[k]
@@ -365,7 +381,9 @@ class Peer:
         if "shares" in topic:
             return bool(self.roles & (PeerRole.MINER | PeerRole.RELAY))
         if "da" in topic:
-            return bool(self.roles & (PeerRole.DA_ONLY | PeerRole.FULL | PeerRole.RELAY))
+            return bool(
+                self.roles & (PeerRole.DA_ONLY | PeerRole.FULL | PeerRole.RELAY)
+            )
         return True
 
     # ----- Validation hooks ---------------------------------------------

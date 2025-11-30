@@ -29,6 +29,7 @@ from typing import Optional, Tuple
 @dataclass(frozen=True)
 class HeadCandidate:
     """A minimal head descriptor used for fork choice."""
+
     height: int
     block_hash: bytes  # canonical digest (e.g., 32B sha3_256)
 

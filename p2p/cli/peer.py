@@ -53,7 +53,8 @@ except Exception:  # pragma: no cover - environment-dependent
     _PeerStore = None  # type: ignore[assignment]
 
 try:  # multiaddr helpers
-    from p2p.transport.multiaddr import parse_multiaddr as _parse_multiaddr  # type: ignore
+    from p2p.transport.multiaddr import \
+        parse_multiaddr as _parse_multiaddr  # type: ignore
 except Exception:  # pragma: no cover
     _parse_multiaddr = None  # type: ignore[assignment]
 
@@ -112,6 +113,7 @@ def parse_duration(expr: str) -> int:
 # Fallback JSON Peer Store
 # =========================
 
+
 @dataclasses.dataclass
 class JPeer:
     peer_id: str
@@ -128,6 +130,7 @@ class JsonPeerStore:
     Minimal peer store used as a fallback when the full p2p.peer.peerstore is not present.
     The on-disk format is a JSON dict: { "peers": [ ... ] }
     """
+
     def __init__(self, path: Path):
         self.path = path
         self._peers: Dict[str, JPeer] = {}
@@ -204,7 +207,11 @@ class JsonPeerStore:
     def export_file(self, dest: Path) -> None:
         _ensure_dirs(dest)
         with dest.open("w", encoding="utf-8") as f:
-            json.dump({"peers": [dataclasses.asdict(p) for p in self._peers.values()]}, f, indent=2)
+            json.dump(
+                {"peers": [dataclasses.asdict(p) for p in self._peers.values()]},
+                f,
+                indent=2,
+            )
 
     def import_file(self, src: Path, merge: bool) -> None:
         with src.open("r", encoding="utf-8") as f:
@@ -228,17 +235,23 @@ class JsonPeerStore:
     def _save(self) -> None:
         _ensure_dirs(self.path)
         with self.path.open("w", encoding="utf-8") as f:
-            json.dump({"peers": [dataclasses.asdict(p) for p in self._peers.values()]}, f, indent=2)
+            json.dump(
+                {"peers": [dataclasses.asdict(p) for p in self._peers.values()]},
+                f,
+                indent=2,
+            )
 
 
 # =========================
 # Compatibility Facade
 # =========================
 
+
 class StoreFacade:
     """
     Thin facade to unify full PeerStore vs JsonPeerStore.
     """
+
     def __init__(self, path: Path):
         self.path = path
         self._impl = None
@@ -320,6 +333,7 @@ class StoreFacade:
 # Multiaddr parsing (fallback)
 # =========================
 
+
 def _fallback_parse_multiaddr(s: str) -> Tuple[str, int]:
     """
     Parse very small subset: /ip4/<ip>/tcp/<port>  OR host:port
@@ -375,7 +389,10 @@ def parse_addr(s: str) -> Tuple[str, int]:
 # Networking probes
 # =========================
 
-def tcp_probe(addr: str, timeout: float = 2.5) -> Tuple[bool, Optional[float], Optional[str]]:
+
+def tcp_probe(
+    addr: str, timeout: float = 2.5
+) -> Tuple[bool, Optional[float], Optional[str]]:
     """
     Best-effort TCP connect() probe. Returns (ok, rtt_seconds, error_message).
     """
@@ -399,6 +416,7 @@ def tcp_probe(addr: str, timeout: float = 2.5) -> Tuple[bool, Optional[float], O
 # CLI
 # =========================
 
+
 def add_common_store_arg(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--store",
@@ -419,18 +437,25 @@ def cmd_list(args: argparse.Namespace) -> int:
     headers = ["PEER_ID", "BANNED_UNTIL", "SCORE", "LAST_SEEN", "CONNECTED", "ADDRS"]
     rows = []
     for p in peers:
-        banned_until = p.get("banned_until") or p.get("ban_until")  # tolerate different field names
+        banned_until = p.get("banned_until") or p.get(
+            "ban_until"
+        )  # tolerate different field names
         last_seen = p.get("last_seen")
-        rows.append([
-            p.get("peer_id", "?")[:20] + ("…" if len(p.get("peer_id","")) > 20 else ""),
-            _fmt_ts(banned_until),
-            f'{p.get("score", 0.0):.2f}',
-            _fmt_ts(last_seen),
-            "Y" if p.get("connected") else "-",
-            ", ".join(p.get("addrs", [])),
-        ])
+        rows.append(
+            [
+                p.get("peer_id", "?")[:20]
+                + ("…" if len(p.get("peer_id", "")) > 20 else ""),
+                _fmt_ts(banned_until),
+                f'{p.get("score", 0.0):.2f}',
+                _fmt_ts(last_seen),
+                "Y" if p.get("connected") else "-",
+                ", ".join(p.get("addrs", [])),
+            ]
+        )
 
-    colw = [max(len(h), *(len(str(row[i])) for row in rows)) for i, h in enumerate(headers)]
+    colw = [
+        max(len(h), *(len(str(row[i])) for row in rows)) for i, h in enumerate(headers)
+    ]
     fmt = "  ".join("{:<" + str(w) + "}" for w in colw)
     print(fmt.format(*headers))
     print(fmt.format(*["-" * w for w in colw]))
@@ -498,7 +523,9 @@ def cmd_import(args: argparse.Namespace) -> int:
     store = StoreFacade(args.store)
     src = Path(args.path)
     store.import_file(src, merge=not args.replace)
-    print(f"[+] imported peers from {src} ({'merge' if not args.replace else 'replace'})")
+    print(
+        f"[+] imported peers from {src} ({'merge' if not args.replace else 'replace'})"
+    )
     return 0
 
 
@@ -560,9 +587,18 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("add", help="Add or update a peer address")
     add_common_store_arg(sp)
     sp.add_argument("peer_id", help="Peer ID (e.g., peer12abc...)")
-    sp.add_argument("addr", help="Multiaddr or host:port (e.g., /ip4/1.2.3.4/tcp/42069)")
-    sp.add_argument("--probe", dest="probe", action="store_true", help="TCP connect() probe after add")
-    sp.add_argument("--timeout", type=float, default=2.5, help="Probe timeout (seconds)")
+    sp.add_argument(
+        "addr", help="Multiaddr or host:port (e.g., /ip4/1.2.3.4/tcp/42069)"
+    )
+    sp.add_argument(
+        "--probe",
+        dest="probe",
+        action="store_true",
+        help="TCP connect() probe after add",
+    )
+    sp.add_argument(
+        "--timeout", type=float, default=2.5, help="Probe timeout (seconds)"
+    )
     sp.set_defaults(func=cmd_add)
 
     # remove
@@ -575,7 +611,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("ban", help="Ban a peer for a duration (e.g., 15m, 1h, 1d)")
     add_common_store_arg(sp)
     sp.add_argument("peer_id")
-    sp.add_argument("--for", dest="duration", required=True, help="Duration like 15m / 1h / 1d")
+    sp.add_argument(
+        "--for", dest="duration", required=True, help="Duration like 15m / 1h / 1d"
+    )
     sp.set_defaults(func=cmd_ban)
 
     # unban
@@ -601,16 +639,26 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("import", help="Import peers from a JSON file")
     add_common_store_arg(sp)
     sp.add_argument("path", help="Source JSON file")
-    sp.add_argument("--replace", action="store_true", help="Replace existing store instead of merging")
+    sp.add_argument(
+        "--replace",
+        action="store_true",
+        help="Replace existing store instead of merging",
+    )
     sp.set_defaults(func=cmd_import)
 
     # connect
-    sp = sub.add_parser("connect", help="Record a desired connection (and optionally probe it)")
+    sp = sub.add_parser(
+        "connect", help="Record a desired connection (and optionally probe it)"
+    )
     add_common_store_arg(sp)
     sp.add_argument("addr", help="Multiaddr or host:port")
     sp.add_argument("--peer-id", help="Optional peer id; defaults to derived label")
-    sp.add_argument("--probe", action="store_true", help="TCP connect() probe immediately")
-    sp.add_argument("--timeout", type=float, default=2.5, help="Probe timeout (seconds)")
+    sp.add_argument(
+        "--probe", action="store_true", help="TCP connect() probe immediately"
+    )
+    sp.add_argument(
+        "--timeout", type=float, default=2.5, help="Probe timeout (seconds)"
+    )
     sp.set_defaults(func=cmd_connect)
 
     # disconnect

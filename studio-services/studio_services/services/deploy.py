@@ -20,21 +20,15 @@ import logging
 import time
 from typing import Any, Dict, Optional
 
-from studio_services.errors import BadRequest, ChainMismatch, ApiError
-from studio_services.models.deploy import (
-    DeployRequest,
-    DeployResponse,
-    PreflightRequest,
-    PreflightResponse,
-)
-from studio_services.models.common import ChainId
 from studio_services.adapters.node_rpc import NodeRPC, from_env
-from studio_services.adapters.vm_compile import (
-    compile_package,
-    code_hash_bytes,
-    estimate_gas_for_deploy,
-    simulate_deploy_locally,
-)
+from studio_services.adapters.vm_compile import (code_hash_bytes,
+                                                 compile_package,
+                                                 estimate_gas_for_deploy,
+                                                 simulate_deploy_locally)
+from studio_services.errors import ApiError, BadRequest, ChainMismatch
+from studio_services.models.common import ChainId
+from studio_services.models.deploy import (DeployRequest, DeployResponse,
+                                           PreflightRequest, PreflightResponse)
 
 log = logging.getLogger(__name__)
 
@@ -61,11 +55,13 @@ def _pick_first(*func_names: str):
         call = _pick_first("send_raw_transaction", "send_raw_tx")
         tx_hash = call(node_rpc)(signed_bytes)
     """
+
     def _resolve(obj):
         for name in func_names:
             if hasattr(obj, name):
                 return getattr(obj, name)
         raise AttributeError(f"None of {func_names} found on {type(obj).__name__}")
+
     return _resolve
 
 
@@ -182,7 +178,9 @@ def preflight_simulate(req: PreflightRequest) -> PreflightResponse:
     # Optional dry-run deploy (pure local), returns logs/diagnostics if requested
     sim_result: Optional[Dict[str, Any]] = None
     if req.simulate:
-        sim_result = simulate_deploy_locally(build, call_data=req.constructor_args or {})
+        sim_result = simulate_deploy_locally(
+            build, call_data=req.constructor_args or {}
+        )
 
     return PreflightResponse(
         code_hash=code_hash_hex,

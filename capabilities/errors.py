@@ -37,7 +37,9 @@ def _truncate(data: Any, max_len: int = 256) -> Any:
                 return data
             return data[:max_len] + "..."
         if isinstance(data, (list, tuple)):
-            return [ _truncate(x, max_len) for x in data[:16] ] + (["..."] if len(data) > 16 else [])
+            return [_truncate(x, max_len) for x in data[:16]] + (
+                ["..."] if len(data) > 16 else []
+            )
         if isinstance(data, dict):
             out: Dict[str, Any] = {}
             for i, (k, v) in enumerate(data.items()):
@@ -102,6 +104,7 @@ class NotDeterministic(CapError):
     Raised when a syscall request would violate determinism guarantees
     (e.g., missing seeds, non-whitelisted options, time-dependent input).
     """
+
     code = "NOT_DETERMINISTIC"
 
     def __init__(
@@ -122,6 +125,7 @@ class LimitExceeded(CapError):
     """
     Raised when configured ceilings are exceeded (payload/result/queue/rate).
     """
+
     code = "LIMIT_EXCEEDED"
 
     def __init__(
@@ -152,6 +156,7 @@ class NoResultYet(CapError):
     - 'retry_after_blocks' suggests when it may become available.
     - 'status' can be 'queued' | 'leased' | 'running' | 'pending_proof'.
     """
+
     code = "NO_RESULT_YET"
 
     def __init__(
@@ -178,6 +183,7 @@ class AttestationError(CapError):
     Raised when provider attestation/evidence fails policy checks
     (TEE/QPU identity, measurements, certificates, traps/QoS thresholds).
     """
+
     code = "ATTESTATION_ERROR"
 
     def __init__(

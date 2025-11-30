@@ -35,10 +35,11 @@ These helpers are intentionally generic; if you have an ABI schema handy,
 you can add shape-specific validation upstream before calling normalize.
 """
 
-from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Sequence, Tuple, Union
-
+from typing import (Any, Dict, Iterable, List, Mapping, MutableMapping,
+                    Sequence, Tuple, Union)
 
 # ----------------------------- Public API -----------------------------
+
 
 def normalize_args(args: Sequence[Any]) -> List[Any]:
     """
@@ -103,6 +104,7 @@ def hex_to_bytes(s: str) -> bytes:
 
 # ----------------------------- Internals -----------------------------
 
+
 def _normalize_value(v: Any) -> Any:
     # bytes passthrough
     if isinstance(v, (bytes, bytearray, memoryview)):
@@ -115,6 +117,7 @@ def _normalize_value(v: Any) -> Any:
         # allow "base64:..." prefix as a convenience (rare)
         if v.startswith("base64:"):
             import base64
+
             return base64.b64decode(v[7:])
         return v  # plain string (keep as-is)
 
@@ -168,6 +171,7 @@ def _hex_to_bytes(s: str) -> bytes:
 
 def _try_b64(s: str) -> bytes:
     import base64
+
     try:
         return base64.b64decode(s, validate=True)
     except Exception as e:

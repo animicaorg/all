@@ -87,6 +87,7 @@ class MergeItem:
         tx_id: Optional human identifier (hash hex / debug string).
         speculative_error: If set, this item is treated as failed and skipped.
     """
+
     idx: int
     lockset: LockSet
     reexec: Callable[..., Any]
@@ -114,6 +115,7 @@ class MergeRecord:
 @dataclass
 class MergeReport:
     """Summary of the merge pass."""
+
     applied: List[MergeRecord] = field(default_factory=list)
     skipped_conflict: List[MergeRecord] = field(default_factory=list)
     skipped_speculative_error: List[MergeRecord] = field(default_factory=list)
@@ -168,9 +170,19 @@ def merge_speculative(items: Sequence[MergeItem]) -> MergeReport:
     for it in ordered:
         tx_label = it.tx_id or f"tx#{it.idx}"
         if it.speculative_error is not None:
-            log.debug("merge: skip speculative-error idx=%s tx=%s err=%r", it.idx, tx_label, it.speculative_error)
+            log.debug(
+                "merge: skip speculative-error idx=%s tx=%s err=%r",
+                it.idx,
+                tx_label,
+                it.speculative_error,
+            )
             report.skipped_speculative_error.append(
-                MergeRecord(idx=it.idx, tx_id=it.tx_id, status=MergeStatus.SPECULATIVE_ERROR, error=it.speculative_error)
+                MergeRecord(
+                    idx=it.idx,
+                    tx_id=it.tx_id,
+                    status=MergeStatus.SPECULATIVE_ERROR,
+                    error=it.speculative_error,
+                )
             )
             continue
 
@@ -188,7 +200,9 @@ def merge_speculative(items: Sequence[MergeItem]) -> MergeReport:
         except BaseException as e:
             log.warning("merge: reexec failed idx=%s tx=%s err=%r", it.idx, tx_label, e)
             report.failed_reexec.append(
-                MergeRecord(idx=it.idx, tx_id=it.tx_id, status=MergeStatus.REEXEC_ERROR, error=e)
+                MergeRecord(
+                    idx=it.idx, tx_id=it.tx_id, status=MergeStatus.REEXEC_ERROR, error=e
+                )
             )
             # Do not union the lockset on failure.
             continue
@@ -196,7 +210,9 @@ def merge_speculative(items: Sequence[MergeItem]) -> MergeReport:
         # Success: accept & union
         accepted_union = accepted_union.union(it.lockset)
         report.applied.append(
-            MergeRecord(idx=it.idx, tx_id=it.tx_id, status=MergeStatus.APPLIED, result=res)
+            MergeRecord(
+                idx=it.idx, tx_id=it.tx_id, status=MergeStatus.APPLIED, result=res
+            )
         )
         log.debug("merge: applied idx=%s tx=%s", it.idx, tx_label)
 
@@ -217,8 +233,10 @@ def make_reexec(fn: Callable[..., Any], /, **kwargs: Any) -> Callable[[], Any]:
     This is a convenience helper; `MergeItem` can also carry (fn, kwargs)
     separately via fields `reexec` and `reexec_kwargs`.
     """
+
     def _runner() -> Any:
         return fn(**kwargs)
+
     return _runner
 
 

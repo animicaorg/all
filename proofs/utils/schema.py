@@ -44,21 +44,25 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional, Tuple, Union, Mapping
+from typing import Any, Mapping, Optional, Tuple, Union
 
 # local error type
 try:
     from proofs.errors import SchemaError
 except Exception:  # pragma: no cover - during early bootstrap
+
     class SchemaError(Exception):
         pass
+
 
 # --------------------------------------------------------------------------------------
 # Logger
 # --------------------------------------------------------------------------------------
 
 _LOG = logging.getLogger("animica.proofs.schema")
-_level = getattr(logging, os.getenv("ANIMICA_SCHEMA_LOGLEVEL", "WARNING").upper(), logging.WARNING)
+_level = getattr(
+    logging, os.getenv("ANIMICA_SCHEMA_LOGLEVEL", "WARNING").upper(), logging.WARNING
+)
 if not _LOG.handlers:
     _LOG.setLevel(_level)
     _h = logging.StreamHandler()
@@ -73,6 +77,7 @@ STRICT_CDDL = os.getenv("ANIMICA_STRICT_CDDL", "0") == "1"
 # Canonical JSON helpers (sorted keys, no whitespace, stable encodings)
 # --------------------------------------------------------------------------------------
 
+
 def _canonical_json_dumps(obj: Any) -> str:
     """
     Deterministic JSON string: UTF-8, sorted keys, minimal whitespace.
@@ -80,6 +85,7 @@ def _canonical_json_dumps(obj: Any) -> str:
     """
     try:
         from core.utils.serialization import json_dumps as _cj
+
         return _cj(obj)
     except Exception:
         return json.dumps(obj, sort_keys=True, separators=(",", ":"))
@@ -98,6 +104,7 @@ def schema_sha3_256(schema: Mapping[str, Any]) -> bytes:
 # JSON Schema loader & validator (optional dependency on `jsonschema`)
 # --------------------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class JsonSchemaHandle:
     schema: Mapping[str, Any]
@@ -105,7 +112,9 @@ class JsonSchemaHandle:
     draft: Optional[str] = None  # e.g., "2020-12"
 
 
-def load_json_schema(src: Union[str, Path, bytes, Mapping[str, Any]]) -> JsonSchemaHandle:
+def load_json_schema(
+    src: Union[str, Path, bytes, Mapping[str, Any]],
+) -> JsonSchemaHandle:
     """
     Load a JSON Schema from a path/bytes/dict and compute its checksum.
     """
@@ -137,7 +146,9 @@ def load_json_schema(src: Union[str, Path, bytes, Mapping[str, Any]]) -> JsonSch
     return JsonSchemaHandle(schema=obj, checksum=schema_sha3_256(obj), draft=draft)
 
 
-def validate_json(instance: Any, handle: JsonSchemaHandle, *, title: str = "instance") -> None:
+def validate_json(
+    instance: Any, handle: JsonSchemaHandle, *, title: str = "instance"
+) -> None:
     """
     Validate `instance` against JSON Schema in `handle`.
     Uses `jsonschema` (if present). Otherwise:
@@ -150,8 +161,12 @@ def validate_json(instance: Any, handle: JsonSchemaHandle, *, title: str = "inst
         jsonschema = importlib.import_module("jsonschema")
     except Exception:
         if STRICT_JSON:
-            raise SchemaError("jsonschema package not available and ANIMICA_STRICT_JSONSCHEMA=1")  # noqa: TRY003
-        _LOG.debug("jsonschema not available; skipping JSON Schema validation for %s", title)
+            raise SchemaError(
+                "jsonschema package not available and ANIMICA_STRICT_JSONSCHEMA=1"
+            )  # noqa: TRY003
+        _LOG.debug(
+            "jsonschema not available; skipping JSON Schema validation for %s", title
+        )
         return
 
     try:
@@ -160,7 +175,9 @@ def validate_json(instance: Any, handle: JsonSchemaHandle, *, title: str = "inst
         for name in ("Draft202012Validator", "Draft201909Validator", "Draft7Validator"):
             DraftValidator = getattr(jsonschema, name, None) or DraftValidator
         if DraftValidator is None:  # pragma: no cover
-            raise SchemaError("jsonschema installed, but no known Draft*Validator available")
+            raise SchemaError(
+                "jsonschema installed, but no known Draft*Validator available"
+            )
 
         DraftValidator(handle.schema).validate(instance)
     except Exception as e:
@@ -171,6 +188,7 @@ def validate_json(instance: Any, handle: JsonSchemaHandle, *, title: str = "inst
 # CBOR & CDDL helpers
 # --------------------------------------------------------------------------------------
 
+
 def _cbor_decode(data: bytes) -> Any:
     """
     Decode CBOR bytes using preferred implementations:
@@ -180,6 +198,7 @@ def _cbor_decode(data: bytes) -> Any:
     # Try repo canonical
     try:
         from core.encoding import cbor as _c
+
         return _c.loads(data)  # type: ignore[attr-defined]
     except Exception:
         pass
@@ -199,6 +218,7 @@ class CDDLHandle:
     Lightweight wrapper for a CDDL spec.
     `compiled` may be an object from a third-party library or None.
     """
+
     text: str
     compiled: Optional[Any] = None
     source: Optional[Path] = None
@@ -238,10 +258,15 @@ def load_cddl(src: Union[str, Path]) -> CDDLHandle:
                 # cbor2tools.cddl: returns a parser/ast; user calls validator separately
                 compiled = backend.parse_cddl(text)
             else:  # pragma: no cover
-                _LOG.warning("CDDL backend %s found but no known compile API; continuing decode-only", backend)
+                _LOG.warning(
+                    "CDDL backend %s found but no known compile API; continuing decode-only",
+                    backend,
+                )
         except Exception as e:
             if STRICT_CDDL:
-                raise SchemaError(f"Failed to compile CDDL with backend {backend}: {e}") from e
+                raise SchemaError(
+                    f"Failed to compile CDDL with backend {backend}: {e}"
+                ) from e
             _LOG.warning("CDDL compile failed (%s); will perform decode-only checks", e)
 
     elif STRICT_CDDL:
@@ -250,7 +275,9 @@ def load_cddl(src: Union[str, Path]) -> CDDLHandle:
     return CDDLHandle(text=text, compiled=compiled, source=path)
 
 
-def validate_cddl_cbor(cddl: CDDLHandle, cbor_bytes: bytes, *, title: str = "CBOR value") -> Any:
+def validate_cddl_cbor(
+    cddl: CDDLHandle, cbor_bytes: bytes, *, title: str = "CBOR value"
+) -> Any:
     """
     Validate `cbor_bytes` against the provided `cddl` handle.
     Returns the decoded CBOR Python object on success (so callers can reuse it).
@@ -290,7 +317,9 @@ def validate_cddl_cbor(cddl: CDDLHandle, cbor_bytes: bytes, *, title: str = "CBO
 
             if validator is None:
                 # No validator class; best we can do is return decoded obj
-                _LOG.debug("Parsed CDDL AST but no validator API; returning decoded object")
+                _LOG.debug(
+                    "Parsed CDDL AST but no validator API; returning decoded object"
+                )
                 return obj
 
             v = validator(cddl.text)  # type: ignore[call-arg]
@@ -313,13 +342,18 @@ def validate_cddl_cbor(cddl: CDDLHandle, cbor_bytes: bytes, *, title: str = "CBO
 # Convenience: validate JSON by schema path and CBOR by CDDL path
 # --------------------------------------------------------------------------------------
 
-def validate_json_by_path(instance: Any, schema_path: Union[str, Path], *, title: str = "instance") -> JsonSchemaHandle:
+
+def validate_json_by_path(
+    instance: Any, schema_path: Union[str, Path], *, title: str = "instance"
+) -> JsonSchemaHandle:
     h = load_json_schema(schema_path)
     validate_json(instance, h, title=title)
     return h
 
 
-def validate_cbor_by_cddl_path(cbor_bytes: bytes, cddl_path: Union[str, Path], *, title: str = "CBOR value") -> CDDLHandle:
+def validate_cbor_by_cddl_path(
+    cbor_bytes: bytes, cddl_path: Union[str, Path], *, title: str = "CBOR value"
+) -> CDDLHandle:
     h = load_cddl(cddl_path)
     validate_cddl_cbor(h, cbor_bytes, title=title)
     return h

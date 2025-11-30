@@ -31,16 +31,16 @@ from dataclasses import dataclass
 from importlib import import_module
 from typing import Callable, List, Optional, Tuple
 
-
 # --------------------------------------------------------------------------- #
 # Frame model (portable for fallbacks)
 # --------------------------------------------------------------------------- #
 
+
 @dataclass
 class Frame:
-    msg_id: int   # e.g., HELLO, INV, ...
-    seq: int      # per-connection sequence
-    flags: int    # bitfield
+    msg_id: int  # e.g., HELLO, INV, ...
+    seq: int  # per-connection sequence
+    flags: int  # bitfield
     payload: bytes
 
 
@@ -52,7 +52,11 @@ def _rng(seed: int) -> int:
 
 
 def gen_frames(n: int, payload_size: int, seed: Optional[int]) -> List[Frame]:
-    s = seed if (seed is not None) else int(os.environ.get("PYTHONHASHSEED", "0") or "1337")
+    s = (
+        seed
+        if (seed is not None)
+        else int(os.environ.get("PYTHONHASHSEED", "0") or "1337")
+    )
     x = (s & ((1 << 64) - 1)) or 1
     out: List[Frame] = []
     for i in range(1, n + 1):
@@ -63,7 +67,7 @@ def gen_frames(n: int, payload_size: int, seed: Optional[int]) -> List[Frame]:
             buf[j] = (x >> 32) & 0xFF
         # cycle a few message ids and flags
         msg_id = (i % 32) + 1
-        flags = (i % 4)
+        flags = i % 4
         out.append(Frame(msg_id=msg_id, seq=i, flags=flags, payload=bytes(buf)))
     return out
 
@@ -74,6 +78,7 @@ def gen_frames(n: int, payload_size: int, seed: Optional[int]) -> List[Frame]:
 
 Encoder = Callable[[Frame], bytes]
 Decoder = Callable[[bytes], Frame]
+
 
 def _get_p2p_codec() -> Tuple[str, Encoder, Decoder]:
     """
@@ -110,12 +115,19 @@ def _get_p2p_codec() -> Tuple[str, Encoder, Decoder]:
             dec_fn = fn
             break
     if enc_fn is None or dec_fn is None:
-        raise RuntimeError("Usable encode/decode functions not found in p2p.wire.encoding")
+        raise RuntimeError(
+            "Usable encode/decode functions not found in p2p.wire.encoding"
+        )
 
     def _mk(frame: Frame):
         # Best effort mapping (common field names)
         try:
-            return FrameCls(msg_id=frame.msg_id, seq=frame.seq, flags=frame.flags, payload=frame.payload)
+            return FrameCls(
+                msg_id=frame.msg_id,
+                seq=frame.seq,
+                flags=frame.flags,
+                payload=frame.payload,
+            )
         except TypeError:
             # try positional
             return FrameCls(frame.msg_id, frame.seq, frame.flags, frame.payload)
@@ -220,6 +232,7 @@ def get_codec(preference: str) -> Tuple[str, Encoder, Decoder]:
 # Bench core
 # --------------------------------------------------------------------------- #
 
+
 def _encode_all(frames: List[Frame], enc: Encoder) -> Tuple[float, List[bytes], int]:
     t0 = time.perf_counter()
     out: List[bytes] = []
@@ -252,7 +265,9 @@ def percentiles(samples: List[float]) -> Tuple[float, float]:
     else:
         median = 0.5 * (samples_sorted[mid - 1] + samples_sorted[mid])
     # coarse p90
-    idx90 = max(0, min(len(samples_sorted) - 1, int(round(0.90 * (len(samples_sorted) - 1)))))
+    idx90 = max(
+        0, min(len(samples_sorted) - 1, int(round(0.90 * (len(samples_sorted) - 1))))
+    )
     p90 = samples_sorted[idx90]
     return median, p90
 
@@ -300,7 +315,11 @@ def run_bench(
             "frames": frames,
             "payload_size": payload_size,
             "codec": label,
-            "seed": seed if seed is not None else int(os.environ.get("PYTHONHASHSEED", "0") or "1337"),
+            "seed": (
+                seed
+                if seed is not None
+                else int(os.environ.get("PYTHONHASHSEED", "0") or "1337")
+            ),
             "warmup": warmup,
             "repeat": repeat,
         },
@@ -319,14 +338,36 @@ def run_bench(
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description="Wire frames encode/decode throughput benchmark.")
-    ap.add_argument("--frames", type=int, default=100_000, help="Number of frames per run (default: 100k)")
-    ap.add_argument("--payload", type=int, default=64, help="Payload size (bytes) per frame (default: 64)")
-    ap.add_argument("--seed", type=int, default=None, help="Deterministic frame generator seed")
-    ap.add_argument("--warmup", type=int, default=1, help="Warmup iterations (default: 1)")
-    ap.add_argument("--repeat", type=int, default=5, help="Measured iterations (default: 5)")
-    ap.add_argument("--codec", choices=("auto", "p2p", "msgspec", "cbor2", "json"), default="auto",
-                    help="Codec preference (default: auto)")
+    ap = argparse.ArgumentParser(
+        description="Wire frames encode/decode throughput benchmark."
+    )
+    ap.add_argument(
+        "--frames",
+        type=int,
+        default=100_000,
+        help="Number of frames per run (default: 100k)",
+    )
+    ap.add_argument(
+        "--payload",
+        type=int,
+        default=64,
+        help="Payload size (bytes) per frame (default: 64)",
+    )
+    ap.add_argument(
+        "--seed", type=int, default=None, help="Deterministic frame generator seed"
+    )
+    ap.add_argument(
+        "--warmup", type=int, default=1, help="Warmup iterations (default: 1)"
+    )
+    ap.add_argument(
+        "--repeat", type=int, default=5, help="Measured iterations (default: 5)"
+    )
+    ap.add_argument(
+        "--codec",
+        choices=("auto", "p2p", "msgspec", "cbor2", "json"),
+        default="auto",
+        help="Codec preference (default: auto)",
+    )
     args = ap.parse_args(argv)
 
     payload = run_bench(

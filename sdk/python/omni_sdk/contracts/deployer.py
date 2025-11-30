@@ -50,29 +50,37 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 try:
     from omni_sdk.utils.cbor import dumps as cbor_dumps  # type: ignore
 except Exception as _e:  # pragma: no cover
-    raise RuntimeError("omni_sdk.utils.cbor is required for deterministic encoding") from _e
+    raise RuntimeError(
+        "omni_sdk.utils.cbor is required for deterministic encoding"
+    ) from _e
 
 # ABI helpers (normalize & validate ABI inside manifest)
 try:
     from omni_sdk.types.abi import normalize_abi  # type: ignore
 except Exception as _e:  # pragma: no cover
-    raise RuntimeError("omni_sdk.types.abi is required to normalize manifest ABI") from _e
+    raise RuntimeError(
+        "omni_sdk.types.abi is required to normalize manifest ABI"
+    ) from _e
 
 # Tx lifecycle
 from omni_sdk.tx import build as tx_build
 from omni_sdk.tx import encode as tx_encode
 from omni_sdk.tx import send as tx_send
-
 # PQ signer
 from omni_sdk.wallet.signer import PQSigner  # type: ignore
 
 # Errors
 try:
-    from omni_sdk.errors import RpcError, TxError, AbiError, VerifyError  # type: ignore
+    from omni_sdk.errors import (AbiError, RpcError, TxError,  # type: ignore
+                                 VerifyError)
 except Exception:  # pragma: no cover
+
     class RpcError(RuntimeError): ...
+
     class TxError(RuntimeError): ...
+
     class AbiError(RuntimeError): ...
+
     class VerifyError(RuntimeError): ...
 
 
@@ -80,6 +88,7 @@ JsonDict = Dict[str, Any]
 
 
 # --- Manifest helpers ---------------------------------------------------------
+
 
 def normalize_manifest(manifest: Mapping[str, Any]) -> JsonDict:
     """
@@ -133,6 +142,7 @@ def make_package_bytes(
 
 # --- Tx builders --------------------------------------------------------------
 
+
 def _have_tx_deploy() -> bool:
     try:
         # Feature-detect presence of tx.build.deploy
@@ -154,9 +164,13 @@ def build_deploy_tx(
     """
     Construct a deploy transaction object (dataclass or dict).
     """
-    gl = int(gas_limit) if gas_limit is not None else tx_build.suggest_gas_limit(
-        kind="deploy",
-        calldata_len=len(package_bytes),
+    gl = (
+        int(gas_limit)
+        if gas_limit is not None
+        else tx_build.suggest_gas_limit(
+            kind="deploy",
+            calldata_len=len(package_bytes),
+        )
     )
 
     if _have_tx_deploy():
@@ -184,6 +198,7 @@ def build_deploy_tx(
 
 
 # --- Deploy orchestrator ------------------------------------------------------
+
 
 def extract_contract_address(receipt: Mapping[str, Any]) -> Optional[str]:
     """

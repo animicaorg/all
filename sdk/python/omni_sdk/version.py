@@ -6,13 +6,14 @@ We keep a static __version__ (PEP 440) and expose utilities to enrich it with
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Optional, Tuple
 import os
 import subprocess
+from dataclasses import dataclass
+from typing import Optional, Tuple
 
 # Bump this when publishing
 __version__ = "0.1.0"
+
 
 @dataclass(frozen=True)
 class VersionInfo:
@@ -62,7 +63,7 @@ def version_info() -> VersionInfo:
 
 
 def version() -> str:
-    """Human-friendly string, e.g. '0.1.0 (v0.1.0-3-gabc1234)'. """
+    """Human-friendly string, e.g. '0.1.0 (v0.1.0-3-gabc1234)'."""
     return str(version_info())
 
 

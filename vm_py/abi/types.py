@@ -14,7 +14,7 @@ implemented in vm_py.abi.encoding/decoding.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional, Tuple, NewType
+from typing import Any, NewType, Optional, Tuple
 
 __all__ = [
     "ABITypeError",
@@ -39,6 +39,7 @@ __all__ = [
 # Errors
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 class ABITypeError(TypeError):
     """Raised when an ABI type spec is malformed or unsupported."""
 
@@ -53,6 +54,7 @@ class ValidationError(ValueError):
 
 Address = NewType("Address", str)
 
+
 def _try_bech32m_decode(addr: str) -> Tuple[str, bytes] | None:
     """
     Try to decode with pq's bech32m helper if available.
@@ -61,6 +63,7 @@ def _try_bech32m_decode(addr: str) -> Tuple[str, bytes] | None:
     try:
         # Preferred path (provided by pq module in this repo)
         from pq.py.utils.bech32 import bech32m_decode  # type: ignore
+
         hrp, data = bech32m_decode(addr)
         if hrp is None or data is None:
             return None
@@ -76,7 +79,9 @@ def is_address(addr: str, *, hrp: str = "anim") -> bool:
     decoded = _try_bech32m_decode(addr)
     if decoded is not None:
         dhrp, payload = decoded
-        return dhrp == hrp and 4 <= len(payload) <= 1024  # loose bounds; precise rules in pq
+        return (
+            dhrp == hrp and 4 <= len(payload) <= 1024
+        )  # loose bounds; precise rules in pq
     # Light fallback: basic bech32 charset/structure check and HRP prefix.
     # This is *not* a full bech32m check—only used when pq utils are absent.
     if not addr.lower().startswith(hrp + "1"):
@@ -104,6 +109,7 @@ def coerce_address(value: Any, *, hrp: str = "anim") -> Address:
 # ──────────────────────────────────────────────────────────────────────────────
 # Scalar coercion helpers
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def normalize_hex(s: str) -> bytes:
     """Convert a 0x-prefixed hex string to bytes, accepting even-length only."""
@@ -168,6 +174,7 @@ def coerce_bytes(
 # ──────────────────────────────────────────────────────────────────────────────
 # Type specs
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 @dataclass(frozen=True)
 class IntType:
@@ -241,6 +248,7 @@ class AddressType:
 # Parser for textual type specs (e.g., "uint256", "bytes32", "address", "bool")
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def parse_type(spec: str) -> Any:
     """
     Parse a textual type spec into a type object with a .validate() method.
@@ -301,8 +309,38 @@ def parse_type(spec: str) -> Any:
 
 
 def _assert_bits(bits: int) -> None:
-    if bits not in {8, 16, 24, 32, 40, 48, 56, 64,
-                    72, 80, 88, 96, 104, 112, 120, 128,
-                    136, 144, 152, 160, 168, 176, 184, 192,
-                    200, 208, 216, 224, 232, 240, 248, 256}:
+    if bits not in {
+        8,
+        16,
+        24,
+        32,
+        40,
+        48,
+        56,
+        64,
+        72,
+        80,
+        88,
+        96,
+        104,
+        112,
+        120,
+        128,
+        136,
+        144,
+        152,
+        160,
+        168,
+        176,
+        184,
+        192,
+        200,
+        208,
+        216,
+        224,
+        232,
+        240,
+        248,
+        256,
+    }:
         raise ABITypeError("bit width must be a multiple of 8 in 1..256")

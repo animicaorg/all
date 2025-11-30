@@ -35,25 +35,34 @@ from pydantic import BaseModel, Field, NonNegativeInt, conint
 
 # Optional imports (graceful when absent)
 try:  # errors
-    from da.errors import DAError, NotFound, InvalidProof, NamespaceRangeError
+    from da.errors import DAError, InvalidProof, NamespaceRangeError, NotFound
 except Exception:  # pragma: no cover
+
     class DAError(Exception):
         pass
+
     class NotFound(DAError):
         pass
+
     class InvalidProof(DAError):
         pass
+
     class NamespaceRangeError(DAError):
         pass
+
 
 try:  # service
     from .service import RetrievalService
 except Exception as e:  # pragma: no cover
-    raise RuntimeError("da.retrieval.service.RetrievalService is required by api.py") from e
+    raise RuntimeError(
+        "da.retrieval.service.RetrievalService is required by api.py"
+    ) from e
+
 
 # Optional auth / rate limit dependencies (no-ops if modules missing)
 def _noop_dep():
     return None
+
 
 try:
     from .auth import auth_dependency  # type: ignore
@@ -67,6 +76,7 @@ except Exception:  # pragma: no cover
 
 
 # -------------------------- Models --------------------------
+
 
 class BlobPostResponse(BaseModel):
     commitment: str = Field(..., description="NMT root commitment (0x-hex)")
@@ -84,6 +94,7 @@ class ErrorPayload(BaseModel):
 
 # -------------------------- Helpers --------------------------
 
+
 def _hex_to_bytes(x: str) -> bytes:
     xs = x[2:] if x.startswith(("0x", "0X")) else x
     if len(xs) % 2 == 1:
@@ -93,8 +104,10 @@ def _hex_to_bytes(x: str) -> bytes:
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid hex string")
 
+
 def _bytes_to_hex(b: bytes) -> str:
     return "0x" + b.hex()
+
 
 def _coerce_mapping(obj: Any) -> Mapping[str, Any]:
     if obj is None:
@@ -108,6 +121,7 @@ def _coerce_mapping(obj: Any) -> Mapping[str, Any]:
         return dict(obj.__dict__)
     raise TypeError("Receipt/object is not JSON-serializable")
 
+
 def _http_error_from_da(e: DAError) -> HTTPException:
     if isinstance(e, NotFound):
         return HTTPException(status_code=404, detail=str(e) or "Not found")
@@ -119,6 +133,7 @@ def _http_error_from_da(e: DAError) -> HTTPException:
 
 
 # -------------------------- App factory --------------------------
+
 
 def create_app(service: Optional[RetrievalService] = None) -> FastAPI:
     """
@@ -145,7 +160,9 @@ def create_app(service: Optional[RetrievalService] = None) -> FastAPI:
     async def post_blob(
         request: Request,
         response: Response,
-        ns: conint(ge=0) = Query(..., description="Namespace id (non-negative integer)"),
+        ns: conint(ge=0) = Query(
+            ..., description="Namespace id (non-negative integer)"
+        ),
         _auth=Depends(auth_dependency),
         _rl=Depends(rate_limit_dependency),
     ) -> BlobPostResponse:
@@ -155,13 +172,29 @@ def create_app(service: Optional[RetrievalService] = None) -> FastAPI:
                 raise HTTPException(status_code=400, detail="Empty body")
             rec = await _maybe_await(svc.post_blob(namespace=int(ns), data=body))
             # Expected: rec has fields commitment: bytes, size: int, namespace: int, receipt: mapping?
-            commitment_b = rec.get("commitment") if isinstance(rec, dict) else getattr(rec, "commitment", None)
-            size_v = rec.get("size") if isinstance(rec, dict) else getattr(rec, "size", None)
-            ns_v = rec.get("namespace") if isinstance(rec, dict) else getattr(rec, "namespace", ns)
-            receipt_v = rec.get("receipt") if isinstance(rec, dict) else getattr(rec, "receipt", None)
+            commitment_b = (
+                rec.get("commitment")
+                if isinstance(rec, dict)
+                else getattr(rec, "commitment", None)
+            )
+            size_v = (
+                rec.get("size") if isinstance(rec, dict) else getattr(rec, "size", None)
+            )
+            ns_v = (
+                rec.get("namespace")
+                if isinstance(rec, dict)
+                else getattr(rec, "namespace", ns)
+            )
+            receipt_v = (
+                rec.get("receipt")
+                if isinstance(rec, dict)
+                else getattr(rec, "receipt", None)
+            )
 
             if not isinstance(commitment_b, (bytes, bytearray)):
-                raise HTTPException(status_code=500, detail="Service did not return a bytes commitment")
+                raise HTTPException(
+                    status_code=500, detail="Service did not return a bytes commitment"
+                )
             response.headers["X-DA-Commitment"] = _bytes_to_hex(commitment_b)
             return BlobPostResponse(
                 commitment=_bytes_to_hex(commitment_b),
@@ -197,10 +230,18 @@ def create_app(service: Optional[RetrievalService] = None) -> FastAPI:
             if not isinstance(data, (bytes, bytearray)):
                 # allow service to return a stream-like
                 if hasattr(data, "read"):
-                    return StreamingResponse(data, media_type="application/octet-stream")
-                raise HTTPException(status_code=500, detail="Service returned non-bytes payload")
+                    return StreamingResponse(
+                        data, media_type="application/octet-stream"
+                    )
+                raise HTTPException(
+                    status_code=500, detail="Service returned non-bytes payload"
+                )
             headers = {"X-DA-Commitment": _bytes_to_hex(commit_b)}
-            return Response(content=bytes(data), media_type="application/octet-stream", headers=headers)
+            return Response(
+                content=bytes(data),
+                media_type="application/octet-stream",
+                headers=headers,
+            )
         except HTTPException:
             raise
         except DAError as e:
@@ -210,7 +251,11 @@ def create_app(service: Optional[RetrievalService] = None) -> FastAPI:
 
     @app.get(
         "/da/proof",
-        responses={200: {"content": {"application/json": {}}}, 400: {"model": ErrorPayload}, 404: {"model": ErrorPayload}},
+        responses={
+            200: {"content": {"application/json": {}}},
+            400: {"model": ErrorPayload},
+            404: {"model": ErrorPayload},
+        },
         tags=["da"],
         summary="Get a sampling proof for selected indices",
     )
@@ -225,13 +270,19 @@ def create_app(service: Optional[RetrievalService] = None) -> FastAPI:
             commit_b = _hex_to_bytes(commitment)
             idx_list = _parse_indices_csv(indices)
             payload = await _maybe_await(
-                svc.get_proof(commitment=commit_b, indices=idx_list, namespace=namespace)
+                svc.get_proof(
+                    commitment=commit_b, indices=idx_list, namespace=namespace
+                )
             )
             # Ensure JSON-serializable
             if isinstance(payload, (bytes, bytearray)):
                 # If service returns CBOR/bytes, expose as base64 in JSON wrapper
                 import base64
-                payload = {"format": "bytes", "data_b64": base64.b64encode(bytes(payload)).decode()}
+
+                payload = {
+                    "format": "bytes",
+                    "data_b64": base64.b64encode(bytes(payload)).decode(),
+                }
             elif not _is_jsonable(payload):
                 payload = _coerce_mapping(payload)
             return JSONResponse(payload)  # type: ignore[arg-type]
@@ -247,6 +298,7 @@ def create_app(service: Optional[RetrievalService] = None) -> FastAPI:
 
 # -------------------------- Small utils --------------------------
 
+
 def _parse_indices_csv(csv: str) -> List[int]:
     out: List[int] = []
     for piece in csv.split(","):
@@ -258,19 +310,24 @@ def _parse_indices_csv(csv: str) -> List[int]:
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid index: {p!r}")
         if v < 0:
-            raise HTTPException(status_code=400, detail=f"Index must be non-negative: {v}")
+            raise HTTPException(
+                status_code=400, detail=f"Index must be non-negative: {v}"
+            )
         out.append(v)
     if not out:
         raise HTTPException(status_code=400, detail="No indices provided")
     return out
 
+
 def _is_jsonable(x: Any) -> bool:
     try:
         from json import dumps
+
         dumps(x)
         return True
     except Exception:
         return False
+
 
 async def _maybe_await(x):
     return await x if hasattr(x, "__await__") else x
@@ -283,5 +340,6 @@ if __name__ == "__main__":  # pragma: no cover
     #   python -m da.retrieval.api
     # or: uvicorn da.retrieval.api:create_app().  To pass a custom service, import and wire externally.
     import uvicorn  # type: ignore
+
     app = create_app()
     uvicorn.run(app, host="127.0.0.1", port=8549)

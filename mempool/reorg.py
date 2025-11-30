@@ -43,10 +43,11 @@ If any of the above are missing, we fall back to best-effort behavior.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Iterable, Iterator, List, Optional, Sequence, Set, Tuple, Dict
 import logging
 import time
+from dataclasses import dataclass
+from typing import (Any, Dict, Iterable, Iterator, List, Optional, Sequence,
+                    Set, Tuple)
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,7 @@ logger = logging.getLogger(__name__)
 # -------------------------
 # Small helpers
 # -------------------------
+
 
 def _first_attr(obj: Any, names: Sequence[str], default: Any = None) -> Any:
     for n in names:
@@ -151,12 +153,15 @@ def _maybe_update_chain_nonce(pool: Any, addr: bytes, new_nonce: int) -> bool:
 # Public API
 # -------------------------
 
+
 @dataclass
 class ReorgDelta:
     old_tip: Optional[bytes]  # hash
     new_tip: Optional[bytes]  # hash
-    removed: Sequence[Any]    # old branch blocks (tail->head or head->tail, we don't care)
-    added: Sequence[Any]      # new branch blocks
+    removed: Sequence[
+        Any
+    ]  # old branch blocks (tail->head or head->tail, we don't care)
+    added: Sequence[Any]  # new branch blocks
 
 
 @dataclass
@@ -245,14 +250,18 @@ def handle_reorg(
     # Prefer bulk API if pool has it.
     added_hashes = list(included_hashes)
     if added_hashes:
-        if not (_pool_call(pool, "remove_many", added_hashes) or
-                _pool_call(pool, "pop_many", added_hashes)):
+        if not (
+            _pool_call(pool, "remove_many", added_hashes)
+            or _pool_call(pool, "pop_many", added_hashes)
+        ):
             # Fall back to mark_confirmed/remove one-by-one
             for h in added_hashes:
-                if not (_pool_call(pool, "mark_confirmed", h) or
-                        _pool_call(pool, "remove", h) or
-                        _pool_call(pool, "discard", h) or
-                        _pool_call(pool, "pop", h)):
+                if not (
+                    _pool_call(pool, "mark_confirmed", h)
+                    or _pool_call(pool, "remove", h)
+                    or _pool_call(pool, "discard", h)
+                    or _pool_call(pool, "pop", h)
+                ):
                     # If pool cannot remove, that's okay; selection later should ignore.
                     pass
         stats.dropped_confirmed += len(added_hashes)
@@ -300,8 +309,13 @@ def handle_reorg(
     stats.elapsed_ms = (time.perf_counter() - t0) * 1000.0
     logger.info(
         "mempool reorg handled: reinjected=%d dropped=%d dup=%d replaced=%d nonce_updates=%d senders=%d (%.1fms)",
-        stats.reinjected, stats.dropped_confirmed, stats.skipped_duplicate,
-        stats.skipped_replaced, stats.nonce_updates, stats.senders_touched, stats.elapsed_ms
+        stats.reinjected,
+        stats.dropped_confirmed,
+        stats.skipped_duplicate,
+        stats.skipped_replaced,
+        stats.nonce_updates,
+        stats.senders_touched,
+        stats.elapsed_ms,
     )
     return stats
 

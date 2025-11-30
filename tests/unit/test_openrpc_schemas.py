@@ -20,7 +20,8 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Tuple
+from typing import (Any, Dict, Iterable, Iterator, List, Mapping, Optional,
+                    Tuple)
 
 import pytest
 
@@ -65,7 +66,7 @@ def _find_json_files(root: Path) -> Iterator[Path]:
 
 def discover_openrpc_docs() -> List[Path]:
     dirs = []
-    if (env := os.getenv("OPENRPC_DIR")):
+    if env := os.getenv("OPENRPC_DIR"):
         dirs.append(Path(env))
     dirs.extend(Path(d) for d in DEFAULT_SCHEMA_DIRS)
     found: List[Path] = []
@@ -75,7 +76,11 @@ def discover_openrpc_docs() -> List[Path]:
                 try:
                     with f.open("rb") as fh:
                         data = json.load(fh)
-                    if isinstance(data, dict) and "openrpc" in data and "methods" in data:
+                    if (
+                        isinstance(data, dict)
+                        and "openrpc" in data
+                        and "methods" in data
+                    ):
                         found.append(f)
                 except Exception:
                     # Non-JSON or not an OpenRPC doc — ignore
@@ -85,7 +90,7 @@ def discover_openrpc_docs() -> List[Path]:
 
 def discover_example_requests() -> List[Path]:
     dirs = []
-    if (env := os.getenv("OPENRPC_EXAMPLES_DIR")):
+    if env := os.getenv("OPENRPC_EXAMPLES_DIR"):
         dirs.append(Path(env))
     dirs.extend(Path(d) for d in DEFAULT_EXAMPLE_DIRS)
     found: List[Path] = []
@@ -99,6 +104,7 @@ def discover_example_requests() -> List[Path]:
 # -----------------------------------------------------------------------------
 # OpenRPC model helpers (minimal)
 # -----------------------------------------------------------------------------
+
 
 @dataclass
 class Param:
@@ -133,7 +139,9 @@ def parse_openrpc(path: Path) -> OpenRPCDoc:
     data = json.loads(path.read_text(encoding="utf-8"))
 
     assert isinstance(data, dict), f"{path} must be a JSON object"
-    assert "openrpc" in data and isinstance(data["openrpc"], str), f"{path} missing 'openrpc' version"
+    assert "openrpc" in data and isinstance(
+        data["openrpc"], str
+    ), f"{path} missing 'openrpc' version"
     info = data.get("info") or {}
     assert isinstance(info, dict), f"{path} info must be object"
     title = str(info.get("title") or "unknown")
@@ -170,10 +178,14 @@ def parse_openrpc(path: Path) -> OpenRPCDoc:
         result = m.get("result", {}) or None
         if result is not None and not isinstance(result, dict):
             result = None
-        methods[name] = Method(name=name, params=ps, param_structure=param_structure, result=result)
+        methods[name] = Method(
+            name=name, params=ps, param_structure=param_structure, result=result
+        )
 
     assert methods, f"{path} contains no methods"
-    return OpenRPCDoc(title=title, version=version, methods=methods, components=components)
+    return OpenRPCDoc(
+        title=title, version=version, methods=methods, components=components
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -183,14 +195,22 @@ def parse_openrpc(path: Path) -> OpenRPCDoc:
 REF_PREFIX = "#/components/schemas/"
 
 
-def _resolve_refs(schema: Dict[str, Any], components: Mapping[str, Dict[str, Any]], _seen: Optional[set] = None) -> Dict[str, Any]:
+def _resolve_refs(
+    schema: Dict[str, Any],
+    components: Mapping[str, Dict[str, Any]],
+    _seen: Optional[set] = None,
+) -> Dict[str, Any]:
     """Resolve local $ref to components.schemas recursively (best-effort)."""
     from copy import deepcopy
 
     def _res(node: Any) -> Any:
         if isinstance(node, dict):
-            if "$ref" in node and isinstance(node["$ref"], str) and node["$ref"].startswith(REF_PREFIX):
-                key = node["$ref"][len(REF_PREFIX):]
+            if (
+                "$ref" in node
+                and isinstance(node["$ref"], str)
+                and node["$ref"].startswith(REF_PREFIX)
+            ):
+                key = node["$ref"][len(REF_PREFIX) :]
                 target = components.get(key)
                 if target is None:
                     # Leave unresolved; validator will catch if available
@@ -209,10 +229,15 @@ def _resolve_refs(schema: Dict[str, Any], components: Mapping[str, Dict[str, Any
     return _res(schema)
 
 
-def build_params_schema(method: Method, components: Mapping[str, Dict[str, Any]]) -> Dict[str, Any]:
+def build_params_schema(
+    method: Method, components: Mapping[str, Dict[str, Any]]
+) -> Dict[str, Any]:
     """Build a JSON Schema describing the 'params' shape for a method."""
     # Resolve each param's schema first.
-    params = [Param(p.name, _resolve_refs(p.schema, components), p.required) for p in method.params]
+    params = [
+        Param(p.name, _resolve_refs(p.schema, components), p.required)
+        for p in method.params
+    ]
 
     def by_position() -> Dict[str, Any]:
         items = [p.schema for p in params]
@@ -258,21 +283,32 @@ def build_params_schema(method: Method, components: Mapping[str, Dict[str, Any]]
 # Examples loader
 # -----------------------------------------------------------------------------
 
+
 def load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def iter_example_requests(paths: Iterable[Path]) -> Iterator[Tuple[Path, Dict[str, Any]]]:
+def iter_example_requests(
+    paths: Iterable[Path],
+) -> Iterator[Tuple[Path, Dict[str, Any]]]:
     for p in paths:
         try:
             obj = load_json(p)
         except Exception:
             continue
-        if isinstance(obj, dict) and obj.get("jsonrpc") == "2.0" and isinstance(obj.get("method"), str):
+        if (
+            isinstance(obj, dict)
+            and obj.get("jsonrpc") == "2.0"
+            and isinstance(obj.get("method"), str)
+        ):
             yield (p, obj)
         elif isinstance(obj, list):
             for i, it in enumerate(obj):
-                if isinstance(it, dict) and it.get("jsonrpc") == "2.0" and isinstance(it.get("method"), str):
+                if (
+                    isinstance(it, dict)
+                    and it.get("jsonrpc") == "2.0"
+                    and isinstance(it.get("method"), str)
+                ):
                     yield (p.with_suffix(p.suffix + f"#{i}"), it)
 
 
@@ -280,22 +316,31 @@ def iter_example_requests(paths: Iterable[Path]) -> Iterator[Tuple[Path, Dict[st
 # Tests
 # -----------------------------------------------------------------------------
 
+
 def test_openrpc_documents_load_and_have_minimal_shape():
     docs = discover_openrpc_docs()
     if not docs:
-        pytest.skip("No OpenRPC documents found (set OPENRPC_DIR to point at your specs).")
+        pytest.skip(
+            "No OpenRPC documents found (set OPENRPC_DIR to point at your specs)."
+        )
 
     for path in docs:
         doc = parse_openrpc(path)
         assert doc.title, f"{path}: info.title required"
         assert doc.version, f"{path}: info.version required"
         # semver-ish shape for visibility (not strict)
-        assert any(ch.isdigit() for ch in doc.version), f"{path}: info.version should look like a version"
+        assert any(
+            ch.isdigit() for ch in doc.version
+        ), f"{path}: info.version should look like a version"
         # minimal method shapes
         for m in doc.methods.values():
             assert m.name, f"{path}: method missing name"
             assert isinstance(m.params, list), f"{path}:{m.name} params must be list"
-            assert m.param_structure in {"by-name", "by-position", "either"}, f"{path}:{m.name} invalid paramStructure"
+            assert m.param_structure in {
+                "by-name",
+                "by-position",
+                "either",
+            }, f"{path}:{m.name} invalid paramStructure"
 
 
 @pytest.mark.parametrize("strict", [False, True])
@@ -330,7 +375,9 @@ def test_examples_are_covered_and_params_validate(strict):
         # jsonrpc version
         assert req.get("jsonrpc") == "2.0", f"{p}: jsonrpc must be '2.0'"
         method = str(req.get("method"))
-        assert method in methods, f"{p}: method '{method}' not found in any OpenRPC spec"
+        assert (
+            method in methods
+        ), f"{p}: method '{method}' not found in any OpenRPC spec"
         m, doc = methods[method]
 
         # Basic param kind checks
@@ -338,9 +385,13 @@ def test_examples_are_covered_and_params_validate(strict):
         if m.param_structure == "by-name":
             assert isinstance(params, dict), f"{p}: params must be object for by-name"
         elif m.param_structure == "by-position":
-            assert isinstance(params, list), f"{p}: params must be array for by-position"
+            assert isinstance(
+                params, list
+            ), f"{p}: params must be array for by-position"
         else:
-            assert isinstance(params, (dict, list, type(None))), f"{p}: params must be object or array"
+            assert isinstance(
+                params, (dict, list, type(None))
+            ), f"{p}: params must be object or array"
 
         # Strict validation (if jsonschema available)
         if strict:  # pragma: no cover (exercise in CI where jsonschema installed)
@@ -348,7 +399,9 @@ def test_examples_are_covered_and_params_validate(strict):
             try:
                 Draft202012Validator.check_schema(schema)
             except Exception as e:
-                pytest.fail(f"{p}: built params schema for '{method}' is invalid JSON Schema: {e}")
+                pytest.fail(
+                    f"{p}: built params schema for '{method}' is invalid JSON Schema: {e}"
+                )
 
             # Treat None params as []/{} depending on structure for validation
             val = params
@@ -377,5 +430,6 @@ def test_components_jsonschemas_are_well_formed_if_validator_available():
             try:
                 Draft202012Validator.check_schema(schema)
             except Exception as e:
-                pytest.fail(f"{dp}: components.schemas['{name}'] is not a valid JSON Schema: {e}")
-
+                pytest.fail(
+                    f"{dp}: components.schemas['{name}'] is not a valid JSON Schema: {e}"
+                )

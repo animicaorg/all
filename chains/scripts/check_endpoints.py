@@ -48,6 +48,7 @@ DEFAULT_OUT = ROOT / "chains" / "reports" / "endpoints_report.json"
 try:
     import websockets  # type: ignore
     from websockets.exceptions import WebSocketException  # type: ignore
+
     _HAS_WS = True
 except Exception:
     websockets = None  # type: ignore
@@ -71,7 +72,9 @@ def discover_from_registry(registry_path: Path) -> List[Path]:
     return chains
 
 
-def http_probe(url: str, timeout: float, retries: int) -> Tuple[bool, Optional[int], float, Optional[str]]:
+def http_probe(
+    url: str, timeout: float, retries: int
+) -> Tuple[bool, Optional[int], float, Optional[str]]:
     """
     Try HTTP HEAD, fall back to GET if method not allowed.
     Returns: (ok, status_code, latency_ms, error)
@@ -87,7 +90,9 @@ def http_probe(url: str, timeout: float, retries: int) -> Tuple[bool, Optional[i
     for attempt in range(retries + 1):
         try:
             # HEAD first
-            req = Request(url, method="HEAD", headers={"User-Agent": "animica-endpoint-check/1.0"})
+            req = Request(
+                url, method="HEAD", headers={"User-Agent": "animica-endpoint-check/1.0"}
+            )
             ctx = None
             if parsed.scheme == "https":
                 ctx = ssl.create_default_context()
@@ -99,7 +104,11 @@ def http_probe(url: str, timeout: float, retries: int) -> Tuple[bool, Optional[i
             last_err = f"HEAD: {e1!s}"
             # Try GET just for liveness
             try:
-                req = Request(url, method="GET", headers={"User-Agent": "animica-endpoint-check/1.0"})
+                req = Request(
+                    url,
+                    method="GET",
+                    headers={"User-Agent": "animica-endpoint-check/1.0"},
+                )
                 ctx = None
                 if parsed.scheme == "https":
                     ctx = ssl.create_default_context()
@@ -147,21 +156,41 @@ async def ws_probe(urls: List[str], timeout: float) -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
     for u in urls:
         ok, latency_ms, err = await ws_probe_one(u, timeout)
-        results.append({
-            "url": u, "ok": ok, "latency_ms": round(latency_ms, 2),
-            "error": None if ok else err
-        })
+        results.append(
+            {
+                "url": u,
+                "ok": ok,
+                "latency_ms": round(latency_ms, 2),
+                "error": None if ok else err,
+            }
+        )
     return results
 
 
 def main(argv: List[str]) -> int:
-    ap = argparse.ArgumentParser(description="Probe RPC/Explorer endpoints for Animica chains.")
-    ap.add_argument("--registry", default=str(DEFAULT_REGISTRY), help="Path to registry.json")
-    ap.add_argument("--chains", nargs="*", default=[], help="Explicit chain JSON paths (overrides registry)")
-    ap.add_argument("--timeout", type=float, default=5.0, help="Per-request timeout seconds (default 5.0)")
+    ap = argparse.ArgumentParser(
+        description="Probe RPC/Explorer endpoints for Animica chains."
+    )
+    ap.add_argument(
+        "--registry", default=str(DEFAULT_REGISTRY), help="Path to registry.json"
+    )
+    ap.add_argument(
+        "--chains",
+        nargs="*",
+        default=[],
+        help="Explicit chain JSON paths (overrides registry)",
+    )
+    ap.add_argument(
+        "--timeout",
+        type=float,
+        default=5.0,
+        help="Per-request timeout seconds (default 5.0)",
+    )
     ap.add_argument("--retries", type=int, default=0, help="HTTP retries (default 0)")
     ap.add_argument("--out", default=str(DEFAULT_OUT), help="Output report JSON path")
-    ap.add_argument("--no-fail", action="store_true", help="Always exit 0 even if some checks fail")
+    ap.add_argument(
+        "--no-fail", action="store_true", help="Always exit 0 even if some checks fail"
+    )
     args = ap.parse_args(argv)
 
     # Collect chain files
@@ -181,7 +210,7 @@ def main(argv: List[str]) -> int:
         "timeoutSec": args.timeout,
         "retries": args.retries,
         "websocketSupport": _HAS_WS,
-        "chains": []
+        "chains": [],
     }
 
     any_fail = False
@@ -191,10 +220,12 @@ def main(argv: List[str]) -> int:
             chain = read_json(cp)
         except Exception as e:
             any_fail = True
-            report["chains"].append({
-                "file": str(cp),
-                "error": f"invalid JSON: {e}",
-            })
+            report["chains"].append(
+                {
+                    "file": str(cp),
+                    "error": f"invalid JSON: {e}",
+                }
+            )
             continue
 
         name = chain.get("name", cp.stem)
@@ -206,11 +237,15 @@ def main(argv: List[str]) -> int:
         http_results: List[Dict[str, Any]] = []
         for u in rpc_http:
             ok, status, latency_ms, err = http_probe(u, args.timeout, args.retries)
-            http_results.append({
-                "url": u, "ok": ok, "status": status,
-                "latency_ms": round(latency_ms, 2),
-                "error": None if ok else err
-            })
+            http_results.append(
+                {
+                    "url": u,
+                    "ok": ok,
+                    "status": status,
+                    "latency_ms": round(latency_ms, 2),
+                    "error": None if ok else err,
+                }
+            )
             if not ok:
                 any_fail = True
 
@@ -220,12 +255,16 @@ def main(argv: List[str]) -> int:
             if not url:
                 continue
             ok, status, latency_ms, err = http_probe(url, args.timeout, args.retries)
-            exp_results.append({
-                "name": e.get("name", ""),
-                "url": url, "ok": ok, "status": status,
-                "latency_ms": round(latency_ms, 2),
-                "error": None if ok else err
-            })
+            exp_results.append(
+                {
+                    "name": e.get("name", ""),
+                    "url": url,
+                    "ok": ok,
+                    "status": status,
+                    "latency_ms": round(latency_ms, 2),
+                    "error": None if ok else err,
+                }
+            )
             if not ok:
                 any_fail = True
 
@@ -237,17 +276,27 @@ def main(argv: List[str]) -> int:
                     any_fail = True
             else:
                 any_fail = True
-                ws_results = [{"url": u, "ok": False, "latency_ms": 0.0, "error": "websockets package not installed"} for u in rpc_ws]
+                ws_results = [
+                    {
+                        "url": u,
+                        "ok": False,
+                        "latency_ms": 0.0,
+                        "error": "websockets package not installed",
+                    }
+                    for u in rpc_ws
+                ]
 
-        report["chains"].append({
-            "file": str(cp),
-            "name": name,
-            "rpc": {
-                "http": http_results,
-                "ws": ws_results,
-            },
-            "explorers": exp_results,
-        })
+        report["chains"].append(
+            {
+                "file": str(cp),
+                "name": name,
+                "rpc": {
+                    "http": http_results,
+                    "ws": ws_results,
+                },
+                "explorers": exp_results,
+            }
+        )
 
     # Ensure dest dir and write
     out_path = Path(args.out)
@@ -262,11 +311,17 @@ def main(argv: List[str]) -> int:
     for ch in report["chains"]:
         print(f"\n== {ch.get('name','(unknown)')} ==")
         for r in ch["rpc"]["http"]:
-            print(f"{_summary_row(r['ok'])} HTTP {r['status'] or '-':>3} {r['latency_ms']:>7.2f} ms  {r['url']}{'' if r['ok'] else f'  # {r['error']}'}")
+            print(
+                f"{_summary_row(r['ok'])} HTTP {r['status'] or '-':>3} {r['latency_ms']:>7.2f} ms  {r['url']}{'' if r['ok'] else f'  # {r['error']}'}"
+            )
         for r in ch["rpc"]["ws"]:
-            print(f"{_summary_row(r['ok'])}  WS  {'-':>3} {r['latency_ms']:>7.2f} ms  {r['url']}{'' if r['ok'] else f'  # {r['error']}'}")
+            print(
+                f"{_summary_row(r['ok'])}  WS  {'-':>3} {r['latency_ms']:>7.2f} ms  {r['url']}{'' if r['ok'] else f'  # {r['error']}'}"
+            )
         for r in ch["explorers"]:
-            print(f"{_summary_row(r['ok'])} EXPL {r['status'] or '-':>3} {r['latency_ms']:>7.2f} ms  {r['url']}")
+            print(
+                f"{_summary_row(r['ok'])} EXPL {r['status'] or '-':>3} {r['latency_ms']:>7.2f} ms  {r['url']}"
+            )
 
     if any_fail and not args.no_fail:
         return 1

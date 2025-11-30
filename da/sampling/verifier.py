@@ -57,12 +57,14 @@ Notes
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence, Tuple, List, Optional
 from dataclasses import dataclass
+from typing import Any, List, Mapping, Optional, Sequence, Tuple
+
 
 # Lazy imports to keep this module lightweight on import
 def _lazy(module: str, attr: str):
     import importlib
+
     m = importlib.import_module(module)
     try:
         return getattr(m, attr)
@@ -106,7 +108,9 @@ def verify_samples(root: bytes, payload: Mapping[str, Any]) -> Mapping[str, List
                 )
             else:
                 if s.namespace is None:
-                    raise ValueError("namespace required when raw leaf data is provided")
+                    raise ValueError(
+                        "namespace required when raw leaf data is provided"
+                    )
                 # Encode leaf as per NMT codec, then verify inclusion.
                 leaf_node = codec_encode(int(s.namespace), s.leaf_data or b"")
                 verified = _verify_with_possible_prehashed(
@@ -126,10 +130,10 @@ def verify_samples(root: bytes, payload: Mapping[str, Any]) -> Mapping[str, List
 @dataclass(frozen=True)
 class _Sample:
     index: int
-    branch: Sequence[bytes]               # sibling nodes from leaf→root
-    leaf_data: Optional[bytes] = None     # raw shard data (pre-encoding)
-    leaf_hash: Optional[bytes] = None     # pre-encoded leaf node
-    namespace: Optional[int] = None       # required if leaf_data is used
+    branch: Sequence[bytes]  # sibling nodes from leaf→root
+    leaf_data: Optional[bytes] = None  # raw shard data (pre-encoding)
+    leaf_hash: Optional[bytes] = None  # pre-encoded leaf node
+    namespace: Optional[int] = None  # required if leaf_data is used
 
     def _replace_leaf_hash(self, new_hash: bytes) -> "_Sample":
         return _Sample(
@@ -141,7 +145,9 @@ class _Sample:
         )
 
 
-def _verify_with_possible_prehashed(verify_incl_fn, root: bytes, sample: _Sample, prehashed: bool) -> bool:
+def _verify_with_possible_prehashed(
+    verify_incl_fn, root: bytes, sample: _Sample, prehashed: bool
+) -> bool:
     """
     Call da.nmt.verify.verify_inclusion with forward-compatible kwargs.
     Some versions may accept (root, ns, leaf_bytes, index, branch)
@@ -151,8 +157,20 @@ def _verify_with_possible_prehashed(verify_incl_fn, root: bytes, sample: _Sample
     """
     # Variant A: verify_inclusion(root, namespace, leaf_bytes, index, branch)
     try:
-        if sample.namespace is not None and not prehashed and sample.leaf_data is not None:
-            return bool(verify_incl_fn(root, int(sample.namespace), sample.leaf_data, int(sample.index), list(sample.branch)))
+        if (
+            sample.namespace is not None
+            and not prehashed
+            and sample.leaf_data is not None
+        ):
+            return bool(
+                verify_incl_fn(
+                    root,
+                    int(sample.namespace),
+                    sample.leaf_data,
+                    int(sample.index),
+                    list(sample.branch),
+                )
+            )
     except TypeError:
         pass
 
@@ -192,7 +210,9 @@ def _normalize_payload(payload: Mapping[str, Any]) -> List[_Sample]:
     """
     Accept several payload shapes and normalize to a list of _Sample.
     """
-    indices = _as_int_list(payload.get("indices") or payload.get("sample_indices") or [])
+    indices = _as_int_list(
+        payload.get("indices") or payload.get("sample_indices") or []
+    )
     if not indices:
         raise ValueError("payload must include a non-empty 'indices' array")
 
@@ -210,12 +230,16 @@ def _normalize_payload(payload: Mapping[str, Any]) -> List[_Sample]:
             ns = _maybe_namespace(item.get("namespace") or namespace)
             lh = _as_bytes_maybe(item.get("leaf_hash") or item.get("leafNode"))
             ld = _as_bytes_maybe(item.get("leaf") or item.get("data"))
-            samples.append(_Sample(index=idx, branch=br, leaf_data=ld, leaf_hash=lh, namespace=ns))
+            samples.append(
+                _Sample(index=idx, branch=br, leaf_data=ld, leaf_hash=lh, namespace=ns)
+            )
         return samples
 
     # Common parallel-array shape:
     if not isinstance(proofs, list) or len(proofs) != len(indices):
-        raise ValueError("payload.proofs/branches must be a list of the same length as indices")
+        raise ValueError(
+            "payload.proofs/branches must be a list of the same length as indices"
+        )
 
     samples: List[_Sample] = []
     for i, idx in enumerate(indices):
@@ -226,7 +250,15 @@ def _normalize_payload(payload: Mapping[str, Any]) -> List[_Sample]:
             ld = _as_bytes(leaves_raw[i])
         if leaf_hashes is not None:
             lh = _as_bytes(leaf_hashes[i])
-        samples.append(_Sample(index=idx, branch=branch, leaf_data=ld, leaf_hash=lh, namespace=namespace))
+        samples.append(
+            _Sample(
+                index=idx,
+                branch=branch,
+                leaf_data=ld,
+                leaf_hash=lh,
+                namespace=namespace,
+            )
+        )
     return samples
 
 
@@ -244,7 +276,9 @@ def _normalize_branch(obj: Any) -> List[bytes]:
     elif isinstance(obj, dict):
         items = obj.get("branch") or obj.get("siblings") or obj.get("nodes") or []
     else:
-        raise ValueError("proof branch must be a list or dict with a 'branch'/'siblings' field")
+        raise ValueError(
+            "proof branch must be a list or dict with a 'branch'/'siblings' field"
+        )
 
     out: List[bytes] = []
     for n in items:
@@ -255,7 +289,9 @@ def _normalize_branch(obj: Any) -> List[bytes]:
         elif isinstance(n, dict) and ("hash" in n or "node" in n):
             out.append(_as_bytes(n.get("hash") or n.get("node")))
         else:
-            raise ValueError("branch element must be bytes/hex or an object with 'hash'")
+            raise ValueError(
+                "branch element must be bytes/hex or an object with 'hash'"
+            )
     return out
 
 
@@ -278,7 +314,7 @@ def _as_int(x: Any) -> int:
 def _as_int_list(xs: Any) -> List[int]:
     if not isinstance(xs, list):
         return []
-    return [ _as_int(x) for x in xs ]
+    return [_as_int(x) for x in xs]
 
 
 def _as_bytes(x: Any) -> bytes:
@@ -291,6 +327,7 @@ def _as_bytes(x: Any) -> bytes:
         if s.startswith("0x"):
             s = s[2:]
         import binascii
+
         return binascii.unhexlify(s) if s else b""
     raise ValueError(f"cannot parse bytes from {type(x).__name__}")
 

@@ -56,6 +56,7 @@ __all__ = [
 # Small utilities
 # ---------------------------------------------------------------------------
 
+
 def hex_to_bytes(x: str | bytes | bytearray | memoryview) -> bytes:
     """Accept 0x-hex or raw bytes-like and return bytes."""
     if isinstance(x, (bytes, bytearray, memoryview)):
@@ -74,6 +75,7 @@ def hex_to_bytes(x: str | bytes | bytearray | memoryview) -> bytes:
 # ---------------------------------------------------------------------------
 # Backend batch wrapper
 # ---------------------------------------------------------------------------
+
 
 class Batch:
     """
@@ -129,6 +131,7 @@ class Batch:
 # ExecutionState facade
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ExecutionState:
     """
@@ -146,6 +149,7 @@ class ExecutionState:
           es.credit(hex_to_bytes("0xabcd..."), 1000)
           es.set_storage(addr, key, b"value")
     """
+
     backend: Any
 
     # --- balances / nonce --------------------------------------------------
@@ -232,7 +236,10 @@ class ExecutionState:
 # Discovery / construction helpers
 # ---------------------------------------------------------------------------
 
-def _construct_from_exec_adapter(db_uri: Optional[str] = None, **kwargs) -> Optional[ExecutionState]:
+
+def _construct_from_exec_adapter(
+    db_uri: Optional[str] = None, **kwargs
+) -> Optional[ExecutionState]:
     """
     Try to import/construct the adapter from execution.adapters.state_db.
 
@@ -243,6 +250,7 @@ def _construct_from_exec_adapter(db_uri: Optional[str] = None, **kwargs) -> Opti
     """
     try:
         import importlib
+
         mod = importlib.import_module("execution.adapters.state_db")
     except Exception:
         return None

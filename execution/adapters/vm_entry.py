@@ -49,9 +49,11 @@ from typing import Any, Mapping, MutableMapping, Sequence
 # Feature flag & availability
 # -----------------------------------------------------------------------------
 
+
 def _env_truthy(name: str, default: str = "0") -> bool:
     v = os.getenv(name, default)
     return str(v).strip().lower() in ("1", "true", "yes", "on")
+
 
 VM_FEATURE_ENABLED: bool = _env_truthy("ANIMICA_VM_ENABLED", "0")
 
@@ -65,15 +67,16 @@ try:  # pragma: no cover - optional runtime dependency
     _vm_engine_mod = importlib.import_module("vm_py.runtime.engine")
     _VM_AVAILABLE = True
 except Exception:
-    _vm_pkg = None           # type: ignore
-    _vm_version_mod = None   # type: ignore
-    _vm_loader = None        # type: ignore
-    _vm_engine_mod = None    # type: ignore
+    _vm_pkg = None  # type: ignore
+    _vm_version_mod = None  # type: ignore
+    _vm_loader = None  # type: ignore
+    _vm_engine_mod = None  # type: ignore
 
 
 # -----------------------------------------------------------------------------
 # Errors & result types
 # -----------------------------------------------------------------------------
+
 
 class VmNotAvailable(RuntimeError):
     """Raised when vm_py is not importable or the feature flag is disabled."""
@@ -93,6 +96,7 @@ class VmExecResult:
 # -----------------------------------------------------------------------------
 # Public helpers
 # -----------------------------------------------------------------------------
+
 
 def vm_is_available() -> bool:
     """Return True if vm_py is importable and the feature flag is enabled."""
@@ -115,6 +119,7 @@ def vm_version() -> str | None:
 # -----------------------------------------------------------------------------
 # Execution entrypoints
 # -----------------------------------------------------------------------------
+
 
 def run_call(
     *,
@@ -176,6 +181,7 @@ def run_call(
 # -----------------------------------------------------------------------------
 # Internal vm_py shims
 # -----------------------------------------------------------------------------
+
 
 def _ensure_enabled() -> None:
     if not VM_FEATURE_ENABLED:
@@ -262,7 +268,9 @@ def _engine_run_call(
             except Exception as e:  # pragma: no cover
                 raise VmCallError(f"vm_py engine.{fn_name} failed: {e}") from e
 
-    raise VmCallError("vm_py.runtime.engine provides no Engine or run_call/call entrypoint")
+    raise VmCallError(
+        "vm_py.runtime.engine provides no Engine or run_call/call entrypoint"
+    )
 
 
 def _coerce_result(raw: Any) -> VmExecResult:
@@ -281,7 +289,11 @@ def _coerce_result(raw: Any) -> VmExecResult:
         return VmExecResult(return_data=_as_bytes(ret), gas_used=gas, logs=list(logs))
 
     # Object with attributes?
-    ret = getattr(raw, "return_data", None) or getattr(raw, "ret", None) or getattr(raw, "output", b"")
+    ret = (
+        getattr(raw, "return_data", None)
+        or getattr(raw, "ret", None)
+        or getattr(raw, "output", b"")
+    )
     gas = getattr(raw, "gas_used", None) or getattr(raw, "gas", 0)
     logs = getattr(raw, "logs", []) or []
     return VmExecResult(return_data=_as_bytes(ret), gas_used=int(gas), logs=list(logs))

@@ -4,7 +4,6 @@ from typing import Any, Dict, Iterable, List, Mapping
 
 from vm_py.runtime import events_api as _rt
 
-
 # Re-export types so tests and contracts can import them from stdlib.events
 Event = _rt.Event
 CanonicalEvent = _rt.CanonicalEvent

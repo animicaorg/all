@@ -33,11 +33,11 @@ Reported metrics
 
 from __future__ import annotations
 
-import os
-import time
 import math
+import os
 import random
 import statistics
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -50,16 +50,19 @@ except Exception:
     def _sha3_256(b: bytes) -> bytes:
         return hashlib.sha3_256(b).digest()
 
+
 # Optional real integrations (best effort)
 _build_template = None
 _pack_candidate = None
 try:
-    from mining.templates import build_header_template as _build_template  # type: ignore
+    from mining.templates import \
+        build_header_template as _build_template  # type: ignore
 except Exception:
     pass
 
 try:
-    from mining.header_packer import pack_candidate_block as _pack_candidate  # type: ignore
+    from mining.header_packer import \
+        pack_candidate_block as _pack_candidate  # type: ignore
 except Exception:
     try:
         # Some versions expose a class with method pack(...)
@@ -68,6 +71,7 @@ except Exception:
         def _pack_candidate(template, txs: List[bytes], proofs: Dict[str, List[bytes]]):
             packer = HeaderPacker()
             return packer.pack(template, txs, proofs)
+
     except Exception:
         pass
 
@@ -79,7 +83,7 @@ def _merkle_root(leaves: List[bytes]) -> bytes:
     """Canonical, SHA3-256 Merkle with lexicographically ordered pair-hash."""
     if not leaves:
         return b"\x00" * 32
-    level = [ _sha3_256(x) for x in leaves ]
+    level = [_sha3_256(x) for x in leaves]
     while len(level) > 1:
         nxt = []
         it = iter(level)
@@ -91,7 +95,9 @@ def _merkle_root(leaves: List[bytes]) -> bytes:
     return level[0]
 
 
-def _synthetic_build_template(parent_hash: bytes, height: int, theta_micro: int, mix_seed: bytes) -> Dict[str, Any]:
+def _synthetic_build_template(
+    parent_hash: bytes, height: int, theta_micro: int, mix_seed: bytes
+) -> Dict[str, Any]:
     """Very small, deterministic header template for the bench fallback."""
     return {
         "version": 1,
@@ -100,14 +106,14 @@ def _synthetic_build_template(parent_hash: bytes, height: int, theta_micro: int,
         "timestamp": int(time.time()),
         "theta_micro": int(theta_micro),
         "mix_seed": mix_seed,
-        "algo_policy_root": b"\xAB" * 32,
-        "poies_policy_root": b"\xCD" * 32,
+        "algo_policy_root": b"\xab" * 32,
+        "poies_policy_root": b"\xcd" * 32,
     }
 
 
-def _synthetic_pack_candidate(template: Dict[str, Any],
-                              txs: List[bytes],
-                              proofs: Dict[str, List[bytes]]) -> Dict[str, Any]:
+def _synthetic_pack_candidate(
+    template: Dict[str, Any], txs: List[bytes], proofs: Dict[str, List[bytes]]
+) -> Dict[str, Any]:
     """Pack a block candidate (fallback) by computing canonical roots."""
     # Derive receipts root from proof receipts (fake here: hash of body bytes)
     proof_receipts = []
@@ -120,12 +126,14 @@ def _synthetic_pack_candidate(template: Dict[str, Any],
     da_root = b"\x11" * 32
 
     header_body = (
-        template["parent_hash"] +
-        template["height"].to_bytes(8, "big") +
-        template["timestamp"].to_bytes(8, "big") +
-        template["theta_micro"].to_bytes(8, "big") +
-        template["mix_seed"] +
-        tx_root + proofs_root + da_root
+        template["parent_hash"]
+        + template["height"].to_bytes(8, "big")
+        + template["timestamp"].to_bytes(8, "big")
+        + template["theta_micro"].to_bytes(8, "big")
+        + template["mix_seed"]
+        + tx_root
+        + proofs_root
+        + da_root
     )
     header_hash = _sha3_256(header_body)
     header = {
@@ -210,11 +218,15 @@ def run(cfg: Optional[BenchCfg] = None) -> Dict[str, Any]:
         # fresh synthetic inputs each iteration to defeat warm caches a bit
         txs = [_make_fake_tx(rng, cfg.avg_tx_size) for _ in range(cfg.txs)]
         proofs = {
-            "hash":    [_make_fake_proof("hash", rng, 64) for _ in range(cfg.proof_hash)],
-            "ai":      [_make_fake_proof("ai", rng, 256) for _ in range(cfg.proof_ai)],
-            "quantum": [_make_fake_proof("quantum", rng, 192) for _ in range(cfg.proof_quantum)],
-            "storage": [_make_fake_proof("storage", rng, 96) for _ in range(cfg.proof_storage)],
-            "vdf":     [_make_fake_proof("vdf", rng, 96) for _ in range(cfg.proof_vdf)],
+            "hash": [_make_fake_proof("hash", rng, 64) for _ in range(cfg.proof_hash)],
+            "ai": [_make_fake_proof("ai", rng, 256) for _ in range(cfg.proof_ai)],
+            "quantum": [
+                _make_fake_proof("quantum", rng, 192) for _ in range(cfg.proof_quantum)
+            ],
+            "storage": [
+                _make_fake_proof("storage", rng, 96) for _ in range(cfg.proof_storage)
+            ],
+            "vdf": [_make_fake_proof("vdf", rng, 96) for _ in range(cfg.proof_vdf)],
         }
 
         t0 = time.perf_counter()
@@ -223,7 +235,11 @@ def run(cfg: Optional[BenchCfg] = None) -> Dict[str, Any]:
             # Provide minimal shim adapters expected by the function:
             class _CoreShim:
                 def head(self):
-                    return {"hash": parent_hash, "height": cfg.height - 1, "mixSeed": mix_seed}
+                    return {
+                        "hash": parent_hash,
+                        "height": cfg.height - 1,
+                        "mixSeed": mix_seed,
+                    }
 
             class _ConsensusShim:
                 def theta_micro(self):
@@ -237,9 +253,13 @@ def run(cfg: Optional[BenchCfg] = None) -> Dict[str, Any]:
                 def snapshot(self, limit=None):
                     return txs
 
-            template = _build_template(_CoreShim(), _ConsensusShim(), _ProofsShim(), _MempoolShim())
+            template = _build_template(
+                _CoreShim(), _ConsensusShim(), _ProofsShim(), _MempoolShim()
+            )
         else:
-            template = _synthetic_build_template(parent_hash, cfg.height, cfg.theta_micro, mix_seed)
+            template = _synthetic_build_template(
+                parent_hash, cfg.height, cfg.theta_micro, mix_seed
+            )
         t1 = time.perf_counter()
 
         if use_real:
@@ -253,7 +273,11 @@ def run(cfg: Optional[BenchCfg] = None) -> Dict[str, Any]:
 
         # Mildly perturb height & seeds between iterations
         cfg.height += 1
-        parent_hash = candidate["header"]["hash"] if isinstance(candidate, dict) else _sha3_256(parent_hash)
+        parent_hash = (
+            candidate["header"]["hash"]
+            if isinstance(candidate, dict)
+            else _sha3_256(parent_hash)
+        )
         mix_seed = _sha3_256(mix_seed)
 
     def summary(xs: List[float]) -> Dict[str, float]:
@@ -314,7 +338,9 @@ def main() -> int:
     print(f"  pack : {_fmt_summ(out['pack_summary'])}")
     print(f"  candidates/sec (overall): {out['candidates_per_sec']:.2f}")
     print()
-    print("Hint: tweak workload via env, e.g.: ITER=100 TXS=500 PROOF_HASH=128 python -m mining.bench.template_latency")
+    print(
+        "Hint: tweak workload via env, e.g.: ITER=100 TXS=500 PROOF_HASH=128 python -m mining.bench.template_latency"
+    )
     return 0
 
 

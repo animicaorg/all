@@ -37,6 +37,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 # Load the native extension (built via maturin/pyo3)
 # ---------------------------------------------------------------------------
 
+
 def _load_native() -> Any:
     """
     Attempt to import the bundled extension module. On failure, raise an
@@ -59,11 +60,13 @@ def _load_native() -> Any:
             )
             raise ImportError(msg) from exc
 
+
 _native = _load_native()
 
 # ---------------------------------------------------------------------------
 # Version helpers
 # ---------------------------------------------------------------------------
+
 
 def _probe(attr_chain: Tuple[str, ...]) -> Optional[Any]:
     """Safely walk an attribute chain on the native module, or return None."""
@@ -73,6 +76,7 @@ def _probe(attr_chain: Tuple[str, ...]) -> Optional[Any]:
             return None
         obj = getattr(obj, name)
     return obj
+
 
 def version() -> Tuple[int, int, int]:
     """
@@ -102,8 +106,10 @@ def version() -> Tuple[int, int, int]:
     # Last resort
     return (0, 0, 0)
 
+
 def _version_string_from_tuple(t: Tuple[int, int, int]) -> str:
     return f"{t[0]}.{t[1]}.{t[2]}"
+
 
 # Prefer native-provided string if available; otherwise derive from tuple.
 _version_str_fn = _probe(("version_string",))
@@ -127,6 +133,7 @@ cpu: Optional[Any] = _probe(("cpu",))
 # ---------------------------------------------------------------------------
 # Friendly CPU feature accessor (maps to a dict) if available.
 # ---------------------------------------------------------------------------
+
 
 def cpu_features() -> Dict[str, bool]:
     """
@@ -157,6 +164,7 @@ def cpu_features() -> Dict[str, bool]:
             return out
     return {}
 
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -172,6 +180,7 @@ __all__ = [
     "cpu_features",
 ]
 
+
 # Helpful runtime note (visible in repr)
 def __repr__() -> str:  # type: ignore[override]
     subs = []
@@ -179,4 +188,3 @@ def __repr__() -> str:  # type: ignore[override]
         subs.append(f"{name}={'yes' if globals().get(name) is not None else 'no'}")
     submods = ", ".join(subs)
     return f"<animica_native {__version__} ({submods})>"
-

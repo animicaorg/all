@@ -22,8 +22,8 @@ __all__ = [
 
 if TYPE_CHECKING:
     # Only for type-checkers; avoids import-time side effects at runtime.
-    from .node.service import P2PService
     from .crypto.handshake import HandshakeParams
+    from .node.service import P2PService
 
 
 def __getattr__(name: str):
@@ -33,9 +33,11 @@ def __getattr__(name: str):
     """
     if name == "P2PService":
         from .node.service import P2PService  # type: ignore
+
         return P2PService
     if name == "HandshakeParams":
         from .crypto.handshake import HandshakeParams  # type: ignore
+
         return HandshakeParams
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 

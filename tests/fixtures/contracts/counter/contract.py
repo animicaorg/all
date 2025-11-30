@@ -17,8 +17,7 @@ Notes:
 from __future__ import annotations
 
 # Contract stdlib (provided by vm_py runtime)
-from stdlib import storage, events, abi  # type: ignore
-
+from stdlib import abi, events, storage  # type: ignore
 
 # ---- constants ---------------------------------------------------------------
 
@@ -28,6 +27,7 @@ _MAX_I256 = (1 << 255) - 1
 
 
 # ---- helpers ----------------------------------------------------------------
+
 
 def _i256_to_bytes(x: int) -> bytes:
     """Encode signed int to 32-byte big-endian two's-complement."""
@@ -41,7 +41,7 @@ def _bytes_to_i256(b: bytes) -> int:
         return 0
     # Accept any length up to 32; left-pad to 32 for signed decode.
     if len(b) < 32:
-        b = (b"\xFF" if (b[0] & 0x80) else b"\x00") * (32 - len(b)) + b
+        b = (b"\xff" if (b[0] & 0x80) else b"\x00") * (32 - len(b)) + b
     elif len(b) > 32:
         abi.revert(b"CorruptState")
     return int.from_bytes(b, byteorder="big", signed=True)
@@ -58,6 +58,7 @@ def _store(v: int) -> None:
 
 
 # ---- public ABI functions ----------------------------------------------------
+
 
 def get() -> int:
     """

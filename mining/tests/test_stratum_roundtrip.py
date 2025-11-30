@@ -8,14 +8,15 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 import pytest
 
-
 # ---------- small introspection helpers --------------------------------------
+
 
 def _maybe(mod: Any, names: Tuple[str, ...]) -> Optional[Any]:
     for n in names:
         if hasattr(mod, n):
             return getattr(mod, n)
     return None
+
 
 def _sig_call(fn: Callable, /, *args, **kwargs):
     """
@@ -28,11 +29,16 @@ def _sig_call(fn: Callable, /, *args, **kwargs):
         return fn(*args, **kwargs)
     fkwargs = {k: v for k, v in kwargs.items() if k in params}
     # trim args length as well
-    max_pos = sum(1 for p in params.values()
-                  if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-                  and p.default is inspect._empty)
+    max_pos = sum(
+        1
+        for p in params.values()
+        if p.kind
+        in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+        and p.default is inspect._empty
+    )
     fargs = args[:max_pos] if len(args) > max_pos else args
     return fn(*fargs, **fkwargs)
+
 
 def _free_port() -> int:
     s = socket.socket()
@@ -53,14 +59,22 @@ StratumClient = _maybe(cli_mod, ("StratumClient", "Client"))
 
 # Optional helpers/constants from protocol
 METHODS = {
-    "subscribe": _maybe(proto_mod, ("METHOD_SUBSCRIBE", "METHOD_MINER_SUBSCRIBE")) or "mining.subscribe",
-    "authorize": _maybe(proto_mod, ("METHOD_AUTHORIZE", "METHOD_MINER_AUTHORIZE")) or "mining.authorize",
-    "set_difficulty": _maybe(proto_mod, ("METHOD_SET_DIFFICULTY", "METHOD_MINER_SET_DIFFICULTY")) or "mining.setDifficulty",
-    "submit_share": _maybe(proto_mod, ("METHOD_SUBMIT_SHARE", "METHOD_MINER_SUBMIT")) or "mining.submitShare",
-    "notify": _maybe(proto_mod, ("METHOD_NOTIFY", "METHOD_MINING_NOTIFY")) or "mining.notify",
+    "subscribe": _maybe(proto_mod, ("METHOD_SUBSCRIBE", "METHOD_MINER_SUBSCRIBE"))
+    or "mining.subscribe",
+    "authorize": _maybe(proto_mod, ("METHOD_AUTHORIZE", "METHOD_MINER_AUTHORIZE"))
+    or "mining.authorize",
+    "set_difficulty": _maybe(
+        proto_mod, ("METHOD_SET_DIFFICULTY", "METHOD_MINER_SET_DIFFICULTY")
+    )
+    or "mining.setDifficulty",
+    "submit_share": _maybe(proto_mod, ("METHOD_SUBMIT_SHARE", "METHOD_MINER_SUBMIT"))
+    or "mining.submitShare",
+    "notify": _maybe(proto_mod, ("METHOD_NOTIFY", "METHOD_MINING_NOTIFY"))
+    or "mining.notify",
 }
 
 # ---------- fixtures ---------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def event_loop():
@@ -68,6 +82,7 @@ def event_loop():
     loop = asyncio.new_event_loop()
     yield loop
     loop.close()
+
 
 @pytest.fixture
 async def stratum_stack(event_loop):
@@ -103,7 +118,7 @@ async def stratum_stack(event_loop):
             "on_share": on_share_cb,
             "on_set_difficulty": on_diff_cb,
             "default_difficulty": 64.0,
-            "validate_shares": False,     # allow fake shares in test
+            "validate_shares": False,  # allow fake shares in test
             "accept_insecure": True,
             "idle_timeout_s": 5,
         }
@@ -168,6 +183,7 @@ async def stratum_stack(event_loop):
 
 # ---------- tests ------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_server_client_set_difficulty(stratum_stack):
     client = stratum_stack["client"]
@@ -182,15 +198,25 @@ async def test_server_client_set_difficulty(stratum_stack):
         fn = getattr(client, meth_name, None)
         if fn is None:
             continue
-        res = fn(payload) if "payload" in inspect.signature(fn).parameters else fn(**payload)
+        res = (
+            fn(payload)
+            if "payload" in inspect.signature(fn).parameters
+            else fn(**payload)
+        )
         if inspect.iscoroutine(res):
             await res
 
     # set difficulty on the session
-    setdiff = getattr(client, "set_difficulty", None) or getattr(client, "difficulty", None)
+    setdiff = getattr(client, "set_difficulty", None) or getattr(
+        client, "difficulty", None
+    )
     assert setdiff is not None, "Client missing set_difficulty()"
     d_target = 128.0
-    res = setdiff(difficulty=d_target) if "difficulty" in inspect.signature(setdiff).parameters else setdiff(d_target)
+    res = (
+        setdiff(difficulty=d_target)
+        if "difficulty" in inspect.signature(setdiff).parameters
+        else setdiff(d_target)
+    )
     if inspect.iscoroutine(res):
         await res
 
@@ -219,7 +245,11 @@ async def test_server_client_submit_share_roundtrip(stratum_stack):
     extranonce = "0x00000001"
 
     # Some clients expose get_work/subscribe that returns a job
-    get_work = getattr(client, "get_work", None) or getattr(client, "getwork", None) or getattr(client, "fetch_work", None)
+    get_work = (
+        getattr(client, "get_work", None)
+        or getattr(client, "getwork", None)
+        or getattr(client, "fetch_work", None)
+    )
     if callable(get_work):
         res = get_work()
         if inspect.iscoroutine(res):
@@ -244,7 +274,11 @@ async def test_server_client_submit_share_roundtrip(stratum_stack):
     }
 
     # Submit via client — accept various method names/signatures
-    submit = getattr(client, "submit_share", None) or getattr(client, "submit", None) or getattr(client, "share", None)
+    submit = (
+        getattr(client, "submit_share", None)
+        or getattr(client, "submit", None)
+        or getattr(client, "share", None)
+    )
     assert submit is not None, "Client missing submit_share()"
 
     # Call with flexible signature
@@ -252,7 +286,13 @@ async def test_server_client_submit_share_roundtrip(stratum_stack):
     if "share" in params:
         res = submit(share=share)
     elif "job_id" in params and "nonce" in params:
-        res = submit(job_id=share["job_id"], nonce=share["nonce"], header=share.get("header"), mix=share.get("mix"), target=share.get("target"))
+        res = submit(
+            job_id=share["job_id"],
+            nonce=share["nonce"],
+            header=share.get("header"),
+            mix=share.get("mix"),
+            target=share.get("target"),
+        )
     else:
         # last resort: pass the whole dict
         res = submit(share)
@@ -281,6 +321,7 @@ async def test_server_client_submit_share_roundtrip(stratum_stack):
 
 
 # ---------- optional protocol-level smoke (JSON-RPC over TCP) ----------------
+
 
 @pytest.mark.asyncio
 async def test_protocol_jsonrpc_shapes_exist():

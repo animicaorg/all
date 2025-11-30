@@ -8,7 +8,7 @@ import pytest
 
 def _binomial_p(n: int, k: int, p: float) -> float:
     """Binomial(n, p) probability of exactly k successes."""
-    return math.comb(n, k) * (p ** k) * ((1.0 - p) ** (n - k))
+    return math.comb(n, k) * (p**k) * ((1.0 - p) ** (n - k))
 
 
 def da_sampling_failure_probability(
@@ -116,11 +116,11 @@ def simulate_da_sampling_failure(
 
 # These parameters should roughly reflect a realistic DA config for a block's
 # erasure-coded blob set.
-TOTAL_SHARDS = 12       # data + parity
-DATA_SHARDS = 8         # minimum required for reconstruction
-WITHHOLDING_PROB = 0.30 # per-shard withholding probability
-SAMPLE_COUNT = 6        # how many shards a light client samples
-P_FAIL_TARGET = 5e-3    # maximum acceptable DA failure probability
+TOTAL_SHARDS = 12  # data + parity
+DATA_SHARDS = 8  # minimum required for reconstruction
+WITHHOLDING_PROB = 0.30  # per-shard withholding probability
+SAMPLE_COUNT = 6  # how many shards a light client samples
+P_FAIL_TARGET = 5e-3  # maximum acceptable DA failure probability
 
 
 def test_theoretical_failure_probability_below_target() -> None:

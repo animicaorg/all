@@ -41,16 +41,20 @@ from __future__ import annotations
 import keyword
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import (Any, Dict, Iterable, List, Mapping, Optional, Sequence,
+                    Tuple)
 
 # ABI normalization
 try:
     from omni_sdk.types.abi import normalize_abi  # type: ignore
 except Exception as _e:  # pragma: no cover
-    raise RuntimeError("omni_sdk.types.abi.normalize_abi is required for codegen") from _e
+    raise RuntimeError(
+        "omni_sdk.types.abi.normalize_abi is required for codegen"
+    ) from _e
 
 
 # ---------- Helpers to parse normalized ABI -----------------------------------
+
 
 def _iter_functions(abi_norm: Mapping[str, Any]) -> Iterable[Mapping[str, Any]]:
     # Supports both {functions:{...}} and list-of-entries shapes
@@ -98,6 +102,7 @@ def _iter_events(abi_norm: Mapping[str, Any]) -> Iterable[Mapping[str, Any]]:
 
 _PY_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+
 def _py_ident(name: str) -> str:
     """Return a safe Python identifier (snake_case), avoiding keywords."""
     if not name:
@@ -113,7 +118,7 @@ def _py_ident(name: str) -> str:
 
 @dataclass(frozen=True)
 class _TypeHint:
-    py: str     # Python type hint as string
+    py: str  # Python type hint as string
     is_bytes_like: bool = False
 
 
@@ -358,6 +363,7 @@ def emit_python_client(
 
     # We embed the normalized ABI literal in the generated file as `_abi` binding.
     import json
+
     abi_literal = json.dumps(abi_norm, separators=(",", ":"), ensure_ascii=False)
 
     header = _HEADER.format(title=title)
@@ -393,7 +399,7 @@ def emit_python_client(
     src += f"\n_abi = {abi_literal}\n"
     src += class_src
     src += body
-    src += f"\n__all__ = [\"{class_name}\"]\n"
+    src += f'\n__all__ = ["{class_name}"]\n'
     return src
 
 
@@ -417,6 +423,7 @@ def write_python_client(
         include_events=include_events,
     )
     import os
+
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(src)

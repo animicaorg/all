@@ -25,10 +25,10 @@ environment only loads a subset during incremental builds.
 from __future__ import annotations
 
 # Re-export submodules for direct access.
-from . import ir as ir  # noqa: F401
 from . import encode as encode  # noqa: F401
-from . import typecheck as typecheck  # noqa: F401
 from . import gas_estimator as gas_estimator  # noqa: F401
+from . import ir as ir  # noqa: F401
+from . import typecheck as typecheck  # noqa: F401
 
 __all__ = [
     "ir",
@@ -44,12 +44,14 @@ __all__ = [
 
 # -------- Convenience wrappers (import-on-call) --------
 
+
 def encode_ir(module) -> bytes:
     """
     Serialize an IR module to canonical bytes.
     """
     # Local import to keep module load light in the browser.
     from .encode import encode_ir as _encode_ir
+
     return _encode_ir(module)
 
 
@@ -58,6 +60,7 @@ def decode_ir(blob: bytes):
     Parse canonical bytes into an IR module.
     """
     from .encode import decode_ir as _decode_ir
+
     return _decode_ir(blob)
 
 
@@ -79,4 +82,5 @@ def estimate_gas(module) -> int:
     Return a coarse upper-bound gas estimate for the module.
     """
     from .gas_estimator import estimate as _estimate
+
     return int(_estimate(module))

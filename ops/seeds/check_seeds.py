@@ -41,12 +41,12 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import ipaddress
 import json
 import os
 import socket
 import sys
 import time
-import ipaddress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -65,6 +65,7 @@ REPORT_DIR = Path("ops/seeds/reports")
 # Helpers: parsing policy lists
 # --------------------------------------------------------------------------------------
 
+
 @dataclass
 class Policy:
     allow_asn: set[int]
@@ -74,7 +75,10 @@ class Policy:
     block_cidr: List[ipaddress._BaseNetwork]
     block_fqdn: set[str]
 
-def _read_policy_list(path: Path) -> Tuple[set[int], List[ipaddress._BaseNetwork], set[str]]:
+
+def _read_policy_list(
+    path: Path,
+) -> Tuple[set[int], List[ipaddress._BaseNetwork], set[str]]:
     asns: set[int] = set()
     cidrs: List[ipaddress._BaseNetwork] = []
     fqdns: set[str] = set()
@@ -103,13 +107,19 @@ def _read_policy_list(path: Path) -> Tuple[set[int], List[ipaddress._BaseNetwork
             fqdns.add(value.lower())
     return asns, cidrs, fqdns
 
+
 def load_policy(allow_path: Path, block_path: Path) -> Policy:
     a_asn, a_cidr, a_fqdn = _read_policy_list(allow_path)
     b_asn, b_cidr, b_fqdn = _read_policy_list(block_path)
     return Policy(
-        allow_asn=a_asn, allow_cidr=a_cidr, allow_fqdn=a_fqdn,
-        block_asn=b_asn, block_cidr=b_cidr, block_fqdn=b_fqdn,
+        allow_asn=a_asn,
+        allow_cidr=a_cidr,
+        allow_fqdn=a_fqdn,
+        block_asn=b_asn,
+        block_cidr=b_cidr,
+        block_fqdn=b_fqdn,
     )
+
 
 # --------------------------------------------------------------------------------------
 # Multiaddr-like parsing
@@ -120,6 +130,7 @@ def load_policy(allow_path: Path, block_path: Path) -> Policy:
 #   /dns/seed.example.org/tcp/30333
 # --------------------------------------------------------------------------------------
 
+
 @dataclass
 class Endpoint:
     raw: str
@@ -128,6 +139,7 @@ class Endpoint:
     proto: str  # 'tcp' or 'udp'
     transport: Optional[str]  # e.g., 'quic-v1'
     addr_type: str  # 'ip4','ip6','dns'
+
 
 def parse_multiaddr(ma: str) -> Optional[Endpoint]:
     parts = [p for p in ma.split("/") if p]
@@ -149,11 +161,15 @@ def parse_multiaddr(ma: str) -> Optional[Endpoint]:
         return None
     if len(parts) >= 5:
         transport = parts[4]
-    return Endpoint(raw=ma, host=host, port=port, proto=proto, transport=transport, addr_type=atype)
+    return Endpoint(
+        raw=ma, host=host, port=port, proto=proto, transport=transport, addr_type=atype
+    )
+
 
 # --------------------------------------------------------------------------------------
 # Seed sources
 # --------------------------------------------------------------------------------------
+
 
 def load_bootstrap_seeds(path: Path) -> Dict[str, Any]:
     if not path.is_file():
@@ -162,6 +178,7 @@ def load_bootstrap_seeds(path: Path) -> Dict[str, Any]:
         return json.loads(path.read_text())
     except Exception as exc:
         raise SystemExit(f"Failed to parse {path}: {exc}")
+
 
 def load_dnsseeds(path: Path) -> List[str]:
     if not path.is_file():
@@ -174,9 +191,11 @@ def load_dnsseeds(path: Path) -> List[str]:
         out.append(line)
     return out
 
+
 # --------------------------------------------------------------------------------------
 # Policy checks
 # --------------------------------------------------------------------------------------
+
 
 def ip_allowed(ip: str, policy: Policy) -> Tuple[bool, Optional[str]]:
     try:
@@ -195,6 +214,7 @@ def ip_allowed(ip: str, policy: Policy) -> Tuple[bool, Optional[str]]:
         return False, "not_in_allow_cidr"
     return True, None
 
+
 def fqdn_allowed(name: str, policy: Policy) -> Tuple[bool, Optional[str]]:
     nm = (name or "").lower()
     if nm in policy.block_fqdn:
@@ -203,19 +223,24 @@ def fqdn_allowed(name: str, policy: Policy) -> Tuple[bool, Optional[str]]:
         return False, "not_in_allow_fqdn"
     return True, None
 
+
 def asn_allowed(asn: Optional[int], policy: Policy) -> Tuple[bool, Optional[str]]:
     if asn is None:
         # If allowlist has ASN entries, but we don't know the ASN, don't fail hard; mark as unknown.
-        return (True if not policy.allow_asn else False), ("asn_unknown" if policy.allow_asn else None)
+        return (True if not policy.allow_asn else False), (
+            "asn_unknown" if policy.allow_asn else None
+        )
     if asn in policy.block_asn:
         return False, "blocked_by_asn"
     if policy.allow_asn and asn not in policy.allow_asn:
         return False, "not_in_allow_asn"
     return True, None
 
+
 # --------------------------------------------------------------------------------------
 # Net probes
 # --------------------------------------------------------------------------------------
+
 
 def resolve_host(host: str) -> List[Tuple[str, int]]:
     """Return list of (ip, family) tuples for host. family: 4 or 6."""
@@ -240,6 +265,7 @@ def resolve_host(host: str) -> List[Tuple[str, int]]:
             uniq.append((ip, fam))
     return uniq
 
+
 def probe_tcp(ip: str, port: int, timeout: float) -> Tuple[bool, float, Optional[str]]:
     start = time.perf_counter()
     try:
@@ -250,6 +276,7 @@ def probe_tcp(ip: str, port: int, timeout: float) -> Tuple[bool, float, Optional
         elapsed = (time.perf_counter() - start) * 1000.0
         return False, elapsed, str(exc)
 
+
 def probe_udp(ip: str, port: int, timeout: float) -> Tuple[bool, float, Optional[str]]:
     """
     UDP has no handshake; we mark success if we can send a datagram without local error.
@@ -257,7 +284,9 @@ def probe_udp(ip: str, port: int, timeout: float) -> Tuple[bool, float, Optional
     """
     start = time.perf_counter()
     try:
-        with socket.socket(socket.AF_INET6 if ":" in ip else socket.AF_INET, socket.SOCK_DGRAM) as s:
+        with socket.socket(
+            socket.AF_INET6 if ":" in ip else socket.AF_INET, socket.SOCK_DGRAM
+        ) as s:
             s.settimeout(timeout)
             s.connect((ip, port))
             # Send a tiny "ping" payload
@@ -268,23 +297,30 @@ def probe_udp(ip: str, port: int, timeout: float) -> Tuple[bool, float, Optional
         elapsed = (time.perf_counter() - start) * 1000.0
         return False, elapsed, str(exc)
 
+
 # --------------------------------------------------------------------------------------
 # Report structs
 # --------------------------------------------------------------------------------------
 
+
 def now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
 
 def atomic_write(path: Path, data: str) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(data)
     os.replace(tmp, path)
 
+
 # --------------------------------------------------------------------------------------
 # Core logic
 # --------------------------------------------------------------------------------------
 
-def check_endpoints(endpoints: List[Endpoint], timeout: float, policy: Policy) -> List[Dict[str, Any]]:
+
+def check_endpoints(
+    endpoints: List[Endpoint], timeout: float, policy: Policy
+) -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
 
     def work(ep: Endpoint) -> Dict[str, Any]:
@@ -300,9 +336,15 @@ def check_endpoints(endpoints: List[Endpoint], timeout: float, policy: Policy) -
 
         if not ips:
             return dict(
-                endpoint=ep.raw, host=ep.host, port=ep.port, proto=ep.proto,
-                transport=ep.transport, resolved_ips=[], status="RESOLVE_FAIL",
-                ok=False, reason="dns_no_answer"
+                endpoint=ep.raw,
+                host=ep.host,
+                port=ep.port,
+                proto=ep.proto,
+                transport=ep.transport,
+                resolved_ips=[],
+                status="RESOLVE_FAIL",
+                ok=False,
+                reason="dns_no_answer",
             )
 
         best: Optional[Dict[str, Any]] = None
@@ -313,66 +355,130 @@ def check_endpoints(endpoints: List[Endpoint], timeout: float, policy: Policy) -
             status_note = f_reason or i_reason
 
             if not f_ok or not i_ok:
-                results.append(dict(
-                    endpoint=ep.raw, host=ep.host, port=ep.port, proto=ep.proto,
-                    transport=ep.transport, ip=ip, ip_family=fam,
-                    ok=False, status="POLICY_BLOCK", reason=status_note
-                ))
+                results.append(
+                    dict(
+                        endpoint=ep.raw,
+                        host=ep.host,
+                        port=ep.port,
+                        proto=ep.proto,
+                        transport=ep.transport,
+                        ip=ip,
+                        ip_family=fam,
+                        ok=False,
+                        status="POLICY_BLOCK",
+                        reason=status_note,
+                    )
+                )
                 continue
 
             # Probe network
             if ep.proto == "tcp" and ep.port:
                 ok, lat_ms, err = probe_tcp(ip, ep.port, timeout)
                 entry = dict(
-                    endpoint=ep.raw, host=ep.host, port=ep.port, proto=ep.proto,
-                    transport=ep.transport, ip=ip, ip_family=fam, ok=ok,
+                    endpoint=ep.raw,
+                    host=ep.host,
+                    port=ep.port,
+                    proto=ep.proto,
+                    transport=ep.transport,
+                    ip=ip,
+                    ip_family=fam,
+                    ok=ok,
                     status="TCP_OK" if ok else "TCP_FAIL",
-                    latency_ms=round(lat_ms, 2), error=err
+                    latency_ms=round(lat_ms, 2),
+                    error=err,
                 )
             elif ep.proto == "udp" and ep.port:
                 ok, lat_ms, err = probe_udp(ip, ep.port, timeout)
                 entry = dict(
-                    endpoint=ep.raw, host=ep.host, port=ep.port, proto=ep.proto,
-                    transport=ep.transport, ip=ip, ip_family=fam, ok=ok,
+                    endpoint=ep.raw,
+                    host=ep.host,
+                    port=ep.port,
+                    proto=ep.proto,
+                    transport=ep.transport,
+                    ip=ip,
+                    ip_family=fam,
+                    ok=ok,
                     status="UDP_SENT" if ok else "UDP_FAIL",
-                    latency_ms=round(lat_ms, 2), error=err
+                    latency_ms=round(lat_ms, 2),
+                    error=err,
                 )
             else:
                 entry = dict(
-                    endpoint=ep.raw, host=ep.host, port=ep.port, proto=ep.proto,
-                    transport=ep.transport, ip=ip, ip_family=fam, ok=False,
-                    status="UNSUPPORTED", reason="missing_port_or_proto"
+                    endpoint=ep.raw,
+                    host=ep.host,
+                    port=ep.port,
+                    proto=ep.proto,
+                    transport=ep.transport,
+                    ip=ip,
+                    ip_family=fam,
+                    ok=False,
+                    status="UNSUPPORTED",
+                    reason="missing_port_or_proto",
                 )
 
             # Pick the fastest successful entry, else keep the last failure for context
             if best is None:
                 best = entry
             else:
-                if entry.get("ok") and (not best.get("ok") or entry.get("latency_ms", 1e9) < best.get("latency_ms", 1e9)):
+                if entry.get("ok") and (
+                    not best.get("ok")
+                    or entry.get("latency_ms", 1e9) < best.get("latency_ms", 1e9)
+                ):
                     best = entry
                 elif not best.get("ok") and not entry.get("ok"):
                     best = entry  # keep the latest failure detail
 
-        return best if best is not None else dict(
-            endpoint=ep.raw, host=ep.host, port=ep.port, proto=ep.proto,
-            transport=ep.transport, ok=False, status="NO_IPS", reason="no_resolved_ips"
+        return (
+            best
+            if best is not None
+            else dict(
+                endpoint=ep.raw,
+                host=ep.host,
+                port=ep.port,
+                proto=ep.proto,
+                transport=ep.transport,
+                ok=False,
+                status="NO_IPS",
+                reason="no_resolved_ips",
+            )
         )
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(32, max(4, len(endpoints)))) as pool:
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=min(32, max(4, len(endpoints)))
+    ) as pool:
         for entry in pool.map(work, endpoints):
             results.append(entry)
     return results
 
+
 def main(argv: Optional[List[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description="Check seeds & produce reachability report")
-    ap.add_argument("--seeds", type=Path, default=DEFAULT_SEEDS, help="Path to bootstrap_nodes.json")
-    ap.add_argument("--dns", type=Path, default=DEFAULT_DNS, help="Path to dnsseeds.txt")
-    ap.add_argument("--allowlist", type=Path, default=DEFAULT_ALLOW, help="Policy allowlist file")
-    ap.add_argument("--blocklist", type=Path, default=DEFAULT_BLOCK, help="Policy blocklist file")
-    ap.add_argument("--timeout", type=float, default=2.0, help="Per-connection timeout (seconds)")
-    ap.add_argument("--min-ok", type=int, default=2, help="Minimum successful endpoints required")
-    ap.add_argument("--outdir", type=Path, default=REPORT_DIR, help="Directory for JSON reports")
-    ap.add_argument("--chain-id", type=str, default=None, help="Override chain_id in report")
+    ap = argparse.ArgumentParser(
+        description="Check seeds & produce reachability report"
+    )
+    ap.add_argument(
+        "--seeds", type=Path, default=DEFAULT_SEEDS, help="Path to bootstrap_nodes.json"
+    )
+    ap.add_argument(
+        "--dns", type=Path, default=DEFAULT_DNS, help="Path to dnsseeds.txt"
+    )
+    ap.add_argument(
+        "--allowlist", type=Path, default=DEFAULT_ALLOW, help="Policy allowlist file"
+    )
+    ap.add_argument(
+        "--blocklist", type=Path, default=DEFAULT_BLOCK, help="Policy blocklist file"
+    )
+    ap.add_argument(
+        "--timeout", type=float, default=2.0, help="Per-connection timeout (seconds)"
+    )
+    ap.add_argument(
+        "--min-ok", type=int, default=2, help="Minimum successful endpoints required"
+    )
+    ap.add_argument(
+        "--outdir", type=Path, default=REPORT_DIR, help="Directory for JSON reports"
+    )
+    ap.add_argument(
+        "--chain-id", type=str, default=None, help="Override chain_id in report"
+    )
     args = ap.parse_args(argv)
 
     args.outdir.mkdir(parents=True, exist_ok=True)
@@ -398,19 +504,39 @@ def main(argv: Optional[List[str]] = None) -> int:
             if ep:
                 endpoints.append(ep)
                 per_seed_eps.append(ep)
-        seed_records.append({
-            "peer_id": peer_id,
-            "region": region,
-            "asn": asn,
-            "multiaddr_count": len(per_seed_eps),
-        })
+        seed_records.append(
+            {
+                "peer_id": peer_id,
+                "region": region,
+                "asn": asn,
+                "multiaddr_count": len(per_seed_eps),
+            }
+        )
 
     # From DNS seeds (we treat these as /dns/<host>/udp/443/quic-v1 and /dns/<host>/tcp/30333 probes)
     dns_seeds = load_dnsseeds(args.dns)
     for host in dns_seeds:
         # Two probes (common defaults): UDP QUIC@443 and TCP@30333
-        endpoints.append(Endpoint(raw=f"/dns/{host}/udp/443/quic-v1", host=host, port=443, proto="udp", transport="quic-v1", addr_type="dns"))
-        endpoints.append(Endpoint(raw=f"/dns/{host}/tcp/30333", host=host, port=30333, proto="tcp", transport=None, addr_type="dns"))
+        endpoints.append(
+            Endpoint(
+                raw=f"/dns/{host}/udp/443/quic-v1",
+                host=host,
+                port=443,
+                proto="udp",
+                transport="quic-v1",
+                addr_type="dns",
+            )
+        )
+        endpoints.append(
+            Endpoint(
+                raw=f"/dns/{host}/tcp/30333",
+                host=host,
+                port=30333,
+                proto="tcp",
+                transport=None,
+                addr_type="dns",
+            )
+        )
 
     # Quick block checks on FQDN level
     fqdn_block_hits = [h for h in dns_seeds if not fqdn_allowed(h, policy)[0]]
@@ -432,7 +558,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             if a_reason == "blocked_by_asn":
                 asn_block_hits.append(s)
             else:
-                asn_allow_misses.append({k: s.get(k) for k in ("peer_id", "asn", "region")})
+                asn_allow_misses.append(
+                    {k: s.get(k) for k in ("peer_id", "asn", "region")}
+                )
 
     # Compose report
     report = {
@@ -451,7 +579,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             "udp_sent": len(ok_udp),
             "policy_blocked": len(blocked),
             "fqdn_block_hits": fqdn_block_hits,
-            "asn_block_hits": [{k: s.get(k) for k in ("peer_id","asn","region")} for s in asn_block_hits],
+            "asn_block_hits": [
+                {k: s.get(k) for k in ("peer_id", "asn", "region")}
+                for s in asn_block_hits
+            ],
             "asn_allow_misses": asn_allow_misses,
             "min_ok_required": args.min_ok,
             "ok_enough": (len(ok_tcp) >= args.min_ok),
@@ -470,21 +601,30 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     # Pretty summary
     print(f"[Animica] Seed Health Report @ {generated_at}  chain={chain_id}")
-    print(f"  Endpoints: {len(endpoints)} | TCP OK: {len(ok_tcp)} | UDP SENT: {len(ok_udp)} | Blocked: {len(blocked)}")
+    print(
+        f"  Endpoints: {len(endpoints)} | TCP OK: {len(ok_tcp)} | UDP SENT: {len(ok_udp)} | Blocked: {len(blocked)}"
+    )
     if fqdn_block_hits:
         print(f"  FQDN block hits: {', '.join(fqdn_block_hits)}")
     if asn_block_hits:
-        short = ", ".join([f"{s.get('peer_id')[:10]}…(asn={s.get('asn')})" for s in asn_block_hits])
+        short = ", ".join(
+            [f"{s.get('peer_id')[:10]}…(asn={s.get('asn')})" for s in asn_block_hits]
+        )
         print(f"  ASN block hits: {short}")
     if asn_allow_misses:
-        print(f"  ASN allow misses: {len(asn_allow_misses)} (allowlist present but some seeds had unknown/disallowed ASN)")
+        print(
+            f"  ASN allow misses: {len(asn_allow_misses)} (allowlist present but some seeds had unknown/disallowed ASN)"
+        )
 
     # Exit codes
     if blocked or fqdn_block_hits or asn_block_hits:
         print("-> Blocklist violation detected.", file=sys.stderr)
         return 2
     if len(ok_tcp) < args.min_ok:
-        print(f"-> Insufficient reachable TCP endpoints (need >= {args.min_ok}).", file=sys.stderr)
+        print(
+            f"-> Insufficient reachable TCP endpoints (need >= {args.min_ok}).",
+            file=sys.stderr,
+        )
         return 3
     return 0
 

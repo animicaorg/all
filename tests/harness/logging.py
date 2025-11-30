@@ -70,7 +70,9 @@ __all__ = [
 # Context handling (thread/task local via contextvars)
 # ------------------------------------------------------------------------------
 
-_CTX: contextvars.ContextVar[Dict[str, Any]] = contextvars.ContextVar("_CTX", default={})
+_CTX: contextvars.ContextVar[Dict[str, Any]] = contextvars.ContextVar(
+    "_CTX", default={}
+)
 
 
 def _ctx_copy() -> Dict[str, Any]:
@@ -110,13 +112,20 @@ def context(**fields: Any) -> Iterator[None]:
 # JSON formatter & plumbing
 # ------------------------------------------------------------------------------
 
+
 def _iso_utc(ts: float) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
 
 def _default_record_keys() -> set:
     dummy = logging.LogRecord(
-        name="x", level=logging.INFO, pathname=__file__, lineno=1, msg="m", args=(), exc_info=None
+        name="x",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=1,
+        msg="m",
+        args=(),
+        exc_info=None,
     )
     keys = set(dummy.__dict__.keys())
     # In some handlers, "message" is added later; account for it.
@@ -129,6 +138,7 @@ _DEFAULT_KEYS = _default_record_keys()
 
 class _ContextFilter(logging.Filter):
     """Inject contextvars payload into the record as 'ctx'."""
+
     def filter(self, record: logging.LogRecord) -> bool:
         # Attach a copy so downstream modifications are harmless
         record.ctx = _ctx_copy()
@@ -251,7 +261,9 @@ def setup_logging(
         for n in ("asyncio", "urllib3", "httpx", "websockets"):
             logging.getLogger(n).setLevel(max(root.level, logging.WARNING))
     else:
-        noisy = [s.strip() for s in os.getenv("TEST_LOG_NOISY", "").split(",") if s.strip()]
+        noisy = [
+            s.strip() for s in os.getenv("TEST_LOG_NOISY", "").split(",") if s.strip()
+        ]
         for n in noisy:
             logging.getLogger(n).setLevel(root.level)
 
@@ -267,6 +279,7 @@ def get_logger(name: str) -> logging.Logger:
 # Convenience decorator: duration logging
 # ------------------------------------------------------------------------------
 
+
 def log_duration(event: str = "call", level: int = logging.INFO):
     """
     Decorator to log start/finish with wall time duration (ms).
@@ -277,6 +290,7 @@ def log_duration(event: str = "call", level: int = logging.INFO):
         {"event":"deploy_tx","phase":"start",...}
         {"event":"deploy_tx","phase":"finish","ms":12.34,...}
     """
+
     def _wrap(fn):
         log = get_logger(f"{fn.__module__}.{fn.__name__}")
 
@@ -289,18 +303,30 @@ def log_duration(event: str = "call", level: int = logging.INFO):
             try:
                 result = fn(*args, **kwargs)
                 ms = _now_ms() - t0
-                log.log(level, f"{event}: finish in {ms:.2f}ms",
-                        extra={"event": event, "phase": "finish", "ms": round(ms, 3)})
+                log.log(
+                    level,
+                    f"{event}: finish in {ms:.2f}ms",
+                    extra={"event": event, "phase": "finish", "ms": round(ms, 3)},
+                )
                 return result
             except Exception as e:
                 ms = _now_ms() - t0
-                log.error(f"{event}: error after {ms:.2f}ms",
-                          extra={"event": event, "phase": "error", "ms": round(ms, 3), "error": str(e)},
-                          exc_info=True)
+                log.error(
+                    f"{event}: error after {ms:.2f}ms",
+                    extra={
+                        "event": event,
+                        "phase": "error",
+                        "ms": round(ms, 3),
+                        "error": str(e),
+                    },
+                    exc_info=True,
+                )
                 raise
+
         # Preserve metadata for pytest introspection
         wrapper.__name__ = fn.__name__
         wrapper.__doc__ = fn.__doc__
         wrapper.__qualname__ = fn.__qualname__
         return wrapper
+
     return _wrap

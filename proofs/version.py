@@ -21,13 +21,15 @@ from typing import Optional
 # It can be overridden at build time with the env var ANIMICA_PROOFS_VERSION.
 __version__ = os.getenv("ANIMICA_PROOFS_VERSION", "0.1.0")
 
+
 @dataclass(frozen=True)
 class GitInfo:
-    tag: Optional[str]          # nearest tag (if any)
-    commit: Optional[str]       # short commit hash (7+ chars)
-    branch: Optional[str]       # current branch (if available)
-    dirty: bool                 # uncommitted changes?
-    distance: Optional[int]     # commits since tag (if any)
+    tag: Optional[str]  # nearest tag (if any)
+    commit: Optional[str]  # short commit hash (7+ chars)
+    branch: Optional[str]  # current branch (if available)
+    dirty: bool  # uncommitted changes?
+    distance: Optional[int]  # commits since tag (if any)
+
 
 def _run_git(args: list[str]) -> Optional[str]:
     """Run a git command; return stdout stripped or None if git not available/not a repo."""
@@ -41,8 +43,10 @@ def _run_git(args: list[str]) -> Optional[str]:
     except Exception:
         return None
 
+
 def _in_git_repo() -> bool:
     return _run_git(["rev-parse", "--is-inside-work-tree"]) == "true"
+
 
 def git_describe() -> GitInfo:
     """
@@ -93,12 +97,16 @@ def git_describe() -> GitInfo:
                 # raw hash only; keep tag None
                 pass
 
-    return GitInfo(tag=tag, commit=commit, branch=branch, dirty=dirty, distance=distance)
+    return GitInfo(
+        tag=tag, commit=commit, branch=branch, dirty=dirty, distance=distance
+    )
+
 
 def _pep440_local(metadata: list[str]) -> str:
     """Join metadata into a PEP 440 local version segment (+a.b.c). Filters empties."""
     cleaned = [m for m in metadata if m]
     return "+" + ".".join(cleaned) if cleaned else ""
+
 
 def version() -> str:
     """
@@ -123,6 +131,7 @@ def version() -> str:
         meta.append("dirty")
     return f"{base}{_pep440_local(meta)}"
 
+
 def runtime_banner(prefix: str = "animica-proofs") -> str:
     gi = git_describe()
     parts = [prefix, version()]
@@ -135,6 +144,7 @@ def runtime_banner(prefix: str = "animica-proofs") -> str:
     if gi.dirty:
         parts.append("dirty")
     return " ".join(parts)
+
 
 if __name__ == "__main__":
     # Print a simple banner for diagnostics

@@ -38,15 +38,16 @@ c_out, stats = apply_all_caps(c_in, pol)
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, MutableSequence, Sequence, Tuple
+from typing import (Any, Dict, Iterable, List, Mapping, MutableSequence,
+                    Sequence, Tuple)
 
-from .types import ProofType, MicroNat, GammaMicro
 from .policy import PoiesPolicy, TypeCap
-
+from .types import GammaMicro, MicroNat, ProofType
 
 # ---------------------------------------------------------------------------
 # Lightweight float-based helpers for tests/legacy callers
 # ---------------------------------------------------------------------------
+
 
 def _policy_lookup(mapping: Mapping[Any, Any], key: Any) -> Any:
     if key in mapping:
@@ -80,7 +81,9 @@ def clip_per_type(values: Mapping[Any, float], policy: Any) -> dict[Any, float]:
 def clip_total_gamma(total: float, policy: Any) -> float:
     """Return scaling factor s such that total * s <= Γ."""
 
-    gamma = float(getattr(policy, "gamma_cap", getattr(policy, "total_gamma_cap", total)))
+    gamma = float(
+        getattr(policy, "gamma_cap", getattr(policy, "total_gamma_cap", total))
+    )
     if total <= 0:
         return 0.0
     if total <= gamma:
@@ -92,17 +95,20 @@ def clip_total_gamma(total: float, policy: Any) -> float:
 # Data structures & statistics
 # -----------------------------
 
+
 @dataclass(frozen=True)
 class Contribution:
     """A single proof's pre-cap ψ contribution."""
-    proof_id: bytes         # deterministic tie-breaker (e.g., nullifier)
+
+    proof_id: bytes  # deterministic tie-breaker (e.g., nullifier)
     proof_type: ProofType
-    psi_micro: MicroNat     # pre-cap ψ (µ-nats); negative values are clamped to 0
+    psi_micro: MicroNat  # pre-cap ψ (µ-nats); negative values are clamped to 0
 
 
 @dataclass(frozen=True)
 class CapStats:
     """Diagnostics for how much clipping happened at each stage (sums in µ-nats)."""
+
     sum_in: MicroNat
     sum_after_per_proof: MicroNat
     sum_after_per_type: MicroNat
@@ -117,6 +123,7 @@ class CapStats:
 # Public API
 # -----------------------------
 
+
 def apply_all_caps(
     contributions: Sequence[Contribution],
     policy: PoiesPolicy,
@@ -126,7 +133,10 @@ def apply_all_caps(
     of contributions (same order as input) and summary statistics.
     """
     # Stage 0: sanitize negatives to zero (defensive)
-    stage0 = [Contribution(c.proof_id, c.proof_type, max(int(c.psi_micro), 0)) for c in contributions]
+    stage0 = [
+        Contribution(c.proof_id, c.proof_type, max(int(c.psi_micro), 0))
+        for c in contributions
+    ]
     sum_in = _sum_psi(stage0)
     per_type_in = _sum_psi_by_type(stage0)
 
@@ -161,6 +171,7 @@ def apply_all_caps(
 # -----------------------------
 # Stage implementations
 # -----------------------------
+
 
 def _apply_per_proof_caps(
     items: Sequence[Contribution],
@@ -236,6 +247,7 @@ def _apply_total_gamma_cap(
 # Helpers: sums & scaling
 # -----------------------------
 
+
 def _sum_psi(items: Sequence[Contribution]) -> MicroNat:
     return sum(c.psi_micro for c in items)
 
@@ -300,7 +312,11 @@ def _proportional_downscale(
     # Sort descending by fractional remainder; tie-break by id (lexicographic), then index
     fracs_sorted = sorted(
         fracs,
-        key=lambda t: (t[0], t[1], -t[2]),  # larger frac first; for equal frac, smaller id first; then earlier index wins after reversing sign
+        key=lambda t: (
+            t[0],
+            t[1],
+            -t[2],
+        ),  # larger frac first; for equal frac, smaller id first; then earlier index wins after reversing sign
         reverse=True,
     )
 
@@ -318,8 +334,9 @@ def _proportional_downscale(
 
 if __name__ == "__main__":
     # Minimal smoke check using a fake policy-like object.
+    from .policy import \
+        Weights  # not used here, just to ensure import path is valid
     from .types import ProofType
-    from .policy import Weights  # not used here, just to ensure import path is valid
 
     class _Caps:
         def __init__(self, per_type, per_proof):
@@ -340,8 +357,10 @@ if __name__ == "__main__":
     pol = _Pol()
     vec = [
         Contribution(b"\x00\x01", ProofType.HASH, 4),  # per-proof capped to 3
-        Contribution(b"\x00\x02", ProofType.HASH, 4),  # per-proof capped to 3 → per-type cap 5 will downscale [3,3] → [3,2]
-        Contribution(b"\x00\x03", ProofType.AI, 6),    # per-proof cap 4
+        Contribution(
+            b"\x00\x02", ProofType.HASH, 4
+        ),  # per-proof capped to 3 → per-type cap 5 will downscale [3,3] → [3,2]
+        Contribution(b"\x00\x03", ProofType.AI, 6),  # per-proof cap 4
     ]
     out, st = apply_all_caps(vec, pol)  # total will be 3+2+4 = 9 → Γ=8 downscale a bit
     print("in :", [c.psi_micro for c in vec], "sum", st.sum_in)

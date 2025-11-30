@@ -31,9 +31,9 @@ Examples
 - samples for ns=24 mainnet:  animica/da/v1/chain/1/samples/ns/24
 """
 
+import re
 from dataclasses import dataclass
 from typing import Literal, Optional
-import re
 
 # -----------------------------------------------------------------------------
 # Canonical constants
@@ -56,6 +56,7 @@ _TOPIC_RE = re.compile(
 # Data model
 # -----------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class TopicParts:
     version: str
@@ -67,6 +68,7 @@ class TopicParts:
 # -----------------------------------------------------------------------------
 # Builders
 # -----------------------------------------------------------------------------
+
 
 def _validate_chain_id(chain_id: int) -> int:
     if not isinstance(chain_id, int) or chain_id < 0:
@@ -84,7 +86,13 @@ def _validate_namespace(ns: Optional[int]) -> Optional[int]:
     return ns
 
 
-def build_topic(kind: Kind, *, chain_id: int, namespace: Optional[int] = None, version: str = VERSION) -> str:
+def build_topic(
+    kind: Kind,
+    *,
+    chain_id: int,
+    namespace: Optional[int] = None,
+    version: str = VERSION,
+) -> str:
     """
     Build a canonical DA gossip topic string.
 
@@ -110,19 +118,28 @@ def commitment_topic(*, chain_id: int, version: str = VERSION) -> str:
     return build_topic("commitment", chain_id=chain_id, version=version)
 
 
-def shares_topic(*, chain_id: int, namespace: Optional[int] = None, version: str = VERSION) -> str:
+def shares_topic(
+    *, chain_id: int, namespace: Optional[int] = None, version: str = VERSION
+) -> str:
     """Topic for share/range availability announcements (optional/advanced)."""
-    return build_topic("shares", chain_id=chain_id, namespace=namespace, version=version)
+    return build_topic(
+        "shares", chain_id=chain_id, namespace=namespace, version=version
+    )
 
 
-def samples_topic(*, chain_id: int, namespace: Optional[int] = None, version: str = VERSION) -> str:
+def samples_topic(
+    *, chain_id: int, namespace: Optional[int] = None, version: str = VERSION
+) -> str:
     """Topic for DAS sample responses (indices + proof branches)."""
-    return build_topic("samples", chain_id=chain_id, namespace=namespace, version=version)
+    return build_topic(
+        "samples", chain_id=chain_id, namespace=namespace, version=version
+    )
 
 
 # -----------------------------------------------------------------------------
 # Parser
 # -----------------------------------------------------------------------------
+
 
 def parse_topic(topic: str) -> TopicParts:
     """

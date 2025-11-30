@@ -56,9 +56,12 @@ import asyncio
 import random
 import time
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Iterable, List, Mapping, Optional, Protocol, Sequence, Tuple, Union, runtime_checkable
+from typing import (Any, Awaitable, Callable, Iterable, List, Mapping,
+                    Optional, Protocol, Sequence, Tuple, Union,
+                    runtime_checkable)
 
 # ------------------------------ Types & Policy ------------------------------
+
 
 @dataclass(frozen=True)
 class HeadInfo:
@@ -81,6 +84,7 @@ class SamplingPolicy:
     - min_ok_ratio: require at least this fraction of returned samples to verify.
     - without_replacement: avoid re-sampling the same indices within a head (best-effort).
     """
+
     target_p_fail: float = 1e-9
     per_block_samples: int = 64
     namespaces: Optional[Sequence[int]] = None
@@ -92,6 +96,7 @@ class SamplingPolicy:
 
 # ------------------------------ Sampler Protocol ----------------------------
 
+
 @runtime_checkable
 class SamplerLike(Protocol):
     """
@@ -102,6 +107,7 @@ class SamplerLike(Protocol):
     Expected to return a JSON-like payload acceptable by
     da.sampling.verifier.verify_samples / light_client.light_verify.
     """
+
     # Common async form:
     async def sample_batch(  # type: ignore[empty-body]
         self,
@@ -111,8 +117,7 @@ class SamplerLike(Protocol):
         sample_count: int,
         namespace: Optional[int] = None,
         timeout_sec: Optional[float] = None,
-    ) -> Mapping[str, Any]:
-        ...
+    ) -> Mapping[str, Any]: ...
 
 
 class DefaultSamplerAdapter:
@@ -120,6 +125,7 @@ class DefaultSamplerAdapter:
     Wrap a sampler instance with various possible method names/signatures into
     a uniform async interface for the scheduler.
     """
+
     def __init__(self, sampler: Any):
         self._sampler = sampler
 
@@ -162,7 +168,9 @@ class DefaultSamplerAdapter:
                     ),
                 )
 
-        raise RuntimeError("Sampler object does not expose a compatible sampling method")
+        raise RuntimeError(
+            "Sampler object does not expose a compatible sampling method"
+        )
 
 
 # ------------------------------ Scheduler -----------------------------------
@@ -181,6 +189,7 @@ class SamplingScheduler:
       - on each new height, schedule up to policy.max_concurrency sample tasks
       - aggregate light-verify results and pass to on_report
     """
+
     def __init__(
         self,
         *,
@@ -204,12 +213,16 @@ class SamplingScheduler:
 
     # -------------------------- public runners --------------------------
 
-    async def run_forever(self, *, poll_interval_sec: float = 5.0, jitter_frac: float = 0.15) -> None:
+    async def run_forever(
+        self, *, poll_interval_sec: float = 5.0, jitter_frac: float = 0.15
+    ) -> None:
         """
         Polls for the latest head and runs sampling when a new height is observed.
         Continues indefinitely until cancelled.
         """
-        backoff = Backoff(min_sec=poll_interval_sec, max_sec=max(poll_interval_sec * 8, 30.0))
+        backoff = Backoff(
+            min_sec=poll_interval_sec, max_sec=max(poll_interval_sec * 8, 30.0)
+        )
         while True:
             try:
                 head = await self._get_head()
@@ -227,7 +240,9 @@ class SamplingScheduler:
                 self._last_height_reported = head.height
                 backoff.reset()
             except Exception as e:
-                self._log(f"[da.sampling.scheduler] sample_head failed at h={head.height}: {e!r}")
+                self._log(
+                    f"[da.sampling.scheduler] sample_head failed at h={head.height}: {e!r}"
+                )
 
             # sleep with jitter
             base = poll_interval_sec
@@ -318,7 +333,9 @@ class SamplingScheduler:
         make_explicit = True
         try:
             # If the sampler exposes "supports_explicit_indices", respect it.
-            if hasattr(self._sampler, "_sampler") and getattr(self._sampler._sampler, "supports_explicit_indices", False):
+            if hasattr(self._sampler, "_sampler") and getattr(
+                self._sampler._sampler, "supports_explicit_indices", False
+            ):
                 make_explicit = True
         except Exception:
             pass
@@ -365,10 +382,12 @@ class SamplingScheduler:
 
 # ------------------------------ Backoff -------------------------------------
 
+
 class Backoff:
     """
     Simple decorrelated jitter backoff (bounded).
     """
+
     def __init__(self, *, min_sec: float = 1.0, max_sec: float = 30.0):
         self.min = float(min_sec)
         self.max = float(max_sec)
@@ -386,8 +405,10 @@ class Backoff:
 
 # ------------------------------ small utils ---------------------------------
 
+
 def _lazy(module: str, attr: str):
     import importlib
+
     m = importlib.import_module(module)
     try:
         return getattr(m, attr)

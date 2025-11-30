@@ -44,11 +44,13 @@ VECTORS_DIR = REPO / "test_vectors"
 
 # ---------- Utilities ----------
 
+
 def pctl(values: Sequence[float], q: float) -> float:
     if not values:
         return float("nan")
     idx = max(0, min(len(values) - 1, int(round((q / 100.0) * (len(values) - 1)))))
     return sorted(values)[idx]
+
 
 @dataclass
 class BenchResult:
@@ -65,14 +67,16 @@ class BenchResult:
         if self.total_calls == 0:
             return f"{self.kind:8s} | no calls"
         lat = self.latencies_s
-        ops = self.total_calls / self.total_s if self.total_s > 0 else float('inf')
+        ops = self.total_calls / self.total_s if self.total_s > 0 else float("inf")
         lines = [
             f"{self.kind:8s} | calls={self.total_calls:,} ok={self.successes:,} fail={self.failures:,} total={self.total_s:.3f}s  → {ops:,.0f} ops/s",
             f"           | lat(ms): min={min(lat)*1e3:6.2f}  p50={stats.median(lat)*1e3:6.2f}  p90={pctl(lat,90)*1e3:6.2f}  p99={pctl(lat,99)*1e3:6.2f}  max={max(lat)*1e3:6.2f}",
         ]
         return "\n".join(lines)
 
+
 # ---------- Loader for test vectors ----------
+
 
 def load_vectors(kind: str, override: Path | None = None) -> list[dict[str, Any]]:
     """
@@ -116,13 +120,16 @@ def load_vectors(kind: str, override: Path | None = None) -> list[dict[str, Any]
         return []
     return valid
 
+
 # ---------- Resolve verifier callables ----------
+
 
 @dataclass
 class Verifier:
     kind: str
     call: Callable[..., Any]
     adapter: Callable[[dict[str, Any]], tuple[tuple, dict]]
+
 
 def _import_verify(kind: str) -> Verifier:
     """
@@ -134,10 +141,12 @@ def _import_verify(kind: str) -> Verifier:
     if kind == "hash":
         try:
             from proofs import hashshare as mod  # type: ignore
+
             verify_fn = getattr(mod, "verify")
         except Exception:
             # Fallback to registry
             from proofs import registry as reg  # type: ignore
+
             verify_fn = lambda envelope, **ctx: reg.verify_envelope(envelope, ctx)  # type: ignore
 
         def adapt(entry: dict[str, Any]) -> tuple[tuple, dict]:
@@ -151,9 +160,11 @@ def _import_verify(kind: str) -> Verifier:
     if kind == "ai":
         try:
             from proofs import ai as mod  # type: ignore
+
             verify_fn = getattr(mod, "verify")
         except Exception:
             from proofs import registry as reg  # type: ignore
+
             verify_fn = lambda envelope, **ctx: reg.verify_envelope(envelope, ctx)  # type: ignore
 
         def adapt(entry: dict[str, Any]) -> tuple[tuple, dict]:
@@ -167,9 +178,11 @@ def _import_verify(kind: str) -> Verifier:
     if kind == "quantum":
         try:
             from proofs import quantum as mod  # type: ignore
+
             verify_fn = getattr(mod, "verify")
         except Exception:
             from proofs import registry as reg  # type: ignore
+
             verify_fn = lambda envelope, **ctx: reg.verify_envelope(envelope, ctx)  # type: ignore
 
         def adapt(entry: dict[str, Any]) -> tuple[tuple, dict]:
@@ -183,9 +196,11 @@ def _import_verify(kind: str) -> Verifier:
     if kind == "storage":
         try:
             from proofs import storage as mod  # type: ignore
+
             verify_fn = getattr(mod, "verify")
         except Exception:
             from proofs import registry as reg  # type: ignore
+
             verify_fn = lambda envelope, **ctx: reg.verify_envelope(envelope, ctx)  # type: ignore
 
         def adapt(entry: dict[str, Any]) -> tuple[tuple, dict]:
@@ -198,9 +213,11 @@ def _import_verify(kind: str) -> Verifier:
     if kind == "vdf":
         try:
             from proofs import vdf as mod  # type: ignore
+
             verify_fn = getattr(mod, "verify")
         except Exception:
             from proofs import registry as reg  # type: ignore
+
             verify_fn = lambda envelope, **ctx: reg.verify_envelope(envelope, ctx)  # type: ignore
 
         def adapt(entry: dict[str, Any]) -> tuple[tuple, dict]:
@@ -212,15 +229,25 @@ def _import_verify(kind: str) -> Verifier:
 
     raise ValueError(f"unsupported kind {kind!r}")
 
+
 # ---------- Benchmark runner ----------
 
-def run_one_kind(kind: str, limit: int, repeat: int, vectors_path: str | None) -> BenchResult:
+
+def run_one_kind(
+    kind: str, limit: int, repeat: int, vectors_path: str | None
+) -> BenchResult:
     vectors_file = Path(vectors_path) if vectors_path else None
     vectors = load_vectors(kind, override=vectors_file)
     if not vectors:
         return BenchResult(
-            kind=kind, samples=0, repeats=repeat, successes=0, failures=0,
-            total_calls=0, total_s=0.0, latencies_s=[]
+            kind=kind,
+            samples=0,
+            repeats=repeat,
+            successes=0,
+            failures=0,
+            total_calls=0,
+            total_s=0.0,
+            latencies_s=[],
         )
 
     if limit > 0:
@@ -266,6 +293,7 @@ def run_one_kind(kind: str, limit: int, repeat: int, vectors_path: str | None) -
         latencies_s=latencies,
     )
 
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description="Animica proofs throughput benchmark")
     ap.add_argument(
@@ -294,7 +322,11 @@ def main(argv: list[str]) -> int:
     )
     args = ap.parse_args(argv)
 
-    kinds = ["hash", "ai", "quantum", "storage", "vdf"] if args.kind == "all" else [args.kind]
+    kinds = (
+        ["hash", "ai", "quantum", "storage", "vdf"]
+        if args.kind == "all"
+        else [args.kind]
+    )
 
     print("Animica — Proof Verifiers Throughput Bench")
     print(f"vectors_dir={VECTORS_DIR}")
@@ -302,7 +334,9 @@ def main(argv: list[str]) -> int:
 
     results: list[BenchResult] = []
     for k in kinds:
-        res = run_one_kind(k, limit=args.limit, repeat=args.repeat, vectors_path=args.vectors)
+        res = run_one_kind(
+            k, limit=args.limit, repeat=args.repeat, vectors_path=args.vectors
+        )
         results.append(res)
         if res.total_calls == 0:
             print(f"{k:8s} | (no vectors found — skipped)")
@@ -314,9 +348,12 @@ def main(argv: list[str]) -> int:
     total_calls = sum(r.total_calls for r in results)
     total_time = sum(r.total_s for r in results)
     if total_calls > 0 and total_time > 0:
-        print(f"TOTAL     | calls={total_calls:,}  time={total_time:.3f}s  → {total_calls/total_time:,.0f} ops/s")
+        print(
+            f"TOTAL     | calls={total_calls:,}  time={total_time:.3f}s  → {total_calls/total_time:,.0f} ops/s"
+        )
 
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))

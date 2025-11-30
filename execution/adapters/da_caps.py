@@ -44,6 +44,7 @@ from typing import Any, Mapping, MutableMapping, Optional, Sequence, TypedDict
 _DA_AVAILABLE = False
 try:  # pragma: no cover - optional import path
     from da import constants as _da_constants  # type: ignore
+
     _DA_AVAILABLE = True
 except Exception:  # pragma: no cover
     _da_constants = None  # type: ignore
@@ -53,16 +54,17 @@ except Exception:  # pragma: no cover
 
 # These are safe, conservative fallbacks. Real networks should override via
 # ChainParams or ensure `da.constants` is available in the runtime.
-_DEFAULT_MAX_BLOB_BYTES = 4 * 1024 * 1024        # 4 MiB per blob
-_DEFAULT_MAX_BLOBS_PER_TX = 4                    # at most 4 blobs per tx
+_DEFAULT_MAX_BLOB_BYTES = 4 * 1024 * 1024  # 4 MiB per blob
+_DEFAULT_MAX_BLOBS_PER_TX = 4  # at most 4 blobs per tx
 _DEFAULT_MAX_TOTAL_BLOB_BYTES_PER_TX = 8 * 1024 * 1024  # 8 MiB per tx
 _DEFAULT_NAMESPACE_MIN = 0
-_DEFAULT_NAMESPACE_MAX = (1 << 32) - 1           # 32-bit namespace space
-_DEFAULT_BLOB_BASE_GAS = 2000                    # flat overhead per blob
-_DEFAULT_BLOB_GAS_PER_BYTE = 2                   # cost slope per byte
+_DEFAULT_NAMESPACE_MAX = (1 << 32) - 1  # 32-bit namespace space
+_DEFAULT_BLOB_BASE_GAS = 2000  # flat overhead per blob
+_DEFAULT_BLOB_GAS_PER_BYTE = 2  # cost slope per byte
 
 
 # ---- Errors ------------------------------------------------------------------
+
 
 class DaCapsError(Exception):
     """Base error for DA caps validation."""
@@ -94,6 +96,7 @@ class MissingBlobField(DaCapsError):
 
 # ---- Types -------------------------------------------------------------------
 
+
 class BlobLike(TypedDict, total=False):
     """
     Minimal shape required by this adapter.
@@ -101,6 +104,7 @@ class BlobLike(TypedDict, total=False):
     - size: int        (required, bytes)
     - commitment: bytes|str  (optional; not used for pricing, present for sanity)
     """
+
     namespace: int
     size: int
     commitment: bytes
@@ -111,6 +115,7 @@ class DaCaps:
     """
     Limits and cost model used by execution for DA blobs.
     """
+
     max_blob_bytes: int
     max_blobs_per_tx: int
     max_total_blob_bytes_per_tx: int
@@ -126,12 +131,14 @@ class BlobCostResult:
     """
     Outcome of `check_and_price_blobs`.
     """
+
     count: int
     total_bytes: int
     gas_cost: int
 
 
 # ---- Public API --------------------------------------------------------------
+
 
 def caps_from_chain_params(params: Optional[Any] = None) -> DaCaps:
     """
@@ -175,18 +182,25 @@ def caps_from_chain_params(params: Optional[Any] = None) -> DaCaps:
                 return da_section[n]
         return default
 
-    max_blob_bytes = int(getk("max_blob_bytes", "maxBlobBytes",
-                              default=caps.max_blob_bytes))
-    max_blobs_per_tx = int(getk("max_blobs_per_tx", "maxBlobsPerTx",
-                                default=caps.max_blobs_per_tx))
-    max_total = int(getk("max_total_blob_bytes_per_tx", "maxTotalBlobBytesPerTx",
-                         default=caps.max_total_blob_bytes_per_tx))
+    max_blob_bytes = int(
+        getk("max_blob_bytes", "maxBlobBytes", default=caps.max_blob_bytes)
+    )
+    max_blobs_per_tx = int(
+        getk("max_blobs_per_tx", "maxBlobsPerTx", default=caps.max_blobs_per_tx)
+    )
+    max_total = int(
+        getk(
+            "max_total_blob_bytes_per_tx",
+            "maxTotalBlobBytesPerTx",
+            default=caps.max_total_blob_bytes_per_tx,
+        )
+    )
     ns_min = int(getk("namespace_min", "namespaceMin", default=caps.namespace_min))
     ns_max = int(getk("namespace_max", "namespaceMax", default=caps.namespace_max))
-    base_gas = int(getk("base_gas_per_blob", "baseGasPerBlob",
-                        default=caps.base_gas_per_blob))
-    gas_per_byte = int(getk("gas_per_byte", "gasPerByte",
-                            default=caps.gas_per_byte))
+    base_gas = int(
+        getk("base_gas_per_blob", "baseGasPerBlob", default=caps.base_gas_per_blob)
+    )
+    gas_per_byte = int(getk("gas_per_byte", "gasPerByte", default=caps.gas_per_byte))
     da_enabled = bool(getk("da_enabled", "enabled", "enable", default=caps.da_enabled))
 
     return DaCaps(
@@ -255,7 +269,9 @@ def estimate_gas_for_sizes(sizes: Sequence[int], caps: DaCaps) -> int:
     Convenience: estimate gas given raw sizes (assumes namespaces already ok).
     Still enforces count/size/total limits.
     """
-    blobs: list[BlobLike] = [{"namespace": caps.namespace_min, "size": int(s)} for s in sizes]
+    blobs: list[BlobLike] = [
+        {"namespace": caps.namespace_min, "size": int(s)} for s in sizes
+    ]
     return check_and_price_blobs(blobs, caps).gas_cost
 
 
@@ -268,6 +284,7 @@ def da_is_available() -> bool:
 
 # ---- Internals ---------------------------------------------------------------
 
+
 def _defaults_from_da_constants() -> DaCaps:
     # Extract with fallbacks to internal defaults
     def _get(attr: str, default: int) -> int:
@@ -275,7 +292,9 @@ def _defaults_from_da_constants() -> DaCaps:
 
     max_blob = _get("MAX_BLOB_BYTES", _DEFAULT_MAX_BLOB_BYTES)
     max_blobs = _get("MAX_BLOBS_PER_TX", _DEFAULT_MAX_BLOBS_PER_TX)
-    max_total = _get("MAX_TOTAL_BLOB_BYTES_PER_TX", _DEFAULT_MAX_TOTAL_BLOB_BYTES_PER_TX)
+    max_total = _get(
+        "MAX_TOTAL_BLOB_BYTES_PER_TX", _DEFAULT_MAX_TOTAL_BLOB_BYTES_PER_TX
+    )
     ns_min = _get("NAMESPACE_MIN", _DEFAULT_NAMESPACE_MIN)
     ns_max = _get("NAMESPACE_MAX", _DEFAULT_NAMESPACE_MAX)
     base = _get("BLOB_BASE_GAS", _DEFAULT_BLOB_BASE_GAS)

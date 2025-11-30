@@ -22,6 +22,7 @@ Exposed API
 - is_allowed_builtin(name): bool
 - is_allowed_import(module, names): bool
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -31,11 +32,13 @@ try:
     # Prefer the VM's ValidationError for consistent reporting.
     from ..errors import ValidationError  # type: ignore
 except Exception:  # pragma: no cover
+
     class ValidationError(Exception):  # type: ignore
         pass
 
 
 # ------------------------------ Builtin rules ------------------------------- #
+
 
 @dataclass(frozen=True)
 class BuiltinRule:
@@ -44,6 +47,7 @@ class BuiltinRule:
     NOTE: We only validate arity and kwarg *names* here; type validation is
     left to later passes (IR type checking) to keep this fast and simple.
     """
+
     min_args: int = 0
     max_args: Optional[int] = None  # None = unbounded (but >= min_args)
     allowed_kwargs: Set[str] = frozenset()
@@ -51,45 +55,78 @@ class BuiltinRule:
     note: str = ""  # documentation breadcrumb
 
 
-def _rule(min_args: int, max_args: Optional[int], *, kwargs: Iterable[str] = (), forbid_kwargs: bool = False, note: str = "") -> BuiltinRule:
-    return BuiltinRule(min_args=min_args, max_args=max_args, allowed_kwargs=frozenset(kwargs), forbid_kwargs=forbid_kwargs, note=note)
+def _rule(
+    min_args: int,
+    max_args: Optional[int],
+    *,
+    kwargs: Iterable[str] = (),
+    forbid_kwargs: bool = False,
+    note: str = "",
+) -> BuiltinRule:
+    return BuiltinRule(
+        min_args=min_args,
+        max_args=max_args,
+        allowed_kwargs=frozenset(kwargs),
+        forbid_kwargs=forbid_kwargs,
+        note=note,
+    )
 
 
 # Deterministic, side-effect-free subset.
 ALLOWED_BUILTINS: Dict[str, BuiltinRule] = {
     # Int/bytes/bool constructors — restricted shapes
-    "int":    _rule(1, 2, kwargs=("base",), note="Only positional value and optional base."),
-    "bytes":  _rule(1, 1, note="From bytes-like; no encoding/str variants."),
-    "bool":   _rule(1, 1),
-
+    "int": _rule(
+        1, 2, kwargs=("base",), note="Only positional value and optional base."
+    ),
+    "bytes": _rule(1, 1, note="From bytes-like; no encoding/str variants."),
+    "bool": _rule(1, 1),
     # Arithmetic / logic helpers (pure)
-    "abs":    _rule(1, 1),
-    "min":    _rule(1, None),  # any arity >=1
-    "max":    _rule(1, None),
-
+    "abs": _rule(1, 1),
+    "min": _rule(1, None),  # any arity >=1
+    "max": _rule(1, None),
     # Sequences
-    "len":       _rule(1, 1),
-    "sum":       _rule(1, 2, note="Optional start only."),
-    "all":       _rule(1, 1),
-    "any":       _rule(1, 1),
+    "len": _rule(1, 1),
+    "sum": _rule(1, 2, note="Optional start only."),
+    "all": _rule(1, 1),
+    "any": _rule(1, 1),
     "enumerate": _rule(1, 2, kwargs=("start",)),
-    "range":     _rule(1, 3),
-    "reversed":  _rule(1, 1),
+    "range": _rule(1, 3),
+    "reversed": _rule(1, 1),
     # Sorting — deterministic only if key func is NOT used; we forbid 'key'
-    "sorted":    _rule(1, None, kwargs=("reverse",), note="No key= allowed; reverse=bool only."),
+    "sorted": _rule(
+        1, None, kwargs=("reverse",), note="No key= allowed; reverse=bool only."
+    ),
 }
 
 # Builtins that are explicitly NEVER allowed (I/O, reflection, dynamic code, nondeterminism)
 BLOCKED_BUILTINS: Set[str] = {
-    "open", "print", "input",
-    "eval", "exec", "compile", "__import__",
-    "dir", "vars", "locals", "globals",
-    "getattr", "setattr", "delattr", "hasattr",
+    "open",
+    "print",
+    "input",
+    "eval",
+    "exec",
+    "compile",
+    "__import__",
+    "dir",
+    "vars",
+    "locals",
+    "globals",
+    "getattr",
+    "setattr",
+    "delattr",
+    "hasattr",
     "super",
     "hash",  # nondeterministic across processes due to hash seed
     "memoryview",  # iteration/identity subtleties; avoid
-    "format", "object", "type", "classmethod", "staticmethod", "property",
-    "help", "quit", "exit",  # REPL niceties
+    "format",
+    "object",
+    "type",
+    "classmethod",
+    "staticmethod",
+    "property",
+    "help",
+    "quit",
+    "exit",  # REPL niceties
 }
 
 
@@ -99,7 +136,9 @@ def is_allowed_builtin(name: str) -> bool:
     return n in ALLOWED_BUILTINS and n not in BLOCKED_BUILTINS
 
 
-def assert_allowed_builtin_call(name: str, argc: int, kwarg_names: Sequence[str]) -> None:
+def assert_allowed_builtin_call(
+    name: str, argc: int, kwarg_names: Sequence[str]
+) -> None:
     """Validate builtin call shape. Raise ValidationError on violation."""
     if name in BLOCKED_BUILTINS:
         raise ValidationError(f"Use of builtin '{name}' is forbidden")
@@ -110,9 +149,13 @@ def assert_allowed_builtin_call(name: str, argc: int, kwarg_names: Sequence[str]
 
     # Arity
     if argc < rule.min_args:
-        raise ValidationError(f"Builtin '{name}' expects at least {rule.min_args} argument(s), got {argc}")
+        raise ValidationError(
+            f"Builtin '{name}' expects at least {rule.min_args} argument(s), got {argc}"
+        )
     if rule.max_args is not None and argc > rule.max_args:
-        raise ValidationError(f"Builtin '{name}' expects at most {rule.max_args} argument(s), got {argc}")
+        raise ValidationError(
+            f"Builtin '{name}' expects at most {rule.max_args} argument(s), got {argc}"
+        )
 
     # Kwargs
     if rule.forbid_kwargs and kwarg_names:
@@ -120,7 +163,9 @@ def assert_allowed_builtin_call(name: str, argc: int, kwarg_names: Sequence[str]
     unknown = [k for k in kwarg_names if k not in rule.allowed_kwargs]
     if unknown:
         allowed_s = ", ".join(sorted(rule.allowed_kwargs)) or "none"
-        raise ValidationError(f"Builtin '{name}' got unsupported kwargs: {unknown}; allowed: {allowed_s}")
+        raise ValidationError(
+            f"Builtin '{name}' got unsupported kwargs: {unknown}; allowed: {allowed_s}"
+        )
 
     # Extra semantic constraints we can check syntactically:
     if name == "sorted" and ("key" in kwarg_names):
@@ -159,7 +204,9 @@ def assert_allowed_import(module: str, names: Optional[Iterable[str]]) -> None:
         if module not in ALLOWED_IMPORTS:
             raise ValidationError(f"Import of module '{module}' is not allowed")
         allowed = ", ".join(sorted(ALLOWED_IMPORTS[module]))
-        raise ValidationError(f"Only named imports from '{module}' are allowed: {{{allowed}}}")
+        raise ValidationError(
+            f"Only named imports from '{module}' are allowed: {{{allowed}}}"
+        )
 
 
 __all__ = [

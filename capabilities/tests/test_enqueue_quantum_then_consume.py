@@ -1,12 +1,13 @@
-import importlib
-import types
 import dataclasses
-import json
 import hashlib
+import importlib
+import json
+import types
+
 import pytest
 
-
 # ---------- Import helpers ----------
+
 
 def _import(modname: str):
     try:
@@ -27,18 +28,21 @@ def _get_attr(obj, names):
 
 # ---------- Errors (with fallbacks) ----------
 
+
 def _load_errors():
     mod = _import("capabilities.errors")
 
-    class _FallbackNoResultYet(Exception):
-        ...
+    class _FallbackNoResultYet(Exception): ...
 
-    class _FallbackAttestationError(Exception):
-        ...
+    class _FallbackAttestationError(Exception): ...
 
-    NoResultYet = getattr(mod, "NoResultYet", _FallbackNoResultYet if mod else _FallbackNoResultYet)
+    NoResultYet = getattr(
+        mod, "NoResultYet", _FallbackNoResultYet if mod else _FallbackNoResultYet
+    )
     AttestationError = getattr(
-        mod, "AttestationError", _FallbackAttestationError if mod else _FallbackAttestationError
+        mod,
+        "AttestationError",
+        _FallbackAttestationError if mod else _FallbackAttestationError,
     )
     return NoResultYet, AttestationError
 
@@ -48,8 +52,16 @@ NoResultYet, AttestationError = _load_errors()
 
 # ---------- Common helpers ----------
 
-def _mk_ctx(chain_id=1, height=100, tx_hash=bytes.fromhex("33" * 32), caller=bytes.fromhex("44" * 32)):
-    return types.SimpleNamespace(chain_id=chain_id, height=height, tx_hash=tx_hash, caller=caller)
+
+def _mk_ctx(
+    chain_id=1,
+    height=100,
+    tx_hash=bytes.fromhex("33" * 32),
+    caller=bytes.fromhex("44" * 32),
+):
+    return types.SimpleNamespace(
+        chain_id=chain_id, height=height, tx_hash=tx_hash, caller=caller
+    )
 
 
 def _task_id_from(receipt):
@@ -62,7 +74,10 @@ def _task_id_from(receipt):
 
 # ---------- Enqueue / Result APIs (with graceful fallbacks) ----------
 
-def _enqueue_quantum(ctx, circuit: bytes | str | dict, shots: int, attestation: dict | bytes | str | None):
+
+def _enqueue_quantum(
+    ctx, circuit: bytes | str | dict, shots: int, attestation: dict | bytes | str | None
+):
     """
     Try the canonical host API first:
       capabilities.host.compute.quantum_enqueue(ctx, circuit=..., shots=..., attestation=...)
@@ -120,7 +135,12 @@ def _write_result_next_block(height_next: int, task_id, result_bytes: bytes):
     # Prefer the official resolver API
     res_mod = _import("capabilities.jobs.resolver")
     if res_mod:
-        for name in ["apply_proofs", "resolve_block", "ingest_block_results", "populate_results"]:
+        for name in [
+            "apply_proofs",
+            "resolve_block",
+            "ingest_block_results",
+            "populate_results",
+        ]:
             fn = getattr(res_mod, name, None)
             if callable(fn):
                 try:
@@ -144,7 +164,12 @@ def _write_result_next_block(height_next: int, task_id, result_bytes: bytes):
         except TypeError:
             record = ResultRecord(task_id=task_id, result=result_bytes, height=height_next)  # type: ignore[misc]
     else:
-        record = {"task_id": task_id, "kind": "Quantum", "height": height_next, "result": result_bytes}
+        record = {
+            "task_id": task_id,
+            "kind": "Quantum",
+            "height": height_next,
+            "result": result_bytes,
+        }
 
     put_fn = _get_attr(store_mod, ["put", "store", "write", "save", "insert"])
     if callable(put_fn):
@@ -156,6 +181,7 @@ def _write_result_next_block(height_next: int, task_id, result_bytes: bytes):
 
 
 # ---------- Attestation normalization (optional but preferred) ----------
+
 
 def _get_quantum_attest_normalizer():
     """
@@ -189,6 +215,7 @@ def _digest_normalized_attest(normalizer, bundle) -> bytes:
 
 # ======================== TESTS ========================
 
+
 def test_quantum_enqueue_then_consume_next_block():
     ctx = _mk_ctx(chain_id=2, height=123)
     # A tiny illustrative circuit; real impl may accept str/bytes/dict
@@ -209,7 +236,9 @@ def test_quantum_enqueue_then_consume_next_block():
         "traps": {"ratio": 0.12, "samples": 200, "pass": True},
     }
 
-    receipt = _enqueue_quantum(ctx, circuit=circuit, shots=shots, attestation=attestation)
+    receipt = _enqueue_quantum(
+        ctx, circuit=circuit, shots=shots, attestation=attestation
+    )
     task_id = _task_id_from(receipt)
     assert task_id, "enqueue must return a receipt with a task_id"
 
@@ -251,19 +280,25 @@ def test_attestation_normalization_yields_stable_task_id():
     if normalizer:
         d_a = _digest_normalized_attest(normalizer, attest_a)
         d_b = _digest_normalized_attest(normalizer, attest_b)
-        assert d_a == d_b, "normalized attestation digests must match for equivalent bundles"
+        assert (
+            d_a == d_b
+        ), "normalized attestation digests must match for equivalent bundles"
 
     r1 = _enqueue_quantum(ctx, circuit=circuit, shots=shots, attestation=attest_a)
     r2 = _enqueue_quantum(ctx, circuit=circuit, shots=shots, attestation=attest_b)
     t1, t2 = _task_id_from(r1), _task_id_from(r2)
 
     if normalizer:
-        assert t1 == t2, "task_id must be stable across equivalent attestations after normalization"
+        assert (
+            t1 == t2
+        ), "task_id must be stable across equivalent attestations after normalization"
     else:
         # If no explicit normalizer is exported, some implementations may still normalize internally.
         # If they don't, the IDs may differ; don't fail the suite for missing export.
         if t1 != t2:
-            pytest.xfail("Quantum attestation normalizer not exposed; task_id may differ")
+            pytest.xfail(
+                "Quantum attestation normalizer not exposed; task_id may differ"
+            )
 
 
 def test_invalid_attestation_rejected_or_skipped():
@@ -291,4 +326,6 @@ def test_invalid_attestation_rejected_or_skipped():
     except pytest.skip.Exception:
         raise
     # If it didn't raise, assume attestation enforcement is not wired yet.
-    pytest.skip("Attestation validation not enforced; enqueue accepted malformed bundle")
+    pytest.skip(
+        "Attestation validation not enforced; enqueue accepted malformed bundle"
+    )

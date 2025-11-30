@@ -26,7 +26,7 @@ except Exception:  # pragma: no cover
 
 # Rates are in "reward units per work unit".
 _REF_RATES = {
-    "AI": 7,        # e.g., 7 reward units per ai_unit
+    "AI": 7,  # e.g., 7 reward units per ai_unit
     "Quantum": 11,  # e.g., 11 reward units per quantum_unit
 }
 
@@ -36,11 +36,13 @@ _REF_FRACTIONS = {
     "Quantum": (0.85, 0.10, 0.05),
 }
 
+
 def _price_ref(kind: str, units: int) -> int:
     if units < 0:
         raise ValueError("units must be non-negative")
     rate = _REF_RATES.get(kind, 1)
     return int(rate * units)
+
 
 def _split_ref(kind: str, base_reward: int) -> Dict[str, int]:
     if base_reward < 0:
@@ -54,7 +56,9 @@ def _split_ref(kind: str, base_reward: int) -> Dict[str, int]:
     p += remainder
     return {"provider": p, "treasury": t, "miner": m}
 
+
 # --------------------------- Adapters into project APIs ---------------------------
+
 
 def _get_price_fn() -> Callable[[str, int], int]:
     """
@@ -73,12 +77,14 @@ def _get_price_fn() -> Callable[[str, int], int]:
     for name in ("price", "calculate", "calc", "base_reward", "compute"):
         fn = getattr(_pricing_mod, name, None)
         if callable(fn):
+
             def _f(kind: str, units: int, _fn=fn) -> int:
                 try:
                     return int(_fn(kind, units))  # type: ignore[misc]
                 except TypeError:
                     # Maybe keyworded
                     return int(_fn(kind=kind, units=units))  # type: ignore[misc]
+
             return _f
 
     # dedicated functions per kind
@@ -87,6 +93,7 @@ def _get_price_fn() -> Callable[[str, int], int]:
         "Quantum": getattr(_pricing_mod, "price_quantum", None),
     }
     if any(callable(v) for v in per_kind.values()):
+
         def _f(kind: str, units: int) -> int:
             fn = per_kind.get(kind)
             if callable(fn):
@@ -95,6 +102,7 @@ def _get_price_fn() -> Callable[[str, int], int]:
                 except TypeError:
                     return int(fn(units=units))  # type: ignore[misc]
             return _price_ref(kind, units)
+
         return _f
 
     # class-based
@@ -107,15 +115,18 @@ def _get_price_fn() -> Callable[[str, int], int]:
                 continue
             for m in ("price", "calculate", "compute", "base_reward"):
                 if hasattr(obj, m):
+
                     def _f(kind: str, units: int, _obj=obj, _m=m) -> int:
                         meth = getattr(_obj, _m)
                         try:
                             return int(meth(kind, units))  # type: ignore[misc]
                         except TypeError:
                             return int(meth(kind=kind, units=units))  # type: ignore[misc]
+
                     return _f
 
     return _price_ref
+
 
 def _get_split_fn() -> Callable[[str, int], Dict[str, int]]:
     """
@@ -133,12 +144,14 @@ def _get_split_fn() -> Callable[[str, int], Dict[str, int]]:
     for name in ("calculate", "apply", "compute", "split"):
         fn = getattr(_split_mod, name, None)
         if callable(fn):
+
             def _f(kind: str, base_reward: int, _fn=fn) -> Dict[str, int]:
                 try:
                     out = _fn(kind, base_reward)  # type: ignore[misc]
                 except TypeError:
                     out = _fn(kind=kind, base_reward=base_reward)  # type: ignore[misc]
                 return {k: int(v) for k, v in dict(out).items()}
+
             return _f
 
     per_kind = {
@@ -146,6 +159,7 @@ def _get_split_fn() -> Callable[[str, int], Dict[str, int]]:
         "Quantum": getattr(_split_mod, "split_quantum", None),
     }
     if any(callable(v) for v in per_kind.values()):
+
         def _f(kind: str, base_reward: int) -> Dict[str, int]:
             fn = per_kind.get(kind)
             if callable(fn):
@@ -155,6 +169,7 @@ def _get_split_fn() -> Callable[[str, int], Dict[str, int]]:
                     out = fn(base_reward=base_reward)  # type: ignore[misc]
                 return {k: int(v) for k, v in dict(out).items()}
             return _split_ref(kind, base_reward)
+
         return _f
 
     for cname in ("Splitting", "Splitter", "Engine"):
@@ -166,13 +181,17 @@ def _get_split_fn() -> Callable[[str, int], Dict[str, int]]:
                 continue
             for m in ("calculate", "apply", "compute", "split"):
                 if hasattr(obj, m):
-                    def _f(kind: str, base_reward: int, _obj=obj, _m=m) -> Dict[str, int]:
+
+                    def _f(
+                        kind: str, base_reward: int, _obj=obj, _m=m
+                    ) -> Dict[str, int]:
                         meth = getattr(_obj, _m)
                         try:
                             out = meth(kind, base_reward)  # type: ignore[misc]
                         except TypeError:
                             out = meth(kind=kind, base_reward=base_reward)  # type: ignore[misc]
                         return {k: int(v) for k, v in dict(out).items()}
+
                     return _f
 
     return _split_ref
@@ -183,6 +202,7 @@ SPLIT = _get_split_fn()
 
 
 # --------------------------- Tests ---------------------------
+
 
 @pytest.mark.parametrize("kind", ["AI", "Quantum"])
 @pytest.mark.parametrize("units", [0, 1, 2, 5, 10, 1234])
@@ -206,14 +226,26 @@ def test_split_sums_to_base_and_is_stable(kind: str, units: int) -> None:
 
     # Basic shape
     for parts in (parts1, parts2):
-        assert set(parts.keys()) == {"provider", "treasury", "miner"}, "Split must have the 3 canonical keys"
-        assert all(isinstance(v, int) for v in parts.values()), "Split outputs must be integers"
+        assert set(parts.keys()) == {
+            "provider",
+            "treasury",
+            "miner",
+        }, "Split must have the 3 canonical keys"
+        assert all(
+            isinstance(v, int) for v in parts.values()
+        ), "Split outputs must be integers"
         assert all(v >= 0 for v in parts.values()), "Split outputs must be non-negative"
-        assert sum(parts.values()) == base, "Split must be conservative: sums to the base reward"
+        assert (
+            sum(parts.values()) == base
+        ), "Split must be conservative: sums to the base reward"
 
         # Provider should not receive less than each other party
-        assert parts["provider"] >= parts["treasury"], "Provider share should be >= treasury share"
-        assert parts["provider"] >= parts["miner"], "Provider share should be >= miner share"
+        assert (
+            parts["provider"] >= parts["treasury"]
+        ), "Provider share should be >= treasury share"
+        assert (
+            parts["provider"] >= parts["miner"]
+        ), "Provider share should be >= miner share"
 
     # Determinism/idempotence
     assert parts1 == parts2, "Split must be deterministic for the same inputs"
@@ -241,6 +273,10 @@ def test_small_and_large_units_behave_reasonably(kind: str) -> None:
 def test_rounding_is_conservative(kind: str, base_reward: int) -> None:
     parts = SPLIT(kind, base_reward)
     # No component should ever exceed the base on its own
-    assert all(v <= base_reward for v in parts.values()), "No split component may exceed the base reward"
+    assert all(
+        v <= base_reward for v in parts.values()
+    ), "No split component may exceed the base reward"
     # Sum must equal base exactly (remainder handled deterministically by implementation)
-    assert sum(parts.values()) == base_reward, "Remainder handling must be conservative and exact"
+    assert (
+        sum(parts.values()) == base_reward
+    ), "Remainder handling must be conservative and exact"

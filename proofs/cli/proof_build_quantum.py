@@ -51,22 +51,22 @@ except Exception:  # pragma: no cover
 
 # Optional pretty output
 try:
-    from rich.console import Console  # type: ignore
-    from rich.table import Table  # type: ignore
-    from rich.panel import Panel  # type: ignore
     from rich import box  # type: ignore
+    from rich.console import Console  # type: ignore
+    from rich.panel import Panel  # type: ignore
+    from rich.table import Table  # type: ignore
 except Exception:  # pragma: no cover
     Console = None  # type: ignore
     Table = None  # type: ignore
     Panel = None  # type: ignore
-    box = None    # type: ignore
+    box = None  # type: ignore
 
+from proofs import cbor as proofs_cbor
+from proofs import nullifiers as nul
+from proofs import registry
+from proofs.types import ProofEnvelope  # type: ignore
 # Animica libs (internal)
 from proofs.version import __version__
-from proofs import cbor as proofs_cbor
-from proofs import registry
-from proofs import nullifiers as nul
-from proofs.types import ProofEnvelope  # type: ignore
 
 app = typer.Typer(
     name="proof-build-quantum",
@@ -77,14 +77,18 @@ app = typer.Typer(
 
 # -------------- helpers --------------
 
+
 def _b64(x: bytes) -> str:
     return base64.b64encode(x).decode("ascii")
+
 
 def _read_bytes(p: Path) -> bytes:
     return p.read_bytes()
 
+
 def _sha3_256(b: bytes) -> bytes:
     return hashlib.sha3_256(b).digest()
+
 
 def _parse_hex_bytes(s: str) -> bytes:
     s = s.strip().lower()
@@ -95,8 +99,10 @@ def _parse_hex_bytes(s: str) -> bytes:
     except binascii.Error as e:
         raise typer.BadParameter(f"Invalid hex digest: {e}")
 
+
 def _load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
+
 
 def _resolve_quantum_type_id() -> int:
     # Try common names via registry
@@ -116,6 +122,7 @@ def _resolve_quantum_type_id() -> int:
                 pass
     return 3  # placeholder fallback; real registry provides canonical id
 
+
 def _encode_body(type_id: int, body: Dict[str, Any]) -> bytes:
     # Prefer canonical encoder
     for fn_name in ("encode_body", "encode_proof_body", "encode_quantum_body"):
@@ -133,11 +140,13 @@ def _encode_body(type_id: int, body: Dict[str, Any]) -> bytes:
     # Fallback to cbor2
     try:
         import cbor2  # type: ignore
+
         return cbor2.dumps(body)
     except Exception as e:
         raise RuntimeError(
             f"Could not CBOR-encode body; install cbor2 or ensure proofs.cbor has encode_body(): {e}"
         )
+
 
 def _compute_nullifier(type_id: int, body_cbor: bytes) -> bytes:
     for candidate in ("compute_nullifier", "nullifier_for_body", "nullifier"):
@@ -152,6 +161,7 @@ def _compute_nullifier(type_id: int, body_cbor: bytes) -> bytes:
     # Domain-separated fallback (must match proofs/nullifiers.py domain if present)
     tag = b"animica:nullifier:quantum:v1"
     return hashlib.sha3_256(tag + type_id.to_bytes(2, "big") + body_cbor).digest()
+
 
 def _build_attestation_bundle(
     provider: Optional[str],
@@ -191,6 +201,7 @@ def _build_attestation_bundle(
 
     return att
 
+
 def _load_traps(path: Path) -> Any:
     """
     Load trap outcomes. Expected formats supported:
@@ -208,7 +219,9 @@ def _load_traps(path: Path) -> Any:
         total = int(obj["total"])
         passed = int(obj["passed"])
         if total <= 0 or passed < 0 or passed > total:
-            raise typer.BadParameter("Invalid trap summary: passed must be in [0,total]")
+            raise typer.BadParameter(
+                "Invalid trap summary: passed must be in [0,total]"
+            )
         details = obj.get("details") if isinstance(obj.get("details"), list) else None
         return {"summary": {"total": total, "passed": passed}, "details": details or []}
 
@@ -227,69 +240,113 @@ def _load_traps(path: Path) -> Any:
             raise typer.BadParameter("Computed invalid trap totals from list")
         return {"summary": {"total": total, "passed": passed}, "details": obj}
 
-    raise typer.BadParameter("--traps must be a JSON object with total/passed or a JSON array")
+    raise typer.BadParameter(
+        "--traps must be a JSON object with total/passed or a JSON array"
+    )
+
 
 def _digest_from_args(circuit: Optional[Path], digest_hex: Optional[str]) -> bytes:
     if digest_hex:
         return _parse_hex_bytes(digest_hex)
     if not circuit:
-        raise typer.BadParameter("Provide --circuit to hash OR --digest with a hex value")
+        raise typer.BadParameter(
+            "Provide --circuit to hash OR --digest with a hex value"
+        )
     return _sha3_256(_read_bytes(circuit))
+
 
 def _maybe_hex_to_bytes(x: Optional[str]) -> Optional[bytes]:
     if x is None:
         return None
     return _parse_hex_bytes(x)
 
-def _save_outputs(env: ProofEnvelope, out_path: Optional[Path], json_path: Optional[Path]) -> None:
+
+def _save_outputs(
+    env: ProofEnvelope, out_path: Optional[Path], json_path: Optional[Path]
+) -> None:
     if out_path:
         try:
             data = proofs_cbor.encode_envelope(env)  # type: ignore[attr-defined]
         except Exception:
             try:
                 import cbor2  # type: ignore
-                data = cbor2.dumps({"type_id": env.type_id, "body": env.body, "nullifier": env.nullifier})
+
+                data = cbor2.dumps(
+                    {
+                        "type_id": env.type_id,
+                        "body": env.body,
+                        "nullifier": env.nullifier,
+                    }
+                )
             except Exception as e:
                 raise RuntimeError(f"Failed to encode envelope CBOR: {e}")
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(data)
 
     if json_path:
+
         def b2h(b: bytes) -> str:
             return "0x" + b.hex()
+
         view = {
             "type_id": env.type_id,
             "body": env.body,
-            "nullifier": b2h(env.nullifier) if isinstance(env.nullifier, bytes) else env.nullifier,
+            "nullifier": (
+                b2h(env.nullifier)
+                if isinstance(env.nullifier, bytes)
+                else env.nullifier
+            ),
         }
         json_path.parent.mkdir(parents=True, exist_ok=True)
-        json_path.write_text(json.dumps(view, indent=2, sort_keys=True), encoding="utf-8")
+        json_path.write_text(
+            json.dumps(view, indent=2, sort_keys=True), encoding="utf-8"
+        )
 
-def _human_report(console: Any, env: ProofEnvelope, traps_summary: Dict[str, int]) -> None:
+
+def _human_report(
+    console: Any, env: ProofEnvelope, traps_summary: Dict[str, int]
+) -> None:
     t = Table(title="QuantumProof Envelope", box=box.SIMPLE if box else None)
     t.add_column("Field")
     t.add_column("Value", overflow="fold")
     t.add_row("type_id", str(env.type_id))
-    nullifier_hex = ("0x" + env.nullifier.hex()) if isinstance(env.nullifier, bytes) else str(env.nullifier)
+    nullifier_hex = (
+        ("0x" + env.nullifier.hex())
+        if isinstance(env.nullifier, bytes)
+        else str(env.nullifier)
+    )
     t.add_row("nullifier", nullifier_hex)
     console.print(Panel(t, title="Assembled", expand=False))
 
     b = env.body if isinstance(env.body, dict) else {}
     tb = Table(title="Body Summary", box=box.SIMPLE if box else None)
-    tb.add_column("Key"); tb.add_column("Summary", overflow="fold")
+    tb.add_column("Key")
+    tb.add_column("Summary", overflow="fold")
     tb.add_row("version", str(b.get("version")))
     att = b.get("attestation", {})
     if isinstance(att, dict):
         tb.add_row("attestation.provider", str(att.get("provider")))
         evid = att.get("evidence", {})
         if isinstance(evid, dict):
-            if evid.get("provider_cert_pem"): tb.add_row("evidence.provider_cert_pem", "present (PEM)")
-            if evid.get("chain_pem"): tb.add_row("evidence.chain_pem", "present (PEM)")
+            if evid.get("provider_cert_pem"):
+                tb.add_row("evidence.provider_cert_pem", "present (PEM)")
+            if evid.get("chain_pem"):
+                tb.add_row("evidence.chain_pem", "present (PEM)")
     circ = b.get("circuit")
     if isinstance(circ, dict):
-        if circ.get("digest"): tb.add_row("circuit.digest", str(circ.get("digest") if isinstance(circ["digest"], str) else "0x"+bytes(circ["digest"]).hex()))
-        if circ.get("shots") is not None: tb.add_row("circuit.shots", str(circ.get("shots")))
-        if circ.get("format"): tb.add_row("circuit.format", str(circ.get("format")))
+        if circ.get("digest"):
+            tb.add_row(
+                "circuit.digest",
+                str(
+                    circ.get("digest")
+                    if isinstance(circ["digest"], str)
+                    else "0x" + bytes(circ["digest"]).hex()
+                ),
+            )
+        if circ.get("shots") is not None:
+            tb.add_row("circuit.shots", str(circ.get("shots")))
+        if circ.get("format"):
+            tb.add_row("circuit.format", str(circ.get("format")))
     tb.add_row("traps.total", str(traps_summary.get("total", 0)))
     tb.add_row("traps.passed", str(traps_summary.get("passed", 0)))
     qos = b.get("qos", {})
@@ -299,47 +356,86 @@ def _human_report(console: Any, env: ProofEnvelope, traps_summary: Dict[str, int
                 tb.add_row(f"qos.{k}", str(qos[k]))
     console.print(tb)
 
+
 # -------------- CLI --------------
 
+
 @app.callback()
-def _meta(version: bool = typer.Option(False, "--version", "-V", help="Print version and exit", is_eager=True)) -> None:
+def _meta(
+    version: bool = typer.Option(
+        False, "--version", "-V", help="Print version and exit", is_eager=True
+    )
+) -> None:
     if version:
         typer.echo(f"animica-proofs {__version__}")
         raise typer.Exit(0)
 
+
 @app.command("build")
 def build_quantum_proof(
     # Attestation
-    provider: Optional[str] = typer.Option(None, "--provider", help="Provider name hint (ionq|rigetti|oxfordq|ibm|aws|google|...)"),
-    provider_cert: Optional[Path] = typer.Option(None, "--provider-cert", help="Provider identity certificate (PEM)"),
-    cert_chain: Optional[Path] = typer.Option(None, "--cert-chain", help="Optional PEM chain bundle"),
-    attest_json: Optional[Path] = typer.Option(None, "--attest-json", help="Pre-built attestation JSON bundle"),
-
+    provider: Optional[str] = typer.Option(
+        None,
+        "--provider",
+        help="Provider name hint (ionq|rigetti|oxfordq|ibm|aws|google|...)",
+    ),
+    provider_cert: Optional[Path] = typer.Option(
+        None, "--provider-cert", help="Provider identity certificate (PEM)"
+    ),
+    cert_chain: Optional[Path] = typer.Option(
+        None, "--cert-chain", help="Optional PEM chain bundle"
+    ),
+    attest_json: Optional[Path] = typer.Option(
+        None, "--attest-json", help="Pre-built attestation JSON bundle"
+    ),
     # Traps
-    traps: Path = typer.Option(..., "--traps", help="Trap outcomes JSON (summary or list)"),
-
+    traps: Path = typer.Option(
+        ..., "--traps", help="Trap outcomes JSON (summary or list)"
+    ),
     # Circuit description → digest
-    circuit: Optional[Path] = typer.Option(None, "--circuit", help="Circuit file (QASM/JSON) to hash with sha3-256"),
-    digest: Optional[str] = typer.Option(None, "--digest", help="Explicit circuit digest (hex)"),
-    shots: Optional[int] = typer.Option(None, "--shots", help="Number of circuit shots actually executed"),
-    circuit_format: Optional[str] = typer.Option(None, "--circuit-format", help="freeform hint: qasm|json|cirq|quil|..."),
-
+    circuit: Optional[Path] = typer.Option(
+        None, "--circuit", help="Circuit file (QASM/JSON) to hash with sha3-256"
+    ),
+    digest: Optional[str] = typer.Option(
+        None, "--digest", help="Explicit circuit digest (hex)"
+    ),
+    shots: Optional[int] = typer.Option(
+        None, "--shots", help="Number of circuit shots actually executed"
+    ),
+    circuit_format: Optional[str] = typer.Option(
+        None, "--circuit-format", help="freeform hint: qasm|json|cirq|quil|..."
+    ),
     # QoS / device meta (optional; non-consensus)
-    latency_ms: Optional[int] = typer.Option(None, "--latency-ms", help="Observed end-to-end latency in ms"),
-    queue_ms: Optional[int] = typer.Option(None, "--queue-ms", help="Queue wait time in ms"),
-    backend: Optional[str] = typer.Option(None, "--backend", help="Backend family (e.g., trapped-ion, superconducting)"),
-    device_id: Optional[str] = typer.Option(None, "--device-id", help="Provider device id/alias"),
-
+    latency_ms: Optional[int] = typer.Option(
+        None, "--latency-ms", help="Observed end-to-end latency in ms"
+    ),
+    queue_ms: Optional[int] = typer.Option(
+        None, "--queue-ms", help="Queue wait time in ms"
+    ),
+    backend: Optional[str] = typer.Option(
+        None, "--backend", help="Backend family (e.g., trapped-ion, superconducting)"
+    ),
+    device_id: Optional[str] = typer.Option(
+        None, "--device-id", help="Provider device id/alias"
+    ),
     # Optional linkage
-    task_id: Optional[str] = typer.Option(None, "--task-id", help="Optional task id (hex) for correlation"),
-    job_hint: Optional[str] = typer.Option(None, "--job-hint", help="Free-form hint (non-consensus)"),
-
+    task_id: Optional[str] = typer.Option(
+        None, "--task-id", help="Optional task id (hex) for correlation"
+    ),
+    job_hint: Optional[str] = typer.Option(
+        None, "--job-hint", help="Free-form hint (non-consensus)"
+    ),
     # Outputs
-    out: Optional[Path] = typer.Option(None, "--out", "-o", help="Write CBOR envelope to this file"),
-    json_out: Optional[Path] = typer.Option(None, "--json", help="Also write JSON envelope to this file"),
-
+    out: Optional[Path] = typer.Option(
+        None, "--out", "-o", help="Write CBOR envelope to this file"
+    ),
+    json_out: Optional[Path] = typer.Option(
+        None, "--json", help="Also write JSON envelope to this file"
+    ),
     # Display
-    quiet: bool = typer.Option(False, "--quiet", "-q", help="No pretty print; just OK line"),
+    quiet: bool = typer.Option(
+        False, "--quiet", "-q", help="No pretty print; just OK line"
+    ),
 ) -> None:
     """
     Build a QuantumProof envelope and write it to disk.
@@ -368,7 +464,10 @@ def build_quantum_proof(
         "version": 1,
         "attestation": att,
         "traps": {
-            "summary": {"total": int(traps_summary["total"]), "passed": int(traps_summary["passed"])},
+            "summary": {
+                "total": int(traps_summary["total"]),
+                "passed": int(traps_summary["passed"]),
+            },
             "details": traps_details,
         },
         "circuit": {
@@ -382,10 +481,14 @@ def build_quantum_proof(
 
     if any(v is not None for v in (latency_ms, queue_ms, backend, device_id)):
         body["qos"] = {}
-        if latency_ms is not None: body["qos"]["latency_ms"] = int(latency_ms)
-        if queue_ms is not None:   body["qos"]["queue_ms"] = int(queue_ms)
-        if backend is not None:    body["qos"]["backend"] = backend
-        if device_id is not None:  body["qos"]["device_id"] = device_id
+        if latency_ms is not None:
+            body["qos"]["latency_ms"] = int(latency_ms)
+        if queue_ms is not None:
+            body["qos"]["queue_ms"] = int(queue_ms)
+        if backend is not None:
+            body["qos"]["backend"] = backend
+        if device_id is not None:
+            body["qos"]["device_id"] = device_id
 
     if task_id_bytes is not None:
         body["task_id"] = task_id_bytes
@@ -405,19 +508,25 @@ def build_quantum_proof(
 
     # 9) Print
     if quiet:
-        print(f"OK type_id={type_id} nullifier=0x{nullifier.hex()} cbor_out={out or '-'} json_out={json_out or '-'}")
+        print(
+            f"OK type_id={type_id} nullifier=0x{nullifier.hex()} cbor_out={out or '-'} json_out={json_out or '-'}"
+        )
         return
 
     if Console is None:
-        print(f"QuantumProof built.\n type_id={type_id}\n nullifier=0x{nullifier.hex()}\n out={out}\n json={json_out}")
+        print(
+            f"QuantumProof built.\n type_id={type_id}\n nullifier=0x{nullifier.hex()}\n out={out}\n json={json_out}"
+        )
         return
 
     console = Console()
     _human_report(console, env, traps_summary)
 
+
 def main() -> int:
     app()
     return 0
+
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())

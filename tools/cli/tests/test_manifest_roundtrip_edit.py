@@ -7,9 +7,7 @@ from pathlib import Path
 import pytest
 
 from vm_py.runtime.manifest_provenance import (
-    compute_manifest_hash_for_provenance,
-    is_provenance_hash_valid,
-)
+    compute_manifest_hash_for_provenance, is_provenance_hash_valid)
 
 
 def _load_manifest() -> Path:
@@ -23,7 +21,11 @@ def _load_manifest() -> Path:
 def _with_provenance(manifest: dict) -> dict:
     manifest = deepcopy(manifest)
     manifest_hash = compute_manifest_hash_for_provenance(manifest)
-    manifest["provenance"] = {"hashAlgo": "sha3_256", "hash": manifest_hash, "signatures": []}
+    manifest["provenance"] = {
+        "hashAlgo": "sha3_256",
+        "hash": manifest_hash,
+        "signatures": [],
+    }
     return manifest
 
 

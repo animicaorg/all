@@ -16,6 +16,7 @@ BanList = banlist_mod.BanList
 @dataclass
 class FakeSender:
     """Readable wrapper for sender ids."""
+
     name: str
 
     @property

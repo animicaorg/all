@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 from aicf.queue.jobkind import JobKind
+
 """
 aicf.integration.proofs_bridge
 --------------------------------
@@ -27,11 +29,11 @@ duck-typing the attributes we read.
 
 
 from dataclasses import asdict
-from typing import Any, Optional, Mapping
+from typing import Any, Mapping, Optional
 
-from aicf.errors import AICFError
 from aicf.aitypes.job import JobKind
 from aicf.aitypes.proof_claim import ProofClaim
+from aicf.errors import AICFError
 
 
 def _to_hex(x: Any) -> str:
@@ -110,7 +112,11 @@ def _extract_task_id(proof: Any) -> str:
 
     if task_id is None and isinstance(proof, Mapping):
         # nested mapping form
-        task_id = proof.get("task_id") or proof.get("body", {}).get("task_id") or proof.get("meta", {}).get("task_id")
+        task_id = (
+            proof.get("task_id")
+            or proof.get("body", {}).get("task_id")
+            or proof.get("meta", {}).get("task_id")
+        )
 
     if task_id is None:
         raise AICFError(
@@ -164,7 +170,9 @@ def _extract_provider_id(proof: Any) -> Optional[str]:
         return str(provider)
 
 
-def claim_from_ai_proof(ai_proof: Any, *, height: int, envelope: Any | None = None) -> ProofClaim:
+def claim_from_ai_proof(
+    ai_proof: Any, *, height: int, envelope: Any | None = None
+) -> ProofClaim:
     """
     Build a ProofClaim from a verified AIProof object/dict.
 
@@ -192,7 +200,9 @@ def claim_from_ai_proof(ai_proof: Any, *, height: int, envelope: Any | None = No
     )
 
 
-def claim_from_quantum_proof(quantum_proof: Any, *, height: int, envelope: Any | None = None) -> ProofClaim:
+def claim_from_quantum_proof(
+    quantum_proof: Any, *, height: int, envelope: Any | None = None
+) -> ProofClaim:
     """
     Build a ProofClaim from a verified QuantumProof object/dict.
 
@@ -222,14 +232,23 @@ def claim_from_envelope(envelope: Any, *, height: int) -> ProofClaim:
     For high-assurance code paths, prefer the explicit typed helpers above.
     """
     # Try common type markers
-    t = (_get(envelope, "type_id") or _get(envelope, "type") or "").lower() if isinstance(_get(envelope, "type") or "", str) else _get(envelope, "type_id")
+    t = (
+        (_get(envelope, "type_id") or _get(envelope, "type") or "").lower()
+        if isinstance(_get(envelope, "type") or "", str)
+        else _get(envelope, "type_id")
+    )
     body = _get(envelope, "body") or envelope
 
     def _looks_ai(m: Any) -> bool:
-        return any(_get(m, k) is not None for k in ("qos", "redundancy", "trap_receipts", "workload_digest"))
+        return any(
+            _get(m, k) is not None
+            for k in ("qos", "redundancy", "trap_receipts", "workload_digest")
+        )
 
     def _looks_quantum(m: Any) -> bool:
-        return any(_get(m, k) is not None for k in ("trap_circuits", "shots", "depth", "width"))
+        return any(
+            _get(m, k) is not None for k in ("trap_circuits", "shots", "depth", "width")
+        )
 
     try:
         if isinstance(t, str) and "ai" in t:

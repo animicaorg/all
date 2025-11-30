@@ -50,11 +50,13 @@ BUILD_DIR = REPO / "contracts" / "build"
 
 # --- Small utilities ---------------------------------------------------------
 
+
 def _read_env_bool(name: str, default: bool = False) -> bool:
     v = os.getenv(name)
     if v is None:
         return default
     return str(v).strip().lower() in ("1", "true", "yes", "on")
+
 
 def _read_env_int(name: str, default: int) -> int:
     try:
@@ -62,9 +64,11 @@ def _read_env_int(name: str, default: int) -> int:
     except Exception:
         return default
 
+
 def _load_json(path: Path) -> Any:
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
+
 
 @dataclass
 class Config:
@@ -78,17 +82,34 @@ class Config:
     shots: int
     trap_rate: int
 
+
 def parse_args_env() -> Config:
-    p = argparse.ArgumentParser(description="Deploy & test quantum_rng example contract.")
+    p = argparse.ArgumentParser(
+        description="Deploy & test quantum_rng example contract."
+    )
     p.add_argument("--rpc-url", default=os.getenv("RPC_URL", "http://127.0.0.1:8545"))
     p.add_argument("--chain-id", type=int, default=_read_env_int("CHAIN_ID", 1337))
     p.add_argument("--mnemonic", default=os.getenv("DEPLOYER_MNEMONIC"))
-    p.add_argument("--gas-price-wei", type=int, default=os.getenv("GAS_PRICE_WEI") or None)
-    p.add_argument("--timeout-secs", type=int, default=_read_env_int("TIMEOUT_SECS", 120))
-    p.add_argument("--poll-interval", type=float, default=float(os.getenv("POLL_INTERVAL_SECS") or 2.0))
-    p.add_argument("--bits", type=int, default=32, help="Requested random bits (multiple of 8).")
-    p.add_argument("--shots", type=int, default=8, help="Quantum shots (provider-specific).")
-    p.add_argument("--trap-rate", type=int, default=10, help="Trap-circuit percent (0..100).")
+    p.add_argument(
+        "--gas-price-wei", type=int, default=os.getenv("GAS_PRICE_WEI") or None
+    )
+    p.add_argument(
+        "--timeout-secs", type=int, default=_read_env_int("TIMEOUT_SECS", 120)
+    )
+    p.add_argument(
+        "--poll-interval",
+        type=float,
+        default=float(os.getenv("POLL_INTERVAL_SECS") or 2.0),
+    )
+    p.add_argument(
+        "--bits", type=int, default=32, help="Requested random bits (multiple of 8)."
+    )
+    p.add_argument(
+        "--shots", type=int, default=8, help="Quantum shots (provider-specific)."
+    )
+    p.add_argument(
+        "--trap-rate", type=int, default=10, help="Trap-circuit percent (0..100)."
+    )
     args = p.parse_args()
 
     return Config(
@@ -103,18 +124,22 @@ def parse_args_env() -> Config:
         trap_rate=args.trap_rate,
     )
 
+
 # --- Build & deploy helpers --------------------------------------------------
+
 
 def build_package(contract_dir: Path, out_dir: Path) -> Path:
     """
     Build a deployable package using our local toolchain. Returns the package path.
     """
     try:
-        from contracts.tools.build_package import build as build_func  # our tool exposes build()
+        from contracts.tools.build_package import \
+            build as build_func  # our tool exposes build()
     except Exception:
         # Back-compat: earlier version exported build_package()
         try:
-            from contracts.tools.build_package import build_package as build_func  # type: ignore
+            from contracts.tools.build_package import \
+                build_package as build_func  # type: ignore
         except Exception as exc:  # pragma: no cover
             raise RuntimeError(f"contracts.tools.build_package not available: {exc}")
 
@@ -122,7 +147,14 @@ def build_package(contract_dir: Path, out_dir: Path) -> Path:
     pkg_path = build_func(contract_dir=str(contract_dir), out_dir=str(out_dir))
     return Path(pkg_path)
 
-def deploy_package_via_tool(pkg_path: Path, rpc_url: str, chain_id: int, mnemonic: Optional[str], gas_price_wei: Optional[int]) -> str:
+
+def deploy_package_via_tool(
+    pkg_path: Path,
+    rpc_url: str,
+    chain_id: int,
+    mnemonic: Optional[str],
+    gas_price_wei: Optional[int],
+) -> str:
     """
     Prefer the contracts.tools.deploy helper if available (handles signer & send).
     """
@@ -140,6 +172,7 @@ def deploy_package_via_tool(pkg_path: Path, rpc_url: str, chain_id: int, mnemoni
     )
     return str(addr)
 
+
 def _load_manifest_abi(manifest_path: Path) -> Any:
     m = _load_json(manifest_path)
     if "abi" in m and m["abi"]:
@@ -149,35 +182,54 @@ def _load_manifest_abi(manifest_path: Path) -> Any:
     if abi_ref:
         ap = (manifest_path.parent / abi_ref).resolve()
         return _load_json(ap)
-    raise RuntimeError("Manifest missing ABI; expected 'abi' inline or 'abi_path' reference")
+    raise RuntimeError(
+        "Manifest missing ABI; expected 'abi' inline or 'abi_path' reference"
+    )
+
 
 # --- Client helpers ----------------------------------------------------------
 
+
 class Rpc:
     """Tiny JSON-RPC helper; used only for WS subscribe fallback if SDK WS absent."""
+
     def __init__(self, url: str):
         self.url = url
 
+
 # --- Contract client via SDK -------------------------------------------------
+
 
 class ContractClient:
     """
     Lightweight wrapper around the Python SDK's contract client. We intentionally
     import lazily and keep the surface tiny for robustness across minor API shifts.
     """
+
     def __init__(self, rpc_url: str, chain_id: int, address: str, abi: Any):
+        from omni_sdk.contracts.client import \
+            ContractClient as SdkContractClient  # type: ignore
         from omni_sdk.rpc.http import HttpClient  # type: ignore
-        from omni_sdk.contracts.client import ContractClient as SdkContractClient  # type: ignore
 
         self.http = HttpClient(rpc_url)
-        self.client = SdkContractClient(self.http, address=address, abi=abi, chain_id=chain_id)
+        self.client = SdkContractClient(
+            self.http, address=address, abi=abi, chain_id=chain_id
+        )
 
     def call(self, fn: str, *args) -> Any:
         return self.client.call(fn, *args)
 
+
 # --- Orchestration -----------------------------------------------------------
 
-def wait_for_poll_ready(client: ContractClient, task_id: bytes, want_len: int, timeout_secs: int, poll_interval: float) -> Tuple[bool, Optional[bytes]]:
+
+def wait_for_poll_ready(
+    client: ContractClient,
+    task_id: bytes,
+    want_len: int,
+    timeout_secs: int,
+    poll_interval: float,
+) -> Tuple[bool, Optional[bytes]]:
     """
     Polls contract.poll(task_id) until it returns (True, out) or timeout.
     Returns (ready, out_or_none).
@@ -193,17 +245,22 @@ def wait_for_poll_ready(client: ContractClient, task_id: bytes, want_len: int, t
         last_status = (ready, bytes(out))
         if ready:
             if want_len > 0 and len(out) != want_len:
-                raise AssertionError(f"unexpected output length: {len(out)} vs {want_len}")
+                raise AssertionError(
+                    f"unexpected output length: {len(out)} vs {want_len}"
+                )
             return True, bytes(out)
         if time.time() - t0 > timeout_secs:
             return False, None
         time.sleep(poll_interval)
 
+
 def main() -> int:
     cfg = parse_args_env()
 
     if not MANIFEST.is_file() or not SOURCE.is_file():
-        print(f"[ERR] missing manifest/source at {MANIFEST} / {SOURCE}", file=sys.stderr)
+        print(
+            f"[ERR] missing manifest/source at {MANIFEST} / {SOURCE}", file=sys.stderr
+        )
         return 2
 
     print(f"[i] Building package from {HERE} → {BUILD_DIR} …")
@@ -212,7 +269,9 @@ def main() -> int:
 
     print(f"[i] Deploying to chain {cfg.chain_id} via {cfg.rpc_url} …")
     try:
-        address = deploy_package_via_tool(pkg_path, cfg.rpc_url, cfg.chain_id, cfg.mnemonic, cfg.gas_price_wei)
+        address = deploy_package_via_tool(
+            pkg_path, cfg.rpc_url, cfg.chain_id, cfg.mnemonic, cfg.gas_price_wei
+        )
     except Exception as exc:
         print(f"[ERR] deploy failed: {exc}", file=sys.stderr)
         return 3
@@ -222,10 +281,15 @@ def main() -> int:
     c = ContractClient(cfg.rpc_url, cfg.chain_id, address, abi)
 
     if cfg.bits % 8 != 0 or cfg.bits <= 0:
-        print(f"[ERR] bits must be a positive multiple of 8 (got {cfg.bits})", file=sys.stderr)
+        print(
+            f"[ERR] bits must be a positive multiple of 8 (got {cfg.bits})",
+            file=sys.stderr,
+        )
         return 4
 
-    print(f"[i] request(bits={cfg.bits}, shots={cfg.shots}, trap_rate={cfg.trap_rate}) …")
+    print(
+        f"[i] request(bits={cfg.bits}, shots={cfg.shots}, trap_rate={cfg.trap_rate}) …"
+    )
     try:
         task_id = c.call("request", int(cfg.bits), int(cfg.shots), int(cfg.trap_rate))
     except Exception as exc:
@@ -237,12 +301,19 @@ def main() -> int:
     print(f"[✓] task_id = 0x{bytes(task_id).hex()}")
 
     want_len = cfg.bits // 8
-    print(f"[i] Polling for result (timeout={cfg.timeout_secs}s, every {cfg.poll_interval}s) …")
-    ready, out = wait_for_poll_ready(c, bytes(task_id), want_len, cfg.timeout_secs, cfg.poll_interval)
+    print(
+        f"[i] Polling for result (timeout={cfg.timeout_secs}s, every {cfg.poll_interval}s) …"
+    )
+    ready, out = wait_for_poll_ready(
+        c, bytes(task_id), want_len, cfg.timeout_secs, cfg.poll_interval
+    )
 
     if not ready:
         # Not necessarily a failure in early devnets; print status and exit non-zero to flag CI.
-        print(f"[!] Result not ready within {cfg.timeout_secs}s. The job may settle in later blocks.", file=sys.stderr)
+        print(
+            f"[!] Result not ready within {cfg.timeout_secs}s. The job may settle in later blocks.",
+            file=sys.stderr,
+        )
         return 7
 
     assert out is not None and len(out) == want_len
@@ -254,7 +325,10 @@ def main() -> int:
         print(f"[ERR] last() returned non-bytes: {type(last)}", file=sys.stderr)
         return 8
     if bytes(last) != bytes(out):
-        print(f"[ERR] last() mismatch:\n  last=0x{bytes(last).hex()}\n  out =0x{bytes(out).hex()}", file=sys.stderr)
+        print(
+            f"[ERR] last() mismatch:\n  last=0x{bytes(last).hex()}\n  out =0x{bytes(out).hex()}",
+            file=sys.stderr,
+        )
         return 9
 
     print("[✓] last() matches the fulfilled result")

@@ -37,7 +37,7 @@ import time
 from collections import defaultdict
 from typing import Any, Dict, Iterable, MutableMapping, Set
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
 # Canonical topic strings
 JOB_ASSIGNED = "aicf.jobAssigned"
@@ -130,7 +130,9 @@ def build_ws_router() -> APIRouter:
                     _ = await websocket.receive_text()
                     # Optionally echo pings:
                     if _ == "ping":
-                        await websocket.send_text(json.dumps({"event": "pong", "ts": time.time()}))
+                        await websocket.send_text(
+                            json.dumps({"event": "pong", "ts": time.time()})
+                        )
                 except WebSocketDisconnect:
                     break
         finally:

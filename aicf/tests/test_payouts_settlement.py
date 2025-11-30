@@ -19,7 +19,10 @@ except Exception:  # pragma: no cover
 
 # --------------------------- Payout fixtures & helpers ---------------------------
 
-def make_payout(provider: str, p_amt: int, t_amt: int, m_amt: int, epoch: int = 1) -> Dict[str, Any]:
+
+def make_payout(
+    provider: str, p_amt: int, t_amt: int, m_amt: int, epoch: int = 1
+) -> Dict[str, Any]:
     """
     Canonical, module-agnostic payout shape the test will pass to the settlement API.
     The keys are intentionally generic; adapter logic will try to map them if needed.
@@ -27,12 +30,18 @@ def make_payout(provider: str, p_amt: int, t_amt: int, m_amt: int, epoch: int = 
     assert p_amt >= 0 and t_amt >= 0 and m_amt >= 0
     return {
         "provider": provider,
-        "amounts": {"provider": int(p_amt), "treasury": int(t_amt), "miner": int(m_amt)},
+        "amounts": {
+            "provider": int(p_amt),
+            "treasury": int(t_amt),
+            "miner": int(m_amt),
+        },
         "epoch": int(epoch),
     }
 
 
-def _sum_expected(payouts: Iterable[Dict[str, Any]]) -> Tuple[int, int, int, int, Dict[str, int]]:
+def _sum_expected(
+    payouts: Iterable[Dict[str, Any]],
+) -> Tuple[int, int, int, int, Dict[str, int]]:
     per_provider: Dict[str, int] = {}
     p = t = m = 0
     for pyo in payouts:
@@ -50,6 +59,7 @@ def _sum_expected(payouts: Iterable[Dict[str, Any]]) -> Tuple[int, int, int, int
 
 # --------------------------- Fallback reference settlement ---------------------------
 
+
 class _LedgerStub:
     def __init__(self) -> None:
         self.provider_balances: Dict[str, int] = {}
@@ -58,7 +68,9 @@ class _LedgerStub:
 
     # Extremely forgiving credit methods — accept multiple shapes.
     def credit_provider(self, provider: str, amount: int, *_, **__) -> None:
-        self.provider_balances[provider] = self.provider_balances.get(provider, 0) + int(amount)
+        self.provider_balances[provider] = self.provider_balances.get(
+            provider, 0
+        ) + int(amount)
 
     def credit_treasury(self, amount: int, *_, **__) -> None:
         self.treasury_balance += int(amount)
@@ -67,7 +79,15 @@ class _LedgerStub:
         self.miner_balance += int(amount)
 
     # Optional aliases some implementations might call
-    def credit(self, *, provider: Optional[str] = None, treasury: Optional[int] = None, miner: Optional[int] = None, amount: Optional[int] = None, **_) -> None:
+    def credit(
+        self,
+        *,
+        provider: Optional[str] = None,
+        treasury: Optional[int] = None,
+        miner: Optional[int] = None,
+        amount: Optional[int] = None,
+        **_,
+    ) -> None:
         if provider is not None and amount is not None:
             self.credit_provider(provider, amount)
         if treasury is not None:
@@ -76,7 +96,9 @@ class _LedgerStub:
             self.credit_miner(miner)
 
 
-def _settle_ref(payouts: List[Dict[str, Any]], epoch: int, ledger: Optional[_LedgerStub] = None) -> Dict[str, Any]:
+def _settle_ref(
+    payouts: List[Dict[str, Any]], epoch: int, ledger: Optional[_LedgerStub] = None
+) -> Dict[str, Any]:
     p_sum, t_sum, m_sum, grand, per_provider = _sum_expected(payouts)
     receipts = []
     for pyo in payouts:
@@ -91,7 +113,12 @@ def _settle_ref(payouts: List[Dict[str, Any]], epoch: int, ledger: Optional[_Led
             ledger.credit_miner(ma)
     return {
         "epoch": epoch,
-        "totals": {"provider": p_sum, "treasury": t_sum, "miner": m_sum, "grand": grand},
+        "totals": {
+            "provider": p_sum,
+            "treasury": t_sum,
+            "miner": m_sum,
+            "grand": grand,
+        },
         "per_provider": per_provider,
         "receipts": receipts,
         "used_ref": True,
@@ -100,7 +127,10 @@ def _settle_ref(payouts: List[Dict[str, Any]], epoch: int, ledger: Optional[_Led
 
 # --------------------------- Adapter into project API ---------------------------
 
-def _get_settle_fn() -> Callable[[List[Dict[str, Any]], int, Optional[_LedgerStub]], Dict[str, Any]]:
+
+def _get_settle_fn() -> (
+    Callable[[List[Dict[str, Any]], int, Optional[_LedgerStub]], Dict[str, Any]]
+):
     """
     Attempt to adapt to common project settlement APIs. Returns a function that
     takes (payouts, epoch, ledger_stub) and returns a normalized dict result.
@@ -116,10 +146,15 @@ def _get_settle_fn() -> Callable[[List[Dict[str, Any]], int, Optional[_LedgerStu
     def normalize(result: Any) -> Dict[str, Any]:
         """Best-effort normalization of various return shapes into a stable dict."""
         # Already normalized?
-        if isinstance(result, dict) and ("totals" in result or {"provider", "treasury", "miner"} <= set(result.keys())):
+        if isinstance(result, dict) and (
+            "totals" in result
+            or {"provider", "treasury", "miner"} <= set(result.keys())
+        ):
             if "totals" not in result:
                 # flatten to totals
-                totals = {k: int(result.get(k, 0)) for k in ("provider", "treasury", "miner")}
+                totals = {
+                    k: int(result.get(k, 0)) for k in ("provider", "treasury", "miner")
+                }
                 totals["grand"] = sum(totals.values())
                 result = dict(result)
                 result["totals"] = totals
@@ -143,11 +178,20 @@ def _get_settle_fn() -> Callable[[List[Dict[str, Any]], int, Optional[_LedgerStu
 
         # Totals via attributes
         for key, cand_names in {
-            "provider": ("total_provider", "provider_total", "providers", "to_providers"),
+            "provider": (
+                "total_provider",
+                "provider_total",
+                "providers",
+                "to_providers",
+            ),
             "treasury": ("total_treasury", "treasury_total", "to_treasury"),
             "miner": ("total_miner", "miner_total", "to_miners", "to_miner_pool"),
         }.items():
-            v = getattr_int(result, *cand_names) if not isinstance(result, tuple) else None
+            v = (
+                getattr_int(result, *cand_names)
+                if not isinstance(result, tuple)
+                else None
+            )
             if v is not None:
                 totals[key] = v
 
@@ -163,23 +207,51 @@ def _get_settle_fn() -> Callable[[List[Dict[str, Any]], int, Optional[_LedgerStu
         if cand_receipts is not None and isinstance(cand_receipts, (list, tuple)):
             for r in cand_receipts:
                 if isinstance(r, dict):
-                    receipts.append({
-                        "provider": r.get("provider") or r.get("provider_id") or r.get("providerId"),
-                        "amount": int(r.get("amount") or r.get("provider_amount") or r.get("to_provider") or 0),
-                        "epoch": int(r.get("epoch") or 0),
-                    })
+                    receipts.append(
+                        {
+                            "provider": r.get("provider")
+                            or r.get("provider_id")
+                            or r.get("providerId"),
+                            "amount": int(
+                                r.get("amount")
+                                or r.get("provider_amount")
+                                or r.get("to_provider")
+                                or 0
+                            ),
+                            "epoch": int(r.get("epoch") or 0),
+                        }
+                    )
                 else:
-                    prov = getattr(r, "provider", None) or getattr(r, "provider_id", None) or getattr(r, "providerId", None)
-                    amt = getattr(r, "amount", None) or getattr(r, "provider_amount", None) or getattr(r, "to_provider", None)
+                    prov = (
+                        getattr(r, "provider", None)
+                        or getattr(r, "provider_id", None)
+                        or getattr(r, "providerId", None)
+                    )
+                    amt = (
+                        getattr(r, "amount", None)
+                        or getattr(r, "provider_amount", None)
+                        or getattr(r, "to_provider", None)
+                    )
                     ep = getattr(r, "epoch", None)
-                    receipts.append({"provider": prov, "amount": int(amt or 0), "epoch": int(ep or 0)})
+                    receipts.append(
+                        {
+                            "provider": prov,
+                            "amount": int(amt or 0),
+                            "epoch": int(ep or 0),
+                        }
+                    )
 
         # Per-provider totals if available
         pp = getattr(result, "per_provider", None)
         if isinstance(pp, dict):
             per_provider = {str(k): int(v) for k, v in pp.items()}
 
-        out: Dict[str, Any] = {"totals": totals or {}, "receipts": receipts, "per_provider": per_provider, "used_ref": False}
+        out: Dict[str, Any] = {
+            "totals": totals or {},
+            "receipts": receipts,
+            "per_provider": per_provider,
+            "used_ref": False,
+        }
         # Attach epoch if discoverable
         ep = getattr_int(result, "epoch", "epoch_id")
         if ep is not None:
@@ -191,7 +263,9 @@ def _get_settle_fn() -> Callable[[List[Dict[str, Any]], int, Optional[_LedgerStu
         fn = getattr(_settlement_mod, fname, None)
         if callable(fn):
 
-            def call(payouts: List[Dict[str, Any]], epoch: int, ledger: Optional[_LedgerStub]) -> Dict[str, Any]:
+            def call(
+                payouts: List[Dict[str, Any]], epoch: int, ledger: Optional[_LedgerStub]
+            ) -> Dict[str, Any]:
                 # try with ledger kw first
                 if ledger is not None:
                     for kw in kw_ledger_names:
@@ -216,6 +290,7 @@ def _get_settle_fn() -> Callable[[List[Dict[str, Any]], int, Optional[_LedgerStu
                         continue
                 # fall back
                 return _settle_ref(payouts, epoch, ledger)
+
             return call
 
     # Try class-based engines
@@ -227,11 +302,22 @@ def _get_settle_fn() -> Callable[[List[Dict[str, Any]], int, Optional[_LedgerStu
             except Exception:
                 obj = None
             if obj is not None:
-                for m in ("batch_settle", "run", "settle", "process", "execute", "batch"):
+                for m in (
+                    "batch_settle",
+                    "run",
+                    "settle",
+                    "process",
+                    "execute",
+                    "batch",
+                ):
                     if hasattr(obj, m):
                         meth = getattr(obj, m)
 
-                        def call(payouts: List[Dict[str, Any]], epoch: int, ledger: Optional[_LedgerStub]) -> Dict[str, Any]:
+                        def call(
+                            payouts: List[Dict[str, Any]],
+                            epoch: int,
+                            ledger: Optional[_LedgerStub],
+                        ) -> Dict[str, Any]:
                             if ledger is not None:
                                 for kw in kw_ledger_names:
                                     try:
@@ -252,6 +338,7 @@ def _get_settle_fn() -> Callable[[List[Dict[str, Any]], int, Optional[_LedgerStu
                                 except Exception:
                                     continue
                             return _settle_ref(payouts, epoch, ledger)
+
                         return call
 
     # Nothing matched — use reference.
@@ -262,6 +349,7 @@ SETTLE = _get_settle_fn()
 
 
 # --------------------------- Tests ---------------------------
+
 
 @pytest.fixture
 def sample_payouts() -> List[Dict[str, Any]]:
@@ -277,9 +365,16 @@ def test_batch_settlement_conservation(sample_payouts: List[Dict[str, Any]]) -> 
     p_sum, t_sum, m_sum, grand, per_provider = _sum_expected(sample_payouts)
     result = SETTLE(sample_payouts, epoch=7, ledger=None)
 
-    assert "totals" in result and isinstance(result["totals"], dict), "Settlement must return totals"
+    assert "totals" in result and isinstance(
+        result["totals"], dict
+    ), "Settlement must return totals"
     totals = result["totals"]
-    for k, expected in (("provider", p_sum), ("treasury", t_sum), ("miner", m_sum), ("grand", grand)):
+    for k, expected in (
+        ("provider", p_sum),
+        ("treasury", t_sum),
+        ("miner", m_sum),
+        ("grand", grand),
+    ):
         assert int(totals.get(k, -1)) == expected, f"Total {k} mismatch"
 
     # If per-provider breakdown is supplied, validate it.
@@ -289,13 +384,17 @@ def test_batch_settlement_conservation(sample_payouts: List[Dict[str, Any]]) -> 
         assert observed == per_provider
 
 
-def test_settlement_receipts_and_provider_aggregation(sample_payouts: List[Dict[str, Any]]) -> None:
+def test_settlement_receipts_and_provider_aggregation(
+    sample_payouts: List[Dict[str, Any]],
+) -> None:
     _, _, _, _, per_provider = _sum_expected(sample_payouts)
     result = SETTLE(sample_payouts, epoch=7, ledger=None)
 
     receipts = result.get("receipts")
     if not isinstance(receipts, (list, tuple)) or not receipts:
-        pytest.skip("Settlement implementation did not return receipts; skipping receipt checks")
+        pytest.skip(
+            "Settlement implementation did not return receipts; skipping receipt checks"
+        )
 
     # Aggregate receipts per provider and compare to expected provider totals.
     agg: Dict[str, int] = {}
@@ -309,7 +408,9 @@ def test_settlement_receipts_and_provider_aggregation(sample_payouts: List[Dict[
     # Only check providers that exist in receipts to avoid false positives on unknown shapes.
     # If implementation returns per-payout receipts, this becomes a strict equality.
     for prov, expected_amt in per_provider.items():
-        assert agg.get(prov, 0) == expected_amt, f"Provider {prov} aggregated receipt amount mismatch"
+        assert (
+            agg.get(prov, 0) == expected_amt
+        ), f"Provider {prov} aggregated receipt amount mismatch"
 
 
 def test_ledger_balances_if_supported(sample_payouts: List[Dict[str, Any]]) -> None:
@@ -319,17 +420,25 @@ def test_ledger_balances_if_supported(sample_payouts: List[Dict[str, Any]]) -> N
 
     # If the adapter managed to wire our stub, balances should match expected figures.
     # We detect this by checking any non-zero change in the stub.
-    wired = (sum(ledger.provider_balances.values()) + ledger.treasury_balance + ledger.miner_balance) > 0
+    wired = (
+        sum(ledger.provider_balances.values())
+        + ledger.treasury_balance
+        + ledger.miner_balance
+    ) > 0
     if not wired and result.get("used_ref"):
         wired = True  # reference path always wires the stub if provided
 
     if not wired:
-        pytest.skip("Settlement implementation did not accept a ledger/state stub; skipping ledger balance checks")
+        pytest.skip(
+            "Settlement implementation did not accept a ledger/state stub; skipping ledger balance checks"
+        )
 
     assert ledger.treasury_balance == t_sum, "Treasury balance mismatch"
     assert ledger.miner_balance == m_sum, "Miner pool balance mismatch"
     for prov, expected in per_provider.items():
-        assert ledger.provider_balances.get(prov, 0) == expected, f"Provider {prov} balance mismatch"
+        assert (
+            ledger.provider_balances.get(prov, 0) == expected
+        ), f"Provider {prov} balance mismatch"
 
 
 def test_zero_case_is_handled() -> None:

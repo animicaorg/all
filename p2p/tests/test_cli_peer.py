@@ -37,7 +37,6 @@ class _Listener(threading.Thread):
 
 
 @pytest.fixture
-
 def temp_store(tmp_path):
     path = tmp_path / "peers.json"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -45,7 +44,9 @@ def temp_store(tmp_path):
 
 
 def _make_args(store, peer_id, addr, probe=True, timeout=1.0):
-    return SimpleNamespace(store=store, peer_id=peer_id, addr=addr, probe=probe, timeout=timeout)
+    return SimpleNamespace(
+        store=store, peer_id=peer_id, addr=addr, probe=probe, timeout=timeout
+    )
 
 
 def test_probe_success_updates_peer(temp_store, capsys):
@@ -70,7 +71,9 @@ def test_probe_success_updates_peer(temp_store, capsys):
 def test_probe_failure_is_non_fatal(temp_store, capsys):
     port = free_port()
     addr = f"/ip4/127.0.0.1/tcp/{port}"
-    rc = peer_cli.cmd_add(_make_args(temp_store, "peer-fail", addr, probe=True, timeout=0.25))
+    rc = peer_cli.cmd_add(
+        _make_args(temp_store, "peer-fail", addr, probe=True, timeout=0.25)
+    )
     assert rc == 0
     captured = capsys.readouterr().out
     assert "[probe] FAILED" in captured

@@ -35,12 +35,16 @@ except Exception as e:  # pragma: no cover
 
 DOMAIN_TASK_ID_V1 = b"animica.capabilities.task_id.v1"
 
+
 def u64be(n: int) -> bytes:
     if n < 0:
         raise ValueError("u64be: negative value")
     return int(n).to_bytes(8, "big", signed=False)
 
-def derive_task_id_local(chain_id: int, height: int, tx_hash: bytes, caller: bytes, payload: bytes) -> bytes:
+
+def derive_task_id_local(
+    chain_id: int, height: int, tx_hash: bytes, caller: bytes, payload: bytes
+) -> bytes:
     h = sha3_256()
     h.update(DOMAIN_TASK_ID_V1)
     h.update(u64be(chain_id))
@@ -50,13 +54,17 @@ def derive_task_id_local(chain_id: int, height: int, tx_hash: bytes, caller: byt
     h.update(payload)
     return h.digest()
 
+
 def rand_bytes(n: int) -> bytes:
     return secrets.token_bytes(n)
 
+
 # ---- bench harness ----------------------------------------------------------
+
 
 def bench_env() -> dict:
     import platform
+
     return {
         "python": sys.version.split()[0],
         "impl": platform.python_implementation(),
@@ -66,9 +74,11 @@ def bench_env() -> dict:
         "time_source": "perf_counter",
     }
 
+
 def warmup(fn: Callable[[], None], iters: int = 100) -> None:
     for _ in range(max(0, int(iters))):
         fn()
+
 
 def run_bench(fn: Callable[[], None], iters: int = 100, repeat: int = 1) -> dict:
     iters = max(1, int(iters))
@@ -97,34 +107,49 @@ def run_bench(fn: Callable[[], None], iters: int = 100, repeat: int = 1) -> dict
         "env": bench_env(),
     }
 
+
 # ---- backends ---------------------------------------------------------------
+
 
 @dataclass
 class EnqueueResult:
     task_id: bytes
 
+
 class Backend:
     name: str = "base"
-    def enqueue(self, chain_id: int, height: int, tx_hash: bytes, caller: bytes, payload: bytes) -> EnqueueResult:
+
+    def enqueue(
+        self, chain_id: int, height: int, tx_hash: bytes, caller: bytes, payload: bytes
+    ) -> EnqueueResult:
         raise NotImplementedError
+
     def close(self) -> None:
         pass
+
 
 class LocalMemBackend(Backend):
     name = "local"
     __slots__ = ("_items",)
+
     def __init__(self) -> None:
         self._items: list[tuple[bytes, bytes, bytes, int, int]] = []
-    def enqueue(self, chain_id: int, height: int, tx_hash: bytes, caller: bytes, payload: bytes) -> EnqueueResult:
+
+    def enqueue(
+        self, chain_id: int, height: int, tx_hash: bytes, caller: bytes, payload: bytes
+    ) -> EnqueueResult:
         tid = derive_task_id_local(chain_id, height, tx_hash, caller, payload)
         self._items.append((tid, caller, payload, chain_id, height))
         return EnqueueResult(task_id=tid)
+
 
 class SQLiteBackend(Backend):
     """
     Minimal SQLite-backed queue to approximate disk/SQL overhead.
     """
+
     name = "sqlite"
+
     def __init__(self, path: str, fast: bool = False) -> None:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         self._db = sqlite3.connect(path, isolation_level=None, timeout=30.0)
@@ -145,7 +170,10 @@ class SQLiteBackend(Backend):
             """
         )
         self._ins = self._db.cursor()
-    def enqueue(self, chain_id: int, height: int, tx_hash: bytes, caller: bytes, payload: bytes) -> EnqueueResult:
+
+    def enqueue(
+        self, chain_id: int, height: int, tx_hash: bytes, caller: bytes, payload: bytes
+    ) -> EnqueueResult:
         tid = derive_task_id_local(chain_id, height, tx_hash, caller, payload)
         now = time.time()
         # Single-row transaction via autocommit cursor
@@ -154,18 +182,22 @@ class SQLiteBackend(Backend):
             (tid, caller, payload, chain_id, height, tx_hash, now),
         )
         return EnqueueResult(task_id=tid)
+
     def close(self) -> None:
         try:
             self._ins.close()
         finally:
             self._db.close()
 
+
 class CapabilitiesBackend(Backend):
     """
     Attempts to use the real capabilities.jobs queue & id derivation if present.
     Falls back to local derivation for the task_id if the function name differs.
     """
+
     name = "cap"
+
     def __init__(self, db_uri: Optional[str] = None) -> None:
         # Lazy/defensive imports to avoid hard coupling.
         try:
@@ -203,7 +235,9 @@ class CapabilitiesBackend(Backend):
         else:  # pragma: no cover
             raise RuntimeError("JobQueue has no enqueue/enqueue_raw")
 
-    def enqueue(self, chain_id: int, height: int, tx_hash: bytes, caller: bytes, payload: bytes) -> EnqueueResult:
+    def enqueue(
+        self, chain_id: int, height: int, tx_hash: bytes, caller: bytes, payload: bytes
+    ) -> EnqueueResult:
         tid = self._derive(chain_id, height, tx_hash, caller, payload)
         # Be generous with accepted shapes: many queues accept a dict-like request.
         try:
@@ -229,7 +263,9 @@ class CapabilitiesBackend(Backend):
             except Exception:
                 pass
 
+
 # ---- main bench logic -------------------------------------------------------
+
 
 def build_backend(args: argparse.Namespace) -> Backend:
     if args.backend == "local":
@@ -240,30 +276,82 @@ def build_backend(args: argparse.Namespace) -> Backend:
         return CapabilitiesBackend(db_uri=args.cap_db_uri)
     raise SystemExit(f"Unknown backend {args.backend!r}")
 
+
 def main(argv: Optional[list[str]] = None) -> int:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    p.add_argument("--backend", choices=("local", "sqlite", "cap"), default="local", help="which queue backend to benchmark")
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    p.add_argument(
+        "--backend",
+        choices=("local", "sqlite", "cap"),
+        default="local",
+        help="which queue backend to benchmark",
+    )
     # Batch/config
-    p.add_argument("--batch", type=int, default=512, help="operations per measured batch")
+    p.add_argument(
+        "--batch", type=int, default=512, help="operations per measured batch"
+    )
     p.add_argument("--iters", type=int, default=50, help="measured batches per repeat")
     p.add_argument("--repeat", type=int, default=3, help="number of timing repeats")
     p.add_argument("--warmup", type=int, default=50, help="unmeasured warmup batches")
     # Payload/caller settings
-    p.add_argument("--payload-bytes", type=int, default=256, help="payload size in bytes")
-    p.add_argument("--payload-min", type=int, default=None, help="if set, jitter payload size uniformly in [min, max]")
-    p.add_argument("--payload-max", type=int, default=None, help="upper bound for jittered payload size")
-    p.add_argument("--unique-caller", action="store_true", help="use a new random caller per op (otherwise fixed caller)")
-    p.add_argument("--unique-txhash", action="store_true", help="use a new random tx hash per op (otherwise fixed tx hash)")
+    p.add_argument(
+        "--payload-bytes", type=int, default=256, help="payload size in bytes"
+    )
+    p.add_argument(
+        "--payload-min",
+        type=int,
+        default=None,
+        help="if set, jitter payload size uniformly in [min, max]",
+    )
+    p.add_argument(
+        "--payload-max",
+        type=int,
+        default=None,
+        help="upper bound for jittered payload size",
+    )
+    p.add_argument(
+        "--unique-caller",
+        action="store_true",
+        help="use a new random caller per op (otherwise fixed caller)",
+    )
+    p.add_argument(
+        "--unique-txhash",
+        action="store_true",
+        help="use a new random tx hash per op (otherwise fixed tx hash)",
+    )
     # Chain/height
-    p.add_argument("--chain-id", type=int, default=1337, help="chain id to bind into task-id")
-    p.add_argument("--height", type=int, default=1, help="block height to bind into task-id")
+    p.add_argument(
+        "--chain-id", type=int, default=1337, help="chain id to bind into task-id"
+    )
+    p.add_argument(
+        "--height", type=int, default=1, help="block height to bind into task-id"
+    )
     # SQLite tuning
-    p.add_argument("--sqlite-path", type=str, default="bench_data/enqueue.sqlite", help="path for sqlite backend DB")
-    p.add_argument("--sqlite-fast", action="store_true", help="use PRAGMA synchronous=OFF (less durable, faster)")
+    p.add_argument(
+        "--sqlite-path",
+        type=str,
+        default="bench_data/enqueue.sqlite",
+        help="path for sqlite backend DB",
+    )
+    p.add_argument(
+        "--sqlite-fast",
+        action="store_true",
+        help="use PRAGMA synchronous=OFF (less durable, faster)",
+    )
     # Capabilities backend
-    p.add_argument("--cap-db-uri", type=str, default=None, help="optional db uri for capabilities backend JobQueue")
+    p.add_argument(
+        "--cap-db-uri",
+        type=str,
+        default=None,
+        help="optional db uri for capabilities backend JobQueue",
+    )
     # Output
-    p.add_argument("--print-samples", action="store_true", help="print per-repeat average seconds (debug)")
+    p.add_argument(
+        "--print-samples",
+        action="store_true",
+        help="print per-repeat average seconds (debug)",
+    )
     args = p.parse_args(argv)
 
     # Validate jitter args
@@ -343,6 +431,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         pass
 
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())

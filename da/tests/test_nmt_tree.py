@@ -3,10 +3,10 @@ from typing import Callable, Iterable, List, Tuple
 
 import pytest
 
-
 # ---------------------------
 # Helpers to tolerate minor API drift across modules we own.
 # ---------------------------
+
 
 def _hx(s: str) -> bytes:
     s = s.lower()
@@ -20,10 +20,12 @@ def _get_sha3_256() -> Callable[[bytes], bytes]:
     for name in ("sha3_256", "sha3_256_bytes", "hash_sha3_256"):
         if hasattr(hmod, name):
             fn = getattr(hmod, name)
+
             # normalize to return bytes
             def _wrap(b: bytes, _fn=fn):
                 out = _fn(b)
                 return out if isinstance(out, (bytes, bytearray)) else bytes(out)
+
             return _wrap
     raise RuntimeError("da.utils.hash missing sha3_256()")
 
@@ -34,10 +36,14 @@ def _get_encode_leaf() -> Callable[[int, bytes, int], bytes]:
         if hasattr(cmod, name):
             fn = getattr(cmod, name)
             return lambda ns, data, ns_bytes=8, _fn=fn: _fn(ns, data, ns_bytes)
-    raise RuntimeError("da.nmt.codec missing encode_leaf() / leaf_encode() / leaf_serialize()")
+    raise RuntimeError(
+        "da.nmt.codec missing encode_leaf() / leaf_encode() / leaf_serialize()"
+    )
 
 
-def _compute_root_via_commit(leaves: Iterable[Tuple[int, bytes]], ns_bytes: int) -> bytes:
+def _compute_root_via_commit(
+    leaves: Iterable[Tuple[int, bytes]], ns_bytes: int
+) -> bytes:
     """Try commit helpers; fall back to explicit tree if unavailable."""
     # commit module route
     try:
@@ -45,7 +51,11 @@ def _compute_root_via_commit(leaves: Iterable[Tuple[int, bytes]], ns_bytes: int)
         for name in ("nmt_root", "compute_root", "commit_root"):
             if hasattr(cmod, name):
                 fn = getattr(cmod, name)
-                root = fn(list(leaves), ns_bytes) if fn.__code__.co_argcount >= 2 else fn(list(leaves))
+                root = (
+                    fn(list(leaves), ns_bytes)
+                    if fn.__code__.co_argcount >= 2
+                    else fn(list(leaves))
+                )
                 return root if isinstance(root, (bytes, bytearray)) else bytes(root)
     except ModuleNotFoundError:
         pass
@@ -67,7 +77,11 @@ def _compute_root_via_commit(leaves: Iterable[Tuple[int, bytes]], ns_bytes: int)
         tree = cls()  # type: ignore[call-arg]
 
     # append leaves (method name variants)
-    append = getattr(tree, "append", None) or getattr(tree, "add", None) or getattr(tree, "push", None)
+    append = (
+        getattr(tree, "append", None)
+        or getattr(tree, "add", None)
+        or getattr(tree, "push", None)
+    )
     if append is None:
         raise RuntimeError("No append/add/push on NMT tree")
 
@@ -92,6 +106,7 @@ def _compute_root(leaves: Iterable[Tuple[int, bytes]], ns_bytes: int = 8) -> byt
 # Tests
 # ---------------------------
 
+
 def test_single_leaf_root_equals_leaf_hash():
     sha3_256 = _get_sha3_256()
     enc_leaf = _get_encode_leaf()
@@ -105,7 +120,9 @@ def test_single_leaf_root_equals_leaf_hash():
 
     root = _compute_root([(ns, data)], ns_bytes)
     assert isinstance(root, (bytes, bytearray)) and len(root) == 32
-    assert root == expected, "Single-leaf NMT root must equal hash(encode_leaf(ns,data))"
+    assert (
+        root == expected
+    ), "Single-leaf NMT root must equal hash(encode_leaf(ns,data))"
 
 
 def test_ordering_independent_across_distinct_namespaces():
@@ -116,7 +133,9 @@ def test_ordering_independent_across_distinct_namespaces():
     root1 = _compute_root([a, b], ns_bytes)
     root2 = _compute_root([b, a], ns_bytes)
 
-    assert root1 == root2, "Reordering different namespaces must not change NMT root (sort by ns)"
+    assert (
+        root1 == root2
+    ), "Reordering different namespaces must not change NMT root (sort by ns)"
 
 
 def test_relative_order_matters_within_same_namespace():
@@ -127,7 +146,9 @@ def test_relative_order_matters_within_same_namespace():
     r1 = _compute_root(leaves1, ns_bytes)
     r2 = _compute_root(leaves2, ns_bytes)
 
-    assert r1 != r2, "Within the same namespace, original relative order must be preserved (stable sort)"
+    assert (
+        r1 != r2
+    ), "Within the same namespace, original relative order must be preserved (stable sort)"
 
 
 def test_mixed_namespaces_stable_sort_contract():
@@ -141,13 +162,17 @@ def test_mixed_namespaces_stable_sort_contract():
         (0x03, b"r"),
     ]
     # Stable sort by (ns, original-order)
-    order = sorted(range(len(leaves_unsorted)), key=lambda i: (leaves_unsorted[i][0], i))
+    order = sorted(
+        range(len(leaves_unsorted)), key=lambda i: (leaves_unsorted[i][0], i)
+    )
     leaves_sorted = [leaves_unsorted[i] for i in order]
 
     r_unsorted = _compute_root(leaves_unsorted, ns_bytes)
     r_sorted = _compute_root(leaves_sorted, ns_bytes)
 
-    assert r_unsorted == r_sorted, "Implementation must behave like stable sort by (namespace, original index)"
+    assert (
+        r_unsorted == r_sorted
+    ), "Implementation must behave like stable sort by (namespace, original index)"
 
 
 def test_multiple_leaves_nonzero_root_length_and_type():
@@ -157,7 +182,11 @@ def test_multiple_leaves_nonzero_root_length_and_type():
     assert isinstance(root, (bytes, bytearray))
     assert len(root) == 32, "NMT root must be 32-byte hash"
     # nontrivial sanity: roots should differ if we mutate a payload
-    root2 = _compute_root([(ns, (data + b"!") if i == 2 else data) for i, (ns, data) in enumerate(leaves)], ns_bytes)
+    root2 = _compute_root(
+        [
+            (ns, (data + b"!") if i == 2 else data)
+            for i, (ns, data) in enumerate(leaves)
+        ],
+        ns_bytes,
+    )
     assert root != root2, "Change in a leaf payload must change NMT root"
-
-

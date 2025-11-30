@@ -26,17 +26,19 @@ import random
 import time
 from dataclasses import dataclass, field
 from itertools import count
-from typing import Any, Awaitable, Callable, Dict, Mapping, MutableMapping, Optional, Union
+from typing import (Any, Awaitable, Callable, Dict, Mapping, MutableMapping,
+                    Optional, Union)
 
 try:
     import websockets  # type: ignore
     from websockets.client import connect as ws_connect  # type: ignore
-    from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK  # type: ignore
+    from websockets.exceptions import (ConnectionClosedError,  # type: ignore
+                                       ConnectionClosedOK)
 except Exception as e:  # pragma: no cover
     raise RuntimeError("The 'websockets' package is required for WsClient") from e
 
-from ..version import __version__ as SDK_VERSION  # type: ignore
 from ..errors import RpcError  # type: ignore
+from ..version import __version__ as SDK_VERSION  # type: ignore
 
 JSON = Union[dict, list, str, int, float, bool, None]
 Params = Union[list, dict, None]
@@ -68,7 +70,9 @@ class WsClient:
     _pending: Dict[int, asyncio.Future] = field(init=False, default_factory=dict)
     _sub_handlers: Dict[str, OnEvent] = field(init=False, default_factory=dict)
     _method_handlers: Dict[str, OnEvent] = field(init=False, default_factory=dict)
-    _resubscribe: Dict[str, tuple[str, Params, OnEvent]] = field(init=False, default_factory=dict)
+    _resubscribe: Dict[str, tuple[str, Params, OnEvent]] = field(
+        init=False, default_factory=dict
+    )
     _closing: bool = field(init=False, default=False)
 
     # ------------- context manager -------------
@@ -95,19 +99,32 @@ class WsClient:
             attempt += 1
             try:
                 self._ws = await asyncio.wait_for(
-                    ws_connect(self.url, extra_headers=hdrs, ping_interval=self.ping_interval),
+                    ws_connect(
+                        self.url, extra_headers=hdrs, ping_interval=self.ping_interval
+                    ),
                     timeout=self.connect_timeout,
                 )
                 # Start reader
-                self._reader_task = asyncio.create_task(self._reader_loop(), name="WsClient.reader")
+                self._reader_task = asyncio.create_task(
+                    self._reader_loop(), name="WsClient.reader"
+                )
                 # Resubscribe streams if reconnecting
                 if self._resubscribe:
                     await self._restore_subscriptions()
                 return
             except Exception as e:
                 if attempt > self.max_retries:
-                    raise RpcError(code=-32098, message="WS connect failed", data=str(e))
-                await asyncio.sleep(_jitter_backoff(self.backoff_base, self.backoff_factor, attempt, self.backoff_jitter))
+                    raise RpcError(
+                        code=-32098, message="WS connect failed", data=str(e)
+                    )
+                await asyncio.sleep(
+                    _jitter_backoff(
+                        self.backoff_base,
+                        self.backoff_factor,
+                        attempt,
+                        self.backoff_jitter,
+                    )
+                )
 
     async def close(self) -> None:
         """Close the WebSocket and cancel tasks."""
@@ -130,7 +147,9 @@ class WsClient:
 
     # ------------- RPC primitives --------------
 
-    async def request(self, method: str, params: Params = None, *, id: Optional[int] = None) -> JSON:
+    async def request(
+        self, method: str, params: Params = None, *, id: Optional[int] = None
+    ) -> JSON:
         """Send a JSON-RPC request and await the response."""
         if self._ws is None:
             await self.connect()
@@ -153,7 +172,10 @@ class WsClient:
         self._pending[id] = fut
 
         try:
-            await asyncio.wait_for(self._ws.send(json.dumps(payload, separators=(",", ":"))), timeout=self.request_timeout)
+            await asyncio.wait_for(
+                self._ws.send(json.dumps(payload, separators=(",", ":"))),
+                timeout=self.request_timeout,
+            )
         except Exception as e:
             self._pending.pop(id, None)
             raise RpcError(code=-32098, message="WS send failed", data=str(e))
@@ -165,7 +187,9 @@ class WsClient:
 
     # ------------- Subscriptions ----------------
 
-    async def subscribe(self, method: str, params: Params = None, *, on_event: OnEvent) -> str:
+    async def subscribe(
+        self, method: str, params: Params = None, *, on_event: OnEvent
+    ) -> str:
         """
         Generic subscription helper.
 
@@ -198,14 +222,22 @@ class WsClient:
     # Convenience wrappers (names are examples; adjust to your node API)
     async def subscribe_new_heads(self, on_event: OnEvent) -> str:
         # Common patterns seen: "chain_subscribeNewHeads" or "subscribe_newHeads"
-        try_methods = ("chain_subscribeNewHeads", "subscribe_newHeads", "ws_subscribeNewHeads")
+        try_methods = (
+            "chain_subscribeNewHeads",
+            "subscribe_newHeads",
+            "ws_subscribeNewHeads",
+        )
         last_err: Optional[Exception] = None
         for m in try_methods:
             try:
                 return await self.subscribe(m, [], on_event=on_event)
             except Exception as e:
                 last_err = e
-        raise RpcError(code=-32601, message="No supported newHeads subscription method", data=str(last_err))
+        raise RpcError(
+            code=-32601,
+            message="No supported newHeads subscription method",
+            data=str(last_err),
+        )
 
     async def subscribe_pending_txs(self, on_event: OnEvent) -> str:
         try_methods = ("mempool_subscribePendingTxs", "subscribe_pendingTxs")
@@ -215,7 +247,11 @@ class WsClient:
                 return await self.subscribe(m, [], on_event=on_event)
             except Exception as e:
                 last_err = e
-        raise RpcError(code=-32601, message="No supported pendingTxs subscription method", data=str(last_err))
+        raise RpcError(
+            code=-32601,
+            message="No supported pendingTxs subscription method",
+            data=str(last_err),
+        )
 
     # Arbitrary method notifications (not subscription-id keyed)
     def on(self, method: str, handler: OnEvent) -> None:
@@ -254,7 +290,11 @@ class WsClient:
             # Response to a request
             if isinstance(data, dict) and "id" in data:
                 rid = data.get("id")
-                fut = self._pending.get(int(rid)) if isinstance(rid, int) or (isinstance(rid, str) and rid.isdigit()) else None
+                fut = (
+                    self._pending.get(int(rid))
+                    if isinstance(rid, int) or (isinstance(rid, str) and rid.isdigit())
+                    else None
+                )
                 # Allow str ids as well
                 if fut is None and isinstance(rid, str):
                     # Search pending with matching rid string (rare)
@@ -265,7 +305,13 @@ class WsClient:
                 if fut is not None and not fut.done():
                     if "error" in data and data["error"] is not None:
                         err = data["error"]
-                        fut.set_exception(RpcError(code=err.get("code", -32603), message=err.get("message", "Unknown error"), data=err.get("data")))
+                        fut.set_exception(
+                            RpcError(
+                                code=err.get("code", -32603),
+                                message=err.get("message", "Unknown error"),
+                                data=err.get("data"),
+                            )
+                        )
                     else:
                         fut.set_result(data.get("result"))
                 continue
@@ -303,7 +349,9 @@ class WsClient:
         # Notify all pending requests that the transport dropped
         for fut in list(self._pending.values()):
             if not fut.done():
-                fut.set_exception(RpcError(code=-32098, message="WS disconnected", data=None))
+                fut.set_exception(
+                    RpcError(code=-32098, message="WS disconnected", data=None)
+                )
         self._pending.clear()
 
         # Attempt reconnection with backoff
@@ -316,7 +364,14 @@ class WsClient:
             except RpcError:
                 if attempt > self.max_retries:
                     return
-                await asyncio.sleep(_jitter_backoff(self.backoff_base, self.backoff_factor, attempt, self.backoff_jitter))
+                await asyncio.sleep(
+                    _jitter_backoff(
+                        self.backoff_base,
+                        self.backoff_factor,
+                        attempt,
+                        self.backoff_jitter,
+                    )
+                )
 
     async def _restore_subscriptions(self) -> None:
         """Re-subscribe active streams after reconnect."""

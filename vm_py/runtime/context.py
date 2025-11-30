@@ -21,11 +21,11 @@ sources; `timestamp` is the consensus timestamp provided by the execution layer.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import Any, Dict, Optional, Union
 
-
 # ----------------------------- helpers ----------------------------- #
+
 
 class ContextError(Exception):
     """Validation or coercion failure for BlockEnv/TxEnv."""
@@ -69,6 +69,7 @@ def _require_non_negative_int(name: str, v: Any) -> int:
 
 # ----------------------------- models ------------------------------ #
 
+
 @dataclass(frozen=True)
 class BlockEnv:
     """
@@ -81,15 +82,22 @@ class BlockEnv:
     coinbase:   Miner/producer address as raw bytes.
     chain_id:   Integer chain identifier (matches core/types/params.py).
     """
+
     height: int
     timestamp: int
     coinbase: bytes
     chain_id: int
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "height", _require_non_negative_int("height", self.height))
-        object.__setattr__(self, "timestamp", _require_non_negative_int("timestamp", self.timestamp))
-        object.__setattr__(self, "chain_id", _require_non_negative_int("chain_id", self.chain_id))
+        object.__setattr__(
+            self, "height", _require_non_negative_int("height", self.height)
+        )
+        object.__setattr__(
+            self, "timestamp", _require_non_negative_int("timestamp", self.timestamp)
+        )
+        object.__setattr__(
+            self, "chain_id", _require_non_negative_int("chain_id", self.chain_id)
+        )
         object.__setattr__(self, "coinbase", to_bytes(self.coinbase))
 
     # ---- constructors ---- #
@@ -138,6 +146,7 @@ class TxEnv:
     gas_limit: Gas limit available to the VM (int).
     nonce:     Sender nonce (int).
     """
+
     tx_hash: bytes
     sender: bytes
     to: Optional[bytes]
@@ -150,9 +159,15 @@ class TxEnv:
         object.__setattr__(self, "sender", to_bytes(self.sender))
         if self.to is not None:
             object.__setattr__(self, "to", to_bytes(self.to))
-        object.__setattr__(self, "value", _require_non_negative_int("value", self.value))
-        object.__setattr__(self, "gas_limit", _require_non_negative_int("gas_limit", self.gas_limit))
-        object.__setattr__(self, "nonce", _require_non_negative_int("nonce", self.nonce))
+        object.__setattr__(
+            self, "value", _require_non_negative_int("value", self.value)
+        )
+        object.__setattr__(
+            self, "gas_limit", _require_non_negative_int("gas_limit", self.gas_limit)
+        )
+        object.__setattr__(
+            self, "nonce", _require_non_negative_int("nonce", self.nonce)
+        )
 
     # ---- constructors ---- #
 
@@ -190,7 +205,7 @@ class TxEnv:
         d = asdict(self)
         d["tx_hash"] = to_hex(self.tx_hash)
         d["sender"] = to_hex(self.sender)
-        d["to"] = (to_hex(self.to) if self.to is not None else None)
+        d["to"] = to_hex(self.to) if self.to is not None else None
         return d
 
 

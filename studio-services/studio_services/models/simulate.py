@@ -25,10 +25,12 @@ from typing import Any, Dict, List, Optional
 try:
     # Pydantic v2
     from pydantic import BaseModel, Field, PositiveInt, conint, model_validator
+
     _IS_PYDANTIC_V2 = True
 except Exception:  # pragma: no cover - v1 fallback
     from pydantic.v1 import BaseModel, Field, PositiveInt  # type: ignore
     from pydantic.v1.types import conint  # type: ignore
+
     _IS_PYDANTIC_V2 = False
 
 from .common import Address, ChainId, Hash, Hex
@@ -73,21 +75,38 @@ class SimulateCall(BaseModel):
 
     chain_id: ChainId = Field(..., description="Target chain id.")
     # Mode A
-    source: Optional[str] = Field(default=None, description="Python contract source (exclusive with `address`).")
-    manifest: Optional[Dict[str, Any]] = Field(default=None, description="Manifest/ABI JSON when `source` is provided.")
+    source: Optional[str] = Field(
+        default=None, description="Python contract source (exclusive with `address`)."
+    )
+    manifest: Optional[Dict[str, Any]] = Field(
+        default=None, description="Manifest/ABI JSON when `source` is provided."
+    )
     # Mode B
-    address: Optional[Address] = Field(default=None, description="Deployed contract address (exclusive with `source`).")
-    abi: Optional[Dict[str, Any]] = Field(default=None, description="Optional ABI to use with `address`.")
+    address: Optional[Address] = Field(
+        default=None, description="Deployed contract address (exclusive with `source`)."
+    )
+    abi: Optional[Dict[str, Any]] = Field(
+        default=None, description="Optional ABI to use with `address`."
+    )
 
     # Call
     function: str = Field(..., min_length=1, description="Function name to invoke.")
-    args: Dict[str, Any] = Field(default_factory=dict, description="Arguments keyed by name (or '_args' for positional).")
-    sender: Optional[Address] = Field(default=None, description="Simulated sender address.")
+    args: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Arguments keyed by name (or '_args' for positional).",
+    )
+    sender: Optional[Address] = Field(
+        default=None, description="Simulated sender address."
+    )
     value: Optional[conint(ge=0)] = Field(default=0, description="Value in base units (default 0).")  # type: ignore[misc]
     gas_limit: Optional[conint(ge=0)] = Field(default=None, description="Gas upper bound (simulated).")  # type: ignore[misc]
     gas_price: Optional[conint(ge=0)] = Field(default=None, description="Gas price (simulated).")  # type: ignore[misc]
-    seed: Optional[Hex] = Field(default=None, description="Deterministic PRNG seed for the VM.")
-    context: Optional[Dict[str, Any]] = Field(default=None, description="Optional block/tx context overrides.")
+    seed: Optional[Hex] = Field(
+        default=None, description="Deterministic PRNG seed for the VM."
+    )
+    context: Optional[Dict[str, Any]] = Field(
+        default=None, description="Optional block/tx context overrides."
+    )
 
     class Config:  # type: ignore[override]
         extra = "forbid"
@@ -95,25 +114,32 @@ class SimulateCall(BaseModel):
         populate_by_name = True
 
     if _IS_PYDANTIC_V2:
+
         @model_validator(mode="after")
         def _mode_exclusivity(cls, v: "SimulateCall") -> "SimulateCall":  # type: ignore[override]
             has_src = bool(v.source)
             has_addr = bool(v.address)
             if has_src == has_addr:
-                raise ValueError("Provide exactly one of {source+manifest} OR {address}.")
+                raise ValueError(
+                    "Provide exactly one of {source+manifest} OR {address}."
+                )
             if has_src and v.manifest is None:
                 raise ValueError("`manifest` is required when `source` is provided.")
             if has_addr and v.abi is not None and not isinstance(v.abi, dict):
                 raise ValueError("`abi` must be an object when provided.")
             return v
+
     else:  # pragma: no cover - v1 compatibility
+
         @classmethod
         def validate(cls, value):  # type: ignore[override]
             obj = super().validate(value)
             has_src = bool(obj.source)
             has_addr = bool(obj.address)
             if has_src == has_addr:
-                raise ValueError("Provide exactly one of {source+manifest} OR {address}.")
+                raise ValueError(
+                    "Provide exactly one of {source+manifest} OR {address}."
+                )
             if has_src and obj.manifest is None:
                 raise ValueError("`manifest` is required when `source` is provided.")
             if has_addr and obj.abi is not None and not isinstance(obj.abi, dict):
@@ -127,7 +153,9 @@ class SimulatedEvent(BaseModel):
     """
 
     name: str = Field(..., description="Event name.")
-    args: Dict[str, Any] = Field(default_factory=dict, description="Event arguments (decoded).")
+    args: Dict[str, Any] = Field(
+        default_factory=dict, description="Event arguments (decoded)."
+    )
 
     class Config:  # type: ignore[override]
         extra = "forbid"
@@ -143,12 +171,22 @@ class SimulateResult(BaseModel):
 
     ok: bool = Field(..., description="True if the call executed without VM error.")
     return_value: Any = Field(None, description="Decoded return value (per ABI).")
-    events: List[SimulatedEvent] = Field(default_factory=list, description="Emitted events (decoded).")
-    gas_used: PositiveInt = Field(..., description="Gas units consumed by the simulated call.")
-    logs_text: List[str] = Field(default_factory=list, description="Optional textual logs/trace.")
+    events: List[SimulatedEvent] = Field(
+        default_factory=list, description="Emitted events (decoded)."
+    )
+    gas_used: PositiveInt = Field(
+        ..., description="Gas units consumed by the simulated call."
+    )
+    logs_text: List[str] = Field(
+        default_factory=list, description="Optional textual logs/trace."
+    )
     error: Optional[str] = Field(default=None, description="Error string if ok=False.")
-    code_hash: Optional[Hash] = Field(default=None, description="Computed code hash (if compiled or resolved).")
-    abi: Optional[Dict[str, Any]] = Field(default=None, description="Normalized ABI used for encoding/decoding.")
+    code_hash: Optional[Hash] = Field(
+        default=None, description="Computed code hash (if compiled or resolved)."
+    )
+    abi: Optional[Dict[str, Any]] = Field(
+        default=None, description="Normalized ABI used for encoding/decoding."
+    )
     state_diff: Optional[Dict[str, Any]] = Field(
         default=None,
         description="Preview of state mutations (for UX only; simulator does not persist).",

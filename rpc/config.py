@@ -30,6 +30,7 @@ Notes
 - Paths beginning with ~ are expanded.
 - This module has no external deps (no dotenv). Use your process manager to inject env.
 """
+
 from __future__ import annotations
 
 import json
@@ -111,7 +112,9 @@ def _env_list(name: str, default: List[str]) -> List[str]:
         return list(default)
     s = v.strip()
     # Try JSON first
-    if (s.startswith("[") and s.endswith("]")) or (s.startswith('"') and s.endswith('"')):
+    if (s.startswith("[") and s.endswith("]")) or (
+        s.startswith('"') and s.endswith('"')
+    ):
         try:
             parsed = json.loads(s)
             if isinstance(parsed, list):
@@ -193,7 +196,9 @@ class RateLimitConfig:
     default_rps: float = 50.0
     burst: int = 200
     # Per-method overrides (method name → rps).
-    per_method_rps: Dict[str, float] = field(default_factory=lambda: dict(DEFAULT_PER_METHOD_RPS))
+    per_method_rps: Dict[str, float] = field(
+        default_factory=lambda: dict(DEFAULT_PER_METHOD_RPS)
+    )
 
     def method_rps(self, method: str) -> float:
         return self.per_method_rps.get(method, self.default_rps)
@@ -248,7 +253,9 @@ def load() -> RpcConfig:
         ),
     )
 
-    db_uri = _expand_sqlite_uri(_env("ANIMICA_RPC_DB_URI", "sqlite:///~/animica/data/chain.db"))
+    db_uri = _expand_sqlite_uri(
+        _env("ANIMICA_RPC_DB_URI", "sqlite:///~/animica/data/chain.db")
+    )
 
     explicit_chain_id = "ANIMICA_CHAIN_ID" in os.environ
     # Respect explicit chain id first, then fall back to ANIMICA_NETWORK so
@@ -325,6 +332,7 @@ def resolve_chain_id(cfg: RpcConfig | Config | None = None) -> int:
                 break
     # Fallback to default mainnet id if all else fails.
     return 1
+
 
 @dataclass
 class Config:

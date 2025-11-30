@@ -14,18 +14,19 @@ lazily at dispatch time to keep module import cost low.
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from ..errors import ExecError
 
 if TYPE_CHECKING:  # type-only imports to avoid import-time cost/cycles
-    from .env import BlockEnv, TxEnv
     from ..types.result import ApplyResult
+    from .env import BlockEnv, TxEnv
 
 
 # --------------------------------------------------------------------------------------
 # Helpers
 # --------------------------------------------------------------------------------------
+
 
 class DispatchError(ExecError):
     """Raised when a transaction cannot be classified or routed."""
@@ -110,7 +111,9 @@ def resolve_tx_kind(tx: Any) -> str:
                 return _ALIAS_KIND[k]
 
     # Heuristics
-    has_code = any(_get(tx, n) is not None for n in ("code", "init_code", "bytecode", "contract"))
+    has_code = any(
+        _get(tx, n) is not None for n in ("code", "init_code", "bytecode", "contract")
+    )
     to = _get(tx, "to", "recipient", "to_address")
     data = _get(tx, "data", "input", "call_data", "calldata")
     to_bytes = _as_bytes(to)
@@ -121,7 +124,12 @@ def resolve_tx_kind(tx: Any) -> str:
     if (to is None or len(to_bytes) == 0) and data is not None and len(data_bytes) > 0:
         # contract-creation style with to == null
         return "deploy"
-    if to is not None and len(to_bytes) > 0 and data is not None and len(data_bytes) > 0:
+    if (
+        to is not None
+        and len(to_bytes) > 0
+        and data is not None
+        and len(data_bytes) > 0
+    ):
         return "call"
     if to is not None and len(to_bytes) > 0:
         return "transfer"
@@ -133,6 +141,7 @@ def resolve_tx_kind(tx: Any) -> str:
 # --------------------------------------------------------------------------------------
 # Public API
 # --------------------------------------------------------------------------------------
+
 
 def dispatch(
     tx: Any,
@@ -183,6 +192,7 @@ def dispatch(
 
     if kind == "transfer":
         from . import transfers as _transfers
+
         if not hasattr(_transfers, "apply_transfer"):
             raise DispatchError("transfer handler not available")
         return _transfers.apply_transfer(  # type: ignore[no-any-return]
@@ -191,18 +201,34 @@ def dispatch(
 
     if kind == "deploy":
         from . import contracts as _contracts
+
         if not hasattr(_contracts, "apply_deploy"):
             raise DispatchError("deploy handler not available")
         return _contracts.apply_deploy(  # type: ignore[no-any-return]
-            tx, state, block_env, tx_env, vm=vm, params=params, da=da, capabilities=capabilities
+            tx,
+            state,
+            block_env,
+            tx_env,
+            vm=vm,
+            params=params,
+            da=da,
+            capabilities=capabilities,
         )
 
     if kind == "call":
         from . import contracts as _contracts
+
         if not hasattr(_contracts, "apply_call"):
             raise DispatchError("call handler not available")
         return _contracts.apply_call(  # type: ignore[no-any-return]
-            tx, state, block_env, tx_env, vm=vm, params=params, da=da, capabilities=capabilities
+            tx,
+            state,
+            block_env,
+            tx_env,
+            vm=vm,
+            params=params,
+            da=da,
+            capabilities=capabilities,
         )
 
     raise DispatchError(f"unknown transaction kind: {kind!r}")

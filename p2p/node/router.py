@@ -4,33 +4,30 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from itertools import count
-from typing import (
-    Awaitable,
-    Callable,
-    Dict,
-    Iterable,
-    List,
-    Optional,
-    Protocol,
-    Tuple,
-)
+from typing import (Awaitable, Callable, Dict, Iterable, List, Optional,
+                    Protocol, Tuple)
 
 log = logging.getLogger("animica.p2p.router")
 
 
 # ---- Minimal interfaces the router relies on ---------------------------------
 
+
 class ConnLike(Protocol):
     """Subset of a secure connection used by handlers."""
+
     remote_addr: str
 
-    async def send_frame(self, msg_id: int, payload: bytes, *, acks: bool = False) -> None: ...
+    async def send_frame(
+        self, msg_id: int, payload: bytes, *, acks: bool = False
+    ) -> None: ...
     def is_closed(self) -> bool: ...
 
 
 @dataclass(frozen=True)
 class Frame:
     """Envelope from p2p/wire/frames.py (light alias for typing here)."""
+
     msg_id: int
     seq: int
     flags: int
@@ -43,6 +40,7 @@ class Handler(Protocol):
     - msg_ids(): iterable of numeric message IDs this handler accepts
     - handle(): process a single frame (must catch/translate its own errors)
     """
+
     def msg_ids(self) -> Iterable[int]: ...
     async def handle(self, conn: ConnLike, frame: Frame) -> None: ...
 
@@ -60,7 +58,11 @@ class Router:
       • Broadcasts frames to per-msg_id subscribers (debug, tracing, side-effects)
     """
 
-    def __init__(self, loop: Optional[asyncio.AbstractEventLoop] = None, events: Optional[object] = None) -> None:
+    def __init__(
+        self,
+        loop: Optional[asyncio.AbstractEventLoop] = None,
+        events: Optional[object] = None,
+    ) -> None:
         self._loop = loop or asyncio.get_event_loop()
         self._events = events  # optional event-bus (p2p/node/events.py)
         self._handlers: Dict[int, Handler] = {}
@@ -79,9 +81,18 @@ class Router:
             if mid in self._handlers:
                 # Deterministic: last write wins, but warn loudly
                 prev = type(self._handlers[mid]).__name__
-                log.warning("Overriding handler for msg_id=%s (%s -> %s)", mid, prev, type(handler).__name__)
+                log.warning(
+                    "Overriding handler for msg_id=%s (%s -> %s)",
+                    mid,
+                    prev,
+                    type(handler).__name__,
+                )
             self._handlers[mid] = handler
-        log.debug("Mounted handler %s for msg_ids=%s", type(handler).__name__, list(handler.msg_ids()))
+        log.debug(
+            "Mounted handler %s for msg_ids=%s",
+            type(handler).__name__,
+            list(handler.msg_ids()),
+        )
 
     def remove_handler_for(self, msg_id: int) -> None:
         self._handlers.pop(msg_id, None)
@@ -117,7 +128,11 @@ class Router:
         handler = self._handlers.get(frame.msg_id)
         if handler is None:
             self._dispatch_drop_nohandler += 1
-            log.debug("No handler for msg_id=%s from %s", frame.msg_id, getattr(conn, "remote_addr", "?"))
+            log.debug(
+                "No handler for msg_id=%s from %s",
+                frame.msg_id,
+                getattr(conn, "remote_addr", "?"),
+            )
             # Still notify subscribers (useful for tracing unknown traffic)
             await self._notify_subscribers(conn, frame)
             return
@@ -129,7 +144,12 @@ class Router:
             raise
         except Exception as e:
             self._dispatch_errors += 1
-            log.warning("Handler error for msg_id=%s (%s)", frame.msg_id, type(handler).__name__, exc_info=e)
+            log.warning(
+                "Handler error for msg_id=%s (%s)",
+                frame.msg_id,
+                type(handler).__name__,
+                exc_info=e,
+            )
         finally:
             # Subscribers are fire-and-forget; they must handle their own errors
             await self._notify_subscribers(conn, frame)

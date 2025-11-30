@@ -45,9 +45,11 @@ from typing import Final
 
 from stdlib import abi  # type: ignore
 
+
 # Resolve VM-provided treasury primitives (with graceful fallback that reverts)
 def _revert_unavailable(*_args, **_kwargs):  # pragma: no cover
     abi.revert(b"TREASURY:UNAVAILABLE")
+
 
 try:
     from stdlib.treasury import balance as _vm_balance  # type: ignore
@@ -66,13 +68,16 @@ except Exception:  # pragma: no cover
 
 _U256_MAX: Final[int] = (1 << 256) - 1
 
+
 def _require_non_negative(amount: int) -> None:
     if amount < 0:
         abi.revert(b"TREASURY:NEG_AMOUNT")
 
+
 def _require_u256(amount: int) -> None:
     if amount < 0 or amount > _U256_MAX:
         abi.revert(b"TREASURY:NEG_AMOUNT")  # single code for simplicity
+
 
 def _require_addr(addr: bytes) -> None:
     if not isinstance(addr, (bytes, bytearray)) or len(addr) == 0:
@@ -82,6 +87,7 @@ def _require_addr(addr: bytes) -> None:
 # -------------
 # Public API
 # -------------
+
 
 def balance() -> int:
     """

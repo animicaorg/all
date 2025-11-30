@@ -34,6 +34,6 @@ __all__ = [
 # Optional type-only imports for IDEs/type checkers (won't execute at runtime).
 if TYPE_CHECKING:  # pragma: no cover
     from . import core_chain as core_chain  # noqa: F401
-    from . import rpc_mount as rpc_mount    # noqa: F401
-    from . import p2p_topics as p2p_topics  # noqa: F401
     from . import p2p_gossip as p2p_gossip  # noqa: F401
+    from . import p2p_topics as p2p_topics  # noqa: F401
+    from . import rpc_mount as rpc_mount  # noqa: F401

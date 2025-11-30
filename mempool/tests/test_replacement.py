@@ -6,7 +6,9 @@ from typing import Any, Optional
 import pytest
 
 pool_mod = pytest.importorskip("mempool.pool", reason="mempool.pool module not found")
-policy_mod = pytest.importorskip("mempool.policy", reason="mempool.policy module not found")
+policy_mod = pytest.importorskip(
+    "mempool.policy", reason="mempool.policy module not found"
+)
 errors = pytest.importorskip("mempool.errors", reason="mempool.errors module not found")
 
 # Prefer specific error types if the package defines them.
@@ -18,23 +20,27 @@ ERR_REPLACEMENT = getattr(errors, "ReplacementError", ERR_ADMISSION)
 # Helpers & test scaffolding
 # -------------------------
 
+
 class FakeTx:
     """
     Minimal tx object with just enough surface area for pool + priority code.
     We will monkeypatch mempool.priority.effective_priority(tx) to return tx.fee,
     and mempool.validate.* to no-op so we can isolate replacement behavior.
     """
+
     def __init__(self, sender: bytes, nonce: int, fee: int, size_bytes: int = 100):
         self.sender = sender
         self.nonce = nonce
         self.fee = fee
         self.size_bytes = size_bytes
-        self.hash = (sender + nonce.to_bytes(8, "big"))[:32] or b"\xAB" * 32  # best-effort
+        self.hash = (sender + nonce.to_bytes(8, "big"))[
+            :32
+        ] or b"\xab" * 32  # best-effort
         self.tx_hash = self.hash  # common alias
 
     # If code asks for encoded size:
     def __bytes__(self) -> bytes:
-        return b"\xEE" * self.size_bytes
+        return b"\xee" * self.size_bytes
 
 
 ALICE = b"A" * 20
@@ -59,7 +65,9 @@ def _bump_ratio() -> float:
         if hasattr(policy_mod, name):
             val = getattr(policy_mod, name)
             # PCT values likely in percent form (e.g., 10 or 12.5)
-            if "PCT" in name or (isinstance(val, (int, float)) and val > 1.0 and val <= 100):
+            if "PCT" in name or (
+                isinstance(val, (int, float)) and val > 1.0 and val <= 100
+            ):
                 return float(val) / 100.0
             return float(val)
     return 0.10
@@ -111,12 +119,22 @@ def _monkeypatch_validation(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.setattr(validate, name, lambda *a, **k: True, raising=True)
 
     # Size helper sometimes consulted by pools
-    for name in ("estimate_encoded_size", "encoded_size", "tx_encoded_size", "get_encoded_size"):
+    for name in (
+        "estimate_encoded_size",
+        "encoded_size",
+        "tx_encoded_size",
+        "get_encoded_size",
+    ):
         if hasattr(validate, name):
             monkeypatch.setattr(validate, name, lambda tx: len(bytes(tx)), raising=True)
 
     # PQ precheck should succeed by default for these tests
-    for name in ("precheck_pq_signature", "pq_precheck_verify", "verify_pq_signature", "pq_verify"):
+    for name in (
+        "precheck_pq_signature",
+        "pq_precheck_verify",
+        "verify_pq_signature",
+        "pq_verify",
+    ):
         if hasattr(validate, name):
             monkeypatch.setattr(validate, name, lambda *a, **k: True, raising=True)
 
@@ -131,7 +149,9 @@ def _monkeypatch_priority(monkeypatch: pytest.MonkeyPatch) -> None:
         return
     for name in ("effective_priority", "priority_of", "calc_effective_priority"):
         if hasattr(priority, name):
-            monkeypatch.setattr(priority, name, lambda tx: getattr(tx, "fee", 0), raising=True)
+            monkeypatch.setattr(
+                priority, name, lambda tx: getattr(tx, "fee", 0), raising=True
+            )
 
 
 def _admit(pool: Any, tx: FakeTx) -> Optional[str]:
@@ -182,6 +202,7 @@ def _len_pool(pool: Any) -> int:
 # -------------------------
 # Tests
 # -------------------------
+
 
 def test_insufficient_bump_is_rejected(monkeypatch: pytest.MonkeyPatch):
     _monkeypatch_validation(monkeypatch)
@@ -241,7 +262,9 @@ def test_sufficient_bump_replaces(monkeypatch: pytest.MonkeyPatch):
 
     n_after = _len_pool(pool)
     if n_before != -1 and n_after != -1:
-        assert n_after == n_before, "Replacement should not change total pool size for same sender+nonce"
+        assert (
+            n_after == n_before
+        ), "Replacement should not change total pool size for same sender+nonce"
 
     # If pool exposes a lookup by (sender, nonce), prefer it and assert we get the higher-fee tx
     for name in ("get", "get_tx", "by_sender_nonce", "lookup"):

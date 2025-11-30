@@ -24,16 +24,16 @@ Python stdlib `sqlite3` on Ubuntu 22.04 is 3.37+ (supports UPSERT).
 
 import os
 import sqlite3
-from urllib.parse import urlparse
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Iterable, Iterator, List, Optional, Tuple, Union
+from urllib.parse import urlparse
 
-from .kv import KV, ReadOnlyKV, Batch
+from .kv import KV, Batch, ReadOnlyKV
 
 DEFAULT_PRAGMAS = {
-    "journal_mode": "WAL",      # better concurrency
-    "synchronous": "NORMAL",    # durability vs speed trade (NORMAL is fine with WAL)
+    "journal_mode": "WAL",  # better concurrency
+    "synchronous": "NORMAL",  # durability vs speed trade (NORMAL is fine with WAL)
     "temp_store": "MEMORY",
     "mmap_size": 512 * 1024 * 1024,  # 512 MiB
     "page_size": 4096,
@@ -169,8 +169,8 @@ def _open_connection(
     conn = sqlite3.connect(
         path_str,
         detect_types=0,
-        isolation_level=None,      # autocommit; we explicitly BEGIN for batches
-        check_same_thread=False,   # allow multi-threaded use; caller synchronizes
+        isolation_level=None,  # autocommit; we explicitly BEGIN for batches
+        check_same_thread=False,  # allow multi-threaded use; caller synchronizes
         uri=uri_mode,
     )
     # Speed up row→bytes conversion slightly
@@ -201,7 +201,9 @@ class SQLiteKV(KV):
 
     def __init__(
         self,
-        conn_or_path: Union[sqlite3.Connection, str, bytes, "os.PathLike[str]", "os.PathLike[bytes]"],
+        conn_or_path: Union[
+            sqlite3.Connection, str, bytes, "os.PathLike[str]", "os.PathLike[bytes]"
+        ],
         *,
         pragmas: Optional[dict] = None,
         create: bool = True,
@@ -224,7 +226,9 @@ class SQLiteKV(KV):
         return bytes(row[0]) if row is not None else None
 
     def has(self, key: bytes) -> bool:
-        cur = self._conn.execute("SELECT 1 FROM kv WHERE k = ? LIMIT 1", (memoryview(key),))
+        cur = self._conn.execute(
+            "SELECT 1 FROM kv WHERE k = ? LIMIT 1", (memoryview(key),)
+        )
         row = cur.fetchone()
         cur.close()
         return row is not None

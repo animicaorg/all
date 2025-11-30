@@ -12,7 +12,9 @@ from typing import Iterable, List
 
 try:  # Optional dependency used to populate the peer store
     from p2p.cli import peer as peer_cli
-except Exception:  # pragma: no cover - fallback to avoid hard dependency when not installed
+except (
+    Exception
+):  # pragma: no cover - fallback to avoid hard dependency when not installed
     peer_cli = None  # type: ignore
 
 SEED_DIR = Path(__file__).resolve().parent
@@ -70,7 +72,9 @@ def dedupe_multiaddrs(seeds: Iterable[SeedEntry]) -> list[str]:
     return out
 
 
-def write_peerstore(seeds: Iterable[SeedEntry], store_path: Path = DEFAULT_STORE) -> None:
+def write_peerstore(
+    seeds: Iterable[SeedEntry], store_path: Path = DEFAULT_STORE
+) -> None:
     if peer_cli is None:
         return
     store = peer_cli.StoreFacade(store_path)
@@ -81,9 +85,20 @@ def write_peerstore(seeds: Iterable[SeedEntry], store_path: Path = DEFAULT_STORE
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--profile", required=True, choices=["devnet", "testnet", "mainnet"], help="Profile to load")
-    ap.add_argument("--store", type=Path, default=DEFAULT_STORE, help="Peer store path to populate")
-    ap.add_argument("--write-peerstore", action="store_true", help="Populate the peer store with seeds")
+    ap.add_argument(
+        "--profile",
+        required=True,
+        choices=["devnet", "testnet", "mainnet"],
+        help="Profile to load",
+    )
+    ap.add_argument(
+        "--store", type=Path, default=DEFAULT_STORE, help="Peer store path to populate"
+    )
+    ap.add_argument(
+        "--write-peerstore",
+        action="store_true",
+        help="Populate the peer store with seeds",
+    )
     args = ap.parse_args(argv)
 
     seeds = load_profile_file(args.profile)

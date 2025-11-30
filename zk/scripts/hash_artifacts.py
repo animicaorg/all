@@ -31,15 +31,14 @@ Exit codes
 from __future__ import annotations
 
 import argparse
-import json
-import sys
-from dataclasses import dataclass, asdict
-from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
-
 # --- hashing backends (stdlib) -------------------------------------------------
 # Python 3.6+ includes NIST SHA3 (sha3_256). We also support sha256 for parity.
 import hashlib
+import json
+import sys
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 # --- constants & types ---------------------------------------------------------
 
@@ -50,22 +49,30 @@ JSON_EXTS = {".json"}
 
 DEFAULT_INCLUDE = {"vk", "proof", "public", "code", "bin"}
 
+
 @dataclass
 class ArtifactHash:
     path: str
     rel: str
-    type: str                  # vk|proof|public|code|bin|json
+    type: str  # vk|proof|public|code|bin|json
     size: int
-    algo: str                  # sha3_256|sha256
-    raw_hash: str              # 0x-prefixed hex over raw file bytes
-    canonical_json_hash: Optional[str] = None  # for JSON kinds (vk/proof/public/other .json)
-    details: Dict[str, Any] = None             # optional extra details (e.g., protocol/curve from vk)
+    algo: str  # sha3_256|sha256
+    raw_hash: str  # 0x-prefixed hex over raw file bytes
+    canonical_json_hash: Optional[str] = (
+        None  # for JSON kinds (vk/proof/public/other .json)
+    )
+    details: Dict[str, Any] = (
+        None  # optional extra details (e.g., protocol/curve from vk)
+    )
+
 
 # --- helpers -------------------------------------------------------------------
+
 
 def canonical_dumps(obj: Any) -> str:
     """Deterministic, compact JSON with sorted keys + trailing newline."""
     return json.dumps(obj, sort_keys=True, separators=(",", ":")) + "\n"
+
 
 def h_init(algo: str):
     a = algo.lower()
@@ -75,10 +82,12 @@ def h_init(algo: str):
         return hashlib.sha256()
     raise SystemExit(f"Unsupported --algo {algo}. Use sha3_256 or sha256.")
 
+
 def hash_bytes(data: bytes, algo: str) -> str:
     h = h_init(algo)
     h.update(data)
     return "0x" + h.hexdigest()
+
 
 def hash_file_stream(path: Path, algo: str, chunk_size: int = 1 << 20) -> str:
     h = h_init(algo)
@@ -90,9 +99,11 @@ def hash_file_stream(path: Path, algo: str, chunk_size: int = 1 << 20) -> str:
             h.update(chunk)
     return "0x" + h.hexdigest()
 
+
 def load_json(path: Path) -> Any:
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
+
 
 def infer_kind(p: Path) -> str:
     name = p.name
@@ -106,13 +117,17 @@ def infer_kind(p: Path) -> str:
         return "json"
     return "bin"  # default fallback: treat as raw
 
+
 def discover(paths: List[Path], include: Iterable[str]) -> List[Path]:
     include = set(include)
     out: List[Path] = []
     for p in paths:
         if p.is_file():
             kind = infer_kind(p)
-            if kind in include or (kind not in {"vk","proof","public","code","bin"} and "json" in include):
+            if kind in include or (
+                kind not in {"vk", "proof", "public", "code", "bin"}
+                and "json" in include
+            ):
                 out.append(p)
             continue
         if p.is_dir():
@@ -147,13 +162,16 @@ def discover(paths: List[Path], include: Iterable[str]) -> List[Path]:
             seen.add(q.resolve())
     return deduped
 
+
 def vk_metadata(vk_obj: Dict[str, Any]) -> Dict[str, Any]:
     # Common snarkjs vk fields (best-effort)
     proto = vk_obj.get("protocol") or vk_obj.get("vk", {}).get("protocol")
     curve = vk_obj.get("curve") or vk_obj.get("vk", {}).get("curve")
     return {"protocol": proto, "curve": curve}
 
+
 # --- main hashing --------------------------------------------------------------
+
 
 def compute_hash_record(path: Path, root: Path, algo: str) -> ArtifactHash:
     kind = infer_kind(path)
@@ -185,6 +203,7 @@ def compute_hash_record(path: Path, root: Path, algo: str) -> ArtifactHash:
         details=details or {},
     )
 
+
 def write_checksums_txt(out_path: Path, records: List[ArtifactHash]) -> None:
     """
     Format:
@@ -199,6 +218,7 @@ def write_checksums_txt(out_path: Path, records: List[ArtifactHash]) -> None:
     payload = "\n".join(lines) + ("\n" if lines else "")
     out_path.write_text(payload, encoding="utf-8")
 
+
 def write_hashes_json(out_path: Path, root: Path, records: List[ArtifactHash]) -> None:
     data = {
         "root": str(root),
@@ -207,7 +227,9 @@ def write_hashes_json(out_path: Path, root: Path, records: List[ArtifactHash]) -
     }
     out_path.write_text(canonical_dumps(data), encoding="utf-8")
 
+
 # --- CLI -----------------------------------------------------------------------
+
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
@@ -233,10 +255,11 @@ def parse_args() -> argparse.Namespace:
         "--out-prefix",
         default=None,
         help="Optional output prefix (e.g., /path/to/dir/out). Writes <prefix>.CHECKSUMS.txt and <prefix>.hashes.json. "
-             "If not set and a single directory is provided, outputs are written inside that directory. "
-             "If multiple roots or files are provided, defaults to current directory prefix './hash_artifacts'.",
+        "If not set and a single directory is provided, outputs are written inside that directory. "
+        "If multiple roots or files are provided, defaults to current directory prefix './hash_artifacts'.",
     )
     return p.parse_args()
+
 
 def main() -> None:
     args = parse_args()
@@ -281,7 +304,10 @@ def main() -> None:
             discovered.extend(discover([p], include))
 
     if not discovered:
-        print("No artifacts found to hash (check --include filters or paths).", file=sys.stderr)
+        print(
+            "No artifacts found to hash (check --include filters or paths).",
+            file=sys.stderr,
+        )
         sys.exit(2)
 
     # Compute records
@@ -343,6 +369,7 @@ def main() -> None:
         if r.canonical_json_hash:
             print(f"          canon: {r.canonical_json_hash}")
         print(f"          raw:   {r.raw_hash}")
+
 
 if __name__ == "__main__":
     main()

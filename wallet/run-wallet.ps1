@@ -10,6 +10,14 @@ Write-Host "Running flutter pub get..."
 flutter pub get
 if($LASTEXITCODE -ne 0) { Write-Host "flutter pub get failed"; exit $LASTEXITCODE }
 
+# If .env is missing, create it from .env.example to simplify dev flow
+if(-not (Test-Path -Path "./.env")){
+    if(Test-Path -Path "./.env.example"){
+        Write-Host "Creating .env from .env.example"
+        Copy-Item -Path ./.env.example -Destination ./.env
+    }
+}
+
 if([string]::IsNullOrEmpty($DeviceId)){
     Write-Host "Running on default device (use -DeviceId to target an emulator/device)"
     flutter run

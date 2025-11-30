@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import math
 from fractions import Fraction
-from typing import Iterable, Tuple, Optional
+from typing import Iterable, Optional, Tuple
 
 # ------------------------------------------------------------------------------
 # Constants & guards
@@ -39,6 +39,7 @@ NATS_PER_MUNAT = 1.0 / MUNATS_PER_NAT
 # ------------------------------------------------------------------------------
 # Basic guards & clamps
 # ------------------------------------------------------------------------------
+
 
 def clamp(x: float, lo: float, hi: float) -> float:
     """Clamp x into [lo, hi]. Requires lo <= hi."""
@@ -59,6 +60,7 @@ def is_finite(x: float) -> bool:
 # ------------------------------------------------------------------------------
 # Log/exp helpers (safe)
 # ------------------------------------------------------------------------------
+
 
 def ln_safe(x: float) -> float:
     """
@@ -101,6 +103,7 @@ def exp_safe(x: float) -> float:
 # PoIES draw helper
 # ------------------------------------------------------------------------------
 
+
 def H_of_u(u: float) -> float:
     """
     H(u) = −ln(u) used for PoIES u-draws.
@@ -117,6 +120,7 @@ def H_of_u(u: float) -> float:
 # ------------------------------------------------------------------------------
 # µnats fixed-point conversions
 # ------------------------------------------------------------------------------
+
 
 def to_munats(nats: float, *, rounding: str = "nearest") -> int:
     """
@@ -166,6 +170,7 @@ def sum_munats(values: Iterable[int]) -> int:
 # Ratios & scaling
 # ------------------------------------------------------------------------------
 
+
 def ratio(dividend: float, divisor: float, *, default: float = 0.0) -> float:
     """
     Return dividend / divisor with safe zero handling.
@@ -183,12 +188,16 @@ def ratio(dividend: float, divisor: float, *, default: float = 0.0) -> float:
     return dividend / divisor
 
 
-def ratio_clamped(dividend: float, divisor: float, lo: float, hi: float, *, default: float = 0.0) -> float:
+def ratio_clamped(
+    dividend: float, divisor: float, lo: float, hi: float, *, default: float = 0.0
+) -> float:
     """ratio() followed by clamp into [lo, hi]."""
     return clamp(ratio(dividend, divisor, default=default), lo, hi)
 
 
-def ratio_fp(dividend: int, divisor: int, *, scale: int = 1_000_000, default: int = 0) -> int:
+def ratio_fp(
+    dividend: int, divisor: int, *, scale: int = 1_000_000, default: int = 0
+) -> int:
     """
     Fixed-point ratio using integers:
         floor((dividend * scale) / divisor)
@@ -211,7 +220,12 @@ def mul_ratio_clamped(x: float, num: float, den: float, lo: float, hi: float) ->
     return clamp(x * r, lo, hi)
 
 
-def harmonic_mean(values: Iterable[float], weights: Optional[Iterable[float]] = None, *, eps: float = 1e-18) -> float:
+def harmonic_mean(
+    values: Iterable[float],
+    weights: Optional[Iterable[float]] = None,
+    *,
+    eps: float = 1e-18,
+) -> float:
     """
     Stable harmonic mean with optional positive weights.
     Returns 0 for empty iterables.
@@ -239,6 +253,7 @@ def harmonic_mean(values: Iterable[float], weights: Optional[Iterable[float]] = 
 # ------------------------------------------------------------------------------
 # Exact rational helpers when needed
 # ------------------------------------------------------------------------------
+
 
 def ratio_fraction(dividend: int, divisor: int) -> Fraction:
     """

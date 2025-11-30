@@ -22,26 +22,30 @@ Notes:
   • KEM keys (Kyber/ML-KEM-768) are for P2P handshake & do not produce an account address.
 """
 
-import os
-import sys
-import json
-import stat
 import argparse
+import json
+import os
+import stat
+import sys
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict
 
 # Local imports from the pq package
 try:
-    from pq.py import keygen as pq_keygen
     from pq.py import address as pq_address
+    from pq.py import keygen as pq_keygen
     from pq.py import registry as pq_registry
 except Exception as e:  # pragma: no cover
-    print("FATAL: could not import pq package. Ensure your PYTHONPATH includes repo root.", file=sys.stderr)
+    print(
+        "FATAL: could not import pq package. Ensure your PYTHONPATH includes repo root.",
+        file=sys.stderr,
+    )
     raise
 
 # --------------------------------------------------------------------------------------
 # Helpers
 # --------------------------------------------------------------------------------------
+
 
 def _secure_write(path: Path, data: bytes, secret: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -53,12 +57,15 @@ def _secure_write(path: Path, data: bytes, secret: bool = False) -> None:
         except Exception:
             pass
 
+
 def _as_hex(b: bytes) -> str:
     return b.hex()
+
 
 def _is_kem_name(name: str) -> bool:
     n = name.lower()
     return n.startswith("kyber") or "kem" in n
+
 
 def _detect_kind(alg: str, kem_flag: bool | None) -> str:
     if kem_flag is True:
@@ -67,6 +74,7 @@ def _detect_kind(alg: str, kem_flag: bool | None) -> str:
         return "sig"
     # auto-detect from name
     return "kem" if _is_kem_name(alg) else "sig"
+
 
 def _derive_address_or_none(alg: str, pk: bytes) -> str | None:
     # Only signatures map to account addresses
@@ -78,6 +86,7 @@ def _derive_address_or_none(alg: str, pk: bytes) -> str | None:
         # Fallback to None if registry/policy not available
         return None
 
+
 def _lengths_for(alg: str, kind: str) -> Dict[str, int]:
     try:
         if kind == "sig":
@@ -85,26 +94,64 @@ def _lengths_for(alg: str, kind: str) -> Dict[str, int]:
             return {"pk": meta.pk_len, "sk": meta.sk_len, "sig": meta.sig_len}
         else:
             meta = pq_registry.kem_alg_info(alg)
-            return {"pk": meta.pk_len, "sk": meta.sk_len, "ct": meta.ct_len, "ss": meta.ss_len}
+            return {
+                "pk": meta.pk_len,
+                "sk": meta.sk_len,
+                "ct": meta.ct_len,
+                "ss": meta.ss_len,
+            }
     except Exception:
         return {}
+
 
 # --------------------------------------------------------------------------------------
 # Main
 # --------------------------------------------------------------------------------------
 
+
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="omni pq keygen", description="Generate Animica post-quantum keypairs.")
-    p.add_argument("--alg", required=True,
-                   help="Algorithm: dilithium3 | sphincs-shake-128s | kyber768")
-    p.add_argument("--kem", action=argparse.BooleanOptionalAction, default=None,
-                   help="Force KEM (True) or signature (False). Default: auto-detect by name.")
-    p.add_argument("--out-dir", type=Path, default=None, help="Directory to write {name}.sk/.pk/.json")
-    p.add_argument("--name", default=None, help="Base filename (default: <alg>_<short>)")
-    p.add_argument("--stdout", action="store_true", help="Print JSON to stdout (keys hex-encoded)")
-    p.add_argument("--no-files", action="store_true", help="Do not write any files (implies --stdout)")
-    p.add_argument("--json", dest="json_only", action="store_true", help="Only write {name}.json (no raw .sk/.pk)")
-    p.add_argument("--addr-only", action="store_true", help="Only print derived address (if signature alg)")
+    p = argparse.ArgumentParser(
+        prog="omni pq keygen", description="Generate Animica post-quantum keypairs."
+    )
+    p.add_argument(
+        "--alg",
+        required=True,
+        help="Algorithm: dilithium3 | sphincs-shake-128s | kyber768",
+    )
+    p.add_argument(
+        "--kem",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Force KEM (True) or signature (False). Default: auto-detect by name.",
+    )
+    p.add_argument(
+        "--out-dir",
+        type=Path,
+        default=None,
+        help="Directory to write {name}.sk/.pk/.json",
+    )
+    p.add_argument(
+        "--name", default=None, help="Base filename (default: <alg>_<short>)"
+    )
+    p.add_argument(
+        "--stdout", action="store_true", help="Print JSON to stdout (keys hex-encoded)"
+    )
+    p.add_argument(
+        "--no-files",
+        action="store_true",
+        help="Do not write any files (implies --stdout)",
+    )
+    p.add_argument(
+        "--json",
+        dest="json_only",
+        action="store_true",
+        help="Only write {name}.json (no raw .sk/.pk)",
+    )
+    p.add_argument(
+        "--addr-only",
+        action="store_true",
+        help="Only print derived address (if signature alg)",
+    )
     args = p.parse_args(argv)
 
     alg = args.alg.strip().lower()
@@ -157,7 +204,9 @@ def main(argv: list[str] | None = None) -> int:
     # Write files?
     if not args.no_files:
         # JSON
-        _secure_write(json_path, json.dumps(result, indent=2).encode("utf-8"), secret=False)
+        _secure_write(
+            json_path, json.dumps(result, indent=2).encode("utf-8"), secret=False
+        )
         # Raw blobs unless json-only
         if not args.json_only:
             _secure_write(pk_path, bytes.fromhex(result["pk_hex"]), secret=False)

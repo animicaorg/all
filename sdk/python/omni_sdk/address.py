@@ -33,7 +33,7 @@ implementations if necessary. As a last resort we raise a clear error.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple, Dict
+from typing import Dict, Optional, Tuple
 
 DEFAULT_HRP = "anim"
 
@@ -58,24 +58,32 @@ class AddressError(ValueError):
 
 # ---- Hash helpers ------------------------------------------------------------
 
+
 def _sha3_256(data: bytes) -> bytes:
     try:
         # Prefer SDK hash wrapper if available (consistent across codebase)
-        from omni_sdk.utils.hash import sha3_256 as _sdk_sha3_256  # type: ignore
+        from omni_sdk.utils.hash import \
+            sha3_256 as _sdk_sha3_256  # type: ignore
+
         return _sdk_sha3_256(data)
     except Exception:
         import hashlib
 
         if not hasattr(hashlib, "sha3_256"):
-            raise RuntimeError("Python hashlib lacks sha3_256; please install pysha3 or use Python 3.8+.")
+            raise RuntimeError(
+                "Python hashlib lacks sha3_256; please install pysha3 or use Python 3.8+."
+            )
         return hashlib.sha3_256(data).digest()
 
 
 # ---- UVarint helpers ---------------------------------------------------------
 
+
 def _uvarint_encode(n: int) -> bytes:
     try:
-        from omni_sdk.utils.bytes import uvarint_encode as _sdk_uvarint_encode  # type: ignore
+        from omni_sdk.utils.bytes import \
+            uvarint_encode as _sdk_uvarint_encode  # type: ignore
+
         return _sdk_uvarint_encode(n)
     except Exception:
         # Minimal local encoding (LEB128-like, 7 bits per byte)
@@ -100,7 +108,9 @@ def _uvarint_decode(buf: bytes) -> Tuple[int, int]:
     Returns (value, bytes_consumed).
     """
     try:
-        from omni_sdk.utils.bytes import uvarint_decode as _sdk_uvarint_decode  # type: ignore
+        from omni_sdk.utils.bytes import \
+            uvarint_decode as _sdk_uvarint_decode  # type: ignore
+
         val, used = _sdk_uvarint_decode(buf)
         return int(val), int(used)
     except Exception:
@@ -117,6 +127,7 @@ def _uvarint_decode(buf: bytes) -> Tuple[int, int]:
 
 
 # ---- Bech32m helpers ---------------------------------------------------------
+
 
 def _convertbits(data: bytes, from_bits: int, to_bits: int, pad: bool) -> bytes:
     """
@@ -151,16 +162,27 @@ def _get_bech32_impl():
     # SDK variant
     try:
         from omni_sdk.utils import bech32 as b32  # type: ignore
+
         # Common shapes to try:
-        if hasattr(b32, "Encoding") and hasattr(b32, "bech32_encode") and hasattr(b32, "bech32_decode"):
+        if (
+            hasattr(b32, "Encoding")
+            and hasattr(b32, "bech32_encode")
+            and hasattr(b32, "bech32_decode")
+        ):
             Encoding = b32.Encoding  # enum-like (must contain BECH32M)
+
             def enc(hrp: str, data5: bytes) -> str:
                 return b32.bech32_encode(hrp, data5, Encoding.BECH32M)  # type: ignore[attr-defined]
+
             def dec(addr: str) -> Tuple[str, bytes]:
                 hrp, data5, spec = b32.bech32_decode(addr)
-                if getattr(Encoding, "BECH32M", None) is not None and spec != Encoding.BECH32M:
+                if (
+                    getattr(Encoding, "BECH32M", None) is not None
+                    and spec != Encoding.BECH32M
+                ):
                     raise AddressError("address is not Bech32m")
                 return hrp, bytes(data5 or ())
+
             return enc, dec
         # Some libs expose encode_bech32m/decode_bech32m
         if hasattr(b32, "encode_bech32m") and hasattr(b32, "decode_bech32m"):
@@ -171,15 +193,26 @@ def _get_bech32_impl():
     # PQ variant
     try:
         from pq.py.utils import bech32 as b32  # type: ignore
-        if hasattr(b32, "Encoding") and hasattr(b32, "bech32_encode") and hasattr(b32, "bech32_decode"):
+
+        if (
+            hasattr(b32, "Encoding")
+            and hasattr(b32, "bech32_encode")
+            and hasattr(b32, "bech32_decode")
+        ):
             Encoding = b32.Encoding
+
             def enc(hrp: str, data5: bytes) -> str:
                 return b32.bech32_encode(hrp, data5, Encoding.BECH32M)  # type: ignore[attr-defined]
+
             def dec(addr: str) -> Tuple[str, bytes]:
                 hrp, data5, spec = b32.bech32_decode(addr)
-                if getattr(Encoding, "BECH32M", None) is not None and spec != Encoding.BECH32M:
+                if (
+                    getattr(Encoding, "BECH32M", None) is not None
+                    and spec != Encoding.BECH32M
+                ):
                     raise AddressError("address is not Bech32m")
                 return hrp, bytes(data5 or ())
+
             return enc, dec
         if hasattr(b32, "encode_bech32m") and hasattr(b32, "decode_bech32m"):
             return b32.encode_bech32m, b32.decode_bech32m  # type: ignore[attr-defined]
@@ -195,6 +228,7 @@ _B32_ENCODE, _B32_DECODE = _get_bech32_impl()
 
 
 # ---- Core API ----------------------------------------------------------------
+
 
 def from_pubkey(public_key: bytes, *, alg_id: int, hrp: str = DEFAULT_HRP) -> str:
     """
@@ -233,7 +267,9 @@ def encode(payload: bytes, *, hrp: str = DEFAULT_HRP) -> str:
     Encode a binary payload to a Bech32m address with the given HRP.
     """
     if not isinstance(payload, (bytes, bytearray)) or len(payload) < 33:
-        raise AddressError("payload must be bytes of length >= 33 (uvarint(alg_id) + 32-byte hash)")
+        raise AddressError(
+            "payload must be bytes of length >= 33 (uvarint(alg_id) + 32-byte hash)"
+        )
     data5 = _convertbits(bytes(payload), 8, 5, True)
     return _B32_ENCODE(hrp, data5)
 

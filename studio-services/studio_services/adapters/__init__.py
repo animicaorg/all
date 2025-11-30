@@ -18,8 +18,8 @@ via PEP 562 (__getattr__).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 import importlib
+from typing import TYPE_CHECKING
 
 # Public attributes resolved lazily
 __all__ = [
@@ -45,9 +45,5 @@ def __dir__():
 
 # Help static analyzers and IDEs discover symbols without importing at runtime
 if TYPE_CHECKING:
-    from . import node_rpc
-    from . import light_verify
-    from . import vm_compile
-    from . import vm_hash
-    from . import da_client
-    from . import pq_addr
+    from . import (da_client, light_verify, node_rpc, pq_addr, vm_compile,
+                   vm_hash)

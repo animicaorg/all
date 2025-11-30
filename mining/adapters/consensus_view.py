@@ -54,15 +54,17 @@ Typical usage
 
 from dataclasses import dataclass
 from math import log
-from typing import Any, Dict, List, Optional, Tuple, Callable, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 # ---------------------------------------------------------------------------
 # Logging (best-effort)
 try:
     from core.logging import get_logger
+
     log = get_logger("mining.adapters.consensus_view")
 except Exception:  # noqa: BLE001
     import logging
+
     log = logging.getLogger("mining.adapters.consensus_view")
     if not log.handlers:
         logging.basicConfig(level=logging.INFO)
@@ -71,17 +73,20 @@ except Exception:  # noqa: BLE001
 # Optional imports from consensus/
 PolicyType = Any
 try:
-    from consensus.policy import load_policy as _load_policy  # type: ignore[attr-defined]
+    from consensus.policy import \
+        load_policy as _load_policy  # type: ignore[attr-defined]
 except Exception:  # noqa: BLE001
     _load_policy = None  # type: ignore[assignment]
 
 try:
-    from consensus.caps import apply_caps as _apply_caps  # type: ignore[attr-defined]
+    from consensus.caps import \
+        apply_caps as _apply_caps  # type: ignore[attr-defined]
 except Exception:  # noqa: BLE001
     _apply_caps = None  # type: ignore[assignment]
 
 try:
-    from consensus.math import to_micro_nats as _to_micro_nats  # type: ignore[attr-defined]
+    from consensus.math import \
+        to_micro_nats as _to_micro_nats  # type: ignore[attr-defined]
 except Exception:  # noqa: BLE001
     _to_micro_nats = None  # type: ignore[assignment]
 
@@ -90,12 +95,16 @@ _ScorerCtor: Optional[Callable[..., Any]] = None
 _score_fn: Optional[Callable[..., Any]] = None
 try:
     # Preferred: a class with `.score_batch(psi_inputs)` and `.sum_psi(...)`
-    from consensus.scorer import Scorer as _Scorer  # type: ignore[attr-defined]
+    from consensus.scorer import \
+        Scorer as _Scorer  # type: ignore[attr-defined]
+
     _ScorerCtor = _Scorer  # type: ignore[assignment]
 except Exception:  # noqa: BLE001
     try:
         # Fallback: a function `score_batch(policy, psi_inputs)` → per-item ψ
-        from consensus.scorer import score_batch as _score_batch  # type: ignore[attr-defined]
+        from consensus.scorer import \
+            score_batch as _score_batch  # type: ignore[attr-defined]
+
         _score_fn = _score_batch
     except Exception:  # noqa: BLE001
         pass
@@ -103,12 +112,16 @@ except Exception:  # noqa: BLE001
 # Optional mapping from proofs.metrics → ψ-inputs for the scorer
 _map_metrics: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None
 try:
-    from proofs.policy_adapter import metrics_to_psi as _metrics_to_psi  # type: ignore[attr-defined]
+    from proofs.policy_adapter import \
+        metrics_to_psi as _metrics_to_psi  # type: ignore[attr-defined]
+
     _map_metrics = _metrics_to_psi  # type: ignore[assignment]
 except Exception:  # noqa: BLE001
     try:
         # Some trees export a slightly different name:
-        from proofs.policy_adapter import map_metrics_to_psi as _map2  # type: ignore[attr-defined]
+        from proofs.policy_adapter import \
+            map_metrics_to_psi as _map2  # type: ignore[attr-defined]
+
         _map_metrics = _map2  # type: ignore[assignment]
     except Exception:  # noqa: BLE001
         _map_metrics = None  # Final fallback below
@@ -133,19 +146,31 @@ class ConsensusViewAdapter:
         self.theta_micro = int(theta_micro)
 
         # Try to read some optional fields from the policy (duck-typing)
-        self._policy_id = getattr(policy, "policy_id", None) or getattr(policy, "id", None)
-        self._total_gamma_cap = getattr(policy, "total_gamma_cap", None) or getattr(policy, "gamma_total", None)
-        self._caps = getattr(policy, "caps", None) or getattr(policy, "per_type_caps", None)
-        self._escort_q = getattr(policy, "escort_q", None) or getattr(policy, "escort_quota", None)
+        self._policy_id = getattr(policy, "policy_id", None) or getattr(
+            policy, "id", None
+        )
+        self._total_gamma_cap = getattr(policy, "total_gamma_cap", None) or getattr(
+            policy, "gamma_total", None
+        )
+        self._caps = getattr(policy, "caps", None) or getattr(
+            policy, "per_type_caps", None
+        )
+        self._escort_q = getattr(policy, "escort_q", None) or getattr(
+            policy, "escort_quota", None
+        )
 
         # Prepare a scorer instance if the implementation is class-based
         self._scorer = _ScorerCtor(policy) if _ScorerCtor is not None else None
 
     # ------------------------------------------------------------------ ctors
     @classmethod
-    def from_policy_file(cls, policy_path: str, theta_micro: int) -> "ConsensusViewAdapter":
+    def from_policy_file(
+        cls, policy_path: str, theta_micro: int
+    ) -> "ConsensusViewAdapter":
         if _load_policy is None:
-            raise ImportError("consensus.policy.load_policy is not available in this environment")
+            raise ImportError(
+                "consensus.policy.load_policy is not available in this environment"
+            )
         policy = _load_policy(policy_path)  # type: ignore[no-any-return]
         return cls(policy=policy, theta_micro=theta_micro)
 
@@ -170,11 +195,15 @@ class ConsensusViewAdapter:
             if hasattr(header, name):
                 val = getattr(header, name)
                 self.theta_micro = int(val)
-                log.debug("Theta updated from header", extra={"theta_micro": self.theta_micro})
+                log.debug(
+                    "Theta updated from header", extra={"theta_micro": self.theta_micro}
+                )
                 return
 
     # ----------------------------------------------------------- ψ computation
-    def _map_metrics_to_psi_inputs(self, metrics_item: Dict[str, Any]) -> Dict[str, Any]:
+    def _map_metrics_to_psi_inputs(
+        self, metrics_item: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """
         Convert a metrics dict into the scorer's ψ-input record using proofs.policy_adapter
         if present; otherwise accept a precomputed {'psi': …, 'kind': …} or apply a very
@@ -186,7 +215,10 @@ class ConsensusViewAdapter:
         # Fallbacks:
         if "psi" in metrics_item:
             # Already pre-computed by caller
-            return {"kind": metrics_item.get("kind", "unknown"), "psi": float(metrics_item["psi"])}
+            return {
+                "kind": metrics_item.get("kind", "unknown"),
+                "psi": float(metrics_item["psi"]),
+            }
 
         # Extremely conservative heuristic:
         kind = str(metrics_item.get("kind", "unknown")).lower()
@@ -231,7 +263,9 @@ class ConsensusViewAdapter:
         }
         """
         # Map metrics → ψ-inputs expected by the scorer
-        psi_inputs: List[Dict[str, Any]] = [self._map_metrics_to_psi_inputs(m) for m in metrics_list]
+        psi_inputs: List[Dict[str, Any]] = [
+            self._map_metrics_to_psi_inputs(m) for m in metrics_list
+        ]
 
         # If we have a real scorer, prefer it
         items_out: List[Dict[str, Any]] = []
@@ -247,7 +281,9 @@ class ConsensusViewAdapter:
                     items_out.append({"kind": k, "psi": p})
                     sum_psi += p
             except Exception as e:  # noqa: BLE001
-                log.warning("scorer.score_batch failed; falling back", extra={"err": str(e)})
+                log.warning(
+                    "scorer.score_batch failed; falling back", extra={"err": str(e)}
+                )
                 self._scorer = None  # downgrade
                 items_out, sum_psi = _fallback_sum(psi_inputs)
 
@@ -260,7 +296,10 @@ class ConsensusViewAdapter:
                     items_out.append({"kind": k, "psi": p})
                     sum_psi += p
             except Exception as e:  # noqa: BLE001
-                log.warning("consensus.scorer.score_batch failed; falling back", extra={"err": str(e)})
+                log.warning(
+                    "consensus.scorer.score_batch failed; falling back",
+                    extra={"err": str(e)},
+                )
                 items_out, sum_psi = _fallback_sum(psi_inputs)
         else:
             items_out, sum_psi = _fallback_sum(psi_inputs)
@@ -277,13 +316,18 @@ class ConsensusViewAdapter:
                 for it in capped_items:
                     base = float(it.get("psi", 0.0))
                     capped = float(it.get("psi_capped", base))
-                    new_items.append({"kind": it.get("kind"), "psi": base, "psi_capped": capped})
+                    new_items.append(
+                        {"kind": it.get("kind"), "psi": base, "psi_capped": capped}
+                    )
                     sum_c += capped
                 items_out = new_items
                 sum_psi_capped = sum_c
                 caps_applied = True
             except Exception as e:  # noqa: BLE001
-                log.warning("caps application failed; using uncapped values", extra={"err": str(e)})
+                log.warning(
+                    "caps application failed; using uncapped values",
+                    extra={"err": str(e)},
+                )
 
         return {
             "items": items_out,
@@ -311,7 +355,9 @@ class ConsensusViewAdapter:
 
         # Score batch
         br = self.score_preview(metrics_list)
-        sum_psi = float(br["sum_psi_capped"] if br.get("caps_applied") else br["sum_psi"])
+        sum_psi = float(
+            br["sum_psi_capped"] if br.get("caps_applied") else br["sum_psi"]
+        )
 
         # Convert ψ (nats) → µ-nats if scorer returns in nats; we assume ψ already in nats.
         # If consensus.math.to_micro_nats is available, use it; otherwise multiply by 1e6.
@@ -339,7 +385,10 @@ class ConsensusViewAdapter:
 # ---------------------------------------------------------------------------
 # Helpers
 
-def _fallback_sum(psi_inputs: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], float]:
+
+def _fallback_sum(
+    psi_inputs: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], float]:
     items_out: List[Dict[str, Any]] = []
     total = 0.0
     for it in psi_inputs:

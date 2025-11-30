@@ -18,14 +18,14 @@ methods. All amounts are integers in the smallest unit (e.g. wei-like).
 
 from __future__ import annotations
 
-from typing import Protocol, Optional, Dict, Any
+from typing import Any, Dict, Optional, Protocol
 
 from ..errors import ExecError
-
 
 # =============================================================================
 # Balance access protocol
 # =============================================================================
+
 
 class BalanceAccess(Protocol):
     def get_balance(self, address: bytes) -> int: ...
@@ -35,6 +35,7 @@ class BalanceAccess(Protocol):
 # =============================================================================
 # Errors
 # =============================================================================
+
 
 class InsufficientBalance(ExecError):
     """Raised when a debit would make an account balance negative."""
@@ -47,6 +48,7 @@ class NegativeAmount(ExecError):
 # =============================================================================
 # Internal helpers
 # =============================================================================
+
 
 def _ensure_non_negative(amount: int) -> None:
     if amount < 0:
@@ -72,6 +74,7 @@ def _safe_sub(a: int, b: int) -> int:
 # =============================================================================
 # Public balance operations
 # =============================================================================
+
 
 def credit(state: BalanceAccess, address: bytes, amount: int) -> int:
     """
@@ -100,7 +103,9 @@ def debit(state: BalanceAccess, address: bytes, amount: int) -> int:
     return new
 
 
-def safe_transfer(state: BalanceAccess, sender: bytes, recipient: bytes, amount: int) -> Dict[str, int]:
+def safe_transfer(
+    state: BalanceAccess, sender: bytes, recipient: bytes, amount: int
+) -> Dict[str, int]:
     """
     Transfer `amount` from `sender` to `recipient` with checks.
 
@@ -118,6 +123,7 @@ def safe_transfer(state: BalanceAccess, sender: bytes, recipient: bytes, amount:
 # =============================================================================
 # Gas fees
 # =============================================================================
+
 
 def apply_gas_fees(
     state: BalanceAccess,

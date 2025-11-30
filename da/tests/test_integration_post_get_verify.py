@@ -31,6 +31,7 @@ DATA = bytes(random.getrandbits(8) for _ in range(48 * 1024))  # 48 KiB sample b
 
 # ------------------------------- Utilities --------------------------------- #
 
+
 def _hex(b: bytes) -> str:
     return "0x" + b.hex()
 
@@ -88,7 +89,11 @@ def _try_make_app(tmpdir) -> Optional[Any]:
                     except Exception:
                         svc = None
                 if svc:
-                    for helper in ("app_from_service", "mount_app", "create_app_for_service"):
+                    for helper in (
+                        "app_from_service",
+                        "mount_app",
+                        "create_app_for_service",
+                    ):
                         if hasattr(api, helper):
                             try:
                                 return getattr(api, helper)(svc)
@@ -119,8 +124,20 @@ def _post_blob(client: TestClient, ns: int, data: bytes) -> Tuple[str, Dict[str,
         ("application/json", {"namespace": ns, "data_hex": _hex(data)}),
         ("application/json", {"ns": ns, "data": _hex(data)}),
         ("application/json", {"ns": ns, "data_b64": base64.b64encode(data).decode()}),
-        ("multipart/form-data", {"file": ("blob.bin", io.BytesIO(data), "application/octet-stream"), "ns": str(ns)}),
-        ("multipart/form-data", {"file": ("blob.bin", io.BytesIO(data), "application/octet-stream"), "namespace": str(ns)}),
+        (
+            "multipart/form-data",
+            {
+                "file": ("blob.bin", io.BytesIO(data), "application/octet-stream"),
+                "ns": str(ns),
+            },
+        ),
+        (
+            "multipart/form-data",
+            {
+                "file": ("blob.bin", io.BytesIO(data), "application/octet-stream"),
+                "namespace": str(ns),
+            },
+        ),
     ]
 
     for ep in endpoints:
@@ -142,30 +159,46 @@ def _post_blob(client: TestClient, ns: int, data: bytes) -> Tuple[str, Dict[str,
                     # Find a hex commitment
                     cand = None
                     for key in ("commitment", "root", "nmt_root", "da_root", "id"):
-                        if key in js and isinstance(js[key], str) and js[key].startswith("0x"):
+                        if (
+                            key in js
+                            and isinstance(js[key], str)
+                            and js[key].startswith("0x")
+                        ):
                             cand = js[key]
                             break
                     if not cand:
                         for v in js.values():
-                            if isinstance(v, str) and v.startswith("0x") and len(v) >= 66:
+                            if (
+                                isinstance(v, str)
+                                and v.startswith("0x")
+                                and len(v) >= 66
+                            ):
                                 cand = v
                                 break
                     if not cand:
                         for v in js.values():
                             if isinstance(v, dict):
                                 for vv in v.values():
-                                    if isinstance(vv, str) and vv.startswith("0x") and len(vv) >= 66:
+                                    if (
+                                        isinstance(vv, str)
+                                        and vv.startswith("0x")
+                                        and len(vv) >= 66
+                                    ):
                                         cand = vv
                                         break
                             if cand:
                                 break
                     if not cand:
-                        raise AssertionError(f"POST {ep} ok but no commitment found: {js}")
+                        raise AssertionError(
+                            f"POST {ep} ok but no commitment found: {js}"
+                        )
                     return cand, js
             except Exception:
                 pass
 
-    raise pytest.skip.Exception("Could not POST blob with any supported payload/endpoint variant")
+    raise pytest.skip.Exception(
+        "Could not POST blob with any supported payload/endpoint variant"
+    )
 
 
 def _get_blob_bytes(client: TestClient, commitment_hex: str) -> bytes:
@@ -198,7 +231,9 @@ def _get_blob_bytes(client: TestClient, commitment_hex: str) -> bytes:
     raise pytest.skip.Exception("Could not GET blob bytes from any supported endpoint")
 
 
-def _get_proof(client: TestClient, commitment_hex: str, samples: int = 24) -> Dict[str, Any]:
+def _get_proof(
+    client: TestClient, commitment_hex: str, samples: int = 24
+) -> Dict[str, Any]:
     endpoints = [
         (f"/da/blob/{commitment_hex}/proof", {}),
         (f"/da/proof/{commitment_hex}", {}),
@@ -242,7 +277,11 @@ def _commit_locally(ns: int, data: bytes) -> Optional[str]:
                         elif isinstance(root, str):
                             cand = "0x" + root
                     elif isinstance(res, dict):
-                        root = res.get("root") or res.get("commitment") or res.get("nmt_root")
+                        root = (
+                            res.get("root")
+                            or res.get("commitment")
+                            or res.get("nmt_root")
+                        )
                         if isinstance(root, bytes):
                             cand = _hex(root)
                         elif isinstance(root, str):
@@ -279,7 +318,11 @@ def _try_verify_light(root_hex: str, proof: Dict[str, Any]) -> Optional[bool]:
     Attempt to verify availability proof using known helpers.
     Returns True/False if a verifier ran, or None if no suitable verifier is available.
     """
-    root_b = bytes.fromhex(root_hex[2:]) if root_hex.startswith("0x") else bytes.fromhex(root_hex)
+    root_b = (
+        bytes.fromhex(root_hex[2:])
+        if root_hex.startswith("0x")
+        else bytes.fromhex(root_hex)
+    )
 
     # 1) da.sampling.verifier
     try:
@@ -327,6 +370,7 @@ def _try_verify_light(root_hex: str, proof: Dict[str, Any]) -> Optional[bool]:
 
 # ---------------------------------- Test ------------------------------------ #
 
+
 @pytest.mark.skipif(TestClient is None, reason="fastapi.testclient not available")
 def test_end_to_end_post_get_verify(tmp_path):
     app = _try_make_app(tmp_path)
@@ -337,7 +381,9 @@ def test_end_to_end_post_get_verify(tmp_path):
 
     # 1) POST the blob
     commitment_hex, post_js = _post_blob(client, NS, DATA)
-    assert isinstance(commitment_hex, str) and commitment_hex.startswith("0x"), "Commitment must be 0x-hex"
+    assert isinstance(commitment_hex, str) and commitment_hex.startswith(
+        "0x"
+    ), "Commitment must be 0x-hex"
 
     # 2) GET the blob back and compare bytes
     got = _get_blob_bytes(client, commitment_hex)
@@ -346,11 +392,17 @@ def test_end_to_end_post_get_verify(tmp_path):
     # 3) Compute commitment locally and cross-check the root
     local_root = _commit_locally(NS, DATA)
     if local_root is not None:
-        assert local_root.lower() == commitment_hex.lower(), f"Local NMT root {local_root} != API commitment {commitment_hex}"
+        assert (
+            local_root.lower() == commitment_hex.lower()
+        ), f"Local NMT root {local_root} != API commitment {commitment_hex}"
 
     # 4) Request an availability proof and (optionally) verify it
     proof = _get_proof(client, commitment_hex, samples=24)
-    assert isinstance(proof, dict) and len(proof) > 0 or ("_binary" in proof and proof["_binary"] is True)
+    assert (
+        isinstance(proof, dict)
+        and len(proof) > 0
+        or ("_binary" in proof and proof["_binary"] is True)
+    )
 
     # Optional verification if helpers are present
     vr = None
@@ -365,4 +417,7 @@ def test_end_to_end_post_get_verify(tmp_path):
         if isinstance(proof, dict):
             # Common shape hints
             if "samples" in proof:
-                assert isinstance(proof["samples"], (list, tuple)) and len(proof["samples"]) > 0
+                assert (
+                    isinstance(proof["samples"], (list, tuple))
+                    and len(proof["samples"]) > 0
+                )

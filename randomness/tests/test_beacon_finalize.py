@@ -1,7 +1,7 @@
 import json
 import os
 from binascii import unhexlify
-from typing import Any, Optional, Tuple, Callable
+from typing import Any, Callable, Optional, Tuple
 
 import pytest
 
@@ -24,6 +24,7 @@ VDF_VERIFY_NAMES = [
     # external module attribute paths consulted via finalize_mod
 ]
 
+
 def _hex_bytes(x: Any) -> bytes:
     if isinstance(x, (bytes, bytearray)):
         return bytes(x)
@@ -38,6 +39,7 @@ def _hex_bytes(x: Any) -> bytes:
         return bytes(x)
     raise TypeError("unsupported bytes-like value for hex decode")
 
+
 def _as_int(x: Any) -> int:
     if isinstance(x, int):
         return x
@@ -47,6 +49,7 @@ def _as_int(x: Any) -> int:
             return int(s, 16)
         return int(s)
     raise TypeError("unsupported int-like value for int conversion")
+
 
 def _load_beacon_vectors() -> list[dict]:
     here = os.path.dirname(__file__)
@@ -59,6 +62,7 @@ def _load_beacon_vectors() -> list[dict]:
         return [data]
     assert isinstance(data, list)
     return data
+
 
 def _extract_case(vec: dict) -> dict:
     """
@@ -79,8 +83,20 @@ def _extract_case(vec: dict) -> dict:
 
     # vdf bundle
     v = vec.get("vdf") or {}
-    N = v.get("modulus") or v.get("N") or v.get("mod") or vec.get("modulus") or vec.get("N")
-    t = v.get("iterations") or v.get("t") or v.get("T") or vec.get("iterations") or vec.get("t")
+    N = (
+        v.get("modulus")
+        or v.get("N")
+        or v.get("mod")
+        or vec.get("modulus")
+        or vec.get("N")
+    )
+    t = (
+        v.get("iterations")
+        or v.get("t")
+        or v.get("T")
+        or vec.get("iterations")
+        or vec.get("t")
+    )
     vin = v.get("input") or v.get("seed") or vec.get("vdf_input") or vec.get("seed")
     y = v.get("output") or v.get("y") or vec.get("vdf_output") or vec.get("output")
     pi = v.get("proof") or v.get("pi") or vec.get("vdf_proof") or vec.get("proof")
@@ -94,9 +110,12 @@ def _extract_case(vec: dict) -> dict:
             "iterations": _as_int(t),
             "input": _hex_bytes(vin),
             "output": _hex_bytes(y),
-            "proof": _hex_bytes(pi if not isinstance(pi, dict) else (pi.get("pi") or pi.get("proof"))),
+            "proof": _hex_bytes(
+                pi if not isinstance(pi, dict) else (pi.get("pi") or pi.get("proof"))
+            ),
         },
     }
+
 
 def _make_store(tmp_path) -> Optional[Any]:
     """
@@ -106,6 +125,7 @@ def _make_store(tmp_path) -> Optional[Any]:
     # Try SQLite-backed store
     try:
         from randomness.store.sqlite import SqliteStore  # type: ignore
+
         db_path = os.path.join(tmp_path, "rand.db")
         return SqliteStore(db_path)  # type: ignore[no-any-return]
     except Exception:
@@ -113,10 +133,12 @@ def _make_store(tmp_path) -> Optional[Any]:
     # Try KV generic
     try:
         from randomness.store.kv import KV  # type: ignore
+
         return KV()  # type: ignore[no-any-return]
     except Exception:
         pass
     return None
+
 
 def _patch_vdf_verifier(monkeypatch: pytest.MonkeyPatch, expected: dict) -> None:
     """
@@ -174,6 +196,7 @@ def _patch_vdf_verifier(monkeypatch: pytest.MonkeyPatch, expected: dict) -> None
     # Also try patching the canonical verifier module if finalize imports from there
     try:
         import randomness.vdf.verifier as vmod  # type: ignore
+
         if hasattr(vmod, "verify"):
             monkeypatch.setattr(vmod, "verify", _accept)
             patched_any = True
@@ -188,7 +211,10 @@ def _patch_vdf_verifier(monkeypatch: pytest.MonkeyPatch, expected: dict) -> None
         # If we couldn't patch, it's still OK—the implementation may not need it for vectorized tests.
         pass
 
-def _call_finalize(store: Optional[Any], round_id: int, aggregate: bytes, vdf: dict, prev_output: bytes) -> Optional[Any]:
+
+def _call_finalize(
+    store: Optional[Any], round_id: int, aggregate: bytes, vdf: dict, prev_output: bytes
+) -> Optional[Any]:
     """
     Try multiple finalize entry signatures. Returns BeaconOut (or equivalent) if available,
     else None (caller can try to read from store/history).
@@ -199,10 +225,37 @@ def _call_finalize(store: Optional[Any], round_id: int, aggregate: bytes, vdf: d
         # (round_id, aggregate, vdf_proof, prev_output, store=...)
         ((round_id, aggregate, vdf["proof"], prev_output), {"store": store}),
         # kwargs-only styles
-        (tuple(), {"store": store, "round_id": round_id, "aggregate": aggregate, "vdf_proof": vdf["proof"], "prev_output": prev_output}),
-        (tuple(), {"store": store, "round_id": round_id, "aggregate": aggregate, "proof": vdf["proof"], "previous": prev_output}),
+        (
+            tuple(),
+            {
+                "store": store,
+                "round_id": round_id,
+                "aggregate": aggregate,
+                "vdf_proof": vdf["proof"],
+                "prev_output": prev_output,
+            },
+        ),
+        (
+            tuple(),
+            {
+                "store": store,
+                "round_id": round_id,
+                "aggregate": aggregate,
+                "proof": vdf["proof"],
+                "previous": prev_output,
+            },
+        ),
         # Some APIs may accept the full bundle:
-        (tuple(), {"store": store, "round_id": round_id, "aggregate": aggregate, "vdf": vdf, "prev_output": prev_output}),
+        (
+            tuple(),
+            {
+                "store": store,
+                "round_id": round_id,
+                "aggregate": aggregate,
+                "vdf": vdf,
+                "prev_output": prev_output,
+            },
+        ),
         # Simplest: (round_id,) only — implementation looks up everything from store (may no-op here)
         ((round_id,), {"store": store}),
     ]
@@ -236,8 +289,11 @@ def _call_finalize(store: Optional[Any], round_id: int, aggregate: bytes, vdf: d
             # If the implementation explicitly reports invalid inputs, surface that
             raise
     # If we exhausted signatures, skip to avoid hard failure due to surface drift.
-    pytest.skip(f"Could not call finalize function with any supported signature (last TypeError: {last_exc})")
+    pytest.skip(
+        f"Could not call finalize function with any supported signature (last TypeError: {last_exc})"
+    )
     return None
+
 
 def _read_latest_from_store(store: Optional[Any]) -> Optional[Any]:
     """
@@ -248,6 +304,7 @@ def _read_latest_from_store(store: Optional[Any]) -> Optional[Any]:
     # Try history helper
     try:
         import randomness.beacon.history as hist  # type: ignore
+
         for nm in ("latest", "get_latest", "read_latest", "head"):
             if hasattr(hist, nm):
                 out = getattr(hist, nm)(store)  # type: ignore
@@ -258,6 +315,7 @@ def _read_latest_from_store(store: Optional[Any]) -> Optional[Any]:
     # Try state helper
     try:
         import randomness.beacon.state as st  # type: ignore
+
         for nm in ("get_latest", "read_latest", "latest"):
             if hasattr(st, nm):
                 out = getattr(st, nm)(store)  # type: ignore
@@ -273,6 +331,7 @@ def _read_latest_from_store(store: Optional[Any]) -> Optional[Any]:
             except Exception:
                 continue
     return None
+
 
 def _extract_output(obj: Any) -> Optional[bytes]:
     """
@@ -306,6 +365,7 @@ def _extract_output(obj: Any) -> Optional[bytes]:
             return bytes(v)
     return None
 
+
 def _extract_round_id(obj: Any) -> Optional[int]:
     if isinstance(obj, dict):
         for k in ("round_id", "round", "id", "height"):
@@ -318,8 +378,11 @@ def _extract_round_id(obj: Any) -> Optional[int]:
                 return v
     return None
 
+
 @pytest.mark.parametrize("use_store", [True, False])
-def test_beacon_finalize_stores_and_returns(monkeypatch: pytest.MonkeyPatch, tmp_path, use_store: bool):
+def test_beacon_finalize_stores_and_returns(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, use_store: bool
+):
     """
     Full round finalize: given an aggregate and a matching VDF proof from vectors,
     finalize produces BeaconOut and persists it (when a store is provided).
@@ -354,6 +417,9 @@ def test_beacon_finalize_stores_and_returns(monkeypatch: pytest.MonkeyPatch, tmp
     out_bytes = _extract_output(beacon_obj)
     rid_val = _extract_round_id(beacon_obj)
 
-    assert rid_val == case["round_id"], f"Beacon round id mismatch (got {rid_val}, expected {case['round_id']})"
-    assert out_bytes == case["vdf"]["output"], "Beacon output does not match vector's expected output"
-
+    assert (
+        rid_val == case["round_id"]
+    ), f"Beacon round id mismatch (got {rid_val}, expected {case['round_id']})"
+    assert (
+        out_bytes == case["vdf"]["output"]
+    ), "Beacon output does not match vector's expected output"

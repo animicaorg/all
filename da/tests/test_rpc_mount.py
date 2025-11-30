@@ -145,7 +145,13 @@ def _post_blob(client: TestClient, ns: int, data: bytes) -> Tuple[str, Dict[str,
         ("application/json", {"namespace": ns, "data": "0x" + data.hex()}),
         ("application/json", {"ns": ns, "data_hex": "0x" + data.hex()}),
         ("application/json", {"ns": ns, "data_b64": base64.b64encode(data).decode()}),
-        ("multipart/form-data", {"file": ("blob.bin", io.BytesIO(data), "application/octet-stream"), "ns": str(ns)}),
+        (
+            "multipart/form-data",
+            {
+                "file": ("blob.bin", io.BytesIO(data), "application/octet-stream"),
+                "ns": str(ns),
+            },
+        ),
     ]
     last_err: Optional[str] = None
     for ep in endpoints:
@@ -211,7 +217,9 @@ def _get_blob(client: TestClient, commitment_hex: str) -> bytes:
     pytest.skip("Could not GET blob via RPC-mounted endpoints")
 
 
-def _get_proof(client: TestClient, commitment_hex: str, samples: int = 16) -> Dict[str, Any]:
+def _get_proof(
+    client: TestClient, commitment_hex: str, samples: int = 16
+) -> Dict[str, Any]:
     for ep, params in (
         (f"/da/blob/{commitment_hex}/proof", {}),
         (f"/da/proof/{commitment_hex}", {}),
@@ -229,7 +237,9 @@ def _get_proof(client: TestClient, commitment_hex: str, samples: int = 16) -> Di
     pytest.skip("Could not GET availability proof via RPC-mounted endpoints")
 
 
-@pytest.mark.skipif(FastAPI is None or TestClient is None, reason="fastapi not available")
+@pytest.mark.skipif(
+    FastAPI is None or TestClient is None, reason="fastapi not available"
+)
 def test_rpc_mount_da_endpoints(tmp_path):
     # Build host app and optional service
     app = _make_app()
@@ -253,4 +263,3 @@ def test_rpc_mount_da_endpoints(tmp_path):
 
     proof = _get_proof(client, commitment_hex, samples=12)
     assert isinstance(proof, dict) and len(proof) > 0
-

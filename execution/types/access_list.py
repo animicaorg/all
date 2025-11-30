@@ -26,13 +26,14 @@ This module is dependency-light and safe to import from execution runtime code.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple, Union
-
+from typing import (Any, Dict, Iterable, Iterator, List, Mapping, Optional,
+                    Sequence, Tuple, Union)
 
 HexLike = Union[str, bytes, bytearray, memoryview]
 
 
 # ------------------------------ hex helpers ---------------------------------
+
 
 def _hex_to_bytes(v: HexLike) -> bytes:
     if isinstance(v, (bytes, bytearray, memoryview)):
@@ -58,6 +59,7 @@ def _bytes_to_hex(b: Optional[bytes]) -> Optional[str]:
 
 # ------------------------------ main types ----------------------------------
 
+
 @dataclass(frozen=True)
 class AccessListEntry:
     """
@@ -67,6 +69,7 @@ class AccessListEntry:
         address: bytes                — account/contract address
         storage_keys: tuple[bytes, …] — zero or more 32-byte storage slots
     """
+
     address: bytes
     storage_keys: Tuple[bytes, ...] = ()
 
@@ -130,7 +133,9 @@ class AccessList(Tuple[AccessListEntry, ...]):
         for addr in sorted(grouped.keys()):
             # unique keys preserving order using set+list comprehension would reorder; use seen set.
             seen: set[bytes] = set()
-            unique_sorted = sorted(k for k in grouped[addr] if (k not in seen and not seen.add(k)))
+            unique_sorted = sorted(
+                k for k in grouped[addr] if (k not in seen and not seen.add(k))
+            )
             entries.append(AccessListEntry(addr, unique_sorted))
         return AccessList(entries)
 
@@ -138,7 +143,9 @@ class AccessList(Tuple[AccessListEntry, ...]):
         return [e.to_dict() for e in self]
 
     @classmethod
-    def from_dict(cls, arr: Sequence[Mapping[str, Any] | AccessListEntry]) -> "AccessList":
+    def from_dict(
+        cls, arr: Sequence[Mapping[str, Any] | AccessListEntry]
+    ) -> "AccessList":
         entries: List[AccessListEntry] = []
         for i, item in enumerate(arr):
             if isinstance(item, AccessListEntry):
@@ -146,7 +153,9 @@ class AccessList(Tuple[AccessListEntry, ...]):
             elif isinstance(item, Mapping):
                 entries.append(AccessListEntry.from_dict(item))
             else:
-                raise TypeError(f"AccessList item {i} must be AccessListEntry or mapping")
+                raise TypeError(
+                    f"AccessList item {i} must be AccessListEntry or mapping"
+                )
         return AccessList(entries)
 
     # nice repr

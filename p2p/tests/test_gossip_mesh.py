@@ -1,7 +1,8 @@
 import os
+import random
 import sys
 import types
-import random
+
 import pytest
 
 # Allow importing local package
@@ -10,12 +11,13 @@ sys.path.insert(0, os.path.expanduser("~/animica"))
 # ----- Imports (skip whole file if modules are missing) -----
 try:
     mesh_mod = __import__("p2p.gossip.mesh", fromlist=["*"])
-    eng_mod  = __import__("p2p.gossip.engine", fromlist=["*"])
+    eng_mod = __import__("p2p.gossip.engine", fromlist=["*"])
 except Exception as e:
     pytest.skip(f"Gossip modules not available: {e}", allow_module_level=True)
 
 
 # ====== Adaptive helpers (work across small API variations) ======
+
 
 def _find_engine_class():
     for name in ("Engine", "GossipEngine", "PubSubEngine", "MeshEngine"):
@@ -37,6 +39,7 @@ def _find_mesh_class():
 
 class _Capture:
     """Records (peer_id, topic, payload) for 'sends' leaving the engine."""
+
     def __init__(self):
         self.sends = []
 
@@ -52,6 +55,7 @@ class _Capture:
 
 class _DummyTransport:
     """A minimal transport that offers a 'send' compatible surface."""
+
     def __init__(self, capture: _Capture):
         self.capture = capture
 
@@ -75,7 +79,9 @@ def _wire_sender(engine, capture: _Capture):
     for name in ("set_sender", "set_send_callback", "set_transport", "set_outbound"):
         if hasattr(engine, name) and callable(getattr(engine, name)):
             try:
-                getattr(engine, name)(dummy.send if "sender" in name or "callback" in name else dummy)
+                getattr(engine, name)(
+                    dummy.send if "sender" in name or "callback" in name else dummy
+                )
                 return
             except Exception:
                 pass
@@ -84,7 +90,15 @@ def _wire_sender(engine, capture: _Capture):
     for attr in ("sender", "send_func", "send_cb", "on_send", "outbound", "transport"):
         if hasattr(engine, attr):
             try:
-                setattr(engine, attr, dummy.send if attr in ("sender","send_func","send_cb","on_send") else dummy)
+                setattr(
+                    engine,
+                    attr,
+                    (
+                        dummy.send
+                        if attr in ("sender", "send_func", "send_cb", "on_send")
+                        else dummy
+                    ),
+                )
                 return
             except Exception:
                 pass
@@ -93,6 +107,7 @@ def _wire_sender(engine, capture: _Capture):
     for meth in ("send", "send_to_peer"):
         if hasattr(engine, meth) and callable(getattr(engine, meth)):
             orig = getattr(engine, meth)
+
             def wrapper(*a, **kw):
                 # Try to parse (peer_id, topic, payload)
                 if len(a) >= 3:
@@ -100,6 +115,7 @@ def _wire_sender(engine, capture: _Capture):
                 elif "peer_id" in kw and "topic" in kw and "payload" in kw:
                     capture.send(kw["peer_id"], kw["topic"], kw["payload"])
                 return None
+
             setattr(engine, meth, wrapper)
             return
 
@@ -127,7 +143,14 @@ def _construct_engine(fanout=2, degree=2):
 
     # Try with/without an explicit mesh
     if Mesh is not None:
-        meshes = [None, Mesh(degree=degree) if "degree" in Mesh.__init__.__code__.co_varnames else Mesh()]
+        meshes = [
+            None,
+            (
+                Mesh(degree=degree)
+                if "degree" in Mesh.__init__.__code__.co_varnames
+                else Mesh()
+            ),
+        ]
     else:
         meshes = [None]
 
@@ -167,7 +190,13 @@ def _ensure_topic_methods(engine):
 
     # Subscribe
     def subscribe(peer_id, topic):
-        for name in ("subscribe", "join", "attach", "add_subscriber", "add_peer_to_topic"):
+        for name in (
+            "subscribe",
+            "join",
+            "attach",
+            "add_subscriber",
+            "add_peer_to_topic",
+        ):
             if hasattr(engine, name):
                 try:
                     getattr(engine, name)(peer_id, topic)
@@ -190,7 +219,13 @@ def _ensure_topic_methods(engine):
 
     # Unsubscribe
     def unsubscribe(peer_id, topic):
-        for name in ("unsubscribe", "leave", "detach", "remove_subscriber", "remove_peer_from_topic"):
+        for name in (
+            "unsubscribe",
+            "leave",
+            "detach",
+            "remove_subscriber",
+            "remove_peer_from_topic",
+        ):
             if hasattr(engine, name):
                 try:
                     getattr(engine, name)(peer_id, topic)
@@ -249,7 +284,9 @@ def _ensure_topic_methods(engine):
         for name in ("publish", "emit", "broadcast", "publish_raw", "send_publish"):
             if hasattr(engine, name) and callable(getattr(engine, name)):
                 try:
-                    return getattr(engine, name)(topic=topic, payload=payload, origin=origin)
+                    return getattr(engine, name)(
+                        topic=topic, payload=payload, origin=origin
+                    )
                 except TypeError:
                     try:
                         return getattr(engine, name)(topic, payload, origin)
@@ -264,6 +301,7 @@ def _ensure_topic_methods(engine):
 
 
 # ====== Tests ======
+
 
 def test_pubsub_routing_and_fanout(monkeypatch):
     """
@@ -280,19 +318,23 @@ def test_pubsub_routing_and_fanout(monkeypatch):
     subscribe, unsubscribe, graft, prune, publish = _ensure_topic_methods(engine)
 
     topic_blocks = "blocks"
-    topic_txs    = "txs"
+    topic_txs = "txs"
 
     # Make three peers and subscribe some of them to 'blocks'
     peers = ["peer-A", "peer-B", "peer-C"]
     subscribe(peers[0], topic_blocks)
     subscribe(peers[1], topic_blocks)
-    subscribe(peers[2], topic_txs)     # not subscribed to 'blocks'
+    subscribe(peers[2], topic_txs)  # not subscribed to 'blocks'
 
     # Publish on 'blocks'
     capture.clear()
     publish(topic_blocks, b"blk#1")
 
-    recipients = {p for (p, t, _pl) in [(pid, t, pl) for (pid, t, pl) in capture.sends] if t == topic_blocks}
+    recipients = {
+        p
+        for (p, t, _pl) in [(pid, t, pl) for (pid, t, pl) in capture.sends]
+        if t == topic_blocks
+    }
     # Only peers A/B should be eligible; C must not receive
     assert recipients.issubset({"peer-A", "peer-B"})
     assert "peer-C" not in recipients
@@ -368,4 +410,3 @@ def test_unsubscribe_stops_delivery(monkeypatch):
     publish(topic, b"m1")
     got_second = any(pid == P and t == topic for (pid, t, _pl) in capture.sends)
     assert not got_second, "Peer must not receive after unsubscribe"
-

@@ -7,10 +7,12 @@ from typing import Dict, NewType, Optional
 
 ProviderId = NewType("ProviderId", str)
 
+
 class Capability(IntFlag):
     NONE = 0
     AI = 1
     QUANTUM = 2
+
 
 class ProviderStatus(str, Enum):
     REGISTERED = "registered"
@@ -19,6 +21,7 @@ class ProviderStatus(str, Enum):
     JAILED = "jailed"
     INACTIVE = "inactive"
     RETIRED = "retired"
+
 
 @dataclass(frozen=True)
 class Provider:
@@ -48,7 +51,9 @@ class Provider:
         now = _now()
         return replace(self, last_heartbeat=now, updated_at=now)
 
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
 
 __all__ = ["ProviderId", "Capability", "ProviderStatus", "Provider"]

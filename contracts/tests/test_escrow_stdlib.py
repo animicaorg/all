@@ -23,12 +23,12 @@ Events:
 from __future__ import annotations
 
 from pathlib import Path
-import pytest
 
+import pytest
 
 # ---------------------------- inline escrow contract ---------------------------
 
-CONTRACT_SOURCE = r'''
+CONTRACT_SOURCE = r"""
 from stdlib.storage import get, set
 from stdlib.events import emit
 from stdlib.abi import require, revert
@@ -143,7 +143,8 @@ def refund(sender: str) -> None:
     _store_u(K_REF, refunded_to_depositor() + amt)
     _store_b(K_SEALED, True)
     emit(b"Refund", {"to": depositor(), "amount": amt})
-'''
+"""
+
 
 def _write_contract(tmp_path: Path) -> Path:
     p = tmp_path / "escrow_test_contract.py"
@@ -152,6 +153,7 @@ def _write_contract(tmp_path: Path) -> Path:
 
 
 # ---------------------------------- tests -------------------------------------
+
 
 def test_deposit_dispute_refund(tmp_path: Path, compile_contract, funded_accounts):
     src = _write_contract(tmp_path)
@@ -191,7 +193,9 @@ def test_deposit_dispute_refund(tmp_path: Path, compile_contract, funded_account
     assert names == [b"Deposit", b"Dispute", b"Refund"]
 
 
-def test_deposit_then_release_happy_path(tmp_path: Path, compile_contract, funded_accounts):
+def test_deposit_then_release_happy_path(
+    tmp_path: Path, compile_contract, funded_accounts
+):
     src = _write_contract(tmp_path)
     c = compile_contract(src)
 

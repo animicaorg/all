@@ -22,38 +22,35 @@ Labels:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, Iterable, Optional
 import os
 import time
-
+from dataclasses import dataclass
+from typing import Dict, Iterable, Optional
 
 # ------------------------------ optional import ------------------------------
 
 try:
     # Prometheus Python client (preferred)
-    from prometheus_client import (
-        Counter,
-        Histogram,
-        CollectorRegistry,
-        generate_latest,
-        CONTENT_TYPE_LATEST,
-    )
+    from prometheus_client import (CONTENT_TYPE_LATEST, CollectorRegistry,
+                                   Counter, Histogram, generate_latest)
+
     _PROM_AVAILABLE = True
 except Exception:  # pragma: no cover - exercised only when dependency missing
     _PROM_AVAILABLE = False
 
     class _NoopMetric:
         def __init__(self, *_, **__): ...
-        def labels(self, *_, **__): return self
+        def labels(self, *_, **__):
+            return self
+
         def inc(self, *_a, **_k): ...
         def observe(self, *_a, **_k): ...
 
     # No-op shims with compatible constructors/APIs
-    Counter = _NoopMetric       # type: ignore
-    Histogram = _NoopMetric     # type: ignore
+    Counter = _NoopMetric  # type: ignore
+    Histogram = _NoopMetric  # type: ignore
 
-    class CollectorRegistry:     # type: ignore
+    class CollectorRegistry:  # type: ignore
         def __init__(self, *_, **__): ...
 
     def generate_latest(_=None):  # type: ignore
@@ -65,6 +62,7 @@ except Exception:  # pragma: no cover - exercised only when dependency missing
 # ------------------------------ configuration -------------------------------
 
 _PREFIX = "animica_exec_"
+
 
 # Allow narrow tuning of histogram buckets via env (simple comma-separated lists).
 # If unset, we pick sane defaults for a Python VM chain.
@@ -85,26 +83,62 @@ def _buckets_from_env(name: str, default: Iterable[float]) -> Iterable[float]:
     return out or default
 
 
-_TX_GAS_BUCKETS = tuple(_buckets_from_env(
-    "ANIMICA_METRICS_TX_GAS_BUCKETS",
-    # Rough, log-scale-ish buckets (gas units)
-    (500, 1_000, 2_000, 5_000, 10_000, 20_000, 50_000, 100_000, 200_000, 500_000, 1_000_000),
-))
-_TX_LOGS_BUCKETS = tuple(_buckets_from_env(
-    "ANIMICA_METRICS_TX_LOGS_BUCKETS",
-    (0, 1, 2, 4, 8, 16, 32, 64, 128, 256),
-))
-_BLOCK_SECONDS_BUCKETS = tuple(_buckets_from_env(
-    "ANIMICA_METRICS_BLOCK_SECONDS_BUCKETS",
-    # 5ms .. 30s
-    (0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0,
-     2.5, 5.0, 7.5, 10.0, 15.0, 20.0, 30.0),
-))
+_TX_GAS_BUCKETS = tuple(
+    _buckets_from_env(
+        "ANIMICA_METRICS_TX_GAS_BUCKETS",
+        # Rough, log-scale-ish buckets (gas units)
+        (
+            500,
+            1_000,
+            2_000,
+            5_000,
+            10_000,
+            20_000,
+            50_000,
+            100_000,
+            200_000,
+            500_000,
+            1_000_000,
+        ),
+    )
+)
+_TX_LOGS_BUCKETS = tuple(
+    _buckets_from_env(
+        "ANIMICA_METRICS_TX_LOGS_BUCKETS",
+        (0, 1, 2, 4, 8, 16, 32, 64, 128, 256),
+    )
+)
+_BLOCK_SECONDS_BUCKETS = tuple(
+    _buckets_from_env(
+        "ANIMICA_METRICS_BLOCK_SECONDS_BUCKETS",
+        # 5ms .. 30s
+        (
+            0.005,
+            0.01,
+            0.025,
+            0.05,
+            0.075,
+            0.1,
+            0.25,
+            0.5,
+            0.75,
+            1.0,
+            2.5,
+            5.0,
+            7.5,
+            10.0,
+            15.0,
+            20.0,
+            30.0,
+        ),
+    )
+)
 
 
 # ------------------------------ registry & ctor ------------------------------
 
 _registry: Optional[CollectorRegistry] = None
+
 
 def set_registry(registry: CollectorRegistry) -> None:
     """
@@ -116,6 +150,7 @@ def set_registry(registry: CollectorRegistry) -> None:
         return  # already initialized; callers should set registry early
     _registry = registry
     _build_metrics()
+
 
 def get_registry() -> CollectorRegistry:
     """
@@ -173,6 +208,7 @@ def _build_metrics() -> None:
 
 
 # ------------------------------ helpers -------------------------------------
+
 
 def _norm_result(s: str) -> str:
     s = (s or "").strip().lower()
@@ -238,6 +274,7 @@ class _TimerCtx:
     # Context manager protocol
     def __enter__(self) -> "_TimerCtx":
         return self
+
     def __exit__(self, exc_type, exc, tb) -> None:
         self.stop()
 
@@ -262,6 +299,7 @@ def time_block_apply(labels: Optional[Dict[str, str]] = None) -> _TimerCtx:
 
 
 # ------------------------------ exposition ----------------------------------
+
 
 def generate_latest_text() -> bytes:
     """

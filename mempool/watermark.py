@@ -31,21 +31,23 @@ Conventions
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Iterable, Optional, Tuple, List
 import math
 import time
-
+from dataclasses import dataclass
+from typing import Iterable, List, Optional, Tuple
 
 # -------------------------------
 # Utilities
 # -------------------------------
 
+
 def _clamp(x: float, lo: float, hi: float) -> float:
     return lo if x < lo else hi if x > hi else x
 
+
 def _lerp(a: float, b: float, t: float) -> float:
     return a + (b - a) * t
+
 
 def _safe_int(x: float) -> int:
     if math.isinf(x) or math.isnan(x):
@@ -56,6 +58,7 @@ def _safe_int(x: float) -> int:
 # -------------------------------
 # Log-space histogram
 # -------------------------------
+
 
 class LogHistogram:
     """
@@ -69,7 +72,14 @@ class LogHistogram:
 
     __slots__ = ("_edges", "_counts", "_sum", "_decay")
 
-    def __init__(self, *, min_wei: int = 1, max_wei: int = 10**12, bins: int = 96, decay: float = 0.95) -> None:
+    def __init__(
+        self,
+        *,
+        min_wei: int = 1,
+        max_wei: int = 10**12,
+        bins: int = 96,
+        decay: float = 0.95,
+    ) -> None:
         assert min_wei >= 1 and max_wei > min_wei and bins >= 8
         self._edges: List[float] = []
         log_min = math.log10(float(min_wei))
@@ -145,6 +155,7 @@ class LogHistogram:
 # Watermark logic
 # -------------------------------
 
+
 @dataclass
 class WatermarkConfig:
     # Absolute lower bound for the floor (safety)
@@ -162,13 +173,13 @@ class WatermarkConfig:
     high_util: float = 0.90
 
     # Percentiles used at various pressures
-    admit_quantile_low: float = 0.05   # at/below low_util
-    evict_quantile_mid: float = 0.15   # mid band
+    admit_quantile_low: float = 0.05  # at/below low_util
+    evict_quantile_mid: float = 0.15  # mid band
     evict_quantile_high: float = 0.30  # above high_util
 
     # Smoothing limits per update (ratios)
-    max_step_up: float = 1.50   # at most +50% per thresholds() call
-    max_step_down: float = 0.67 # at most -33% per thresholds() call
+    max_step_up: float = 1.50  # at most +50% per thresholds() call
+    max_step_down: float = 0.67  # at most -33% per thresholds() call
 
 
 @dataclass
@@ -192,8 +203,14 @@ class FeeWatermark:
         th = wm.thresholds(pool_size, capacity)
     """
 
-    __slots__ = ("cfg", "_hist", "_floor_ema", "_admit_floor", "_evict_below",
-                 "_last_update_t")
+    __slots__ = (
+        "cfg",
+        "_hist",
+        "_floor_ema",
+        "_admit_floor",
+        "_evict_below",
+        "_last_update_t",
+    )
 
     def __init__(self, cfg: Optional[WatermarkConfig] = None) -> None:
         self.cfg = cfg or WatermarkConfig()
@@ -255,7 +272,9 @@ class FeeWatermark:
             limit = int(math.floor(current * self.cfg.max_step_down))
             return max(target, limit)
 
-    def thresholds(self, pool_size: int, capacity: int, *, now: Optional[float] = None) -> Thresholds:
+    def thresholds(
+        self, pool_size: int, capacity: int, *, now: Optional[float] = None
+    ) -> Thresholds:
         """
         Compute current thresholds given the pool occupancy.
 
@@ -287,8 +306,12 @@ class FeeWatermark:
             evict_target = max(ema_floor, evict_hist)
         else:
             # Mid band: blend between low and high behaviors.
-            t = (util - self.cfg.low_util) / max(1e-9, (self.cfg.high_util - self.cfg.low_util))
-            evict_q = _lerp(self.cfg.evict_quantile_mid, self.cfg.evict_quantile_high, t)
+            t = (util - self.cfg.low_util) / max(
+                1e-9, (self.cfg.high_util - self.cfg.low_util)
+            )
+            evict_q = _lerp(
+                self.cfg.evict_quantile_mid, self.cfg.evict_quantile_high, t
+            )
             evict_hist = self._hist.percentile(evict_q)
 
             low_q = self.cfg.admit_quantile_low
@@ -296,12 +319,19 @@ class FeeWatermark:
             admit_q = _lerp(low_q, mid_q, t * 0.6)
             admit_hist = self._hist.percentile(admit_q)
 
-            admit_target = max(self.cfg.min_floor_wei, max(ema_floor, min(evict_hist, max(admit_hist, ema_floor))))
+            admit_target = max(
+                self.cfg.min_floor_wei,
+                max(ema_floor, min(evict_hist, max(admit_hist, ema_floor))),
+            )
             evict_target = max(self.cfg.min_floor_wei, int(evict_hist))
 
         # Smooth against last published thresholds
         new_admit = self._bounded_step(self._admit_floor, int(admit_target))
-        new_evict = self._bounded_step(max(self._evict_below, 0), int(evict_target)) if evict_target > 0 else 0
+        new_evict = (
+            self._bounded_step(max(self._evict_below, 0), int(evict_target))
+            if evict_target > 0
+            else 0
+        )
 
         # Monotonic safety: never set evict below admit in the same tick
         if new_evict > 0 and new_evict < new_admit:
@@ -311,7 +341,11 @@ class FeeWatermark:
         self._evict_below = new_evict
         self._last_update_t = time.monotonic() if now is None else now
 
-        return Thresholds(admit_floor_wei=self._admit_floor, evict_below_wei=self._evict_below, utilization=util)
+        return Thresholds(
+            admit_floor_wei=self._admit_floor,
+            evict_below_wei=self._evict_below,
+            utilization=util,
+        )
 
     # ---------- inspection / control ----------
 
@@ -344,4 +378,6 @@ if __name__ == "__main__":
     # Pool thresholds at different utilizations
     for util in [0.3, 0.7, 0.95]:
         th = wm.thresholds(pool_size=int(util * 10_000), capacity=10_000)
-        print(f"util={util:.2f} -> admit_floor={th.admit_floor_wei} evict_below={th.evict_below_wei}")
+        print(
+            f"util={util:.2f} -> admit_floor={th.admit_floor_wei} evict_below={th.evict_below_wei}"
+        )

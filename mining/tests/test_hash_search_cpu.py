@@ -1,9 +1,9 @@
 import importlib
 import math
 import os
-from typing import Any, Iterable, Optional, Tuple, List, Callable
-import pytest
+from typing import Any, Callable, Iterable, List, Optional, Tuple
 
+import pytest
 
 # Try to import the module under test
 hs = importlib.import_module("mining.hash_search")
@@ -24,17 +24,19 @@ def _pick_callable(mod, names: Iterable[str]) -> Optional[Callable[..., Any]]:
 scan_fn = _pick_callable(
     hs,
     (
-        "scan_cpu",            # preferred
-        "scan",                # generic
-        "search",              # generic
-        "scan_nonces",         # descriptive
-        "find_shares",         # descriptive
+        "scan_cpu",  # preferred
+        "scan",  # generic
+        "search",  # generic
+        "scan_nonces",  # descriptive
+        "find_shares",  # descriptive
     ),
 )
 
 # A small, deterministic header template (bytes). Many implementations only
 # need a fixed prefix (header-without-nonce) and will append/encode the nonce.
-HEADER_BYTES = b"ANIMICA-TEST-HEADER-\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a" + bytes(range(16))
+HEADER_BYTES = b"ANIMICA-TEST-HEADER-\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a" + bytes(
+    range(16)
+)
 
 # Difficulty parameter (Θ). With H = -ln(u), acceptance probability is p = e^{-Θ}.
 # Θ=2.0 -> p≈0.1353 which yields a healthy amount of shares for a few thousand trials.
@@ -58,9 +60,29 @@ def _try_scan_variants() -> Tuple[List[Any], int]:
     # Common positional/keyword variants
     calls.append(lambda: (scan_fn(HEADER_BYTES, 0, NONCES, THETA), NONCES))
     calls.append(lambda: (scan_fn(HEADER_BYTES, NONCES, THETA), NONCES))
-    calls.append(lambda: (scan_fn(header=HEADER_BYTES, start_nonce=0, count=NONCES, Theta=THETA), NONCES))
-    calls.append(lambda: (scan_fn(header_bytes=HEADER_BYTES, start=0, n=NONCES, theta=THETA), NONCES))
-    calls.append(lambda: (scan_fn(template={"header": HEADER_BYTES}, start_nonce=0, count=NONCES, Theta=THETA), NONCES))
+    calls.append(
+        lambda: (
+            scan_fn(header=HEADER_BYTES, start_nonce=0, count=NONCES, Theta=THETA),
+            NONCES,
+        )
+    )
+    calls.append(
+        lambda: (
+            scan_fn(header_bytes=HEADER_BYTES, start=0, n=NONCES, theta=THETA),
+            NONCES,
+        )
+    )
+    calls.append(
+        lambda: (
+            scan_fn(
+                template={"header": HEADER_BYTES},
+                start_nonce=0,
+                count=NONCES,
+                Theta=THETA,
+            ),
+            NONCES,
+        )
+    )
 
     last_err: Optional[Exception] = None
     for c in calls:
@@ -73,13 +95,17 @@ def _try_scan_variants() -> Tuple[List[Any], int]:
         except TypeError as e:
             last_err = e
             continue
-        except Exception as e:  # pragma: no cover - make test resilient to unexpected shapes
+        except (
+            Exception
+        ) as e:  # pragma: no cover - make test resilient to unexpected shapes
             last_err = e
             continue
 
     # If we got here, signatures didn't match.
     if last_err:
-        pytest.skip(f"Could not invoke scan function with expected signatures: {last_err}")
+        pytest.skip(
+            f"Could not invoke scan function with expected signatures: {last_err}"
+        )
     pytest.skip("Could not invoke scan function with expected signatures.")
 
 
@@ -151,7 +177,9 @@ def test_finds_shares_and_rate_matches_expectation():
 
     observed = len(shares)
     expected = tested * math.exp(-THETA)
-    sigma = math.sqrt(expected * (1.0 - math.exp(-THETA)))  # binomial stddev ≈ sqrt(N p (1-p))
+    sigma = math.sqrt(
+        expected * (1.0 - math.exp(-THETA))
+    )  # binomial stddev ≈ sqrt(N p (1-p))
 
     # Allow a fairly wide band to avoid needless flakiness in CI.
     # 6 sigma is extremely safe for N=5000.
@@ -164,6 +192,6 @@ def test_finds_shares_and_rate_matches_expectation():
         f"expected≈{expected:.2f} ± {6.0*sigma:.2f} (6σ band: [{lower:.1f}, {upper:.1f}])"
     )
 
-    assert lower <= observed <= upper, (
-        "Observed share count is far from expectation — check nonce hashing/H(u) and threshold comparison"
-    )
+    assert (
+        lower <= observed <= upper
+    ), "Observed share count is far from expectation — check nonce hashing/H(u) and threshold comparison"

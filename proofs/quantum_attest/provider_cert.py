@@ -66,36 +66,34 @@ from typing import Any, Dict, Optional, Tuple
 
 # Optional crypto dependencies (graceful degradation)
 try:
-    from cryptography.hazmat.primitives import hashes
-    from cryptography.hazmat.primitives.asymmetric import ed25519, ec, rsa, padding
-    from cryptography.hazmat.primitives.serialization import load_pem_public_key
     from cryptography import x509
     from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import (ec, ed25519,
+                                                           padding, rsa)
+    from cryptography.hazmat.primitives.serialization import \
+        load_pem_public_key
 except Exception:  # pragma: no cover - optional
     x509 = None  # type: ignore
 
 # Local JWKS helpers
 try:
-    from proofs.quantum_attest import (
-        qpu_jwks_cache_dir,
-        qpu_registry_path,
-        parse_jwt_header,
-        find_key,
-        QPUKeyRef,
-    )
+    from proofs.quantum_attest import (QPUKeyRef, find_key, parse_jwt_header,
+                                       qpu_jwks_cache_dir, qpu_registry_path)
 except Exception as e:  # pragma: no cover
     raise RuntimeError(f"Import failure: ensure repository is on PYTHONPATH; {e}")
 
 # Optional Post-Quantum verification
 try:
-    from pq.py.verify import verify as pq_verify  # type: ignore
     from pq.py.registry import AlgId  # type: ignore
+    from pq.py.verify import verify as pq_verify  # type: ignore
 except Exception:  # pragma: no cover
     pq_verify = None
     AlgId = None  # type: ignore
 
 
 # ---------- Utilities ----------
+
 
 def _b64url_decode(data: str) -> bytes:
     pad = "=" * ((4 - len(data) % 4) % 4)
@@ -134,6 +132,7 @@ def _now_utc() -> datetime:
 
 # ---------- Data classes ----------
 
+
 @dataclass(frozen=True)
 class JWSBundle:
     compact: str
@@ -158,6 +157,7 @@ class ProviderCert:
     """
     Normalized provider certificate envelope.
     """
+
     claims: Dict[str, Any]
     jws: Optional[JWSBundle] = None
     x509: Optional[X509Bundle] = None
@@ -180,6 +180,7 @@ class VerifiedProvider:
 
 
 # ---------- Parsing ----------
+
 
 def parse_input(data: bytes) -> ProviderCert:
     """
@@ -230,7 +231,10 @@ def parse_input(data: bytes) -> ProviderCert:
 
     # X509 piece
     x509_obj = None
-    if isinstance(obj.get("x509_chain_pem"), str) and "BEGIN CERTIFICATE" in obj["x509_chain_pem"]:
+    if (
+        isinstance(obj.get("x509_chain_pem"), str)
+        and "BEGIN CERTIFICATE" in obj["x509_chain_pem"]
+    ):
         x509_obj = X509Bundle(chain_pem=obj["x509_chain_pem"])
 
     # PQ piece
@@ -243,10 +247,13 @@ def parse_input(data: bytes) -> ProviderCert:
         if alg and pub and sig:
             pq_obj = PQBundle(alg=alg, pub=pub, sig=sig)
 
-    return ProviderCert(claims=claims, jws=jws_obj, x509=x509_obj, pq=pq_obj, raw=obj if fmt else None)
+    return ProviderCert(
+        claims=claims, jws=jws_obj, x509=x509_obj, pq=pq_obj, raw=obj if fmt else None
+    )
 
 
 # ---------- JWS verification using JWKS cache ----------
+
 
 def _jwk_to_public_key(jwk: Dict[str, Any]):
     """
@@ -260,6 +267,7 @@ def _jwk_to_public_key(jwk: Dict[str, Any]):
     alg = jwk.get("alg")
     if kty == "OKP" and jwk.get("crv") == "Ed25519":
         from cryptography.hazmat.primitives import serialization
+
         raw = _b64url_decode(jwk["x"])
         # Construct from raw 32-byte Ed25519 pubkey
         return ed25519.Ed25519PublicKey.from_public_bytes(raw)
@@ -279,7 +287,9 @@ def _jwk_to_public_key(jwk: Dict[str, Any]):
     raise ValueError(f"Unsupported JWK kty/crv combo: kty={kty}, alg={alg}")
 
 
-def verify_jws_with_jwks(bundle: JWSBundle) -> Tuple[bool, Optional[QPUKeyRef], Optional[str], str]:
+def verify_jws_with_jwks(
+    bundle: JWSBundle,
+) -> Tuple[bool, Optional[QPUKeyRef], Optional[str], str]:
     """
     Verify the compact JWS using keys from local JWKS cache.
 
@@ -309,7 +319,12 @@ def verify_jws_with_jwks(bundle: JWSBundle) -> Tuple[bool, Optional[QPUKeyRef], 
             jwk = k
             break
     if jwk is None:
-        return False, key_ref, key_ref.slug, f"JWK {kid} disappeared from {jwks_path.name}"
+        return (
+            False,
+            key_ref,
+            key_ref.slug,
+            f"JWK {kid} disappeared from {jwks_path.name}",
+        )
 
     # Build public key
     pub = _jwk_to_public_key(jwk)
@@ -350,6 +365,7 @@ def verify_jws_with_jwks(bundle: JWSBundle) -> Tuple[bool, Optional[QPUKeyRef], 
 
 # ---------- X.509 chain verification & binding ----------
 
+
 def _load_pem_chain(pem_concatenated: str):
     if x509 is None:
         raise RuntimeError("cryptography not installed (cannot verify X.509)")
@@ -359,7 +375,9 @@ def _load_pem_chain(pem_concatenated: str):
         if not blob:
             continue
         blob += "\n-----END CERTIFICATE-----\n"
-        certs.append(x509.load_pem_x509_certificate(blob.encode("utf-8"), default_backend()))
+        certs.append(
+            x509.load_pem_x509_certificate(blob.encode("utf-8"), default_backend())
+        )
     if not certs:
         raise ValueError("no certificates in PEM chain")
     return certs
@@ -376,6 +394,7 @@ def _pubkey_equal_to_jwk(cert: "x509.Certificate", jwk: Dict[str, Any]) -> bool:
             except Exception:
                 # Older cryptography needs explicit enums:
                 from cryptography.hazmat.primitives import serialization
+
                 raw = pub.public_bytes(
                     serialization.Encoding.Raw,
                     serialization.PublicFormat.Raw,
@@ -399,7 +418,9 @@ def _pubkey_equal_to_jwk(cert: "x509.Certificate", jwk: Dict[str, Any]) -> bool:
     return False
 
 
-def verify_x509_chain_binding(x509_bundle: X509Bundle, jws_bundle: Optional[JWSBundle]) -> Tuple[bool, str]:
+def verify_x509_chain_binding(
+    x509_bundle: X509Bundle, jws_bundle: Optional[JWSBundle]
+) -> Tuple[bool, str]:
     """
     Minimal chain validation (time validity + chain linkage + JWS pubkey binding if provided).
     Not a full PKI path validator; good enough for vendor-rooted provider identity chains.
@@ -433,7 +454,11 @@ def verify_x509_chain_binding(x509_bundle: X509Bundle, jws_bundle: Optional[JWSB
                 child.signature,
                 child.tbs_certificate_bytes,
                 # Signature algorithm depends on child.signature_algorithm_oid; use default mapping:
-                padding.PKCS1v15() if isinstance(parent_pub, rsa.RSAPublicKey) else ec.ECDSA(hashes.SHA256()),
+                (
+                    padding.PKCS1v15()
+                    if isinstance(parent_pub, rsa.RSAPublicKey)
+                    else ec.ECDSA(hashes.SHA256())
+                ),
             )
         except Exception as e:
             return False, f"cert signature invalid at {i}: {e}"
@@ -445,6 +470,7 @@ def verify_x509_chain_binding(x509_bundle: X509Bundle, jws_bundle: Optional[JWSB
             return False, "JWS missing kid for binding"
         # Recover exact JWK used (same as in JWS verification)
         from pathlib import Path as _Path
+
         # Search every JWKS for the kid (small cost, local)
         pick = None
         for p in sorted(qpu_jwks_cache_dir().glob("*.jwks.json")):
@@ -464,6 +490,7 @@ def verify_x509_chain_binding(x509_bundle: X509Bundle, jws_bundle: Optional[JWSB
 
 
 # ---------- PQ signature verification ----------
+
 
 def verify_pq_signature(pqb: PQBundle, claims: Dict[str, Any]) -> Tuple[bool, str]:
     """
@@ -485,6 +512,7 @@ def verify_pq_signature(pqb: PQBundle, claims: Dict[str, Any]) -> Tuple[bool, st
 
 
 # ---------- High-level verify entrypoints ----------
+
 
 def verify_provider_cert(cert: ProviderCert) -> VerifiedProvider:
     """
@@ -555,10 +583,14 @@ def load_and_verify(path: str | Path | bytes) -> VerifiedProvider:
 
 # ---------- CLI (dev helper) ----------
 
+
 def _cli(argv: list[str]) -> int:  # pragma: no cover
     import argparse
+
     ap = argparse.ArgumentParser(description="Verify a provider identity certificate")
-    ap.add_argument("infile", help="Path to provider certificate (compact JWS or hybrid JSON)")
+    ap.add_argument(
+        "infile", help="Path to provider certificate (compact JWS or hybrid JSON)"
+    )
     args = ap.parse_args(argv)
 
     try:
@@ -567,17 +599,22 @@ def _cli(argv: list[str]) -> int:  # pragma: no cover
         print(f"[!] Parse/verify error: {e}")
         return 2
 
-    print(json.dumps({
-        "overall_ok": vp.overall_ok,
-        "jws_verified": vp.jws_verified,
-        "x509_verified": vp.x509_verified,
-        "pq_verified": vp.pq_verified,
-        "jwks_slug_used": vp.jwks_slug_used,
-        "jwks_kid": vp.jwks_kid,
-        "alg": vp.alg,
-        "decisions": vp.decisions,
-        "claims": vp.claims,
-    }, indent=2))
+    print(
+        json.dumps(
+            {
+                "overall_ok": vp.overall_ok,
+                "jws_verified": vp.jws_verified,
+                "x509_verified": vp.x509_verified,
+                "pq_verified": vp.pq_verified,
+                "jwks_slug_used": vp.jwks_slug_used,
+                "jwks_kid": vp.jwks_kid,
+                "alg": vp.alg,
+                "decisions": vp.decisions,
+                "claims": vp.claims,
+            },
+            indent=2,
+        )
+    )
     return 0
 
 

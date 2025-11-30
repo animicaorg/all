@@ -28,14 +28,18 @@ from __future__ import annotations
 
 # Re-export protocol types for convenience.
 try:
-    from randomness.types.core import RoundId, CommitRecord, RevealRecord  # noqa: F401
+    from randomness.types.core import (CommitRecord,  # noqa: F401
+                                       RevealRecord, RoundId)
 except Exception:  # pragma: no cover
     # During bootstrap or partial installs these may be unavailable.
     RoundId = int  # type: ignore
+
     class CommitRecord:  # type: ignore
         pass
+
     class RevealRecord:  # type: ignore
         pass
+
 
 # Surface package version if available.
 try:  # pragma: no cover

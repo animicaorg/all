@@ -68,16 +68,17 @@ import pathlib
 import sqlite3
 import sys
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple, Union, cast
+from typing import (Any, Dict, Iterable, List, Mapping, Optional, Tuple, Union,
+                    cast)
 
 from .config import IndexerConfig, from_env
 from .rpc import JsonRpcClient
-
 
 Json = Mapping[str, Any]
 
 
 # ------------------------------ utilities ---------------------------------- #
+
 
 def _hex_to_int(h: Union[str, int]) -> int:
     if isinstance(h, int):
@@ -94,6 +95,7 @@ def _ensure_dir(p: Union[str, pathlib.Path]) -> pathlib.Path:
 
 
 # ------------------------------- sinks ------------------------------------- #
+
 
 class Sink:
     async def aclose(self) -> None:  # uniform async close
@@ -169,17 +171,34 @@ class SqliteSink(Sink):
         for tx in txs:
             # When full_txs=False, "tx" may be a hash string. Normalize to dict.
             if isinstance(tx, str):
-                rows.append((tx, block_number, None, None, None, None, None, json.dumps({"hash": tx})))
+                rows.append(
+                    (
+                        tx,
+                        block_number,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        json.dumps({"hash": tx}),
+                    )
+                )
                 continue
 
             t_hash = cast(str, tx.get("hash"))
             t_from = cast(Optional[str], tx.get("from"))
             t_to = cast(Optional[str], tx.get("to"))
             t_val = cast(Optional[str], tx.get("value"))
-            t_nonce = _hex_to_int(tx["nonce"]) if "nonce" in tx and isinstance(tx["nonce"], str) else cast(Optional[int], tx.get("nonce"))  # noqa: E501
+            t_nonce = (
+                _hex_to_int(tx["nonce"])
+                if "nonce" in tx and isinstance(tx["nonce"], str)
+                else cast(Optional[int], tx.get("nonce"))
+            )  # noqa: E501
             t_input = cast(Optional[str], tx.get("input"))
             t_raw = json.dumps(tx, separators=(",", ":"), sort_keys=True)
-            rows.append((t_hash, block_number, t_from, t_to, t_val, t_nonce, t_input, t_raw))
+            rows.append(
+                (t_hash, block_number, t_from, t_to, t_val, t_nonce, t_input, t_raw)
+            )
 
         if rows:
             self.conn.executemany(
@@ -218,7 +237,9 @@ class JsonlSink(Sink):
         self._txs = open(self.txs_path, "a", encoding="utf-8")
 
     def record_block(self, block: Json) -> None:
-        self._blocks.write(json.dumps(block, separators=(",", ":"), sort_keys=True) + "\n")
+        self._blocks.write(
+            json.dumps(block, separators=(",", ":"), sort_keys=True) + "\n"
+        )
         try:
             self._last_block = _hex_to_int(block.get("number", 0))
         except Exception:
@@ -232,7 +253,9 @@ class JsonlSink(Sink):
             else:
                 rec = dict(tx)
                 rec["blockNumber"] = block_number
-            self._txs.write(json.dumps(rec, separators=(",", ":"), sort_keys=True) + "\n")
+            self._txs.write(
+                json.dumps(rec, separators=(",", ":"), sort_keys=True) + "\n"
+            )
 
     def commit(self) -> None:
         self._blocks.flush()
@@ -286,7 +309,11 @@ class JsonlSink(Sink):
                     return None
 
                 rec = json.loads(lines[-1].decode("utf-8"))
-                num = rec.get("number") or rec.get("blockNumber") or rec.get("block_number")
+                num = (
+                    rec.get("number")
+                    or rec.get("blockNumber")
+                    or rec.get("block_number")
+                )
                 if num is None:
                     return None
                 return _hex_to_int(num)
@@ -295,6 +322,7 @@ class JsonlSink(Sink):
 
 
 # ------------------------------- ingestor ---------------------------------- #
+
 
 @dataclass
 class Ingestor:
@@ -315,7 +343,9 @@ class Ingestor:
 
         self.index_full_txs: bool = bool(getattr(self.cfg, "index_full_txs", True))
         self.max_batch: int = int(getattr(self.cfg, "max_batch_size", 25))
-        self.tail_poll_interval_s: float = float(getattr(self.cfg, "tail_poll_interval_s", 2.0))
+        self.tail_poll_interval_s: float = float(
+            getattr(self.cfg, "tail_poll_interval_s", 2.0)
+        )
 
     # ----------------------------- high-level ops --------------------------- #
 
@@ -392,14 +422,21 @@ class Ingestor:
             else:
                 await asyncio.sleep(self.tail_poll_interval_s)
 
-    async def _ingest_range(self, rpc: JsonRpcClient, start: int, stop: int, *, commit_each_batch: bool) -> None:
+    async def _ingest_range(
+        self, rpc: JsonRpcClient, start: int, stop: int, *, commit_each_batch: bool
+    ) -> None:
         self.log.info("ingest range [%s, %s]", start, stop)
         full_txs = self.index_full_txs
 
         cur = start
         while cur <= stop:
             chunk_end = min(cur + self.max_batch - 1, stop)
-            blocks = cast(List[Json], await rpc.get_block_range(cur, chunk_end, full_txs=full_txs, max_batch=self.max_batch))  # noqa: E501
+            blocks = cast(
+                List[Json],
+                await rpc.get_block_range(
+                    cur, chunk_end, full_txs=full_txs, max_batch=self.max_batch
+                ),
+            )  # noqa: E501
 
             # Defensive: some nodes may return null for not-yet-built blocks
             filtered: List[Json] = [b for b in blocks if b]
@@ -421,7 +458,9 @@ class Ingestor:
 
             if commit_each_batch:
                 # lightweight heartbeat logging
-                last_num = _hex_to_int(filtered[-1]["number"]) if filtered else (cur - 1)
+                last_num = (
+                    _hex_to_int(filtered[-1]["number"]) if filtered else (cur - 1)
+                )
                 self.log.info("ingested up to block %s", last_num)
 
     def _process_block(self, block: Json, *, full_txs: bool) -> None:
@@ -433,6 +472,7 @@ class Ingestor:
 
 
 # ------------------------------- CLI entry --------------------------------- #
+
 
 def _build_ingestor(cfg: Optional[IndexerConfig] = None) -> Ingestor:
     cfg = cfg or from_env()
@@ -455,7 +495,9 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     one = sub.add_parser("one-shot", help="ingest a single block by number")
     one.add_argument("--at", dest="at", type=int, required=True)
 
-    p.add_argument("--log-level", default=None, help="override log level (DEBUG, INFO, ...)")
+    p.add_argument(
+        "--log-level", default=None, help="override log level (DEBUG, INFO, ...)"
+    )
     return p.parse_args(argv)
 
 

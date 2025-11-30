@@ -50,7 +50,9 @@ from .message_ids import MsgID
 
 MAGIC = b"AM"
 VERSION = 1
-HEADER_FMT = "!2sBBHQQII8s"  # magic,ver,flags,msg_id,seq,nonce,plain_len,wire_len,checksum8
+HEADER_FMT = (
+    "!2sBBHQQII8s"  # magic,ver,flags,msg_id,seq,nonce,plain_len,wire_len,checksum8
+)
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
 
 
@@ -214,7 +216,9 @@ def unpack_frame(
 
     body_wire = framed[HEADER_SIZE:]
     if len(body_wire) != wire_len:
-        raise ValueError(f"wire_len mismatch: header={wire_len} actual={len(body_wire)}")
+        raise ValueError(
+            f"wire_len mismatch: header={wire_len} actual={len(body_wire)}"
+        )
 
     header_bytes = framed[:HEADER_SIZE]
 
@@ -244,13 +248,16 @@ def unpack_frame(
 
 # Streaming helpers -----------------------------------------------------------
 
+
 class Framer:
     """
     Convenience helper that maintains a send-sequence counter and an optional AEAD.
     Transports can use this to pack/unpack frames.
     """
 
-    def __init__(self, *, aead: Optional[AeadLike] = None, compress_threshold: int = 1024) -> None:
+    def __init__(
+        self, *, aead: Optional[AeadLike] = None, compress_threshold: int = 1024
+    ) -> None:
         self._aead = aead
         self._seq = 0
         self._compress_threshold = int(compress_threshold)

@@ -5,8 +5,8 @@ from typing import Any, Callable, Optional
 
 import pytest
 
-from randomness.errors import VDFInvalid  # type: ignore
 import randomness.vdf.verifier as vdf_ver  # type: ignore
+from randomness.errors import VDFInvalid  # type: ignore
 
 # Optional helpers/types (if available)
 try:
@@ -17,6 +17,7 @@ except Exception:  # pragma: no cover - optional
 
 
 # ---------- Test helpers ----------
+
 
 def _hex_or_b(v: Any) -> bytes:
     """
@@ -59,7 +60,9 @@ def _load_vectors() -> list[dict]:
             return data["vectors"]
         # Or a single vector
         return [data]
-    assert isinstance(data, list), "vdf.json must be a list of vectors or an object with 'vectors'"
+    assert isinstance(
+        data, list
+    ), "vdf.json must be a list of vectors or an object with 'vectors'"
     return data
 
 
@@ -73,7 +76,12 @@ def _extract_case(vec: dict) -> tuple[int, int, bytes, bytes, bytes]:
     it = vec.get("iterations") or vec.get("t") or vec.get("T") or vec.get("steps")
     inp = vec.get("input") or vec.get("seed") or vec.get("challenge") or vec.get("g")
     out = vec.get("output") or vec.get("y") or vec.get("result")
-    prv = vec.get("proof") or vec.get("pi") or vec.get("wesolowski") or vec.get("proof_bytes")
+    prv = (
+        vec.get("proof")
+        or vec.get("pi")
+        or vec.get("wesolowski")
+        or vec.get("proof_bytes")
+    )
 
     if mod is None or it is None or inp is None or out is None or prv is None:
         raise KeyError("Missing required VDF vector fields")
@@ -181,6 +189,7 @@ def _assert_invalid(N: int, t: int, inp: bytes, out: bytes, proof: bytes):
 
 
 # ---------- Tests ----------
+
 
 def test_vdf_vectors_verify():
     """

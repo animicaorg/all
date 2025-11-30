@@ -32,7 +32,6 @@ except Exception:  # noqa: BLE001
 
 import json
 
-
 DOMAIN_TAG = b"animica/cap.task_id/v1"
 
 
@@ -63,7 +62,9 @@ def _stable_payload_bytes(payload: Dict[str, Any]) -> bytes:
     if _CBOR_DUMPS is not None:
         return _CBOR_DUMPS(payload)
     # JSON fallback (keys sorted, minimal separators). ensure_ascii=False to keep UTF-8 stable.
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
 
 
 def derive_task_id(

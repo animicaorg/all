@@ -31,20 +31,21 @@ Schema (conceptual, version 1)
 The digest covers all fields EXCEPT `digest` itself.
 """
 
-from dataclasses import dataclass
-from typing import Any, Dict, Tuple
+import hashlib
 import json
 import time
-import hashlib
+from dataclasses import dataclass
+from typing import Any, Dict, Tuple
 
 from capabilities.errors import CapError
-from capabilities.jobs.types import JobKind
 from capabilities.jobs.id import derive_task_id_hex
+from capabilities.jobs.types import JobKind
 
 # --- Canonical bytes encoder (CBOR-first, JSON fallback) ---------------------
 
 try:
-    from capabilities.cbor.codec import dumps as _CBOR_DUMPS, loads as _CBOR_LOADS  # type: ignore
+    from capabilities.cbor.codec import dumps as _CBOR_DUMPS  # type: ignore
+    from capabilities.cbor.codec import loads as _CBOR_LOADS
 except Exception:  # pragma: no cover - exercised indirectly
     _CBOR_DUMPS = None  # type: ignore
     _CBOR_LOADS = None  # type: ignore
@@ -55,7 +56,9 @@ def _canon_dumps(obj: Any) -> bytes:
     if _CBOR_DUMPS is not None:
         return _CBOR_DUMPS(obj)
     # Stable JSON fallback (sorted keys, no spaces, UTF-8)
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(
+        obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
 
 
 def _canon_loads(b: bytes) -> Any:
@@ -65,6 +68,7 @@ def _canon_loads(b: bytes) -> Any:
 
 
 # --- Hash helpers ------------------------------------------------------------
+
 
 def _sha3_256(data: bytes) -> bytes:
     return hashlib.sha3_256(data).digest()
@@ -99,7 +103,9 @@ class JobReceiptV1:
         return {
             "v": RECEIPT_VERSION,
             "task_id": self.task_id,
-            "kind": int(self.kind.value if hasattr(self.kind, "value") else int(self.kind)),  # enum→int
+            "kind": int(
+                self.kind.value if hasattr(self.kind, "value") else int(self.kind)
+            ),  # enum→int
             "chain_id": int(self.chain_id),
             "height": int(self.height),
             "tx_hash": self.tx_hash,
@@ -143,6 +149,7 @@ class JobReceiptV1:
 
 
 # --- Builders & validators ---------------------------------------------------
+
 
 def compute_payload_hash(payload: Any) -> bytes:
     """
@@ -246,8 +253,11 @@ def validate_receipt(
         height=receipt.height,
         tx_hash=receipt.tx_hash,
         caller=receipt.caller,
-        payload=_canon_loads(_canon_dumps(expect_payload)) if expect_payload is not None else None
-        or {},  # when unknown, check only when payload provided
+        payload=(
+            _canon_loads(_canon_dumps(expect_payload))
+            if expect_payload is not None
+            else None or {}
+        ),  # when unknown, check only when payload provided
     )
     # If payload was provided, we can compare; otherwise skip this strict check.
     if expect_payload is not None and bytes.fromhex(task_id_hex) != receipt.task_id:

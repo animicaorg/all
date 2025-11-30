@@ -26,11 +26,22 @@ COUNTER_MANIFEST = {
     "name": "Counter",
     "abi": {
         "functions": [
-            {"name": "inc", "inputs": [{"name": "amount", "type": "int"}], "outputs": []},
-            {"name": "get", "inputs": [], "outputs": [{"name": "value", "type": "int"}]},
+            {
+                "name": "inc",
+                "inputs": [{"name": "amount", "type": "int"}],
+                "outputs": [],
+            },
+            {
+                "name": "get",
+                "inputs": [],
+                "outputs": [{"name": "value", "type": "int"}],
+            },
         ],
         "events": [
-            {"name": "Inc", "inputs": [{"name": "by", "type": "int"}, {"name": "v", "type": "int"}]},
+            {
+                "name": "Inc",
+                "inputs": [{"name": "by", "type": "int"}, {"name": "v", "type": "int"}],
+            },
         ],
     },
 }
@@ -89,7 +100,11 @@ async def test_verify_returns_code_hash_if_available(aclient):
 
     data = resp.json()
     code_hash = _extract_code_hash(data)
-    assert isinstance(code_hash, str) and code_hash.startswith("0x") and len(code_hash) >= 10
+    assert (
+        isinstance(code_hash, str)
+        and code_hash.startswith("0x")
+        and len(code_hash) >= 10
+    )
 
     # Determinism check: verifying the same source again should yield the same hash.
     resp2 = await aclient.post("/verify", json=payload)
@@ -108,7 +123,9 @@ async def test_verify_expected_hash_match_flag_when_supported(aclient):
     base = {"source": COUNTER_SOURCE, "manifest": COUNTER_MANIFEST}
     first = await aclient.post("/verify", json=base)
     if first.status_code != 200:
-        pytest.skip(f"/verify not available for expected-hash check (status {first.status_code})")
+        pytest.skip(
+            f"/verify not available for expected-hash check (status {first.status_code})"
+        )
     code_hash = _extract_code_hash(first.json())
     assert code_hash, "Service returned 200 but no code hash was found in payload"
 
@@ -127,9 +144,13 @@ async def test_verify_expected_hash_match_flag_when_supported(aclient):
         )
         if matched is None:
             # Implementation doesn't expose a match flag; accept and stop.
-            pytest.skip("Verifier does not expose a 'matched' flag; only returns code hash.")
+            pytest.skip(
+                "Verifier does not expose a 'matched' flag; only returns code hash."
+            )
         assert matched is True, f"Expected match with {expected_key} but got: {data}"
         break
     else:
         # None of the expected-* keys were accepted with 200; skip.
-        pytest.skip("Verifier did not accept any expected-code-hash hint in this deployment.")
+        pytest.skip(
+            "Verifier did not accept any expected-code-hash hint in this deployment."
+        )

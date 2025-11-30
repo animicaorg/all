@@ -57,16 +57,13 @@ from __future__ import annotations
 
 from typing import Final, Tuple
 
-from stdlib import abi, events, storage, hash as _hash  # type: ignore
+from stdlib import abi, events
+from stdlib import hash as _hash  # type: ignore
+from stdlib import storage
 
 # Import the validated, low-level capability shims (enforce lengths, emit base events)
-from . import (
-    ai_enqueue,
-    read_result,
-    MAX_MODEL_LEN,
-    MAX_PROMPT_LEN,
-    MIN_PROMPT_LEN,
-)
+from . import (MAX_MODEL_LEN, MAX_PROMPT_LEN, MIN_PROMPT_LEN, ai_enqueue,
+               read_result)
 
 # -----------------------------------------------------------------------------
 # Bounded constants for tag usage
@@ -78,6 +75,7 @@ MAX_TAG_LEN: Final[int] = 32  # small, indexer-friendly label
 # -----------------------------------------------------------------------------
 # Internal helpers
 # -----------------------------------------------------------------------------
+
 
 def _ensure_bytes(x: object) -> bytes:
     if not isinstance(x, (bytes, bytearray)):
@@ -105,6 +103,7 @@ def _key_for(tag: bytes) -> bytes:
 # -----------------------------------------------------------------------------
 # Public API
 # -----------------------------------------------------------------------------
+
 
 def request(model: bytes, prompt: bytes) -> bytes:
     """

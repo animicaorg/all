@@ -28,18 +28,23 @@ API
 
 from __future__ import annotations
 
-from typing import Iterable, IO, Optional, Tuple, Union, Any, Dict
 import os
+from typing import IO, Any, Dict, Iterable, Optional, Tuple, Union
 
-from .types import Commitment as CommitmentT, BlobMeta
+from ..constants import \
+    MAX_BLOB_BYTES  # soft guard; precise enforcement upstream
 from ..nmt.namespace import validate_namespace_id
-from ..constants import MAX_BLOB_BYTES  # soft guard; precise enforcement upstream
+from .types import BlobMeta
+from .types import Commitment as CommitmentT
 
 # --- Types for sources ---
-Source = Union[bytes, bytearray, memoryview, str, os.PathLike, IO[bytes], Iterable[bytes]]
+Source = Union[
+    bytes, bytearray, memoryview, str, os.PathLike, IO[bytes], Iterable[bytes]
+]
 
 
 # --- internal: dynamic imports with graceful fallbacks ---------------------- #
+
 
 def _nmt_compute_root():
     """
@@ -49,21 +54,26 @@ def _nmt_compute_root():
     # Preferred name
     try:  # pragma: no cover - import lattice
         from ..nmt.commit import compute_da_root as fn  # type: ignore
+
         return fn
     except Exception:
         pass
     # Alternate name (if defined that way)
     try:  # pragma: no cover
         from ..nmt.commit import compute_nmt_root as fn  # type: ignore
+
         return fn
     except Exception:
         pass
     # Last-resort generic
     try:  # pragma: no cover
         from ..nmt.commit import compute_root as fn  # type: ignore
+
         return fn
     except Exception as e:  # pragma: no cover
-        raise ImportError("No suitable NMT commit function found in da.nmt.commit") from e
+        raise ImportError(
+            "No suitable NMT commit function found in da.nmt.commit"
+        ) from e
 
 
 def _erasure_encode_to_leaves():
@@ -74,25 +84,33 @@ def _erasure_encode_to_leaves():
     """
     # Common name used by this repo
     try:  # pragma: no cover
-        from ..erasure.encoder import encode_blob_to_leaves as fn  # type: ignore
+        from ..erasure.encoder import \
+            encode_blob_to_leaves as fn  # type: ignore
+
         return fn
     except Exception:
         pass
     # Alternate name
     try:  # pragma: no cover
-        from ..erasure.encoder import encode_to_namespaced_leaves as fn  # type: ignore
+        from ..erasure.encoder import \
+            encode_to_namespaced_leaves as fn  # type: ignore
+
         return fn
     except Exception:
         pass
     # Fallback to a more generic entrypoint that returns (leaves, meta)
     try:  # pragma: no cover
         from ..erasure.encoder import encode as fn  # type: ignore
+
         return fn
     except Exception as e:  # pragma: no cover
-        raise ImportError("No suitable erasure encoder found in da.erasure.encoder") from e
+        raise ImportError(
+            "No suitable erasure encoder found in da.erasure.encoder"
+        ) from e
 
 
 # --- core ------------------------------------------------------------------ #
+
 
 def _compute_size_hint(source: Source) -> Optional[int]:
     """Best-effort size hint without consuming the stream."""
@@ -107,22 +125,32 @@ def _compute_size_hint(source: Source) -> Optional[int]:
     return None
 
 
-def _meta_from_dict(d: Dict[str, Any], *, namespace: int, mime: Optional[str]) -> BlobMeta:
+def _meta_from_dict(
+    d: Dict[str, Any], *, namespace: int, mime: Optional[str]
+) -> BlobMeta:
     return BlobMeta(
         namespace=int(namespace),
         size_bytes=int(d.get("size_bytes", d.get("sizeBytes", 0))),
         mime=mime,
-        data_shards=(None if d.get("data_shards") is None else int(d["data_shards"]))
-        if "data_shards" in d
-        else (None if d.get("dataShards") is None else int(d["dataShards"])),
-        total_shards=(None if d.get("total_shards") is None else int(d["total_shards"]))
-        if "total_shards" in d
-        else (None if d.get("totalShards") is None else int(d["totalShards"])),
-        share_bytes=(None if d.get("share_bytes") is None else int(d["share_bytes"]))
-        if "share_bytes" in d
-        else (None if d.get("shareBytes") is None else int(d["shareBytes"]))
-        if "shareBytes" in d
-        else None,
+        data_shards=(
+            (None if d.get("data_shards") is None else int(d["data_shards"]))
+            if "data_shards" in d
+            else (None if d.get("dataShards") is None else int(d["dataShards"]))
+        ),
+        total_shards=(
+            (None if d.get("total_shards") is None else int(d["total_shards"]))
+            if "total_shards" in d
+            else (None if d.get("totalShards") is None else int(d["totalShards"]))
+        ),
+        share_bytes=(
+            (None if d.get("share_bytes") is None else int(d["share_bytes"]))
+            if "share_bytes" in d
+            else (
+                (None if d.get("shareBytes") is None else int(d["shareBytes"]))
+                if "shareBytes" in d
+                else None
+            )
+        ),
     )
 
 
@@ -219,13 +247,18 @@ def commit(
 
     # Final soft size check if we now have an exact size
     if meta.size_bytes and meta.size_bytes > MAX_BLOB_BYTES:
-        raise ValueError(f"blob size {meta.size_bytes} > MAX_BLOB_BYTES={MAX_BLOB_BYTES}")
+        raise ValueError(
+            f"blob size {meta.size_bytes} > MAX_BLOB_BYTES={MAX_BLOB_BYTES}"
+        )
 
-    commitment = CommitmentT(namespace=namespace, root=root_bytes, size_bytes=meta.size_bytes)
+    commitment = CommitmentT(
+        namespace=namespace, root=root_bytes, size_bytes=meta.size_bytes
+    )
     return commitment, meta
 
 
 # --- convenience wrappers --------------------------------------------------- #
+
 
 def commit_bytes(
     data: Union[bytes, bytearray, memoryview],

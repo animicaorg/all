@@ -1,13 +1,13 @@
+import hashlib
 import json
 import os
-import hashlib
 from pathlib import Path
-from typing import List, Tuple, Dict, Any
+from typing import Any, Dict, List, Tuple
 
 import pytest
 
-from zk.tests import fixture_path, configure_test_logging
 from zk.integration.types import canonical_json_bytes, compute_vk_hash
+from zk.tests import configure_test_logging, fixture_path
 
 configure_test_logging()
 
@@ -81,14 +81,19 @@ def _env_hash(envelope: Dict[str, Any]) -> str:
     vk_hash = None
     if envelope.get("vk") is not None:
         vk_hash = compute_vk_hash(
-            envelope["kind"], envelope["vk_format"], envelope["vk"], envelope.get("fri_params")
+            envelope["kind"],
+            envelope["vk_format"],
+            envelope["vk"],
+            envelope.get("fri_params"),
         )
     proj = {
         "kind": envelope["kind"],
         "public_inputs": envelope["public_inputs"],
         "vk_ref": envelope.get("vk_ref"),
         "vk_hash": vk_hash,
-        "proof_hash": hashlib.sha3_256(canonical_json_bytes(envelope["proof"])).hexdigest(),
+        "proof_hash": hashlib.sha3_256(
+            canonical_json_bytes(envelope["proof"])
+        ).hexdigest(),
     }
     return hashlib.sha3_256(canonical_json_bytes(proj)).hexdigest()
 
@@ -125,14 +130,18 @@ def test_snarkjs_envelope_roundtrip_stable_hashes():
     h_vkjson_2 = hashlib.sha3_256(canonical_json_bytes(env2["vk"])).hexdigest()
     assert h_vkjson_2 == h_vkjson_1, "vk canonical hash changed after round-trip"
 
-    vk_hash_2 = compute_vk_hash(env2["kind"], env2["vk_format"], env2["vk"], env2.get("fri_params"))
+    vk_hash_2 = compute_vk_hash(
+        env2["kind"], env2["vk_format"], env2["vk"], env2.get("fri_params")
+    )
     assert vk_hash_2 == vk_hash_1, "computed vk_hash changed after round-trip"
 
     h_env_2 = hashlib.sha3_256(canonical_json_bytes(env2)).hexdigest()
     assert h_env_2 == h_env_1, "envelope canonical hash changed after round-trip"
 
     proj_hash_2 = _env_hash(env2)
-    assert proj_hash_2 == proj_hash_1, "projection (audit) hash changed after round-trip"
+    assert (
+        proj_hash_2 == proj_hash_1
+    ), "projection (audit) hash changed after round-trip"
 
 
 @pytest.mark.slow
@@ -161,10 +170,12 @@ def test_snarkjs_envelope_snippet_identity_shapes():
     snarkjs_proof = envelope["proof"]
     snarkjs_vk = envelope["vk"]
 
-    assert hashlib.sha3_256(canonical_json_bytes(snarkjs_proof)).hexdigest() == \
-           hashlib.sha3_256(canonical_json_bytes(proof)).hexdigest(), \
-           "extracted proof differs canonically from original"
+    assert (
+        hashlib.sha3_256(canonical_json_bytes(snarkjs_proof)).hexdigest()
+        == hashlib.sha3_256(canonical_json_bytes(proof)).hexdigest()
+    ), "extracted proof differs canonically from original"
 
-    assert hashlib.sha3_256(canonical_json_bytes(snarkjs_vk)).hexdigest() == \
-           hashlib.sha3_256(canonical_json_bytes(vk)).hexdigest(), \
-           "extracted vk differs canonically from original"
+    assert (
+        hashlib.sha3_256(canonical_json_bytes(snarkjs_vk)).hexdigest()
+        == hashlib.sha3_256(canonical_json_bytes(vk)).hexdigest()
+    ), "extracted vk differs canonically from original"

@@ -11,6 +11,7 @@ These utilities are imported by individual test modules, e.g.:
 They intentionally avoid pytest-specific fixtures so they can be used from
 both pytest and ad-hoc scripts.
 """
+
 from __future__ import annotations
 
 import asyncio as _asyncio
@@ -24,6 +25,7 @@ from typing import AsyncIterator, Awaitable, Callable, Iterable, Optional
 # Try to speed up asyncio if uvloop is present (harmless if not).
 try:  # pragma: no cover
     import uvloop  # type: ignore
+
     uvloop.install()
 except Exception:
     pass
@@ -62,7 +64,7 @@ def quic_multiaddr(port: int) -> str:
 class BootCfg:
     chain_id: int = 1337
     listen_addrs: list[str] = None  # type: ignore[assignment]
-    seeds: list[str] = None         # type: ignore[assignment]
+    seeds: list[str] = None  # type: ignore[assignment]
     enable_quic: bool = False
     enable_ws: bool = False
     nat: bool = False

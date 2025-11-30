@@ -35,6 +35,7 @@ API
 
 Errors raise `NMTCodecError`.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -47,14 +48,14 @@ except Exception:  # pragma: no cover
 
 _NS_BYTES = (NAMESPACE_BITS + 7) // 8
 
-from .namespace import NamespaceId
-from ..utils.bytes import write_uvarint, read_uvarint
+from ..utils.bytes import read_uvarint, write_uvarint
 from ..utils.hash import sha3_256
-
+from .namespace import NamespaceId
 
 # --------------------------------------------------------------------------- #
 # Errors
 # --------------------------------------------------------------------------- #
+
 
 class NMTCodecError(ValueError):
     """Raised on malformed or inconsistent leaf encodings."""
@@ -64,7 +65,10 @@ class NMTCodecError(ValueError):
 # Encode / Decode
 # --------------------------------------------------------------------------- #
 
-def encode_leaf(ns: int | NamespaceId, data: bytes, ns_bytes: int | None = None) -> bytes:
+
+def encode_leaf(
+    ns: int | NamespaceId, data: bytes, ns_bytes: int | None = None
+) -> bytes:
     """
     Serialize one leaf as: ``ns_be || uvarint(len) || data``.
 
@@ -79,7 +83,11 @@ def encode_leaf(ns: int | NamespaceId, data: bytes, ns_bytes: int | None = None)
     if width <= 0:
         raise NMTCodecError("ns_bytes must be positive")
     ns_be = int(ns_id).to_bytes(width, "big")
-    return ns_be + write_uvarint(len(data)) + (bytes(data) if not isinstance(data, bytes) else data)
+    return (
+        ns_be
+        + write_uvarint(len(data))
+        + (bytes(data) if not isinstance(data, bytes) else data)
+    )
 
 
 def decode_one(buf: bytes, *, offset: int = 0) -> Tuple[NamespaceId, bytes, int]:
@@ -138,6 +146,7 @@ def iter_leaves(buf: bytes) -> Iterator[Tuple[NamespaceId, bytes]]:
 # --------------------------------------------------------------------------- #
 # Hash helper
 # --------------------------------------------------------------------------- #
+
 
 def payload_hash_from_encoded(encoded_leaf: bytes) -> bytes:
     """

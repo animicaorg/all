@@ -48,6 +48,7 @@ app = typer.Typer(
 
 # -------------------- utils --------------------
 
+
 def _to_dict(x: Any) -> Dict[str, Any]:
     if x is None:
         return {}
@@ -111,6 +112,7 @@ def _fmt_amount(x: Optional[float]) -> str:
 
 # -------------------- dynamic imports --------------------
 
+
 def _import_module(name: str) -> Optional[Any]:
     try:
         mod = __import__(name, fromlist=["*"])
@@ -168,6 +170,7 @@ def _events_types_api() -> Optional[Any]:
 
 # -------------------- reason codes & defaults --------------------
 
+
 def _known_reason_map() -> Dict[str, Any]:
     """
     Collect known reason codes from penalties module or events types.
@@ -203,8 +206,16 @@ def _known_reason_map() -> Dict[str, Any]:
                 mapping[str(k).lower()] = v
     # If empty, seed with common names mapped to strings
     if not mapping:
-        for name in ("traps_miss", "qos_breach", "latency_breach", "availability_downtime", "no_attestation",
-                     "proof_invalid", "job_expired", "lease_lost"):
+        for name in (
+            "traps_miss",
+            "qos_breach",
+            "latency_breach",
+            "availability_downtime",
+            "no_attestation",
+            "proof_invalid",
+            "job_expired",
+            "lease_lost",
+        ):
             mapping[name] = name
     return mapping
 
@@ -273,6 +284,7 @@ def _default_fraction_for_reason(reason: Any) -> Optional[float]:
 
 # -------------------- stake & amounts --------------------
 
+
 def _get_stake_amount(provider_id: str) -> Optional[float]:
     """
     Query current stake for provider from staking or registry.
@@ -302,7 +314,9 @@ def _get_stake_amount(provider_id: str) -> Optional[float]:
     return None
 
 
-def _resolve_amount(amount: Optional[float], percent: Optional[float], reason: Any, provider_id: str) -> Tuple[Optional[float], Optional[float]]:
+def _resolve_amount(
+    amount: Optional[float], percent: Optional[float], reason: Any, provider_id: str
+) -> Tuple[Optional[float], Optional[float]]:
     """
     Return (amount, fraction) where amount is absolute units, fraction is [0,1].
     Preference: explicit amount > explicit percent > default fraction (if stake known).
@@ -320,9 +334,17 @@ def _resolve_amount(amount: Optional[float], percent: Optional[float], reason: A
 
 # -------------------- apply slashing --------------------
 
-def _build_event(provider_id: str, reason: Any, amount: Optional[float], fraction: Optional[float],
-                 jail: bool, cooldown: Optional[int], evidence: Optional[Dict[str, Any]],
-                 note: Optional[str]) -> Any:
+
+def _build_event(
+    provider_id: str,
+    reason: Any,
+    amount: Optional[float],
+    fraction: Optional[float],
+    jail: bool,
+    cooldown: Optional[int],
+    evidence: Optional[Dict[str, Any]],
+    note: Optional[str],
+) -> Any:
     # Try to construct a proper SlashEvent dataclass if available.
     ev_mod = _events_types_api()
     if ev_mod and hasattr(ev_mod, "SlashEvent"):
@@ -355,23 +377,75 @@ def _build_event(provider_id: str, reason: Any, amount: Optional[float], fractio
     }
 
 
-def _apply_with_engine(engine: Any, event: Any, provider_id: str, reason: Any,
-                       amount: Optional[float], fraction: Optional[float],
-                       jail: bool, cooldown: Optional[int], evidence: Optional[Dict[str, Any]],
-                       note: Optional[str]) -> Optional[Dict[str, Any]]:
+def _apply_with_engine(
+    engine: Any,
+    event: Any,
+    provider_id: str,
+    reason: Any,
+    amount: Optional[float],
+    fraction: Optional[float],
+    jail: bool,
+    cooldown: Optional[int],
+    evidence: Optional[Dict[str, Any]],
+    note: Optional[str],
+) -> Optional[Dict[str, Any]]:
     """
     Try a sequence of method shapes on the engine.
     Return normalized result dict or None.
     """
     candidates = [
-        ("apply_slash", dict(provider_id=provider_id, reason=reason, amount=amount, fraction=fraction,
-                             jail=jail, cooldown_s=cooldown, evidence=evidence, note=note)),
-        ("apply", dict(provider_id=provider_id, reason=reason, amount=amount, fraction=fraction,
-                       jail=jail, cooldown_s=cooldown, evidence=evidence, note=note)),
-        ("slash", dict(provider_id=provider_id, reason=reason, amount=amount, fraction=fraction,
-                       jail=jail, cooldown_s=cooldown, evidence=evidence, note=note)),
-        ("penalize", dict(provider_id=provider_id, reason=reason, amount=amount, fraction=fraction,
-                          jail=jail, cooldown_s=cooldown, evidence=evidence, note=note)),
+        (
+            "apply_slash",
+            dict(
+                provider_id=provider_id,
+                reason=reason,
+                amount=amount,
+                fraction=fraction,
+                jail=jail,
+                cooldown_s=cooldown,
+                evidence=evidence,
+                note=note,
+            ),
+        ),
+        (
+            "apply",
+            dict(
+                provider_id=provider_id,
+                reason=reason,
+                amount=amount,
+                fraction=fraction,
+                jail=jail,
+                cooldown_s=cooldown,
+                evidence=evidence,
+                note=note,
+            ),
+        ),
+        (
+            "slash",
+            dict(
+                provider_id=provider_id,
+                reason=reason,
+                amount=amount,
+                fraction=fraction,
+                jail=jail,
+                cooldown_s=cooldown,
+                evidence=evidence,
+                note=note,
+            ),
+        ),
+        (
+            "penalize",
+            dict(
+                provider_id=provider_id,
+                reason=reason,
+                amount=amount,
+                fraction=fraction,
+                jail=jail,
+                cooldown_s=cooldown,
+                evidence=evidence,
+                note=note,
+            ),
+        ),
         ("emit", dict(event=event)),
         ("emit_slash", dict(event=event)),
     ]
@@ -386,13 +460,22 @@ def _apply_with_engine(engine: Any, event: Any, provider_id: str, reason: Any,
     return None
 
 
-def _apply_with_primitives(provider_id: str, reason: Any, amount: Optional[float], fraction: Optional[float],
-                           jail: bool, cooldown: Optional[int]) -> Optional[Dict[str, Any]]:
+def _apply_with_primitives(
+    provider_id: str,
+    reason: Any,
+    amount: Optional[float],
+    fraction: Optional[float],
+    jail: bool,
+    cooldown: Optional[int],
+) -> Optional[Dict[str, Any]]:
     """
     Primitive fallback: reduce stake directly using staking API;
     apply jail/cooldown via penalties if available.
     """
-    result: Dict[str, Any] = {"provider_id": provider_id, "reason": str(getattr(reason, "name", reason))}
+    result: Dict[str, Any] = {
+        "provider_id": provider_id,
+        "reason": str(getattr(reason, "name", reason)),
+    }
     st = _staking_api()
     if fraction is not None:
         stake = _get_stake_amount(provider_id)
@@ -426,10 +509,19 @@ def _apply_with_primitives(provider_id: str, reason: Any, amount: Optional[float
     return result
 
 
-def _apply_slash(db: Optional[str], provider_id: str, reason_in: str,
-                 amount: Optional[float], percent: Optional[float], points: Optional[int],
-                 jail: bool, cooldown: Optional[int], evidence: Optional[str],
-                 note: Optional[str], dry_run: bool) -> Dict[str, Any]:
+def _apply_slash(
+    db: Optional[str],
+    provider_id: str,
+    reason_in: str,
+    amount: Optional[float],
+    percent: Optional[float],
+    points: Optional[int],
+    jail: bool,
+    cooldown: Optional[int],
+    evidence: Optional[str],
+    note: Optional[str],
+    dry_run: bool,
+) -> Dict[str, Any]:
     reason = _resolve_reason(reason_in)
     evid_obj = _read_evidence_arg(evidence)
     amt, frac = _resolve_amount(amount, percent, reason, provider_id)
@@ -460,7 +552,18 @@ def _apply_slash(db: Optional[str], provider_id: str, reason_in: str,
     # Try engine first
     res = None
     if engine:
-        res = _apply_with_engine(engine, event, provider_id, reason, amt, frac, jail, cooldown, evid_obj, note)
+        res = _apply_with_engine(
+            engine,
+            event,
+            provider_id,
+            reason,
+            amt,
+            frac,
+            jail,
+            cooldown,
+            evid_obj,
+            note,
+        )
 
     # Fallback to primitives
     if res is None:
@@ -476,19 +579,34 @@ def _apply_slash(db: Optional[str], provider_id: str, reason_in: str,
 # -------------------- CLI commands --------------------
 
 COMMON_OPTIONS = [
-    typer.Option(None, "--db", help="Optional DB URI for engine/backends (e.g., sqlite:///aicf_dev.db)."),
+    typer.Option(
+        None,
+        "--db",
+        help="Optional DB URI for engine/backends (e.g., sqlite:///aicf_dev.db).",
+    ),
     typer.Option(..., "--provider", help="Provider ID to slash."),
-    typer.Option(None, "--reason", help="Reason code (e.g., traps_miss, qos_breach, latency_breach, availability_downtime, no_attestation)."),
+    typer.Option(
+        None,
+        "--reason",
+        help="Reason code (e.g., traps_miss, qos_breach, latency_breach, availability_downtime, no_attestation).",
+    ),
     typer.Option(None, "--amount", help="Absolute amount to slash (units)."),
-    typer.Option(None, "--percent", help="Percent of current stake to slash (e.g., 1.5 for 1.5%)."),
+    typer.Option(
+        None,
+        "--percent",
+        help="Percent of current stake to slash (e.g., 1.5 for 1.5%).",
+    ),
     typer.Option(None, "--points", help="Penalty points (if supported by backend)."),
     typer.Option(False, "--jail/--no-jail", help="Jail provider (if supported)."),
     typer.Option(None, "--cooldown", help="Cooldown in seconds."),
     typer.Option(None, "--evidence", help="Evidence JSON or @file.json."),
     typer.Option(None, "--note", help="Free-form note to attach."),
-    typer.Option(False, "--dry-run", help="Do not apply; show computed parameters only."),
+    typer.Option(
+        False, "--dry-run", help="Do not apply; show computed parameters only."
+    ),
     typer.Option(False, "--json", help="Output result as JSON."),
 ]
+
 
 def _apply_command(
     db: Optional[str],
@@ -505,7 +623,9 @@ def _apply_command(
     json_out: bool,
 ) -> None:
     if not reason:
-        typer.secho("Missing --reason. Use `list-reasons` to see options.", fg=typer.colors.RED)
+        typer.secho(
+            "Missing --reason. Use `list-reasons` to see options.", fg=typer.colors.RED
+        )
         raise typer.Exit(2)
 
     res = _apply_slash(
@@ -526,7 +646,18 @@ def _apply_command(
         return
 
     typer.secho("Slash applied (or dry-run):", bold=True)
-    for k in ("provider_id", "reason", "requested_amount", "requested_fraction", "points", "jail", "cooldown_s", "note", "implied_amount", "slashed_amount"):
+    for k in (
+        "provider_id",
+        "reason",
+        "requested_amount",
+        "requested_fraction",
+        "points",
+        "jail",
+        "cooldown_s",
+        "note",
+        "implied_amount",
+        "slashed_amount",
+    ):
         if k in res and res[k] is not None:
             v = res[k]
             if k in ("requested_amount", "implied_amount", "slashed_amount"):
@@ -554,30 +685,66 @@ def cmd_apply(
     """
     Apply a slash with explicit reason/amount/percent options.
     """
-    _apply_command(db, provider, reason, amount, percent, points, jail, cooldown, evidence, note, dry_run, json_out)
+    _apply_command(
+        db,
+        provider,
+        reason,
+        amount,
+        percent,
+        points,
+        jail,
+        cooldown,
+        evidence,
+        note,
+        dry_run,
+        json_out,
+    )
 
 
 @app.command("traps-miss")
 def cmd_traps_miss(
     provider: str = typer.Option(..., "--provider", help="Provider ID to slash."),
     db: Optional[str] = typer.Option(None, "--db", help="Optional DB URI."),
-    percent: Optional[float] = typer.Option(1.0, "--percent", help="Default: 1.0%% of stake."),
-    amount: Optional[float] = typer.Option(None, "--amount", help="Absolute amount to slash."),
+    percent: Optional[float] = typer.Option(
+        1.0, "--percent", help="Default: 1.0%% of stake."
+    ),
+    amount: Optional[float] = typer.Option(
+        None, "--amount", help="Absolute amount to slash."
+    ),
     jail: bool = typer.Option(False, "--jail/--no-jail"),
-    cooldown: Optional[int] = typer.Option(None, "--cooldown", help="Cooldown in seconds."),
-    evidence: Optional[str] = typer.Option(None, "--evidence", help="Evidence JSON or @file."),
+    cooldown: Optional[int] = typer.Option(
+        None, "--cooldown", help="Cooldown in seconds."
+    ),
+    evidence: Optional[str] = typer.Option(
+        None, "--evidence", help="Evidence JSON or @file."
+    ),
     note: Optional[str] = typer.Option("Simulated traps miss", "--note"),
     dry_run: bool = typer.Option(False, "--dry-run"),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
-    _apply_command(db, provider, "traps_miss", amount, percent, None, jail, cooldown, evidence, note, dry_run, json_out)
+    _apply_command(
+        db,
+        provider,
+        "traps_miss",
+        amount,
+        percent,
+        None,
+        jail,
+        cooldown,
+        evidence,
+        note,
+        dry_run,
+        json_out,
+    )
 
 
 @app.command("qos-breach")
 def cmd_qos_breach(
     provider: str = typer.Option(..., "--provider"),
     db: Optional[str] = typer.Option(None, "--db"),
-    percent: Optional[float] = typer.Option(0.5, "--percent", help="Default: 0.5%% of stake."),
+    percent: Optional[float] = typer.Option(
+        0.5, "--percent", help="Default: 0.5%% of stake."
+    ),
     amount: Optional[float] = typer.Option(None, "--amount"),
     jail: bool = typer.Option(False, "--jail/--no-jail"),
     cooldown: Optional[int] = typer.Option(None, "--cooldown"),
@@ -586,14 +753,29 @@ def cmd_qos_breach(
     dry_run: bool = typer.Option(False, "--dry-run"),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
-    _apply_command(db, provider, "qos_breach", amount, percent, None, jail, cooldown, evidence, note, dry_run, json_out)
+    _apply_command(
+        db,
+        provider,
+        "qos_breach",
+        amount,
+        percent,
+        None,
+        jail,
+        cooldown,
+        evidence,
+        note,
+        dry_run,
+        json_out,
+    )
 
 
 @app.command("latency")
 def cmd_latency_breach(
     provider: str = typer.Option(..., "--provider"),
     db: Optional[str] = typer.Option(None, "--db"),
-    percent: Optional[float] = typer.Option(0.25, "--percent", help="Default: 0.25%% of stake."),
+    percent: Optional[float] = typer.Option(
+        0.25, "--percent", help="Default: 0.25%% of stake."
+    ),
     amount: Optional[float] = typer.Option(None, "--amount"),
     jail: bool = typer.Option(False, "--jail/--no-jail"),
     cooldown: Optional[int] = typer.Option(None, "--cooldown"),
@@ -602,30 +784,62 @@ def cmd_latency_breach(
     dry_run: bool = typer.Option(False, "--dry-run"),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
-    _apply_command(db, provider, "latency_breach", amount, percent, None, jail, cooldown, evidence, note, dry_run, json_out)
+    _apply_command(
+        db,
+        provider,
+        "latency_breach",
+        amount,
+        percent,
+        None,
+        jail,
+        cooldown,
+        evidence,
+        note,
+        dry_run,
+        json_out,
+    )
 
 
 @app.command("no-attestation")
 def cmd_no_attestation(
     provider: str = typer.Option(..., "--provider"),
     db: Optional[str] = typer.Option(None, "--db"),
-    percent: Optional[float] = typer.Option(2.0, "--percent", help="Default: 2.0%% of stake."),
+    percent: Optional[float] = typer.Option(
+        2.0, "--percent", help="Default: 2.0%% of stake."
+    ),
     amount: Optional[float] = typer.Option(None, "--amount"),
     jail: bool = typer.Option(True, "--jail/--no-jail", help="Default: jail"),
     cooldown: Optional[int] = typer.Option(86400, "--cooldown", help="Default: 1 day."),
     evidence: Optional[str] = typer.Option(None, "--evidence"),
-    note: Optional[str] = typer.Option("Simulated missing/invalid attestation", "--note"),
+    note: Optional[str] = typer.Option(
+        "Simulated missing/invalid attestation", "--note"
+    ),
     dry_run: bool = typer.Option(False, "--dry-run"),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
-    _apply_command(db, provider, "no_attestation", amount, percent, None, jail, cooldown, evidence, note, dry_run, json_out)
+    _apply_command(
+        db,
+        provider,
+        "no_attestation",
+        amount,
+        percent,
+        None,
+        jail,
+        cooldown,
+        evidence,
+        note,
+        dry_run,
+        json_out,
+    )
 
 
 @app.command("downtime")
 def cmd_availability_downtime(
     provider: str = typer.Option(..., "--provider"),
     db: Optional[str] = typer.Option(None, "--db"),
-    percent: Optional[float] = typer.Option(0.75, "--percent", help="Default: 0.75%% of stake."),
+    percent: Optional[float] = typer.Option(
+        0.75, "--percent", help="Default: 0.75%% of stake."
+    ),
     amount: Optional[float] = typer.Option(None, "--amount"),
     jail: bool = typer.Option(False, "--jail/--no-jail"),
     cooldown: Optional[int] = typer.Option(None, "--cooldown"),
@@ -634,11 +848,26 @@ def cmd_availability_downtime(
     dry_run: bool = typer.Option(False, "--dry-run"),
     json_out: bool = typer.Option(False, "--json"),
 ) -> None:
-    _apply_command(db, provider, "availability_downtime", amount, percent, None, jail, cooldown, evidence, note, dry_run, json_out)
+    _apply_command(
+        db,
+        provider,
+        "availability_downtime",
+        amount,
+        percent,
+        None,
+        jail,
+        cooldown,
+        evidence,
+        note,
+        dry_run,
+        json_out,
+    )
 
 
 @app.command("list-reasons")
-def cmd_list_reasons(json_out: bool = typer.Option(False, "--json", help="Output JSON.")) -> None:
+def cmd_list_reasons(
+    json_out: bool = typer.Option(False, "--json", help="Output JSON.")
+) -> None:
     m = _known_reason_map()
     rows: List[Dict[str, Any]] = []
     for k, v in sorted(m.items()):

@@ -42,7 +42,13 @@ def _http_timeout() -> float:
         return 5.0
 
 
-def _rpc_call(rpc_url: str, method: str, params: Optional[Sequence[Any] | Dict[str, Any]] = None, *, req_id: int = 1) -> Any:
+def _rpc_call(
+    rpc_url: str,
+    method: str,
+    params: Optional[Sequence[Any] | Dict[str, Any]] = None,
+    *,
+    req_id: int = 1,
+) -> Any:
     if params is None:
         params = []
     payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
@@ -60,7 +66,11 @@ def _rpc_call(rpc_url: str, method: str, params: Optional[Sequence[Any] | Dict[s
     return msg["result"]
 
 
-def _rpc_try(rpc_url: str, methods: Sequence[str], params: Optional[Sequence[Any] | Dict[str, Any]] = None) -> Tuple[str, Any]:
+def _rpc_try(
+    rpc_url: str,
+    methods: Sequence[str],
+    params: Optional[Sequence[Any] | Dict[str, Any]] = None,
+) -> Tuple[str, Any]:
     last_exc: Optional[Exception] = None
     for i, m in enumerate(methods, start=1):
         try:
@@ -141,7 +151,9 @@ async def _ws_connect():
 
         return send_json, recv_json, close
     except Exception:
-        pytest.skip("No suitable WebSocket client library found (install 'websockets' or 'websocket-client').")
+        pytest.skip(
+            "No suitable WebSocket client library found (install 'websockets' or 'websocket-client')."
+        )
         raise  # unreachable
 
 
@@ -151,7 +163,12 @@ async def _ws_subscribe(send_json, recv_json, topic: str) -> None:
     """
     candidates = [
         {"jsonrpc": "2.0", "id": 1, "method": "subscribe", "params": [topic]},
-        {"jsonrpc": "2.0", "id": 1, "method": "ws.subscribe", "params": [{"topic": topic}]},
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "ws.subscribe",
+            "params": [{"topic": topic}],
+        },
         {"op": "subscribe", "topic": topic},
         {"type": "subscribe", "topic": topic},
         {"action": "subscribe", "topic": topic},
@@ -163,7 +180,9 @@ async def _ws_subscribe(send_json, recv_json, topic: str) -> None:
             try:
                 ack = await recv_json(timeout=0.3)
                 # Accept a variety of ack shapes; ignore if not recognizable
-                if isinstance(ack, dict) and any(k in ack for k in ("subscribed", "ok", "ack", "result")):
+                if isinstance(ack, dict) and any(
+                    k in ack for k in ("subscribed", "ok", "ack", "result")
+                ):
                     break
             except Exception:
                 break
@@ -311,7 +330,9 @@ async def test_ws_pending_txs_stream():
         # Try to stimulate with a tiny CBOR tx (best-effort).
         raw = _read_fixture_bytes()
         if raw:
-            _send_raw_tx(rpc_url, raw)  # ignore result; the goal is to create pending traffic
+            _send_raw_tx(
+                rpc_url, raw
+            )  # ignore result; the goal is to create pending traffic
 
         deadline = time.time() + wait_secs
         got_topic = False
@@ -319,7 +340,9 @@ async def test_ws_pending_txs_stream():
 
         while time.time() < deadline:
             try:
-                msg = await recv_json(timeout=min(2.0, max(0.2, deadline - time.time())))
+                msg = await recv_json(
+                    timeout=min(2.0, max(0.2, deadline - time.time()))
+                )
             except Exception:
                 continue
             if not isinstance(msg, dict):
@@ -332,7 +355,10 @@ async def test_ws_pending_txs_stream():
             payload = _extract_event_payload(msg)
             # Look for a tx-like shape
             if isinstance(payload, dict) and (
-                "hash" in payload or "txHash" in payload or "raw" in payload or "from" in payload
+                "hash" in payload
+                or "txHash" in payload
+                or "raw" in payload
+                or "from" in payload
             ):
                 got_tx = True
                 break
@@ -349,4 +375,3 @@ async def test_ws_pending_txs_stream():
 
     finally:
         await close()
-

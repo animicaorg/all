@@ -33,15 +33,16 @@ capabilities/cli/__init__.py.
 
 from __future__ import annotations
 
+import datetime as _dt
+import inspect
 import json
 import os
 import sys
-import inspect
-import datetime as _dt
 from dataclasses import asdict, is_dataclass
 from importlib import import_module
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import (Any, Dict, Iterable, List, Mapping, Optional, Sequence,
+                    Tuple)
 
 try:
     import typer  # type: ignore
@@ -58,6 +59,7 @@ COMMAND_NAME = "list-jobs"
 
 
 # --------------------------- helpers ---------------------------
+
 
 def _call_with_supported_kwargs(fn, **kwargs):
     """
@@ -76,7 +78,8 @@ def _call_with_supported_kwargs(fn, **kwargs):
     accepted = {
         k: v
         for k, v in kwargs.items()
-        if k in sig.parameters or any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values())
+        if k in sig.parameters
+        or any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values())
     }
     return fn(**accepted)
 
@@ -127,7 +130,9 @@ def _fmt_ts(ts: Any) -> str:
             if "T" in ts or "-" in ts or ":" in ts:
                 return ts
             try:
-                return _dt.datetime.fromtimestamp(float(ts)).isoformat(timespec="seconds")
+                return _dt.datetime.fromtimestamp(float(ts)).isoformat(
+                    timespec="seconds"
+                )
             except Exception:
                 return ts
         if isinstance(ts, _dt.datetime):
@@ -190,6 +195,7 @@ def _normalize_job(job: Dict[str, Any]) -> Dict[str, Any]:
             if isinstance(circ, str):
                 # maybe JSON
                 import json as _json
+
                 circ = _json.loads(circ)
             gates = circ.get("gates") if isinstance(circ, dict) else None
             if isinstance(gates, Sequence):
@@ -199,7 +205,11 @@ def _normalize_job(job: Dict[str, Any]) -> Dict[str, Any]:
 
     # height hint
     if "height" not in j:
-        j["height"] = j.get("block_height") or j.get("claimed_at_height") or j.get("resolved_height")
+        j["height"] = (
+            j.get("block_height")
+            or j.get("claimed_at_height")
+            or j.get("resolved_height")
+        )
 
     # error (if any)
     if "error" not in j:
@@ -246,6 +256,7 @@ def _emit(rows: List[Dict[str, Any]], as_json: bool, columns: Sequence[str]) -> 
 
 
 # --------------------------- backends ---------------------------
+
 
 def _list_via_queue(
     queue_db: Path,
@@ -333,7 +344,9 @@ def _list_via_aicf(
     if JobStore is not None and store_db is not None:
         store = JobStore(str(store_db))
     elif callable(open_store):
-        store = _call_with_supported_kwargs(open_store, path=str(store_db) if store_db else None)
+        store = _call_with_supported_kwargs(
+            open_store, path=str(store_db) if store_db else None
+        )
     else:
         # If neither exists, try a module-level getter
         get_store = getattr(mod, "get_store", None)
@@ -381,6 +394,7 @@ def _list_via_aicf(
 
 # --------------------------- CLI ---------------------------
 
+
 @app.command("list-jobs")
 def list_jobs_cmd(
     backend: Optional[str] = typer.Option(
@@ -409,7 +423,9 @@ def list_jobs_cmd(
     caller: Optional[str] = typer.Option(
         None, "--caller", help="Filter by caller address substring."
     ),
-    limit: int = typer.Option(50, "--limit", min=1, max=1000, help="Max rows to return."),
+    limit: int = typer.Option(
+        50, "--limit", min=1, max=1000, help="Max rows to return."
+    ),
     offset: int = typer.Option(0, "--offset", min=0, help="Offset for pagination."),
     sort: str = typer.Option(
         "created_at",
@@ -431,7 +447,9 @@ def list_jobs_cmd(
         "--wide",
         help="Show a wider set of columns.",
     ),
-    json_out: bool = typer.Option(False, "--json", help="Emit machine-readable JSON array."),
+    json_out: bool = typer.Option(
+        False, "--json", help="Emit machine-readable JSON array."
+    ),
 ) -> None:
     """
     List capability jobs and print their statuses.
@@ -441,9 +459,29 @@ def list_jobs_cmd(
         cols = [c.strip() for c in columns.split(",") if c.strip()]
     else:
         cols = (
-            ["id", "kind", "status", "priority", "created_at", "lease_expires", "caller"]
+            [
+                "id",
+                "kind",
+                "status",
+                "priority",
+                "created_at",
+                "lease_expires",
+                "caller",
+            ]
             if not wide
-            else ["id", "kind", "status", "priority", "created_at", "lease_expires", "caller", "model", "shots", "height", "error"]
+            else [
+                "id",
+                "kind",
+                "status",
+                "priority",
+                "created_at",
+                "lease_expires",
+                "caller",
+                "model",
+                "shots",
+                "height",
+                "error",
+            ]
         )
 
     rows: List[Dict[str, Any]] = []
@@ -451,14 +489,18 @@ def list_jobs_cmd(
 
     def try_queue() -> Optional[List[Dict[str, Any]]]:
         try:
-            return _list_via_queue(queue_db, kind, status, caller, limit, offset, sort, desc)
+            return _list_via_queue(
+                queue_db, kind, status, caller, limit, offset, sort, desc
+            )
         except Exception as e:
             errors.append(f"queue: {e}")
             return None
 
     def try_aicf() -> Optional[List[Dict[str, Any]]]:
         try:
-            return _list_via_aicf(aicf_db, kind, status, caller, limit, offset, sort, desc)
+            return _list_via_aicf(
+                aicf_db, kind, status, caller, limit, offset, sort, desc
+            )
         except Exception as e:
             errors.append(f"aicf: {e}")
             return None

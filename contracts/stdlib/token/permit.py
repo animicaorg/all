@@ -62,7 +62,8 @@ from __future__ import annotations
 
 from typing import Final
 
-from stdlib import events, abi, storage  # type: ignore
+from stdlib import abi, events, storage  # type: ignore
+
 try:  # hash helpers for domain separation
     from stdlib.hash import sha3_256  # type: ignore
 except Exception as _exc:  # pragma: no cover
@@ -71,13 +72,15 @@ except Exception as _exc:  # pragma: no cover
         abi.revert(b"PERMIT:SHA3_UNAVAILABLE")
         return b""  # unreachable
 
+
+from ..token import \
+    fungible as _tok  # type: ignore  # for address/amount guards if needed
 # Import the base token internals so we update allowance in the canonical layout
-from .fungible import (  # type: ignore
-    key_allowance,      # (owner, spender) -> storage key
-    _set_u256,          # storage setter for u256 (big-endian)
-    EVT_APPROVAL,       # event tag for Approval(owner, spender, value)
-)
-from ..token import fungible as _tok  # type: ignore  # for address/amount guards if needed
+from .fungible import \
+    EVT_APPROVAL  # event tag for Approval(owner, spender, value)
+from .fungible import _set_u256  # storage setter for u256 (big-endian)
+from .fungible import \
+    key_allowance  # type: ignore; (owner, spender) -> storage key
 
 # Optional contextual clock for deadline enforcement (epoch seconds)
 try:
@@ -85,14 +88,17 @@ try:
 except Exception:  # pragma: no cover
     _block_timestamp = None  # type: ignore
 
+
 # Optional PQ verifier syscall (host-provided)
 def _verify_unavailable(*_a: bytes) -> bool:  # pragma: no cover
     abi.revert(b"PERMIT:VERIFY_UNAVAILABLE")
     return False
 
+
 try:
     # Signature is validated against the **hash** of SignBytes (see _hash_sign_bytes)
-    from stdlib.abi import verify_pq_signature as _verify_pq_signature  # type: ignore
+    from stdlib.abi import \
+        verify_pq_signature as _verify_pq_signature  # type: ignore
 except Exception:  # pragma: no cover
     _verify_pq_signature = _verify_unavailable  # type: ignore
 
@@ -108,6 +114,7 @@ K_NONCE_PREFIX: Final[bytes] = b"tok:permit:nonce:"  # + owner
 # ------------------------------------------------------------------------------
 # Encoding helpers (deterministic, network byte order)
 # ------------------------------------------------------------------------------
+
 
 def _u64(n: int) -> bytes:
     if n < 0 or n > (1 << 64) - 1:
@@ -131,6 +138,7 @@ def _bytes32(b: bytes) -> bytes:
 # Address derivation (PQ)
 # ------------------------------------------------------------------------------
 
+
 def address_from_pubkey(alg_id: bytes, pubkey: bytes) -> bytes:
     """
     Deterministic address payload = alg_id || sha3_256(pubkey).
@@ -147,6 +155,7 @@ def address_from_pubkey(alg_id: bytes, pubkey: bytes) -> bytes:
 # ------------------------------------------------------------------------------
 # Nonces
 # ------------------------------------------------------------------------------
+
 
 def _k_nonce(owner: bytes) -> bytes:
     if not owner:
@@ -180,6 +189,7 @@ def _consume_nonce(owner: bytes) -> int:
 # Domain & SignBytes
 # ------------------------------------------------------------------------------
 
+
 def domain_separator(chain_id: int, token_addr: bytes) -> bytes:
     """
     Compute a 32-byte domain separator bound to (domain tag, chain_id, token_addr).
@@ -212,14 +222,7 @@ def build_sign_bytes(
         abi.revert(b"PERMIT:NEGATIVE_PARAM")
 
     ds = domain_separator(chain_id, token_addr)
-    sb = (
-        ds
-        + owner
-        + spender
-        + _u256(value)
-        + _u256(nonce)
-        + _u64(deadline)
-    )
+    sb = ds + owner + spender + _u256(value) + _u256(nonce) + _u64(deadline)
     return sb
 
 
@@ -230,6 +233,7 @@ def _hash_sign_bytes(sign_bytes: bytes) -> bytes:
 # ------------------------------------------------------------------------------
 # Permit execution
 # ------------------------------------------------------------------------------
+
 
 def permit(
     caller: bytes,
@@ -298,6 +302,7 @@ def permit(
 # ------------------------------------------------------------------------------
 # Convenience: cancel next permit (bump nonce)
 # ------------------------------------------------------------------------------
+
 
 def cancel_next_permit(caller: bytes, owner: bytes) -> int:
     """

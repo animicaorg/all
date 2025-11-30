@@ -24,13 +24,13 @@ from typing import Any, Dict, Iterable, Optional, Tuple, Union
 
 from tests.harness.clients import HttpRpcClient
 
-
 HexInt = Union[str, int]
 
 
 # ------------------------------------------------------------------------------
 # Small helpers
 # ------------------------------------------------------------------------------
+
 
 def _hex_to_int(v: HexInt) -> int:
     if isinstance(v, int):
@@ -104,7 +104,12 @@ def _get_head_height(rpc: HttpRpcClient) -> int:
     # 1) Direct height
     res = _rpc_try_methods(
         rpc,
-        methods=("omni_getHeadHeight", "omni_headHeight", "chain_headHeight", "eth_blockNumber"),
+        methods=(
+            "omni_getHeadHeight",
+            "omni_headHeight",
+            "chain_headHeight",
+            "eth_blockNumber",
+        ),
         params=[],
     )
     n = _extract_block_number(res)
@@ -115,7 +120,11 @@ def _get_head_height(rpc: HttpRpcClient) -> int:
     res = _rpc_try_methods(
         rpc,
         methods=("omni_getHead", "omni_head", "chain_getHead", "eth_getBlockByNumber"),
-        params=(["latest", False] if "eth_getBlockByNumber" in ("eth_getBlockByNumber",) else []),
+        params=(
+            ["latest", False]
+            if "eth_getBlockByNumber" in ("eth_getBlockByNumber",)
+            else []
+        ),
     )
     n = _extract_block_number(res)
     if n is not None:
@@ -162,6 +171,7 @@ def _receipt_is_finalized(rcpt: Dict[str, Any]) -> bool:
 # ------------------------------------------------------------------------------
 # Public API
 # ------------------------------------------------------------------------------
+
 
 def wait_for_height(
     rpc: HttpRpcClient,
@@ -279,12 +289,14 @@ def wait_for_new_head(
     # Try WS if provided
     if ws_url:
         try:
-            return asyncio.run(_wait_for_new_head_ws(
-                ws_url,
-                start_height=base,
-                min_delta=min_delta,
-                timeout=timeout,
-            ))
+            return asyncio.run(
+                _wait_for_new_head_ws(
+                    ws_url,
+                    start_height=base,
+                    min_delta=min_delta,
+                    timeout=timeout,
+                )
+            )
         except Exception:
             # Fall back to polling
             pass
@@ -360,7 +372,9 @@ def wait_for_inclusion_and_receipt(
 
     if min_confirmations > 0:
         target = bn + min_confirmations
-        h = wait_for_height(rpc, target, timeout=max(0.0, timeout / 2), poll_interval=poll_interval)
+        h = wait_for_height(
+            rpc, target, timeout=max(0.0, timeout / 2), poll_interval=poll_interval
+        )
         return rcpt, h
 
     return rcpt, _get_head_height(rpc)

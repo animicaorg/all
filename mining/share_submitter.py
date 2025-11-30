@@ -5,13 +5,14 @@ import logging
 import random
 import threading
 import time
-from dataclasses import dataclass, field, asdict
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, TypedDict, Union
+from dataclasses import asdict, dataclass, field
+from typing import (Any, Callable, Dict, Iterable, List, Optional, Tuple,
+                    TypedDict, Union)
 
 try:
     # stdlib-only HTTP client (no external deps)
+    from urllib.error import HTTPError, URLError
     from urllib.request import Request, urlopen
-    from urllib.error import URLError, HTTPError
 except Exception:  # pragma: no cover
     # This will basically never happen, but keeps type-checkers happy.
     urlopen = None  # type: ignore
@@ -44,7 +45,9 @@ class SubmitterConfig:
     max_backoff_s: float = 5.0
     jitter: float = 0.25  # 0..1 proportion of backoff to add/sub as jitter
     batch_size: int = 256
-    http_headers: Dict[str, str] = field(default_factory=lambda: {"Content-Type": "application/json"})
+    http_headers: Dict[str, str] = field(
+        default_factory=lambda: {"Content-Type": "application/json"}
+    )
     method_submit_share: str = "miner.submitShare"
     method_submit_share_batch: str = "miner.submitShareBatch"
     method_submit_block: str = "miner.submitBlock"
@@ -163,7 +166,11 @@ def _default_block_encoder(candidate_block: Any) -> Dict[str, Any]:
             if hasattr(candidate_block, "to_dict"):
                 b = candidate_block.to_dict()  # type: ignore[attr-defined]
             else:
-                b = {k: getattr(candidate_block, k) for k in dir(candidate_block) if not k.startswith("_")}
+                b = {
+                    k: getattr(candidate_block, k)
+                    for k in dir(candidate_block)
+                    if not k.startswith("_")
+                }
 
     for key in ("header", "txs", "proofs"):
         if key not in b:
@@ -172,7 +179,9 @@ def _default_block_encoder(candidate_block: Any) -> Dict[str, Any]:
 
 
 class JsonRpcClient:
-    def __init__(self, url: str, headers: Optional[Dict[str, str]] = None, timeout_s: float = 5.0):
+    def __init__(
+        self, url: str, headers: Optional[Dict[str, str]] = None, timeout_s: float = 5.0
+    ):
         self._url = url
         self._headers = headers or {"Content-Type": "application/json"}
         self._timeout_s = timeout_s
@@ -184,7 +193,12 @@ class JsonRpcClient:
         return self._id
 
     def call(self, method: str, params: Any) -> Any:
-        req = {"jsonrpc": "2.0", "id": self._next_id(), "method": method, "params": params}
+        req = {
+            "jsonrpc": "2.0",
+            "id": self._next_id(),
+            "method": method,
+            "params": params,
+        }
         body = json.dumps(req).encode("utf-8")
         r = Request(self._url, data=body, headers=self._headers, method="POST")
         try:
@@ -204,12 +218,17 @@ class JsonRpcClient:
 
         if "error" in obj and obj["error"]:
             err = obj["error"]
-            raise RpcError(err.get("code", -32000), err.get("message", "Unknown error"), err.get("data"))
+            raise RpcError(
+                err.get("code", -32000),
+                err.get("message", "Unknown error"),
+                err.get("data"),
+            )
         return obj.get("result")
 
     def batch(self, calls: List[Tuple[str, Any]]) -> List[Any]:
         batch_req = [
-            {"jsonrpc": "2.0", "id": self._next_id(), "method": m, "params": p} for (m, p) in calls
+            {"jsonrpc": "2.0", "id": self._next_id(), "method": m, "params": p}
+            for (m, p) in calls
         ]
         body = json.dumps(batch_req).encode("utf-8")
         r = Request(self._url, data=body, headers=self._headers, method="POST")
@@ -238,7 +257,13 @@ class JsonRpcClient:
                 continue
             if "error" in item and item["error"]:
                 err = item["error"]
-                out.append(RpcError(err.get("code", -32000), err.get("message", "Unknown error"), err.get("data")))
+                out.append(
+                    RpcError(
+                        err.get("code", -32000),
+                        err.get("message", "Unknown error"),
+                        err.get("data"),
+                    )
+                )
             else:
                 out.append(item.get("result"))
         return out
@@ -305,7 +330,9 @@ class ShareSubmitter:
                         accepted=accepted,
                         reason=str(res.get("reason", "")),
                         hash=str(res.get("hash", "")),
-                        d_ratio=float(res.get("d_ratio", payload.get("d_ratio") or 0.0)),
+                        d_ratio=float(
+                            res.get("d_ratio", payload.get("d_ratio") or 0.0)
+                        ),
                         height=int(res.get("height", payload.get("height") or 0)),
                     )
                 # Fallback: some nodes may return True/False
@@ -319,7 +346,9 @@ class ShareSubmitter:
                 if e.code == -32601 and tries == 1:
                     # Try batch form with a single element
                     try:
-                        br = self.rpc.call(self.cfg.method_submit_share_batch, [[payload]])
+                        br = self.rpc.call(
+                            self.cfg.method_submit_share_batch, [[payload]]
+                        )
                         # Expect a list of ShareResult
                         if isinstance(br, list) and br:
                             out = br[0]
@@ -333,19 +362,31 @@ class ShareSubmitter:
                                     accepted=accepted,
                                     reason=str(out.get("reason", "")),
                                     hash=str(out.get("hash", "")),
-                                    d_ratio=float(out.get("d_ratio", payload.get("d_ratio") or 0.0)),
-                                    height=int(out.get("height", payload.get("height") or 0)),
+                                    d_ratio=float(
+                                        out.get(
+                                            "d_ratio", payload.get("d_ratio") or 0.0
+                                        )
+                                    ),
+                                    height=int(
+                                        out.get("height", payload.get("height") or 0)
+                                    ),
                                 )
                             if out is True:
                                 self._stats.shares_accepted += 1
                                 return ShareResult(accepted=True)
                             self._stats.shares_rejected += 1
-                            return ShareResult(accepted=False, reason="unexpected-batch-result")
+                            return ShareResult(
+                                accepted=False, reason="unexpected-batch-result"
+                            )
                     except RpcError as e2:
                         # keep falling through to retry logic
                         self._stats.last_error = f"{e2.code}:{e2}"
                 # Semantic rejections should not be retried aggressively
-                if e.code in (-32010, -32011, -32012):  # examples: WorkExpired, LowDifficulty, Duplicate
+                if e.code in (
+                    -32010,
+                    -32011,
+                    -32012,
+                ):  # examples: WorkExpired, LowDifficulty, Duplicate
                     self._stats.shares_rejected += 1
                     return ShareResult(accepted=False, reason=f"rpc:{e.code}:{e}")
                 # Transport-level or transient server errors: backoff
@@ -356,12 +397,20 @@ class ShareSubmitter:
                 self._stats.last_error = str(e)
 
             if tries >= self.cfg.max_retries:
-                return ShareResult(accepted=False, reason=f"retries-exhausted:{self._stats.last_error or ''}")
+                return ShareResult(
+                    accepted=False,
+                    reason=f"retries-exhausted:{self._stats.last_error or ''}",
+                )
 
             # Exponential backoff with jitter
             sleep = backoff * (1.0 + (random.random() * 2 - 1) * self.cfg.jitter)
             sleep = max(0.0, min(sleep, self.cfg.max_backoff_s))
-            self._log.debug("share submit retry", tries=tries, sleep=sleep, last_error=self._stats.last_error)
+            self._log.debug(
+                "share submit retry",
+                tries=tries,
+                sleep=sleep,
+                last_error=self._stats.last_error,
+            )
             time.sleep(sleep)
             backoff = min(backoff * 2.0, self.cfg.max_backoff_s)
 
@@ -388,7 +437,11 @@ class ShareSubmitter:
                 self._stats.blocks_rejected += 1
                 return {"accepted": False, "reason": "unexpected-result"}
             except RpcError as e:
-                if e.code in (-32020, -32021, -32022):  # e.g., InvalidBlock, BadProofs, Stale
+                if e.code in (
+                    -32020,
+                    -32021,
+                    -32022,
+                ):  # e.g., InvalidBlock, BadProofs, Stale
                     self._stats.blocks_rejected += 1
                     return {"accepted": False, "reason": f"rpc:{e.code}:{e}"}
                 self._stats.last_error = f"{e.code}:{e}"
@@ -396,11 +449,19 @@ class ShareSubmitter:
                 self._stats.last_error = str(e)
 
             if tries >= self.cfg.max_retries:
-                return {"accepted": False, "reason": f"retries-exhausted:{self._stats.last_error or ''}"}
+                return {
+                    "accepted": False,
+                    "reason": f"retries-exhausted:{self._stats.last_error or ''}",
+                }
 
             sleep = backoff * (1.0 + (random.random() * 2 - 1) * self.cfg.jitter)
             sleep = max(0.0, min(sleep, self.cfg.max_backoff_s))
-            self._log.debug("block submit retry", tries=tries, sleep=sleep, last_error=self._stats.last_error)
+            self._log.debug(
+                "block submit retry",
+                tries=tries,
+                sleep=sleep,
+                last_error=self._stats.last_error,
+            )
             time.sleep(sleep)
             backoff = min(backoff * 2.0, self.cfg.max_backoff_s)
 
@@ -446,7 +507,9 @@ class ShareSubmitter:
                         encoded.append(self._share_encoder(s))
                 except Exception as e:
                     # If any share can't be encoded, fall back to per-share processing
-                    self._log.warning("share encoder error; falling back per-share: %r", e)
+                    self._log.warning(
+                        "share encoder error; falling back per-share: %r", e
+                    )
                     encoded = []
 
                 if encoded:
@@ -464,10 +527,14 @@ class ShareSubmitter:
                     except RpcError as e:
                         if e.code != -32601:
                             # Batch supported but failed; treat as transient and retry individually
-                            self._log.debug("batch submit failed; falling back per-share: %s", e)
+                            self._log.debug(
+                                "batch submit failed; falling back per-share: %s", e
+                            )
                         # else: method not found → permanent fallback below
                     except TransportError as e:
-                        self._log.debug("transport error on batch; falling back per-share: %s", e)
+                        self._log.debug(
+                            "transport error on batch; falling back per-share: %s", e
+                        )
                         # fall through to per-share loop
 
                 # Per-share submissions with individual retries
@@ -476,7 +543,9 @@ class ShareSubmitter:
                         res = self.submit_share_once(s)
                         # (stats already updated in submit_share_once)
                         if not res.get("accepted", False):
-                            self._log.debug("share rejected", reason=res.get("reason", ""))
+                            self._log.debug(
+                                "share rejected", reason=res.get("reason", "")
+                            )
                     except Exception as e:
                         self._stats.shares_errors += 1
                         self._stats.last_error = repr(e)
@@ -505,7 +574,9 @@ class ShareSubmitter:
 
 # Protocol (duck type) for ShareBuffer-like objects
 class ShareBufferLike:
-    def pop_batch(self, max_items: int = 1024, timeout: float = 0.0) -> List[Any]:  # pragma: no cover - interface
+    def pop_batch(
+        self, max_items: int = 1024, timeout: float = 0.0
+    ) -> List[Any]:  # pragma: no cover - interface
         raise NotImplementedError
 
     def stats(self) -> Any:  # pragma: no cover - interface
@@ -519,17 +590,32 @@ if __name__ == "__main__":  # pragma: no cover
     import argparse
     import sys
 
-    ap = argparse.ArgumentParser(description="Submit a single share or block to the local node RPC.")
-    ap.add_argument("--rpc", default="http://127.0.0.1:8545/rpc", help="JSON-RPC endpoint")
+    ap = argparse.ArgumentParser(
+        description="Submit a single share or block to the local node RPC."
+    )
+    ap.add_argument(
+        "--rpc", default="http://127.0.0.1:8545/rpc", help="JSON-RPC endpoint"
+    )
     ap.add_argument("--timeout", type=float, default=5.0, help="HTTP timeout (s)")
-    ap.add_argument("--headers", type=str, default="", help='Extra headers JSON, e.g. \'{"Authorization":"Bearer …"}\'')
+    ap.add_argument(
+        "--headers",
+        type=str,
+        default="",
+        help='Extra headers JSON, e.g. \'{"Authorization":"Bearer …"}\'',
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sp1 = sub.add_parser("share", help="Submit a single share JSON file")
-    sp1.add_argument("--file", required=True, help="Path to share JSON (payload with header/nonce/proof)")
+    sp1.add_argument(
+        "--file",
+        required=True,
+        help="Path to share JSON (payload with header/nonce/proof)",
+    )
 
     sp2 = sub.add_parser("block", help="Submit a candidate block JSON file")
-    sp2.add_argument("--file", required=True, help="Path to block JSON (header/txs/proofs)")
+    sp2.add_argument(
+        "--file", required=True, help="Path to block JSON (header/txs/proofs)"
+    )
 
     args = ap.parse_args()
     headers = {}
@@ -540,7 +626,9 @@ if __name__ == "__main__":  # pragma: no cover
             print(f"Invalid headers JSON: {e}", file=sys.stderr)
             sys.exit(2)
 
-    cfg = SubmitterConfig(rpc_url=args.rpc, timeout_s=args.timeout, http_headers=headers)
+    cfg = SubmitterConfig(
+        rpc_url=args.rpc, timeout_s=args.timeout, http_headers=headers
+    )
     subm = ShareSubmitter(cfg)
 
     try:

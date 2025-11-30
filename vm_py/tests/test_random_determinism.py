@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import os
-import pytest
 from typing import Callable, Optional, Tuple
 
+import pytest
 
 # We try to be resilient to small API differences in vm_py.runtime.random_api.
 # The helpers below discover either a stateful RNG (preferred) or a stateless
@@ -40,6 +40,7 @@ def _find_stateful_rng(rnd_mod) -> Optional[Callable[[bytes], Callable[[int], by
                 if callable(inst):
                     return lambda n, _inst=inst: bytes(_inst(n))
                 raise TypeError("No read/bytes method on RNG instance")
+
             # Smoke-test the constructor without fixing the seed in case of validation
             _ = _ctor(os.urandom(32))  # ensure it doesn't raise
             return _ctor
@@ -53,6 +54,7 @@ def _find_stateful_rng(rnd_mod) -> Optional[Callable[[bytes], Callable[[int], by
         if not callable(fn):
             continue
         try:
+
             def _ctor(seed: bytes, _fn=fn):
                 inst = _fn(seed)  # type: ignore[call-arg]
                 for meth in ("read", "bytes", "next_bytes", "random_bytes", "get"):
@@ -62,6 +64,7 @@ def _find_stateful_rng(rnd_mod) -> Optional[Callable[[bytes], Callable[[int], by
                 if callable(inst):
                     return lambda n, _inst=inst: bytes(_inst(n))
                 raise TypeError("No read/bytes method on RNG instance")
+
             _ = _ctor(os.urandom(32))
             return _ctor
         except Exception:
@@ -77,6 +80,7 @@ def _find_stateless_fn(rnd_mod) -> Optional[Callable[[bytes, int], bytes]]:
     for fname in ("random_bytes", "bytes_for_seed", "deterministic_bytes", "bytes"):
         fn = getattr(rnd_mod, fname, None)
         if callable(fn):
+
             def _wrap(seed: bytes, n: int, _fn=fn):
                 # Try common signatures
                 last_err = None
@@ -92,7 +96,10 @@ def _find_stateless_fn(rnd_mod) -> Optional[Callable[[bytes, int], bytes]]:
                     except Exception as e:
                         last_err = e
                         continue
-                raise AssertionError(f"Stateless RNG call failed; last error: {last_err}")
+                raise AssertionError(
+                    f"Stateless RNG call failed; last error: {last_err}"
+                )
+
             # Quick smoke test:
             _ = _wrap(os.urandom(32), 1)
             return _wrap
@@ -135,8 +142,8 @@ def test_same_seed_same_output(n: int):
 @pytest.mark.parametrize("n", [32, 64, 128])
 def test_different_seeds_different_output(n: int):
     _require_any_rng()
-    seed1 = b"\xAA" * 32
-    seed2 = b"\xAB" * 32
+    seed1 = b"\xaa" * 32
+    seed2 = b"\xab" * 32
     out1 = _one_shot(seed1, n)
     out2 = _one_shot(seed2, n)
     # Deterministic PRNG should differ for different seeds; collision here would be astronomically unlikely.
@@ -183,5 +190,3 @@ def test_reinit_repeats_sequence_prefix():
     # And the full one-shot should start with that prefix too
     all_once = _one_shot(seed, n)
     assert all_once.startswith(prefix)
-
-

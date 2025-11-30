@@ -28,7 +28,7 @@
 #
 # Pairs are identified by a canonical bytes32 key (e.g., sha3_256(b"BTC/USD")).
 
-from stdlib import storage, events, abi, hash  # type: ignore
+from stdlib import abi, events, hash, storage  # type: ignore
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Constants & storage key helpers
@@ -47,21 +47,22 @@ _FEEDER_PREFIX = b"\x00feeder\x00"
 #   source:     b"\x02src"   | 0x00 | <pair32>
 #   commit:     b"\x02cmt"   | 0x00 | <pair32>
 _META_DECIMALS = b"\x01meta"
-_ROUND_ID      = b"\x01round"
-_VAL_KEY       = b"\x02value"
-_TS_KEY        = b"\x02ts"
-_SRC_KEY       = b"\x02src"
-_CMT_KEY       = b"\x02cmt"
+_ROUND_ID = b"\x01round"
+_VAL_KEY = b"\x02value"
+_TS_KEY = b"\x02ts"
+_SRC_KEY = b"\x02src"
+_CMT_KEY = b"\x02cmt"
 
 # Boundaries / defaults
-MAX_SKEW_SECS = 15 * 60         # submissions must be within ±15 minutes of block time
-DEFAULT_DECIMALS = 8            # if not set explicitly, require caller to set first
+MAX_SKEW_SECS = 15 * 60  # submissions must be within ±15 minutes of block time
+DEFAULT_DECIMALS = 8  # if not set explicitly, require caller to set first
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Small encoding helpers (deterministic, endian-stable)
 # We store integers as big-endian minimal bytes (with sign for 'int' values),
 # and fixed-size bytes as-is. Presence is implied by non-empty storage.
 # ────────────────────────────────────────────────────────────────────────────────
+
 
 def _i_to_be(n: int) -> bytes:
     """int → minimal big-endian two's-complement bytes (signed)."""
@@ -72,11 +73,13 @@ def _i_to_be(n: int) -> bytes:
     length = (bits + 7) // 8
     return n.to_bytes(length, "big", signed=True)
 
+
 def _be_to_i(b: bytes) -> int:
     """big-endian two's-complement bytes → int."""
     if b == b"":
         return 0
     return int.from_bytes(b, "big", signed=True)
+
 
 def _u_to_be(u: int, width: int) -> bytes:
     """unsigned int → fixed-width big-endian bytes (width in bytes)."""
@@ -84,34 +87,43 @@ def _u_to_be(u: int, width: int) -> bytes:
     abi.require(u < (1 << (width * 8)), b"overflow u")
     return u.to_bytes(width, "big", signed=False)
 
+
 def _be_to_u(b: bytes) -> int:
     if b == b"":
         return 0
     return int.from_bytes(b, "big", signed=False)
 
+
 def _b32(x: bytes) -> bytes:
     abi.require(len(x) == 32, b"bad bytes32")
     return x
 
+
 def _addr_key(addr: bytes) -> bytes:
     return _FEEDER_PREFIX + addr
 
+
 def _k(prefix: bytes, pair32: bytes) -> bytes:
     return prefix + b"\x00" + _b32(pair32)
+
 
 # ────────────────────────────────────────────────────────────────────────────────
 # Owner / feeder utilities
 # ────────────────────────────────────────────────────────────────────────────────
 
+
 def _owner() -> bytes:
     return storage.get(_OWNER_KEY)
+
 
 def _only_owner() -> None:
     abi.require(storage.get(_OWNER_KEY) == abi.caller(), b"not owner")
 
+
 def _is_feeder(addr: bytes) -> bool:
     v = storage.get(_addr_key(addr))
     return v == b"\x01"
+
 
 def _only_owner_or_feeder() -> None:
     c = abi.caller()
@@ -119,9 +131,11 @@ def _only_owner_or_feeder() -> None:
         return
     abi.require(_is_feeder(c), b"not feeder")
 
+
 # ────────────────────────────────────────────────────────────────────────────────
 # Public interface
 # ────────────────────────────────────────────────────────────────────────────────
+
 
 def init(owner: bytes) -> None:
     """
@@ -134,6 +148,7 @@ def init(owner: bytes) -> None:
     storage.set(_OWNER_KEY, owner)
     events.emit(b"OwnerSet", {b"owner": owner})
 
+
 def set_feeder(addr: bytes, allowed: bool) -> None:
     """
     Allow/deny a feeder address. Only owner.
@@ -145,6 +160,7 @@ def set_feeder(addr: bytes, allowed: bool) -> None:
     _only_owner()
     storage.set(_addr_key(addr), b"\x01" if allowed else b"")
     events.emit(b"FeederSet", {b"addr": addr, b"allowed": True if allowed else False})
+
 
 def set_pair_decimals(pair: bytes, decimals: int) -> None:
     """
@@ -159,6 +175,7 @@ def set_pair_decimals(pair: bytes, decimals: int) -> None:
     storage.set(_k(_META_DECIMALS, pair), _u_to_be(decimals, 1))
     events.emit(b"PairConfigured", {b"pair": _b32(pair), b"decimals": decimals})
 
+
 def has_pair(pair: bytes) -> bool:
     """
     Returns True if the pair has been configured (decimals present).
@@ -169,6 +186,7 @@ def has_pair(pair: bytes) -> bool:
       exists: bool
     """
     return storage.get(_k(_META_DECIMALS, pair)) != b""
+
 
 def get_decimals(pair: bytes) -> int:
     """
@@ -182,6 +200,7 @@ def get_decimals(pair: bytes) -> int:
     d = storage.get(_k(_META_DECIMALS, pair))
     abi.require(d != b"", b"no pair")
     return _be_to_u(d)
+
 
 def submit(  # reporter push w/ DA commitment
     pair: bytes,
@@ -249,6 +268,7 @@ def submit(  # reporter push w/ DA commitment
     )
     return nxt
 
+
 def get_latest(pair: bytes):
     """
     Return the latest observation for a pair.
@@ -283,9 +303,11 @@ def get_latest(pair: bytes):
 
     return (value, decimals, ts, round_id, _b32(source), _b32(commitment))
 
+
 # ────────────────────────────────────────────────────────────────────────────────
 # Optional convenience read helpers
 # ────────────────────────────────────────────────────────────────────────────────
+
 
 def get_commitment(pair: bytes) -> bytes:
     """
@@ -299,6 +321,7 @@ def get_commitment(pair: bytes) -> bytes:
     c = storage.get(_k(_CMT_KEY, _b32(pair)))
     return c if c != b"" else (b"\x00" * 32)
 
+
 def get_round_id(pair: bytes) -> int:
     """
     Returns the current round id for a pair (0 if never updated).
@@ -310,9 +333,11 @@ def get_round_id(pair: bytes) -> int:
     """
     return _be_to_u(storage.get(_k(_ROUND_ID, _b32(pair))))
 
+
 # ────────────────────────────────────────────────────────────────────────────────
 # Internal: time skew check (block-time driven)
 # ────────────────────────────────────────────────────────────────────────────────
+
 
 def _within_skew(ts: int) -> bool:
     """

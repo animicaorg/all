@@ -12,7 +12,6 @@ until the full end-to-end harness is available.
 
 import pytest
 
-
 pytestmark = pytest.mark.skip(
     reason="Vertical 12 cross-layer DA→mempool→block scenario not yet implemented"
 )

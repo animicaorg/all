@@ -36,6 +36,7 @@ DEFAULT_DST = ROOT / "website" / "chains"
 # Optional jsonschema validation
 try:
     import jsonschema  # type: ignore
+
     _HAS_JSONSCHEMA = True
 except Exception:
     _HAS_JSONSCHEMA = False
@@ -79,7 +80,10 @@ def validate_with_schema(chains_dir: Path, files: List[Path]) -> None:
         else:
             errs = list(chain_validator.iter_errors(data))
         if errs:
-            pretty = "\n".join(f" - {p}: {'/'.join(map(str,e.path)) or '(root)'}: {e.message}" for e in errs)
+            pretty = "\n".join(
+                f" - {p}: {'/'.join(map(str,e.path)) or '(root)'}: {e.message}"
+                for e in errs
+            )
             raise SystemExit(f"[error] schema validation failed:\n{pretty}")
 
 
@@ -97,14 +101,32 @@ def discover_jsons(src_dir: Path) -> List[Path]:
 
 
 def main(argv: List[str]) -> int:
-    ap = argparse.ArgumentParser(description="Sync & minify chains/* into website/chains/")
-    ap.add_argument("--src", default=str(DEFAULT_SRC), help="Source chains dir (default: chains)")
-    ap.add_argument("--dst", default=str(DEFAULT_DST), help="Destination dir (default: website/chains)")
+    ap = argparse.ArgumentParser(
+        description="Sync & minify chains/* into website/chains/"
+    )
+    ap.add_argument(
+        "--src", default=str(DEFAULT_SRC), help="Source chains dir (default: chains)"
+    )
+    ap.add_argument(
+        "--dst",
+        default=str(DEFAULT_DST),
+        help="Destination dir (default: website/chains)",
+    )
     ap.add_argument("--include-icons", action="store_true", help="Copy chains/icons/*")
-    ap.add_argument("--include-bootstrap", action="store_true", help="Copy chains/bootstrap/*")
-    ap.add_argument("--include-signatures", action="store_true", help="Copy chains/signatures/*")
-    ap.add_argument("--validate", action="store_true", help="Validate JSONs against schemas (requires jsonschema)")
-    ap.add_argument("--dry-run", action="store_true", help="Print actions but do not write/copy")
+    ap.add_argument(
+        "--include-bootstrap", action="store_true", help="Copy chains/bootstrap/*"
+    )
+    ap.add_argument(
+        "--include-signatures", action="store_true", help="Copy chains/signatures/*"
+    )
+    ap.add_argument(
+        "--validate",
+        action="store_true",
+        help="Validate JSONs against schemas (requires jsonschema)",
+    )
+    ap.add_argument(
+        "--dry-run", action="store_true", help="Print actions but do not write/copy"
+    )
     args = ap.parse_args(argv)
 
     src = Path(args.src).resolve()

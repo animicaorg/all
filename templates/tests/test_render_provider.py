@@ -1,9 +1,9 @@
 import json
 import os
-import sys
 import shutil
-import tempfile
 import subprocess
+import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -62,9 +62,7 @@ def assert_no_unrendered_tokens(p: Path, optional: bool = False):
         pytest.fail(f"Missing expected file: {p}")
     text = p.read_text(encoding="utf-8")
     offenders = [t for t in UNRENDERED_PATTERNS if t in text]
-    assert (
-        not offenders
-    ), f"Unrendered template tokens in {p}: {', '.join(offenders)}"
+    assert not offenders, f"Unrendered template tokens in {p}: {', '.join(offenders)}"
 
 
 def file_non_empty(p: Path) -> bool:
@@ -182,25 +180,41 @@ def test_render_provider_template(template_id: str):
             assert_no_unrendered_tokens(rendered_root / rel)
 
         # Lightweight content checks
-        req_text = (rendered_root / "requirements.txt").read_text(encoding="utf-8").lower()
+        req_text = (
+            (rendered_root / "requirements.txt").read_text(encoding="utf-8").lower()
+        )
         assert "fastapi" in req_text, "requirements.txt should include fastapi"
         assert "uvicorn" in req_text, "requirements.txt should include uvicorn"
 
-        server_text = (rendered_root / "aicf_provider" / "server.py").read_text(encoding="utf-8")
-        assert "FastAPI" in server_text or "fastapi" in server_text.lower(), "server.py should create a FastAPI app"
+        server_text = (rendered_root / "aicf_provider" / "server.py").read_text(
+            encoding="utf-8"
+        )
+        assert (
+            "FastAPI" in server_text or "fastapi" in server_text.lower()
+        ), "server.py should create a FastAPI app"
 
         # k8s files should mention the project slug (or app name)
-        k_deploy = (rendered_root / "k8s" / "deployment.yaml").read_text(encoding="utf-8")
-        assert proj_slug in k_deploy or "name:" in k_deploy, "deployment.yaml should be parameterized with project slug/name"
+        k_deploy = (rendered_root / "k8s" / "deployment.yaml").read_text(
+            encoding="utf-8"
+        )
+        assert (
+            proj_slug in k_deploy or "name:" in k_deploy
+        ), "deployment.yaml should be parameterized with project slug/name"
 
         # Dockerfile sanity
         docker_text = (rendered_root / "Dockerfile").read_text(encoding="utf-8")
         assert "FROM" in docker_text, "Dockerfile should specify a base image"
-        assert "uvicorn" in docker_text.lower() or "gunicorn" in docker_text.lower(), "Dockerfile should run an ASGI server"
+        assert (
+            "uvicorn" in docker_text.lower() or "gunicorn" in docker_text.lower()
+        ), "Dockerfile should run an ASGI server"
 
         # scripts/run_worker.py should be executable-ish (shebang or python -m)
-        run_worker = (rendered_root / "scripts" / "run_worker.py").read_text(encoding="utf-8")
-        assert "#!" in run_worker or "if __name__ == '__main__':" in run_worker, "run_worker.py should be invocable"
+        run_worker = (rendered_root / "scripts" / "run_worker.py").read_text(
+            encoding="utf-8"
+        )
+        assert (
+            "#!" in run_worker or "if __name__ == '__main__':" in run_worker
+        ), "run_worker.py should be invocable"
 
         # Clean up temp dir contents if you want to inspect locally, comment the next line.
         # (left intentionally; pytest tmpdir auto-cleans)

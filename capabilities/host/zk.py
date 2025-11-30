@@ -42,16 +42,13 @@ validation is performed to ensure well-formed requests and bounded resource use.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Tuple, Union
 import hashlib
 import json
 import logging
+from typing import Any, Dict, Tuple, Union
 
-from .provider import (  # type: ignore
-    SyscallContext,
-    ProviderRegistry,
-    get_registry,
-)
+from .provider import (ProviderRegistry, SyscallContext,  # type: ignore
+                       get_registry)
 
 # Try to import the registry key; fall back to a literal if older provider.py
 try:  # pragma: no cover - import shape flexibility
@@ -69,6 +66,7 @@ try:
     # Expected (but not required) API in capabilities/adapters/zk.py:
     #   def verify(circuit, proof, public_input) -> bool | tuple[bool, int]
     from ..adapters import zk as _zk_adapter  # type: ignore
+
     _HAS_ADAPTER = True
 except Exception:  # pragma: no cover
     _zk_adapter = None
@@ -78,15 +76,17 @@ except Exception:  # pragma: no cover
 # ----------------------------
 # Default limits chosen to be conservative but useful for dev/test.
 _DEFAULT_LIMITS = {
-    "MAX_CIRCUIT_BYTES": 512 * 1024,   # 512 KiB
-    "MAX_PROOF_BYTES":   512 * 1024,   # 512 KiB
-    "MAX_INPUT_BYTES":   128 * 1024,   # 128 KiB (public input)
-    "MAX_TOTAL_BYTES":   1 * 1024 * 1024,  # 1 MiB total cap
+    "MAX_CIRCUIT_BYTES": 512 * 1024,  # 512 KiB
+    "MAX_PROOF_BYTES": 512 * 1024,  # 512 KiB
+    "MAX_INPUT_BYTES": 128 * 1024,  # 128 KiB (public input)
+    "MAX_TOTAL_BYTES": 1 * 1024 * 1024,  # 1 MiB total cap
 }
+
 
 def _load_limits() -> Dict[str, int]:
     try:
         from .. import config as _cfg  # type: ignore
+
         limits = dict(_DEFAULT_LIMITS)
         for k in list(limits.keys()):
             v = getattr(_cfg, f"ZK_{k}", None)
@@ -96,6 +96,7 @@ def _load_limits() -> Dict[str, int]:
     except Exception:  # pragma: no cover
         return dict(_DEFAULT_LIMITS)
 
+
 _LIMITS = _load_limits()
 
 # ----------------------------
@@ -103,6 +104,7 @@ _LIMITS = _load_limits()
 # ----------------------------
 
 JSONish = Union[dict, list, str, int, float, bool, None, bytes, bytearray]
+
 
 def _to_bytes(obj: JSONish) -> bytes:
     """
@@ -125,6 +127,7 @@ def _to_bytes(obj: JSONish) -> bytes:
         if isinstance(x, (bytes, bytearray)):
             # Tag as {"__b64__": "<base64>"} to avoid collisions.
             import base64
+
             return {"__b64__": base64.b64encode(bytes(x)).decode("ascii")}
         if isinstance(x, dict):
             # Sort keys for determinism.
@@ -133,7 +136,9 @@ def _to_bytes(obj: JSONish) -> bytes:
             return [_enc(v) for v in x]
         return x
 
-    return json.dumps(_enc(obj), sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return json.dumps(
+        _enc(obj), sort_keys=True, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
 
 
 def _sha3_256(*chunks: bytes) -> bytes:
@@ -176,7 +181,9 @@ def _estimate_units(c_b: bytes, p_b: bytes, i_b: bytes) -> int:
 
     kib = 1024.0
     base = 100.0
-    add = (len(c_b) / kib) * 1.0 + (len(p_b) / kib) * 2.0 + (len(i_b) / (2.0 * kib)) * 1.0
+    add = (
+        (len(c_b) / kib) * 1.0 + (len(p_b) / kib) * 2.0 + (len(i_b) / (2.0 * kib)) * 1.0
+    )
     bump = 10.0 * math.log2(1.0 + (len(c_b) / (64.0 * kib)))
     units = int(base + add + bump)
     if units < 100:
@@ -190,7 +197,10 @@ def _estimate_units(c_b: bytes, p_b: bytes, i_b: bytes) -> int:
 # Provider entrypoint
 # ----------------------------
 
-def _zk_verify(ctx: SyscallContext, *, circuit: JSONish, proof: JSONish, public_input: JSONish) -> Dict[str, Any]:
+
+def _zk_verify(
+    ctx: SyscallContext, *, circuit: JSONish, proof: JSONish, public_input: JSONish
+) -> Dict[str, Any]:
     """
     Verify a zero-knowledge proof in a deterministic, resource-bounded way.
 
@@ -216,14 +226,31 @@ def _zk_verify(ctx: SyscallContext, *, circuit: JSONish, proof: JSONish, public_
             else:
                 ok = bool(res)
                 units = _estimate_units(c_b, p_b, i_b)
-            return {"ok": ok, "units": units, "reason": None if ok else "adapter_reject", "digest": digest}
+            return {
+                "ok": ok,
+                "units": units,
+                "reason": None if ok else "adapter_reject",
+                "digest": digest,
+            }
         except Exception as e:  # pragma: no cover
-            log.warning("zk adapter threw; falling back to deterministic failure", exc_info=e)
+            log.warning(
+                "zk adapter threw; falling back to deterministic failure", exc_info=e
+            )
             # Deterministic failure with an estimate
-            return {"ok": False, "units": _estimate_units(c_b, p_b, i_b), "reason": "adapter_error", "digest": digest}
+            return {
+                "ok": False,
+                "units": _estimate_units(c_b, p_b, i_b),
+                "reason": "adapter_error",
+                "digest": digest,
+            }
 
     # No adapter: deterministic, conservative failure with an estimate
-    return {"ok": False, "units": _estimate_units(c_b, p_b, i_b), "reason": "no_adapter", "digest": digest}
+    return {
+        "ok": False,
+        "units": _estimate_units(c_b, p_b, i_b),
+        "reason": "no_adapter",
+        "digest": digest,
+    }
 
 
 # Mark deterministic for the registry

@@ -23,14 +23,15 @@ to `da.sampling.verifier.verify_samples`.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Any
-import time
-import math
-import json
 import binascii
+import json
+import math
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
+from typing import (Any, Callable, Dict, Iterable, List, Mapping, Optional,
+                    Sequence, Tuple)
 
 # Optional HTTP deps
 try:  # pragma: no cover - exercised in integration tests
@@ -38,10 +39,13 @@ try:  # pragma: no cover - exercised in integration tests
 except Exception:  # pragma: no cover
     requests = None
 
+
 # Lazy imports for planning / verification / probability
 def _lazy(module: str, attr: str) -> Any:  # pragma: no cover - trivial
     import importlib
+
     return getattr(importlib.import_module(module), attr)
+
 
 # ----------------------------- Config & Types ------------------------------
 
@@ -57,8 +61,8 @@ class SamplerConfig:
     max_retries: int = 3
     backoff_initial_s: float = 0.25
     backoff_factor: float = 2.0
-    batch_size: int = 64               # indices per proof request
-    max_in_flight: int = 4             # concurrency
+    batch_size: int = 64  # indices per proof request
+    max_in_flight: int = 4  # concurrency
     user_agent: str = "animica-da-sampler/1.0"
     headers: Mapping[str, str] = field(default_factory=dict)
 
@@ -77,9 +81,9 @@ class SamplerResult:
     selected_indices: List[int]
     ok_indices: List[int]
     bad_indices: List[int]
-    errors: Dict[int, str]                      # index -> error string (fetch/verify)
+    errors: Dict[int, str]  # index -> error string (fetch/verify)
     stats: SamplerStats
-    p_fail_estimate: Optional[float] = None     # upper bound estimate given sample_count
+    p_fail_estimate: Optional[float] = None  # upper bound estimate given sample_count
 
     def ok_ratio(self) -> float:
         if not self.selected_indices:
@@ -88,6 +92,7 @@ class SamplerResult:
 
 
 # ----------------------------- HTTP Transport ------------------------------
+
 
 class _HttpDAClient:
     """
@@ -108,11 +113,13 @@ class _HttpDAClient:
     def _build_url(self, path: str) -> str:
         return f"{self.base}{path}"
 
-    def _do(self, method: str, path: str, *, params=None, json_body=None) -> Tuple[int, bytes]:
+    def _do(
+        self, method: str, path: str, *, params=None, json_body=None
+    ) -> Tuple[int, bytes]:
         if requests is None:
             # urllib fallback (stdlib only)
-            import urllib.request
             import urllib.parse
+            import urllib.request
 
             url = self._build_url(path)
             if params:
@@ -132,27 +139,44 @@ class _HttpDAClient:
         # requests path (preferred)
         sess = self._session or requests
         if method == "GET":
-            r = sess.get(self._build_url(path), params=params, headers=self.headers, timeout=self.timeout)
+            r = sess.get(
+                self._build_url(path),
+                params=params,
+                headers=self.headers,
+                timeout=self.timeout,
+            )
         elif method == "POST":
-            r = sess.post(self._build_url(path), json=json_body, headers=self.headers, timeout=self.timeout)
+            r = sess.post(
+                self._build_url(path),
+                json=json_body,
+                headers=self.headers,
+                timeout=self.timeout,
+            )
         else:
             raise ValueError("unsupported method")
         return int(r.status_code), bytes(r.content)
 
     # --- public ---
 
-    def fetch_proof(self, commitment_hex: HexStr, indices: Sequence[int]) -> Mapping[str, Any]:
+    def fetch_proof(
+        self, commitment_hex: HexStr, indices: Sequence[int]
+    ) -> Mapping[str, Any]:
         """
         Try GET first, then POST. Returns parsed JSON (raises on HTTP errors).
         """
         # GET
-        params = {"commitment": commitment_hex, "indices": ",".join(str(i) for i in indices)}
+        params = {
+            "commitment": commitment_hex,
+            "indices": ",".join(str(i) for i in indices),
+        }
         code, data = self._do("GET", "/da/proof", params=params, json_body=None)
         if code == 200:
             try:
                 return json.loads(data.decode("utf-8"))
             except Exception as e:
-                raise RuntimeError(f"invalid JSON in GET /da/proof response: {e}") from e
+                raise RuntimeError(
+                    f"invalid JSON in GET /da/proof response: {e}"
+                ) from e
 
         # Fallback to POST
         body = {"commitment": commitment_hex, "indices": list(map(int, indices))}
@@ -168,6 +192,7 @@ class _HttpDAClient:
 
 
 # ------------------------------ Sampler ------------------------------------
+
 
 def _to_hex(b: bytes) -> str:
     return "0x" + binascii.hexlify(b).decode("ascii")
@@ -217,6 +242,7 @@ class DataAvailabilitySampler:
             def _default_verify(commitment: bytes, proof: Mapping[str, Any]) -> Any:
                 vf = _lazy("da.sampling.verifier", "verify_samples")
                 return vf(commitment, proof)
+
             self._verify = _default_verify
         else:
             self._verify = verify_fn
@@ -239,7 +265,11 @@ class DataAvailabilitySampler:
         If `indices` is not provided, a uniform plan of `sample_count` indices is generated.
         """
         t0 = time.time()
-        sel = list(map(int, indices)) if indices is not None else self._plan(population_size, sample_count, seed)
+        sel = (
+            list(map(int, indices))
+            if indices is not None
+            else self._plan(population_size, sample_count, seed)
+        )
         stats = SamplerStats()
 
         ok: List[int] = []
@@ -251,7 +281,16 @@ class DataAvailabilitySampler:
         # Fetch+verify in batches with limited concurrency
         batches = list(_chunks(sel, max(1, int(self.cfg.batch_size))))
         with ThreadPoolExecutor(max_workers=max(1, int(self.cfg.max_in_flight))) as tp:
-            futs = [tp.submit(self._fetch_and_verify_batch, commitment, commitment_hex, batch, stats) for batch in batches]
+            futs = [
+                tp.submit(
+                    self._fetch_and_verify_batch,
+                    commitment,
+                    commitment_hex,
+                    batch,
+                    stats,
+                )
+                for batch in batches
+            ]
             for fut in as_completed(futs):
                 b_ok, b_bad, b_errs = fut.result()
                 ok.extend(b_ok)
@@ -261,7 +300,9 @@ class DataAvailabilitySampler:
         stats.elapsed_s = max(0.0, time.time() - t0)
 
         # Estimate p_fail upper bound with simple (1 - f)^{n} style bound:
-        p_fail_est = self._estimate_p_fail(population_size=population_size, total_samples=len(sel), bad=len(bad))
+        p_fail_est = self._estimate_p_fail(
+            population_size=population_size, total_samples=len(sel), bad=len(bad)
+        )
 
         return SamplerResult(
             commitment=commitment,
@@ -275,9 +316,20 @@ class DataAvailabilitySampler:
 
     # ----------------------- internals -----------------------
 
-    def _plan(self, population_size: int, sample_count: int, seed: Optional[int]) -> List[int]:
+    def _plan(
+        self, population_size: int, sample_count: int, seed: Optional[int]
+    ) -> List[int]:
         plan_uniform = _lazy("da.sampling.queries", "plan_uniform")
-        return list(map(int, plan_uniform(population_size=population_size, sample_count=sample_count, seed=seed)))
+        return list(
+            map(
+                int,
+                plan_uniform(
+                    population_size=population_size,
+                    sample_count=sample_count,
+                    seed=seed,
+                ),
+            )
+        )
 
     def _fetch_and_verify_batch(
         self,
@@ -309,7 +361,7 @@ class DataAvailabilitySampler:
                 if attempt >= int(self.cfg.max_retries):
                     break
                 # backoff
-                sleep = self.cfg.backoff_initial_s * (self.cfg.backoff_factor ** attempt)
+                sleep = self.cfg.backoff_initial_s * (self.cfg.backoff_factor**attempt)
                 time.sleep(sleep)
                 with self._lock:
                     stats.retries += 1
@@ -318,7 +370,11 @@ class DataAvailabilitySampler:
         if payload is None:
             # mark all indices in this batch as failed fetch
             msg = str(last_err) if last_err else "unknown fetch error"
-            return [], list(map(int, indices)), {int(i): f"fetch: {msg}" for i in indices}
+            return (
+                [],
+                list(map(int, indices)),
+                {int(i): f"fetch: {msg}" for i in indices},
+            )
 
         # Verify; normalize result shape
         try:
@@ -330,7 +386,9 @@ class DataAvailabilitySampler:
             msg = f"verify: {e}"
             return [], list(map(int, indices)), {int(i): msg for i in indices}
 
-    def _estimate_p_fail(self, *, population_size: int, total_samples: int, bad: int) -> Optional[float]:
+    def _estimate_p_fail(
+        self, *, population_size: int, total_samples: int, bad: int
+    ) -> Optional[float]:
         """
         A conservative bound: if no bad samples observed, use standard (1 - f)^n bound
         rearranged to solve for p_fail under worst-case fraction of corruption.
@@ -344,19 +402,24 @@ class DataAvailabilitySampler:
         try:
             # Use package math if available for a better bound
             pf = _lazy("da.sampling.probability", "estimate_p_fail_upper")
-            return float(pf(population_size=population_size, sample_count=total_samples))
+            return float(
+                pf(population_size=population_size, sample_count=total_samples)
+            )
         except Exception:
             # Simple heuristic: assume >=1 share corrupt among population; prob miss after n samples
             # p_fail <= ((population_size - 1) / population_size) ** total_samples
             if population_size <= 1:
                 return 0.0
             base = (population_size - 1) / float(population_size)
-            return float(base ** total_samples)
+            return float(base**total_samples)
 
 
 # ------------------------- helpers -------------------------
 
-def _normalize_verify_result(v: Any, batch_indices: Sequence[int]) -> Tuple[List[int], List[int]]:
+
+def _normalize_verify_result(
+    v: Any, batch_indices: Sequence[int]
+) -> Tuple[List[int], List[int]]:
     """
     Accepts multiple shapes from verify function and returns (ok_indices, bad_indices).
     """

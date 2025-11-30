@@ -25,22 +25,25 @@ import hashlib
 import time
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, Deque, Dict, Iterable, List, Optional, Set, Tuple
+from typing import (Awaitable, Callable, Deque, Dict, Iterable, List, Optional,
+                    Set, Tuple)
 
 try:
     # Preferred canonical topic helpers
     from .topics import is_valid_topic as _is_valid_topic  # type: ignore
 except Exception:  # pragma: no cover
+
     def _is_valid_topic(topic: str) -> bool:
         return 1 <= len(topic) <= 256 and all(32 <= ord(c) <= 126 for c in topic)
+
 
 from .mesh import Mesh  # simple GossipSub-like mesh
 from .validator import prefilter as fast_prefilter
 
-
 # --------------------------------------------------------------------------------------
 # Token bucket (tiny, allocation-free hot path)
 # --------------------------------------------------------------------------------------
+
 
 @dataclass
 class TokenBucket:
@@ -64,6 +67,7 @@ class TokenBucket:
 # --------------------------------------------------------------------------------------
 # Scoring
 # --------------------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class ScoreParams:
@@ -121,11 +125,13 @@ class PeerScore:
 # Message table (dedupe)
 # --------------------------------------------------------------------------------------
 
+
 @dataclass
 class SeenTable:
     """
     Per-topic LRU of recently seen msg_ids. O(1) membership & eviction.
     """
+
     capacity: int = 4096
 
     def __post_init__(self) -> None:
@@ -182,7 +188,9 @@ class GossipEngine:
         self.params = score_params or ScoreParams()
 
         self._subs: Set[str] = set()
-        self._seen_by_topic: Dict[str, SeenTable] = defaultdict(lambda: SeenTable(lru_capacity))
+        self._seen_by_topic: Dict[str, SeenTable] = defaultdict(
+            lambda: SeenTable(lru_capacity)
+        )
         self._peer_scores: Dict[str, PeerScore] = defaultdict(PeerScore)
         self._ingress_buckets: Dict[Tuple[str, str], TokenBucket] = defaultdict(
             lambda: TokenBucket(ingress_bucket_capacity, ingress_refill_per_sec)

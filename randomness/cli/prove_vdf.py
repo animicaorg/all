@@ -25,8 +25,8 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 
 # Optional deps guard
 try:
-    import typer  # type: ignore
     import requests  # type: ignore
+    import typer  # type: ignore
 except Exception as e:  # pragma: no cover
     raise SystemExit(
         "This command requires optional dependencies.\n"
@@ -36,11 +36,14 @@ except Exception as e:  # pragma: no cover
 
 # Import the reference prover from our tree
 try:
-    from randomness.vdf.wesolowski import prove as wesolowski_prove  # type: ignore
+    from randomness.vdf.wesolowski import \
+        prove as wesolowski_prove  # type: ignore
 except Exception as e:  # pragma: no cover
     wesolowski_prove = None  # type: ignore
 
-_DEFAULT_RPC = os.getenv("OMNI_RPC_URL") or os.getenv("ANIMICA_RPC_URL") or "http://127.0.0.1:8545"
+_DEFAULT_RPC = (
+    os.getenv("OMNI_RPC_URL") or os.getenv("ANIMICA_RPC_URL") or "http://127.0.0.1:8545"
+)
 
 app = typer.Typer(
     name="omni-rand-prove-vdf",
@@ -50,7 +53,9 @@ app = typer.Typer(
 )
 
 
-def _rpc_call(url: str, method: str, params: Optional[Sequence[Any]] = None, timeout: float = 30.0) -> Dict[str, Any]:
+def _rpc_call(
+    url: str, method: str, params: Optional[Sequence[Any]] = None, timeout: float = 30.0
+) -> Dict[str, Any]:
     body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": list(params or [])}
     try:
         r = requests.post(url, json=body, timeout=timeout)
@@ -105,8 +110,12 @@ def _compute_vdf(n_hex: str, x_hex: str, iterations: int) -> Tuple[str, str]:
 
 @app.command("prove-vdf")
 def cmd_prove_vdf(
-    rpc: str = typer.Option(_DEFAULT_RPC, "--rpc", help=f"JSON-RPC endpoint (default: {_DEFAULT_RPC})"),
-    submit: bool = typer.Option(False, "--submit", "-s", help="Submit the computed proof via rand.submitVDF."),
+    rpc: str = typer.Option(
+        _DEFAULT_RPC, "--rpc", help=f"JSON-RPC endpoint (default: {_DEFAULT_RPC})"
+    ),
+    submit: bool = typer.Option(
+        False, "--submit", "-s", help="Submit the computed proof via rand.submitVDF."
+    ),
 ) -> None:
     """
     Fetch the current round VDF input from the node, run the reference prover locally,
@@ -131,7 +140,15 @@ def cmd_prove_vdf(
     x_hex = vdf_info.get("input")
     iterations = vdf_info.get("iterations")
 
-    missing = [name for name, val in [("modulus", n_hex), ("input", x_hex), ("iterations", iterations)] if val is None]
+    missing = [
+        name
+        for name, val in [
+            ("modulus", n_hex),
+            ("input", x_hex),
+            ("iterations", iterations),
+        ]
+        if val is None
+    ]
     if missing:
         raise SystemExit(
             "Node did not return VDF parameters from rand.getRound; missing: "
@@ -142,7 +159,10 @@ def cmd_prove_vdf(
     phase = round_info.get("phase") or vdf_info.get("phase")
 
     typer.echo(f"Round: {round_id}  Phase: {phase}")
-    typer.echo("Running VDF prover… (this may take a while on large iteration counts)", err=True)
+    typer.echo(
+        "Running VDF prover… (this may take a while on large iteration counts)",
+        err=True,
+    )
 
     y_hex, pi_hex = _compute_vdf(n_hex, x_hex, int(iterations))
 
@@ -159,7 +179,9 @@ def cmd_prove_vdf(
         # Best-effort: submit via rand.submitVDF. If the node uses a different method name,
         # it will return an error explaining the mismatch.
         submit_res = _rpc_call(rpc, "rand.submitVDF", [result_obj])
-        typer.echo(json.dumps({"proof": result_obj, "submitResult": submit_res}, indent=2))
+        typer.echo(
+            json.dumps({"proof": result_obj, "submitResult": submit_res}, indent=2)
+        )
     else:
         typer.echo(json.dumps(result_obj, indent=2))
 

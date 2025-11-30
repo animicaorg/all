@@ -34,6 +34,7 @@ Typical usage
     # 2) All leaves for namespace 24
     rng = build_namespace_range(t, ns=24)
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -43,10 +44,10 @@ from .namespace import NamespaceId, NamespaceRange
 from .node import Node
 from .tree import NMT
 
-
 # --------------------------------------------------------------------------- #
 # Data structures
 # --------------------------------------------------------------------------- #
+
 
 @dataclass(frozen=True)
 class SiblingStep:
@@ -59,6 +60,7 @@ class SiblingStep:
       • hash   : 32-byte sibling hash
       • ns_min / ns_max : namespace range covered by the sibling subtree
     """
+
     level: int
     side: str  # "L" | "R"
     hash: bytes
@@ -83,6 +85,7 @@ class RangeProof:
     order (or the full encoded leaves to hash), plus this proof to reconstruct
     the root.
     """
+
     start: int
     count: int
     ns_range: NamespaceRange  # union namespace range of the covered leaves
@@ -93,7 +96,10 @@ class RangeProof:
 # Inclusion (single leaf)
 # --------------------------------------------------------------------------- #
 
-def build_inclusion(tree: NMT, index: int, *, leaf_payload_hash: Optional[bytes] = None) -> InclusionProof:
+
+def build_inclusion(
+    tree: NMT, index: int, *, leaf_payload_hash: Optional[bytes] = None
+) -> InclusionProof:
     """
     Build an inclusion proof for the leaf at `index`.
 
@@ -157,6 +163,7 @@ def build_inclusion(tree: NMT, index: int, *, leaf_payload_hash: Optional[bytes]
 # --------------------------------------------------------------------------- #
 # Namespace-range (contiguous span) multi-proof
 # --------------------------------------------------------------------------- #
+
 
 def build_range(tree: NMT, start: int, count: int) -> RangeProof:
     """

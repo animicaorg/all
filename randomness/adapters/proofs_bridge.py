@@ -63,6 +63,7 @@ try:  # pragma: no cover - optional
         "rand_vdf_verify_seconds", "Time spent verifying VDF proofs"
     )
 except Exception:  # pragma: no cover - fallback
+
     class _Noop:
         def labels(self, *_, **__):
             return self
@@ -76,9 +77,11 @@ except Exception:  # pragma: no cover - fallback
     VDF_PROOFS_SEEN = _Noop()
     VDF_VERIFY_SECONDS = _Noop()
 
+
 # ---- Types & light helpers ----
 def _b2h(b: bytes) -> str:
     return "0x" + b.hex()
+
 
 def _h2b(h: str | bytes) -> bytes:
     if isinstance(h, bytes):
@@ -87,14 +90,17 @@ def _h2b(h: str | bytes) -> bytes:
         raise ValueError("expected 0x-prefixed hex string")
     return bytes.fromhex(h[2:])
 
+
 @dataclass
 class VdfProofMsg:
     """Canonical envelope we operate on."""
+
     round: int
-    y: bytes     # output
-    pi: bytes    # proof
+    y: bytes  # output
+    pi: bytes  # proof
     worker_id: Optional[str] = None
     ts: int = 0  # arrival timestamp (filled automatically if zero)
+
 
 # ---- Protocols for integration points ----
 class VdfInput:
@@ -105,10 +111,13 @@ class VdfInput:
       - N / modulus      : bytes or int (modulus)
       - t / iterations   : int
     """
+
     pass  # purely descriptive; concrete type provided by the chain
+
 
 class VdfInputProvider(Protocol):
     async def get_vdf_input(self, round_id: int) -> VdfInput | None: ...
+
 
 class VdfStore(Protocol):
     async def has_vdf_proof(self, round_id: int) -> bool: ...
@@ -122,15 +131,21 @@ class VdfStore(Protocol):
         ts: int,
     ) -> None: ...
 
+
 class OnAcceptCallback(Protocol):
-    async def __call__(self, round_id: int, y: bytes, pi: bytes, worker_id: Optional[str]) -> None: ...
+    async def __call__(
+        self, round_id: int, y: bytes, pi: bytes, worker_id: Optional[str]
+    ) -> None: ...
+
 
 # ---- Verifier glue (accept multiple signatures) ----
 _verify_fn = None
 try:  # pragma: no cover - primary path
-    from randomness.vdf.verifier import verify as _verify_fn  # type: ignore[attr-defined]
+    from randomness.vdf.verifier import \
+        verify as _verify_fn  # type: ignore[attr-defined]
 except Exception:  # pragma: no cover - dev fallback to module-level helper below
     _verify_fn = None
+
 
 def _unpack_input(inp: Any) -> tuple[bytes, Any, int]:
     """
@@ -138,9 +153,24 @@ def _unpack_input(inp: Any) -> tuple[bytes, Any, int]:
     N may be an int or bytes (implementation-dependent); we pass it through.
     """
     # Objects or dicts: resolve generous attribute names
-    get = (lambda *names: next((getattr(inp, n, None) for n in names if getattr(inp, n, None) is not None), None)) \
-          if not isinstance(inp, dict) else \
-          (lambda *names: next((inp.get(n) for n in names if inp.get(n) is not None), None))
+    get = (
+        (
+            lambda *names: next(
+                (
+                    getattr(inp, n, None)
+                    for n in names
+                    if getattr(inp, n, None) is not None
+                ),
+                None,
+            )
+        )
+        if not isinstance(inp, dict)
+        else (
+            lambda *names: next(
+                (inp.get(n) for n in names if inp.get(n) is not None), None
+            )
+        )
+    )
 
     x = get("x", "input", "seed", "X")
     N = get("N", "modulus", "mod", "M")
@@ -159,6 +189,7 @@ def _unpack_input(inp: Any) -> tuple[bytes, Any, int]:
         raise TypeError("unexpected types for VDF input")
 
     return bytes(x), N, int(t)
+
 
 def _verify(inp: Any, y: bytes, pi: bytes) -> bool:
     """
@@ -192,7 +223,9 @@ def _verify(inp: Any, y: bytes, pi: bytes) -> bool:
 
     # Final fallback: try wesolowski module directly if present.
     try:  # pragma: no cover - fallback path
-        from randomness.vdf.wesolowski import verify as wes_verify  # type: ignore
+        from randomness.vdf.wesolowski import \
+            verify as wes_verify  # type: ignore
+
         ok = wes_verify(x, y, pi, N, t)  # type: ignore[misc]
         if isinstance(ok, bool):
             return ok
@@ -200,6 +233,7 @@ def _verify(inp: Any, y: bytes, pi: bytes) -> bool:
         pass
 
     raise RuntimeError("no viable VDF verifier signature available")
+
 
 # ---- Bridge implementation ----
 class VdfProofsBridge:
@@ -301,7 +335,9 @@ class VdfProofsBridge:
                 )
             except Exception as e:
                 VDF_PROOFS_SEEN.labels(result="store_err").inc()
-                logger.warning("failed to persist VDF proof (round=%s): %s", msg.round, e)
+                logger.warning(
+                    "failed to persist VDF proof (round=%s): %s", msg.round, e
+                )
                 return False
 
         VDF_PROOFS_SEEN.labels(result="ok").inc()
@@ -313,7 +349,9 @@ class VdfProofsBridge:
                 logger.debug("on_accept callback failed (round=%s): %s", msg.round, e)
         return True
 
-    async def ingest_batch(self, items: list[dict[str, Any] | VdfProofMsg]) -> tuple[int, int]:
+    async def ingest_batch(
+        self, items: list[dict[str, Any] | VdfProofMsg]
+    ) -> tuple[int, int]:
         """
         Ingest multiple proofs; returns (accepted, rejected) counts.
         Each item may be a VdfProofMsg or a dict with keys: round, y, pi, worker_id, ts.
@@ -323,7 +361,11 @@ class VdfProofsBridge:
         for it in items:
             if isinstance(it, VdfProofMsg):
                 accepted = await self.ingest_proof(
-                    round_id=it.round, y=it.y, pi=it.pi, worker_id=it.worker_id, ts=it.ts
+                    round_id=it.round,
+                    y=it.y,
+                    pi=it.pi,
+                    worker_id=it.worker_id,
+                    ts=it.ts,
                 )
             else:
                 accepted = await self.ingest_proof(
@@ -337,20 +379,25 @@ class VdfProofsBridge:
             bad += int(not accepted)
         return ok, bad
 
+
 # ---- Helpers ----
 class _Timer:
     """Context manager to time a block and observe a histogram (if provided)."""
+
     def __init__(self, hist: Any) -> None:
         self._hist = hist
         self._t0 = 0.0
+
     def __enter__(self) -> None:
         self._t0 = time.perf_counter()
+
     def __exit__(self, *_: Any) -> None:
         dt = time.perf_counter() - self._t0
         try:
             self._hist.observe(dt)  # type: ignore[attr-defined]
         except Exception:
             pass
+
 
 __all__ = [
     "VdfProofsBridge",

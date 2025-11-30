@@ -5,12 +5,12 @@ from typing import Any, Callable, Dict, Tuple
 
 import pytest
 
+import proofs.cbor as pcbor
 from proofs import nullifiers as pnull
 from proofs import types as ptypes
-import proofs.cbor as pcbor
-
 
 # ---------- helpers: locate a generic nullifier function & CBOR codec ----------
+
 
 def find_encode_decode(mod) -> Tuple[Callable[[Any], bytes], Callable[[bytes], Any]]:
     cands = [
@@ -23,6 +23,7 @@ def find_encode_decode(mod) -> Tuple[Callable[[Any], bytes], Callable[[bytes], A
         if hasattr(mod, en) and hasattr(mod, de):
             return getattr(mod, en), getattr(mod, de)
     raise AssertionError("proofs.cbor must expose encode/decode (or equivalent)")
+
 
 ENCODE, DECODE = find_encode_decode(pcbor)
 
@@ -55,7 +56,10 @@ def find_nullifier_fn(mod) -> Callable[[int, Any], bytes]:
 
     def call_per_kind(type_id: int, body: Any) -> bytes:
         key_map = {
-            int(ptypes.ProofType.HASHSHARE): ("hashshare_nullifier", "nullifier_hashshare"),
+            int(ptypes.ProofType.HASHSHARE): (
+                "hashshare_nullifier",
+                "nullifier_hashshare",
+            ),
             int(ptypes.ProofType.AI): ("ai_nullifier", "nullifier_ai"),
             int(ptypes.ProofType.QUANTUM): ("quantum_nullifier", "nullifier_quantum"),
             int(ptypes.ProofType.STORAGE): ("storage_nullifier", "nullifier_storage"),
@@ -65,7 +69,9 @@ def find_nullifier_fn(mod) -> Callable[[int, Any], bytes]:
             for k, fn in per_kind.items():
                 if cand in k and callable(fn):
                     return _invoke_nullifier(fn, body)
-        raise AssertionError(f"No suitable nullifier function found for type_id={type_id}")
+        raise AssertionError(
+            f"No suitable nullifier function found for type_id={type_id}"
+        )
 
     return call_per_kind
 
@@ -78,6 +84,7 @@ def _wrap_generic(fn: Callable[..., bytes]) -> Callable[[int, Any], bytes]:
         except TypeError:
             # Some variants might take (body, type_id)
             return _invoke_nullifier(lambda b: fn(b, type_id), body)
+
     return wrapper
 
 
@@ -103,6 +110,7 @@ NULLIFIER = find_nullifier_fn(pnull)
 
 
 # ------------------------------- fixtures ------------------------------------
+
 
 def sample_body(t: ptypes.ProofType) -> Dict[str, Any]:
     if t is ptypes.ProofType.HASHSHARE:
@@ -155,6 +163,7 @@ ALL_TYPES = [
 
 # ------------------------------- tests ---------------------------------------
 
+
 @pytest.mark.parametrize("t", ALL_TYPES)
 def test_deterministic_per_type(t: ptypes.ProofType) -> None:
     body = sample_body(t)
@@ -178,20 +187,35 @@ def test_domain_separation_across_types() -> None:
         pairs.append((t, sample_body(t)))
     vals = [NULLIFIER(int(t), b) for (t, b) in pairs]
     # Ensure pairwise uniqueness
-    assert len(set(vals)) == len(vals), "domain separation: different proof types must not collide"
+    assert len(set(vals)) == len(
+        vals
+    ), "domain separation: different proof types must not collide"
 
 
 @pytest.mark.parametrize(
     "t,mut",
     [
         (ptypes.ProofType.HASHSHARE, lambda b: b.__setitem__("nonce", b["nonce"] + 1)),
-        (ptypes.ProofType.AI, lambda b: b.__setitem__("output_digest", (int.from_bytes(b["output_digest"], "big") ^ 1).to_bytes(len(b["output_digest"]), "big"))),
+        (
+            ptypes.ProofType.AI,
+            lambda b: b.__setitem__(
+                "output_digest",
+                (int.from_bytes(b["output_digest"], "big") ^ 1).to_bytes(
+                    len(b["output_digest"]), "big"
+                ),
+            ),
+        ),
         (ptypes.ProofType.QUANTUM, lambda b: b.__setitem__("shots", b["shots"] + 1)),
         (ptypes.ProofType.STORAGE, lambda b: b.__setitem__("sector", b["sector"] + 1)),
-        (ptypes.ProofType.VDF, lambda b: b.__setitem__("iterations", b["iterations"] + 1)),
+        (
+            ptypes.ProofType.VDF,
+            lambda b: b.__setitem__("iterations", b["iterations"] + 1),
+        ),
     ],
 )
-def test_field_sensitivity(t: ptypes.ProofType, mut: Callable[[Dict[str, Any]], None]) -> None:
+def test_field_sensitivity(
+    t: ptypes.ProofType, mut: Callable[[Dict[str, Any]], None]
+) -> None:
     body = sample_body(t)
     n_before = NULLIFIER(int(t), body)
     # mutate a single salient field

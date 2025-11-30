@@ -31,7 +31,6 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-
 REPO = Path(__file__).resolve().parents[2]
 REPORT_DIR_DEFAULT = REPO / "tests" / "reports"
 DEVNET_DIR = REPO / "tests" / "devnet"
@@ -42,18 +41,25 @@ WAIT_SCRIPT_DEFAULT = DEVNET_DIR / "wait_for_services.sh"
 
 # ---------- utilities ----------
 
+
 def log(msg: str) -> None:
     print(f"[full-suite] {msg}", flush=True)
 
 
-def run(cmd: List[str], cwd: Path | None = None, env: Dict[str, str] | None = None) -> int:
+def run(
+    cmd: List[str], cwd: Path | None = None, env: Dict[str, str] | None = None
+) -> int:
     log("RUN: " + " ".join(shlex.quote(x) for x in cmd))
     return subprocess.run(cmd, cwd=str(cwd or REPO), env=env).returncode
 
 
 def find_compose_cmd() -> List[str]:
     # Prefer v2 `docker compose`, fallback to legacy `docker-compose`
-    code = subprocess.run(["docker", "compose", "version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    code = subprocess.run(
+        ["docker", "compose", "version"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     if code.returncode == 0:
         return ["docker", "compose"]
     return ["docker-compose"]
@@ -77,7 +83,10 @@ def ensure_executable(path: Path) -> None:
 
 # ---------- phases ----------
 
-def phase_devnet_up(compose_file: Path, env_file: Path, compose_opts: List[str]) -> Tuple[bool, List[str]]:
+
+def phase_devnet_up(
+    compose_file: Path, env_file: Path, compose_opts: List[str]
+) -> Tuple[bool, List[str]]:
     compose = find_compose_cmd()
     base = compose + ["-f", str(compose_file)]
     if env_file.exists():
@@ -104,11 +113,32 @@ def phase_pytest_integration(report_dir: Path) -> int:
 
     # Coverage packages (best effort)
     cov_targets = [
-        "pq","core","rpc","consensus","proofs","mining","p2p","mempool",
-        "da","execution","vm_py","capabilities","aicf","randomness","studio_services",
+        "pq",
+        "core",
+        "rpc",
+        "consensus",
+        "proofs",
+        "mining",
+        "p2p",
+        "mempool",
+        "da",
+        "execution",
+        "vm_py",
+        "capabilities",
+        "aicf",
+        "randomness",
+        "studio_services",
     ]
 
-    pytest_cmd: List[str] = [sys.executable, "-m", "pytest", "-q", "-ra", "--maxfail=1", "--durations=20"]
+    pytest_cmd: List[str] = [
+        sys.executable,
+        "-m",
+        "pytest",
+        "-q",
+        "-ra",
+        "--maxfail=1",
+        "--durations=20",
+    ]
     pytest_cmd += ["--junitxml", str(junit_path)]
 
     # Strict markers/config
@@ -136,7 +166,10 @@ def phase_pytest_integration(report_dir: Path) -> int:
         ]
 
     # Deselect heavy suites; we'll run E2E separately
-    pytest_cmd += ["-k", "not e2e and not docker and not bench and not load and not fuzz"]
+    pytest_cmd += [
+        "-k",
+        "not e2e and not docker and not bench and not load and not fuzz",
+    ]
 
     # Target directories
     pytest_cmd += [
@@ -180,13 +213,34 @@ def phase_fuzz_smoke(seconds: int) -> int:
 
     # Map fuzz targets → (corpus dir, optional dict path)
     targets: Dict[str, Tuple[str, str | None]] = {
-        "tests/fuzz/fuzz_tx_decode.py": ("tests/fuzz/corpus_txs", "tests/fuzz/dictionaries/cbor.dict"),
-        "tests/fuzz/fuzz_block_decode.py": ("tests/fuzz/corpus_blocks", "tests/fuzz/dictionaries/cbor.dict"),
-        "tests/fuzz/fuzz_proof_envelopes.py": ("tests/fuzz/corpus_proofs", "tests/fuzz/dictionaries/cbor.dict"),
-        "tests/fuzz/fuzz_vm_ir.py": ("tests/fuzz/corpus_vm_ir", "tests/fuzz/dictionaries/cbor.dict"),
-        "tests/fuzz/fuzz_p2p_messages.py": ("tests/fuzz/corpus_blocks", "tests/fuzz/dictionaries/cbor.dict"),
-        "tests/fuzz/fuzz_nmt_proofs.py": ("tests/fuzz/corpus_blocks", "tests/fuzz/dictionaries/cbor.dict"),
-        "tests/fuzz/fuzz_randomness_inputs.py": ("tests/fuzz/corpus_blocks", "tests/fuzz/dictionaries/json.dict"),
+        "tests/fuzz/fuzz_tx_decode.py": (
+            "tests/fuzz/corpus_txs",
+            "tests/fuzz/dictionaries/cbor.dict",
+        ),
+        "tests/fuzz/fuzz_block_decode.py": (
+            "tests/fuzz/corpus_blocks",
+            "tests/fuzz/dictionaries/cbor.dict",
+        ),
+        "tests/fuzz/fuzz_proof_envelopes.py": (
+            "tests/fuzz/corpus_proofs",
+            "tests/fuzz/dictionaries/cbor.dict",
+        ),
+        "tests/fuzz/fuzz_vm_ir.py": (
+            "tests/fuzz/corpus_vm_ir",
+            "tests/fuzz/dictionaries/cbor.dict",
+        ),
+        "tests/fuzz/fuzz_p2p_messages.py": (
+            "tests/fuzz/corpus_blocks",
+            "tests/fuzz/dictionaries/cbor.dict",
+        ),
+        "tests/fuzz/fuzz_nmt_proofs.py": (
+            "tests/fuzz/corpus_blocks",
+            "tests/fuzz/dictionaries/cbor.dict",
+        ),
+        "tests/fuzz/fuzz_randomness_inputs.py": (
+            "tests/fuzz/corpus_blocks",
+            "tests/fuzz/dictionaries/json.dict",
+        ),
     }
 
     env = os.environ.copy()
@@ -195,7 +249,16 @@ def phase_fuzz_smoke(seconds: int) -> int:
     cumulative_rc = 0
     runner = REPO / "tests" / "fuzz" / "atheris_runner.py"
     for target, (corpus, dict_path) in targets.items():
-        cmd = [sys.executable, str(runner), "--target", target, "--seconds", str(seconds), "--corpus", corpus]
+        cmd = [
+            sys.executable,
+            str(runner),
+            "--target",
+            target,
+            "--seconds",
+            str(seconds),
+            "--corpus",
+            corpus,
+        ]
         if dict_path:
             cmd += ["--dict", dict_path]
         rc = run(cmd, cwd=REPO, env=env)
@@ -203,7 +266,9 @@ def phase_fuzz_smoke(seconds: int) -> int:
     return cumulative_rc
 
 
-def phase_devnet_down(compose_bin: List[str], compose_file: Path, env_file: Path) -> int:
+def phase_devnet_down(
+    compose_bin: List[str], compose_file: Path, env_file: Path
+) -> int:
     base = compose_bin + ["-f", str(compose_file)]
     if env_file.exists():
         base += ["--env-file", str(env_file)]
@@ -212,17 +277,49 @@ def phase_devnet_down(compose_bin: List[str], compose_file: Path, env_file: Path
 
 # ---------- main ----------
 
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run full devnet + integration + e2e + fuzz-smoke suite.")
-    parser.add_argument("--no-docker", action="store_true", help="Assume devnet is already running; skip compose up/down.")
-    parser.add_argument("--compose-file", default=str(COMPOSE_FILE_DEFAULT), help="Path to docker-compose.yml")
-    parser.add_argument("--env-file", default=str(ENV_FILE_DEFAULT), help="Path to env file for compose")
-    parser.add_argument("--compose-opt", action="append", default=[], help="Extra options for `docker compose up`")
-    parser.add_argument("--wait-timeout", type=int, default=180, help="Seconds to wait for services to be ready")
+    parser = argparse.ArgumentParser(
+        description="Run full devnet + integration + e2e + fuzz-smoke suite."
+    )
+    parser.add_argument(
+        "--no-docker",
+        action="store_true",
+        help="Assume devnet is already running; skip compose up/down.",
+    )
+    parser.add_argument(
+        "--compose-file",
+        default=str(COMPOSE_FILE_DEFAULT),
+        help="Path to docker-compose.yml",
+    )
+    parser.add_argument(
+        "--env-file", default=str(ENV_FILE_DEFAULT), help="Path to env file for compose"
+    )
+    parser.add_argument(
+        "--compose-opt",
+        action="append",
+        default=[],
+        help="Extra options for `docker compose up`",
+    )
+    parser.add_argument(
+        "--wait-timeout",
+        type=int,
+        default=180,
+        help="Seconds to wait for services to be ready",
+    )
     parser.add_argument("--skip-e2e", action="store_true", help="Skip E2E runners")
     parser.add_argument("--skip-fuzz", action="store_true", help="Skip fuzz smoke")
-    parser.add_argument("--fuzz-seconds", type=int, default=10, help="Seconds per fuzz target in smoke pass")
-    parser.add_argument("--report-dir", default=str(REPORT_DIR_DEFAULT), help="Directory for junit/coverage reports")
+    parser.add_argument(
+        "--fuzz-seconds",
+        type=int,
+        default=10,
+        help="Seconds per fuzz target in smoke pass",
+    )
+    parser.add_argument(
+        "--report-dir",
+        default=str(REPORT_DIR_DEFAULT),
+        help="Directory for junit/coverage reports",
+    )
 
     args = parser.parse_args()
 

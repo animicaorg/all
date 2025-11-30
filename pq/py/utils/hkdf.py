@@ -28,9 +28,9 @@ Security Notes
   (e.g., "animica p2p aead key v1").
 """
 
-from typing import Optional, Union, Callable
-import hmac
 import hashlib
+import hmac
+from typing import Callable, Optional, Union
 
 BytesLike = Union[bytes, bytearray, memoryview]
 DigestFactory = Callable[[], "hashlib._Hash"]  # create a new hash object
@@ -83,7 +83,9 @@ def hkdf_expand(
     if length < 0:
         raise ValueError("length must be non-negative")
     if length > 255 * hash_len:
-        raise ValueError(f"length {length} exceeds HKDF limit {255 * hash_len} for this hash")
+        raise ValueError(
+            f"length {length} exceeds HKDF limit {255 * hash_len} for this hash"
+        )
 
     if not prk_b or len(prk_b) < hash_len:
         # RFC 5869 allows any length PRK from Extract; warn if clearly odd.
@@ -146,8 +148,7 @@ __all__ = [
 if __name__ == "__main__":
     # Deterministic sample with SHA3-256.
     ikm = bytes.fromhex(
-        "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
-        "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+        "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b" "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
     )
     salt = bytes.fromhex("000102030405060708090a0b0c")
     info = b"animica p2p aead key v1"

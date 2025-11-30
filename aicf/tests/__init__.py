@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 AICF test suite package.
 
@@ -20,6 +21,7 @@ def reseed_random() -> None:
     the start to make results reproducible across platforms.
     """
     import random
+
     random.seed(TEST_SEED)
 
 

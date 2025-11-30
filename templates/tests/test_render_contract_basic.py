@@ -41,11 +41,13 @@ VAR_TYPES = {"string", "integer", "number", "boolean", "enum"}
 
 # A simple marker scan for "obvious unrendered template tokens".
 UNRENDERED_PATTERNS = (
-    "{{",              # moustache-like
+    "{{",  # moustache-like
     "}}",
-    "[[",              # some engines use [[var]]
+    "[[",  # some engines use [[var]]
     "]]",
-    "<%=", "<%", "%>", # ejs-like
+    "<%=",
+    "<%",
+    "%>",  # ejs-like
 )
 
 
@@ -55,7 +57,11 @@ def _load_index() -> Any:
 
 
 def _find_template_entry(index_obj: Any, template_id: str) -> Mapping[str, Any]:
-    entries = index_obj["templates"] if isinstance(index_obj, dict) and "templates" in index_obj else index_obj
+    entries = (
+        index_obj["templates"]
+        if isinstance(index_obj, dict) and "templates" in index_obj
+        else index_obj
+    )
     for e in entries:
         if isinstance(e, dict) and e.get("id") == template_id:
             return e
@@ -102,7 +108,9 @@ def _collect_defaults(vars_spec: Mapping[str, Any]) -> Dict[str, Any]:
     """
     out: Dict[str, Any] = {}
     variables = vars_spec.get("variables", [])
-    assert isinstance(variables, list), "variables.json must contain a 'variables' array"
+    assert isinstance(
+        variables, list
+    ), "variables.json must contain a 'variables' array"
 
     for var in variables:
         assert isinstance(var, dict), "Each variable spec must be an object"
@@ -132,7 +140,9 @@ def _collect_defaults(vars_spec: Mapping[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def _render_any_signature(render_fn, template_dir: Path, outdir: Path, variables: Mapping[str, Any]) -> None:
+def _render_any_signature(
+    render_fn, template_dir: Path, outdir: Path, variables: Mapping[str, Any]
+) -> None:
     """
     Try a few common call signatures. Raise TypeError if none match.
     """
@@ -190,7 +200,9 @@ def _choose_project_root(outdir: Path, vars_map: Mapping[str, Any]) -> Path:
 def test_render_contract_python_basic_smoke() -> None:
     # Import rendering engine (skip if not available on this environment)
     render_mod = pytest.importorskip("templates.engine.render")
-    render_fn = getattr(render_mod, "render_template", None) or getattr(render_mod, "render", None)
+    render_fn = getattr(render_mod, "render_template", None) or getattr(
+        render_mod, "render", None
+    )
     if render_fn is None:
         pytest.skip("templates.engine.render has no 'render_template' or 'render'")
 
@@ -226,13 +238,19 @@ def test_render_contract_python_basic_smoke() -> None:
 
         # All expected files should exist and be files
         missing = [str(p) for p in expected_files if not p.exists()]
-        assert not missing, f"Rendered project missing expected files:\n- " + "\n- ".join(missing)
+        assert (
+            not missing
+        ), f"Rendered project missing expected files:\n- " + "\n- ".join(missing)
         not_files = [str(p) for p in expected_files if not p.is_file()]
-        assert not not_files, f"These paths exist but are not files:\n- " + "\n- ".join(not_files)
+        assert not not_files, f"These paths exist but are not files:\n- " + "\n- ".join(
+            not_files
+        )
 
         # manifest should be valid JSON
         manifest = _load_json(root / "contracts" / "manifest.json")
-        assert isinstance(manifest.get("name", ""), str) and manifest["name"].strip(), "manifest.name must be non-empty string"
+        assert (
+            isinstance(manifest.get("name", ""), str) and manifest["name"].strip()
+        ), "manifest.name must be non-empty string"
 
         # No obvious unrendered tokens in key files
         _assert_no_unrendered_tokens(root / "pyproject.toml")
@@ -262,7 +280,9 @@ def test_render_contract_python_basic_minimal_compilation_hint() -> None:
     but we still check for the presence of canonical TOML sections.
     """
     render_mod = pytest.importorskip("templates.engine.render")
-    render_fn = getattr(render_mod, "render_template", None) or getattr(render_mod, "render", None)
+    render_fn = getattr(render_mod, "render_template", None) or getattr(
+        render_mod, "render", None
+    )
     if render_fn is None:
         pytest.skip("templates.engine.render has no 'render_template' or 'render'")
 
@@ -277,12 +297,22 @@ def test_render_contract_python_basic_minimal_compilation_hint() -> None:
         _render_any_signature(render_fn, tdir, out, vars_map)
         root = _choose_project_root(out, vars_map)
 
-        pyproject = (root / "pyproject.toml").read_text(encoding="utf-8", errors="ignore")
-        assert "[project]" in pyproject or "[tool.poetry]" in pyproject or "[tool.setuptools]" in pyproject, (
-            "pyproject.toml should define a recognizable project table"
+        pyproject = (root / "pyproject.toml").read_text(
+            encoding="utf-8", errors="ignore"
         )
+        assert (
+            "[project]" in pyproject
+            or "[tool.poetry]" in pyproject
+            or "[tool.setuptools]" in pyproject
+        ), "pyproject.toml should define a recognizable project table"
 
         # contracts/contract.py should look like Python (rudimentary checks)
-        code = (root / "contracts" / "contract.py").read_text(encoding="utf-8", errors="ignore")
-        assert "def " in code, "contract.py should contain at least one function definition"
-        assert "class " not in code or "class " in code, "allow both styles; this is just a presence guard"
+        code = (root / "contracts" / "contract.py").read_text(
+            encoding="utf-8", errors="ignore"
+        )
+        assert (
+            "def " in code
+        ), "contract.py should contain at least one function definition"
+        assert (
+            "class " not in code or "class " in code
+        ), "allow both styles; this is just a presence guard"

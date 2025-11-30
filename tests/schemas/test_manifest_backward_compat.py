@@ -114,7 +114,9 @@ def _discover_example_paths_with_versions() -> List[Tuple[Path, str, Dict]]:
     return results
 
 
-EXAMPLES_WITH_VERSIONS: List[Tuple[Path, str, Dict]] = _discover_example_paths_with_versions()
+EXAMPLES_WITH_VERSIONS: List[Tuple[Path, str, Dict]] = (
+    _discover_example_paths_with_versions()
+)
 
 
 def _collect_schema_versions() -> List[str]:
@@ -145,7 +147,9 @@ def test_manifest_backward_compat_has_multiple_versions() -> None:
     EXAMPLES_WITH_VERSIONS,
     ids=lambda t: f"{t[0]}@{t[1]}",
 )
-def test_manifest_backward_compat_examples(rel_path: Path, schema_version: str, manifest: Dict) -> None:
+def test_manifest_backward_compat_examples(
+    rel_path: Path, schema_version: str, manifest: Dict
+) -> None:
     """
     Ensure older manifest schema_version examples still validate under the
     current docs-level package manifest schema, *or* are explicitly marked

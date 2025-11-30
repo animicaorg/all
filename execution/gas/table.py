@@ -50,12 +50,11 @@ Usage
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Tuple
-
-import json
 
 # Optional YAML support (graceful fallback to JSON-only)
 try:
@@ -65,7 +64,6 @@ except Exception:  # pragma: no cover - environment without PyYAML
 
 # Local helpers
 from execution.types.gas import U256_MAX, is_u256
-
 
 # ------------------------------ defaults -------------------------------------
 
@@ -127,15 +125,16 @@ _DEFAULT_BUILTINS: Dict[str, int] = {
 
 # ------------------------------ datatypes ------------------------------------
 
+
 @dataclass(frozen=True)
 class GasTable:
     """
     Immutable container of gas costs for VM opcodes and stdlib/syscall builtins.
     """
+
     meta: Tuple[Tuple[str, Any], ...]
     opcodes: Tuple[Tuple[str, int], ...]
     builtins: Tuple[Tuple[str, int], ...]
-
 
     # ---------- lookup ----------
 
@@ -179,7 +178,9 @@ class GasTable:
             if v < 0:
                 raise ValueError(f"{kind}.{k}: cost must be non-negative")
             if not is_u256(v):
-                raise OverflowError(f"{kind}.{k}: cost must fit into u256 (<= {U256_MAX})")
+                raise OverflowError(
+                    f"{kind}.{k}: cost must fit into u256 (<= {U256_MAX})"
+                )
             out[k] = int(v)
         # Canonicalize ordering
         return dict(sorted(out.items(), key=lambda kv: kv[0]))
@@ -192,7 +193,9 @@ class GasTable:
         opcodes: Mapping[str, Any],
         builtins: Mapping[str, Any],
     ) -> "GasTable":
-        meta_c = dict(sorted(((str(k), meta[k]) for k in meta.keys()), key=lambda kv: kv[0]))
+        meta_c = dict(
+            sorted(((str(k), meta[k]) for k in meta.keys()), key=lambda kv: kv[0])
+        )
         op_c = cls._validate_costs("opcodes", opcodes)
         bi_c = cls._validate_costs("builtins", builtins)
         return GasTable(
@@ -203,6 +206,7 @@ class GasTable:
 
 
 # ------------------------------ helpers --------------------------------------
+
 
 def _merge_dicts(*dicts: Mapping[str, Any]) -> Dict[str, Any]:
     """
@@ -260,6 +264,7 @@ def _discover_default_path(start: Optional[Path] = None) -> Optional[Path]:
 
 # ------------------------------ public API -----------------------------------
 
+
 @lru_cache(maxsize=8)
 def load_gas_table(
     path: Optional[str | Path] = None,
@@ -288,7 +293,9 @@ def load_gas_table(
     opcodes = dict(_DEFAULT_OPCODES)
     builtins = dict(_DEFAULT_BUILTINS)
 
-    resolved_path: Optional[Path] = Path(path) if path is not None else _discover_default_path()
+    resolved_path: Optional[Path] = (
+        Path(path) if path is not None else _discover_default_path()
+    )
     if resolved_path and resolved_path.exists():
         data = _load_yaml_or_json(resolved_path)
         file_meta = dict(data.get("meta") or {})

@@ -12,7 +12,8 @@ import pytest
 # --------------------------- Optional project modules ---------------------------
 
 try:
-    from aicf.integration import proofs_bridge as _proofs_bridge_mod  # type: ignore
+    from aicf.integration import \
+        proofs_bridge as _proofs_bridge_mod  # type: ignore
 except Exception:
     _proofs_bridge_mod = None  # type: ignore
 
@@ -29,6 +30,7 @@ except Exception:
 
 # --------------------------- Fixtures: sample proofs ---------------------------
 
+
 @pytest.fixture
 def sample_proofs() -> List[Dict[str, Any]]:
     """
@@ -40,7 +42,7 @@ def sample_proofs() -> List[Dict[str, Any]]:
             "kind": "AI",
             "task_id": "0xai01",
             "provider": "provAI",
-            "units": 120,        # abstract "ai_units"
+            "units": 120,  # abstract "ai_units"
             "nullifier": "n-ai-01",
             "height": 1001,
         },
@@ -48,7 +50,7 @@ def sample_proofs() -> List[Dict[str, Any]]:
             "kind": "QUANTUM",
             "task_id": "0xq01",
             "provider": "provQ",
-            "units": 15,         # abstract "quantum_units"
+            "units": 15,  # abstract "quantum_units"
             "nullifier": "n-q-01",
             "height": 1001,
         },
@@ -57,7 +59,10 @@ def sample_proofs() -> List[Dict[str, Any]]:
 
 # --------------------------- Generic helpers ---------------------------
 
-def _sum_amounts(payouts: Iterable[Dict[str, Any]]) -> Tuple[int, int, int, Dict[str, int]]:
+
+def _sum_amounts(
+    payouts: Iterable[Dict[str, Any]],
+) -> Tuple[int, int, int, Dict[str, int]]:
     p = t = m = 0
     per_provider: Dict[str, int] = {}
     for pyo in payouts:
@@ -75,20 +80,23 @@ def _sum_amounts(payouts: Iterable[Dict[str, Any]]) -> Tuple[int, int, int, Dict
 
 # --------------------------- Fallback reference implementations ---------------------------
 
+
 def _claims_from_proofs_ref(proofs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Convert generic proof dicts to generic claims. Real bridge may enrich them.
     """
     claims: List[Dict[str, Any]] = []
     for pr in proofs:
-        claims.append({
-            "kind": pr.get("kind"),
-            "task_id": pr.get("task_id"),
-            "provider": pr.get("provider"),
-            "units": int(pr.get("units", 0)),
-            "height": int(pr.get("height", 0)),
-            "nullifier": pr.get("nullifier"),
-        })
+        claims.append(
+            {
+                "kind": pr.get("kind"),
+                "task_id": pr.get("task_id"),
+                "provider": pr.get("provider"),
+                "units": int(pr.get("units", 0)),
+                "height": int(pr.get("height", 0)),
+                "nullifier": pr.get("nullifier"),
+            }
+        )
     return claims
 
 
@@ -115,17 +123,21 @@ def _split_ref(base_reward: int) -> Dict[str, int]:
     return {"provider": provider, "treasury": treasury, "miner": miner}
 
 
-def _payouts_from_claims_ref(claims: List[Dict[str, Any]], epoch: int) -> List[Dict[str, Any]]:
+def _payouts_from_claims_ref(
+    claims: List[Dict[str, Any]], epoch: int
+) -> List[Dict[str, Any]]:
     payouts: List[Dict[str, Any]] = []
     for cl in claims:
         base = _price_units_ref(str(cl.get("kind", "")), int(cl.get("units", 0)))
         amounts = _split_ref(base)
-        payouts.append({
-            "provider": cl.get("provider"),
-            "amounts": amounts,
-            "epoch": int(epoch),
-            "task_id": cl.get("task_id"),
-        })
+        payouts.append(
+            {
+                "provider": cl.get("provider"),
+                "amounts": amounts,
+                "epoch": int(epoch),
+                "task_id": cl.get("task_id"),
+            }
+        )
     return payouts
 
 
@@ -136,7 +148,9 @@ class _LedgerStub:
         self.miner_balance: int = 0
 
     def credit_provider(self, provider: str, amount: int, *_, **__) -> None:
-        self.provider_balances[provider] = self.provider_balances.get(provider, 0) + int(amount)
+        self.provider_balances[provider] = self.provider_balances.get(
+            provider, 0
+        ) + int(amount)
 
     def credit_treasury(self, amount: int, *_, **__) -> None:
         self.treasury_balance += int(amount)
@@ -145,7 +159,15 @@ class _LedgerStub:
         self.miner_balance += int(amount)
 
     # Optional generic credit signature some implementations might invoke
-    def credit(self, *, provider: Optional[str] = None, amount: Optional[int] = None, treasury: Optional[int] = None, miner: Optional[int] = None, **_) -> None:
+    def credit(
+        self,
+        *,
+        provider: Optional[str] = None,
+        amount: Optional[int] = None,
+        treasury: Optional[int] = None,
+        miner: Optional[int] = None,
+        **_,
+    ) -> None:
         if provider is not None and amount is not None:
             self.credit_provider(provider, amount)
         if treasury is not None:
@@ -154,7 +176,9 @@ class _LedgerStub:
             self.credit_miner(miner)
 
 
-def _settle_ref(payouts: List[Dict[str, Any]], epoch: int, ledger: _LedgerStub) -> Dict[str, Any]:
+def _settle_ref(
+    payouts: List[Dict[str, Any]], epoch: int, ledger: _LedgerStub
+) -> Dict[str, Any]:
     receipts = []
     for pyo in payouts:
         prov = str(pyo.get("provider"))
@@ -169,7 +193,12 @@ def _settle_ref(payouts: List[Dict[str, Any]], epoch: int, ledger: _LedgerStub) 
     p_sum, t_sum, m_sum, per_provider = _sum_amounts(payouts)
     return {
         "epoch": epoch,
-        "totals": {"provider": p_sum, "treasury": t_sum, "miner": m_sum, "grand": p_sum + t_sum + m_sum},
+        "totals": {
+            "provider": p_sum,
+            "treasury": t_sum,
+            "miner": m_sum,
+            "grand": p_sum + t_sum + m_sum,
+        },
         "per_provider": per_provider,
         "receipts": receipts,
         "used_ref": True,
@@ -178,13 +207,22 @@ def _settle_ref(payouts: List[Dict[str, Any]], epoch: int, ledger: _LedgerStub) 
 
 # --------------------------- Adapters into project APIs ---------------------------
 
+
 def _get_claims_builder() -> Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]:
     if _proofs_bridge_mod is None:
         return _claims_from_proofs_ref
 
-    for fname in ("proofs_to_claims", "to_claims", "build_claims", "map_claims", "normalize_claims", "process"):
+    for fname in (
+        "proofs_to_claims",
+        "to_claims",
+        "build_claims",
+        "map_claims",
+        "normalize_claims",
+        "process",
+    ):
         fn = getattr(_proofs_bridge_mod, fname, None)
         if callable(fn):
+
             def call(proofs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 try:
                     out = fn(proofs)  # type: ignore[misc]
@@ -195,18 +233,22 @@ def _get_claims_builder() -> Callable[[List[Dict[str, Any]]], List[Dict[str, Any
                     pass
                 # fallback
                 return _claims_from_proofs_ref(proofs)
+
             return call
 
     return _claims_from_proofs_ref
 
 
-def _get_payouts_builder(epoch: int) -> Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]:
+def _get_payouts_builder(
+    epoch: int,
+) -> Callable[[List[Dict[str, Any]]], List[Dict[str, Any]]]:
     if _payouts_mod is None:
         return lambda claims: _payouts_from_claims_ref(claims, epoch)
 
     for fname in ("from_claims", "build", "make", "compute", "assemble"):
         fn = getattr(_payouts_mod, fname, None)
         if callable(fn):
+
             def call(claims: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 try:
                     out = fn(claims, epoch)  # type: ignore[misc]
@@ -222,35 +264,52 @@ def _get_payouts_builder(epoch: int) -> Callable[[List[Dict[str, Any]]], List[Di
                 except Exception:
                     pass
                 return _payouts_from_claims_ref(claims, epoch)
+
             return call
 
     return lambda claims: _payouts_from_claims_ref(claims, epoch)
 
 
-def _get_settle_fn() -> Callable[[List[Dict[str, Any]], int, _LedgerStub], Dict[str, Any]]:
+def _get_settle_fn() -> (
+    Callable[[List[Dict[str, Any]], int, _LedgerStub], Dict[str, Any]]
+):
     if _settlement_mod is None:
         return _settle_ref
 
     for fname in ("batch_settle", "run", "settle", "process", "execute", "batch"):
         fn = getattr(_settlement_mod, fname, None)
         if callable(fn):
-            def call(payouts: List[Dict[str, Any]], epoch: int, ledger: _LedgerStub) -> Dict[str, Any]:
+
+            def call(
+                payouts: List[Dict[str, Any]], epoch: int, ledger: _LedgerStub
+            ) -> Dict[str, Any]:
                 # try common ledger kw names
                 for kw in ("ledger", "state", "treasury_state", "treasury"):
                     try:
                         res = fn(payouts, epoch, **{kw: ledger})  # type: ignore[misc]
                         # Best-effort normalize
-                        return {"totals": {}, "receipts": [], "used_ref": False, **(res if isinstance(res, dict) else {})}
+                        return {
+                            "totals": {},
+                            "receipts": [],
+                            "used_ref": False,
+                            **(res if isinstance(res, dict) else {}),
+                        }
                     except TypeError:
                         try:
                             res = fn(epoch, payouts, **{kw: ledger})  # type: ignore[misc]
-                            return {"totals": {}, "receipts": [], "used_ref": False, **(res if isinstance(res, dict) else {})}
+                            return {
+                                "totals": {},
+                                "receipts": [],
+                                "used_ref": False,
+                                **(res if isinstance(res, dict) else {}),
+                            }
                         except TypeError:
                             continue
                     except Exception:
                         continue
                 # No ledger accepted — just fall back to reference so we can assert credits.
                 return _settle_ref(payouts, epoch, ledger)
+
             return call
 
     return _settle_ref
@@ -263,6 +322,7 @@ SETTLE = _get_settle_fn()
 
 # --------------------------- The integration test ---------------------------
 
+
 def test_proof_to_claim_to_payout_credit(sample_proofs: List[Dict[str, Any]]) -> None:
     epoch = 77
     # 1) Proofs -> Claims
@@ -273,7 +333,9 @@ def test_proof_to_claim_to_payout_credit(sample_proofs: List[Dict[str, Any]]) ->
     payouts = PAYOUTS_FROM_CLAIMS(epoch)(claims)
     assert isinstance(payouts, list) and payouts, "No payouts produced"
     for p in payouts:
-        assert {"provider", "amounts"}.issubset(set(p.keys())), f"Incomplete payout entry: {p}"
+        assert {"provider", "amounts"}.issubset(
+            set(p.keys())
+        ), f"Incomplete payout entry: {p}"
 
     # Expected totals computed from payouts themselves (implementation-agnostic).
     p_sum, t_sum, m_sum, per_provider = _sum_amounts(payouts)
@@ -283,7 +345,11 @@ def test_proof_to_claim_to_payout_credit(sample_proofs: List[Dict[str, Any]]) ->
     result = SETTLE(payouts, epoch=epoch, ledger=ledger)
 
     # If project settlement didn't wire our stub, detect it and use reference to perform credits so we can assert.
-    wired = (sum(ledger.provider_balances.values()) + ledger.treasury_balance + ledger.miner_balance) > 0
+    wired = (
+        sum(ledger.provider_balances.values())
+        + ledger.treasury_balance
+        + ledger.miner_balance
+    ) > 0
     if not wired:
         _settle_ref(payouts, epoch, ledger)
         wired = True
@@ -294,7 +360,9 @@ def test_proof_to_claim_to_payout_credit(sample_proofs: List[Dict[str, Any]]) ->
     assert ledger.treasury_balance == t_sum
     assert ledger.miner_balance == m_sum
     for prov, expected in per_provider.items():
-        assert ledger.provider_balances.get(prov, 0) == expected, f"Provider {prov} credited mismatch"
+        assert (
+            ledger.provider_balances.get(prov, 0) == expected
+        ), f"Provider {prov} credited mismatch"
 
     # Optional: if settlement returned totals, check conservation.
     totals = result.get("totals", {}) if isinstance(result, dict) else {}

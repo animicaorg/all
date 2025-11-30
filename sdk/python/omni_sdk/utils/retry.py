@@ -46,7 +46,8 @@ from __future__ import annotations
 import asyncio
 import random
 import time
-from typing import Any, Awaitable, Callable, Iterable, Optional, Sequence, Tuple, Type, TypeVar, Union, overload, Literal, cast
+from typing import (Any, Awaitable, Callable, Iterable, Literal, Optional,
+                    Sequence, Tuple, Type, TypeVar, Union, cast, overload)
 
 __all__ = [
     "RetryError",
@@ -130,7 +131,11 @@ def backoff_delay(
     return max(0.0, float(delay))
 
 
-def _should_retry(exc: BaseException, exceptions: Tuple[Type[BaseException], ...], retry_if: Optional[Callable[[BaseException], bool]]) -> bool:
+def _should_retry(
+    exc: BaseException,
+    exceptions: Tuple[Type[BaseException], ...],
+    retry_if: Optional[Callable[[BaseException], bool]],
+) -> bool:
     if not isinstance(exc, exceptions):
         return False
     if retry_if is not None:

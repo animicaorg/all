@@ -25,12 +25,12 @@ Integration points
 
 """
 
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from enum import Enum, auto
 from typing import Dict, List, Optional, Tuple
 
-from aicf.treasury.state import TreasuryState  # internal ledger
 from aicf.aitypes.provider import ProviderId
+from aicf.treasury.state import TreasuryState  # internal ledger
 
 
 class WithdrawalError(Exception):
@@ -107,6 +107,7 @@ class WithdrawalConfig:
     - max_pending_per_provider: limit pending requests per provider
     - max_per_block_execute: optional cap on the *sum* executed in one block
     """
+
     delay_blocks: int = 7200  # ~1 day at 12s blocks
     cooldown_blocks: int = 0
     min_amount: int = 0
@@ -132,6 +133,7 @@ class WithdrawalTracker:
     - last_request_height: provider -> last request height (for cooldown)
     - last_height_processed: last height seen by finalize_due (optional)
     """
+
     next_id: int = 1
     pending: Dict[int, Dict] = None  # type: ignore
     last_request_height: Dict[str, int] = None  # type: ignore
@@ -156,7 +158,9 @@ class WithdrawalTracker:
         wt = WithdrawalTracker(
             next_id=int(d.get("next_id", 1)),
             pending={int(k): v for k, v in (d.get("pending") or {}).items()},
-            last_request_height={str(k): int(v) for k, v in (d.get("last_request_height") or {}).items()},
+            last_request_height={
+                str(k): int(v) for k, v in (d.get("last_request_height") or {}).items()
+            },
             last_height_processed=d.get("last_height_processed"),
         )
         return wt
@@ -175,7 +179,12 @@ class WithdrawalManager:
 
     __slots__ = ("cfg", "treasury", "_t")
 
-    def __init__(self, cfg: WithdrawalConfig, treasury: TreasuryState, tracker: Optional[WithdrawalTracker] = None) -> None:
+    def __init__(
+        self,
+        cfg: WithdrawalConfig,
+        treasury: TreasuryState,
+        tracker: Optional[WithdrawalTracker] = None,
+    ) -> None:
         cfg.validate()
         self.cfg = cfg
         self.treasury = treasury
@@ -191,17 +200,25 @@ class WithdrawalManager:
 
     # --- queries ---
 
-    def list_pending(self, provider: Optional[ProviderId] = None) -> List[WithdrawalRequest]:
+    def list_pending(
+        self, provider: Optional[ProviderId] = None
+    ) -> List[WithdrawalRequest]:
         out: List[WithdrawalRequest] = []
         for d in self._t.pending.values():
             req = WithdrawalRequest.from_dict(d)
-            if req.status == Status.PENDING and (provider is None or req.provider == provider):
+            if req.status == Status.PENDING and (
+                provider is None or req.provider == provider
+            ):
                 out.append(req)
         out.sort(key=lambda r: (r.earliest_exec_height, r.id))
         return out
 
-    def list_executable(self, height: int, *, provider: Optional[ProviderId] = None) -> List[WithdrawalRequest]:
-        return [r for r in self.list_pending(provider) if r.earliest_exec_height <= height]
+    def list_executable(
+        self, height: int, *, provider: Optional[ProviderId] = None
+    ) -> List[WithdrawalRequest]:
+        return [
+            r for r in self.list_pending(provider) if r.earliest_exec_height <= height
+        ]
 
     def next_allowed_request_height(self, provider: ProviderId) -> int:
         last = self._t.last_request_height.get(str(provider))
@@ -211,7 +228,9 @@ class WithdrawalManager:
 
     # --- core ops ---
 
-    def request(self, provider: ProviderId, amount: int, height: int) -> WithdrawalRequest:
+    def request(
+        self, provider: ProviderId, amount: int, height: int
+    ) -> WithdrawalRequest:
         """
         Create a withdrawal request:
           • Enforces min_amount
@@ -230,18 +249,27 @@ class WithdrawalManager:
         # cooldown
         next_allowed = self.next_allowed_request_height(provider)
         if height < next_allowed:
-            raise CooldownNotElapsed(f"cooldown not elapsed: next at height >= {next_allowed}")
+            raise CooldownNotElapsed(
+                f"cooldown not elapsed: next at height >= {next_allowed}"
+            )
 
         # pending count
-        pending_for_provider = sum(1 for r in self._t.pending.values()
-                                   if r["status"] == Status.PENDING.name and r["provider"] == str(provider))
+        pending_for_provider = sum(
+            1
+            for r in self._t.pending.values()
+            if r["status"] == Status.PENDING.name and r["provider"] == str(provider)
+        )
         if pending_for_provider >= self.cfg.max_pending_per_provider:
-            raise TooManyPending(f"max pending reached ({self.cfg.max_pending_per_provider})")
+            raise TooManyPending(
+                f"max pending reached ({self.cfg.max_pending_per_provider})"
+            )
 
         # sufficient funds
         available = self._available(provider)
         if amount > available:
-            raise InsufficientFunds(f"insufficient funds: want {amount}, have {available}")
+            raise InsufficientFunds(
+                f"insufficient funds: want {amount}, have {available}"
+            )
 
         # lock funds
         self.treasury.debit(provider, amount, height=height, reason="withdraw-request")
@@ -261,7 +289,9 @@ class WithdrawalManager:
         self._t.last_request_height[str(provider)] = height
         return req
 
-    def cancel(self, request_id: int, provider: ProviderId, height: int) -> WithdrawalRequest:
+    def cancel(
+        self, request_id: int, provider: ProviderId, height: int
+    ) -> WithdrawalRequest:
         """
         Cancel a *pending* request; credits funds back to provider.
         """
@@ -274,7 +304,9 @@ class WithdrawalManager:
         if req.status != Status.PENDING:
             raise InvalidRequest(f"cannot cancel request in status {req.status.name}")
         # credit back
-        self.treasury.credit(provider, req.amount, height=height, reason="withdraw-cancel")
+        self.treasury.credit(
+            provider, req.amount, height=height, reason="withdraw-cancel"
+        )
         # update record
         req = WithdrawalRequest(
             id=req.id,
@@ -301,7 +333,9 @@ class WithdrawalManager:
         if req.status != Status.PENDING:
             raise InvalidRequest(f"cannot execute request in status {req.status.name}")
         if height < req.earliest_exec_height:
-            raise InvalidRequest(f"not yet executable (earliest {req.earliest_exec_height})")
+            raise InvalidRequest(
+                f"not yet executable (earliest {req.earliest_exec_height})"
+            )
 
         executed = WithdrawalRequest(
             id=req.id,

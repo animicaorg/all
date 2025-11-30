@@ -29,7 +29,7 @@ Notes
 - Deterministic: no time/random/network/FS access; strict integer bounds.
 """
 
-from stdlib import storage, events, abi  # provided by vm runtime sandbox
+from stdlib import abi, events, storage  # provided by vm runtime sandbox
 
 _STORAGE_KEY = b"c"
 _U64_MAX = (1 << 64) - 1

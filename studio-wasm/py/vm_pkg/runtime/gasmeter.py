@@ -26,6 +26,7 @@ from ..errors import OOG, ValidationError
 @dataclass
 class GasSnapshot:
     """Immutable snapshot of gas state (for debugging/inspection)."""
+
     limit: int
     used: int
     refunds: int
@@ -98,7 +99,9 @@ class GasMeter:
         if not isinstance(n, int) or n < 0:
             raise ValidationError(f"gas ensure must be non-negative int, got {n!r}")
         if self._used + n > self._limit:
-            raise OOG(f"insufficient gas for operation: need {n}, remaining {self.remaining}")
+            raise OOG(
+                f"insufficient gas for operation: need {n}, remaining {self.remaining}"
+            )
 
     def refund(self, n: int) -> None:
         """Apply a refund up to `n` units; clamps `used` at 0 (never negative)."""
@@ -111,7 +114,7 @@ class GasMeter:
         if self._used < 0:
             self._used = 0
         # Track the amount of refund effectively applied
-        self._refunds += (prev_used - self._used)
+        self._refunds += prev_used - self._used
 
     # ---------------- Diagnostics ----------------
 

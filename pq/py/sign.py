@@ -44,19 +44,15 @@ Security notes
 """
 
 from dataclasses import dataclass
-from typing import Optional, Union, Literal, Tuple
+from typing import Literal, Optional, Tuple, Union
 
+from pq.py.registry import ALG_ID, ALG_NAME, is_known_alg_id, is_sig_alg_id
 from pq.py.utils.hash import sha3_256, sha3_512
-from pq.py.registry import (
-    ALG_ID,
-    ALG_NAME,
-    is_known_alg_id,
-    is_sig_alg_id,
-)
 
 # --------------------------------------------------------------------------------------
 # Small helpers: varint, field encoding, alg normalization
 # --------------------------------------------------------------------------------------
+
 
 def _uvarint(n: int) -> bytes:
     """LEB128 uvarint (little endian base-128) for compact, unambiguous ints."""
@@ -73,9 +69,11 @@ def _uvarint(n: int) -> bytes:
             break
     return bytes(out)
 
+
 def _len_bytes(b: bytes) -> bytes:
     """Length prefix for a bytes field (uvarint length || bytes)."""
     return _uvarint(len(b)) + b
+
 
 def _norm_domain(domain: Union[str, bytes]) -> bytes:
     if isinstance(domain, bytes):
@@ -86,6 +84,7 @@ def _norm_domain(domain: Union[str, bytes]) -> bytes:
             raise ValueError("domain must be non-empty")
         return d.encode("utf-8")
     raise TypeError("domain must be str|bytes")
+
 
 def _normalize_alg(alg: Union[int, str]) -> Tuple[int, str]:
     if isinstance(alg, int):
@@ -102,11 +101,13 @@ def _normalize_alg(alg: Union[int, str]) -> Tuple[int, str]:
         return alg_id, name
     raise TypeError("alg must be int (alg_id) or str (name)")
 
+
 # --------------------------------------------------------------------------------------
 # Canonical SignBytes
 # --------------------------------------------------------------------------------------
 
 PrehashKind = Literal["sha3-512", "sha3-256"]
+
 
 def build_sign_bytes(
     msg: bytes,
@@ -164,9 +165,11 @@ def build_sign_bytes(
     else:
         raise ValueError(f"Unsupported prehash: {prehash}")
 
+
 # --------------------------------------------------------------------------------------
 # Signature & SignedMessage envelopes
 # --------------------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class Signature:
@@ -182,14 +185,17 @@ class Signature:
             f"domain={self.domain!r}, prehash={self.prehash}, sig[:8]={self.sig[:8].hex()}…)"
         )
 
+
 @dataclass(frozen=True)
 class SignedMessage:
     message: bytes
     signature: Signature
 
+
 # --------------------------------------------------------------------------------------
 # Backend dispatcher
 # --------------------------------------------------------------------------------------
+
 
 def _backend_sign(alg_name: str, sk: bytes, msg: bytes) -> bytes:
     """
@@ -210,12 +216,16 @@ def _backend_sign(alg_name: str, sk: bytes, msg: bytes) -> bytes:
         ) from e
 
     if not hasattr(backend, "sign"):
-        raise NotImplementedError(f"Backend {backend.__name__} lacks .sign(secret_key, message)")
+        raise NotImplementedError(
+            f"Backend {backend.__name__} lacks .sign(secret_key, message)"
+        )
     return backend.sign(sk, msg)  # type: ignore[arg-type]
+
 
 # --------------------------------------------------------------------------------------
 # Public API
 # --------------------------------------------------------------------------------------
+
 
 def sign_detached(
     msg: bytes,
@@ -240,7 +250,11 @@ def sign_detached(
         prehash=prehash,
     )
     sig = _backend_sign(alg_name, sk, ph)
-    domain_str = domain.decode("utf-8", "replace") if isinstance(domain, (bytes, bytearray)) else str(domain)
+    domain_str = (
+        domain.decode("utf-8", "replace")
+        if isinstance(domain, (bytes, bytearray))
+        else str(domain)
+    )
     return Signature(
         alg_id=alg_id,
         alg_name=alg_name,
@@ -248,6 +262,7 @@ def sign_detached(
         prehash=prehash,
         sig=sig,
     )
+
 
 def sign_attached(
     msg: bytes,
@@ -275,17 +290,21 @@ def sign_attached(
         ),
     )
 
+
 # --------------------------------------------------------------------------------------
 # CLI smoke (python -m pq.py.sign <alg> <hex:sk> <hex:msg> [domain] [chain_id])
 # --------------------------------------------------------------------------------------
+
 
 def _parse_hex_arg(s: str) -> bytes:
     if not s.startswith("hex:"):
         raise ValueError("expected hex:…")
     return bytes.fromhex(s[4:].replace("_", "").replace(" ", ""))
 
+
 def _main() -> None:
     import sys
+
     args = sys.argv[1:]
     if len(args) < 3 or args[0] in ("-h", "--help"):
         print(
@@ -315,6 +334,7 @@ def _main() -> None:
     print("domain:", sig.domain)
     print("prehash:", sig.prehash)
     print("sig:", sig.sig.hex())
+
 
 if __name__ == "__main__":
     _main()

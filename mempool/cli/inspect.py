@@ -31,8 +31,8 @@ import statistics
 import sys
 import time
 import typing as t
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-from urllib.error import URLError, HTTPError
 
 # Best-effort version exposure (not required)
 try:
@@ -52,7 +52,7 @@ class EntryView:
     gas: int | None
     tip_per_gas: int | None  # wei-like units if provided
     effective_priority: float  # normalized "priority" used for sorting
-    created_ts: float | None   # unix seconds if available
+    created_ts: float | None  # unix seconds if available
 
     @property
     def short_hash(self) -> str:
@@ -137,18 +137,26 @@ def _extract_entry_view(entry: dict) -> EntryView:
     tx = _get(entry, "tx", default=None) or {}
     meta = _get(entry, "meta", default=None) or {}
 
-    tx_hash = _get(entry, "hash", "tx_hash", default=None) \
-              or _get(tx, "hash", "tx_hash", default="")
+    tx_hash = _get(entry, "hash", "tx_hash", default=None) or _get(
+        tx, "hash", "tx_hash", default=""
+    )
 
-    sender = _get(entry, "sender", "from", default=None) \
-             or _get(tx, "from", "sender", default="") \
-             or "?"
+    sender = (
+        _get(entry, "sender", "from", default=None)
+        or _get(tx, "from", "sender", default="")
+        or "?"
+    )
 
-    nonce = _coerce_int(_get(entry, "nonce", default=None) or _get(tx, "nonce", default=None))
+    nonce = _coerce_int(
+        _get(entry, "nonce", default=None) or _get(tx, "nonce", default=None)
+    )
 
     size_bytes = _infer_size_bytes(entry)
 
-    gas = _coerce_int(_get(entry, "gas", "gas_limit", default=None) or _get(tx, "gas", "gas_limit", default=None))
+    gas = _coerce_int(
+        _get(entry, "gas", "gas_limit", default=None)
+        or _get(tx, "gas", "gas_limit", default=None)
+    )
 
     tip_pg = _coerce_int(
         _get(entry, "tip", "tip_per_gas", "maxPriorityFeePerGas", default=None)
@@ -157,10 +165,9 @@ def _extract_entry_view(entry: dict) -> EntryView:
     )
 
     # Priority: prefer explicit, then compute a rough heuristic.
-    pr_explicit = (
-        _coerce_float(_get(entry, "priority", "effective_priority", default=None))
-        or _coerce_float(_get(meta, "effective_priority", default=None))
-    )
+    pr_explicit = _coerce_float(
+        _get(entry, "priority", "effective_priority", default=None)
+    ) or _coerce_float(_get(meta, "effective_priority", default=None))
 
     if pr_explicit is not None:
         priority = float(pr_explicit)
@@ -217,12 +224,7 @@ def _fetch_via_rpc(url: str) -> list[dict]:
     Try calling a non-standard debug method `mempool.inspect`.
     Expected shape: {"entries":[ ... ]} or a raw array.
     """
-    req_body = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "mempool.inspect",
-        "params": []
-    }
+    req_body = {"jsonrpc": "2.0", "id": 1, "method": "mempool.inspect", "params": []}
     data = json.dumps(req_body).encode("utf-8")
     req = Request(url, data=data, headers={"Content-Type": "application/json"})
     try:
@@ -296,7 +298,11 @@ def compute_stats(views: list[EntryView]) -> dict[str, t.Any]:
         pr_stats = {
             "min": min(prios),
             "median": statistics.median(prios),
-            "p90": statistics.quantiles(prios, n=10)[-1] if len(prios) >= 10 else max(prios),
+            "p90": (
+                statistics.quantiles(prios, n=10)[-1]
+                if len(prios) >= 10
+                else max(prios)
+            ),
             "max": max(prios),
         }
 
@@ -307,7 +313,11 @@ def compute_stats(views: list[EntryView]) -> dict[str, t.Any]:
         tip_stats = {
             "min": min(tips),
             "median": int(statistics.median(tips)),
-            "p90": int(statistics.quantiles(tips, n=10)[-1]) if len(tips) >= 10 else max(tips),
+            "p90": (
+                int(statistics.quantiles(tips, n=10)[-1])
+                if len(tips) >= 10
+                else max(tips)
+            ),
             "max": max(tips),
         }
 
@@ -332,41 +342,57 @@ def print_stats(stats: dict[str, t.Any]):
     print(f"Unique senders    : {stats['unique_senders']}")
     pr = stats.get("priority") or {}
     if pr:
-        print(f"Priority          : min={fmt_priority(pr.get('min'))} "
-              f"median={fmt_priority(pr.get('median'))} "
-              f"p90={fmt_priority(pr.get('p90'))} "
-              f"max={fmt_priority(pr.get('max'))}")
+        print(
+            f"Priority          : min={fmt_priority(pr.get('min'))} "
+            f"median={fmt_priority(pr.get('median'))} "
+            f"p90={fmt_priority(pr.get('p90'))} "
+            f"max={fmt_priority(pr.get('max'))}"
+        )
     tips = stats.get("tip_per_gas") or {}
     if tips:
-        print(f"Tip per gas       : min={tips.get('min')} "
-              f"median={tips.get('median')} "
-              f"p90={tips.get('p90')} "
-              f"max={tips.get('max')}")
+        print(
+            f"Tip per gas       : min={tips.get('min')} "
+            f"median={tips.get('median')} "
+            f"p90={tips.get('p90')} "
+            f"max={tips.get('max')}"
+        )
 
 
 def print_top(views: list[EntryView], n: int):
     print()
     print_header(f"Top {min(n, len(views))} by effective priority")
-    print(f"{'PRIORITY':>10}  {'TIP/pg':>10}  {'SIZE':>8}  {'AGE':>8}  {'NONCE':>7}  {'SENDER':<20}  HASH")
+    print(
+        f"{'PRIORITY':>10}  {'TIP/pg':>10}  {'SIZE':>8}  {'AGE':>8}  {'NONCE':>7}  {'SENDER':<20}  HASH"
+    )
     for v in views[:n]:
-        print(f"{fmt_priority(v.effective_priority):>10}  "
-              f"{fmt_tip(v.tip_per_gas):>10}  "
-              f"{human_bytes(v.size_bytes):>8}  "
-              f"{v.age:>8}  "
-              f"{(str(v.nonce) if v.nonce is not None else '—'):>7}  "
-              f"{v.sender:<20}  "
-              f"{v.short_hash}")
+        print(
+            f"{fmt_priority(v.effective_priority):>10}  "
+            f"{fmt_tip(v.tip_per_gas):>10}  "
+            f"{human_bytes(v.size_bytes):>8}  "
+            f"{v.age:>8}  "
+            f"{(str(v.nonce) if v.nonce is not None else '—'):>7}  "
+            f"{v.sender:<20}  "
+            f"{v.short_hash}"
+        )
 
 
 def print_per_sender(views: list[EntryView], max_senders: int, max_each: int):
     print()
-    print_header(f"Per-sender queues (top {max_senders} senders by outstanding tx count)")
+    print_header(
+        f"Per-sender queues (top {max_senders} senders by outstanding tx count)"
+    )
     by_sender: dict[str, list[EntryView]] = collections.defaultdict(list)
     for v in views:
         by_sender[v.sender].append(v)
     ranked = sorted(by_sender.items(), key=lambda kv: (-len(kv[1]), kv[0]))
     for sender, entries in ranked[:max_senders]:
-        es = sorted(entries, key=lambda v: (v.nonce if v.nonce is not None else 1 << 62, -v.effective_priority))
+        es = sorted(
+            entries,
+            key=lambda v: (
+                v.nonce if v.nonce is not None else 1 << 62,
+                -v.effective_priority,
+            ),
+        )
         nonces = [e.nonce for e in es if e.nonce is not None]
         # Show the first gaps succinctly
         gaps = []
@@ -382,10 +408,12 @@ def print_per_sender(views: list[EntryView], max_senders: int, max_each: int):
         print(f"- {sender} — {len(entries)} txs; nonce gaps:{gaps_str}")
         print(f"  {'NONCE':>7}  {'PRIORITY':>10}  {'TIP/pg':>10}  HASH")
         for e in es[:max_each]:
-            print(f"  {str(e.nonce) if e.nonce is not None else '—':>7}  "
-                  f"{fmt_priority(e.effective_priority):>10}  "
-                  f"{fmt_tip(e.tip_per_gas):>10}  "
-                  f"{e.short_hash}")
+            print(
+                f"  {str(e.nonce) if e.nonce is not None else '—':>7}  "
+                f"{fmt_priority(e.effective_priority):>10}  "
+                f"{fmt_tip(e.tip_per_gas):>10}  "
+                f"{e.short_hash}"
+            )
         if len(es) > max_each:
             print(f"  … (+{len(es) - max_each} more)")
 
@@ -394,12 +422,24 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Inspect Animica mempool snapshots")
     src = p.add_mutually_exclusive_group(required=True)
     src.add_argument("-i", "--input", help="JSON file path or '-' for stdin")
-    src.add_argument("--rpc", help="JSON-RPC endpoint URL (expects non-standard 'mempool.inspect')")
+    src.add_argument(
+        "--rpc", help="JSON-RPC endpoint URL (expects non-standard 'mempool.inspect')"
+    )
 
-    p.add_argument("--top", type=int, default=25, help="How many top-priority txs to print")
-    p.add_argument("--per-sender", type=int, default=10, help="How many senders to list")
-    p.add_argument("--each", type=int, default=10, help="How many txs to show per sender")
-    p.add_argument("--json", action="store_true", help="Output machine-readable summary JSON instead of pretty tables")
+    p.add_argument(
+        "--top", type=int, default=25, help="How many top-priority txs to print"
+    )
+    p.add_argument(
+        "--per-sender", type=int, default=10, help="How many senders to list"
+    )
+    p.add_argument(
+        "--each", type=int, default=10, help="How many txs to show per sender"
+    )
+    p.add_argument(
+        "--json",
+        action="store_true",
+        help="Output machine-readable summary JSON instead of pretty tables",
+    )
     p.add_argument("--version", action="store_true", help="Print tool version and exit")
 
     args = p.parse_args(argv)
@@ -430,10 +470,18 @@ def main(argv: list[str] | None = None) -> int:
             "stats": stats,
             "top": [dataclasses.asdict(v) for v in views[: args.top]],
             "per_sender": {
-                sender: [dataclasses.asdict(v) for v in sorted(vs, key=lambda x: (x.nonce if x.nonce is not None else 1 << 62))[: args.each]]
+                sender: [
+                    dataclasses.asdict(v)
+                    for v in sorted(
+                        vs, key=lambda x: (x.nonce if x.nonce is not None else 1 << 62)
+                    )[: args.each]
+                ]
                 for sender, vs in sorted(
-                    ((s, [v for v in views if v.sender == s]) for s in {v.sender for v in views}),
-                    key=lambda kv: (-len(kv[1]), kv[0])
+                    (
+                        (s, [v for v in views if v.sender == s])
+                        for s in {v.sender for v in views}
+                    ),
+                    key=lambda kv: (-len(kv[1]), kv[0]),
                 )[: args.per_sender]
             },
         }

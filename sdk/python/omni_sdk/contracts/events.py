@@ -33,23 +33,29 @@ Where a DecodedEvent is a dict with keys:
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import (Any, Dict, Iterable, List, Mapping, Optional, Sequence,
+                    Tuple)
 
 # --- Utilities ----------------------------------------------------------------
 
 try:
-    from omni_sdk.utils.bytes import to_hex as _to_hex, from_hex as _from_hex  # type: ignore
+    from omni_sdk.utils.bytes import from_hex as _from_hex
+    from omni_sdk.utils.bytes import to_hex as _to_hex  # type: ignore
 except Exception:
+
     def _to_hex(b: bytes) -> str:
         return "0x" + bytes(b).hex()
+
     def _from_hex(s: str) -> bytes:
         s = s[2:] if isinstance(s, str) and s.startswith("0x") else s
         return bytes.fromhex(s)
+
 
 try:
     from omni_sdk.utils.hash import keccak256 as _keccak256  # type: ignore
 except Exception:
     import hashlib
+
     def _keccak256(b: bytes) -> bytes:
         try:
             # pysha3 provides keccak_256 on hashlib in many envs
@@ -57,30 +63,38 @@ except Exception:
         except Exception:
             # Fallback to sha3_256 (not identical but better than nothing for fallback path)
             if not hasattr(hashlib, "sha3_256"):
-                raise RuntimeError("Need keccak256 or sha3_256 in hashlib for event topics")
+                raise RuntimeError(
+                    "Need keccak256 or sha3_256 in hashlib for event topics"
+                )
             return hashlib.sha3_256(b).digest()
+
 
 # --- ABI helpers ---------------------------------------------------------------
 
 # We rely on the ABI module for normalization and decoding when available.
 try:
-    from omni_sdk.types.abi import (  # type: ignore
-        normalize_abi as _normalize_abi,
-        decode_event as _abi_decode_event,    # preferred if present
-    )
+    from omni_sdk.types.abi import \
+        decode_event as _abi_decode_event  # preferred if present
+    from omni_sdk.types.abi import \
+        normalize_abi as _normalize_abi  # type: ignore
 except Exception as _e:  # pragma: no cover
-    raise RuntimeError("omni_sdk.types.abi is required for robust event decoding") from _e
+    raise RuntimeError(
+        "omni_sdk.types.abi is required for robust event decoding"
+    ) from _e
 
 # Optional helper (if the ABI module exposes it)
 try:
-    from omni_sdk.types.abi import event_selector as _abi_event_selector  # type: ignore
+    from omni_sdk.types.abi import \
+        event_selector as _abi_event_selector  # type: ignore
 except Exception:
     _abi_event_selector = None  # type: ignore
 
 JsonDict = Dict[str, Any]
 
 
-def _iter_events(abi_norm: Mapping[str, Any]) -> Iterable[Tuple[str, Mapping[str, Any]]]:
+def _iter_events(
+    abi_norm: Mapping[str, Any],
+) -> Iterable[Tuple[str, Mapping[str, Any]]]:
     """
     Yield (name, event_def) from a normalized ABI. Supports either:
       - dict with "events" as {name: def} or [defs]
@@ -142,7 +156,9 @@ def _count_indexed(ev: Mapping[str, Any]) -> int:
 # -----------------------------------------------------------------------------
 
 
-def build_event_index(abi: Mapping[str, Any] | Sequence[Mapping[str, Any]]) -> Dict[bytes, Tuple[str, Mapping[str, Any]]]:
+def build_event_index(
+    abi: Mapping[str, Any] | Sequence[Mapping[str, Any]],
+) -> Dict[bytes, Tuple[str, Mapping[str, Any]]]:
     """
     Build a selector → (name, event_def) index for fast matching.
     """
@@ -288,7 +304,9 @@ def decode_logs(
             cands = _match_anonymous_candidates(abi_norm, topic_count=len(topics_b))
             for cand_name, cand_ev in cands:
                 try:
-                    _ = _decode_event_with_abi(abi_norm, cand_name, cand_ev, topics_b, data_b)
+                    _ = _decode_event_with_abi(
+                        abi_norm, cand_name, cand_ev, topics_b, data_b
+                    )
                     name, ev_def = cand_name, cand_ev
                     break
                 except Exception:

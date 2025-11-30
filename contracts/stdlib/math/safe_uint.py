@@ -29,19 +29,13 @@ from __future__ import annotations
 from typing import Final, Optional, Tuple
 
 # Local import of base math primitives (kept narrow & explicit)
-from . import (  # type: ignore
-    U256_MAX,
-    U128_MAX,
-    require_u256,
-    require_divisor,
-    u256_add_sat as _u256_add_sat,
-    u256_sub_floor as _u256_sub_floor,
-    u256_mul_sat as _u256_mul_sat,
-    u256_mul_div_down as _u256_mul_div_down,
-    u256_mul_div_up as _u256_mul_div_up,
-    apply_bps,
-    apply_bps_up,
-)
+from . import (U128_MAX, U256_MAX, apply_bps, apply_bps_up, require_divisor,
+               require_u256)
+from . import u256_add_sat as _u256_add_sat  # type: ignore
+from . import u256_mul_div_down as _u256_mul_div_down
+from . import u256_mul_div_up as _u256_mul_div_up
+from . import u256_mul_sat as _u256_mul_sat
+from . import u256_sub_floor as _u256_sub_floor
 
 try:
     # Resolved lazily inside helpers to play nice with the VM import guard.
@@ -53,6 +47,7 @@ except Exception:
 # ---------------------------------------------------------------------------
 # ABI / Revert plumbing
 # ---------------------------------------------------------------------------
+
 
 def _abi():
     global _abi_mod
@@ -66,7 +61,7 @@ def _revert(msg: bytes) -> None:
 
 
 # Canonical error tags (short, stable)
-ERR_OOB: Final[bytes] = b"UINT:OOB"          # input/result outside [0, U256_MAX]
+ERR_OOB: Final[bytes] = b"UINT:OOB"  # input/result outside [0, U256_MAX]
 ERR_OVER: Final[bytes] = b"UINT:OVERFLOW"
 ERR_UNDER: Final[bytes] = b"UINT:UNDERFLOW"
 ERR_DIV0: Final[bytes] = b"UINT:DIV0"
@@ -77,6 +72,7 @@ ERR_POW_OVER: Final[bytes] = b"UINT:POW_OVERFLOW"
 # Internal guards
 # ---------------------------------------------------------------------------
 
+
 def _assert_u256(x: int) -> None:
     """Revert if x not in [0, U256_MAX]."""
     if x < 0 or x > U256_MAX:
@@ -86,6 +82,7 @@ def _assert_u256(x: int) -> None:
 # ---------------------------------------------------------------------------
 # Saturating (never revert due to range)
 # ---------------------------------------------------------------------------
+
 
 def u256_add_sat(x: int, y: int) -> int:
     """Saturating add: min(x+y, U256_MAX)."""
@@ -128,6 +125,7 @@ def u256_mul_div_up_sat(x: int, y: int, d: int) -> int:
 # ---------------------------------------------------------------------------
 # Checked (fail-fast on errors)
 # ---------------------------------------------------------------------------
+
 
 def u256_add(x: int, y: int) -> int:
     """Checked add: revert on overflow."""
@@ -221,6 +219,7 @@ def u256_pow(base: int, exp: int) -> int:
 # Fee helpers (checked)
 # ---------------------------------------------------------------------------
 
+
 def u256_add_fee_bps(amount: int, bps_fee: int) -> Tuple[int, int]:
     """
     Compute (total, fee) where:
@@ -251,6 +250,7 @@ def u256_add_fee_bps_up(amount: int, bps_fee: int) -> Tuple[int, int]:
 # ---------------------------------------------------------------------------
 # "try_*" convenience (no revert; return Optional[int])
 # ---------------------------------------------------------------------------
+
 
 def try_add_u256(x: int, y: int) -> Optional[int]:
     """Return x+y or None on overflow/OOB."""
@@ -285,6 +285,7 @@ def try_div_u256(x: int, y: int) -> Optional[int]:
 # ---------------------------------------------------------------------------
 # U128 helpers (occasionally useful for tighter caps)
 # ---------------------------------------------------------------------------
+
 
 def u128_add(x: int, y: int) -> int:
     """Checked add in U128, revert on overflow/underflow."""
@@ -327,17 +328,36 @@ def u128_div(x: int, y: int) -> int:
 
 __all__ = [
     # errors
-    "ERR_OOB", "ERR_OVER", "ERR_UNDER", "ERR_DIV0", "ERR_POW_OVER",
+    "ERR_OOB",
+    "ERR_OVER",
+    "ERR_UNDER",
+    "ERR_DIV0",
+    "ERR_POW_OVER",
     # saturating U256
-    "u256_add_sat", "u256_sub_floor", "u256_mul_sat",
-    "u256_mul_div_down_sat", "u256_mul_div_up_sat",
+    "u256_add_sat",
+    "u256_sub_floor",
+    "u256_mul_sat",
+    "u256_mul_div_down_sat",
+    "u256_mul_div_up_sat",
     # checked U256
-    "u256_add", "u256_sub", "u256_mul", "u256_div",
-    "u256_mul_div_down", "u256_mul_div_up", "u256_pow",
+    "u256_add",
+    "u256_sub",
+    "u256_mul",
+    "u256_div",
+    "u256_mul_div_down",
+    "u256_mul_div_up",
+    "u256_pow",
     # fees
-    "u256_add_fee_bps", "u256_add_fee_bps_up",
+    "u256_add_fee_bps",
+    "u256_add_fee_bps_up",
     # try_* (optional)
-    "try_add_u256", "try_sub_u256", "try_mul_u256", "try_div_u256",
+    "try_add_u256",
+    "try_sub_u256",
+    "try_mul_u256",
+    "try_div_u256",
     # U128 helpers
-    "u128_add", "u128_sub", "u128_mul", "u128_div",
+    "u128_add",
+    "u128_sub",
+    "u128_mul",
+    "u128_div",
 ]

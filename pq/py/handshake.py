@@ -37,35 +37,36 @@ This file does not perform AEAD; it only yields symmetric keys suitable for AEAD
 """
 
 from dataclasses import dataclass
-from typing import Optional, Tuple, Dict, Any, List, Literal
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
-from pq.py.registry import ALG_ID, ALG_NAME
-from pq.py.utils.hash import sha3_256, sha3_512
-from pq.py.utils.rng import os_random
-from pq.py.utils import bech32 as _b32
+from pq.py import address as pq_addr
+from pq.py import kem as pq_kem
 from pq.py import sign as pq_sign
 from pq.py import verify as pq_verify
-from pq.py import kem as pq_kem
-from pq.py import address as pq_addr
-
+from pq.py.registry import ALG_ID, ALG_NAME
+from pq.py.utils import bech32 as _b32
+from pq.py.utils.hash import sha3_256, sha3_512
+from pq.py.utils.rng import os_random
 
 Role = Literal["initiator", "responder"]
 
 HELLO_MAGIC = b"ANM1HELLO"
-AUTH_MAGIC  = b"ANM1AUTH"
+AUTH_MAGIC = b"ANM1AUTH"
 DOMAIN_HELLO = b"animica/p2p/hello-v1"
-DOMAIN_AUTH  = b"animica/p2p/auth-v1"
-KDF_LABEL    = b"animica/pq/kyber768/kdf/v1"
+DOMAIN_AUTH = b"animica/p2p/auth-v1"
+KDF_LABEL = b"animica/pq/kyber768/kdf/v1"
 
 KEM_ALG_NAME = "kyber768"
-KEM_ALG_ID   = ALG_ID[KEM_ALG_NAME]
+KEM_ALG_ID = ALG_ID[KEM_ALG_NAME]
 
 # --------------------------------------------------------------------------------------
 # Errors & dataclasses
 # --------------------------------------------------------------------------------------
 
+
 class HandshakeError(Exception):
     pass
+
 
 @dataclass(frozen=True)
 class Hello:
@@ -73,9 +74,9 @@ class Hello:
     sig_pub: bytes
     kem_alg_id: int
     kem_ephemeral_pub: bytes
-    nonce: bytes                 # 32 B
-    features_json: bytes         # canonical (sorted-keys) UTF-8 JSON
-    bech32_addr: str             # anim1... derived from (alg_id || sha3_256(sig_pub))
+    nonce: bytes  # 32 B
+    features_json: bytes  # canonical (sorted-keys) UTF-8 JSON
+    bech32_addr: str  # anim1... derived from (alg_id || sha3_256(sig_pub))
 
     def encode(self) -> bytes:
         return encode_hello(
@@ -105,37 +106,42 @@ class HandshakeResult:
     peer_sig_pub: bytes
     peer_addr: str
     transcript_hash: bytes
-    send_key: bytes     # 32B
-    recv_key: bytes     # 32B
-    our_ct: bytes       # ciphertext we sent
-    peer_ct: bytes      # ciphertext we received
+    send_key: bytes  # 32B
+    recv_key: bytes  # 32B
+    our_ct: bytes  # ciphertext we sent
+    peer_ct: bytes  # ciphertext we received
 
 
 # --------------------------------------------------------------------------------------
 # Canonical length-prefix helpers (stable & dependency-free)
 # --------------------------------------------------------------------------------------
 
+
 def _lp(b: bytes) -> bytes:
     if len(b) > 0xFFFF:
         raise ValueError("Field too large for 2-byte length prefix")
     return len(b).to_bytes(2, "big") + b
+
 
 def _lp_u16(v: int) -> bytes:
     if not (0 <= v <= 0xFFFF):
         raise ValueError("u16 out of range")
     return v.to_bytes(2, "big")
 
+
 def _canon_json(obj: Dict[str, Any]) -> bytes:
     """
     Deterministic JSON encoder: sorted keys, no spaces, UTF-8 bytes.
     """
     import json
+
     return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
 # --------------------------------------------------------------------------------------
 # Encoders/decoders for HELLO and AUTH frames
 # --------------------------------------------------------------------------------------
+
 
 def encode_hello(
     sig_alg_id: int,
@@ -157,11 +163,16 @@ def encode_hello(
         raise HandshakeError("nonce must be 32 bytes")
     baddr = bech32_addr.encode("utf-8")
     return (
-        HELLO_MAGIC +
-        _lp_u16(sig_alg_id) + _lp(sig_pub) +
-        _lp_u16(kem_alg_id) + _lp(kem_ephemeral_pub) +
-        _lp(nonce) + _lp(features_json) + _lp(baddr)
+        HELLO_MAGIC
+        + _lp_u16(sig_alg_id)
+        + _lp(sig_pub)
+        + _lp_u16(kem_alg_id)
+        + _lp(kem_ephemeral_pub)
+        + _lp(nonce)
+        + _lp(features_json)
+        + _lp(baddr)
     )
+
 
 def decode_hello(buf: bytes) -> Hello:
     if not buf.startswith(HELLO_MAGIC):
@@ -172,7 +183,7 @@ def decode_hello(buf: bytes) -> Hello:
         nonlocal i
         if i + n > len(buf):
             raise HandshakeError("truncated HELLO")
-        out = buf[i:i+n]
+        out = buf[i : i + n]
         i += n
         return out
 
@@ -181,12 +192,12 @@ def decode_hello(buf: bytes) -> Hello:
         return take(l)
 
     sig_alg_id = int.from_bytes(take(2), "big")
-    sig_pub    = take_lp()
+    sig_pub = take_lp()
     kem_alg_id = int.from_bytes(take(2), "big")
-    kem_epk    = take_lp()
-    nonce      = take_lp()
-    features   = take_lp()
-    baddr      = take_lp().decode("utf-8")
+    kem_epk = take_lp()
+    nonce = take_lp()
+    features = take_lp()
+    baddr = take_lp().decode("utf-8")
 
     return Hello(
         sig_alg_id=sig_alg_id,
@@ -198,8 +209,10 @@ def decode_hello(buf: bytes) -> Hello:
         bech32_addr=baddr,
     )
 
+
 def encode_auth(sig_alg_id: int, signature: bytes) -> bytes:
     return AUTH_MAGIC + _lp_u16(sig_alg_id) + _lp(signature)
+
 
 def decode_auth(buf: bytes) -> Auth:
     if not buf.startswith(AUTH_MAGIC):
@@ -207,15 +220,15 @@ def decode_auth(buf: bytes) -> Auth:
     i = len(AUTH_MAGIC)
     if i + 2 > len(buf):
         raise HandshakeError("truncated AUTH")
-    sig_alg_id = int.from_bytes(buf[i:i+2], "big")
+    sig_alg_id = int.from_bytes(buf[i : i + 2], "big")
     i += 2
     if i + 2 > len(buf):
         raise HandshakeError("truncated AUTH (lp)")
-    l = int.from_bytes(buf[i:i+2], "big")
+    l = int.from_bytes(buf[i : i + 2], "big")
     i += 2
     if i + l > len(buf):
         raise HandshakeError("truncated AUTH (sig)")
-    sig = buf[i:i+l]
+    sig = buf[i : i + l]
     return Auth(sig_alg_id=sig_alg_id, signature=sig)
 
 
@@ -223,11 +236,13 @@ def decode_auth(buf: bytes) -> Auth:
 # Transcript & KDF helpers
 # --------------------------------------------------------------------------------------
 
+
 def transcript_hash(hello_i: bytes, hello_r: bytes) -> bytes:
     """
     H(DOMAIN_HELLO || LP(hello_i) || LP(hello_r))
     """
     return sha3_256(DOMAIN_HELLO + _lp(hello_i) + _lp(hello_r))
+
 
 def kdf_info(our_epk: bytes, peer_epk: bytes, th: bytes) -> bytes:
     """
@@ -236,6 +251,7 @@ def kdf_info(our_epk: bytes, peer_epk: bytes, th: bytes) -> bytes:
     """
     a, b = (our_epk, peer_epk) if our_epk <= peer_epk else (peer_epk, our_epk)
     return KDF_LABEL + _lp(a) + _lp(b) + _lp(th)
+
 
 def mix_shared_secrets(ss_a: bytes, ss_b: bytes) -> bytes:
     """
@@ -247,6 +263,7 @@ def mix_shared_secrets(ss_a: bytes, ss_b: bytes) -> bytes:
 # --------------------------------------------------------------------------------------
 # Address & identity helpers
 # --------------------------------------------------------------------------------------
+
 
 def derive_address(sig_alg_id: int, sig_pub: bytes) -> str:
     """
@@ -262,22 +279,32 @@ def derive_address(sig_alg_id: int, sig_pub: bytes) -> str:
 # High-level handshake building blocks
 # --------------------------------------------------------------------------------------
 
+
 @dataclass
 class LocalIdentity:
-    sig_alg: str              # "dilithium3" | "sphincs_shake_128s"
+    sig_alg: str  # "dilithium3" | "sphincs_shake_128s"
     sig_pk: bytes
     sig_sk: bytes
+
 
 @dataclass
 class EphemeralKem:
     pk: bytes
     sk: bytes
 
+
 def make_ephemeral_kem(seed: Optional[bytes] = None) -> EphemeralKem:
     epk, esk = pq_kem.keygen(seed=seed)
     return EphemeralKem(pk=epk, sk=esk)
 
-def build_hello(identity: LocalIdentity, e: EphemeralKem, *, features: Optional[Dict[str, Any]] = None, nonce: Optional[bytes] = None) -> Tuple[Hello, bytes]:
+
+def build_hello(
+    identity: LocalIdentity,
+    e: EphemeralKem,
+    *,
+    features: Optional[Dict[str, Any]] = None,
+    nonce: Optional[bytes] = None,
+) -> Tuple[Hello, bytes]:
     """
     Construct a HELLO object and its encoded bytes.
     """
@@ -299,15 +326,25 @@ def build_hello(identity: LocalIdentity, e: EphemeralKem, *, features: Optional[
     )
     return hello, hello.encode()
 
+
 def sign_auth(identity: LocalIdentity, th: bytes) -> Auth:
-    sig = pq_sign.sign(identity.sig_alg, identity.sig_sk, message=th, domain=DOMAIN_AUTH)
+    sig = pq_sign.sign(
+        identity.sig_alg, identity.sig_sk, message=th, domain=DOMAIN_AUTH
+    )
     return Auth(sig_alg_id=ALG_ID[identity.sig_alg], signature=sig)
+
 
 def verify_auth(peer_hello: Hello, auth: Auth, th: bytes) -> None:
     if auth.sig_alg_id != peer_hello.sig_alg_id:
         raise HandshakeError("peer AUTH sig_alg_id mismatch with HELLO")
     name = ALG_NAME[auth.sig_alg_id]
-    ok = pq_verify.verify(name, peer_hello.sig_pub, message=th, signature=auth.signature, domain=DOMAIN_AUTH)
+    ok = pq_verify.verify(
+        name,
+        peer_hello.sig_pub,
+        message=th,
+        signature=auth.signature,
+        domain=DOMAIN_AUTH,
+    )
     if not ok:
         raise HandshakeError("peer AUTH signature invalid")
 
@@ -315,6 +352,7 @@ def verify_auth(peer_hello: Hello, auth: Auth, th: bytes) -> None:
 # --------------------------------------------------------------------------------------
 # Orchestrated flows (role-specific)
 # --------------------------------------------------------------------------------------
+
 
 def initiator_handshake(
     local: LocalIdentity,
@@ -345,14 +383,24 @@ def initiator_handshake(
         auth_i = sign_auth(local, th).encode()
         # KEM: I encapsulates to R
         ct_i, ss_i = pq_kem.encapsulate(peer_hello.kem_ephemeral_pub)
+
         # Wait for peer's AUTH and ct, then verify/decapsulate
         def finalize(peer_auth_bytes: bytes, peer_ct: bytes) -> HandshakeResult:
             auth_r = decode_auth(peer_auth_bytes)
             verify_auth(peer_hello, auth_r, th)
             ss_r = pq_kem.decapsulate(e.sk, peer_ct)
             s_mix = mix_shared_secrets(ss_i, ss_r)
-            info = kdf_info(hello_obj.kem_ephemeral_pub, peer_hello.kem_ephemeral_pub, th)
-            k0, k1 = pq_kem.derive_symmetric_keys(s_mix, our_pub=hello_obj.kem_ephemeral_pub, peer_pub=peer_hello.kem_ephemeral_pub, transcript=th, n_keys=2, key_len=32)
+            info = kdf_info(
+                hello_obj.kem_ephemeral_pub, peer_hello.kem_ephemeral_pub, th
+            )
+            k0, k1 = pq_kem.derive_symmetric_keys(
+                s_mix,
+                our_pub=hello_obj.kem_ephemeral_pub,
+                peer_pub=peer_hello.kem_ephemeral_pub,
+                transcript=th,
+                n_keys=2,
+                key_len=32,
+            )
             # Initiator mapping
             send_key, recv_key = k0, k1
             return HandshakeResult(
@@ -366,6 +414,7 @@ def initiator_handshake(
                 our_ct=ct_i,
                 peer_ct=peer_ct,
             )
+
         return {
             "auth_bytes": auth_i,
             "ct_bytes": ct_i,
@@ -413,8 +462,17 @@ def responder_handshake(
         verify_auth(peer_hello, auth_i, th)
         ss_i = pq_kem.decapsulate(e.sk, peer_ct)
         s_mix = mix_shared_secrets(ss_i, ss_r)
-        info = kdf_info(hello_obj.kem_ephemeral_pub, peer_hello.kem_ephemeral_pub, th)  # unused, kept for clarity
-        k0, k1 = pq_kem.derive_symmetric_keys(s_mix, our_pub=hello_obj.kem_ephemeral_pub, peer_pub=peer_hello.kem_ephemeral_pub, transcript=th, n_keys=2, key_len=32)
+        info = kdf_info(
+            hello_obj.kem_ephemeral_pub, peer_hello.kem_ephemeral_pub, th
+        )  # unused, kept for clarity
+        k0, k1 = pq_kem.derive_symmetric_keys(
+            s_mix,
+            our_pub=hello_obj.kem_ephemeral_pub,
+            peer_pub=peer_hello.kem_ephemeral_pub,
+            transcript=th,
+            n_keys=2,
+            key_len=32,
+        )
         # Responder mapping
         send_key, recv_key = k1, k0
         return HandshakeResult(
@@ -446,6 +504,7 @@ def responder_handshake(
 # --------------------------------------------------------------------------------------
 # Offline self-test (no I/O): simulate both sides
 # --------------------------------------------------------------------------------------
+
 
 def _self_test() -> None:  # pragma: no cover
     from pq.py import keygen as pq_keygen
@@ -488,6 +547,7 @@ def _self_test() -> None:  # pragma: no cover
     print("I recv =", resI.recv_key.hex())
     print("R send =", resR.send_key.hex())
     print("R recv =", resR.recv_key.hex())
+
 
 if __name__ == "__main__":  # pragma: no cover
     _self_test()

@@ -39,8 +39,8 @@ import pytest
 
 from tests.integration import env  # gating helper
 
-
 # --------------------------------- helpers -----------------------------------
+
 
 def _services_base() -> Optional[str]:
     base = env("STUDIO_SERVICES_URL") or env("ANIMICA_SERVICES_URL")
@@ -77,7 +77,9 @@ def _headers() -> Dict[str, str]:
     return h
 
 
-def _read_fixture(path_env: str, default_rel: str, *, binary: bool = False) -> Tuple[str, bytes]:
+def _read_fixture(
+    path_env: str, default_rel: str, *, binary: bool = False
+) -> Tuple[str, bytes]:
     # Resolve env or default path in repo
     p = env(path_env) or default_rel
     pp = pathlib.Path(p)
@@ -133,8 +135,10 @@ def _status_ok(doc: Dict[str, Any]) -> bool:
     # Accept a variety of success markers
     status = (doc.get("status") or doc.get("state") or "").lower()
     verified = doc.get("verified") or doc.get("match") or doc.get("ok")
-    reason = (doc.get("reason") or doc.get("error") or "")
-    return bool(verified) or status in ("matched", "success", "ok", "done") and not reason
+    reason = doc.get("reason") or doc.get("error") or ""
+    return (
+        bool(verified) or status in ("matched", "success", "ok", "done") and not reason
+    )
 
 
 def _extract_job_id(doc: Dict[str, Any]) -> Optional[str]:
@@ -151,17 +155,22 @@ def _join(base: str, path: str) -> str:
 
 # ----------------------------------- test ------------------------------------
 
+
 @pytest.mark.timeout(900)
 def test_services_verify_cycle_contract_source_path_matches_onchain():
     base = _services_base()
     if not base:
-        pytest.skip("Set STUDIO_SERVICES_URL (or ANIMICA_SERVICES_URL) to run studio-services verification test.")
+        pytest.skip(
+            "Set STUDIO_SERVICES_URL (or ANIMICA_SERVICES_URL) to run studio-services verification test."
+        )
 
     # Target to verify: prefer explicit address/txHash from environment.
     address = env("VERIFY_ADDRESS")
     tx_hash = env("VERIFY_TXHASH")
     if not address and not tx_hash:
-        pytest.skip("Provide VERIFY_ADDRESS or VERIFY_TXHASH for a deployed contract to verify.")
+        pytest.skip(
+            "Provide VERIFY_ADDRESS or VERIFY_TXHASH for a deployed contract to verify."
+        )
 
     # Read fixtures (defaults to studio-services bundled counter).
     src_name, src_bytes = _read_fixture(
@@ -233,7 +242,9 @@ def test_services_verify_cycle_contract_source_path_matches_onchain():
             break
 
     if not submit_doc:
-        pytest.skip("studio-services /verify endpoint not reachable at common paths or payload shapes.")
+        pytest.skip(
+            "studio-services /verify endpoint not reachable at common paths or payload shapes."
+        )
 
     # Either immediate result or queued job.
     job_id = _extract_job_id(submit_doc)
@@ -271,21 +282,35 @@ def test_services_verify_cycle_contract_source_path_matches_onchain():
                     break
             time.sleep(1.0)
 
-    assert _status_ok(result), f"Verification did not succeed: {json.dumps(result, indent=2)}"
+    assert _status_ok(
+        result
+    ), f"Verification did not succeed: {json.dumps(result, indent=2)}"
 
     # Sane fields
-    code_hash = result.get("codeHash") or result.get("code_hash") or result.get("artifactHash") or result.get("artifact_hash")
+    code_hash = (
+        result.get("codeHash")
+        or result.get("code_hash")
+        or result.get("artifactHash")
+        or result.get("artifact_hash")
+    )
     if code_hash is not None:
         assert _is_hex(code_hash), f"codeHash is not hex-like: {code_hash!r}"
 
     # Echoed/normalized source filename or path (best-effort)
-    src_path = result.get("sourcePath") or result.get("source") or result.get("filename")
+    src_path = (
+        result.get("sourcePath") or result.get("source") or result.get("filename")
+    )
     if isinstance(src_path, str):
-        assert src_name in src_path or src_path.endswith(".py"), f"Unexpected source path in result: {src_path!r}"
+        assert src_name in src_path or src_path.endswith(
+            ".py"
+        ), f"Unexpected source path in result: {src_path!r}"
 
     # If the server reports an address/txHash back, it should match our inputs (when provided).
     if address and isinstance(result.get("address"), str):
-        assert result["address"].lower() == address.lower(), "Verification result address mismatch."
+        assert (
+            result["address"].lower() == address.lower()
+        ), "Verification result address mismatch."
     if tx_hash and isinstance(result.get("txHash"), str):
-        assert result["txHash"].lower() == tx_hash.lower(), "Verification result txHash mismatch."
-
+        assert (
+            result["txHash"].lower() == tx_hash.lower()
+        ), "Verification result txHash mismatch."

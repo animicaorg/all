@@ -21,10 +21,9 @@ from typing import Dict
 
 import pytest
 
-
 # ---------------------------- helpers -----------------------------------------
 
-CONTRACT_SOURCE = r'''
+CONTRACT_SOURCE = r"""
 # minimal token for tests — deterministic, no external deps
 from stdlib.storage import get, set
 from stdlib.events import emit
@@ -121,7 +120,8 @@ def permit(owner: str, spender: str, amount: int, deadline: int, alg_id: str, si
     _store_u(_k_allow(owner, spender), amount)
     _store_u(_k_nonce(owner), nonce + 1)
     emit(b"Permit", {"owner": owner, "spender": spender, "amount": amount, "nonce": nonce})
-'''
+"""
+
 
 def _write_contract(tmp_path: Path) -> Path:
     p = tmp_path / "token_test_contract.py"
@@ -129,16 +129,23 @@ def _write_contract(tmp_path: Path) -> Path:
     return p
 
 
-def _permit_signature(owner: str, spender: str, amount: int, nonce: int, deadline: int, alg_id: str) -> bytes:
+def _permit_signature(
+    owner: str, spender: str, amount: int, nonce: int, deadline: int, alg_id: str
+) -> bytes:
     m = hashlib.sha3_256()
-    raw = "|".join([owner, spender, str(amount), str(nonce), str(deadline), alg_id]).encode("utf-8")
+    raw = "|".join(
+        [owner, spender, str(amount), str(nonce), str(deadline), alg_id]
+    ).encode("utf-8")
     m.update(b"PERMIT|" + raw)
     return m.digest()
 
 
 # ------------------------------- tests ----------------------------------------
 
-def test_balances_and_transfer(tmp_path: Path, compile_contract, funded_accounts: Dict[str, Dict]):
+
+def test_balances_and_transfer(
+    tmp_path: Path, compile_contract, funded_accounts: Dict[str, Dict]
+):
     src = _write_contract(tmp_path)
     c = compile_contract(src)
 
@@ -161,7 +168,9 @@ def test_balances_and_transfer(tmp_path: Path, compile_contract, funded_accounts
     assert names.count(b"Transfer") >= 2  # mint + transfer
 
 
-def test_allowance_approve_and_transfer_from(tmp_path: Path, compile_contract, funded_accounts: Dict[str, Dict]):
+def test_allowance_approve_and_transfer_from(
+    tmp_path: Path, compile_contract, funded_accounts: Dict[str, Dict]
+):
     src = _write_contract(tmp_path)
     c = compile_contract(src)
 
@@ -184,7 +193,9 @@ def test_allowance_approve_and_transfer_from(tmp_path: Path, compile_contract, f
         c.call("transfer_from", bob, alice, bob, 400)
 
 
-def test_permit_sets_allowance_and_increments_nonce(tmp_path: Path, compile_contract, funded_accounts: Dict[str, Dict]):
+def test_permit_sets_allowance_and_increments_nonce(
+    tmp_path: Path, compile_contract, funded_accounts: Dict[str, Dict]
+):
     src = _write_contract(tmp_path)
     c = compile_contract(src)
 
@@ -225,7 +236,9 @@ def test_permit_sets_allowance_and_increments_nonce(tmp_path: Path, compile_cont
     assert c.call("nonces", owner) == 2
 
 
-def test_permit_rejects_bad_sig(tmp_path: Path, compile_contract, funded_accounts: Dict[str, Dict]):
+def test_permit_rejects_bad_sig(
+    tmp_path: Path, compile_contract, funded_accounts: Dict[str, Dict]
+):
     src = _write_contract(tmp_path)
     c = compile_contract(src)
 

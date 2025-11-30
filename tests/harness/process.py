@@ -49,31 +49,38 @@ from __future__ import annotations
 import atexit
 import io
 import os
-import re
-import sys
-import time
 import queue
+import re
 import shutil
 import signal
-import threading
-import tempfile
 import subprocess
-from dataclasses import dataclass, field
+import sys
+import tempfile
+import threading
+import time
 from collections import deque
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Deque, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import (Callable, Deque, Iterable, List, Optional, Sequence, Tuple,
+                    Union)
 
 try:
     # Optional helper (used when waiting on a port)
     from tests.harness.ports import wait_for_listen
 except Exception:  # pragma: no cover - optional import for standalone use
-    def wait_for_listen(host: str, port: int, timeout: float = 10.0, interval: float = 0.05) -> bool:
-        import socket
+
+    def wait_for_listen(
+        host: str, port: int, timeout: float = 10.0, interval: float = 0.05
+    ) -> bool:
         import contextlib
+        import socket
+
         deadline = time.time() + timeout
         while time.time() < deadline:
             try:
-                with contextlib.closing(socket.create_connection((host, port), timeout=interval)):
+                with contextlib.closing(
+                    socket.create_connection((host, port), timeout=interval)
+                ):
                     return True
             except OSError:
                 time.sleep(interval)
@@ -83,6 +90,7 @@ except Exception:  # pragma: no cover - optional import for standalone use
 # --------------------------------------------------------------------------------------
 # Paths & logging
 # --------------------------------------------------------------------------------------
+
 
 def _default_artifacts_root() -> Path:
     root = os.getenv("TEST_ARTIFACTS_DIR")
@@ -104,8 +112,10 @@ def _safe_name(name: str) -> str:
 # Stream tee to file + ring buffer
 # --------------------------------------------------------------------------------------
 
+
 class _TeeReader(threading.Thread):
     """Reads lines from a pipe, writes to file, keeps a small ring buffer."""
+
     def __init__(self, stream, log_path: Path, ring: Deque[str], name: str):
         super().__init__(name=f"tee-{name}", daemon=True)
         self._stream = stream
@@ -144,11 +154,13 @@ class _TeeReader(threading.Thread):
 
 ReadyPredicate = Callable[[], bool]
 
+
 @dataclass
 class ManagedProcess:
     """
     Wrapper for a long-running subprocess with log capture and graceful teardown.
     """
+
     args: Sequence[Union[str, os.PathLike]]
     name: str = "proc"
     cwd: Optional[Union[str, os.PathLike]] = None
@@ -158,20 +170,24 @@ class ManagedProcess:
     ready_predicate: Optional[ReadyPredicate] = None
     ready_port: Optional[Tuple[str, int]] = None
     ready_timeout: float = 20.0
-    kill_grace_period: float = 8.0       # seconds to wait after TERM/CTRL_BREAK
-    kill_hard_timeout: float = 5.0       # seconds to wait after KILL
-    extra_creationflags: int = 0         # windows-only
-    start_new_session: bool = True       # posix: setsid; windows: new process group
+    kill_grace_period: float = 8.0  # seconds to wait after TERM/CTRL_BREAK
+    kill_hard_timeout: float = 5.0  # seconds to wait after KILL
+    extra_creationflags: int = 0  # windows-only
+    start_new_session: bool = True  # posix: setsid; windows: new process group
     stdout_log_name: Optional[str] = None
     stderr_log_name: Optional[str] = None
-    ring_size: int = 400                 # last N log lines kept in memory
+    ring_size: int = 400  # last N log lines kept in memory
 
     # Internal state (populated after start)
     proc: Optional[subprocess.Popen] = field(default=None, init=False)
     stdout_path: Optional[Path] = field(default=None, init=False)
     stderr_path: Optional[Path] = field(default=None, init=False)
-    _stdout_ring: Deque[str] = field(default_factory=lambda: deque(maxlen=400), init=False)
-    _stderr_ring: Deque[str] = field(default_factory=lambda: deque(maxlen=400), init=False)
+    _stdout_ring: Deque[str] = field(
+        default_factory=lambda: deque(maxlen=400), init=False
+    )
+    _stderr_ring: Deque[str] = field(
+        default_factory=lambda: deque(maxlen=400), init=False
+    )
     _tee_out: Optional[_TeeReader] = field(default=None, init=False)
     _tee_err: Optional[_TeeReader] = field(default=None, init=False)
     _ready_event: threading.Event = field(default_factory=threading.Event, init=False)
@@ -191,7 +207,9 @@ class ManagedProcess:
         if os.name == "nt":
             # Create independent console group to allow CTRL_BREAK
             CREATE_NEW_PROCESS_GROUP = 0x00000200
-            popen_kwargs["creationflags"] = (self.extra_creationflags or 0) | (CREATE_NEW_PROCESS_GROUP if self.start_new_session else 0)
+            popen_kwargs["creationflags"] = (self.extra_creationflags or 0) | (
+                CREATE_NEW_PROCESS_GROUP if self.start_new_session else 0
+            )
         else:
             if self.start_new_session:
                 popen_kwargs["preexec_fn"] = os.setsid  # type: ignore
@@ -211,14 +229,20 @@ class ManagedProcess:
 
         # Begin tee threads
         assert self.proc.stdout and self.proc.stderr
-        self._tee_out = _TeeReader(self.proc.stdout, self.stdout_path, self._stdout_ring, f"{self.name}-out")
-        self._tee_err = _TeeReader(self.proc.stderr, self.stderr_path, self._stderr_ring, f"{self.name}-err")
+        self._tee_out = _TeeReader(
+            self.proc.stdout, self.stdout_path, self._stdout_ring, f"{self.name}-out"
+        )
+        self._tee_err = _TeeReader(
+            self.proc.stderr, self.stderr_path, self._stderr_ring, f"{self.name}-err"
+        )
         self._tee_out.start()
         self._tee_err.start()
 
         # Kick off background ready watcher if criteria provided
         if self.ready_regex or self.ready_predicate or self.ready_port:
-            t = threading.Thread(target=self._wait_ready_bg, name=f"ready-{self.name}", daemon=True)
+            t = threading.Thread(
+                target=self._wait_ready_bg, name=f"ready-{self.name}", daemon=True
+            )
             t.start()
         else:
             self._ready_event.set()
@@ -236,7 +260,11 @@ class ManagedProcess:
     def _wait_ready_bg(self) -> None:
         pattern: Optional[re.Pattern[str]] = None
         if self.ready_regex is not None:
-            pattern = re.compile(self.ready_regex) if isinstance(self.ready_regex, str) else self.ready_regex
+            pattern = (
+                re.compile(self.ready_regex)
+                if isinstance(self.ready_regex, str)
+                else self.ready_regex
+            )
 
         start = time.time()
         while time.time() - start < self.ready_timeout:
@@ -250,7 +278,11 @@ class ManagedProcess:
                     return
             if pattern:
                 # scan newest lines first, then block briefly
-                if any(pattern.search(line) for line in list(self._stdout_ring)[-50:] + list(self._stderr_ring)[-50:]):
+                if any(
+                    pattern.search(line)
+                    for line in list(self._stdout_ring)[-50:]
+                    + list(self._stderr_ring)[-50:]
+                ):
                     self._ready_event.set()
                     return
             # check if process died
@@ -393,8 +425,10 @@ class ManagedProcess:
 # Process supervisor
 # --------------------------------------------------------------------------------------
 
+
 class ProcessSupervisor:
     """Tracks multiple ManagedProcess instances for coordinated teardown."""
+
     def __init__(self) -> None:
         self._procs: list[ManagedProcess] = []
         self._closed = False
@@ -424,9 +458,11 @@ class ProcessSupervisor:
 # Misc helpers
 # --------------------------------------------------------------------------------------
 
+
 class _suppress:
     def __enter__(self):  # pragma: no cover
         return self
+
     def __exit__(self, exc_type, exc, tb):  # pragma: no cover
         return True
 
@@ -447,9 +483,14 @@ def start_and_wait(
     Raises RuntimeError on timeout or early exit.
     """
     p = ManagedProcess(
-        args=args, name=name, cwd=cwd, env=env,
-        ready_regex=ready_regex, ready_port=ready_port,
-        ready_predicate=ready_predicate, ready_timeout=ready_timeout,
+        args=args,
+        name=name,
+        cwd=cwd,
+        env=env,
+        ready_regex=ready_regex,
+        ready_port=ready_port,
+        ready_predicate=ready_predicate,
+        ready_timeout=ready_timeout,
         log_dir=log_dir,
     ).start()
 

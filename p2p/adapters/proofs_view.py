@@ -49,18 +49,21 @@ except Exception:  # pragma: no cover
 
         def _cbor_decode(b: bytes) -> Any:
             return cbor2.loads(b)
+
     except Exception as e:  # pragma: no cover
-        raise RuntimeError("No CBOR decoder available (need core.encoding.cbor or cbor2)") from e
+        raise RuntimeError(
+            "No CBOR decoder available (need core.encoding.cbor or cbor2)"
+        ) from e
 
 # --- Type ids and topic mapping ---
 
 _TYPE_NAME_BY_ID = {
     # Keep in sync with consensus/proofs registries (defensive copy for fast-path use).
-    0: "hash",       # HashShare
-    1: "ai",         # AIProof
-    2: "quantum",    # QuantumProof
-    3: "storage",    # StorageHeartbeat
-    4: "vdf",        # VDFProof
+    0: "hash",  # HashShare
+    1: "ai",  # AIProof
+    2: "quantum",  # QuantumProof
+    3: "storage",  # StorageHeartbeat
+    4: "vdf",  # VDFProof
 }
 
 try:
@@ -82,6 +85,7 @@ except Exception:
 @dataclass(frozen=True)
 class PreParsedProof:
     """Minimal information extracted from a proof envelope."""
+
     type_id: int
     type_name: str
     nullifier: Optional[bytes]
@@ -96,6 +100,7 @@ class PreParsedProof:
 # Internal helpers
 # --------------------------
 
+
 def _as_mapping(x: Any) -> Optional[Mapping[Any, Any]]:
     return x if isinstance(x, Mapping) else None
 
@@ -108,18 +113,30 @@ def _extract_envelope(obj: Any) -> tuple[int, Any, Optional[bytes]]:
     # Array/tuple case: [type_id, body, nullifier]
     if isinstance(obj, (list, tuple)) and len(obj) == 3:
         t_id, body, nul = obj[0], obj[1], obj[2]
-        return int(t_id), body, (bytes(nul) if isinstance(nul, (bytes, bytearray)) else None)
+        return (
+            int(t_id),
+            body,
+            (bytes(nul) if isinstance(nul, (bytes, bytearray)) else None),
+        )
 
     m = _as_mapping(obj)
     if m is not None:
         # Prefer string keys
         if "type_id" in m and "body" in m and "nullifier" in m:
             nul = m["nullifier"]
-            return int(m["type_id"]), m["body"], (bytes(nul) if isinstance(nul, (bytes, bytearray)) else None)
+            return (
+                int(m["type_id"]),
+                m["body"],
+                (bytes(nul) if isinstance(nul, (bytes, bytearray)) else None),
+            )
         # Small-int-keyed map: 0=type,1=body,2=nullifier
         if 0 in m and 1 in m:
             nul = m.get(2, None)
-            return int(m[0]), m[1], (bytes(nul) if isinstance(nul, (bytes, bytearray)) else None)
+            return (
+                int(m[0]),
+                m[1],
+                (bytes(nul) if isinstance(nul, (bytes, bytearray)) else None),
+            )
 
     raise ValueError("invalid envelope shape")
 
@@ -153,7 +170,10 @@ def _best_effort_header_hash(body: Any) -> Optional[bytes]:
 # Public API
 # --------------------------
 
-def preparse_proof(envelope_cbor: bytes, *, max_size: int = 256 * 1024) -> PreParsedProof:
+
+def preparse_proof(
+    envelope_cbor: bytes, *, max_size: int = 256 * 1024
+) -> PreParsedProof:
     """
     Decode the envelope and return a PreParsedProof.
 
@@ -223,7 +243,11 @@ def admit_for_gossip(
     if pp.type_name == "unknown":
         return None, "unknown-type"
 
-    if pp.nullifier is None or not isinstance(pp.nullifier, (bytes, bytearray)) or len(pp.nullifier) == 0:
+    if (
+        pp.nullifier is None
+        or not isinstance(pp.nullifier, (bytes, bytearray))
+        or len(pp.nullifier) == 0
+    ):
         return None, "missing-nullifier"
 
     if seen_nullifiers is not None:
