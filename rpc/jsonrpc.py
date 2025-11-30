@@ -22,6 +22,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Tuple, Union
 
 from fastapi import APIRouter, Request, Response
@@ -65,6 +66,8 @@ except Exception:  # pragma: no cover - fallback if errors module not ready
         code = -32603
         message = "Internal error"
 
+
+from rpc import version as rpc_version
 
 log = logging.getLogger(__name__)
 
@@ -168,6 +171,84 @@ def _sync_with_methods_registry() -> None:
 
 _sync_with_methods_registry()
 
+# Cached OpenRPC doc (if available)
+_OPENRPC_CACHE_PATH: Path | None = None
+_OPENRPC_CACHE_DOC: Dict[str, Any] | None = None
+_OPENRPC_CACHE_MTIME: float | None = None
+
+
+# --------------------------------------------------------------------------------------
+# OpenRPC discovery helper
+# --------------------------------------------------------------------------------------
+
+
+def _load_openrpc_document() -> Dict[str, Any]:
+    """
+    Return the OpenRPC document for this server.
+
+    Prefer loading from the same path served by /openrpc.json so rpc.discover
+    mirrors the HTTP endpoint. Falls back to a synthesized document derived from
+    the registered method names if the file is missing or invalid.
+    """
+
+    global _OPENRPC_CACHE_DOC, _OPENRPC_CACHE_PATH, _OPENRPC_CACHE_MTIME
+
+    path: Path | None = None
+    try:
+        # Import lazily to avoid circular imports at module load time.
+        from rpc.openrpc_mount import _resolve_openrpc_path  # type: ignore
+
+        path = Path(_resolve_openrpc_path()).expanduser()
+    except Exception:
+        path = None
+
+    if path and path.exists():
+        try:
+            mtime = path.stat().st_mtime
+            if (
+                _OPENRPC_CACHE_DOC is not None
+                and _OPENRPC_CACHE_PATH == path
+                and _OPENRPC_CACHE_MTIME == mtime
+            ):
+                return _OPENRPC_CACHE_DOC
+
+            with path.open("r", encoding="utf-8") as f:
+                doc = json.load(f)
+
+            _OPENRPC_CACHE_PATH = path
+            _OPENRPC_CACHE_MTIME = mtime
+            _OPENRPC_CACHE_DOC = doc
+        except Exception as e:  # pragma: no cover - best-effort cache
+            log.warning("Failed to load OpenRPC document from %s: %s", path, e)
+
+    if _OPENRPC_CACHE_DOC is None:
+        doc: Dict[str, Any] = {
+            "openrpc": "1.2.6",
+            "info": {
+                "title": "Animica RPC",
+                "version": getattr(rpc_version, "__version__", "dev"),
+            },
+            "methods": [{"name": name} for name in registry.names],
+        }
+    else:
+        doc = dict(_OPENRPC_CACHE_DOC)
+
+    methods_list = list(doc.get("methods", []))
+    known_names = set()
+    for m in methods_list:
+        if isinstance(m, str):
+            known_names.add(m)
+        elif isinstance(m, dict) and "name" in m:
+            known_names.add(str(m["name"]))
+
+    for name in registry.names:
+        if name not in known_names:
+            methods_list.append({"name": name})
+
+    doc["methods"] = methods_list
+    _OPENRPC_CACHE_DOC = doc
+    return doc
+
 
 # --------------------------------------------------------------------------------------
 # Error shaping
@@ -231,24 +312,7 @@ def _bind_call_args(fn: CallableLike, params: Optional[Params], ctx: Context) ->
     if "request" in sig.parameters and "request" not in bound.arguments:
         bound.arguments["request"] = ctx.request
 
-    # Return as arg/kw lists
-    args: List[Any] = []
-    kwargs: Dict[str, Any] = {}
-    for name, param in sig.parameters.items():
-        if name in bound.arguments:
-            if param.kind in (param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD) and name not in kwargs:
-                # preserve order for positional-first
-                args.append(bound.arguments[name])
-            elif param.kind in (param.KEYWORD_ONLY, param.VAR_KEYWORD):
-                kwargs[name] = bound.arguments[name]
-            else:
-                # default to kwargs for safety
-                kwargs[name] = bound.arguments[name]
-    # Include any extras that were bound (e.g., var-positional)
-    for k, v in bound.arguments.items():
-        if k not in sig.parameters:
-            kwargs[k] = v
-    return args, kwargs
+    return [], dict(bound.arguments)
 
 
 async def _maybe_await(x: Any) -> Any:
@@ -286,7 +350,7 @@ def _validate_request_obj(obj: Json) -> Tuple[str, Optional[Params], Any]:
 
     params: Optional[Params] = obj.get("params")
     if params is not None and not isinstance(params, (list, dict)):
-        raise InvalidRequest("params, if present, must be array or object")
+        raise InvalidParams("params, if present, must be array or object")
 
     # id is optional (notification when absent)
     id_present = "id" in obj
@@ -335,7 +399,7 @@ async def dispatch_one(obj: Json, ctx: Optional[Context]) -> Optional[Json]:
         return {"jsonrpc": "2.0", "id": req_id, "error": _error_obj(exc)}
 
 
-async def dispatch(payload: Union[Json, List[Any]], ctx: Optional[Context] = None) -> Union[Json, List[Json]]:
+async def dispatch(payload: Union[Json, List[Any]], ctx: Optional[Context] = None) -> Union[Json, List[Json], None]:
     """
     Dispatch a parsed JSON payload (already json.loads'ed).
     Handles single objects and batches.
@@ -348,20 +412,22 @@ async def dispatch(payload: Union[Json, List[Any]], ctx: Optional[Context] = Non
         if len(payload) == 0:
             # Empty batch is invalid
             return {"jsonrpc": "2.0", "id": None, "error": _error_obj(InvalidRequest("empty batch"))}
-        # Process concurrently but keep result order for request objects
-        tasks = [dispatch_one(obj, ctx) if isinstance(obj, dict)
-                 else asyncio.create_task(dispatch_one({"jsonrpc": "2.0", "method": "__invalid__", "id": None}, ctx))
-                 for obj in payload]
+
         results: List[Optional[Json]] = []
-        for t in tasks:
-            r = await t
+        for obj in payload:
+            if isinstance(obj, dict):
+                r = await dispatch_one(obj, ctx)
+            else:
+                r = {"jsonrpc": "2.0", "id": None, "error": _error_obj(InvalidRequest("Request must be an object"))}
             results.append(r)
-        # Filter out None (notifications)
+
         out = [r for r in results if r is not None]
-        # If batch had only notifications, spec says return empty list
         return out
+
     elif isinstance(payload, dict):
-        return await dispatch_one(payload, ctx) or {"jsonrpc": "2.0", "id": None, "result": None}
+        res = await dispatch_one(payload, ctx)
+        return res
+
     else:
         # Entire payload invalid
         return {"jsonrpc": "2.0", "id": None, "error": _error_obj(InvalidRequest("payload must be object or array"))}
@@ -393,6 +459,8 @@ async def jsonrpc_endpoint(request: Request) -> Response:
             headers={k.lower(): v for k, v in request.headers.items()},
         )
         result = await dispatch(payload, ctx)
+        if result is None:
+            return Response(status_code=204)
         return Response(content=json.dumps(result, separators=(",", ":")), media_type="application/json")
     except JsonRpcError as e:
         # Top-level structural errors
@@ -406,6 +474,14 @@ async def jsonrpc_endpoint(request: Request) -> Response:
 # --------------------------------------------------------------------------------------
 # Introspection helper (optional)
 # --------------------------------------------------------------------------------------
+
+
+@registry.method("rpc.discover")
+async def rpc_discover() -> Dict[str, Any]:
+    """Return the OpenRPC document for this server (same as GET /openrpc.json)."""
+
+    return _load_openrpc_document()
+
 
 @registry.method("rpc.listMethods")
 async def rpc_list_methods() -> List[str]:

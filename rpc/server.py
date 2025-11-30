@@ -313,13 +313,21 @@ def create_app(cfg: rpc_config.Config | None = None) -> FastAPI:
             try:
                 payload = await request.json()
             except Exception as e:
-                raise rpc_errors.ParseError(f"Invalid JSON body: {e}")  # type: ignore[misc]
+                err = rpc_errors.ParseError(f"Invalid JSON body: {e}")  # type: ignore[misc]
+                return JSONResponse(
+                    {"jsonrpc": "2.0", "id": None, "error": err.to_dict()},
+                    status_code=200,
+                )
 
             try:
                 result = await _call_dispatch(payload, request)
             except rpc_errors.RpcError as re:  # type: ignore[attr-defined]
                 # Structured RPC error already; return as-is
-                return JSONResponse(re.to_dict(), status_code=200)  # type: ignore[attr-defined]
+                rpc_id = payload.get("id") if isinstance(payload, dict) else None
+                return JSONResponse(
+                    {"jsonrpc": "2.0", "id": rpc_id, "error": re.to_dict()},
+                    status_code=200,
+                )
             except Exception as e:
                 log.exception("Unhandled error in JSON-RPC")
                 # Map to JSON-RPC internal error shape
@@ -333,6 +341,8 @@ def create_app(cfg: rpc_config.Config | None = None) -> FastAPI:
                 )
 
             # If dispatcher returned a native structure, serialize directly
+            if result is None:
+                return Response(status_code=204)
             if isinstance(result, (dict, list)):
                 return JSONResponse(result)
             # As a fallback, dump to JSON

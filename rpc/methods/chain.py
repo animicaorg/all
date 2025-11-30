@@ -5,6 +5,7 @@ import typing as t
 
 from rpc.methods import method
 from rpc import deps
+from rpc.methods.block import _fallback_block, _resolve_block_by_number, _block_view
 
 # Optional/loose imports: we compute the head hash using canonical bytes if available.
 try:  # preferred, if provided by core
@@ -59,7 +60,34 @@ def _compute_header_hash(header: t.Any) -> str | None:
         return None
 
 
-def _header_view(height: int, header: t.Any) -> dict[str, t.Any]:
+_ZERO_HASH = "0x" + ("0" * 64)
+
+
+def _fallback_roots() -> dict[str, str]:
+    return {
+        "stateRoot": _ZERO_HASH,
+        "txsRoot": _ZERO_HASH,
+        "receiptsRoot": _ZERO_HASH,
+        "proofsRoot": _ZERO_HASH,
+        "daRoot": _ZERO_HASH,
+    }
+
+
+def _fallback_header(chain_id: int) -> dict[str, t.Any]:
+    return {
+        "height": 0,
+        "hash": _ZERO_HASH,
+        "chainId": chain_id,
+        "parentHash": _ZERO_HASH,
+        "timestamp": 0,
+        "thetaMicro": 0,
+        "mixSeed": _ZERO_HASH,
+        "nonce": _ZERO_HASH,
+        "roots": _fallback_roots(),
+    }
+
+
+def _header_view(height: int | None, header: t.Any, chain_id_fallback: int | None = None) -> dict[str, t.Any]:
     """Project a header dataclass/object into a JSON-friendly view."""
     # Try to read common fields defensively.
     chain_id = getattr(header, "chain_id", getattr(header, "chainId", None))
@@ -67,22 +95,51 @@ def _header_view(height: int, header: t.Any) -> dict[str, t.Any]:
     mix_seed = getattr(header, "mix_seed", getattr(header, "mixSeed", None))
     nonce = getattr(header, "nonce", None)
 
-    roots = getattr(header, "roots", None) or {}
+    if isinstance(header, dict):
+        chain_id = header.get("chainId", header.get("chain_id", chain_id))
+        theta_micro = header.get("thetaMicro", theta_micro)
+        mix_seed = header.get("mixSeed", mix_seed)
+        nonce = header.get("nonce", nonce)
+
+    roots = getattr(header, "roots", None) or ({
+        "stateRoot": header.get("stateRoot") if isinstance(header, dict) else None,
+        "txsRoot": header.get("txsRoot") if isinstance(header, dict) else None,
+        "receiptsRoot": header.get("receiptsRoot") if isinstance(header, dict) else None,
+        "proofsRoot": header.get("proofsRoot") if isinstance(header, dict) else None,
+        "daRoot": header.get("daRoot") if isinstance(header, dict) else None,
+    } if isinstance(header, dict) else {})
     # Roots may themselves be bytes; map to hex where relevant
     roots_view: dict[str, t.Any] = {}
     if isinstance(roots, dict):
         for k, v in roots.items():
             roots_view[k] = _hex(v) if isinstance(v, (bytes, bytearray)) else v
 
+    height_int = int(height) if height is not None else None
+
+    computed_hash = _compute_header_hash(header)
+    if computed_hash is None:
+        computed_hash = getattr(header, "hash", None)
+        if computed_hash is None and isinstance(header, dict):
+            computed_hash = header.get("hash")
+
+    if chain_id is None and chain_id_fallback is not None:
+        chain_id = chain_id_fallback
+
+    if not roots_view or any(v is None for v in roots_view.values()):
+        roots_view = _fallback_roots()
+
     hv = {
-        "height": int(height),
-        "hash": _compute_header_hash(header),
+        "height": height_int,
+        "number": height_int,  # alias for clients expecting `number`
+        "hash": computed_hash,
         "chainId": int(chain_id) if chain_id is not None else None,
         "thetaMicro": int(theta_micro) if theta_micro is not None else None,
         "mixSeed": _hex(mix_seed) if isinstance(mix_seed, (bytes, bytearray)) else mix_seed,
         "nonce": _hex(nonce) if isinstance(nonce, (bytes, bytearray)) else nonce,
         "roots": roots_view or roots,
     }
+    if isinstance(roots_view, dict):
+        hv.update(roots_view)
     # Drop Nones for tidiness
     return {k: v for k, v in hv.items() if v is not None}
 
@@ -96,7 +153,11 @@ def chain_get_params() -> dict:
     return _dataclass_to_dict(params)
 
 
-@method("chain.getChainId", desc="Return the active chainId for this node.")
+@method(
+    "chain.getChainId",
+    desc="Return the active chainId for this node.",
+    aliases=("eth_chainId",),
+)
 def chain_get_chain_id() -> int:
     """
     Returns the numeric chainId (e.g., 1 for animica mainnet).
@@ -123,4 +184,20 @@ def chain_get_head() -> dict:
     else:  # pragma: no cover
         raise RuntimeError("deps.get_head() returned an unexpected shape")
 
-    return _header_view(int(height), header)
+    chain_id_val = int(deps.get_chain_id())
+    if height is None or header is None:
+        h, blk = _resolve_block_by_number(0)
+        if blk is None:
+            blk = _fallback_block(chain_id_val)
+            h = 0
+        block_view = _block_view(blk, h, include_txs=False, include_receipts=False, chain_id_fallback=chain_id_val)
+        header_view = block_view.get("header", block_view)
+        if isinstance(header_view, dict):
+            roots = header_view.get("roots")
+            if isinstance(roots, dict):
+                merged = dict(header_view)
+                merged.update(roots)
+                header_view = merged
+        return header_view
+
+    return _header_view(int(height), header, chain_id_fallback=chain_id_val)
