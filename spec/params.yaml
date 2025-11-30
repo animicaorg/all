@@ -244,11 +244,11 @@ networks:
         tips_split_pct: { miner: 70, aicf: 30 }
     consensus:
       poies:
-        theta_initial_munats: 9000000
-        theta_min_munats: 3000000
-        theta_max_munats: 24000000
-        retarget: { window_blocks: 300, ema_beta: 0.35, clamp_ratio_per_window: { min: 0.5, max: 3.0 } }
-        share_target_munats: 2000000
+        theta_initial_munats: 2000000
+        theta_min_munats: 1000000
+        theta_max_munats: 12000000
+        retarget: { window_blocks: 90, ema_beta: 0.45, clamp_ratio_per_window: { min: 0.98, max: 1.15 } }
+        share_target_munats: 600000
         nullifier_ttl_blocks: 8192
         gamma: { total_cap_munats: 8000000, escort_quantile: 0.2 }
       fairness_alpha:
