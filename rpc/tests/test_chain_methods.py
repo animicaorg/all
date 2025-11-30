@@ -116,3 +116,18 @@ def test_head_and_block_views_are_consistent():
 
     h_block = blk["header"].get("hash", blk.get("hash"))
     assert h_block == h_head
+
+
+def test_eth_aliases_resolve():
+    client, cfg, _ = new_test_client()
+
+    chain_id_res = rpc_call(client, "eth_chainId")
+    assert chain_id_res["result"] == cfg.chain_id
+
+    blk_res = rpc_call(
+        client,
+        "eth_getBlockByNumber",
+        params={"number": 0, "includeTx": False, "includeReceipts": False},
+    )
+    blk = blk_res["result"]
+    assert blk["header"]["number"] == 0

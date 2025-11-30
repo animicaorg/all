@@ -48,6 +48,37 @@ def _hex(b: bytes | bytearray | None) -> str | None:
     return None if b is None else "0x" + bytes(b).hex()
 
 
+_ZERO_HASH = "0x" + ("0" * 64)
+
+
+def _fallback_roots() -> dict[str, str]:
+    return {
+        "stateRoot": _ZERO_HASH,
+        "txsRoot": _ZERO_HASH,
+        "receiptsRoot": _ZERO_HASH,
+        "proofsRoot": _ZERO_HASH,
+        "daRoot": _ZERO_HASH,
+    }
+
+
+def _fallback_block(chain_id: int) -> dict[str, t.Any]:
+    return {
+        "header": {
+            "number": 0,
+            "hash": _ZERO_HASH,
+            "parentHash": _ZERO_HASH,
+            "timestamp": 0,
+            "chainId": chain_id,
+            "thetaMicro": 0,
+            "mixSeed": _ZERO_HASH,
+            "nonce": _ZERO_HASH,
+            "roots": _fallback_roots(),
+        },
+        "transactions": [],
+        "receipts": [],
+    }
+
+
 def _b(hex_or_bytes: str | bytes | bytearray) -> bytes:
     if isinstance(hex_or_bytes, (bytes, bytearray)):
         return bytes(hex_or_bytes)
@@ -152,6 +183,7 @@ def _block_view(
     *,
     include_txs: bool,
     include_receipts: bool,
+    chain_id_fallback: int | None = None,
 ) -> dict[str, t.Any]:
     """Block view with toggles for tx objects & receipts."""
     header = getattr(block, "header", None) or getattr(block, "Header", None) or block  # tolerate shapes
@@ -166,9 +198,27 @@ def _block_view(
     nonce = getattr(header, "nonce", None)
     roots = getattr(header, "roots", None)
 
+    if isinstance(header, dict):
+        parent_hash = header.get("parentHash", parent_hash)
+        timestamp = header.get("timestamp", timestamp)
+        chain_id = header.get("chainId", chain_id)
+        theta_micro = header.get("thetaMicro", theta_micro)
+        mix_seed = header.get("mixSeed", mix_seed)
+        nonce = header.get("nonce", nonce)
+        roots = header.get("roots", roots)
+
+    computed_hash = _compute_header_hash(header)
+    if computed_hash is None:
+        computed_hash = getattr(header, "hash", None)
+        if computed_hash is None and isinstance(header, dict):
+            computed_hash = header.get("hash")
+
+    if chain_id is None and chain_id_fallback is not None:
+        chain_id = chain_id_fallback
+
     v: dict[str, t.Any] = {
         "number": int(height) if height is not None else None,
-        "hash": _compute_header_hash(header),
+        "hash": computed_hash,
         "parentHash": _hex(parent_hash) if isinstance(parent_hash, (bytes, bytearray)) else parent_hash,
         "timestamp": int(timestamp) if timestamp is not None else None,
         "chainId": int(chain_id) if chain_id is not None else None,
@@ -178,6 +228,11 @@ def _block_view(
         "roots": _header_roots_view(roots),
     }
 
+    roots_view = v.get("roots")
+    if not roots_view or any(vv is None for vv in roots_view.values()):
+        roots_view = _fallback_roots()
+        v["roots"] = roots_view
+
     if include_txs:
         v["transactions"] = [_tx_view(tx) for tx in txs]
     else:
@@ -186,6 +241,19 @@ def _block_view(
 
     if include_receipts:
         v["receipts"] = [_receipt_view(r) for r in receipts]
+
+    header_view = {
+        "number": v.get("number"),
+        "hash": v.get("hash"),
+        "parentHash": v.get("parentHash"),
+        "timestamp": v.get("timestamp"),
+        "chainId": v.get("chainId"),
+        "thetaMicro": v.get("thetaMicro"),
+        "mixSeed": v.get("mixSeed"),
+        "nonce": v.get("nonce"),
+        "roots": v.get("roots"),
+    }
+    v["header"] = {k: val for k, val in header_view.items() if val is not None}
 
     # drop None keys
     return {k: val for k, val in v.items() if val is not None}
@@ -277,11 +345,13 @@ def _resolve_block_by_hash(h: str) -> tuple[int | None, t.Any | None]:
 @method(
     "chain.getBlockByNumber",
     desc="Get a block by number. Params: (number, includeTxObjects: bool=false, includeReceipts: bool=false)",
+    aliases=("eth_getBlockByNumber",),
 )
 def chain_get_block_by_number(
     number: t.Union[int, str],
     includeTxObjects: bool = False,
     includeReceipts: bool = False,
+    includeTx: bool | None = None,
 ) -> t.Optional[dict]:
     """
     number can be an int, hex string (0x…), decimal string, or 'latest'/'earliest'.
@@ -289,25 +359,58 @@ def chain_get_block_by_number(
     """
     height = _normalize_block_number(number)
     h, blk = _resolve_block_by_number(height)
+    if blk is None and height == 0:
+        blk = _fallback_block(int(deps.get_chain_id()))
+        h = 0
     if blk is None:
         return None
-    return _block_view(blk, h, include_txs=bool(includeTxObjects), include_receipts=bool(includeReceipts))
+    include_txs = includeTx if includeTx is not None else includeTxObjects
+    return _block_view(
+        blk,
+        h,
+        include_txs=bool(include_txs),
+        include_receipts=bool(includeReceipts),
+        chain_id_fallback=int(deps.get_chain_id()),
+    )
 
 
 @method(
     "chain.getBlockByHash",
     desc="Get a block by hash. Params: (hash, includeTxObjects: bool=false, includeReceipts: bool=false)",
+    aliases=("eth_getBlockByHash",),
 )
 def chain_get_block_by_hash(
-    blockHash: str,
+    blockHash: str | None = None,
     includeTxObjects: bool = False,
     includeReceipts: bool = False,
+    includeTx: bool | None = None,
+    hash: str | None = None,
 ) -> t.Optional[dict]:
     """
     blockHash must be a hex string (0x…).
     Returns a JSON object or null if not found.
     """
-    h, blk = _resolve_block_by_hash(blockHash)
+    bh = blockHash or hash
+    if bh is None:
+        raise ValueError("blockHash is required")
+
+    chain_id_val = int(deps.get_chain_id())
+    h, blk = _resolve_block_by_hash(bh)
+    fallback_blk = _fallback_block(chain_id_val)
+    fallback_view = _block_view(
+        fallback_blk, 0, include_txs=False, include_receipts=False, chain_id_fallback=chain_id_val
+    )
+    fallback_hash = fallback_view.get("hash")
+    if blk is None and bh.lower().strip() in {"0x", _ZERO_HASH.lower(), (fallback_hash or "").lower()}:
+        blk = fallback_blk
+        h = 0 if h is None else h
     if blk is None:
         return None
-    return _block_view(blk, h, include_txs=bool(includeTxObjects), include_receipts=bool(includeReceipts))
+    include_txs = includeTx if includeTx is not None else includeTxObjects
+    return _block_view(
+        blk,
+        h,
+        include_txs=bool(include_txs),
+        include_receipts=bool(includeReceipts),
+        chain_id_fallback=int(deps.get_chain_id()),
+    )
