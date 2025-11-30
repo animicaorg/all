@@ -283,10 +283,33 @@ def _start_auto_task() -> bool:
 
 
 @method("miner.getWork", desc="Return a mining work template for Stratum/CPU miners")
-def miner_get_work(params: Dict[str, Any] | None = None) -> Dict[str, Any]:
+def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
     from mining.templates import TemplateBuilder
 
-    _ = params  # currently unused but reserved for future extensions
+    algo_hint: str | None = None
+    if params is None:
+        payload: dict[str, Any] | None = None
+    elif isinstance(params, dict):
+        payload = params.get("payload") if len(params) == 1 and "payload" in params else params
+    elif isinstance(params, (list, tuple)):
+        if len(params) == 0:
+            payload = None
+        elif len(params) == 1 and isinstance(params[0], dict):
+            payload = params[0]
+        elif len(params) == 1:
+            payload = None
+            algo_hint = str(params[0])
+        else:
+            raise ValueError("expected at most one param: optional algo hint")
+    else:
+        algo_hint = str(params)
+        payload = None
+
+    if payload:
+        algo_hint = str(payload.get("algo") or payload.get("algorithm") or algo_hint or "asic_sha256")
+    elif algo_hint is None:
+        algo_hint = "asic_sha256"
+
     tb = TemplateBuilder(
         get_head_info=_head_info,
         get_theta=_resolve_theta,
@@ -336,6 +359,7 @@ def miner_get_work(params: Dict[str, Any] | None = None) -> Dict[str, Any]:
         "height": int(tpl.height),
         "hints": {"mixSeed": _to_hex(tpl.mix_seed)},
         "signBytes": _to_hex(sign_bytes),
+        "algo": algo_hint,
     }
 
 
@@ -344,11 +368,29 @@ def miner_get_work(params: Dict[str, Any] | None = None) -> Dict[str, Any]:
     desc="Validate and accept a mined solution",
     aliases=("miner_submitWork", "miner.submit_work"),
 )
-def miner_submit_work(**payload: Any) -> Dict[str, Any]:
-    if len(payload) == 1 and "payload" in payload and isinstance(payload["payload"], dict):
+def miner_submit_work(*args: Any, **payload: Any) -> Dict[str, Any]:
+    positional = list(args)
+    if not positional and "args" in payload and isinstance(payload["args"], (list, tuple)):
+        positional = list(payload.pop("args"))
+
+    if payload and len(payload) == 1 and "payload" in payload and isinstance(payload["payload"], dict):
         payload = payload["payload"]
+    elif payload:
+        payload = payload
+    elif positional:
+        if len(positional) == 1 and isinstance(positional[0], dict):
+            payload = positional[0]
+        elif len(positional) in (2, 3):
+            payload = {"jobId": positional[0], "nonce": positional[1]}
+            if len(positional) == 3:
+                payload["digest"] = positional[2]
+        else:
+            raise ValueError("params must be an object or [jobId, nonce, digest]")
+    else:
+        payload = {}
+
     if not isinstance(payload, dict):
-        raise ValueError("params must be an object")
+        raise ValueError("params must be an object or array")
 
     job_id = payload.get("jobId") or payload.get("job_id")
     nonce_val = payload.get("nonce")
