@@ -79,12 +79,58 @@ class _RpcHandler(BaseHTTPRequestHandler):
         self._send(payload)
 
 
-def _start_rpc_server(tmp_path: Path) -> tuple[HTTPServer, str]:
-    server = HTTPServer(("127.0.0.1", 0), _RpcHandler)
+def _start_rpc_server(tmp_path: Path, handler_cls: type[BaseHTTPRequestHandler] = _RpcHandler) -> tuple[HTTPServer, str]:
+    server = HTTPServer(("127.0.0.1", 0), handler_cls)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     host, port = server.server_address
     return server, f"http://{host}:{port}"
+
+
+class _GenerateOnlyHandler(BaseHTTPRequestHandler):
+    state = {"height": 0, "chainId": 0xA11CA, "auto": False}
+
+    def log_message(self, fmt: str, *args) -> None:  # pragma: no cover - silence server logs in tests
+        return
+
+    def _send(self, payload: dict, code: int = 200) -> None:
+        data = json.dumps(payload).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_POST(self):  # noqa: N802 - http.server signature
+        length = int(self.headers.get("content-length", "0"))
+        body = self.rfile.read(length)
+        req = json.loads(body.decode() or "{}")
+
+        if self.path.rstrip("/") != "/rpc":
+            self.send_error(404)
+            return
+
+        method = req.get("method")
+        params = req.get("params") or []
+        if method == "chain.getHead":
+            result = {
+                "height": self.state["height"],
+                "chainId": self.state["chainId"],
+                "autoMine": self.state["auto"],
+            }
+        elif method == "animica_generate":
+            count = int(params[0]) if params else 1
+            self.state["height"] += max(1, count)
+            result = {"height": self.state["height"], "mined": max(1, count)}
+        elif method == "animica_status":
+            result = {"height": self.state["height"], "chainId": self.state["chainId"], "autoMine": self.state["auto"]}
+        else:
+            payload = {"jsonrpc": "2.0", "id": req.get("id"), "error": {"code": -32601, "message": "Method not found"}}
+            self._send(payload)
+            return
+
+        payload = {"jsonrpc": "2.0", "id": req.get("id", 1), "result": result}
+        self._send(payload)
 
 
 def test_status_and_mine_against_rpc(tmp_path: Path) -> None:
@@ -102,6 +148,19 @@ def test_status_and_mine_against_rpc(tmp_path: Path) -> None:
 
         block_one = json.loads(_run_cli(["block", "1", "--rpc-url", url, "--json"]))
         assert block_one["number"] == hex(1)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_mine_fallbacks_when_miner_endpoints_missing(tmp_path: Path) -> None:
+    server, url = _start_rpc_server(tmp_path, _GenerateOnlyHandler)
+    try:
+        new_height = int(_run_cli(["mine", "--rpc-url", url, "--count", "2"]))
+        assert new_height == 2
+
+        status_after = json.loads(_run_cli(["status", "--rpc-url", url, "--json"]))
+        assert status_after["height"] == 2
     finally:
         server.shutdown()
         server.server_close()
