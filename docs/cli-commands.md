@@ -4,27 +4,66 @@ This guide collects the main command-line tools shipped in the repository and su
 
 ## Network profiles & orchestration
 
-Profile defaults for devnet/testnet/mainnet live under `ops/profiles/`. Use
-`ops/run.sh` to source a profile and start common services:
+Profile defaults for devnet/testnet/mainnet live under `ops/profiles/` and
+include RPC URLs, Stratum/API binds, DB URIs, and seed lists. Use `ops/run.sh`
+to source a profile and start common services:
 
 ```
-# default devnet
+# default devnet (node + pool background, dashboard foreground)
 ops/run.sh all
 
-# profile aware
+# profile aware shortcuts
 ops/run.sh --profile testnet node
 ops/run.sh --profile mainnet pool
 ops/run.sh dashboard
 ```
 
-Each profile sets `ANIMICA_NETWORK`, `ANIMICA_RPC_URL`, Stratum binds, and pool
-database defaults so the Python CLIs (node, mining, wallet) inherit consistent
-settings.
+`ops/run.sh all` keeps the node and pool running in the background and exports
+`ANIMICA_NETWORK`, `ANIMICA_RPC_URL`, `ANIMICA_STRATUM_BIND`, `ANIMICA_POOL_API_BIND`,
+and related DB URIs so the Python CLIs (node, pool, wallet) inherit consistent
+settings. Stop the dashboard with `Ctrl+C` to clean up the background services.
+
+## Node CLI
+
+Thin Typer surface for quick JSON-RPC checks. Available as `animica-node` or
+`python -m animica.cli.node`:
+
+- `status` prints RPC URL, chain ID, head, sync status, and (when available) the
+  full head block.
+- `head` dumps the JSON head payload.
+- `block --height N` or `block --hash 0x...` fetches a block; height lookups
+  fall back to hash queries when needed.
+- `tx --hash 0x...` retrieves a transaction by hash.
+
+Example against a running devnet node:
+
+```sh
+animica-node status --rpc-url $ANIMICA_RPC_URL
+animica-node block --height 1 --rpc-url $ANIMICA_RPC_URL
+```
+
+## Pool CLI
+
+Stratum pool helper (same Typer app behind `animica-mining`/`animica-pool`).
+Commands:
+
+- `run-pool` starts the Stratum + metrics API using `ANIMICA_RPC_URL`,
+  `ANIMICA_STRATUM_BIND`, `ANIMICA_POOL_API_BIND`, and `ANIMICA_MINING_POOL_DB_URL`
+  (CLI flags override env vars).
+- `show-config` prints the resolved pool configuration.
+- `generate-payout-address` mints a dev payout address using the wallet helpers.
+
+Example matching the devnet profile:
+
+```sh
+ANIMICA_POOL_PROFILE=hashshare animica-pool run-pool --rpc-url $ANIMICA_RPC_URL
+```
 
 ## Wallet CLI
 
 Developer-friendly wallet/address helper built on the PQ registry. Invoke via
-`python -m animica.cli.wallet` with the following subcommands:
+the console script (`animica-wallet`) or module (`python -m animica.cli.wallet`)
+with the following subcommands:
 
 - `create --label <name> [--allow-insecure-fallback]` create a new Dilithium3-
   style keypair, derive a bech32m `anim1…` address, and persist it to
@@ -38,11 +77,11 @@ Developer-friendly wallet/address helper built on the PQ registry. Invoke via
 Example workflow to generate and verify an address against a running node:
 
 ```sh
-python -m animica.cli.wallet create --label dev1 --allow-insecure-fallback
-python -m animica.cli.wallet list
+animica-wallet create --label dev1 --allow-insecure-fallback
+animica-wallet list
 
 # Query balance over JSON-RPC (state.getBalance)
-python -m animica.cli.wallet show --address anim1... --rpc-url $ANIMICA_RPC_URL
+animica-wallet show --address anim1... --rpc-url $ANIMICA_RPC_URL
 ```
 
 Addresses emitted by the wallet, explorer, and pool payout configs all follow
