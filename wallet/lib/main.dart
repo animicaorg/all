@@ -7,8 +7,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app.dart'; // Will host AnimicaApp
-// To be added shortly in this repo plan:
-import 'services/env.dart' show Env;            // Env.bootstrap(String flavor)
+import 'services/env.dart' show Env; // Env.bootstrap(String flavor)
+import 'services/crash_reporter.dart' show CrashReporter;
 import 'tool/env_loader.dart' as env_loader; // loadDotEnvIfPresent()
 
 /// Compile-time flavor: pass with
@@ -40,12 +40,18 @@ Future<void> main() async {
   FlutterError.onError = (FlutterErrorDetails details) {
     // Always log to console.
     FlutterError.dumpErrorToConsole(details);
-    // TODO: hook a crash reporter (Sentry/Firebase) here if desired.
+    // Forward to the crash reporter (no-op if not configured)
+    try {
+      CrashReporter.reportError(details.exception, details.stack ?? StackTrace.current);
+    } catch (_) {}
   };
 
   // Bootstrap environment (URLs, chainId, feature flags) based on flavor.
   // Env is provided by wallet/lib/services/env.dart in this repo plan.
   final Env env = await _bootstrapEnv();
+
+  // Initialize crash reporting (optional)
+  await CrashReporter.init(env);
 
   // Riverpod scope + app
   runZonedGuarded(
@@ -59,8 +65,10 @@ Future<void> main() async {
     ),
     (Object error, StackTrace stack) {
       // Last-chance error sink (isolate/zone).
-      // TODO: forward to crash reporter if configured.
-      // For now, print to console in dev.
+      // Forward to crash reporter and print locally in debug.
+      try {
+        CrashReporter.reportError(error, stack);
+      } catch (_) {}
       if (kDebugMode) {
         // ignore: avoid_print
         print('Uncaught zone error: $error\n$stack');

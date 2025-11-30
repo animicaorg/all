@@ -59,17 +59,25 @@ def _apply_domain(h, domain: bytes) -> None:
 # ------------------------------ Keccak Support ------------------------------- #
 
 # Try to provide Keccak-256 from common libraries (optional).
+# We attempt several possible providers and set flags for availability.
 _has_pysha3 = False
 _has_pycryptodome = False
 try:  # pysha3 (a.k.a. "sha3" package) provides keccak_256 compatible with Ethereum.
     import sha3  # type: ignore
     _has_pysha3 = True
 except Exception:
+    # Try PyCryptodome (`pip install pycryptodome`) which may expose either
+    # `Crypto` or `Cryptodome` top-level packages depending on how it was
+    # installed (pycryptodome vs pycryptodomex). Try both import paths.
     try:
         from Crypto.Hash import keccak as _keccak  # type: ignore
         _has_pycryptodome = True
     except Exception:
-        pass
+        try:
+            from Cryptodome.Hash import keccak as _keccak  # type: ignore
+            _has_pycryptodome = True
+        except Exception:
+            pass
 
 
 def _new_keccak256():
@@ -78,7 +86,7 @@ def _new_keccak256():
     if _has_pycryptodome:
         return _keccak.new(digest_bits=256)  # type: ignore[name-defined]
     raise VmError(
-        "keccak256 is unavailable: install either 'pysha3' (preferred) or 'pycryptodome'."
+        "keccak256 is unavailable: install either 'pysha3' (preferred), 'pycryptodome', or 'pycryptodomex'."
     )
 
 

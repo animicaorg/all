@@ -118,6 +118,9 @@ _BUILTIN_MODULES = (
     "rpc.methods.state",
     "rpc.methods.receipt",
     "rpc.methods.miner",
+    "rpc.methods.marketplace",  # ANM token marketplace methods
+    "rpc.methods.payments",  # Payment webhook handler for Stripe/PayPal
+    "rpc.methods.quantum",  # Quantum jobs & workers explorer RPC
 )
 
 

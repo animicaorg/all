@@ -33,6 +33,7 @@ class Env {
   final Uri? rpcWs;
   final int chainId;
   final Map<String, bool> featureFlags; // e.g. {"devtools": true, "experimental_pq": true}
+  final String? sentryDsn; // optional DSN for crash reporting (enable via --dart-define=SENTRY_DSN=...)
   final String userAgent;
 
   const Env({
@@ -88,6 +89,9 @@ class Env {
       rpcWs: rpcWs,
       chainId: chainId,
       featureFlags: featureFlags,
+      sentryDsn: (const String.fromEnvironment('SENTRY_DSN', defaultValue: '')).isNotEmpty
+          ? const String.fromEnvironment('SENTRY_DSN')
+          : null,
       userAgent: ua,
     );
   }
@@ -108,6 +112,7 @@ class Env {
       rpcWs: defaults.ws != null ? Uri.parse(defaults.ws!) : null,
       chainId: 2,
       featureFlags: const {},
+      sentryDsn: null,
       userAgent: _buildUserAgent(parsed),
     );
   }
