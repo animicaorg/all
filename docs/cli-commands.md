@@ -21,6 +21,33 @@ Each profile sets `ANIMICA_NETWORK`, `ANIMICA_RPC_URL`, Stratum binds, and pool
 database defaults so the Python CLIs (node, mining, wallet) inherit consistent
 settings.
 
+## Wallet CLI
+
+Developer-friendly wallet/address helper built on the PQ registry. Invoke via
+`python -m animica.cli.wallet` with the following subcommands:
+
+- `create --label <name> [--allow-insecure-fallback]` create a new Dilithium3-
+  style keypair, derive a bech32m `anim1…` address, and persist it to
+  `~/.animica/wallets.json`.
+- `list` show known addresses and algorithms (bech32m/anim HRP).
+- `show --address <addr> [--rpc-url ...]` print the wallet entry plus
+  `state.getBalance` from the configured RPC endpoint.
+- `export --address <addr> --out wallet.json` / `import --file wallet.json`
+  round-trip secrets in a JSON format that keeps the bech32m encoding intact.
+
+Example workflow to generate and verify an address against a running node:
+
+```sh
+python -m animica.cli.wallet create --label dev1 --allow-insecure-fallback
+python -m animica.cli.wallet list
+
+# Query balance over JSON-RPC (state.getBalance)
+python -m animica.cli.wallet show --address anim1... --rpc-url $ANIMICA_RPC_URL
+```
+
+Addresses emitted by the wallet, explorer, and pool payout configs all follow
+`anim` bech32m encoding (alg_id || sha3_256(pubkey)) per `docs/spec/ADDRESSES.md`.
+
 ## VM(Py) tooling
 
 ### Running commands
