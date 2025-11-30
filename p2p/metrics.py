@@ -305,8 +305,21 @@ class _Facade:
 
 METRICS = _Facade()
 
+_METRICS_SINGLETON: Optional[_Facade] = None
+
+
+def get_metrics(registry: Optional[CollectorRegistry] = None) -> _Facade:
+    """
+    Return a process-wide metrics facade. Ignores custom registries for
+    compatibility; all metrics share the module-level registry.
+    """
+    global _METRICS_SINGLETON
+    if _METRICS_SINGLETON is None:
+        _METRICS_SINGLETON = METRICS
+    return _METRICS_SINGLETON
+
 __all__ = [
-    "REG", "METRICS",
+    "REG", "METRICS", "get_metrics",
     "inc_bytes", "inc_msg", "inc_gossip",
     "set_peers", "set_mesh_size",
     "observe_handshake", "observe_rtt",
