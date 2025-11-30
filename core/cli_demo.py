@@ -43,6 +43,18 @@ def _params_to_dict(params: Any) -> dict[str, Any]:
         return {"_repr": repr(params)}
 
 
+def _json_safe(obj: Any) -> Any:
+    """Convert common non-JSON-serializable types to friendly values."""
+
+    if isinstance(obj, bytes):
+        return "0x" + obj.hex()
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [_json_safe(v) for v in obj]
+    return obj
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(
         prog="animica-cli-demo",
@@ -93,7 +105,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     print("=== Animica — Chain Sanity ===")
     print(f"DB URI:        {args.db}")
     if params is not None:
-        p = _params_to_dict(params)
+        p = _json_safe(_params_to_dict(params))
         # Pull a few common fields if present to headline them.
         chain_id = p.get("chain_id", "unknown")
         network_name = p.get("network_name", "unknown")
