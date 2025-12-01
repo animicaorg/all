@@ -55,8 +55,8 @@ from typing import Optional
 
 # ---------- Robust import with graceful no-op fallback ----------
 try:
-    from prometheus_client import (CollectorRegistry, Counter,  # type: ignore
-                                   Gauge, Histogram)
+    from prometheus_client import Counter  # type: ignore
+    from prometheus_client import CollectorRegistry, Gauge, Histogram
 
     _PROM_AVAILABLE = True
 except Exception:  # pragma: no cover - exercised only in minimal envs

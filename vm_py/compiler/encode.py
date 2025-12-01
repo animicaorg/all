@@ -57,12 +57,13 @@ try:
 except Exception:  # pragma: no cover
     _MSGSPEC_AVAILABLE = False
 
-from .ir import (Assign, Attribute, BinOp,  # Structured IR; Instruction IR
-                 Block, BoolOp, Call, Compare, Const, Expr, ExprStmt, Function,
-                 IAttrGet, IBinOp, ICall, ICompare, IDup, If, IJump,
-                 IJumpIfFalse, IJumpIfTrue, ILoadConst, ILoadName, INop, Instr,
-                 IPop, IReturn, IStoreName, ISubscriptGet, IUnaryOp, Module,
-                 Name, Prog, Return, Stmt, Subscript, UnaryOp, While)
+from .ir import BinOp  # Structured IR; Instruction IR
+from .ir import (Assign, Attribute, Block, BoolOp, Call, Compare, Const, Expr,
+                 ExprStmt, Function, IAttrGet, IBinOp, ICall, ICompare, IDup,
+                 If, IJump, IJumpIfFalse, IJumpIfTrue, ILoadConst, ILoadName,
+                 INop, Instr, IPop, IReturn, IStoreName, ISubscriptGet,
+                 IUnaryOp, Module, Name, Prog, Return, Stmt, Subscript,
+                 UnaryOp, While)
 
 MAGIC = b"ACIR"
 VERSION = 1

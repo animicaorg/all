@@ -1,0 +1,27 @@
+version: '3.8'
+services:
+  omni-node:
+    image: animica/omni-node:dev
+    restart: unless-stopped
+    environment:
+      - RPC_PORT=8545
+    ports:
+      - "8545:8545"
+      - "30303:30303"
+    volumes:
+      - ./data/omni-node:/var/lib/omni-node
+
+  indexer:
+    image: animica/indexer:dev
+    restart: unless-stopped
+    depends_on:
+      - omni-node
+    environment:
+      - RPC_URL=http://omni-node:8545
+    ports:
+      - "9200:9200"
+
+# Notes:
+# - Replace the image names with your locally built images or registry
+#   images (e.g., build via `docker build -t animica/omni-node:dev ./node`) .
+# - This is a lightweight template to get a local devnet + indexer running.

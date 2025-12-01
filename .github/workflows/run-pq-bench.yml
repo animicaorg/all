@@ -1,0 +1,57 @@
+name: Run PQ benchmark
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [ main ]
+
+jobs:
+  pq-bench:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install system deps (liboqs build deps)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config libssl-dev libgmp-dev
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain-action@stable
+
+      - name: Build native pq_precompile (with bench)
+        working-directory: native/pq_precompile
+        run: |
+          cargo build --release --bins || cargo build --release
+
+      - name: Run bench binary and capture JSON lines
+        working-directory: native/pq_precompile
+        run: |
+          # Try to run the bench binary; fall back to any binary in target
+          BIN=$(ls target/release | grep -E '^bench$' || true)
+          if [ -x "target/release/bench" ]; then
+            ./target/release/bench 2>&1 | tee bench_output.jsonl
+          else
+            echo '{"error":"bench binary not found"}' > bench_output.jsonl
+          fi
+
+      - name: Run bench parser to suggest gas (if bench output present)
+        working-directory: native/pq_precompile
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r ../../requirements.txt || true
+          python bench_parser.py --json < bench_output.jsonl > bench_suggested_gas.json || true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pq-bench-artifacts
+          path: |
+            native/pq_precompile/bench_output.jsonl
+            native/pq_precompile/bench_suggested_gas.json

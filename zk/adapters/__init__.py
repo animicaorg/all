@@ -47,9 +47,6 @@ from ..verifiers.transcript_fs import Transcript  # type: ignore
 # --- Re-export user-facing helpers from verifiers ----------------------------
 
 
-
-
-
 # py_ecc field/point builders (optimized preferred)
 try:  # pragma: no cover
     from py_ecc.optimized_bn128 import FQ, FQ2

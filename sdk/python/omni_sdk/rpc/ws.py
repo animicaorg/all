@@ -32,8 +32,8 @@ from typing import (Any, Awaitable, Callable, Dict, Mapping, MutableMapping,
 try:
     import websockets  # type: ignore
     from websockets.client import connect as ws_connect  # type: ignore
-    from websockets.exceptions import (ConnectionClosedError,  # type: ignore
-                                       ConnectionClosedOK)
+    from websockets.exceptions import ConnectionClosedError  # type: ignore
+    from websockets.exceptions import ConnectionClosedOK
 except Exception as e:  # pragma: no cover
     raise RuntimeError("The 'websockets' package is required for WsClient") from e
 

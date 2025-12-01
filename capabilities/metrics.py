@@ -27,8 +27,8 @@ log = logging.getLogger(__name__)
 # --- Optional Prometheus dependency -------------------------------------------------
 
 try:
-    from prometheus_client import (Counter, Gauge, Histogram,  # type: ignore
-                                   start_http_server)
+    from prometheus_client import Histogram  # type: ignore
+    from prometheus_client import Counter, Gauge, start_http_server
 
     _PROM_AVAILABLE = True
 except Exception:  # pragma: no cover - exercised only when prometheus_client is absent

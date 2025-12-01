@@ -159,8 +159,8 @@ def _make_signer(secret: str):
     """
     try:
         from omni_sdk.address import address_from_pubkey  # type: ignore
-        from omni_sdk.wallet.signer import (DilithiumSigner,  # type: ignore
-                                            SphincsSigner)
+        from omni_sdk.wallet.signer import DilithiumSigner  # type: ignore
+        from omni_sdk.wallet.signer import SphincsSigner
     except Exception as e:  # pragma: no cover
         raise BadRequest(f"Server missing omni_sdk for faucet signing: {e}")
 

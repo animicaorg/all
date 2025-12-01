@@ -43,8 +43,8 @@ from threading import RLock
 from typing import (Any, Callable, Dict, Iterable, Optional, Protocol,
                     runtime_checkable)
 
-from ..errors import (CapError, LimitExceeded,  # re-exported exceptions
-                      NoResultYet, NotDeterministic)
+from ..errors import LimitExceeded  # re-exported exceptions
+from ..errors import CapError, NoResultYet, NotDeterministic
 
 try:
     # Optional metrics; provider calls should best-effort bump these if available.

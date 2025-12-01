@@ -63,14 +63,39 @@ def suggest_gas(records, ms_to_gas=1000):
 
 
 def main():
+    import argparse
+
+    p = argparse.ArgumentParser()
+    p.add_argument(
+        "--json",
+        dest="json_only",
+        action="store_true",
+        help="output suggestion JSON only",
+    )
+    p.add_argument(
+        "--ms-to-gas",
+        dest="ms_to_gas",
+        type=float,
+        default=1000.0,
+        help="ms to gas factor",
+    )
+    args = p.parse_args()
+
     data = sys.stdin.read().splitlines()
     records = parse_lines(data)
     if not records:
         print("No bench JSON records found on stdin (look for PQ_BENCH_JSON lines).")
         sys.exit(2)
+
+    suggestion = suggest_gas(records, ms_to_gas=args.ms_to_gas)
+
+    if args.json_only:
+        # emit suggestion JSON only for CI consumption
+        print(json.dumps(suggestion))
+        return
+
     print("Parsed records:")
     print(json.dumps(records, indent=2))
-    suggestion = suggest_gas(records, ms_to_gas=1000)
     print("\nSuggested gas formula (first-pass):")
     print(json.dumps(suggestion, indent=2))
     print(

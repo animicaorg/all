@@ -331,8 +331,8 @@ def from_config(
     seen_ttl = fallback_seen_ttl
 
     try:
-        from mempool.config import (MAX_TX_BYTES,  # type: ignore
-                                    P2P_GLOBAL_TPS, P2P_PER_PEER_TPS,
+        from mempool.config import MAX_TX_BYTES  # type: ignore
+        from mempool.config import (P2P_GLOBAL_TPS, P2P_PER_PEER_TPS,
                                     RELAY_SEEN_TTL_S)
 
         max_bytes = int(

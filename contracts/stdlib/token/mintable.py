@@ -42,11 +42,9 @@ from .fungible import total_supply
 try:
     from ..access.roles import DEFAULT_ADMIN_ROLE  # bytes32
     from ..access.roles import \
-        grant_role  # (caller: bytes, role_id: bytes, account: bytes) -> None
-    from ..access.roles import \
         has_role  # (role_id: bytes, account: bytes) -> bool
-    from ..access.roles import \
-        revoke_role  # type: ignore; (caller: bytes, role_id: bytes, account: bytes) -> None
+    from ..access.roles import (  # (caller: bytes, role_id: bytes, account: bytes) -> None; type: ignore; (caller: bytes, role_id: bytes, account: bytes) -> None
+        grant_role, revoke_role)
 except Exception:  # pragma: no cover
     # Lightweight compatibility fallbacks if the roles module is not linked yet.
     # These degrade to "owner-only" control; role checks always return False.

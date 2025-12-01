@@ -100,9 +100,8 @@ _METRICS_ENABLED = str(
 
 try:  # optional; keep template easy to run
     if _METRICS_ENABLED:
-        from prometheus_client import (CONTENT_TYPE_LATEST,  # type: ignore
-                                       Counter, Gauge, Summary,
-                                       generate_latest)
+        from prometheus_client import CONTENT_TYPE_LATEST  # type: ignore
+        from prometheus_client import Counter, Gauge, Summary, generate_latest
 
         REQ_COUNTER = Counter(
             "aicf_http_requests_total",

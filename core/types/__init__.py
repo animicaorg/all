@@ -94,7 +94,7 @@ if TYPE_CHECKING:
     from .block import Block  # noqa: F401
     from .header import Header  # noqa: F401
     from .params import ChainParams  # noqa: F401
-    from .proof import (AIProofRef, HashShare, QuantumProofRef,  # noqa: F401
-                        StorageHeartbeat, VDFProofRef)
+    from .proof import QuantumProofRef  # noqa: F401
+    from .proof import AIProofRef, HashShare, StorageHeartbeat, VDFProofRef
     from .receipt import Receipt  # noqa: F401
     from .tx import Tx  # noqa: F401

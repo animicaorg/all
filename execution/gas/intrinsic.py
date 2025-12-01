@@ -44,9 +44,8 @@ try:
 except Exception:  # pragma: no cover
     yaml = None  # type: ignore
 
-from execution.types.gas import \
-    mul_price_gas  # reused for generic multiply w/ cap semantics
-from execution.types.gas import U256_MAX, Gas, is_u256, saturating_add
+from execution.types.gas import (  # reused for generic multiply w/ cap semantics
+    U256_MAX, Gas, is_u256, mul_price_gas, saturating_add)
 
 # --------------------------- parameter model ---------------------------------
 

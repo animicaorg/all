@@ -36,8 +36,8 @@ import typer
 
 from ..address import Address
 from ..rpc.http import RpcClient  # required
-from ..tx.build import (build_deploy_tx,  # helpers for deploy construction
-                        estimate_deploy_gas)
+from ..tx.build import build_deploy_tx  # helpers for deploy construction
+from ..tx.build import estimate_deploy_gas
 from ..tx.encode import encode_tx_cbor  # CBOR encoder for raw tx submission
 from ..tx.send import await_receipt, send_raw_transaction
 from ..wallet.signer import Signer  # PQ signer interface

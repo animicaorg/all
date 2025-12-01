@@ -25,8 +25,8 @@ Notes:
   simply surfaces the result via `read(task_id)`.
 """
 
-from stdlib import (abi, events, hash,  # type: ignore[reportMissingImports]
-                    storage, syscalls)
+from stdlib import hash  # type: ignore[reportMissingImports]
+from stdlib import abi, events, storage, syscalls
 
 # ---- caps & prefixes ---------------------------------------------------------
 
