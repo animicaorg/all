@@ -59,10 +59,10 @@ from stdlib import abi, events, storage  # type: ignore
 # Local stdlib helpers
 from ..math.safe_uint import (  # type: ignore  # relative import within package
     u256_add, u256_sub)
-from . import (DEFAULT_DECIMALS, ERR_BAD_AMOUNT, EVT_APPROVAL,  # type: ignore
-               EVT_TRANSFER, clamp_decimals, key_allow, key_balance,
-               normalize_symbol, require_address, require_amount, require_name,
-               require_symbol)
+from . import EVT_APPROVAL  # type: ignore
+from . import (DEFAULT_DECIMALS, ERR_BAD_AMOUNT, EVT_TRANSFER, clamp_decimals,
+               key_allow, key_balance, normalize_symbol, require_address,
+               require_amount, require_name, require_symbol)
 
 # ------------------------------------------------------------------------------
 # Storage keys (metadata & owner). Values are raw bytes unless noted.

@@ -52,8 +52,8 @@ except Exception:  # pragma: no cover - metrics are optional
 # ─────────────────────────────── Errors & types ───────────────────────────────
 
 try:
-    from aicf.errors import (AICFError, JobExpired, LeaseLost,  # type: ignore
-                             RegistryError)
+    from aicf.errors import LeaseLost  # type: ignore
+    from aicf.errors import AICFError, JobExpired, RegistryError
 except Exception:
 
     class AICFError(RuntimeError): ...

@@ -17,9 +17,9 @@ from __future__ import annotations
 
 # Optional re-exports (these may be provided by tests/devnet/helpers.py or similar).
 try:  # pragma: no cover
-    from .helpers import (DevnetConfig, ensure_devnet_running,  # type: ignore
-                          funded_accounts, rpc_client, wait_for_heads,
-                          ws_client)
+    from .helpers import ensure_devnet_running  # type: ignore
+    from .helpers import (DevnetConfig, funded_accounts, rpc_client,
+                          wait_for_heads, ws_client)
 except Exception:  # pragma: no cover
     # Helpers are optional; tests that need them will import concrete modules directly.
     DevnetConfig = None  # type: ignore

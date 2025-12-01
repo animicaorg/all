@@ -34,8 +34,8 @@ from typing import Optional, Tuple
 # We only import error types to surface precise reasons when desired.
 # Keep this import shallow to avoid cycles elsewhere.
 try:  # pragma: no cover - soft dependency for nicer errors
-    from randomness.errors import (BadReveal, CommitTooLate,  # type: ignore
-                                   RevealTooEarly)
+    from randomness.errors import CommitTooLate  # type: ignore
+    from randomness.errors import BadReveal, RevealTooEarly
 except Exception:  # pragma: no cover
 
     class CommitTooLate(RuntimeError):  # type: ignore

@@ -1,0 +1,7 @@
+ # ruff accepts top-level keys in a standalone .ruff.toml file. Use
+# top-level settings (not [tool.ruff] which belongs in pyproject.toml).
+line-length = 88
+exclude = [
+  "templates/**",
+  "**/templates/**",
+]

@@ -84,7 +84,7 @@ def match_once(
     expire_leases(quotas, now=now)
 
     assigns: List[Tuple[str, str]] = []
-    taken: set[str] = set()
+    taken: Set[str] = set()
     prov_list = list(providers)
     jobs = list(ranked_jobs)
 

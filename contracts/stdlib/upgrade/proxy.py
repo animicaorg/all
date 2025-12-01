@@ -62,9 +62,9 @@ from __future__ import annotations
 
 from typing import Final
 
+from stdlib import storage  # type: ignore
 from stdlib import abi, events  # type: ignore
 from stdlib import hash as _hash  # type: ignore
-from stdlib import storage  # type: ignore
 
 # Optional: used only if the proxy contract chooses owner-gated upgrades.
 try:  # pragma: no cover - imported when available

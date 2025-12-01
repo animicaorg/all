@@ -67,7 +67,6 @@ from omni_sdk.wallet.signer import PQSigner  # type: ignore
 # --- SDK imports (typed where available) --------------------------------------
 
 
-
 # Address helpers (validation/normalization)
 try:
     from omni_sdk.address import is_valid as _addr_is_valid  # type: ignore
@@ -83,8 +82,8 @@ try:
     #  - normalize_abi(abi_obj) -> dict
     #  - encode_call(abi, fn_name, args) -> bytes
     #  - decode_return(abi, fn_name, data) -> Any
-    from omni_sdk.types.abi import (decode_return, encode_call,  # type: ignore
-                                    normalize_abi)
+    from omni_sdk.types.abi import encode_call  # type: ignore
+    from omni_sdk.types.abi import decode_return, normalize_abi
 except Exception as _e:  # pragma: no cover
     raise RuntimeError("omni_sdk.types.abi is required by ContractClient") from _e
 

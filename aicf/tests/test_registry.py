@@ -1,9 +1,8 @@
 import pytest
 
 # Types/enums used by the registry
-from aicf.aitypes.provider import \
-    Capability  # IntFlag: Capability.AI | Capability.QUANTUM
-from aicf.aitypes.provider import ProviderId, ProviderStatus
+from aicf.aitypes.provider import (  # IntFlag: Capability.AI | Capability.QUANTUM
+    Capability, ProviderId, ProviderStatus)
 from aicf.errors import RegistryError
 from aicf.registry.allowlist import Allowlist
 from aicf.registry.registry import Registry
