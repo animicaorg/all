@@ -244,6 +244,8 @@ def create_app(service: Optional[RetrievalService] = None) -> FastAPI:
             )
         except HTTPException:
             raise
+        except NotFound as e:
+            return _not_found_response(commitment, str(e))
         except DAError as e:
             raise _http_error_from_da(e)
         except Exception as e:  # pragma: no cover
@@ -288,6 +290,8 @@ def create_app(service: Optional[RetrievalService] = None) -> FastAPI:
             return JSONResponse(payload)  # type: ignore[arg-type]
         except HTTPException:
             raise
+        except NotFound as e:
+            return _not_found_response(commitment, str(e))
         except DAError as e:
             raise _http_error_from_da(e)
         except Exception as e:  # pragma: no cover
@@ -331,6 +335,14 @@ def _is_jsonable(x: Any) -> bool:
 
 async def _maybe_await(x):
     return await x if hasattr(x, "__await__") else x
+
+
+def _not_found_response(commitment: str, detail: Optional[str]) -> JSONResponse:
+    message = detail or "Not found"
+    return JSONResponse(
+        {"error": message, "commitment": commitment},
+        status_code=404,
+    )
 
 
 # -------------------------- Dev entry --------------------------
