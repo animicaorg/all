@@ -334,6 +334,7 @@ def _normalize_receipt(
         "Return the transaction receipt for a mined transaction hash. "
         "If the transaction is pending or unknown, returns null."
     ),
+    aliases=("tx_getTransactionReceipt",),
 )
 def tx_get_transaction_receipt(txHash: HexStr) -> t.Optional[dict]:
     # Validate & parse hash
