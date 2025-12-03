@@ -166,27 +166,9 @@ pub fn reconstruct(params: RsParams, shards: &mut [Option<Vec<u8>>]) -> Result<(
     if present < params.data_shards {
         return Err(RsError::NotEnoughShards);
     }
-    let shard_len = len_opt.unwrap_or(0);
-
-    // Allocate missing shards to the proper length.
-    for s in shards.iter_mut() {
-        if s.is_none() {
-            *s = Some(vec![0u8; shard_len]);
-        }
-    }
-
-    let mut owned: Vec<Vec<u8>> = shards.iter_mut()
-        .map(|o| o.take().expect("just ensured Some"))
-        .collect();
-
     let rs = build_rs(params)?;
     rs.reconstruct(shards)
         .map_err(|e| RsError::BackendError(format!("{e}")))?;
-
-    // Put back.
-    for (dst, src) in shards.iter_mut().zip(owned.into_iter()) {
-        *dst = Some(src);
-    }
     Ok(())
 }
 
@@ -209,11 +191,46 @@ pub fn verify(params: RsParams, shards: &[Vec<u8>]) -> Result<bool, RsError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::{rngs::StdRng, RngCore, SeedableRng};
+
+    #[derive(Clone)]
+    struct TestRng {
+        state: u64,
+    }
+
+    impl TestRng {
+        fn new(seed: u64) -> Self {
+            // Avoid all-zero lockup.
+            let s = if seed == 0 { 0x1234_5678_9ABC_DEF0 } else { seed };
+            Self { state: s }
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            // Simple xorshift64*
+            let mut x = self.state;
+            x ^= x >> 12;
+            x ^= x << 25;
+            x ^= x >> 27;
+            self.state = x;
+            x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        }
+
+        fn fill_bytes(&mut self, buf: &mut [u8]) {
+            let mut i = 0;
+            while i + 8 <= buf.len() {
+                buf[i..i + 8].copy_from_slice(&self.next_u64().to_le_bytes());
+                i += 8;
+            }
+            if i < buf.len() {
+                let tail = self.next_u64().to_le_bytes();
+                let remain = buf.len() - i;
+                buf[i..].copy_from_slice(&tail[..remain]);
+            }
+        }
+    }
 
     fn random_shards(k: usize, m: usize, len: usize, seed: u64) -> (RsParams, Vec<Vec<u8>>) {
         let params = RsParams { data_shards: k, parity_shards: m };
-        let mut rng = StdRng::seed_from_u64(seed);
+        let mut rng = TestRng::new(seed);
         let mut shards = vec![vec![0u8; len]; k + m];
         for s in &mut shards[..k] {
             rng.fill_bytes(s);
