@@ -38,6 +38,7 @@ Where `params` may be positional (list/tuple) or named (dict).
 
 import importlib
 import inspect
+import logging
 import threading
 import typing as t
 from dataclasses import dataclass, field
@@ -124,6 +125,7 @@ _BUILTIN_MODULES = (
     "rpc.methods.state",
     "rpc.methods.receipt",
     "rpc.methods.miner",
+    "rpc.methods.da",  # Data availability surface
     "rpc.methods.marketplace",  # ANM token marketplace methods
     "rpc.methods.payments",  # Payment webhook handler for Stripe/PayPal
     "rpc.methods.quantum",  # Quantum jobs & workers explorer RPC
@@ -141,9 +143,9 @@ def register(
     replace: bool = False,
 ) -> MethodSpec:
     """Register a method callable under a JSON-RPC name."""
-    if not isinstance(name, str) or "." not in name:
+    if not isinstance(name, str) or not name:
         raise ValueError(
-            f"Method name must be namespaced like 'ns.method', got {name!r}"
+            f"Method name must be a non-empty string, got {name!r}"
         )
 
     namespace = name.split(".", 1)[0]
@@ -217,7 +219,9 @@ def get_registry() -> dict[str, MethodSpec]:
 def list_methods(namespace: str | None = None) -> list[str]:
     ensure_loaded()
     with _LOCK:
-        names = sorted(k for k in _REGISTRY.keys() if "." in k)
+        names = sorted(
+            k for k in _REGISTRY.keys() if ("." in k or "_" in k)
+        )
         if namespace:
             names = [n for n in names if n.startswith(namespace + ".")]
         # Deduplicate aliases by unique MethodSpec identity
@@ -230,7 +234,10 @@ def list_methods(namespace: str | None = None) -> list[str]:
 def load_builtins() -> None:
     """Import built-in method modules so their @method decorators run."""
     for mod in _BUILTIN_MODULES:
-        importlib.import_module(mod)
+        try:
+            importlib.import_module(mod)
+        except Exception:
+            log.exception("Failed to import RPC methods module %s", mod)
 
 
 def ensure_loaded() -> None:
@@ -278,3 +285,4 @@ __all__ = [
     "ensure_loaded",
     "clear_registry",
 ]
+log = logging.getLogger(__name__)

@@ -31,7 +31,7 @@ from fastapi import APIRouter, Request, Response
 try:
     # Prefer our shared error types if available
     from .errors import (InternalError, InvalidParams, InvalidRequest,
-                         JsonRpcError, MethodNotFound)
+                         JsonRpcError, MethodNotFound, RpcError, to_error)
 except Exception:  # pragma: no cover - fallback if errors module not ready
 
     class JsonRpcError(Exception):  # type: ignore
@@ -68,6 +68,28 @@ except Exception:  # pragma: no cover - fallback if errors module not ready
     class InternalError(JsonRpcError):  # type: ignore
         code = -32603
         message = "Internal error"
+
+    class RpcError(JsonRpcError):  # type: ignore
+        def __init__(self, message: str, code: int, data: Any | None = None):
+            self.data = data
+            self.code = code
+            self.message = message
+            super().__init__(message)
+
+        def to_dict(self) -> dict[str, Any]:
+            base = {"code": int(self.code), "message": self.message}
+            if self.data is not None:
+                base["data"] = self.data
+            return base
+
+    def to_error(exc: Exception) -> RpcError:
+        if isinstance(exc, RpcError):
+            return exc
+        if isinstance(exc, JsonRpcError):
+            return RpcError(getattr(exc, "message", str(exc)), getattr(exc, "code", -32000), getattr(exc, "data", None))
+        if isinstance(exc, (ValueError, TypeError)):
+            return InvalidParams(str(exc))
+        return InternalError(str(exc))
 
 
 from rpc import version as rpc_version
@@ -271,21 +293,35 @@ def _error_obj(exc: Exception) -> Json:
       • ValueError/TypeError → InvalidParams
       • Otherwise → Server error (-32000) with message
     """
-    if isinstance(exc, JsonRpcError):
-        err = {
-            "code": getattr(exc, "code", -32000),
-            "message": getattr(exc, "message", str(exc)),
-        }
-        data = getattr(exc, "data", None)
+    rpc_err = to_error(exc)
+    code = getattr(rpc_err, "code", -32603)
+    message = getattr(rpc_err, "message", "Internal error")
+    data = getattr(rpc_err, "data", None)
+
+    # Normalize canonical JSON-RPC messages
+    if code == -32602:
+        if message != "Invalid params":
+            data = data or {"detail": message}
+        message = "Invalid params"
+    elif code == -32601:
+        message = "Method not found"
+    elif code == -32603:
+        message = "Internal error"
+
+    if hasattr(rpc_err, "to_dict"):
+        base = rpc_err.to_dict()  # type: ignore[assignment]
+        base["code"] = code
+        base["message"] = message
         if data is not None:
-            err["data"] = data
-        return err
+            base["data"] = data
+        return base
 
-    if isinstance(exc, (ValueError, TypeError)):
-        return {"code": -32602, "message": "Invalid params", "data": str(exc)}
-
-    # Default server error
-    return {"code": -32000, "message": "Server error", "data": str(exc)}
+    # Fallback for unexpected shapes
+    return {
+        "code": code,
+        "message": message,
+        "data": data,
+    }
 
 
 # --------------------------------------------------------------------------------------
