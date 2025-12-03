@@ -11,6 +11,13 @@ The Animica Marketplace is a comprehensive token sales platform integrating:
 
 This guide covers deployment, configuration, and testing of the complete system.
 
+### Mainnet Release File Paths
+
+- **Binaries**: Release builds land in `installers/qa/artifacts/` from the compiled outputs in `native/target/release/`.
+- **Manifests**: Ship the contract and app manifests from `contracts/examples/treasury/manifest.json`, `explorer-web/public/manifest.webmanifest`, `wallet/web/manifest.json`, and `wallet-extension/dist-manifests/`.
+- **Docs**: Use `docs/release_process.md` and the marketplace guides in the repository root as the release documentation set.
+- **Icons**: Bundle the brand assets in `contrib/logos/` and the explorer icons in `explorer-web/public/icons/` for store listings and manifests.
+
 ## Architecture
 
 ```
