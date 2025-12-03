@@ -30,6 +30,11 @@ from __future__ import annotations
 import os
 from typing import Final, Iterable, Tuple
 
+import pytest
+
+# Hypothesis is optional in the minimal test environment; skip the property
+# suite cleanly when it is not available instead of raising during collection.
+hypothesis = pytest.importorskip("hypothesis")
 from hypothesis import HealthCheck, Verbosity, given, settings
 from hypothesis import strategies as st
 

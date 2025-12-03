@@ -13,6 +13,7 @@ import dataclasses
 import json
 import os
 import random
+import sys
 import time
 import typing as t
 from pathlib import Path
@@ -20,6 +21,12 @@ from urllib import request
 from urllib.error import HTTPError, URLError
 
 import pytest
+
+# Ensure the repository root is importable for tests that rely on in-repo
+# packages (e.g., core, tools, ops).
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 # ---------- CLI OPTIONS ----------
 
