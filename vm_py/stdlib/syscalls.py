@@ -93,7 +93,11 @@ def blob_pin(ns: Union[int, BytesLike], data: BytesLike) -> bytes:
     data_b = bytes(data)
     if len(data_b) == 0:
         raise ValueError("data must not be empty")
-    return _sys.blob_pin(ns_b, data_b)
+
+    # The runtime provider expects an int namespace; accept bytes-like inputs for
+    # ergonomics but convert to the canonical int form before delegating.
+    ns_int = ns if isinstance(ns, int) else int.from_bytes(ns_b, "big")
+    return _sys.blob_pin(ns_int, data_b)
 
 
 # ------------------------------ Compute -------------------------------------
