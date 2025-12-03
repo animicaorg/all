@@ -27,20 +27,24 @@
   "economics": {
     "premineTotal": "81000000000000000",
     "premineBreakdownANM": {
-      "treasury": 39600000,
-      "aicf": 20250000,
-      "foundation": 8100000,
-      "faucet": 3240000,
-      "dev_reserve": 9810000
+      "foundation": 45000000,
+      "treasury": 20000000,
+      "aicf": 7000000,
+      "founder": 9000000
+    },
+    "blockReward": {
+      "initial": "5194100000",
+      "decayPct": 50,
+      "epochLengthBlocks": 78840000,
+      "tail": "0"
     }
   },
 
   "alloc": [
-    { "address": "system:treasury",   "nonce": 0, "balance": "39600000000000000" },
-    { "address": "system:aicf",       "nonce": 0, "balance": "20250000000000000" },
-    { "address": "system:foundation", "nonce": 0, "balance": "8100000000000000" },
-    { "address": "system:faucet",     "nonce": 0, "balance": "3240000000000000" },
-    { "address": "system:dev",        "nonce": 0, "balance": "9810000000000000" }
+    { "address": "system:foundation", "nonce": 0, "balance": "45000000000000000" },
+    { "address": "system:treasury",   "nonce": 0, "balance": "20000000000000000" },
+    { "address": "system:aicf",       "nonce": 0, "balance": "7000000000000000" },
+    { "address": "system:founder",    "nonce": 0, "balance": "9000000000000000" }
   ],
 
   "consensus": {
@@ -51,6 +55,7 @@
   "notes": [
     "All balances are integers in base units (10^9 = 1 ANM).",
     "Premine total: 81,000,000 ANM → 81,000,000 × 10^9 = 81,000,000,000,000,000 base units.",
+    "Block reward schedule: start 5,194,100,000 nANM/block, halving (50% decay) every 78,840,000 blocks.",
     "System addresses use the 'system:<name>' convention and are resolved by execution/runtime/system.py.",
     "algPolicyRoot and paramsRef.sha3_256 are placeholders—replace with actual roots before launch."
   ]
