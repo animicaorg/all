@@ -41,6 +41,48 @@ In Cargo.toml:
 animica-sdk = "0.1"
 
 
+## Minimal example (Python)
+
+```python
+from omni_sdk.address import to_address
+from omni_sdk.rpc.http import RpcClient
+from omni_sdk.tx.build import suggest_gas_limit, transfer
+from omni_sdk.tx.encode import pack_signed, sign_bytes
+from omni_sdk.tx.send import submit_and_wait
+from omni_sdk.wallet.mnemonic import from_mnemonic
+from omni_sdk.wallet.signer import Dilithium3Signer
+
+rpc = RpcClient("http://127.0.0.1:8545")
+
+# Fetch the latest block
+head = rpc.request("chain_getHead")
+print("Latest height:", head["height"])
+
+# Build and send a simple self-transfer
+mnemonic = "... 24 words ..."  # supply your dev/test mnemonic
+signer = Dilithium3Signer(from_mnemonic(mnemonic))
+sender = to_address(signer.public_key())
+
+tx = transfer(
+    from_addr=sender,
+    to_addr=sender,
+    amount=1,
+    nonce=0,
+    chain_id=1,
+    max_fee=50_000,
+    gas_limit=suggest_gas_limit("transfer"),
+)
+
+sig = signer.sign(sign_bytes(tx))
+raw = pack_signed(
+    tx, signature=sig, alg_id=signer.alg_id, public_key=signer.public_key()
+)
+
+receipt = submit_and_wait(rpc, raw)
+print("Included in block", receipt.get("blockHeight"))
+```
+
+
 ⸻
 
 Quickstart — Python
