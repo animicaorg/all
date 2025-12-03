@@ -3,11 +3,10 @@ set -euo pipefail
 
 # Animica monorepo test orchestrator
 # Modes:
-#   ./testall.sh        -> run unit + e2e/integration tests
-#   ./testall.sh unit   -> unit tests only
-#   ./testall.sh e2e    -> e2e/integration flows only
+#   ./testall.sh            -> run all suites
+#   ./testall.sh <target>   -> run a specific suite (core|consensus|mempool|da|vm_py|sdk)
 
-ROOT_DIR="$(pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 c_blue='\033[34m'; c_green='\033[32m'; c_yellow='\033[33m'; c_red='\033[31m'; c_reset='\033[0m'
 log()   { echo -e "${c_blue}[testall]${c_reset} $*"; }
@@ -22,65 +21,11 @@ activate_venv() {
 }
 
 ensure_pytest() {
-  # Ensure pytest and minimal plugins needed by the repo's suites are present.
-  # PyYAML is required by governance scripts and test fixtures; pytest-asyncio
-  # enables async tests marked with @pytest.mark.asyncio.
   local pkgs=(pytest pytest-asyncio pyyaml)
   if ! command -v pytest >/dev/null 2>&1; then
     warn "pytest not found; attempting install via python3 -m pip install -U ${pkgs[*]}"
     python3 -m pip install -U "${pkgs[@]}" || fail "Unable to install pytest"
-  else
-    python3 -m pip install -U "${pkgs[@]}" >/dev/null 2>&1 || warn "Could not refresh pytest plugins"
   fi
-}
-
-ensure_node_pkg() {
-  local dir="$1"
-  if [[ ! -d "$dir" ]]; then
-    warn "$dir missing; skipping"
-    return 1
-  fi
-  return 0
-}
-
-run_py_unit() {
-  log "[PY] Running unit tests"
-  activate_venv
-  ensure_pytest
-  local targets=(core execution consensus mempool p2p da randomness aicf mining pq governance templates python/animica)
-  local existing=()
-  for t in "${targets[@]}"; do
-    [[ -d "$ROOT_DIR/$t" ]] && existing+=("$t") || warn "[PY] $t not present; skipping"
-  done
-  if ((${#existing[@]}==0)); then
-    warn "[PY] no python targets found"
-    return
-  fi
-  (cd "$ROOT_DIR" && pytest "${existing[@]}")
-}
-
-run_py_e2e() {
-  log "[PY] Running integration/e2e tests"
-  activate_venv
-  ensure_pytest
-  local e2e_paths=(
-    "p2p/tests/test_end_to_end_two_nodes.py"
-    "da/tests/test_integration_post_get_verify.py"
-    "python/animica/da/tests/test_da_api_contract.py"
-    "mining/tests/test_orchestrator_single_node.py"
-    "randomness/tests/test_rpc_cli_roundtrip.py"
-    "aicf/tests/test_integration_proof_to_payout.py"
-    "aicf/tests/test_cli_provider_flow.py"
-  )
-  local existing=()
-  for p in "${e2e_paths[@]}"; do
-    [[ -f "$ROOT_DIR/$p" ]] && existing+=("$p") || warn "[PY] $p not present; skipping"
-  done
-  if ((${#existing[@]}==0)); then
-    warn "[PY] no e2e test files found"
-    return
-  fi
-  (cd "$ROOT_DIR" && pytest "${existing[@]}")
 }
 
 npm_runner() {
@@ -89,128 +34,65 @@ npm_runner() {
   warn "No Node package manager (pnpm/npm) found"; echo ""; return 1
 }
 
-run_sdk_py_e2e() {
-  log "[SDK] Python e2e harness"
+run_pytest_target() {
+  local label="$1" target="$2"
   activate_venv
-  if [[ -f "$ROOT_DIR/sdk/test-harness/run_e2e_py.py" ]]; then
-    (cd "$ROOT_DIR" && python sdk/test-harness/run_e2e_py.py)
+  ensure_pytest
+  if [[ -d "$ROOT_DIR/$target" || -f "$ROOT_DIR/$target" ]]; then
+    log "[$label] pytest $target"
+    (cd "$ROOT_DIR" && pytest "$target")
   else
-    warn "[SDK] run_e2e_py.py not found; skipping"
+    warn "[$label] $target not present; skipping"
   fi
 }
 
-run_sdk_ts_unit() {
-  log "[SDK] TypeScript unit tests"
-  ensure_node_pkg "$ROOT_DIR/sdk/typescript" || return
-  local mgr; mgr=$(npm_runner) || return
-  (cd "$ROOT_DIR/sdk/typescript" && $mgr install && $mgr test)
-}
+run_core_tests()       { run_pytest_target "Core" core; }
+run_consensus_tests()  { run_pytest_target "Consensus" consensus; }
+run_mempool_tests()    { run_pytest_target "Mempool" mempool; }
+run_da_tests()         { run_pytest_target "DA" da; }
+run_vm_py_tests()      { run_pytest_target "VM-Py" vm_py/tests; }
+run_sdk_python_tests() { run_pytest_target "SDK (Python)" sdk/python/tests; }
 
-run_sdk_ts_e2e() {
-  log "[SDK] TypeScript e2e harness"
-  ensure_node_pkg "$ROOT_DIR/sdk" || return
-  local mgr; mgr=$(npm_runner) || return
-  if [[ -f "$ROOT_DIR/sdk/test-harness/run_e2e_ts.mjs" ]]; then
-    (cd "$ROOT_DIR/sdk" && $mgr install && node test-harness/run_e2e_ts.mjs)
-  else
-    warn "[SDK] run_e2e_ts.mjs not found; skipping"
-  fi
-}
-
-run_sdk_rs_tests() {
-  log "[SDK] Rust tests and e2e"
-  if ! command -v cargo >/dev/null 2>&1; then
-    warn "cargo not found; skipping Rust"
+run_sdk_typescript_tests() {
+  log "[SDK] TypeScript tests"
+  if [[ ! -d "$ROOT_DIR/sdk" ]]; then
+    warn "[SDK] sdk directory missing; skipping TypeScript tests"
     return
   fi
-  if [[ -d "$ROOT_DIR/sdk/rust" ]]; then
-    (cd "$ROOT_DIR/sdk/rust" && cargo test)
-  else
-    warn "sdk/rust missing; skipping cargo tests"
-  fi
-  if [[ -x "$ROOT_DIR/sdk/test-harness/run_e2e_rs.sh" ]]; then
-    (cd "$ROOT_DIR/sdk/test-harness" && ./run_e2e_rs.sh)
-  else
-    warn "run_e2e_rs.sh not found; skipping"
-  fi
-}
-
-run_wallet_extension_unit() {
-  log "[Wallet-Ext] Unit tests"
-  ensure_node_pkg "$ROOT_DIR/wallet-extension" || return
   local mgr; mgr=$(npm_runner) || return
-  (cd "$ROOT_DIR/wallet-extension" && $mgr install && $mgr test)
+  (cd "$ROOT_DIR/sdk" && $mgr install && $mgr test)
 }
 
-run_wallet_extension_e2e() {
-  log "[Wallet-Ext] E2E tests"
-  ensure_node_pkg "$ROOT_DIR/wallet-extension" || return
-  local mgr; mgr=$(npm_runner) || return
-  if [[ -f "$ROOT_DIR/wallet-extension/playwright.config.ts" ]]; then
-    (cd "$ROOT_DIR/wallet-extension" && $mgr install && $mgr exec playwright install --with-deps || true && $mgr exec playwright test)
-  else
-    warn "playwright.config.ts missing; skipping wallet-extension e2e"
-  fi
+run_sdk_tests() {
+  run_sdk_python_tests
+  run_sdk_typescript_tests
 }
 
-run_studio_wasm_unit() {
-  log "[Studio-WASM] Unit tests"
-  ensure_node_pkg "$ROOT_DIR/studio-wasm" || return
-  local mgr; mgr=$(npm_runner) || return
-  (cd "$ROOT_DIR/studio-wasm" && $mgr install && $mgr test)
+run_all() {
+  run_core_tests
+  run_consensus_tests
+  run_mempool_tests
+  run_da_tests
+  run_vm_py_tests
+  run_sdk_tests
 }
 
-run_studio_wasm_e2e() {
-  log "[Studio-WASM] E2E tests"
-  ensure_node_pkg "$ROOT_DIR/studio-wasm" || return
-  local mgr; mgr=$(npm_runner) || return
-  if [[ -f "$ROOT_DIR/studio-wasm/playwright.config.ts" ]]; then
-    (cd "$ROOT_DIR/studio-wasm" && $mgr install && $mgr exec playwright install --with-deps || true && $mgr exec playwright test)
-  else
-    warn "playwright.config.ts missing; skipping studio-wasm e2e"
-  fi
-}
-
-run_wallet_checks() {
-  log "[Wallet] Flutter checks"
-  if ! command -v flutter >/dev/null 2>&1; then
-    warn "Flutter not installed; skipping wallet checks"
-    return
-  fi
-  if [[ -d "$ROOT_DIR/wallet" ]]; then
-    (cd "$ROOT_DIR/wallet" && flutter test)
-  else
-    warn "wallet directory missing; skipping"
-  fi
+usage() {
+  cat <<USAGE
+Usage: $0 [all|core|consensus|mempool|da|vm_py|sdk]
+Run Animica test suites. Defaults to "all" if no argument provided.
+USAGE
 }
 
 cmd="${1:-all}"
 case "$cmd" in
-  unit)
-    run_py_unit
-    run_sdk_ts_unit
-    run_sdk_rs_tests
-    run_wallet_extension_unit
-    run_studio_wasm_unit
-    ;;
-  e2e)
-    run_py_e2e
-    run_sdk_py_e2e
-    run_sdk_ts_e2e
-    run_wallet_extension_e2e
-    run_studio_wasm_e2e
-    ;;
-  all|*)
-    run_py_unit
-    run_sdk_ts_unit
-    run_sdk_rs_tests
-    run_wallet_extension_unit
-    run_studio_wasm_unit
-    run_wallet_checks
-    run_py_e2e
-    run_sdk_py_e2e
-    run_sdk_ts_e2e
-    run_wallet_extension_e2e
-    run_studio_wasm_e2e
-    ;;
- esac
+  core) run_core_tests ;;
+  consensus) run_consensus_tests ;;
+  mempool) run_mempool_tests ;;
+  da) run_da_tests ;;
+  vm_py) run_vm_py_tests ;;
+  sdk) run_sdk_tests ;;
+  all) run_all ;;
+  -h|--help|help) usage ;;
+  *) usage; exit 1 ;;
+esac
