@@ -1,130 +1,322 @@
 {
-  "abiVersion": "1",
-  "contract": {
-    "name": "AiAgent",
-    "version": "1.0.0",
-    "description": "Minimal AI agent that enqueues prompts to AICF, tracks last task id, and (next block) reads/consumes results deterministically."
-  },
+  "abiVersion": 1,
+  "name": "AiAgent",
   "functions": [
-    { "name": "owner", "stateMutability": "view", "inputs": [], "outputs": [ { "name": "addr", "type": "address" } ] },
-
+    {
+      "name": "owner",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        {
+          "type": {
+            "abiType": "address"
+          },
+          "name": "addr"
+        }
+      ]
+    },
     {
       "name": "model",
       "stateMutability": "view",
       "inputs": [],
-      "outputs": [ { "name": "name", "type": "bytes", "description": "UTF-8 model identifier (e.g., b\"animica/text-ada-001\")." } ]
+      "outputs": [
+        {
+          "type": {
+            "abiType": "bytes"
+          },
+          "name": "name",
+          "docs": "UTF-8 model identifier (e.g., b\"animica/text-ada-001\")."
+        }
+      ]
     },
     {
       "name": "setModel",
       "stateMutability": "nonpayable",
-      "inputs": [ { "name": "name", "type": "bytes" } ],
-      "outputs": [ { "name": "ok", "type": "bool" } ],
-      "description": "Owner-only: update default model used by enqueue()."
+      "inputs": [
+        {
+          "type": {
+            "abiType": "bytes"
+          },
+          "name": "name"
+        }
+      ],
+      "outputs": [
+        {
+          "type": {
+            "abiType": "bool"
+          },
+          "name": "ok"
+        }
+      ],
+      "docs": "Owner-only: update default model used by enqueue()."
     },
-
     {
       "name": "lastPrompt",
       "stateMutability": "view",
       "inputs": [],
-      "outputs": [ { "name": "prompt", "type": "bytes" } ]
+      "outputs": [
+        {
+          "type": {
+            "abiType": "bytes"
+          },
+          "name": "prompt"
+        }
+      ]
     },
     {
       "name": "lastTaskId",
       "stateMutability": "view",
       "inputs": [],
-      "outputs": [ { "name": "task_id", "type": "bytes32" } ]
+      "outputs": [
+        {
+          "type": {
+            "abiType": "bytes32"
+          },
+          "name": "task_id"
+        }
+      ]
     },
     {
       "name": "lastResult",
       "stateMutability": "view",
       "inputs": [],
-      "outputs": [ { "name": "result", "type": "bytes" } ],
-      "description": "Cached last consumed result (set by consume())."
+      "outputs": [
+        {
+          "type": {
+            "abiType": "bytes"
+          },
+          "name": "result"
+        }
+      ],
+      "docs": "Cached last consumed result (set by consume())."
     },
-
     {
       "name": "enqueue",
       "stateMutability": "nonpayable",
       "inputs": [
-        { "name": "prompt", "type": "bytes", "description": "UTF-8 prompt bytes. Size capped by contract code." },
-        { "name": "modelOverride", "type": "bytes", "description": "Optional; pass b'' to use current model()." }
+        {
+          "type": {
+            "abiType": "bytes"
+          },
+          "name": "prompt",
+          "docs": "UTF-8 prompt bytes. Size capped by contract code."
+        },
+        {
+          "type": {
+            "abiType": "bytes"
+          },
+          "name": "modelOverride",
+          "docs": "Optional; pass b'' to use current model()."
+        }
       ],
       "outputs": [
-        { "name": "task_id", "type": "bytes32" }
+        {
+          "type": {
+            "abiType": "bytes32"
+          },
+          "name": "task_id"
+        }
       ],
-      "description": "Enqueue prompt to AICF. Returns deterministic task_id (H(chainId|height|txHash|caller|payload))."
+      "docs": "Enqueue prompt to AICF. Returns deterministic task_id (H(chainId|height|txHash|caller|payload))."
     },
-
     {
       "name": "hasResult",
       "stateMutability": "view",
-      "inputs": [ { "name": "task_id", "type": "bytes32" } ],
-      "outputs": [ { "name": "available", "type": "bool" } ],
-      "description": "True if a result is available (typically next block or later)."
+      "inputs": [
+        {
+          "type": {
+            "abiType": "bytes32"
+          },
+          "name": "task_id"
+        }
+      ],
+      "outputs": [
+        {
+          "type": {
+            "abiType": "bool"
+          },
+          "name": "available"
+        }
+      ],
+      "docs": "True if a result is available (typically next block or later)."
     },
     {
       "name": "readResult",
       "stateMutability": "view",
-      "inputs": [ { "name": "task_id", "type": "bytes32" } ],
-      "outputs": [
-        { "name": "available", "type": "bool" },
-        { "name": "result", "type": "bytes" }
+      "inputs": [
+        {
+          "type": {
+            "abiType": "bytes32"
+          },
+          "name": "task_id"
+        }
       ],
-      "description": "Read result without mutating state; returns (available, result)."
+      "outputs": [
+        {
+          "type": {
+            "abiType": "bool"
+          },
+          "name": "available"
+        },
+        {
+          "type": {
+            "abiType": "bytes"
+          },
+          "name": "result"
+        }
+      ],
+      "docs": "Read result without mutating state; returns (available, result)."
     },
     {
       "name": "consume",
       "stateMutability": "nonpayable",
-      "inputs": [ { "name": "task_id", "type": "bytes32" } ],
-      "outputs": [
-        { "name": "ok", "type": "bool" },
-        { "name": "result", "type": "bytes" }
+      "inputs": [
+        {
+          "type": {
+            "abiType": "bytes32"
+          },
+          "name": "task_id"
+        }
       ],
-      "description": "Consume available result: caches into lastResult and emits Consumed(task_id,...). Reverts if not available."
+      "outputs": [
+        {
+          "type": {
+            "abiType": "bool"
+          },
+          "name": "ok"
+        },
+        {
+          "type": {
+            "abiType": "bytes"
+          },
+          "name": "result"
+        }
+      ],
+      "docs": "Consume available result: caches into lastResult and emits Consumed(task_id,...). Reverts if not available."
     },
-
     {
       "name": "transferOwnership",
       "stateMutability": "nonpayable",
-      "inputs": [ { "name": "newOwner", "type": "address" } ],
-      "outputs": [ { "name": "ok", "type": "bool" } ]
+      "inputs": [
+        {
+          "type": {
+            "abiType": "address"
+          },
+          "name": "newOwner"
+        }
+      ],
+      "outputs": [
+        {
+          "type": {
+            "abiType": "bool"
+          },
+          "name": "ok"
+        }
+      ]
     }
   ],
   "events": [
     {
       "name": "Enqueued",
       "inputs": [
-        { "name": "task_id", "type": "bytes32", "indexed": true },
-        { "name": "model",   "type": "bytes",   "indexed": false },
-        { "name": "promptLen", "type": "uint32", "indexed": false }
+        {
+          "type": {
+            "abiType": "bytes32"
+          },
+          "name": "task_id",
+          "indexed": true
+        },
+        {
+          "type": {
+            "abiType": "bytes"
+          },
+          "name": "model",
+          "indexed": false
+        },
+        {
+          "type": {
+            "abiType": "u32"
+          },
+          "name": "promptLen",
+          "indexed": false
+        }
       ]
     },
     {
       "name": "Consumed",
       "inputs": [
-        { "name": "task_id",   "type": "bytes32", "indexed": true },
-        { "name": "resultLen", "type": "uint32",  "indexed": false }
+        {
+          "type": {
+            "abiType": "bytes32"
+          },
+          "name": "task_id",
+          "indexed": true
+        },
+        {
+          "type": {
+            "abiType": "u32"
+          },
+          "name": "resultLen",
+          "indexed": false
+        }
       ]
     },
     {
       "name": "ModelUpdated",
       "inputs": [
-        { "name": "oldModel", "type": "bytes", "indexed": false },
-        { "name": "newModel", "type": "bytes", "indexed": false }
+        {
+          "type": {
+            "abiType": "bytes"
+          },
+          "name": "oldModel",
+          "indexed": false
+        },
+        {
+          "type": {
+            "abiType": "bytes"
+          },
+          "name": "newModel",
+          "indexed": false
+        }
       ]
     },
     {
       "name": "OwnershipTransferred",
       "inputs": [
-        { "name": "previousOwner", "type": "address", "indexed": true },
-        { "name": "newOwner",      "type": "address", "indexed": true }
+        {
+          "type": {
+            "abiType": "address"
+          },
+          "name": "previousOwner",
+          "indexed": true
+        },
+        {
+          "type": {
+            "abiType": "address"
+          },
+          "name": "newOwner",
+          "indexed": true
+        }
       ]
     }
   ],
   "errors": [
-    { "name": "NotOwner" },
-    { "name": "EmptyPrompt" },
-    { "name": "PromptTooLarge" },
-    { "name": "NoResultYet" }
-  ]
+    {
+      "name": "NotOwner",
+      "inputs": []
+    },
+    {
+      "name": "EmptyPrompt",
+      "inputs": []
+    },
+    {
+      "name": "PromptTooLarge",
+      "inputs": []
+    },
+    {
+      "name": "NoResultYet",
+      "inputs": []
+    }
+  ],
+  "docs": "Minimal AI agent that enqueues prompts to AICF, tracks last task id, and (next block) reads/consumes results deterministically."
 }
