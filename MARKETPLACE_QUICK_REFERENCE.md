@@ -19,6 +19,13 @@
 | `MARKETPLACE_DEPLOYMENT.md` | Deployment guide | 500+ | ✅ Complete |
 | `MARKETPLACE_SUMMARY.md` | This summary | 400+ | ✅ Complete |
 
+## Mainnet Release File Paths
+
+- **Binaries**: CI output for installers is collected under `installers/qa/artifacts/` from the release builds in `native/target/release/`.
+- **Manifests**: Key manifests live at `contracts/examples/treasury/manifest.json`, `explorer-web/public/manifest.webmanifest`, `wallet/web/manifest.json`, and `wallet-extension/dist-manifests/`.
+- **Docs**: Release instructions are in `docs/release_process.md` alongside the marketplace guides in this directory.
+- **Icons**: Use the brand assets in `contrib/logos/` and the shipped explorer icons in `explorer-web/public/icons/` for release branding.
+
 ## Key RPC Methods
 
 ```bash
