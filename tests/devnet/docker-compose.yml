@@ -42,6 +42,7 @@ services:
     working_dir: /app
     env_file:
       - ./env.devnet.example
+      - ./.env
     volumes:
       - ../..:/app:ro
       - node1_data:/data
@@ -80,6 +81,7 @@ services:
     working_dir: /app
     env_file:
       - ./env.devnet.example
+      - ./.env
     volumes:
       - ../..:/app:ro
       - node2_data:/data
