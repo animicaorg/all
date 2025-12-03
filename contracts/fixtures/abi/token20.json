@@ -1,17 +1,18 @@
 {
-  "abiVersion": "1",
-  "contract": {
-    "name": "Token20",
-    "version": "1.0.0",
-    "description": "Animica-20 fungible token (ERC-20-like) ABI suitable for vm_py & SDK."
-  },
+  "abiVersion": 1,
+  "name": "Token20",
   "functions": [
     {
       "name": "name",
       "stateMutability": "view",
       "inputs": [],
       "outputs": [
-        { "name": "name", "type": "string" }
+        {
+          "type": {
+            "abiType": "string"
+          },
+          "name": "name"
+        }
       ]
     },
     {
@@ -19,7 +20,12 @@
       "stateMutability": "view",
       "inputs": [],
       "outputs": [
-        { "name": "symbol", "type": "string" }
+        {
+          "type": {
+            "abiType": "string"
+          },
+          "name": "symbol"
+        }
       ]
     },
     {
@@ -27,7 +33,12 @@
       "stateMutability": "view",
       "inputs": [],
       "outputs": [
-        { "name": "decimals", "type": "uint8" }
+        {
+          "type": {
+            "abiType": "u8"
+          },
+          "name": "decimals"
+        }
       ]
     },
     {
@@ -35,62 +46,142 @@
       "stateMutability": "view",
       "inputs": [],
       "outputs": [
-        { "name": "supply", "type": "uint256" }
+        {
+          "type": {
+            "abiType": "u256"
+          },
+          "name": "supply"
+        }
       ]
     },
     {
       "name": "balanceOf",
       "stateMutability": "view",
       "inputs": [
-        { "name": "owner", "type": "address" }
+        {
+          "type": {
+            "abiType": "address"
+          },
+          "name": "owner"
+        }
       ],
       "outputs": [
-        { "name": "balance", "type": "uint256" }
+        {
+          "type": {
+            "abiType": "u256"
+          },
+          "name": "balance"
+        }
       ]
     },
     {
       "name": "allowance",
       "stateMutability": "view",
       "inputs": [
-        { "name": "owner", "type": "address" },
-        { "name": "spender", "type": "address" }
+        {
+          "type": {
+            "abiType": "address"
+          },
+          "name": "owner"
+        },
+        {
+          "type": {
+            "abiType": "address"
+          },
+          "name": "spender"
+        }
       ],
       "outputs": [
-        { "name": "remaining", "type": "uint256" }
+        {
+          "type": {
+            "abiType": "u256"
+          },
+          "name": "remaining"
+        }
       ]
     },
     {
       "name": "transfer",
       "stateMutability": "nonpayable",
       "inputs": [
-        { "name": "to", "type": "address" },
-        { "name": "amount", "type": "uint256" }
+        {
+          "type": {
+            "abiType": "address"
+          },
+          "name": "to"
+        },
+        {
+          "type": {
+            "abiType": "u256"
+          },
+          "name": "amount"
+        }
       ],
       "outputs": [
-        { "name": "success", "type": "bool" }
+        {
+          "type": {
+            "abiType": "bool"
+          },
+          "name": "success"
+        }
       ]
     },
     {
       "name": "approve",
       "stateMutability": "nonpayable",
       "inputs": [
-        { "name": "spender", "type": "address" },
-        { "name": "amount", "type": "uint256" }
+        {
+          "type": {
+            "abiType": "address"
+          },
+          "name": "spender"
+        },
+        {
+          "type": {
+            "abiType": "u256"
+          },
+          "name": "amount"
+        }
       ],
       "outputs": [
-        { "name": "success", "type": "bool" }
+        {
+          "type": {
+            "abiType": "bool"
+          },
+          "name": "success"
+        }
       ]
     },
     {
       "name": "transferFrom",
       "stateMutability": "nonpayable",
       "inputs": [
-        { "name": "from", "type": "address" },
-        { "name": "to", "type": "address" },
-        { "name": "amount", "type": "uint256" }
+        {
+          "type": {
+            "abiType": "address"
+          },
+          "name": "from"
+        },
+        {
+          "type": {
+            "abiType": "address"
+          },
+          "name": "to"
+        },
+        {
+          "type": {
+            "abiType": "u256"
+          },
+          "name": "amount"
+        }
       ],
       "outputs": [
-        { "name": "success", "type": "bool" }
+        {
+          "type": {
+            "abiType": "bool"
+          },
+          "name": "success"
+        }
       ]
     }
   ],
@@ -98,24 +189,73 @@
     {
       "name": "Transfer",
       "inputs": [
-        { "name": "from", "type": "address", "indexed": true },
-        { "name": "to", "type": "address", "indexed": true },
-        { "name": "amount", "type": "uint256", "indexed": false }
+        {
+          "type": {
+            "abiType": "address"
+          },
+          "name": "from",
+          "indexed": true
+        },
+        {
+          "type": {
+            "abiType": "address"
+          },
+          "name": "to",
+          "indexed": true
+        },
+        {
+          "type": {
+            "abiType": "u256"
+          },
+          "name": "amount",
+          "indexed": false
+        }
       ]
     },
     {
       "name": "Approval",
       "inputs": [
-        { "name": "owner", "type": "address", "indexed": true },
-        { "name": "spender", "type": "address", "indexed": true },
-        { "name": "amount", "type": "uint256", "indexed": false }
+        {
+          "type": {
+            "abiType": "address"
+          },
+          "name": "owner",
+          "indexed": true
+        },
+        {
+          "type": {
+            "abiType": "address"
+          },
+          "name": "spender",
+          "indexed": true
+        },
+        {
+          "type": {
+            "abiType": "u256"
+          },
+          "name": "amount",
+          "indexed": false
+        }
       ]
     }
   ],
   "errors": [
-    { "name": "InsufficientBalance" },
-    { "name": "InsufficientAllowance" },
-    { "name": "Paused" },
-    { "name": "Unauthorized" }
-  ]
+    {
+      "name": "InsufficientBalance",
+      "inputs": []
+    },
+    {
+      "name": "InsufficientAllowance",
+      "inputs": []
+    },
+    {
+      "name": "Paused",
+      "inputs": []
+    },
+    {
+      "name": "Unauthorized",
+      "inputs": []
+    }
+  ],
+  "docs": "Animica-20 fungible token (ERC-20-like) ABI suitable for vm_py & SDK."
 }

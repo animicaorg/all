@@ -1,99 +1,240 @@
 {
-  "abiVersion": "1",
-  "contract": {
-    "name": "NameRegistry",
-    "version": "1.0.0",
-    "description": "Minimal bytes32 → address registry with owner-gated writes. Designed for deterministic Python-VM: set/clear keys, resolve addresses, and emit canonical events."
-  },
+  "abiVersion": 1,
+  "name": "NameRegistry",
   "functions": [
     {
       "name": "owner",
       "stateMutability": "view",
       "inputs": [],
-      "outputs": [{ "name": "addr", "type": "address" }],
-      "description": "Current contract owner (controls set/clear/transferOwnership)."
+      "outputs": [
+        {
+          "type": {
+            "abiType": "address"
+          },
+          "name": "addr"
+        }
+      ],
+      "docs": "Current contract owner (controls set/clear/transferOwnership)."
     },
     {
       "name": "transferOwnership",
       "stateMutability": "nonpayable",
-      "inputs": [{ "name": "newOwner", "type": "address" }],
-      "outputs": [{ "name": "ok", "type": "bool" }],
-      "description": "Owner-only: transfer ownership to a new address."
+      "inputs": [
+        {
+          "type": {
+            "abiType": "address"
+          },
+          "name": "newOwner"
+        }
+      ],
+      "outputs": [
+        {
+          "type": {
+            "abiType": "bool"
+          },
+          "name": "ok"
+        }
+      ],
+      "docs": "Owner-only: transfer ownership to a new address."
     },
-
     {
       "name": "resolve",
       "stateMutability": "view",
-      "inputs": [{ "name": "name", "type": "bytes32" }],
-      "outputs": [{ "name": "addr", "type": "address" }],
-      "description": "Return the address mapped to 'name', or the zero-address if unset."
+      "inputs": [
+        {
+          "type": {
+            "abiType": "bytes32"
+          },
+          "name": "name"
+        }
+      ],
+      "outputs": [
+        {
+          "type": {
+            "abiType": "address"
+          },
+          "name": "addr"
+        }
+      ],
+      "docs": "Return the address mapped to 'name', or the zero-address if unset."
     },
     {
       "name": "has",
       "stateMutability": "view",
-      "inputs": [{ "name": "name", "type": "bytes32" }],
-      "outputs": [{ "name": "present", "type": "bool" }],
-      "description": "True iff 'name' is currently set to a non-zero address."
+      "inputs": [
+        {
+          "type": {
+            "abiType": "bytes32"
+          },
+          "name": "name"
+        }
+      ],
+      "outputs": [
+        {
+          "type": {
+            "abiType": "bool"
+          },
+          "name": "present"
+        }
+      ],
+      "docs": "True iff 'name' is currently set to a non-zero address."
     },
-
     {
       "name": "set",
       "stateMutability": "nonpayable",
       "inputs": [
-        { "name": "name", "type": "bytes32" },
-        { "name": "addr", "type": "address" }
+        {
+          "type": {
+            "abiType": "bytes32"
+          },
+          "name": "name"
+        },
+        {
+          "type": {
+            "abiType": "address"
+          },
+          "name": "addr"
+        }
       ],
-      "outputs": [{ "name": "ok", "type": "bool" }],
-      "description": "Owner-only: map 'name' to 'addr'. Emits NameSet(name, old, addr)."
+      "outputs": [
+        {
+          "type": {
+            "abiType": "bool"
+          },
+          "name": "ok"
+        }
+      ],
+      "docs": "Owner-only: map 'name' to 'addr'. Emits NameSet(name, old, addr)."
     },
     {
       "name": "clear",
       "stateMutability": "nonpayable",
-      "inputs": [{ "name": "name", "type": "bytes32" }],
-      "outputs": [{ "name": "ok", "type": "bool" }],
-      "description": "Owner-only: clear mapping for 'name' (set to zero). Emits NameCleared(name, old)."
+      "inputs": [
+        {
+          "type": {
+            "abiType": "bytes32"
+          },
+          "name": "name"
+        }
+      ],
+      "outputs": [
+        {
+          "type": {
+            "abiType": "bool"
+          },
+          "name": "ok"
+        }
+      ],
+      "docs": "Owner-only: clear mapping for 'name' (set to zero). Emits NameCleared(name, old)."
     },
-
     {
       "name": "trySetIfEmpty",
       "stateMutability": "nonpayable",
       "inputs": [
-        { "name": "name", "type": "bytes32" },
-        { "name": "addr", "type": "address" }
+        {
+          "type": {
+            "abiType": "bytes32"
+          },
+          "name": "name"
+        },
+        {
+          "type": {
+            "abiType": "address"
+          },
+          "name": "addr"
+        }
       ],
-      "outputs": [{ "name": "set", "type": "bool" }],
-      "description": "Owner-only convenience: set only if 'name' was empty. Returns false and leaves state unchanged otherwise."
+      "outputs": [
+        {
+          "type": {
+            "abiType": "bool"
+          },
+          "name": "set"
+        }
+      ],
+      "docs": "Owner-only convenience: set only if 'name' was empty. Returns false and leaves state unchanged otherwise."
     }
   ],
   "events": [
     {
       "name": "NameSet",
       "inputs": [
-        { "name": "name", "type": "bytes32", "indexed": true },
-        { "name": "old", "type": "address", "indexed": false },
-        { "name": "addr", "type": "address", "indexed": false }
+        {
+          "type": {
+            "abiType": "bytes32"
+          },
+          "name": "name",
+          "indexed": true
+        },
+        {
+          "type": {
+            "abiType": "address"
+          },
+          "name": "old",
+          "indexed": false
+        },
+        {
+          "type": {
+            "abiType": "address"
+          },
+          "name": "addr",
+          "indexed": false
+        }
       ],
-      "description": "Emitted when a name is set/updated."
+      "docs": "Emitted when a name is set/updated."
     },
     {
       "name": "NameCleared",
       "inputs": [
-        { "name": "name", "type": "bytes32", "indexed": true },
-        { "name": "old", "type": "address", "indexed": false }
+        {
+          "type": {
+            "abiType": "bytes32"
+          },
+          "name": "name",
+          "indexed": true
+        },
+        {
+          "type": {
+            "abiType": "address"
+          },
+          "name": "old",
+          "indexed": false
+        }
       ],
-      "description": "Emitted when a name is cleared to zero."
+      "docs": "Emitted when a name is cleared to zero."
     },
     {
       "name": "OwnershipTransferred",
       "inputs": [
-        { "name": "previousOwner", "type": "address", "indexed": true },
-        { "name": "newOwner", "type": "address", "indexed": true }
+        {
+          "type": {
+            "abiType": "address"
+          },
+          "name": "previousOwner",
+          "indexed": true
+        },
+        {
+          "type": {
+            "abiType": "address"
+          },
+          "name": "newOwner",
+          "indexed": true
+        }
       ],
-      "description": "Standard ownership transfer event."
+      "docs": "Standard ownership transfer event."
     }
   ],
   "errors": [
-    { "name": "NotOwner", "description": "Caller is not the contract owner." },
-    { "name": "ZeroAddress", "description": "Provided address must be non-zero." }
-  ]
+    {
+      "name": "NotOwner",
+      "inputs": [],
+      "docs": "Caller is not the contract owner."
+    },
+    {
+      "name": "ZeroAddress",
+      "inputs": [],
+      "docs": "Provided address must be non-zero."
+    }
+  ],
+  "docs": "Minimal bytes32 \u2192 address registry with owner-gated writes. Designed for deterministic Python-VM: set/clear keys, resolve addresses, and emit canonical events."
 }
