@@ -277,7 +277,12 @@ class JobQueue:
             self._cache_put(task_id_hex, self._row_to_dict(row))
 
         return JobReceipt(
-            task_id=bytes.fromhex(task_id_hex), chain_id=chain_id, height=height
+            task_id=bytes.fromhex(task_id_hex),
+            kind=req.kind,
+            caller=bytes(caller),
+            chain_id=chain_id,
+            height_hint=req.height_hint if req.height_hint is not None else height,
+            created_at=now,
         )
 
     def get(self, task_id_hex: str) -> Optional[Dict[str, Any]]:
@@ -341,7 +346,14 @@ class JobQueue:
                 self.conn.execute("ROLLBACK;")
                 raise
 
-        req = JobRequest(kind=JobKind[row["kind"]], payload=_b_loads(row["payload"]))
+        req = JobRequest(
+            kind=JobKind[row["kind"]],
+            caller=bytes(row["caller"]),
+            chain_id=int(row["chain_id"]),
+            payload=_b_loads(row["payload"]),
+            height_hint=int(row["height"]),
+            created_at=int(row["enqueued_at_s"]),
+        )
         # Update caches
         self._cache_put(
             task_id, self._row_to_dict(row) | {"status": JobStatus.IN_PROGRESS}
