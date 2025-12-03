@@ -71,7 +71,7 @@ HAVE_DA_API = HAVE_HTTPX and APP is not None
 
 
 @pytest.mark.skipif(not HAVE_DA_API, reason="DA API app or httpx not available")
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_da_blob_unknown_commitment_returns_404_and_json() -> None:
     """
     For an unknown commitment, GET /da/blob/{commitment} must return:
@@ -100,7 +100,7 @@ async def test_da_blob_unknown_commitment_returns_404_and_json() -> None:
 
 
 @pytest.mark.skipif(not HAVE_DA_API, reason="DA API app or httpx not available")
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_da_proof_unknown_commitment_returns_404_and_json() -> None:
     """
     For an unknown commitment, GET /da/proof/{commitment} must return:
