@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Animica Extension Demo</title>
+    <style>
+      body {
+        font-family: Inter, system-ui, -apple-system, sans-serif;
+        margin: 2rem auto;
+        padding: 0 1.5rem;
+        max-width: 720px;
+        line-height: 1.6;
+        color: #0f172a;
+      }
+      h1 {
+        margin-bottom: 0.25rem;
+      }
+      button {
+        cursor: pointer;
+        border: 1px solid #cbd5e1;
+        background: linear-gradient(#f8fafc, #e2e8f0);
+        border-radius: 6px;
+        padding: 0.6rem 0.9rem;
+        margin: 0.25rem 0;
+      }
+      pre {
+        background: #0f172a;
+        color: #e2e8f0;
+        padding: 1rem;
+        border-radius: 8px;
+        min-height: 180px;
+        overflow-x: auto;
+        white-space: pre-wrap;
+      }
+      .card {
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 1rem 1.25rem;
+        margin-top: 1rem;
+        box-shadow: 0 10px 15px -10px rgba(15, 23, 42, 0.2);
+      }
+      label {
+        display: block;
+        font-weight: 600;
+        margin-top: 0.5rem;
+      }
+      input {
+        width: 100%;
+        padding: 0.45rem 0.5rem;
+        border-radius: 6px;
+        border: 1px solid #cbd5e1;
+        margin-top: 0.15rem;
+        font-size: 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Animica extension demo</h1>
+    <p>
+      This page exercises <code>window.animica.request</code>. Load the unpacked extension,
+      then use the buttons below to request accounts, read the chainId, and send a demo
+      transaction.
+    </p>
+
+    <div class="card">
+      <button id="connect">Request accounts</button>
+      <div id="account-row"></div>
+    </div>
+
+    <div class="card">
+      <button id="chain">Get chainId</button>
+      <div id="chain-row"></div>
+    </div>
+
+    <div class="card">
+      <h3>Send test transaction</h3>
+      <label for="to">Recipient (anim... address)</label>
+      <input id="to" type="text" placeholder="anim1..." />
+      <label for="value">Value (hex, e.g. 0x0 or 0xde0b6b3a7640000 for 1 ANM)</label>
+      <input id="value" type="text" placeholder="0x0" />
+      <label for="data">Data (optional hex payload)</label>
+      <input id="data" type="text" placeholder="0x" value="0x" />
+      <button id="send">Send transaction</button>
+    </div>
+
+    <div class="card">
+      <h3>Log</h3>
+      <pre id="log">Waiting for interactions…</pre>
+    </div>
+
+    <script>
+      const logEl = document.getElementById("log");
+      const accountRow = document.getElementById("account-row");
+      const chainRow = document.getElementById("chain-row");
+      let currentAccount;
+
+      function log(message, data) {
+        const time = new Date().toISOString();
+        const payload = data ? `\n${JSON.stringify(data, null, 2)}` : "";
+        logEl.textContent = `[${time}] ${message}${payload}\n\n${logEl.textContent}`;
+      }
+
+      function requireProvider() {
+        if (!window.animica) {
+          log("window.animica is not injected. Ensure the extension is loaded and this page is allowed.");
+          throw new Error("Provider not found");
+        }
+        return window.animica;
+      }
+
+      document.getElementById("connect").addEventListener("click", async () => {
+        try {
+          const provider = requireProvider();
+          const accounts = await provider.request({ method: "animica_requestAccounts" });
+          currentAccount = accounts?.[0];
+          accountRow.textContent = currentAccount
+            ? `Connected account: ${currentAccount}`
+            : "No account returned";
+          log("animica_requestAccounts", accounts);
+        } catch (err) {
+          log("Account request failed", { error: err?.message ?? err });
+        }
+      });
+
+      document.getElementById("chain").addEventListener("click", async () => {
+        try {
+          const provider = requireProvider();
+          const chainId = await provider.request({ method: "animica_chainId" });
+          chainRow.textContent = `chainId: ${chainId}`;
+          log("animica_chainId", { chainId });
+        } catch (err) {
+          log("chainId request failed", { error: err?.message ?? err });
+        }
+      });
+
+      document.getElementById("send").addEventListener("click", async () => {
+        try {
+          const provider = requireProvider();
+          if (!currentAccount) {
+            log("Requesting accounts before sending…");
+            const accounts = await provider.request({ method: "animica_requestAccounts" });
+            currentAccount = accounts?.[0];
+          }
+
+          const to = (document.getElementById("to").value || "").trim();
+          const value = (document.getElementById("value").value || "0x0").trim();
+          const data = (document.getElementById("data").value || "0x").trim();
+          const params = [{ from: currentAccount, to, value, data }];
+
+          const txHash = await provider.request({ method: "animica_sendTransaction", params });
+          log("animica_sendTransaction submitted", { txHash, params: params[0] });
+        } catch (err) {
+          log("Transaction failed or was rejected", { error: err?.message ?? err });
+        }
+      });
+    </script>
+  </body>
+</html>
