@@ -300,7 +300,11 @@ def _start_auto_task() -> bool:
     return True
 
 
-@method("miner.getWork", desc="Return a mining work template for Stratum/CPU miners")
+@method(
+    "miner.getWork",
+    desc="Return a mining work template for Stratum/CPU miners",
+    aliases=("miner_getWork",),
+)
 def miner_get_work(params: Any | None = None) -> Dict[str, Any]:
     from mining.templates import TemplateBuilder
 
@@ -554,7 +558,11 @@ def miner_stop() -> bool:
     return False
 
 
-@method("miner.submitShare", desc="Accept a submitted share from the mining pool")
+@method(
+    "miner.submitShare",
+    desc="Accept a submitted share from the mining pool",
+    aliases=("miner_submitShare",),
+)
 def miner_submit_share(**payload: Any) -> Dict[str, Any]:
     # TODO: wire into real PoW validation once available. For now accept and echo.
     share = (

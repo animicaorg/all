@@ -348,6 +348,7 @@ def _lookup_persisted_tx(
 @method(
     "tx.sendRawTransaction",
     desc="Submit a signed CBOR-encoded transaction. Param: rawTx (hex string '0x…' or base64 '0b:…'). Returns tx hash.",
+    aliases=("tx_sendRawTransaction",),
 )
 def tx_send_raw_transaction(rawTx: str) -> str:
     # Accept hex only for now
@@ -391,6 +392,7 @@ def tx_send_raw_transaction(rawTx: str) -> str:
 @method(
     "tx.getTransactionByHash",
     desc="Get a transaction by hash. Returns full object with pending/persisted context.",
+    aliases=("tx_getTransactionByHash",),
 )
 def tx_get_transaction_by_hash(txHash: str) -> t.Optional[dict]:
     if not isinstance(txHash, str):

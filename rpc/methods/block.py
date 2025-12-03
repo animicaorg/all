@@ -367,7 +367,7 @@ def _resolve_block_by_hash(h: str) -> tuple[int | None, t.Any | None]:
 @method(
     "chain.getBlockByNumber",
     desc="Get a block by number. Params: (number, includeTxObjects: bool=false, includeReceipts: bool=false)",
-    aliases=("eth_getBlockByNumber",),
+    aliases=("eth_getBlockByNumber", "block_getBlockByNumber"),
 )
 def chain_get_block_by_number(
     number: t.Union[int, str],
@@ -399,7 +399,7 @@ def chain_get_block_by_number(
 @method(
     "chain.getBlockByHash",
     desc="Get a block by hash. Params: (hash, includeTxObjects: bool=false, includeReceipts: bool=false)",
-    aliases=("eth_getBlockByHash",),
+    aliases=("eth_getBlockByHash", "block_getBlockByHash"),
 )
 def chain_get_block_by_hash(
     blockHash: str | None = None,
