@@ -92,6 +92,7 @@ export const SITE: SiteConfig = {
   nav: {
     top: [
       { label: 'Home', href: '/' },
+      { label: 'Developers', href: '/developers' },
       { label: 'Wallet', href: '/wallet' },
       { label: 'Explorer', href: ENV.EXPLORER_URL, external: true, target: '_blank', rel: 'noopener' },
       { label: 'Studio', href: ENV.STUDIO_URL, external: true, target: '_blank', rel: 'noopener' },
