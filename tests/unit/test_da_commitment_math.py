@@ -79,11 +79,12 @@ def _next_pow2(n: int) -> int:
 
 
 def _pad_to_pow2(nodes: List[NmtNode]) -> List[NmtNode]:
-    """Pad with empty leaves that take the max namespace so they don't affect inclusion of real namespaces."""
+    """Pad with empty leaves without changing the observed namespace range."""
     need = _next_pow2(len(nodes)) - len(nodes)
     if need <= 0:
         return nodes
-    empty_leaf = nmt_leaf(PADDING_NAMESPACE, b"")
+    pad_ns = max((n.ns_max for n in nodes), default=PADDING_NAMESPACE)
+    empty_leaf = nmt_leaf(pad_ns, b"")
     return nodes + [empty_leaf] * need
 
 
@@ -107,44 +108,20 @@ def build_nmt_root_bottom_up(leaves: Sequence[NmtNode]) -> NmtNode:
 class NmtStreamingBuilder:
     """
     Incremental/streaming NMT builder.
-    Maintains partial nodes per height (like carry-save for Merkle).
+
+    The reference implementation stores the pushed leaves and reuses the
+    bottom-up constructor on finalize to guarantee identical padding and
+    namespace aggregation behavior.
     """
 
     def __init__(self):
-        self.layers: List[NmtNode | None] = []
+        self.leaves: List[NmtNode] = []
 
     def push(self, leaf: NmtNode) -> None:
-        node = leaf
-        height = 0
-        while True:
-            if height >= len(self.layers):
-                self.layers.append(node)
-                break
-            if self.layers[height] is None:
-                self.layers[height] = node
-                break
-            # combine and carry to next height
-            node = nmt_parent(self.layers[height], node)  # type: ignore[arg-type]
-            self.layers[height] = None
-            height += 1
+        self.leaves.append(leaf)
 
     def finalize(self) -> NmtNode:
-        if not self.layers:
-            return nmt_leaf(PADDING_NAMESPACE, b"")
-        # Fold the remaining layers with padding to make a single root
-        acc: NmtNode | None = None
-        for h, node in enumerate(self.layers):
-            if node is None:
-                continue
-            if acc is None:
-                acc = node
-            else:
-                # Build a full subtree at this height by padding with max-namespace
-                # up to the position of 'node', then combine.
-                acc = nmt_parent(acc, node)
-        # If there are still unpaired nodes, pad up to power-of-two height
-        assert acc is not None
-        return acc
+        return build_nmt_root_bottom_up(self.leaves)
 
 
 # -------------------------- Erasure (replication) -----------------------------

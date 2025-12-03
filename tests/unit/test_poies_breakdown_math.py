@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, Mapping, Tuple
 
 import pytest
+
+pytest.importorskip("hypothesis")
 from hypothesis import given
 from hypothesis import strategies as st
 
