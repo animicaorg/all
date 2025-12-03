@@ -33,11 +33,13 @@
       "founder": 9000000
     },
     "blockReward": {
-      "initial": "5194100000",
+      "initial": "5199141213",
       "decayPct": 50,
       "epochLengthBlocks": 78840000,
+      "maxEpochs": 10,
       "tail": "0"
-    }
+    },
+    "supplyCapTotal": "900000000000000000"
   },
 
   "alloc": [
@@ -55,7 +57,8 @@
   "notes": [
     "All balances are integers in base units (10^9 = 1 ANM).",
     "Premine total: 81,000,000 ANM → 81,000,000 × 10^9 = 81,000,000,000,000,000 base units.",
-    "Block reward schedule: start 5,194,100,000 nANM/block, halving (50% decay) every 78,840,000 blocks.",
+    "Block reward schedule: start 5,199,141,213 nANM/block, halving (50% decay) every 78,840,000 blocks for 10 epochs (~50 years total).",
+    "Terminal cap: 900,000,000 ANM total supply (premine + 819,000,000 mined); rewards end once the cap is reached.",
     "System addresses use the 'system:<name>' convention and are resolved by execution/runtime/system.py.",
     "algPolicyRoot and paramsRef.sha3_256 are placeholders—replace with actual roots before launch."
   ]
