@@ -17,6 +17,8 @@ import os
 from typing import Any, Dict
 
 import pytest
+
+pytest.importorskip("hypothesis")
 from hypothesis import given
 from hypothesis import strategies as st
 

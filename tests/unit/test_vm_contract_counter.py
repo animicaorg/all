@@ -33,13 +33,16 @@ if PY_BRIDGE_DIR.exists():
     # Ensure "vm_pkg" and "bridge" are importable
     sys.path.insert(0, str(PY_BRIDGE_DIR))
 else:
-    pytest.skip(f"studio-wasm Python runtime not found at {PY_BRIDGE_DIR}")
+    pytest.skip(
+        f"studio-wasm Python runtime not found at {PY_BRIDGE_DIR}",
+        allow_module_level=True,
+    )
 
 # Import bridge entry points (compile/run)
 try:
     from bridge.entry import compile_bytes, run_call  # type: ignore
 except Exception as e:  # pragma: no cover
-    pytest.skip(f"Could not import vm_py bridge entry points: {e}")
+    pytest.skip(f"Could not import vm_py bridge entry points: {e}", allow_module_level=True)
 
 
 # --- Helpers ------------------------------------------------------------------

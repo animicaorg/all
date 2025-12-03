@@ -60,8 +60,9 @@ def _load_first_existing() -> tuple[Path, Dict[str, Any]]:
             except Exception:
                 # try next file
                 pass
-    raise FileNotFoundError(
-        "Could not locate chain params JSON. Set CHAIN_PARAMS_FILE to an existing file."
+    pytest.skip(
+        "Could not locate chain params JSON. Set CHAIN_PARAMS_FILE to an existing file.",
+        allow_module_level=True,
     )
 
 
