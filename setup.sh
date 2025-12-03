@@ -53,4 +53,12 @@ log "Bootstrapping dependencies in $ROOT_DIR"
 install_node_deps
 setup_python
 
+# Prepare a writable devnet environment file for docker-compose overrides
+DEVNET_ENV_EXAMPLE="$ROOT_DIR/tests/devnet/env.devnet.example"
+DEVNET_ENV_LOCAL="$ROOT_DIR/tests/devnet/.env"
+if [[ -f "$DEVNET_ENV_EXAMPLE" && ! -f "$DEVNET_ENV_LOCAL" ]]; then
+  log "Creating default devnet env at tests/devnet/.env (customize as needed)"
+  cp "$DEVNET_ENV_EXAMPLE" "$DEVNET_ENV_LOCAL"
+fi
+
 log "Setup complete. Activate the environment with 'source .venv/bin/activate'."
