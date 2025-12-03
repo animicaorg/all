@@ -7,6 +7,8 @@ Contents:
 - `counter/manifest.json` — ABI + metadata for the counter.
 - `escrow/contract.py` — minimal escrow demo using the treasury API.
 - `escrow/manifest.json` — ABI + metadata for the escrow demo.
+- `blob_pinner/contract.py` — pins bytes via the blob.pin capability and emits the commitment.
+- `blob_pinner/manifest.json` — declares blob.pin capability + limits for the demo.
 - `useful_work/` — block-scoring demo contract used by `useful_work_demo.py`.
 
 > The VM runs fully offline and deterministically. Each CLI invocation creates a fresh in-memory state unless the tool exposes an explicit state persistence flag (see `-h` on each command).

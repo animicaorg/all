@@ -1,0 +1,67 @@
+{
+  "name": "BlobPinner",
+  "version": "1.0.0",
+  "manifestVersion": 1,
+  "language": "python-vm",
+  "entry": "contract.py",
+  "sources": {
+    "contract.py": "./contract.py"
+  },
+  "abi": {
+    "functions": [
+      {
+        "name": "pin",
+        "inputs": [
+          { "name": "data", "type": "bytes" }
+        ],
+        "outputs": [
+          { "type": "bytes" }
+        ],
+        "notes": "Pins data to the DA capability using a default namespace."
+      },
+      {
+        "name": "pin_with_namespace",
+        "inputs": [
+          { "name": "namespace", "type": "int" },
+          { "name": "data", "type": "bytes" }
+        ],
+        "outputs": [
+          { "type": "bytes" }
+        ],
+        "notes": "Pins data to an explicit namespace id using blob.pin capability."
+      }
+    ],
+    "events": [
+      {
+        "name": "Pinner.BlobPinned",
+        "inputs": [
+          { "name": "ns", "type": "int" },
+          { "name": "size", "type": "int" },
+          { "name": "commitment", "type": "bytes" }
+        ]
+      }
+    ],
+    "errors": [
+      { "name": "pinner: namespace must be int" },
+      { "name": "pinner: namespace out of range" },
+      { "name": "pinner: data must be bytes-like" },
+      { "name": "pinner: payload must not be empty" }
+    ]
+  },
+  "deploy": {
+    "initStorage": {},
+    "metadata": {
+      "description": "Demonstrates the blob.pin capability by pinning user data and emitting a commitment event."
+    }
+  },
+  "resources": {
+    "caps": ["blob.pin"],
+    "limits": {
+      "max_blob_bytes": 65536,
+      "max_ai_units": 0,
+      "max_zk_proofs": 0,
+      "max_random_bytes": 0,
+      "max_treasury_transfers": 0
+    }
+  }
+}
