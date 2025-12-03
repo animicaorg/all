@@ -158,7 +158,11 @@ def _header_view(
     return {k: v for k, v in hv.items() if v is not None}
 
 
-@method("chain.getParams", desc="Return canonical chain/economic/consensus parameters.")
+@method(
+    "chain.getParams",
+    desc="Return canonical chain/economic/consensus parameters.",
+    aliases=("chain_getParams",),
+)
 def chain_get_params() -> dict:
     """
     Returns the chain parameters loaded by the node (subset of spec/params.yaml).
@@ -170,7 +174,7 @@ def chain_get_params() -> dict:
 @method(
     "chain.getChainId",
     desc="Return the active chainId for this node.",
-    aliases=("eth_chainId",),
+    aliases=("eth_chainId", "chain_getChainId"),
 )
 def chain_get_chain_id() -> int:
     """
@@ -179,7 +183,11 @@ def chain_get_chain_id() -> int:
     return int(deps.get_chain_id())
 
 
-@method("chain.getHead", desc="Return the current best head (height + header view).")
+@method(
+    "chain.getHead",
+    desc="Return the current best head (height + header view).",
+    aliases=("chain_getHead",),
+)
 def chain_get_head() -> dict:
     """
     Returns an object: { height, hash, chainId, thetaMicro, mixSeed, nonce, roots }
