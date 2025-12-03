@@ -6,6 +6,13 @@ A comprehensive end-to-end marketplace system for ANM token sales, integrating P
 
 **Status: ✅ COMPLETE**
 
+### Mainnet Release File Paths
+
+- **Binaries**: Release installers gather the compiled outputs from `native/target/release/` into `installers/qa/artifacts/` for distribution.
+- **Manifests**: Publish the latest manifests from `contracts/examples/treasury/manifest.json`, `explorer-web/public/manifest.webmanifest`, `wallet/web/manifest.json`, and `wallet-extension/dist-manifests/`.
+- **Docs**: The release documentation bundle includes `docs/release_process.md` plus the marketplace guides in the repository root.
+- **Icons**: Use `contrib/logos/` and `explorer-web/public/icons/` as the authoritative icon sources for release assets and storefronts.
+
 ---
 
 ## Files Created

@@ -5,13 +5,13 @@
 ### Python Backend
 
 1. **`rpc/methods/marketplace.py`** (NEW - 555 lines)
-   - Location: `c:\Users\User\Documents\all\rpc\methods\marketplace.py`
+   - Location: `rpc/methods/marketplace.py`
    - Purpose: RPC methods for treasury and marketplace data
    - Methods: getTreasurySnapshot, getMarketData, getPriceHistory, getPurchaseHistory, getPricingCurve, calculatePrice
    - Status: ✅ Production ready
 
 2. **`rpc/methods/payments.py`** (NEW - 500+ lines)
-   - Location: `c:\Users\User\Documents\all\rpc\methods\payments.py`
+   - Location: `rpc/methods/payments.py`
    - Purpose: Payment webhook handler for Stripe and PayPal
    - Functions: process_stripe_webhook, process_paypal_webhook, _verify_webhook_signature
    - Status: ✅ Production ready
@@ -19,44 +19,44 @@
 ### Smart Contracts
 
 3. **`contracts/examples/treasury/contract.py`** (NEW - 400+ lines)
-   - Location: `c:\Users\User\Documents\all\contracts\examples\treasury\contract.py`
+   - Location: `contracts/examples/treasury/contract.py`
    - Purpose: On-chain treasury contract for token management
    - Functions: init, recordSale, transferOwnership, treasurySnapshot
    - Status: ✅ Production ready
 
 4. **`contracts/examples/treasury/manifest.json`** (NEW - 300+ lines)
-   - Location: `c:\Users\User\Documents\all\contracts\examples\treasury\manifest.json`
+   - Location: `contracts/examples/treasury/manifest.json`
    - Purpose: Contract ABI and metadata
    - Status: ✅ Complete
 
 5. **`contracts/examples/treasury/deploy_and_test.py`** (NEW - 200+ lines)
-   - Location: `c:\Users\User\Documents\all\contracts\examples\treasury\deploy_and_test.py`
+   - Location: `contracts/examples/treasury/deploy_and_test.py`
    - Purpose: Deployment and testing script
    - Status: ✅ Production ready
 
 ### React Explorer Frontend
 
 6. **`explorer-web/src/pages/Marketplace/MarketplacePage.tsx`** (NEW - 650 lines)
-   - Location: `c:\Users\User\Documents\all\explorer-web\src\pages\Marketplace\MarketplacePage.tsx`
+   - Location: `explorer-web/src/pages/Marketplace/MarketplacePage.tsx`
    - Purpose: Full marketplace UI page
    - Status: ✅ Production ready with all features
 
 ### Flutter Wallet Frontend
 
 7. **`wallet/lib/services/rpc_marketplace.dart`** (NEW - 300+ lines)
-   - Location: `c:\Users\User\Documents\all\wallet\lib\services\rpc_marketplace.dart`
+   - Location: `wallet/lib/services/rpc_marketplace.dart`
    - Purpose: Marketplace-specific RPC client
    - Status: ✅ Production ready with mocks
 
 8. **`wallet/lib/services/deep_links.dart`** (NEW - 400+ lines)
-   - Location: `c:\Users\User\Documents\all\wallet\lib\services\deep_links.dart`
+   - Location: `wallet/lib/services/deep_links.dart`
    - Purpose: Deep linking handler between apps
    - Status: ✅ Complete with Android/iOS support
 
 ### Testing
 
 9. **`tests/integration/test_marketplace_e2e.py`** (NEW - 600+ lines)
-   - Location: `c:\Users\User\Documents\all\tests\integration\test_marketplace_e2e.py`
+   - Location: `tests/integration/test_marketplace_e2e.py`
    - Purpose: End-to-end integration tests
    - Test Count: 20+ comprehensive tests
    - Status: ✅ Ready to run
@@ -64,17 +64,24 @@
 ### Documentation
 
 10. **`MARKETPLACE_DEPLOYMENT.md`** (NEW - 500+ lines)
-    - Location: `c:\Users\User\Documents\all\MARKETPLACE_DEPLOYMENT.md`
+    - Location: `MARKETPLACE_DEPLOYMENT.md`
     - Purpose: Complete deployment and setup guide
     - Status: ✅ Production ready
 
 11. **`MARKETPLACE_SUMMARY.md`** (NEW - 400+ lines)
-    - Location: `c:\Users\User\Documents\all\MARKETPLACE_SUMMARY.md`
+    - Location: `MARKETPLACE_SUMMARY.md`
     - Purpose: Implementation summary and overview
     - Status: ✅ Complete
 
 12. **`MARKETPLACE_QUICK_REFERENCE.md`** (NEW - 400+ lines)
-    - Location: `c:\Users\User\Documents\all\MARKETPLACE_QUICK_REFERENCE.md`
+    - Location: `MARKETPLACE_QUICK_REFERENCE.md`
+
+### Mainnet Release Artifact Map
+
+- **Binaries**: CI publishes packaged installers into `installers/qa/artifacts/` after building platform binaries from `native/target/release/`.
+- **Manifests**: Contract and app manifests live at `contracts/examples/treasury/manifest.json`, `explorer-web/public/manifest.webmanifest`, `wallet/web/manifest.json`, and `wallet-extension/dist-manifests/`.
+- **Docs**: Release and deployment docs are under `docs/release_process.md` plus the marketplace guides in the repository root.
+- **Icons**: Brand and application icons are stored in `contrib/logos/` and `explorer-web/public/icons/` for bundling in installers and web manifests.
     - Purpose: Quick reference guide for developers
     - Status: ✅ Complete
 
