@@ -10,7 +10,8 @@
     "preview": "vite preview --strictPort",
     "test": "vitest run",
     "test:ui": "vitest --ui",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "sanity:explorer": "node scripts/explorer-sanity-check.mjs"
   },
   "dependencies": {
     "@animica/sdk": "file:../sdk",
