@@ -4,6 +4,15 @@ This `docs/` tree is the **single source of truth** for concepts, specs, and how
 
 ---
 
+## Getting Started
+
+- **Run a node (devnet stack):** Follow [quickstart-devnet.md](quickstart-devnet.md) to clone the repo, create a venv, and launch the node + miner + dashboard with `ops/run.sh --profile devnet all`.
+- **Use the wallet:** The Flutter wallet quickstart in [wallet/README.md](../wallet/README.md#quickstart-any-platform) shows how to install deps and launch on desktop/mobile/web with `flutter run`.
+- **Write a Python contract:** [dev/CONTRACTS_START.md](dev/CONTRACTS_START.md) walks through building, compiling, and deploying the Counter contract on VM(Py).
+- **Connect to devnet/mainnet RPC:** [rpc-quickstart.md](rpc-quickstart.md) covers local JSON-RPC usage (HTTP/WS); chain metadata in [chains/animica.testnet.json](../chains/animica.testnet.json) and [chains/animica.mainnet.json](../chains/animica.mainnet.json) list public endpoints.
+
+---
+
 ## Documentation Philosophy
 
 - **One repo, one truth.** Specs, reference, and examples live next to the code they describe.

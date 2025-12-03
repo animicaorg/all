@@ -44,7 +44,7 @@ function toHexOrRaw(x: string | number | bigint): string {
 
 export const Links = {
   chainId: ENV.CHAIN_ID,
-  rpc: ENV.RPC_URL,
+  rpc: { url: ENV.RPC_URL },
 
   studio: {
     root: ENV.STUDIO_URL,
@@ -137,5 +137,8 @@ export const Links = {
     },
   },
 };
+
+// Backward-compatible alias used by existing pages/components.
+export const links = Links;
 
 export type LinksType = typeof Links;
