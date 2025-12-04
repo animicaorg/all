@@ -17,6 +17,7 @@ import keyring from './keyring';
 import { loadVaultEnvelope, clearSession as clearKeyringSession } from './keyring/storage';
 import { generateMnemonic } from './keyring/mnemonic';
 import { createRouter } from './router';
+import type { BgResponse } from './runtime';
 import { getRpcClient, listNetworks, selectNetworkByChainId } from './network/state';
 import type { Network } from './network/networks';
 import { RpcClient } from './network/rpc';
@@ -41,7 +42,7 @@ interface Router {
   handleMessage: (
     msg: unknown,
     sender: chrome.runtime.MessageSender
-  ) => Promise<unknown>;
+  ) => Promise<BgResponse>;
   handlePort?: (port: chrome.runtime.Port) => void;
   onAlarm?: (name: AlarmName) => Promise<void> | void;
   onStartup?: () => Promise<void> | void;
@@ -344,7 +345,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       const r = await getRouter();
       const res = await r.handleMessage(msg, sender);
-      sendResponse({ ok: true, result: res });
+      sendResponse(res);
     } catch (err: any) {
       console.error('[bg] onMessage error:', err);
       sendResponse({

@@ -217,9 +217,7 @@ export function createRouter() {
 
   return {
     async handleMessage(msg: unknown, sender: chrome.runtime.MessageSender) {
-      const resp = await handleRequest(msg as BgRequest, sender);
-      if (!resp.ok) throw new Error(resp.error ?? 'Router error');
-      return resp.result;
+      return handleRequest(msg as BgRequest, sender);
     },
     handlePort(port: chrome.runtime.Port) {
       handlePortConnection(port);
