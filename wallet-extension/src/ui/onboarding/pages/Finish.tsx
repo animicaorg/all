@@ -9,6 +9,7 @@ type Props = {
   setPin2: (v: string) => void;
   isBusy?: boolean;
   canFinish?: boolean;
+  refreshToken?: number;
   onFinish: () => void;
   onBack: () => void;
   onDone?: () => void; // fired when user clicks "Finish" (window may close)
@@ -46,6 +47,7 @@ export default function Finish({
   setPin2,
   isBusy = false,
   canFinish = false,
+  refreshToken = 0,
   onFinish,
   onBack,
   onDone,
@@ -82,7 +84,7 @@ export default function Finish({
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [refreshToken]);
 
   const addrDisplay = useMemo(() => shortAddr(address), [address]);
   const mnemonicPreviewShort = useMemo(() => shortAddr(mnemonicPreview, 10), [mnemonicPreview]);
