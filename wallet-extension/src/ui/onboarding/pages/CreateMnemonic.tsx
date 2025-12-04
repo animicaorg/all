@@ -2,10 +2,18 @@ import React, { useEffect, useMemo, useState } from "react";
 
 type Props = {
   words?: 12 | 24;
+  /** Optional mnemonic supplied by parent (preferred). */
+  mnemonic?: string;
+  /** Deprecated: use `mnemonic` instead. */
   initialMnemonic?: string;
   isBusy?: boolean;
   onBack: () => void;
-  onNext: (mnemonic: string) => void;
+  /**
+   * Called when the user wants to proceed.  `onNext` receives the mnemonic,
+   * while `onContinue` mirrors the onboarding shell prop used elsewhere.
+   */
+  onNext?: (mnemonic: string) => void;
+  onContinue?: () => void;
 };
 
 type BgGenerateReq = {
@@ -25,20 +33,31 @@ type BgGenerateResp =
  */
 export default function CreateMnemonic({
   words = 12,
+  mnemonic: providedMnemonic,
   initialMnemonic,
   isBusy = false,
   onBack,
   onNext,
+  onContinue,
 }: Props) {
-  const [mnemonic, setMnemonic] = useState<string>(initialMnemonic ?? "");
+  const [mnemonic, setMnemonic] = useState<string>(initialMnemonic ?? providedMnemonic ?? "");
   const [ack, setAck] = useState(false);
-  const [loading, setLoading] = useState<boolean>(!initialMnemonic);
+  const [loading, setLoading] = useState<boolean>(!initialMnemonic && !providedMnemonic);
   const [error, setError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<boolean>(true);
 
+  // Sync mnemonic passed from parent.
+  useEffect(() => {
+    if (providedMnemonic) {
+      setMnemonic(providedMnemonic);
+      setLoading(false);
+      setError(null);
+    }
+  }, [providedMnemonic]);
+
   // Attempt to fetch a real mnemonic from background on first mount (unless provided)
   useEffect(() => {
-    if (initialMnemonic) {
+    if (initialMnemonic || providedMnemonic) {
       setLoading(false);
       return;
     }
@@ -108,6 +127,12 @@ export default function CreateMnemonic({
 
   const canContinue = ack && !loading && !!mnemonic && !isBusy;
 
+  const handleContinue = () => {
+    if (!canContinue) return;
+    if (onNext) onNext(mnemonic);
+    else if (onContinue) onContinue();
+  };
+
   return (
     <section className="ob-card" data-testid="create-mnemonic">
       <h1 className="ob-title">Write down your recovery phrase</h1>
@@ -121,7 +146,7 @@ export default function CreateMnemonic({
         {loading ? (
           <div className="mnemonic-skeleton" aria-busy="true" />
         ) : (
-          <ol className="mnemonic-grid">
+          <ol className="mnemonic-grid" style={{ listStyle: "none", margin: 0, padding: 0 }}>
             {wordsList.map((w, i) => (
               <li key={i}>
                 <span className="idx">{i + 1}</span>
@@ -160,7 +185,7 @@ export default function CreateMnemonic({
         </button>
         <button
           className="btn primary"
-          onClick={() => onNext(mnemonic)}
+          onClick={handleContinue}
           disabled={!canContinue}
           data-testid="btn-continue-verify"
         >
