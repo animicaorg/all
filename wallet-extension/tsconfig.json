@@ -1,5 +1,4 @@
 {
-  "extends": null,
   "compilerOptions": {
     /* Output & module resolution (Vite/TSX friendly) */
     "target": "ES2022",
