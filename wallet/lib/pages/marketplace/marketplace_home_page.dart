@@ -12,6 +12,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../state/providers.dart';
+import '../../services/pricing_engine.dart' show MarketPriceData;
 
 class MarketplaceHomePage extends ConsumerWidget {
   const MarketplaceHomePage({Key? key}) : super(key: key);
