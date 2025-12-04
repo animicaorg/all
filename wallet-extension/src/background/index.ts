@@ -4,12 +4,16 @@
  * - Wires the message router used by content/provider/UI
  * - Schedules/handles extension alarms (keepalive + GC)
  *
- * This file keeps imports lazy where possible to avoid waking the SW unnecessarily.
+ * This file keeps runtime work minimal; static imports are used for SW compatibility
+ * and runtime initialization is deferred where possible.
  */
 
 /// <reference lib="webworker" />
 
 /* eslint-disable no-console */
+
+import * as migrations from './migrations';
+import { createRouter } from './router';
 
 // Some bundlers inject small helpers (e.g. modulepreload) that expect a `window`
 // global. The MV3 background runs in a worker context where `window` is absent,
@@ -37,11 +41,11 @@ interface Router {
   onStartup?: () => Promise<void> | void;
 }
 
-// Lazy singletons
+// Lazy singletons (static imports because dynamic import() is disallowed in SWs)
 let _routerPromise: Promise<Router> | null = null;
 function getRouter(): Promise<Router> {
   if (!_routerPromise) {
-    _routerPromise = import('./router').then((m) => m.createRouter());
+    _routerPromise = Promise.resolve(createRouter());
   }
   return _routerPromise;
 }
@@ -75,8 +79,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   // Run storage migrations on install/update without blocking boot.
   // (Loaded lazily to avoid waking the worker on every event.)
   try {
-    const mig = await import('./migrations');
-    await mig.runMigrations?.();
+    await migrations.runMigrations?.();
   } catch (err) {
     console.error('[bg] migrations failed:', err);
   }
