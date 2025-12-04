@@ -1,135 +1,574 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
-import Hero from "../components/Hero.astro";
-import FeatureGrid from "../components/FeatureGrid.astro";
-import CTAButtons from "../components/CTAButtons.astro";
-import LogosStrip from "../components/LogosStrip.astro";
-import Newsletter from "../components/Newsletter.astro";
-import FAQ from "../components/FAQ.astro";
-import Testimonial from "../components/Testimonial.astro";
-import ChainCard from "../components/ChainCard.astro";
+import Header from "../components/Header.astro";
+import Footer from "../components/Footer.astro";
 import StatusBadge from "../components/StatusBadge.astro";
 import MetricTicker from "../components/MetricTicker.astro";
+import ChainCard from "../components/ChainCard.astro";
+import CTAButtons from "../components/CTAButtons.astro";
+import InlineLink from "../components/InlineLink.astro";
 
 import { site } from "../config/site";
 import { links } from "../config/links";
 import chains from "../config/chains";
 
-const pageTitle = site.tagline || "Animica — Useful Proofs, Deterministic VM, and Open Tooling";
-const pageDesc =
-  "Animica is a post-quantum, useful-work chain with PoIES consensus, DA, a deterministic Python VM, and first-class AI/Quantum capabilities.";
+const heroTitle = "Animica — the useful-work chain for real builders";
+const heroDesc =
+  "Post-quantum consensus, deterministic Python VM, DA, and a toolchain that keeps explorers, SDKs, and Studio in lockstep.";
+
+const architecture = [
+  {
+    title: "Consensus & DA",
+    blurb: "PoIES with useful work, data-availability sampling, and predictable finality windows.",
+    href: "/docs/consensus/poies",
+    tag: "core",
+  },
+  {
+    title: "Deterministic Python VM",
+    blurb: "Python-first contracts with gas metering, ABI surfaces, and reproducible execution.",
+    href: "/docs/vm/overview",
+    tag: "vm",
+  },
+  {
+    title: "Randomness + ZK",
+    blurb: "Beacon with VDF + QRNG mixing and pluggable Groth16/PLONK/STARK verifiers.",
+    href: "/docs/randomness/overview",
+    tag: "crypto",
+  },
+  {
+    title: "AI Compute Fund",
+    blurb: "Queue, attestations, and settlement rails for verifiable AI/quantum jobs.",
+    href: "/docs/aicf/overview",
+    tag: "ai",
+  },
+  {
+    title: "Wallet & Provider",
+    blurb: "MV3 extension keys, PQ signatures (Dilithium/SPHINCS+), and simulation hooks.",
+    href: "/docs/wallet/overview",
+    tag: "wallet",
+  },
+  {
+    title: "Operations",
+    blurb: "Devnet recipes, node configs, metrics, and policies for running reliable infra.",
+    href: "/docs/ops/devnet",
+    tag: "ops",
+  },
+];
+
+const resources = [
+  {
+    title: "Deployment playbook",
+    href: "/deployment",
+    description: "How we ship the site: environments, previews, and static hosting defaults.",
+  },
+  {
+    title: "Security hardening",
+    href: "/security",
+    description: "Defense-in-depth headers, CSP templates, and iframe rules grounded in SECURITY.md.",
+  },
+  {
+    title: "Accessibility checklist",
+    href: "/accessibility",
+    description: "Keyboard-first navigation, color contrast, and semantic guidelines from ACCESSIBILITY.md.",
+  },
+  {
+    title: "Full documentation",
+    href: "/docs",
+    description: "Browse guides on consensus, VM, SDKs, AICF, randomness, wallet, and tooling.",
+  },
+];
+
+const toolchain = [
+  {
+    label: "Studio",
+    href: links.studio.home(),
+    detail: "Simulate, deploy, verify, and manage manifests directly in the browser.",
+  },
+  {
+    label: "Explorer",
+    href: links.explorer.home(),
+    detail: "Blocks, transactions, contract code, and token inventory in one fast UI.",
+  },
+  {
+    label: "SDKs",
+    href: links.docs.sdk("python"),
+    detail: "Typed clients for Python, TypeScript, and Rust plus OpenRPC artifacts.",
+  },
+  {
+    label: "GitHub",
+    href: site.links?.github ?? "https://github.com/animica-labs",
+    detail: "Every crate, contract, and explorer component lives in this monorepo.",
+  },
+];
 ---
 
-<BaseLayout title={pageTitle} description={pageDesc}>
-  <!-- Hero -->
-  <section class="relative overflow-hidden section-hero">
-    <Hero
-      title="Build on useful work."
-      subtitle="PoIES consensus, Python VM, Data Availability, and verifiable AI/Quantum — all in one open stack."
-      primaryHref={links.studio.home}
-      primaryText="Open Studio"
-      secondaryHref={links.explorer.home}
-      secondaryText="Open Explorer"
-    />
-  </section>
+<BaseLayout title={heroTitle} description={heroDesc} bodyClass="home">
+  <fragment slot="header">
+    <Header />
+  </fragment>
 
-  <!-- Live Status / Metrics -->
-  <section class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 mt-8 sm:mt-12">
-    <div class="metric-grid">
-      <div class="stat-card">
-        <div class="flex items-center justify-between">
-          <h3 class="text-sm font-medium opacity-80">Network Status</h3>
+  <section class="hero">
+    <div class="hero__content">
+      <p class="eyebrow">Useful-work L1 · Post-quantum · Python-native</p>
+      <h1>{heroTitle}</h1>
+      <p class="lede">{heroDesc}</p>
+      <div class="hero__actions">
+        <a class="button button--primary" href={links.studio.home()}>Open Studio</a>
+        <a class="button button--ghost" href={links.explorer.home()}>Inspect the Explorer</a>
+        <InlineLink href={links.docs.gettingStarted()} class="hero__link">Read the docs →</InlineLink>
+      </div>
+      <div class="hero__badges">
+        <div class="badge">
+          <span class="label">Network</span>
           <StatusBadge rpcUrl={links.rpc.url} />
         </div>
-        <p class="mt-3 value">
-          <MetricTicker rpcUrl={links.rpc.url} kind="height" />
-        </p>
-        <p class="text-xs opacity-70 mt-1">Current head height</p>
+        <div class="badge">
+          <span class="label">Head height</span>
+          <span class="metric"><MetricTicker rpcUrl={links.rpc.url} kind="height" /></span>
+        </div>
+        <div class="badge">
+          <span class="label">Approx. TPS</span>
+          <span class="metric"><MetricTicker rpcUrl={links.rpc.url} kind="tps" /></span>
+        </div>
       </div>
-
-      <div class="stat-card">
-        <h3 class="text-sm font-medium opacity-80">Approx. TPS</h3>
-        <p class="mt-3 value">
-          <MetricTicker rpcUrl={links.rpc.url} kind="tps" />
-        </p>
-        <p class="text-xs opacity-70 mt-1">Recent 60s average</p>
+    </div>
+    <div class="hero__panel">
+      <div class="panel-card">
+        <h2>What ships with Animica</h2>
+        <ul class="panel-list">
+          <li>Useful-work consensus with deterministic gas and DA sampling</li>
+          <li>Python VM + stdlib, contract examples, and reproducible builds</li>
+          <li>Explorer, Studio, SDKs, wallet extension, and OpenRPC schemas</li>
+          <li>AI/quantum job marketplace (AICF) with attestations</li>
+        </ul>
+        <CTAButtons />
       </div>
-
-      <div class="stat-card">
-        <h3 class="text-sm font-medium opacity-80">Chain ID</h3>
-        <p class="mt-3 value">{links.chainId}</p>
-        <p class="text-xs opacity-70 mt-1">Configured RPC target</p>
+      <div class="panel-card panel-card--ghost">
+        <h3>See the monorepo</h3>
+        <p class="muted">Consensus, VM, SDKs, explorer, studio, wallet, and proofs all live together.</p>
+        <a class="button button--full" href={site.links?.github ?? "https://github.com/animica-labs"}>Open GitHub</a>
       </div>
     </div>
   </section>
 
-  <!-- Features -->
-  <section class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 mt-14 sm:mt-20">
-    <FeatureGrid />
-    <div class="mt-8 sm:mt-10 flex justify-center">
-      <CTAButtons />
+  <section class="section">
+    <header class="section__header">
+      <p class="eyebrow">Architecture</p>
+      <h2>Everything builders need stays in sync</h2>
+      <p class="muted">Map each subsystem to its home in the repo and the docs that describe it.</p>
+    </header>
+    <div class="card-grid">
+      {architecture.map((item) => (
+        <a class="card" href={item.href}>
+          <div class="card__tag">{item.tag}</div>
+          <h3>{item.title}</h3>
+          <p>{item.blurb}</p>
+          <span class="inline-link">Explore docs →</span>
+        </a>
+      ))}
     </div>
   </section>
 
-  <!-- Known Chains -->
+  <section class="section">
+    <header class="section__header">
+      <p class="eyebrow">Toolchain</p>
+      <h2>Go from idea to mainnet with one workflow</h2>
+      <p class="muted">Start in Studio, inspect contracts in Explorer, automate with SDKs, and plug into the network RPC.</p>
+    </header>
+    <div class="toolchain">
+      <div class="toolchain__items">
+        {toolchain.map((item) => (
+          <a class="tool" href={item.href}>
+            <div class="tool__title">{item.label}</div>
+            <p class="tool__desc">{item.detail}</p>
+            <span class="inline-link">Open {item.label}</span>
+          </a>
+        ))}
+      </div>
+      <div class="toolchain__cta">
+        <div class="panel-card">
+          <h3>Deploy a contract now</h3>
+          <p class="muted">Use the Counter or Escrow templates, then verify the source from the same view.</p>
+          <div class="toolchain__buttons">
+            <a class="button button--primary" href={links.studio.template("counter")}>Launch Counter template</a>
+            <a class="button button--ghost" href={links.studio.deploy()}>Deploy from manifest</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   {Array.isArray(chains) && chains.length ? (
-    <section class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 mt-14 sm:mt-20">
-      <h2 class="text-xl sm:text-2xl font-semibold tracking-tight">Networks</h2>
-      <p class="mt-1 text-sm opacity-80">
-        Connect a wallet or use the SDKs to interact with any listed network.
-      </p>
-      <div class="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {chains.map((c) => (
-          <ChainCard chain={c} />
+    <section class="section">
+      <header class="section__header">
+        <p class="eyebrow">Networks</p>
+        <h2>Pre-configured endpoints for wallets and SDKs</h2>
+        <p class="muted">Use the chain IDs and RPC URLs below or jump straight into the explorer.</p>
+      </header>
+      <div class="card-grid networks">
+        {chains.map((chain) => (
+          <ChainCard chain={chain} />
         ))}
       </div>
     </section>
   ) : null}
 
-  <!-- Logos -->
-  <section class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 mt-14 sm:mt-20">
-    <LogosStrip />
-  </section>
-
-  <!-- Testimonials -->
-  <section class="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 mt-14 sm:mt-20">
-    <div class="grid gap-6 sm:grid-cols-2">
-      <Testimonial
-        quote="The Python VM with deterministic gas made our prototype week ridiculously productive."
-        author="Priya N."
-        org="ZK-ML Researcher"
-      />
-      <Testimonial
-        quote="Animica’s AICF flow and proofs let us settle verified AI jobs with clean economics."
-        author="Diego M."
-        org="AI Infra"
-      />
+  <section class="section">
+    <header class="section__header">
+      <p class="eyebrow">Documentation & policies</p>
+      <h2>Every policy lives next to the code it protects</h2>
+      <p class="muted">The core Markdown files in <code>website/docs</code> are now first-class pages.</p>
+    </header>
+    <div class="card-grid resources">
+      {resources.map((resource) => (
+        <a class="card" href={resource.href}>
+          <h3>{resource.title}</h3>
+          <p>{resource.description}</p>
+          <span class="inline-link">Read →</span>
+        </a>
+      ))}
+    </div>
+    <div class="resource-footnote">
+      <p class="muted">
+        Need the full repo? Grab the <InlineLink href="https://github.com/animica-labs/animica">monorepo</InlineLink> or read the
+        <InlineLink href="/docs">developer documentation</InlineLink>.
+      </p>
     </div>
   </section>
 
-  <!-- Newsletter -->
-  <section class="mx-auto max-w-2xl px-4 sm:px-6 lg:px-8 mt-14 sm:mt-20">
-    <Newsletter />
-  </section>
-
-  <!-- FAQ -->
-  <section class="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8 mt-14 sm:mt-20">
-    <FAQ />
-  </section>
-
-  <!-- Secondary CTA -->
-  <section class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 mt-16 sm:mt-24 mb-16 sm:mb-28">
-    <div class="rounded-2xl border p-6 sm:p-10 text-center bg-[var(--bg-elevated)]
-                border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-      <h2 class="text-2xl sm:text-3xl font-semibold tracking-tight">
-        Ready to ship?
-      </h2>
-      <p class="mt-2 opacity-80">
-        Start in the browser with Studio, deploy a contract, and watch it land on-chain.
-      </p>
-      <div class="mt-6 flex justify-center">
-        <CTAButtons />
+  <section class="section section--cta">
+    <div class="cta">
+      <div>
+        <p class="eyebrow">Ready to build?</p>
+        <h2>Ship something verifiable this week</h2>
+        <p class="muted">Use Studio to deploy, Explorer to audit, and the SDKs to automate your pipeline.</p>
+      </div>
+      <div class="cta__actions">
+        <a class="button button--primary" href={links.studio.home()}>Start in Studio</a>
+        <a class="button button--ghost" href={links.docs.sdk("typescript")}>View SDK examples</a>
       </div>
     </div>
   </section>
+
+  <fragment slot="footer">
+    <Footer />
+  </fragment>
 </BaseLayout>
+
+<style>
+  .home main#main {
+    gap: 0;
+  }
+
+  .hero {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: var(--space-8);
+    padding: clamp(2rem, 4vw, 3.5rem) clamp(1.5rem, 4vw, 2.5rem);
+    max-width: 1200px;
+    margin: 0 auto;
+    align-items: start;
+  }
+
+  .hero__content h1 {
+    font-size: clamp(2.4rem, 4vw, 3.4rem);
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+    margin: 0.35rem 0 0.75rem;
+  }
+
+  .hero__content .lede {
+    font-size: 1.05rem;
+    color: color-mix(in oklab, var(--text-primary), #fff 16%);
+    margin-bottom: 1.5rem;
+  }
+
+  .eyebrow {
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-size: 0.78rem;
+    color: color-mix(in oklab, var(--text-primary), #fff 36%);
+  }
+
+  .hero__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: center;
+  }
+
+  .hero__link {
+    font-weight: var(--weight-medium);
+  }
+
+  .hero__badges {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+  }
+
+  .badge {
+    border: 1px solid color-mix(in oklab, var(--color-border), transparent 30%);
+    background: color-mix(in oklab, var(--bg-elevated), #10131f 45%);
+    border-radius: var(--radius-lg);
+    padding: 0.9rem 1rem;
+    display: grid;
+    gap: 0.4rem;
+  }
+
+  .badge .label {
+    font-size: 0.8rem;
+    opacity: 0.75;
+  }
+
+  .badge .metric {
+    font-size: 1.25rem;
+    font-weight: var(--weight-semibold);
+  }
+
+  .hero__panel {
+    display: grid;
+    gap: 1rem;
+  }
+
+  .panel-card {
+    border: 1px solid color-mix(in oklab, var(--color-border), transparent 30%);
+    background: linear-gradient(150deg, color-mix(in oklab, var(--color-surface), #0d1625 16%), color-mix(in oklab, var(--color-surface-2), #0b1021 30%));
+    border-radius: var(--radius-xl);
+    padding: 1.25rem 1.5rem;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.25);
+  }
+
+  .panel-card--ghost {
+    background: color-mix(in oklab, var(--color-surface-2), #080c18 20%);
+  }
+
+  .panel-card h2,
+  .panel-card h3 {
+    margin: 0 0 0.4rem;
+  }
+
+  .panel-card p {
+    margin: 0 0 1rem;
+  }
+
+  .panel-list {
+    margin: 0 0 1rem;
+    padding: 0;
+    list-style: disc;
+    color: color-mix(in oklab, var(--text-primary), #fff 12%);
+    padding-left: 1rem;
+    display: grid;
+    gap: 0.35rem;
+  }
+
+  .button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    border-radius: var(--radius-lg);
+    padding: 0.75rem 1rem;
+    font-weight: var(--weight-semibold);
+    font-size: 0.95rem;
+    text-decoration: none;
+    border: 1px solid transparent;
+    transition: transform 150ms ease, box-shadow 150ms ease, opacity 150ms ease;
+    white-space: nowrap;
+  }
+
+  .button--primary {
+    background: linear-gradient(120deg, var(--brand-grad-from), var(--brand-grad-to));
+    color: #020712;
+    border-color: color-mix(in oklab, var(--brand-grad-to), transparent 30%);
+    box-shadow: 0 14px 35px rgba(0, 0, 0, 0.3);
+  }
+
+  .button--ghost {
+    background: color-mix(in oklab, var(--bg-elevated), #0c111f 30%);
+    border-color: color-mix(in oklab, var(--color-border), transparent 35%);
+    color: var(--text-primary);
+  }
+
+  .button--full {
+    width: 100%;
+    justify-content: center;
+    background: color-mix(in oklab, var(--bg-elevated), #0c111f 30%);
+    border-color: color-mix(in oklab, var(--color-border), transparent 35%);
+    color: var(--text-primary);
+  }
+
+  .button:hover {
+    transform: translateY(-2px);
+    opacity: 0.98;
+  }
+
+  .section {
+    max-width: 1200px;
+    margin: clamp(2.5rem, 5vw, 4rem) auto;
+    padding: 0 clamp(1.5rem, 4vw, 2.5rem);
+    display: grid;
+    gap: 1.5rem;
+  }
+
+  .section__header h2 {
+    margin: 0.2rem 0;
+    font-size: clamp(1.8rem, 3vw, 2.2rem);
+    letter-spacing: -0.02em;
+  }
+
+  .section__header .muted {
+    max-width: 720px;
+  }
+
+  .muted {
+    color: color-mix(in oklab, var(--text-primary), #fff 24%);
+  }
+
+  .card-grid {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  }
+
+  .card {
+    position: relative;
+    padding: 1.25rem 1.35rem;
+    border: 1px solid color-mix(in oklab, var(--color-border), transparent 35%);
+    background: color-mix(in oklab, var(--color-surface), #0d1220 26%);
+    border-radius: var(--radius-xl);
+    display: grid;
+    gap: 0.4rem;
+    min-height: 180px;
+    transition: border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+  }
+
+  .card:hover {
+    border-color: color-mix(in oklab, var(--brand-grad-to), transparent 40%);
+    transform: translateY(-2px);
+    box-shadow: 0 16px 42px rgba(0, 0, 0, 0.28);
+  }
+
+  .card__tag {
+    font-size: 0.75rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    opacity: 0.72;
+  }
+
+  .inline-link {
+    display: inline-flex;
+    gap: 0.35rem;
+    color: color-mix(in oklab, var(--brand-grad-to), #fff 10%);
+    font-weight: var(--weight-medium);
+  }
+
+  .toolchain {
+    display: grid;
+    grid-template-columns: 1.2fr 0.9fr;
+    gap: 1rem;
+  }
+
+  .toolchain__items {
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .tool {
+    border: 1px solid color-mix(in oklab, var(--color-border), transparent 30%);
+    border-radius: var(--radius-lg);
+    padding: 1rem 1.1rem;
+    background: color-mix(in oklab, var(--color-surface-2), #0d1625 16%);
+    display: grid;
+    gap: 0.35rem;
+    transition: border-color 120ms ease, background 120ms ease;
+  }
+
+  .tool:hover {
+    border-color: color-mix(in oklab, var(--brand-grad-to), transparent 40%);
+    background: color-mix(in oklab, var(--color-surface-2), #0f182d 8%);
+  }
+
+  .tool__title {
+    font-weight: var(--weight-semibold);
+    font-size: 1.05rem;
+  }
+
+  .tool__desc {
+    margin: 0;
+    color: color-mix(in oklab, var(--text-primary), #fff 22%);
+  }
+
+  .toolchain__cta .panel-card {
+    height: 100%;
+  }
+
+  .toolchain__buttons {
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .networks {
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  }
+
+  .resources .card {
+    min-height: 0;
+  }
+
+  .resource-footnote {
+    text-align: center;
+    margin-top: 0.5rem;
+  }
+
+  .section--cta {
+    margin-top: clamp(2.5rem, 5vw, 4rem);
+    margin-bottom: clamp(2.5rem, 6vw, 4.5rem);
+  }
+
+  .cta {
+    border: 1px solid color-mix(in oklab, var(--color-border), transparent 40%);
+    background: linear-gradient(120deg, color-mix(in oklab, var(--color-surface), #0f182a 18%), color-mix(in oklab, var(--brand-grad-from), #0a1322 22%));
+    border-radius: var(--radius-2xl);
+    padding: clamp(1.5rem, 4vw, 2.5rem);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.3);
+  }
+
+  .cta__actions {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  @media (max-width: 900px) {
+    .toolchain {
+      grid-template-columns: 1fr;
+    }
+
+    .cta {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .hero {
+      padding-top: 1.5rem;
+    }
+
+    .hero__actions {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .button {
+      width: 100%;
+      justify-content: center;
+    }
+  }
+</style>
