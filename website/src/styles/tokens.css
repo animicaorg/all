@@ -88,42 +88,43 @@
   --z-toast: 1200;
 
   /* Brand (aligns with SITE.brand.theme.color in site.ts) */
-  --brand-50:  #ecfeff;
-  --brand-100: #cffafe;
-  --brand-200: #a5f3fc;
-  --brand-300: #67e8f9;
-  --brand-400: #22d3ee;
-  --brand-500: #0ea5e9; /* Primary */
-  --brand-600: #0284c7;
-  --brand-700: #0369a1;
-  --brand-800: #075985;
-  --brand-900: #0c4a6e;
+  --brand-50:  #f1f8ff;
+  --brand-100: #d9edff;
+  --brand-200: #b8dbff;
+  --brand-300: #90c2ff;
+  --brand-400: #6aa6ff;
+  --brand-500: #4b8bff; /* Primary */
+  --brand-600: #3a73e0;
+  --brand-700: #2f5ec2;
+  --brand-800: #254c9f;
+  --brand-900: #1d3d7f;
 
   /* Accent gradient */
-  --brand-grad-from: var(--brand-400);
-  --brand-grad-to: var(--brand-500);
+  --brand-grad-from: #6aa6ff;
+  --brand-grad-to: #7ef1d2;
 
   /* Neutral scale (tailored slate) */
-  --gray-50:  #f8fafc;
-  --gray-100: #f1f5f9;
-  --gray-200: #e2e8f0;
-  --gray-300: #cbd5e1;
-  --gray-400: #94a3b8;
-  --gray-500: #64748b;
-  --gray-600: #475569;
-  --gray-700: #334155;
-  --gray-800: #1e293b;
-  --gray-900: #0f172a;
+  --gray-50:  #f7f9fd;
+  --gray-100: #e7ecf7;
+  --gray-200: #d3daeb;
+  --gray-300: #b7c2d9;
+  --gray-400: #94a2bd;
+  --gray-500: #7c8cab;
+  --gray-600: #657495;
+  --gray-700: #505e7a;
+  --gray-800: #3a4962;
+  --gray-900: #222b3b;
 
   /* Semantic (Light default) */
-  --color-bg:           #0b0f1a;         /* deep space */
-  --color-fg:           #e6edf5;
-  --color-surface:      #111827ea;       /* translucent panels */
-  --color-surface-2:    #0f172a;         /* solid blocks */
-  --color-border:       rgba(148, 163, 184, 0.28);
-  --color-muted:        #9aa6bd;
+  --color-bg:           #070a14;         /* deep night with a hint of indigo */
+  --color-fg:           #eef2fb;
+  --color-surface:      rgba(16, 21, 35, 0.94); /* softened cards */
+  --color-surface-2:    #0c1021;         /* solid blocks */
+  --color-border:       rgba(255, 255, 255, 0.08);
+  --color-muted:        #b7c3dd;
   --color-accent:       var(--brand-500);
-  --color-accent-contrast: #03131a;
+  --color-accent-contrast: #06121e;
+  --text-primary:       var(--color-fg);
 
   --color-success: #10b981;
   --color-warning: #f59e0b;
@@ -137,14 +138,15 @@
 
 /* ------------------------------- Dark Theme ------------------------------- */
 [data-theme="dark"], .theme-dark {
-  --color-bg:        #0b0f1a;
-  --color-fg:        #e6edf5;
-  --color-surface:   rgba(17, 24, 39, 0.92);
-  --color-surface-2: #0f172a;
-  --color-border:    rgba(148, 163, 184, 0.24);
-  --color-muted:     #9aa6bd;
+  --color-bg:        #060914;
+  --color-fg:        #eef2fb;
+  --color-surface:   rgba(15, 20, 34, 0.95);
+  --color-surface-2: #0c1021;
+  --color-border:    rgba(255, 255, 255, 0.08);
+  --color-muted:     #b7c3dd;
+  --text-primary:    var(--color-fg);
 
-  --ring-color: color-mix(in oklab, var(--brand-400), #fff 5%);
+  --ring-color: color-mix(in oklab, var(--brand-400), #fff 8%);
 }
 
 /* ------------------------------- Light Theme ------------------------------ */
@@ -155,6 +157,7 @@
   --color-surface-2: #f8fafc;
   --color-border:    rgba(15, 23, 42, 0.12);
   --color-muted:     #475569;
+  --text-primary:    var(--color-fg);
 
   --ring-color: color-mix(in oklab, var(--brand-500), #000 5%);
 }
@@ -175,9 +178,10 @@ html {
 body {
   margin: 0;
   min-height: 100dvh;
-  background: radial-gradient(1200px 800px at 10% -10%, #0b5d8a22, transparent 60%) no-repeat,
-              radial-gradient(1000px 700px at 100% 0%, #22d3ee14, transparent 60%) no-repeat,
-              var(--color-bg);
+  background:
+    radial-gradient(1200px 900px at 12% -10%, rgba(106, 166, 255, 0.18), transparent 60%) no-repeat,
+    radial-gradient(1000px 720px at 92% 5%, rgba(126, 241, 210, 0.16), transparent 62%) no-repeat,
+    linear-gradient(180deg, color-mix(in oklab, var(--color-bg), #090f22 30%), var(--color-bg));
 }
 
 /* Panels / cards */
