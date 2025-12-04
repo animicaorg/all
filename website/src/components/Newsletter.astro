@@ -186,15 +186,15 @@ const msgId = `nl-msg-${Math.random().toString(36).slice(2, 8)}`;
         const ct = res.headers.get("content-type") || "";
         const data = ct.includes("application/json") ? await res.json().catch(() => ({})) : {};
         if (res.ok && (data.ok !== false)) {
-          announce(data.message || ${JSON.stringify(successMessage)}, true);
+          announce(data.message || successMessage, true);
           form.reset();
           // re-stamp timestamp
           if (t) t.value = String(Math.floor(Date.now() / 1000));
         } else {
-          announce(data.message || ${JSON.stringify(errorMessage)}, false);
+          announce(data.message || errorMessage, false);
         }
       } catch (err) {
-        announce(${JSON.stringify(errorMessage)}, false);
+        announce(errorMessage, false);
       } finally {
         setLoading(false);
       }

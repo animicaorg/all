@@ -182,7 +182,7 @@ const ROADMAP_URL = import.meta.env.PUBLIC_ROADMAP_URL as string | undefined;
   <!-- Client override loader: fetch PUBLIC_ROADMAP_URL JSON and replace lists -->
   <script is:inline>
     (function () {
-      const FEED = ${JSON.stringify(ROADMAP_URL ?? "")};
+      const FEED = ROADMAP_URL ?? "";
       if (!FEED) return;
 
       const col = (name) => document.querySelector(`[data-col="${name}"]`);

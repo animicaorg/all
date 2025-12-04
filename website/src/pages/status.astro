@@ -150,9 +150,9 @@ const friendlyRpc = rpcHttp;
   <!-- Inline controller: fetch head, estimate TPS/BPS, ping, WS, peers -->
   <script is:inline>
     (function () {
-      const baseRpc = ${JSON.stringify(baseRpc)};
-      const rpcHttp = ${JSON.stringify(rpcHttp)};
-      const wsUrl = ${JSON.stringify(wsUrl)};
+      const baseRpcUrl = baseRpc;
+      const rpcHttpUrl = rpcHttp;
+      const wsUrlClient = wsUrl;
 
       const el = (id) => document.getElementById(id);
       const tpsEl = el('tps');
@@ -176,7 +176,7 @@ const friendlyRpc = rpcHttp;
       async function rpc(method, params) {
         const body = { jsonrpc: "2.0", id: Math.floor(Math.random()*1e6), method, params: params ?? [] };
         const t0 = performance.now();
-        const res = await fetch(rpcHttp, {
+        const res = await fetch(rpcHttpUrl, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(body),
@@ -263,7 +263,7 @@ const friendlyRpc = rpcHttp;
       function connectWS() {
         try {
           const t0 = performance.now();
-          const sock = new WebSocket(wsUrl);
+          const sock = new WebSocket(wsUrlClient);
           let opened = false;
           let pingTimer = null;
 
@@ -309,7 +309,7 @@ const friendlyRpc = rpcHttp;
       // Optional /healthz or /readyz probe for peers
       async function loadHealth() {
         try {
-          const u = new URL(baseRpc);
+          const u = new URL(baseRpcUrl);
           const base = u.pathname.endsWith("/rpc") ? u.pathname.replace(/\/rpc$/, "") : u.pathname;
           const healthZ = `${u.origin}${base}/healthz`;
           const readyZ  = `${u.origin}${base}/readyz`;
