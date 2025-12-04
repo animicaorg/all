@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Welcome from "./pages/Welcome";
 import CreateMnemonic from "./pages/CreateMnemonic";
 import VerifyMnemonic from "./pages/VerifyMnemonic";
@@ -29,6 +29,14 @@ export default function App() {
   const [pin2, setPin2] = useState<string>("");
   const [isBusy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const initialMode = useMemo(() => {
+    try {
+      return new URLSearchParams(window.location.search).get("mode");
+    } catch {
+      return null;
+    }
+  }, []);
 
   // Derived: can we finalize?
   const pinOk = useMemo(() => pin.length >= 6 && pin === pin2, [pin, pin2]);
@@ -96,6 +104,15 @@ export default function App() {
       setBusy(false);
     }
   }, [mode, pinOk, mnemonic, pin]);
+
+  useEffect(() => {
+    if (step !== "welcome" || !initialMode) return;
+    if (initialMode === "create") {
+      void beginCreate();
+    } else if (initialMode === "import") {
+      beginImport();
+    }
+  }, [beginCreate, beginImport, initialMode, step]);
 
   return (
     <div className="onboarding-shell">

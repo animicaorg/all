@@ -21,7 +21,13 @@ const DEFAULTS: Settings = {
 function callBackground<T = any>(msg: any): Promise<T | undefined> {
   return new Promise((resolve) => {
     try {
-      chrome.runtime.sendMessage(msg, (resp) => resolve(resp as T));
+      chrome.runtime.sendMessage(msg, (resp) => {
+        if (resp && typeof resp === "object" && "ok" in resp && "result" in resp) {
+          resolve((resp as any).ok ? ((resp as any).result as T) : (resp as T));
+          return;
+        }
+        resolve(resp as T);
+      });
     } catch {
       resolve(undefined);
     }
@@ -66,8 +72,8 @@ export default function SettingsPage() {
   // Load settings (prefer background, fallback to local storage)
   useEffect(() => {
     (async () => {
-      const fromBg = await callBackground<Settings>({ type: "settings.get" });
-      if (fromBg && typeof fromBg === "object") {
+      const fromBg = await callBackground<Settings | { ok: boolean; error?: string }>({ type: "settings.get" });
+      if (fromBg && typeof fromBg === "object" && (fromBg as any).ok !== false) {
         setSettings({ ...DEFAULTS, ...fromBg });
         setLoaded(true);
         return;
@@ -141,22 +147,24 @@ export default function SettingsPage() {
   };
 
   const onExportVault = async () => {
-    const res = await callBackground<{ ok: boolean; fileName?: string; dataUrl?: string; error?: string }>({
-      type: "vault.export",
+    const res = await callBackground<{ fileName?: string; dataUrl?: string; error?: string; ok?: boolean }>({
+      route: "vault.export",
     });
-    if (!res?.ok) {
-      alert(res?.error || "Export failed (is wallet unlocked?)");
+    if (!res || ("ok" in res && (res as any).ok === false)) {
+      const errMsg = (res as any)?.error || "Export failed (is wallet unlocked?)";
+      alert(errMsg);
       return;
     }
+    const payload = "result" in (res as any) ? (res as any).result : res;
     // Fallback: if background didn't give dataUrl, fetch from local
-    if (!res.dataUrl) {
+    if (!payload?.dataUrl) {
       const raw = await chrome.storage?.local.get(["vault"]);
       const blob = new Blob([JSON.stringify(raw?.vault ?? {}, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
-      triggerDownload(url, res.fileName ?? "animica-vault.json");
+      triggerDownload(url, payload?.fileName ?? "animica-vault.json");
       return;
     }
-    triggerDownload(res.dataUrl, res.fileName ?? "animica-vault.json");
+    triggerDownload(payload.dataUrl, payload.fileName ?? "animica-vault.json");
   };
 
   const triggerDownload = (url: string, filename: string) => {

@@ -13,7 +13,9 @@
 /* eslint-disable no-console */
 
 import * as migrations from './migrations';
-import { createRouter } from './router';
+import keyring from './keyring';
+import { loadVaultEnvelope } from './keyring/storage';
+import { addRoutes, createRouter } from './router';
 
 // Some bundlers inject small helpers (e.g. modulepreload) that expect a `window`
 // global. The MV3 background runs in a worker context where `window` is absent,
@@ -49,6 +51,83 @@ function getRouter(): Promise<Router> {
   }
   return _routerPromise;
 }
+
+async function maybeHandleLegacyMessage(
+  msg: any,
+  sendResponse: (resp: unknown) => void,
+): Promise<boolean> {
+  if (!msg || typeof msg !== 'object') return false;
+
+  if (msg.kind === 'accounts:list') {
+    const snapshot = await listAccounts();
+    sendResponse({ ok: true, ...snapshot });
+    return true;
+  }
+
+  if (msg.kind === 'accounts:select') {
+    const result = await selectAccount(msg.address);
+    sendResponse(result);
+    return true;
+  }
+
+  if (msg.type === 'vault.export') {
+    try {
+      const payload = await exportVault();
+      sendResponse({ ok: true, ...payload });
+    } catch (err: any) {
+      sendResponse({ ok: false, error: err?.message ?? 'Failed to export vault' });
+    }
+    return true;
+  }
+
+  return false;
+}
+
+/* ---------------------------- Route registration ---------------------------- */
+
+async function listAccounts() {
+  await keyring.init();
+  const accounts = await keyring.listAccounts();
+  const selected = await keyring.getSelected();
+  const locked = await keyring.isLocked();
+  return {
+    accounts: accounts.map((a) => ({
+      address: a.address,
+      name: a.label,
+      algo: (a as any).algo ?? (a as any).alg,
+      path: a.path,
+    })),
+    selected: selected?.address,
+    locked,
+  };
+}
+
+async function selectAccount(address: string | undefined) {
+  await keyring.init();
+  const accounts = await keyring.listAccounts();
+  const acct = address ? accounts.find((a) => a.address === address) : undefined;
+  if (!acct) {
+    return { ok: false, error: 'Account not found' } as const;
+  }
+  await keyring.selectAccount(acct.id);
+  return { ok: true } as const;
+}
+
+async function exportVault() {
+  const envelope = await loadVaultEnvelope();
+  if (!envelope) {
+    throw new Error('No vault data to export yet.');
+  }
+  const json = JSON.stringify(envelope, null, 2);
+  const dataUrl = `data:application/json,${encodeURIComponent(json)}`;
+  return { dataUrl, fileName: 'animica-vault.json' } as const;
+}
+
+addRoutes({
+  'accounts.list': async () => listAccounts(),
+  'accounts.select': async (payload: { address?: string }) => selectAccount(payload?.address),
+  'vault.export': async () => exportVault(),
+});
 
 // Schedule default alarms (idempotent: re-creates with same name)
 function scheduleDefaultAlarms() {
@@ -111,6 +190,9 @@ chrome.runtime.onStartup?.addListener(async () => {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
+      const handled = await maybeHandleLegacyMessage(msg, sendResponse);
+      if (handled) return;
+
       const r = await getRouter();
       const res = await r.handleMessage(msg, sender);
       sendResponse({ ok: true, result: res });
