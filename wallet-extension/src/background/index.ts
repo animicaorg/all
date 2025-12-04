@@ -14,7 +14,8 @@
 
 import * as migrations from './migrations';
 import keyring from './keyring';
-import { loadVaultEnvelope } from './keyring/storage';
+import { loadVaultEnvelope, clearSession as clearKeyringSession } from './keyring/storage';
+import { generateMnemonic } from './keyring/mnemonic';
 import { createRouter } from './router';
 
 // Some bundlers inject small helpers (e.g. modulepreload) that expect a `window`
@@ -81,6 +82,39 @@ async function maybeHandleLegacyMessage(
       return true;
     }
     await keyring.selectAccount(acct.id);
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (msg.kind === 'keyring.generateMnemonic' || msg.type === 'keyring.generateMnemonic') {
+    const words = msg.words === 24 ? 24 : 12;
+    const mnemonic = generateMnemonic(words);
+    sendResponse({ ok: true, mnemonic });
+    return true;
+  }
+
+  if (msg.kind === 'keyring.setupVault' || msg.type === 'keyring.setupVault') {
+    const pin = msg.pin ?? msg.password ?? '';
+    await keyring.importMnemonic({
+      mnemonic: msg.mnemonic,
+      password: pin,
+      storeMnemonic: true,
+    });
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (msg.kind === 'sessions.reset') {
+    try {
+      await clearKeyringSession();
+    } catch (err) {
+      console.warn('[bg] failed to clear keyring session', err);
+    }
+    try {
+      keyring.lock();
+    } catch (err) {
+      console.warn('[bg] failed to lock keyring', err);
+    }
     sendResponse({ ok: true });
     return true;
   }
