@@ -11,7 +11,7 @@ const githubHref = site?.links?.github ?? "https://github.com/animica";
 const year = new Date().getFullYear();
 ---
 
-<footer class="border-t border-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)] bg-[var(--bg-regular)]">
+<footer class="border-t border-[color-mix(in_srgb,var(--color-border),transparent_40%)] bg-[color-mix(in_srgb,var(--color-bg),#050915_8%)] backdrop-blur">
   <div class="container mx-auto px-4 py-12 grid gap-8 sm:grid-cols-[1fr_auto_auto_auto] items-start">
     <!-- Brand & blurb -->
     <div class="space-y-3 max-w-md">
@@ -54,10 +54,10 @@ const year = new Date().getFullYear();
     </nav>
   </div>
 
-  <div class="border-t border-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)]">
-    <div class="container mx-auto px-4 h-12 text-xs flex items-center justify-between">
-      <span class="opacity-70">© {year} {site.brand}. All rights reserved.</span>
-      <div class="flex items-center gap-4 opacity-75">
+  <div class="border-t border-[color-mix(in_srgb,var(--color-border),transparent_40%)]">
+    <div class="container mx-auto px-4 h-12 text-xs flex items-center justify-between text-[color-mix(in_srgb,var(--text-primary),#fff_12%)]">
+      <span class="opacity-75">© {year} {site.brand}. All rights reserved.</span>
+      <div class="flex items-center gap-4 opacity-80">
         <a href="/status" class="hover:opacity-100">Status</a>
         <a href="/changelog" class="hover:opacity-100">Changelog</a>
         <a href="/rss.xml" class="hover:opacity-100">RSS</a>
