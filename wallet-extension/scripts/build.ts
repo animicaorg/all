@@ -14,20 +14,13 @@
 import fs from "node:fs/promises";
 import fssync from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const ROOT = path.resolve(__dirname, "..");
+import { ROOT, patchForChrome, patchForFirefox, readManifestBase } from "./manifest.js";
 
 const PUBLIC_DIR = path.join(ROOT, "public");
 const DIST_CHROME = path.join(ROOT, "dist-chrome");
 const DIST_FIREFOX = path.join(ROOT, "dist-firefox");
-const MANIFEST_BASE = path.join(ROOT, "manifest.base.json");
 const DIST_MANIFESTS_DIR = path.join(ROOT, "dist-manifests");
-
-type Json = Record<string, any>;
 
 async function main() {
   banner("Animica Wallet — build");
@@ -36,7 +29,7 @@ async function main() {
   await ensureDir(DIST_CHROME);
   await ensureDir(DIST_FIREFOX);
 
-  const base = await readJson<Json>(MANIFEST_BASE);
+  const base = await readManifestBase();
 
   const chromeManifest = patchForChrome(base);
   const firefoxManifest = patchForFirefox(base);
@@ -84,65 +77,6 @@ async function main() {
       `- ${rel(DIST_FIREFOX)} (Firefox MV3)\n` +
       `- ${rel(DIST_MANIFESTS_DIR)}/manifest.{chrome,firefox}.json`
   );
-}
-
-// ───────────────────────────────────────────────────────────────────────────────
-// Manifest transforms
-// ───────────────────────────────────────────────────────────────────────────────
-
-function patchForChrome(base: Json): Json {
-  const m: Json = structuredClone(base);
-
-  // Ensure MV3 minimum version (Chrome)
-  if (!m.minimum_chrome_version) m.minimum_chrome_version = "108";
-
-  // Keep ESM service worker (supported by Chromium MV3).
-  // Ensure action popups point to copied HTML in dist root.
-  if (!m.action) {
-    m.action = { default_title: "Animica Wallet", default_popup: "popup.html" };
-  } else {
-    m.action.default_popup = "popup.html";
-  }
-
-  // Sanity: background config exists
-  if (!m.background) {
-    m.background = { service_worker: "background.js", type: "module" };
-  }
-
-  return sortKeys(m);
-}
-
-function patchForFirefox(base: Json): Json {
-  const m: Json = structuredClone(base);
-
-  // Firefox MV3 (as of 2024–2025) is stricter; avoid "type": "module" for SW.
-  if (!m.background) m.background = {};
-  m.background.service_worker = "background.js";
-  if (m.background.type) delete m.background.type;
-
-  // Gecko-specific settings (addon ID + min version)
-  const addonId = process.env.FIREFOX_ADDON_ID || "wallet@animica.dev";
-  m.browser_specific_settings = {
-    gecko: { id: addonId, strict_min_version: "109.0" },
-  };
-
-  // Firefox uses the same "action" structure; ensure popup filename.
-  if (!m.action) {
-    m.action = { default_title: "Animica Wallet", default_popup: "popup.html" };
-  } else {
-    m.action.default_popup = "popup.html";
-  }
-
-  // Firefox doesn't support "minimum_chrome_version"
-  if (m.minimum_chrome_version) delete m.minimum_chrome_version;
-
-  // CSP differences can cause rejections; keep simple, non-module-safe default.
-  if (m.content_security_policy?.extension_pages) {
-    m.content_security_policy.extension_pages =
-      "script-src 'self'; object-src 'self'; base-uri 'self'";
-  }
-
-  return sortKeys(m);
 }
 
 // ───────────────────────────────────────────────────────────────────────────────
@@ -218,27 +152,10 @@ async function copyDir(src: string, dst: string) {
   }
 }
 
-async function readJson<T = any>(p: string): Promise<T> {
-  const buf = await fs.readFile(p, "utf8");
-  return JSON.parse(buf) as T;
-}
-
 async function writePrettyJson(p: string, obj: any) {
   const json = JSON.stringify(obj, null, 2) + "\n";
   await ensureDir(path.dirname(p));
   await fs.writeFile(p, json, "utf8");
-}
-
-function sortKeys(obj: any): any {
-  if (Array.isArray(obj)) return obj.map(sortKeys);
-  if (obj && typeof obj === "object") {
-    return Object.fromEntries(
-      Object.keys(obj)
-        .sort()
-        .map((k) => [k, sortKeys(obj[k])])
-    );
-  }
-  return obj;
 }
 
 // ───────────────────────────────────────────────────────────────────────────────
