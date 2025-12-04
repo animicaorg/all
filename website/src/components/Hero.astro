@@ -41,19 +41,24 @@ const docsHref = links?.docs?.home ?? docsUrl ?? "/docs";
   <div class="container mx-auto px-4 py-16 sm:py-20 lg:py-24 grid gap-10 lg:grid-cols-2 lg:items-center">
     <div class="max-w-xl">
       {kicker && (
-        <div class="mb-3 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs leading-none
-                    border-[color-mix(in_srgb,var(--text-primary)_/_16%,transparent)]">
-          <span class="inline-block size-2 rounded-full bg-emerald-500"></span>
-          <span class="tracking-wide uppercase">{kicker}</span>
+        <div class="mb-4 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs leading-none
+                    border-[color-mix(in_srgb,var(--text-primary)_/_18%,transparent)]
+                    bg-[color-mix(in_srgb,var(--bg-elevated)_/_80%,transparent)] shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
+          <span class="inline-block size-2 rounded-full bg-[var(--brand-grad-to)]"></span>
+          <span class="tracking-wide uppercase text-[0.7rem] text-[color-mix(in_srgb,var(--text-primary),#fff_5%)]">{kicker}</span>
         </div>
       )}
 
-      <h1 id="hero-title" class="text-4xl sm:text-5xl font-semibold leading-tight">
+      <h1
+        id="hero-title"
+        class="text-4xl sm:text-5xl font-semibold leading-tight bg-clip-text text-transparent
+               bg-gradient-to-r from-[var(--brand-grad-from)] via-[color-mix(in_srgb,var(--brand-grad-to),#fff_12%)] to-[var(--text-primary)]"
+      >
         {title}
       </h1>
 
       {subtitle && (
-        <p class="mt-4 text-[1.05rem] opacity-90">
+        <p class="mt-4 text-[1.05rem] leading-relaxed text-[color-mix(in_srgb,var(--text-primary),#fff_10%)]">
           {subtitle}
         </p>
       )}
@@ -62,8 +67,9 @@ const docsHref = links?.docs?.home ?? docsUrl ?? "/docs";
         <a
           href={studioHref}
           class="inline-flex items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium
-                 bg-white text-black hover:opacity-95 active:opacity-90
-                 dark:bg-[var(--text-primary)] dark:text-[var(--bg-regular)]"
+                 bg-gradient-to-r from-[var(--brand-grad-from)] to-[var(--brand-grad-to)]
+                 text-[var(--color-accent-contrast)] shadow-[0_10px_35px_rgba(32,67,255,0.25)]
+                 hover:shadow-[0_12px_40px_rgba(32,150,255,0.28)] active:translate-y-[0.5px]"
         >
           Launch Studio
           <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M14 3h7v7h-2V6.41L9.41 16 8 14.59 16.59 6H14V3zM5 5h5V3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-5h-2v5H5V5z"/></svg>
@@ -73,8 +79,10 @@ const docsHref = links?.docs?.home ?? docsUrl ?? "/docs";
           <a
             href={explorerHref}
             class="inline-flex items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium
-                   border hover:bg-[var(--bg-elevated)]
-                   border-[color-mix(in_srgb,var(--text-primary)_/_18%,transparent)]"
+                   border border-[color-mix(in_srgb,var(--text-primary)_/_18%,transparent)]
+                   bg-[color-mix(in_srgb,var(--bg-regular)_/_70%,transparent)]
+                   hover:border-[color-mix(in_srgb,var(--text-primary)_/_28%,transparent)]
+                   hover:bg-[color-mix(in_srgb,var(--bg-elevated)_/_90%,transparent)] transition-colors"
           >
             Open Explorer
             <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 1 0 .001 20.001A10 10 0 0 0 12 2m6.92 6h-5.01l-2 3.5l2.75 4.77l4.26-7.27zM11 7l-2 3.5H5.08A8 8 0 0 1 11 7m-5.84 10A7.96 7.96 0 0 1 4 12c0-.34.03-.67.08-1h4.91l2 3.5L8.24 17H5.16zM12 20a8 8 0 0 1-1-.07l2.76-4.73L18.84 17A8 8 0 0 1 12 20"/></svg>
@@ -85,7 +93,8 @@ const docsHref = links?.docs?.home ?? docsUrl ?? "/docs";
           <a
             href={docsHref}
             class="inline-flex items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium
-                   opacity-90 hover:opacity-100"
+                   text-[color-mix(in_srgb,var(--text-primary),#fff_10%)]
+                   hover:text-[var(--text-primary)] transition-colors"
           >
             Read Docs
           </a>
@@ -93,15 +102,15 @@ const docsHref = links?.docs?.home ?? docsUrl ?? "/docs";
       </div>
 
       <!-- quick blurb / snippet -->
-      <div class="mt-8 rounded-lg border text-xs overflow-hidden
-                  border-[color-mix(in_srgb,var(--text-primary)_/_14%,transparent)]">
+      <div class="mt-8 rounded-xl border text-xs overflow-hidden bg-[color-mix(in_srgb,var(--bg-elevated)_/_85%,transparent)]
+                  border-[color-mix(in_srgb,var(--text-primary)_/_14%,transparent)] shadow-[0_20px_55px_rgba(0,0,0,0.35)]">
         <div class="px-3 py-2 border-b border-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)] flex items-center gap-2">
-          <span class="size-2 rounded-full bg-rose-500"></span>
-          <span class="size-2 rounded-full bg-amber-500"></span>
+          <span class="size-2 rounded-full bg-[var(--brand-grad-from)]"></span>
+          <span class="size-2 rounded-full bg-[var(--brand-grad-to)]"></span>
           <span class="size-2 rounded-full bg-emerald-500"></span>
-          <span class="ml-2 opacity-70">Quickstart</span>
+          <span class="ml-2 opacity-80">Quickstart</span>
         </div>
-        <pre class="m-0 p-3 overflow-x-auto"><code>pip install omni-sdk  # Python
+        <pre class="m-0 p-3 overflow-x-auto text-[0.92rem] leading-relaxed"><code>pip install omni-sdk  # Python
 npx @animica/sdk@latest init
 # Then: deploy the Counter example from Studio</code></pre>
       </div>
