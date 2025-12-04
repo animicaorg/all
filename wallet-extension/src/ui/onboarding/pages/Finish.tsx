@@ -3,13 +3,16 @@ import React, { useEffect, useMemo, useState } from "react";
 type Props = {
   mode: "new" | "import";
   mnemonicPreview: string;
+  algo: "dilithium3" | "sphincs_shake_128s";
   pin: string;
   pin2: string;
   setPin: (v: string) => void;
   setPin2: (v: string) => void;
+  setAlgo: (v: "dilithium3" | "sphincs_shake_128s") => void;
   isBusy?: boolean;
   canFinish?: boolean;
   refreshToken?: number;
+  primaryAddress?: string;
   onFinish: () => void;
   onBack: () => void;
   onDone?: () => void; // fired when user clicks "Finish" (window may close)
@@ -45,9 +48,12 @@ export default function Finish({
   pin2,
   setPin,
   setPin2,
+  algo,
+  setAlgo,
   isBusy = false,
   canFinish = false,
   refreshToken = 0,
+  primaryAddress,
   onFinish,
   onBack,
   onDone,
@@ -85,6 +91,12 @@ export default function Finish({
       mounted = false;
     };
   }, [refreshToken]);
+
+  useEffect(() => {
+    if (primaryAddress) {
+      setAddress(primaryAddress);
+    }
+  }, [primaryAddress]);
 
   const addrDisplay = useMemo(() => shortAddr(address), [address]);
   const mnemonicPreviewShort = useMemo(() => shortAddr(mnemonicPreview, 10), [mnemonicPreview]);
@@ -161,6 +173,30 @@ export default function Finish({
         Recovery phrase preview: <code>{mnemonicPreviewShort || "…"}</code> (store it safely — not saved by default).
       </p>
 
+      <div className="field">
+        <label className="lbl">Signature algorithm</label>
+        <div className="radio-row">
+          <label className={"radio" + (algo === "dilithium3" ? " checked" : "")}>
+            <input
+              type="radio"
+              name="algo"
+              checked={algo === "dilithium3"}
+              onChange={() => setAlgo("dilithium3")}
+            />
+            Dilithium3 (default)
+          </label>
+          <label className={"radio" + (algo === "sphincs_shake_128s" ? " checked" : "")}>
+            <input
+              type="radio"
+              name="algo"
+              checked={algo === "sphincs_shake_128s"}
+              onChange={() => setAlgo("sphincs_shake_128s")}
+            />
+            SPHINCS+-SHAKE-128s
+          </label>
+        </div>
+      </div>
+
       <div className="ob-actions">
         <button className="btn" onClick={onBack} disabled={isBusy}>
           Back
@@ -231,6 +267,9 @@ const css = `
 .pw-row { display: flex; gap: 8px; }
 .bad { border-color: #e53935; background: #fff6f6; }
 .msg { color: #b00020; }
+.radio-row { display: flex; gap: 12px; flex-wrap: wrap; }
+.radio { display: inline-flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 999px; border: 1px solid var(--border, #ddd); }
+.radio.checked { border-color: #666; }
 .check {
   width: 40px; height: 40px; border-radius: 50%;
   display: grid; place-items: center;
