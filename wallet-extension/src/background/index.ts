@@ -13,6 +13,8 @@
 /* eslint-disable no-console */
 
 import * as migrations from './migrations';
+import keyring from './keyring';
+import { loadVaultEnvelope } from './keyring/storage';
 import { createRouter } from './router';
 
 // Some bundlers inject small helpers (e.g. modulepreload) that expect a `window`
@@ -48,6 +50,54 @@ function getRouter(): Promise<Router> {
     _routerPromise = Promise.resolve(createRouter());
   }
   return _routerPromise;
+}
+
+async function maybeHandleLegacyMessage(
+  msg: any,
+  sendResponse: (resp: unknown) => void,
+): Promise<boolean> {
+  if (!msg || typeof msg !== 'object') return false;
+
+  if (msg.kind === 'accounts:list') {
+    await keyring.init();
+    const accounts = await keyring.listAccounts();
+    const selected = await keyring.getSelected();
+    const locked = await keyring.isLocked();
+    sendResponse({
+      ok: true,
+      accounts: accounts.map((a) => ({ address: a.address, name: a.label, algo: (a as any).algo ?? (a as any).alg, path: a.path })),
+      selected: selected?.address,
+      locked,
+    });
+    return true;
+  }
+
+  if (msg.kind === 'accounts:select') {
+    await keyring.init();
+    const accounts = await keyring.listAccounts();
+    const acct = accounts.find((a) => a.address === msg.address);
+    if (!acct) {
+      sendResponse({ ok: false, error: 'Account not found' });
+      return true;
+    }
+    await keyring.selectAccount(acct.id);
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (msg.type === 'vault.export') {
+    const envelope = await loadVaultEnvelope();
+    if (!envelope) {
+      sendResponse({ ok: false, error: 'No vault data to export yet.' });
+      return true;
+    }
+    const json = JSON.stringify(envelope, null, 2);
+    const dataUrl = `data:application/json,${encodeURIComponent(json)}`;
+    sendResponse({ ok: true, dataUrl, fileName: 'animica-vault.json' });
+    return true;
+  }
+
+  return false;
 }
 
 // Schedule default alarms (idempotent: re-creates with same name)
@@ -111,6 +161,9 @@ chrome.runtime.onStartup?.addListener(async () => {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
+      const handled = await maybeHandleLegacyMessage(msg, sendResponse);
+      if (handled) return;
+
       const r = await getRouter();
       const res = await r.handleMessage(msg, sender);
       sendResponse({ ok: true, result: res });
