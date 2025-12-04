@@ -39,13 +39,16 @@ export default defineConfig(({ mode }) => ({
         // Non-HTML entries (built as chunks for MV3 manifest)
         background: path.resolve(__dirname, "src/background/index.ts"),
         content_inject: path.resolve(__dirname, "src/content/inject.ts"),
-        content_bridge: path.resolve(__dirname, "src/content/bridge.ts")
+        content_bridge: path.resolve(__dirname, "src/content/bridge.ts"),
+        provider: path.resolve(__dirname, "src/provider/index.ts"),
       },
       output: {
         // Keep stable, readable paths for MV3 references
         entryFileNames: (chunk) => {
-          if (chunk.name === "background") return "background/[name].js";
-          if (chunk.name?.startsWith("content_")) return "content/[name].js";
+          if (chunk.name === "background") return "background.js";
+          if (chunk.name === "content_bridge") return "content/bridge.js";
+          if (chunk.name === "content_inject") return "content/inject.js";
+          if (chunk.name === "provider") return "provider.js";
           // HTML page scripts get hashed; they’re referenced by the HTML itself
           return "assets/[name]-[hash].js";
         },
