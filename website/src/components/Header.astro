@@ -97,7 +97,7 @@ const activePath = Astro.url.pathname;
   <!-- Client-side: tiny JSON-RPC ping to show online/offline/lagging status -->
   <script>
     (function () {
-      const rpc = ${JSON.stringify(rpcUrl)};
+      const rpc = rpcUrl;
       if (!rpc) return;
 
       const dot = document.querySelector("[data-network-pill] [data-dot]");
