@@ -186,14 +186,14 @@ async function maybeHandleLegacyMessage(
 
   if (msg.kind === 'keyring.setupVault' || msg.type === 'keyring.setupVault') {
     const pin = msg.pin ?? msg.password ?? '';
-    await keyring.importMnemonic({
+    const { account } = await keyring.importMnemonic({
       mnemonic: msg.mnemonic,
       password: pin,
       storeMnemonic: true,
       initialAlg: msg.algo ?? msg.initialAlg,
     });
     await notifyAccountsChanged();
-    sendResponse({ ok: true });
+    sendResponse({ ok: true, result: { address: account?.address ?? '' } });
     return true;
   }
 
