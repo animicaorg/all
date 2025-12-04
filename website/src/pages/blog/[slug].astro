@@ -8,19 +8,34 @@ const modMap = import.meta.glob("./**/*.{md,mdx}", { eager: true });
 
 // Normalize into an index: slug → { frontmatter, Content }
 type Entry = { slug: string; frontmatter: Record<string, any>; Content: any };
-const entries = Object.entries(modMap)
-  .map(([path, mod]: [string, any]) => {
-    const slug = path.replace("./", "").replace(/\.(md|mdx)$/, "");
-    if (slug.includes("/")) return null; // restrict to top-level posts for this [slug] route
-    const Content = mod.default ?? mod.Content;
-    const frontmatter = mod.frontmatter ?? {};
-    return { slug, frontmatter, Content } as Entry;
-  })
-  .filter(Boolean) as Entry[];
+
+function toEntries(map: Record<string, any>): Entry[] {
+  return Object.entries(map)
+    .map(([path, mod]: [string, any]) => {
+      const slug = path.replace("./", "").replace(/\.(md|mdx)$/, "");
+      if (slug.includes("/")) return null; // restrict to top-level posts for this [slug] route
+      const Content = mod.default ?? mod.Content;
+      const frontmatter = mod.frontmatter ?? {};
+      return { slug, frontmatter, Content } as Entry;
+    })
+    .filter(Boolean) as Entry[];
+}
+
+const entries = toEntries(modMap);
 
 // Generate static paths at build time
 export function getStaticPaths() {
-  return entries.map(({ slug, frontmatter }) => ({
+  const map = import.meta.glob("./**/*.{md,mdx}", { eager: true });
+  const paths = Object.entries(map)
+    .map(([path, mod]: [string, any]) => {
+      const slug = path.replace("./", "").replace(/\.(md|mdx)$/i, "");
+      if (slug.includes("/")) return null;
+      const frontmatter = (mod as any).frontmatter ?? {};
+      return { slug, frontmatter };
+    })
+    .filter(Boolean) as { slug: string; frontmatter: Record<string, any> }[];
+
+  return paths.map(({ slug, frontmatter }) => ({
     params: { slug },
     props: { slug, frontmatter },
   }));

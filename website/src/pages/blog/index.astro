@@ -3,15 +3,19 @@ import BaseLayout from "../../layouts/BaseLayout.astro";
 import InlineLink from "../../components/InlineLink.astro";
 
 // Discover all MD/MDX blog posts located under this directory (excluding this index page)
-const all = await Astro.glob("./**/*.{md,mdx}");
+const modMap = import.meta.glob("./**/*.{md,mdx}", { eager: true });
 
-// Filter out any accidental matches that point to the index route itself
-const posts = all
-  .filter((p) => p.url && !/\/blog\/?$/.test(p.url))
-  .map((p) => ({
-    url: p.url,
-    frontmatter: p.frontmatter ?? {},
-  }))
+// Normalize to a simple array of { url, frontmatter }
+const posts = Object.entries(modMap)
+  .map(([path, mod]: [string, any]) => {
+    const slug = path.replace("./", "").replace(/\.(md|mdx)$/i, "");
+    if (!slug || slug.includes("/")) return null; // keep top-level posts only
+    return {
+      url: `/blog/${slug}`,
+      frontmatter: (mod as any).frontmatter ?? {},
+    };
+  })
+  .filter(Boolean)
   // Sort newest first by frontmatter.date (ISO or yyyy-mm-dd). Fallback to epoch 0.
   .sort((a, b) => {
     const da = new Date(a.frontmatter.date ?? 0).getTime();

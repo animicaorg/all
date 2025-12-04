@@ -1,22 +1,11 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
-import InlineLink from "../components/InlineLink.astro";
+import MilestoneCard from "../components/MilestoneCard.astro";
+import type { Milestone } from "../types/roadmap";
 
 const pageTitle = "Roadmap — milestones & status";
 const pageDesc =
   "High-level milestones pulled from the project board (NOW/NEXT/LATER/Done). Set PUBLIC_ROADMAP_URL to override at runtime.";
-
-// Minimal milestone typing for build-time defaults
-type Milestone = {
-  id: string;
-  title: string;
-  status: "NOW" | "NEXT" | "LATER" | "DONE";
-  quarter?: string;      // e.g., "2025Q4"
-  summary?: string;
-  progress?: number;     // 0..100
-  tags?: string[];
-  links?: { label: string; href: string }[];
-};
 
 // Build-time fallback list (edit freely). At runtime we can override via PUBLIC_ROADMAP_URL JSON.
 const defaults: Milestone[] = [
@@ -126,7 +115,7 @@ const ROADMAP_URL = import.meta.env.PUBLIC_ROADMAP_URL as string | undefined;
           <p class="text-xs opacity-70">Actively in progress</p>
         </div>
         <div class="p-4 space-y-4" data-col="NOW">
-          {groups.NOW.map((m) => <MilestoneCard {...m} />)}
+          {groups.NOW.map((m) => <MilestoneCard milestone={m} />)}
         </div>
       </div>
 
@@ -138,7 +127,7 @@ const ROADMAP_URL = import.meta.env.PUBLIC_ROADMAP_URL as string | undefined;
           <p class="text-xs opacity-70">Up next on deck</p>
         </div>
         <div class="p-4 space-y-4" data-col="NEXT">
-          {groups.NEXT.map((m) => <MilestoneCard {...m} />)}
+          {groups.NEXT.map((m) => <MilestoneCard milestone={m} />)}
         </div>
       </div>
 
@@ -150,7 +139,7 @@ const ROADMAP_URL = import.meta.env.PUBLIC_ROADMAP_URL as string | undefined;
           <p class="text-xs opacity-70">Planned / exploration</p>
         </div>
         <div class="p-4 space-y-4" data-col="LATER">
-          {groups.LATER.map((m) => <MilestoneCard {...m} />)}
+          {groups.LATER.map((m) => <MilestoneCard milestone={m} />)}
         </div>
       </div>
 
@@ -162,7 +151,7 @@ const ROADMAP_URL = import.meta.env.PUBLIC_ROADMAP_URL as string | undefined;
           <p class="text-xs opacity-70">Shipped</p>
         </div>
         <div class="p-4 space-y-4" data-col="DONE">
-          {groups.DONE.map((m) => <MilestoneCard {...m} />)}
+          {groups.DONE.map((m) => <MilestoneCard milestone={m} />)}
         </div>
       </div>
     </div>
@@ -181,9 +170,9 @@ const ROADMAP_URL = import.meta.env.PUBLIC_ROADMAP_URL as string | undefined;
 
   <!-- Client override loader: fetch PUBLIC_ROADMAP_URL JSON and replace lists -->
   <script is:inline>
-    (function () {
-      const FEED = ROADMAP_URL ?? "";
-      if (!FEED) return;
+      (function () {
+        const FEED = {JSON.stringify(ROADMAP_URL ?? "")};
+        if (!FEED) return;
 
       const col = (name) => document.querySelector(`[data-col="${name}"]`);
       const cols = { NOW: col("NOW"), NEXT: col("NEXT"), LATER: col("LATER"), DONE: col("DONE") };
@@ -263,47 +252,3 @@ const ROADMAP_URL = import.meta.env.PUBLIC_ROADMAP_URL as string | undefined;
   </script>
 </BaseLayout>
 
-<!-- Milestone card partial (server-rendered for defaults) -->
----
-function MilestoneCard(m: Milestone) {
-  const prog = Number.isFinite(m.progress) ? Math.min(100, Math.max(0, m.progress!)) : null;
-  return (
-    <div class="rounded-xl border p-4 bg-[var(--bg-raised)]
-                border-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)]">
-      <div class="flex items-start justify-between gap-3">
-        <div>
-          <h3 class="text-sm font-semibold tracking-tight">{m.title}</h3>
-          <p class="text-xs opacity-70 mt-0.5">{m.quarter}</p>
-        </div>
-        {m?.tags?.length ? (
-          <div class="flex flex-wrap gap-1 justify-end">
-            {m.tags!.map((t) => (
-              <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] border
-                           border-[color-mix(in_srgb,var(--text-primary)_/_16%,transparent)] opacity-80">{t}</span>
-            ))}
-          </div>
-        ) : null}
-      </div>
-
-      {m.summary ? <p class="mt-2 text-sm opacity-90">{m.summary}</p> : null}
-
-      {prog !== null ? (
-        <div class="mt-3">
-          <div class="h-1.5 rounded-full bg-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)] overflow-hidden">
-            <div class="h-1.5 rounded-full" style={{ width: prog + "%", background: "color-mix(in srgb, var(--text-primary) 65%, transparent)" }} />
-          </div>
-          <p class="text-[11px] opacity-70 mt-1">{prog}%</p>
-        </div>
-      ) : null}
-
-      {m?.links?.length ? (
-        <div class="mt-3 flex flex-wrap gap-2">
-          {m.links!.map((l) => (
-            <InlineLink href={l.href} underline>{l.label}</InlineLink>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
----
