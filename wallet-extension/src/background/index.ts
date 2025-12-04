@@ -120,6 +120,15 @@ async function maybeHandleLegacyMessage(
     return true;
   }
 
+  if (msg.type === 'keyring/getPrimaryAddress' || msg.kind === 'keyring.getPrimaryAddress') {
+    await keyring.init();
+    const selected = await keyring.getSelected();
+    const all = await keyring.listAccounts();
+    const primary = selected ?? all[0];
+    sendResponse({ ok: true, result: { address: primary?.address ?? '' } });
+    return true;
+  }
+
   if (msg.type === 'vault.export') {
     const envelope = await loadVaultEnvelope();
     if (!envelope) {
