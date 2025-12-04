@@ -12,6 +12,7 @@
 ///   treasuryMultiplier = 1.0 + (percentSold / curve)
 
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 
 const double _basePrice = 1.00; // USD
@@ -260,5 +261,3 @@ class PricingEngine {
   }
 }
 
-// Use dart:math for sqrt if not imported
-import 'dart:math' as math;

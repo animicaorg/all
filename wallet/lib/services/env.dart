@@ -42,6 +42,7 @@ class Env {
     required this.rpcWs,
     required this.chainId,
     required this.featureFlags,
+    this.sentryDsn,
     required this.userAgent,
   });
 

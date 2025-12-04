@@ -13,7 +13,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../state/providers.dart';
 import '../../services/payment_gateway.dart';
-import '../../widgets/loading_overlay.dart';
+import '../../widgets/chart_widget.dart';
 
 class BuyAnmPage extends ConsumerStatefulWidget {
   const BuyAnmPage({Key? key}) : super(key: key);

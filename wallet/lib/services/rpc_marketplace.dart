@@ -7,8 +7,8 @@
 /// - Purchase history
 /// - Pricing calculations
 
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
-import 'pricing_engine.dart';
 
 /// RPC method call wrapper with error handling
 class RpcClient {
@@ -133,7 +133,7 @@ class RpcClient {
 
     // Step 3: Calculate treasury multiplier
     final treasuryMultiplier =
-        1.0 + 2.0 * (percentSold / 100.0).sqrt();
+        1.0 + 2.0 * math.sqrt(percentSold / 100.0);
 
     // Step 4: Final price
     final finalPrice = effectiveExchangePrice * treasuryMultiplier;

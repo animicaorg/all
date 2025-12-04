@@ -242,7 +242,7 @@ class PaymentMethodOption {
 
 /// Stats card row
 class StatsRow extends StatelessWidget {
-  final List<StatsCard> stats;
+  final List<StatsCardModel> stats;
 
   const StatsRow({
     Key? key,

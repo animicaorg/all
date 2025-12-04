@@ -29,7 +29,7 @@ final List<RouteBase> marketplaceRoutes = [
         path: 'buy',
         name: 'buy_anm',
         pageBuilder: (context, state) => CustomTransitionPage<void>(
-          child: const BuyANMPage(),
+          child: const BuyAnmPage(),
           transitionsBuilder: (context, animation, secondaryAnimation, child) {
             return SlideTransition(
               position: animation.drive(
