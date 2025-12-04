@@ -44,6 +44,8 @@ const PUBLIC_DIR = path.join(ROOT, "public");
 const DIST = path.join(ROOT, BROWSER === "chrome" ? "dist-chrome" : "dist-firefox");
 const MANIFEST_BASE = path.join(ROOT, "manifest.base.json");
 
+const HTML_PAGES = ["popup.html", "onboarding.html", "approve.html"];
+
 const wsClients = new Set<WebSocket>();
 
 async function writeManifest() {
@@ -77,6 +79,7 @@ async function main() {
   // 3) Start Vite in watch mode targeting the chosen browser
   await startViteWatch(BROWSER, async () => {
     await writeManifest();
+    await syncBuiltHtmlToRoot();
     await writeDevReloadJS();
     await injectReloadScriptTags();
     broadcastReload();
@@ -186,7 +189,7 @@ async function copyPublicToDist() {
   if (!fssync.existsSync(PUBLIC_DIR)) return;
   await copyDir(PUBLIC_DIR, DIST);
   await Promise.all(
-    ["popup.html", "onboarding.html", "approve.html"].map(async (html) => {
+    HTML_PAGES.map(async (html) => {
       const p = path.join(DIST, html);
       if (fssync.existsSync(p)) await maybeInjectInto(p);
     })
@@ -212,6 +215,21 @@ function watchManifestBase(onChange: () => void | Promise<void>) {
   chokidar.watch(MANIFEST_BASE, { ignoreInitial: true }).on("change", () => {
     void onChange();
   });
+}
+
+async function syncBuiltHtmlToRoot() {
+  const builtDir = path.join(DIST, "public");
+
+  await Promise.all(
+    HTML_PAGES.map(async (html) => {
+      const builtPath = path.join(builtDir, html);
+      const targetPath = path.join(DIST, html);
+      if (!fssync.existsSync(builtPath)) return;
+
+      await ensureDir(path.dirname(targetPath));
+      await fs.copyFile(builtPath, targetPath);
+    })
+  );
 }
 
 async function writeDevReloadJS() {
@@ -242,10 +260,22 @@ async function writeDevReloadJS() {
 }
 
 async function injectReloadScriptTags() {
-  const files = await fs.readdir(DIST).catch(() => []);
-  for (const f of files) {
-    if (!f.endsWith(".html")) continue;
-    await maybeInjectInto(path.join(DIST, f));
+  const candidates = new Set<string>();
+
+  for (const html of HTML_PAGES) {
+    candidates.add(path.join(DIST, html));
+    candidates.add(path.join(DIST, "public", html));
+  }
+
+  const rootFiles = await fs.readdir(DIST).catch(() => []);
+  for (const f of rootFiles) {
+    if (f.endsWith(".html")) {
+      candidates.add(path.join(DIST, f));
+    }
+  }
+
+  for (const html of candidates) {
+    await maybeInjectInto(html);
   }
 }
 

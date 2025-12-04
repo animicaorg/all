@@ -21,6 +21,7 @@ const PUBLIC_DIR = path.join(ROOT, "public");
 const DIST_CHROME = path.join(ROOT, "dist-chrome");
 const DIST_FIREFOX = path.join(ROOT, "dist-firefox");
 const DIST_MANIFESTS_DIR = path.join(ROOT, "dist-manifests");
+const HTML_PAGES = ["popup.html", "onboarding.html", "approve.html"];
 
 async function main() {
   banner("Animica Wallet — build");
@@ -58,11 +59,13 @@ async function main() {
     outDir: DIST_CHROME,
     env: { BROWSER: "chrome" },
   });
+  await syncBuiltHtml(DIST_CHROME);
   await runViteBuild({
     mode: "firefox",
     outDir: DIST_FIREFOX,
     env: { BROWSER: "firefox" },
   });
+  await syncBuiltHtml(DIST_FIREFOX);
 
   // Drop generated manifests into each built bundle root.
   await writePrettyJson(path.join(DIST_CHROME, "manifest.json"), chromeManifest);
@@ -103,6 +106,20 @@ async function runViteBuild(opts: {
     cwd: ROOT,
     env: { ...process.env, ...(opts.env || {}) },
   });
+}
+
+async function syncBuiltHtml(outDir: string) {
+  const builtDir = path.join(outDir, "public");
+
+  await Promise.all(
+    HTML_PAGES.map(async (html) => {
+      const built = path.join(builtDir, html);
+      const target = path.join(outDir, html);
+      if (!fssync.existsSync(built)) return;
+
+      await fs.copyFile(built, target);
+    })
+  );
 }
 
 // ───────────────────────────────────────────────────────────────────────────────
