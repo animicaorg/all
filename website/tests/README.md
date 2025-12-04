@@ -99,7 +99,7 @@ src/
     format.ts
     format.test.ts
   components/
-    StatusBadge.tsx
+    StatusBadge.astro
     StatusBadge.test.tsx
 
 

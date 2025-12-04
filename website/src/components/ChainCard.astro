@@ -15,7 +15,7 @@
  *   <ChainCard chainId={1} name="Animica Mainnet" rpc="https://rpc.animica.org" explorer="https://explorer.animica.org" />
  */
 
-import StatusBadge from "./StatusBadge.tsx";
+import StatusBadge from "./StatusBadge.astro";
 import { explorerUrl } from "../env";
 
 interface Props {
@@ -62,7 +62,7 @@ const prettyRpc = rpc.replace(/^https?:\/\//, "");
     </div>
     {showStatus && (
       <div class="ml-auto">
-        <StatusBadge client:load rpcUrl={rpc} size="sm" />
+        <StatusBadge rpcUrl={rpc} size="sm" />
       </div>
     )}
   </header>
