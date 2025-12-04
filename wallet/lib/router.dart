@@ -124,10 +124,16 @@ GoRouter createRouter(Env env, {String flavor = 'dev'}) {
     routes: <RouteBase>[
       // Onboarding flow
       GoRoute(
-        path: Routes.onboardingWelcome,
-        name: 'onboarding_welcome',
-        builder: (ctx, st) => const WelcomePage(),
+        path: Routes.onboardingRoot,
+        redirect: (_, st) =>
+            st.matchedLocation == Routes.onboardingRoot ? Routes.onboardingWelcome : null,
+        builder: (ctx, st) => const SizedBox.shrink(),
         routes: [
+          GoRoute(
+            path: 'welcome',
+            name: 'onboarding_welcome',
+            builder: (ctx, st) => const WelcomePage(),
+          ),
           GoRoute(
             path: 'create',
             name: 'onboarding_create',
