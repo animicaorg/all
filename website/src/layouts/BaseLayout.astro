@@ -102,21 +102,23 @@ const jsonLdPayload = Array.isArray(jsonLd) ? jsonLd : (jsonLd ? [jsonLd] : []);
   </head>
 
   <body class={`theme tokens ${bodyClass}`}>
-    <a href="#main" class="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 bg-[var(--bg-elevated)] text-[var(--text-primary)] px-3 py-2 rounded">
-      Skip to content
-    </a>
+    <div class="page-shell">
+      <a href="#main" class="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 bg-[var(--bg-elevated)] text-[var(--text-primary)] px-3 py-2 rounded">
+        Skip to content
+      </a>
 
-    <header id="site-header">
-      <slot name="header" />
-    </header>
+      <header id="site-header">
+        <slot name="header" />
+      </header>
 
-    <main id="main" tabindex="-1">
-      <slot />
-    </main>
+      <main id="main" tabindex="-1">
+        <slot />
+      </main>
 
-    <footer id="site-footer">
-      <slot name="footer" />
-    </footer>
+      <footer id="site-footer">
+        <slot name="footer" />
+      </footer>
+    </div>
 
     <!-- Example analytics hook (opt-in). Uncomment & configure if desired.
     <script type="module">
