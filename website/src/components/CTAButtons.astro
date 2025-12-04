@@ -39,8 +39,10 @@ const justify =
     href={studioHref}
     class={`inline-flex items-center justify-center gap-2 rounded-md font-medium
             ${sizeCls}
-            bg-white text-black hover:opacity-95 active:opacity-90
-            dark:bg-[var(--text-primary)] dark:text-[var(--bg-regular)]`}
+            bg-gradient-to-r from-[var(--brand-grad-from)] to-[var(--brand-grad-to)]
+            text-[var(--color-accent-contrast)] shadow-[0_10px_35px_rgba(32,67,255,0.25)]
+            hover:shadow-[0_12px_40px_rgba(32,150,255,0.28)] active:translate-y-[0.5px]
+            dark:text-[var(--color-accent-contrast)]`}
     aria-label="Open Studio"
   >
     Open Studio
@@ -54,8 +56,11 @@ const justify =
       href={explorerHref}
       class={`inline-flex items-center justify-center gap-2 rounded-md font-medium
               ${sizeCls}
-              border hover:bg-[var(--bg-elevated)]
-              border-[color-mix(in_srgb,var(--text-primary)_/_18%,transparent)]`}
+              border border-[color-mix(in_srgb,var(--text-primary)_/_18%,transparent)]
+              bg-[color-mix(in_srgb,var(--bg-regular)_/_70%,transparent)]
+              hover:border-[color-mix(in_srgb,var(--text-primary)_/_28%,transparent)]
+              hover:bg-[color-mix(in_srgb,var(--bg-elevated)_/_90%,transparent)]
+              transition-colors`}
       aria-label="Open Explorer"
     >
       Open Explorer
@@ -70,7 +75,8 @@ const justify =
       href={docsHref}
       class={`inline-flex items-center justify-center gap-2 rounded-md font-medium
               ${sizeCls}
-              opacity-90 hover:opacity-100`}
+              text-[color-mix(in_srgb,var(--text-primary),#fff_10%)]
+              hover:text-[var(--text-primary)] transition-colors`}
       aria-label="Read Docs"
     >
       Read Docs
