@@ -241,6 +241,15 @@ importers:
       astro:
         specifier: ^4.12.0
         version: 4.16.19(@types/node@20.19.24)(rollup@4.52.5)(typescript@5.9.3)
+      prismjs:
+        specifier: ^1.30.0
+        version: 1.30.0
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      react-dom:
+        specifier: ^18.3.1
+        version: 18.3.1(react@18.3.1)
     devDependencies:
       '@astrojs/tailwind':
         specifier: ^5.1.0
@@ -251,6 +260,12 @@ importers:
       '@playwright/test':
         specifier: ^1.49.0
         version: 1.56.1
+      '@types/react':
+        specifier: ^18.3.0
+        version: 18.3.26
+      '@types/react-dom':
+        specifier: ^18.3.0
+        version: 18.3.7(@types/react@18.3.26)
       '@typescript-eslint/eslint-plugin':
         specifier: ^8.3.0
         version: 8.46.3(@typescript-eslint/parser@8.46.3(eslint@9.39.1(jiti@1.21.7))(typescript@5.9.3))(eslint@9.39.1(jiti@1.21.7))(typescript@5.9.3)
