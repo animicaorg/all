@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import env from "../env";
+import { rpcUrl as defaultRpcUrl } from "../env";
 
 /**
  * StatusBadge — RPC health indicator (healthy / degraded / offline)
@@ -95,7 +95,7 @@ export default function StatusBadge({
   size = "md",
   onStatusChange,
 }: Props) {
-  const URL = rpcUrl || env.PUBLIC_RPC_URL || "/rpc";
+  const URL = rpcUrl || defaultRpcUrl || "/rpc";
   const thresholds = { ...DEFAULT_THRESHOLDS, ...(userThresh || {}) };
 
   const [status, setStatus] = useState<RpcHealth>("offline");

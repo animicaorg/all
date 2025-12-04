@@ -1,11 +1,11 @@
 ---
 import site from "../config/site";
 import links from "../config/links";
-import env from "../env";
+import { docsUrl, explorerUrl, studioUrl } from "../env";
 
-const studioHref = links?.studio?.home ?? env.PUBLIC_STUDIO_URL ?? "/studio";
-const explorerHref = links?.explorer?.home ?? "/explorer";
-const docsHref = links?.docs?.home ?? env.PUBLIC_DOCS_URL ?? "/docs";
+const studioHref = links?.studio?.home ?? studioUrl ?? "/studio";
+const explorerHref = links?.explorer?.home ?? explorerUrl ?? "/explorer";
+const docsHref = links?.docs?.home ?? docsUrl ?? "/docs";
 const githubHref = site?.links?.github ?? "https://github.com/animica";
 
 const year = new Date().getFullYear();
