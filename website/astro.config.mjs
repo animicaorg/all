@@ -5,7 +5,6 @@ import sitemap from '@astrojs/sitemap';
 import tailwind from '@astrojs/tailwind';
 // Optional: generates robots.txt from policy.
 // If you haven't added it yet, run: pnpm add -D @astrojs/robots
-import robots from '@astrojs/robots';
 
 // Resolve site URL (required for sitemap & absolute OG tags)
 const SITE_URL = process.env.SITE_URL?.replace(/\/+$/, '') || 'https://animica.org';
@@ -30,14 +29,6 @@ export default defineConfig({
     sitemap({
       filter: (page) => !page.includes('/drafts/'), // skip drafts if any
       i18n: false,
-    }),
-    robots({
-      host: SITE_URL,
-      sitemap: `${SITE_URL}/sitemap-index.xml`,
-      policy: [
-        { userAgent: '*', allow: '/' },
-        { userAgent: '*', disallow: ['/admin', '/api/private'] },
-      ],
     }),
   ],
 
