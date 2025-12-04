@@ -1,0 +1,11 @@
+{
+  "name": "dotenv",
+  "version": "0.0.0-local",
+  "type": "module",
+  "main": "lib/main.js",
+  "exports": {
+    ".": "./lib/main.js",
+    "./config": "./config.js",
+    "./package.json": "./package.json"
+  }
+}
