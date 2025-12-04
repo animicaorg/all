@@ -139,42 +139,55 @@ function wireOnMessage() {
   });
 }
 
+function handlePortConnection(port: chrome.runtime.Port) {
+  const name = port.name || 'default';
+  const set = livePorts.get(name) ?? new Set<chrome.runtime.Port>();
+  set.add(port);
+  livePorts.set(name, set);
+
+  const ctxBase = buildCtx((port as any).sender ?? { tab: undefined } as chrome.runtime.MessageSender);
+
+  port.onMessage.addListener(async (msg: BgRequest) => {
+    const handlers = portHandlers.get(name) ?? [];
+    if (!handlers.length) {
+      port.postMessage(err(`No port handlers for "${name}"`));
+      return;
+    }
+    const ctx = { ...ctxBase, sender: (port as any).sender ?? ({} as chrome.runtime.MessageSender) };
+    for (const h of handlers) {
+      try {
+        const out = await h(msg, port, ctx);
+        if (out !== undefined) {
+          port.postMessage(ok(out));
+        }
+      } catch (e: any) {
+        port.postMessage(err(e?.message ?? 'Port handler error'));
+      }
+    }
+  });
+
+  port.onDisconnect.addListener(() => {
+    const s = livePorts.get(name);
+    if (s) s.delete(port);
+  });
+}
+
 function wireOnConnect() {
   chrome.runtime.onConnect.addListener((port) => {
-    const name = port.name || 'default';
-    const set = livePorts.get(name) ?? new Set<chrome.runtime.Port>();
-    set.add(port);
-    livePorts.set(name, set);
-
-    const ctxBase = buildCtx((port as any).sender ?? { tab: undefined } as chrome.runtime.MessageSender);
-
-    port.onMessage.addListener(async (msg: BgRequest) => {
-      const handlers = portHandlers.get(name) ?? [];
-      if (!handlers.length) {
-        port.postMessage(err(`No port handlers for "${name}"`));
-        return;
-      }
-      const ctx = { ...ctxBase, sender: (port as any).sender ?? ({} as chrome.runtime.MessageSender) };
-      for (const h of handlers) {
-        try {
-          const out = await h(msg, port, ctx);
-          if (out !== undefined) {
-            port.postMessage(ok(out));
-          }
-        } catch (e: any) {
-          port.postMessage(err(e?.message ?? 'Port handler error'));
-        }
-      }
-    });
-
-    port.onDisconnect.addListener(() => {
-      const s = livePorts.get(name);
-      if (s) s.delete(port);
-    });
+    handlePortConnection(port);
   });
 }
 
 /* ------------------------------- Bootstrap ------------------------------ */
+
+function ensureBuiltInRoutes() {
+  if (!routes.has('ping')) {
+    addRoute<undefined, { pong: true; version: string }>('ping', () => {
+      const version = chrome.runtime.getManifest().version ?? '0.0.0';
+      return { pong: true, version };
+    });
+  }
+}
 
 /**
  * Initialize the router exactly once. Safe to call multiple times.
@@ -184,13 +197,7 @@ export function initRouter() {
   if (wired) return;
   wired = true;
 
-  // Built-in health route
-  if (!routes.has('ping')) {
-    addRoute<undefined, { pong: true; version: string }>('ping', () => {
-      const version = chrome.runtime.getManifest().version ?? '0.0.0';
-      return { pong: true, version };
-    });
-  }
+  ensureBuiltInRoutes();
 
   wireOnMessage();
   wireOnConnect();
@@ -199,6 +206,31 @@ export function initRouter() {
   if (process.env.NODE_ENV !== 'production') {
     console.info('[router] initialized with routes:', Array.from(routes.keys()));
   }
+}
+
+/**
+ * Construct a Router compatible with the background service worker entry.
+ * It reuses the same routing tables but defers wiring to the caller.
+ */
+export function createRouter() {
+  ensureBuiltInRoutes();
+
+  return {
+    async handleMessage(msg: unknown, sender: chrome.runtime.MessageSender) {
+      const resp = await handleRequest(msg as BgRequest, sender);
+      if (!resp.ok) throw new Error(resp.error ?? 'Router error');
+      return resp.result;
+    },
+    handlePort(port: chrome.runtime.Port) {
+      handlePortConnection(port);
+    },
+    async onAlarm(_name: string) {
+      /* hook reserved for future alarm routes */
+    },
+    async onStartup() {
+      ensureBuiltInRoutes();
+    },
+  };
 }
 
 /* --------------------------------- Types -------------------------------- */
