@@ -122,4 +122,32 @@ export async function hkdfHex(opts: HKDFOpts): Promise<string> {
   return s;
 }
 
+/**
+ * Synchronous HKDF expand helper for small deterministic derivations.
+ *
+ * Uses a zero salt (per RFC 5869 recommendation) unless provided. This is
+ * intentionally synchronous for use in lightweight dev-only fallbacks where
+ * async/await is noisy and extract/expand operations are inexpensive.
+ */
+export function hkdfExpand(
+  ikm: Uint8Array | ArrayBuffer | number[],
+  info: Uint8Array | ArrayBuffer | number[] = new Uint8Array(0),
+  length: number,
+  salt?: Uint8Array | ArrayBuffer | number[],
+): Uint8Array {
+  const ikmU8 = toU8(ikm);
+  if (ikmU8.length === 0) throw new Error('hkdfExpand: ikm must be non-empty');
+
+  const L = length >>> 0;
+  if (!Number.isFinite(L) || L <= 0) throw new Error('hkdfExpand: length must be > 0');
+
+  const saltU8 = salt ? toU8(salt) : new Uint8Array(HASH_LEN);
+  const infoU8 = info ? toU8(info) : new Uint8Array(0);
+
+  const prk = extract(saltU8, ikmU8);
+  const okm = expand(prk, infoU8, L);
+  prk.fill(0);
+  return okm;
+}
+
 export const _internal = { HASH_LEN, extract, expand, toU8, concat };
