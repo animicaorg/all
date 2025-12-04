@@ -138,7 +138,7 @@ export function getDefaultNetworkId(): NetworkId {
 export function getNetwork(id: NetworkId): Network {
   const n = NETWORK_MAP[id];
   if (!n) {
-    throw new Error(\`Unknown network id: \${id}\`);
+    throw new Error(`Unknown network id: ${id}`);
   }
   return n;
 }
