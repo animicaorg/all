@@ -27,7 +27,10 @@ import '../services/da_client.dart';
 import '../services/aicf_client.dart';
 import '../services/randomness_client.dart';
 import '../services/light_client.dart';
-import '../services/rpc_marketplace.dart';
+import '../services/pricing_engine.dart' as pricing;
+import '../services/market_data_service.dart';
+import '../services/payment_gateway.dart';
+import '../services/rpc_marketplace.dart' as marketplace;
 
 /// ============ Base clients ============
 
@@ -83,12 +86,12 @@ final lightClientProvider = Provider<LightClient>((ref) {
 });
 
 /// Marketplace RPC client (for treasury/pricing data)
-final marketplaceRpcProvider = Provider<RpcClient>((ref) {
+final marketplaceRpcProvider = Provider<marketplace.RpcClient>((ref) {
   final baseUrl = const String.fromEnvironment(
     'MARKETPLACE_RPC_URL',
     defaultValue: 'http://127.0.0.1:8545',
   );
-  return RpcClient(baseUrl: baseUrl);
+  return marketplace.RpcClient(baseUrl: baseUrl);
 });
 
 /// ============ App state bits (examples) ============
@@ -247,13 +250,13 @@ final marketDataServiceProvider = Provider((ref) {
 
 /// Current market price
 final currentMarketPriceProvider =
-    FutureProvider<MarketPriceData>((ref) async {
+    FutureProvider<marketplace.MarketPriceData>((ref) async {
   final rpcClient = ref.watch(marketplaceRpcProvider);
   
   try {
     // Try to fetch from RPC marketplace methods
     final result = await rpcClient.call('explorer_getMarketData', {'token': 'ANM'});
-    return MarketPriceData.fromJson(result);
+    return marketplace.MarketPriceData.fromJson(result);
   } catch (e) {
     // Fallback to market data service
     final service = ref.watch(marketDataServiceProvider);
@@ -286,24 +289,25 @@ final priceHistoryProvider = FutureProvider<List<double>>((ref) async {
 });
 
 /// Stream of real-time price updates
-final priceUpdatesStreamProvider = StreamProvider<MarketPriceData>((ref) {
+final priceUpdatesStreamProvider =
+    StreamProvider<marketplace.MarketPriceData>((ref) {
   final service = ref.watch(marketDataServiceProvider);
   return service.priceUpdates;
 });
 
 /// Treasury snapshot (from blockchain/API)
 final treasurySnapshotProvider =
-    FutureProvider<TreasurySnapshot>((ref) async {
+    FutureProvider<marketplace.TreasurySnapshot>((ref) async {
   final rpcClient = ref.watch(marketplaceRpcProvider);
 
   try {
     // Fetch treasury state from RPC marketplace methods
     final result = await rpcClient.call('explorer_getTreasurySnapshot', {});
-    return TreasurySnapshot.fromJson(result);
+    return marketplace.TreasurySnapshot.fromJson(result);
   } catch (e) {
     debugPrint('Treasury snapshot RPC error: $e');
     // Fallback to sensible defaults
-    return TreasurySnapshot(
+    return marketplace.TreasurySnapshot(
       totalSupply: 1e10,
       soldToDate: 2.5e9,
       treasuryBalance: 7.5e9,
@@ -317,11 +321,12 @@ final treasurySnapshotProvider =
 });
 
 /// Pricing engine
-final pricingEngineProvider = FutureProvider((ref) async {
-  final marketPrice = await ref.watch(currentMarketPriceProvider).future;
-  final treasury = await ref.watch(treasurySnapshotProvider).future;
+final pricingEngineProvider =
+    FutureProvider<pricing.PricingEngine>((ref) async {
+  final marketPrice = await ref.watch(currentMarketPriceProvider.future);
+  final treasury = await ref.watch(treasurySnapshotProvider.future);
 
-  return PricingEngine(
+  return pricing.PricingEngine(
     initialTreasury: treasury,
     initialMarketPrice: marketPrice,
   );
@@ -329,38 +334,39 @@ final pricingEngineProvider = FutureProvider((ref) async {
 
 /// Current ANM price in USD
 final anmPriceProvider = FutureProvider<double>((ref) async {
-  final engine = await ref.watch(pricingEngineProvider).future;
+  final engine = await ref.watch(pricingEngineProvider.future);
   return engine.getCurrentPrice();
 });
 
 /// Pricing at specific percent sold
 final priceAtPercentSoldProvider =
     FutureProvider.family<double, double>((ref, percentSold) async {
-  final engine = await ref.watch(pricingEngineProvider).future;
+  final engine = await ref.watch(pricingEngineProvider.future);
   return engine.getPriceAtPercentSold(percentSold);
 });
 
 /// Current treasury revenue
 final treasuryRevenueProvider = FutureProvider<double>((ref) async {
-  final engine = await ref.watch(pricingEngineProvider).future;
+  final engine = await ref.watch(pricingEngineProvider.future);
   return engine.currentRevenue;
 });
 
 /// Price to reach $1B target
 final priceToReachTargetProvider = FutureProvider<double>((ref) async {
-  final engine = await ref.watch(pricingEngineProvider).future;
+  final engine = await ref.watch(pricingEngineProvider.future);
   return engine.priceToReachTarget;
 });
 
 /// Years to $1B target
 final yearsToTargetProvider = FutureProvider<double>((ref) async {
-  final engine = await ref.watch(pricingEngineProvider).future;
+  final engine = await ref.watch(pricingEngineProvider.future);
   return engine.yearsToTargetAtCurrentPrice;
 });
 
 /// End-of-year pricing simulation
-final eoySimulationProvider = FutureProvider<PricingSimulation>((ref) async {
-  final engine = await ref.watch(pricingEngineProvider).future;
+final eoySimulationProvider =
+    FutureProvider<pricing.PricingSimulation>((ref) async {
+  final engine = await ref.watch(pricingEngineProvider.future);
   return engine.simulateEndOfYear();
 });
 
@@ -421,7 +427,7 @@ class PurchaseStateNotifier extends StateNotifier<PurchaseState> {
     state = state.copyWith(isProcessing: true, errorMessage: null);
 
     try {
-      final price = await ref.watch(anmPriceProvider).future;
+      final price = await ref.watch(anmPriceProvider.future);
       final amountUsd = state.anmQuantity * price;
       final processor = ref.watch(paymentProcessorProvider);
 
@@ -559,7 +565,7 @@ final purchaseHistoryProvider =
 
 /// Total ANM balance from purchases
 final anmBalanceProvider = FutureProvider<double>((ref) async {
-  final history = await ref.watch(purchaseHistoryProvider).future;
+  final history = await ref.watch(purchaseHistoryProvider.future);
   return history.fold<double>(
     0,
     (sum, p) => p.status == 'completed' ? sum + p.anmQuantity : sum,
@@ -568,7 +574,7 @@ final anmBalanceProvider = FutureProvider<double>((ref) async {
 
 /// Total USD spent
 final totalSpentProvider = FutureProvider<double>((ref) async {
-  final history = await ref.watch(purchaseHistoryProvider).future;
+  final history = await ref.watch(purchaseHistoryProvider.future);
   return history.fold<double>(
     0,
     (sum, p) => p.status == 'completed' ? sum + p.usdAmount : sum,
@@ -577,8 +583,8 @@ final totalSpentProvider = FutureProvider<double>((ref) async {
 
 /// Average purchase price
 final averagePurchasePriceProvider = FutureProvider<double>((ref) async {
-  final balance = await ref.watch(anmBalanceProvider).future;
-  final spent = await ref.watch(totalSpentProvider).future;
+  final balance = await ref.watch(anmBalanceProvider.future);
+  final spent = await ref.watch(totalSpentProvider.future);
   return balance > 0 ? spent / balance : 0;
 });
 
@@ -605,11 +611,11 @@ class DashboardSummary {
 
 /// Comprehensive dashboard summary
 final dashboardSummaryProvider = FutureProvider<DashboardSummary>((ref) async {
-  final price = await ref.watch(anmPriceProvider).future;
-  final balance = await ref.watch(anmBalanceProvider).future;
-  final revenue = await ref.watch(treasuryRevenueProvider).future;
-  final yearsToTarget = await ref.watch(yearsToTargetProvider).future;
-  final marketPrice = await ref.watch(currentMarketPriceProvider).future;
+  final price = await ref.watch(anmPriceProvider.future);
+  final balance = await ref.watch(anmBalanceProvider.future);
+  final revenue = await ref.watch(treasuryRevenueProvider.future);
+  final yearsToTarget = await ref.watch(yearsToTargetProvider.future);
+  final marketPrice = await ref.watch(currentMarketPriceProvider.future);
 
   const targetRevenue = 1e9;
   final percentToTarget = (revenue / targetRevenue * 100).clamp(0, 100);
