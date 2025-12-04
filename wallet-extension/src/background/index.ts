@@ -17,6 +17,9 @@ import keyring from './keyring';
 import { loadVaultEnvelope, clearSession as clearKeyringSession } from './keyring/storage';
 import { generateMnemonic } from './keyring/mnemonic';
 import { createRouter } from './router';
+import { getRpcClient, listNetworks, selectNetworkByChainId } from './network/state';
+import type { Network } from './network/networks';
+import { RpcClient } from './network/rpc';
 
 // Some bundlers inject small helpers (e.g. modulepreload) that expect a `window`
 // global. The MV3 background runs in a worker context where `window` is absent,
@@ -53,11 +56,97 @@ function getRouter(): Promise<Router> {
   return _routerPromise;
 }
 
+function broadcast(msg: unknown) {
+  try {
+    chrome.runtime.sendMessage(msg);
+  } catch (err) {
+    console.warn('[bg] broadcast failed', err);
+  }
+}
+
+async function notifyAccountsChanged() {
+  try {
+    const accounts = await keyring.listAccounts();
+    const selected = await keyring.getSelected();
+    const payload = accounts.map((a) => ({
+      address: a.address,
+      name: a.label,
+      algo: (a as any).algo ?? (a as any).alg,
+      path: a.path,
+    }));
+
+    broadcast({ type: 'accounts/updated', accounts: payload, selected: selected?.address, locked: await keyring.isLocked() });
+    broadcast({ channel: 'animica', type: 'EVENT', event: 'accountsChanged', payload: payload.map((a) => a.address) });
+  } catch (err) {
+    console.warn('[bg] failed to broadcast accountsChanged', err);
+  }
+}
+
+async function notifyChainChanged(net?: Network) {
+  try {
+    const network = net ?? (await getRpcClient()).network;
+    const chainIdHex = `0x${network.chainId.toString(16)}`;
+    broadcast({ type: 'network/changed', chainId: network.chainId, name: network.name });
+    broadcast({ channel: 'animica', type: 'EVENT', event: 'chainChanged', payload: { chainId: chainIdHex, name: network.name } });
+  } catch (err) {
+    console.warn('[bg] failed to broadcast chainChanged', err);
+  }
+}
+
+async function fetchHead(client: RpcClient): Promise<any> {
+  const attempts = ['chain_getHead', 'animica_getHead', 'omni_getHead'];
+  let lastError: unknown;
+  for (const method of attempts) {
+    try {
+      return await client.call<any>(method);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  // As a last resort, try a health ping.
+  await client.health();
+  if (lastError) throw lastError;
+  return null;
+}
+
 async function maybeHandleLegacyMessage(
   msg: any,
   sendResponse: (resp: unknown) => void,
 ): Promise<boolean> {
   if (!msg || typeof msg !== 'object') return false;
+
+  // In-page provider bridge (content script → background)
+  if (msg.channel === 'animica' && msg.type === 'REQUEST') {
+    const { method, params } = msg.payload || {};
+    try {
+      const { client, network } = await getRpcClient();
+      if (method === 'animica_requestAccounts' || method === 'eth_requestAccounts' || method === 'wallet_requestPermissions') {
+        await keyring.init();
+        const accounts = await keyring.listAccounts();
+        const addrs = accounts.map((a) => a.address);
+        sendResponse({ ok: true, id: msg.id, result: addrs });
+        await notifyAccountsChanged();
+        return true;
+      }
+      if (method === 'animica_accounts' || method === 'eth_accounts') {
+        await keyring.init();
+        const accounts = await keyring.listAccounts();
+        sendResponse({ ok: true, id: msg.id, result: accounts.map((a) => a.address) });
+        return true;
+      }
+      if (method === 'animica_chainId' || method === 'eth_chainId') {
+        sendResponse({ ok: true, id: msg.id, result: `0x${network.chainId.toString(16)}` });
+        return true;
+      }
+
+      const result = await client.call(method, params as any);
+      sendResponse({ ok: true, id: msg.id, result });
+      return true;
+    } catch (err: any) {
+      sendResponse({ ok: false, id: msg.id, error: { message: err?.message ?? String(err), code: err?.code ?? err?.status } });
+      return true;
+    }
+  }
 
   if (msg.kind === 'accounts:list') {
     await keyring.init();
@@ -82,6 +171,7 @@ async function maybeHandleLegacyMessage(
       return true;
     }
     await keyring.selectAccount(acct.id);
+    await notifyAccountsChanged();
     sendResponse({ ok: true });
     return true;
   }
@@ -101,6 +191,7 @@ async function maybeHandleLegacyMessage(
       storeMnemonic: true,
       initialAlg: msg.algo ?? msg.initialAlg,
     });
+    await notifyAccountsChanged();
     sendResponse({ ok: true });
     return true;
   }
@@ -138,6 +229,49 @@ async function maybeHandleLegacyMessage(
     const json = JSON.stringify(envelope, null, 2);
     const dataUrl = `data:application/json,${encodeURIComponent(json)}`;
     sendResponse({ ok: true, dataUrl, fileName: 'animica-vault.json' });
+    return true;
+  }
+
+  if (msg.kind === 'networks:list') {
+    const { networks, selected } = await listNetworks();
+    sendResponse({
+      ok: true,
+      networks: networks.map((n) => ({ chainId: n.chainId, name: n.name, rpcUrl: n.rpcHttp, key: n.id })),
+      selected: selected.chainId,
+    });
+    return true;
+  }
+
+  if (msg.kind === 'networks:select') {
+    try {
+      const net = await selectNetworkByChainId(Number(msg.chainId));
+      await notifyChainChanged(net);
+      sendResponse({ ok: true });
+    } catch (err: any) {
+      sendResponse({ ok: false, error: err?.message ?? String(err) });
+    }
+    return true;
+  }
+
+  if (msg.type === 'network/getSelected') {
+    const { network } = await getRpcClient();
+    sendResponse({ ok: true, result: { chainId: network.chainId, name: network.name } });
+    return true;
+  }
+
+  if (msg.type === 'rpc.getHead') {
+    try {
+      const { client, network } = await getRpcClient();
+      const head = await fetchHead(client);
+      sendResponse({ ok: true, result: { ...(head ?? {}), chainId: network.chainId, networkName: network.name } });
+    } catch (err: any) {
+      sendResponse({ ok: false, error: err?.message ?? String(err) });
+    }
+    return true;
+  }
+
+  if (msg.type === 'wallet.getRecentTxs') {
+    sendResponse({ ok: true, result: [] });
     return true;
   }
 

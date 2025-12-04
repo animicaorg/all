@@ -36,6 +36,7 @@ export default function App() {
   const [pin2, setPin2] = useState<string>("");
   const [isBusy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [addressRefresh, setAddressRefresh] = useState(0);
 
   const initialMode = useMemo(() => {
     try {
@@ -112,6 +113,7 @@ export default function App() {
       });
       // Reset any stale sessions so popup starts clean
       await bgSend({ kind: "sessions.reset" });
+      setAddressRefresh((v) => v + 1);
       // Success — Finish screen will offer to close the window.
     } catch (e: any) {
       setError(e?.message ?? String(e));
@@ -189,6 +191,7 @@ export default function App() {
             setPin2={setPin2}
             isBusy={isBusy}
             canFinish={pinOk && !!mnemonic}
+            refreshToken={addressRefresh}
             onFinish={onFinalize}
             onBack={() => setStep(mode === "new" ? "verify" : "import")}
           />

@@ -94,6 +94,24 @@ export default function AccountSelect({
     };
   }, []); // mount once
 
+  // React to background broadcasts (account added/selected elsewhere)
+  useEffect(() => {
+    const handler = (msg: any) => {
+      if (!msg || typeof msg !== "object") return;
+      if (msg.type === "accounts/updated" && Array.isArray(msg.accounts)) {
+        setBgAccounts(msg.accounts);
+        if (typeof msg.locked === "boolean") setLocked(msg.locked);
+        if (msg.selected) setSelected(msg.selected);
+      }
+    };
+    try {
+      chrome.runtime?.onMessage?.addListener(handler);
+      return () => chrome.runtime?.onMessage?.removeListener(handler);
+    } catch {
+      return () => undefined;
+    }
+  }, []);
+
   const list = useMemo<AccountItem[]>(() => {
     if (accounts?.length) return accounts;
     if (bgAccounts?.length) return bgAccounts;
