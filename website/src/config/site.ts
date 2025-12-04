@@ -163,3 +163,18 @@ export const SITE: SiteConfig = {
 
 export const NAV = SITE.nav;
 export const BRAND = SITE.brand;
+
+// Backward-compatible shape consumed by pages/components
+export const site = {
+  brand: SITE.brand.name,
+  tagline: SITE.brand.tagline,
+  description: SITE.meta.description,
+  url: SITE.urls.site,
+  contact: SITE.contact,
+  links: SITE.social,
+  meta: SITE.meta,
+  nav: SITE.nav,
+  theme: SITE.brand.theme,
+};
+
+export default site;
