@@ -9,7 +9,11 @@ overrides:
 
 importers:
 
-  .: {}
+  .:
+    dependencies:
+      dotenv:
+        specifier: file:vendor/dotenv
+        version: link:vendor/dotenv
 
   apps/miner-dashboard:
     dependencies:
