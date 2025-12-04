@@ -1,0 +1,102 @@
+---
+import BaseLayout from "../layouts/BaseLayout.astro";
+import Header from "../components/Header.astro";
+import Footer from "../components/Footer.astro";
+
+import SecurityContent from "../../docs/SECURITY.md";
+
+const title = "Security";
+const description = "Defense-in-depth guidance for the site, rendered directly from SECURITY.md.";
+---
+
+<BaseLayout title={title} description={description} bodyClass="page">
+  <fragment slot="header">
+    <Header />
+  </fragment>
+
+  <section class="doc-shell">
+    <div>
+      <p class="eyebrow">Hardening</p>
+      <h1>{title}</h1>
+      <p class="muted">{description}</p>
+    </div>
+    <article class="doc">
+      <SecurityContent />
+    </article>
+  </section>
+
+  <fragment slot="footer">
+    <Footer />
+  </fragment>
+</BaseLayout>
+
+<style>
+  .doc-shell {
+    max-width: 960px;
+    margin: clamp(1.5rem, 4vw, 3rem) auto;
+    padding: 0 clamp(1.25rem, 4vw, 2.25rem);
+    display: grid;
+    gap: 1.25rem;
+  }
+
+  h1 {
+    margin: 0.25rem 0 0.35rem;
+    font-size: clamp(2rem, 4vw, 2.6rem);
+    letter-spacing: -0.02em;
+  }
+
+  .muted {
+    color: color-mix(in oklab, var(--text-primary), #fff 20%);
+  }
+
+  .doc {
+    border: 1px solid color-mix(in oklab, var(--color-border), transparent 35%);
+    background: color-mix(in oklab, var(--color-surface), #0e1523 18%);
+    border-radius: var(--radius-xl);
+    padding: clamp(1rem, 3vw, 1.75rem);
+    line-height: 1.6;
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .doc :global(h2),
+  .doc :global(h3),
+  .doc :global(h4) {
+    margin-top: 1rem;
+    margin-bottom: 0.35rem;
+  }
+
+  .doc :global(code) {
+    background: color-mix(in oklab, var(--bg-elevated), #0d1020 15%);
+    padding: 0.15rem 0.3rem;
+    border-radius: 0.35rem;
+    font-size: 0.95em;
+  }
+
+  .doc :global(pre) {
+    background: color-mix(in oklab, var(--bg-elevated), #0d1020 12%);
+    border: 1px solid color-mix(in oklab, var(--color-border), transparent 30%);
+    border-radius: 0.75rem;
+    padding: 0.75rem;
+    overflow-x: auto;
+  }
+
+  .doc :global(table) {
+    border-collapse: collapse;
+    width: 100%;
+  }
+
+  .doc :global(th),
+  .doc :global(td) {
+    border: 1px solid color-mix(in oklab, var(--color-border), transparent 40%);
+    padding: 0.4rem 0.55rem;
+    text-align: left;
+  }
+
+  .doc :global(blockquote) {
+    border-left: 3px solid color-mix(in oklab, var(--brand-grad-to), transparent 30%);
+    margin: 0.5rem 0;
+    padding: 0.35rem 0.85rem;
+    color: color-mix(in oklab, var(--text-primary), #fff 26%);
+  }
+</style>
