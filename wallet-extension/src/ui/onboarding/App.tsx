@@ -152,7 +152,7 @@ export default function App() {
         {step === "verify" && (
           <VerifyMnemonic
             mnemonic={mnemonic}
-            onVerified={onVerifiedContinue}
+            onNext={onVerifiedContinue}
             onBack={() => setStep("create")}
           />
         )}
