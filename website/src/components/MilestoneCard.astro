@@ -1,0 +1,52 @@
+---
+import InlineLink from "./InlineLink.astro";
+import type { Milestone } from "../types/roadmap";
+
+interface Props {
+  milestone: Milestone;
+}
+
+const { milestone } = Astro.props as Props;
+const prog = Number.isFinite(milestone.progress)
+  ? Math.min(100, Math.max(0, milestone.progress!))
+  : null;
+const tags = milestone.tags ?? [];
+const links = milestone.links ?? [];
+---
+
+<div class="rounded-xl border p-4 bg-[var(--bg-raised)]
+            border-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)]">
+  <div class="flex items-start justify-between gap-3">
+    <div>
+      <h3 class="text-sm font-semibold tracking-tight">{milestone.title}</h3>
+      <p class="text-xs opacity-70 mt-0.5">{milestone.quarter}</p>
+    </div>
+    {tags.length ? (
+      <div class="flex flex-wrap gap-1 justify-end">
+        {tags.map((t) => (
+          <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] border
+                       border-[color-mix(in_srgb,var(--text-primary)_/_16%,transparent)] opacity-80">{t}</span>
+        ))}
+      </div>
+    ) : null}
+  </div>
+
+  {milestone.summary ? <p class="mt-2 text-sm opacity-90">{milestone.summary}</p> : null}
+
+  {prog !== null ? (
+    <div class="mt-3">
+      <div class="h-1.5 rounded-full bg-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)] overflow-hidden">
+        <div class="h-1.5 rounded-full" style={{ width: prog + "%", background: "color-mix(in srgb, var(--text-primary) 65%, transparent)" }} />
+      </div>
+      <p class="text-[11px] opacity-70 mt-1">{prog}%</p>
+    </div>
+  ) : null}
+
+  {links.length ? (
+    <div class="mt-3 flex flex-wrap gap-2">
+      {links.map((l) => (
+        <InlineLink href={l.href} underline>{l.label}</InlineLink>
+      ))}
+    </div>
+  ) : null}
+</div>

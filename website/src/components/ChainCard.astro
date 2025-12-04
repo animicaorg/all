@@ -17,17 +17,20 @@
 
 import StatusBadge from "./StatusBadge.astro";
 import { explorerUrl } from "../env";
+import type { ChainRecord } from "../config/chains";
 
 interface Props {
-  chainId: number | string;
-  name: string;
-  rpc: string;
+  chain?: Partial<ChainRecord> & { rpcUrls?: string[] };
+  chainId?: number | string;
+  name?: string;
+  rpc?: string;
   explorer?: string;
   class?: string;
   showStatus?: boolean;
 }
 
 const {
+  chain,
   chainId,
   name,
   rpc,
@@ -36,16 +39,24 @@ const {
   showStatus = true,
 } = Astro.props as Props;
 
+const resolvedRpc =
+  rpc || chain?.rpc || chain?.rpcUrls?.[0] || chain?.rpcUrl || "";
+const resolvedName = name || chain?.name || "Unnamed Network";
+const resolvedChainId = chainId ?? chain?.chainId ?? chain?.id ?? "?";
+const resolvedExplorer =
+  explorer || chain?.explorerUrl || (chain as any)?.explorerURL || (chain as any)?.explorer;
+
 const fallbackExplorer = explorerUrl || "";
 const explorerHref =
-  explorer ||
-  (fallbackExplorer
+  resolvedExplorer ||
+  (fallbackExplorer && resolvedChainId
     ? `${fallbackExplorer}${fallbackExplorer.includes("?") ? "&" : "?"}chainId=${encodeURIComponent(
-        String(chainId)
+        String(resolvedChainId)
       )}`
     : "");
 
-const prettyRpc = rpc.replace(/^https?:\/\//, "");
+const prettyRpc = resolvedRpc ? resolvedRpc.replace(/^https?:\/\//, "") : "";
+const hasRpc = Boolean(resolvedRpc);
 ---
 
 <article
@@ -55,14 +66,14 @@ const prettyRpc = rpc.replace(/^https?:\/\//, "");
 >
   <header class="flex items-start gap-3">
     <div class="min-w-0">
-      <h3 class="text-base sm:text-lg font-semibold leading-tight truncate">{name}</h3>
+      <h3 class="text-base sm:text-lg font-semibold leading-tight truncate">{resolvedName}</h3>
       <p class="mt-0.5 text-xs sm:text-sm opacity-75">
-        Chain ID: <code class="rounded bg-black/5 px-1 py-0.5">{String(chainId)}</code>
+        Chain ID: <code class="rounded bg-black/5 px-1 py-0.5">{String(resolvedChainId)}</code>
       </p>
     </div>
-    {showStatus && (
+    {showStatus && hasRpc && (
       <div class="ml-auto">
-        <StatusBadge rpcUrl={rpc} size="sm" />
+        <StatusBadge rpcUrl={resolvedRpc} size="sm" />
       </div>
     )}
   </header>
@@ -72,27 +83,33 @@ const prettyRpc = rpc.replace(/^https?:\/\//, "");
       <label class="text-xs uppercase tracking-wide opacity-70">RPC URL</label>
       <div class="mt-1 flex items-center gap-2">
         <code class="inline-flex max-w-full truncate rounded bg-black/5 px-2 py-1 text-sm">
-          {rpc}
+          {resolvedRpc || "Not provided"}
         </code>
-        <button
-          class="shrink-0 rounded border px-2 py-1 text-xs hover:bg-black/5 active:scale-[0.99]
-                 border-[color-mix(in_srgb,var(--text-primary)_/_15%,transparent)]"
-          data-copy={rpc}
-          aria-label="Copy RPC URL"
-          title="Copy RPC URL"
-        >
-          Copy
-        </button>
-        <a
-          href={`${rpc}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          class="shrink-0 rounded border px-2 py-1 text-xs hover:bg-black/5
-                 border-[color-mix(in_srgb,var(--text-primary)_/_15%,transparent)]"
-          title={`Open ${prettyRpc}`}
-        >
-          Open
-        </a>
+        {hasRpc ? (
+          <>
+            <button
+              class="shrink-0 rounded border px-2 py-1 text-xs hover:bg-black/5 active:scale-[0.99]
+                     border-[color-mix(in_srgb,var(--text-primary)_/_15%,transparent)]"
+              data-copy={resolvedRpc}
+              aria-label="Copy RPC URL"
+              title="Copy RPC URL"
+            >
+              Copy
+            </button>
+            <a
+              href={`${resolvedRpc}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="shrink-0 rounded border px-2 py-1 text-xs hover:bg-black/5
+                     border-[color-mix(in_srgb,var(--text-primary)_/_15%,transparent)]"
+              title={prettyRpc ? `Open ${prettyRpc}` : "Open RPC"}
+            >
+              Open
+            </a>
+          </>
+        ) : (
+          <span class="text-xs opacity-70">RPC unavailable</span>
+        )}
       </div>
     </div>
 
