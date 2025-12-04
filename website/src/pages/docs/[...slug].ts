@@ -16,6 +16,9 @@
 import type { APIRoute } from "astro";
 
 export const prerender = false;
+export function getStaticPaths() {
+  return [];
+}
 
 const CANONICAL =
   (import.meta.env.PUBLIC_DOCS_URL as string) || "https://docs.animica.dev";

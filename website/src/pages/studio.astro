@@ -11,6 +11,10 @@ import { site } from "../config/site";
 const pageTitle = "Studio — Build, simulate, deploy";
 const pageDesc =
   "Animica Studio is a web IDE to write Python-VM contracts, simulate calls in-browser (WASM), and deploy on-chain. No server-side signing.";
+
+const studioHome = links.studio.home();
+const servicesDocs = links?.services?.docs ?? links.docs.home();
+const walletHome = links?.wallet?.home ?? links.explorer.home();
 ---
 
 <BaseLayout title={pageTitle} description={pageDesc}>
@@ -28,7 +32,7 @@ const pageDesc =
 
     <div class="mt-6">
       <a
-        href={links.studio.home}
+        href={studioHome}
         class="inline-flex items-center gap-2 rounded-lg px-4 py-2 font-medium
                bg-[var(--btn-primary-bg,#111)] text-[var(--btn-primary-fg,#fff)]
                hover:opacity-90 focus:outline-none focus-visible:ring-2
@@ -43,7 +47,7 @@ const pageDesc =
         </svg>
       </a>
       <p class="mt-2 text-sm opacity-70">
-        Deep link: <InlineLink href={links.studio.home} underline>{links.studio.home}</InlineLink>
+        Deep link: <InlineLink href={studioHome} underline>{studioHome}</InlineLink>
       </p>
     </div>
 
@@ -54,7 +58,7 @@ const pageDesc =
         <ul class="mt-3 space-y-2 text-sm opacity-85 list-disc pl-5">
           <li>Monaco editor with diagnostics and gas estimates</li>
           <li>In-browser simulator (Pyodide/WASM) — no node required</li>
-          <li>Deploy &amp; verify via <InlineLink href={links.services.docs} underline noIcon>Studio Services</InlineLink></li>
+          <li>Deploy &amp; verify via <InlineLink href={servicesDocs} underline noIcon>Studio Services</InlineLink></li>
           <li>Data Availability, AI/Quantum capability hooks (read-only helpers)</li>
         </ul>
       </div>
@@ -64,7 +68,7 @@ const pageDesc =
         <ul class="mt-3 space-y-2 text-sm opacity-85 list-disc pl-5">
           <li>A modern browser (Chromium, Firefox, Safari recent)</li>
           <li>RPC target reachable: <InlineLink href={links.rpc.url} underline noIcon>{links.rpc.url}</InlineLink></li>
-          <li>Optional: <InlineLink href={links.wallet.home} underline>Animica Wallet</InlineLink> for local signing</li>
+          <li>Optional: <InlineLink href={walletHome} underline>Animica Wallet</InlineLink> for local signing</li>
         </ul>
       </div>
     </div>
@@ -121,7 +125,7 @@ console.log('Counter value:', value);
     <ul class="mt-3 space-y-2 text-sm opacity-85 list-disc pl-5">
       <li>If the simulator fails to load, hard refresh to bust the Pyodide cache.</li>
       <li>For RPC errors, confirm the configured Chain ID matches your target network.</li>
-      <li>Verify your wallet has permissions to connect to <code>{new URL(links.studio.home).host}</code>.</li>
+      <li>Verify your wallet has permissions to connect to <code>{new URL(studioHome).host}</code>.</li>
     </ul>
     <div class="mt-6">
       <CTAButtons />
