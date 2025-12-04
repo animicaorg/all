@@ -130,17 +130,35 @@ The build scripts generate per-browser manifests and copy public assets. During 
 
 📦 Production Builds
 
+1) Install deps (required for `rimraf` / `cross-env` used by build scripts)
+
+```bash
+# from repo root: installs all workspaces, including wallet-extension
+pnpm install
+
+# or if you only need this package (from wallet-extension/)
+pnpm install --filter @animica/wallet-extension
+```
+
+2) Build bundles
+
+```bash
 # Chromium bundle (zip) & dist/chrome
-pnpm build:chrome
+pnpm --filter @animica/wallet-extension build:chrome
 
 # Firefox bundle (zip) & dist/firefox
-pnpm build:firefox
+pnpm --filter @animica/wallet-extension build:firefox
+```
 
 Outputs:
 	•	dist/chrome/** + dist-manifests/manifest.chrome.json
 	•	dist/firefox/** + dist-manifests/manifest.firefox.json
 
 You can side-load the folders above or distribute the generated archives.
+
+Troubleshooting:
+        •       “rimraf: command not found” (or similar): install deps first, then rerun the build command above.
+        •       “husky - install command is DEPRECATED” when installing via a zip/without .git: safe to ignore for builds; it only attempts to set up git hooks.
 
 ⸻
 
