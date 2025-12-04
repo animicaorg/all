@@ -29,6 +29,13 @@ export default defineConfig(({ mode }) => ({
     emptyOutDir: false, // scripts/build.ts may pre-copy assets / manifests
     sourcemap: mode !== "production" ? true : false,
     target: "es2022",
+    // The background service worker runs in a worker-like global without
+    // DOM APIs such as `window`/`document`. Vite's modulepreload helpers
+    // inject DOM touchpoints into every entry chunk, which causes runtime
+    // failures when the background loads (ReferenceError: window is not defined).
+    // Chrome/Firefox MV3 already support modulepreload, so disable Vite's
+    // injection entirely to keep the background bundle worker-safe.
+    modulePreload: false,
     rollupOptions: {
       input: {
         // UI pages (HTML multi-page build)
