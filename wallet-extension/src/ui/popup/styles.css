@@ -64,11 +64,23 @@
 }
 
 /* Root popup canvas */
-html, body, #root {
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 420px;
+  height: 640px;
+  min-width: 380px;
+  max-width: 500px;
+  min-height: 600px;
+  max-height: 720px;
+}
+
+#root {
+  width: 100%;
   height: 100%;
 }
+
 body {
-  margin: 0;
   font-family: var(--ami-font);
   font-size: 14px;
   line-height: 1.35;
@@ -81,10 +93,14 @@ body {
 }
 
 /* Popup sizing */
-.ami-popup {
-  min-width: 360px;           /* keep within MV3 popup bounds */
-  max-width: 420px;
-  min-height: 520px;
+.ami-popup,
+.ami-popup-root {
+  width: 100%;
+  height: 100%;
+  min-width: 420px;           /* keep within MV3 popup bounds */
+  max-width: 480px;
+  min-height: 640px;
+  max-height: 720px;
   box-sizing: border-box;
   padding: 14px;
   display: grid;

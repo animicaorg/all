@@ -82,7 +82,7 @@ export default function App() {
   }, [tab]);
 
   return (
-    <div className="ami-popup-root">
+    <div className="ami-popup ami-popup-root">
       {/* Top bar */}
       <header className="ami-topbar">
         <div className="ami-brand">
