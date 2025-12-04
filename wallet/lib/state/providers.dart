@@ -185,14 +185,6 @@ void disposeGlobalContainer() {
   _globalContainer = null;
 }
 
-// ============================================================================
-// MARKETPLACE & PRICING PROVIDERS (ANM Token Sales)
-// ============================================================================
-
-import '../services/pricing_engine.dart';
-import '../services/market_data_service.dart';
-import '../services/payment_gateway.dart';
-
 /// Market data service configuration
 final marketDataConfigProvider = Provider(
   (_) => MarketDataConfig(
@@ -250,13 +242,21 @@ final marketDataServiceProvider = Provider((ref) {
 
 /// Current market price
 final currentMarketPriceProvider =
-    FutureProvider<marketplace.MarketPriceData>((ref) async {
+    FutureProvider<pricing.MarketPriceData>((ref) async {
   final rpcClient = ref.watch(marketplaceRpcProvider);
-  
+
   try {
     // Try to fetch from RPC marketplace methods
     final result = await rpcClient.call('explorer_getMarketData', {'token': 'ANM'});
-    return marketplace.MarketPriceData.fromJson(result);
+    return pricing.MarketPriceData(
+      price: (result['price'] as num).toDouble(),
+      change24h: (result['change24h'] as num?)?.toDouble() ?? 0,
+      marketCap: (result['marketCap'] as num?)?.toDouble() ?? 0,
+      volume24h: (result['volume24h'] as num?)?.toDouble() ?? 0,
+      priceHistory: const [],
+      timestamp: DateTime.parse(result['lastUpdate'] as String),
+      source: result['source'] as String? ?? 'rpc',
+    );
   } catch (e) {
     // Fallback to market data service
     final service = ref.watch(marketDataServiceProvider);
@@ -289,33 +289,33 @@ final priceHistoryProvider = FutureProvider<List<double>>((ref) async {
 });
 
 /// Stream of real-time price updates
-final priceUpdatesStreamProvider =
-    StreamProvider<marketplace.MarketPriceData>((ref) {
+final priceUpdatesStreamProvider = StreamProvider<pricing.MarketPriceData>((ref) {
   final service = ref.watch(marketDataServiceProvider);
   return service.priceUpdates;
 });
 
 /// Treasury snapshot (from blockchain/API)
 final treasurySnapshotProvider =
-    FutureProvider<marketplace.TreasurySnapshot>((ref) async {
+    FutureProvider<pricing.TreasurySnapshot>((ref) async {
   final rpcClient = ref.watch(marketplaceRpcProvider);
 
   try {
     // Fetch treasury state from RPC marketplace methods
     final result = await rpcClient.call('explorer_getTreasurySnapshot', {});
-    return marketplace.TreasurySnapshot.fromJson(result);
+    return pricing.TreasurySnapshot(
+      totalSupply: (result['totalSupply'] as num).toDouble(),
+      soldToDate: (result['soldToDate'] as num).toDouble(),
+      treasuryBalance: (result['treasuryBalance'] as num).toDouble(),
+      timestamp: DateTime.parse(result['timestamp'] as String),
+    );
   } catch (e) {
     debugPrint('Treasury snapshot RPC error: $e');
     // Fallback to sensible defaults
-    return marketplace.TreasurySnapshot(
+    return pricing.TreasurySnapshot(
       totalSupply: 1e10,
       soldToDate: 2.5e9,
       treasuryBalance: 7.5e9,
       timestamp: DateTime.now(),
-      percentSold: 25.0,
-      revenueToDate: 3.75e8,
-      targetRevenue: 1e9,
-      yearsToTarget: 2.5,
     );
   }
 });
@@ -618,7 +618,7 @@ final dashboardSummaryProvider = FutureProvider<DashboardSummary>((ref) async {
   final marketPrice = await ref.watch(currentMarketPriceProvider.future);
 
   const targetRevenue = 1e9;
-  final percentToTarget = (revenue / targetRevenue * 100).clamp(0, 100);
+  final percentToTarget = (revenue / targetRevenue * 100).clamp(0, 100).toDouble();
 
   return DashboardSummary(
     anmPrice: price,
@@ -629,4 +629,4 @@ final dashboardSummaryProvider = FutureProvider<DashboardSummary>((ref) async {
     yearsToTarget: yearsToTarget,
     priceChange24h: marketPrice.change24h,
   );
-})
+});
