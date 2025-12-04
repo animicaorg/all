@@ -27,7 +27,7 @@ function firstRpc(c: any): Rpcish {
   return links.rpc.url;
 }
 
-const primary = chains.find((c: any) => c.id === 1) ?? chains[0];
+const primary = chains.find((c: any) => c.chainId === 1) ?? chains[0];
 const primaryRpc = firstRpc(primary);
 const chainCount = chains.length;
 ---
@@ -85,7 +85,7 @@ const chainCount = chains.length;
                   {c.name ?? "Unnamed Network"}
                 </h3>
                 <p class="text-xs opacity-70 mt-0.5">
-                  chainId <span class="font-mono">{c.id ?? "?"}</span>
+                  chainId <span class="font-mono">{c.chainId ?? c.id ?? "?"}</span>
                   {c?.testnet ? " · testnet" : ""}
                 </p>
               </div>

@@ -22,10 +22,9 @@ const explorerHref = links?.explorer?.home ?? explorerUrl ?? "/explorer";
 const chainId = envChainId ? String(envChainId) : "";
 const rpcUrl = envRpcUrl ?? "";
 
-const chainRec =
-  Array.isArray(chains?.list)
-    ? chains.list.find((c: any) => String(c.id) === String(chainId))
-    : undefined;
+const chainRec = Array.isArray(chains)
+  ? chains.find((c: any) => String(c.chainId ?? c.id) === String(chainId))
+  : undefined;
 
 const networkName =
   chainRec?.name ??
