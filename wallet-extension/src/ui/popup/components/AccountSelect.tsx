@@ -22,6 +22,10 @@ type Props = {
   showAlgo?: boolean;
   /** Optional: render a "no accounts" action (e.g., open onboarding). */
   onNoAccountsAction?: () => void;
+  /** Optional override for the create-account flow. */
+  onCreateAccount?: () => void;
+  /** Optional override for the import-account flow. */
+  onImportAccount?: () => void;
   /** Optional label override */
   label?: string;
 };
@@ -64,6 +68,8 @@ export default function AccountSelect({
   compact,
   showAlgo,
   onNoAccountsAction,
+  onCreateAccount,
+  onImportAccount,
   label = "Account",
 }: Props) {
   const [bgAccounts, setBgAccounts] = useState<AccountItem[] | null>(null);
@@ -99,6 +105,22 @@ export default function AccountSelect({
     [list, selected]
   );
 
+  function handleCreateAccount() {
+    if (onCreateAccount) {
+      onCreateAccount();
+      return;
+    }
+    openOnboarding("create");
+  }
+
+  function handleImportAccount() {
+    if (onImportAccount) {
+      onImportAccount();
+      return;
+    }
+    openOnboarding("import");
+  }
+
   function handleChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const addr = e.target.value;
     const acct = list.find((a) => a.address === addr) ?? { address: addr };
@@ -123,11 +145,14 @@ export default function AccountSelect({
             <div className="ami-empty-title">No accounts</div>
             <div className="ami-empty-sub">Create or import to get started.</div>
           </div>
-          {onNoAccountsAction ? (
-            <button className="ami-btn" onClick={onNoAccountsAction}>
-              Add
+          <div className="ami-empty-actions">
+            <button className="ami-btn ami-btn-primary" onClick={handleCreateAccount}>
+              Create account
             </button>
-          ) : null}
+            <button className="ami-btn" onClick={handleImportAccount}>
+              Import account
+            </button>
+          </div>
         </div>
       ) : (
         <>
@@ -242,12 +267,15 @@ export default function AccountSelect({
         }
         .ami-empty-title { font-weight: 600; }
         .ami-empty-sub { font-size:.85rem; opacity:.7; }
+        .ami-empty-actions { margin-left:auto; display:flex; gap:.35rem; flex-wrap:wrap; justify-content:flex-end; }
         .ami-btn {
-          margin-left:auto; border: 1px solid var(--ami-primary, #4b7cff);
+          border: 1px solid var(--ami-primary, #4b7cff);
           color: var(--ami-primary, #4b7cff); padding:.35rem .6rem; border-radius:6px; background:transparent;
           cursor:pointer;
         }
+        .ami-btn-primary { background: var(--ami-primary, #4b7cff); color: white; }
         .ami-btn:hover { background: color-mix(in srgb, var(--ami-primary, #4b7cff) 12%, transparent); }
+        .ami-btn-primary:hover { background: color-mix(in srgb, var(--ami-primary, #4b7cff) 92%, black 0%); color: #fff; }
       `}</style>
     </div>
   );
@@ -279,6 +307,21 @@ function avatarText(a: AccountItem) {
 async function copy(text: string) {
   try {
     await navigator.clipboard.writeText(text);
+  } catch {
+    // ignore
+  }
+}
+
+function openOnboarding(mode: "create" | "import") {
+  try {
+    const chromeAny = (globalThis as any).chrome;
+    const base = chromeAny?.runtime?.getURL?.("onboarding.html") ?? "/onboarding.html";
+    const url = base.includes("?") ? `${base}&mode=${mode}` : `${base}?mode=${mode}`;
+    if (chromeAny?.tabs?.create) {
+      chromeAny.tabs.create({ url });
+      return;
+    }
+    window.open(url, "_blank", "noopener,noreferrer");
   } catch {
     // ignore
   }
