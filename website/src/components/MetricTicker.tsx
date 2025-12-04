@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import env from "../env";
+import { rpcUrl } from "../env";
 
 /**
  * MetricTicker
@@ -38,7 +38,7 @@ type Props = {
   compact?: boolean;
 };
 
-const RPC_URL = env.PUBLIC_RPC_URL || "/rpc";
+const RPC_URL = rpcUrl ?? "/rpc";
 
 async function rpcCall<T = unknown>(method: string, params?: unknown): Promise<T> {
   const id = Math.floor(Math.random() * 1e9);
