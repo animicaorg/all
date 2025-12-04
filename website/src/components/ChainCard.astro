@@ -16,7 +16,7 @@
  */
 
 import StatusBadge from "./StatusBadge.tsx";
-import env from "../env";
+import { explorerUrl } from "../env";
 
 interface Props {
   chainId: number | string;
@@ -36,7 +36,7 @@ const {
   showStatus = true,
 } = Astro.props as Props;
 
-const fallbackExplorer = env.PUBLIC_EXPLORER_URL ? String(env.PUBLIC_EXPLORER_URL) : "";
+const fallbackExplorer = explorerUrl || "";
 const explorerHref =
   explorer ||
   (fallbackExplorer

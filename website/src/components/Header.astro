@@ -2,7 +2,7 @@
 import site from "../config/site";
 import links from "../config/links";
 import chains from "../config/chains";
-import env from "../env";
+import { chainId as envChainId, explorerUrl, rpcUrl as envRpcUrl, studioUrl } from "../env";
 
 /**
  * Top navigation header with brand, primary links, network pill, and CTA.
@@ -16,11 +16,11 @@ const nav = [
   { href: "/blog", label: "Blog" },
 ];
 
-const studioHref = links?.studio?.home ?? env.PUBLIC_STUDIO_URL ?? "/studio";
-const explorerHref = links?.explorer?.home ?? "/explorer";
+const studioHref = links?.studio?.home ?? studioUrl ?? "/studio";
+const explorerHref = links?.explorer?.home ?? explorerUrl ?? "/explorer";
 
-const chainId = env.PUBLIC_CHAIN_ID ?? "";
-const rpcUrl = env.PUBLIC_RPC_URL ?? "";
+const chainId = envChainId ? String(envChainId) : "";
+const rpcUrl = envRpcUrl ?? "";
 
 const chainRec =
   Array.isArray(chains?.list)

@@ -1,6 +1,6 @@
 ---
 import links from "../config/links";
-import env from "../env";
+import { docsUrl } from "../env";
 
 interface Feature {
   id: string;
@@ -17,7 +17,7 @@ interface Props {
   class?: string;
 }
 
-const docsHref = links?.docs?.home ?? env.PUBLIC_DOCS_URL ?? "/docs";
+const docsHref = links?.docs?.home ?? docsUrl ?? "/docs";
 
 const defaults: Feature[] = [
   {
