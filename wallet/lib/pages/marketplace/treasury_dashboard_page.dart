@@ -12,6 +12,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../state/providers.dart';
 import '../../widgets/chart_widget.dart';
+import '../../services/pricing_engine.dart' show PricingSimulation, TreasurySnapshot;
 
 class TreasuryDashboardPage extends ConsumerWidget {
   const TreasuryDashboardPage({Key? key}) : super(key: key);
