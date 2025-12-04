@@ -1,5 +1,5 @@
 import type { APIRoute } from "astro";
-import { env } from "../../env";
+import { ENV } from "../../env";
 
 /**
  * /api/status.json
@@ -13,7 +13,7 @@ import { env } from "../../env";
 
 type JsonRpcResult<T> = { jsonrpc: "2.0"; id: number | string | null; result?: T; error?: { code: number; message: string; data?: unknown } };
 
-const RPC_URL = env.PUBLIC_RPC_URL;
+const RPC_URL = ENV.RPC_URL;
 const DEFAULT_TARGET_BLOCK_TIME_SEC = 12;
 
 async function rpcCall<T = any>(method: string, params: unknown[] = [], signal?: AbortSignal): Promise<T> {
