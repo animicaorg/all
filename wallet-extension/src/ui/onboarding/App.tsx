@@ -9,7 +9,13 @@ import Finish from "./pages/Finish";
 // Router there will map these `kind` strings to handlers.
 type BgMessage =
   | { kind: "keyring.generateMnemonic"; words?: number }
-  | { kind: "keyring.setupVault"; action: "create" | "import"; mnemonic: string; pin?: string }
+  | {
+      kind: "keyring.setupVault";
+      action: "create" | "import";
+      mnemonic: string;
+      pin?: string;
+      algo?: "dilithium3" | "sphincs_shake_128s";
+    }
   | { kind: "sessions.reset" };
 
 async function bgSend<T = unknown>(msg: BgMessage): Promise<T> {
@@ -25,6 +31,7 @@ export default function App() {
   const [step, setStep] = useState<Step>("welcome");
   const [mode, setMode] = useState<"new" | "import" | null>(null);
   const [mnemonic, setMnemonic] = useState<string>("");
+  const [algo, setAlgo] = useState<"dilithium3" | "sphincs_shake_128s">("dilithium3");
   const [pin, setPin] = useState<string>("");
   const [pin2, setPin2] = useState<string>("");
   const [isBusy, setBusy] = useState(false);
@@ -43,7 +50,10 @@ export default function App() {
 
   const beginCreate = useCallback(async () => {
     setMode("new");
+    setAlgo("dilithium3");
     setError(null);
+    setPin("");
+    setPin2("");
     setBusy(true);
     try {
       const res = await bgSend<{ mnemonic: string }>({ kind: "keyring.generateMnemonic", words: 24 });
@@ -58,7 +68,10 @@ export default function App() {
 
   const beginImport = useCallback(() => {
     setMode("import");
+    setAlgo("dilithium3");
     setError(null);
+    setPin("");
+    setPin2("");
     setStep("import");
   }, []);
 
@@ -71,8 +84,9 @@ export default function App() {
     setStep("finish");
   }, []);
 
-  const onImportSubmit = useCallback((phrase: string) => {
+  const onImportSubmit = useCallback((phrase: string, algorithm: "dilithium3" | "sphincs_shake_128s") => {
     setMnemonic(phrase.trim().replace(/\s+/g, " "));
+    setAlgo(algorithm);
     setStep("finish");
   }, []);
 
@@ -94,6 +108,7 @@ export default function App() {
         action: mode === "new" ? "create" : "import",
         mnemonic,
         pin,
+        algo,
       });
       // Reset any stale sessions so popup starts clean
       await bgSend({ kind: "sessions.reset" });
@@ -103,7 +118,7 @@ export default function App() {
     } finally {
       setBusy(false);
     }
-  }, [mode, pinOk, mnemonic, pin]);
+    }, [mode, pinOk, mnemonic, pin, algo]);
 
   useEffect(() => {
     if (step !== "welcome" || !initialMode) return;

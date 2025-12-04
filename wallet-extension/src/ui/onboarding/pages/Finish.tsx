@@ -1,6 +1,16 @@
 import React, { useEffect, useMemo, useState } from "react";
 
 type Props = {
+  mode: "new" | "import";
+  mnemonicPreview: string;
+  pin: string;
+  pin2: string;
+  setPin: (v: string) => void;
+  setPin2: (v: string) => void;
+  isBusy?: boolean;
+  canFinish?: boolean;
+  onFinish: () => void;
+  onBack: () => void;
   onDone?: () => void; // fired when user clicks "Finish" (window may close)
 };
 
@@ -27,10 +37,23 @@ function shortAddr(addr: string, n = 6) {
   return `${addr.slice(0, n)}…${addr.slice(-n)}`;
 }
 
-export default function Finish({ onDone }: Props) {
+export default function Finish({
+  mode,
+  mnemonicPreview,
+  pin,
+  pin2,
+  setPin,
+  setPin2,
+  isBusy = false,
+  canFinish = false,
+  onFinish,
+  onBack,
+  onDone,
+}: Props) {
   const [address, setAddress] = useState<string>("");
   const [net, setNet] = useState<NetInfo | null>(null);
   const [copied, setCopied] = useState(false);
+  const [show, setShow] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -62,6 +85,14 @@ export default function Finish({ onDone }: Props) {
   }, []);
 
   const addrDisplay = useMemo(() => shortAddr(address), [address]);
+  const mnemonicPreviewShort = useMemo(() => shortAddr(mnemonicPreview, 10), [mnemonicPreview]);
+
+  const pinError = useMemo(() => {
+    if (pin.length === 0 && pin2.length === 0) return null;
+    if (pin.length < 6) return "Password must be at least 6 characters.";
+    if (pin !== pin2) return "Passwords do not match.";
+    return null;
+  }, [pin, pin2]);
 
   async function copy() {
     try {
@@ -83,19 +114,66 @@ export default function Finish({ onDone }: Props) {
   }
 
   function finish() {
-    onDone?.();
-    // Close the onboarding window if it was opened as a separate window
-    try {
-      window.close();
-    } catch {
-      /* ignored */
-    }
+    if (!canFinish || pinError || isBusy) return;
+    onFinish();
   }
 
   return (
     <section className="ob-card" data-testid="finish-onboarding">
       <div className="check">✓</div>
-      <h1 className="ob-title">Wallet ready</h1>
+      <h1 className="ob-title">Secure your wallet</h1>
+      <p className="ob-subtitle">
+        Create a password to encrypt your vault. You will use it to unlock this {mode === "new" ? "new" : "imported"} wallet.
+      </p>
+
+      <div className="field">
+        <label className="lbl">Password</label>
+        <div className="pw-row">
+          <input
+            type={show ? "text" : "password"}
+            placeholder="Enter password (min 6 characters)"
+            value={pin}
+            onChange={(e) => setPin(e.target.value)}
+            autoComplete="new-password"
+          />
+          <button type="button" className="btn ghost sm" onClick={() => setShow((v) => !v)}>
+            {show ? "Hide" : "Show"}
+          </button>
+        </div>
+      </div>
+
+      <div className="field">
+        <label className="lbl">Confirm password</label>
+        <input
+          type={show ? "text" : "password"}
+          placeholder="Repeat password"
+          value={pin2}
+          onChange={(e) => setPin2(e.target.value)}
+          autoComplete="new-password"
+          className={pinError ? "bad" : ""}
+        />
+        {pinError && <small className="msg">{pinError}</small>}
+      </div>
+
+      <p className="ob-hint">
+        Recovery phrase preview: <code>{mnemonicPreviewShort || "…"}</code> (store it safely — not saved by default).
+      </p>
+
+      <div className="ob-actions">
+        <button className="btn" onClick={onBack} disabled={isBusy}>
+          Back
+        </button>
+        <button
+          className="btn primary"
+          onClick={finish}
+          disabled={!canFinish || !!pinError || isBusy}
+          data-testid="btn-finish"
+        >
+          {isBusy ? "Saving…" : "Finish setup"}
+        </button>
+      </div>
+
+      <h2 className="ob-title" style={{ marginTop: 18 }}>Wallet ready</h2>
       <p className="ob-subtitle">
         You’re all set{net ? ` on ${net.name} (chain ${net.chainId})` : ""}! Here’s your address:
       </p>
@@ -125,8 +203,18 @@ export default function Finish({ onDone }: Props) {
 
       <div className="ob-actions">
         <button className="btn" onClick={openPopup}>Open wallet</button>
-        <button className="btn primary" onClick={finish} data-testid="btn-finish">
-          Finish
+        <button
+          className="btn primary"
+          onClick={() => {
+            onDone?.();
+            try {
+              window.close();
+            } catch {
+              /* ignored */
+            }
+          }}
+        >
+          Close
         </button>
       </div>
 
@@ -136,6 +224,11 @@ export default function Finish({ onDone }: Props) {
 }
 
 const css = `
+.field { display: grid; gap: 6px; margin: 12px 0; }
+.lbl { font-size: 12px; opacity: 0.8; }
+.pw-row { display: flex; gap: 8px; }
+.bad { border-color: #e53935; background: #fff6f6; }
+.msg { color: #b00020; }
 .check {
   width: 40px; height: 40px; border-radius: 50%;
   display: grid; place-items: center;

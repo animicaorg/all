@@ -2,7 +2,11 @@ import React, { useMemo, useState } from "react";
 
 type Props = {
   onBack: () => void;
-  onNext: () => void; // fired once import succeeds
+  /**
+   * Called when the mnemonic is validated so the parent can proceed to the
+   * password step. The parent handles persistence to avoid duplicate imports.
+   */
+  onSubmit: (mnemonic: string, algo: Algo) => void;
 };
 
 type Algo = "dilithium3" | "sphincs_shake_128s";
@@ -23,70 +27,21 @@ function validateMnemonic(words: string[]): string | null {
   return null;
 }
 
-async function bgCall<T = unknown>(message: any): Promise<T> {
-  return new Promise((resolve, reject) => {
-    try {
-      chrome.runtime.sendMessage(message, (resp: any) => {
-        const err = chrome.runtime.lastError;
-        if (err) return reject(new Error(err.message));
-        if (resp && resp.ok) return resolve(resp.result as T);
-        reject(new Error(resp?.error ?? "Import failed"));
-      });
-    } catch (e: any) {
-      reject(e);
-    }
-  });
-}
-
-export default function Import({ onBack, onNext }: Props) {
+export default function Import({ onBack, onSubmit }: Props) {
   const [mnemonicText, setMnemonicText] = useState("");
   const [algo, setAlgo] = useState<Algo>("dilithium3");
-  const [password, setPassword] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [isBusy, setIsBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [show, setShow] = useState(false);
-
   const words = useMemo(() => normWords(mnemonicText), [mnemonicText]);
   const mnemonicError = useMemo(() => validateMnemonic(words), [words]);
-  const pwError = useMemo(() => {
-    if (password.length < 8) return "Password must be at least 8 characters.";
-    if (password !== confirm) return "Passwords do not match.";
-    return null;
-  }, [password, confirm]);
+  const canContinue = !mnemonicError;
 
-  const canImport = !mnemonicError && !pwError && !isBusy;
-
-  async function onImport() {
-    setError(null);
-    setIsBusy(true);
-    try {
-      const res = await bgCall<{ address: string }>({
-        type: "keyring/importMnemonic",
-        mnemonic: words.join(" "),
-        password,
-        algo,
-      });
-      // Optionally you could stash address in state or store if onboarding needs it.
-      void res;
-      onNext();
-    } catch (e: any) {
-      setError(e?.message ?? "Failed to import. Please try again.");
-    } finally {
-      setIsBusy(false);
-    }
+  function onImport() {
+    onSubmit(words.join(" "), algo);
   }
 
   return (
     <section className="ob-card" data-testid="import-mnemonic">
       <h1 className="ob-title">Import wallet</h1>
-      <p className="ob-subtitle">Paste your recovery phrase, choose algorithm, and set a password to encrypt your vault.</p>
-
-      {error && (
-        <p className="ob-warning" role="alert">
-          {error}
-        </p>
-      )}
+      <p className="ob-subtitle">Paste your recovery phrase and choose a signature algorithm to continue.</p>
 
       <div className="field">
         <label className="lbl">Recovery phrase</label>
@@ -130,46 +85,17 @@ export default function Import({ onBack, onNext }: Props) {
         </div>
       </div>
 
-      <div className="field">
-        <label className="lbl">Password</label>
-        <div className="pw-row">
-          <input
-            type={show ? "text" : "password"}
-            placeholder="New password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="new-password"
-          />
-          <button type="button" className="btn ghost sm" onClick={() => setShow((v) => !v)}>
-            {show ? "Hide" : "Show"}
-          </button>
-        </div>
-      </div>
-
-      <div className="field">
-        <label className="lbl">Confirm password</label>
-        <input
-          type={show ? "text" : "password"}
-          placeholder="Repeat password"
-          value={confirm}
-          onChange={(e) => setConfirm(e.target.value)}
-          autoComplete="new-password"
-          className={pwError ? "bad" : ""}
-        />
-        {pwError && <small className="msg">{pwError}</small>}
-      </div>
-
       <div className="ob-actions">
-        <button className="btn" onClick={onBack} disabled={isBusy}>
+        <button className="btn" onClick={onBack}>
           Back
         </button>
         <button
           className="btn primary"
           onClick={onImport}
-          disabled={!canImport}
+          disabled={!canContinue}
           data-testid="btn-import-continue"
         >
-          {isBusy ? "Importing…" : "Import wallet"}
+          Continue
         </button>
       </div>
 
