@@ -20,15 +20,11 @@
 import path from "node:path";
 import fs from "node:fs/promises";
 import fssync from "node:fs";
-import { fileURLToPath } from "node:url";
 import chokidar from "chokidar";
 import { WebSocketServer } from "ws";
 import { build, InlineConfig, LogLevel, mergeConfig } from "vite";
 import { spawn } from "node:child_process";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const ROOT = path.resolve(__dirname, "..");
+import { ROOT, patchForChrome, patchForFirefox, readManifestBase } from "./manifest.js";
 
 type Browser = "chrome" | "firefox";
 
@@ -46,12 +42,23 @@ const PORT = Number(argv.get("port") || process.env.WALLET_DEV_PORT || 17365);
 
 const PUBLIC_DIR = path.join(ROOT, "public");
 const DIST = path.join(ROOT, BROWSER === "chrome" ? "dist-chrome" : "dist-firefox");
+const MANIFEST_BASE = path.join(ROOT, "manifest.base.json");
 
 const wsClients = new Set<WebSocket>();
+
+async function writeManifest() {
+  const base = await readManifestBase();
+  const manifest =
+    BROWSER === "chrome" ? patchForChrome(base) : patchForFirefox(base);
+  const json = JSON.stringify(manifest, null, 2) + "\n";
+  await ensureDir(DIST);
+  await fs.writeFile(path.join(DIST, "manifest.json"), json, "utf8");
+}
 
 async function main() {
   banner(`Animica Wallet — dev (${BROWSER})`);
   await ensureDir(DIST);
+  await writeManifest();
 
   // 1) Start WS server for live reload
   const wss = new WebSocketServer({ port: PORT });
@@ -69,6 +76,7 @@ async function main() {
 
   // 3) Start Vite in watch mode targeting the chosen browser
   await startViteWatch(BROWSER, async () => {
+    await writeManifest();
     await writeDevReloadJS();
     await injectReloadScriptTags();
     broadcastReload();
@@ -96,7 +104,13 @@ async function main() {
     }
   });
 
-  // 5) Developer tips
+  // 5) Watch manifest.base.json for edits and mirror into dist
+  watchManifestBase(async () => {
+    await writeManifest();
+    broadcastReload();
+  });
+
+  // 6) Developer tips
   console.log(
     [
       "",
@@ -134,19 +148,27 @@ async function startViteWatch(browser: Browser, onEnd: () => Promise<void>) {
   // our post-build hooks via a small timer on stdout "END"ish signals would be nicer,
   // but cross-version output differs.
   let debounceTimer: NodeJS.Timeout | null = null;
-  const poke = () => {
+  let handling = false;
+  const poke = (changedPath?: string) => {
+    if (handling) return;
+    if (changedPath && changedPath.endsWith("manifest.json")) return;
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(async () => {
-      await onEnd();
+      handling = true;
+      try {
+        await onEnd();
+      } finally {
+        handling = false;
+      }
     }, 150);
   };
 
   // Lightweight file watcher on dist to trigger post-build hook:
   chokidar
     .watch([path.join(DIST, "**/*")], { ignoreInitial: true, depth: 3 })
-    .on("add", poke)
-    .on("change", poke)
-    .on("unlink", poke);
+    .on("add", (p) => poke(p))
+    .on("change", (p) => poke(p))
+    .on("unlink", (p) => poke(p));
 
   child.on("exit", (code) => {
     if (code !== 0) {
@@ -184,6 +206,12 @@ function watchPublic(
     .on("unlink", (p) => onEvent("unlink", p))
     .on("addDir", (p) => onEvent("addDir", p))
     .on("unlinkDir", (p) => onEvent("unlinkDir", p));
+}
+
+function watchManifestBase(onChange: () => void | Promise<void>) {
+  chokidar.watch(MANIFEST_BASE, { ignoreInitial: true }).on("change", () => {
+    void onChange();
+  });
 }
 
 async function writeDevReloadJS() {
