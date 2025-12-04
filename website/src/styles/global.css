@@ -1,3 +1,6 @@
+@import "./tokens.css";
+@import "./theme.css";
+
 /* ==========================================================================
    Animica Global Styles
    - Modern reset
@@ -89,6 +92,108 @@ body {
   color: var(--color-fg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+body.theme.tokens {
+  background:
+    radial-gradient(120% 120% at 20% 10%, color-mix(in oklab, var(--brand-500), #000 35%) 0%, transparent 55%),
+    radial-gradient(140% 140% at 90% 10%, color-mix(in oklab, var(--brand-300), #000 50%) 0%, transparent 60%),
+    radial-gradient(160% 160% at 50% 80%, color-mix(in oklab, var(--brand-700), #000 70%) 0%, transparent 65%),
+    linear-gradient(160deg, #05060a, #0b0c11 40%, #07080d 100%);
+  color: var(--color-fg);
+}
+
+.page-shell {
+  position: relative;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  isolation: isolate;
+}
+
+.page-shell::before,
+.page-shell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.page-shell::before {
+  background-image:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 80px 80px;
+  mask-image: radial-gradient(circle at 50% 30%, rgba(0,0,0,0.6), transparent 60%);
+  opacity: 0.75;
+}
+
+.page-shell::after {
+  background:
+    radial-gradient(35% 25% at 18% 16%, rgba(88, 166, 255, 0.16), transparent 60%),
+    radial-gradient(30% 20% at 82% 12%, rgba(82, 255, 182, 0.13), transparent 60%),
+    radial-gradient(40% 32% at 70% 72%, rgba(255, 140, 102, 0.08), transparent 70%);
+  filter: blur(8px);
+}
+
+main#main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+}
+
+.section-hero {
+  border-bottom: 1px solid color-mix(in oklab, var(--color-border), transparent 30%);
+  backdrop-filter: saturate(120%) blur(6px);
+  background:
+    radial-gradient(120% 120% at 15% 10%, color-mix(in oklab, var(--brand-400), transparent 55%), transparent 55%),
+    linear-gradient(180deg, color-mix(in oklab, var(--color-surface), transparent 10%), transparent 50%);
+}
+
+.metric-grid {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.stat-card {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, color-mix(in oklab, var(--color-surface), #fff 3%), color-mix(in oklab, var(--color-surface-2), #000 6%));
+  border: 1px solid color-mix(in oklab, var(--color-border), transparent 10%);
+  border-radius: var(--radius-xl);
+  padding: var(--space-5);
+  box-shadow:
+    0 10px 40px rgba(0, 0, 0, 0.3),
+    0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.stat-card::after {
+  content: "";
+  position: absolute;
+  inset: -20% auto auto -20%;
+  width: 60%;
+  height: 60%;
+  background: radial-gradient(circle at 30% 30%, color-mix(in oklab, var(--brand-500), transparent 55%), transparent 70%);
+  opacity: 0.8;
+  pointer-events: none;
+}
+
+.stat-card h3 {
+  font-size: var(--text-sm);
+  letter-spacing: 0.02em;
+  color: color-mix(in oklab, var(--color-muted), #fff 15%);
+}
+
+.stat-card .value {
+  font-size: 1.75rem;
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.01em;
+}
+
+.stat-card p:last-child {
+  margin: 0;
+  color: color-mix(in oklab, var(--color-muted), #fff 8%);
 }
 
 a {
