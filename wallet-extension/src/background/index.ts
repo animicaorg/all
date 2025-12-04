@@ -15,7 +15,7 @@
 import * as migrations from './migrations';
 import keyring from './keyring';
 import { loadVaultEnvelope } from './keyring/storage';
-import { addRoutes, createRouter } from './router';
+import { createRouter } from './router';
 
 // Some bundlers inject small helpers (e.g. modulepreload) that expect a `window`
 // global. The MV3 background runs in a worker context where `window` is absent,
@@ -59,75 +59,46 @@ async function maybeHandleLegacyMessage(
   if (!msg || typeof msg !== 'object') return false;
 
   if (msg.kind === 'accounts:list') {
-    const snapshot = await listAccounts();
-    sendResponse({ ok: true, ...snapshot });
+    await keyring.init();
+    const accounts = await keyring.listAccounts();
+    const selected = await keyring.getSelected();
+    const locked = await keyring.isLocked();
+    sendResponse({
+      ok: true,
+      accounts: accounts.map((a) => ({ address: a.address, name: a.label, algo: (a as any).algo ?? (a as any).alg, path: a.path })),
+      selected: selected?.address,
+      locked,
+    });
     return true;
   }
 
   if (msg.kind === 'accounts:select') {
-    const result = await selectAccount(msg.address);
-    sendResponse(result);
+    await keyring.init();
+    const accounts = await keyring.listAccounts();
+    const acct = accounts.find((a) => a.address === msg.address);
+    if (!acct) {
+      sendResponse({ ok: false, error: 'Account not found' });
+      return true;
+    }
+    await keyring.selectAccount(acct.id);
+    sendResponse({ ok: true });
     return true;
   }
 
   if (msg.type === 'vault.export') {
-    try {
-      const payload = await exportVault();
-      sendResponse({ ok: true, ...payload });
-    } catch (err: any) {
-      sendResponse({ ok: false, error: err?.message ?? 'Failed to export vault' });
+    const envelope = await loadVaultEnvelope();
+    if (!envelope) {
+      sendResponse({ ok: false, error: 'No vault data to export yet.' });
+      return true;
     }
+    const json = JSON.stringify(envelope, null, 2);
+    const dataUrl = `data:application/json,${encodeURIComponent(json)}`;
+    sendResponse({ ok: true, dataUrl, fileName: 'animica-vault.json' });
     return true;
   }
 
   return false;
 }
-
-/* ---------------------------- Route registration ---------------------------- */
-
-async function listAccounts() {
-  await keyring.init();
-  const accounts = await keyring.listAccounts();
-  const selected = await keyring.getSelected();
-  const locked = await keyring.isLocked();
-  return {
-    accounts: accounts.map((a) => ({
-      address: a.address,
-      name: a.label,
-      algo: (a as any).algo ?? (a as any).alg,
-      path: a.path,
-    })),
-    selected: selected?.address,
-    locked,
-  };
-}
-
-async function selectAccount(address: string | undefined) {
-  await keyring.init();
-  const accounts = await keyring.listAccounts();
-  const acct = address ? accounts.find((a) => a.address === address) : undefined;
-  if (!acct) {
-    return { ok: false, error: 'Account not found' } as const;
-  }
-  await keyring.selectAccount(acct.id);
-  return { ok: true } as const;
-}
-
-async function exportVault() {
-  const envelope = await loadVaultEnvelope();
-  if (!envelope) {
-    throw new Error('No vault data to export yet.');
-  }
-  const json = JSON.stringify(envelope, null, 2);
-  const dataUrl = `data:application/json,${encodeURIComponent(json)}`;
-  return { dataUrl, fileName: 'animica-vault.json' } as const;
-}
-
-addRoutes({
-  'accounts.list': async () => listAccounts(),
-  'accounts.select': async (payload: { address?: string }) => selectAccount(payload?.address),
-  'vault.export': async () => exportVault(),
-});
 
 // Schedule default alarms (idempotent: re-creates with same name)
 function scheduleDefaultAlarms() {
