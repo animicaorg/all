@@ -11,6 +11,13 @@
 
 /* eslint-disable no-console */
 
+// Some bundlers inject small helpers (e.g. modulepreload) that expect a `window`
+// global. The MV3 background runs in a worker context where `window` is absent,
+// so alias it to `self` to avoid ReferenceError during early bootstrap.
+if (typeof (globalThis as any).window === 'undefined') {
+  (globalThis as any).window = self as any;
+}
+
 // Alarm names (centralized here)
 const ALARMS = {
   KEEPALIVE: 'animica:keepalive',
