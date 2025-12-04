@@ -99,6 +99,7 @@ async function maybeHandleLegacyMessage(
       mnemonic: msg.mnemonic,
       password: pin,
       storeMnemonic: true,
+      initialAlg: msg.algo ?? msg.initialAlg,
     });
     sendResponse({ ok: true });
     return true;
