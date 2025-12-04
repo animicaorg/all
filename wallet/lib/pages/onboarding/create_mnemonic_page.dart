@@ -9,6 +9,7 @@ import '../../router.dart';
 import '../../state/account_state.dart';
 import '../../crypto/sha3.dart' as hash;
 import '../../crypto/bech32m.dart';
+import '../../keyring/mnemonic.dart';
 
 class CreateMnemonicPage extends ConsumerStatefulWidget {
   const CreateMnemonicPage({super.key});
@@ -21,6 +22,8 @@ class _CreateMnemonicPageState extends ConsumerState<CreateMnemonicPage> {
   String? _mnemonic;
   String? _error;
   bool _saving = false;
+  final _passwordCtrl = TextEditingController();
+  final _confirmCtrl = TextEditingController();
 
   @override
   void initState() {
@@ -28,10 +31,20 @@ class _CreateMnemonicPageState extends ConsumerState<CreateMnemonicPage> {
     _generate();
   }
 
-  Future<void> _generate() async {
+  @override
+  void dispose() {
+    _passwordCtrl.dispose();
+    _confirmCtrl.dispose();
+    super.dispose();
+  }
+
+  void _generate() {
     try {
-      final phrase = await keyring.createWallet();
-      setState(() => _mnemonic = phrase);
+      final phrase = Mnemonic.generate();
+      setState(() {
+        _mnemonic = phrase;
+        _error = null;
+      });
     } catch (e) {
       setState(() => _error = e.toString());
     }
@@ -72,6 +85,29 @@ class _CreateMnemonicPageState extends ConsumerState<CreateMnemonicPage> {
                   ),
                 ),
               ),
+            const SizedBox(height: 20),
+            Text('Set a wallet password', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _passwordCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Password',
+                hintText: 'At least 8 characters',
+              ),
+              obscureText: true,
+              enableSuggestions: false,
+              autocorrect: false,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _confirmCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Confirm password',
+              ),
+              obscureText: true,
+              enableSuggestions: false,
+              autocorrect: false,
+            ),
             const Spacer(),
             Row(
               children: [
@@ -109,6 +145,27 @@ class _CreateMnemonicPageState extends ConsumerState<CreateMnemonicPage> {
     });
 
     try {
+      final phrase = _mnemonic;
+      if (phrase == null) {
+        throw Exception('No recovery phrase available. Try regenerating.');
+      }
+
+      final password = _passwordCtrl.text;
+      if (password.isEmpty) {
+        throw Exception('Password is required');
+      }
+      if (password.length < 8) {
+        throw Exception('Password must be at least 8 characters');
+      }
+      if (password != _confirmCtrl.text) {
+        throw Exception('Passwords do not match');
+      }
+      if (await keyring.hasWallet()) {
+        throw Exception('A wallet already exists on this device. Wipe it before creating a new one.');
+      }
+
+      await keyring.importWallet(mnemonic: phrase, passphrase: password);
+
       final signer = PqSigner.dev();
       final kp = await keyring.deriveDilithium3(signer: signer, account: 0);
       final addrBytes = hash.sha3_256(kp.publicKey);

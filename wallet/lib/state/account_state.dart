@@ -18,6 +18,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:riverpod/riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/state_service.dart';
 import 'providers.dart' show stateServiceProvider;
@@ -189,6 +190,9 @@ class AccountsNotifier extends StateNotifier<AccountsState> {
   final Ref _ref;
   final Map<String, Future<void>?> _inflight = {}; // per-address refresh guard
   Timer? _poll;
+  SharedPreferences? _prefs;
+
+  static const _prefsKey = 'animica.accounts.v1';
 
   AccountsNotifier(this._ref) : super(const AccountsState()) {
     // Optionally: start a light poll for the active address balance every 8s.
@@ -196,6 +200,8 @@ class AccountsNotifier extends StateNotifier<AccountsState> {
       final a = state.active;
       if (a != null) refreshBalance(a);
     });
+
+    _hydrateFromDisk();
   }
 
   // ---- account CRUD ----
@@ -227,6 +233,7 @@ class AccountsNotifier extends StateNotifier<AccountsState> {
     );
     final next = [...state.accounts, entry];
     state = state.copyWith(accounts: next, errorNull: true);
+    _persist();
     // If no active, set this one active
     if (state.active == null) {
       setActive(a);
@@ -240,6 +247,7 @@ class AccountsNotifier extends StateNotifier<AccountsState> {
         .map((x) => x.address == a ? x.copyWith(label: newLabel.trim()) : x)
         .toList(growable: false);
     state = state.copyWith(accounts: next, errorNull: true);
+    _persist();
   }
 
   void removeAccount(String address) {
@@ -250,6 +258,7 @@ class AccountsNotifier extends StateNotifier<AccountsState> {
         : state.active;
     final bals = Map<String, AccountBalance>.from(state.balances)..remove(a);
     state = state.copyWith(accounts: next, active: newActive, balances: bals, errorNull: true, activeNull: newActive == null);
+    _persist();
   }
 
   void setActive(String address) {
@@ -258,6 +267,7 @@ class AccountsNotifier extends StateNotifier<AccountsState> {
       throw StateError('setActive: address not in account list');
     }
     state = state.copyWith(active: a, errorNull: true);
+    _persist();
     // Proactively refresh active balance
     refreshBalance(a);
   }
@@ -344,6 +354,7 @@ class AccountsNotifier extends StateNotifier<AccountsState> {
     if (json == null) return state;
     final next = AccountsState.fromJson(json);
     state = next;
+    _persist();
     return next;
   }
 
@@ -354,6 +365,36 @@ class AccountsNotifier extends StateNotifier<AccountsState> {
     _poll?.cancel();
     _inflight.clear();
     super.dispose();
+  }
+
+  // ---- persistence ----
+
+  Future<SharedPreferences> _prefsInstance() async {
+    _prefs ??= await SharedPreferences.getInstance();
+    return _prefs!;
+  }
+
+  Future<void> _hydrateFromDisk() async {
+    try {
+      final prefs = await _prefsInstance();
+      final raw = prefs.getString(_prefsKey);
+      if (raw == null || raw.isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is Map<String, dynamic>) {
+        hydrate(decoded);
+      }
+    } catch (_) {
+      // Ignore persistence errors to avoid blocking app startup.
+    }
+  }
+
+  Future<void> _persist() async {
+    try {
+      final prefs = await _prefsInstance();
+      await prefs.setString(_prefsKey, jsonEncode(state.toJson()));
+    } catch (_) {
+      // Swallow persistence errors; state remains in memory.
+    }
   }
 }
 
