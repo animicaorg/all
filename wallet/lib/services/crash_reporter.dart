@@ -5,7 +5,7 @@
 // pubspec.yaml and wire it here.
 
 import 'package:flutter/foundation.dart';
-import 'services/env.dart' show Env;
+import 'env.dart' show Env;
 
 class CrashReporter {
   static Env? _env;

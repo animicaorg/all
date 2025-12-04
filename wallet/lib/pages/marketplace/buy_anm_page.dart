@@ -14,6 +14,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../state/providers.dart';
 import '../../services/payment_gateway.dart';
 import '../../widgets/chart_widget.dart';
+import '../../services/pricing_engine.dart' show TreasurySnapshot;
 
 class BuyAnmPage extends ConsumerStatefulWidget {
   const BuyAnmPage({Key? key}) : super(key: key);
