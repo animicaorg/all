@@ -37,6 +37,7 @@ export default function App() {
   const [isBusy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [addressRefresh, setAddressRefresh] = useState(0);
+  const [primaryAddress, setPrimaryAddress] = useState<string>("");
 
   const initialMode = useMemo(() => {
     try {
@@ -55,6 +56,7 @@ export default function App() {
     setError(null);
     setPin("");
     setPin2("");
+    setPrimaryAddress("");
     setBusy(true);
     try {
       const res = await bgSend<{ mnemonic: string }>({ kind: "keyring.generateMnemonic", words: 24 });
@@ -73,6 +75,7 @@ export default function App() {
     setError(null);
     setPin("");
     setPin2("");
+    setPrimaryAddress("");
     setStep("import");
   }, []);
 
@@ -104,7 +107,7 @@ export default function App() {
     }
     setBusy(true);
     try {
-      await bgSend<{ ok: true }>({
+      const res = await bgSend<{ ok: true; result?: { address?: string } }>({
         kind: "keyring.setupVault",
         action: mode === "new" ? "create" : "import",
         mnemonic,
@@ -114,13 +117,14 @@ export default function App() {
       // Reset any stale sessions so popup starts clean
       await bgSend({ kind: "sessions.reset" });
       setAddressRefresh((v) => v + 1);
+      if (res?.result?.address) setPrimaryAddress(res.result.address);
       // Success — Finish screen will offer to close the window.
     } catch (e: any) {
       setError(e?.message ?? String(e));
     } finally {
       setBusy(false);
     }
-    }, [mode, pinOk, mnemonic, pin, algo]);
+  }, [mode, pinOk, mnemonic, pin, algo]);
 
   useEffect(() => {
     if (step !== "welcome" || !initialMode) return;
@@ -184,14 +188,17 @@ export default function App() {
         {step === "finish" && (
           <Finish
             mode={mode ?? "new"}
-            mnemonicPreview={mnemonic}
-            pin={pin}
-            pin2={pin2}
-            setPin={setPin}
-            setPin2={setPin2}
-            isBusy={isBusy}
-            canFinish={pinOk && !!mnemonic}
-            refreshToken={addressRefresh}
+          mnemonicPreview={mnemonic}
+          algo={algo}
+          pin={pin}
+          pin2={pin2}
+          setPin={setPin}
+          setPin2={setPin2}
+          setAlgo={setAlgo}
+          primaryAddress={primaryAddress}
+          isBusy={isBusy}
+          canFinish={pinOk && !!mnemonic}
+          refreshToken={addressRefresh}
             onFinish={onFinalize}
             onBack={() => setStep(mode === "new" ? "verify" : "import")}
           />
