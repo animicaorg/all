@@ -1,7 +1,7 @@
 ---
 import BaseLayout from "../layouts/BaseLayout.astro";
-import StatusBadge from "../components/StatusBadge.tsx";
-import MetricTicker from "../components/MetricTicker.tsx";
+import StatusBadge from "../components/StatusBadge.astro";
+import MetricTicker from "../components/MetricTicker.astro";
 import InlineLink from "../components/InlineLink.astro";
 import CodeBlock from "../components/CodeBlock.astro";
 import { links } from "../config/links";
@@ -37,7 +37,7 @@ const friendlyRpc = rpcHttp;
                   border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
         <div class="flex items-center justify-between gap-3">
           <h3 class="text-sm font-medium opacity-80">RPC</h3>
-          <StatusBadge client:load rpcUrl={baseRpc} />
+          <StatusBadge rpcUrl={baseRpc} />
         </div>
         <p class="mt-4 text-xs opacity-70">HTTP endpoint</p>
         <p class="font-mono text-xs break-all opacity-90">{friendlyRpc}</p>
@@ -62,7 +62,7 @@ const friendlyRpc = rpcHttp;
                   border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
         <h3 class="text-sm font-medium opacity-80">Head height</h3>
         <p class="mt-3 text-2xl font-semibold tracking-tight">
-          <MetricTicker client:load rpcUrl={baseRpc} kind="height" />
+          <MetricTicker rpcUrl={baseRpc} kind="height" />
         </p>
         <p class="text-xs opacity-70 mt-1">Updates live</p>
       </div>

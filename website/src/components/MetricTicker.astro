@@ -1,0 +1,208 @@
+---
+import { rpcUrl as defaultRpcUrl } from "../env";
+
+type Props = {
+  pollMs?: number;
+  windowSeconds?: number;
+  className?: string;
+  compact?: boolean;
+  rpcUrl?: string;
+};
+
+const pollMs = (Astro.props as Props).pollMs ?? 2000;
+const windowSeconds = (Astro.props as Props).windowSeconds ?? 60;
+const className = (Astro.props as Props).className ?? "";
+const compact = (Astro.props as Props).compact ?? false;
+const rpcUrl = (Astro.props as Props).rpcUrl ?? defaultRpcUrl ?? "/rpc";
+
+const uid = `metric-ticker-${Math.random().toString(36).slice(2, 9)}`;
+const config = JSON.stringify({ pollMs, windowSeconds, compact, rpcUrl });
+---
+{compact ? (
+  <div class={`inline-flex items-center gap-3 text-sm ${className}`} id={uid} data-config={config} aria-live="polite">
+    <span class="inline-block size-2 rounded-full bg-zinc-500" data-role="badge" />
+    <span class="tabular-nums" data-role="height">Head: —</span>
+    <span aria-hidden="true">•</span>
+    <span class="tabular-nums" data-role="tps">TPS: —</span>
+    <span class="opacity-70" data-role="age">(age —)</span>
+  </div>
+) : (
+  <div
+    id={uid}
+    data-config={config}
+    class={`flex items-center gap-4 rounded-lg border px-3 py-2 text-sm
+      border-[color-mix(in_srgb,var(--text-primary)_/_.12,transparent)]
+      bg-[var(--bg-elevated)] ${className}`}
+    aria-live="polite"
+  >
+    <span class="inline-block size-2 rounded-full bg-zinc-500" aria-label="status" data-role="badge" />
+    <div class="flex items-baseline gap-2">
+      <span class="opacity-80">Head</span>
+      <span class="font-semibold tabular-nums" data-role="height">—</span>
+    </div>
+    <div class="flex items-baseline gap-2">
+      <span class="opacity-80">TPS</span>
+      <span class="font-semibold tabular-nums" data-role="tps">—</span>
+    </div>
+    <div class="ml-auto flex items-baseline gap-2 opacity-75">
+      <span>Age</span>
+      <span class="tabular-nums" data-role="age">—</span>
+    </div>
+  </div>
+)}
+<script>
+(() => {
+  const badgeClasses = {
+    ok: "bg-emerald-500",
+    warn: "bg-amber-500",
+    error: "bg-rose-500",
+    idle: "bg-zinc-500",
+  };
+
+  const root = document.getElementById("${uid}");
+  if (!root) return;
+
+  const cfg = (() => {
+    try {
+      return JSON.parse(root.dataset.config || "{}");
+    } catch {
+      return {};
+    }
+  })();
+
+  const pollMs = Number(cfg.pollMs) || 2000;
+  const windowSeconds = Number(cfg.windowSeconds) || 60;
+  const rpcUrl = cfg.rpcUrl || "/rpc";
+  const windowMs = windowSeconds * 1000;
+
+  const badgeEl = root.querySelector('[data-role="badge"]');
+  const heightEl = root.querySelector('[data-role="height"]');
+  const tpsEl = root.querySelector('[data-role="tps"]');
+  const ageEl = root.querySelector('[data-role="age"]');
+
+  let samples = [];
+  let lastFetchedHeight = -1;
+  let lastUpdateMs = null;
+  let status = "idle";
+  let timer = null;
+
+  const setBadge = (state) => {
+    if (!badgeEl) return;
+    badgeEl.classList.remove(
+      badgeClasses.ok,
+      badgeClasses.warn,
+      badgeClasses.error,
+      badgeClasses.idle,
+    );
+    badgeEl.classList.add(badgeClasses[state] || badgeClasses.idle);
+  };
+
+  const rpcCall = async (method, params) => {
+    const id = Math.floor(Math.random() * 1e9);
+    const res = await fetch(rpcUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+    });
+    if (!res.ok) throw new Error(`RPC HTTP ${res.status}`);
+    const body = await res.json();
+    if (body?.error) throw new Error(body.error.message || "RPC error");
+    return body.result;
+  };
+
+  const getHead = () => rpcCall("chain.getHead");
+
+  const getBlockByNumber = async (n) => {
+    try {
+      return await rpcCall("chain.getBlockByNumber", [n, { includeTxs: true }]);
+    } catch {
+      try {
+        return await rpcCall("chain.getBlockByNumber", [n, true]);
+      } catch {
+        try {
+          return await rpcCall("chain.getBlockByNumber", [n]);
+        } catch {
+          return null;
+        }
+      }
+    }
+  };
+
+  const computeTps = () => {
+    const now = Date.now();
+    const windowStart = now - windowMs;
+    const windowSamples = samples.filter((s) => s.tMs >= windowStart);
+    if (windowSamples.length === 0) return 0;
+    const totalTx = windowSamples.reduce((acc, s) => acc + s.txCount, 0);
+    const times = windowSamples.map((s) => s.tMs);
+    const spanMs = Math.max(1, Math.max(...times) - Math.min(...times));
+    return totalTx / (spanMs / 1000);
+  };
+
+  const formatTps = (value) => {
+    if (!isFinite(value)) return "—";
+    if (value >= 1000) return `${value.toFixed(0)}`;
+    if (value >= 100) return `${value.toFixed(1)}`;
+    return `${value.toFixed(2)}`;
+  };
+
+  const formatAge = (ms) => {
+    if (ms == null) return "—";
+    const s = Math.floor(ms / 1000);
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    const rs = s % 60;
+    return `${m}m ${rs}s`;
+  };
+
+  const updateUi = () => {
+    const tps = computeTps();
+    const age = lastUpdateMs == null ? null : Math.max(0, Date.now() - lastUpdateMs);
+    if (heightEl) {
+      heightEl.textContent = compact ? `Head: ${lastFetchedHeight >= 0 ? lastFetchedHeight : "—"}` : `${lastFetchedHeight >= 0 ? lastFetchedHeight : "—"}`;
+    }
+    if (tpsEl) tpsEl.textContent = compact ? `TPS: ${formatTps(tps)}` : formatTps(tps);
+    if (ageEl) ageEl.textContent = compact ? `(age ${formatAge(age)})` : formatAge(age);
+    setBadge(status);
+  };
+
+  const tick = async () => {
+    try {
+      const head = await getHead();
+      const h = head?.number;
+      if (typeof h !== "number") throw new Error("Invalid head height");
+      const prev = lastFetchedHeight;
+      if (heightEl) {
+        heightEl.textContent = compact ? `Head: ${h}` : `${h}`;
+      }
+      const start = prev >= 0 ? prev + 1 : h;
+      for (let n = start; n <= h; n++) {
+        const block = await getBlockByNumber(n);
+        if (!block) continue;
+        const txs = Array.isArray(block.txs)
+          ? block.txs
+          : Array.isArray(block.transactions)
+          ? block.transactions
+          : [];
+        const tSec = block.timestamp ?? block.time ?? head.timestamp ?? head.time ?? Math.floor(Date.now() / 1000);
+        const tMs = typeof tSec === "number" ? tSec * 1000 : Date.now();
+        samples.push({ tMs, txCount: txs.length });
+        if (samples.length > 512) samples.splice(0, samples.length - 512);
+      }
+      lastFetchedHeight = h;
+      const cutoff = Date.now() - windowMs * 2;
+      samples = samples.filter((s) => s.tMs >= cutoff);
+      lastUpdateMs = Date.now();
+      status = "ok";
+    } catch (err) {
+      console.error("[MetricTicker] poll error:", err);
+      status = status === "error" ? "error" : "warn";
+    }
+    updateUi();
+  };
+
+  tick();
+  timer = window.setInterval(tick, pollMs);
+  window.addEventListener("pagehide", () => timer && clearInterval(timer), { once: true });
+})();
+</script>
