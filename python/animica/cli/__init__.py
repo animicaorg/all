@@ -7,4 +7,6 @@ operations tooling.
 
 from __future__ import annotations
 
-__all__ = ["wallet", "node", "mining"]
+from .main import app, main
+
+__all__ = ["app", "main", "wallet", "node", "mining"]

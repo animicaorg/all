@@ -7,10 +7,17 @@ from pathlib import Path
 from typing import Optional
 
 import typer
-from animica.cli.wallet import WalletEntry, _wallet_file_path, create_wallet
 from animica.config import load_network_config
-from animica.stratum_pool import cli as pool_cli
-from animica.stratum_pool.config import PoolConfig, load_config_from_env
+
+try:
+    from animica.cli.wallet import (WalletEntry, _wallet_file_path,
+                                    create_wallet)
+    from animica.stratum_pool import cli as pool_cli
+    from animica.stratum_pool.config import PoolConfig, load_config_from_env
+
+    HAVE_STRATUM = True
+except Exception:
+    HAVE_STRATUM = False
 
 app = typer.Typer(help="Run and inspect the Animica Stratum pool.")
 
@@ -25,6 +32,16 @@ def _ensure_network_env() -> None:
     cfg = load_network_config()
     os.environ.setdefault("ANIMICA_NETWORK", cfg.name)
     os.environ.setdefault(RPC_ENV, cfg.rpc_url)
+
+
+def _ensure_stratum_available() -> None:
+    if not HAVE_STRATUM:
+        typer.echo(
+            "Error: Stratum pool modules required. "
+            "Ensure 'animica[stratum]' is installed.",
+            err=True,
+        )
+        raise typer.Exit(1)
 
 
 @app.command("run-pool")
@@ -46,6 +63,7 @@ def run_pool(
     ),
 ) -> None:
     """Start the Animica Stratum mining pool."""
+    _ensure_stratum_available()
     _ensure_network_env()
     env_overrides = {
         RPC_ENV: rpc_url,
