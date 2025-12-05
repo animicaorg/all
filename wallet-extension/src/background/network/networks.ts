@@ -73,8 +73,9 @@ const BUILTIN: Record<Exclude<NetworkId, "custom-env">, Network> = {
   "animica-devnet": {
     id: "animica-devnet",
     name: "Animica Devnet (local)",
-    chainId: 31337,
-    rpcHttp: "http://localhost:8545",
+    chainId: 1337,
+    // JSON-RPC POST handler lives at /rpc on the devnet node
+    rpcHttp: "http://localhost:8545/rpc",
     rpcWs: "ws://localhost:8546",
     explorer: "http://localhost:8080",
     bech32Prefix: "anim",
