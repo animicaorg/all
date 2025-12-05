@@ -101,8 +101,8 @@ A privacy-first, post-quantum (PQ) wallet for Animica networks. Ships an in-page
 
 Copy `.env.example` → `.env` if you want to override:
 
-RPC_URL=https://localhost:8545
-CHAIN_ID=31337
+RPC_URL=https://localhost:8545/rpc
+CHAIN_ID=1337
 CORS_ORIGINS=*
 
 > **Note:** Point `RPC_URL` at the JSON-RPC handler, not just the server root. Some Animica node setups expose the RPC listener at `/rpc`; hitting the bare `/` can return `405 Method Not Allowed`. If `curl -X POST <host>:<port>/rpc` returns `200` but `/` does not, set `RPC_URL` to include `/rpc`.

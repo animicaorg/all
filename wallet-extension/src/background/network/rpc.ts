@@ -106,7 +106,7 @@ export class RpcClient {
       params,
       id: nextId++,
     };
-    const res = await this._postWithRetries<JsonRpcResponse<T>>(req);
+    const res = await this._postWithRetries<JsonRpcResponse<T>>(req, method);
     if ("error" in res) {
       throw RpcError.from(res.error);
     }
@@ -127,7 +127,8 @@ export class RpcClient {
       id: nextId++,
     }));
 
-    const res = await this._postWithRetries<JsonRpcResponse<T>[]>(reqs);
+    const methodHint = `batch:${items.map((it) => it.method).join(",")}`;
+    const res = await this._postWithRetries<JsonRpcResponse<T>[]>(reqs, methodHint);
 
     // Map by id for stable ordering
     const byId = new Map<number | string, JsonRpcResponse<T>>();
@@ -154,13 +155,13 @@ export class RpcClient {
   }
 
   // Internal POST + retries
-  private async _postWithRetries<T = any>(body: any): Promise<T> {
+  private async _postWithRetries<T = any>(body: any, methodHint?: string): Promise<T> {
     let attempt = 0;
     // eslint-disable-next-line no-constant-condition
     while (true) {
       attempt += 1;
       try {
-        return await this._postOnce<T>(body);
+        return await this._postOnce<T>(body, methodHint);
       } catch (err: any) {
         if (attempt > this.maxRetries || !isRetryable(err)) {
           throw err;
@@ -171,7 +172,7 @@ export class RpcClient {
     }
   }
 
-  private async _postOnce<T = any>(body: any): Promise<T> {
+  private async _postOnce<T = any>(body: any, methodHint?: string): Promise<T> {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), this.timeoutMs);
 
@@ -188,7 +189,15 @@ export class RpcClient {
       });
 
       if (!resp.ok) {
-        // Bubble HTTP errors with status for retry policy
+        // Bubble HTTP errors with status for retry policy and log enough context to debug routing issues.
+        console.warn(
+          `[rpc] HTTP ${resp.status} from ${this.url} for method ${methodHint ?? "unknown"}`,
+          {
+            url: this.url,
+            status: resp.status,
+            method: methodHint,
+          }
+        );
         throw new HttpError(`HTTP ${resp.status} from JSON-RPC`, resp.status);
       }
 
