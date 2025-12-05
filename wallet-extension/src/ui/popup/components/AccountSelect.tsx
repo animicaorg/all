@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 export type AccountItem = {
   address: string; // bech32m anim1... (preferred), or hex if not yet encoded
@@ -78,21 +78,22 @@ export default function AccountSelect({
 
   useEffect(() => setSelected(value), [value]);
 
+  const refreshFromBackground = useCallback(async () => {
+    const resp = await bgListAccounts();
+    if (!resp?.ok) return;
+    setBgAccounts(resp.accounts);
+    setLocked(!!resp.locked);
+
+    if (typeof value === "undefined") {
+      const nextSelected = resp.selected || resp.accounts[0]?.address;
+      if (nextSelected) setSelected(nextSelected);
+    }
+  }, [value]);
+
   // Hydrate from background keyring
   useEffect(() => {
-    let mounted = true;
-    bgListAccounts().then((resp) => {
-      if (!mounted || !resp?.ok) return;
-      setBgAccounts(resp.accounts);
-      setLocked(!!resp.locked);
-      if (typeof value === "undefined" && resp.selected) {
-        setSelected(resp.selected);
-      }
-    });
-    return () => {
-      mounted = false;
-    };
-  }, []); // mount once
+    refreshFromBackground().catch(() => undefined);
+  }, [refreshFromBackground]); // mount once
 
   // React to background broadcasts (account added/selected elsewhere)
   useEffect(() => {
@@ -101,7 +102,12 @@ export default function AccountSelect({
       if (msg.type === "accounts/updated" && Array.isArray(msg.accounts)) {
         setBgAccounts(msg.accounts);
         if (typeof msg.locked === "boolean") setLocked(msg.locked);
-        if (msg.selected) setSelected(msg.selected);
+        if (typeof value === "undefined") {
+          const nextSelected = msg.selected || msg.accounts[0]?.address;
+          if (nextSelected) setSelected(nextSelected);
+        }
+        // Ensure persisted state stays in sync with UI selection
+        void refreshFromBackground();
       }
     };
     try {

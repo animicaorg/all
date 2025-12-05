@@ -62,6 +62,7 @@ export default function Finish({
   const [net, setNet] = useState<NetInfo | null>(null);
   const [copied, setCopied] = useState(false);
   const [show, setShow] = useState(false);
+  const [addrError, setAddrError] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -79,6 +80,9 @@ export default function Finish({
 
         if (addrRes.status === "fulfilled" && addrRes.value?.address) {
           setAddress(addrRes.value.address);
+          setAddrError(null);
+        } else if (addrRes.status === "rejected") {
+          setAddrError(addrRes.reason?.message ?? "Unable to load address");
         }
         if (netRes.status === "fulfilled" && netRes.value) {
           setNet(netRes.value);
@@ -95,8 +99,29 @@ export default function Finish({
   useEffect(() => {
     if (primaryAddress) {
       setAddress(primaryAddress);
+      setAddrError(null);
     }
   }, [primaryAddress]);
+
+  useEffect(() => {
+    const handler = (msg: any) => {
+      if (!msg || typeof msg !== "object") return;
+      if (msg.type === "accounts/updated") {
+        const next = msg.selected || msg.accounts?.[0]?.address;
+        if (typeof next === "string" && next.length > 0) {
+          setAddress(next);
+          setAddrError(null);
+        }
+      }
+    };
+
+    try {
+      chrome.runtime?.onMessage?.addListener(handler);
+      return () => chrome.runtime?.onMessage?.removeListener(handler);
+    } catch {
+      return () => undefined;
+    }
+  }, []);
 
   const addrDisplay = useMemo(() => shortAddr(address), [address]);
   const mnemonicPreviewShort = useMemo(() => shortAddr(mnemonicPreview, 10), [mnemonicPreview]);
@@ -217,7 +242,9 @@ export default function Finish({
       </p>
 
       <div className="addr-card">
-        <code title={address}>{addrDisplay || "anim1…"}</code>
+        <code title={address}>
+          {address ? addrDisplay : addrError ? "No account selected" : "Loading address…"}
+        </code>
         <button className="btn ghost sm" onClick={copy} disabled={!address}>
           {copied ? "Copied" : "Copy"}
         </button>
