@@ -11,9 +11,14 @@ import httpx
 import typer
 from animica.config import load_network_config
 
-from pq.py.address import address_from_pubkey, validate_address
-from pq.py.keygen import keygen_sig
-from pq.py.registry import default_signature_alg, name_of
+try:
+    from pq.py.address import address_from_pubkey, validate_address
+    from pq.py.keygen import keygen_sig
+    from pq.py.registry import default_signature_alg, name_of
+
+    HAVE_PQ = True
+except Exception:
+    HAVE_PQ = False
 
 DEFAULT_WALLET_PATH = Path.home() / ".animica" / "wallets.json"
 WALLET_FILE_ENV = "ANIMICA_WALLETS_FILE"

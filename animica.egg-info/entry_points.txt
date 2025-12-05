@@ -1,0 +1,7 @@
+[console_scripts]
+animica = animica.cli.main:main
+animica-mining = animica.cli.mining:app
+animica-node = animica.cli.node:app
+animica-p2p = p2p.cli:main
+animica-pool = animica.cli.mining:app
+animica-wallet = animica.cli.wallet:app

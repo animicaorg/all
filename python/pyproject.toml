@@ -22,11 +22,11 @@ classifiers = [
 ]
 
 [project.scripts]
+animica = "animica.cli.main:main"
 animica-wallet = "animica.cli.wallet:app"
 animica-node = "animica.cli.node:app"
 animica-mining = "animica.cli.mining:app"
 animica-pool = "animica.cli.mining:app"
-animica-p2p = "p2p.cli:main"
 
 [project.optional-dependencies]
 stratum = [
@@ -42,8 +42,7 @@ quantum = [
 ]
 
 [tool.setuptools]
-package-dir = {"" = ".."}
+packages = ["animica", "animica.cli", "animica.stratum_pool"]
 
-[tool.setuptools.packages.find]
-where = [".."]
-include = ["animica*", "p2p*"]
+[tool.setuptools.package-data]
+animica = ["py.typed"]
