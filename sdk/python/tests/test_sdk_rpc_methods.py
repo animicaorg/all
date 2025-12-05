@@ -27,7 +27,9 @@ fake_address.is_valid = lambda addr, expected_hrp=None: True
 fake_address.validate = fake_address.is_valid
 fake_address.AddressError = ValueError
 sys.modules.setdefault("omni_sdk.address", fake_address)
-fake_types_pkg = sys.modules.setdefault("omni_sdk.types", types.ModuleType("omni_sdk.types"))
+fake_types_pkg = sys.modules.setdefault(
+    "omni_sdk.types", types.ModuleType("omni_sdk.types")
+)
 fake_abi = types.ModuleType("omni_sdk.types.abi")
 fake_abi.encode_call = lambda abi, fn, args: b""
 fake_abi.decode_return = lambda abi, fn, data: {}
@@ -60,7 +62,9 @@ class _DummyPQSigner:
 fake_signer_mod.PQSigner = _DummyPQSigner
 fake_signer_mod.Dilithium3Signer = _DummyPQSigner
 fake_signer_mod.SphincsShake128sSigner = _DummyPQSigner
-fake_wallet_pkg = sys.modules.setdefault("omni_sdk.wallet", types.ModuleType("omni_sdk.wallet"))
+fake_wallet_pkg = sys.modules.setdefault(
+    "omni_sdk.wallet", types.ModuleType("omni_sdk.wallet")
+)
 fake_wallet_pkg.keystore = fake_keystore
 fake_wallet_pkg.signer = fake_signer_mod
 sys.modules.setdefault("omni_sdk.wallet.keystore", fake_keystore)
@@ -126,13 +130,19 @@ class ContractClient:
     def get_nonce(self, addr: str) -> int:
         res = self._rpc.call("state.getNonce", [addr])
         if not isinstance(res, int):
-            raise RpcError(method="state.getNonce", code=-32603, message="unexpected nonce payload")
+            raise RpcError(
+                method="state.getNonce", code=-32603, message="unexpected nonce payload"
+            )
         return res
 
     def get_balance(self, addr: str) -> int:
         res = self._rpc.call("state.getBalance", [addr])
         if not isinstance(res, int):
-            raise RpcError(method="state.getBalance", code=-32603, message="unexpected balance payload")
+            raise RpcError(
+                method="state.getBalance",
+                code=-32603,
+                message="unexpected balance payload",
+            )
         return res
 
 
@@ -143,20 +153,26 @@ class RandomnessClient:
     def get_params(self):
         res = self._rpc.call_fn("rand.getParams", {})
         if not isinstance(res, dict):
-            raise RpcError(method="rand.getParams", code=-32603, message="invalid response")
+            raise RpcError(
+                method="rand.getParams", code=-32603, message="invalid response"
+            )
         return res
 
     def get_round(self):
         res = self._rpc.call_fn("rand.getRound", {})
         if not isinstance(res, dict):
-            raise RpcError(method="rand.getRound", code=-32603, message="invalid response")
+            raise RpcError(
+                method="rand.getRound", code=-32603, message="invalid response"
+            )
         return res
 
     def get_beacon(self, round_id=None):
         params = {} if round_id is None else {"round": round_id}
         res = self._rpc.call_fn("rand.getBeacon", params)
         if not isinstance(res, dict):
-            raise RpcError(method="rand.getBeacon", code=-32603, message="invalid response")
+            raise RpcError(
+                method="rand.getBeacon", code=-32603, message="invalid response"
+            )
         return res
 
     def get_history(self, *, start=None, limit=10):
@@ -165,7 +181,9 @@ class RandomnessClient:
             params["start"] = start
         res = self._rpc.call_fn("rand.getHistory", params)
         if not isinstance(res, dict):
-            raise RpcError(method="rand.getHistory", code=-32603, message="invalid response")
+            raise RpcError(
+                method="rand.getHistory", code=-32603, message="invalid response"
+            )
         return res
 
     def commit(self, *, address: str, salt: bytes, payload: bytes):
@@ -178,7 +196,9 @@ class RandomnessClient:
             },
         )
         if not isinstance(res, dict):
-            raise RpcError(method="rand.commit", code=-32603, message="invalid response")
+            raise RpcError(
+                method="rand.commit", code=-32603, message="invalid response"
+            )
         return res
 
     def reveal(self, *, salt: bytes, payload: bytes):
@@ -187,7 +207,9 @@ class RandomnessClient:
             {"salt": "0x" + salt.hex(), "payload": "0x" + payload.hex()},
         )
         if not isinstance(res, dict):
-            raise RpcError(method="rand.reveal", code=-32603, message="invalid response")
+            raise RpcError(
+                method="rand.reveal", code=-32603, message="invalid response"
+            )
         return res
 
 
@@ -245,8 +267,15 @@ def test_tx_helpers_use_expected_methods_and_handle_errors():
 
 
 def test_contract_client_rpc_wrappers():
-    rpc = RecordingRpc(responses={"state.getNonce": lambda _p: 7, "state.getBalance": 42})
-    client = ContractClient(rpc=rpc, address="anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq", abi=[], chain_id=1)
+    rpc = RecordingRpc(
+        responses={"state.getNonce": lambda _p: 7, "state.getBalance": 42}
+    )
+    client = ContractClient(
+        rpc=rpc,
+        address="anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+        abi=[],
+        chain_id=1,
+    )
 
     assert client.get_nonce("anim1abc") == 7
     assert client.get_balance("anim1abc") == 42
@@ -271,8 +300,14 @@ def test_randomness_client_issues_correct_methods_and_validates_responses():
         responses={
             "rand.getParams": lambda _p: {"roundSeconds": 30},
             "rand.getRound": lambda _p: {"roundId": 5},
-            "rand.getBeacon": lambda params: {"round": params.get("round", None) or None, "output": "0x00"},
-            "rand.getHistory": lambda params: {"limit": params.get("limit"), "items": []},
+            "rand.getBeacon": lambda params: {
+                "round": params.get("round", None) or None,
+                "output": "0x00",
+            },
+            "rand.getHistory": lambda params: {
+                "limit": params.get("limit"),
+                "items": [],
+            },
             "rand.commit": lambda params: {"commitment": params["payload"]},
             "rand.reveal": lambda params: {"ok": params["payload"] == "0x99"},
         }
@@ -289,7 +324,12 @@ def test_randomness_client_issues_correct_methods_and_validates_responses():
     reveal = client.reveal(salt=b"\x00", payload=b"\x99")
 
     methods = [m for m, _ in rpc.calls]
-    assert methods[:4] == ["rand.getParams", "rand.getRound", "rand.getBeacon", "rand.getHistory"]
+    assert methods[:4] == [
+        "rand.getParams",
+        "rand.getRound",
+        "rand.getBeacon",
+        "rand.getHistory",
+    ]
     assert methods[-2:] == ["rand.commit", "rand.reveal"]
     last_params = rpc.calls[-1][1]
     assert last_params["payload"] == "0x99"

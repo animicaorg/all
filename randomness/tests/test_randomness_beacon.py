@@ -12,7 +12,9 @@ def _beacon_bytes(round_id: int, salt: str = "") -> bytes:
     return hashlib.sha3_256(msg).digest()
 
 
-def _record_block(db: core_db.RandomnessCoreDB, height: int, round_id: int, *, salt: str = "") -> bytes:
+def _record_block(
+    db: core_db.RandomnessCoreDB, height: int, round_id: int, *, salt: str = ""
+) -> bytes:
     beacon = _beacon_bytes(round_id, salt)
     db.link_round_to_block(
         height=height,
@@ -57,7 +59,9 @@ def test_beacon_output_is_deterministic_for_block_sequence():
     kv2._d.update(kv._d)
     db_restarted = core_db.RandomnessCoreDB(kv2)
     exec_view_restarted = ExecutionRandomness(pointer_source=db_restarted)
-    restarted_sequence = [exec_view_restarted.beacon_digest_at_height(h) for h in range(3)]
+    restarted_sequence = [
+        exec_view_restarted.beacon_digest_at_height(h) for h in range(3)
+    ]
 
     assert digest_sequence == restarted_sequence
 

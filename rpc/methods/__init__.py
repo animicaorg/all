@@ -144,9 +144,7 @@ def register(
 ) -> MethodSpec:
     """Register a method callable under a JSON-RPC name."""
     if not isinstance(name, str) or not name:
-        raise ValueError(
-            f"Method name must be a non-empty string, got {name!r}"
-        )
+        raise ValueError(f"Method name must be a non-empty string, got {name!r}")
 
     namespace = name.split(".", 1)[0]
 
@@ -219,9 +217,7 @@ def get_registry() -> dict[str, MethodSpec]:
 def list_methods(namespace: str | None = None) -> list[str]:
     ensure_loaded()
     with _LOCK:
-        names = sorted(
-            k for k in _REGISTRY.keys() if ("." in k or "_" in k)
-        )
+        names = sorted(k for k in _REGISTRY.keys() if ("." in k or "_" in k))
         if namespace:
             names = [n for n in names if n.startswith(namespace + ".")]
         # Deduplicate aliases by unique MethodSpec identity

@@ -78,7 +78,9 @@ def apply_transfer(state: Dict[str, Account], tx: Tx) -> None:
     state[COINBASE].balance += fee
 
 
-def generate_valid_transfers(state: Dict[str, Account], rng: random.Random, count: int) -> List[Tx]:
+def generate_valid_transfers(
+    state: Dict[str, Account], rng: random.Random, count: int
+) -> List[Tx]:
     addrs = [ALICE, BOB, CAROL]
     txs: List[Tx] = []
     for _ in range(count):
@@ -104,8 +106,12 @@ def _epoch_supply_bounds(blocks: int) -> Tuple[int, int]:
     bounded_epochs = min(full_epochs, ISSUANCE_MAX_HALVINGS)
     epoch_rewards = [_issuance_for_epoch(e) for e in range(bounded_epochs + 1)]
 
-    minted_from_full_epochs = sum(epoch_rewards[e] * ISSUANCE_EPOCH_LEN for e in range(bounded_epochs))
-    minted_from_remainder = epoch_rewards[min(bounded_epochs, len(epoch_rewards) - 1)] * remainder
+    minted_from_full_epochs = sum(
+        epoch_rewards[e] * ISSUANCE_EPOCH_LEN for e in range(bounded_epochs)
+    )
+    minted_from_remainder = (
+        epoch_rewards[min(bounded_epochs, len(epoch_rewards) - 1)] * remainder
+    )
 
     last_reward = epoch_rewards[min(bounded_epochs, len(epoch_rewards) - 1)]
     return minted_from_full_epochs + minted_from_remainder, last_reward
@@ -120,7 +126,9 @@ def test_total_supply_respects_emission_schedule_upper_bound() -> None:
     simulated_supply = total_supply(state)
 
     theoretical_issuance, last_reward = _epoch_supply_bounds(blocks)
-    theoretical_max = theoretical_issuance + last_reward  # buffer for rounding/next-block clamp
+    theoretical_max = (
+        theoretical_issuance + last_reward
+    )  # buffer for rounding/next-block clamp
 
     assert minted <= theoretical_max
     assert simulated_supply == total_supply(state)

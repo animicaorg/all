@@ -6,9 +6,13 @@ from typing import Any, Optional
 import pytest
 
 pool_mod = pytest.importorskip("mempool.pool", reason="mempool.pool module not found")
-policy_mod = pytest.importorskip("mempool.policy", reason="mempool.policy module not found")
+policy_mod = pytest.importorskip(
+    "mempool.policy", reason="mempool.policy module not found"
+)
 errors = pytest.importorskip("mempool.errors", reason="mempool.errors module not found")
-evict_mod = pytest.importorskip("mempool.evict", reason="mempool.evict module not found")
+evict_mod = pytest.importorskip(
+    "mempool.evict", reason="mempool.evict module not found"
+)
 
 # Prefer specific error types if the package defines them.
 ERR_ADMISSION = getattr(errors, "AdmissionError", Exception)
@@ -56,7 +60,9 @@ def _monkeypatch_validation_and_priority(monkeypatch: pytest.MonkeyPatch) -> Non
             "get_encoded_size",
         ):
             if hasattr(validate, name):
-                monkeypatch.setattr(validate, name, lambda tx: len(bytes(tx)), raising=True)
+                monkeypatch.setattr(
+                    validate, name, lambda tx: len(bytes(tx)), raising=True
+                )
         for name in (
             "precheck_pq_signature",
             "pq_precheck_verify",
@@ -194,7 +200,8 @@ def _contains_tx(pool: Any, tx: FakeTx) -> bool:
                 except Exception:
                     continue
     return any(
-        t is tx or (t.sender == tx.sender and t.nonce == tx.nonce) for t in _pool_items(pool)
+        t is tx or (t.sender == tx.sender and t.nonce == tx.nonce)
+        for t in _pool_items(pool)
     )
 
 
@@ -218,9 +225,7 @@ def test_rejects_below_min_fee():
     )
 
     tx = FakeTx(ALICE, 0, fee=500)
-    meta = types.SimpleNamespace(
-        effective_fee_wei=500, size_bytes=len(bytes(tx))
-    )
+    meta = types.SimpleNamespace(effective_fee_wei=500, size_bytes=len(bytes(tx)))
 
     with pytest.raises(ERR_FEE_TOO_LOW):
         policy.check_admit(tx=tx, meta=meta, pool_size=0, capacity=100)
@@ -301,5 +306,3 @@ def test_rbf_rules_enforced(monkeypatch: pytest.MonkeyPatch):
 
     assert _contains_tx(pool, sufficient)
     assert not _contains_tx(pool, base)
-
-

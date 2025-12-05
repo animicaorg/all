@@ -61,9 +61,13 @@ def _assert_param(param: object, *, allow_indexed: bool = False) -> None:
     assert "type" in param, "parameter missing type"
     _assert_type(param["type"])
     if "name" in param:
-        assert isinstance(param["name"], str) and param["name"], "param name must be non-empty string"
+        assert (
+            isinstance(param["name"], str) and param["name"]
+        ), "param name must be non-empty string"
     if allow_indexed:
-        assert isinstance(param.get("indexed", False), bool), "indexed must be boolean when present"
+        assert isinstance(
+            param.get("indexed", False), bool
+        ), "indexed must be boolean when present"
 
 
 def _assert_function(fn: object) -> None:
@@ -110,7 +114,9 @@ def test_fixtures_align_with_abi_schema(manifest_path: Path) -> None:
     manifest = json.loads(manifest_path.read_text())
     assert isinstance(manifest.get("abiVersion"), int), "abiVersion must be an integer"
     assert manifest.get("abiVersion") == 1, "abiVersion must be 1"
-    assert isinstance(manifest.get("name"), str) and manifest["name"], "name must be non-empty string"
+    assert (
+        isinstance(manifest.get("name"), str) and manifest["name"]
+    ), "name must be non-empty string"
 
     fns = manifest.get("functions")
     assert isinstance(fns, list) and fns, "functions list must be non-empty"

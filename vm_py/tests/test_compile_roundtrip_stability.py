@@ -6,13 +6,10 @@ from typing import Any, Dict, Iterable, Tuple
 
 import pytest
 
-from vm_py.tests.test_runtime_counter import (
-    MANIFEST_PATH,
-    SOURCE_PATH,
-    _engine_call,
-    _engine_new_session,
-    _load_module_from_manifest,
-)
+from vm_py.tests.test_runtime_counter import (MANIFEST_PATH, SOURCE_PATH,
+                                              _engine_call,
+                                              _engine_new_session,
+                                              _load_module_from_manifest)
 
 HERE = Path(__file__).resolve().parent
 
@@ -20,6 +17,7 @@ HERE = Path(__file__).resolve().parent
 @pytest.fixture(scope="module")
 def have_examples() -> bool:
     return MANIFEST_PATH.exists() and SOURCE_PATH.exists()
+
 
 CONTRACT_SRC = """
 from stdlib import storage, events
@@ -41,7 +39,11 @@ CONTRACT_MANIFEST: Dict[str, Any] = {
     "version": "0.0.1",
     "abi": {
         "functions": [
-            {"name": "set_value", "inputs": [{"name": "x", "type": "int"}], "outputs": []},
+            {
+                "name": "set_value",
+                "inputs": [{"name": "x", "type": "int"}],
+                "outputs": [],
+            },
             {"name": "get_value", "inputs": [], "outputs": [{"type": "int"}]},
             {
                 "name": "multi_emit",
@@ -59,6 +61,7 @@ CONTRACT_MANIFEST: Dict[str, Any] = {
 
 
 # --- codec helpers ------------------------------------------------------------
+
 
 def _encode_module(module_obj: Any) -> bytes:
     from vm_py.compiler import encode as enc  # type: ignore
@@ -96,6 +99,7 @@ def _roundtrip(module_or_bytes: Any) -> Tuple[Any, bytes]:
 
 
 # --- compilation helpers ------------------------------------------------------
+
 
 def _compile_module_from_source(src: str, manifest: Dict[str, Any]) -> Any:
     try:

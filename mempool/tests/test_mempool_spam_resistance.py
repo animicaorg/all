@@ -6,15 +6,8 @@ import types
 import pytest
 
 from mempool.tests.test_mempool_fee_policy import (
-    FakeTx,
-    _admit,
-    _contains_tx,
-    _len_pool,
-    _make_config,
-    _monkeypatch_validation_and_priority,
-    _new_pool,
-    _pool_items,
-)
+    FakeTx, _admit, _contains_tx, _len_pool, _make_config,
+    _monkeypatch_validation_and_priority, _new_pool, _pool_items)
 
 
 def test_random_spam_resilience(monkeypatch: pytest.MonkeyPatch):
@@ -59,5 +52,3 @@ def test_random_spam_resilience(monkeypatch: pytest.MonkeyPatch):
         assert isinstance(tx.sender, (bytes, bytearray)) and len(tx.sender) > 0
         assert isinstance(tx.nonce, int) and tx.nonce >= 0
         assert _contains_tx(pool, tx)
-
-

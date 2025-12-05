@@ -13,7 +13,9 @@ def _add_chain(
     current_height = fork.nodes[fc._hex_to_bytes(parent)].height  # type: ignore[attr-defined]
     for h, weight in blocks:
         current_height += 1
-        fork.add_block(h=h, parent=current_parent, height=current_height, weight_micro=weight)
+        fork.add_block(
+            h=h, parent=current_parent, height=current_height, weight_micro=weight
+        )
         current_parent = h
 
 

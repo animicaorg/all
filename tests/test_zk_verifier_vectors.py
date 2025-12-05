@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import pytest
+
 pytest.importorskip("py_ecc")
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,7 +21,9 @@ def _load_groth16_fixture():
     public_path = base / "public.json"
 
     if not proof_path.exists() or not vk_path.exists() or not public_path.exists():
-        pytest.skip("Groth16 embedding fixtures are missing in zk/circuits/groth16/embedding")
+        pytest.skip(
+            "Groth16 embedding fixtures are missing in zk/circuits/groth16/embedding"
+        )
 
     proof = json.loads(proof_path.read_text(encoding="utf-8"))
     vk = json.loads(vk_path.read_text(encoding="utf-8"))

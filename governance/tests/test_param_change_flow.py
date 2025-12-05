@@ -16,7 +16,9 @@ def test_governance_param_change_flow():
     proposal = {"type": "param_change", "params": {"min_gas_price": 1200}}
 
     # Validate proposed change is well-formed and within bounds
-    rules = {"min_gas_price": validator.BoundRule(min=1, max=1_000_000, step=1, type="int")}
+    rules = {
+        "min_gas_price": validator.BoundRule(min=1, max=1_000_000, step=1, type="int")
+    }
     changes = validator._flatten_changes(proposal)
     assert changes == [("min_gas_price", 1200)]
     assert validator.validate_bounds(proposal, rules) == []
