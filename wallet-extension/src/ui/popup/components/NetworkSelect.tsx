@@ -24,9 +24,14 @@ type Props = {
 
 /** Local fallback list; background may return a richer list */
 const FALLBACK_NETWORKS: NetworkItem[] = [
-  { chainId: 11_001, name: "Animica Devnet", rpcUrl: "http://localhost:8545", key: "animica-devnet" },
-  { chainId: 21_001, name: "Animica Testnet", rpcUrl: "https://rpc.testnet.animica.org", key: "animica-testnet" },
-  { chainId: 31_001, name: "Animica Mainnet", rpcUrl: "https://rpc.animica.org", key: "animica-mainnet" },
+  {
+    chainId: 1337,
+    name: "Animica Devnet",
+    rpcUrl: "http://localhost:8545/rpc", // devnet JSON-RPC handler listens on /rpc
+    key: "animica-devnet",
+  },
+  { chainId: 2, name: "Animica Testnet", rpcUrl: "https://rpc.testnet.animica.org", key: "animica-testnet" },
+  { chainId: 1, name: "Animica Mainnet", rpcUrl: "https://rpc.animica.org", key: "animica-mainnet" },
 ];
 
 type BgListResp =
