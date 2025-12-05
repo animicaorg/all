@@ -46,6 +46,24 @@ def _ensure_rpc_available() -> None:
         raise typer.Exit(1)
 
 
+def _request_rpc(method: str, params: Optional[list], rpc_url: Optional[str]):
+    """Perform an RPC request using RpcClient if available, otherwise httpx."""
+    url = _resolve_rpc_url(rpc_url)
+    if HAVE_RPC:
+        client = RpcClient(url, timeout=10.0)
+        return client.request(method, params)
+    else:
+        import httpx
+
+        payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or []}
+        resp = httpx.post(url, json=payload, timeout=10.0)
+        resp.raise_for_status()
+        parsed = resp.json()
+        if "error" in parsed:
+            raise RuntimeError(parsed.get("error"))
+        return parsed.get("result")
+
+
 def _pretty(obj: dict) -> str:
     return json.dumps(obj, indent=2, ensure_ascii=False)
 
@@ -60,17 +78,14 @@ def head(
     ),
 ) -> None:
     """Display the current chain head (height, hash, timestamp)."""
-    _ensure_rpc_available()
+    # RPC availability handled by _request_rpc fallback
 
     try:
-        url = _resolve_rpc_url(rpc_url)
-        client = RpcClient(url, timeout=10.0)
-
         # Try different method names
         head_data = None
         for method in ("chain_getHead", "chain.getHead", "eth_blockNumber"):
             try:
-                head_data = client.request(method)
+                head_data = _request_rpc(method, None, rpc_url)
                 break
             except Exception:
                 continue
@@ -116,12 +131,9 @@ def block(
     ),
 ) -> None:
     """Display block details (transactions, receipts, state changes)."""
-    _ensure_rpc_available()
+    # RPC availability handled by _request_rpc fallback
 
     try:
-        url = _resolve_rpc_url(rpc_url)
-        client = RpcClient(url, timeout=10.0)
-
         # Determine if it's a height or hash
         is_hash = height_or_hash.startswith("0x")
 
@@ -132,7 +144,7 @@ def block(
             method = "chain_getBlockByHeight"
             params = [int(height_or_hash)]
 
-        block_data = client.request(method, params)
+        block_data = _request_rpc(method, params, rpc_url)
 
         if block_data is None:
             typer.echo(f"Block not found: {height_or_hash}", err=True)
@@ -157,15 +169,12 @@ def tx(
     ),
 ) -> None:
     """Display transaction details and receipt."""
-    _ensure_rpc_available()
+    # RPC availability handled by _request_rpc fallback
 
     try:
-        url = _resolve_rpc_url(rpc_url)
-        client = RpcClient(url, timeout=10.0)
-
         # Fetch tx and receipt
-        tx_data = client.request("chain_getTx", [tx_hash])
-        receipt = client.request("chain_getReceipt", [tx_hash])
+        tx_data = _request_rpc("chain_getTx", [tx_hash], rpc_url)
+        receipt = _request_rpc("chain_getReceipt", [tx_hash], rpc_url)
 
         if tx_data is None:
             typer.echo(f"Transaction not found: {tx_hash}", err=True)
@@ -194,17 +203,14 @@ def account(
     ),
 ) -> None:
     """Display account balance and state."""
-    _ensure_rpc_available()
+    # RPC availability handled by _request_rpc fallback
 
     try:
-        url = _resolve_rpc_url(rpc_url)
-        client = RpcClient(url, timeout=10.0)
-
         # Try different balance methods
         balance = None
         for method in ("chain_getBalance", "eth_getBalance"):
             try:
-                balance = client.request(method, [address])
+                balance = _request_rpc(method, [address], rpc_url)
                 break
             except Exception:
                 continue
@@ -218,7 +224,7 @@ def account(
 
         # Try to get nonce
         try:
-            nonce = client.request("chain_getTransactionCount", [address])
+            nonce = _request_rpc("chain_getTransactionCount", [address], rpc_url)
             if nonce is not None:
                 typer.echo(f"Nonce:   {nonce}")
         except Exception:
@@ -246,12 +252,9 @@ def events(
     ),
 ) -> None:
     """Query chain events/logs in a height range."""
-    _ensure_rpc_available()
+    # RPC availability handled by _request_rpc fallback
 
     try:
-        url = _resolve_rpc_url(rpc_url)
-        client = RpcClient(url, timeout=10.0)
-
         # Build filter
         filter_params = {
             "fromHeight": from_height,
@@ -265,7 +268,7 @@ def events(
         events_data = None
         for method in ("chain_getLogs", "eth_getLogs"):
             try:
-                events_data = client.request(method, [filter_params])
+                events_data = _request_rpc(method, [filter_params], rpc_url)
                 break
             except Exception:
                 continue

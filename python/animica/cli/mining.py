@@ -81,8 +81,17 @@ def run_pool(
 @app.command("show-config")
 def show_config() -> None:
     """Display the effective pool configuration."""
+    _ensure_stratum_available()
     _ensure_network_env()
-    cfg: PoolConfig = load_config_from_env()
+    # load_config_from_env is provided by animica.stratum_pool when installed
+    try:
+        cfg: PoolConfig = load_config_from_env()
+    except Exception as e:
+        typer.echo(
+            "Error: could not load pool config; ensure animica[stratum] is installed",
+            err=True,
+        )
+        raise typer.Exit(1)
     typer.echo(
         f"RPC URL: {cfg.rpc_url}\n"
         f"DB URL: {cfg.db_url}\n"
@@ -104,8 +113,20 @@ def generate_payout_address(
     ),
 ) -> None:
     """Generate a dev wallet for pool payouts using the wallet CLI helpers."""
-    entry: WalletEntry = create_wallet(label, _wallet_file_path(wallet_file))
-    typer.echo(f"Generated payout address {entry.address} (label: {entry.label})")
+    # Delegate to wallet module for key generation (no stratum dependency required)
+    try:
+        from animica.cli.wallet import (_generate_entry, _load_store,
+                                        _save_store, _wallet_file_path)
+
+        path = _wallet_file_path(wallet_file)
+        store = _load_store(path)
+        entry = _generate_entry(label, allow_fallback=True)
+        store.setdefault("wallets", []).append(entry.to_dict())
+        _save_store(path, store)
+        typer.echo(f"Generated payout address {entry.address} (label: {entry.label})")
+    except Exception as e:
+        typer.echo(f"Error generating payout address: {e}", err=True)
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -23,6 +23,27 @@ try:
 except Exception:
     HAVE_PQ = False
 
+# Fallbacks when PQ not available
+if not HAVE_PQ:
+    try:
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import \
+            Ed25519PrivateKey
+    except Exception:
+        Ed25519PrivateKey = None
+        serialization = None
+
+    def default_signature_alg():
+        class _Alg:
+            alg_id = 0xFFFF
+            name = "ed25519-fallback"
+
+        return _Alg()
+
+    def name_of(alg_id: int) -> str:
+        return "ed25519-fallback" if alg_id == 0xFFFF else f"0x{alg_id:04x}"
+
+
 try:
     from omni_sdk.address import from_pubkey, validate
 
@@ -75,24 +96,46 @@ def new(
     ),
 ) -> None:
     """Generate a new keypair using the default signature algorithm (Dilithium3)."""
-    _ensure_pq_available()
-    _ensure_sdk_available()
-
+    # Generate keypair
+    alg_obj = default_signature_alg()
     try:
-        # Generate keypair using PQ module
-        alg_obj = default_signature_alg()
-        pk_bytes, sk_bytes = keygen_sig(alg_obj)
+        if HAVE_PQ:
+            pk_bytes, sk_bytes = keygen_sig(alg_obj)
+            addr = None
+            if HAVE_SDK:
+                try:
+                    addr = from_pubkey(pk_bytes, alg_obj.alg_id)
+                except Exception:
+                    addr = None
+        else:
+            if Ed25519PrivateKey is None or serialization is None:
+                typer.echo(
+                    "Error: PQ not available and cryptography fallback not installed.",
+                    err=True,
+                )
+                raise typer.Exit(1)
+            sk = Ed25519PrivateKey.generate()
+            pk = sk.public_key()
+            pk_bytes = pk.public_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PublicFormat.Raw,
+            )
+            sk_bytes = sk.private_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PrivateFormat.Raw,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
+            addr = None
+            if HAVE_SDK:
+                try:
+                    addr = from_pubkey(pk_bytes, alg_obj.alg_id)
+                except Exception:
+                    addr = None
 
-        # Derive address
-        addr = from_pubkey(pk_bytes, alg_obj.alg_id)
-
-        # Build output
         key_data = {
             "label": label or "",
             "algorithm": alg_obj.alg_id,
-            "algorithm_name": (
-                name_of(alg_obj.alg_id) if HAVE_PQ else f"0x{alg_obj.alg_id:04x}"
-            ),
+            "algorithm_name": name_of(alg_obj.alg_id),
             "public_key_hex": pk_bytes.hex(),
             "secret_key_hex": sk_bytes.hex(),
             "address": addr,
@@ -102,13 +145,19 @@ def new(
             output_path = Path(output)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(json.dumps(key_data, indent=2))
-            output_path.chmod(0o600)
+            try:
+                output_path.chmod(0o600)
+            except Exception:
+                pass
             typer.echo(f"✓ Key saved to {output_path}")
-            typer.echo(f"  Address: {addr}")
+            if key_data.get("address"):
+                typer.echo(f"  Address: {key_data['address']}")
             typer.echo(f"  Algorithm: {key_data['algorithm_name']}")
         else:
             typer.echo(json.dumps(key_data, indent=2))
 
+    except typer.Exit:
+        raise
     except Exception as e:
         typer.echo(f"Error generating key: {e}", err=True)
         raise typer.Exit(1)
@@ -119,7 +168,8 @@ def show(
     key_id: str = typer.Argument(..., help="Key ID, file path, or address to lookup"),
 ) -> None:
     """Display key details (public key, address, algorithm)."""
-    _ensure_sdk_available()
+    # Don't require omni_sdk.address to display saved key files; only use it
+    # for address validation when available.
 
     try:
         key_path = Path(key_id)
@@ -181,8 +231,8 @@ def list_keys(
         try:
             data = json.loads(key_file.read_text())
             label = data.get("label") or key_file.stem
-            addr = data.get("address", "unknown")
-            alg = data.get("algorithm_name", data.get("algorithm", "?"))
+            addr = data.get("address") or ""
+            alg = str(data.get("algorithm_name") or data.get("algorithm") or "?")
             typer.echo(f"  {label:20} {addr:50} {alg}")
         except Exception as e:
             typer.echo(f"  {key_file.name:20} (error: {e})", err=True)

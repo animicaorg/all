@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import click as _click
 import httpx
 import typer
 from animica.config import load_network_config
@@ -19,6 +20,25 @@ try:
     HAVE_PQ = True
 except Exception:
     HAVE_PQ = False
+
+# Fallbacks when PQ package is not available
+if not HAVE_PQ:
+    try:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import \
+            Ed25519PrivateKey
+    except Exception:
+        Ed25519PrivateKey = None
+
+    def default_signature_alg():
+        class _Alg:
+            alg_id = 0xFFFF
+            name = "ed25519-fallback"
+
+        return _Alg()
+
+    def name_of(alg_id: int) -> str:  # pragma: no cover - simple fallback
+        return "ed25519-fallback" if alg_id == 0xFFFF else f"0x{alg_id:04x}"
+
 
 DEFAULT_WALLET_PATH = Path.home() / ".animica" / "wallets.json"
 WALLET_FILE_ENV = "ANIMICA_WALLETS_FILE"
@@ -111,20 +131,45 @@ def _generate_entry(label: str, *, allow_fallback: bool) -> WalletEntry:
         os.environ.setdefault("ANIMICA_ALLOW_PQ_PURE_FALLBACK", "1")
         os.environ.setdefault("ANIMICA_UNSAFE_PQ_FAKE", "1")
     alg_info = default_signature_alg()
-    try:
-        kp = keygen_sig(alg_info.alg_id)
-        address = kp.address
-        public = kp.public_key
-        secret = kp.secret_key
-        alg_name = kp.alg_name
-    except NotImplementedError:
-        os.environ.setdefault("ANIMICA_ALLOW_PQ_PURE_FALLBACK", "1")
-        os.environ.setdefault("ANIMICA_UNSAFE_PQ_FAKE", "1")
-        from pq.py.algs import pure_python_fallbacks as pq_fallbacks
+    if HAVE_PQ:
+        try:
+            kp = keygen_sig(alg_info.alg_id)
+            address = kp.address
+            public = kp.public_key
+            secret = kp.secret_key
+            alg_name = kp.alg_name
+        except NotImplementedError:
+            os.environ.setdefault("ANIMICA_ALLOW_PQ_PURE_FALLBACK", "1")
+            os.environ.setdefault("ANIMICA_UNSAFE_PQ_FAKE", "1")
+            from pq.py.algs import pure_python_fallbacks as pq_fallbacks
 
-        secret, public = pq_fallbacks.fallback_sig_keypair(alg_info.name)
-        address = address_from_pubkey(public, alg_info.alg_id)
+            secret, public = pq_fallbacks.fallback_sig_keypair(alg_info.name)
+            address = address_from_pubkey(public, alg_info.alg_id)
+            alg_name = alg_info.name
+    else:
+        # Use ed25519 fallback if cryptography is available
+        if Ed25519PrivateKey is None:
+            raise RuntimeError(
+                "PQ not available and cryptography fallback not installed"
+            )
+        from cryptography.hazmat.primitives import serialization
+
+        sk = Ed25519PrivateKey.generate()
+        pk = sk.public_key()
+        public = pk.public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        # Private key raw bytes (unsafe, but stored locally in wallet store)
+        secret = sk.private_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PrivateFormat.Raw,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+        # Construct a simple fallback address: hrp 'anim1' + hex(pubkey)
+        address = "anim1" + public.hex()
         alg_name = alg_info.name
+
     return WalletEntry(
         label=label,
         address=address,
@@ -186,8 +231,12 @@ def _configure(
 
 
 def _current_wallet_file() -> Optional[Path]:
-    ctx = typer.get_current_context(silent=True)
-    if ctx and ctx.obj:
+    # Typer may not expose get_current_context in all versions; use click's helper.
+    try:
+        ctx = _click.get_current_context(silent=True)
+    except Exception:
+        ctx = None
+    if ctx and getattr(ctx, "obj", None):
         return ctx.obj.get("wallet_file")
     return None
 
@@ -207,7 +256,11 @@ def create(
     store = _load_store(path)
 
     entry = _generate_entry(label, allow_fallback=allow_insecure_fallback)
-    validate_address(entry.address, expect_hrp="anim")
+    # Validate address only if PQ validate function is available
+    if HAVE_PQ:
+        validate_address(entry.address, expect_hrp="anim")
+    else:
+        typer.echo("Warning: PQ not available; skipping address validation")
 
     if any(e.get("address") == entry.address for e in store.get("wallets", [])):
         typer.echo("Wallet already exists", err=True)
