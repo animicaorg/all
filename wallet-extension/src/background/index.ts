@@ -18,7 +18,7 @@ import { loadVaultEnvelope, clearSession as clearKeyringSession } from './keyrin
 import { generateMnemonic } from './keyring/mnemonic';
 import { createRouter } from './router';
 import type { BgResponse } from './runtime';
-import { getRpcClient, listNetworks, selectNetworkByChainId } from './network/state';
+import { getRpcClient, listNetworks, selectNetworkByChainId, rpcHealth } from './network/state';
 import type { Network } from './network/networks';
 import { RpcClient } from './network/rpc';
 
@@ -301,6 +301,17 @@ function devKeepWarmTick() {
   }
 }
 
+async function logRpcStatus(context: string) {
+  try {
+    const { network } = await getRpcClient();
+    const health = await rpcHealth();
+    const status = health.ok ? 'ok' : `error: ${health.error ?? 'unknown'}`;
+    console.log(`[bg] RPC (${context}): ${network.rpcHttp} (chain ${network.chainId}) → ${status}`);
+  } catch (err) {
+    console.warn(`[bg] RPC (${context}) check failed:`, err);
+  }
+}
+
 // Install / update bootstrap
 chrome.runtime.onInstalled.addListener(async (details) => {
   console.log(`[bg] onInstalled: ${details.reason}`);
@@ -315,6 +326,8 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 
   scheduleDefaultAlarms();
 
+  void logRpcStatus('install');
+
   // Notify router (so it can initialize stores, caches, etc.)
   try {
     const r = await getRouter();
@@ -328,6 +341,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 chrome.runtime.onStartup?.addListener(async () => {
   console.log('[bg] onStartup');
   scheduleDefaultAlarms();
+  void logRpcStatus('startup');
   try {
     const r = await getRouter();
     await r.onStartup?.();
