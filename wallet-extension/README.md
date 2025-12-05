@@ -105,6 +105,8 @@ RPC_URL=https://localhost:8545
 CHAIN_ID=31337
 CORS_ORIGINS=*
 
+> **Note:** Point `RPC_URL` at the JSON-RPC handler, not just the server root. Some Animica node setups expose the RPC listener at `/rpc`; hitting the bare `/` can return `405 Method Not Allowed`. If `curl -X POST <host>:<port>/rpc` returns `200` but `/` does not, set `RPC_URL` to include `/rpc`.
+
 ---
 
 ## ▶️ Development (MV3 live reload)
