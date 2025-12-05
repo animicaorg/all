@@ -18,7 +18,7 @@ import { loadVaultEnvelope, clearSession as clearKeyringSession } from './keyrin
 import { generateMnemonic } from './keyring/mnemonic';
 import { createRouter } from './router';
 import type { BgResponse } from './runtime';
-import { getRpcClient, listNetworks, selectNetworkByChainId, rpcHealth } from './network/state';
+import { getRpcClient, listNetworks, selectNetworkByChainId, rpcSanityCheck } from './network/state';
 import type { Network } from './network/networks';
 import { RpcClient } from './network/rpc';
 
@@ -193,6 +193,7 @@ async function maybeHandleLegacyMessage(
       initialAlg: msg.algo ?? msg.initialAlg,
     });
     await notifyAccountsChanged();
+    void rpcSanityCheck('post-setup');
     sendResponse({ ok: true, result: { address: account?.address ?? '' } });
     return true;
   }
@@ -302,14 +303,7 @@ function devKeepWarmTick() {
 }
 
 async function logRpcStatus(context: string) {
-  try {
-    const { network } = await getRpcClient();
-    const health = await rpcHealth();
-    const status = health.ok ? 'ok' : `error: ${health.error ?? 'unknown'}`;
-    console.log(`[bg] RPC (${context}): ${network.rpcHttp} (chain ${network.chainId}) → ${status}`);
-  } catch (err) {
-    console.warn(`[bg] RPC (${context}) check failed:`, err);
-  }
+  await rpcSanityCheck(`bg:${context}`);
 }
 
 // Install / update bootstrap
