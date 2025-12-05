@@ -32,7 +32,16 @@
 
 import { generateMnemonic, mnemonicToSeed } from './mnemonic';
 import { encryptVault, decryptVault, type EncryptedVault } from './vault';
-import { saveVault, loadVault, clearVault, saveSession, loadSession, clearSession } from './storage';
+import {
+  saveVault,
+  loadVault,
+  clearVault,
+  saveSession,
+  clearSession,
+  saveVaultEnvelope,
+  loadVaultEnvelope,
+  clearVaultEnvelope,
+} from './storage';
 import { bech32AddressFromPub } from './addresses';
 import { deriveKeypair } from './derive';
 import * as d3 from '../pq/dilithium3';
@@ -99,6 +108,7 @@ export class Keyring {
   public async init(): Promise<void> {
     if (this.inited) return;
     const data = await loadVault<PersistedKeyringV1>();
+    const envelope = await loadVaultEnvelope();
     if (data && data.version === 1) {
       // Backfill legacy fields (alg ⇔ algo)
       for (const acct of data.meta.accounts) {
@@ -106,9 +116,16 @@ export class Keyring {
         (acct as AccountMeta).alg = (acct as AccountMeta).alg ?? (acct as AccountMeta).algo;
       }
       this.persisted = data;
+      if (envelope) {
+        // Prefer the dedicated encrypted envelope if present (authoritative for secrets)
+        this.persisted.vault = envelope;
+      } else if (data.vault) {
+        // Backfill a missing envelope key to ensure only ciphertext is stored
+        await saveVaultEnvelope(data.vault);
+      }
     } else {
       this.persisted = newEmptyState();
-      await saveVault(this.persisted);
+      await this.persistState();
     }
     this.inited = true;
   }
@@ -135,7 +152,7 @@ export class Keyring {
 
     this.persisted.vault = vault;
     this.persisted.meta.mnemonicStored = !!opts.storeMnemonic;
-    await saveVault(this.persisted);
+    await this.persistState();
 
     // Keep unlocked for this session (user just created)
     this.unlockedSeed = seed;
@@ -181,7 +198,7 @@ export class Keyring {
 
     this.persisted.vault = vault;
     this.persisted.meta.mnemonicStored = !!(normalized.storeMnemonic ?? true);
-    await saveVault(this.persisted);
+    await this.persistState();
 
     // Keep unlocked for this session
     this.unlockedSeed = seed;
@@ -236,7 +253,7 @@ export class Keyring {
     if (this.persisted.meta.nextIndex <= opts.index) {
       this.persisted.meta.nextIndex = opts.index + 1;
     }
-    await saveVault(this.persisted);
+    await this.persistState();
     return account;
   }
 
@@ -259,6 +276,11 @@ export class Keyring {
     this.persisted = newEmptyState();
     await clearVault();
     await saveVault(this.persisted);
+    try {
+      await clearVaultEnvelope();
+    } catch {
+      /* ignore */
+    }
     await clearSession();
   }
 
@@ -284,7 +306,7 @@ export class Keyring {
       throw new Error('Account not found.');
     }
     this.persisted.meta.selectedId = id;
-    await saveVault(this.persisted);
+    await this.persistState();
   }
 
   /** Add a new derived account using the next index. Requires unlocked seed. */
@@ -294,11 +316,11 @@ export class Keyring {
     const idx = this.persisted.meta.nextIndex;
     const { account } = await this.addAccountFromSeed(seed, alg, label ?? `Account ${idx + 1}`, idx);
     this.persisted.meta.nextIndex = idx + 1;
-    await saveVault(this.persisted);
+    await this.persistState();
     // Keep first account selected by default
     if (!this.persisted.meta.selectedId) {
       this.persisted.meta.selectedId = account.id;
-      await saveVault(this.persisted);
+      await this.persistState();
     }
     return account;
   }
@@ -317,7 +339,7 @@ export class Keyring {
     if (this.persisted.meta.selectedId === id) {
       this.persisted.meta.selectedId = accs[0]?.id;
     }
-    await saveVault(this.persisted);
+    await this.persistState();
   }
 
   // ---------- export helpers ----------
@@ -427,6 +449,31 @@ export class Keyring {
     const obj = JSON.parse(json) as { v: number; seed: number[]; mnemonic?: string | null };
     if (obj.v !== 1 || !Array.isArray(obj.seed)) throw new Error('Invalid vault payload.');
     return { seed: new Uint8Array(obj.seed), mnemonic: obj.mnemonic ?? null };
+  }
+
+  /** Persist keyring state plus encrypted envelope (if present). */
+  private async persistState(): Promise<void> {
+    await saveVault(this.persisted);
+    if (this.persisted.vault) {
+      await saveVaultEnvelope(this.persisted.vault);
+      this.logCipherIntegrity(this.persisted.vault).catch(() => undefined);
+    }
+  }
+
+  /** Dev-only sanity log to ensure ciphertext is not trivially readable. */
+  private async logCipherIntegrity(vault: EncryptedVault): Promise<void> {
+    try {
+      if (!((import.meta as any)?.env?.DEV)) return;
+      const decoded = atob(vault.ciphertextB64);
+      try {
+        JSON.parse(decoded);
+        console.warn('[keyring] Vault ciphertext looked like JSON — check encryption setup.');
+      } catch {
+        // Expected: ciphertext should not be parseable JSON
+      }
+    } catch {
+      /* ignore logging errors */
+    }
   }
 }
 
