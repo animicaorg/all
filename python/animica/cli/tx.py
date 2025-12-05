@@ -53,6 +53,23 @@ def _ensure_rpc_available() -> None:
         raise typer.Exit(1)
 
 
+def _request_rpc(method: str, params: Optional[list], rpc_url: Optional[str]):
+    url = _resolve_rpc_url(rpc_url)
+    if HAVE_RPC:
+        client = RpcClient(url, timeout=10.0)
+        return client.request(method, params)
+    else:
+        import httpx
+
+        payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or []}
+        resp = httpx.post(url, json=payload, timeout=10.0)
+        resp.raise_for_status()
+        parsed = resp.json()
+        if "error" in parsed:
+            raise RuntimeError(parsed.get("error"))
+        return parsed.get("result")
+
+
 def _pretty(obj: Any) -> str:
     return json.dumps(obj, indent=2, ensure_ascii=False)
 
@@ -89,16 +106,14 @@ def build(
       animica tx build --from anim1... --to anim1... --value 1.5 --gas 200000
       animica tx build --from 0 --to anim1... --value 1 --output tx.json
     """
-    _ensure_rpc_available()
-
+    # Resolve nonce via RPC (uses fallback helper)
     try:
-        url = _resolve_rpc_url(rpc_url)
-        client = RpcClient(url, timeout=10.0)
-
         # Fetch nonce if not provided
         if nonce is None:
             try:
-                nonce_result = client.request("chain_getTransactionCount", [from_addr])
+                nonce_result = _request_rpc(
+                    "chain_getTransactionCount", [from_addr], rpc_url
+                )
                 nonce = int(nonce_result) if nonce_result else 0
             except Exception:
                 nonce = 0
@@ -139,7 +154,8 @@ def sign(
       animica tx sign --file tx.json --key 0
       animica tx sign --file tx.json --key path/to/key.json
     """
-    _ensure_rpc_available()
+    # Signing requires wallet integration; this command is intentionally
+    # a placeholder until wallet signing is hooked up.
 
     try:
         if not tx_file.exists():
@@ -184,7 +200,7 @@ def send(
     Examples:
       animica tx send --from anim1... --to anim1... --value 1.5 --key-file key.json
     """
-    _ensure_rpc_available()
+    # Sending requires a signer and a node; not implemented fully yet.
 
     try:
         # TODO: Implement full send workflow
@@ -218,12 +234,7 @@ def simulate(
     Examples:
       animica tx simulate --file tx.json
     """
-    _ensure_rpc_available()
-
     try:
-        url = _resolve_rpc_url(rpc_url)
-        client = RpcClient(url, timeout=10.0)
-
         if not tx_file.exists():
             typer.echo(f"File not found: {tx_file}", err=True)
             raise typer.Exit(1)
@@ -233,8 +244,8 @@ def simulate(
         if from_addr:
             tx_data["from"] = from_addr
 
-        # Call eth_call (or animica_vm_call)
-        result = client.request("eth_call", [tx_data, "latest"])
+        # Call eth_call (or animica_vm_call) via helper
+        result = _request_rpc("eth_call", [tx_data, "latest"], rpc_url)
 
         typer.echo("Simulation result:")
         typer.echo(_pretty(result))

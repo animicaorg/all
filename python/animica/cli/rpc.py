@@ -70,14 +70,11 @@ def call(
     The params argument can be a JSON array or object. If omitted, an empty
     array is used.
     """
-    _ensure_rpc_available()
-
     try:
         url = _resolve_rpc_url(rpc_url)
-        client = RpcClient(url, timeout=10.0)
 
         # Parse params
-        params: Any = None
+        params: Any = []
         if params_arg:
             try:
                 params = json.loads(params_arg)
@@ -85,10 +82,21 @@ def call(
                 typer.echo(f"Error parsing params JSON: {e}", err=True)
                 raise typer.Exit(1)
 
-        # Make request
-        result = client.request(method, params)
+        # Use RpcClient when available, otherwise fall back to httpx
+        if HAVE_RPC:
+            client = RpcClient(url, timeout=10.0)
+            result = client.request(method, params)
+        else:
+            import httpx
 
-        # Output
+            payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+            resp = httpx.post(url, json=payload, timeout=10.0)
+            resp.raise_for_status()
+            parsed = resp.json()
+            if "error" in parsed:
+                raise RuntimeError(parsed.get("error"))
+            result = parsed.get("result")
+
         typer.echo(json.dumps(result, indent=2, ensure_ascii=False))
 
     except Exception as e:

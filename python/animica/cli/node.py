@@ -43,31 +43,37 @@ def _pretty(obj: Any) -> str:
 
 
 @app.command()
-async def status(
+def status(
     rpc_url: Optional[str] = typer.Option(
         None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
     )
 ) -> None:
     """Show chain head, block info and sync state."""
     url = _resolve_rpc_url(rpc_url)
-    head = await rpc_call("chain.getHead", [], rpc_url=url)
-    height = head.get("height") or head.get("number") or 0
-    chain_id = head.get("chainId") or head.get("chain_id")
-    head_hash = head.get("hash") or head.get("blockHash")
+    try:
+        head = asyncio.run(rpc_call("chain.getHead", [], rpc_url=url))
+        height = head.get("height") or head.get("number") or 0
+        chain_id = head.get("chainId") or head.get("chain_id")
+        head_hash = head.get("hash") or head.get("blockHash")
+    except Exception as e:
+        typer.echo(f"Error contacting RPC at {url}: {e}", err=True)
+        return
 
     block = None
     if height is not None:
         try:
-            block = await rpc_call("chain.getBlockByHeight", [height], rpc_url=url)
-        except Exception:  # noqa: BLE001
+            block = asyncio.run(
+                rpc_call("chain.getBlockByHeight", [height], rpc_url=url)
+            )
+        except Exception:
             block = None
 
     sync_status = None
     for method in ("node.syncStatus", "chain.syncing", "sync.isSyncing"):
         try:
-            sync_status = await rpc_call(method, [], rpc_url=url)
+            sync_status = asyncio.run(rpc_call(method, [], rpc_url=url))
             break
-        except Exception:  # noqa: BLE001
+        except Exception:
             continue
 
     typer.echo(f"RPC URL: {url}")
@@ -81,19 +87,19 @@ async def status(
 
 
 @app.command()
-async def head(
+def head(
     rpc_url: Optional[str] = typer.Option(
         None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
     )
 ) -> None:
     """Print the current chain head summary."""
     url = _resolve_rpc_url(rpc_url)
-    head_info = await rpc_call("chain.getHead", [], rpc_url=url)
+    head_info = asyncio.run(rpc_call("chain.getHead", [], rpc_url=url))
     typer.echo(_pretty(head_info))
 
 
 @app.command()
-async def block(
+def block(
     height: Optional[int] = typer.Option(None, "--height", help="Block height"),
     hash: Optional[str] = typer.Option(None, "--hash", help="Block hash"),
     rpc_url: Optional[str] = typer.Option(
@@ -105,22 +111,22 @@ async def block(
         raise typer.BadParameter("Provide --height or --hash")
     url = _resolve_rpc_url(rpc_url)
     if height is not None:
-        result = await rpc_call("chain.getBlockByHeight", [height], rpc_url=url)
+        result = asyncio.run(rpc_call("chain.getBlockByHeight", [height], rpc_url=url))
         if (
             isinstance(result, dict)
             and "transactions" not in result
             and result.get("hash")
         ):
-            result = await rpc_call(
-                "chain.getBlockByHash", [result["hash"]], rpc_url=url
+            result = asyncio.run(
+                rpc_call("chain.getBlockByHash", [result["hash"]], rpc_url=url)
             )
     else:
-        result = await rpc_call("chain.getBlockByHash", [hash], rpc_url=url)
+        result = asyncio.run(rpc_call("chain.getBlockByHash", [hash], rpc_url=url))
     typer.echo(_pretty(result))
 
 
 @app.command()
-async def tx(
+def tx(
     hash: str = typer.Option(..., "--hash", help="Transaction hash"),
     rpc_url: Optional[str] = typer.Option(
         None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
@@ -128,7 +134,7 @@ async def tx(
 ) -> None:
     """Fetch and display a transaction by hash."""
     url = _resolve_rpc_url(rpc_url)
-    result = await rpc_call("chain.getTransactionByHash", [hash], rpc_url=url)
+    result = asyncio.run(rpc_call("chain.getTransactionByHash", [hash], rpc_url=url))
     typer.echo(_pretty(result))
 
 
