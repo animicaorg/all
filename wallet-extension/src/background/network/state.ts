@@ -66,3 +66,15 @@ export async function rpcHealth(): Promise<{ ok: boolean; network: Network; erro
     return { ok: false, network: await getSelectedNetwork(), error: err?.message ?? String(err) };
   }
 }
+
+/** Lightweight sanity check + dev log for RPC availability. */
+export async function rpcSanityCheck(context: string): Promise<{ ok: boolean; network: Network; error?: string }> {
+  const res = await rpcHealth();
+  const { ok, network, error } = res;
+  if (ok) {
+    console.log(`[rpc] ${context}: ${network.rpcHttp} (chain ${network.chainId}) ok`);
+  } else {
+    console.warn(`[rpc] ${context}: ${network.rpcHttp} (chain ${network.chainId}) failed: ${error ?? 'unknown error'}`);
+  }
+  return res;
+}
