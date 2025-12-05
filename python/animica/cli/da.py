@@ -39,11 +39,9 @@ def _resolve_rpc_url(rpc_url: Optional[str]) -> str:
 def _ensure_da_available() -> None:
     if not HAVE_DA:
         typer.echo(
-            "Error: omni_sdk.da.client.DAClient required. "
-            "Ensure 'omni_sdk' is installed.",
+            "Warning: omni_sdk.da.client not installed — falling back to generic RPC/http methods.",
             err=True,
         )
-        raise typer.Exit(1)
 
 
 @app.command()
@@ -70,8 +68,6 @@ def submit(
 
     try:
         url = _resolve_rpc_url(rpc_url)
-        rpc = RpcClient(url, timeout=30.0)
-        da = DAClient(rpc)
 
         # Read data
         if input_file:
@@ -83,14 +79,58 @@ def submit(
             typer.echo("Error: no data provided", err=True)
             raise typer.Exit(1)
 
-        # Submit
-        commit, receipt = da.post_blob(namespace=namespace, data=data)
+        # Preferred path: use DAClient when available
+        if HAVE_DA:
+            rpc = RpcClient(url, timeout=30.0)
+            da = DAClient(rpc)
+            commit, receipt = da.post_blob(namespace=namespace, data=data)
+        else:
+            # Try a set of common RPC method names for DA submission
+            import httpx
+
+            candidate_methods = [
+                "da_postBlob",
+                "da.postBlob",
+                "da_submit",
+                "da.submit",
+                "post_blob",
+                "da.post_blob",
+            ]
+            parsed = None
+            for method in candidate_methods:
+                payload = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": method,
+                    "params": [namespace, data.hex()],
+                }
+                try:
+                    resp = httpx.post(url, json=payload, timeout=30.0)
+                    resp.raise_for_status()
+                    parsed = resp.json()
+                    if parsed and (parsed.get("result") is not None):
+                        break
+                except Exception:
+                    parsed = None
+                    continue
+
+            if not parsed:
+                typer.echo(
+                    "Error: DA client not available and no RPC fallback succeeded",
+                    err=True,
+                )
+                raise typer.Exit(1)
+
+            commit = parsed.get("result")
+            receipt = parsed.get("result")
 
         typer.echo(f"✓ Blob submitted")
         typer.echo(f"  Commitment: {commit}")
         typer.echo(f"  Receipt: {receipt}")
         typer.echo(f"  Size: {len(data)} bytes")
 
+    except typer.Exit:
+        raise
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
@@ -120,14 +160,63 @@ def get(
 
     try:
         url = _resolve_rpc_url(rpc_url)
-        rpc = RpcClient(url, timeout=30.0)
-        da = DAClient(rpc)
+        if HAVE_DA:
+            rpc = RpcClient(url, timeout=30.0)
+            da = DAClient(rpc)
+            data = da.get_blob(commitment)
+        else:
+            import httpx
 
-        # Fetch blob
-        data = da.get_blob(commitment)
+            candidate_methods = [
+                "da_getBlob",
+                "da.getBlob",
+                "da_get",
+                "da.get",
+                "get_blob",
+            ]
+            parsed = None
+            for method in candidate_methods:
+                payload = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": method,
+                    "params": [commitment],
+                }
+                try:
+                    resp = httpx.post(url, json=payload, timeout=30.0)
+                    resp.raise_for_status()
+                    parsed = resp.json()
+                    if parsed and (parsed.get("result") is not None):
+                        break
+                except Exception:
+                    parsed = None
+                    continue
+
+            if not parsed:
+                typer.echo(
+                    "Error: DA client not available and no RPC fallback succeeded",
+                    err=True,
+                )
+                raise typer.Exit(1)
+
+            # Expect the RPC to return hex or base64; attempt decoding heuristics
+            result = parsed.get("result")
+            if isinstance(result, str):
+                try:
+                    # hex-encoded
+                    data = bytes.fromhex(result.replace("0x", ""))
+                except Exception:
+                    try:
+                        import base64
+
+                        data = base64.b64decode(result)
+                    except Exception:
+                        data = None
+            else:
+                data = None
 
         if data is None:
-            typer.echo(f"Blob not found: {commitment}", err=True)
+            typer.echo(f"Blob not found or could not decode: {commitment}", err=True)
             raise typer.Exit(1)
 
         # Output
@@ -138,6 +227,8 @@ def get(
         else:
             sys.stdout.buffer.write(data)
 
+    except typer.Exit:
+        raise
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
@@ -164,13 +255,61 @@ def verify(
 
     try:
         url = _resolve_rpc_url(rpc_url)
-        rpc = RpcClient(url, timeout=30.0)
-        da = DAClient(rpc)
-
         data = data_file.read_bytes()
 
-        # Verify
-        ok = da.verify_availability(commitment)
+        if HAVE_DA:
+            rpc = RpcClient(url, timeout=30.0)
+            da = DAClient(rpc)
+            ok = da.verify_availability(commitment)
+        else:
+            # Use RPC fallback to fetch blob and compare
+            import httpx
+
+            # Reuse get() candidates
+            candidate_methods = [
+                "da_getBlob",
+                "da.getBlob",
+                "da_get",
+                "da.get",
+                "get_blob",
+            ]
+            parsed = None
+            for method in candidate_methods:
+                payload = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": method,
+                    "params": [commitment],
+                }
+                try:
+                    resp = httpx.post(url, json=payload, timeout=30.0)
+                    resp.raise_for_status()
+                    parsed = resp.json()
+                    if parsed and (parsed.get("result") is not None):
+                        break
+                except Exception:
+                    parsed = None
+                    continue
+
+            if not parsed:
+                typer.echo(
+                    "Error: DA client not available and no RPC fallback succeeded",
+                    err=True,
+                )
+                raise typer.Exit(1)
+
+            result = parsed.get("result")
+            if isinstance(result, str):
+                try:
+                    blob = bytes.fromhex(result.replace("0x", ""))
+                except Exception:
+                    import base64
+
+                    blob = base64.b64decode(result)
+            else:
+                blob = None
+
+            ok = blob == data
 
         if ok:
             typer.echo("✓ Verification successful")
@@ -180,6 +319,8 @@ def verify(
             typer.echo(f"  File does not match commitment", err=True)
             raise typer.Exit(1)
 
+    except typer.Exit:
+        raise
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)

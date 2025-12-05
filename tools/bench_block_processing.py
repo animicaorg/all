@@ -8,15 +8,15 @@ transitions.
 Usage:
     python tools/bench_block_processing.py
 """
+
 from __future__ import annotations
 
 import hashlib
+import sys
 import time
 from dataclasses import dataclass
-from typing import Dict, Iterable, List
-
 from pathlib import Path
-import sys
+from typing import Dict, Iterable, List
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -73,12 +73,16 @@ def _make_address(seed: int) -> bytes:
     return seed.to_bytes(20, "big")
 
 
-def _populate_initial_balances(state: SimpleState, addrs: Iterable[bytes], balance: int) -> None:
+def _populate_initial_balances(
+    state: SimpleState, addrs: Iterable[bytes], balance: int
+) -> None:
     for addr in addrs:
         state.set_balance(addr, balance)
 
 
-def _generate_transfers(senders: List[bytes], recipients: List[bytes], count: int) -> List[dict]:
+def _generate_transfers(
+    senders: List[bytes], recipients: List[bytes], count: int
+) -> List[dict]:
     txs: List[dict] = []
     for i in range(count):
         sender = senders[i % len(senders)]
@@ -102,7 +106,12 @@ def _process_block(tx_bundle: List[dict], *, height: int, chain_id: int) -> floa
     _populate_initial_balances(state, senders, balance=1_000_000)
     _populate_initial_balances(state, recipients, balance=0)
 
-    block_env = BlockContext(height=height, timestamp=int(time.time()), chain_id=chain_id, coinbase=b"\x01" * 20)
+    block_env = BlockContext(
+        height=height,
+        timestamp=int(time.time()),
+        chain_id=chain_id,
+        coinbase=b"\x01" * 20,
+    )
 
     start = time.perf_counter()
     for idx, tx in enumerate(tx_bundle):

@@ -42,7 +42,9 @@ else:
 try:
     from bridge.entry import compile_bytes, run_call  # type: ignore
 except Exception as e:  # pragma: no cover
-    pytest.skip(f"Could not import vm_py bridge entry points: {e}", allow_module_level=True)
+    pytest.skip(
+        f"Could not import vm_py bridge entry points: {e}", allow_module_level=True
+    )
 
 
 # --- Helpers ------------------------------------------------------------------

@@ -1,0 +1,10 @@
+{
+  "from": "anim1",
+  "to": "anim1",
+  "value": 1000000000000000000,
+  "data": "0x",
+  "gas": 200000,
+  "gasPrice": 1000000000,
+  "nonce": 0,
+  "chainId": 31337
+}

@@ -5,6 +5,7 @@ Exposes a single function that pins a blob to the DA layer via stdlib.syscalls
 and returns the deterministic commitment bytes. An event is emitted so tooling
 can observe the pin operation in logs.
 """
+
 from typing import Final
 
 from stdlib import abi, events, syscalls

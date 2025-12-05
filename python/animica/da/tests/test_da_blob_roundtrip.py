@@ -61,9 +61,7 @@ async def test_da_blob_roundtrip_via_api(blob_size: int, tmp_path) -> None:
     async with httpx.AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as client:
-        post_resp = await client.post(
-            "/da/blob", params={"ns": 24}, content=data
-        )
+        post_resp = await client.post("/da/blob", params={"ns": 24}, content=data)
         assert post_resp.status_code == 200
         post_json = post_resp.json()
         commitment = post_json.get("commitment")

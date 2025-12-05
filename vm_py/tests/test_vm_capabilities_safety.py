@@ -45,7 +45,9 @@ def test_capability_contract_cannot_import_nondeterminism(snippet: str) -> None:
 # --- Capability modules should remain deterministic ---------------------------
 
 
-def test_syscall_stubs_do_not_touch_host_nondeterminism(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_syscall_stubs_do_not_touch_host_nondeterminism(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def _boom(*_: object, **__: object) -> None:  # pragma: no cover - raised if touched
         raise AssertionError("host nondeterminism should not be reachable")
 
@@ -69,7 +71,9 @@ def test_syscall_stubs_do_not_touch_host_nondeterminism(monkeypatch: pytest.Monk
 
 
 def _load_manifest() -> dict:
-    assert BLOB_PINNER_MANIFEST.is_file(), f"missing BlobPinner manifest at {BLOB_PINNER_MANIFEST}"
+    assert (
+        BLOB_PINNER_MANIFEST.is_file()
+    ), f"missing BlobPinner manifest at {BLOB_PINNER_MANIFEST}"
     with BLOB_PINNER_MANIFEST.open("r", encoding="utf-8") as f:
         return json.load(f)
 
@@ -93,7 +97,9 @@ def test_blob_pinner_end_to_end_uses_da_capability() -> None:
         commitment = blob_pinner.pin(payload)
         assert isinstance(commitment, (bytes, bytearray, memoryview))
 
-        expected = syscalls_api.blob_pin(blob_pinner.DEFAULT_NAMESPACE, payload)["commitment"]
+        expected = syscalls_api.blob_pin(blob_pinner.DEFAULT_NAMESPACE, payload)[
+            "commitment"
+        ]
         assert commitment == expected
 
         events = std_events.get_events()

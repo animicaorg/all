@@ -1,0 +1,8 @@
+{
+  "label": "mykeytest",
+  "algorithm": 65535,
+  "algorithm_name": "ed25519-fallback",
+  "public_key_hex": "cae6145a31494795b93683b88f7c19314c065f50614becc0d6ae8f8ba5c09917",
+  "secret_key_hex": "f7a6d311e94f49b4e7447afd77e3fc40c527dd4c98dd4b41140665272c8f0ed4",
+  "address": null
+}

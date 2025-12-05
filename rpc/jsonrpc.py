@@ -86,7 +86,11 @@ except Exception:  # pragma: no cover - fallback if errors module not ready
         if isinstance(exc, RpcError):
             return exc
         if isinstance(exc, JsonRpcError):
-            return RpcError(getattr(exc, "message", str(exc)), getattr(exc, "code", -32000), getattr(exc, "data", None))
+            return RpcError(
+                getattr(exc, "message", str(exc)),
+                getattr(exc, "code", -32000),
+                getattr(exc, "data", None),
+            )
         if isinstance(exc, (ValueError, TypeError)):
             return InvalidParams(str(exc))
         return InternalError(str(exc))
