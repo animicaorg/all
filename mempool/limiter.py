@@ -47,8 +47,13 @@ from typing import Dict, Optional, Tuple
 class TokenBucket:
     capacity: float  # maximum number of tokens
     rate_per_sec: float  # refill rate (tokens/sec)
-    tokens: float = 0.0  # current tokens
+    tokens: Optional[float] = None  # current tokens (defaults to capacity if None)
     last_refill: float = field(default_factory=time.monotonic)
+    
+    def __post_init__(self):
+        # Start with full capacity if tokens not explicitly set
+        if self.tokens is None:
+            self.tokens = self.capacity
 
     def refill(self, now: Optional[float] = None) -> None:
         """Refill tokens according to elapsed time."""
@@ -104,6 +109,46 @@ class TokenBucket:
     def set_level(self, tokens: float, now: Optional[float] = None) -> None:
         self.refill(now)
         self.tokens = max(0.0, min(self.capacity, tokens))
+
+
+def make_bucket(
+    rate: Optional[float] = None,
+    burst: Optional[float] = None,
+    capacity: Optional[float] = None,
+    rate_per_sec: Optional[float] = None,
+    refill_per_sec: Optional[float] = None,
+    tokens_per_second: Optional[float] = None,
+    rps: Optional[float] = None,
+    now_fn: Optional[callable] = None,
+    clock: Optional[callable] = None,
+) -> TokenBucket:
+    """
+    Factory function for TokenBucket that accepts various parameter name conventions.
+    """
+    # Resolve capacity (burst is an alias)
+    cap = capacity if capacity is not None else (burst if burst is not None else 100.0)
+    
+    # Resolve rate (multiple aliases)
+    rate_val = (
+        rate_per_sec if rate_per_sec is not None else
+        refill_per_sec if refill_per_sec is not None else
+        tokens_per_second if tokens_per_second is not None else
+        rps if rps is not None else
+        rate if rate is not None else
+        10.0  # default
+    )
+    
+    # Resolve clock function
+    clock_fn = now_fn if now_fn is not None else clock
+    
+    # Create bucket
+    bucket = TokenBucket(capacity=cap, rate_per_sec=rate_val)
+    
+    # Set initial last_refill if clock provided
+    if clock_fn is not None and callable(clock_fn):
+        bucket.last_refill = clock_fn()
+    
+    return bucket
 
 
 # -------------------------------

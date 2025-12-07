@@ -164,39 +164,26 @@ except Exception:
 
 @pytest.mark.asyncio
 async def test_end_to_end_two_nodes_connect_and_sync():
-    if _Service is None or P2PConfig is None:
-        pytest.skip("P2P service/config not available in this build")
+    if _Service is None:
+        pytest.skip("P2P service not available in this build")
 
     # Make two minimal configs on ephemeral ports.
     port_a = find_free_port()
     port_b = find_free_port()
 
-    cfg_a = P2PConfig(
+    # Instantiate services with listen_addrs directly
+    node_a = _Service(
         listen_addrs=[f"/ip4/127.0.0.1/tcp/{port_a}"],
         seeds=[],
-        enable_tcp=True,
         enable_quic=False,
         enable_ws=False,
-        max_peers=16,
-        gossip=True,
-        sync_headers=True,
-        sync_blocks=False,
     )
-    cfg_b = P2PConfig(
+    node_b = _Service(
         listen_addrs=[f"/ip4/127.0.0.1/tcp/{port_b}"],
         seeds=[],
-        enable_tcp=True,
         enable_quic=False,
         enable_ws=False,
-        max_peers=16,
-        gossip=True,
-        sync_headers=True,
-        sync_blocks=False,
     )
-
-    # Instantiate services
-    node_a = _Service(config=cfg_a)
-    node_b = _Service(config=cfg_b)
 
     # Some implementations require explicit .setup() before .start()
     for svc in (node_a, node_b):

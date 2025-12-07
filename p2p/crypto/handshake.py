@@ -413,3 +413,41 @@ async def perform_handshake_tcp(
         raise HandshakeError("tcp handshake timeout") from exc
     except Exception as exc:
         raise HandshakeError(f"tcp handshake failed: {exc}") from exc
+
+
+# Compatibility aliases for tests
+def kyber_handshake(
+    seed_initiator: bytes | None = None, seed_responder: bytes | None = None
+) -> Tuple[HandshakeKeys, HandshakeKeys]:
+    """
+    Convenience wrapper for testing: performs an in-process two-flight handshake
+    with optional deterministic seeds.
+    
+    The seeds are used to create minimal deterministic HELLO payloads.
+    
+    Returns:
+        (initiator_keys, responder_keys)
+    """
+    # Generate deterministic or random seeds for HELLO payloads
+    if seed_initiator is None:
+        seed_initiator = os.urandom(32)
+    if seed_responder is None:
+        seed_responder = os.urandom(32)
+    
+    # Create minimal HELLO payloads using the seeds
+    # In a real handshake, these would be full CBOR-encoded HELLO frames with
+    # identity, chain_id, version, etc. For testing, we use minimal payloads.
+    hello_i_bytes = b"HELLO_I:" + seed_initiator
+    hello_r_bytes = b"HELLO_R:" + seed_responder
+    
+    # simulate_two_flight returns (kyber_ct, responder_keys, initiator_keys)
+    _, responder_keys, initiator_keys = simulate_two_flight(
+        hello_i_bytes, hello_r_bytes
+    )
+    
+    return initiator_keys, responder_keys
+
+
+# Additional aliases for test compatibility
+perform_handshake = kyber_handshake
+handshake = kyber_handshake

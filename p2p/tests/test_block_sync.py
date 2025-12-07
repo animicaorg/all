@@ -166,6 +166,10 @@ class InMemoryBlockDB:
         assert self.best_tip is not None, "empty"
         return self.headers[self.best_tip]
 
+    def count(self) -> int:
+        """Return number of blocks in the DB."""
+        return len(self.blocks)
+
 
 class BlockImporter:
     """
@@ -202,15 +206,15 @@ class BlockImporter:
         return True
 
     def import_many(self, blks: Iterable[FakeBlock]) -> int:
-        imported = 0
+        count_before = self.db.count()
         for b in blks:
             try:
-                if self.import_block(b):
-                    imported += 1
+                self.import_block(b)
             except IntegrityError:
                 # For tests we don't propagate; caller can assert on final state
                 pass
-        return imported
+        count_after = self.db.count()
+        return count_after - count_before
 
 
 # ------------------------------

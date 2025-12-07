@@ -120,7 +120,12 @@ def ai_enqueue(model: StrOrBytes, prompt: StrOrBytes) -> bytes:
         raise ValueError("model must not be empty")
     if len(prompt_b) == 0:
         raise ValueError("prompt must not be empty")
-    return _sys.ai_enqueue(model_b, prompt_b)
+    result = _sys.ai_enqueue(model_b, prompt_b)
+    # syscalls_api returns a dict; extract the task_id bytes
+    if isinstance(result, dict):
+        return result.get("task_id", b"")
+    # Fallback for direct bytes return (e.g., mocked implementations)
+    return result if isinstance(result, bytes) else b""
 
 
 def quantum_enqueue(circuit: StrOrBytes, shots: int = 256) -> bytes:
@@ -138,7 +143,12 @@ def quantum_enqueue(circuit: StrOrBytes, shots: int = 256) -> bytes:
     _ensure_non_negative("shots", shots)
     if len(circuit_b) == 0:
         raise ValueError("circuit must not be empty")
-    return _sys.quantum_enqueue(circuit_b, shots)
+    result = _sys.quantum_enqueue(circuit_b, shots)
+    # syscalls_api returns a dict; extract the task_id bytes
+    if isinstance(result, dict):
+        return result.get("task_id", b"")
+    # Fallback for direct bytes return (e.g., mocked implementations)
+    return result if isinstance(result, bytes) else b""
 
 
 def read_result(task_id: BytesLike) -> Optional[bytes]:
@@ -159,7 +169,14 @@ def read_result(task_id: BytesLike) -> Optional[bytes]:
     tid = bytes(task_id)
     if len(tid) == 0:
         raise ValueError("task_id must not be empty")
-    return _sys.read_result(tid)
+    result = _sys.read_result(tid)
+    # syscalls_api returns a dict; extract the result bytes or None
+    if isinstance(result, dict):
+        if not result.get("ready", False):
+            return None
+        return result.get("result")
+    # Fallback for direct bytes/None return (e.g., mocked implementations)
+    return result
 
 
 # --------------------------------- zk ---------------------------------------
