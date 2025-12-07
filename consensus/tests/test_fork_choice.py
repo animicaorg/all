@@ -84,7 +84,13 @@ def _call_choose(prev, candidates, **kwargs):
         try:
             inst = _FC_CLASS(**kwargs)
         except TypeError:
-            inst = _FC_CLASS()  # fallback
+            # Provide minimal required kwargs if not already in kwargs
+            minimal_kwargs = {"genesis_hash": "0x00"}
+            minimal_kwargs.update(kwargs)
+            try:
+                inst = _FC_CLASS(**minimal_kwargs)
+            except TypeError:
+                inst = _FC_CLASS(genesis_hash="0x00")  # last fallback
 
         for meth_name in ("choose", "select", "pick", "pick_best", "choose_head"):
             if hasattr(inst, meth_name):
