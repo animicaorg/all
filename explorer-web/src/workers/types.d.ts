@@ -3,15 +3,17 @@
  * These ambient declarations provide strong typing for main-thread ↔ worker
  * communications without importing from the worker module directly.
  *
- * Usage (main thread):
- *   const worker = new Worker(new URL("./wsBuffer.worker.ts", import.meta.url), { type: "module" }) as WSBuffer.Worker;
- *   worker.postMessage({ type: "config", flushMs: 50 });
- *   worker.postMessage({ type: "pushEvent", event: { kind: "head", payload: {...} } });
- *   worker.onmessage = (e) => {
- *     if (WSBuffer.isBatch(e.data)) { /* ... */ }
- *     else if (WSBuffer.isStats(e.data)) { /* ... */ }
- *     else if (WSBuffer.isError(e.data)) { /* ... */ }
- *   };
+ * @example
+ * ```typescript
+ * const worker = new Worker(new URL("./wsBuffer.worker.ts", import.meta.url), { type: "module" }) as WSBuffer.Worker;
+ * worker.postMessage({ type: "config", flushMs: 50 });
+ * worker.postMessage({ type: "pushEvent", event: { kind: "head", payload: {...} } });
+ * worker.onmessage = (e) => {
+ *   if (WSBuffer.isBatch(e.data)) { }
+ *   else if (WSBuffer.isStats(e.data)) { }
+ *   else if (WSBuffer.isError(e.data)) { }
+ * };
+ * ```
  */
 
 declare namespace WSBuffer {

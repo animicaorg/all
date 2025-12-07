@@ -9,6 +9,11 @@
 export type Hex = `0x${string}`;
 
 /**
+ * Hash type alias (typically 0x-prefixed hex string).
+ */
+export type Hash = Hex;
+
+/**
  * Address string. Typically bech32 (e.g. "omni1...") or hex ("0x...").
  * Keep it as a string to remain display- and transport-friendly.
  */

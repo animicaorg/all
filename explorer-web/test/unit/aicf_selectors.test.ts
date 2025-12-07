@@ -26,7 +26,7 @@ const providers: Provider[] = [
 
 const jobs: Job[] = [
   // P1 completed (mix of on-time and late)
-  { id: 'j1', providerId: 'P1', status: 'completed', startedAt: t0 + 0_000,  completedAt: t0 + 20_000,  deadlineAt: t0 + 30_000,  units: 10 },
+  { id: 'j1', providerId: 'P1', status: 'completed', startedAt: t0,          completedAt: t0 + 20_000,  deadlineAt: t0 + 30_000,  units: 10 },
   { id: 'j2', providerId: 'P1', status: 'completed', startedAt: t0 + 40_000, completedAt: t0 + 70_000,  deadlineAt: t0 + 65_000,  units: 5  },
   { id: 'j3', providerId: 'P1', status: 'completed', startedAt: t0 + 90_000, completedAt: t0 + 140_000, deadlineAt: t0 + 200_000, units: 20 },
   { id: 'j4', providerId: 'P1', status: 'completed', startedAt: t0 + 220_000,completedAt: t0 + 260_000, deadlineAt: t0 + 300_000, units: 15 },

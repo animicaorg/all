@@ -14,7 +14,7 @@
  */
 
 import * as cborg from 'cborg';
-import { toBytes, bytesToHex, Hex } from './bytes';
+import { toBytes, bytesToHex, type Hex } from './bytes';
 
 export type CborValue =
   | null
