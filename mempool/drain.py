@@ -340,11 +340,48 @@ def format_selection(result: DrainResult) -> str:
     return "\n".join(b)
 
 
+# -------------------------
+# Convenience wrappers for test compatibility
+# -------------------------
+
+
+def select_ready(
+    pool: Any,
+    *,
+    gas_budget: Optional[int] = None,
+    byte_budget: Optional[int] = None,
+    gas_limit: Optional[int] = None,
+    byte_limit: Optional[int] = None,
+    max_txs: Optional[int] = None,
+    clock: Clock = _now,
+) -> List[Tuple[Any, Any]]:
+    """
+    Wrapper around select_for_block that accepts individual budget kwargs.
+    
+    This provides compatibility with tests that call with separate parameters
+    instead of a DrainConfig object. Returns just the picked list for easier
+    consumption by tests.
+    """
+    # Normalize parameter names (tests use various synonyms)
+    gas = gas_budget or gas_limit or 1_000_000_000
+    byt = byte_budget or byte_limit or 1_000_000_000
+    
+    cfg = DrainConfig(
+        gas_limit=gas,
+        byte_limit=byt,
+        max_txs=max_txs,
+        early_exit_on_starvation=True,
+    )
+    result = select_for_block(pool, cfg, clock=clock)
+    return result.picked
+
+
 __all__ = [
     "DrainConfig",
     "DrainStats",
     "DrainResult",
     "select_for_block",
+    "select_ready",
     "drain_for_block",
     "format_selection",
 ]

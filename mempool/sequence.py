@@ -348,8 +348,7 @@ class NonceSequencer:
     ) -> bool:
         """
         Simplified add method for backward compatibility.
-        Just tracks that this (sender, nonce) exists. Returns True if there's a gap.
-        This is a lightweight version that doesn't store the full tx.
+        Tracks that this (sender, nonce) exists. Returns True if there's a gap.
         """
         q = self._queues.get(sender)
         if q is None:
@@ -357,19 +356,41 @@ class NonceSequencer:
             self._queues[sender] = q
             self._maybe_add_rr_sender(sender)
         
-        # Check if there's a nonce gap
+        # Check if there's a nonce gap BEFORE adding
         has_gap = nonce > q.next_nonce and nonce not in q.txs
+        
+        # Add a minimal placeholder to txs so is_ready can work
+        # We use a simple object that just stores the tx_hash
+        class TxPlaceholder:
+            def __init__(self, tx_hash):
+                self.tx_hash = tx_hash
+        
+        q.txs[nonce] = TxPlaceholder(tx_hash)
+        
+        # Update ready_end if needed
+        if not has_gap:
+            # No gap - this tx might extend the ready window
+            # Find the new ready_end (first missing nonce)
+            n = q.next_nonce
+            while n in q.txs:
+                n += 1
+            q.ready_end = n
+        
         return has_gap
 
     def is_ready(self, sender: str, nonce: int) -> bool:
         """
         Check if (sender, nonce) is ready (i.e., in the ready window).
-        A tx is ready if nonce == next_nonce or if all preceding nonces are present.
+        A tx is ready if nonce is contiguous with next_nonce (all prior nonces present).
         """
         q = self._queues.get(sender)
         if q is None:
             return False
-        return q.has_ready() and nonce < q.ready_end
+        
+        # A transaction is ready if:
+        # 1. It's in the queue
+        # 2. Its nonce is in the contiguous ready window [next_nonce, ready_end)
+        return nonce in q.txs and nonce >= q.next_nonce and nonce < q.ready_end
 
     # ----------------------------
     # Ready collection
@@ -476,6 +497,67 @@ class NonceSequencer:
             self._rr_index = self._rr_index % len(self._rr_senders)
         else:
             self._rr_index = 0
+
+    def remove(self, sender: str, nonce: int, tx_hash: bytes) -> None:
+        """
+        Remove a transaction from the queue. This is like evict but for Pool's internal use.
+        """
+        q = self._queues.get(sender)
+        if q is None:
+            return
+        
+        # Remove from txs
+        if nonce in q.txs:
+            del q.txs[nonce]
+        
+        # Recompute ready_end if needed
+        if nonce < q.ready_end:
+            # Find new ready_end (first missing nonce starting from next_nonce)
+            n = q.next_nonce
+            while n in q.txs:
+                n += 1
+            q.ready_end = n
+        
+        # Clean up empty queue
+        if len(q.txs) == 0:
+            self._remove_rr_sender(sender)
+
+    def promote_next_ready(self, sender: str) -> Optional[List[bytes]]:
+        """
+        After a tx is consumed/removed, check if the next nonce(s) became ready.
+        Returns a list of tx_hashes that just became ready (were held, now contiguous).
+        """
+        q = self._queues.get(sender)
+        if q is None:
+            return None
+        
+        # Find all newly ready tx hashes
+        promoted = []
+        old_ready_end = q.ready_end
+        
+        # Extend ready_end as far as we can
+        n = q.ready_end
+        while n in q.txs:
+            tx = q.txs[n]
+            # Extract hash from placeholder or full tx
+            tx_hash = getattr(tx, 'tx_hash', None)
+            if tx_hash and n >= old_ready_end:
+                promoted.append(tx_hash)
+            n += 1
+        
+        q.ready_end = n
+        return promoted if promoted else None
+
+    def get_hash(self, sender: str, nonce: int) -> Optional[bytes]:
+        """
+        Get the tx_hash for a given (sender, nonce), if it exists.
+        """
+        q = self._queues.get(sender)
+        if q is None or nonce not in q.txs:
+            return None
+        
+        tx = q.txs[nonce]
+        return getattr(tx, 'tx_hash', None)
 
 
 # Alias for test compatibility
