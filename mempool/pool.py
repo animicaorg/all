@@ -161,6 +161,22 @@ class Pool:
     ) -> None:
         # Accept both cfg and config parameters (config is alias for tests)
         actual_cfg = cfg or config or PoolConfig()
+        
+        # Normalize config attributes for test compatibility
+        # SimpleNamespace from tests may use different attribute names
+        if not isinstance(actual_cfg, PoolConfig):
+            # It's a SimpleNamespace or similar; normalize attributes
+            max_txs = getattr(actual_cfg, 'max_txs', None) or getattr(actual_cfg, 'max_items', None) or getattr(actual_cfg, 'capacity', None) or 150_000
+            max_bytes = getattr(actual_cfg, 'max_bytes', None) or getattr(actual_cfg, 'capacity_bytes', None) or getattr(actual_cfg, 'max_mem_bytes', None) or 256 * 1024 * 1024
+            target_util = getattr(actual_cfg, 'target_util', 0.9)
+            accept_below_floor_for_local = getattr(actual_cfg, 'accept_below_floor_for_local', True)
+            actual_cfg = PoolConfig(
+                max_txs=max_txs,
+                max_bytes=max_bytes,
+                target_util=target_util,
+                accept_below_floor_for_local=accept_below_floor_for_local,
+            )
+        
         self.cfg = actual_cfg
         self.clock = clock
         # Create a test-friendly watermark with lower min floor if none provided
