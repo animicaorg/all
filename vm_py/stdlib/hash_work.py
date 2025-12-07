@@ -7,7 +7,10 @@ integrating hash-based useful work with the Animica capabilities layer.
 Surface:
     - sha256(data: bytes) -> bytes
     - sha256d(data: bytes) -> bytes
+    - blake2b_256(data: bytes) -> bytes
+    - compute_commitment(data: bytes) -> bytes
     - make_hash_job_sha256(input_commitment, target_bits, max_iters) -> dict
+    - make_hash_job_sha256d(input_commitment, target_bits, max_iters) -> dict
     - make_hash_job_scrypt(input_commitment, N, r, p, max_cost) -> dict
     - verify_hash_result(job_desc, result_desc) -> bool
 """
