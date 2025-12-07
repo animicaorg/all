@@ -1,0 +1,236 @@
+/* ===================================================================
+   Responsive styles for studio-web
+   Mobile-first approach for contract IDE and deployment tools
+   =================================================================== */
+
+/* Mobile navigation improvements */
+@media (max-width: 960px) {
+  .sidebar {
+    width: 60px !important;
+  }
+
+  .sidebar.collapsed {
+    width: 60px !important;
+  }
+
+  .sidebar:not(.collapsed) {
+    width: 240px !important;
+    box-shadow: 4px 0 12px rgba(0, 0, 0, 0.2);
+  }
+}
+
+/* TopBar responsive */
+@media (max-width: 768px) {
+  .topbar {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 12px;
+  }
+
+  .topbar > * {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .topbar {
+    padding: 8px 10px;
+    gap: 6px;
+  }
+
+  /* Stack network selector and buttons vertically on very small screens */
+  .topbar-left,
+  .topbar-right {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+/* Monaco Editor responsive wrapper */
+.editor-container {
+  min-height: 400px;
+  height: 100%;
+}
+
+@media (max-width: 768px) {
+  .editor-container {
+    min-height: 300px;
+  }
+}
+
+@media (max-width: 640px) {
+  .editor-container {
+    min-height: 250px;
+    font-size: 12px;
+  }
+}
+
+/* Form and input responsive */
+@media (max-width: 640px) {
+  input[type="text"],
+  input[type="number"],
+  textarea,
+  select {
+    font-size: 16px; /* Prevent zoom on iOS */
+    padding: 10px 12px;
+  }
+
+  button {
+    min-height: 44px;
+    padding: 10px 16px;
+  }
+}
+
+/* Card layouts */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 1rem;
+}
+
+@media (max-width: 640px) {
+  .card-grid {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+}
+
+/* Modal responsive */
+.modal-overlay {
+  padding: 1rem;
+}
+
+@media (max-width: 640px) {
+  .modal-overlay {
+    padding: 0.5rem;
+  }
+
+  .modal-content {
+    max-height: calc(100vh - 1rem);
+    max-width: 100%;
+  }
+}
+
+/* Tables - horizontal scroll on mobile */
+.table-container {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table-container table {
+  min-width: 600px;
+}
+
+@media (max-width: 640px) {
+  .table-container {
+    margin: 0 -0.75rem;
+    padding: 0 0.75rem;
+  }
+}
+
+/* Code blocks */
+pre,
+code {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 640px) {
+  pre {
+    font-size: 0.8rem;
+    padding: 0.75rem;
+  }
+
+  code {
+    font-size: 0.85rem;
+  }
+}
+
+/* Toast notifications */
+.toast-container {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  z-index: 9999;
+}
+
+@media (max-width: 640px) {
+  .toast-container {
+    bottom: 0.5rem;
+    right: 0.5rem;
+    left: 0.5rem;
+    max-width: calc(100vw - 1rem);
+  }
+
+  .toast {
+    max-width: 100%;
+  }
+}
+
+/* Prevent horizontal scroll */
+body {
+  overflow-x: hidden;
+}
+
+/* Safe area for mobile browsers */
+@supports (padding: max(0px)) {
+  body {
+    padding-bottom: max(env(safe-area-inset-bottom), 0px);
+  }
+
+  .app-main {
+    padding-bottom: max(env(safe-area-inset-bottom), 1rem);
+  }
+}
+
+/* Touch-friendly targets */
+button,
+a[role="button"],
+.btn,
+.navlink {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* Status bar mobile */
+.status-bar {
+  font-size: 0.875rem;
+  padding: 0.5rem 1rem;
+}
+
+@media (max-width: 640px) {
+  .status-bar {
+    font-size: 0.75rem;
+    padding: 0.4rem 0.75rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .status-bar-item {
+    flex: 1 1 auto;
+    min-width: fit-content;
+  }
+}
+
+/* Virtual keyboard handling for forms */
+@media (max-width: 640px) {
+  .form-container {
+    padding-bottom: 200px; /* Extra space when keyboard is visible */
+  }
+}
+
+/* Responsive spacing utilities */
+@media (max-width: 640px) {
+  .mobile-p-sm {
+    padding: 0.5rem;
+  }
+
+  .mobile-m-sm {
+    margin: 0.5rem;
+  }
+
+  .mobile-gap-sm {
+    gap: 0.5rem;
+  }
+}

@@ -154,7 +154,14 @@ main#main {
 .metric-grid {
   display: grid;
   gap: var(--space-4);
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+}
+
+@media (max-width: 640px) {
+  .metric-grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-3);
+  }
 }
 
 .stat-card {
@@ -374,6 +381,96 @@ input::placeholder, textarea::placeholder {
   color: var(--color-muted);
   font-size: var(--text-sm);
   margin-bottom: var(--space-3);
+}
+
+/* ------------------------------ Mobile Responsive ----------------------------- */
+@media (max-width: 768px) {
+  body {
+    font-size: var(--text-base, 16px);
+  }
+
+  .section-hero {
+    padding: var(--space-8) var(--space-4);
+  }
+
+  .stat-card {
+    padding: var(--space-4);
+  }
+
+  .stat-card .value {
+    font-size: 1.5rem;
+  }
+
+  /* Responsive tables */
+  .table-responsive {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .table-responsive table {
+    min-width: 600px;
+  }
+
+  /* Code blocks */
+  pre {
+    font-size: 0.85rem;
+    padding: var(--space-3);
+  }
+}
+
+@media (max-width: 640px) {
+  /* Base typography */
+  body {
+    font-size: 15px;
+  }
+
+  h1 { font-size: 1.75rem; }
+  h2 { font-size: 1.5rem; }
+  h3 { font-size: 1.25rem; }
+  h4 { font-size: 1.125rem; }
+
+  /* Spacing adjustments */
+  .section-hero {
+    padding: var(--space-6) var(--space-3);
+  }
+
+  /* Touch-friendly buttons */
+  button,
+  a[role="button"],
+  .btn {
+    min-height: 44px;
+    min-width: 44px;
+    padding: 12px 16px;
+  }
+
+  /* Form inputs */
+  input,
+  textarea,
+  select {
+    font-size: 16px; /* Prevent zoom on iOS */
+    padding: 10px 12px;
+  }
+
+  /* Prevent horizontal scroll */
+  body {
+    overflow-x: hidden;
+  }
+
+  /* Code blocks scroll */
+  pre {
+    font-size: 0.8rem;
+    padding: var(--space-2);
+    margin-left: calc(var(--space-3) * -1);
+    margin-right: calc(var(--space-3) * -1);
+    border-radius: 0;
+  }
+}
+
+/* Safe area for mobile browsers */
+@supports (padding: max(0px)) {
+  body {
+    padding-bottom: max(env(safe-area-inset-bottom), 0px);
+  }
 }
 
 /* ------------------------------ Print Styles ------------------------------ */

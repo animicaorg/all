@@ -7,6 +7,7 @@ import { router } from './router';
 import './styles/tokens.css';
 import './styles/theme.css';
 import './styles/app.css';
+import './styles/responsive.css';
 
 // Guard against missing root element (helps when embedding in other hosts)
 const rootEl = document.getElementById('root');
