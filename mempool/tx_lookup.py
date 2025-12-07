@@ -268,6 +268,23 @@ class TxLookupIndex:
         with self._lock:
             return list(self._by_sender_nonce.keys())
 
+    def all_items(self) -> Iterable[Tuple[str, any]]:
+        """
+        Return all (hash, entry) pairs in the index.
+        For compatibility with tests that need to iterate all entries.
+        Entry is a wrapped object with .meta and other attributes.
+        """
+        with self._lock:
+            # Create wrapper objects that have meta attribute
+            items = []
+            for h, tx in self._by_hash.items():
+                class Entry:
+                    def __init__(self, tx):
+                        self.tx = tx
+                        self.meta = getattr(tx, 'meta', None)
+                items.append((h, Entry(tx)))
+            return items
+
     def stats(self) -> Dict[str, int]:
         with self._lock:
             return {

@@ -26,7 +26,8 @@ import pytest
 # ----------------------- Inline minimal multisig -----------------------
 
 MULTISIG_SRC = r'''
-from stdlib.storage import get, set
+from stdlib.storage import get
+from stdlib.storage import set as store_set
 from stdlib.events import emit
 from stdlib.abi import require
 from stdlib.hash import sha3_256
@@ -60,7 +61,7 @@ def _nonce_key(nonce: int) -> bytes:
 
 def init(threshold: int = 2) -> None:
     require(1 <= threshold <= 3, "threshold out of range")
-    set(K_THRESH, str(threshold).encode("ascii"))
+    store_set(K_THRESH, str(threshold).encode("ascii"))
     # No need to persist owners since fixed for this test-only contract
 
 def get_threshold() -> int:
@@ -97,7 +98,7 @@ def execute(subject: bytes, nonce: int, approvals_blob: bytes, n: int) -> None:
     require(len(seen) >= threshold, "insufficient approvals")
 
     # Mark nonce used first (commit), then emit the log (effects visible)
-    set(_nonce_key(nonce), b"1")
+    store_set(_nonce_key(nonce), b"1")
 
     # The "action hash" is included only as diagnostics (not needed for checks here)
     action_hash = sha3_256(subject + str(nonce).encode("ascii"))

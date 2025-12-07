@@ -91,7 +91,8 @@ class MockAIHost:
         self._tasks: Dict[bytes, Tuple[bytes, int]] = {}
 
     # Signature mirrors stdlib.syscalls.ai_enqueue
-    def ai_enqueue(self, model, prompt: bytes) -> bytes:
+    def ai_enqueue(self, model, prompt) -> bytes:
+        # Accept both str and bytes for model
         if isinstance(model, bytes):
             _ = model  # ignored, but ensures bytes are accepted
         elif isinstance(model, str):
@@ -99,8 +100,18 @@ class MockAIHost:
         else:  # pragma: no cover - defensive
             raise TypeError("model must be bytes or str")
 
-        tid = b"TASK-" + hashlib.sha3_256(prompt).digest()[:8]
-        self._tasks[tid] = (prompt, self.height + 1)
+        # Handle prompt as str or bytes (match _to_bytes behavior)
+        if isinstance(prompt, str):
+            prompt_b = prompt.encode("utf-8")
+        elif isinstance(prompt, bytes):
+            prompt_b = prompt
+        elif isinstance(prompt, (bytearray, memoryview)):
+            prompt_b = bytes(prompt)
+        else:
+            raise TypeError(f"prompt must be bytes-like or str, got {type(prompt).__name__}")
+
+        tid = b"TASK-" + hashlib.sha3_256(prompt_b).digest()[:8]
+        self._tasks[tid] = (prompt_b, self.height + 1)
         return tid
 
     # Signature mirrors stdlib.syscalls.read_result
