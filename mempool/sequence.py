@@ -340,6 +340,27 @@ class NonceSequencer:
         res = q.admit(tx, base_fee_wei=base_fee_wei, rbf_policy=rbf_policy)
         return res
 
+    def add(
+        self,
+        sender: str,
+        nonce: int,
+        tx_hash: bytes,
+    ) -> bool:
+        """
+        Simplified add method for backward compatibility.
+        Just tracks that this (sender, nonce) exists. Returns True if there's a gap.
+        This is a lightweight version that doesn't store the full tx.
+        """
+        q = self._queues.get(sender)
+        if q is None:
+            q = SenderQueue(sender=sender, next_nonce=nonce)
+            self._queues[sender] = q
+            self._maybe_add_rr_sender(sender)
+        
+        # Check if there's a nonce gap
+        has_gap = nonce > q.next_nonce and nonce not in q.txs
+        return has_gap
+
     # ----------------------------
     # Ready collection
     # ----------------------------
