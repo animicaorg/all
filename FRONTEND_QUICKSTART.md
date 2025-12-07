@@ -409,15 +409,96 @@ pnpm build
 
 ---
 
+## Mobile Optimization & Responsive Design
+
+All frontend apps have been optimized for mobile devices with a mobile-first approach.
+
+### Supported Viewports
+
+Test your changes at these common viewport widths:
+
+- **Small phones**: 360px × 640px (e.g., iPhone SE, Galaxy S8)
+- **Large phones**: 414px × 896px (e.g., iPhone 11/12/13)
+- **Tablets**: 768px × 1024px (iPad, Android tablets)
+- **Laptops**: 1024px × 768px and up
+- **Desktops**: 1280px+ wide
+
+### Mobile Features
+
+#### Responsive Navigation
+- **Miner Dashboard**: Floating action button (FAB) menu on mobile with slide-up navigation
+- **Explorer Web**: Horizontal scrollable navigation on mobile, vertical sidebar on desktop
+- **Studio Web**: Auto-collapsing sidebar on viewports < 960px
+- **Website**: Responsive breakpoints with mobile-optimized spacing
+
+#### Touch-Friendly Design
+- Minimum touch target size: **44×44px** (WCAG 2.1 AAA compliant)
+- Inputs use **16px font size** on mobile to prevent iOS zoom
+- Adequate spacing between interactive elements
+
+#### Responsive Tables
+- **Mobile stacked cards**: Tables convert to card-based layouts on small screens (miner-dashboard)
+- **Horizontal scroll**: Tables with min-width and smooth scrolling on tablets
+- **Truncation helpers**: Hash/address truncation for narrow viewports
+
+#### Safe Areas & Browser Chrome
+- Support for `env(safe-area-inset-*)` for notched devices
+- Dynamic viewport units (`dvh`) where supported
+- Bottom padding to account for mobile browser toolbars
+
+### Testing Mobile Layouts
+
+#### Browser DevTools
+```bash
+# Chrome/Edge DevTools
+1. Press F12
+2. Click "Toggle device toolbar" (Ctrl+Shift+M)
+3. Select device or set custom dimensions
+4. Test at 360px, 768px, and 1024px widths
+```
+
+#### Real Device Testing
+```bash
+# Expose dev server to local network
+cd <app-directory>
+pnpm dev:host  # For miner-dashboard
+# Or manually:
+vite --host 0.0.0.0 --port 5173
+
+# Access from mobile device
+http://<your-ip>:5173
+```
+
+### Known Mobile Edge Cases
+
+1. **Safari iOS**: Fixed headers may overlap with content when scrolling. Use `position: sticky` with `top: 0` instead of `position: fixed`.
+
+2. **Virtual Keyboard**: On iOS/Android, the keyboard pushes content up. Forms have extra bottom padding to compensate.
+
+3. **Horizontal Scroll**: Prevented by `overflow-x: hidden` on body, but tables/code blocks have intentional horizontal scroll with `-webkit-overflow-scrolling: touch`.
+
+4. **Touch Gestures**: Swipe back/forward can interfere with carousels. Use `touch-action` CSS property if needed.
+
+### Performance Optimizations
+
+- **Code splitting**: Heavy components (Monaco editor, charts) loaded on demand
+- **Lazy routes**: Routes loaded as separate chunks
+- **Image optimization**: Responsive images with proper sizing attributes
+- **CSS containment**: Layout containment on cards/widgets for better paint performance
+
+---
+
 ## Contributing
 
 When working on frontend:
 1. Run `pnpm lint` before committing
 2. Ensure `pnpm build` passes
 3. Test in both light and dark mode
-4. Verify responsive layout (mobile/tablet/desktop)
-5. Check for console errors/warnings
-6. Add tests for new features
+4. **Test responsive layout at 360px, 768px, and 1024px+ widths**
+5. **Verify touch targets are at least 44×44px**
+6. Check for console errors/warnings
+7. Add tests for new features
+8. **Ensure no horizontal scroll on mobile devices**
 
 ---
 
