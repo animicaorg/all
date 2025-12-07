@@ -168,6 +168,53 @@ class TxLookupIndex:
         """
         return self.insert(tx, allow_replace=True)
 
+    def add(self, tx_hash: str, tx: any, meta: any = None) -> None:
+        """
+        Backward compatibility alias for insert. Accepts (hash, tx, meta) signature.
+        Used by pool.py. Converts to PoolTx and inserts.
+        """
+        # Always create a proper PoolTx for insertion
+        from mempool.types import PoolTx as PoolTxType, EffectiveFee
+        
+        # Ensure we have meta
+        if meta is None:
+            # Create minimal meta from tx attributes
+            from mempool.types import TxMeta
+            meta = TxMeta(
+                sender=getattr(tx, 'sender', ''),
+                nonce=getattr(tx, 'nonce', 0),
+                gas_limit=getattr(tx, 'gas_limit', 0),
+                size_bytes=getattr(tx, 'size_bytes', 0),
+            )
+        
+        # Create PoolTx
+        try:
+            fee_val = getattr(meta, 'effective_fee_wei', getattr(tx, 'fee', 0))
+            fee = EffectiveFee.from_legacy(fee_val)
+            ptx = PoolTxType(
+                tx=tx,
+                tx_hash=tx_hash,
+                raw=getattr(tx, 'raw', b""),
+                meta=meta,
+                fee=fee
+            )
+        except Exception:
+            # If PoolTx creation fails, create a minimal object
+            class MinimalPoolTx:
+                def __init__(self):
+                    self.tx = tx
+                    self.tx_hash = tx_hash
+                    self.meta = meta
+                    self.raw = getattr(tx, 'raw', b"")
+            ptx = MinimalPoolTx()
+        
+        result = self.insert(ptx, allow_replace=False)
+        if not result.ok:
+            # Convert to exception for backward compat
+            if result.reason == "duplicate_hash":
+                from mempool.errors import DuplicateTx
+                raise DuplicateTx("transaction already in pool")
+
     def remove_by_hash(self, tx_hash: str) -> Optional[PoolTx]:
         """
         Remove a transaction by hash and update both indices. Returns the removed tx, if any.
