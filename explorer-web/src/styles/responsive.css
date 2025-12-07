@@ -1,0 +1,110 @@
+/* ===================================================================
+   Responsive styles for explorer-web
+   Mobile-first approach with breakpoints at 640px, 768px, 1024px
+   =================================================================== */
+
+/* TopBar responsive adjustments */
+@media (max-width: 768px) {
+  .explorer-topbar {
+    grid-template-columns: 1fr !important;
+    gap: 8px !important;
+    padding: 8px 12px !important;
+  }
+
+  .network-selector {
+    flex-wrap: wrap;
+    gap: 4px !important;
+  }
+
+  .network-label {
+    display: none !important;
+  }
+}
+
+@media (max-width: 640px) {
+  .explorer-topbar {
+    padding: 8px 10px !important;
+  }
+}
+
+/* Ensure horizontal scrolling for tables on mobile */
+.table-responsive {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 10px;
+}
+
+.table-responsive table {
+  min-width: 600px;
+}
+
+/* Prevent layout shift on mobile */
+body {
+  overflow-x: hidden;
+}
+
+/* Touch-friendly button sizes */
+button,
+a[role="button"],
+.btn {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* Responsive text truncation */
+.truncate-mobile {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .truncate-mobile {
+    max-width: 120px;
+  }
+}
+
+/* Card grid responsive */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 1rem;
+}
+
+@media (max-width: 640px) {
+  .card-grid {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+}
+
+/* Mobile-friendly spacing */
+@media (max-width: 640px) {
+  .page-header {
+    padding: 1rem 0.75rem;
+  }
+
+  .page-content {
+    padding: 0.75rem;
+  }
+}
+
+/* Code block horizontal scroll with hint */
+pre {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 640px) {
+  pre {
+    font-size: 0.8rem;
+    padding: 0.75rem;
+  }
+}
+
+/* Safari mobile viewport fix */
+@supports (padding: max(0px)) {
+  body {
+    padding-bottom: max(env(safe-area-inset-bottom), 0px);
+  }
+}

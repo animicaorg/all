@@ -410,7 +410,17 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.4 ui-sans-serif
 
 @media (max-width: 920px){
   .app-container{grid-template-columns: 1fr}
-  .sidenav{display:flex;overflow:auto;gap:.4rem;border-right:none;border-bottom:1px solid var(--border)}
-  .navlink{white-space:nowrap}
+  .sidenav{display:flex;overflow-x:auto;overflow-y:hidden;gap:.4rem;border-right:none;border-bottom:1px solid var(--border);-webkit-overflow-scrolling:touch;padding:.5rem}
+  .navlink{white-space:nowrap;min-height:44px;display:flex;align-items:center}
+}
+
+@media (max-width: 640px){
+  .topbar{padding:.5rem .7rem;gap:.5rem}
+  .brand-text{font-size:.9rem}
+  .net-pill{font-size:.75rem;padding:.15rem .4rem}
+  .app-main{padding:.75rem}
+  .toast-host{inset:auto 8px 8px auto;max-width:calc(100vw - 16px)}
+  .toast{max-width:100%}
+  .footer{padding:.5rem .7rem;font-size:.8rem}
 }
 `;
