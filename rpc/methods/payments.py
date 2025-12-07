@@ -380,17 +380,18 @@ async def _mint_tokens_on_chain(
     """
     Mint ANM tokens to user address on-chain.
 
-    TODO: Replace with actual on-chain minting call:
+    NOTE: Mock implementation for development/testing.
+    In production, replace with actual on-chain minting:
     1. Load treasury contract
     2. Call mint(user_address, anm_quantity)
     3. Wait for transaction confirmation
     4. Return transaction hash
 
     Returns:
-        Transaction hash
+        Transaction hash (mock in devnet)
     """
 
-    # For now, return mock transaction hash
+    # Return mock transaction hash for development
     import secrets
 
     tx_hash = "0x" + secrets.token_hex(32)
