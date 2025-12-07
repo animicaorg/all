@@ -103,6 +103,7 @@ export default function TopBar() {
 
   return (
     <header
+      className="explorer-topbar"
       style={{
         position: "sticky",
         top: 0,
@@ -132,8 +133,8 @@ export default function TopBar() {
           Animica
         </Link>
 
-        <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-          <label htmlFor="network" style={{ fontSize: 12, opacity: 0.8 }}>
+        <div className="network-selector" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <label htmlFor="network" style={{ fontSize: 12, opacity: 0.8 }} className="network-label">
             {t("app.network", "Network")}
           </label>
           <select

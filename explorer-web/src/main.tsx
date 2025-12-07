@@ -6,6 +6,7 @@ import App from "./App";
 import "./styles/tokens.css";
 import "./styles/theme.css";
 import "./styles/app.css";
+import "./styles/responsive.css";
 
 /**
  * Apply initial theme before React mounts to avoid FOUC.
