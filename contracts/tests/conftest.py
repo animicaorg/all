@@ -257,9 +257,12 @@ def _blob_pin(ns: int, data: bytes) -> Dict[str, Any]:
     }
 
 
-def _ai_enqueue(model: str, prompt: str) -> Dict[str, Any]:
+def _ai_enqueue(model, prompt) -> Dict[str, Any]:
     # Deterministic task id
-    tid = _drbg(b"ai|" + model.encode() + b"|" + prompt.encode(), 16).hex()
+    # Handle both str and bytes for model and prompt
+    model_b = model.encode("utf-8") if isinstance(model, str) else bytes(model)
+    prompt_b = prompt.encode("utf-8") if isinstance(prompt, str) else bytes(prompt)
+    tid = _drbg(b"ai|" + model_b + b"|" + prompt_b, 16).hex()
     return {"kind": "AI", "task_id": tid}
 
 
@@ -275,10 +278,19 @@ def _read_result(task_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _get_beacon() -> bytes:
+    """
+    Return a deterministic beacon value for tests.
+    Tests can monkeypatch this to provide specific beacon values.
+    """
+    return b"\x11" * 32  # Default test beacon
+
+
 _syscalls_mod.blob_pin = _blob_pin  # type: ignore[attr-defined]
 _syscalls_mod.ai_enqueue = _ai_enqueue  # type: ignore[attr-defined]
 _syscalls_mod.quantum_enqueue = _quantum_enqueue  # type: ignore[attr-defined]
 _syscalls_mod.read_result = _read_result  # type: ignore[attr-defined]
+_syscalls_mod.get_beacon = _get_beacon  # type: ignore[attr-defined]
 
 
 def _install_test_stdlib() -> None:
