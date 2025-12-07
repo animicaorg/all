@@ -250,6 +250,10 @@ def tx_signing_bytes(tx: Any) -> bytes:
     return signbytes_tx(payload, chain_id)
 
 
+# Backward compatibility alias
+tx_sign_bytes = tx_signing_bytes
+
+
 __all__ = [
     "DOM_TX_SIGN_V1",
     "DOM_HEADER_SIGN_V1",
@@ -258,6 +262,7 @@ __all__ = [
     "signbytes_header",
     "header_signing_bytes",
     "tx_signing_bytes",
+    "tx_sign_bytes",  # Backward compatibility alias
     "hash_signbytes",
     "tx_hash",
     "header_hash",

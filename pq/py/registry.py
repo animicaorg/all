@@ -394,6 +394,39 @@ def default_signature_alg() -> SigAlgInfo:
     return require_sig("sphincs_shake_128s")
 
 
+def normalize_alg_name(name_or_id: AlgNameOrId) -> str:
+    """
+    Normalize an algorithm name or ID to its canonical string name.
+    
+    Examples:
+        normalize_alg_name("dilithium3") -> "dilithium3"
+        normalize_alg_name(1) -> "dilithium3" (if ID 1 maps to dilithium3)
+        normalize_alg_name("DILITHIUM3") -> "dilithium3"
+    """
+    if isinstance(name_or_id, int):
+        # Resolve ID to name
+        info = get(name_or_id)
+        if info is None:
+            raise KeyError(f"Unknown algorithm ID: {name_or_id}")
+        return info.name
+    
+    # Normalize string: lowercase, replace hyphens/underscores
+    normalized = str(name_or_id).lower().replace("-", "_")
+    
+    # Check if it exists in our registry
+    if normalized in BY_NAME:
+        return normalized
+    
+    # Try without underscores (e.g., "sphincsshake128s")
+    no_underscore = normalized.replace("_", "")
+    for known_name in BY_NAME.keys():
+        if known_name.replace("_", "") == no_underscore:
+            return known_name
+    
+    # Return as-is if not found (let caller handle unknown algs)
+    return normalized
+
+
 def default_kem_alg() -> KemAlgInfo:
     """
     Default KEM for P2P handshakes and session key establishment.
