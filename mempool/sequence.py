@@ -361,6 +361,16 @@ class NonceSequencer:
         has_gap = nonce > q.next_nonce and nonce not in q.txs
         return has_gap
 
+    def is_ready(self, sender: str, nonce: int) -> bool:
+        """
+        Check if (sender, nonce) is ready (i.e., in the ready window).
+        A tx is ready if nonce == next_nonce or if all preceding nonces are present.
+        """
+        q = self._queues.get(sender)
+        if q is None:
+            return False
+        return q.has_ready() and nonce < q.ready_end
+
     # ----------------------------
     # Ready collection
     # ----------------------------
