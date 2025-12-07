@@ -266,10 +266,10 @@ async def explorer_get_price_history(
         days = 7  # Default to 7 days
 
     try:
-        # TODO: Implement actual price history fetch from database
-        # Generate mock history for now
+        # NOTE: Returns mock data. In production, fetch from price history database.
+        # Generate mock history with reasonable progression
         prices = [1.0 + (i * 0.07) for i in range(days)]
-        timestamps = [datetime.utcnow().isoformat() + "Z" for _ in range(day)]
+        timestamps = [datetime.utcnow().isoformat() + "Z" for _ in range(days)]
 
         return {
             "prices": prices,
