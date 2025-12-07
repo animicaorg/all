@@ -1,0 +1,11 @@
+{
+  "extName": {
+    "message": "Animica Wallet"
+  },
+  "extDescription": {
+    "message": "PQ-secure browser wallet for Animica: keyring, in-page provider (window.animica), approvals, and simulation."
+  },
+  "extActionTitle": {
+    "message": "Animica Wallet"
+  }
+}
