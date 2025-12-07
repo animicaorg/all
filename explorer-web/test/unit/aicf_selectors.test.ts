@@ -26,20 +26,20 @@ const providers: Provider[] = [
 
 const jobs: Job[] = [
   // P1 completed (mix of on-time and late)
-  { id: 'j1', providerId: 'P1', status: 'completed', startedAt: t0 + 0_000,  completedAt: t0 + 20_000,  deadlineAt: t0 + 30_000,  units: 10 },
-  { id: 'j2', providerId: 'P1', status: 'completed', startedAt: t0 + 40_000, completedAt: t0 + 70_000,  deadlineAt: t0 + 65_000,  units: 5  },
-  { id: 'j3', providerId: 'P1', status: 'completed', startedAt: t0 + 90_000, completedAt: t0 + 140_000, deadlineAt: t0 + 200_000, units: 20 },
-  { id: 'j4', providerId: 'P1', status: 'completed', startedAt: t0 + 220_000,completedAt: t0 + 260_000, deadlineAt: t0 + 300_000, units: 15 },
-  { id: 'j5', providerId: 'P1', status: 'completed', startedAt: t0 + 300_000,completedAt: t0 + 390_000, deadlineAt: t0 + 380_000, units: 8  },
+  { id: 'j1', providerId: 'P1', status: 'completed', startedAt: t0 + 0,      completedAt: t0 + 20000,   deadlineAt: t0 + 30000,   units: 10 },
+  { id: 'j2', providerId: 'P1', status: 'completed', startedAt: t0 + 40000,  completedAt: t0 + 70000,   deadlineAt: t0 + 65000,   units: 5  },
+  { id: 'j3', providerId: 'P1', status: 'completed', startedAt: t0 + 90000,  completedAt: t0 + 140000,  deadlineAt: t0 + 200000,  units: 20 },
+  { id: 'j4', providerId: 'P1', status: 'completed', startedAt: t0 + 220000, completedAt: t0 + 260000,  deadlineAt: t0 + 300000,  units: 15 },
+  { id: 'j5', providerId: 'P1', status: 'completed', startedAt: t0 + 300000, completedAt: t0 + 390000,  deadlineAt: t0 + 380000,  units: 8  },
   // P1 failed
-  { id: 'j6', providerId: 'P1', status: 'failed',    startedAt: t0 + 410_000,                                     units: 12 },
+  { id: 'j6', providerId: 'P1', status: 'failed',    startedAt: t0 + 410000,                                      units: 12 },
   // P2 completed (mix)
-  { id: 'k1', providerId: 'P2', status: 'completed', startedAt: t0 + 10_000, completedAt: t0 + 50_000,  deadlineAt: t0 + 60_000,  units: 12 },
-  { id: 'k2', providerId: 'P2', status: 'completed', startedAt: t0 + 120_000,completedAt: t0 + 200_000, deadlineAt: t0 + 180_000, units: 30 },
-  { id: 'k3', providerId: 'P2', status: 'completed', startedAt: t0 + 240_000,completedAt: t0 + 320_000, deadlineAt: t0 + 360_000, units: 25 },
+  { id: 'k1', providerId: 'P2', status: 'completed', startedAt: t0 + 10, completedAt: t0 + 50,  deadlineAt: t0 + 60,  units: 12 },
+  { id: 'k2', providerId: 'P2', status: 'completed', startedAt: t0 + 120,completedAt: t0 + 200, deadlineAt: t0 + 180, units: 30 },
+  { id: 'k3', providerId: 'P2', status: 'completed', startedAt: t0 + 240,completedAt: t0 + 320, deadlineAt: t0 + 360, units: 25 },
   // P2 failed
-  { id: 'k4', providerId: 'P2', status: 'failed',    startedAt: t0 + 260_000,                                     units: 10 },
-  { id: 'k5', providerId: 'P2', status: 'failed',    startedAt: t0 + 360_000,                                     units: 18 },
+  { id: 'k4', providerId: 'P2', status: 'failed',    startedAt: t0 + 260,                                     units: 10 },
+  { id: 'k5', providerId: 'P2', status: 'failed',    startedAt: t0 + 360,                                     units: 18 },
 ]
 
 const settlements: Settlement[] = []
@@ -59,10 +59,10 @@ function percentile(sorted: number[], p: number) {
 function computeWindowMs(js: Job[]) {
   const starts = js.map(j => j.startedAt).filter(Boolean)
   const ends = js.map(j => j.completedAt ?? j.startedAt).filter(Boolean)
-  if (starts.length === 0 || ends.length === 0) return 60_000 // guard
+  if (starts.length === 0 || ends.length === 0) return 60 // guard
   const minS = Math.min(...starts)
   const maxE = Math.max(...ends)
-  const span = Math.max(60_000, maxE - minS) // at least 1 minute to avoid infinity
+  const span = Math.max(60, maxE - minS) // at least 1 minute to avoid infinity
   return span
 }
 
@@ -86,8 +86,8 @@ function expectedSLA(js: Job[]) {
     avgLatencyMs: durations.length ? durations.reduce((a, b) => a + b, 0) / durations.length : 0,
     p95LatencyMs: percentile(durations, 0.95),
     unitsTotal,
-    jobsPerMin: (total * 60_000) / winMs,
-    unitsPerMin: (unitsTotal * 60_000) / winMs,
+    jobsPerMin: (total * 60) / winMs,
+    unitsPerMin: (unitsTotal * 60) / winMs,
   }
 }
 
