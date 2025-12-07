@@ -77,6 +77,7 @@ class ProofType(IntEnum):
     QUANTUM = 3  # Quantum work proof (provider attest + trap-circuit outcomes)
     STORAGE = 4  # Storage heartbeat / PoSt-style availability proof
     VDF = 5  # Verifiable delay function (bonus / beacon tie-in)
+    HASH_WORK = 6  # Hash-based useful work (algorithm-agnostic, device-agnostic)
 
 
 # Bidirectional name ↔ id helpers (stable, lowercase keys)
