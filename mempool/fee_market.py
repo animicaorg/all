@@ -162,14 +162,37 @@ def update_on_block(
 # ---------- Surge multiplier ----------
 
 
-def surge_multiplier(pressure: MempoolPressure, cfg: FeeMarketConfig) -> float:
+def surge_multiplier(
+    pressure: MempoolPressure | float,
+    cfg: Optional[FeeMarketConfig] = None
+) -> float:
     """
     Convert pending gas into a multiplicative surge factor.
+
+    Accepts either:
+    - pressure: MempoolPressure object, cfg: FeeMarketConfig
+    - pressure: float (load factor), cfg: Optional[FeeMarketConfig]
+
+    When pressure is a float, it's interpreted as the load factor (pending_blocks).
 
     pending_blocks = pending_gas / (target_util * block_gas_limit)
 
     multiplier = 1 + beta * max(0, pending_blocks - surge_pending_blocks)
     """
+    if cfg is None:
+        cfg = FeeMarketConfig()
+    
+    # Handle float load factor directly
+    if isinstance(pressure, (int, float)):
+        load = float(pressure)
+        # For simple load factor API, use a threshold of 1.0 (capacity)
+        # instead of the default surge_pending_blocks which is designed for multi-block queues
+        threshold = 1.0  # surge kicks in when load > 1.0 (over capacity)
+        over = max(0.0, load - threshold)
+        mult = 1.0 + cfg.surge_beta * over
+        return float(min(cfg.surge_cap, max(1.0, mult)))
+    
+    # Handle MempoolPressure object
     denom = max(1, int(cfg.target_utilization * pressure.block_gas_limit))
     pending_blocks = pressure.pending_gas / float(denom)
     over = max(0.0, pending_blocks - cfg.surge_pending_blocks)
@@ -178,6 +201,43 @@ def surge_multiplier(pressure: MempoolPressure, cfg: FeeMarketConfig) -> float:
 
 
 # ---------- Floor computation & suggestions ----------
+
+
+def compute_dynamic_floor(
+    fees: list[int],
+    alpha: float = 0.2,
+    base_floor: int = 1 * GWEI
+) -> int:
+    """
+    Compute a dynamic fee floor from a list of recent block fees using EMA.
+    This is a convenience function for tests and external callers.
+    
+    Args:
+        fees: List of fees from recent blocks
+        alpha: EMA smoothing factor (0..1], higher = more responsive
+        base_floor: Minimum floor value
+    
+    Returns:
+        Computed floor as integer wei value
+    """
+    if not fees:
+        return base_floor
+    
+    ema = float(fees[0])
+    for fee in fees[1:]:
+        ema = alpha * float(fee) + (1.0 - alpha) * ema
+    
+    return max(base_floor, int(ema))
+
+
+def current_floor(state: Optional[FeeMarketState] = None) -> int:
+    """
+    Get the current dynamic floor from state.
+    If state is None, returns a default minimum.
+    """
+    if state is None:
+        return 1 * GWEI
+    return int(state.ema_floor)
 
 
 @dataclass(frozen=True)
