@@ -45,7 +45,7 @@ except Exception:  # pragma: no cover
         raw: bytes
 
 
-__all__ = ["TxLookupIndex", "AdmissionProbe", "InsertResult"]
+__all__ = ["TxLookupIndex", "AdmissionProbe", "InsertResult", "TxIndex"]
 
 
 @dataclass(frozen=True)
@@ -302,3 +302,7 @@ if __name__ == "__main__":  # pragma: no cover
     print("get hA6:", idx.get("hA6").tx_hash if idx.get("hA6") else None)
     print("stats:", idx.stats())
     print("snapshot:", idx.snapshot())
+
+
+# Backward compatibility alias  
+TxIndex = TxLookupIndex
