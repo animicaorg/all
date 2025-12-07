@@ -45,7 +45,17 @@ except Exception:  # pragma: no cover
         raw: bytes
 
 
-__all__ = ["TxLookupIndex", "AdmissionProbe", "InsertResult", "TxIndex"]
+__all__ = ["TxLookupIndex", "AdmissionProbe", "InsertResult", "TxIndex", "IndexEntry"]
+
+
+@dataclass
+class IndexEntry:
+    """
+    Entry stored in the index. Wraps the transaction and its metadata.
+    This allows Pool to access both tx and meta easily.
+    """
+    tx: any  # The actual transaction object (can be PoolTx or duck-typed tx)
+    meta: any  # The TxMeta object
 
 
 @dataclass(frozen=True)
@@ -94,8 +104,8 @@ class TxLookupIndex:
     """
 
     def __init__(self) -> None:
-        self._by_hash: Dict[str, PoolTx] = {}
-        self._by_sender_nonce: Dict[str, Dict[int, str]] = {}
+        self._by_hash: Dict[bytes, IndexEntry] = {}
+        self._by_sender_nonce: Dict[str, Dict[int, bytes]] = {}
         self._lock = threading.RLock()
 
         # Lightweight counters for metrics/diagnostics
@@ -168,18 +178,28 @@ class TxLookupIndex:
         """
         return self.insert(tx, allow_replace=True)
 
-    def add(self, tx_hash: str, tx: any, meta: any = None) -> None:
+    def add(self, tx_hash: any, tx: any, meta: any = None) -> None:
         """
-        Backward compatibility alias for insert. Accepts (hash, tx, meta) signature.
-        Used by pool.py. Converts to PoolTx and inserts.
+        Backward compatibility method for Pool. Stores (tx, meta) as an IndexEntry.
+        Accepts tx_hash as bytes or str; normalizes to bytes internally.
         """
-        # Always create a proper PoolTx for insertion
-        from mempool.types import PoolTx as PoolTxType, EffectiveFee
+        from mempool.types import TxMeta
+        
+        # Normalize tx_hash to bytes
+        if isinstance(tx_hash, str):
+            if tx_hash.startswith('0x'):
+                tx_hash = bytes.fromhex(tx_hash[2:])
+            else:
+                try:
+                    tx_hash = bytes.fromhex(tx_hash)
+                except ValueError:
+                    tx_hash = tx_hash.encode('utf-8')
+        elif not isinstance(tx_hash, (bytes, bytearray)):
+            tx_hash = bytes(tx_hash)
         
         # Ensure we have meta
         if meta is None:
             # Create minimal meta from tx attributes
-            from mempool.types import TxMeta
             meta = TxMeta(
                 sender=getattr(tx, 'sender', ''),
                 nonce=getattr(tx, 'nonce', 0),
@@ -187,50 +207,82 @@ class TxLookupIndex:
                 size_bytes=getattr(tx, 'size_bytes', 0),
             )
         
-        # Create PoolTx
-        try:
-            fee_val = getattr(meta, 'effective_fee_wei', getattr(tx, 'fee', 0))
-            fee = EffectiveFee.from_legacy(fee_val)
-            ptx = PoolTxType(
-                tx=tx,
-                tx_hash=tx_hash,
-                raw=getattr(tx, 'raw', b""),
-                meta=meta,
-                fee=fee
-            )
-        except Exception:
-            # If PoolTx creation fails, create a minimal object
-            class MinimalPoolTx:
-                def __init__(self):
-                    self.tx = tx
-                    self.tx_hash = tx_hash
-                    self.meta = meta
-                    self.raw = getattr(tx, 'raw', b"")
-            ptx = MinimalPoolTx()
-        
-        result = self.insert(ptx, allow_replace=False)
-        if not result.ok:
-            # Convert to exception for backward compat
-            if result.reason == "duplicate_hash":
+        # Check for duplicates
+        with self._lock:
+            if tx_hash in self._by_hash:
                 from mempool.errors import DuplicateTx
                 raise DuplicateTx("transaction already in pool")
+            
+            # Create entry
+            entry = IndexEntry(tx=tx, meta=meta)
+            
+            # Get sender and nonce
+            sender = getattr(meta, 'sender', '')
+            nonce = int(getattr(meta, 'nonce', 0))
+            
+            # Check for nonce conflict
+            occupant_hash = self._get_occupant_hash_locked(sender, nonce)
+            if occupant_hash is not None:
+                from mempool.errors import DuplicateTx
+                raise DuplicateTx("nonce conflict")
+            
+            # Store (using bytes key)
+            self._by_hash[tx_hash] = entry
+            bucket = self._by_sender_nonce.get(sender)
+            if bucket is None:
+                bucket = {}
+                self._by_sender_nonce[sender] = bucket
+            bucket[nonce] = tx_hash
+            self._ctr_added += 1
 
-    def remove_by_hash(self, tx_hash: str) -> Optional[PoolTx]:
+    def remove_by_hash(self, tx_hash: any) -> Optional[IndexEntry]:
         """
-        Remove a transaction by hash and update both indices. Returns the removed tx, if any.
+        Remove a transaction by hash and update both indices. Returns the removed entry, if any.
+        Accepts hash as bytes or hex string.
         """
+        # Normalize to bytes
+        if isinstance(tx_hash, str):
+            if tx_hash.startswith('0x'):
+                tx_hash = bytes.fromhex(tx_hash[2:])
+            else:
+                try:
+                    tx_hash = bytes.fromhex(tx_hash)
+                except ValueError:
+                    tx_hash = tx_hash.encode('utf-8')
+        elif not isinstance(tx_hash, (bytes, bytearray)):
+            tx_hash = bytes(tx_hash)
+        
         with self._lock:
             return self._remove_locked(tx_hash)
+
+    def remove(self, tx_hash: any) -> Optional[IndexEntry]:
+        """
+        Alias for remove_by_hash for compatibility with Pool._remove() calls.
+        """
+        return self.remove_by_hash(tx_hash)
 
     # -------------------------------
     # Lookups
     # -------------------------------
 
-    def get(self, tx_hash: str) -> Optional[PoolTx]:
+    def get(self, tx_hash: any) -> Optional[IndexEntry]:
+        """Get entry by hash. Accepts bytes or hex string."""
+        # Normalize to bytes
+        if isinstance(tx_hash, str):
+            if tx_hash.startswith('0x'):
+                tx_hash = bytes.fromhex(tx_hash[2:])
+            else:
+                try:
+                    tx_hash = bytes.fromhex(tx_hash)
+                except ValueError:
+                    tx_hash = tx_hash.encode('utf-8')
+        elif not isinstance(tx_hash, (bytes, bytearray)):
+            tx_hash = bytes(tx_hash)
+        
         with self._lock:
             return self._by_hash.get(tx_hash)
 
-    def get_by_sender(self, sender: str) -> List[PoolTx]:
+    def get_by_sender(self, sender: str) -> List[IndexEntry]:
         with self._lock:
             bucket = self._by_sender_nonce.get(sender)
             if not bucket:
@@ -239,7 +291,7 @@ class TxLookupIndex:
             items = sorted(bucket.items(), key=lambda kv: kv[0])
             return [self._by_hash[h] for _, h in items if h in self._by_hash]
 
-    def get_by_sender_nonce(self, sender: str, nonce: int) -> Optional[PoolTx]:
+    def get_by_sender_nonce(self, sender: str, nonce: int) -> Optional[IndexEntry]:
         with self._lock:
             bucket = self._by_sender_nonce.get(sender)
             if not bucket:
@@ -249,12 +301,12 @@ class TxLookupIndex:
                 return None
             return self._by_hash.get(h)
 
-    def pop_by_sender_nonce(self, sender: str, nonce: int) -> Optional[PoolTx]:
+    def pop_by_sender_nonce(self, sender: str, nonce: int) -> Optional[IndexEntry]:
         with self._lock:
-            tx = self.get_by_sender_nonce(sender, nonce)
-            if tx is None:
+            h = self._get_occupant_hash_locked(sender, nonce)
+            if h is None:
                 return None
-            return self._remove_locked(tx.tx_hash)
+            return self._remove_locked(h)
 
     # -------------------------------
     # Introspection / metrics
@@ -268,22 +320,13 @@ class TxLookupIndex:
         with self._lock:
             return list(self._by_sender_nonce.keys())
 
-    def all_items(self) -> Iterable[Tuple[str, any]]:
+    def all_items(self) -> Iterable[Tuple[bytes, IndexEntry]]:
         """
         Return all (hash, entry) pairs in the index.
-        For compatibility with tests that need to iterate all entries.
-        Entry is a wrapped object with .meta and other attributes.
+        Hash is bytes, entry has .tx and .meta attributes.
         """
         with self._lock:
-            # Create wrapper objects that have meta attribute
-            items = []
-            for h, tx in self._by_hash.items():
-                class Entry:
-                    def __init__(self, tx):
-                        self.tx = tx
-                        self.meta = getattr(tx, 'meta', None)
-                items.append((h, Entry(tx)))
-            return items
+            return list(self._by_hash.items())
 
     def stats(self) -> Dict[str, int]:
         with self._lock:
@@ -320,18 +363,37 @@ class TxLookupIndex:
         h = bucket.get(int(nonce))
         if not h:
             return None
-        return self._by_hash.get(h)
+        entry = self._by_hash.get(h)
+        # For compatibility, return a PoolTx-like object with hash and meta
+        if entry:
+            # Create a minimal PoolTx-like object
+            class OccupantTx:
+                def __init__(self, tx_hash, tx, meta):
+                    self.tx_hash = tx_hash
+                    self.sender = getattr(meta, 'sender', '')
+                    self.nonce = getattr(meta, 'nonce', 0)
+                    self.meta = meta
+            return OccupantTx(h, entry.tx, entry.meta)
+        return None
 
-    def _remove_locked(self, tx_hash: str) -> Optional[PoolTx]:
-        tx = self._by_hash.pop(tx_hash, None)
-        if tx is None:
+    def _get_occupant_hash_locked(self, sender: str, nonce: int) -> Optional[bytes]:
+        """Get just the hash of the occupant at (sender, nonce)."""
+        bucket = self._by_sender_nonce.get(sender)
+        if not bucket:
             return None
-        bucket = self._by_sender_nonce.get(tx.meta.sender)
+        return bucket.get(int(nonce))
+
+    def _remove_locked(self, tx_hash: bytes) -> Optional[IndexEntry]:
+        """Remove entry by hash (must be bytes)."""
+        entry = self._by_hash.pop(tx_hash, None)
+        if entry is None:
+            return None
+        bucket = self._by_sender_nonce.get(entry.meta.sender)
         if bucket is not None:
-            bucket.pop(int(tx.meta.nonce), None)
+            bucket.pop(int(entry.meta.nonce), None)
             if not bucket:
-                self._by_sender_nonce.pop(tx.meta.sender, None)
-        return tx
+                self._by_sender_nonce.pop(entry.meta.sender, None)
+        return entry
 
 
 # ---------------------------------------

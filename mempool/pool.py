@@ -485,9 +485,26 @@ class Pool:
 
         return existing_hash
 
-    def get(self, h: bytes) -> Optional[PoolTx]:
+    def get(self, h: bytes) -> Optional[Any]:
+        """Get transaction by hash. Returns the tx object or None."""
         ent = self.index.get(h)
         return ent.tx if ent is not None else None
+
+    def __len__(self) -> int:
+        """Return the number of transactions in the pool."""
+        return len(self.index)
+
+    def __contains__(self, item: any) -> bool:
+        """Check if a transaction is in the pool. Accepts tx object or hash."""
+        # If it's a tx object, get its hash
+        if hasattr(item, 'hash'):
+            h = item.hash
+        elif hasattr(item, 'tx_hash'):
+            h = item.tx_hash
+        else:
+            h = item
+        
+        return self.index.get(h) is not None
 
     def fetch_ready(self, max_txs: int, max_bytes: int) -> List[PoolTx]:
         """
