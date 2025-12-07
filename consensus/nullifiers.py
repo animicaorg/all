@@ -323,6 +323,63 @@ class KVNullifierStore:
         return max(0, self._approx_size)
 
 
+# Compatibility wrapper for test code that expects different method names
+class Nullifiers:
+    """
+    Simplified wrapper around MemoryNullifierStore with test-friendly API.
+    Provides add(), seen(), advance() methods expected by test code.
+    """
+    def __init__(self, window: int = 10_000):
+        self.cfg = Config(window=window)
+        self.store = MemoryNullifierStore(self.cfg)
+        self.height = 0
+    
+    def add(self, nullifier: bytes | str, height: int | None = None) -> bool:
+        """Add a nullifier at given height. Returns True if added, False if duplicate."""
+        if isinstance(nullifier, str):
+            # Convert hex string to bytes
+            if nullifier.startswith("0x"):
+                nullifier = bytes.fromhex(nullifier[2:])
+            else:
+                nullifier = bytes.fromhex(nullifier)
+        
+        if height is None:
+            height = self.height
+        else:
+            self.height = max(self.height, height)
+        
+        # Check if already seen (duplicate)
+        if self.store.seen(nullifier):
+            return False
+        
+        # Record the nullifier
+        self.store.record(nullifier, height)
+        return True
+    
+    def seen(self, nullifier: bytes | str) -> bool:
+        """Check if nullifier is currently active in the window."""
+        if isinstance(nullifier, str):
+            # Convert hex string to bytes
+            if nullifier.startswith("0x"):
+                nullifier = bytes.fromhex(nullifier[2:])
+            else:
+                nullifier = bytes.fromhex(nullifier)
+        return self.store.seen(nullifier)
+    
+    def advance(self, height: int) -> None:
+        """Advance to a new height and prune old nullifiers."""
+        self.height = height
+        self.store.prune(height)
+    
+    def has(self, nullifier: bytes | str) -> bool:
+        """Alias for seen()."""
+        return self.seen(nullifier)
+    
+    def contains(self, nullifier: bytes | str) -> bool:
+        """Alias for seen()."""
+        return self.seen(nullifier)
+
+
 __all__ = [
     "Config",
     "NullifierStore",
@@ -330,4 +387,5 @@ __all__ = [
     "KV",
     "InMemoryKV",
     "KVNullifierStore",
+    "Nullifiers",
 ]
