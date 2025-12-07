@@ -147,8 +147,11 @@ def _st_set(key: bytes, value: bytes) -> None:
     ctx.storage[key] = bytes(value)
 
 
+# Use proper function names to avoid shadowing Python built-ins
 _storage_mod.get = _st_get  # type: ignore[attr-defined]
 _storage_mod.set = _st_set  # type: ignore[attr-defined]
+# Also expose set as store_set to avoid conflicts
+_storage_mod.store_set = _st_set  # type: ignore[attr-defined]
 
 
 # events submodule
@@ -348,16 +351,18 @@ class ContractInstance:
 @pytest.fixture(scope="session")
 def funded_accounts() -> Dict[str, Dict[str, Any]]:
     """
-    Three deterministic "funded" accounts used across tests.
+    Four deterministic "funded" accounts used across tests.
     Balances are large enough for example flows.
     """
     deployer = _det_address("deployer")
     alice = _det_address("alice")
     bob = _det_address("bob")
+    carol = _det_address("carol")
     return {
         "deployer": {"address": deployer, "balance": 10_000_000},
         "alice": {"address": alice, "balance": 5_000_000},
         "bob": {"address": bob, "balance": 5_000_000},
+        "carol": {"address": carol, "balance": 5_000_000},
     }
 
 

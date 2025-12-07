@@ -74,13 +74,41 @@ class AccessEntry:
         )
 
 
-@dataclass(frozen=True)
 class PqSignature:
-    alg_id: int
-    pubkey: bytes
-    sig: bytes
-
-    def __post_init__(self) -> None:
+    """
+    Post-quantum signature container.
+    Supports both canonical (alg_id, pubkey, sig) and legacy (alg, pub, sig) parameter names.
+    """
+    
+    def __init__(
+        self,
+        alg_id: int = None,
+        pubkey: bytes = None,
+        sig: bytes = None,
+        *,
+        alg: int = None,  # Legacy alias for alg_id
+        pub: bytes = None,  # Legacy alias for pubkey
+    ):
+        # Handle legacy parameter names
+        if alg is not None and alg_id is None:
+            alg_id = alg
+        if pub is not None and pubkey is None:
+            pubkey = pub
+        
+        # Validate required parameters
+        if alg_id is None:
+            raise TypeError("PqSignature() missing required argument: 'alg_id' or 'alg'")
+        if pubkey is None:
+            raise TypeError("PqSignature() missing required argument: 'pubkey' or 'pub'")
+        if sig is None:
+            raise TypeError("PqSignature() missing required argument: 'sig'")
+        
+        # Store as attributes (frozen via object.__setattr__ in __post_init__)
+        object.__setattr__(self, 'alg_id', alg_id)
+        object.__setattr__(self, 'pubkey', pubkey)
+        object.__setattr__(self, 'sig', sig)
+        
+        # Validate
         if not isinstance(self.alg_id, int) or self.alg_id < 0:
             raise ValueError("PqSignature.alg_id must be a non-negative int")
         if not isinstance(self.pubkey, (bytes, bytearray)):
@@ -89,6 +117,16 @@ class PqSignature:
             raise TypeError("PqSignature.sig must be bytes")
         if len(self.pubkey) > PUBKEY_MAX or len(self.sig) > SIG_MAX:
             raise ValueError("PqSignature.{pubkey,sig} exceed safety caps")
+    
+    def __eq__(self, other):
+        if not isinstance(other, PqSignature):
+            return False
+        return (self.alg_id == other.alg_id and
+                self.pubkey == other.pubkey and
+                self.sig == other.sig)
+    
+    def __hash__(self):
+        return hash((self.alg_id, self.pubkey, self.sig))
 
     def to_obj(self) -> Mapping[str, Any]:
         return {
