@@ -163,6 +163,7 @@ def pytest_ignore_collect(collection_path, config):
         "/templates/contract-python-basic/",
         "/templates/contract-python-workspace/",
         "/python/animica/cli/tests/",
+        "/python/animica/hash_work/tests/",
         "/sdk/python/tests/",
         "/vm_py/tests/",
     ]
