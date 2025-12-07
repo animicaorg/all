@@ -127,31 +127,34 @@ export function createExplorerStore(preloaded?: Partial<ExplorerState>) {
   type S = ExplorerState;
 
   const withMiddlewares = subscribeWithSelector<S>(
+    // @ts-expect-error - Zustand middleware type inference is complex; the composition is correct at runtime
     devtools(
       persist<S>(
         (set, get) => {
           const d = { ...defaults(), ...preloaded };
+          // Type cast for devtools middleware (accepts 3 params: partial, replace, actionName)
+          const setWithAction = set as any;
 
           return {
             ...d,
 
             setNetwork: (patch) =>
-              set(
-                (s) => ({ network: { ...s.network, ...patch } }),
+              setWithAction(
+                (s: S) => ({ network: { ...s.network, ...patch } }),
                 false,
                 'network/setNetwork'
               ),
 
             setHead: (patch) =>
-              set(
-                (s) => ({ head: { ...s.head, ...patch } }),
+              setWithAction(
+                (s: S) => ({ head: { ...s.head, ...patch } }),
                 false,
                 'head/setHead'
               ),
 
             setTheme: (theme) =>
-              set(
-                (s) => ({ ui: { ...s.ui, theme } }),
+              setWithAction(
+                (s: S) => ({ ui: { ...s.ui, theme } }),
                 false,
                 'ui/setTheme'
               ),
@@ -167,7 +170,7 @@ export function createExplorerStore(preloaded?: Partial<ExplorerState>) {
                       ts: Date.now(),
                       ttl: input.ttl,
                     };
-              set((s) => ({ toasts: [t, ...s.toasts].slice(0, 200) }), false, 'toast/add');
+              setWithAction((s: S) => ({ toasts: [t, ...s.toasts].slice(0, 200) }), false, 'toast/add');
               // Optional auto-expire
               if (t.ttl && typeof window !== 'undefined') {
                 window.setTimeout(() => {
@@ -179,9 +182,9 @@ export function createExplorerStore(preloaded?: Partial<ExplorerState>) {
             },
 
             removeToast: (id) =>
-              set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }), false, 'toast/remove'),
+              setWithAction((s: S) => ({ toasts: s.toasts.filter((t) => t.id !== id) }), false, 'toast/remove'),
 
-            clearToasts: () => set({ toasts: [] }, false, 'toast/clear'),
+            clearToasts: () => setWithAction({ toasts: [] }, false, 'toast/clear'),
           };
         },
         {
@@ -249,7 +252,6 @@ export function useExplorerStore<T>(
   if (!store) {
     throw new Error('useExplorerStore must be used within <ExplorerStoreProvider>');
   }
-  // @ts-expect-error: zustand react signature supports equality as third arg
   return useZustandStore(store, selector, equality);
 }
 
