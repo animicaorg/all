@@ -6,3 +6,8 @@ __pycache__/
 .env
 .animica/
 *.tsbuildinfo
+
+# Build artifacts
+wallet-extension/dist-chrome/
+wallet-extension/dist-firefox/
+wallet-extension/dist-manifests/
