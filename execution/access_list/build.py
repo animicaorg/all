@@ -67,11 +67,14 @@ def _to_bytes(x: Any) -> bytes:
         return bytes(x)
     if isinstance(x, memoryview):
         return bytes(x)
-    if isinstance(x, str) and x.startswith("0x"):
-        h = x[2:]
-        if len(h) % 2:
-            h = "0" + h
-        return bytes.fromhex(h)
+    if isinstance(x, str):
+        # Accept both 0x and 0X prefix (case-insensitive)
+        s = x.lower()
+        if s.startswith("0x"):
+            h = s[2:]
+            if len(h) % 2:
+                h = "0" + h
+            return bytes.fromhex(h)
     raise TypeError(f"expected bytes-like or 0x-hex string, got {type(x)!r}")
 
 
@@ -79,10 +82,10 @@ def _to_bytes(x: Any) -> bytes:
 
 _EVENT_ACCOUNT_READ = {"account_read", "acct_read", "account-get", "account-load"}
 _EVENT_ACCOUNT_WRITE = {"account_write", "acct_write", "account-put", "account-store"}
-_EVENT_STORAGE_READ = {"storage_read", "sread", "storage-get", "slot-get"}
-_EVENT_STORAGE_WRITE = {"storage_write", "swrite", "storage-put", "slot-put"}
-_EVENT_CALL = {"call", "delegate_call", "static_call"}
-_EVENT_CREATE = {"create", "contract_create"}
+_EVENT_STORAGE_READ = {"storage_read", "sread", "storage-get", "slot-get", "sload"}
+_EVENT_STORAGE_WRITE = {"storage_write", "swrite", "storage-put", "slot-put", "sstore"}
+_EVENT_CALL = {"call", "delegate_call", "static_call", "delegatecall", "staticcall"}
+_EVENT_CREATE = {"create", "contract_create", "create2"}
 
 
 def _normalize_tracker_storage(
@@ -137,15 +140,33 @@ def _ingest_event(
     include_calls: bool,
 ) -> None:
     if isinstance(ev, dict):
-        etype = str(ev.get("type", "")).lower()
+        # Accept either 'type' or 'op' as the event type field
+        etype = str(ev.get("type") or ev.get("op") or "").lower()
         if not etype:
-            raise ValueError("event dict missing 'type'")
+            raise ValueError("event dict missing 'type' or 'op' field")
         addr = ev.get("address")
-        key = ev.get("key", None)
+        # Accept either 'key' or 'slot' as the storage key field
+        key = ev.get("key") or ev.get("slot")
     elif isinstance(ev, (tuple, list)) and ev:
-        etype = str(ev[0]).lower()
-        addr = ev[1] if len(ev) > 1 else None
-        key = ev[2] if len(ev) > 2 else None
+        # Special case: 2-element tuples (address, slot) are treated as storage accesses
+        # Heuristic: if first element looks like an address (0x-prefixed, ~20 bytes), use (address, slot) format
+        if len(ev) == 2:
+            first = str(ev[0])
+            if first.lower().startswith("0x"):
+                # Likely (address, slot) format
+                addr = ev[0]
+                key = ev[1]
+                etype = "storage_access"
+            else:
+                # Standard format: (type, address) where type is a non-hex string
+                etype = first.lower()
+                addr = ev[1] if len(ev) > 1 else None
+                key = None
+        else:
+            # Standard format: (type, address, key)
+            etype = str(ev[0]).lower()
+            addr = ev[1] if len(ev) > 1 else None
+            key = ev[2] if len(ev) > 2 else None
     else:
         raise TypeError(f"unsupported event shape: {type(ev)!r}")
 
@@ -167,6 +188,13 @@ def _ingest_event(
             k_b = _to_bytes(key)
             slots.setdefault(a_b, set()).add(k_b)
             addrs.add(a_b)
+    elif etype == "storage_access":
+        # Tuple format (address, slot) - treat as both read and write
+        a_b = _to_bytes(addr)
+        if key is not None:
+            k_b = _to_bytes(key)
+            slots.setdefault(a_b, set()).add(k_b)
+        addrs.add(a_b)
     elif etype in _EVENT_CALL or etype in _EVENT_CREATE:
         # Calls/creates touch the callee/created address at the account level.
         if include_calls and addr is not None:
