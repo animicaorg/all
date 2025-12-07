@@ -300,10 +300,17 @@ class Pool:
                 self._remove(scored[i][1])
                 i += 1
 
-    def _enqueue_ready_if_contiguous(self, ptx: PoolTx, meta: TxMeta) -> None:
+    def _enqueue_ready_if_contiguous(self, ptx: Any, meta: TxMeta) -> None:
         """If the tx has the sender's next nonce, mark ready and enqueue."""
-        if self.seqs.is_ready(ptx.sender, ptx.nonce):
-            self._heap_push(ptx.hash, self._score(ptx, meta))
+        # Get sender and nonce from tx or meta (duck-typed)
+        sender = getattr(ptx, 'sender', meta.sender)
+        if isinstance(sender, (bytes, bytearray)):
+            sender = sender.hex()
+        nonce = getattr(ptx, 'nonce', meta.nonce)
+        h = getattr(ptx, 'hash', getattr(ptx, 'tx_hash', None))
+        
+        if self.seqs.is_ready(sender, nonce):
+            self._heap_push(h, self._score(ptx, meta))
 
     def _remove(self, h: bytes) -> None:
         ent = self.index.get(h)
@@ -311,15 +318,22 @@ class Pool:
             return
         ptx = ent.tx
         meta = ent.meta
+        
+        # Get sender and nonce (duck-typed)
+        sender = getattr(ptx, 'sender', meta.sender)
+        if isinstance(sender, (bytes, bytearray)):
+            sender = sender.hex()
+        nonce = getattr(ptx, 'nonce', meta.nonce)
+        
         # Remove from indexes
         self.index.remove(h)
-        self.seqs.remove(ptx.sender, ptx.nonce, h)
+        self.seqs.remove(sender, nonce, h)
         # Mark heap entry stale (leave lazy deletion)
         self._in_heap.pop(h, None)
         # Accounting
         self._n_bytes = max(0, self._n_bytes - int(getattr(meta, "size_bytes", 0)))
         # Promote any newly contiguous txs for this sender
-        nxt = self.seqs.promote_next_ready(ptx.sender)
+        nxt = self.seqs.promote_next_ready(sender)
         if nxt:
             # We may have many; enqueue all that became ready
             for hh in nxt:
@@ -375,11 +389,21 @@ class Pool:
                 getattr(tx, "fee", None) or
                 getattr(tx, "max_fee_per_gas", 0)
             )
+            
+            # Normalize sender to string (handle bytes from tests)
+            raw_sender = getattr(tx, "sender", sender if 'sender' in locals() else "")
+            if isinstance(raw_sender, (bytes, bytearray)):
+                sender_str = raw_sender.hex()
+            elif isinstance(raw_sender, str):
+                sender_str = raw_sender
+            else:
+                sender_str = str(raw_sender)
+            
             meta = TxMeta(
                 size_bytes=getattr(tx, "size_bytes", getattr(tx, "serialized_size", 0)),
                 first_seen_s=self.clock(),
                 effective_fee_wei=effective_fee,
-                sender=getattr(tx, "sender", sender if 'sender' in locals() else ""),
+                sender=sender_str,
                 nonce=getattr(tx, "nonce", nonce if 'nonce' in locals() else 0),
                 gas_limit=getattr(tx, "gas_limit", 0),
             )
@@ -461,9 +485,26 @@ class Pool:
 
         return existing_hash
 
-    def get(self, h: bytes) -> Optional[PoolTx]:
+    def get(self, h: bytes) -> Optional[Any]:
+        """Get transaction by hash. Returns the tx object or None."""
         ent = self.index.get(h)
         return ent.tx if ent is not None else None
+
+    def __len__(self) -> int:
+        """Return the number of transactions in the pool."""
+        return len(self.index)
+
+    def __contains__(self, item: any) -> bool:
+        """Check if a transaction is in the pool. Accepts tx object or hash."""
+        # If it's a tx object, get its hash
+        if hasattr(item, 'hash'):
+            h = item.hash
+        elif hasattr(item, 'tx_hash'):
+            h = item.tx_hash
+        else:
+            h = item
+        
+        return self.index.get(h) is not None
 
     def fetch_ready(self, max_txs: int, max_bytes: int) -> List[PoolTx]:
         """
@@ -523,20 +564,22 @@ class Pool:
 
     def stats(self) -> PoolStats:
         """Return a snapshot of pool stats. (Fields defined in mempool.types)"""
-        ready = len(self._in_heap)
         total = len(self.index)
-        held = max(0, total - ready)
-        th = self.thresholds()
+        
+        # Compute total gas by summing gas_limit from all entries
+        total_gas = 0
+        for _, entry in self.index.all_items():
+            gas_limit = getattr(entry.meta, 'gas_limit', 0) if hasattr(entry, 'meta') else 0
+            total_gas += gas_limit
+        
         return PoolStats(
-            total=total,
-            ready=ready,
-            held=held,
-            bytes=self._n_bytes,
-            admit_floor_wei=th.admit_floor_wei,
-            evict_below_wei=th.evict_below_wei,
-            utilization=(
-                float(total) / float(self.cfg.max_txs) if self.cfg.max_txs else 0.0
-            ),
+            total_txs=total,
+            total_bytes=self._n_bytes,
+            total_gas=total_gas,
+            min_gas_price_wei=None,  # Optional, not computed here
+            max_gas_price_wei=None,  # Optional, not computed here
+            oldest_first_seen=None,  # Optional, not computed here
+            newest_first_seen=None,  # Optional, not computed here
         )
 
     # ------------- Iteration helpers (optional) -------------
@@ -556,6 +599,53 @@ class Pool:
             sc = self._score(ent.tx, ent.meta)
             out.append((h, sc))
         return out
+
+    def iter_ready(self, now_s: Optional[float] = None) -> Iterable[Tuple[Any, Any]]:
+        """
+        Non-destructive iteration over ready transactions in priority order.
+        
+        Yields (tx, meta) tuples for transactions that are currently ready
+        (nonce-contiguous for their sender). This is used by drain/selection
+        logic to build blocks without mutating the pool.
+        
+        The iteration is ordered by descending priority (highest priority first).
+        """
+        if now_s is None:
+            now_s = self.clock()
+        
+        # Create a sorted snapshot of the heap
+        snapshot: List[Tuple[float, int, bytes]] = list(self._ready_heap)
+        snapshot.sort()  # Sort by (-score, tag, hash)
+        
+        # Yield transactions in priority order (best first)
+        seen = set()
+        for neg_sc, tag, h in snapshot:
+            if h in seen:
+                continue
+            seen.add(h)
+            
+            # Check if this is the current best entry for this hash
+            cur = self._in_heap.get(h)
+            if cur is None:
+                continue  # Already removed
+            
+            ent = self.index.get(h)
+            if ent is None:
+                continue  # Not in index
+            
+            # Verify still ready (nonce-contiguous)
+            # Use meta.sender (which is already normalized to string) and meta.nonce
+            sender = getattr(ent.meta, 'sender', '')
+            nonce = getattr(ent.meta, 'nonce', 0)
+            
+            if not self.seqs.is_ready(sender, nonce):
+                continue
+            
+            # Recompute current score (may have drifted)
+            current_score = self._score(ent.tx, ent.meta)
+            
+            # Yield (tx, meta) tuple
+            yield (ent.tx, ent.meta)
 
 
 # -------------------------------

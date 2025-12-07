@@ -381,7 +381,10 @@ def validate_block(
 
 def validate_header(header, proofs=None, policy=None):
     """
-    Simplified validator for tests that checks policy roots only.
+    Simplified validator for tests that checks policy roots and θ threshold.
+    
+    Computes S = H(u) + Σψ and checks S >= θ to enforce the acceptance threshold.
+    This ensures blocks with insufficient proof-of-work are properly rejected.
     
     Returns a simple object with an 'accepted' attribute for test compatibility.
     Raises PolicyError on policy root mismatch.
@@ -418,12 +421,54 @@ def validate_header(header, proofs=None, policy=None):
             if header_alg != alg_root:
                 raise PolicyError("alg-policy-root-mismatch")
     
+    # Compute S = H(u) + Σψ and check against θ threshold
+    # This enforces that the block has sufficient proof-of-work
+    if proofs is not None:
+        # Import math module for H(u) computation
+        from . import math as math_mod
+        
+        # Get u_draw from header (supports multiple field names)
+        u_draw = getattr(header, "u_draw", None)
+        if u_draw is None:
+            u_draw = getattr(header, "nonce", None)
+        if u_draw is None and hasattr(header, "__getitem__"):
+            u_draw = header.get("u_draw") or header.get("nonce")
+        
+        # Compute H(u) - the hash-share contribution in µ-nats
+        if u_draw is not None:
+            try:
+                h_micro = int(math_mod.H(u_draw))
+            except Exception:
+                h_micro = 0
+        else:
+            h_micro = 0
+        
+        # Sum Σψ from all proofs (external service contributions in µ-nats)
+        psi_sum = 0
+        for p in proofs:
+            psi_val = getattr(p, "psi_micro", 0)
+            psi_sum += psi_val
+        
+        # Compute total score S = H(u) + Σψ
+        s_micro = h_micro + psi_sum
+        
+        # Get θ threshold from header
+        theta_micro = getattr(header, "theta_micro", 0)
+        if theta_micro == 0 and hasattr(header, "__getitem__"):
+            theta_micro = header.get("theta_micro", 0)
+        
+        # Check acceptance: S >= θ
+        accepted = s_micro >= theta_micro
+    else:
+        # No proofs provided, accept (backward compatibility)
+        accepted = True
+    
     # Simple acceptance result for test compatibility
     class Result:
         def __init__(self, accepted):
             self.accepted = accepted
     
-    return Result(accepted=True)
+    return Result(accepted=accepted)
 
 
 __all__ = [
