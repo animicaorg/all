@@ -15,6 +15,14 @@
 body {
   min-height: 100vh;
   background: inherit;
+  overflow-x: hidden; /* Prevent horizontal scroll */
+}
+
+/* Ensure viewport covers safe areas on mobile */
+@supports (padding: max(0px)) {
+  body {
+    padding-bottom: max(env(safe-area-inset-bottom), 0px);
+  }
 }
 
 .glass {
@@ -25,10 +33,65 @@ body {
 
 .card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
   gap: 1rem;
+}
+
+/* Mobile-optimized card grid */
+@media (max-width: 640px) {
+  .card-grid {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
 }
 
 .table-card {
   border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Responsive table wrapper with scroll hints */
+.table-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  position: relative;
+}
+
+/* Scroll hint shadow */
+.table-wrapper::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 30px;
+  background: linear-gradient(to left, rgba(11, 16, 33, 0.9), transparent);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.table-wrapper:not(.scrolled-end)::after {
+  opacity: 1;
+}
+
+/* Touch-friendly minimum sizes */
+button,
+a,
+[role="button"] {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* Prevent text overflow */
+.truncate-hash {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+@media (max-width: 640px) {
+  .truncate-hash {
+    max-width: 120px;
+  }
 }

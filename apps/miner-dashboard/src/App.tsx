@@ -7,6 +7,7 @@ import BlocksPage from './pages/BlocksPage';
 import SettingsPage from './pages/SettingsPage';
 import TopNav from './components/Layout/TopNav';
 import Sidebar from './components/Layout/Sidebar';
+import MobileNav from './components/Layout/MobileNav';
 
 const App = () => {
   return (
@@ -14,7 +15,7 @@ const App = () => {
       <TopNav />
       <div className="flex">
         <Sidebar />
-        <main className="flex-1 p-6 sm:p-8 bg-gradient-to-br from-indigo-950/70 via-night to-black/70">
+        <main className="flex-1 p-4 sm:p-6 md:p-8 bg-gradient-to-br from-indigo-950/70 via-night to-black/70 pb-20 sm:pb-8">
           <Routes>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/miners" element={<MinersPage />} />
@@ -25,6 +26,7 @@ const App = () => {
           </Routes>
         </main>
       </div>
+      <MobileNav />
     </div>
   );
 };
