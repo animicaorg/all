@@ -100,23 +100,53 @@ log
 # --- Python: tests -------------------------------------------------------------
 
 run_step "Python: pytest (all discovered tests)" \
-  pytest
+  pytest -c tests/pytest.ini
 
 # --- Rust: native crates -------------------------------------------------------
 
-if command -v cargo >/dev/null 2>&1; then
-  if [ -f "native/Cargo.toml" ]; then
-    run_step "Rust: native crate tests (native/)" \
-      bash -c 'cd native && cargo test --all --all-features'
-  else
-    skip_step "Rust: native crate tests (native/ not present)"
+check_rust_version() {
+  local version_output
+  version_output=$(rustc --version 2>&1)
+  local version_number
+  version_number=$(echo "$version_output" | grep -oE '[0-9]+\.[0-9]+' | head -1)
+  
+  if [ -n "$version_number" ]; then
+    local major minor
+    major=$(echo "$version_number" | cut -d. -f1)
+    minor=$(echo "$version_number" | cut -d. -f2)
+    
+    # Check if version is >= 1.80.0
+    if [ "$major" -gt 1 ] || ([ "$major" -eq 1 ] && [ "$minor" -ge 80 ]); then
+      return 0
+    fi
   fi
+  return 1
+}
 
-  if [ -f "crates/animica-native/Cargo.toml" ]; then
-    run_step "Rust: animica-native crate tests (crates/animica-native/)" \
-      bash -c 'cd crates/animica-native && cargo test --all --all-features'
+if command -v cargo >/dev/null 2>&1; then
+  if ! check_rust_version; then
+    log "ERROR: Rust toolchain is outdated (requires rustc 1.80.0+)"
+    log "Current version: $(rustc --version 2>&1)"
+    log ""
+    log "To update your Rust toolchain:"
+    log "  1. Run: rustup update"
+    log "  2. Or run the helper script: ./scripts/update-rust-toolchain.sh"
+    log ""
+    skip_step "Rust tests (outdated toolchain)"
   else
-    skip_step "Rust: animica-native crate tests (crates/animica-native/ not present)"
+    if [ -f "native/Cargo.toml" ]; then
+      run_step "Rust: native crate tests (native/)" \
+        bash -c 'cd native && cargo test --all --all-features'
+    else
+      skip_step "Rust: native crate tests (native/ not present)"
+    fi
+
+    if [ -f "crates/animica-native/Cargo.toml" ]; then
+      run_step "Rust: animica-native crate tests (crates/animica-native/)" \
+        bash -c 'cd crates/animica-native && cargo test --all --all-features'
+    else
+      skip_step "Rust: animica-native crate tests (crates/animica-native/ not present)"
+    fi
   fi
 else
   skip_step "Rust tests (cargo not installed)"
