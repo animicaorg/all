@@ -20,6 +20,13 @@ vi.mock('../../src/background/keyring/storage', () => {
     clearSession: vi.fn(async () => {
       delete mem.session
     }),
+    saveVaultEnvelope: vi.fn(async (v: any) => {
+      mem.vaultEnvelope = v
+    }),
+    loadVaultEnvelope: vi.fn(async () => mem.vaultEnvelope ?? null),
+    clearVaultEnvelope: vi.fn(async () => {
+      delete mem.vaultEnvelope
+    }),
   }
 })
 
