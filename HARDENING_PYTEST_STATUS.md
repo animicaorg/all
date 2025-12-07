@@ -5,8 +5,8 @@
 This document summarizes the test hardening effort to fix Python test suite failures and drive toward a fully green test suite without xfail masking.
 
 **Initial State:** 332 passing, 55 failing, 58 skipped  
-**Current State:** ~387 passing, ~47 failing, 59 skipped  
-**Improvement:** Fixed 8 failures, reduced overall test failures by ~15%
+**Current State:** 347 passing, 46 failing, 52 skipped (5 collection errors)  
+**Improvement:** Fixed 9 test failures, +15 passing tests (16% reduction in failures, 4.5% increase in passing)
 
 ## Test Results by Subsystem
 
