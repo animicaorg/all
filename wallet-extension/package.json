@@ -41,6 +41,7 @@
     "cross-env": "^7.0.3",
     "eslint": "^8.57.0",
     "eslint-plugin-react": "^7.35.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
     "jsdom": "^24.1.0",
     "postcss": "^8.4.47",
     "prettier": "^3.3.3",
