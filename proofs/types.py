@@ -63,6 +63,7 @@ class ProofType(IntEnum):
     QUANTUM = 0x03
     STORAGE = 0x04
     VDF = 0x05
+    HASH_WORK = 0x06
 
 
 # --- Proof bodies ------------------------------------------------------------
@@ -184,9 +185,40 @@ class VDFProofBody:
     seconds: int
 
 
+@dataclass(frozen=True)
+class HashWorkBody:
+    """
+    Hash-based useful work proof body.
+
+    Fields:
+      job_id:           identifier for the hash job (32 bytes)
+      algorithm:        hash algorithm used (e.g., "SHA256", "SCRYPT")
+      output_hash:      computed hash result (32 bytes)
+      nonce:            solution nonce/proof (variable length)
+      iterations:       actual iterations performed
+      device_type:      device type used (e.g., "CPU", "GPU", "ASIC", "QUANTUM")
+      target_bits:      difficulty target met (log2 scale)
+      work_units:       abstract work units (used by ψ mapping)
+    """
+
+    job_id: Bytes32
+    algorithm: str
+    output_hash: Bytes32
+    nonce: bytes
+    iterations: int
+    device_type: str
+    target_bits: int
+    work_units: int
+
+
 # Union of all body types (useful for type hints)
 AnyProofBody = Union[
-    HashShareBody, AIProofBody, QuantumProofBody, StorageHeartbeatBody, VDFProofBody
+    HashShareBody,
+    AIProofBody,
+    QuantumProofBody,
+    StorageHeartbeatBody,
+    VDFProofBody,
+    HashWorkBody,
 ]
 
 
@@ -254,6 +286,15 @@ class ProofEnvelope:
                 "iters": self.body.iterations,
                 "secs": self.body.seconds,
             }
+        if t == ProofType.HASH_WORK and isinstance(self.body, HashWorkBody):
+            return {
+                "type": "hash_work",
+                "job_id": self.body.job_id.hex()[:16] + "…",
+                "algorithm": self.body.algorithm,
+                "device": self.body.device_type,
+                "iterations": self.body.iterations,
+                "target_bits": self.body.target_bits,
+            }
         return {"type": f"unknown({int(self.type_id)})"}
 
 
@@ -264,6 +305,7 @@ _BODY_TO_TYPE: Dict[type, ProofType] = {
     QuantumProofBody: ProofType.QUANTUM,
     StorageHeartbeatBody: ProofType.STORAGE,
     VDFProofBody: ProofType.VDF,
+    HashWorkBody: ProofType.HASH_WORK,
 }
 
 
@@ -297,6 +339,7 @@ __all__ = [
     "QuantumProofBody",
     "StorageHeartbeatBody",
     "VDFProofBody",
+    "HashWorkBody",
     "AnyProofBody",
     "ProofEnvelope",
     "b32",

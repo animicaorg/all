@@ -141,6 +141,15 @@ def metrics_to_signals(proof_type: ProofType, m: ProofMetrics) -> Dict[str, floa
             "seconds": _floor0(m.vdf_seconds),
         }
 
+    # HASH_WORK useful work
+    if proof_type == ProofType.HASH_WORK:
+        return {
+            "units": _floor0(m.hash_work_units),
+            "iterations": _floor0(m.hash_iterations),
+            "target_bits": _floor0(m.hash_target_bits),
+            "qos": _clamp01(m.qos),
+        }
+
     # Unknown type → empty (scorer should ignore or raise)
     return {}
 
