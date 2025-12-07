@@ -10,7 +10,7 @@ This walkthrough demonstrates the full integration of quantum computing as an ex
 
 ## Prerequisites
 
-- Python 3.11+
+- **Python 3.11+** (required for all Animica development)
 - Run commands from the repository root
 - Dependencies: `pip install pytest pytest-asyncio cbor2 pyyaml`
 - Set `RUN_INTEGRATION_TESTS=1` to enable integration tests
