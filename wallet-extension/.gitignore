@@ -1,0 +1,19 @@
+# Build outputs
+dist-chrome/
+dist-firefox/
+dist-manifests/
+
+# Dependencies
+node_modules/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test
+coverage/
+*.log
