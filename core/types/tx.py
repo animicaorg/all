@@ -108,9 +108,9 @@ class PqSignature:
         object.__setattr__(self, 'pubkey', pubkey)
         object.__setattr__(self, 'sig', sig)
         
-        # Validate
-        if not isinstance(self.alg_id, int) or self.alg_id < 0:
-            raise ValueError("PqSignature.alg_id must be a non-negative int")
+        # Validate types (but allow out-of-range alg values for downstream validation)
+        if not isinstance(self.alg_id, int):
+            raise TypeError("PqSignature.alg_id must be an int")
         if not isinstance(self.pubkey, (bytes, bytearray)):
             raise TypeError("PqSignature.pubkey must be bytes")
         if not isinstance(self.sig, (bytes, bytearray)):
