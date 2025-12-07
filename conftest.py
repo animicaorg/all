@@ -140,12 +140,10 @@ def pytest_pyfunc_call(pyfuncitem):
 
 def pytest_ignore_collect(collection_path, config):
     """
-    Disable test collection for this repo snapshot.
+    Selectively disable test collection for modules with unavailable dependencies.
 
-    The workspace contains numerous placeholder test modules that assume
-    heavyweight, unavailable dependencies. To allow focused development in this
-    constrained environment, we skip collection entirely; targeted suites can be
-    re-enabled locally by removing this hook.
+    The workspace contains test modules that may assume heavyweight or external
+    dependencies. Skip only those specific suites while allowing the rest to run.
     """
 
     # pytest <9 passed a py.path.local object named "path" to this hook,
@@ -153,4 +151,24 @@ def pytest_ignore_collect(collection_path, config):
     # argument. Accept the new name to avoid the PytestRemovedIn9 warning
     # while keeping the behavior identical across versions.
 
-    return True
+    # Convert to string for path checking
+    path_str = str(collection_path)
+    
+    # Skip optional test suites that require heavy dependencies or have import issues
+    skip_patterns = [
+        "/da/tests/",
+        "/randomness/tests/",
+        "/pq/tests/",
+        "/templates/tests/",
+        "/templates/contract-python-basic/",
+        "/templates/contract-python-workspace/",
+        "/python/animica/cli/tests/",
+        "/sdk/python/tests/",
+        "/vm_py/tests/",
+    ]
+    
+    for pattern in skip_patterns:
+        if pattern in path_str:
+            return True
+    
+    return False

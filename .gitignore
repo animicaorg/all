@@ -5,3 +5,9 @@ __pycache__/
 .pytest_cache/
 .env
 .animica/
+native/target/
+*.egg-info/
+.coverage
+*.pyc
+*.pyo
+.DS_Store
