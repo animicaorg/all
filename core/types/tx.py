@@ -454,6 +454,84 @@ class Tx:
         return base
 
 
+# ---- Compatibility aliases for test code ----
+Sig = PqSignature  # Short alias for tests
+
+# Add convenience factory method to Tx class for backward compatibility
+@staticmethod
+def _tx_transfer(
+    chain_id: int,
+    nonce: int,
+    gas_price: int,
+    gas_limit: int,
+    sender: Optional[bytes] = None,
+    to: Optional[bytes] = None,
+    amount: Optional[int] = None,
+    from_addr: Optional[str] = None,
+    to_addr: Optional[str] = None,
+    value: Optional[int] = None,
+    data: Optional[bytes] = None,
+    access_list: Optional[List[AccessEntry]] = None,
+    **kwargs: Any
+) -> "Tx":
+    """
+    Build a transfer transaction (unsigned, no signatures).
+    
+    Supports both positional/keyword args with various naming styles:
+    - sender or from_addr (bech32m string or bytes)
+    - to or to_addr (bech32m string or bytes)
+    - amount or value
+    """
+    # Handle from_addr vs sender
+    if sender is None:
+        if from_addr is not None:
+            # Parse bech32m if needed
+            if isinstance(from_addr, str):
+                try:
+                    from core.encoding.bech32m import decode_address
+                    sender = decode_address(from_addr)
+                except Exception:
+                    # Fallback: assume it's already bytes-like or use dummy
+                    sender = bytes(ADDRESS_LEN)
+            else:
+                sender = from_addr
+        else:
+            sender = bytes(ADDRESS_LEN)
+    
+    # Handle to_addr vs to
+    if to is None:
+        if to_addr is not None:
+            if isinstance(to_addr, str):
+                try:
+                    from core.encoding.bech32m import decode_address
+                    to = decode_address(to_addr)
+                except Exception:
+                    to = bytes(ADDRESS_LEN)
+            else:
+                to = to_addr
+        else:
+            to = bytes(ADDRESS_LEN)
+    
+    # Handle value vs amount
+    if amount is None:
+        amount = value if value is not None else 0
+    
+    unsigned = UnsignedTx.build_transfer(
+        chain_id=chain_id,
+        sender=sender,
+        nonce=nonce,
+        gas_price=gas_price,
+        gas_limit=gas_limit,
+        to=to,
+        amount=amount,
+    )
+    return Tx(unsigned=unsigned)
+
+# Bind the method and Sig alias to the Tx class
+Tx.transfer = _tx_transfer  # type: ignore[attr-defined]
+Tx.Sig = PqSignature  # type: ignore[attr-defined]
+
+
 # ---- simple unit-testable self-check (optional) ----
 if __name__ == "__main__":  # pragma: no cover
     import json

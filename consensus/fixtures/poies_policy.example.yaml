@@ -20,6 +20,7 @@ gamma:
   # Maximum Σψ allowed to contribute toward acceptance in a single block.
   # Units: micro-nats (µ-nats). This is the global Γ cap.
   total_cap_micro: 6000000     # = 6.0 Mµ-nats
+  total: 6000000               # Alias for test compatibility
 
 fairness:
   # Escort parameter q (0..1). Higher q increases the marginal utility of
@@ -52,6 +53,16 @@ nullifiers:
 #  - enabled: bool
 #  - psi: mapping model with scaling constants (all µ-nats)
 #  - caps: per-type Γ cap (µ-nats) and optional per-proof caps
+
+# Caps structure for test compatibility
+caps:
+  per_type:
+    hash: 2000000
+    ai: 1500000
+    quantum: 1000000
+    storage: 500000
+    vdf: 500000
+
 types:
   hashshare:
     enabled: true

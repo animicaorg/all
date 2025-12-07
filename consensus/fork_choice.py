@@ -177,6 +177,47 @@ class ForkChoice:
     def best_tip(self) -> BestTip:
         return self._best
 
+    def choose(
+        self, prev: object, candidates: Sequence[object]
+    ) -> object:
+        """
+        Stateless fork choice: select best candidate from a list.
+        
+        This is a convenience method for testing. It expects candidates with
+        .height, .weight (or .total_weight), and .hash attributes.
+        Returns the best candidate according to fork choice rules.
+        """
+        if not candidates:
+            return prev
+        
+        best = candidates[0]
+        for c in candidates[1:]:
+            # Extract attributes with fallbacks
+            c_height = getattr(c, "height", getattr(c, "number", 0))
+            c_weight = getattr(c, "weight", getattr(c, "total_weight", 0))
+            c_hash = getattr(c, "hash", b"")
+            
+            best_height = getattr(best, "height", getattr(best, "number", 0))
+            best_weight = getattr(best, "weight", getattr(best, "total_weight", 0))
+            best_hash = getattr(best, "hash", b"")
+            
+            # Apply fork choice rules:
+            # 1. Prefer higher height (longest chain)
+            if c_height > best_height:
+                best = c
+            elif c_height == best_height:
+                # 2. On equal height, prefer higher weight
+                if c_weight > best_weight:
+                    best = c
+                elif c_weight == best_weight:
+                    # 3. On equal height and weight, use deterministic hash tie-breaker
+                    c_hash_bytes = _hex_to_bytes(c_hash) if isinstance(c_hash, str) else c_hash
+                    best_hash_bytes = _hex_to_bytes(best_hash) if isinstance(best_hash, str) else best_hash
+                    if _hash_lt(c_hash_bytes, best_hash_bytes):
+                        best = c
+        
+        return best
+
     def has(self, h: str | bytes) -> bool:
         return _hex_to_bytes(h) in self.nodes
 
