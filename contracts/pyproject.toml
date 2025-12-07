@@ -103,14 +103,7 @@ namespace_packages = true
 explicit_package_bases = false
 
 # Exclude generated artifacts and caches.
-exclude = '(?x)(
-    ^build/|
-    ^dist/|
-    ^\.venv/|
-    ^venv/|
-    ^\.mypy_cache/|
-    ^\.pytest_cache/
-)$'
+exclude = '^(build/|dist/|\.venv/|venv/|\.mypy_cache/|\.pytest_cache/).*$'
 
 # If your contracts import local SDK/VM directly from this mono-repo during dev,
 # you can help mypy locate them by uncommenting and tuning the path hints below:
