@@ -140,5 +140,6 @@ export const Links = {
 
 // Backward-compatible alias used by existing pages/components.
 export const links = Links;
+export default Links;
 
 export type LinksType = typeof Links;
