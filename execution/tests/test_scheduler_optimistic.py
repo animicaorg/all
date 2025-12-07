@@ -82,6 +82,10 @@ def _access_sets(tx: Tx) -> Tuple[Set[str], Set[str]]:
     """
     Returns (reads, writes) sets of logical keys touched by tx.
     We treat sender/recipient balances and sender nonce as keys.
+    
+    Note: Recipient balance is both read and written, since in a full VM
+    the recipient's current balance must be loaded before adding to it.
+    This conservative approach ensures serial equivalence.
     """
     r: Set[str] = {f"bal:{tx.sender}", f"nonce:{tx.sender}", f"bal:{tx.to}"}
     w: Set[str] = {f"bal:{tx.sender}", f"bal:{tx.to}", f"nonce:{tx.sender}"}
@@ -93,12 +97,34 @@ def _optimistic_layers(txs: List[Tx]) -> List[List[int]]:
     Partition tx indices into conflict-free layers based on read/write sets.
     Greedy layering: preserve original order while grouping non-conflicting txs.
     Conflicts: any R/W or W/R or W/W intersection.
+    
+    Key invariant: if tx_i conflicts with tx_j and i < j, then tx_i must be in
+    a layer that executes before tx_j's layer (to preserve input order).
     """
     layers: List[List[int]] = []
+    # Track which layer each transaction index was placed in
+    tx_layer: Dict[int, int] = {}
+    
     for idx, tx in enumerate(txs):
         r, w = _access_sets(tx)
+        
+        # Find the minimum layer index for this tx by checking all previously
+        # placed transactions for conflicts. If this tx conflicts with a previous
+        # tx that's in layer L, this tx must go in layer L+1 or later.
+        min_layer_idx = 0
+        for prev_idx in range(idx):
+            if prev_idx not in tx_layer:
+                continue  # Previous tx wasn't placed (shouldn't happen in this model)
+            prev_r, prev_w = _access_sets(txs[prev_idx])
+            # Check if current tx conflicts with previous tx
+            if (w & prev_w) or (w & prev_r) or (r & prev_w):
+                # Conflict: current tx must go AFTER prev tx's layer
+                min_layer_idx = max(min_layer_idx, tx_layer[prev_idx] + 1)
+        
+        # Now try to place in the earliest layer >= min_layer_idx where there's no conflict
         placed = False
-        for layer in layers:
+        for layer_idx in range(min_layer_idx, len(layers)):
+            layer = layers[layer_idx]
             # Build layer aggregate sets
             layer_r: Set[str] = set()
             layer_w: Set[str] = set()
@@ -109,10 +135,16 @@ def _optimistic_layers(txs: List[Tx]) -> List[List[int]]:
             # Check conflicts against current layer
             if not (w & layer_w or w & layer_r or r & layer_w):
                 layer.append(idx)
+                tx_layer[idx] = layer_idx
                 placed = True
                 break
+        
         if not placed:
+            # Create new layer at index min_layer_idx or later
+            new_layer_idx = len(layers)
             layers.append([idx])
+            tx_layer[idx] = new_layer_idx
+    
     return layers
 
 
@@ -144,16 +176,19 @@ def initial_state() -> Dict[Address, Amount]:
         "bob": 50,
         "carol": 0,
         "dave": 20,
+        "eve": 0,
+        "frank": 0,
     }
 
 
 @pytest.fixture
 def non_conflicting_batch() -> List[Tx]:
-    # Disjoint senders (and distinct recipients) → should layer into one batch
+    # Disjoint senders and distinct recipients → should layer into one batch
+    # alice→carol, bob→carol, dave→eve are all non-conflicting (disjoint address sets for writes)
     return [
-        Tx("alice", "carol", 10, 0),
-        Tx("bob", "dave", 5, 0),
-        Tx("dave", "carol", 3, 0),
+        Tx("alice", "eve", 10, 0),    # alice writes bal:alice, eve writes bal:eve
+        Tx("bob", "carol", 5, 0),     # bob writes bal:bob, carol writes bal:carol
+        Tx("dave", "frank", 3, 0),    # dave writes bal:dave, frank writes bal:frank
     ]
 
 

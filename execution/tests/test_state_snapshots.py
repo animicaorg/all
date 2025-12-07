@@ -102,12 +102,10 @@ class ModelJournal:
 
     def revert(self, cid: int) -> None:
         idx = self._find_index(cid)
-        cp = self._stack.pop(idx)
-        # Revert only the selected checkpoint; deeper children (if present) must have been
-        # committed or reverted first. Enforce stack discipline.
-        if idx != len(self._stack):
-            # We only support LIFO reverts; real implementation could allow arbitrary, but that's uncommon.
+        # Enforce LIFO: must revert the top-most checkpoint first
+        if idx != len(self._stack) - 1:
             raise RuntimeError("revert must target the top-most checkpoint (LIFO)")
+        cp = self._stack.pop(idx)
         # Restore keys in reverse insertion order for determinism (dict preserves insertion order in Python 3.7+)
         for k, prev in reversed(list(cp.prev.items())):
             if prev is _MISSING:
