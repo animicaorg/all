@@ -11,3 +11,4 @@ native/target/
 *.pyc
 *.pyo
 .DS_Store
+*.tsbuildinfo
