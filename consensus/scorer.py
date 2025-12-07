@@ -236,12 +236,30 @@ def default_score_hooks(policy: PoiesPolicy) -> Dict[ProofType, ScoreHook]:
         score = k_sec * math.log1p(seconds)
         return _to_micro(score)
 
+    # HASH_WORK — useful hash work based on units/difficulty/iterations
+    def score_hash_work(metrics: Mapping[str, Any], _policy: PoiesPolicy) -> MicroNat:
+        units = max(0.0, float(metrics.get("units", 0.0)))
+        iterations = max(0.0, float(metrics.get("iterations", 0.0)))
+        target_bits = max(0.0, float(metrics.get("target_bits", 0.0)))
+        qos = _clamp01(float(metrics.get("qos", 1.0)))
+
+        # Score based on work units with QoS multiplier
+        k_units = _W(ProofType.HASH_WORK, "k_units", 0.8)
+        # Add difficulty bonus: higher target_bits = exponentially harder
+        difficulty_bonus = math.log1p(target_bits) / 10.0  # Normalize
+        # Add iteration bonus (log scale)
+        iteration_bonus = math.log1p(iterations) / 100.0  # Normalize
+
+        score = k_units * (units + difficulty_bonus + iteration_bonus) * qos
+        return _to_micro(score)
+
     return {
         ProofType.HASH: score_hash,
         ProofType.AI: score_ai,
         ProofType.QUANTUM: score_quantum,
         ProofType.STORAGE: score_storage,
         ProofType.VDF: score_vdf,
+        ProofType.HASH_WORK: score_hash_work,
     }
 
 
