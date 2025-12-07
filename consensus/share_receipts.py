@@ -265,10 +265,10 @@ class ShareAggregator:
 
     def merkle_root(self) -> bytes:
         """
-        Return the canonical Merkle root over leaf *hashes*.
+        Return the canonical Merkle root over leaf bytes (domain separation applied by _merkle_root).
         Empty set is the 32-byte zero.
         """
-        leaves = [r.leaf_hash() for r in self._sorted_receipts()]
+        leaves = [r.leaf_bytes() for r in self._sorted_receipts()]
         return _merkle_root(leaves)
 
     def finalize(self) -> Tuple[bytes, AggregationStats]:
@@ -314,6 +314,28 @@ def receipts_root_from_integrals(
     return agg.merkle_root()
 
 
+def merkle_root(leaves: Iterable[bytes]) -> bytes:
+    """
+    Compute canonical merkle root over arbitrary leaf bytes.
+    
+    Sorts leaves by their leaf-hash (sha3_256(0x00 || leaf)) to ensure
+    deterministic output regardless of input order.
+    
+    Empty set returns sha3_256(b"") as the sentinel value.
+    
+    This function is provided for compatibility with tests and external
+    callers that work with raw leaf bytes rather than ShareReceipt objects.
+    """
+    leaves_list = list(leaves)
+    if not leaves_list:
+        # Empty set sentinel: sha3_256(b"")
+        return sha3_256(b"")
+    
+    # Sort by leaf-hash for canonical ordering
+    sorted_leaves = sorted(leaves_list, key=lambda leaf: sha3_256(b"\x00" + leaf))
+    return _merkle_root(sorted_leaves)
+
+
 __all__ = [
     "ShareReceipt",
     "ShareAggregator",
@@ -321,4 +343,5 @@ __all__ = [
     "stochastic_round",
     "receipts_root_from_fractionals",
     "receipts_root_from_integrals",
+    "merkle_root",
 ]
