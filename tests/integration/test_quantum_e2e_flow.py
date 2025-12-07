@@ -229,7 +229,10 @@ def test_quantum_integration_with_poies_scoring():
             Cap = namedtuple("Cap", "per_type_micro per_proof_micro_max")
             self.caps = {
                 ProofType.HASH: Cap(5_000_000, 3_000_000),
+                ProofType.AI: Cap(7_000_000, 5_000_000),
                 ProofType.QUANTUM: Cap(7_000_000, 5_000_000),
+                ProofType.STORAGE: Cap(6_000_000, 4_000_000),
+                ProofType.VDF: Cap(6_000_000, 4_000_000),
             }
             self.gamma_cap = 12_000_000
             self.weights = {
