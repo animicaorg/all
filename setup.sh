@@ -16,7 +16,7 @@ ensure_pnpm() {
     return
   fi
   if command -v npm >/dev/null 2>&1; then
-    warn "pnpm not found; installing pnpm@9 globally via npm"
+    warn "pnpm not found; installing pnpm@9 globally via npm" >&2
     npm install -g pnpm@9 >/dev/null 2>&1 || fail "npm could not install pnpm"
     echo pnpm
     return
