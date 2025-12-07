@@ -34,9 +34,9 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any, Dict, Optional
 
-from .types import (AIProofBody, Bytes32, HashShareBody, ProofEnvelope,
-                    ProofType, QuantumProofBody, StorageHeartbeatBody,
-                    VDFProofBody)
+from .types import (AIProofBody, Bytes32, HashShareBody, HashWorkBody,
+                    ProofEnvelope, ProofType, QuantumProofBody,
+                    StorageHeartbeatBody, VDFProofBody)
 
 # -------- small numeric helpers ------------------------------------------------
 
@@ -95,6 +95,12 @@ class ProofMetrics:
     vdf_iterations: Optional[int] = None  # ≥0
     vdf_quality: Optional[float] = None  # ≥0 (contextual)
 
+    # Hash Work
+    hash_work_units: Optional[int] = None  # ≥0
+    hash_iterations: Optional[int] = None  # ≥0
+    hash_target_bits: Optional[int] = None  # ≥0
+    qos: Optional[float] = None  # ∈[0,1] quality of service
+
     def to_dict(self) -> Dict[str, Any]:
         """Plain dict suitable for JSON/CBOR; omits None fields."""
         out = {
@@ -112,6 +118,10 @@ class ProofMetrics:
             ("vdf_seconds", self.vdf_seconds),
             ("vdf_iterations", self.vdf_iterations),
             ("vdf_quality", self.vdf_quality),
+            ("hash_work_units", self.hash_work_units),
+            ("hash_iterations", self.hash_iterations),
+            ("hash_target_bits", self.hash_target_bits),
+            ("qos", self.qos),
         ):
             if v is not None:
                 out[k] = v
@@ -148,6 +158,19 @@ class ProofMetrics:
             m = replace(m, vdf_iterations=0)
         if m.vdf_quality is not None:
             m = replace(m, vdf_quality=_finite_nonneg(m.vdf_quality))
+        if m.hash_work_units is not None and m.hash_work_units < 0:
+            m = replace(m, hash_work_units=0)
+        if m.hash_iterations is not None and m.hash_iterations < 0:
+            m = replace(m, hash_iterations=0)
+        if m.hash_target_bits is not None and m.hash_target_bits < 0:
+            m = replace(m, hash_target_bits=0)
+        if m.qos is not None:
+            # clamp to [0,1]
+            qos = m.qos
+            if qos != qos or qos == float("inf") or qos == float("-inf"):
+                qos = 0.0
+            qos = 0.0 if qos < 0.0 else (1.0 if qos > 1.0 else qos)
+            m = replace(m, qos=qos)
         return m
 
 
@@ -259,6 +282,26 @@ def metrics_vdf(
     )
 
 
+def metrics_hash_work(env: ProofEnvelope) -> ProofMetrics:
+    """
+    Build metrics for a Hash Work proof envelope.
+
+    work_units are taken directly from the verified body. QoS is computed
+    as a simple measure (always 1.0 for now; could be refined based on latency).
+    """
+    if env.type_id != ProofType.HASH_WORK or not isinstance(env.body, HashWorkBody):
+        raise TypeError("metrics_hash_work requires a HashWork envelope")
+    b = env.body
+    return ProofMetrics(
+        kind=env.type_id,
+        nullifier=env.nullifier,
+        hash_work_units=max(0, int(b.work_units)),
+        hash_iterations=max(0, int(b.iterations)),
+        hash_target_bits=max(0, int(b.target_bits)),
+        qos=1.0,  # Default QoS; could be refined based on submission time
+    )
+
+
 # -------- generic dispatcher ---------------------------------------------------
 
 
@@ -284,6 +327,8 @@ def build_metrics(env: ProofEnvelope, **context: Any) -> ProofMetrics:
         return metrics_vdf(
             env, ref_iters_per_sec=context.get("ref_iters_per_sec")
         ).ensure_bounds()
+    if env.type_id == ProofType.HASH_WORK:
+        return metrics_hash_work(env).ensure_bounds()
     raise ValueError(f"Unknown proof type: {env.type_id}")
 
 
@@ -294,5 +339,6 @@ __all__ = [
     "metrics_quantum",
     "metrics_storage",
     "metrics_vdf",
+    "metrics_hash_work",
     "build_metrics",
 ]
