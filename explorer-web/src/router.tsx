@@ -16,11 +16,12 @@ const BlocksPage = lazy(() => import("./pages/Blocks/BlocksPage"));
 const TxPage = lazy(() => import("./pages/Tx/TxPage"));
 const AddressPage = lazy(() => import("./pages/Address/AddressPage"));
 const ContractsPage = lazy(() => import("./pages/Contracts/ContractsPage"));
-const AICFPage = lazy(() => import("./pages/AICF/AICFPage"));
-const DAPage = lazy(() => import("./pages/DA/DAPage"));
-const BeaconPage = lazy(() => import("./pages/Beacon/BeaconPage"));
+// Temporarily disabled: missing service exports
+// const AICFPage = lazy(() => import("./pages/AICF/AICFPage"));
+// const DAPage = lazy(() => import("./pages/DA/DAPage"));
+// const BeaconPage = lazy(() => import("./pages/Beacon/BeaconPage"));
+// const MarketplacePage = lazy(() => import("./pages/Marketplace/MarketplacePage"));
 const NetworkPage = lazy(() => import("./pages/Network/NetworkPage"));
-const MarketplacePage = lazy(() => import("./pages/Marketplace/MarketplacePage"));
 // Home is optional; we redirect to /blocks by default to keep UX smooth.
 // If you later add HomePage, switch the "/" route below.
 const HomePage = null;
@@ -61,20 +62,15 @@ export default function AppRouter() {
         {/* Contracts */}
         <Route path="/contracts" element={<ContractsPage />} />
 
-        {/* AICF */}
-        <Route path="/aicf" element={<AICFPage />} />
-
-        {/* Data Availability */}
-        <Route path="/da" element={<DAPage />} />
-
-        {/* Randomness Beacon */}
-        <Route path="/beacon" element={<BeaconPage />} />
-
         {/* Network */}
         <Route path="/network" element={<NetworkPage />} />
 
-        {/* Marketplace */}
+        {/* Temporarily disabled: missing service exports
+        <Route path="/aicf" element={<AICFPage />} />
+        <Route path="/da" element={<DAPage />} />
+        <Route path="/beacon" element={<BeaconPage />} />
         <Route path="/marketplace" element={<MarketplacePage />} />
+        */}
 
         {/* 404 */}
         <Route path="*" element={<NotFound />} />

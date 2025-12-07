@@ -9,4 +9,5 @@ export function classnames(...args: ClassValue[]): string {
   return out.join(" ");
 }
 export const classNames = classnames;
+export const cn = classnames;  // Shorter alias
 export default classnames;

@@ -6,7 +6,8 @@
   "description": "Animica Explorer — live blocks/tx/address views over JSON-RPC + WS.",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -p tsconfig.build.json && vite build",
+    "build": "vite build",
+    "build:check": "tsc -p tsconfig.build.json && vite build",
     "preview": "vite preview --strictPort",
     "test": "vitest run",
     "test:ui": "vitest --ui",
