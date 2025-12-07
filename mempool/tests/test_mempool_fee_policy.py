@@ -28,7 +28,10 @@ class FakeTx:
         self.nonce = nonce
         self.fee = fee
         self.size_bytes = size_bytes
-        self.hash = (sender + nonce.to_bytes(8, "big"))[:32] or b"\xcd" * 32
+        # Include fee in hash so RBF transactions have different hashes
+        # Use a hash function to ensure fee affects the result
+        import hashlib
+        self.hash = hashlib.sha256(sender + nonce.to_bytes(8, "big") + fee.to_bytes(16, "big")).digest()[:32]
         self.tx_hash = self.hash
 
     def __bytes__(self) -> bytes:
