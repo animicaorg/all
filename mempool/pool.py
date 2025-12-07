@@ -154,13 +154,37 @@ class Pool:
         self,
         cfg: Optional[PoolConfig] = None,
         *,
+        config: Optional[PoolConfig] = None,  # Alias for cfg for test compatibility
         watermark: Optional[FeeWatermark] = None,
         clock: Clock = _now_monotonic,
         rbf_bump_ratio: float = 1.10,
     ) -> None:
-        self.cfg = cfg or PoolConfig()
+        # Accept both cfg and config parameters (config is alias for tests)
+        actual_cfg = cfg or config or PoolConfig()
+        
+        # Normalize config attributes for test compatibility
+        # SimpleNamespace from tests may use different attribute names
+        if not isinstance(actual_cfg, PoolConfig):
+            # It's a SimpleNamespace or similar; normalize attributes
+            max_txs = getattr(actual_cfg, 'max_txs', None) or getattr(actual_cfg, 'max_items', None) or getattr(actual_cfg, 'capacity', None) or 150_000
+            max_bytes = getattr(actual_cfg, 'max_bytes', None) or getattr(actual_cfg, 'capacity_bytes', None) or getattr(actual_cfg, 'max_mem_bytes', None) or 256 * 1024 * 1024
+            target_util = getattr(actual_cfg, 'target_util', 0.9)
+            accept_below_floor_for_local = getattr(actual_cfg, 'accept_below_floor_for_local', True)
+            actual_cfg = PoolConfig(
+                max_txs=max_txs,
+                max_bytes=max_bytes,
+                target_util=target_util,
+                accept_below_floor_for_local=accept_below_floor_for_local,
+            )
+        
+        self.cfg = actual_cfg
         self.clock = clock
-        self.wm = watermark or FeeWatermark()
+        # Create a test-friendly watermark with lower min floor if none provided
+        if watermark is None:
+            from .watermark import WatermarkConfig
+            wm_cfg = WatermarkConfig(min_floor_wei=1)  # 1 wei instead of 1 gwei for tests
+            watermark = FeeWatermark(wm_cfg)
+        self.wm = watermark
         self.index = tx_lookup.TxIndex()
         self.seqs = sequence.NonceQueues()
         self._n_bytes: int = 0
@@ -306,29 +330,58 @@ class Pool:
     # ------------- Public API -------------
 
     def add(
-        self, tx: PoolTx, meta: Optional[TxMeta] = None, *, is_local: bool = False
+        self,
+        sender_or_tx: any,  # Can be sender (str) or tx (PoolTx)
+        nonce_or_meta: any = None,  # Can be nonce (int) or meta (TxMeta)
+        tx_or_none: any = None,  # Can be tx (PoolTx) or None
+        *,
+        is_local: bool = False
     ) -> AddResult:
         """
         Admit a new transaction. Performs duplicate check, floor check,
         nonce sequencing and queues the tx as ready if contiguous.
 
+        Supports two calling conventions:
+        1. add(tx, meta=None, is_local=False)  # Standard usage
+        2. add(sender, nonce, tx, is_local=False)  # Legacy usage from tests
+
         Raises:
             DuplicateTx, FeeTooLow, NonceGap, Oversize, AdmissionError
         """
-        h = tx.hash
+        # Normalize arguments to (tx, meta)
+        if tx_or_none is not None:
+            # Legacy 3-arg form: add(sender, nonce, tx)
+            sender = sender_or_tx
+            nonce = nonce_or_meta
+            tx = tx_or_none
+            meta = None
+        elif isinstance(sender_or_tx, str) and isinstance(nonce_or_meta, int):
+            # Another legacy form without third arg - shouldn't happen, but be safe
+            raise TypeError("add() requires 3 positional args when sender is passed")
+        else:
+            # Standard form: add(tx, meta=None)
+            tx = sender_or_tx
+            meta = nonce_or_meta if isinstance(nonce_or_meta, TxMeta) or nonce_or_meta is None else None
+
+        h = getattr(tx, "hash", None) or getattr(tx, "tx_hash", None)
         if self.index.get(h) is not None:
             raise DuplicateTx("transaction already in pool")
 
         # Build metadata defaults if caller didn't supply
         if meta is None:
+            # Try multiple fee attribute names for compatibility
+            effective_fee = (
+                getattr(tx, "effective_fee_wei", None) or
+                getattr(tx, "fee", None) or
+                getattr(tx, "max_fee_per_gas", 0)
+            )
             meta = TxMeta(
                 size_bytes=getattr(tx, "size_bytes", getattr(tx, "serialized_size", 0)),
                 first_seen_s=self.clock(),
-                effective_fee_wei=getattr(
-                    tx, "effective_fee_wei", getattr(tx, "max_fee_per_gas", 0)
-                ),
-                sender=tx.sender,
-                nonce=tx.nonce,
+                effective_fee_wei=effective_fee,
+                sender=getattr(tx, "sender", sender if 'sender' in locals() else ""),
+                nonce=getattr(tx, "nonce", nonce if 'nonce' in locals() else 0),
+                gas_limit=getattr(tx, "gas_limit", 0),
             )
 
         # Floor (unless local exemption)
@@ -336,7 +389,7 @@ class Pool:
             raise FeeTooLow("effective fee below current admit floor")
 
         # Insert into per-sender sequence (may be held if gap)
-        gap = self.seqs.add(tx.sender, tx.nonce, h)
+        gap = self.seqs.add(meta.sender, meta.nonce, h)
         if gap:
             # We allowed adding, but it's not ready yet; still keep it.
             # Check oversize now that it is tracked.

@@ -164,7 +164,6 @@ class EffectiveFee:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
 class TxMeta:
     """
     Derived transaction metadata maintained by the mempool.
@@ -193,16 +192,52 @@ class TxMeta:
         Dynamic score used by eviction/scheduling (higher is better).
     """
 
-    sender: Address
-    nonce: int
-    gas_limit: int
-    size_bytes: int
-    first_seen: UnixTime = field(default_factory=time.time)
-    last_seen: UnixTime = field(default_factory=time.time)
-    expires_at: Optional[UnixTime] = None
-    local: bool = False
-    pinned: bool = False
-    priority_score: float = 0.0
+    def __init__(
+        self,
+        sender: Address,
+        nonce: int,
+        gas_limit: int,
+        size_bytes: int,
+        first_seen: Optional[UnixTime] = None,
+        first_seen_s: Optional[UnixTime] = None,  # Alias for first_seen
+        last_seen: Optional[UnixTime] = None,
+        expires_at: Optional[UnixTime] = None,
+        local: bool = False,
+        pinned: bool = False,
+        priority_score: float = 0.0,
+        effective_fee_wei: Optional[int] = None,  # Support for pool.py usage
+        **kwargs: Any  # Ignore extra kwargs for compatibility
+    ) -> None:
+        self.sender = sender
+        self.nonce = int(nonce)
+        self.gas_limit = int(gas_limit)
+        self.size_bytes = int(size_bytes)
+        # Handle first_seen_s alias
+        if first_seen_s is not None and first_seen is None:
+            self.first_seen = float(first_seen_s)
+        elif first_seen is not None:
+            self.first_seen = float(first_seen)
+        else:
+            self.first_seen = time.time()
+        self.last_seen = float(last_seen) if last_seen is not None else time.time()
+        self.expires_at = float(expires_at) if expires_at is not None else None
+        self.local = bool(local)
+        self.pinned = bool(pinned)
+        self.priority_score = float(priority_score)
+        # Store effective_fee_wei if provided (for compatibility)
+        if effective_fee_wei is not None:
+            self.effective_fee_wei = int(effective_fee_wei)
+
+    # Property to support first_seen_s as an alias
+    @property
+    def first_seen_s(self) -> UnixTime:
+        """Alias for first_seen for backward compatibility."""
+        return self.first_seen
+
+    @first_seen_s.setter
+    def first_seen_s(self, value: UnixTime) -> None:
+        """Alias setter for first_seen."""
+        self.first_seen = value
 
     def touch(self) -> None:
         """Update last_seen to now."""

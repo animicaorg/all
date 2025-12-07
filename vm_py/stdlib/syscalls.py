@@ -208,6 +208,21 @@ def random_bytes(n: int) -> bytes:
     return _sys.random_bytes(n)
 
 
+def get_beacon() -> bytes:
+    """
+    Get the current randomness beacon value (32 bytes).
+    This provides a source of public randomness that can be mixed with other sources.
+    
+    Returns:
+        32 bytes of beacon randomness
+    """
+    # Delegate to the runtime's beacon API if available
+    if hasattr(_sys, 'get_beacon'):
+        return _sys.get_beacon()
+    # Fallback: use random_bytes (deterministic) if beacon not available
+    return random_bytes(32)
+
+
 __all__ = (
     "blob_pin",
     "ai_enqueue",
@@ -215,4 +230,5 @@ __all__ = (
     "read_result",
     "zk_verify",
     "random_bytes",
+    "get_beacon",
 )
