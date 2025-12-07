@@ -86,6 +86,7 @@ __all__ = [
     "SenderQueue",
     "NonceSequencer",
     "AdmitResult",
+    "NonceQueues",  # Alias for backward compatibility
 ]
 
 
@@ -444,6 +445,10 @@ class NonceSequencer:
             self._rr_index = self._rr_index % len(self._rr_senders)
         else:
             self._rr_index = 0
+
+
+# Alias for test compatibility
+NonceQueues = NonceSequencer
 
 
 # Convenience: tiny self-test (manual) when run as a script
