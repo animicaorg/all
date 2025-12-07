@@ -1,7 +1,10 @@
 node_modules/
 .venv/
 dist/
+dist-*/
 __pycache__/
 .pytest_cache/
 .env
 .animica/
+*.tsbuildinfo
+env.d.ts
