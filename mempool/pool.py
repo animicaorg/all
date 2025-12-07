@@ -49,24 +49,30 @@ from .types import PoolStats, PoolTx, TxMeta
 from .watermark import FeeWatermark, Thresholds
 
 # -------------------------------
-# Errors (re-export from .errors if present)
+# Errors (import from .errors if present, with fallbacks)
 # -------------------------------
 
+try:
+    from .errors import (AdmissionError, DoSError, FeeTooLow, 
+                         ReplacementError, Oversize, NonceGap)
+except Exception:  # pragma: no cover
+    class AdmissionError(Exception):
+        pass
 
-class AdmissionError(Exception):
-    pass
+    class ReplacementError(Exception):
+        pass
 
+    class DoSError(Exception):
+        pass
 
-class ReplacementError(Exception):
-    pass
+    class FeeTooLow(AdmissionError):
+        pass
 
+    class Oversize(AdmissionError):
+        pass
 
-class DoSError(Exception):
-    pass
-
-
-class FeeTooLow(AdmissionError):
-    pass
+    class NonceGap(AdmissionError):
+        pass
 
 
 class DuplicateTx(AdmissionError):
@@ -377,11 +383,7 @@ class Pool:
             tx = sender_or_tx
             meta = nonce_or_meta if isinstance(nonce_or_meta, TxMeta) or nonce_or_meta is None else None
 
-        h = getattr(tx, "hash", None) or getattr(tx, "tx_hash", None)
-        if self.index.get(h) is not None:
-            raise DuplicateTx("transaction already in pool")
-
-        # Build metadata defaults if caller didn't supply
+        # Build metadata defaults if caller didn't supply (needed for RBF check)
         if meta is None:
             # Try multiple fee attribute names for compatibility
             effective_fee = (
@@ -407,6 +409,23 @@ class Pool:
                 nonce=getattr(tx, "nonce", nonce if 'nonce' in locals() else 0),
                 gas_limit=getattr(tx, "gas_limit", 0),
             )
+
+        h = getattr(tx, "hash", None) or getattr(tx, "tx_hash", None)
+        
+        # Check for existing transaction with same sender+nonce (RBF case)
+        existing_hash = self.seqs.get_hash(meta.sender, meta.nonce)
+        if existing_hash is not None:
+            if existing_hash == h:
+                # Same hash -> duplicate
+                raise DuplicateTx("transaction already in pool")
+            else:
+                # Different hash, same sender+nonce -> attempt RBF replacement
+                replaced = self.replace(tx, meta)
+                return AddResult(new=False, replaced_hash=replaced)
+        
+        # Check if hash is already in pool (shouldn't happen after sequence check, but be safe)
+        if self.index.get(h) is not None:
+            raise DuplicateTx("transaction already in pool")
 
         # Floor (unless local exemption)
         if not self._admit_floor_ok(meta, is_local=is_local):
@@ -439,26 +458,38 @@ class Pool:
         Raises:
             ReplacementError if no replaceable tx found or fee bump too small.
         """
-        # Find if a tx exists for (sender, nonce)
-        existing_hash = self.seqs.get_hash(tx.sender, tx.nonce)
-        if existing_hash is None:
-            raise ReplacementError("no replaceable tx for sender/nonce")
-
-        existing = self.index.get(existing_hash)
-        if existing is None:
-            raise ReplacementError("inconsistent indices")
-
-        # Compute metadata for the new tx if needed
+        # Compute metadata for the new tx if needed (need sender/nonce for lookup)
         if meta is None:
+            # Normalize sender to string (handle bytes from tests)
+            raw_sender = getattr(tx, "sender", "")
+            if isinstance(raw_sender, (bytes, bytearray)):
+                sender_str = raw_sender.hex()
+            elif isinstance(raw_sender, str):
+                sender_str = raw_sender
+            else:
+                sender_str = str(raw_sender)
+            
             meta = TxMeta(
                 size_bytes=getattr(tx, "size_bytes", getattr(tx, "serialized_size", 0)),
                 first_seen_s=self.clock(),
                 effective_fee_wei=getattr(
-                    tx, "effective_fee_wei", getattr(tx, "max_fee_per_gas", 0)
+                    tx, "effective_fee_wei", getattr(tx, "fee", getattr(tx, "max_fee_per_gas", 0))
                 ),
-                sender=tx.sender,
-                nonce=tx.nonce,
+                sender=sender_str,
+                nonce=getattr(tx, "nonce", 0),
+                gas_limit=getattr(tx, "gas_limit", 0),
             )
+        
+        # Find if a tx exists for (sender, nonce)
+        existing_hash = self.seqs.get_hash(meta.sender, meta.nonce)
+        if existing_hash is None:
+            # Simple error for missing tx case (structured error not useful here)
+            raise ReplacementError("no replaceable tx for sender/nonce")
+
+        existing = self.index.get(existing_hash)
+        if existing is None:
+            # Simple error for inconsistency case
+            raise ReplacementError("inconsistent indices")
 
         old_fee = int(getattr(existing.meta, "effective_fee_wei", 0))
         new_fee = int(getattr(meta, "effective_fee_wei", 0))
@@ -469,12 +500,28 @@ class Pool:
             min_ratio = self._rbf_bump_ratio
 
         if new_fee < int(old_fee * float(min_ratio)):
-            raise ReplacementError(f"fee bump too small: need ≥ {min_ratio:.2f}x")
+            # Try to use structured error if available, fallback to simple message
+            try:
+                h_old = existing_hash.hex() if isinstance(existing_hash, bytes) else str(existing_hash)
+                h_new = (getattr(tx, "hash", None) or getattr(tx, "tx_hash", None))
+                h_new = h_new.hex() if isinstance(h_new, bytes) else str(h_new)
+                raise ReplacementError(
+                    required_bump=min_ratio,
+                    current_effective_gas_price_wei=old_fee,
+                    offered_effective_gas_price_wei=new_fee,
+                    tx_hash_old=h_old,
+                    tx_hash_new=h_new,
+                    sender=meta.sender,
+                )
+            except TypeError:
+                # Fallback if ReplacementError doesn't accept keyword args
+                raise ReplacementError(f"fee bump too small: need ≥ {min_ratio:.2f}x")
 
         # Remove old and add new (preserve nonce sequencing position)
         self._remove(existing_hash)
-        self.index.add(tx.hash, tx, meta)
-        self.seqs.add(tx.sender, tx.nonce, tx.hash)
+        h = getattr(tx, "hash", None) or getattr(tx, "tx_hash", None)
+        self.index.add(h, tx, meta)
+        self.seqs.add(meta.sender, meta.nonce, h)
 
         self._n_bytes += int(getattr(meta, "size_bytes", 0))
         # If contiguous, (re)enqueue
