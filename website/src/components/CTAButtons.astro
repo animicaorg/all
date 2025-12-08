@@ -22,31 +22,21 @@ const studioHref = links?.studio?.home ?? studioUrl ?? "/studio";
 const explorerHref = links?.explorer?.home ?? explorerUrl ?? "/explorer";
 const docsHref = links?.docs?.home ?? docsUrl ?? "/docs";
 
-const sizeCls =
-  size === "sm"
-    ? "px-3 py-2 text-sm"
-    : size === "lg"
-    ? "px-5 py-3 text-base"
-    : "px-4 py-2.5 text-sm";
-
-const justify =
-  align === "center" ? "justify-center" : align === "end" ? "justify-end" : "justify-start";
+const sizeClass = size === "sm" ? "button--sm" : size === "lg" ? "button--lg" : "";
+const justifyClass = 
+  align === "center" ? "cta-buttons--center" : 
+  align === "end" ? "cta-buttons--end" : "";
 ---
 
-<div class={`flex flex-col sm:flex-row gap-3 sm:gap-4 ${justify} ${className}`}>
-  <!-- Open Studio (primary) -->
+<div class={`cta-buttons ${justifyClass} ${className}`}>
+  <!-- Launch Studio (primary) -->
   <a
     href={studioHref}
-    class={`inline-flex items-center justify-center gap-2 rounded-md font-medium
-            ${sizeCls}
-            bg-gradient-to-r from-[var(--brand-grad-from)] to-[var(--brand-grad-to)]
-            text-[var(--color-accent-contrast)] shadow-[0_10px_35px_rgba(32,67,255,0.25)]
-            hover:shadow-[0_12px_40px_rgba(32,150,255,0.28)] active:translate-y-[0.5px]
-            dark:text-[var(--color-accent-contrast)]`}
-    aria-label="Open Studio"
+    class={`button button--primary ${sizeClass} hover-lift group`}
+    aria-label="Launch Studio"
   >
-    Open Studio
-    <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+    <span>Launch Studio</span>
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" class="cta-icon">
       <path fill="currentColor" d="M14 3h7v7h-2V6.41L9.41 16 8 14.59 16.59 6H14V3zM5 5h5V3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-5h-2v5H5V5z"/>
     </svg>
   </a>
@@ -54,17 +44,11 @@ const justify =
   {showExplorer && (
     <a
       href={explorerHref}
-      class={`inline-flex items-center justify-center gap-2 rounded-md font-medium
-              ${sizeCls}
-              border border-[color-mix(in_srgb,var(--text-primary)_/_18%,transparent)]
-              bg-[color-mix(in_srgb,var(--bg-regular)_/_70%,transparent)]
-              hover:border-[color-mix(in_srgb,var(--text-primary)_/_28%,transparent)]
-              hover:bg-[color-mix(in_srgb,var(--bg-elevated)_/_90%,transparent)]
-              transition-colors`}
+      class={`button button--outline ${sizeClass} hover-lift group`}
       aria-label="Open Explorer"
     >
-      Open Explorer
-      <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+      <span>Open Explorer</span>
+      <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" class="cta-icon">
         <path fill="currentColor" d="M12 2a10 10 0 1 0 .001 20.001A10 10 0 0 0 12 2m6.92 6h-5.01l-2 3.5l2.75 4.77l4.26-7.27zM11 7l-2 3.5H5.08A8 8 0 0 1 11 7m-5.84 10A7.96 7.96 0 0 1 4 12c0-.34.03-.67.08-1h4.91l2 3.5L8.24 17H5.16zM12 20a8 8 0 0 1-1-.07l2.76-4.73L18.84 17A8 8 0 0 1 12 20"/>
       </svg>
     </a>
@@ -73,16 +57,50 @@ const justify =
   {showDocs && (
     <a
       href={docsHref}
-      class={`inline-flex items-center justify-center gap-2 rounded-md font-medium
-              ${sizeCls}
-              text-[color-mix(in_srgb,var(--text-primary),#fff_10%)]
-              hover:text-[var(--text-primary)] transition-colors`}
+      class={`button button--ghost ${sizeClass} hover-lift`}
       aria-label="Read Docs"
     >
-      Read Docs
-      <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+      <span>Read Docs</span>
+      <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" class="cta-icon">
         <path fill="currentColor" d="M6 2h9a3 3 0 0 1 3 3v14.5a.5.5 0 0 1-.8.4L15 18H6a3 3 0 0 1-3-3V5a3 3 0 0 1 3-3m0 2a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h9.5l.5.4V5a1 1 0 0 0-1-1z"/>
       </svg>
     </a>
   )}
 </div>
+
+<style>
+  .cta-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    align-items: center;
+  }
+
+  .cta-buttons--center {
+    justify-content: center;
+  }
+
+  .cta-buttons--end {
+    justify-content: flex-end;
+  }
+
+  @media (max-width: 640px) {
+    .cta-buttons {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .cta-buttons .button {
+      width: 100%;
+      justify-content: center;
+    }
+  }
+
+  .cta-icon {
+    transition: transform var(--transition-fast);
+  }
+
+  .group:hover .cta-icon {
+    transform: translateX(2px);
+  }
+</style>

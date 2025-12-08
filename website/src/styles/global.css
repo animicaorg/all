@@ -1,5 +1,6 @@
 @import "./tokens.css";
 @import "./theme.css";
+@import './animations.css';
 
 /* ==========================================================================
    Animica Global Styles
@@ -84,8 +85,6 @@ table {
 }
 
 /* ------------------------------ Base Defaults ----------------------------- */
-@import './animations.css';
-
 body {
   font-family: var(--font-sans);
   font-size: var(--text-md);
