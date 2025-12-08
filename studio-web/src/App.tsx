@@ -8,7 +8,7 @@ import StatusBar from './components/StatusBar';
 import ToastHost from './components/ToastHost';
 import ProviderBanner from './components/ProviderBanner';
 import NetworkMismatchBanner from './components/NetworkMismatchBanner';
-import { useAccount } from './hooks/useAccount';
+import useAccount from './hooks/useAccount';
 import { useNetwork } from './state/network';
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; err?: unknown }> {
@@ -37,7 +37,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
 }
 
 const App: React.FC = () => {
-  const { status, chainId: walletChainId, provider, ensureChain } = useAccount();
+  const { status, chainId: walletChainId, provider, ensureChain } = useAccount({ autoConnect: true });
   const { chainId: studioChainId } = useNetwork();
   const [providerDismissed, setProviderDismissed] = useState(false);
   const [networkDismissed, setNetworkDismissed] = useState(false);
