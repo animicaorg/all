@@ -34,4 +34,5 @@ animica/stratum_pool/core.py
 animica/stratum_pool/job_manager.py
 animica/stratum_pool/metrics.py
 animica/stratum_pool/stratum_server.py
+tests/test_config.py
 tests/test_wallet_cli.py

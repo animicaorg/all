@@ -7,6 +7,7 @@ without hard-coding devnet defaults.
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,8 @@ from urllib.parse import urlparse
 
 DEFAULT_NETWORK = "mainnet"
 DEFAULT_RPC_URL = "http://127.0.0.1:8545/rpc"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -31,6 +34,42 @@ class NetworkConfig:
     def rpc_host(self) -> str:
         parsed = urlparse(self.rpc_url)
         return parsed.hostname or "127.0.0.1"
+
+
+def _safe_int_from_env(env_var: str, default: int) -> int:
+    """
+    Safely parse an integer from an environment variable.
+    
+    Treats empty string, whitespace, or invalid values as unset.
+    Logs a warning when an invalid value is encountered.
+    
+    Args:
+        env_var: Name of the environment variable
+        default: Default value to use if env var is unset or invalid
+        
+    Returns:
+        Parsed integer or default value
+    """
+    value = os.getenv(env_var)
+    
+    # Treat None (unset) as unset
+    if value is None:
+        return default
+    
+    # Treat empty or whitespace-only as unset
+    value = value.strip()
+    if not value:
+        return default
+    
+    # Try to parse as integer
+    try:
+        return int(value)
+    except ValueError:
+        logger.warning(
+            f"Invalid value for {env_var}: '{value}' (expected integer). "
+            f"Falling back to default: {default}"
+        )
+        return default
 
 
 def get_network_defaults(network: str) -> dict[str, any]:
@@ -100,6 +139,11 @@ def load_network_config(network: Optional[str] = None) -> NetworkConfig:
     2. ANIMICA_NETWORK environment variable
     3. DEFAULT_NETWORK constant
     
+    Environment variable handling:
+    - ANIMICA_CHAIN_ID: Must be a valid integer. Empty string or whitespace
+      is treated as unset and falls back to network defaults. Invalid values
+      log a warning and fall back to defaults.
+    
     Args:
         network: Optional network name override
         
@@ -111,7 +155,7 @@ def load_network_config(network: Optional[str] = None) -> NetworkConfig:
     
     # Allow environment overrides
     rpc_url = os.getenv("ANIMICA_RPC_URL", defaults["rpc_url"])
-    chain_id = int(os.getenv("ANIMICA_CHAIN_ID", str(defaults["chain_id"])))
+    chain_id = _safe_int_from_env("ANIMICA_CHAIN_ID", defaults["chain_id"])
     
     return NetworkConfig(
         name=network_name,
