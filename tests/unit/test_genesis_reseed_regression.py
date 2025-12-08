@@ -197,8 +197,8 @@ def test_absolute_sqlite_uri_with_four_slashes():
         for wal_file in glob.glob(os.path.join(temp_dir, "*.db-*")):
             try:
                 os.unlink(wal_file)
-            except:
-                pass
+            except OSError:
+                pass  # WAL file might be locked or already deleted
         try:
             os.rmdir(temp_dir)
         except OSError:

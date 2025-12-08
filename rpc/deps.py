@@ -484,7 +484,11 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
     
     head = _HeadAccessor(bundle)
     head_info = head.get()
-    log.info(f"RPC context ready: head_height={head_info.get('height')}, head_hash={head_info.get('hash')}")
+    # head_info is a dict with 'height', 'hash', 'header' keys
+    if head_info:
+        log.info(f"RPC context ready: head_height={head_info.get('height')}, head_hash={head_info.get('hash')}")
+    else:
+        log.info("RPC context ready: no head set yet")
     
     return RpcContext(
         cfg=cfg_view,
