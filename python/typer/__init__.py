@@ -28,9 +28,30 @@ def Option(default: Any = None, *_, envvar: Optional[str] = None, **__) -> Optio
     return OptionInfo(default, envvar=envvar)
 
 
-def echo(message: str, err: bool = False) -> None:
+def Argument(default: Any = None, *_, **__) -> OptionInfo:  # type: ignore[override]
+    """Stub for typer.Argument - returns an OptionInfo for compatibility."""
+    return OptionInfo(default, envvar=None)
+
+
+def echo(message: str = "", err: bool = False) -> None:
     stream = sys.stderr if err else sys.stdout
     stream.write(str(message) + "\n")
+
+
+def secho(message: str = "", *, fg: Optional[str] = None, bold: bool = False, err: bool = False) -> None:
+    """Styled echo - stub implementation that ignores styling."""
+    echo(message, err=err)
+
+
+class Colors:
+    """Stub for typer.colors."""
+    GREEN = "green"
+    CYAN = "cyan"
+    YELLOW = "yellow"
+    RED = "red"
+
+
+colors = Colors()
 
 
 class Context:
@@ -54,10 +75,12 @@ def get_app_dir(_: str) -> str:
 
 
 class Typer:
-    def __init__(self, *, help: str | None = None) -> None:  # noqa: A002
+    def __init__(self, *, help: str | None = None, name: str | None = None, **kwargs: Any) -> None:  # noqa: A002
         self.help = help or ""
+        self.name = name
         self._commands: Dict[str, Callable[..., Any]] = {}
         self._callback: Optional[Callable[..., Any]] = None
+        self._subapps: Dict[str, Typer] = {}
 
     def command(self, name: Optional[str] = None):
         def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -73,6 +96,12 @@ class Typer:
             return func
 
         return decorator
+
+    def add_typer(self, typer_instance: Typer, *, name: str, **kwargs: Any) -> None:
+        """Add a sub-application to this Typer app."""
+        self._subapps[name] = typer_instance
+        # Register the subapp as a command group
+        self._commands[name] = typer_instance
 
     def _parse_options(
         self, func: Callable[..., Any], args: List[str], ctx: Optional[Context] = None
@@ -107,6 +136,7 @@ class Typer:
                 remaining.append(arg)
                 i += 1
         values: Dict[str, Any] = {}
+        remaining_idx = 0
         for position, param in enumerate(params):
             if (
                 ctx is not None
@@ -126,9 +156,13 @@ class Typer:
                 default_val = default.default
             else:
                 default_val = default
+            # If not provided as an option, try to get from remaining (positional args)
+            if raw is None and remaining_idx < len(remaining):
+                raw = remaining[remaining_idx]
+                remaining_idx += 1
             if raw is None:
-                if default is inspect._empty:
-                    raise BadParameter(f"Missing required option --{param.name}")
+                if default is inspect._empty or (isinstance(default, OptionInfo) and default.default is ...):
+                    raise BadParameter(f"Missing required argument: {param.name}")
                 values[param.name] = default_val
                 continue
             if param.annotation is int:
@@ -188,10 +222,13 @@ class Typer:
 __all__ = [
     "Typer",
     "Option",
+    "Argument",
     "Context",
     "Exit",
     "BadParameter",
     "echo",
+    "secho",
+    "colors",
     "get_current_context",
     "get_app_dir",
 ]
