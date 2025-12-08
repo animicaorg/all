@@ -33,6 +33,20 @@ Enter Animica mainnet bootstrap password:
 
 Enter `animicawins` (the password will not be echoed to the terminal for security).
 
+**Alternative: Environment Variable**
+
+For automated or production deployments, you can set the bootstrap password via environment variable:
+
+```bash
+export ANIMICA_BOOTSTRAP_PASSWORD="animicawins"
+python -m core.bootstrap \
+  --genesis-sample genesis/genesis.sample.mainnet.json \
+  --db sqlite:///animica.db \
+  --network mainnet
+```
+
+This allows the bootstrap to proceed without an interactive prompt.
+
 On success, you will see:
 
 ```
@@ -103,7 +117,8 @@ The user-provided address `anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3
 ### Password Handling
 
 - The bootstrap password is **never logged or persisted**.
-- It is defined as a constant in `core/bootstrap.py` but is not emitted to logs or stored in files/databases.
+- It can be set via the `ANIMICA_BOOTSTRAP_PASSWORD` environment variable or defaults to a hardcoded value in `core/bootstrap.py`.
+- For production deployments, consider using environment variables or additional security measures (HSM, multi-sig, ceremony-style bootstrap).
 - The password prompt uses `getpass` for non-echo terminal input.
 - Incorrect password entry exits cleanly without creating genesis.
 

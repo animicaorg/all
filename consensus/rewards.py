@@ -42,11 +42,12 @@ MAINNET_PREMINE_TOTAL: int = 81_000_000_000_000_000  # 81M ANM in base units
 #   - aicf:        7,000,000 ANM
 #   - founder:     9,000,000 ANM
 #
-# User-provided address: anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f
-# NOTE: This address is documented in the code comments as part of the mainnet premine
-# design. To incorporate it into the distribution with an actual allocation, adjust the
-# amounts below (e.g., reduce founder allocation and add a separate entry for the user
-# address). The distribution must sum to MAINNET_PREMINE_TOTAL.
+# TODO: User-provided address anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f
+# is mentioned in the requirements but not yet allocated in the distribution. To
+# incorporate it, adjust one or more system buckets (e.g., reduce founder by X ANM and
+# add a new entry for the user address with X ANM). The distribution must sum to
+# MAINNET_PREMINE_TOTAL. For now, it is documented here but not included in the
+# allocation pending design decision.
 #
 # Current distribution matches genesis/genesis.sample.mainnet.json exactly:
 
