@@ -60,17 +60,10 @@ def _ensure_network_set() -> str:
 
 def _get_compose_file() -> Path:
     """Get the path to the docker-compose file for devnet with studio services."""
-    # Try to find repo root by looking for ops/docker directory
-    # Start from current file and traverse up
-    current = Path(__file__).resolve()
-    for parent in current.parents:
-        compose_file = parent / "ops" / "docker" / "docker-compose.devnet.yml"
-        if compose_file.exists():
-            return compose_file
-    
-    # Fallback: try the expected location based on typical structure
+    # Use the same compose file as node.py for consistency
+    # This ensures we're working with the same service definitions
     repo_root = Path(__file__).resolve().parents[3]
-    compose_file = repo_root / "ops" / "docker" / "docker-compose.devnet.yml"
+    compose_file = repo_root / "tests" / "devnet" / "docker-compose.yml"
     
     if not compose_file.exists():
         typer.echo(
@@ -281,10 +274,12 @@ def up(
     typer.secho(f"\nStarting Studio Services for network: {network}", fg=typer.colors.CYAN, bold=True)
     typer.echo(f"Using compose file: {compose_file}")
     
-    # Build docker-compose command targeting only the 'services' service
+    # Build docker-compose command using the 'studio' profile
+    # This profile includes studio-services and explorer (which depends on services)
     cmd = [
         "docker", "compose",
         "-f", str(compose_file),
+        "--profile", "studio",
     ]
     
     if build:
@@ -294,9 +289,6 @@ def up(
     
     if detach:
         cmd.append("-d")
-    
-    # Target only the studio services container
-    cmd.append("services")
     
     typer.echo(f"\nRunning: {' '.join(cmd)}")
     typer.echo("This may take a few minutes on first run...\n")
@@ -382,18 +374,16 @@ def down(
             bold=True
         )
     
-    # Build docker-compose command targeting only the 'services' service
+    # Build docker-compose command using the 'studio' profile
     cmd = [
         "docker", "compose",
         "-f", str(compose_file),
+        "--profile", "studio",
         "down"
     ]
     
     if volumes:
         cmd.append("-v")
-    
-    # Only stop the services container
-    cmd.append("services")
     
     typer.echo(f"\nRunning: {' '.join(cmd)}\n")
     
@@ -557,19 +547,17 @@ def logs(
     
     compose_file = _get_compose_file()
     
-    # Build docker-compose command
+    # Build docker-compose command using the 'studio' profile
     cmd = [
         "docker", "compose",
         "-f", str(compose_file),
+        "--profile", "studio",
         "logs",
         "--tail", str(tail),
     ]
     
     if follow:
         cmd.append("-f")
-    
-    # Target only the services container
-    cmd.append("services")
     
     try:
         # Run interactively to preserve output streaming
