@@ -1,5 +1,50 @@
 # Animica L1 Blockchain - Quickstart Guide
 
+## Network Configuration
+
+Animica supports multiple network profiles:
+- **mainnet** (chain ID 1) - Production network with premine allocation
+- **testnet** (chain ID 2) - Public test network
+- **devnet** (chain ID 1337) - Local development network
+- **local-devnet** - Alternative local development setup
+
+### Default Network: Mainnet
+
+**By default, all CLI commands and RPC configurations use mainnet** unless explicitly overridden.
+
+To use a different network:
+
+```bash
+# Option 1: Set network environment variable (persistent for shell session)
+export ANIMICA_NETWORK=devnet
+animica node status
+
+# Option 2: Use --network flag (per-command)
+animica --network devnet node status
+
+# Option 3: Set persistent network preference
+animica network set devnet
+animica node status  # Now uses devnet
+```
+
+### Checking Premine Balances (Mainnet)
+
+To check premine wallet balances on mainnet:
+
+```bash
+# Show wallet info including balance
+animica wallet show <address|label>
+
+# Example: Check premine wallet by label
+animica wallet show premine
+
+# Or use RPC directly
+animica rpc call state.getBalance '{"params": ["anim1..."]}'
+
+# Wallet file location (default)
+# ~/.animica/wallets.json
+```
+
 ## Fresh Machine Setup (Ubuntu/Debian)
 
 ### Install System Dependencies
@@ -82,8 +127,13 @@ pytest -m "not slow and not integration" -q
 
 ## Devnet Setup
 
+**Note:** Since the default network is mainnet, you must explicitly set the network to devnet for local development.
+
 ### Option 1: Docker Compose (Recommended)
 ```bash
+# Set network to devnet before starting
+export ANIMICA_NETWORK=devnet
+
 # Start devnet (node + miner + explorer + services)
 bash tests/devnet/up.sh
 
@@ -110,6 +160,9 @@ bash tests/devnet/cleanup.sh
 ```bash
 # Activate environment
 source .venv/bin/activate
+
+# Set network to devnet
+export ANIMICA_NETWORK=devnet
 
 # Set genesis for devnet
 bash genesis/devnet.sh
