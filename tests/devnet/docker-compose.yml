@@ -24,9 +24,9 @@ networks:
     driver: bridge
 
 volumes:
-  node1_data:
-  node2_data:
-  services_data:
+  devnet_node1_data:
+  devnet_node2_data:
+  devnet_services_data:
 
 services:
   # ---------------------------------------------------------------
@@ -45,9 +45,10 @@ services:
       - ./.env
     volumes:
       - ../..:/app:ro
-      - node1_data:/data
+      - devnet_node1_data:/data
     environment:
       # DB & chain config (matches rpc.config expectations)
+      ANIMICA_NETWORK: "devnet"
       ANIMICA_CHAIN_ID: "${ANIMICA_CHAIN_ID:-1337}"
       ANIMICA_RPC_DB_URI: "${ANIMICA_RPC_DB_URI:-sqlite:////data/animica.db}"
       GENESIS_PATH: "${GENESIS_PATH:-core/genesis/genesis.json}"
@@ -84,8 +85,9 @@ services:
       - ./.env
     volumes:
       - ../..:/app:ro
-      - node2_data:/data
+      - devnet_node2_data:/data
     environment:
+      ANIMICA_NETWORK: "devnet"
       ANIMICA_CHAIN_ID: "${ANIMICA_CHAIN_ID:-1337}"
       ANIMICA_RPC_DB_URI: "${ANIMICA_NODE2_RPC_DB_URI:-sqlite:////data/animica.db}"
       GENESIS_PATH: "${GENESIS_PATH:-core/genesis/genesis.json}"
@@ -125,6 +127,7 @@ services:
       DEVICE: "${MINER_DEVICE:-cpu}"
       THREADS: "${MINER_THREADS:-2}"
       LOG_LEVEL: "${MINER_LOG_LEVEL:-INFO}"
+      ANIMICA_NETWORK: "devnet"
     command: >
       bash -lc "
       set -euo pipefail;
@@ -154,8 +157,9 @@ services:
       RATE_LIMITS: "burst=20,per_min=120"
       LOG_LEVEL: "${STUDIO_LOG_LEVEL:-INFO}"
       FAUCET_KEY: "${FAUCET_KEY:-}"
+      ANIMICA_NETWORK: "devnet"
     volumes:
-      - services_data:/var/lib/services
+      - devnet_services_data:/var/lib/services
     ports:
       - "${HOST_STUDIO_SERVICES:-8787}:8787"
     command: >
@@ -189,6 +193,7 @@ services:
       VITE_CHAIN_ID: "${ANIMICA_CHAIN_ID:-1337}"
       # Optional studio-services integration
       VITE_SERVICES_URL: "http://localhost:${HOST_STUDIO_SERVICES:-8787}"
+      ANIMICA_NETWORK: "devnet"
     volumes:
       - ../../explorer-web:/app:rw
     ports:

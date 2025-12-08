@@ -1,0 +1,179 @@
+# Animica Testnet
+# -------------------------------------------------------------------
+# Public testnet node configuration with:
+#   - Node (RPC+WS on 8546) - testnet chain ID 2
+#   - Optional miner
+#   - Optional studio-services (deploy/verify API with faucet)
+#   - Optional explorer-web
+#
+# Usage:
+#   animica network set testnet
+#   animica node up
+#   # or directly:
+#   docker compose -f ops/docker/docker-compose.testnet.yml up -d
+#
+# Notes:
+# - Uses testnet chain ID (2)
+# - Isolated volumes: testnet_node_data, testnet_services_data
+# - Genesis: core/genesis/genesis.testnet.json (or default if not exists)
+# - Data directory isolated to prevent cross-network contamination
+# - Faucet enabled by default for testnet (requires FAUCET_KEY)
+# -------------------------------------------------------------------
+name: animica-testnet
+
+networks:
+  testnet:
+    driver: bridge
+
+volumes:
+  testnet_node_data:
+  testnet_services_data:
+
+services:
+  # ---------------------------------------------------------------
+  # Node: core + rpc (+ ws) for testnet
+  # ---------------------------------------------------------------
+  node:
+    build:
+      context: ../..
+      dockerfile: ops/docker/node.Dockerfile
+    container_name: animica-testnet-node
+    user: "root"
+    working_dir: /app
+    volumes:
+      - ../..:/app:ro
+      - testnet_node_data:/data
+    environment:
+      # Testnet chain config
+      ANIMICA_NETWORK: "testnet"
+      ANIMICA_CHAIN_ID: "${ANIMICA_CHAIN_ID:-2}"
+      ANIMICA_RPC_DB_URI: "${ANIMICA_RPC_DB_URI:-sqlite:////data/testnet.db}"
+      GENESIS_PATH: "${GENESIS_PATH:-core/genesis/genesis.testnet.json}"
+      # RPC server config
+      ANIMICA_RPC_HOST: "${ANIMICA_RPC_HOST:-0.0.0.0}"
+      ANIMICA_RPC_PORT: "${ANIMICA_RPC_PORT:-8546}"
+      ANIMICA_RPC_CORS_ORIGINS: "${ANIMICA_RPC_CORS_ORIGINS:-[*]}"
+      ANIMICA_LOG_LEVEL: "${ANIMICA_LOG_LEVEL:-INFO}"
+      # P2P config (testnet seeds/peers should be set via env or config)
+      P2P_ENABLE: "${P2P_ENABLE:-true}"
+      P2P_LISTEN: "${P2P_LISTEN:-0.0.0.0:30334}"
+      P2P_SEEDS: "${P2P_SEEDS:-}"
+    command: ["/bin/bash", "-c", "python -m rpc.main"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8546/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    ports:
+      - "${HOST_RPC_PORT:-8546}:8546"
+      - "${HOST_P2P_PORT:-30334}:30334"
+    networks: [testnet]
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------
+  # Miner (optional - use separate profile)
+  # ---------------------------------------------------------------
+  miner:
+    profiles: [miner]
+    build:
+      context: ../..
+      dockerfile: ops/docker/miner.Dockerfile
+    container_name: animica-testnet-miner
+    working_dir: /app
+    volumes:
+      - ../..:/app:ro
+    environment:
+      RPC_URL: "${RPC_URL:-http://node:8546}"
+      DEVICE: "${MINER_DEVICE:-cpu}"
+      THREADS: "${MINER_THREADS:-4}"
+      LOG_LEVEL: "${MINER_LOG_LEVEL:-INFO}"
+      ANIMICA_NETWORK: "testnet"
+    command: >
+      bash -lc "
+      set -euo pipefail;
+      exec python -m mining.cli.miner --threads $${THREADS} --device $${DEVICE} --rpc $${RPC_URL}
+      "
+    depends_on:
+      node:
+        condition: service_healthy
+    networks: [testnet]
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------
+  # studio-services (optional - use separate profile)
+  # Note: Faucet can be enabled on testnet for developers
+  # ---------------------------------------------------------------
+  services:
+    profiles: [studio]
+    build:
+      context: ../../studio-services
+      dockerfile: Dockerfile
+    container_name: animica-testnet-services
+    environment:
+      RPC_URL: "${RPC_URL:-http://node:8546}"
+      CHAIN_ID: "${ANIMICA_CHAIN_ID:-2}"
+      STORAGE_DIR: "/var/lib/services/storage"
+      RATE_LIMITS: "${RATE_LIMITS:-burst=15,per_min=90}"
+      LOG_LEVEL: "${STUDIO_LOG_LEVEL:-INFO}"
+      ANIMICA_NETWORK: "testnet"
+      # Faucet enabled on testnet (requires FAUCET_KEY to be set)
+      FAUCET_KEY: "${FAUCET_KEY:-}"
+      FAUCET_DRIP_AMOUNT: "${FAUCET_DRIP_AMOUNT:-1000000000000000000}"
+    volumes:
+      - testnet_services_data:/var/lib/services
+    ports:
+      - "${HOST_STUDIO_SERVICES:-8788}:8787"
+    command: >
+      bash -lc "
+      set -euo pipefail;
+      python -m studio_services.main --host 0.0.0.0 --port 8787
+      "
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8787/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    depends_on:
+      node:
+        condition: service_healthy
+    networks: [testnet]
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------
+  # explorer-web (optional - use separate profile)
+  # ---------------------------------------------------------------
+  explorer:
+    profiles: [studio]
+    image: node:20-alpine
+    container_name: animica-testnet-explorer
+    working_dir: /app
+    environment:
+      VITE_RPC_URL: "http://localhost:${HOST_RPC_PORT:-8546}"
+      VITE_CHAIN_ID: "${ANIMICA_CHAIN_ID:-2}"
+      VITE_SERVICES_URL: "http://localhost:${HOST_STUDIO_SERVICES:-8788}"
+      ANIMICA_NETWORK: "testnet"
+    volumes:
+      - ../../explorer-web:/app:rw
+    ports:
+      - "${HOST_EXPLORER:-5174}:5173"
+    command: >
+      sh -lc "
+      set -eu;
+      corepack enable || true;
+      if ! command -v pnpm >/dev/null 2>&1; then npm i -g pnpm@9; fi;
+      pnpm install --frozen-lockfile || pnpm install;
+      pnpm run build;
+      pnpm exec vite preview --host 0.0.0.0 --port 5173
+      "
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5173/ >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+    depends_on:
+      node:
+        condition: service_healthy
+      services:
+        condition: service_healthy
+    networks: [testnet]
+    restart: unless-stopped

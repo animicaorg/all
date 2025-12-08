@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 
 import httpx
 import typer
-from animica.config import load_network_config
+from animica.config import get_network_defaults, load_network_config
 
 from .state import get_cli_state
 
@@ -79,11 +79,21 @@ def _ensure_network_set() -> str:
     raise typer.Exit(code=1)
 
 
-def _get_compose_file() -> Path:
-    """Get the path to the docker-compose file for devnet."""
-    # Assume we're in the repo root or python/ subdirectory
-    repo_root = Path(__file__).resolve().parents[3]
-    compose_file = repo_root / "tests" / "devnet" / "docker-compose.yml"
+def _get_compose_file(network: str) -> Path:
+    """
+    Get the path to the docker-compose file for the specified network.
+    
+    Args:
+        network: Network name (mainnet, testnet, devnet, local-devnet)
+        
+    Returns:
+        Path to the appropriate docker-compose file
+        
+    Raises:
+        typer.Exit: If compose file not found
+    """
+    defaults = get_network_defaults(network)
+    compose_file = defaults["compose_file"]
     
     if not compose_file.exists():
         typer.echo(
@@ -91,7 +101,11 @@ def _get_compose_file() -> Path:
             err=True
         )
         typer.echo(
-            "Node lifecycle management requires the devnet docker-compose setup.",
+            f"Node lifecycle management for {network} requires the compose setup.",
+            err=True
+        )
+        typer.echo(
+            f"\nExpected location: {compose_file}",
             err=True
         )
         raise typer.Exit(code=1)
@@ -197,11 +211,6 @@ def tx(
 
 @app.command()
 def up(
-    profile: str = typer.Option(
-        "dev",
-        "--profile",
-        help="Docker Compose profile to use (dev, prod, etc.)"
-    ),
     detach: bool = typer.Option(
         True,
         "--detach/--no-detach",
@@ -212,14 +221,26 @@ def up(
         "--build/--no-build",
         help="Build images before starting"
     ),
+    with_miner: bool = typer.Option(
+        False,
+        "--with-miner",
+        help="Also start miner service (uses 'miner' profile)"
+    ),
 ) -> None:
     """
     Start an Animica node using Docker Compose.
     
-    This command spins up a local development node with the configured network
-    settings. It uses the devnet docker-compose configuration to start:
-      - Node(s) with RPC/WS endpoints
-      - Mining service
+    This command spins up a node with the configured network settings.
+    The compose file and configuration are automatically selected based on
+    the active network (set via 'animica network set <network>').
+    
+    Network-specific behavior:
+      - mainnet: Uses ops/docker/docker-compose.mainnet.yml, chain ID 1, port 8545
+      - testnet: Uses ops/docker/docker-compose.testnet.yml, chain ID 2, port 8546
+      - devnet/local-devnet: Uses tests/devnet/docker-compose.yml, chain ID 1337, port 8545
+    
+    Each network uses isolated data directories and volumes to prevent cross-network
+    contamination of blockchain data.
     
     Note: Studio Services (deploy/verify API) are NOT started by default.
     To start Studio Services, use 'animica studio up' after the node is running.
@@ -228,9 +249,14 @@ def up(
       animica network set <network>
     
     Examples:
+      animica network set mainnet
       animica node up
+      
+      animica network set testnet
       animica node up --no-detach  # Run in foreground
-      animica node up --profile dev --build
+      
+      animica network set devnet
+      animica node up --with-miner  # Start node with miner
       
     To also start Studio Services (optional):
       animica node up
@@ -239,18 +265,32 @@ def up(
     # Enforce network requirement
     network = _ensure_network_set()
     
-    compose_file = _get_compose_file()
+    # Get network-specific compose file
+    compose_file = _get_compose_file(network)
+    
+    defaults = get_network_defaults(network)
     
     typer.secho(f"Starting node for network: {network}", fg=typer.colors.CYAN, bold=True)
     typer.echo(f"Using compose file: {compose_file}")
-    typer.echo(f"Profile: {profile}")
+    typer.echo(f"Chain ID: {defaults['chain_id']}")
+    typer.echo(f"RPC Port: {defaults['rpc_port']}")
+    typer.echo(f"Data directory: {defaults['data_dir']}")
     
     # Build docker-compose command
+    # For devnet, we need to use profiles; for mainnet/testnet, services run by default
     cmd = [
         "docker", "compose",
         "-f", str(compose_file),
-        "--profile", profile,
     ]
+    
+    # Add profiles based on network and options
+    if network in ["devnet", "local-devnet"]:
+        # Devnet uses profiles: 'dev' for node+miner by default
+        cmd.extend(["--profile", "dev"])
+    
+    if with_miner and network not in ["devnet", "local-devnet"]:
+        # For mainnet/testnet, miner is in separate profile
+        cmd.extend(["--profile", "miner"])
     
     if build:
         cmd.extend(["up", "--build"])
@@ -275,12 +315,19 @@ def up(
             typer.secho("✓ Node started successfully!", fg=typer.colors.GREEN, bold=True)
             if detach:
                 typer.echo(f"\nNode is running in the background on network: {network}")
-                typer.echo("View logs with: docker compose -f tests/devnet/docker-compose.yml logs -f")
+                typer.echo(f"View logs with: docker compose -f {compose_file} logs -f")
                 typer.echo("Check status with: animica node status")
-                typer.echo("\n--- Checking Premine Balances ---")
-                typer.echo("To check premine balances on mainnet:")
-                typer.echo("  animica wallet show <address|label>")
-                typer.echo("  animica rpc call state.getBalance '{\"params\": [\"<address>\"]}'")
+                if network == "mainnet":
+                    typer.echo("\n--- Mainnet Node Running ---")
+                    typer.echo("To check balances:")
+                    typer.echo("  animica wallet show <address|label>")
+                    typer.echo("  animica rpc call state.getBalance '{\"params\": [\"<address>\"]}'")
+                elif network == "testnet":
+                    typer.echo("\n--- Testnet Node Running ---")
+                    typer.echo("Request testnet tokens from faucet if available")
+                else:
+                    typer.echo("\n--- Devnet Node Running ---")
+                    typer.echo("Premine accounts available for testing")
                 typer.echo("\nWallet file location: ~/.animica/wallets.json")
         else:
             typer.secho(
@@ -303,11 +350,6 @@ def up(
 
 @app.command()
 def down(
-    profile: str = typer.Option(
-        "dev",
-        "--profile",
-        help="Docker Compose profile to use (dev, prod, etc.)"
-    ),
     volumes: bool = typer.Option(
         False,
         "--volumes",
@@ -322,28 +364,30 @@ def down(
     removes associated volumes. By default, blockchain data is preserved
     unless --volumes flag is used.
     
+    The command automatically uses the correct compose file based on the
+    active network setting.
+    
     Before running this command, ensure you have set a network using:
       animica network set <network>
     
     Examples:
       animica node down
       animica node down --volumes  # Also delete blockchain data
-      animica node down --profile dev
     
-    WARNING: Using --volumes will delete all blockchain data!
+    WARNING: Using --volumes will delete all blockchain data for the active network!
     """
     # Enforce network requirement
     network = _ensure_network_set()
     
-    compose_file = _get_compose_file()
+    # Get network-specific compose file
+    compose_file = _get_compose_file(network)
     
     typer.secho(f"Stopping node for network: {network}", fg=typer.colors.CYAN, bold=True)
     typer.echo(f"Using compose file: {compose_file}")
-    typer.echo(f"Profile: {profile}")
     
     if volumes:
         typer.secho(
-            "\n⚠ WARNING: --volumes flag will delete all blockchain data!",
+            f"\n⚠ WARNING: --volumes flag will delete all {network} blockchain data!",
             fg=typer.colors.YELLOW,
             bold=True
         )
@@ -352,9 +396,13 @@ def down(
     cmd = [
         "docker", "compose",
         "-f", str(compose_file),
-        "--profile", profile,
-        "down"
     ]
+    
+    # Add profiles for devnet
+    if network in ["devnet", "local-devnet"]:
+        cmd.extend(["--profile", "dev"])
+    
+    cmd.append("down")
     
     if volumes:
         cmd.append("-v")
@@ -372,9 +420,9 @@ def down(
         if result.returncode == 0:
             typer.secho("✓ Node stopped successfully!", fg=typer.colors.GREEN, bold=True)
             if volumes:
-                typer.echo("All volumes and blockchain data have been removed.")
+                typer.echo(f"All volumes and {network} blockchain data have been removed.")
             else:
-                typer.echo("Blockchain data has been preserved in volumes.")
+                typer.echo(f"{network.capitalize()} blockchain data has been preserved in volumes.")
                 typer.echo("Use 'animica node down --volumes' to remove data.")
         else:
             typer.secho(
