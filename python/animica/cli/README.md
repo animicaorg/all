@@ -104,14 +104,23 @@ Wallet Operations
 
 Node Management
 ---------------
+  # Set network first (required for lifecycle operations)
+  animica network set devnet
+
+  # Start a node (requires Docker and docker-compose)
+  animica node up
+  animica node up --no-detach  # Run in foreground
+  animica node up --profile dev --build
+
+  # Stop a node
+  animica node down
+  animica node down --volumes  # Also delete blockchain data
+
   # Check node status
   animica node status
 
-  # Show logs
-  animica node logs --tail 100
-
-  # Run a node
-  animica node run --config config.toml
+  # Show logs (via docker compose)
+  docker compose -f tests/devnet/docker-compose.yml logs -f
 
 Chain Queries
 -------------
@@ -204,12 +213,69 @@ Peer Management
   # Get detailed peer information
   animica peer info QmPeerId...
 
+Node Lifecycle Commands (up/down)
+----------------------------------
+The `node up` and `node down` commands manage local development nodes using
+Docker Compose. These commands are particularly useful for:
+
+  - Quickly spinning up a local devnet for testing
+  - Managing node lifecycle without manual docker-compose commands
+  - Ensuring consistency with network configuration
+
+Prerequisites:
+  - Docker and Docker Compose must be installed
+  - A network must be configured (use `animica network set <network>`)
+
+Features:
+  - Network enforcement: Commands fail with helpful error if network not set
+  - Configurable profiles: dev, prod, etc. (default: dev)
+  - Volume management: Optionally preserve or delete blockchain data
+  - Detached/foreground modes for `up` command
+  - Optional image rebuilding
+
+Examples:
+
+  # First, set a network (required)
+  animica network set devnet
+
+  # Start a node (default: detached, with build)
+  animica node up
+
+  # Start in foreground for debugging
+  animica node up --no-detach
+
+  # Use a different profile
+  animica node up --profile prod
+
+  # Stop the node (preserves data)
+  animica node down
+
+  # Stop and remove all data (WARNING: deletes blockchain state!)
+  animica node down --volumes
+
+  # Check if node is running
+  animica node status
+
+Network Enforcement:
+  Both `node up` and `node down` require an active network configuration.
+  If no network is set, the commands will exit with a clear error message:
+
+    Error: No network configured. Node lifecycle operations require a network to be set.
+
+    Please set a network first using one of these methods:
+      1. Set persistent network: animica network set <network>
+      2. Set via environment: export ANIMICA_NETWORK=<network>
+      3. Use --network flag: animica --network <network> node up
+
+  This ensures that node operations are always performed in the context
+  of a specific network configuration.
+
 Implementation Status
 =====================
 
 ✓ Complete:
   - main.py               Full Typer root with all subgroups
-  - node.py              status, logs (run planned)
+  - node.py              status, head, block, tx, up (start), down (stop)
   - wallet.py            new, list, show, export-vault, import
   - key.py               new, show, list
   - rpc.py               call (raw JSON-RPC)
@@ -221,11 +287,10 @@ Implementation Status
   - peer.py              list, add, remove, info (peer management)
   - state.py             Persistent CLI state storage
   - pyproject.toml       Entry point added as `animica` command
-  - Tests                Basic CLI structure tests
+  - Tests                Comprehensive tests for node, network, state, peer
 
 Partial (TODO):
   - tx.py                sign, send (require full wallet integration)
-  - node.py              run (requires node orchestration)
   - wallet.py            init (requires encrypted vault setup)
 
 Integration Points
