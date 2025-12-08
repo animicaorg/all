@@ -44,8 +44,9 @@ type Props = {
 const box: React.CSSProperties = {
   background: "var(--surface-2)",
   border: "1px solid var(--border-1)",
-  borderRadius: 8,
-  padding: "10px 12px",
+  borderRadius: 10,
+  padding: "12px 14px",
+  boxShadow: "0 1px 2px rgba(0, 0, 0, 0.08)",
 };
 
 const mono: React.CSSProperties = {
@@ -57,8 +58,18 @@ const mono: React.CSSProperties = {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section style={{ marginTop: 16 }}>
-      <h3 style={{ margin: "0 0 8px 0", fontSize: 13, letterSpacing: 0.2, color: "var(--text-2)" }}>{title}</h3>
+    <section style={{ marginTop: 18 }}>
+      <h3 style={{ 
+        margin: "0 0 10px 0", 
+        fontSize: 13, 
+        fontWeight: 700,
+        letterSpacing: 0.02,
+        textTransform: "uppercase", 
+        color: "var(--text-muted)",
+        opacity: 0.85
+      }}>
+        {title}
+      </h3>
       {children}
     </section>
   );
