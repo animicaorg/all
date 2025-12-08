@@ -95,11 +95,13 @@ def _build_signed_transfer_cbor(
         pub=kp.public_key,
         sig=sig_bytes,
     )
-    tx.signatures = [sig_env]
+    # Create signed tx (Tx is frozen dataclass)
+    from dataclasses import replace
+    tx_signed = replace(tx, sigs=(sig_env,))
 
     # Encode CBOR (canonical) and compute tx hash (keccak/sha3 per core.types.tx)
-    cbor_tx = cbor_dumps(tx)
-    tx_hash_hex = "0x" + tx.hash().hex()
+    cbor_tx = tx_signed.to_cbor()
+    tx_hash_hex = "0x" + tx_signed.txid().hex()
     return cbor_tx, tx_hash_hex, sender
 
 
@@ -157,7 +159,8 @@ async def test_rejects_bad_signature(client_and_cfg):
     from pq.py.registry import normalize_alg_name
 
     bad_alg = normalize_alg_name("dilithium3")
-    tx = Tx.transfer(
+    # Build unsigned transfer
+    tx_unsigned = Tx.transfer(
         chain_id=cfg.chain_id,
         nonce=0,
         from_addr="anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqpsu8y",  # syntactically valid bech32m example
@@ -168,15 +171,13 @@ async def test_rejects_bad_signature(client_and_cfg):
         data=b"",
         access_list=[],
     )
-    # Attach a junk signature
-    tx.signatures = [
-        Tx.Sig(alg=bad_alg, pub=b"\x01\x02", sig=b"\x03\x04"),
-    ]
-    raw_hex = "0x" + cbor_dumps(tx).hex()
+    # Create signed tx with a junk signature (using dataclasses.replace since Tx is frozen)
+    from dataclasses import replace
+    tx = replace(tx_unsigned, sigs=(Tx.Sig(alg=bad_alg, pub=b"\x01\x02", sig=b"\x03\x04"),))
+    raw_hex = "0x" + tx.to_cbor().hex()
 
-    res = rpc_call(client, "tx.sendRawTransaction", params={"rawTx": raw_hex})
+    res = rpc_call(client, "tx.sendRawTransaction", params={"rawTx": raw_hex}, expect_error=True)
     # Expect a structured JSON-RPC error for invalid signature (code defined in rpc/errors.py)
-    assert "error" in res, "bad signature should be rejected by RPC"
     err = res["error"]
     assert isinstance(err.get("code"), int)
     # A helpful message mentioning signature/verify

@@ -109,43 +109,29 @@ def ws_connect(client: TestClient, path: str = "/ws"):
         yield ws
 
 
-def ws_publish_new_head(head):
+def ws_publish_new_head(client: TestClient, head):
     """
     Publish a new head to the WebSocket hub from sync test context.
-    TestClient runs the app in a background thread, so we publish directly to the hub.
-    The hub maintains its own subscribers and will push to connected clients.
+    Uses the TestClient's portal to run the async publish in the app's event loop.
+    
+    Args:
+        client: The FastAPI TestClient instance
+        head: The Head object to publish
+    
+    Returns:
+        Number of clients that received the message
     """
     from rpc import ws
+    from anyio.from_thread import start_blocking_portal
     
-    # The hub maintains subscribers in memory. When we publish, it will
-    # push to all connected WebSocket clients, including our test client.
-    # We just need to call the publish method. Since TestClient manages its
-    # own event loop in a thread, and the WebSocket connection is handled there,
-    # we can just directly call publish on the hub which will enqueue messages
-    # for connected clients.
-    #
-    # The trick is that we need to call this from the test thread, and it needs
-    # to reach the hub running in the TestClient thread. The hub is a singleton,
-    # so we can access it directly. The enqueue operation is thread-safe via
-    # the asyncio lock.
-    #
-    # However, we can't call an async method from a sync context without a loop.
-    # The solution: use the anyio BlockingPortal that TestClient provides.
-    
-    # For TestClient, we can use the fact that it exposes the portal
-    import asyncio
-    try:
-        # Create a new event loop just for this call
-        # This works because the hub's publish method is independent
-        loop = asyncio.new_event_loop()
-        try:
-            result = loop.run_until_complete(ws.hub.publish_new_head(head))
-            return result
-        finally:
-            loop.close()
-    except Exception as e:
-        # If that fails, try the sync wrapper
-        return ws.publish_new_head_sync(head)
+    # Use the TestClient's portal to run the async method in the app's event loop
+    if hasattr(client, 'portal') and client.portal is not None:
+        # TestClient provides a portal for calling async functions from sync context
+        return client.portal.call(ws.hub.publish_new_head, head)
+    else:
+        # Fallback: try creating our own portal (shouldn't be needed with TestClient)
+        with start_blocking_portal() as portal:
+            return portal.call(ws.hub.publish_new_head, head)
 
 
 def fetch_openrpc(client: TestClient) -> dict:
