@@ -611,8 +611,6 @@ def attach_lifecycle(app, cfg: _ConfigView | None = None) -> None:
 
     If `cfg` is not provided, it is loaded from rpc.config.load_config().
     """
-    from fastapi import Request
-
     @app.on_event("startup")
     async def _startup() -> None:
         nonlocal cfg
