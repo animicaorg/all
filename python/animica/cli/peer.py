@@ -36,7 +36,12 @@ async def rpc_call(
         response = await client.post(rpc_url, json=payload)
         data = response.json()
     if "error" in data:
-        raise RuntimeError(data["error"])
+        error_info = data["error"]
+        if isinstance(error_info, dict):
+            error_msg = error_info.get("message", str(error_info))
+        else:
+            error_msg = str(error_info)
+        raise RuntimeError(error_msg)
     return data.get("result")
 
 
@@ -272,9 +277,9 @@ def peer_info(
     if peer_data is None:
         # If specific peer info not available, try to find it in the peer list
         try:
-            peers = asyncio.run(
-                rpc_call("p2p.listPeers", [], rpc_url=url)
-            ) or asyncio.run(rpc_call("p2p.getPeers", [], rpc_url=url))
+            peers = asyncio.run(rpc_call("p2p.listPeers", [], rpc_url=url))
+            if not peers:
+                peers = asyncio.run(rpc_call("p2p.getPeers", [], rpc_url=url))
             
             if peers:
                 for peer in peers:
