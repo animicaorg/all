@@ -33,15 +33,18 @@ def _validate_address(addr: t.Any) -> str:
     if not isinstance(addr, str) or not addr:
         raise rpc_errors.InvalidParams("address must be a non-empty string")
     a = addr.strip()
-    # Accept anim… bech32m or raw hex (0x…)
+    # Accept anim… bech32m, system:…, or raw hex (0x…)
     if a.lower().startswith("anim"):
         # Fast shape check; full decode only if needed in fallback path
+        return a
+    if a.lower().startswith("system:"):
+        # Allow system addresses for genesis/treasury accounts
         return a
     if _is_hex_addr(a):
         if not a.lower().startswith("0x"):
             a = "0x" + a
         return a
-    raise rpc_errors.InvalidParams("address must be anim… (bech32m) or 0x… (hex)")
+    raise rpc_errors.InvalidParams("address must be anim… (bech32m), system:… or 0x… (hex)")
 
 
 def _to_account_key_bytes(addr: str) -> bytes | None:
