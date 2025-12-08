@@ -15,7 +15,7 @@ from rpc.tests import new_test_client
 
 def test_readyz_returns_json_serializable_response():
     """Test that /readyz endpoint returns valid JSON with no bytes."""
-    client, cfg, tmpdir = new_test_client()
+    client, _, _ = new_test_client()
     
     # Make a GET request to /readyz
     response = client.get("/readyz")
@@ -53,7 +53,7 @@ def test_readyz_returns_json_serializable_response():
 
 def test_readyz_with_genesis_block():
     """Test /readyz when DB has a genesis block with a hash."""
-    client, cfg, tmpdir = new_test_client()
+    client, _, _ = new_test_client()
     
     # The test client bootstraps genesis automatically via deps.ensure_started(cfg)
     # which calls _maybe_bootstrap_genesis
