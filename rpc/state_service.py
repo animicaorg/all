@@ -44,10 +44,27 @@ def _is_hex(s: str) -> bool:
 
 def parse_address(addr: str) -> bytes:
     """
-    Accepts 'anim1…' (bech32m) or hex '0x…'/'…' and returns raw 32-byte payload.
-    For bech32m, we expect payload = (alg_id || sha3_256(pubkey)) as per pq/address.py.
+    Accepts 'anim1…' (bech32m), hex '0x…', or 'system:…' and returns canonical bytes.
+    
+    Uses core.utils.address.address_to_bytes for consistency with genesis loader.
+    For bech32m: payload = (alg_id || sha3_256(pubkey)) as per pq/address.py.
+    For system: UTF-8 encoded string.
+    For hex: raw bytes.
     """
+    try:
+        # Use canonical address utility for consistency
+        addr_utils = _import("core.utils.address")
+        return addr_utils.address_to_bytes(addr)  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    
+    # Fallback for backward compatibility if core.utils.address is not available
     s = addr.strip()
+    
+    # System addresses (UTF-8)
+    if s.startswith("system:"):
+        return s.lower().encode("utf-8")
+    
     # Hex path
     if _is_hex(s):
         h = s[2:] if s.startswith("0x") else s
@@ -68,7 +85,9 @@ def parse_address(addr: str) -> bytes:
         # Try higher-level codec if available
         try:
             addr_mod = _import("pq.py.address")
-            return addr_mod.decode(addr)  # type: ignore[attr-defined]
+            rec = addr_mod.decode_address(addr)  # type: ignore[attr-defined]
+            # Return the full payload: alg_id (2 bytes) || digest (32 bytes)
+            return rec.alg_id.to_bytes(2, "big") + rec.digest  # type: ignore[attr-defined]
         except Exception as e:
             raise ValueError(f"Invalid address format: {addr}") from e
 
