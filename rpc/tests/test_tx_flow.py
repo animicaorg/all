@@ -35,13 +35,36 @@ def _choose_working_sig_alg():
     for name in candidates:
         alg = normalize_alg_name(name)
         try:
-            kp = pq_keygen.generate(alg)  # (pub, sec) bytes
+            kp = pq_keygen.keygen(alg)  # returns SigKeypair with (public_key, secret_key, address)
             msg = b"animica self-check"
-            sig = pq_sign.sign(alg, kp.secret_key, msg)
-            assert pq_verify.verify(alg, kp.public_key, msg, sig) is True
-            # Also check address derivation for this alg
-            _ = address_from_pubkey(alg, kp.public_key)
-            return alg, kp, pq_sign.sign, pq_verify.verify, address_from_pubkey
+            # Use sign_detached which returns a Signature envelope
+            sig_env = pq_sign.sign_detached(msg, alg, kp.secret_key, domain="test/self-check")
+            # verify_detached expects the Signature envelope
+            assert pq_verify.verify_detached(msg, sig_env, kp.public_key) is True
+            # Check that address is available (keygen already computes it)
+            assert kp.address and isinstance(kp.address, str)
+            
+            # Return wrapper functions that match the old API for backwards compatibility
+            def sign_wrapper(alg_id, sk, msg_bytes):
+                sig_env = pq_sign.sign_detached(msg_bytes, alg_id, sk, domain="tx/sign")
+                return sig_env.sig  # Extract raw signature bytes
+            
+            def verify_wrapper(alg_id, pk, msg_bytes, sig_bytes):
+                # Reconstruct Signature envelope for verification
+                from pq.py.sign import Signature
+                from pq.py.registry import ALG_NAME
+                sig_env = Signature(
+                    alg_id=alg_id if isinstance(alg_id, int) else pq_keygen.keygen(alg_id).alg_id,
+                    alg_name=ALG_NAME.get(alg_id, alg_id) if isinstance(alg_id, int) else alg_id,
+                    domain="tx/sign",
+                    prehash="sha3-512",
+                    chain_id=None,
+                    context=b"",
+                    sig=sig_bytes
+                )
+                return pq_verify.verify_detached(msg_bytes, sig_env, pk)
+            
+            return alg, kp, sign_wrapper, verify_wrapper, address_from_pubkey
         except Exception as e:  # noqa: BLE001 - we genuinely want to try/fallthrough
             last_err = e
             continue
@@ -63,15 +86,18 @@ def _build_signed_transfer_cbor(
     from core.types.tx import Sig, Tx
     from pq.py.utils.hash import sha3_256
 
-    alg, kp, sign_fn, verify_fn, addr_from_pubkey = _choose_working_sig_alg()
+    alg, kp, sign_fn, verify_fn, addr_from_pubkey_fn = _choose_working_sig_alg()
 
-    sender = addr_from_pubkey(alg, kp.public_key)
+    sender = kp.address  # Use the address from the SigKeypair directly
     # A deterministic "to" address derived from the string "recipient"
     to_pub_digest = sha3_256(b"recipient")  # 32 bytes
-    # alg id will be inferred inside address encoder; to keep it simple we just reuse sender's alg for a valid bech32m
-    to_addr = addr_from_pubkey(
-        alg, to_pub_digest + b"\x00" * max(0, len(kp.public_key) - len(to_pub_digest))
-    )
+    # Generate a valid public key for recipient (pad to match key length)
+    to_pubkey = to_pub_digest + b"\x00" * max(0, len(kp.public_key) - len(to_pub_digest))
+    # Use the imported address_from_pubkey with correct argument order
+    from pq.py.address import address_from_pubkey
+    from pq.py.registry import ALG_ID
+    alg_id = ALG_ID[alg] if isinstance(alg, str) else alg
+    to_addr = address_from_pubkey(to_pubkey, alg_id)
 
     # Construct the transaction (aligns with spec/tx_format.cddl and core.types.tx.Tx)
     tx = Tx.transfer(

@@ -17,8 +17,13 @@ Usage in tests:
 
 from __future__ import annotations
 
-import json
+# Enable DEV-ONLY fake PQ backend for tests BEFORE any imports that use PQ modules.
+# This allows tests to run without requiring a production PQ library installation.
+# WARNING: This is NOT secure and must never be used in production environments.
 import os
+os.environ.setdefault("ANIMICA_UNSAFE_PQ_FAKE", "1")
+
+import json
 import tempfile
 import typing as t
 from contextlib import contextmanager
@@ -27,6 +32,14 @@ from fastapi.testclient import TestClient
 
 from rpc import config as rpc_config
 from rpc import server as rpc_server
+
+# Check if trio is available for anyio parametrization
+_HAS_TRIO = False
+try:
+    import trio  # noqa: F401
+    _HAS_TRIO = True
+except ModuleNotFoundError:
+    pass
 
 
 def _temp_db_uri(tmpdir: str | None = None) -> tuple[str, str]:
@@ -151,3 +164,27 @@ __all__ = [
     "fetch_openrpc",
     "make_test_config",
 ]
+
+
+# pytest hook for skipping trio-parametrized tests when trio is not available
+def pytest_collection_modifyitems(config, items):
+    """
+    Skip tests parametrized with backend_name='trio' when trio is not installed.
+    
+    The pytest-anyio plugin can parametrize async tests with multiple backends
+    (asyncio and trio). When trio is not available, we skip those test variants
+    instead of failing the entire test suite.
+    """
+    if _HAS_TRIO:
+        return  # trio is available, no need to skip
+    
+    import pytest
+    skip_trio = pytest.mark.skip(
+        reason="trio backend not available (package 'trio' not installed)"
+    )
+    
+    for item in items:
+        # Check if this is a parametrized test with a 'trio' variant
+        # The parametrization shows up in the nodeid like: test_name[trio]
+        if "[trio]" in item.nodeid:
+            item.add_marker(skip_trio)
