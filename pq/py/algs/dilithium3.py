@@ -114,6 +114,12 @@ def keypair(seed: Optional[bytes] = None) -> Tuple[bytes, bytes]:
     )
 
 
+def generate_keypair(seed: Optional[bytes] = None) -> Tuple[bytes, bytes]:
+    """Compatibility wrapper returning (pk, sk)."""
+    sk, pk = keypair(seed)
+    return (pk, sk)
+
+
 def sign(sk: bytes, msg: bytes) -> bytes:
     """
     Sign a message.

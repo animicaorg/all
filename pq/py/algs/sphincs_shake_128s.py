@@ -119,20 +119,28 @@ def keypair(seed: Optional[bytes] = None) -> Tuple[bytes, bytes]:
     )
 
 
+def generate_keypair(seed: Optional[bytes] = None) -> Tuple[bytes, bytes]:
+    """Compatibility wrapper returning (pk, sk)."""
+    sk, pk = keypair(seed)
+    return (pk, sk)
+
+
 def sign(sk: bytes, msg: bytes) -> bytes:
     """
     Sign a message.
 
     Security:
       • Real signatures when python-oqs is present.
-      • DEV-ONLY fallback returns sha3_512(tag || sk || msg) and is NOT secure.
+      • DEV-ONLY fallback returns sha3_512(tag || pk || msg) and is NOT secure.
     """
     if _OQS_OK and _OQS_MECH:
         with oqs.Signature(_OQS_MECH, secret_key=sk) as signer:  # type: ignore[arg-type]
             return signer.sign(msg)
 
     if _DEV_FAKE_OK:
-        return _sha3_512(b"animica-dev-fake-sphincs-sig|" + sk + b"|" + msg)
+        # Derive pk from sk to make verify work (matches keypair derivation)
+        pk = _sha3_256(b"animica-dev-fake-sphincs-pk|" + sk)
+        return _sha3_512(b"animica-dev-fake-sphincs-sig|" + pk + b"|" + msg)
 
     raise NotImplementedError(
         "SPHINCS+-SHAKE-128s unavailable. Install python-oqs/liboqs or enable ANIMICA_UNSAFE_PQ_FAKE=1 for local dev."
@@ -151,11 +159,10 @@ def verify(pk: bytes, msg: bytes, sig: bytes) -> bool:
                 return False
 
     if _DEV_FAKE_OK:
-        # Accept either signature tied to pk directly, or reconstruct a pseudo-sk from pk
-        expect_a = _sha3_512(b"animica-dev-fake-sphincs-sig|" + pk + b"|" + msg)
-        pseudo_sk = _sha3_256(b"animica-dev-fake-sphincs-sk|" + pk)
-        expect_b = _sha3_512(b"animica-dev-fake-sphincs-sig|" + pseudo_sk + b"|" + msg)
-        return sig == expect_a or sig == expect_b
+        # In fake mode we don't have the real sk; accept signature tied to pk directly
+        # (signer used sk, but we reconstruct expected sig from pk for verification)
+        expect = _sha3_512(b"animica-dev-fake-sphincs-sig|" + pk + b"|" + msg)
+        return sig == expect
 
     return False
 

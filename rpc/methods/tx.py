@@ -173,10 +173,11 @@ def _validate_chain_id(obj: dict) -> None:
     if cid is None:
         # Some txs rely on external chainId; enforce explicit for now.
         raise rpc_errors.ChainIdMismatch(
-            f"Transaction missing chainId (required {want})"
+            got=0,  # Use 0 to indicate missing chain ID
+            expected=want
         )
     if int(cid) != int(want):
-        raise rpc_errors.ChainIdMismatch(f"chainId mismatch: tx={cid} node={want}")
+        raise rpc_errors.ChainIdMismatch(got=int(cid), expected=int(want))
 
 
 def _verify_pq_signature(tx_like: t.Any, obj: dict) -> None:
