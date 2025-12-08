@@ -11,7 +11,7 @@ import os
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-DEFAULT_NETWORK = "devnet"
+DEFAULT_NETWORK = "mainnet"
 DEFAULT_RPC_URL = "http://127.0.0.1:8545/rpc"
 
 
