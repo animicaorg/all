@@ -160,24 +160,24 @@ class StateDB:
         else:
             batch.put(k, v)
 
-    def ensure_account(self, addr: bytes) -> Account:
+    def ensure_account(self, addr: bytes, batch: Optional[Batch] = None) -> Account:
         acc = self.get_account(addr)
         if acc is None:
             acc = Account(nonce=0, balance=0, code_hash=None)
-            self.put_account(addr, acc)
+            self.put_account(addr, acc, batch=batch)
         return acc
 
     def set_balance(
         self, addr: bytes, amount: int, batch: Optional[Batch] = None
     ) -> None:
-        acc = self.ensure_account(addr)
+        acc = self.ensure_account(addr, batch=batch)
         acc.balance = int(amount)
         self.put_account(addr, acc, batch=batch)
 
     def add_balance(
         self, addr: bytes, delta: int, batch: Optional[Batch] = None
     ) -> int:
-        acc = self.ensure_account(addr)
+        acc = self.ensure_account(addr, batch=batch)
         new_balance = acc.balance + int(delta)
         if new_balance < 0:
             raise ValueError("negative balance")
@@ -196,12 +196,12 @@ class StateDB:
     def set_nonce(self, addr: bytes, nonce: int, batch: Optional[Batch] = None) -> None:
         if nonce < 0:
             raise ValueError("negative nonce")
-        acc = self.ensure_account(addr)
+        acc = self.ensure_account(addr, batch=batch)
         acc.nonce = int(nonce)
         self.put_account(addr, acc, batch=batch)
 
     def inc_nonce(self, addr: bytes, batch: Optional[Batch] = None) -> int:
-        acc = self.ensure_account(addr)
+        acc = self.ensure_account(addr, batch=batch)
         acc.nonce += 1
         self.put_account(addr, acc, batch=batch)
         return acc.nonce
@@ -220,7 +220,7 @@ class StateDB:
             self.kv.put(kcode, code)
         else:
             batch.put(kcode, code)
-        acc = self.ensure_account(addr)
+        acc = self.ensure_account(addr, batch=batch)
         acc.code_hash = chash
         self.put_account(addr, acc, batch=batch)
         return chash
@@ -230,7 +230,7 @@ class StateDB:
             self.kv.delete(_k_code(addr))
         else:
             batch.delete(_k_code(addr))
-        acc = self.ensure_account(addr)
+        acc = self.ensure_account(addr, batch=batch)
         acc.code_hash = None
         self.put_account(addr, acc, batch=batch)
 

@@ -332,6 +332,10 @@ def _maybe_bootstrap_genesis(
     Light-touch genesis bootstrap: if the DB appears empty (no head), try to
     initialize it using core.genesis.loader. If anything is missing, this is a
     no-op (RPC can still serve read-only methods with null head).
+    
+    CRITICAL: This function must NOT open a second connection to the DB that's
+    already open in bundle.kv. Instead, it should use the existing KV instance
+    to avoid conflicts and ensure state consistency.
     """
     try:
         head_mod = _import("core.chain.head")
@@ -345,6 +349,7 @@ def _maybe_bootstrap_genesis(
                 need_boot = True
 
         if not need_boot:
+            # DB already has a head; do not reinitialize
             return
 
         if genesis_path is None:
@@ -353,23 +358,24 @@ def _maybe_bootstrap_genesis(
 
         loader = _import("core.genesis.loader")
         head_mod = _import("core.chain.head")
+        
+        # CRITICAL: Use load_genesis with existing KV, NOT load_and_init_genesis
+        # which would open a second connection to the same DB file
         if hasattr(loader, "load_genesis"):
             params, header = loader.load_genesis(
-                genesis_path, kv=bundle.kv, block_db=bundle.block_db
+                genesis_path, kv=bundle.kv, block_db=bundle.block_db, log=True
             )
             if hasattr(head_mod, "finalize_genesis"):
                 head_mod.finalize_genesis(bundle.block_db, params, header)  # type: ignore[arg-type]
             return
-        # Prefer an explicit bootstrap signature if present
+        # Fallback to older bootstrap signatures that accept KV instance
         if hasattr(loader, "bootstrap"):
             loader.bootstrap(bundle.kv, genesis_path, chain_id)  # type: ignore
         elif hasattr(loader, "init_from_genesis"):
             loader.init_from_genesis(bundle.kv, genesis_path, chain_id)  # type: ignore
         elif hasattr(loader, "load_and_init"):
             loader.load_and_init(bundle.kv, genesis_path)  # type: ignore
-        elif hasattr(loader, "load_and_init_genesis"):
-            target_uri = db_uri or "sqlite:///:memory:"
-            loader.load_and_init_genesis(str(genesis_path), target_uri, override_chain_id=chain_id)  # type: ignore
+        # DO NOT use load_and_init_genesis here as it opens a second DB connection
         # else: silently ignore (RPC will report null head)
     except Exception:
         # We deliberately swallow errors here to avoid bringing down the RPC
@@ -461,14 +467,25 @@ def _needs_rebuild(cfg: t.Any | None) -> bool:
 
 
 def build_context(cfg: t.Any | None = None) -> RpcContext:
+    import logging
+    log = logging.getLogger("animica.rpc.deps")
+    
     cfg_view = _coerce_config(cfg) if cfg is not None else _load_rpc_config()
+    log.info(f"Building RPC context with DB: {cfg_view.db_uri}")
+    
     params = _params_from_spec(cfg_view.chain_id)
     kv = _open_kv(cfg_view.db_uri)
     bundle = _build_db_facades(kv)
+    
+    # Check if genesis bootstrap is needed (only if no head exists)
     _maybe_bootstrap_genesis(
         bundle, cfg_view.chain_id, cfg_view.genesis_path, cfg_view.db_uri
     )
+    
     head = _HeadAccessor(bundle)
+    head_info = head.get()
+    log.info(f"RPC context ready: head_height={head_info.get('height')}, head_hash={head_info.get('hash')}")
+    
     return RpcContext(
         cfg=cfg_view,
         params=params,
