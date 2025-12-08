@@ -247,3 +247,31 @@ async def test_pending_pool_eviction_policy_smoke(client_and_cfg):
         rpc_call(client, "tx.sendRawTransaction", params={"rawTx": raw_hex})
         got = rpc_call(client, "tx.getTransactionByHash", params={"txHash": tx_hash})
         assert got["result"] is not None
+
+
+async def test_state_get_nonce_with_bech32m_address_regression(client_and_cfg):
+    """
+    Regression test: state.getNonce should accept bech32m addresses (anim1...)
+    and return 0 (not an InternalError) for accounts that don't exist.
+    
+    This test covers the bug where pending tx flow used bech32m addresses,
+    but the RPC nonce service raised an InternalError instead of returning 0.
+    """
+    client, cfg = client_and_cfg
+    # Generate a fresh keypair to get a valid bech32m address
+    cbor_tx, tx_hash, sender = _build_signed_transfer_cbor(cfg.chain_id, from_nonce=0)
+    
+    # Verify the address is bech32m format
+    assert sender.startswith("anim1"), f"expected bech32m address, got {sender}"
+    
+    # Query nonce for this address (which doesn't exist in test state yet)
+    result = rpc_call(client, "state.getNonce", params={"address": sender})
+    
+    # Must return a valid result (not an error) with nonce 0
+    assert "result" in result, f"expected result, got {result}"
+    assert result["result"] == 0, f"expected nonce 0 for new account, got {result['result']}"
+    
+    # Also verify state.getBalance works with bech32m addresses
+    balance_result = rpc_call(client, "state.getBalance", params={"address": sender})
+    assert "result" in balance_result
+    assert balance_result["result"] == "0x0", f"expected balance 0x0, got {balance_result['result']}"
