@@ -1,6 +1,6 @@
 ---
 import site from "../config/site";
-import links from "../config/links";
+import { links } from "../config/links";
 import { docsUrl, explorerUrl, studioUrl } from "../env";
 
 const studioHref = links?.studio?.home ?? studioUrl ?? "/studio";
@@ -9,61 +9,369 @@ const docsHref = links?.docs?.home ?? docsUrl ?? "/docs";
 const githubHref = site?.links?.github ?? "https://github.com/animica";
 
 const year = new Date().getFullYear();
+
+const footerSections = [
+  {
+    title: "Build",
+    links: [
+      { href: studioHref, label: "Studio" },
+      { href: explorerHref, label: "Explorer" },
+      { href: docsHref, label: "Documentation" },
+      { href: "/network", label: "Network" },
+    ],
+  },
+  {
+    title: "Resources",
+    links: [
+      { href: "/developers", label: "Developers" },
+      { href: "/blog", label: "Blog" },
+      { href: "/roadmap", label: "Roadmap" },
+      { href: "/status", label: "Status" },
+    ],
+  },
+  {
+    title: "Community",
+    links: [
+      { href: githubHref, label: "GitHub", external: true },
+      ...(site?.links?.discord ? [{ href: site.links.discord, label: "Discord", external: true }] : []),
+      ...(site?.links?.twitter ? [{ href: site.links.twitter, label: "X/Twitter", external: true }] : []),
+    ],
+  },
+  {
+    title: "Legal",
+    links: [
+      { href: "/privacy", label: "Privacy" },
+      { href: "/terms", label: "Terms" },
+      { href: "/security", label: "Security" },
+      { href: "/accessibility", label: "Accessibility" },
+    ],
+  },
+];
 ---
 
-<footer class="border-t border-[color-mix(in_srgb,var(--color-border),transparent_40%)] bg-[color-mix(in_srgb,var(--color-bg),#050915_8%)] backdrop-blur">
-  <div class="container mx-auto px-4 py-12 grid gap-8 sm:grid-cols-[1fr_auto_auto_auto] items-start">
-    <!-- Brand & blurb -->
-    <div class="space-y-3 max-w-md">
-      <a href="/" class="inline-flex items-center gap-2 font-semibold text-[1.05rem]" aria-label={site.brand}>
-        <img src="/icons/logo.svg" width="20" height="20" alt="" />
-        <span>{site.brand}</span>
-      </a>
-      {site?.tagline && <p class="opacity-80 text-sm">{site.tagline}</p>}
-      {site?.contact?.email && (
-        <p class="opacity-75 text-sm">Contact: <a class="underline underline-offset-2" href={`mailto:${site.contact.email}`}>{site.contact.email}</a></p>
-      )}
+<footer class="site-footer">
+  <div class="footer-container">
+    <!-- Main Footer Content -->
+    <div class="footer-main">
+      <!-- Brand Section -->
+      <div class="footer-brand">
+        <a href="/" class="footer-logo-link" aria-label={site.brand}>
+          <img src="/icons/logo.svg" width="28" height="28" alt="" class="footer-logo" />
+          <span class="footer-brand-name">{site.brand}</span>
+        </a>
+        
+        {site?.tagline && (
+          <p class="footer-tagline">{site.tagline}</p>
+        )}
+        
+        {site?.contact?.email && (
+          <p class="footer-contact">
+            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" class="contact-icon">
+              <path fill="currentColor" d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/>
+            </svg>
+            <a href={`mailto:${site.contact.email}`} class="footer-email">
+              {site.contact.email}
+            </a>
+          </p>
+        )}
+
+        <!-- Social Links -->
+        <div class="footer-social">
+          {githubHref && (
+            <a href={githubHref} class="social-link" aria-label="GitHub" rel="noopener noreferrer" target="_blank">
+              <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+                <path fill="currentColor" d="M12 2A10 10 0 0 0 2 12c0 4.42 2.87 8.17 6.84 9.5.5.08.66-.23.66-.5v-1.69c-2.77.6-3.36-1.34-3.36-1.34-.46-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.87 1.52 2.34 1.07 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.92 0-1.11.38-2 1.03-2.71-.1-.25-.45-1.29.1-2.64 0 0 .84-.27 2.75 1.02.79-.22 1.65-.33 2.5-.33.85 0 1.71.11 2.5.33 1.91-1.29 2.75-1.02 2.75-1.02.55 1.35.2 2.39.1 2.64.65.71 1.03 1.6 1.03 2.71 0 3.82-2.34 4.66-4.57 4.91.36.31.69.92.69 1.85V21c0 .27.16.59.67.5C19.14 20.16 22 16.42 22 12A10 10 0 0 0 12 2z"/>
+              </svg>
+            </a>
+          )}
+          {site?.links?.discord && (
+            <a href={site.links.discord} class="social-link" aria-label="Discord" rel="noopener noreferrer" target="_blank">
+              <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+                <path fill="currentColor" d="M19.27 5.33C17.94 4.71 16.5 4.26 15 4a.09.09 0 0 0-.07.03c-.18.33-.39.76-.53 1.09a16.09 16.09 0 0 0-4.8 0c-.14-.34-.35-.76-.54-1.09c-.01-.02-.04-.03-.07-.03c-1.5.26-2.93.71-4.27 1.33c-.01 0-.02.01-.03.02c-2.72 4.07-3.47 8.03-3.1 11.95c0 .02.01.04.03.05c1.8 1.32 3.53 2.12 5.24 2.65c.03.01.06 0 .07-.02c.4-.55.76-1.13 1.07-1.74c.02-.04 0-.08-.04-.09c-.57-.22-1.11-.48-1.64-.78c-.04-.02-.04-.08-.01-.11c.11-.08.22-.17.33-.25c.02-.02.05-.02.07-.01c3.44 1.57 7.15 1.57 10.55 0c.02-.01.05-.01.07.01c.11.09.22.17.33.26c.04.03.04.09-.01.11c-.52.31-1.07.56-1.64.78c-.04.01-.05.06-.04.09c.32.61.68 1.19 1.07 1.74c.03.01.06.02.09.01c1.72-.53 3.45-1.33 5.25-2.65c.02-.01.03-.03.03-.05c.44-4.53-.73-8.46-3.1-11.95c-.01-.01-.02-.02-.04-.02zM8.52 14.91c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12c0 1.17-.84 2.12-1.89 2.12zm6.97 0c-1.03 0-1.89-.95-1.89-2.12s.84-2.12 1.89-2.12c1.06 0 1.9.96 1.89 2.12c0 1.17-.83 2.12-1.89 2.12z"/>
+              </svg>
+            </a>
+          )}
+          {site?.links?.twitter && (
+            <a href={site.links.twitter} class="social-link" aria-label="X/Twitter" rel="noopener noreferrer" target="_blank">
+              <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+                <path fill="currentColor" d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+              </svg>
+            </a>
+          )}
+        </div>
+      </div>
+
+      <!-- Footer Navigation Sections -->
+      {footerSections.map((section) => (
+        <div class="footer-section">
+          <h3 class="footer-section-title">{section.title}</h3>
+          <ul class="footer-link-list">
+            {section.links.map((link) => (
+              <li>
+                <a 
+                  href={link.href} 
+                  class="footer-link"
+                  {...(link.external ? { rel: "noopener noreferrer", target: "_blank" } : {})}
+                >
+                  {link.label}
+                  {link.external && (
+                    <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" class="external-icon">
+                      <path fill="currentColor" d="M14 3h7v7h-2V6.41L9.41 16 8 14.59 16.59 6H14V3z"/>
+                    </svg>
+                  )}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
     </div>
 
-    <!-- Quick links -->
-    <nav class="text-sm">
-      <div class="font-medium mb-3">Build</div>
-      <ul class="space-y-2">
-        <li><a href={studioHref} class="opacity-85 hover:opacity-100">Studio</a></li>
-        <li><a href={explorerHref} class="opacity-85 hover:opacity-100">Explorer</a></li>
-        <li><a href={docsHref} class="opacity-85 hover:opacity-100">Docs</a></li>
-      </ul>
-    </nav>
-
-    <nav class="text-sm">
-      <div class="font-medium mb-3">Community</div>
-      <ul class="space-y-2">
-        <li><a href={githubHref} rel="noopener noreferrer" class="opacity-85 hover:opacity-100">GitHub</a></li>
-        {site?.links?.discord && <li><a href={site.links.discord} class="opacity-85 hover:opacity-100">Discord</a></li>}
-        {site?.links?.twitter && <li><a href={site.links.twitter} class="opacity-85 hover:opacity-100">X/Twitter</a></li>}
-      </ul>
-    </nav>
-
-    <nav class="text-sm">
-      <div class="font-medium mb-3">Legal</div>
-      <ul class="space-y-2">
-        <li><a href="/privacy" class="opacity-85 hover:opacity-100">Privacy</a></li>
-        <li><a href="/terms" class="opacity-85 hover:opacity-100">Terms</a></li>
-        <li><a href="/security" class="opacity-85 hover:opacity-100">Security</a></li>
-        <li><a href="/deployment" class="opacity-85 hover:opacity-100">Deployment</a></li>
-        <li><a href="/accessibility" class="opacity-85 hover:opacity-100">Accessibility</a></li>
-      </ul>
-    </nav>
-  </div>
-
-  <div class="border-t border-[color-mix(in_srgb,var(--color-border),transparent_40%)]">
-    <div class="container mx-auto px-4 h-12 text-xs flex items-center justify-between text-[color-mix(in_srgb,var(--text-primary),#fff_12%)]">
-      <span class="opacity-75">© {year} {site.brand}. All rights reserved.</span>
-      <div class="flex items-center gap-4 opacity-80">
-        <a href="/status" class="hover:opacity-100">Status</a>
-        <a href="/changelog" class="hover:opacity-100">Changelog</a>
-        <a href="/rss.xml" class="hover:opacity-100">RSS</a>
+    <!-- Footer Bottom -->
+    <div class="footer-bottom">
+      <div class="footer-bottom-content">
+        <p class="footer-copyright">
+          © {year} {site.brand}. All rights reserved.
+        </p>
+        <div class="footer-bottom-links">
+          <a href="/changelog" class="footer-bottom-link">Changelog</a>
+          <span class="footer-divider">·</span>
+          <a href="/deployment" class="footer-bottom-link">Deployment</a>
+          <span class="footer-divider">·</span>
+          <a href="/rss.xml" class="footer-bottom-link">RSS</a>
+        </div>
       </div>
     </div>
   </div>
 </footer>
+
+<style>
+  .site-footer {
+    border-top: 1px solid var(--color-border);
+    background: linear-gradient(
+      to bottom,
+      rgba(10, 14, 23, 0.5),
+      rgba(10, 14, 23, 0.95)
+    );
+    backdrop-filter: var(--backdrop-blur);
+  }
+
+  .footer-container {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 0 1rem;
+  }
+
+  .footer-main {
+    display: grid;
+    grid-template-columns: 1.5fr repeat(4, 1fr);
+    gap: 3rem;
+    padding: 4rem 0;
+  }
+
+  @media (max-width: 1024px) {
+    .footer-main {
+      grid-template-columns: repeat(3, 1fr);
+      gap: 2.5rem;
+    }
+
+    .footer-brand {
+      grid-column: 1 / -1;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .footer-main {
+      grid-template-columns: 1fr;
+      gap: 2rem;
+      padding: 3rem 0;
+    }
+  }
+
+  /* Brand Section */
+  .footer-brand {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .footer-logo-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.625rem;
+    text-decoration: none;
+    color: var(--color-fg);
+    font-weight: var(--weight-semibold);
+    font-size: 1.25rem;
+    width: fit-content;
+    transition: opacity var(--transition-fast);
+  }
+
+  .footer-logo-link:hover {
+    opacity: 0.9;
+  }
+
+  .footer-logo {
+    width: 28px;
+    height: 28px;
+  }
+
+  .footer-brand-name {
+    font-size: 1.25rem;
+  }
+
+  .footer-tagline {
+    color: var(--text-secondary);
+    font-size: 0.9375rem;
+    line-height: 1.6;
+    margin: 0;
+    max-width: 320px;
+  }
+
+  .footer-contact {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+  }
+
+  .contact-icon {
+    flex-shrink: 0;
+    opacity: 0.7;
+  }
+
+  .footer-email {
+    color: var(--text-secondary);
+    text-decoration: none;
+    transition: color var(--transition-fast);
+  }
+
+  .footer-email:hover {
+    color: var(--color-accent);
+    text-decoration: underline;
+  }
+
+  /* Social Links */
+  .footer-social {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+  }
+
+  .social-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    color: var(--text-secondary);
+    text-decoration: none;
+    transition: all var(--transition-fast);
+  }
+
+  .social-link:hover {
+    background: var(--color-surface-2);
+    border-color: var(--color-accent);
+    color: var(--color-accent);
+    transform: translateY(-2px);
+  }
+
+  /* Footer Sections */
+  .footer-section {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .footer-section-title {
+    font-size: 0.875rem;
+    font-weight: var(--weight-semibold);
+    color: var(--color-fg);
+    margin: 0;
+    letter-spacing: 0.025em;
+  }
+
+  .footer-link-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .footer-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 0.9375rem;
+    transition: color var(--transition-fast);
+  }
+
+  .footer-link:hover {
+    color: var(--color-accent);
+  }
+
+  .external-icon {
+    opacity: 0.5;
+    transition: opacity var(--transition-fast);
+  }
+
+  .footer-link:hover .external-icon {
+    opacity: 1;
+  }
+
+  /* Footer Bottom */
+  .footer-bottom {
+    border-top: 1px solid var(--color-border);
+    padding: 1.5rem 0;
+  }
+
+  .footer-bottom-content {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    font-size: 0.875rem;
+    color: var(--color-muted);
+  }
+
+  @media (max-width: 640px) {
+    .footer-bottom-content {
+      flex-direction: column;
+      text-align: center;
+      gap: 1rem;
+    }
+  }
+
+  .footer-copyright {
+    margin: 0;
+  }
+
+  .footer-bottom-links {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .footer-bottom-link {
+    color: var(--color-muted);
+    text-decoration: none;
+    transition: color var(--transition-fast);
+  }
+
+  .footer-bottom-link:hover {
+    color: var(--color-fg);
+  }
+
+  .footer-divider {
+    opacity: 0.5;
+  }
+</style>

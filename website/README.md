@@ -206,3 +206,33 @@ License & Credits
 	•	Animica © Contributors.
 	•	See LICENSE-THIRD-PARTY.md for upstream licenses.
 
+
+## Design System
+
+The website features a modern, premium design system with:
+
+- **Modern Color Palette**: Vibrant gradients with indigo, purple, and pink accents
+- **Smooth Animations**: Scroll-triggered reveals, hover effects, and micro-interactions
+- **Responsive Design**: Mobile-first approach with breakpoints at 640px, 768px, 1024px
+- **Accessibility**: WCAG 2.1 AA compliant with keyboard navigation and reduced-motion support
+- **Performance**: Optimized animations, lazy-loaded assets, efficient CSS
+
+See [DESIGN_SYSTEM.md](./DESIGN_SYSTEM.md) for complete documentation.
+
+### Key Components
+
+- **Hero**: Modern hero section with animated gradient orbs and staggered entrance animations
+- **Header**: Sticky header with backdrop blur, mobile menu, and network status indicator
+- **Footer**: Organized footer with social links and comprehensive navigation
+- **FeatureGrid**: Scroll-animated feature cards with icon glows and hover effects
+- **CTAButtons**: Consistent button system with primary, secondary, outline, and ghost variants
+
+### Design Tokens
+
+All design tokens are centralized in `src/styles/tokens.css`:
+- Colors (brand, semantic, neutrals)
+- Typography (scale, weights, line heights)
+- Spacing (4px base scale)
+- Shadows (standard + special effects)
+- Animations (durations, easings, keyframes)
+

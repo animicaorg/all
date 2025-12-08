@@ -1,5 +1,6 @@
 @import "./tokens.css";
 @import "./theme.css";
+@import './animations.css';
 
 /* ==========================================================================
    Animica Global Styles
@@ -96,9 +97,10 @@ body {
 
 body.theme.tokens {
   background:
-    radial-gradient(110% 90% at 20% 8%, color-mix(in oklab, var(--brand-400), #02060f 35%) 0%, transparent 55%),
-    radial-gradient(120% 100% at 85% 12%, color-mix(in oklab, #7ef1d2, #02060f 40%) 0%, transparent 58%),
-    linear-gradient(165deg, color-mix(in oklab, var(--color-bg), #0c1325 25%), var(--color-bg));
+    radial-gradient(1200px 800px at 15% 10%, rgba(99, 102, 241, 0.08), transparent 65%),
+    radial-gradient(1000px 900px at 90% 15%, rgba(139, 92, 246, 0.08), transparent 60%),
+    radial-gradient(800px 700px at 50% 100%, rgba(236, 72, 153, 0.05), transparent 70%),
+    linear-gradient(180deg, var(--color-bg), color-mix(in oklab, var(--color-bg), #1e1b4b 8%));
   color: var(--color-fg);
 }
 
@@ -120,19 +122,20 @@ body.theme.tokens {
 
 .page-shell::before {
   background-image:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
-    linear-gradient(0deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
-  background-size: 78px 78px;
-  mask-image: radial-gradient(circle at 50% 30%, rgba(0,0,0,0.5), transparent 62%);
-  opacity: 0.6;
+    linear-gradient(90deg, rgba(99, 102, 241, 0.03) 1px, transparent 1px),
+    linear-gradient(0deg, rgba(99, 102, 241, 0.03) 1px, transparent 1px);
+  background-size: 80px 80px;
+  mask-image: radial-gradient(ellipse at 50% 20%, rgba(0,0,0,0.4), transparent 70%);
+  opacity: 0.5;
 }
 
 .page-shell::after {
   background:
-    radial-gradient(34% 26% at 18% 16%, rgba(106, 166, 255, 0.18), transparent 60%),
-    radial-gradient(32% 22% at 82% 12%, rgba(126, 241, 210, 0.16), transparent 60%),
-    radial-gradient(42% 32% at 70% 74%, rgba(255, 200, 125, 0.08), transparent 70%);
-  filter: blur(9px);
+    radial-gradient(600px 500px at 20% 30%, rgba(99, 102, 241, 0.15), transparent 70%),
+    radial-gradient(500px 400px at 85% 25%, rgba(139, 92, 246, 0.12), transparent 70%),
+    radial-gradient(700px 600px at 50% 90%, rgba(236, 72, 153, 0.08), transparent 75%);
+  filter: blur(80px);
+  animation: float 20s ease-in-out infinite;
 }
 
 main#main {
