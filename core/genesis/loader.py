@@ -208,23 +208,29 @@ def _open_kv(db_uri: str) -> KV:
 
 def _init_state_from_alloc(state: StateDB, alloc: Iterable[Dict[str, Any]]) -> None:
     """
-    Write accounts (nonce, balance) to the state DB in one batch if available.
-    StateDB interface is expected to expose upsert_account(address, nonce, balance).
+    Write accounts (nonce, balance) to the state DB using StateDB public API.
+    Uses batch writes for efficiency when available.
     """
     # Use batch API if the backend provides it for fewer fsyncs.
     if hasattr(state, "batch"):
         with state.batch() as b:
             for a in alloc:
-                addr = _normalize_address(a["address"])
+                addr_str = _normalize_address(a["address"])
+                addr_bytes = addr_str.encode("utf-8")
                 nonce = int(a.get("nonce", 0))
                 bal = int(a.get("balance", 0))
-                b.upsert_account(addr, nonce=nonce, balance=bal)
+                # Set both balance and nonce using StateDB public API with batch
+                state.set_balance(addr_bytes, bal, batch=b)
+                state.set_nonce(addr_bytes, nonce, batch=b)
     else:  # pragma: no cover
         for a in alloc:
-            addr = _normalize_address(a["address"])
+            addr_str = _normalize_address(a["address"])
+            addr_bytes = addr_str.encode("utf-8")
             nonce = int(a.get("nonce", 0))
             bal = int(a.get("balance", 0))
-            state.upsert_account(addr, nonce=nonce, balance=bal)
+            # Set both balance and nonce using StateDB public API without batch
+            state.set_balance(addr_bytes, bal)
+            state.set_nonce(addr_bytes, nonce)
 
 
 # -------------------------
