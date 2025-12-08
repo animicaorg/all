@@ -60,11 +60,22 @@ MAINNET_PREMINE_DISTRIBUTION: List[Tuple[str, int]] = [
 ]
 
 # Sanity check: distribution must sum to total (excluding any zero entries if desired)
-_distribution_sum = sum(amt for _, amt in MAINNET_PREMINE_DISTRIBUTION)
-assert _distribution_sum == MAINNET_PREMINE_TOTAL, (
-    f"MAINNET_PREMINE_DISTRIBUTION sum ({_distribution_sum}) != "
-    f"MAINNET_PREMINE_TOTAL ({MAINNET_PREMINE_TOTAL})"
-)
+def _validate_premine_distribution() -> None:
+    """
+    Validate that MAINNET_PREMINE_DISTRIBUTION sums to MAINNET_PREMINE_TOTAL.
+    
+    This is called at module load time to catch configuration errors early.
+    In production, consider moving to a startup check or test.
+    """
+    _distribution_sum = sum(amt for _, amt in MAINNET_PREMINE_DISTRIBUTION)
+    if _distribution_sum != MAINNET_PREMINE_TOTAL:
+        raise ValueError(
+            f"MAINNET_PREMINE_DISTRIBUTION sum ({_distribution_sum}) != "
+            f"MAINNET_PREMINE_TOTAL ({MAINNET_PREMINE_TOTAL})"
+        )
+
+# Validate at module load time
+_validate_premine_distribution()
 
 
 # ==================================================================================

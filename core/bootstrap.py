@@ -109,12 +109,12 @@ def validate_bootstrap_password(entered: str) -> bool:
 
     Security:
         - Does not log the entered password
-        - Uses constant-time comparison (basic; Python's == is not constant-time,
-          but for a simple string it's acceptable here; upgrade to secrets.compare_digest
-          if needed for additional security)
+        - Uses secrets.compare_digest() for constant-time comparison
+          to prevent timing attacks
     """
-    # Basic comparison (upgrade to secrets.compare_digest for constant-time if needed)
-    return entered == BOOTSTRAP_PASSWORD
+    import secrets
+    # Use constant-time comparison to prevent timing attacks
+    return secrets.compare_digest(entered, BOOTSTRAP_PASSWORD)
 
 
 # ==================================================================================

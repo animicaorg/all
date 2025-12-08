@@ -346,9 +346,10 @@ def load_genesis(
     params = _load_chain_params(genesis, params_override)
 
     # Validate mainnet premine if applicable (chain_id == 1, height == 0)
+    # Note: Import is done here to avoid circular dependencies between
+    # core.genesis and consensus.rewards at module load time.
     chain_id = int(genesis.get("chainId", 0))
     if chain_id == 1:
-        # Import here to avoid circular dependency
         try:
             from consensus.rewards import validate_mainnet_genesis_coinbase
             
@@ -365,7 +366,7 @@ def load_genesis(
             if not is_valid:
                 raise GenesisError(f"Mainnet genesis validation failed: {reason}")
         except ImportError:
-            # consensus.rewards not available; skip validation (optional)
+            # consensus.rewards not available; skip validation (optional dependency)
             pass
 
     # Compute state root and header.
