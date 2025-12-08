@@ -19,28 +19,23 @@ from core.bootstrap import (
     validate_bootstrap_password,
 )
 
-
 def test_validate_bootstrap_password_correct():
     """Correct password passes validation."""
     assert validate_bootstrap_password(BOOTSTRAP_PASSWORD) is True
-
 
 def test_validate_bootstrap_password_incorrect():
     """Incorrect password fails validation."""
     assert validate_bootstrap_password("wrong_password") is False
 
-
 def test_validate_bootstrap_password_empty():
     """Empty password fails validation."""
     assert validate_bootstrap_password("") is False
-
 
 def test_genesis_exists_false_for_nonexistent_db():
     """Genesis does not exist for a non-existent database."""
     with tempfile.TemporaryDirectory() as tmpdir:
         db_uri = f"sqlite:///{tmpdir}/nonexistent.db"
         assert genesis_exists(db_uri) is False
-
 
 def test_genesis_exists_false_for_fresh_db():
     """Genesis does not exist for a freshly created database."""
@@ -52,19 +47,17 @@ def test_genesis_exists_false_for_fresh_db():
         kv.close()
         assert genesis_exists(db_uri) is False
 
-
 def test_bootstrap_mainnet_genesis_missing_file():
     """Bootstrap fails if genesis file does not exist."""
     with tempfile.TemporaryDirectory() as tmpdir:
         genesis_path = Path(tmpdir) / "missing.json"
         db_uri = f"sqlite:///{tmpdir}/test.db"
-        
+
         # Should fail with exit code 2 (file not found)
         exit_code = bootstrap_mainnet_genesis(
             genesis_path, db_uri, skip_password=True, log_level="error"
         )
         assert exit_code == 2
-
 
 def test_bootstrap_mainnet_genesis_incorrect_password():
     """Bootstrap fails with incorrect password for mainnet."""
@@ -79,9 +72,9 @@ def test_bootstrap_mainnet_genesis_incorrect_password():
         }
         genesis_path = Path(tmpdir) / "genesis.json"
         genesis_path.write_text(json.dumps(genesis_data))
-        
+
         db_uri = f"sqlite:///{tmpdir}/test.db"
-        
+
         # Mock the password prompt to return incorrect password
         with patch("core.bootstrap.prompt_bootstrap_password", return_value="wrong"):
             exit_code = bootstrap_mainnet_genesis(
@@ -89,7 +82,6 @@ def test_bootstrap_mainnet_genesis_incorrect_password():
             )
             # Should fail with exit code 3 (password mismatch)
             assert exit_code == 3
-
 
 def test_bootstrap_mainnet_genesis_correct_password():
     """Bootstrap succeeds with correct password for mainnet."""
@@ -104,16 +96,16 @@ def test_bootstrap_mainnet_genesis_correct_password():
         }
         genesis_path = Path(tmpdir) / "genesis.json"
         genesis_path.write_text(json.dumps(genesis_data))
-        
+
         db_uri = f"sqlite:///{tmpdir}/test.db"
-        
+
         # Mock the password prompt to return correct password
         with patch("core.bootstrap.prompt_bootstrap_password", return_value=BOOTSTRAP_PASSWORD):
             with patch("core.bootstrap.load_genesis") as mock_load:
                 # Mock load_genesis to return dummy data
                 from core.types.header import Header
                 from core.types.params import ChainParams, BlockLimits, RetargetParams, RetargetBounds
-                
+
                 params = ChainParams(
                     chain_id=1,
                     chain_name="Mainnet",
@@ -151,16 +143,15 @@ def test_bootstrap_mainnet_genesis_correct_password():
                     extra=b"",
                 )
                 mock_load.return_value = (params, header)
-                
+
                 with patch("core.bootstrap.finalize_genesis") as mock_finalize:
                     mock_finalize.return_value = (0, b"\x00" * 32)
-                    
+
                     exit_code = bootstrap_mainnet_genesis(
                         genesis_path, db_uri, skip_password=False, log_level="error"
                     )
                     # Should succeed (exit code 0)
                     assert exit_code == 0
-
 
 def test_bootstrap_devnet_genesis_no_password_required():
     """Bootstrap for devnet (non-mainnet) does not require password."""
@@ -175,14 +166,14 @@ def test_bootstrap_devnet_genesis_no_password_required():
         }
         genesis_path = Path(tmpdir) / "genesis.json"
         genesis_path.write_text(json.dumps(genesis_data))
-        
+
         db_uri = f"sqlite:///{tmpdir}/test.db"
-        
+
         # Should succeed without password (skip_password=False but chain_id != 1)
         with patch("core.bootstrap.load_genesis") as mock_load:
             from core.types.header import Header
             from core.types.params import ChainParams, BlockLimits, RetargetParams, RetargetBounds
-            
+
             params = ChainParams(
                 chain_id=1337,
                 chain_name="Devnet",
@@ -220,10 +211,10 @@ def test_bootstrap_devnet_genesis_no_password_required():
                 extra=b"",
             )
             mock_load.return_value = (params, header)
-            
+
             with patch("core.bootstrap.finalize_genesis") as mock_finalize:
                 mock_finalize.return_value = (0, b"\x00" * 32)
-                
+
                 # No password prompt should occur (devnet)
                 exit_code = bootstrap_mainnet_genesis(
                     genesis_path, db_uri, skip_password=False, log_level="error"
