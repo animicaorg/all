@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Animica monorepo bootstrapper
 # Installs Node workspace dependencies and the local Animica Python packages.
-# Also ensures test dependencies (trio, Kyber) are available so pytest passes.
+# Also ensures trio is available so pytest passes for trio-based tests.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BLUE='\033[34m'; GREEN='\033[32m'; YELLOW='\033[33m'; RED='\033[31m'; RESET='\033[0m'
@@ -55,16 +55,9 @@ setup_python() {
   log "Installing SDK Python package in editable mode"
   python -m pip install -e "$ROOT_DIR/sdk/python"
 
-  # --- Test-only dependencies to fix failing tests ---
-
+  # Ensure trio is installed for trio-based RPC tests
   log "Ensuring trio is installed for trio-based RPC tests"
   python -m pip install trio
-
-  log "Ensuring Kyber768 dependency is installed for PQC handshake tests"
-  # NOTE: Replace 'pykyber' with the exact package named in the error message if different.
-  # If your project defines a PQC extra like python[pqc], prefer that:
-  #   python -m pip install -e "$ROOT_DIR/python[pqc]"
-  python -m pip install pykyber || warn "pykyber install failed; adjust package name to match the Kyber error hint"
 }
 
 log "Bootstrapping dependencies in $ROOT_DIR"
