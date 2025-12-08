@@ -76,9 +76,15 @@ def register(name: str, func: HandlerFunc, *, desc: str | None = None, aliases: 
     log.debug("Registered RPC method %s (aliases=%s)", name, m.aliases)
 
 
-def method(name: str, *, desc: str | None = None, aliases: Iterable[str] = ()) -> Callable[[HandlerFunc], HandlerFunc]:
+def method(name: str, *, desc: str | None = None, aliases: Iterable[str] = (), replace: bool = False) -> Callable[[HandlerFunc], HandlerFunc]:
     """
     Decorator to register a function as a JSON-RPC method.
+
+    Args:
+        name: The method name (e.g., "tx.sendRawTransaction")
+        desc: Optional description
+        aliases: Optional iterable of alias names
+        replace: If True, allow replacing an existing method (default: False)
 
     Example:
         @method("tx.sendRawTransaction", desc="Submit signed tx")
@@ -87,6 +93,11 @@ def method(name: str, *, desc: str | None = None, aliases: Iterable[str] = ()) -
     """
 
     def decorator(fn: HandlerFunc) -> HandlerFunc:
+        # Allow replacement if requested (useful for tests)
+        if replace and name in _METHODS:
+            _METHODS.pop(name, None)
+            for alias in aliases:
+                _METHODS.pop(alias, None)
         register(name, fn, desc=desc, aliases=aliases)
         return fn
 
