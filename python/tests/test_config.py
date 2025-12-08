@@ -105,10 +105,11 @@ def test_load_network_config_from_env() -> None:
         assert config.chain_id == 2
         assert config.rpc_port == 8546
     finally:
+        # Restore original environment
         if old_network:
             os.environ["ANIMICA_NETWORK"] = old_network
         else:
-            del os.environ["ANIMICA_NETWORK"]
+            os.environ.pop("ANIMICA_NETWORK", None)
 
 
 def test_load_network_config_explicit_network() -> None:
@@ -138,6 +139,7 @@ def test_load_network_config_env_override() -> None:
         assert config.chain_id == 42
         assert config.rpc_host == "custom-host"
     finally:
+        # Restore original environment
         if old_network:
             os.environ["ANIMICA_NETWORK"] = old_network
         else:

@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 
 import httpx
 import typer
-from animica.config import load_network_config
+from animica.config import get_network_defaults, load_network_config
 
 from .state import get_cli_state
 
@@ -92,8 +92,6 @@ def _get_compose_file(network: str) -> Path:
     Raises:
         typer.Exit: If compose file not found
     """
-    from animica.config import get_network_defaults
-    
     defaults = get_network_defaults(network)
     compose_file = defaults["compose_file"]
     
@@ -270,7 +268,6 @@ def up(
     # Get network-specific compose file
     compose_file = _get_compose_file(network)
     
-    from animica.config import get_network_defaults
     defaults = get_network_defaults(network)
     
     typer.secho(f"Starting node for network: {network}", fg=typer.colors.CYAN, bold=True)
