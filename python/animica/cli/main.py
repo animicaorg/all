@@ -3,7 +3,7 @@ animica - Unified CLI for Animica blockchain operations.
 
 A comprehensive command-line interface for:
   - Node lifecycle management (run, status, logs)
-  - Studio Services management (deploy/verify API, up, down, status, logs)
+  - Studio Services management (deploy/verify API, up, down, status, logs) - OPTIONAL
   - Wallet & key management (create, import, list, export)
   - Transaction building, signing, and broadcasting
   - Chain queries (heads, blocks, transactions, accounts, events)
@@ -24,7 +24,7 @@ Global options:
 Examples:
   animica --help
   animica node status
-  animica studio up
+  animica studio up           # Optional: start studio services separately
   animica studio status
   animica wallet new
   animica key list
@@ -120,8 +120,8 @@ def main_callback(
     Quick Start:
       1. Set network: animica network set devnet
       2. Start node: animica node up
-      3. Start Studio Services: animica studio up
-      4. Check status: animica studio status
+      3. (Optional) Start Studio Services: animica studio up
+      4. Check status: animica node status
     """
     _ctx.network = network
     _ctx.rpc_url = rpc_url

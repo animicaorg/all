@@ -60,17 +60,10 @@ def _ensure_network_set() -> str:
 
 def _get_compose_file() -> Path:
     """Get the path to the docker-compose file for devnet with studio services."""
-    # Try to find repo root by looking for ops/docker directory
-    # Start from current file and traverse up
-    current = Path(__file__).resolve()
-    for parent in current.parents:
-        compose_file = parent / "ops" / "docker" / "docker-compose.devnet.yml"
-        if compose_file.exists():
-            return compose_file
-    
-    # Fallback: try the expected location based on typical structure
+    # Use the same compose file as node.py for consistency
+    # This ensures we're working with the same service definitions
     repo_root = Path(__file__).resolve().parents[3]
-    compose_file = repo_root / "ops" / "docker" / "docker-compose.devnet.yml"
+    compose_file = repo_root / "tests" / "devnet" / "docker-compose.yml"
     
     if not compose_file.exists():
         typer.echo(
@@ -242,9 +235,11 @@ def up(
       - Background workers for verification queue
       - SQLite database and file storage
       - Metrics and health endpoints
+      - Explorer web interface (optional)
     
-    Studio Services depends on an Animica node being available. Ensure the node
-    is running before starting Studio Services, or use 'animica node up' first.
+    Studio Services depends on an Animica node being available. If the node is
+    not already running, this command will start it automatically along with
+    Studio Services. Alternatively, start the node first with 'animica node up'.
     
     Before running this command, ensure you have set a network using:
       animica network set <network>
@@ -280,11 +275,16 @@ def up(
     
     typer.secho(f"\nStarting Studio Services for network: {network}", fg=typer.colors.CYAN, bold=True)
     typer.echo(f"Using compose file: {compose_file}")
+    typer.echo("Note: This will also start the node if it's not already running.")
     
-    # Build docker-compose command targeting only the 'services' service
+    # Build docker-compose command using both 'dev' and 'studio' profiles
+    # 'dev' profile: node + miner (required dependencies)
+    # 'studio' profile: studio-services + explorer
     cmd = [
         "docker", "compose",
         "-f", str(compose_file),
+        "--profile", "dev",
+        "--profile", "studio",
     ]
     
     if build:
@@ -294,9 +294,6 @@ def up(
     
     if detach:
         cmd.append("-d")
-    
-    # Target only the studio services container
-    cmd.append("services")
     
     typer.echo(f"\nRunning: {' '.join(cmd)}")
     typer.echo("This may take a few minutes on first run...\n")
@@ -374,6 +371,7 @@ def down(
     
     typer.secho(f"Stopping Studio Services for network: {network}", fg=typer.colors.CYAN, bold=True)
     typer.echo(f"Using compose file: {compose_file}")
+    typer.echo("Note: This will stop only Studio Services. Use 'animica node down' to stop the node.")
     
     if volumes:
         typer.secho(
@@ -382,18 +380,22 @@ def down(
             bold=True
         )
     
-    # Build docker-compose command targeting only the 'services' service
-    cmd = [
-        "docker", "compose",
-        "-f", str(compose_file),
-        "down"
-    ]
-    
+    # Build docker-compose command to stop only 'studio' profile services
+    # We specify the services explicitly to avoid stopping the node
     if volumes:
-        cmd.append("-v")
-    
-    # Only stop the services container
-    cmd.append("services")
+        # Use 'rm' command with force and volumes flags to remove containers and volumes
+        cmd = [
+            "docker", "compose",
+            "-f", str(compose_file),
+            "rm", "-f", "-v", "services", "explorer"
+        ]
+    else:
+        # Use 'stop' command to just stop the containers
+        cmd = [
+            "docker", "compose",
+            "-f", str(compose_file),
+            "stop", "services", "explorer"
+        ]
     
     typer.echo(f"\nRunning: {' '.join(cmd)}\n")
     
@@ -557,7 +559,7 @@ def logs(
     
     compose_file = _get_compose_file()
     
-    # Build docker-compose command
+    # Build docker-compose command to view logs for studio services only
     cmd = [
         "docker", "compose",
         "-f", str(compose_file),
@@ -568,8 +570,8 @@ def logs(
     if follow:
         cmd.append("-f")
     
-    # Target only the services container
-    cmd.append("services")
+    # Target only studio services
+    cmd.extend(["services", "explorer"])
     
     try:
         # Run interactively to preserve output streaming

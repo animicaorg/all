@@ -313,3 +313,68 @@ def test_up_compose_file_not_found(monkeypatch: Any) -> None:
         # Since we're in the real repo, it might actually find the file
         # So we just check it doesn't crash
         assert result.exit_code in (0, 1)
+
+
+def test_up_does_not_start_studio_services(monkeypatch: Any) -> None:
+    """Test that 'node up' does not start Studio Services by default."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_file = Path(tmpdir) / "state.json"
+        state = CLIState(state_file)
+        state.set("active_network", "devnet")
+        monkeypatch.setattr("animica.cli.node.get_cli_state", lambda: CLIState(state_file))
+        
+        # Mock the compose file check
+        mock_compose_file = Path(tmpdir) / "docker-compose.yml"
+        mock_compose_file.write_text("version: '3'\nservices:\n  node1:\n    image: test\n")
+        monkeypatch.setattr("animica.cli.node._get_compose_file", lambda: mock_compose_file)
+        
+        # Mock subprocess.run
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with patch("animica.cli.node.subprocess.run", return_value=mock_result) as mock_run:
+            result = runner.invoke(node.app, ["up"])
+            
+            assert result.exit_code == 0
+            
+            # Verify the command uses 'dev' profile (not 'studio')
+            call_args = mock_run.call_args
+            cmd = call_args[0][0]
+            assert "--profile" in cmd
+            profile_idx = cmd.index("--profile")
+            assert cmd[profile_idx + 1] == "dev"
+            
+            # Verify 'studio' is NOT in the command
+            assert "studio" not in cmd
+
+
+def test_up_succeeds_without_studio_services_present(monkeypatch: Any) -> None:
+    """Test 'node up' succeeds even if Studio Services is not in compose file."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_file = Path(tmpdir) / "state.json"
+        state = CLIState(state_file)
+        state.set("active_network", "devnet")
+        monkeypatch.setattr("animica.cli.node.get_cli_state", lambda: CLIState(state_file))
+        
+        # Mock the compose file without studio services
+        mock_compose_file = Path(tmpdir) / "docker-compose.yml"
+        mock_compose_file.write_text("""
+version: '3'
+services:
+  node1:
+    profiles: [dev]
+    image: test-node
+  miner:
+    profiles: [dev]
+    image: test-miner
+""")
+        monkeypatch.setattr("animica.cli.node._get_compose_file", lambda: mock_compose_file)
+        
+        # Mock subprocess.run
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with patch("animica.cli.node.subprocess.run", return_value=mock_result):
+            result = runner.invoke(node.app, ["up"])
+            
+            # Should succeed even without studio services
+            assert result.exit_code == 0
+            assert "Node started successfully" in result.output
