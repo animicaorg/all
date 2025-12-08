@@ -59,6 +59,14 @@ try:
 except Exception:  # pragma: no cover
     _address_from_pubkey = None  # type: ignore
 
+# PQ algorithm registry (for alg_id lookups)
+try:
+    from pq.py.registry import ALG_ID as _ALG_ID  # type: ignore
+    from pq.py.registry import ALG_NAME as _ALG_NAME  # type: ignore
+except Exception:  # pragma: no cover
+    _ALG_ID = None  # type: ignore
+    _ALG_NAME = None  # type: ignore
+
 
 # ——— Local fallback pending store (development only) ———
 # Map tx_hash_hex → raw_tx_bytes
@@ -97,7 +105,15 @@ def _extract_sender_address(obj: dict) -> str | None:
     Extract the bech32m sender address from a signed transaction object.
     
     Uses the signature envelope to reconstruct the address from pubkey + alg_id.
-    Returns None if signatures are missing or address encoding is unavailable.
+    
+    Args:
+        obj: Transaction object, expected to have structure:
+             {"tx": {...unsigned tx...}, "sigs": [{"alg": int, "pubkey": bytes, "sig": bytes}]}
+             Field names may vary: alg/alg_id/algId, pubkey/pub/pk
+    
+    Returns:
+        Bech32m address string (e.g., "anim1...") or None if signatures are missing
+        or address encoding is unavailable.
     """
     if _address_from_pubkey is None:
         return None
@@ -111,7 +127,7 @@ def _extract_sender_address(obj: dict) -> str | None:
     if not isinstance(sig, dict):
         return None
     
-    # Extract alg_id and pubkey from signature
+    # Extract alg_id and pubkey from signature (support multiple field name variations)
     alg_id = sig.get("alg") or sig.get("alg_id") or sig.get("algId")
     pubkey = sig.get("pubkey") or sig.get("pub") or sig.get("pk")
     
@@ -119,11 +135,10 @@ def _extract_sender_address(obj: dict) -> str | None:
         return None
     
     # Handle alg_id as string (e.g., "dilithium3")
-    if isinstance(alg_id, str):
+    if isinstance(alg_id, str) and _ALG_ID is not None:
         try:
-            from pq.py.registry import ALG_ID
-            if alg_id in ALG_ID:
-                alg_id = ALG_ID[alg_id]
+            if alg_id in _ALG_ID:
+                alg_id = _ALG_ID[alg_id]
             else:
                 # Try parsing as int
                 alg_id = int(alg_id, 0)
@@ -222,12 +237,11 @@ def _extract_sig(obj: dict) -> tuple[int, bytes, bytes]:
         raise rpc_errors.InvalidParams("Missing 'sig.algId'")
     
     # Allow str or int for alg_id
-    if isinstance(alg_id, str):
+    if isinstance(alg_id, str) and _ALG_ID is not None:
         # Try to map alg_name to alg_id if it's a string
         try:
-            from pq.py.registry import ALG_ID
-            if alg_id in ALG_ID:
-                alg_id = ALG_ID[alg_id]
+            if alg_id in _ALG_ID:
+                alg_id = _ALG_ID[alg_id]
             else:
                 # Try parsing as int
                 alg_id = int(alg_id, 0)
@@ -278,18 +292,20 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict) -> None:
     # The pq.py.verify API expects a Signature dataclass with alg_id, alg_name, domain, prehash, sig
     try:
         from pq.py.sign import Signature
-        from pq.py.registry import ALG_NAME, ALG_ID
         
         # Normalize alg_id to int and map to alg_name
-        if isinstance(alg_id, str):
+        if isinstance(alg_id, str) and _ALG_ID is not None:
             # alg_id is actually an alg_name string (e.g., "dilithium3")
             alg_name = alg_id
-            alg_id = ALG_ID.get(alg_name, 0)
+            alg_id = _ALG_ID.get(alg_name, 0)
             if alg_id == 0:
                 raise ValueError(f"Unknown algorithm name: {alg_name}")
-        else:
+        elif _ALG_NAME is not None:
             # alg_id is an int, map to alg_name
-            alg_name = ALG_NAME.get(alg_id, f"alg_0x{alg_id:02x}")
+            alg_name = _ALG_NAME.get(alg_id, f"alg_0x{alg_id:02x}")
+        else:
+            # Fallback if registry is unavailable
+            alg_name = f"alg_0x{alg_id:02x}" if isinstance(alg_id, int) else str(alg_id)
         
         # Construct signature envelope with standard tx signing domain
         # Note: Signature dataclass fields are: alg_id, alg_name, domain, prehash, sig
