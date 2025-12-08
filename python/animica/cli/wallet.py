@@ -140,9 +140,11 @@ def _find_wallet(store: Dict[str, Any], *, identifier: str) -> WalletEntry:
         typer.Exit if not found
     """
     for entry in store.get("wallets", []):
-        if (entry.get("address") == identifier 
-            or entry.get("label") == identifier 
-            or entry.get("public_key_hex") == identifier):
+        if (
+            entry.get("address") == identifier
+            or entry.get("label") == identifier
+            or entry.get("public_key_hex") == identifier
+        ):
             return _entry_from_dict(entry)
     typer.echo(f"Wallet not found: {identifier}", err=True)
     raise typer.Exit(code=1)
@@ -258,8 +260,7 @@ def _configure(
 def _current_wallet_file() -> Optional[Path]:
     # Try to get context from typer's context stack first
     try:
-        import typer as _typer
-        ctx = _typer.get_current_context(silent=True)
+        ctx = typer.get_current_context(silent=True)
         if ctx and hasattr(ctx, "obj") and isinstance(ctx.obj, dict):
             return ctx.obj.get("wallet_file")
     except Exception:
