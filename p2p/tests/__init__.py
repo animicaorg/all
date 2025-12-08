@@ -22,6 +22,11 @@ import socket
 from dataclasses import dataclass
 from typing import AsyncIterator, Awaitable, Callable, Iterable, Optional
 
+# Enable DEV-ONLY fake PQ backend for tests when liboqs is not available.
+# This allows tests to run without requiring a production PQ library installation.
+# WARNING: This is NOT secure and must never be used in production environments.
+os.environ.setdefault("ANIMICA_UNSAFE_PQ_FAKE", "1")
+
 # Try to speed up asyncio if uvloop is present (harmless if not).
 try:  # pragma: no cover
     import uvloop  # type: ignore
