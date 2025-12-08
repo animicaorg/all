@@ -6,7 +6,6 @@ import asyncio
 import json
 import os
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -288,8 +287,8 @@ def up(
             if detach:
                 typer.echo("\nStudio Services is running in the background.")
                 typer.echo(f"API available at: http://127.0.0.1:{config['PORT']}")
-                typer.echo(f"View logs with: animica studio logs")
-                typer.echo(f"Check status with: animica studio status")
+                typer.echo("View logs with: animica studio logs")
+                typer.echo("Check status with: animica studio status")
                 typer.echo(f"OpenAPI docs at: http://127.0.0.1:{config['PORT']}/docs")
         else:
             typer.secho(
@@ -466,7 +465,7 @@ def status(
         else:
             typer.secho("✗ Studio Services is not running", fg=typer.colors.RED, bold=True)
             typer.echo(f"  Could not connect to http://{host}:{port}")
-            typer.echo(f"\nStart Studio Services with: animica studio up")
+            typer.echo("\nStart Studio Services with: animica studio up")
         raise typer.Exit(code=1)
     except httpx.TimeoutException:
         if json_output:
