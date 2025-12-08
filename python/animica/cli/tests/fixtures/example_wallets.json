@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "wallets": [
+    {
+      "label": "premine",
+      "address": "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f",
+      "alg_id": 4098,
+      "alg_name": "sphincs_shake_128s",
+      "public_key_hex": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+      "secret_key_hex": "0011223344556677889900112233445566778899001122334455667788990011",
+      "created_at": "2025-01-01T00:00:00Z"
+    },
+    {
+      "label": "alice",
+      "address": "anim1zqp2u7fz3msky532tz4d3076wm99datq9rdxqjxvznq7zqn7xj0869ctuj4km",
+      "alg_id": 4098,
+      "alg_name": "sphincs_shake_128s",
+      "public_key_hex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "secret_key_hex": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "created_at": "2025-01-02T00:00:00Z"
+    },
+    {
+      "label": "bob",
+      "address": "anim1zqpf3x5k2l8m9n0p1q2r3s4t5u6v7w8x9yazabcdefghijklmnopqrstvwxyz",
+      "alg_id": 4098,
+      "alg_name": "sphincs_shake_128s",
+      "public_key_hex": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "secret_key_hex": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "created_at": "2025-01-03T00:00:00Z"
+    }
+  ],
+  "default_address": "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f"
+}
