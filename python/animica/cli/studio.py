@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 
 import httpx
 import typer
+from animica.config import get_network_defaults
 
 from .state import get_cli_state
 
@@ -71,8 +72,6 @@ def _get_compose_file(network: str) -> Path:
     Raises:
         typer.Exit: If compose file not found
     """
-    from animica.config import get_network_defaults
-    
     defaults = get_network_defaults(network)
     compose_file = defaults["compose_file"]
     
