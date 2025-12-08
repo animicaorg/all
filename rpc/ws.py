@@ -303,7 +303,7 @@ hub = WebSocketHub()
 router = APIRouter()
 
 
-@router.websocket("/")
+@router.websocket("/ws")
 async def ws_route(
     websocket: WebSocket,
     topics: Optional[str] = Query(
@@ -311,9 +311,10 @@ async def ws_route(
     ),
 ):
     """
-    WebSocket endpoint. Mount this router at prefix /ws in rpc/server.py:
+    WebSocket endpoint at /ws.
+    Mount this router directly in rpc/server.py:
 
-        app.include_router(ws.router, prefix="/ws", tags=["ws"])
+        app.include_router(ws.router, tags=["ws"])
     """
     await hub.handle_connection(websocket, topics_qs=topics)
 
@@ -321,3 +322,37 @@ async def ws_route(
 # Convenience re-exports for other modules
 publish_new_head = hub.publish_new_head
 publish_pending_tx = hub.publish_pending_tx
+
+
+def publish_new_head_sync(head: Head) -> int:
+    """
+    Synchronous wrapper for publish_new_head, useful in test contexts.
+    Attempts to schedule the async method in the running event loop if available.
+    """
+    import asyncio
+    
+    try:
+        # Try to get the running event loop in the current thread
+        loop = asyncio.get_running_loop()
+        # We're in an async context, just return a future
+        future = asyncio.ensure_future(hub.publish_new_head(head), loop=loop)
+        # For sync callers, we need to run until complete, but that's not possible
+        # if we're already in an event loop. In that case, we return 0 and schedule it.
+        return 0
+    except RuntimeError:
+        # No running loop in this thread, try to find one or create one
+        pass
+    
+    # Try to get the event loop from the current thread (even if not running)
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # Schedule in the running loop (happens in TestClient thread)
+            future = asyncio.run_coroutine_threadsafe(hub.publish_new_head(head), loop)
+            return future.result(timeout=5.0)
+        else:
+            # Run in the non-running loop
+            return loop.run_until_complete(hub.publish_new_head(head))
+    except RuntimeError:
+        # No event loop at all, create a new one
+        return asyncio.run(hub.publish_new_head(head))

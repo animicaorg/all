@@ -109,6 +109,45 @@ def ws_connect(client: TestClient, path: str = "/ws"):
         yield ws
 
 
+def ws_publish_new_head(head):
+    """
+    Publish a new head to the WebSocket hub from sync test context.
+    TestClient runs the app in a background thread, so we publish directly to the hub.
+    The hub maintains its own subscribers and will push to connected clients.
+    """
+    from rpc import ws
+    
+    # The hub maintains subscribers in memory. When we publish, it will
+    # push to all connected WebSocket clients, including our test client.
+    # We just need to call the publish method. Since TestClient manages its
+    # own event loop in a thread, and the WebSocket connection is handled there,
+    # we can just directly call publish on the hub which will enqueue messages
+    # for connected clients.
+    #
+    # The trick is that we need to call this from the test thread, and it needs
+    # to reach the hub running in the TestClient thread. The hub is a singleton,
+    # so we can access it directly. The enqueue operation is thread-safe via
+    # the asyncio lock.
+    #
+    # However, we can't call an async method from a sync context without a loop.
+    # The solution: use the anyio BlockingPortal that TestClient provides.
+    
+    # For TestClient, we can use the fact that it exposes the portal
+    import asyncio
+    try:
+        # Create a new event loop just for this call
+        # This works because the hub's publish method is independent
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(ws.hub.publish_new_head(head))
+            return result
+        finally:
+            loop.close()
+    except Exception as e:
+        # If that fails, try the sync wrapper
+        return ws.publish_new_head_sync(head)
+
+
 def fetch_openrpc(client: TestClient) -> dict:
     """
     Fetch the OpenRPC document served by the app.
@@ -122,6 +161,7 @@ __all__ = [
     "new_test_client",
     "rpc_call",
     "ws_connect",
+    "ws_publish_new_head",
     "fetch_openrpc",
     "make_test_config",
 ]
