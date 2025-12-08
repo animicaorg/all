@@ -18,4 +18,4 @@
 # community-seed.ap.mainnet.animica.dev
 
 # Add real seeds here prior to launch.
-rpc.animica.org
+seed.animica.org
