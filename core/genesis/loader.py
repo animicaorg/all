@@ -49,6 +49,7 @@ from core.encoding import cbor as cbor
 # --- Core imports (stable surfaces) ---
 from core.utils import hash as uhash
 from core.utils import merkle as umerkle
+from core.utils.address import address_to_bytes
 from core.utils.serialization import to_canonical_json
 
 try:
@@ -210,13 +211,16 @@ def _init_state_from_alloc(state: StateDB, alloc: Iterable[Dict[str, Any]]) -> N
     """
     Write accounts (nonce, balance) to the state DB using StateDB public API.
     Uses batch writes for efficiency when available.
+    
+    Uses address_to_bytes() to ensure canonical key encoding: bech32 addresses
+    are decoded to payload bytes, system addresses are UTF-8 encoded.
     """
     # Use batch API if the backend provides it for fewer fsyncs.
     if hasattr(state, "batch"):
         with state.batch() as b:
             for a in alloc:
                 addr_str = _normalize_address(a["address"])
-                addr_bytes = addr_str.encode("utf-8")
+                addr_bytes = address_to_bytes(addr_str)
                 nonce = int(a.get("nonce", 0))
                 bal = int(a.get("balance", 0))
                 # Set both balance and nonce using StateDB public API with batch
@@ -225,7 +229,7 @@ def _init_state_from_alloc(state: StateDB, alloc: Iterable[Dict[str, Any]]) -> N
     else:  # pragma: no cover
         for a in alloc:
             addr_str = _normalize_address(a["address"])
-            addr_bytes = addr_str.encode("utf-8")
+            addr_bytes = address_to_bytes(addr_str)
             nonce = int(a.get("nonce", 0))
             bal = int(a.get("balance", 0))
             # Set both balance and nonce using StateDB public API without batch
