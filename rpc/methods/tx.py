@@ -553,3 +553,68 @@ def tx_get_transaction_by_hash(txHash: str) -> t.Optional[dict]:
     
     # 3) Not found
     return None
+
+
+@method(
+    "tx.getTransactionReceipt",
+    desc="Get transaction receipt by hash",
+    aliases=("tx_getTransactionReceipt",),
+)
+def tx_get_transaction_receipt(txHash: str) -> t.Optional[dict]:
+    """
+    Retrieve the receipt for a transaction by its hash.
+    
+    Returns None if the transaction is still pending or not found.
+    Returns a receipt object if the transaction has been included in a block.
+    
+    Expected receipt structure (when implemented):
+    {
+        "transactionHash": "0x...",
+        "blockHash": "0x...",
+        "blockNumber": int,
+        "transactionIndex": int,
+        "from": "anim1...",
+        "to": "anim1..." or null,
+        "gasUsed": int,
+        "status": int (1 for success, 0 for failure),
+        "logs": [...],
+        "logsBloom": "0x..."
+    }
+    """
+    if not isinstance(txHash, str):
+        raise rpc_errors.InvalidParams("txHash must be hex string")
+    
+    # Validate hex format
+    tx_hash_hex = txHash.strip().lower()
+    if not tx_hash_hex.startswith("0x"):
+        tx_hash_hex = "0x" + tx_hash_hex
+    
+    # Validate it's a valid hex string after 0x prefix
+    try:
+        _ = bytes.fromhex(tx_hash_hex[2:])
+    except (ValueError, TypeError):
+        raise rpc_errors.InvalidParams("txHash must be valid hex string")
+    
+    # Receipts are only available for persisted transactions (not pending)
+    # Check if it's in the pending pool first
+    raw = _pending_get(tx_hash_hex)
+    if raw is not None:
+        # Transaction is still pending, no receipt yet
+        return None
+    
+    # Try to get the receipt from the persisted DB via deps/state_service
+    try:
+        ctx = deps.get_ctx()
+        if hasattr(ctx, "block_db"):
+            # Stub implementation: Query block_db.get_receipt(tx_hash_hex) to retrieve:
+            # - Receipt object containing execution results (gas used, status, logs)
+            # - Block information (block hash, number, tx index)
+            # - From/To addresses extracted from the original transaction
+            # When implemented, this should return a properly formatted receipt dict
+            # matching the structure documented in the docstring above.
+            return None
+    except Exception:
+        pass
+    
+    # Not found or not yet mined
+    return None
