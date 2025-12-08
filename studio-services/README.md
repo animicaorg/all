@@ -66,7 +66,65 @@ Key modules:
 
 ---
 
-## Quickstart (local dev)
+## Quickstart (Animica CLI - Recommended)
+
+The easiest way to run Studio Services is via the Animica CLI, which handles configuration, service orchestration, and dependencies automatically.
+
+```bash
+# 1) Set your network (one-time setup)
+animica network set devnet
+
+# 2) Ensure node is running (Studio Services requires a node)
+animica node up
+
+# 3) Start Studio Services with automatic configuration
+animica studio up
+
+# Studio Services is now running at http://127.0.0.1:8081
+# OpenAPI docs: http://127.0.0.1:8081/docs
+# Health check: http://127.0.0.1:8081/healthz
+
+# Check service status
+animica studio status
+
+# View logs
+animica studio logs --follow
+
+# Validate configuration before starting
+animica studio config
+
+# Stop Studio Services
+animica studio down
+```
+
+**CLI Commands:**
+
+- `animica studio up` — Start Studio Services (with automatic config validation)
+- `animica studio down` — Stop Studio Services (optionally remove volumes with `--volumes`)
+- `animica studio status` — Check health and readiness endpoints
+- `animica studio logs` — View service logs (use `--follow` to tail)
+- `animica studio config` — Validate configuration without starting
+
+**Configuration:**
+
+Studio Services requires:
+- `RPC_URL` — Node JSON-RPC endpoint (default: http://127.0.0.1:8545)
+- `CHAIN_ID` — Network chain ID (default: 1337)
+
+Optional settings:
+- `STORAGE_DIR` — Storage directory for artifacts (default: ./.data)
+- `ALLOWED_ORIGINS` — CORS allowed origins (comma-separated)
+- `FAUCET_KEY` — Faucet private key (dev/test only)
+- `RATE_LIMITS` — Rate limit configuration (JSON)
+
+Set via environment variables or CLI flags:
+```bash
+animica studio up --rpc-url http://localhost:8545 --chain-id 1337
+```
+
+## Quickstart (local dev - Manual)
+
+For development or if you prefer direct control:
 
 ```bash
 # From repo root
@@ -93,14 +151,17 @@ uvicorn studio_services.main:app --reload
 OpenAPI docs will be at: http://127.0.0.1:8000/docs
 Health endpoints: /healthz, /readyz, /version
 Metrics: /metrics
+```
 
-Quickstart (Docker)
+## Quickstart (Docker)
 
+```bash
 # Build and run
 make docker
 # or:
 docker build -t animica/studio-services .
 docker run --rm -p 8000:8000 --env-file .env -v $(pwd)/.data:/data animica/studio-services
+```
 
 
 ⸻

@@ -42,7 +42,7 @@ from typing import Optional
 import typer
 
 # Import subcommand apps
-from . import chain, da, faucet, key, mining, network, node, peer, rpc, tx, wallet
+from . import chain, da, faucet, key, mining, network, node, peer, rpc, studio, tx, wallet
 
 app = typer.Typer(
     name="animica",
@@ -136,6 +136,7 @@ app.add_typer(da.app, name="da")
 app.add_typer(faucet.app, name="faucet")
 app.add_typer(network.app, name="network")
 app.add_typer(peer.app, name="peer")
+app.add_typer(studio.app, name="studio")
 
 
 # ============================================================================
