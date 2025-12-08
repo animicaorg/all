@@ -42,11 +42,11 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 try:
-    from cryptography.hazmat.primitives.ciphers.aead import (AESGCM,
-                                                             ChaCha20Poly1305)
+    from cryptography.hazmat.primitives.ciphers.aead import (AESGCM as _AESGCM,
+                                                             ChaCha20Poly1305 as _ChaCha20Poly1305)
 except Exception as e:  # pragma: no cover - environment without cryptography
-    AESGCM = None  # type: ignore
-    ChaCha20Poly1305 = None  # type: ignore
+    _AESGCM = None  # type: ignore
+    _ChaCha20Poly1305 = None  # type: ignore
     _cryptography_import_error = e
 else:
     _cryptography_import_error = None
@@ -101,18 +101,18 @@ class AEADContext:
             raise ValueError("nonce_base must be 12 bytes")
 
         if self.name.lower() in ("chacha20-poly1305", "chacha20_poly1305", "chacha20"):
-            if ChaCha20Poly1305 is None:  # pragma: no cover
+            if _ChaCha20Poly1305 is None:  # pragma: no cover
                 raise RuntimeError(
                     f"ChaCha20-Poly1305 not available: {_cryptography_import_error}"
                 )
-            self._impl = ChaCha20Poly1305(self.key)
+            self._impl = _ChaCha20Poly1305(self.key)
             self.name = "chacha20-poly1305"
         elif self.name.lower() in ("aes-256-gcm", "aes_gcm", "aes-gcm", "aes"):
-            if AESGCM is None:  # pragma: no cover
+            if _AESGCM is None:  # pragma: no cover
                 raise RuntimeError(
                     f"AES-GCM not available: {_cryptography_import_error}"
                 )
-            self._impl = AESGCM(self.key)
+            self._impl = _AESGCM(self.key)
             self.name = "aes-256-gcm"
         else:
             raise ValueError(f"unknown AEAD algorithm: {self.name}")
@@ -173,9 +173,9 @@ def available_aeads() -> list[str]:
     Return algorithm names available on this runtime.
     """
     algs: list[str] = []
-    if ChaCha20Poly1305 is not None:
+    if _ChaCha20Poly1305 is not None:
         algs.append("chacha20-poly1305")
-    if AESGCM is not None:
+    if _AESGCM is not None:
         algs.append("aes-256-gcm")
     return algs
 

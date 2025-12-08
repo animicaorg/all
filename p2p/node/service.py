@@ -613,16 +613,20 @@ class P2PService:
             await self._transport.close()
 
     async def _accept_loop(self) -> None:
-        while self._running:
-            try:
-                conn = await self._transport.accept()
-            except asyncio.CancelledError:
-                return
-            except Exception:
-                if self._running:
-                    self._log.warning("accept loop terminating", exc_info=True)
-                return
-            self._track_peer(conn)
+        try:
+            while self._running:
+                try:
+                    conn = await self._transport.accept()
+                except asyncio.CancelledError:
+                    return
+                except Exception:
+                    if self._running:
+                        self._log.warning("accept loop terminating", exc_info=True)
+                    return
+                self._track_peer(conn)
+        except asyncio.CancelledError:
+            # Swallow expected cancellation during shutdown
+            return
 
     async def _dial(self, addr: str) -> None:
         try:
@@ -697,3 +701,10 @@ class P2PService:
             k: {kk: vv for kk, vv in v.items() if kk != "conn"}
             for k, v in self._peers.items()
         }
+    
+    async def dial(self, addr: str) -> None:
+        """
+        Public dial method for tests and CLI.
+        Connects to a peer at the given multiaddr string.
+        """
+        await self._dial(addr)

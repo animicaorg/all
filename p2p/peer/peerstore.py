@@ -70,8 +70,39 @@ class PeerStore:
     Thread-safe for basic concurrent access via an internal lock.
     """
 
-    def __init__(self, db_path: str | Path):
-        self.path = Path(db_path)
+    def __init__(self, db_path: str | Path = None, path: str | Path | None = None):
+        """
+        Initialize PeerStore with a database path.
+        
+        Args:
+            db_path: Path to database file or directory. If directory, uses peers.db inside.
+            path: Alternative keyword argument for db_path (for test compatibility).
+        """
+        # Handle both positional and keyword 'path' argument
+        if db_path is None and path is not None:
+            db_path = path
+        elif db_path is None:
+            db_path = ":memory:"
+            
+        self.path = Path(db_path) if db_path != ":memory:" else Path(db_path)
+        
+        # Special handling for in-memory database
+        if str(db_path) == ":memory:":
+            self._lock = threading.RLock()
+            with self._locked_conn() as conn:
+                for stmt in filter(None, _SCHEMA.split(";")):
+                    s = stmt.strip()
+                    if s:
+                        conn.execute(s)
+            return
+        
+        # If given a directory, use a default db file name inside it
+        if self.path.is_dir():
+            self.path = self.path / "peers.db"
+        elif not self.path.exists() and not self.path.suffix:
+            # Path doesn't exist and has no extension - treat as directory
+            self.path = self.path / "peers.db"
+                
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         with self._locked_conn() as conn:
@@ -105,6 +136,65 @@ class PeerStore:
     # ------------------------------------------------------------------ #
     # Upserts & updates
     # ------------------------------------------------------------------ #
+
+    def add(self, peer_id: str, addrs: Optional[list[str]] = None, score: float = 0) -> None:
+        """
+        Simplified upsert for tests: add/update a peer with minimal required fields.
+        
+        Args:
+            peer_id: Peer identifier
+            addrs: List of multiaddr strings (optional)
+            score: Initial score (default 0)
+        """
+        now = _now()
+        addrs = addrs or []
+        # Use first address or default
+        primary_addr = addrs[0] if addrs else "/ip4/0.0.0.0/tcp/0"
+        
+        with self._locked_conn() as conn:
+            # Insert or update minimal peer record
+            conn.execute(
+                """
+                INSERT INTO peers (peer_id, address, roles, chain_id, alg_policy_root, head_height, caps,
+                                   status, first_seen, last_seen, connected_at, last_disconnect, rtt_ms, score, snapshot)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(peer_id) DO UPDATE SET
+                  address=excluded.address,
+                  last_seen=excluded.last_seen,
+                  score=excluded.score
+                """,
+                (
+                    peer_id,
+                    primary_addr,
+                    0,  # roles: NONE
+                    0,  # chain_id: default
+                    b"",  # alg_policy_root: empty
+                    0,  # head_height: 0
+                    "[]",  # caps: empty list
+                    PeerStatus.DISCONNECTED.value,
+                    now,
+                    now,
+                    None,  # connected_at
+                    None,  # last_disconnect
+                    None,  # rtt_ms
+                    float(score),
+                    "{}",  # snapshot: empty
+                ),
+            )
+            # Upsert all addresses
+            for addr in addrs:
+                conn.execute(
+                    """
+                    INSERT INTO peer_addresses (peer_id, address, last_seen)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(peer_id, address) DO UPDATE SET last_seen=excluded.last_seen
+                    """,
+                    (peer_id, addr, now),
+                )
+    
+    def upsert(self, peer_id: str, addrs: Optional[list[str]] = None, score: float = 0) -> None:
+        """Alias for add() to match test expectations."""
+        self.add(peer_id, addrs, score)
 
     def upsert_peer(self, peer: Peer) -> None:
         """Insert or update a peer row + snapshot; refresh last_seen and address mapping."""
@@ -227,6 +317,21 @@ class PeerStore:
                 "UPDATE peers SET score=?, last_seen=? WHERE peer_id=?",
                 (float(score), _now(), peer_id),
             )
+    
+    def increment_score(self, peer_id: str, delta: float) -> None:
+        """Add delta to the peer's score."""
+        with self._locked_conn() as conn:
+            row = conn.execute(
+                "SELECT score FROM peers WHERE peer_id=?", (peer_id,)
+            ).fetchone()
+            if row is None:
+                return
+            current_score = float(row["score"] or 0.0)
+            new_score = current_score + float(delta)
+            conn.execute(
+                "UPDATE peers SET score=?, last_seen=? WHERE peer_id=?",
+                (new_score, _now(), peer_id),
+            )
 
     def update_head_height(self, peer_id: str, height: int) -> None:
         with self._locked_conn() as conn:
@@ -257,7 +362,17 @@ class PeerStore:
             ).fetchone()
             if row is None:
                 return None
-            return self._row_to_peer(row)
+            peer = self._row_to_peer(row)
+            # Attach addresses from the peer_addresses table
+            addr_rows = conn.execute(
+                "SELECT address FROM peer_addresses WHERE peer_id=? ORDER BY last_seen DESC",
+                (peer_id,),
+            ).fetchall()
+            # Add as a list attribute for compatibility with tests
+            peer.addrs = [r["address"] for r in addr_rows]  # type: ignore
+            # Also attach the score snapshot for test compatibility
+            peer.score = float(row["score"]) if row["score"] is not None else 0.0  # type: ignore
+            return peer
 
     def find_by_address(self, address: str) -> List[str]:
         with self._locked_conn() as conn:
