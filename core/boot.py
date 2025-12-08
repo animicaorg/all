@@ -89,6 +89,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     genesis_path = Path(args.genesis)
     if not genesis_path.exists():
         print(f"[boot] genesis file not found: {genesis_path}", file=sys.stderr)
+        print(
+            "\nFor mainnet genesis creation, run the bootstrap command:\n"
+            "    python -m core.bootstrap --network mainnet --genesis-sample <path> --db <uri>",
+            file=sys.stderr,
+        )
         return 2
 
     try:
