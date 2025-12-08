@@ -188,21 +188,32 @@ def compute_state_root_from_alloc(alloc: Iterable[Dict[str, Any]]) -> bytes:
 # -------------------------
 
 
-def _open_kv(db_uri: str) -> KV:
+def _open_kv(db_uri: str, log: bool = False) -> KV:
     """
     Open a KV backend based on URI.
-      - sqlite:///path/to.db
-      - rocksdb:///path/to_dir  (if compiled)
+      - sqlite:///path/to.db           (relative or absolute path)
+      - sqlite:////absolute/path.db    (4 slashes for absolute paths starting with /)
+      - rocksdb:///path/to_dir         (if compiled)
+    
+    Note: sqlite:////root/... becomes /root/... after removing sqlite:///
     """
     if db_uri.startswith("sqlite:///"):
         path = db_uri[len("sqlite:///") :]
-        os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+        abs_path = os.path.abspath(path)
+        db_dir = os.path.dirname(abs_path)
+        # Create parent directory if it's not empty and not just "."
+        if db_dir and db_dir != ".":
+            os.makedirs(db_dir, exist_ok=True)
+        if log:
+            print(f"[genesis] Opening SQLite DB at: {abs_path}")
         return SQLiteKV(path)
     if db_uri.startswith("rocksdb:///"):
         if RocksDBKV is None:
             raise GenesisError("rocksdb backend requested but not available")
         path = db_uri[len("rocksdb:///") :]
         os.makedirs(path, exist_ok=True)
+        if log:
+            print(f"[genesis] Opening RocksDB at: {path}")
         return RocksDBKV(path)  # type: ignore
     raise GenesisError(f"Unsupported DB URI: {db_uri}")
 
@@ -404,6 +415,10 @@ def load_and_init_genesis(
     """
     Load the genesis file, validate, initialize state, compute state root, build
     and persist the genesis header/block, set canonical head, and return a summary.
+    
+    This function is idempotent: calling it multiple times on the same DB will
+    overwrite the genesis state with the current genesis file contents. This is
+    intentional to support reseeding scenarios.
 
     Returns:
         {
@@ -428,12 +443,24 @@ def load_and_init_genesis(
     computed_state_root = compute_state_root_from_alloc(genesis["alloc"])
 
     # Open KV and wrap DB helpers
-    kv = _open_kv(db_uri)
+    kv = _open_kv(db_uri, log=log)
     state = StateDB(kv)
     blocks = BlockDB(kv)
 
-    # Initialize state from alloc
+    # Initialize state from alloc - always write to ensure idempotent reseeding
+    if log:
+        print(f"[genesis] Writing {len(genesis['alloc'])} alloc entries to state DB")
     _init_state_from_alloc(state, genesis["alloc"])
+    
+    if log:
+        # Verify a sample account was written correctly
+        if genesis["alloc"]:
+            sample = genesis["alloc"][0]
+            addr_str = _normalize_address(sample["address"])
+            addr_bytes = address_to_bytes(addr_str)
+            bal = state.get_balance(addr_bytes)
+            expected = int(sample.get("balance", 0))
+            print(f"[genesis] Sample verification: {addr_str} balance={bal} (expected {expected})")
 
     # Build header & block
     header = _build_genesis_header(genesis, computed_state_root)
