@@ -41,13 +41,13 @@ def address_to_bytes(addr: str, *, allow_system: bool = True) -> bytes:
 
     Examples:
         >>> # Bech32m address → payload bytes (alg_id || sha3_256(pubkey))
-        >>> addr_to_bytes("anim1...")  # 34 bytes
+        >>> address_to_bytes("anim1...")  # 34 bytes
         
         >>> # System address → UTF-8 encoded
-        >>> addr_to_bytes("system:treasury")  # b'system:treasury'
+        >>> address_to_bytes("system:treasury")  # b'system:treasury'
         
         >>> # Hex address → raw bytes
-        >>> addr_to_bytes("0x1234...")  # bytes.fromhex("1234...")
+        >>> address_to_bytes("0x1234...")  # bytes.fromhex("1234...")
     """
     if not isinstance(addr, str) or not addr:
         raise AddressError("address must be a non-empty string")

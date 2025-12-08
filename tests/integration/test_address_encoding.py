@@ -113,7 +113,7 @@ class TestNormalizeAddress:
 
     def test_bech32_normalization(self):
         """Bech32 addresses are lowercased."""
-        addr = "ANIM1ZQXP8GJ..."
+        addr = "ANIM1ZQP8GJPNS43WCY2P8RJ3W3UVN2DWKXX99NKWG020U4QL6GU3YFQZGZGLW560F"
         result = normalize_address(addr)
         assert result == addr.lower()
 
