@@ -41,6 +41,8 @@ Installation & Usage
     animica chain --help
     animica da --help
     animica miner --help  (alias for mining pool)
+    animica network --help
+    animica peer --help
 
 Global Options
 ==============
@@ -173,6 +175,35 @@ Mining Pool
   animica miner run-pool --rpc-url http://localhost:8545 \
     --db-url postgresql://... --stratum-bind 0.0.0.0:3334
 
+Network Management
+------------------
+  # Set the active network
+  animica network set mainnet
+  animica network set testnet
+  animica network set devnet
+
+  # Get the current active network
+  animica network get
+
+  # List all available networks
+  animica network list
+
+Peer Management
+---------------
+  # List all connected peers
+  animica peer list
+  animica peer list --verbose
+
+  # Add a peer
+  animica peer add /ip4/1.2.3.4/tcp/30303/p2p/QmPeerId...
+  animica peer add 1.2.3.4:30303
+
+  # Remove a peer
+  animica peer remove QmPeerId...
+
+  # Get detailed peer information
+  animica peer info QmPeerId...
+
 Implementation Status
 =====================
 
@@ -186,6 +217,9 @@ Implementation Status
   - da.py                submit, get, verify
   - tx.py                build, simulate (sign, send need wallet integration)
   - mining.py            run-pool, show-config, generate-payout-address
+  - network.py           set, get, list (network management)
+  - peer.py              list, add, remove, info (peer management)
+  - state.py             Persistent CLI state storage
   - pyproject.toml       Entry point added as `animica` command
   - Tests                Basic CLI structure tests
 

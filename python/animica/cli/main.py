@@ -9,6 +9,8 @@ A comprehensive command-line interface for:
   - RPC method calls
   - Mining operations (start, stop, status)
   - Data Availability (submit, retrieve, verify)
+  - Network management (set, get, list networks)
+  - Peer management (list, add, remove, info)
 
 Global options:
   --network TEXT          Network profile (local-devnet, devnet, testnet, mainnet)
@@ -27,6 +29,8 @@ Examples:
   animica chain head
   animica rpc call chain_getHead
   animica da submit < blob.bin
+  animica network set mainnet
+  animica peer list
 """
 
 from __future__ import annotations
@@ -38,7 +42,7 @@ from typing import Optional
 import typer
 
 # Import subcommand apps
-from . import chain, da, faucet, key, mining, node, rpc, tx, wallet
+from . import chain, da, faucet, key, mining, network, node, peer, rpc, tx, wallet
 
 app = typer.Typer(
     name="animica",
@@ -130,6 +134,8 @@ app.add_typer(rpc.app, name="rpc")
 app.add_typer(chain.app, name="chain")
 app.add_typer(da.app, name="da")
 app.add_typer(faucet.app, name="faucet")
+app.add_typer(network.app, name="network")
+app.add_typer(peer.app, name="peer")
 
 
 # ============================================================================
