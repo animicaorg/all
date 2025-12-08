@@ -132,6 +132,11 @@ def ensure_loaded() -> None:
     This is idempotent and safe to call multiple times. It loads the builtin
     method modules (tx, state, chain, etc.) via load_builtins() on the first
     call and does nothing on subsequent calls.
+    
+    Note: This function is not thread-safe, but in typical usage it is called
+    at module import time (single-threaded). For concurrent scenarios, the
+    register() function itself will log warnings for duplicate registrations
+    but will not fail.
     """
     global _LOADED
     if not _LOADED:

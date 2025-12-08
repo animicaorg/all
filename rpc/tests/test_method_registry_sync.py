@@ -35,7 +35,7 @@ def test_tx_sendRawTransaction_is_registered():
     result = rpc_call(
         client,
         "tx.sendRawTransaction",
-        params=["0x1234"],  # Invalid tx
+        params=["0x1234"],  # Incomplete/malformed tx data
         expect_error=True,
     )
     
@@ -96,10 +96,13 @@ def test_multiple_methods_are_registered():
 def test_method_aliases_are_registered():
     """
     Test that method aliases (e.g., tx_sendRawTransaction) are also registered.
+    
+    The method tx.sendRawTransaction has an underscore alias tx_sendRawTransaction
+    for compatibility with different naming conventions.
     """
     client, cfg, _ = new_test_client()
     
-    # tx.sendRawTransaction has an alias tx_sendRawTransaction
+    # Test the underscore alias of tx.sendRawTransaction
     result = rpc_call(
         client,
         "tx_sendRawTransaction",  # underscore version (alias)
