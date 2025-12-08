@@ -134,15 +134,32 @@ class MockAIHost:
 @pytest.fixture()
 def mock_ai(monkeypatch) -> MockAIHost:
     """
-    Patch vm_py stdlib syscalls with the MockAIHost methods.
-    We import the concrete module path used by the VM stdlib and replace callables.
+    Patch the test harness syscalls with the MockAIHost methods.
+    The test harness uses _syscalls_mod from conftest which provides synthetic syscalls.
     """
     host = MockAIHost()
-    # Import where the VM exposes its stdlib; patch in-place so contract sees it.
-    import vm_py.stdlib.syscalls as sc  # type: ignore
-
-    monkeypatch.setattr(sc, "ai_enqueue", host.ai_enqueue, raising=True)
-    monkeypatch.setattr(sc, "read_result", host.read_result, raising=True)
+    
+    # Wrap the mock methods to return dicts that match the test harness interface
+    # The harness expects dicts with task_id (bytes) and kind
+    def wrapped_ai_enqueue(model, prompt):
+        tid = host.ai_enqueue(model, prompt)
+        # Convert bytes task_id to the format the contract expects
+        # The contract should store bytes, so we return bytes
+        return tid
+    
+    def wrapped_read_result(task_id):
+        # task_id comes as bytes from the contract
+        result = host.read_result(task_id)
+        return result
+    
+    # Import the test harness syscalls module (installed by conftest)
+    import sys as _sys
+    if "stdlib.syscalls" in _sys.modules:
+        sc = _sys.modules["stdlib.syscalls"]
+        # Patch the test harness functions directly
+        monkeypatch.setattr(sc, "ai_enqueue", wrapped_ai_enqueue, raising=False)
+        monkeypatch.setattr(sc, "read_result", wrapped_read_result, raising=False)
+    
     return host
 
 
