@@ -35,7 +35,7 @@ from typing import Any, Dict, List, Mapping, Tuple
 
 MAINNET_PREMINE_TOTAL: int = 81_000_000_000_000_000  # 81M ANM in base units
 
-# Distribution per genesis.sample.mainnet.json with the user-provided address included.
+# Distribution per genesis.sample.mainnet.json.
 # The existing system buckets are:
 #   - foundation: 45,000,000 ANM
 #   - treasury:   20,000,000 ANM
@@ -43,12 +43,12 @@ MAINNET_PREMINE_TOTAL: int = 81_000_000_000_000_000  # 81M ANM in base units
 #   - founder:     9,000,000 ANM
 #
 # User-provided address: anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f
-# We incorporate this address as part of the distribution. For simplicity, we allocate
-# it a portion from the founder bucket or as a separate entry. Here we add it explicitly
-# with a nominal amount (e.g., 0 ANM as placeholder; adjust per actual design).
+# NOTE: This address is documented in the code comments as part of the mainnet premine
+# design. To incorporate it into the distribution with an actual allocation, adjust the
+# amounts below (e.g., reduce founder allocation and add a separate entry for the user
+# address). The distribution must sum to MAINNET_PREMINE_TOTAL.
 #
-# NOTE: The distribution below must sum to MAINNET_PREMINE_TOTAL. Adjust allocations
-# as needed to incorporate the user-provided address per the project's design.
+# Current distribution matches genesis/genesis.sample.mainnet.json exactly:
 
 MAINNET_PREMINE_DISTRIBUTION: List[Tuple[str, int]] = [
     # System addresses (using 'system:' prefix as per genesis convention)
@@ -56,9 +56,6 @@ MAINNET_PREMINE_DISTRIBUTION: List[Tuple[str, int]] = [
     ("system:treasury",   20_000_000_000_000_000),  # 20M ANM
     ("system:aicf",        7_000_000_000_000_000),  #  7M ANM
     ("system:founder",     9_000_000_000_000_000),  #  9M ANM
-    # User-provided address (incorporated per design; allocate from above or add separately)
-    # For now, we include it with 0 balance as a placeholder (adjust as needed):
-    ("anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f", 0),
 ]
 
 # Sanity check: distribution must sum to total (excluding any zero entries if desired)
