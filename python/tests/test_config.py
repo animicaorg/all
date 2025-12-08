@@ -171,3 +171,125 @@ def test_compose_file_paths_exist() -> None:
     assert mainnet_defaults["compose_file"].name == "docker-compose.mainnet.yml"
     assert testnet_defaults["compose_file"].name == "docker-compose.testnet.yml"
     assert devnet_defaults["compose_file"].name == "docker-compose.yml"
+
+
+def test_load_network_config_empty_chain_id() -> None:
+    """Test that empty ANIMICA_CHAIN_ID is treated as unset."""
+    old_network = os.environ.get("ANIMICA_NETWORK")
+    old_chain_id = os.environ.get("ANIMICA_CHAIN_ID")
+    
+    try:
+        os.environ["ANIMICA_NETWORK"] = "mainnet"
+        os.environ["ANIMICA_CHAIN_ID"] = ""
+        
+        # Should not crash and fall back to mainnet default
+        config = load_network_config()
+        
+        assert config.name == "mainnet"
+        assert config.chain_id == 1  # mainnet default
+    finally:
+        if old_network:
+            os.environ["ANIMICA_NETWORK"] = old_network
+        else:
+            os.environ.pop("ANIMICA_NETWORK", None)
+        if old_chain_id:
+            os.environ["ANIMICA_CHAIN_ID"] = old_chain_id
+        else:
+            os.environ.pop("ANIMICA_CHAIN_ID", None)
+
+
+def test_load_network_config_whitespace_chain_id() -> None:
+    """Test that whitespace-only ANIMICA_CHAIN_ID is treated as unset."""
+    old_network = os.environ.get("ANIMICA_NETWORK")
+    old_chain_id = os.environ.get("ANIMICA_CHAIN_ID")
+    
+    try:
+        os.environ["ANIMICA_NETWORK"] = "testnet"
+        os.environ["ANIMICA_CHAIN_ID"] = "   "
+        
+        # Should not crash and fall back to testnet default
+        config = load_network_config()
+        
+        assert config.name == "testnet"
+        assert config.chain_id == 2  # testnet default
+    finally:
+        if old_network:
+            os.environ["ANIMICA_NETWORK"] = old_network
+        else:
+            os.environ.pop("ANIMICA_NETWORK", None)
+        if old_chain_id:
+            os.environ["ANIMICA_CHAIN_ID"] = old_chain_id
+        else:
+            os.environ.pop("ANIMICA_CHAIN_ID", None)
+
+
+def test_load_network_config_invalid_chain_id() -> None:
+    """Test that invalid ANIMICA_CHAIN_ID falls back to default with warning."""
+    old_network = os.environ.get("ANIMICA_NETWORK")
+    old_chain_id = os.environ.get("ANIMICA_CHAIN_ID")
+    
+    try:
+        os.environ["ANIMICA_NETWORK"] = "devnet"
+        os.environ["ANIMICA_CHAIN_ID"] = "not-a-number"
+        
+        # Should not crash and fall back to devnet default
+        config = load_network_config()
+        
+        assert config.name == "devnet"
+        assert config.chain_id == 1337  # devnet default
+    finally:
+        if old_network:
+            os.environ["ANIMICA_NETWORK"] = old_network
+        else:
+            os.environ.pop("ANIMICA_NETWORK", None)
+        if old_chain_id:
+            os.environ["ANIMICA_CHAIN_ID"] = old_chain_id
+        else:
+            os.environ.pop("ANIMICA_CHAIN_ID", None)
+
+
+def test_load_network_config_valid_chain_id_override() -> None:
+    """Test that valid ANIMICA_CHAIN_ID overrides the default."""
+    old_network = os.environ.get("ANIMICA_NETWORK")
+    old_chain_id = os.environ.get("ANIMICA_CHAIN_ID")
+    
+    try:
+        os.environ["ANIMICA_NETWORK"] = "mainnet"
+        os.environ["ANIMICA_CHAIN_ID"] = "999"
+        
+        config = load_network_config()
+        
+        assert config.name == "mainnet"
+        assert config.chain_id == 999  # overridden value
+    finally:
+        if old_network:
+            os.environ["ANIMICA_NETWORK"] = old_network
+        else:
+            os.environ.pop("ANIMICA_NETWORK", None)
+        if old_chain_id:
+            os.environ["ANIMICA_CHAIN_ID"] = old_chain_id
+        else:
+            os.environ.pop("ANIMICA_CHAIN_ID", None)
+
+
+def test_load_network_config_no_chain_id_env() -> None:
+    """Test that missing ANIMICA_CHAIN_ID uses network default."""
+    old_network = os.environ.get("ANIMICA_NETWORK")
+    old_chain_id = os.environ.get("ANIMICA_CHAIN_ID")
+    
+    try:
+        os.environ["ANIMICA_NETWORK"] = "mainnet"
+        # Ensure ANIMICA_CHAIN_ID is not set
+        os.environ.pop("ANIMICA_CHAIN_ID", None)
+        
+        config = load_network_config()
+        
+        assert config.name == "mainnet"
+        assert config.chain_id == 1  # mainnet default
+    finally:
+        if old_network:
+            os.environ["ANIMICA_NETWORK"] = old_network
+        else:
+            os.environ.pop("ANIMICA_NETWORK", None)
+        if old_chain_id:
+            os.environ["ANIMICA_CHAIN_ID"] = old_chain_id
