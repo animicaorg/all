@@ -219,28 +219,18 @@ def _init_state_from_alloc(state: StateDB, alloc: Iterable[Dict[str, Any]]) -> N
                 addr_bytes = addr_str.encode("utf-8")
                 nonce = int(a.get("nonce", 0))
                 bal = int(a.get("balance", 0))
-                # Set balance and nonce using StateDB public API with batch
-                if bal > 0:
-                    state.set_balance(addr_bytes, bal, batch=b)
-                if nonce > 0:
-                    state.set_nonce(addr_bytes, nonce, batch=b)
-                # If both are 0, still ensure account exists
-                if bal == 0 and nonce == 0:
-                    state.set_balance(addr_bytes, 0, batch=b)
+                # Set both balance and nonce using StateDB public API with batch
+                state.set_balance(addr_bytes, bal, batch=b)
+                state.set_nonce(addr_bytes, nonce, batch=b)
     else:  # pragma: no cover
         for a in alloc:
             addr_str = _normalize_address(a["address"])
             addr_bytes = addr_str.encode("utf-8")
             nonce = int(a.get("nonce", 0))
             bal = int(a.get("balance", 0))
-            # Set balance and nonce using StateDB public API without batch
-            if bal > 0:
-                state.set_balance(addr_bytes, bal)
-            if nonce > 0:
-                state.set_nonce(addr_bytes, nonce)
-            # If both are 0, still ensure account exists
-            if bal == 0 and nonce == 0:
-                state.set_balance(addr_bytes, 0)
+            # Set both balance and nonce using StateDB public API without batch
+            state.set_balance(addr_bytes, bal)
+            state.set_nonce(addr_bytes, nonce)
 
 
 # -------------------------
