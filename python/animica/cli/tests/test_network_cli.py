@@ -59,7 +59,7 @@ def test_get_network_when_not_set(monkeypatch: Any) -> None:
         result = runner.invoke(network.app, ["get"])
         assert result.exit_code == 0
         assert "No network has been explicitly set" in result.output
-        assert "devnet" in result.output
+        assert "mainnet" in result.output
 
 
 def test_list_networks() -> None:

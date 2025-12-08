@@ -48,7 +48,7 @@ Global Options
 ==============
 
 --network TEXT              Network profile (local-devnet, devnet, testnet, mainnet)
-                            Default: devnet
+                            Default: mainnet
                             Env: ANIMICA_NETWORK
 
 --rpc-url TEXT             Override RPC endpoint URL
@@ -72,7 +72,7 @@ Settings are resolved in this priority order (highest to lowest):
 1. Command-line flags (--rpc-url, --chain-id, etc.)
 2. Environment variables (ANIMICA_RPC_URL, ANIMICA_CHAIN_ID, etc.)
 3. Config file (~/.config/animica/config.toml)
-4. Built-in defaults (devnet on http://127.0.0.1:8545/rpc)
+4. Built-in defaults (mainnet on http://127.0.0.1:8545/rpc)
 
 Example Usage Patterns
 ======================
