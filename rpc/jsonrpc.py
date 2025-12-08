@@ -31,7 +31,7 @@ from fastapi import APIRouter, Request, Response
 try:
     # Prefer our shared error types if available
     from .errors import (InternalError, InvalidParams, InvalidRequest,
-                         JsonRpcError, MethodNotFound, RpcError, to_error)
+                         MethodNotFound, RpcError, to_error)
 except Exception:  # pragma: no cover - fallback if errors module not ready
 
     class JsonRpcError(Exception):  # type: ignore
