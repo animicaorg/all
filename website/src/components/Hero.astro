@@ -27,123 +27,373 @@ const docsHref = links?.docs?.home ?? docsUrl ?? "/docs";
 ---
 
 <section
-  class="relative overflow-hidden border-b border-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)]"
+  class="hero-section relative overflow-hidden border-b"
   aria-labelledby="hero-title"
 >
-  <!-- soft background glow -->
-  <div class="pointer-events-none absolute inset-0 -z-10">
-    <div class="absolute -top-32 -right-24 h-80 w-80 rounded-full blur-3xl opacity-20"
-         style="background: radial-gradient(60% 60% at 50% 50%, var(--text-primary) 0%, transparent 70%);"></div>
-    <div class="absolute -bottom-40 -left-24 h-96 w-96 rounded-full blur-3xl opacity-15"
-         style="background: radial-gradient(60% 60% at 50% 50%, var(--accent, #6cf)) 0%, transparent 70%);"></div>
+  <!-- Enhanced animated background with gradient orbs -->
+  <div class="hero-bg-gradient" aria-hidden="true">
+    <div class="gradient-orb gradient-orb-1"></div>
+    <div class="gradient-orb gradient-orb-2"></div>
+    <div class="gradient-orb gradient-orb-3"></div>
   </div>
 
-  <div class="container mx-auto px-4 py-16 sm:py-20 lg:py-24 grid gap-10 lg:grid-cols-2 lg:items-center">
-    <div class="max-w-xl">
-      {kicker && (
-        <div class="mb-4 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs leading-none
-                    border-[color-mix(in_srgb,var(--text-primary)_/_18%,transparent)]
-                    bg-[color-mix(in_srgb,var(--bg-elevated)_/_80%,transparent)] shadow-[0_10px_30px_rgba(0,0,0,0.25)]">
-          <span class="inline-block size-2 rounded-full bg-[var(--brand-grad-to)]"></span>
-          <span class="tracking-wide uppercase text-[0.7rem] text-[color-mix(in_srgb,var(--text-primary),#fff_5%)]">{kicker}</span>
-        </div>
-      )}
+  <!-- Grid pattern overlay -->
+  <div class="hero-grid-pattern" aria-hidden="true"></div>
 
-      <h1
-        id="hero-title"
-        class="text-4xl sm:text-5xl font-semibold leading-tight bg-clip-text text-transparent
-               bg-gradient-to-r from-[var(--brand-grad-from)] via-[color-mix(in_srgb,var(--brand-grad-to),#fff_12%)] to-[var(--text-primary)]"
-      >
-        {title}
-      </h1>
+  <div class="container mx-auto px-4 sm:px-6 lg:px-8 py-20 sm:py-24 lg:py-32">
+    <div class="grid gap-12 lg:grid-cols-2 lg:gap-16 items-center">
+      <!-- Content Column -->
+      <div class="max-w-2xl animate-fade-in-up">
+        {kicker && (
+          <div class="mb-6 inline-flex items-center gap-2.5 rounded-full border px-4 py-2 text-sm
+                      backdrop-blur-sm animate-fade-in-down delay-100
+                      border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg">
+            <span class="relative flex h-2.5 w-2.5">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--brand-grad-to)] opacity-75"></span>
+              <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-[var(--brand-grad-to)]"></span>
+            </span>
+            <span class="font-medium tracking-wide uppercase text-xs gradient-text">{kicker}</span>
+          </div>
+        )}
 
-      {subtitle && (
-        <p class="mt-4 text-[1.05rem] leading-relaxed text-[color-mix(in_srgb,var(--text-primary),#fff_10%)]">
-          {subtitle}
-        </p>
-      )}
-
-      <div class="mt-8 flex flex-col sm:flex-row gap-3 sm:gap-4">
-        <a
-          href={studioHref}
-          class="inline-flex items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium
-                 bg-gradient-to-r from-[var(--brand-grad-from)] to-[var(--brand-grad-to)]
-                 text-[var(--color-accent-contrast)] shadow-[0_10px_35px_rgba(32,67,255,0.25)]
-                 hover:shadow-[0_12px_40px_rgba(32,150,255,0.28)] active:translate-y-[0.5px]"
+        <h1
+          id="hero-title"
+          class="text-5xl sm:text-6xl lg:text-7xl font-bold leading-[1.1] tracking-tight mb-6
+                 animate-fade-in-up delay-200"
         >
-          Launch Studio
-          <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M14 3h7v7h-2V6.41L9.41 16 8 14.59 16.59 6H14V3zM5 5h5V3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-5h-2v5H5V5z"/></svg>
-        </a>
+          <span class="gradient-text gradient-text-animated">
+            {title}
+          </span>
+        </h1>
 
-        {showSecondary && (
-          <a
-            href={explorerHref}
-            class="inline-flex items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium
-                   border border-[color-mix(in_srgb,var(--text-primary)_/_18%,transparent)]
-                   bg-[color-mix(in_srgb,var(--bg-regular)_/_70%,transparent)]
-                   hover:border-[color-mix(in_srgb,var(--text-primary)_/_28%,transparent)]
-                   hover:bg-[color-mix(in_srgb,var(--bg-elevated)_/_90%,transparent)] transition-colors"
-          >
-            Open Explorer
-            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 2a10 10 0 1 0 .001 20.001A10 10 0 0 0 12 2m6.92 6h-5.01l-2 3.5l2.75 4.77l4.26-7.27zM11 7l-2 3.5H5.08A8 8 0 0 1 11 7m-5.84 10A7.96 7.96 0 0 1 4 12c0-.34.03-.67.08-1h4.91l2 3.5L8.24 17H5.16zM12 20a8 8 0 0 1-1-.07l2.76-4.73L18.84 17A8 8 0 0 1 12 20"/></svg>
-          </a>
+        {subtitle && (
+          <p class="text-lg sm:text-xl leading-relaxed text-[var(--text-secondary)] mb-8
+                    animate-fade-in-up delay-300">
+            {subtitle}
+          </p>
         )}
 
-        {showDocs && (
+        <div class="flex flex-col sm:flex-row gap-4 mb-10 animate-fade-in-up delay-400">
           <a
-            href={docsHref}
-            class="inline-flex items-center justify-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium
-                   text-[color-mix(in_srgb,var(--text-primary),#fff_10%)]
-                   hover:text-[var(--text-primary)] transition-colors"
+            href={studioHref}
+            class="button button--primary button--lg hover-lift group"
           >
-            Read Docs
+            <span>Launch Studio</span>
+            <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" class="transition-transform group-hover:translate-x-0.5">
+              <path fill="currentColor" d="M14 3h7v7h-2V6.41L9.41 16 8 14.59 16.59 6H14V3zM5 5h5V3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-5h-2v5H5V5z"/>
+            </svg>
           </a>
-        )}
-      </div>
 
-      <!-- quick blurb / snippet -->
-      <div class="mt-8 rounded-xl border text-xs overflow-hidden bg-[color-mix(in_srgb,var(--bg-elevated)_/_85%,transparent)]
-                  border-[color-mix(in_srgb,var(--text-primary)_/_14%,transparent)] shadow-[0_20px_55px_rgba(0,0,0,0.35)]">
-        <div class="px-3 py-2 border-b border-[color-mix(in_srgb,var(--text-primary)_/_10%,transparent)] flex items-center gap-2">
-          <span class="size-2 rounded-full bg-[var(--brand-grad-from)]"></span>
-          <span class="size-2 rounded-full bg-[var(--brand-grad-to)]"></span>
-          <span class="size-2 rounded-full bg-emerald-500"></span>
-          <span class="ml-2 opacity-80">Quickstart</span>
+          {showSecondary && (
+            <a
+              href={explorerHref}
+              class="button button--outline button--lg hover-lift group"
+            >
+              <span>Open Explorer</span>
+              <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" class="transition-transform group-hover:rotate-12">
+                <path fill="currentColor" d="M12 2a10 10 0 1 0 .001 20.001A10 10 0 0 0 12 2m6.92 6h-5.01l-2 3.5l2.75 4.77l4.26-7.27zM11 7l-2 3.5H5.08A8 8 0 0 1 11 7m-5.84 10A7.96 7.96 0 0 1 4 12c0-.34.03-.67.08-1h4.91l2 3.5L8.24 17H5.16zM12 20a8 8 0 0 1-1-.07l2.76-4.73L18.84 17A8 8 0 0 1 12 20"/>
+              </svg>
+            </a>
+          )}
+
+          {showDocs && (
+            <a
+              href={docsHref}
+              class="button button--ghost button--lg hover-lift"
+            >
+              <span>Read Docs</span>
+            </a>
+          )}
         </div>
-        <pre class="m-0 p-3 overflow-x-auto text-[0.92rem] leading-relaxed"><code>pip install omni-sdk  # Python
-npx @animica/sdk@latest init
-# Then: deploy the Counter example from Studio</code></pre>
-      </div>
-    </div>
 
-    <div class="relative">
-      {heroImage ? (
-        <figure class="rounded-xl overflow-hidden border
-                       border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)] shadow-sm">
-          <img src={heroImage.src} alt={heroImage.alt ?? site.brand} class="w-full h-auto object-cover" loading="eager" decoding="async" />
-        </figure>
-      ) : (
-        <div class="relative rounded-xl border p-6 sm:p-8
-                    border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)] bg-[var(--bg-elevated)]">
-          <div class="text-sm opacity-85">Why Animica</div>
-          <ul class="mt-3 space-y-2 text-sm opacity-90">
-            <li>• Post-quantum keys & addresses (Dilithium / SPHINCS+)</li>
-            <li>• Deterministic Python smart contracts (VM)</li>
-            <li>• Useful-work mining (AI/Quantum/Storage/VDF)</li>
-            <li>• Light clients with DA sampling</li>
-          </ul>
-          <div class="mt-6 grid grid-cols-2 gap-3 text-center text-sm">
-            <div class="rounded-md border py-3 border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-              <div class="text-2xl font-semibold">~1–2s</div>
-              <div class="opacity-70">Block time (devnet)</div>
+        <!-- Code snippet with modern styling -->
+        <div class="code-card animate-fade-in-up delay-500">
+          <div class="code-card-header">
+            <div class="code-card-dots">
+              <span class="dot dot-red"></span>
+              <span class="dot dot-yellow"></span>
+              <span class="dot dot-green"></span>
             </div>
-            <div class="rounded-md border py-3 border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]">
-              <div class="text-2xl font-semibold">PQ</div>
-              <div class="opacity-70">Signatures</div>
+            <span class="code-card-title">Quickstart</span>
+          </div>
+          <pre class="code-card-content"><code>pip install omni-sdk  # Python
+npx @animica/sdk@latest init
+# Deploy from Studio in seconds</code></pre>
+        </div>
+      </div>
+
+      <!-- Visual Column -->
+      <div class="relative animate-fade-in-up delay-300">
+        {heroImage ? (
+          <figure class="hero-image-wrapper hover-lift">
+            <img 
+              src={heroImage.src} 
+              alt={heroImage.alt ?? site.brand} 
+              class="hero-image" 
+              loading="eager" 
+              decoding="async" 
+            />
+          </figure>
+        ) : (
+          <div class="hero-features-card card card--elevated">
+            <h3 class="text-xl font-semibold mb-6 gradient-text">Why Animica</h3>
+            
+            <ul class="space-y-4 mb-8">
+              <li class="feature-item">
+                <svg class="feature-icon" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
+                  <path fill="currentColor" d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z"/>
+                </svg>
+                <span>Post-quantum keys & addresses (Dilithium / SPHINCS+)</span>
+              </li>
+              <li class="feature-item">
+                <svg class="feature-icon" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
+                  <path fill="currentColor" d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/>
+                </svg>
+                <span>Deterministic Python smart contracts (VM)</span>
+              </li>
+              <li class="feature-item">
+                <svg class="feature-icon" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
+                  <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                </svg>
+                <span>Useful-work mining (AI/Quantum/Storage/VDF)</span>
+              </li>
+              <li class="feature-item">
+                <svg class="feature-icon" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
+                  <path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/>
+                </svg>
+                <span>Light clients with DA sampling</span>
+              </li>
+            </ul>
+
+            <div class="stats-grid">
+              <div class="stat-card">
+                <div class="stat-value">~1–2s</div>
+                <div class="stat-label">Block time</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value">PQ</div>
+                <div class="stat-label">Signatures</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value">Python</div>
+                <div class="stat-label">Contracts</div>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   </div>
 </section>
+
+<style>
+  .hero-section {
+    position: relative;
+    border-color: var(--color-border);
+    min-height: max-content;
+  }
+
+  /* Animated gradient orbs in background */
+  .hero-bg-gradient {
+    position: absolute;
+    inset: 0;
+    z-index: -2;
+    overflow: hidden;
+  }
+
+  .gradient-orb {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(80px);
+    opacity: 0.3;
+    animation: float 20s ease-in-out infinite;
+  }
+
+  .gradient-orb-1 {
+    width: 600px;
+    height: 600px;
+    background: radial-gradient(circle, rgba(99, 102, 241, 0.4), transparent 70%);
+    top: -10%;
+    left: -5%;
+    animation-delay: 0s;
+  }
+
+  .gradient-orb-2 {
+    width: 500px;
+    height: 500px;
+    background: radial-gradient(circle, rgba(139, 92, 246, 0.35), transparent 70%);
+    top: 10%;
+    right: -5%;
+    animation-delay: -7s;
+  }
+
+  .gradient-orb-3 {
+    width: 400px;
+    height: 400px;
+    background: radial-gradient(circle, rgba(236, 72, 153, 0.3), transparent 70%);
+    bottom: -10%;
+    left: 40%;
+    animation-delay: -14s;
+  }
+
+  /* Grid pattern */
+  .hero-grid-pattern {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background-image:
+      linear-gradient(rgba(99, 102, 241, 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(99, 102, 241, 0.03) 1px, transparent 1px);
+    background-size: 80px 80px;
+    mask-image: radial-gradient(ellipse at 50% 30%, rgba(0,0,0,0.4), transparent 75%);
+  }
+
+  /* Code card styling */
+  .code-card {
+    border-radius: var(--radius-xl);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    backdrop-filter: var(--backdrop-blur);
+    overflow: hidden;
+    box-shadow: var(--shadow-xl);
+  }
+
+  .code-card-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.875rem 1rem;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-surface-2);
+  }
+
+  .code-card-dots {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .dot {
+    width: 0.75rem;
+    height: 0.75rem;
+    border-radius: 50%;
+  }
+
+  .dot-red { background: #ef4444; }
+  .dot-yellow { background: #f59e0b; }
+  .dot-green { background: #22c55e; }
+
+  .code-card-title {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+  }
+
+  .code-card-content {
+    margin: 0;
+    padding: 1.25rem;
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    line-height: 1.7;
+    overflow-x: auto;
+    color: var(--color-fg);
+  }
+
+  .code-card-content code {
+    background: none;
+    border: none;
+    padding: 0;
+  }
+
+  /* Hero features card */
+  .hero-features-card {
+    padding: 2rem;
+  }
+
+  .feature-item {
+    display: flex;
+    align-items: start;
+    gap: 1rem;
+    color: var(--text-secondary);
+    font-size: 0.9375rem;
+  }
+
+  .feature-icon {
+    flex-shrink: 0;
+    color: var(--brand-grad-from);
+    margin-top: 0.125rem;
+  }
+
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+  }
+
+  .stat-card {
+    text-align: center;
+    padding: 1.25rem 0.75rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-2);
+    transition: all var(--transition-fast);
+  }
+
+  .stat-card:hover {
+    border-color: var(--brand-grad-from);
+    transform: translateY(-2px);
+  }
+
+  .stat-value {
+    font-size: 1.75rem;
+    font-weight: var(--weight-bold);
+    background: linear-gradient(135deg, var(--brand-grad-from), var(--brand-grad-to));
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 0.25rem;
+  }
+
+  .stat-label {
+    font-size: 0.75rem;
+    color: var(--color-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .hero-image-wrapper {
+    position: relative;
+    border-radius: var(--radius-2xl);
+    overflow: hidden;
+    border: 1px solid var(--color-border);
+    box-shadow: var(--shadow-2xl);
+    background: var(--color-surface);
+  }
+
+  .hero-image {
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+
+  /* Responsive adjustments */
+  @media (max-width: 1024px) {
+    .gradient-orb {
+      filter: blur(60px);
+    }
+  }
+
+  @media (max-width: 640px) {
+    .stats-grid {
+      grid-template-columns: 1fr;
+      gap: 0.75rem;
+    }
+    
+    .hero-section {
+      overflow-x: hidden;
+    }
+
+    .gradient-orb {
+      filter: blur(50px);
+      opacity: 0.2;
+    }
+  }
+</style>
