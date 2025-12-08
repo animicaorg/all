@@ -15,16 +15,17 @@ Tests cover:
 from __future__ import annotations
 
 import pytest
+from fastapi.testclient import TestClient
 
 from rpc import config as rpc_config
 from rpc import server as rpc_server
-from rpc.tests import new_test_client, rpc_call
+from rpc.tests import rpc_call
 
 
-def test_faucet_success_on_devnet(tmp_path):
-    """Test faucet works on devnet (chainId=1337)."""
-    # Create test config with devnet chain ID
-    db_uri = f"sqlite:///{tmp_path}/test.db"
+@pytest.fixture
+def devnet_client(tmp_path):
+    """Create a test client with devnet chain ID."""
+    db_uri = f"sqlite:///{tmp_path}/devnet.db"
     cfg = rpc_config.Config(
         host="127.0.0.1",
         port=0,
@@ -32,13 +33,46 @@ def test_faucet_success_on_devnet(tmp_path):
         chain_id=1337,  # devnet
         logging="ERROR",
     )
-    
-    # Create app and client
     app = rpc_server.create_app(cfg)
     rpc_server.deps.ensure_started(cfg)
-    
-    from fastapi.testclient import TestClient
-    client = TestClient(app)
+    return TestClient(app)
+
+
+@pytest.fixture
+def testnet_client(tmp_path):
+    """Create a test client with testnet chain ID."""
+    db_uri = f"sqlite:///{tmp_path}/testnet.db"
+    cfg = rpc_config.Config(
+        host="127.0.0.1",
+        port=0,
+        db_uri=db_uri,
+        chain_id=2,  # testnet
+        logging="ERROR",
+    )
+    app = rpc_server.create_app(cfg)
+    rpc_server.deps.ensure_started(cfg)
+    return TestClient(app)
+
+
+@pytest.fixture
+def mainnet_client(tmp_path):
+    """Create a test client with mainnet chain ID."""
+    db_uri = f"sqlite:///{tmp_path}/mainnet.db"
+    cfg = rpc_config.Config(
+        host="127.0.0.1",
+        port=0,
+        db_uri=db_uri,
+        chain_id=1,  # mainnet
+        logging="ERROR",
+    )
+    app = rpc_server.create_app(cfg)
+    rpc_server.deps.ensure_started(cfg)
+    return TestClient(app)
+
+
+def test_faucet_success_on_devnet(devnet_client):
+    """Test faucet works on devnet (chainId=1337)."""
+    client = devnet_client
     
     # Test with a valid address
     result = rpc_call(
@@ -60,22 +94,9 @@ def test_faucet_success_on_devnet(tmp_path):
     assert amount_int == 500_000_000_000_000_000
 
 
-def test_faucet_success_on_testnet(tmp_path):
+def test_faucet_success_on_testnet(testnet_client):
     """Test faucet works on testnet (chainId=2)."""
-    db_uri = f"sqlite:///{tmp_path}/test.db"
-    cfg = rpc_config.Config(
-        host="127.0.0.1",
-        port=0,
-        db_uri=db_uri,
-        chain_id=2,  # testnet
-        logging="ERROR",
-    )
-    
-    app = rpc_server.create_app(cfg)
-    rpc_server.deps.ensure_started(cfg)
-    
-    from fastapi.testclient import TestClient
-    client = TestClient(app)
+    client = testnet_client
     
     # Test with a valid address
     result = rpc_call(
@@ -89,22 +110,9 @@ def test_faucet_success_on_testnet(tmp_path):
     assert res["address"] == "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
 
 
-def test_faucet_rejected_on_mainnet(tmp_path):
+def test_faucet_rejected_on_mainnet(mainnet_client):
     """Test faucet is rejected on mainnet (chainId=1)."""
-    db_uri = f"sqlite:///{tmp_path}/test.db"
-    cfg = rpc_config.Config(
-        host="127.0.0.1",
-        port=0,
-        db_uri=db_uri,
-        chain_id=1,  # mainnet
-        logging="ERROR",
-    )
-    
-    app = rpc_server.create_app(cfg)
-    rpc_server.deps.ensure_started(cfg)
-    
-    from fastapi.testclient import TestClient
-    client = TestClient(app)
+    client = mainnet_client
     
     # Try to use faucet on mainnet - should fail
     result = rpc_call(
@@ -121,22 +129,9 @@ def test_faucet_rejected_on_mainnet(tmp_path):
     assert error.get("code") == -32600  # Invalid Request
 
 
-def test_faucet_custom_amount(tmp_path):
+def test_faucet_custom_amount(devnet_client):
     """Test faucet with custom amount."""
-    db_uri = f"sqlite:///{tmp_path}/test.db"
-    cfg = rpc_config.Config(
-        host="127.0.0.1",
-        port=0,
-        db_uri=db_uri,
-        chain_id=1337,
-        logging="ERROR",
-    )
-    
-    app = rpc_server.create_app(cfg)
-    rpc_server.deps.ensure_started(cfg)
-    
-    from fastapi.testclient import TestClient
-    client = TestClient(app)
+    client = devnet_client
     
     custom_amount = 1_000_000_000_000_000  # 1M ANM
     
@@ -156,22 +151,9 @@ def test_faucet_custom_amount(tmp_path):
     assert amount_int == custom_amount
 
 
-def test_faucet_balance_increases(tmp_path):
+def test_faucet_balance_increases(devnet_client):
     """Test that faucet increases balance correctly."""
-    db_uri = f"sqlite:///{tmp_path}/test.db"
-    cfg = rpc_config.Config(
-        host="127.0.0.1",
-        port=0,
-        db_uri=db_uri,
-        chain_id=1337,
-        logging="ERROR",
-    )
-    
-    app = rpc_server.create_app(cfg)
-    rpc_server.deps.ensure_started(cfg)
-    
-    from fastapi.testclient import TestClient
-    client = TestClient(app)
+    client = devnet_client
     
     address = "0x1234567890abcdef1234567890abcdef12345678"
     
@@ -190,22 +172,9 @@ def test_faucet_balance_increases(tmp_path):
     assert balance2 == balance1 + 500_000_000_000_000_000
 
 
-def test_faucet_invalid_address(tmp_path):
+def test_faucet_invalid_address(devnet_client):
     """Test faucet rejects invalid addresses."""
-    db_uri = f"sqlite:///{tmp_path}/test.db"
-    cfg = rpc_config.Config(
-        host="127.0.0.1",
-        port=0,
-        db_uri=db_uri,
-        chain_id=1337,
-        logging="ERROR",
-    )
-    
-    app = rpc_server.create_app(cfg)
-    rpc_server.deps.ensure_started(cfg)
-    
-    from fastapi.testclient import TestClient
-    client = TestClient(app)
+    client = devnet_client
     
     # Try with invalid address
     result = rpc_call(
@@ -218,22 +187,9 @@ def test_faucet_invalid_address(tmp_path):
     assert "error" in result
 
 
-def test_faucet_negative_amount(tmp_path):
+def test_faucet_negative_amount(devnet_client):
     """Test faucet rejects negative amounts."""
-    db_uri = f"sqlite:///{tmp_path}/test.db"
-    cfg = rpc_config.Config(
-        host="127.0.0.1",
-        port=0,
-        db_uri=db_uri,
-        chain_id=1337,
-        logging="ERROR",
-    )
-    
-    app = rpc_server.create_app(cfg)
-    rpc_server.deps.ensure_started(cfg)
-    
-    from fastapi.testclient import TestClient
-    client = TestClient(app)
+    client = devnet_client
     
     # Try with negative amount
     result = rpc_call(

@@ -32,7 +32,7 @@ from rpc.methods import method
 # Optional helpers (be tolerant during bring-up)
 try:
     from pq.py.utils import bech32 as _bech32  # type: ignore
-except Exception:  # pragma: no cover
+except (ImportError, ModuleNotFoundError):  # pragma: no cover
     _bech32 = None  # type: ignore
 
 
@@ -110,7 +110,9 @@ def _parse_address(addr: str) -> bytes:
     try:
         from rpc.state_service import parse_address
         return parse_address(addr)
-    except Exception:
+    except (ImportError, ModuleNotFoundError, ValueError):
+        # ImportError/ModuleNotFoundError: module not available
+        # ValueError: parse_address failed, try fallback
         pass
     
     # Fallback to local implementation
