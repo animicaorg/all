@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Animica monorepo bootstrapper
 # Installs Node workspace dependencies and the local Animica Python packages.
-# Also ensures trio is available so pytest passes for trio-based tests.
+# Ensures trio is available so trio-based pytest runs.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BLUE='\033[34m'; GREEN='\033[32m'; YELLOW='\033[33m'; RED='\033[31m'; RESET='\033[0m'
