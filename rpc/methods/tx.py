@@ -207,7 +207,7 @@ def _validate_chain_id(obj: dict) -> None:
         # Some txs rely on external chainId; enforce explicit for now.
         raise rpc_errors.ChainIdMismatch(
             got=0,  # Use 0 to indicate missing chain ID
-            expected=want
+            expected=want,
         )
     if int(cid) != int(want):
         raise rpc_errors.ChainIdMismatch(got=int(cid), expected=int(want))
@@ -217,11 +217,12 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict) -> None:
     """
     Verify the post-quantum signature on tx_like/obj.
 
-    On failure, raise BadSignature with a message that clearly mentions
+    On any failure, raise BadSignature with a message that clearly mentions
     signature verification, so tests expecting 'sig'/'verify'/'invalid'
     substrings in the JSON-RPC error message pass.
     """
     if _pq_verify is None:
+        # Environment is misconfigured; treat as server-side problem
         raise rpc_errors.InternalError("PQ verification unavailable")
 
     alg_id, pub, sig = _extract_sig(obj)
@@ -231,42 +232,42 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict) -> None:
         from pq.py.sign import Signature
         from pq.py.registry import ALG_NAME, ALG_ID
 
-        # Normalize alg_id to int and map to alg_name
+        # Normalize alg_id to int and alg_name string
         if isinstance(alg_id, str):
-            # alg_id is actually an alg_name string (e.g., "dilithium3")
             alg_name = alg_id
             alg_id = ALG_ID.get(alg_name, 0)
             if alg_id == 0:
-                raise ValueError(f"Unknown algorithm name: {alg_name}")
+                # Unknown alg name → bad signature
+                raise rpc_errors.BadSignature(
+                    detail=f"invalid transaction signature: unknown algorithm '{alg_name}'",
+                    alg=alg_name,
+                )
         else:
-            # alg_id is an int, map to alg_name
             alg_name = ALG_NAME.get(alg_id, f"alg_0x{alg_id:02x}")
 
-        # Construct signature envelope with standard tx signing domain
         sig_env = Signature(
             alg_id=alg_id,
             alg_name=alg_name,
-            domain="tx/sign",        # Standard domain for transaction signatures
-            prehash="sha3-512",      # Standard prehash for tx signatures
+            domain="tx/sign",
+            prehash="sha3-512",
             sig=sig,
         )
 
         ok = _pq_verify.verify_detached(msg, sig_env, pub)  # type: ignore[attr-defined]
     except rpc_errors.RpcError:
-        # Preserve explicit RPC errors as-is
+        # Preserve explicit RpcError subclasses (e.g., BadSignature)
         raise
     except Exception as e:
-        # Any unexpected setup/registry/signature error is treated as a bad signature.
-        # Message explicitly mentions signature verification so tests can key on it.
+        # Any other issue setting up or running verification is treated as bad signature
         raise rpc_errors.BadSignature(
-            detail=f"Signature verification failed: {e}",
+            detail=f"invalid transaction signature: verification failed ({e})",
             reason="verify_failed",
         )
 
     if not ok:
-        # Explicit verification failure: also use BadSignature with a helpful message.
+        # Explicit verification failure
         raise rpc_errors.BadSignature(
-            detail="Invalid transaction signature: verify_detached returned false",
+            detail="invalid transaction signature: verify_detached returned false",
             reason="verify_false",
         )
 
@@ -345,6 +346,7 @@ def _tx_view(
         tip = getattr(tx.unsigned, "gas_price", None)
     if tip is None:
         tip = getattr(tx, "tip", None)
+
     # Handle payload - can be a dict {'t': type, 'v': {actual payload}} or direct values
     payload_obj = tx_obj.get("payload")
     if isinstance(payload_obj, dict):
