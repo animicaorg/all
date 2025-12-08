@@ -58,7 +58,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PROFILE_PATH="${REPO_ROOT}/ops/profiles/${PROFILE}.env"
 
-# Make in-repo Python packages importable (python/ layout)
+# Make in-repo Python packages importable
 export PYTHONPATH="${REPO_ROOT}/python${PYTHONPATH:+:${PYTHONPATH}}"
 
 if [[ ! -f "${PROFILE_PATH}" ]]; then
@@ -75,18 +75,36 @@ set -a
 source "${PROFILE_PATH}"
 set +a
 
-# Normalize well-known environment variables so downstream CLIs see the same
-# values whether they came from the profile file or ad-hoc overrides.
+# ------------------------------
+# Normalize network + DBs
+# ------------------------------
+#
+# Rule:
+#  - If ANIMICA_NETWORK is explicitly set in the environment, respect it.
+#  - Otherwise, tie ANIMICA_NETWORK to the PROFILE (devnet/testnet/mainnet).
+#  - DBs are profile-specific by default:
+#       ~/.animica/<profile>/chain.db
+#       ~/.animica/<profile>/pool.db
+#
 
-# If user has explicitly set ANIMICA_NETWORK, respect it.
-# Otherwise, follow the selected profile (devnet/testnet/mainnet).
 if [[ -z "${ANIMICA_NETWORK:-}" ]]; then
   export ANIMICA_NETWORK="${PROFILE}"
 fi
 
+# Default RPC URL if not set in profile
 export ANIMICA_RPC_URL="${ANIMICA_RPC_URL:-http://127.0.0.1:8545/rpc}"
-export ANIMICA_RPC_DB_URI="${ANIMICA_RPC_DB_URI:-sqlite:///~/animica/${PROFILE}/chain.db}"
-export ANIMICA_MINING_POOL_DB_URL="${ANIMICA_MINING_POOL_DB_URL:-sqlite:///~/animica/${PROFILE}/pool.db}"
+
+# Use XDG-ish home by default
+ANIMICA_DATA_ROOT="${ANIMICA_DATA_ROOT:-$HOME/.animica}"
+
+# Per-profile DB roots
+CHAIN_DB_PATH="${ANIMICA_DATA_ROOT}/${PROFILE}/chain.db"
+POOL_DB_PATH="${ANIMICA_DATA_ROOT}/${PROFILE}/pool.db"
+
+export ANIMICA_RPC_DB_URI="${ANIMICA_RPC_DB_URI:-sqlite:///${CHAIN_DB_PATH}}"
+export ANIMICA_MINING_POOL_DB_URL="${ANIMICA_MINING_POOL_DB_URL:-sqlite:///${POOL_DB_PATH}}"
+
+# Stratum + pool API binds
 export ANIMICA_STRATUM_BIND="${ANIMICA_STRATUM_BIND:-0.0.0.0:3333}"
 export ANIMICA_POOL_API_BIND="${ANIMICA_POOL_API_BIND:-0.0.0.0:8550}"
 
@@ -205,6 +223,7 @@ PY
 
 start_node() {
   echo "[animica] Starting node (profile=${PROFILE}, network=${ANIMICA_NETWORK})"
+  echo "[animica] RPC DB: ${ANIMICA_RPC_DB_URI}"
   load_p2p_seeds
   read -r rpc_host rpc_port rpc_path < <(parse_rpc_from_url)
   export ANIMICA_RPC_HOST="${ANIMICA_RPC_HOST:-${rpc_host}}"
@@ -220,6 +239,7 @@ start_node() {
 
 start_pool() {
   echo "[animica] Starting Stratum pool (profile=${PROFILE}, network=${ANIMICA_NETWORK})"
+  echo "[animica] Pool DB: ${ANIMICA_MINING_POOL_DB_URL}"
   cd "${REPO_ROOT}" || exit 1
   if [[ -d .venv ]]; then
     # shellcheck disable=SC1091
