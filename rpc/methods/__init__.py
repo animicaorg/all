@@ -41,11 +41,17 @@ class RpcMethod:
 
 # Global registry: method name → RpcMethod
 _METHODS: Dict[str, RpcMethod] = {}
+_LOADED: bool = False
 
 
 def get_methods() -> Mapping[str, RpcMethod]:
     """Return a read-only view of the registered methods."""
     return dict(_METHODS)
+
+
+def get_registry() -> Mapping[str, RpcMethod]:
+    """Alias for get_methods() to maintain compatibility with jsonrpc dispatcher."""
+    return get_methods()
 
 
 def register(name: str, func: HandlerFunc, *, desc: str | None = None, aliases: Iterable[str] = ()) -> None:
@@ -97,7 +103,7 @@ def _iter_builtin_modules() -> Iterable[str]:
         "rpc.methods.tx",
         "rpc.methods.state",
         "rpc.methods.chain",
-        "rpc.methods.account",
+        # "rpc.methods.account",  # disabled: module does not exist yet
         "rpc.methods.marketplace",
         # "rpc.methods.payments",  # disabled: depends on consensus.PolicyProvider which may be absent
     ]
@@ -117,6 +123,25 @@ def load_builtins() -> None:
             # Log and continue; a missing optional module should not make
             # the entire RPC server unusable.
             log.error("Failed to import RPC methods module %s: %s", mod, exc)
+
+
+def ensure_loaded() -> None:
+    """
+    Ensure that builtin method modules are loaded at least once.
+    
+    This is idempotent and safe to call multiple times. It loads the builtin
+    method modules (tx, state, chain, etc.) via load_builtins() on the first
+    call and does nothing on subsequent calls.
+    
+    Note: This function is not thread-safe, but in typical usage it is called
+    at module import time (single-threaded). For concurrent scenarios, the
+    register() function itself will log warnings for duplicate registrations
+    but will not fail.
+    """
+    global _LOADED
+    if not _LOADED:
+        load_builtins()
+        _LOADED = True
 
 
 async def dispatch(name: str, params: Any) -> Any:
@@ -186,8 +211,10 @@ __all__ = [
     "RpcMethod",
     "HandlerFunc",
     "get_methods",
+    "get_registry",
     "register",
     "method",
     "load_builtins",
+    "ensure_loaded",
     "dispatch",
 ]
