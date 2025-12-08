@@ -398,21 +398,24 @@ def load_genesis(
     if kv is not None:
         state = StateDB(kv)
         if log:
-            print(f"[genesis] Seeding state DB with {len(genesis['alloc'])} alloc entries")
+            import logging
+            logging.info(f"[genesis] Seeding state DB with {len(genesis['alloc'])} alloc entries")
         _init_state_from_alloc(state, genesis["alloc"])
         if log:
             # Verify a sample entry was written
             if genesis["alloc"]:
-                sample = genesis["alloc"][0]
+                import logging
                 from core.utils.address import address_to_bytes
+                sample = genesis["alloc"][0]
                 addr_str = _normalize_address(sample["address"])
                 addr_bytes = address_to_bytes(addr_str)
                 bal = state.get_balance(addr_bytes)
                 expected = int(sample.get("balance", 0))
-                print(f"[genesis] Sample verification: {addr_str} balance={bal} (expected {expected})")
+                logging.info(f"[genesis] Sample verification: {addr_str} balance={bal} (expected {expected})")
 
     if log:
-        print("[genesis] chainId=%s stateRoot=%s", genesis["chainId"], state_root.hex())
+        import logging
+        logging.info(f"[genesis] chainId={genesis['chainId']} stateRoot={state_root.hex()}")
 
     return params, header
 
@@ -461,18 +464,20 @@ def load_and_init_genesis(
 
     # Initialize state from alloc - always write to ensure idempotent reseeding
     if log:
-        print(f"[genesis] Writing {len(genesis['alloc'])} alloc entries to state DB")
+        import logging
+        logging.info(f"[genesis] Writing {len(genesis['alloc'])} alloc entries to state DB")
     _init_state_from_alloc(state, genesis["alloc"])
     
     if log:
         # Verify a sample account was written correctly
         if genesis["alloc"]:
+            import logging
             sample = genesis["alloc"][0]
             addr_str = _normalize_address(sample["address"])
             addr_bytes = address_to_bytes(addr_str)
             bal = state.get_balance(addr_bytes)
             expected = int(sample.get("balance", 0))
-            print(f"[genesis] Sample verification: {addr_str} balance={bal} (expected {expected})")
+            logging.info(f"[genesis] Sample verification: {addr_str} balance={bal} (expected {expected})")
 
     # Build header & block
     header = _build_genesis_header(genesis, computed_state_root)
@@ -492,14 +497,10 @@ def load_and_init_genesis(
         head_height, head_hash = 0, header_hash
 
     if log:
-        print(
-            "[genesis] chainId=%s height=%d stateRoot=%s headHash=%s"
-            % (
-                genesis["chainId"],
-                head_height,
-                computed_state_root.hex(),
-                head_hash.hex(),
-            )
+        import logging
+        logging.info(
+            f"[genesis] chainId={genesis['chainId']} height={head_height} "
+            f"stateRoot={computed_state_root.hex()} headHash={head_hash.hex()}"
         )
 
     return {

@@ -13,6 +13,8 @@ This guards against:
 
 from __future__ import annotations
 
+import importlib
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -50,8 +52,6 @@ def test_core_config_per_network_data_dir():
 
 def test_rpc_config_per_network_db_uri():
     """Test that RPC config uses distinct DB URIs per network."""
-    import os
-    
     # Save original env
     orig_network = os.environ.get("ANIMICA_NETWORK")
     orig_db_uri = os.environ.get("ANIMICA_RPC_DB_URI")
@@ -64,6 +64,8 @@ def test_rpc_config_per_network_db_uri():
         
         # Test mainnet
         os.environ["ANIMICA_NETWORK"] = "mainnet"
+        import rpc.config
+        importlib.reload(rpc.config)
         from rpc.config import load
         mainnet_cfg = load()
         assert mainnet_cfg.chain_id == 1, f"Mainnet should be chain 1, got {mainnet_cfg.chain_id}"
@@ -73,10 +75,7 @@ def test_rpc_config_per_network_db_uri():
         # Test testnet
         os.environ["ANIMICA_NETWORK"] = "testnet"
         # Reload config module to pick up env change
-        import importlib
-        import rpc.config
         importlib.reload(rpc.config)
-        from rpc.config import load
         testnet_cfg = load()
         assert testnet_cfg.chain_id == 2, f"Testnet should be chain 2, got {testnet_cfg.chain_id}"
         assert "chain-2" in testnet_cfg.db_uri, \
@@ -85,7 +84,6 @@ def test_rpc_config_per_network_db_uri():
         # Test devnet
         os.environ["ANIMICA_NETWORK"] = "devnet"
         importlib.reload(rpc.config)
-        from rpc.config import load
         devnet_cfg = load()
         assert devnet_cfg.chain_id == 1337, f"Devnet should be chain 1337, got {devnet_cfg.chain_id}"
         assert "chain-1337" in devnet_cfg.db_uri, \
@@ -114,8 +112,6 @@ def test_rpc_config_per_network_db_uri():
             os.environ.pop("ANIMICA_CHAIN_ID", None)
         
         # Reload config to restore original state
-        import importlib
-        import rpc.config
         importlib.reload(rpc.config)
 
 

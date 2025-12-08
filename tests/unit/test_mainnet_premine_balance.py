@@ -20,14 +20,18 @@ from pathlib import Path
 
 import pytest
 
+from consensus.rewards import (
+    MAINNET_PREMINE_DISTRIBUTION,
+    MAINNET_PREMINE_TOTAL,
+)
 from core.db import open_kv
 from core.db.state_db import StateDB
 from core.genesis.loader import load_and_init_genesis
 from core.utils.address import address_to_bytes
 
-
-MAINNET_PREMINE_ADDRESS = "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f"
-MAINNET_PREMINE_BALANCE = 81000000000000000  # 81,000,000 ANM in base units
+# Extract the premine address from the canonical distribution
+MAINNET_PREMINE_ADDRESS = MAINNET_PREMINE_DISTRIBUTION[0][0]
+MAINNET_PREMINE_BALANCE = MAINNET_PREMINE_TOTAL
 
 
 @pytest.fixture
