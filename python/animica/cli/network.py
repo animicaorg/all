@@ -56,6 +56,22 @@ def set_network(
         f"\nAll subsequent commands will use '{network}' unless overridden with "
         f"--network flag or ANIMICA_NETWORK environment variable."
     )
+    typer.echo(
+        f"\nNote: Each network uses an isolated database to prevent state contamination."
+    )
+    
+    # Show expected chain IDs and DB paths for transparency
+    network_info = {
+        "mainnet": ("chain-1", 1),
+        "testnet": ("chain-2", 2),
+        "devnet": ("chain-1337", 1337),
+        "local-devnet": ("chain-1337", 1337),
+    }
+    if network in network_info:
+        db_dir, chain_id = network_info[network]
+        typer.echo(f"Chain ID: {chain_id}")
+        typer.echo(f"Data directory: ~/.animica/{db_dir}/")
+        typer.echo(f"DB file: ~/.animica/{db_dir}/animica.db")
 
 
 @app.command(name="get")
@@ -80,8 +96,11 @@ def get_network() -> None:
         typer.secho(f"Active network: {network}", fg=typer.colors.CYAN, bold=True)
     else:
         typer.echo("No network has been explicitly set.")
-        typer.echo("Using default: devnet")
+        typer.echo("Using default: mainnet")
         typer.echo("\nSet a network with: animica network set <network>")
+    
+    typer.echo("\nNote: Each network uses an isolated database to prevent state contamination.")
+    typer.echo("Data directories are organized by chain ID (e.g., ~/.animica/chain-1/ for mainnet).")
 
 
 @app.command(name="list")
@@ -108,7 +127,13 @@ def list_networks() -> None:
     if active:
         typer.echo(f"Current active network: {active}")
     else:
-        typer.echo("No network explicitly set (using default: devnet)")
+        typer.echo("No network explicitly set (using default: mainnet)")
+    
+    typer.echo("\nNote: Each network uses an isolated database directory:")
+    typer.echo("  mainnet:      ~/.animica/chain-1/")
+    typer.echo("  testnet:      ~/.animica/chain-2/")
+    typer.echo("  devnet:       ~/.animica/chain-1337/")
+    typer.echo("  local-devnet: ~/.animica/chain-1337/")
 
 
 if __name__ == "__main__":

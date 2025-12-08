@@ -27,6 +27,21 @@ animica network set devnet
 animica node status  # Now uses devnet
 ```
 
+### Database Isolation Per Network
+
+**Each network uses a separate database directory to prevent state contamination:**
+
+- **Mainnet:** `~/.local/share/animica/chain-1/` (or `~/Library/Application Support/animica/chain-1/` on macOS)
+- **Testnet:** `~/.local/share/animica/chain-2/`
+- **Devnet:** `~/.local/share/animica/chain-1337/`
+
+When you switch networks using `animica network set`, the system automatically:
+1. Points to the correct RPC endpoint for that network
+2. Uses the appropriate genesis file (mainnet uses `core/genesis/genesis.json`)
+3. Reads/writes to the network-specific database directory
+
+This ensures that switching between networks doesn't contaminate state or lose data. Your mainnet state remains intact when testing on devnet.
+
 ### Checking Premine Balances (Mainnet)
 
 To check premine wallet balances on mainnet:
