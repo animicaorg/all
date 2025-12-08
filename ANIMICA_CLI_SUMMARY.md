@@ -150,7 +150,7 @@ Settings resolution (highest to lowest priority):
 Key environment variables:
 - ANIMICA_NETWORK           Network profile (default: mainnet)
 - ANIMICA_RPC_URL          RPC endpoint (default: http://127.0.0.1:8545/rpc)
-- ANIMICA_CHAIN_ID         Chain ID
+- ANIMICA_CHAIN_ID         Chain ID (empty/invalid values treated as unset)
 - ANIMICA_CONFIG           Config file path
 
 ================================================================================
