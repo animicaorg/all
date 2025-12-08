@@ -1,7 +1,12 @@
 import asyncio
 import importlib
+import os
 
 import pytest
+
+# Enable PQ fake mode for tests when liboqs is not available
+if not os.environ.get("ANIMICA_UNSAFE_PQ_FAKE"):
+    os.environ["ANIMICA_UNSAFE_PQ_FAKE"] = "1"
 
 
 def _good_window(stats, traps_min, qos_min):
