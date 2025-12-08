@@ -3,6 +3,7 @@ animica - Unified CLI for Animica blockchain operations.
 
 A comprehensive command-line interface for:
   - Node lifecycle management (run, status, logs)
+  - Studio Services management (deploy/verify API, up, down, status, logs)
   - Wallet & key management (create, import, list, export)
   - Transaction building, signing, and broadcasting
   - Chain queries (heads, blocks, transactions, accounts, events)
@@ -23,6 +24,8 @@ Global options:
 Examples:
   animica --help
   animica node status
+  animica studio up
+  animica studio status
   animica wallet new
   animica key list
   animica tx send --from 0 --to anim1... --value 1.5
@@ -35,14 +38,12 @@ Examples:
 
 from __future__ import annotations
 
-import os
-import sys
 from typing import Optional
 
 import typer
 
 # Import subcommand apps
-from . import chain, da, faucet, key, mining, network, node, peer, rpc, tx, wallet
+from . import chain, da, faucet, key, mining, network, node, peer, rpc, studio, tx, wallet
 
 app = typer.Typer(
     name="animica",
@@ -108,13 +109,19 @@ def main_callback(
     Animica CLI — blockchain operations for developers and operators.
 
     This is the main entry point. Most commands are organized into subgroups
-    (node, wallet, key, tx, rpc, chain, miner, da) with their own --help.
+    (node, studio, wallet, key, tx, rpc, chain, miner, da) with their own --help.
 
     Configuration is resolved in this order (highest to lowest priority):
       1. Command-line flags (--rpc-url, --chain-id, etc.)
       2. Environment variables (ANIMICA_RPC_URL, ANIMICA_CHAIN_ID, etc.)
       3. Config file (~/.config/animica/config.toml or ANIMICA_CONFIG)
       4. Built-in defaults (devnet on http://127.0.0.1:8545/rpc)
+    
+    Quick Start:
+      1. Set network: animica network set devnet
+      2. Start node: animica node up
+      3. Start Studio Services: animica studio up
+      4. Check status: animica studio status
     """
     _ctx.network = network
     _ctx.rpc_url = rpc_url
@@ -136,6 +143,7 @@ app.add_typer(da.app, name="da")
 app.add_typer(faucet.app, name="faucet")
 app.add_typer(network.app, name="network")
 app.add_typer(peer.app, name="peer")
+app.add_typer(studio.app, name="studio")
 
 
 # ============================================================================
