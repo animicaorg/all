@@ -137,7 +137,7 @@ def test_up_with_network_from_state(monkeypatch: Any) -> None:
         # Mock the compose file check
         mock_compose_file = Path(tmpdir) / "docker-compose.yml"
         mock_compose_file.write_text("version: '3'\nservices:\n  node1:\n    image: test\n")
-        monkeypatch.setattr("animica.cli.node._get_compose_file", lambda: mock_compose_file)
+        monkeypatch.setattr("animica.cli.node._get_compose_file", lambda network: mock_compose_file)
         
         # Mock subprocess.run
         mock_result = MagicMock()
@@ -172,7 +172,7 @@ def test_up_with_network_from_env(monkeypatch: Any) -> None:
         # Mock the compose file check
         mock_compose_file = Path(tmpdir) / "docker-compose.yml"
         mock_compose_file.write_text("version: '3'\nservices:\n  node1:\n    image: test\n")
-        monkeypatch.setattr("animica.cli.node._get_compose_file", lambda: mock_compose_file)
+        monkeypatch.setattr("animica.cli.node._get_compose_file", lambda network: mock_compose_file)
         
         # Mock subprocess.run
         mock_result = MagicMock()
@@ -196,7 +196,7 @@ def test_down_with_network(monkeypatch: Any) -> None:
         # Mock the compose file check
         mock_compose_file = Path(tmpdir) / "docker-compose.yml"
         mock_compose_file.write_text("version: '3'\nservices:\n  node1:\n    image: test\n")
-        monkeypatch.setattr("animica.cli.node._get_compose_file", lambda: mock_compose_file)
+        monkeypatch.setattr("animica.cli.node._get_compose_file", lambda network: mock_compose_file)
         
         # Mock subprocess.run
         mock_result = MagicMock()
@@ -228,7 +228,7 @@ def test_down_with_volumes(monkeypatch: Any) -> None:
         # Mock the compose file check
         mock_compose_file = Path(tmpdir) / "docker-compose.yml"
         mock_compose_file.write_text("version: '3'\nservices:\n  node1:\n    image: test\n")
-        monkeypatch.setattr("animica.cli.node._get_compose_file", lambda: mock_compose_file)
+        monkeypatch.setattr("animica.cli.node._get_compose_file", lambda network: mock_compose_file)
         
         # Mock subprocess.run
         mock_result = MagicMock()
@@ -246,34 +246,33 @@ def test_down_with_volumes(monkeypatch: Any) -> None:
             assert "-v" in cmd or "--volumes" in cmd
 
 
-def test_up_with_custom_profile(monkeypatch: Any) -> None:
-    """Test 'node up --profile' uses custom profile."""
+def test_up_with_miner_flag(monkeypatch: Any) -> None:
+    """Test 'node up --with-miner' includes miner profile."""
     with tempfile.TemporaryDirectory() as tmpdir:
         state_file = Path(tmpdir) / "state.json"
         state = CLIState(state_file)
-        state.set("active_network", "devnet")
+        state.set("active_network", "mainnet")
         monkeypatch.setattr("animica.cli.node.get_cli_state", lambda: CLIState(state_file))
         
         # Mock the compose file check
         mock_compose_file = Path(tmpdir) / "docker-compose.yml"
-        mock_compose_file.write_text("version: '3'\nservices:\n  node1:\n    image: test\n")
-        monkeypatch.setattr("animica.cli.node._get_compose_file", lambda: mock_compose_file)
+        mock_compose_file.write_text("version: '3'\nservices:\n  node:\n    image: test\n")
+        monkeypatch.setattr("animica.cli.node._get_compose_file", lambda network: mock_compose_file)
         
         # Mock subprocess.run
         mock_result = MagicMock()
         mock_result.returncode = 0
         with patch("animica.cli.node.subprocess.run", return_value=mock_result) as mock_run:
-            result = runner.invoke(node.app, ["up", "--profile", "prod"])
+            result = runner.invoke(node.app, ["up", "--with-miner"])
             
             assert result.exit_code == 0
-            assert "Profile: prod" in result.output
+            assert "Starting node for network: mainnet" in result.output
             
-            # Verify profile was passed to docker-compose
+            # Verify miner profile was passed to docker-compose for mainnet
             call_args = mock_run.call_args
             cmd = call_args[0][0]
             assert "--profile" in cmd
-            profile_idx = cmd.index("--profile")
-            assert cmd[profile_idx + 1] == "prod"
+            assert "miner" in cmd
 
 
 def test_up_docker_not_found(monkeypatch: Any) -> None:
@@ -287,7 +286,7 @@ def test_up_docker_not_found(monkeypatch: Any) -> None:
         # Mock the compose file check
         mock_compose_file = Path(tmpdir) / "docker-compose.yml"
         mock_compose_file.write_text("version: '3'\nservices:\n  node1:\n    image: test\n")
-        monkeypatch.setattr("animica.cli.node._get_compose_file", lambda: mock_compose_file)
+        monkeypatch.setattr("animica.cli.node._get_compose_file", lambda network: mock_compose_file)
         
         # Mock subprocess.run to raise FileNotFoundError
         with patch("animica.cli.node.subprocess.run", side_effect=FileNotFoundError()):
@@ -326,7 +325,7 @@ def test_up_does_not_start_studio_services(monkeypatch: Any) -> None:
         # Mock the compose file check
         mock_compose_file = Path(tmpdir) / "docker-compose.yml"
         mock_compose_file.write_text("version: '3'\nservices:\n  node1:\n    image: test\n")
-        monkeypatch.setattr("animica.cli.node._get_compose_file", lambda: mock_compose_file)
+        monkeypatch.setattr("animica.cli.node._get_compose_file", lambda network: mock_compose_file)
         
         # Mock subprocess.run
         mock_result = MagicMock()
@@ -367,7 +366,7 @@ services:
     profiles: [dev]
     image: test-miner
 """)
-        monkeypatch.setattr("animica.cli.node._get_compose_file", lambda: mock_compose_file)
+        monkeypatch.setattr("animica.cli.node._get_compose_file", lambda network: mock_compose_file)
         
         # Mock subprocess.run
         mock_result = MagicMock()
@@ -378,3 +377,139 @@ services:
             # Should succeed even without studio services
             assert result.exit_code == 0
             assert "Node started successfully" in result.output
+
+
+def test_mainnet_uses_correct_compose_file(monkeypatch: Any) -> None:
+    """Test that mainnet network uses mainnet compose file."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_file = Path(tmpdir) / "state.json"
+        state = CLIState(state_file)
+        state.set("active_network", "mainnet")
+        monkeypatch.setattr("animica.cli.node.get_cli_state", lambda: CLIState(state_file))
+        
+        # Track which network was passed to _get_compose_file
+        captured_network = []
+        
+        def mock_get_compose_file(network: str) -> Path:
+            captured_network.append(network)
+            mock_file = Path(tmpdir) / "docker-compose.mainnet.yml"
+            mock_file.write_text("version: '3'\nservices:\n  node:\n    image: test\n")
+            return mock_file
+        
+        monkeypatch.setattr("animica.cli.node._get_compose_file", mock_get_compose_file)
+        
+        # Mock subprocess.run
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with patch("animica.cli.node.subprocess.run", return_value=mock_result):
+            result = runner.invoke(node.app, ["up"])
+            
+            assert result.exit_code == 0
+            assert "Starting node for network: mainnet" in result.output
+            assert captured_network[0] == "mainnet"
+            assert "Chain ID: 1" in result.output
+
+
+def test_testnet_uses_correct_compose_file(monkeypatch: Any) -> None:
+    """Test that testnet network uses testnet compose file."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_file = Path(tmpdir) / "state.json"
+        state = CLIState(state_file)
+        state.set("active_network", "testnet")
+        monkeypatch.setattr("animica.cli.node.get_cli_state", lambda: CLIState(state_file))
+        
+        # Track which network was passed to _get_compose_file
+        captured_network = []
+        
+        def mock_get_compose_file(network: str) -> Path:
+            captured_network.append(network)
+            mock_file = Path(tmpdir) / "docker-compose.testnet.yml"
+            mock_file.write_text("version: '3'\nservices:\n  node:\n    image: test\n")
+            return mock_file
+        
+        monkeypatch.setattr("animica.cli.node._get_compose_file", mock_get_compose_file)
+        
+        # Mock subprocess.run
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with patch("animica.cli.node.subprocess.run", return_value=mock_result):
+            result = runner.invoke(node.app, ["up"])
+            
+            assert result.exit_code == 0
+            assert "Starting node for network: testnet" in result.output
+            assert captured_network[0] == "testnet"
+            assert "Chain ID: 2" in result.output
+
+
+def test_devnet_uses_correct_compose_file(monkeypatch: Any) -> None:
+    """Test that devnet network uses devnet compose file."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_file = Path(tmpdir) / "state.json"
+        state = CLIState(state_file)
+        state.set("active_network", "devnet")
+        monkeypatch.setattr("animica.cli.node.get_cli_state", lambda: CLIState(state_file))
+        
+        # Track which network was passed to _get_compose_file
+        captured_network = []
+        
+        def mock_get_compose_file(network: str) -> Path:
+            captured_network.append(network)
+            mock_file = Path(tmpdir) / "docker-compose.yml"
+            mock_file.write_text("version: '3'\nservices:\n  node1:\n    image: test\n")
+            return mock_file
+        
+        monkeypatch.setattr("animica.cli.node._get_compose_file", mock_get_compose_file)
+        
+        # Mock subprocess.run
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        with patch("animica.cli.node.subprocess.run", return_value=mock_result):
+            result = runner.invoke(node.app, ["up"])
+            
+            assert result.exit_code == 0
+            assert "Starting node for network: devnet" in result.output
+            assert captured_network[0] == "devnet"
+            assert "Chain ID: 1337" in result.output
+
+
+def test_network_switching_affects_compose_file(monkeypatch: Any) -> None:
+    """Test that switching networks changes the compose file used."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_file = Path(tmpdir) / "state.json"
+        state = CLIState(state_file)
+        monkeypatch.setattr("animica.cli.node.get_cli_state", lambda: CLIState(state_file))
+        monkeypatch.setattr("animica.cli.network.get_cli_state", lambda: CLIState(state_file))
+        
+        # Track networks passed to _get_compose_file
+        captured_networks = []
+        
+        def mock_get_compose_file(network: str) -> Path:
+            captured_networks.append(network)
+            mock_file = Path(tmpdir) / f"docker-compose.{network}.yml"
+            mock_file.write_text("version: '3'\nservices:\n  node:\n    image: test\n")
+            return mock_file
+        
+        monkeypatch.setattr("animica.cli.node._get_compose_file", mock_get_compose_file)
+        
+        # Mock subprocess.run
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        
+        # Set to mainnet and run
+        from animica.cli import network as network_cli
+        result1 = runner.invoke(network_cli.app, ["set", "mainnet"])
+        assert result1.exit_code == 0
+        
+        with patch("animica.cli.node.subprocess.run", return_value=mock_result):
+            result2 = runner.invoke(node.app, ["up"])
+            assert result2.exit_code == 0
+            assert captured_networks[-1] == "mainnet"
+        
+        # Switch to testnet and run
+        result3 = runner.invoke(network_cli.app, ["set", "testnet"])
+        assert result3.exit_code == 0
+        
+        with patch("animica.cli.node.subprocess.run", return_value=mock_result):
+            result4 = runner.invoke(node.app, ["up"])
+            assert result4.exit_code == 0
+            assert captured_networks[-1] == "testnet"
