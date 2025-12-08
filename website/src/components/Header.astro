@@ -1,14 +1,8 @@
 ---
 import site from "../config/site";
-import links from "../config/links";
+import { links } from "../config/links";
 import chains from "../config/chains";
 import { chainId as envChainId, explorerUrl, rpcUrl as envRpcUrl, studioUrl } from "../env";
-
-/**
- * Top navigation header with brand, primary links, network pill, and CTA.
- * - Reads PUBLIC_CHAIN_ID and PUBLIC_RPC_URL from env.
- * - Attempts a lightweight JSON-RPC ping (chain.getHead) client-side to show online status.
- */
 
 const nav = [
   { href: "/docs", label: "Docs" },
@@ -33,71 +27,91 @@ const networkName =
 const activePath = Astro.url.pathname;
 ---
 
-<header class="header sticky top-0 z-40 backdrop-blur supports-[backdrop-filter]:bg-[color-mix(in_srgb,var(--color-bg)_/_72%,transparent)] border-b border-[color-mix(in_srgb,var(--color-border),transparent 35%)] shadow-[0_10px_35px_rgba(0,0,0,0.22)]">
-  <div class="container mx-auto px-4 h-14 flex items-center justify-between gap-4">
+<header class="site-header">
+  <div class="header-container">
     <!-- Brand -->
-    <a href="/" class="inline-flex items-center gap-2 font-semibold text-[1.05rem]" aria-label={site.brand}>
-      <img src="/icons/logo.svg" width="20" height="20" alt="" />
-      <span>{site.brand}</span>
+    <a href="/" class="brand-link" aria-label={site.brand}>
+      <img src="/icons/logo.svg" width="24" height="24" alt="" class="brand-logo" />
+      <span class="brand-name">{site.brand}</span>
     </a>
 
-    <!-- Primary nav -->
-    <nav class="hidden md:flex items-center gap-6 text-sm" aria-label="Primary">
+    <!-- Desktop Navigation -->
+    <nav class="desktop-nav" aria-label="Primary">
       {nav.map((item) => {
         const isActive = activePath === item.href || activePath.startsWith(item.href + "/");
         return (
           <a
             href={item.href}
-            class={`opacity-85 hover:opacity-100 transition-opacity ${isActive ? "font-medium" : ""}`}
+            class={`nav-link ${isActive ? "nav-link--active" : ""}`}
             aria-current={isActive ? "page" : undefined}
           >
             {item.label}
           </a>
         );
       })}
-      <a
-        href={explorerHref}
-        class="opacity-85 hover:opacity-100 transition-opacity md:hidden"
-      >
-        Explorer
-      </a>
     </nav>
 
-    <div class="flex items-center gap-3">
-      <!-- Network pill -->
+    <div class="header-actions">
+      <!-- Network Status Pill -->
       <div
-        class="group inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs leading-none bg-[var(--bg-elevated)] border-[color-mix(in_srgb,var(--text-primary)_/_12%,transparent)]"
+        class="network-pill"
         data-network-pill
         title={rpcUrl ? `RPC: ${rpcUrl}` : "No RPC configured"}
       >
-        <span
-          class="inline-block size-2 rounded-full bg-[color-mix(in_srgb,var(--text-primary)_/_40%,transparent)]"
-          aria-hidden="true"
-          data-dot
-        ></span>
-        <span class="truncate max-w-[10ch] sm:max-w-[16ch]" data-net-name>{networkName}</span>
-        {chainId && <span class="opacity-70" data-chain-id>· {chainId}</span>}
+        <span class="network-status" data-dot></span>
+        <span class="network-name" data-net-name>{networkName}</span>
+        {chainId && <span class="network-chain-id" data-chain-id>· {chainId}</span>}
         <span class="sr-only" data-status-sr>(status unknown)</span>
       </div>
 
-      <!-- CTA -->
-      <a
-        href={studioHref}
-        class="inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium bg-white text-black hover:opacity-95 active:opacity-90 dark:bg-[var(--text-primary)] dark:text-[var(--bg-regular)]"
-      >
-        Launch Studio
-        <svg width="14" height="14" viewBox="0 0 24 24" class="opacity-90" aria-hidden="true">
+      <!-- CTA Button -->
+      <a href={studioHref} class="button button--primary button--sm">
+        <span>Launch Studio</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
           <path fill="currentColor" d="M14 3h7v7h-2V6.41L9.41 16 8 14.59 16.59 6H14V3zM5 5h5V3H5a2 2 0 0 0-2 2v14c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-5h-2v5H5V5z"/>
         </svg>
       </a>
+
+      <!-- Mobile Menu Button -->
+      <button class="mobile-menu-btn" aria-label="Toggle navigation" data-mobile-menu-toggle>
+        <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" class="menu-icon">
+          <path fill="currentColor" d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/>
+        </svg>
+        <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" class="close-icon">
+          <path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/>
+        </svg>
+      </button>
     </div>
   </div>
 
-  <!-- Client-side: tiny JSON-RPC ping to show online/offline/lagging status -->
-  <script>
+  <!-- Mobile Navigation Overlay -->
+  <div class="mobile-nav" data-mobile-nav>
+    <nav class="mobile-nav-content" aria-label="Mobile">
+      {nav.map((item) => {
+        const isActive = activePath === item.href || activePath.startsWith(item.href + "/");
+        return (
+          <a
+            href={item.href}
+            class={`mobile-nav-link ${isActive ? "mobile-nav-link--active" : ""}`}
+            aria-current={isActive ? "page" : undefined}
+          >
+            {item.label}
+          </a>
+        );
+      })}
+      <a href={explorerHref} class="mobile-nav-link">
+        Explorer
+      </a>
+      <a href={studioHref} class="button button--primary button--lg mobile-cta">
+        Launch Studio
+      </a>
+    </nav>
+  </div>
+
+  <!-- Client-side: JSON-RPC network status check -->
+  <script define:vars={{ rpcUrl }}>
     (function () {
-      const rpc = rpcUrl;
-      if (!rpc) return;
+      if (!rpcUrl) return;
 
       const dot = document.querySelector("[data-network-pill] [data-dot]");
       const pill = document.querySelector("[data-network-pill]");
@@ -105,21 +119,15 @@ const activePath = Astro.url.pathname;
 
       const setStatus = (state, tip) => {
         if (!dot || !pill) return;
-        let color = "bg-[color-mix(in_srgb,var(--text-primary)_/_40%,transparent)]";
-        let srText = "status unknown";
-        if (state === "online") { color = "bg-emerald-500"; srText = "online"; }
-        if (state === "lagging") { color = "bg-amber-500"; srText = "degraded"; }
-        if (state === "offline") { color = "bg-rose-500"; srText = "offline"; }
-        dot.className = "inline-block size-2 rounded-full " + color;
-        if (sr) sr.textContent = "(" + srText + (tip ? ", head " + tip : "") + ")";
+        dot.dataset.status = state;
+        if (sr) sr.textContent = "(" + state + (tip ? ", head " + tip : "") + ")";
         pill.dataset.status = state;
       };
 
-      // Fire and forget
       const ctrl = new AbortController();
       setTimeout(() => ctrl.abort(), 6_000);
 
-      fetch(rpc, {
+      fetch(rpcUrl, {
         method: "POST",
         headers: {"content-type": "application/json"},
         body: JSON.stringify({
@@ -133,7 +141,6 @@ const activePath = Astro.url.pathname;
       .then(r => r.json())
       .then(j => {
         const head = j?.result;
-        // Heuristic: if we have a height and it’s numeric, declare online.
         const h = head && (head.number ?? head.height);
         const height = typeof h === "number" ? h : (typeof h === "string" ? Number(h) : undefined);
         setStatus("online", Number.isFinite(height) ? String(height) : undefined);
@@ -141,4 +148,309 @@ const activePath = Astro.url.pathname;
       .catch(() => setStatus("offline"));
     })();
   </script>
+
+  <!-- Mobile menu toggle script -->
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const toggleBtn = document.querySelector('[data-mobile-menu-toggle]');
+      const mobileNav = document.querySelector('[data-mobile-nav]');
+      
+      if (toggleBtn && mobileNav) {
+        toggleBtn.addEventListener('click', () => {
+          const isOpen = mobileNav.classList.contains('mobile-nav--open');
+          
+          if (isOpen) {
+            mobileNav.classList.remove('mobile-nav--open');
+            toggleBtn.classList.remove('mobile-menu-btn--open');
+            document.body.style.overflow = '';
+          } else {
+            mobileNav.classList.add('mobile-nav--open');
+            toggleBtn.classList.add('mobile-menu-btn--open');
+            document.body.style.overflow = 'hidden';
+          }
+        });
+
+        // Close on escape
+        document.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape' && mobileNav.classList.contains('mobile-nav--open')) {
+            mobileNav.classList.remove('mobile-nav--open');
+            toggleBtn.classList.remove('mobile-menu-btn--open');
+            document.body.style.overflow = '';
+          }
+        });
+
+        // Close on outside click
+        mobileNav.addEventListener('click', (e) => {
+          if (e.target === mobileNav) {
+            mobileNav.classList.remove('mobile-nav--open');
+            toggleBtn.classList.remove('mobile-menu-btn--open');
+            document.body.style.overflow = '';
+          }
+        });
+      }
+    });
+  </script>
 </header>
+
+<style>
+  .site-header {
+    position: sticky;
+    top: 0;
+    z-index: var(--z-sticky);
+    backdrop-filter: var(--backdrop-blur);
+    background: rgba(10, 14, 23, 0.8);
+    border-bottom: 1px solid var(--color-border);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+  }
+
+  .header-container {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 0 1rem;
+    height: 4rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  /* Brand */
+  .brand-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.625rem;
+    text-decoration: none;
+    color: var(--color-fg);
+    font-weight: var(--weight-semibold);
+    font-size: 1.125rem;
+    transition: opacity var(--transition-fast);
+  }
+
+  .brand-link:hover {
+    opacity: 0.9;
+  }
+
+  .brand-logo {
+    width: 24px;
+    height: 24px;
+  }
+
+  .brand-name {
+    font-size: 1.125rem;
+  }
+
+  /* Desktop Navigation */
+  .desktop-nav {
+    display: none;
+    align-items: center;
+    gap: 0.25rem;
+    margin-left: auto;
+  }
+
+  @media (min-width: 768px) {
+    .desktop-nav {
+      display: flex;
+    }
+  }
+
+  .nav-link {
+    position: relative;
+    padding: 0.5rem 0.875rem;
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 0.9375rem;
+    font-weight: var(--weight-medium);
+    border-radius: var(--radius-md);
+    transition: all var(--transition-fast);
+  }
+
+  .nav-link:hover {
+    color: var(--color-fg);
+    background: rgba(99, 102, 241, 0.08);
+  }
+
+  .nav-link--active {
+    color: var(--color-fg);
+    background: rgba(99, 102, 241, 0.12);
+  }
+
+  .nav-link--active::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 0.875rem;
+    right: 0.875rem;
+    height: 2px;
+    background: linear-gradient(90deg, var(--brand-grad-from), var(--brand-grad-to));
+    border-radius: 2px 2px 0 0;
+  }
+
+  /* Header Actions */
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  /* Network Pill */
+  .network-pill {
+    display: none;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.875rem;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    font-size: 0.8125rem;
+    font-weight: var(--weight-medium);
+    cursor: default;
+    transition: all var(--transition-fast);
+  }
+
+  @media (min-width: 640px) {
+    .network-pill {
+      display: inline-flex;
+    }
+  }
+
+  .network-pill:hover {
+    border-color: rgba(99, 102, 241, 0.3);
+  }
+
+  .network-status {
+    display: inline-block;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: var(--color-muted);
+    transition: background var(--transition-fast);
+  }
+
+  .network-pill[data-status="online"] .network-status {
+    background: var(--color-success);
+    box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.2);
+  }
+
+  .network-pill[data-status="offline"] .network-status {
+    background: var(--color-danger);
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2);
+  }
+
+  .network-pill[data-status="lagging"] .network-status {
+    background: var(--color-warning);
+    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
+  }
+
+  .network-name {
+    color: var(--color-fg);
+  }
+
+  .network-chain-id {
+    color: var(--color-muted);
+  }
+
+  /* Mobile Menu Button */
+  .mobile-menu-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border: none;
+    background: transparent;
+    color: var(--color-fg);
+    cursor: pointer;
+    border-radius: var(--radius-md);
+    transition: all var(--transition-fast);
+  }
+
+  @media (min-width: 768px) {
+    .mobile-menu-btn {
+      display: none;
+    }
+  }
+
+  .mobile-menu-btn:hover {
+    background: rgba(99, 102, 241, 0.08);
+  }
+
+  .mobile-menu-btn .close-icon {
+    display: none;
+  }
+
+  .mobile-menu-btn--open .menu-icon {
+    display: none;
+  }
+
+  .mobile-menu-btn--open .close-icon {
+    display: block;
+  }
+
+  /* Mobile Navigation */
+  .mobile-nav {
+    position: fixed;
+    inset: 4rem 0 0 0;
+    z-index: var(--z-dropdown);
+    background: rgba(10, 14, 23, 0.98);
+    backdrop-filter: var(--backdrop-blur);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity var(--transition-base), visibility var(--transition-base);
+  }
+
+  .mobile-nav--open {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  @media (min-width: 768px) {
+    .mobile-nav {
+      display: none;
+    }
+  }
+
+  .mobile-nav-content {
+    display: flex;
+    flex-direction: column;
+    padding: 1.5rem 1rem;
+    gap: 0.5rem;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+
+  .mobile-nav-link {
+    padding: 1rem;
+    color: var(--color-fg);
+    text-decoration: none;
+    font-size: 1.125rem;
+    font-weight: var(--weight-medium);
+    border-radius: var(--radius-lg);
+    transition: all var(--transition-fast);
+  }
+
+  .mobile-nav-link:hover {
+    background: rgba(99, 102, 241, 0.08);
+  }
+
+  .mobile-nav-link--active {
+    background: rgba(99, 102, 241, 0.12);
+  }
+
+  .mobile-cta {
+    margin-top: 1rem;
+    width: 100%;
+  }
+
+  /* Screen reader only */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+</style>
