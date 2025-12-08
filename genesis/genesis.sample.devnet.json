@@ -40,7 +40,8 @@
     { "address": "system:aicf",       "nonce": 0, "balance": "20250000000000000" },
     { "address": "system:foundation", "nonce": 0, "balance": "8100000000000000" },
     { "address": "system:faucet",     "nonce": 0, "balance": "3240000000000000" },
-    { "address": "system:dev",        "nonce": 0, "balance": "9810000000000000" }
+    { "address": "system:dev",        "nonce": 0, "balance": "9810000000000000" },
+    { "address": "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f", "nonce": 0, "balance": "500000000000000000" }
   ],
 
   "consensus": {
