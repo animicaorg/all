@@ -382,22 +382,20 @@ def down(
     
     # Build docker-compose command to stop only 'studio' profile services
     # We specify the services explicitly to avoid stopping the node
-    cmd = [
-        "docker", "compose",
-        "-f", str(compose_file),
-        "stop", "services", "explorer"
-    ]
-    
-    # If removing volumes, we need to use 'rm' instead
     if volumes:
+        # Use 'rm' command with force and volumes flags to remove containers and volumes
         cmd = [
             "docker", "compose",
             "-f", str(compose_file),
-            "rm", "-f", "-s", "-v", "services", "explorer"
+            "rm", "-f", "-v", "services", "explorer"
         ]
-    
-    if volumes:
-        cmd.append("-v")
+    else:
+        # Use 'stop' command to just stop the containers
+        cmd = [
+            "docker", "compose",
+            "-f", str(compose_file),
+            "stop", "services", "explorer"
+        ]
     
     typer.echo(f"\nRunning: {' '.join(cmd)}\n")
     
