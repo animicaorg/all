@@ -62,18 +62,19 @@ def _write_contract(tmp_path: Path) -> Path:
 @pytest.fixture()
 def beacon_patch(monkeypatch):
     """
-    Patch vm_py.stdlib.syscalls.get_beacon to return a deterministic 32-byte value.
+    Patch the test harness's get_beacon to return a deterministic 32-byte value.
     The callable can be re-bound inside a test to simulate a new round/beacon.
     """
-    import vm_py.stdlib.syscalls as sc  # type: ignore
-
     current = {"val": b"\x11" * 32}
 
     def _get_beacon() -> bytes:
         return current["val"]
 
-    # install initial beacon
-    monkeypatch.setattr(sc, "get_beacon", _get_beacon, raising=True)
+    # Patch the test harness's stdlib module (installed by conftest)
+    import sys
+    if "stdlib.syscalls" in sys.modules:
+        sc = sys.modules["stdlib.syscalls"]
+        monkeypatch.setattr(sc, "get_beacon", _get_beacon, raising=False)
 
     class Controller:
         @staticmethod
