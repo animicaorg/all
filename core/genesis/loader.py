@@ -345,6 +345,29 @@ def load_genesis(
 
     params = _load_chain_params(genesis, params_override)
 
+    # Validate mainnet premine if applicable (chain_id == 1, height == 0)
+    chain_id = int(genesis.get("chainId", 0))
+    if chain_id == 1:
+        # Import here to avoid circular dependency
+        try:
+            from consensus.rewards import validate_mainnet_genesis_coinbase
+            
+            # Convert alloc to coinbase outputs format for validation
+            coinbase_outputs = [
+                (a["address"], int(a.get("balance", 0)))
+                for a in genesis.get("alloc", [])
+            ]
+            is_valid, reason = validate_mainnet_genesis_coinbase(
+                chain_id=chain_id,
+                height=0,
+                coinbase_outputs=coinbase_outputs,
+            )
+            if not is_valid:
+                raise GenesisError(f"Mainnet genesis validation failed: {reason}")
+        except ImportError:
+            # consensus.rewards not available; skip validation (optional)
+            pass
+
     # Compute state root and header.
     state_root = compute_state_root_from_alloc(genesis["alloc"])
     header = _build_genesis_header(genesis, state_root)
