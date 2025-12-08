@@ -213,6 +213,9 @@ def test_up_with_network_from_state(monkeypatch: Any) -> None:
             assert "compose" in cmd
             assert "up" in cmd
             assert "--profile" in cmd
+            # Should have both dev and studio profiles
+            assert cmd.count("--profile") == 2
+            assert "dev" in cmd
             assert "studio" in cmd
             
             # Verify environment includes network and config
@@ -390,9 +393,10 @@ def test_down_with_network(monkeypatch: Any) -> None:
             cmd = call_args[0][0]
             assert "docker" in cmd
             assert "compose" in cmd
-            assert "down" in cmd
-            assert "--profile" in cmd
-            assert "studio" in cmd
+            # Should use 'stop' command with specific services
+            assert "stop" in cmd or "rm" in cmd
+            assert "services" in cmd
+            assert "explorer" in cmd
 
 
 def test_down_with_volumes(monkeypatch: Any) -> None:
@@ -418,10 +422,10 @@ def test_down_with_volumes(monkeypatch: Any) -> None:
             assert "WARNING" in result.output
             assert "have been removed" in result.output
             
-            # Verify -v flag was passed
+            # Verify volume removal flag was passed (uses 'rm' command)
             call_args = mock_run.call_args
             cmd = call_args[0][0]
-            assert "-v" in cmd
+            assert "rm" in cmd or "-v" in cmd
 
 
 def test_logs_without_network(monkeypatch: Any) -> None:
@@ -465,9 +469,10 @@ def test_logs_with_network(monkeypatch: Any) -> None:
             assert "docker" in cmd
             assert "compose" in cmd
             assert "logs" in cmd
-            assert "--profile" in cmd
-            assert "studio" in cmd
             assert "--tail" in cmd
+            # Should target specific services
+            assert "services" in cmd
+            assert "explorer" in cmd
 
 
 def test_logs_with_follow(monkeypatch: Any) -> None:
@@ -491,10 +496,10 @@ def test_logs_with_follow(monkeypatch: Any) -> None:
             
             assert result.exit_code == 0
             
-            # Verify -f flag was passed
+            # Verify -f flag was passed for follow
             call_args = mock_run.call_args
             cmd = call_args[0][0]
-            assert "-f" in cmd
+            assert "-f" in cmd or "--follow" in cmd
 
 
 def test_logs_with_custom_tail(monkeypatch: Any) -> None:

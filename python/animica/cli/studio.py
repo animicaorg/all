@@ -235,9 +235,11 @@ def up(
       - Background workers for verification queue
       - SQLite database and file storage
       - Metrics and health endpoints
+      - Explorer web interface (optional)
     
-    Studio Services depends on an Animica node being available. Ensure the node
-    is running before starting Studio Services, or use 'animica node up' first.
+    Studio Services depends on an Animica node being available. If the node is
+    not already running, this command will start it automatically along with
+    Studio Services. Alternatively, start the node first with 'animica node up'.
     
     Before running this command, ensure you have set a network using:
       animica network set <network>
@@ -273,12 +275,15 @@ def up(
     
     typer.secho(f"\nStarting Studio Services for network: {network}", fg=typer.colors.CYAN, bold=True)
     typer.echo(f"Using compose file: {compose_file}")
+    typer.echo("Note: This will also start the node if it's not already running.")
     
-    # Build docker-compose command using the 'studio' profile
-    # This profile includes studio-services and explorer (which depends on services)
+    # Build docker-compose command using both 'dev' and 'studio' profiles
+    # 'dev' profile: node + miner (required dependencies)
+    # 'studio' profile: studio-services + explorer
     cmd = [
         "docker", "compose",
         "-f", str(compose_file),
+        "--profile", "dev",
         "--profile", "studio",
     ]
     
@@ -366,6 +371,7 @@ def down(
     
     typer.secho(f"Stopping Studio Services for network: {network}", fg=typer.colors.CYAN, bold=True)
     typer.echo(f"Using compose file: {compose_file}")
+    typer.echo("Note: This will stop only Studio Services. Use 'animica node down' to stop the node.")
     
     if volumes:
         typer.secho(
@@ -374,13 +380,21 @@ def down(
             bold=True
         )
     
-    # Build docker-compose command using the 'studio' profile
+    # Build docker-compose command to stop only 'studio' profile services
+    # We specify the services explicitly to avoid stopping the node
     cmd = [
         "docker", "compose",
         "-f", str(compose_file),
-        "--profile", "studio",
-        "down"
+        "stop", "services", "explorer"
     ]
+    
+    # If removing volumes, we need to use 'rm' instead
+    if volumes:
+        cmd = [
+            "docker", "compose",
+            "-f", str(compose_file),
+            "rm", "-f", "-s", "-v", "services", "explorer"
+        ]
     
     if volumes:
         cmd.append("-v")
@@ -547,17 +561,19 @@ def logs(
     
     compose_file = _get_compose_file()
     
-    # Build docker-compose command using the 'studio' profile
+    # Build docker-compose command to view logs for studio services only
     cmd = [
         "docker", "compose",
         "-f", str(compose_file),
-        "--profile", "studio",
         "logs",
         "--tail", str(tail),
     ]
     
     if follow:
         cmd.append("-f")
+    
+    # Target only studio services
+    cmd.extend(["services", "explorer"])
     
     try:
         # Run interactively to preserve output streaming
