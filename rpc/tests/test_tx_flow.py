@@ -166,7 +166,9 @@ async def test_send_raw_transaction_roundtrip(client_and_cfg):
     txv = q["result"]
     assert txv is not None, "submitted tx must be findable by hash while pending"
     assert txv["hash"] == got_hash
-    assert txv["from"] == sender
+    # Regression: pending tx must return bech32m sender address (anim1...), not 0x... hex
+    assert txv["from"] == sender, f"expected bech32m sender {sender}, got {txv.get('from')}"
+    assert sender.startswith("anim1"), "sender should be bech32m format"
     assert txv["to"] is not None
     assert txv.get("blockNumber") in (
         None,

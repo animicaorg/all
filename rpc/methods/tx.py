@@ -53,6 +53,12 @@ try:
 except Exception:  # pragma: no cover
     _pq_verify = None  # type: ignore
 
+# Bech32m address encoding
+try:
+    from pq.py.address import address_from_pubkey as _address_from_pubkey  # type: ignore
+except Exception:  # pragma: no cover
+    _address_from_pubkey = None  # type: ignore
+
 
 # ——— Local fallback pending store (development only) ———
 # Map tx_hash_hex → raw_tx_bytes
@@ -84,6 +90,55 @@ def _b(x: str | bytes | bytearray) -> bytes:
     if s.startswith("0x"):
         s = s[2:]
     return bytes.fromhex(s)
+
+
+def _extract_sender_address(obj: dict) -> str | None:
+    """
+    Extract the bech32m sender address from a signed transaction object.
+    
+    Uses the signature envelope to reconstruct the address from pubkey + alg_id.
+    Returns None if signatures are missing or address encoding is unavailable.
+    """
+    if _address_from_pubkey is None:
+        return None
+    
+    # Try to extract signature from obj["sigs"][0]
+    sigs = obj.get("sigs")
+    if not sigs or not isinstance(sigs, list) or len(sigs) == 0:
+        return None
+    
+    sig = sigs[0]
+    if not isinstance(sig, dict):
+        return None
+    
+    # Extract alg_id and pubkey from signature
+    alg_id = sig.get("alg") or sig.get("alg_id") or sig.get("algId")
+    pubkey = sig.get("pubkey") or sig.get("pub") or sig.get("pk")
+    
+    if alg_id is None or pubkey is None:
+        return None
+    
+    # Handle alg_id as string (e.g., "dilithium3")
+    if isinstance(alg_id, str):
+        try:
+            from pq.py.registry import ALG_ID
+            if alg_id in ALG_ID:
+                alg_id = ALG_ID[alg_id]
+            else:
+                # Try parsing as int
+                alg_id = int(alg_id, 0)
+        except Exception:
+            return None
+    
+    # Ensure pubkey is bytes
+    if isinstance(pubkey, str):
+        pubkey = _b(pubkey)
+    
+    # Convert to bech32m address
+    try:
+        return _address_from_pubkey(pubkey, alg_id)
+    except Exception:
+        return None
 
 
 def _compute_tx_hash(tx_like: t.Any) -> str:
@@ -292,13 +347,18 @@ def _tx_view(
     # If obj has 'tx' key, it's a nested structure
     tx_obj = obj.get("tx", obj) if isinstance(obj, dict) else obj
     
-    # Extract from nested structure or dataclass
-    _from = tx_obj.get("from") or tx_obj.get("sender")
-    if _from is None and hasattr(tx, "unsigned"):
-        # tx is a Tx dataclass, get sender from unsigned
-        _from = getattr(tx.unsigned, "sender", None)
+    # Extract sender address
+    # First, try to get bech32m address from signature (for pending txs with sigs)
+    _from = _extract_sender_address(obj)
+    
+    # Fallback to raw bytes from transaction structure
     if _from is None:
-        _from = getattr(tx, "sender", None)
+        _from = tx_obj.get("from") or tx_obj.get("sender")
+        if _from is None and hasattr(tx, "unsigned"):
+            # tx is a Tx dataclass, get sender from unsigned
+            _from = getattr(tx.unsigned, "sender", None)
+        if _from is None:
+            _from = getattr(tx, "sender", None)
     
     to = tx_obj.get("to")
     if to is None and hasattr(tx, "unsigned"):
