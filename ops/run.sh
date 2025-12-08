@@ -12,7 +12,7 @@ Subcommands:
   all         Start node + pool in the background, then launch the dashboard.
 
 Options:
-  --profile PROFILE   Choose devnet, testnet, or mainnet (default: devnet).
+  --profile PROFILE   Choose devnet, testnet, or mainnet (default: mainnet).
 USAGE
 }
 
@@ -20,7 +20,7 @@ USAGE
 # Profile / command parsing
 # ------------------------------
 
-PROFILE="devnet"
+PROFILE="mainnet"
 COMMAND=""
 
 while [[ $# -gt 0 ]]; do

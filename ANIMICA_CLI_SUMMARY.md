@@ -148,7 +148,7 @@ Settings resolution (highest to lowest priority):
 4. Built-in defaults
 
 Key environment variables:
-- ANIMICA_NETWORK           Network profile (default: devnet)
+- ANIMICA_NETWORK           Network profile (default: mainnet)
 - ANIMICA_RPC_URL          RPC endpoint (default: http://127.0.0.1:8545/rpc)
 - ANIMICA_CHAIN_ID         Chain ID
 - ANIMICA_CONFIG           Config file path
