@@ -254,7 +254,7 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict) -> None:
         raise rpc_errors.InternalError(f"PQ signature verification setup failed: {e}")
     
     if not ok:
-        raise rpc_errors.InvalidTx("Post-quantum signature verification failed")
+        raise rpc_errors.BadSignature("Invalid post-quantum signature: verification failed")
 
 
 def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
