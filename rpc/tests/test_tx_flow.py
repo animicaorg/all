@@ -255,7 +255,7 @@ async def test_state_get_nonce_with_bech32m_address_regression(client_and_cfg):
     and return 0 (not an InternalError) for accounts that don't exist.
     
     This test covers the bug where pending tx flow used bech32m addresses,
-    but the RPC nonce service raised InternalError instead of returning 0.
+    but the RPC nonce service raised an InternalError instead of returning 0.
     """
     client, cfg = client_and_cfg
     # Generate a fresh keypair to get a valid bech32m address
