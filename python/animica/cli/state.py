@@ -30,8 +30,11 @@ class CLIState:
             try:
                 with open(self.state_file, "r") as f:
                     self._data = json.load(f)
-            except (json.JSONDecodeError, IOError):
+            except (json.JSONDecodeError, IOError) as e:
                 # If file is corrupted or unreadable, start fresh
+                import sys
+                print(f"Warning: CLI state file corrupted ({self.state_file}): {e}", file=sys.stderr)
+                print("Starting with fresh state.", file=sys.stderr)
                 self._data = {}
 
     def _save(self) -> None:
