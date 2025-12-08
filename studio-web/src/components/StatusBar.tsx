@@ -17,8 +17,9 @@ function shortenHash(h?: string, width = 10) {
 }
 
 export default function StatusBar() {
-  const compile = useStore((s) => s.compile);
-  const network = useStore((s) => s.network);
+  const compile = useStore((s) => (s as any).compile);
+  const network = useStore((s) => (s as any).network);
+  const [showDiagnostics, setShowDiagnostics] = React.useState(false);
 
   const diagCounts = useMemo(() => {
     const errs = compile?.diagnostics?.filter((d: any) => d.severity === "error").length ?? 0;
@@ -57,6 +58,8 @@ export default function StatusBar() {
   const headHeight = network?.head?.height ?? 0;
   const headHash = network?.head?.hash ?? "";
   const latency = network?.latencyMs;
+  const rpcUrl = network?.rpcUrl ?? "—";
+  const syncStatus = network?.syncing ? "syncing" : "synced";
 
   return (
     <footer className="statusbar" role="status" aria-live="polite">
@@ -75,20 +78,32 @@ export default function StatusBar() {
           </span>
         </span>
 
-        <span className="kv">
+        <button 
+          className="kv kv-btn" 
+          onClick={() => setShowDiagnostics(!showDiagnostics)}
+          title={diagCounts.errs > 0 || diagCounts.warns > 0 ? "Click to view diagnostics" : "No issues"}
+        >
           <span className="k">diag</span>
           <span className="v">
             {diagCounts.errs > 0 ? `${diagCounts.errs} err` : "0 err"}
             {diagCounts.warns > 0 ? `, ${diagCounts.warns} warn` : ""}
           </span>
-        </span>
+        </button>
       </div>
 
       <div className="spacer" />
 
-      <div className={`block network ${connected ? "ok" : "down"}`} title={connected ? "Connected" : "Disconnected"}>
+      <button 
+        className={`block network ${connected ? "ok" : "down"} clickable`}
+        title={connected ? `RPC: ${rpcUrl}\nLatency: ${latency ?? "—"}ms\nStatus: ${syncStatus}` : "Disconnected - Check RPC URL"}
+        onClick={() => {
+          if (!connected) {
+            alert(`RPC appears offline.\n\nURL: ${rpcUrl}\n\nPlease check:\n• Network connectivity\n• RPC endpoint is running\n• Firewall settings`);
+          }
+        }}
+      >
         <span className="dot" aria-hidden="true" />
-        <span className="label">{connected ? "Connected" : "Offline"}</span>
+        <span className="label">{connected ? "RPC Online" : "RPC Offline"}</span>
 
         <div className="sep" />
 
@@ -113,7 +128,7 @@ export default function StatusBar() {
             <span className="v">#{network.chainId}</span>
           </span>
         )}
-      </div>
+      </button>
 
       <style>{`
         .statusbar {
@@ -142,6 +157,14 @@ export default function StatusBar() {
           background: var(--surface-elev-1);
           color: var(--fg);
         }
+        .block.clickable {
+          cursor: pointer;
+          transition: border-color 150ms ease, background 150ms ease;
+        }
+        .block.clickable:hover {
+          border-color: var(--accent);
+          background: color-mix(in oklab, var(--accent) 8%, var(--surface-elev-1));
+        }
         .compile.st-compiling {
           border-color: var(--accent);
         }
@@ -163,6 +186,17 @@ export default function StatusBar() {
           display: inline-flex;
           align-items: center;
           gap: 6px;
+        }
+        .kv-btn {
+          appearance: none;
+          background: transparent;
+          border: none;
+          cursor: pointer;
+          padding: 0;
+          transition: opacity 150ms ease;
+        }
+        .kv-btn:hover {
+          opacity: 0.8;
         }
         .kv .k {
           color: var(--fg-muted);

@@ -131,13 +131,23 @@ export default function SideBar() {
         </a>
         <a
           className="ext"
-          href="https://status.animica.example"
+          href="/explorer"
           target="_blank"
           rel="noreferrer"
-          title="Network status"
+          title="Block explorer"
         >
-          <Emoji>📈</Emoji>
-          <span className="label">Status</span>
+          <Emoji>🔍</Emoji>
+          <span className="label">Explorer</span>
+        </a>
+        <a
+          className="ext"
+          href="https://github.com/animicaorg"
+          target="_blank"
+          rel="noreferrer"
+          title="GitHub"
+        >
+          <Emoji>⚙️</Emoji>
+          <span className="label">GitHub</span>
         </a>
       </div>
 

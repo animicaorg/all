@@ -29,11 +29,12 @@ function isProbablyRpcUrl(url: string) {
 
 export default function TopBar() {
   const { rpcUrl, chainId, presets, setNetwork } = useNetwork();
-  const { address, connected, connecting, connect, disconnect } = useAccount();
+  const { address, connected, connecting, connect, disconnect, providerStatus } = useAccount();
   const { push } = useToasts();
 
   const [head, setHead] = useState<Head | null>(null);
   const [loadingHead, setLoadingHead] = useState(false);
+  const [lastResponseTime, setLastResponseTime] = useState<number | null>(null);
   const lastPollError = useRef<string | null>(null);
 
   const activePreset = useMemo(() => {
@@ -47,6 +48,7 @@ export default function TopBar() {
 
     async function poll() {
       if (!rpcUrl || !isProbablyRpcUrl(rpcUrl)) return;
+      const startTime = Date.now();
       try {
         setLoadingHead(true);
         const res = await fetch(rpcUrl, {
@@ -59,16 +61,19 @@ export default function TopBar() {
             params: []
           })
         });
+        const responseTime = Date.now() - startTime;
         const json = await res.json();
         const result = json?.result as Head | undefined;
         if (!stop && result) {
           setHead(result);
+          setLastResponseTime(responseTime);
           lastPollError.current = null;
         }
       } catch (err: any) {
         const msg = `RPC ${String(err?.message || err)}`;
         if (!stop) {
           setHead(null);
+          setLastResponseTime(null);
           if (lastPollError.current !== msg) {
             lastPollError.current = msg;
             push({ kind: "error", message: msg });
@@ -128,6 +133,19 @@ export default function TopBar() {
     return loadingHead ? "…" : "RPC offline";
   }, [head, loadingHead, rpcUrl]);
 
+  const rpcStatus = useMemo(() => {
+    if (!rpcUrl) return "—";
+    if (head && lastResponseTime !== null) return `${lastResponseTime}ms`;
+    if (loadingHead) return "checking…";
+    return "offline";
+  }, [head, lastResponseTime, loadingHead, rpcUrl]);
+
+  const networkMismatch = useMemo(() => {
+    // Check if wallet chainId differs from Studio's selected chainId
+    const walletChain = (window as any).animica?.chainId;
+    return connected && walletChain && chainId && walletChain !== chainId;
+  }, [connected, chainId]);
+
   return (
     <header className="topbar">
       <div className="left">
@@ -135,6 +153,18 @@ export default function TopBar() {
           <span className="logo">◎</span>
           <span className="title">Animica Studio</span>
         </div>
+
+        <nav className="links">
+          <a href="https://docs.animica.example" target="_blank" rel="noopener noreferrer" className="link">
+            Docs
+          </a>
+          <a href="/explorer" target="_blank" rel="noopener noreferrer" className="link">
+            Explorer
+          </a>
+          <a href="https://github.com/animicaorg" target="_blank" rel="noopener noreferrer" className="link">
+            GitHub
+          </a>
+        </nav>
 
         <div className="group network">
           <span className="label">Network</span>
@@ -151,13 +181,6 @@ export default function TopBar() {
           </select>
         </div>
 
-        <div className="group rpc">
-          <span className="label">RPC</span>
-          <span className="value mono" title={rpcUrl}>
-            {rpcUrl}
-          </span>
-        </div>
-
         <div className="group chain">
           <span className="label">Chain</span>
           <span className="value mono">{chainId ?? "—"}</span>
@@ -165,11 +188,23 @@ export default function TopBar() {
       </div>
 
       <div className="right">
-        <div className="group head">
-          <span className={`dot ${loadingHead ? "blink" : "ok"}`} />
+        <div className="group head" title={`RPC latency: ${rpcStatus}`}>
+          <span className={`dot ${loadingHead ? "blink" : head ? "ok" : "error"}`} />
           <span className="label">Head</span>
           <span className="value mono">{headLabel}</span>
         </div>
+
+        {providerStatus === "unavailable" && (
+          <div className="provider-warning" title="Wallet not detected">
+            <span className="icon">⚠️</span>
+          </div>
+        )}
+
+        {networkMismatch && (
+          <div className="network-mismatch" title="Wallet network doesn't match Studio network">
+            <span className="icon">🔄</span>
+          </div>
+        )}
 
         {connected ? (
           <div className="account">
@@ -181,8 +216,8 @@ export default function TopBar() {
             </button>
           </div>
         ) : (
-          <button className="btn primary" onClick={onConnect} disabled={connecting}>
-            {connecting ? "Connecting…" : "Connect Wallet"}
+          <button className="btn primary" onClick={onConnect} disabled={connecting || providerStatus === "unavailable"}>
+            {connecting ? "Connecting…" : providerStatus === "unavailable" ? "Install Wallet" : "Connect Wallet"}
           </button>
         )}
       </div>
@@ -225,6 +260,28 @@ export default function TopBar() {
         }
         .title {
           letter-spacing: 0.25px;
+        }
+        .links {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+        .link {
+          font-size: 13px;
+          font-weight: 600;
+          color: var(--fg-muted);
+          text-decoration: none;
+          padding: 6px 10px;
+          border-radius: 8px;
+          transition: color 150ms ease, background 150ms ease;
+        }
+        .link:hover {
+          color: var(--fg-strong);
+          background: color-mix(in oklab, var(--accent) 8%, transparent);
+        }
+        .link:focus-visible {
+          outline: 2px solid var(--accent);
+          outline-offset: 2px;
         }
         .group {
           display: flex;
@@ -316,6 +373,10 @@ export default function TopBar() {
         .dot.ok {
           background: var(--ok);
         }
+        .dot.error {
+          background: var(--danger);
+          box-shadow: 0 0 0 3px color-mix(in oklab, var(--danger) 18%, transparent);
+        }
         .dot.blink {
           animation: blink 1s infinite;
           background: var(--accent);
@@ -329,13 +390,27 @@ export default function TopBar() {
             opacity: 1;
           }
         }
-        @media (max-width: 1100px) {
-          .rpc .value {
+        .provider-warning,
+        .network-mismatch {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 6px 10px;
+          border-radius: 8px;
+          background: color-mix(in oklab, var(--warning) 12%, var(--surface));
+          border: 1px solid color-mix(in oklab, var(--warning) 30%, transparent);
+        }
+        .provider-warning .icon,
+        .network-mismatch .icon {
+          font-size: 16px;
+        }
+        @media (max-width: 1200px) {
+          .links {
             display: none;
           }
         }
         @media (max-width: 820px) {
-          .chain .value {
+          .chain {
             display: none;
           }
         }
