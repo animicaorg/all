@@ -44,7 +44,7 @@ from .constants import MAX_OUTBOUND_PEERS as CONST_MAX_OUTBOUND
 from .constants import MAX_PEERS as CONST_MAX_PEERS
 from .constants import PROTOCOL_ID
 
-DEFAULT_SEEDS: Final[tuple[str, ...]] = ("/dns4/rpc.animica.org/tcp/9000",)
+DEFAULT_SEEDS: Final[tuple[str, ...]] = ("/dns4/seed.animica.org/tcp/9000",)
 
 
 # ---------- parsing helpers ----------------------------------------------------
