@@ -25,7 +25,7 @@ class PoolConfig:
     log_level: str = "INFO"
     api_host: str = "0.0.0.0"
     api_port: int = 8550
-    network: str = "devnet"
+    network: str = "mainnet"
     profile: str = "hashshare"
     extranonce2_size: int = 4
 

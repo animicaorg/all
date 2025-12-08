@@ -84,7 +84,7 @@ def get_network() -> None:
       1. --network command-line flag (highest priority)
       2. ANIMICA_NETWORK environment variable
       3. Persisted setting from 'animica network set'
-      4. Default (devnet)
+      4. Default (mainnet)
 
     Examples:
         animica network get

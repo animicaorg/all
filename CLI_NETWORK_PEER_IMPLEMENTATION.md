@@ -33,7 +33,7 @@ The network command allows users to manage which blockchain network (mainnet, te
 1. `--network` command-line flag (highest priority)
 2. `ANIMICA_NETWORK` environment variable
 3. Persisted setting from `animica network set`
-4. Default (devnet)
+4. Default (mainnet)
 
 ### 2. Peer Management Command (`animica peer`)
 
