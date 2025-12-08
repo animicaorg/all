@@ -50,10 +50,21 @@ from core.types.params import ChainParams
 # be emitted to logs or stored in files/databases.
 #
 # SECURITY NOTE: This is a simple gate for first-time genesis bootstrap. In a
-# production deployment, consider additional security measures (HSM, multi-sig, etc.).
+# production deployment, consider:
+#   1. Using environment variables (e.g., ANIMICA_BOOTSTRAP_PASSWORD) instead of
+#      hardcoded constants
+#   2. Multi-signature authorization or HSM-based key management
+#   3. Ceremony-style genesis creation with multiple authorized parties
+#   4. Time-limited bootstrap windows with additional security layers
+#
+# For the current implementation, the hardcoded password is acceptable for initial
+# bootstrap but should be enhanced for production mainnet deployment.
 # ==================================================================================
 
-BOOTSTRAP_PASSWORD: str = "animicawins"
+import os
+
+# Read from environment variable if available, otherwise use default
+BOOTSTRAP_PASSWORD: str = os.getenv("ANIMICA_BOOTSTRAP_PASSWORD", "animicawins")
 
 # Prompt text (never includes the password itself)
 BOOTSTRAP_PROMPT: str = "Enter Animica mainnet bootstrap password: "
