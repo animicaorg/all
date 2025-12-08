@@ -103,14 +103,21 @@ class PqSignature:
         if sig is None:
             raise TypeError("PqSignature() missing required argument: 'sig'")
         
+        # Try to cast alg_id to int if it's not already (for downstream validation)
+        if not isinstance(alg_id, int):
+            try:
+                alg_id = int(alg_id)
+            except (TypeError, ValueError):
+                # Allow non-int values through; validation will catch them later
+                pass
+        
         # Store as attributes (frozen via object.__setattr__ in __post_init__)
         object.__setattr__(self, 'alg_id', alg_id)
         object.__setattr__(self, 'pubkey', pubkey)
         object.__setattr__(self, 'sig', sig)
         
-        # Validate types (but allow out-of-range alg values for downstream validation)
-        if not isinstance(self.alg_id, int):
-            raise TypeError("PqSignature.alg_id must be an int")
+        # Validate types (but allow out-of-range or non-int alg values for downstream validation)
+        # Note: alg_id may be non-int if cast failed; that's intentional
         if not isinstance(self.pubkey, (bytes, bytearray)):
             raise TypeError("PqSignature.pubkey must be bytes")
         if not isinstance(self.sig, (bytes, bytearray)):

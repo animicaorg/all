@@ -109,6 +109,31 @@ def ws_connect(client: TestClient, path: str = "/ws"):
         yield ws
 
 
+def ws_publish_new_head(client: TestClient, head):
+    """
+    Publish a new head to the WebSocket hub from sync test context.
+    Uses the TestClient's portal to run the async publish in the app's event loop.
+    
+    Args:
+        client: The FastAPI TestClient instance
+        head: The Head object to publish
+    
+    Returns:
+        Number of clients that received the message
+    """
+    from rpc import ws
+    from anyio.from_thread import start_blocking_portal
+    
+    # Use the TestClient's portal to run the async method in the app's event loop
+    if hasattr(client, 'portal') and client.portal is not None:
+        # TestClient provides a portal for calling async functions from sync context
+        return client.portal.call(ws.hub.publish_new_head, head)
+    else:
+        # Fallback: try creating our own portal (shouldn't be needed with TestClient)
+        with start_blocking_portal() as portal:
+            return portal.call(ws.hub.publish_new_head, head)
+
+
 def fetch_openrpc(client: TestClient) -> dict:
     """
     Fetch the OpenRPC document served by the app.
@@ -122,6 +147,7 @@ __all__ = [
     "new_test_client",
     "rpc_call",
     "ws_connect",
+    "ws_publish_new_head",
     "fetch_openrpc",
     "make_test_config",
 ]

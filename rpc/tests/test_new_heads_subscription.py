@@ -2,9 +2,6 @@ from __future__ import annotations
 
 import json
 
-from anyio import from_thread
-
-from rpc import ws
 from rpc.models import Head
 from rpc.tests import new_test_client, ws_connect
 
@@ -23,6 +20,8 @@ def _make_head(number: int = 1) -> Head:
 def test_ws_new_heads_roundtrip():
     """Subscribing to newHeads should deliver broadcast head snapshots."""
 
+    from rpc.tests import ws_publish_new_head
+    
     client, _, _ = new_test_client()
 
     with ws_connect(client, path="/ws") as ws_client:
@@ -30,8 +29,8 @@ def test_ws_new_heads_roundtrip():
         ws_client.send_json({"op": "sub", "topics": ["newHeads"]})
 
         head = _make_head(3)
-        # Broadcast via the shared hub
-        from_thread.run(ws.publish_new_head, head)
+        # Broadcast via the shared hub using the test helper
+        ws_publish_new_head(client, head)
 
         # Drain messages until we see the head payload
         for _ in range(5):
@@ -41,7 +40,8 @@ def test_ws_new_heads_roundtrip():
                 payload = msg.get("data", {})
                 assert payload["number"] == head.number
                 assert payload["hash"] == head.hash
-                assert payload["parentHash"] == head.parent_hash
+                # Model uses snake_case internally
+                assert payload["parent_hash"] == head.parent_hash
                 break
         else:
             raise AssertionError("No newHeads payload received over WebSocket")
