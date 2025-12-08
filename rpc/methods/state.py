@@ -82,80 +82,97 @@ def _to_hex_quantity(n: int) -> str:
 def _svc_balance(addr: str, *, tag: str = "latest") -> int:
     """
     Query balance (in smallest unit) using the best available dependency.
-    Returns an integer.
+    Returns an integer. Returns 0 if account does not exist.
     """
-    # Preferred: dedicated state_service
-    svc = getattr(deps, "state_service", None)
-    if svc is not None:
-        if hasattr(svc, "get_balance"):
-            return int(svc.get_balance(addr, tag=tag))  # type: ignore[no-any-return]
-        if hasattr(svc, "balance"):
-            return int(svc.balance(addr, tag=tag))  # type: ignore[no-any-return]
+    # Preferred: dedicated state_service (handles address parsing)
+    try:
+        from rpc.state_service import get_balance as state_svc_get_balance
+        return int(state_svc_get_balance(addr))
+    except Exception:
+        pass
 
-    # Direct helpers on deps
-    if hasattr(deps, "get_balance"):
-        return int(deps.get_balance(addr, tag=tag))  # type: ignore[no-any-return]
-    if hasattr(deps, "balance"):
-        return int(deps.balance(addr, tag=tag))  # type: ignore[no-any-return]
-
-    # Fallback: raw StateDB (best effort)
+    # Fallback: raw StateDB with manual address parsing
     sdb = getattr(deps, "state_db", None)
     if sdb is not None:
-        if hasattr(sdb, "get_balance"):
-            return int(sdb.get_balance(addr))  # type: ignore[no-any-return]
-        key = _to_account_key_bytes(addr)
+        # Parse address (bech32m or hex) to bytes
+        try:
+            from rpc.state_service import parse_address
+            key = parse_address(addr)
+        except Exception:
+            key = _to_account_key_bytes(addr)
+        
         if key is not None:
-            # heuristics: try get_account → dict with "balance"; else try get(key,"balance")
+            # Try get_balance if available
+            if hasattr(sdb, "get_balance"):
+                try:
+                    return int(sdb.get_balance(key))  # type: ignore[no-any-return]
+                except Exception:
+                    pass
+            
+            # Try get_account (handles both dict and Account objects)
             if hasattr(sdb, "get_account"):
-                acct = sdb.get_account(key)  # type: ignore[attr-defined]
-                if acct and isinstance(acct, dict) and "balance" in acct:
-                    return int(acct["balance"])
-            if hasattr(sdb, "get"):
-                val = sdb.get(key, b"balance")  # type: ignore[attr-defined]
-                if val is not None:
-                    try:
-                        return int(val)
-                    except Exception:
-                        pass
-
-    raise rpc_errors.InternalError("balance service unavailable")
+                try:
+                    acct = sdb.get_account(key)  # type: ignore[attr-defined]
+                    if acct is not None:
+                        # Handle Account object (with .balance attribute)
+                        if hasattr(acct, "balance"):
+                            return int(acct.balance)
+                        # Handle dict
+                        if isinstance(acct, dict) and "balance" in acct:
+                            return int(acct["balance"])
+                except Exception:
+                    pass
+    
+    # Return 0 for non-existent accounts (standard behavior)
+    return 0
 
 
 def _svc_nonce(addr: str, *, tag: str = "latest") -> int:
     """
     Query account nonce using the best available dependency.
+    Returns 0 if account does not exist (standard behavior for new accounts).
     """
-    svc = getattr(deps, "state_service", None)
-    if svc is not None:
-        if hasattr(svc, "get_nonce"):
-            return int(svc.get_nonce(addr, tag=tag))  # type: ignore[no-any-return]
-        if hasattr(svc, "nonce"):
-            return int(svc.nonce(addr, tag=tag))  # type: ignore[no-any-return]
+    # Preferred: dedicated state_service (handles address parsing)
+    try:
+        from rpc.state_service import get_nonce as state_svc_get_nonce
+        return int(state_svc_get_nonce(addr))
+    except Exception:
+        pass
 
-    if hasattr(deps, "get_nonce"):
-        return int(deps.get_nonce(addr, tag=tag))  # type: ignore[no-any-return]
-    if hasattr(deps, "nonce"):
-        return int(deps.nonce(addr, tag=tag))  # type: ignore[no-any-return]
-
+    # Fallback: raw StateDB with manual address parsing
     sdb = getattr(deps, "state_db", None)
     if sdb is not None:
-        if hasattr(sdb, "get_nonce"):
-            return int(sdb.get_nonce(addr))  # type: ignore[no-any-return]
-        key = _to_account_key_bytes(addr)
+        # Parse address (bech32m or hex) to bytes
+        try:
+            from rpc.state_service import parse_address
+            key = parse_address(addr)
+        except Exception:
+            key = _to_account_key_bytes(addr)
+        
         if key is not None:
+            # Try get_nonce if available
+            if hasattr(sdb, "get_nonce"):
+                try:
+                    return int(sdb.get_nonce(key))  # type: ignore[no-any-return]
+                except Exception:
+                    pass
+            
+            # Try get_account (handles both dict and Account objects)
             if hasattr(sdb, "get_account"):
-                acct = sdb.get_account(key)  # type: ignore[attr-defined]
-                if acct and isinstance(acct, dict) and "nonce" in acct:
-                    return int(acct["nonce"])
-            if hasattr(sdb, "get"):
-                val = sdb.get(key, b"nonce")  # type: ignore[attr-defined]
-                if val is not None:
-                    try:
-                        return int(val)
-                    except Exception:
-                        pass
-
-    raise rpc_errors.InternalError("nonce service unavailable")
+                try:
+                    acct = sdb.get_account(key)  # type: ignore[attr-defined]
+                    if acct is not None:
+                        # Handle Account object (with .nonce attribute)
+                        if hasattr(acct, "nonce"):
+                            return int(acct.nonce)
+                        # Handle dict
+                        if isinstance(acct, dict) and "nonce" in acct:
+                            return int(acct["nonce"])
+                except Exception:
+                    pass
+    
+    # Return 0 for non-existent accounts (standard behavior)
+    return 0
 
 
 # ——— RPC Methods ———
