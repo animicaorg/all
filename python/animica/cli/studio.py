@@ -17,6 +17,12 @@ from .state import get_cli_state
 STATE_KEY_NETWORK = "active_network"
 DEFAULT_STUDIO_PORT = 8081
 DEFAULT_STUDIO_HOST = "0.0.0.0"
+DEFAULT_CHAIN_ID = 1337
+DEFAULT_STORAGE_DIR = "./.data"
+
+# Default health check responses
+DEFAULT_HEALTH_RESPONSE = {"status": "ok"}
+DEFAULT_READY_RESPONSE = {"status": "ready"}
 
 app = typer.Typer(help="Manage Animica Studio Services.")
 
@@ -54,7 +60,15 @@ def _ensure_network_set() -> str:
 
 def _get_compose_file() -> Path:
     """Get the path to the docker-compose file for devnet with studio services."""
-    # Assume we're in the repo root or python/ subdirectory
+    # Try to find repo root by looking for ops/docker directory
+    # Start from current file and traverse up
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        compose_file = parent / "ops" / "docker" / "docker-compose.devnet.yml"
+        if compose_file.exists():
+            return compose_file
+    
+    # Fallback: try the expected location based on typical structure
     repo_root = Path(__file__).resolve().parents[3]
     compose_file = repo_root / "ops" / "docker" / "docker-compose.devnet.yml"
     
@@ -96,11 +110,20 @@ def _validate_config(
         config["RPC_URL"] = rpc_url
     
     # CHAIN_ID (defaults to 1337)
-    chain_id = chain_id or int(os.getenv("CHAIN_ID") or os.getenv("ANIMICA_CHAIN_ID") or 1337)
-    config["CHAIN_ID"] = chain_id
+    if chain_id is not None:
+        config["CHAIN_ID"] = chain_id
+    else:
+        chain_id_str = os.getenv("CHAIN_ID") or os.getenv("ANIMICA_CHAIN_ID")
+        if chain_id_str:
+            try:
+                config["CHAIN_ID"] = int(chain_id_str)
+            except (ValueError, TypeError):
+                errors.append(f"CHAIN_ID must be a valid integer, got: '{chain_id_str}'")
+        else:
+            config["CHAIN_ID"] = DEFAULT_CHAIN_ID
     
     # STORAGE_DIR (defaults to ./.data)
-    storage_dir = storage_dir or os.getenv("STORAGE_DIR") or "./.data"
+    storage_dir = storage_dir or os.getenv("STORAGE_DIR") or DEFAULT_STORAGE_DIR
     config["STORAGE_DIR"] = storage_dir
     
     # HOST (defaults to 0.0.0.0)
@@ -108,8 +131,17 @@ def _validate_config(
     config["HOST"] = host
     
     # PORT (defaults to 8081)
-    port = port or int(os.getenv("PORT") or os.getenv("SERVICES_PORT") or DEFAULT_STUDIO_PORT)
-    config["PORT"] = port
+    if port is not None:
+        config["PORT"] = port
+    else:
+        port_str = os.getenv("PORT") or os.getenv("SERVICES_PORT")
+        if port_str:
+            try:
+                config["PORT"] = int(port_str)
+            except (ValueError, TypeError):
+                errors.append(f"PORT must be a valid integer, got: '{port_str}'")
+        else:
+            config["PORT"] = DEFAULT_STUDIO_PORT
     
     # Optional but recommended: ALLOWED_ORIGINS for CORS
     allowed_origins = os.getenv("ALLOWED_ORIGINS") or os.getenv("CORS_ALLOW_ORIGINS")
@@ -150,7 +182,7 @@ async def _check_health(
     async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.get(url)
         response.raise_for_status()
-        return response.json() if response.headers.get("content-type", "").startswith("application/json") else {"status": "ok"}
+        return response.json() if response.headers.get("content-type", "").startswith("application/json") else DEFAULT_HEALTH_RESPONSE
 
 
 async def _check_readiness(
@@ -167,7 +199,7 @@ async def _check_readiness(
     async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.get(url)
         response.raise_for_status()
-        return response.json() if response.headers.get("content-type", "").startswith("application/json") else {"status": "ready"}
+        return response.json() if response.headers.get("content-type", "").startswith("application/json") else DEFAULT_READY_RESPONSE
 
 
 @app.command("up")

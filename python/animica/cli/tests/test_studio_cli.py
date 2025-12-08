@@ -60,6 +60,9 @@ def test_config_validate_with_optional_settings(monkeypatch: Any) -> None:
     assert "cdef" in result.output
 
 
+
+
+
 @respx.mock
 def test_status_service_running(monkeypatch: Any) -> None:
     """Test status command when service is running."""
