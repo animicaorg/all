@@ -137,9 +137,12 @@ services:
 
   # ---------------------------------------------------------------
   # studio-services (deploy / verify / faucet / artifacts)
+  # Note: Use profile 'studio' to start this service explicitly.
+  # It is not started by default with 'dev' profile to allow node
+  # operations to succeed independently.
   # ---------------------------------------------------------------
   services:
-    profiles: [dev]
+    profiles: [studio]
     build:
       context: ../../studio-services
       dockerfile: Dockerfile
@@ -173,9 +176,11 @@ services:
 
   # ---------------------------------------------------------------
   # explorer-web (build once, serve with vite preview)
+  # Note: Use profile 'studio' to start this service. Explorer depends
+  # on studio-services, so it's part of the same optional profile.
   # ---------------------------------------------------------------
   explorer:
-    profiles: [dev]
+    profiles: [studio]
     image: node:20-alpine
     container_name: animica-explorer
     working_dir: /app

@@ -212,7 +212,8 @@ def test_up_with_network_from_state(monkeypatch: Any) -> None:
             assert "docker" in cmd
             assert "compose" in cmd
             assert "up" in cmd
-            assert "services" in cmd
+            assert "--profile" in cmd
+            assert "studio" in cmd
             
             # Verify environment includes network and config
             env = call_args[1]["env"]
@@ -390,7 +391,8 @@ def test_down_with_network(monkeypatch: Any) -> None:
             assert "docker" in cmd
             assert "compose" in cmd
             assert "down" in cmd
-            assert "services" in cmd
+            assert "--profile" in cmd
+            assert "studio" in cmd
 
 
 def test_down_with_volumes(monkeypatch: Any) -> None:
@@ -463,7 +465,8 @@ def test_logs_with_network(monkeypatch: Any) -> None:
             assert "docker" in cmd
             assert "compose" in cmd
             assert "logs" in cmd
-            assert "services" in cmd
+            assert "--profile" in cmd
+            assert "studio" in cmd
             assert "--tail" in cmd
 
 

@@ -122,6 +122,24 @@ Node Management
   # Show logs (via docker compose)
   docker compose -f tests/devnet/docker-compose.yml logs -f
 
+Studio Services Management (Optional)
+--------------------------------------
+  # Studio Services provides deploy/verify API and is OPTIONAL
+  # Start Studio Services (after node is running)
+  animica studio up
+  animica studio up --no-detach  # Run in foreground
+  
+  # Stop Studio Services
+  animica studio down
+  animica studio down --volumes  # Also delete storage data
+  
+  # Check Studio Services status
+  animica studio status
+  
+  # View Studio Services logs
+  animica studio logs
+  animica studio logs --follow
+
 Chain Queries
 -------------
   # Current chain head
@@ -232,6 +250,7 @@ Features:
   - Volume management: Optionally preserve or delete blockchain data
   - Detached/foreground modes for `up` command
   - Optional image rebuilding
+  - Studio Services are decoupled and NOT started by default
 
 Examples:
 
@@ -239,6 +258,7 @@ Examples:
   animica network set devnet
 
   # Start a node (default: detached, with build)
+  # Note: This starts ONLY the node and miner, NOT Studio Services
   animica node up
 
   # Start in foreground for debugging
@@ -269,6 +289,37 @@ Network Enforcement:
 
   This ensures that node operations are always performed in the context
   of a specific network configuration.
+
+Studio Services (Optional)
+---------------------------
+Studio Services (deploy/verify API, faucet, artifacts storage) is now OPTIONAL
+and must be started separately from the node. This decoupling ensures that:
+
+  - `node up` succeeds even if Studio Services fails or is not needed
+  - Studio Services can be developed/debugged independently
+  - Resource usage is reduced when Studio Services is not required
+
+To use Studio Services:
+
+  1. Start the node first:
+     animica node up
+
+  2. Start Studio Services separately:
+     animica studio up
+
+  3. Check Studio Services status:
+     animica studio status
+
+  4. Stop Studio Services:
+     animica studio down
+
+Studio Services requires:
+  - A running Animica node
+  - RPC_URL configured (can be set via --rpc-url flag)
+  - Optional: FAUCET_KEY for faucet functionality (devnet only)
+
+Configuration:
+  animica studio config  # Validate configuration before starting
 
 Implementation Status
 =====================

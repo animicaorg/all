@@ -218,8 +218,10 @@ def up(
     This command spins up a local development node with the configured network
     settings. It uses the devnet docker-compose configuration to start:
       - Node(s) with RPC/WS endpoints
-      - Optional mining service
-      - Optional explorer and services
+      - Mining service
+    
+    Note: Studio Services (deploy/verify API) are NOT started by default.
+    To start Studio Services, use 'animica studio up' after the node is running.
     
     Before running this command, ensure you have set a network using:
       animica network set <network>
@@ -228,6 +230,10 @@ def up(
       animica node up
       animica node up --no-detach  # Run in foreground
       animica node up --profile dev --build
+      
+    To also start Studio Services (optional):
+      animica node up
+      animica studio up  # Start studio services separately
     """
     # Enforce network requirement
     network = _ensure_network_set()
