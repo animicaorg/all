@@ -1,5 +1,6 @@
 import React, { useMemo } from "react";
 import { useStore } from "../state/store";
+import { useToasts } from "../state/toasts";
 
 /**
  * StatusBar — shows compile status, diagnostics, gas estimate,
@@ -19,6 +20,7 @@ function shortenHash(h?: string, width = 10) {
 export default function StatusBar() {
   const compile = useStore((s) => (s as any).compile);
   const network = useStore((s) => (s as any).network);
+  const { push: pushToast } = useToasts();
   const [showDiagnostics, setShowDiagnostics] = React.useState(false);
 
   const diagCounts = useMemo(() => {
@@ -98,7 +100,15 @@ export default function StatusBar() {
         title={connected ? `RPC: ${rpcUrl}\nLatency: ${latency ?? "—"}ms\nStatus: ${syncStatus}` : "Disconnected - Check RPC URL"}
         onClick={() => {
           if (!connected) {
-            alert(`RPC appears offline.\n\nURL: ${rpcUrl}\n\nPlease check:\n• Network connectivity\n• RPC endpoint is running\n• Firewall settings`);
+            pushToast({
+              kind: "error",
+              message: `RPC appears offline (${rpcUrl}). Check network connectivity, RPC endpoint, and firewall settings.`,
+            });
+          } else {
+            pushToast({
+              kind: "success",
+              message: `RPC Online: ${rpcUrl} • Latency: ${latency ?? "—"}ms • ${syncStatus}`,
+            });
           }
         }}
       >

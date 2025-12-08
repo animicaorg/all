@@ -155,6 +155,7 @@ export default function TopBar() {
         </div>
 
         <nav className="links">
+          {/* TODO: Replace example URLs with production URLs when deployed */}
           <a href="https://docs.animica.example" target="_blank" rel="noopener noreferrer" className="link">
             Docs
           </a>

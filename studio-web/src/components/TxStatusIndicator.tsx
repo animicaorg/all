@@ -80,9 +80,36 @@ export default function TxStatusIndicator({
   const config = STATUS_CONFIG[status];
 
   const handleCopy = async () => {
-    if (hash) {
+    if (!hash) return;
+    
+    try {
+      // Modern clipboard API (preferred)
       await navigator.clipboard.writeText(hash);
       onCopyHash?.();
+    } catch (err) {
+      // Fallback for older browsers or when clipboard API is unavailable
+      const textarea = document.createElement('textarea');
+      textarea.value = hash;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      textarea.style.pointerEvents = 'none';
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        // Note: execCommand is deprecated but still widely supported as fallback
+        const success = document.execCommand('copy');
+        if (success) {
+          onCopyHash?.();
+        } else {
+          console.error('Copy command failed');
+          // Could show user feedback here if needed
+        }
+      } catch (fallbackErr) {
+        console.error('Failed to copy hash:', fallbackErr);
+        // Could show user feedback here if needed
+      } finally {
+        document.body.removeChild(textarea);
+      }
     }
   };
 

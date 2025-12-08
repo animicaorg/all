@@ -42,6 +42,7 @@ export default function ProviderBanner({ providerStatus, onDismiss }: ProviderBa
           </p>
         </div>
         <div className="provider-banner-actions">
+          {/* TODO: Update with actual wallet installation URL when published */}
           <a
             href="https://github.com/animicaorg/all/tree/main/wallet-extension"
             target="_blank"
