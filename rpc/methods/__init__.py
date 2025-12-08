@@ -95,9 +95,13 @@ def method(name: str, *, desc: str | None = None, aliases: Iterable[str] = (), r
     def decorator(fn: HandlerFunc) -> HandlerFunc:
         # Allow replacement if requested (useful for tests)
         if replace and name in _METHODS:
+            # Remove existing method and its aliases
+            old_method = _METHODS[name]
             _METHODS.pop(name, None)
-            for alias in aliases:
-                _METHODS.pop(alias, None)
+            # Only remove aliases that belong to the old method being replaced
+            for alias in getattr(old_method, 'aliases', ()):
+                if alias in _METHODS and _METHODS[alias] == old_method:
+                    _METHODS.pop(alias, None)
         register(name, fn, desc=desc, aliases=aliases)
         return fn
 
