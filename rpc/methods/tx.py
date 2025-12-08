@@ -88,23 +88,29 @@ def _b(x: str | bytes | bytearray) -> bytes:
 
 def _compute_tx_hash(tx_like: t.Any) -> str:
     """
-    Compute tx hash from canonical SignBytes (preferred) or canonical CBOR fallback.
+    Compute tx hash (txid) from the full signed transaction CBOR.
+    Per spec: TxID = sha3_256(CBOR(SignedTxMap)), i.e., includes signatures.
     """
     try:
-        if _tx_sign_bytes is not None:
-            sb = _tx_sign_bytes(tx_like)
+        # If tx_like is a Tx dataclass with txid() method, use it
+        if hasattr(tx_like, "txid") and callable(getattr(tx_like, "txid")):
+            return _hex(tx_like.txid()) or ""  # type: ignore[return-value]
+        
+        # If tx_like is a Tx dataclass with to_cbor() method, use it
+        if hasattr(tx_like, "to_cbor") and callable(getattr(tx_like, "to_cbor")):
+            cbor_bytes = tx_like.to_cbor()
+            return _hex(_sha3_256(cbor_bytes)) or ""  # type: ignore[return-value]
+        
+        # Fallback: tx_like is a dict (full signed tx structure)
+        if _cbor_dumps is None:
+            raise RuntimeError("No CBOR encoder available")
+        if _dc.is_dataclass(tx_like):
+            obj = _dcd(tx_like)
         else:
-            # Fallback: dump dict without signature field
-            if _cbor_dumps is None:
-                raise RuntimeError("No CBOR encoder available")
-            if _dc.is_dataclass(tx_like):
-                obj = _dcd(tx_like)
-            else:
-                obj = dict(tx_like)
-            for k in ("sig", "signature"):
-                obj.pop(k, None)
-            sb = _cbor_dumps(obj)
-        return _hex(_sha3_256(sb)) or ""  # type: ignore[return-value]
+            obj = dict(tx_like)
+        # Hash the full object including signatures
+        cbor_bytes = _cbor_dumps(obj)
+        return _hex(_sha3_256(cbor_bytes)) or ""  # type: ignore[return-value]
     except Exception as e:  # pragma: no cover
         raise rpc_errors.InternalError(f"tx hash failed: {e}")
 
@@ -140,22 +146,40 @@ def _chain_id_required() -> int:
 
 def _extract_sig(obj: dict) -> tuple[int, bytes, bytes]:
     """
-    Extract (alg_id, pubkey, signature) from obj["sig"] or obj["signature"].
+    Extract (alg_id, pubkey, signature) from obj["sig"], obj["signature"], or obj["sigs"][0].
     Supports hex strings or raw bytes.
+    Handles both flat and nested tx structures.
     """
+    # Try flat structure first (obj.sig or obj.signature)
     sig = obj.get("sig") or obj.get("signature")
+    
+    # If not found, try nested structure (obj.sigs[0])
+    if sig is None:
+        sigs = obj.get("sigs")
+        if isinstance(sigs, list) and len(sigs) > 0:
+            sig = sigs[0]
+    
     if not isinstance(sig, dict):
         raise rpc_errors.InvalidParams("Missing 'sig' object")
+    
     alg_id = sig.get("algId") or sig.get("alg_id") or sig.get("alg")
     if alg_id is None:
         raise rpc_errors.InvalidParams("Missing 'sig.algId'")
+    
     # Allow str or int for alg_id
     if isinstance(alg_id, str):
+        # Try to map alg_name to alg_id if it's a string
         try:
-            alg_id = int(alg_id, 0)
+            from pq.py.registry import ALG_ID
+            if alg_id in ALG_ID:
+                alg_id = ALG_ID[alg_id]
+            else:
+                # Try parsing as int
+                alg_id = int(alg_id, 0)
         except Exception:
-            # leave as str; pq.verify may accept names
+            # leave as str; will be handled by verification
             pass
+    
     pub = sig.get("pubkey") or sig.get("pub") or sig.get("pk")
     s = sig.get("sig") or sig.get("signature")
     if pub is None or s is None:
@@ -169,7 +193,16 @@ def _extract_sig(obj: dict) -> tuple[int, bytes, bytes]:
 
 def _validate_chain_id(obj: dict) -> None:
     want = _chain_id_required()
+    
+    # Handle both flat and nested tx structures
+    # Try flat structure first
     cid = obj.get("chainId") or obj.get("chain_id")
+    
+    # If not found, try nested structure (obj.tx.chainId)
+    if cid is None and "tx" in obj and isinstance(obj["tx"], dict):
+        tx_obj = obj["tx"]
+        cid = tx_obj.get("chainId") or tx_obj.get("chain_id")
+    
     if cid is None:
         # Some txs rely on external chainId; enforce explicit for now.
         raise rpc_errors.ChainIdMismatch(
@@ -185,7 +218,41 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict) -> None:
         raise rpc_errors.InternalError("PQ verification unavailable")
     alg_id, pub, sig = _extract_sig(obj)
     msg = _sign_bytes(tx_like)
-    ok = _pq_verify.verify(alg_id=alg_id, pubkey=pub, message=msg, signature=sig)  # type: ignore
+    
+    # Construct a Signature envelope for verify_detached
+    # The pq.py.verify API expects a Signature dataclass with alg_id, alg_name, domain, prehash, sig
+    try:
+        from pq.py.sign import Signature
+        from pq.py.registry import ALG_NAME, ALG_ID
+        
+        # Normalize alg_id to int and map to alg_name
+        if isinstance(alg_id, str):
+            # alg_id is actually an alg_name string (e.g., "dilithium3")
+            alg_name = alg_id
+            alg_id = ALG_ID.get(alg_name, 0)
+            if alg_id == 0:
+                raise ValueError(f"Unknown algorithm name: {alg_name}")
+        else:
+            # alg_id is an int, map to alg_name
+            alg_name = ALG_NAME.get(alg_id, f"alg_0x{alg_id:02x}")
+        
+        # Construct signature envelope with standard tx signing domain
+        # Note: Signature dataclass fields are: alg_id, alg_name, domain, prehash, sig
+        sig_env = Signature(
+            alg_id=alg_id,
+            alg_name=alg_name,
+            domain="tx/sign",  # Standard domain for transaction signatures
+            prehash="sha3-512",  # Standard prehash for tx signatures
+            sig=sig
+        )
+        
+        # Call verify_detached with the signature envelope
+        # verify_detached signature: (msg: bytes, sig: Signature, pk: bytes, **kwargs) -> bool
+        ok = _pq_verify.verify_detached(msg, sig_env, pub)  # type: ignore[attr-defined]
+    except Exception as e:
+        # Fallback error for unexpected issues
+        raise rpc_errors.InternalError(f"PQ signature verification setup failed: {e}")
+    
     if not ok:
         raise rpc_errors.InvalidTx("Post-quantum signature verification failed")
 
@@ -197,7 +264,9 @@ def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
     if _Tx is not None:
         try:
             # Try friendly constructors if present
-            if hasattr(_Tx, "from_dict"):
+            if hasattr(_Tx, "from_obj"):
+                tx = _Tx.from_obj(obj)  # type: ignore[attr-defined]
+            elif hasattr(_Tx, "from_dict"):
                 tx = _Tx.from_dict(obj)  # type: ignore[attr-defined]
             else:
                 tx = _Tx(**obj)  # type: ignore[call-arg]
@@ -219,18 +288,83 @@ def _tx_view(
     block_number: int | None = None,
     tx_index: int | None = None,
 ) -> dict:
-    _from = obj.get("from") or obj.get("sender") or getattr(tx, "sender", None)
-    to = obj.get("to", getattr(tx, "to", None))
-    nonce = obj.get("nonce", getattr(tx, "nonce", None))
-    gas = obj.get("gas", obj.get("gasLimit", getattr(tx, "gas_limit", None)))
-    tip = obj.get("tip", obj.get("gasPrice", getattr(tx, "tip", None)))
-    value = obj.get("value", getattr(tx, "value", 0))
-    data = obj.get("data", obj.get("payload", getattr(tx, "data", None)))
-    hash_hex = _compute_tx_hash(tx if _dc.is_dataclass(tx) else obj)
+    # Handle both flat and nested tx structures
+    # If obj has 'tx' key, it's a nested structure
+    tx_obj = obj.get("tx", obj) if isinstance(obj, dict) else obj
+    
+    # Extract from nested structure or dataclass
+    _from = tx_obj.get("from") or tx_obj.get("sender")
+    if _from is None and hasattr(tx, "unsigned"):
+        # tx is a Tx dataclass, get sender from unsigned
+        _from = getattr(tx.unsigned, "sender", None)
+    if _from is None:
+        _from = getattr(tx, "sender", None)
+    
+    to = tx_obj.get("to")
+    if to is None and hasattr(tx, "unsigned"):
+        payload = getattr(tx.unsigned, "payload", None)
+        to = getattr(payload, "to", None)
+    if to is None:
+        to = getattr(tx, "to", None)
+    
+    nonce = tx_obj.get("nonce")
+    if nonce is None and hasattr(tx, "unsigned"):
+        nonce = getattr(tx.unsigned, "nonce", None)
+    if nonce is None:
+        nonce = getattr(tx, "nonce", None)
+    
+    # Handle gas - can be a dict {'limit': ..., 'price': ...} or direct values
+    gas_obj = tx_obj.get("gas")
+    if isinstance(gas_obj, dict):
+        gas = gas_obj.get("limit")
+        tip = gas_obj.get("price")
+    else:
+        gas = gas_obj or tx_obj.get("gasLimit")
+        tip = tx_obj.get("tip") or tx_obj.get("gasPrice")
+    
+    if gas is None and hasattr(tx, "unsigned"):
+        gas = getattr(tx.unsigned, "gas_limit", None)
+    if gas is None:
+        gas = getattr(tx, "gas_limit", None)
+    
+    if tip is None and hasattr(tx, "unsigned"):
+        tip = getattr(tx.unsigned, "gas_price", None)
+    if tip is None:
+        tip = getattr(tx, "tip", None)
+    # Handle payload - can be a dict {'t': type, 'v': {actual payload}} or direct values
+    payload_obj = tx_obj.get("payload")
+    if isinstance(payload_obj, dict):
+        payload_v = payload_obj.get("v", {})
+        value = payload_v.get("amount", payload_v.get("value", 0))
+        data = payload_v.get("data")
+        if to is None:
+            to = payload_v.get("to")
+    else:
+        value = tx_obj.get("value")
+        data = tx_obj.get("data")
+    
+    if value is None and hasattr(tx, "unsigned"):
+        payload = getattr(tx.unsigned, "payload", None)
+        value = getattr(payload, "amount", getattr(payload, "value", 0))
+    if value is None:
+        value = getattr(tx, "value", 0)
+    
+    if data is None and hasattr(tx, "unsigned"):
+        payload = getattr(tx.unsigned, "payload", None)
+        data = getattr(payload, "data", None)
+    if data is None:
+        data = getattr(tx, "data", None)
+    
+    # Compute hash - use the txid() method if available (for Tx dataclass)
+    if hasattr(tx, "txid") and callable(getattr(tx, "txid")):
+        hash_hex = _hex(tx.txid()) or ""
+    else:
+        # Fallback: hash the full obj
+        hash_hex = _hex(_sha3_256(_cbor_dumps(obj))) or "" if _cbor_dumps else ""
     v = {
         "hash": hash_hex,
-        "from": _from,
-        "to": to,
+        "from": _hex(_from) if isinstance(_from, (bytes, bytearray)) else _from,
+        "to": _hex(to) if isinstance(to, (bytes, bytearray)) else to,
         "nonce": int(nonce) if nonce is not None else None,
         "gas": int(gas) if gas is not None else None,
         "tip": int(tip) if tip is not None else None,
@@ -367,8 +501,9 @@ def tx_send_raw_transaction(rawTx: str) -> str:
     # PQ signature verify
     _verify_pq_signature(tx_like, obj)
 
-    # Compute hash
-    tx_hash_hex = _compute_tx_hash(tx_like if _dc.is_dataclass(tx_like) else obj)
+    # Compute hash from the original CBOR bytes to ensure consistency
+    # Per spec: TxID = sha3_256(CBOR(SignedTxMap))
+    tx_hash_hex = _hex(_sha3_256(raw)) or ""
 
     # Duplicate suppression: if already in pending/persisted, return hash (idempotent)
     if _pending_get(tx_hash_hex) is not None:

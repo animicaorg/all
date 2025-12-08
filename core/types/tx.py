@@ -144,8 +144,24 @@ class PqSignature:
 
     @staticmethod
     def from_obj(o: Mapping[str, Any]) -> "PqSignature":
+        alg = o["alg"]
+        # Handle both int alg_id and string alg_name
+        if isinstance(alg, str):
+            # Map algorithm name to ID
+            try:
+                from pq.py.registry import ALG_ID
+                alg_id = ALG_ID.get(alg, None)
+                if alg_id is None:
+                    # Try parsing as int
+                    alg_id = int(alg, 0)
+            except Exception:
+                # Fallback: use 0 to indicate unknown (will fail validation later)
+                alg_id = 0
+        else:
+            alg_id = int(alg)
+        
         return PqSignature(
-            alg_id=int(o["alg"]),
+            alg_id=alg_id,
             pubkey=bytes(o["pubkey"]),
             sig=bytes(o["sig"]),
         )
