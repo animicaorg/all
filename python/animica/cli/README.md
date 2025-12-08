@@ -111,25 +111,44 @@ Wallet Operations
   animica wallet --wallet-file /path/to/wallets.json list
   export ANIMICA_WALLETS_FILE=/path/to/wallets.json
 
-Node Management
----------------
-  # Set network first (required for lifecycle operations)
-  animica network set devnet
+Node Management & Network Selection
+------------------------------------
+  Animica supports multiple networks with automatic Docker Compose configuration:
+  - mainnet (chain ID 1, port 8545)
+  - testnet (chain ID 2, port 8546)
+  - devnet (chain ID 1337, port 8545)
+  
+  Each network uses isolated data directories and volumes.
+  See docs/network-docker-compose.md for complete documentation.
 
-  # Start a node (requires Docker and docker-compose)
-  animica node up
-  animica node up --no-detach  # Run in foreground
-  animica node up --profile dev --build
+  # Set active network (required before node operations)
+  animica network set mainnet     # Production network
+  animica network set testnet     # Public test network
+  animica network set devnet      # Local development
+
+  # View active network
+  animica network get
+
+  # List available networks
+  animica network list
+
+  # Start a node (automatically uses active network's compose file)
+  animica node up                 # Detached mode (background)
+  animica node up --no-detach     # Foreground with logs
+  animica node up --with-miner    # Include miner service
+  animica node up --no-build      # Skip image rebuild
 
   # Stop a node
   animica node down
-  animica node down --volumes  # Also delete blockchain data
+  animica node down --volumes     # Also delete blockchain data (DESTRUCTIVE)
 
   # Check node status
   animica node status
 
-  # Show logs (via docker compose)
-  docker compose -f tests/devnet/docker-compose.yml logs -f
+  # View node logs
+  # The exact compose file path depends on the active network
+  animica network get  # Shows which network is active
+  docker compose -f <compose-file> logs -f
 
 Studio Services Management (Optional)
 --------------------------------------

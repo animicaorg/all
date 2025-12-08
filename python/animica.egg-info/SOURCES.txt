@@ -21,6 +21,7 @@ animica/cli/node.py
 animica/cli/peer.py
 animica/cli/rpc.py
 animica/cli/state.py
+animica/cli/studio.py
 animica/cli/tx.py
 animica/cli/wallet.py
 animica/stratum_pool/__init__.py
