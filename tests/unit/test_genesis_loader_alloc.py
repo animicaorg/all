@@ -33,7 +33,7 @@ def test_init_state_from_alloc_uses_statedb_api():
     alloc = [
         {"address": "system:treasury", "nonce": 0, "balance": "1000000"},
         {"address": "system:test", "nonce": 5, "balance": "2000000"},
-        {"address": "test:account", "nonce": 0, "balance": "0"}  # Zero balance case
+        {"address": "system:account", "nonce": 0, "balance": "0"}  # Zero balance case
     ]
 
     # Use a temporary SQLite DB
@@ -52,7 +52,7 @@ def test_init_state_from_alloc_uses_statedb_api():
         # Note: StateDB expects bytes addresses
         treasury_addr = "system:treasury".encode("utf-8")
         test_addr = "system:test".encode("utf-8")
-        account_addr = "test:account".encode("utf-8")
+        account_addr = "system:account".encode("utf-8")
 
         # Check balances
         assert state.get_balance(treasury_addr) == 1000000, \
@@ -90,9 +90,9 @@ def test_init_state_from_alloc_batch_api():
 
     # Create sample alloc with multiple entries to ensure batching is effective
     alloc = [
-        {"address": "batch:test1", "nonce": 1, "balance": "50"},
-        {"address": "batch:test2", "nonce": 2, "balance": "100"},
-        {"address": "batch:test3", "nonce": 0, "balance": "150"},
+        {"address": "system:test1", "nonce": 1, "balance": "50"},
+        {"address": "system:test2", "nonce": 2, "balance": "100"},
+        {"address": "system:test3", "nonce": 0, "balance": "150"},
     ]
 
     with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as db_f:
@@ -107,9 +107,9 @@ def test_init_state_from_alloc_batch_api():
         _init_state_from_alloc(state, alloc)
         
         # Verify all accounts were written correctly
-        test1_addr = "batch:test1".encode("utf-8")
-        test2_addr = "batch:test2".encode("utf-8")
-        test3_addr = "batch:test3".encode("utf-8")
+        test1_addr = "system:test1".encode("utf-8")
+        test2_addr = "system:test2".encode("utf-8")
+        test3_addr = "system:test3".encode("utf-8")
 
         assert state.get_balance(test1_addr) == 50
         assert state.get_nonce(test1_addr) == 1

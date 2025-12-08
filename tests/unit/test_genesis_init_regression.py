@@ -37,9 +37,9 @@ def test_load_and_init_genesis_full_flow():
         "chainId": 1337,
         "genesisTime": "2024-01-01T00:00:00Z",
         "alloc": [
-            {"address": "test:treasury", "nonce": 0, "balance": 1000000},
-            {"address": "test:validator", "nonce": 5, "balance": 2000000},
-            {"address": "test:user", "nonce": 0, "balance": 500000}
+            {"address": "system:treasury", "nonce": 0, "balance": 1000000},
+            {"address": "system:validator", "nonce": 5, "balance": 2000000},
+            {"address": "system:user", "nonce": 0, "balance": 500000}
         ],
         "economics": {"premineTotal": 5000000},
         "consensus": {"initialThetaMicro": 1000000}
@@ -59,9 +59,9 @@ def test_load_and_init_genesis_full_flow():
         # Test 1: Verify state was seeded with correct balances and nonces
         state = env["state"]
         
-        treasury_addr = "test:treasury".encode("utf-8")
-        validator_addr = "test:validator".encode("utf-8")
-        user_addr = "test:user".encode("utf-8")
+        treasury_addr = "system:treasury".encode("utf-8")
+        validator_addr = "system:validator".encode("utf-8")
+        user_addr = "system:user".encode("utf-8")
         
         assert state.get_balance(treasury_addr) == 1000000, \
             "Treasury balance should be 1000000"
@@ -163,8 +163,8 @@ def test_load_and_init_genesis_state_root_consistency():
     from core.genesis.loader import load_and_init_genesis, compute_state_root_from_alloc
     
     alloc = [
-        {"address": "test:addr1", "nonce": 0, "balance": 12345},
-        {"address": "test:addr2", "nonce": 10, "balance": 67890}
+        {"address": "system:addr1", "nonce": 0, "balance": 12345},
+        {"address": "system:addr2", "nonce": 10, "balance": 67890}
     ]
     
     genesis_data = {
@@ -216,7 +216,7 @@ def test_load_and_init_genesis_address_normalization():
         "genesisTime": "2024-01-01T00:00:00Z",
         "alloc": [
             {"address": "System:Treasury", "nonce": 0, "balance": 1000},
-            {"address": "TEST:USER", "nonce": 1, "balance": 2000}
+            {"address": "SYSTEM:USER", "nonce": 1, "balance": 2000}
         ],
         "economics": {"premineTotal": 5000},
         "consensus": {"initialThetaMicro": 1000000}
@@ -237,7 +237,7 @@ def test_load_and_init_genesis_address_normalization():
         
         # Addresses should be normalized to lowercase
         treasury_addr = "system:treasury".encode("utf-8")
-        user_addr = "test:user".encode("utf-8")
+        user_addr = "system:user".encode("utf-8")
         
         assert state.get_balance(treasury_addr) == 1000, \
             "Treasury balance should be accessible with lowercase address"
@@ -264,7 +264,7 @@ def test_load_and_init_genesis_multiple_calls():
     genesis_data = {
         "chainId": 3333,
         "genesisTime": "2024-01-01T00:00:00Z",
-        "alloc": [{"address": "test:single", "nonce": 0, "balance": 999}],
+        "alloc": [{"address": "system:single", "nonce": 0, "balance": 999}],
         "economics": {"premineTotal": 1000},
         "consensus": {"initialThetaMicro": 1000000}
     }
