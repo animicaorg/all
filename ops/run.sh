@@ -76,19 +76,36 @@ source "${PROFILE_PATH}"
 set +a
 
 # ------------------------------
-# Normalize network + DBs
+# Normalize network + chain id + DBs
 # ------------------------------
 #
-# Rule:
-#  - If ANIMICA_NETWORK is explicitly set in the environment, respect it.
-#  - Otherwise, tie ANIMICA_NETWORK to the PROFILE (devnet/testnet/mainnet).
+#  - ANIMICA_NETWORK follows PROFILE unless explicitly set.
+#  - ANIMICA_CHAIN_ID default depends on PROFILE:
+#        devnet  -> 1337
+#        testnet -> 2
+#        mainnet -> 1
 #  - DBs are profile-specific by default:
-#       ~/.animica/<profile>/chain.db
-#       ~/.animica/<profile>/pool.db
+#        ~/.animica/<profile>/chain.db
+#        ~/.animica/<profile>/pool.db
 #
 
 if [[ -z "${ANIMICA_NETWORK:-}" ]]; then
   export ANIMICA_NETWORK="${PROFILE}"
+fi
+
+# Chain id defaults by profile, but allow explicit override.
+if [[ -z "${ANIMICA_CHAIN_ID:-}" ]]; then
+  case "${PROFILE}" in
+    devnet)
+      export ANIMICA_CHAIN_ID=1337
+      ;;
+    testnet)
+      export ANIMICA_CHAIN_ID=2
+      ;;
+    mainnet)
+      export ANIMICA_CHAIN_ID=1
+      ;;
+  esac
 fi
 
 # Default RPC URL if not set in profile
@@ -222,7 +239,7 @@ PY
 # ------------------------------
 
 start_node() {
-  echo "[animica] Starting node (profile=${PROFILE}, network=${ANIMICA_NETWORK})"
+  echo "[animica] Starting node (profile=${PROFILE}, network=${ANIMICA_NETWORK}, chain_id=${ANIMICA_CHAIN_ID})"
   echo "[animica] RPC DB: ${ANIMICA_RPC_DB_URI}"
   load_p2p_seeds
   read -r rpc_host rpc_port rpc_path < <(parse_rpc_from_url)
@@ -238,7 +255,7 @@ start_node() {
 }
 
 start_pool() {
-  echo "[animica] Starting Stratum pool (profile=${PROFILE}, network=${ANIMICA_NETWORK})"
+  echo "[animica] Starting Stratum pool (profile=${PROFILE}, network=${ANIMICA_NETWORK}, chain_id=${ANIMICA_CHAIN_ID})"
   echo "[animica] Pool DB: ${ANIMICA_MINING_POOL_DB_URL}"
   cd "${REPO_ROOT}" || exit 1
   if [[ -d .venv ]]; then
@@ -259,7 +276,7 @@ start_pool() {
 }
 
 start_dashboard() {
-  echo "[animica] Starting miner dashboard (profile=${PROFILE}, network=${ANIMICA_NETWORK})"
+  echo "[animica] Starting miner dashboard (profile=${PROFILE}, network=${ANIMICA_NETWORK}, chain_id=${ANIMICA_CHAIN_ID})"
   cd "${REPO_ROOT}" || exit 1
   if [[ ! -d node_modules ]]; then
     pnpm install
@@ -278,7 +295,7 @@ start_dashboard() {
 }
 
 start_all() {
-  echo "[animica] Launching node + pool in background for profile=${PROFILE}, network=${ANIMICA_NETWORK}"
+  echo "[animica] Launching node + pool in background for profile=${PROFILE}, network=${ANIMICA_NETWORK}, chain_id=${ANIMICA_CHAIN_ID}"
   start_node &
   NODE_PID=$!
   start_pool &
