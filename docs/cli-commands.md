@@ -67,12 +67,17 @@ with the following subcommands:
 
 - `create --label <name> [--allow-insecure-fallback]` create a new Dilithium3-
   style keypair, derive a bech32m `anim1…` address, and persist it to
-  `~/.animica/wallets.json`.
+  `~/.animica/wallets.json` (default wallet store location).
 - `list` show known addresses and algorithms (bech32m/anim HRP).
-- `show --address <addr> [--rpc-url ...]` print the wallet entry plus
-  `state.getBalance` from the configured RPC endpoint.
-- `export --address <addr> --out wallet.json` / `import --file wallet.json`
+- `show <address|label|pubkey_hex> [--rpc-url ...]` print the wallet entry plus
+  `state.getBalance` from the configured RPC endpoint. Lookup by address (full
+  bech32), label, or public key hex.
+- `export <address|label|pubkey_hex> --out wallet.json` / `import --file wallet.json`
   round-trip secrets in a JSON format that keeps the bech32m encoding intact.
+- `set-default <address|label|pubkey_hex>` mark a wallet as the default.
+
+The wallet file defaults to `~/.animica/wallets.json` and can be overridden via
+`--wallet-file` flag or `ANIMICA_WALLETS_FILE` environment variable.
 
 Example workflow to generate and verify an address against a running node:
 
@@ -80,8 +85,13 @@ Example workflow to generate and verify an address against a running node:
 animica-wallet create --label dev1 --allow-insecure-fallback
 animica-wallet list
 
-# Query balance over JSON-RPC (state.getBalance)
-animica-wallet show --address anim1... --rpc-url $ANIMICA_RPC_URL
+# Query balance over JSON-RPC (state.getBalance) - by address or label
+animica-wallet show anim1...               # by address
+animica-wallet show dev1                   # by label
+animica-wallet show dev1 --rpc-url $ANIMICA_RPC_URL
+
+# Export by label or address
+animica-wallet export dev1 --out backup.json
 ```
 
 Addresses emitted by the wallet, explorer, and pool payout configs all follow
