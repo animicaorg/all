@@ -193,7 +193,7 @@ def test_up_with_network_from_state(monkeypatch: Any) -> None:
         # Mock the compose file check
         mock_compose_file = Path(tmpdir) / "docker-compose.yml"
         mock_compose_file.write_text("version: '3'\nservices:\n  services:\n    image: test\n")
-        monkeypatch.setattr("animica.cli.studio._get_compose_file", lambda: mock_compose_file)
+        monkeypatch.setattr("animica.cli.studio._get_compose_file", lambda network: mock_compose_file)
         
         # Mock subprocess.run
         mock_result = MagicMock()
@@ -235,7 +235,7 @@ def test_up_with_network_from_env(monkeypatch: Any) -> None:
         # Mock the compose file check
         mock_compose_file = Path(tmpdir) / "docker-compose.yml"
         mock_compose_file.write_text("version: '3'\nservices:\n  services:\n    image: test\n")
-        monkeypatch.setattr("animica.cli.studio._get_compose_file", lambda: mock_compose_file)
+        monkeypatch.setattr("animica.cli.studio._get_compose_file", lambda network: mock_compose_file)
         
         # Mock subprocess.run
         mock_result = MagicMock()
@@ -259,7 +259,7 @@ def test_up_with_custom_config(monkeypatch: Any) -> None:
         # Mock the compose file check
         mock_compose_file = Path(tmpdir) / "docker-compose.yml"
         mock_compose_file.write_text("version: '3'\nservices:\n  services:\n    image: test\n")
-        monkeypatch.setattr("animica.cli.studio._get_compose_file", lambda: mock_compose_file)
+        monkeypatch.setattr("animica.cli.studio._get_compose_file", lambda network: mock_compose_file)
         
         # Mock subprocess.run
         mock_result = MagicMock()
@@ -296,7 +296,7 @@ def test_up_default_build_and_detach(monkeypatch: Any) -> None:
         # Mock the compose file check
         mock_compose_file = Path(tmpdir) / "docker-compose.yml"
         mock_compose_file.write_text("version: '3'\nservices:\n  services:\n    image: test\n")
-        monkeypatch.setattr("animica.cli.studio._get_compose_file", lambda: mock_compose_file)
+        monkeypatch.setattr("animica.cli.studio._get_compose_file", lambda network: mock_compose_file)
         
         # Mock subprocess.run
         mock_result = MagicMock(returncode=0)
@@ -319,7 +319,7 @@ def test_up_docker_not_found(monkeypatch: Any) -> None:
         # Mock the compose file check
         mock_compose_file = Path(tmpdir) / "docker-compose.yml"
         mock_compose_file.write_text("version: '3'\nservices:\n  services:\n    image: test\n")
-        monkeypatch.setattr("animica.cli.studio._get_compose_file", lambda: mock_compose_file)
+        monkeypatch.setattr("animica.cli.studio._get_compose_file", lambda network: mock_compose_file)
         
         # Mock subprocess.run to raise FileNotFoundError
         with patch("animica.cli.studio.subprocess.run", side_effect=FileNotFoundError()):
@@ -339,7 +339,7 @@ def test_up_compose_file_not_found(monkeypatch: Any) -> None:
         monkeypatch.setenv("RPC_URL", "http://localhost:8545")
         
         # Mock _get_compose_file to raise Exit when file doesn't exist
-        def mock_get_compose():
+        def mock_get_compose(network):
             raise typer.Exit(code=1)
         
         monkeypatch.setattr("animica.cli.studio._get_compose_file", mock_get_compose)
@@ -375,7 +375,7 @@ def test_down_with_network(monkeypatch: Any) -> None:
         # Mock the compose file check
         mock_compose_file = Path(tmpdir) / "docker-compose.yml"
         mock_compose_file.write_text("version: '3'\nservices:\n  services:\n    image: test\n")
-        monkeypatch.setattr("animica.cli.studio._get_compose_file", lambda: mock_compose_file)
+        monkeypatch.setattr("animica.cli.studio._get_compose_file", lambda network: mock_compose_file)
         
         # Mock subprocess.run
         mock_result = MagicMock()
@@ -410,7 +410,7 @@ def test_down_with_volumes(monkeypatch: Any) -> None:
         # Mock the compose file check
         mock_compose_file = Path(tmpdir) / "docker-compose.yml"
         mock_compose_file.write_text("version: '3'\nservices:\n  services:\n    image: test\n")
-        monkeypatch.setattr("animica.cli.studio._get_compose_file", lambda: mock_compose_file)
+        monkeypatch.setattr("animica.cli.studio._get_compose_file", lambda network: mock_compose_file)
         
         # Mock subprocess.run
         mock_result = MagicMock()
@@ -452,7 +452,7 @@ def test_logs_with_network(monkeypatch: Any) -> None:
         # Mock the compose file check
         mock_compose_file = Path(tmpdir) / "docker-compose.yml"
         mock_compose_file.write_text("version: '3'\nservices:\n  services:\n    image: test\n")
-        monkeypatch.setattr("animica.cli.studio._get_compose_file", lambda: mock_compose_file)
+        monkeypatch.setattr("animica.cli.studio._get_compose_file", lambda network: mock_compose_file)
         
         # Mock subprocess.run
         mock_result = MagicMock()
@@ -486,7 +486,7 @@ def test_logs_with_follow(monkeypatch: Any) -> None:
         # Mock the compose file check
         mock_compose_file = Path(tmpdir) / "docker-compose.yml"
         mock_compose_file.write_text("version: '3'\nservices:\n  services:\n    image: test\n")
-        monkeypatch.setattr("animica.cli.studio._get_compose_file", lambda: mock_compose_file)
+        monkeypatch.setattr("animica.cli.studio._get_compose_file", lambda network: mock_compose_file)
         
         # Mock subprocess.run
         mock_result = MagicMock()
@@ -513,7 +513,7 @@ def test_logs_with_custom_tail(monkeypatch: Any) -> None:
         # Mock the compose file check
         mock_compose_file = Path(tmpdir) / "docker-compose.yml"
         mock_compose_file.write_text("version: '3'\nservices:\n  services:\n    image: test\n")
-        monkeypatch.setattr("animica.cli.studio._get_compose_file", lambda: mock_compose_file)
+        monkeypatch.setattr("animica.cli.studio._get_compose_file", lambda network: mock_compose_file)
         
         # Mock subprocess.run
         mock_result = MagicMock()
