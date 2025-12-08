@@ -85,11 +85,12 @@ def parse_address(addr: str) -> bytes:
         # Try higher-level codec if available
         try:
             addr_mod = _import("pq.py.address")
-            rec = addr_mod.decode_address(addr)  # type: ignore[attr-defined]
+            rec = addr_mod.decode_address(s)  # type: ignore[attr-defined]
             # Return the full payload: alg_id (2 bytes) || digest (32 bytes)
-            return rec.alg_id.to_bytes(2, "big") + rec.digest  # type: ignore[attr-defined]
+            digest_bytes = bytes(rec.digest) if not isinstance(rec.digest, bytes) else rec.digest  # type: ignore[attr-defined]
+            return rec.alg_id.to_bytes(2, "big") + digest_bytes  # type: ignore[attr-defined]
         except Exception as e:
-            raise ValueError(f"Invalid address format: {addr}") from e
+            raise ValueError(f"Invalid address format: {s}") from e
 
 
 # -------- Hash helpers -------------------------------------------------------
