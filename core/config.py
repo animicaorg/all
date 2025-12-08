@@ -160,11 +160,11 @@ def _env_bool(name: str, default: bool) -> bool:
 
 @dataclass
 class ChainConfig:
-    chain_id: int = DEVNET_CHAIN_ID
-    network_name: str = "devnet"  # "mainnet" | "testnet" | "devnet"
+    chain_id: int = MAINNET_CHAIN_ID
+    network_name: str = "mainnet"  # "mainnet" | "testnet" | "devnet"
 
     @staticmethod
-    def infer_from_env(default: int = DEVNET_CHAIN_ID) -> "ChainConfig":
+    def infer_from_env(default: int = MAINNET_CHAIN_ID) -> "ChainConfig":
         # Priority: explicit chain id → network name
         if "ANIMICA_CHAIN_ID" in os.environ:
             cid = _env_int("ANIMICA_CHAIN_ID", default)
@@ -178,8 +178,10 @@ class ChainConfig:
             return ChainConfig(chain_id=MAINNET_CHAIN_ID, network_name="mainnet")
         if net in {"test", "testnet"}:
             return ChainConfig(chain_id=TESTNET_CHAIN_ID, network_name="testnet")
-        # default
-        return ChainConfig(chain_id=default, network_name="devnet")
+        if net in {"dev", "devnet"}:
+            return ChainConfig(chain_id=DEVNET_CHAIN_ID, network_name="devnet")
+        # default to mainnet when no network is specified
+        return ChainConfig(chain_id=MAINNET_CHAIN_ID, network_name="mainnet")
 
 
 @dataclass
