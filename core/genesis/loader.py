@@ -397,7 +397,19 @@ def load_genesis(
     # Optionally seed state DB for callers that pass a KV handle.
     if kv is not None:
         state = StateDB(kv)
+        if log:
+            print(f"[genesis] Seeding state DB with {len(genesis['alloc'])} alloc entries")
         _init_state_from_alloc(state, genesis["alloc"])
+        if log:
+            # Verify a sample entry was written
+            if genesis["alloc"]:
+                sample = genesis["alloc"][0]
+                from core.utils.address import address_to_bytes
+                addr_str = _normalize_address(sample["address"])
+                addr_bytes = address_to_bytes(addr_str)
+                bal = state.get_balance(addr_bytes)
+                expected = int(sample.get("balance", 0))
+                print(f"[genesis] Sample verification: {addr_str} balance={bal} (expected {expected})")
 
     if log:
         print("[genesis] chainId=%s stateRoot=%s", genesis["chainId"], state_root.hex())

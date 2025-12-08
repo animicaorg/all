@@ -390,10 +390,12 @@ def _maybe_bootstrap_genesis(
             loader.load_and_init(bundle.kv, genesis_path)  # type: ignore
         # DO NOT use load_and_init_genesis here as it opens a second DB connection
         # else: silently ignore (RPC will report null head)
-    except Exception:
+    except Exception as e:
         # We deliberately swallow errors here to avoid bringing down the RPC
         # process if core/genesis evolves. The node CLI (core.boot) handles
         # authoritative bootstrapping for production.
+        import logging
+        logging.warning(f"Genesis bootstrap failed: {type(e).__name__}: {e}")
         try:
             from core.types.header import Header
             from core.utils.hash import ZERO32

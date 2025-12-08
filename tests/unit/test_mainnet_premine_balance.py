@@ -127,8 +127,8 @@ def test_mainnet_premine_accessible_via_rpc():
             assert balance == MAINNET_PREMINE_BALANCE, \
                 f"RPC getBalance should return {MAINNET_PREMINE_BALANCE} for premine address, got {balance}"
             
-            # Also test that a non-existent address returns 0
-            zero_balance = get_balance("anim1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq8xyuud")
+            # Also test that a system address that doesn't exist returns 0
+            zero_balance = get_balance("system:nonexistent")
             assert zero_balance == 0, f"Non-existent address should have balance 0, got {zero_balance}"
             
         finally:
