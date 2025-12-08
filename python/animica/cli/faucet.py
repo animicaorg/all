@@ -13,9 +13,11 @@ Note: Faucet is ONLY available on non-mainnet networks (devnet, testnet).
 from __future__ import annotations
 
 import json
+import os
 import sys
 from typing import Optional
 
+import requests
 import typer
 
 app = typer.Typer(
@@ -27,14 +29,11 @@ app = typer.Typer(
 
 def _get_rpc_url() -> str:
     """Get RPC URL from environment or use default."""
-    import os
     return os.getenv("ANIMICA_RPC_URL", "http://127.0.0.1:8545/rpc")
 
 
 def _rpc_call(method: str, params: dict | list | None = None) -> dict:
     """Make a JSON-RPC call to the node."""
-    import requests
-    
     url = _get_rpc_url()
     payload = {
         "jsonrpc": "2.0",
@@ -46,26 +45,28 @@ def _rpc_call(method: str, params: dict | list | None = None) -> dict:
     try:
         resp = requests.post(url, json=payload, timeout=10)
         resp.raise_for_status()
-        data = resp.json()
-        
-        if "error" in data:
-            error = data["error"]
-            msg = error.get("message", "Unknown error")
-            code = error.get("code", -32000)
-            err_data = error.get("data", {})
-            
-            typer.secho(f"Error: {msg}", fg=typer.colors.RED, err=True)
-            if err_data:
-                typer.secho(f"Details: {json.dumps(err_data, indent=2)}", fg=typer.colors.RED, err=True)
-            sys.exit(1)
-        
-        return data
     except requests.exceptions.RequestException as e:
         typer.secho(f"Failed to connect to RPC at {url}: {e}", fg=typer.colors.RED, err=True)
         sys.exit(1)
-    except Exception as e:
-        typer.secho(f"Unexpected error: {e}", fg=typer.colors.RED, err=True)
+    
+    try:
+        data = resp.json()
+    except json.JSONDecodeError as e:
+        typer.secho(f"Failed to decode JSON response: {e}", fg=typer.colors.RED, err=True)
         sys.exit(1)
+    
+    if "error" in data:
+        error = data["error"]
+        msg = error.get("message", "Unknown error")
+        code = error.get("code", -32000)
+        err_data = error.get("data", {})
+        
+        typer.secho(f"Error: {msg}", fg=typer.colors.RED, err=True)
+        if err_data:
+            typer.secho(f"Details: {json.dumps(err_data, indent=2)}", fg=typer.colors.RED, err=True)
+        sys.exit(1)
+    
+    return data
 
 
 @app.command("request")
