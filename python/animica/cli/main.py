@@ -123,10 +123,11 @@ def main_callback(
       animica network set devnet
     
     Quick Start:
-      1. Set network: animica network set devnet
-      2. Start node: animica node up
-      3. (Optional) Start Studio Services: animica studio up
-      4. Check status: animica node status
+      1. Start node: animica node up  # Uses mainnet by default
+      2. (Optional) Start Studio Services: animica studio up
+      3. Check status: animica node status
+      
+      For devnet testing, first set network: animica network set devnet
     """
     _ctx.network = network
     _ctx.rpc_url = rpc_url

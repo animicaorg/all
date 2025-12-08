@@ -14,7 +14,7 @@ def test_load_config_from_env_defaults(monkeypatch):
     assert isinstance(cfg, PoolConfig)
     assert cfg.host == "0.0.0.0"
     assert cfg.port == 3333
-    assert cfg.network == "devnet"
+    assert cfg.network == "mainnet"
 
 
 def test_load_config_from_env_overrides(monkeypatch):
