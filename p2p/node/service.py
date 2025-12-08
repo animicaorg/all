@@ -557,6 +557,15 @@ class P2PService:
         # basic metadata (height, versions, caps) so operators can confirm the
         # network is healthy.
         self._identify = idsvc.perform_identify
+        
+        # Metrics object for test compatibility
+        class _Metrics:
+            def __init__(self, service):
+                self._service = service
+            @property
+            def peer_count(self):
+                return len(self._service._peers)
+        self.metrics = _Metrics(self)
 
     async def start(self) -> None:
         if self._running:
@@ -707,4 +716,12 @@ class P2PService:
         Public dial method for tests and CLI.
         Connects to a peer at the given multiaddr string.
         """
+        # Parse multiaddr format (/ip4/host/tcp/port) to tcp://host:port
+        if addr.startswith("/"):
+            try:
+                parsed = self._parse_multiaddr(addr)
+                if parsed.transport == "tcp":
+                    addr = f"tcp://{parsed.host}:{parsed.port}"
+            except Exception:
+                pass  # Fall through and try as-is
         await self._dial(addr)

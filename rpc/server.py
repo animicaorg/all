@@ -391,7 +391,9 @@ def create_app(cfg: rpc_config.Config | None = None) -> FastAPI:
 
     # --- WebSocket subscriptions ---
     if WS_ROUTER is not None:
-        app.include_router(WS_ROUTER, prefix="/ws")
+        # Don't use prefix; the WS_ROUTER already defines routes at "/"
+        # which we want to be accessible at "/ws"
+        app.include_router(WS_ROUTER)
     else:
         # Minimal /ws echo (should not be hit if rpc.ws is present)
         @app.websocket("/ws")
