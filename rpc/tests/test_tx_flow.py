@@ -155,13 +155,14 @@ async def test_send_raw_transaction_roundtrip(client_and_cfg):
     # 1) Submit
     submit = rpc_call(client, "tx.sendRawTransaction", params={"rawTx": raw_hex})
     assert submit["jsonrpc"] == "2.0"
-    got_hash = submit["result"]["txHash"]
+    # The result is the tx hash directly, not a dict
+    got_hash = submit["result"]
     assert isinstance(got_hash, str) and got_hash.startswith("0x")
     # Prefer equality when the node computes hash the same way
     assert got_hash == exp_tx_hash
 
     # 2) The pending pool should expose it by hash
-    q = rpc_call(client, "tx.getTransactionByHash", params={"hash": got_hash})
+    q = rpc_call(client, "tx.getTransactionByHash", params={"txHash": got_hash})
     txv = q["result"]
     assert txv is not None, "submitted tx must be findable by hash while pending"
     assert txv["hash"] == got_hash
@@ -219,10 +220,11 @@ async def test_duplicate_submit_returns_same_hash(client_and_cfg):
 
     r1 = rpc_call(client, "tx.sendRawTransaction", params={"rawTx": raw_hex})
     r2 = rpc_call(client, "tx.sendRawTransaction", params={"rawTx": raw_hex})
-    assert r1["result"]["txHash"] == exp_tx_hash
+    # The result is the tx hash directly, not a dict
+    assert r1["result"] == exp_tx_hash
     # Second submit should either be idempotent OK (same hash) or return a "duplicate" error.
     if "result" in r2:
-        assert r2["result"]["txHash"] == exp_tx_hash
+        assert r2["result"] == exp_tx_hash
     else:
         assert "error" in r2
         msg = (r2["error"].get("message") or "").lower()
@@ -241,5 +243,5 @@ async def test_pending_pool_eviction_policy_smoke(client_and_cfg):
         )
         raw_hex = "0x" + cbor_tx.hex()
         rpc_call(client, "tx.sendRawTransaction", params={"rawTx": raw_hex})
-        got = rpc_call(client, "tx.getTransactionByHash", params={"hash": tx_hash})
+        got = rpc_call(client, "tx.getTransactionByHash", params={"txHash": tx_hash})
         assert got["result"] is not None
