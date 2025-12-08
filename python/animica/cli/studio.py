@@ -58,12 +58,23 @@ def _ensure_network_set() -> str:
     raise typer.Exit(code=1)
 
 
-def _get_compose_file() -> Path:
-    """Get the path to the docker-compose file for devnet with studio services."""
-    # Use the same compose file as node.py for consistency
-    # This ensures we're working with the same service definitions
-    repo_root = Path(__file__).resolve().parents[3]
-    compose_file = repo_root / "tests" / "devnet" / "docker-compose.yml"
+def _get_compose_file(network: str) -> Path:
+    """
+    Get the path to the docker-compose file for the specified network.
+    
+    Args:
+        network: Network name (mainnet, testnet, devnet, local-devnet)
+        
+    Returns:
+        Path to the appropriate docker-compose file
+        
+    Raises:
+        typer.Exit: If compose file not found
+    """
+    from animica.config import get_network_defaults
+    
+    defaults = get_network_defaults(network)
+    compose_file = defaults["compose_file"]
     
     if not compose_file.exists():
         typer.echo(
@@ -71,7 +82,11 @@ def _get_compose_file() -> Path:
             err=True
         )
         typer.echo(
-            "Studio Services lifecycle management requires the devnet docker-compose setup.",
+            f"Studio Services lifecycle management for {network} requires the compose setup.",
+            err=True
+        )
+        typer.echo(
+            f"\nExpected location: {compose_file}",
             err=True
         )
         raise typer.Exit(code=1)
@@ -271,21 +286,29 @@ def up(
     typer.echo(f"  HOST: {config['HOST']}")
     typer.echo(f"  PORT: {config['PORT']}")
     
-    compose_file = _get_compose_file()
+    # Get network-specific compose file
+    compose_file = _get_compose_file(network)
     
     typer.secho(f"\nStarting Studio Services for network: {network}", fg=typer.colors.CYAN, bold=True)
     typer.echo(f"Using compose file: {compose_file}")
     typer.echo("Note: This will also start the node if it's not already running.")
     
-    # Build docker-compose command using both 'dev' and 'studio' profiles
-    # 'dev' profile: node + miner (required dependencies)
-    # 'studio' profile: studio-services + explorer
+    # Build docker-compose command
+    # For devnet, use both 'dev' (node+miner) and 'studio' (services+explorer) profiles
+    # For mainnet/testnet, just use 'studio' profile (node runs by default)
     cmd = [
         "docker", "compose",
         "-f", str(compose_file),
-        "--profile", "dev",
-        "--profile", "studio",
     ]
+    
+    if network in ["devnet", "local-devnet"]:
+        # Devnet needs both profiles
+        cmd.extend(["--profile", "dev", "--profile", "studio"])
+    else:
+        # Mainnet/testnet: studio profile includes services+explorer
+        cmd.extend(["--profile", "studio"])
+    
+    # Note: We removed the separate --profile flag as it's now automatic
     
     if build:
         cmd.extend(["up", "--build"])
@@ -367,7 +390,8 @@ def down(
     # Enforce network requirement
     network = _ensure_network_set()
     
-    compose_file = _get_compose_file()
+    # Get network-specific compose file
+    compose_file = _get_compose_file(network)
     
     typer.secho(f"Stopping Studio Services for network: {network}", fg=typer.colors.CYAN, bold=True)
     typer.echo(f"Using compose file: {compose_file}")
@@ -557,7 +581,8 @@ def logs(
     # Enforce network requirement
     network = _ensure_network_set()
     
-    compose_file = _get_compose_file()
+    # Get network-specific compose file
+    compose_file = _get_compose_file(network)
     
     # Build docker-compose command to view logs for studio services only
     cmd = [
