@@ -45,7 +45,11 @@ _RPC_ENV = "ANIMICA_RPC_URL"
 
 
 def _get_default_wallet_path() -> Path:
-    """Get the default wallet path, respecting HOME environment variable."""
+    """Get the default wallet path, respecting HOME environment variable.
+    
+    Default location: ~/.animica/wallets.json
+    This path is used across all network profiles (mainnet, testnet, devnet).
+    """
     return Path.home() / ".animica" / "wallets.json"
 
 app = typer.Typer(
@@ -354,10 +358,14 @@ def show(
     The wallet store defaults to ~/.animica/wallets.json unless overridden
     via --wallet-file or ANIMICA_WALLETS_FILE.
     
+    The RPC URL defaults to the configured network (mainnet by default).
+    To check balances on a different network, use --rpc-url or set ANIMICA_NETWORK.
+    
     Examples:
-        animica wallet show anim1zqp8gjpns...  # by address
-        animica wallet show premine            # by label
+        animica wallet show anim1zqp8gjpns...  # by address (on mainnet)
+        animica wallet show premine            # by label (checks premine balance)
         animica wallet show a1b2c3d4...        # by public key hex
+        animica --network devnet wallet show premine  # check on devnet
     """
     # Support both positional and --address for backwards compatibility
     lookup_id = identifier or address

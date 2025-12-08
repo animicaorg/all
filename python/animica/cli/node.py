@@ -40,6 +40,7 @@ async def rpc_call(
 
 
 def _resolve_rpc_url(rpc_url: Optional[str]) -> str:
+    """Resolve RPC URL from CLI arg, env var, or network config (defaults to mainnet)."""
     return rpc_url or os.environ.get(RPC_ENV) or load_network_config().rpc_url
 
 
@@ -273,9 +274,14 @@ def up(
         if result.returncode == 0:
             typer.secho("✓ Node started successfully!", fg=typer.colors.GREEN, bold=True)
             if detach:
-                typer.echo("\nNode is running in the background.")
+                typer.echo(f"\nNode is running in the background on network: {network}")
                 typer.echo("View logs with: docker compose -f tests/devnet/docker-compose.yml logs -f")
                 typer.echo("Check status with: animica node status")
+                typer.echo("\n--- Checking Premine Balances ---")
+                typer.echo("To check premine balances on mainnet:")
+                typer.echo("  animica wallet show <address|label>")
+                typer.echo("  animica rpc call state.getBalance '{\"params\": [\"<address>\"]}'")
+                typer.echo("\nWallet file location: ~/.animica/wallets.json")
         else:
             typer.secho(
                 f"Error: Node startup failed with exit code {result.returncode}",

@@ -481,10 +481,28 @@ def _needs_rebuild(cfg: t.Any | None) -> bool:
 
 def build_context(cfg: t.Any | None = None) -> RpcContext:
     import logging
+    import os
     log = logging.getLogger("animica.rpc.deps")
     
     cfg_view = _coerce_config(cfg) if cfg is not None else _load_rpc_config()
-    log.info(f"Building RPC context with DB: {cfg_view.db_uri}")
+    
+    # Determine network name for logging
+    network = os.environ.get("ANIMICA_NETWORK", "").strip().lower()
+    if not network:
+        # Infer from chain_id
+        if cfg_view.chain_id == 1:
+            network = "mainnet"
+        elif cfg_view.chain_id == 2:
+            network = "testnet"
+        elif cfg_view.chain_id == 1337:
+            network = "devnet"
+        else:
+            network = f"custom (chain_id={cfg_view.chain_id})"
+    
+    log.info(f"Building RPC context for network: {network} (chain_id={cfg_view.chain_id})")
+    log.info(f"Using database: {cfg_view.db_uri}")
+    if cfg_view.genesis_path:
+        log.info(f"Genesis file: {cfg_view.genesis_path}")
     
     params = _params_from_spec(cfg_view.chain_id)
     kv = _open_kv(cfg_view.db_uri)
@@ -498,10 +516,10 @@ def build_context(cfg: t.Any | None = None) -> RpcContext:
     head = _HeadAccessor(bundle)
     head_info = head.get()
     # head_info is a dict with 'height', 'hash', 'header' keys
-    if head_info:
+    if head_info and head_info.get('height') is not None:
         log.info(f"RPC context ready: head_height={head_info.get('height')}, head_hash={head_info.get('hash')}")
     else:
-        log.info("RPC context ready: no head set yet")
+        log.info("RPC context ready: no head set yet (genesis will be initialized on first use)")
     
     return RpcContext(
         cfg=cfg_view,

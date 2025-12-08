@@ -258,8 +258,8 @@ def load() -> RpcConfig:
     )
 
     explicit_chain_id = "ANIMICA_CHAIN_ID" in os.environ
-    # Respect explicit chain id first, then fall back to ANIMICA_NETWORK so
-    # "devnet" boots with the expected 1337 instead of the mainnet default.
+    # Respect explicit chain id first, then fall back to ANIMICA_NETWORK.
+    # Default to mainnet (chain_id=1) when no network is explicitly configured.
     network = (_env("ANIMICA_NETWORK", "") or "").strip().lower()
     if explicit_chain_id:
         chain_id = _env_int("ANIMICA_CHAIN_ID", 1)
@@ -268,9 +268,10 @@ def load() -> RpcConfig:
             chain_id = 1
         elif network in {"test", "testnet"}:
             chain_id = 2
-        elif network in {"dev", "devnet"}:
+        elif network in {"dev", "devnet", "local-devnet"}:
             chain_id = 1337
         else:
+            # Default to mainnet when no network is specified
             chain_id = 1
     log_level = (_env("ANIMICA_LOG_LEVEL", "INFO") or "INFO").upper()
 

@@ -115,7 +115,12 @@ def main_callback(
       1. Command-line flags (--rpc-url, --chain-id, etc.)
       2. Environment variables (ANIMICA_RPC_URL, ANIMICA_CHAIN_ID, etc.)
       3. Config file (~/.config/animica/config.toml or ANIMICA_CONFIG)
-      4. Built-in defaults (devnet on http://127.0.0.1:8545/rpc)
+      4. Built-in defaults (mainnet on http://127.0.0.1:8545/rpc)
+    
+    To use devnet or testnet instead of mainnet:
+      animica --network devnet <command>
+      export ANIMICA_NETWORK=devnet
+      animica network set devnet
     
     Quick Start:
       1. Set network: animica network set devnet
