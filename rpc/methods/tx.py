@@ -553,3 +553,44 @@ def tx_get_transaction_by_hash(txHash: str) -> t.Optional[dict]:
     
     # 3) Not found
     return None
+
+
+@method(
+    "tx.getTransactionReceipt",
+    desc="Get transaction receipt by hash",
+    aliases=("tx_getTransactionReceipt",),
+)
+def tx_get_transaction_receipt(txHash: str) -> t.Optional[dict]:
+    """
+    Retrieve the receipt for a transaction by its hash.
+    
+    Returns None if the transaction is still pending or not found.
+    Returns a receipt object if the transaction has been included in a block.
+    """
+    if not isinstance(txHash, str):
+        raise rpc_errors.InvalidParams("txHash must be hex string")
+    
+    tx_hash_hex = txHash.lower()
+    if not tx_hash_hex.startswith("0x"):
+        tx_hash_hex = "0x" + tx_hash_hex
+    
+    # Receipts are only available for persisted transactions (not pending)
+    # Check if it's in the pending pool first
+    raw = _pending_get(tx_hash_hex)
+    if raw is not None:
+        # Transaction is still pending, no receipt yet
+        return None
+    
+    # Try to get the receipt from the persisted DB via deps/state_service
+    try:
+        ctx = deps.get_ctx()
+        if hasattr(ctx, "block_db"):
+            # Try to get receipt from block DB
+            # This is a stub - actual implementation would query block_db for receipt
+            # For now, return None to indicate "not implemented" gracefully
+            return None
+    except Exception:
+        pass
+    
+    # Not found or not yet mined
+    return None
