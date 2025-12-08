@@ -90,17 +90,26 @@ Key Management
 
 Wallet Operations
 -----------------
-  # Create a new wallet
-  animica wallet new --label "my-wallet"
+  # Create a new wallet (stored in ~/.animica/wallets.json by default)
+  animica wallet create --label "my-wallet"
 
   # List all wallets
   animica wallet list
 
-  # Show wallet details
-  animica wallet show anim1...
+  # Show wallet details (lookup by address, label, or public key hex)
+  animica wallet show anim1...              # by address
+  animica wallet show my-wallet             # by label
+  animica wallet show a1b2c3d4...           # by public key hex
 
-  # Export for backup
-  animica wallet export-vault > wallet-backup.json
+  # Export wallet for backup (lookup by address or label)
+  animica wallet export my-wallet --out backup.json
+  
+  # Set default wallet
+  animica wallet set-default my-wallet
+  
+  # Override wallet store location
+  animica wallet --wallet-file /path/to/wallets.json list
+  export ANIMICA_WALLETS_FILE=/path/to/wallets.json
 
 Node Management
 ---------------

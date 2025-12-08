@@ -40,9 +40,13 @@ if not HAVE_PQ:
         return "ed25519-fallback" if alg_id == 0xFFFF else f"0x{alg_id:04x}"
 
 
-DEFAULT_WALLET_PATH = Path.home() / ".animica" / "wallets.json"
 WALLET_FILE_ENV = "ANIMICA_WALLETS_FILE"
 _RPC_ENV = "ANIMICA_RPC_URL"
+
+
+def _get_default_wallet_path() -> Path:
+    """Get the default wallet path, respecting HOME environment variable."""
+    return Path.home() / ".animica" / "wallets.json"
 
 app = typer.Typer(
     help="Wallet helper for creating, listing, and inspecting Animica addresses."
@@ -71,7 +75,10 @@ class WalletEntry:
 def _wallet_file_path(wallet_file: Optional[Path]) -> Path:
     if wallet_file is not None:
         return Path(wallet_file)
-    return Path(os.environ.get(WALLET_FILE_ENV, DEFAULT_WALLET_PATH))
+    env_path = os.environ.get(WALLET_FILE_ENV)
+    if env_path:
+        return Path(env_path)
+    return _get_default_wallet_path()
 
 
 def _secure_path(path: Path) -> None:
@@ -118,11 +125,26 @@ def _entry_from_dict(entry: Dict[str, Any]) -> WalletEntry:
     )
 
 
-def _find_wallet(store: Dict[str, Any], *, address: str) -> WalletEntry:
+def _find_wallet(store: Dict[str, Any], *, identifier: str) -> WalletEntry:
+    """
+    Find a wallet by address, label, or public_key_hex.
+    
+    Args:
+        store: The wallet store dict
+        identifier: Address (full bech32), label, or public key hex
+        
+    Returns:
+        WalletEntry if found
+        
+    Raises:
+        typer.Exit if not found
+    """
     for entry in store.get("wallets", []):
-        if entry.get("address") == address:
+        if (entry.get("address") == identifier 
+            or entry.get("label") == identifier 
+            or entry.get("public_key_hex") == identifier):
             return _entry_from_dict(entry)
-    typer.echo("Wallet not found", err=True)
+    typer.echo(f"Wallet not found: {identifier}", err=True)
     raise typer.Exit(code=1)
 
 
@@ -227,17 +249,30 @@ def _configure(
         envvar=WALLET_FILE_ENV,
     ),
 ) -> None:
-    ctx.obj = {"wallet_file": wallet_file}
+    # Ensure ctx.obj is a dict, then store wallet_file
+    if ctx.obj is None:
+        ctx.obj = {}
+    ctx.obj["wallet_file"] = wallet_file
 
 
 def _current_wallet_file() -> Optional[Path]:
-    # Typer may not expose get_current_context in all versions; use click's helper.
+    # Try to get context from typer's context stack first
+    try:
+        import typer as _typer
+        ctx = _typer.get_current_context(silent=True)
+        if ctx and hasattr(ctx, "obj") and isinstance(ctx.obj, dict):
+            return ctx.obj.get("wallet_file")
+    except Exception:
+        pass
+    
+    # Fallback to click context (for CLI invocations outside typer.testing)
     try:
         ctx = _click.get_current_context(silent=True)
+        if ctx and hasattr(ctx, "obj") and isinstance(ctx.obj, dict):
+            return ctx.obj.get("wallet_file")
     except Exception:
-        ctx = None
-    if ctx and getattr(ctx, "obj", None):
-        return ctx.obj.get("wallet_file")
+        pass
+    
     return None
 
 
@@ -299,18 +334,43 @@ def list_wallets() -> None:  # noqa: A001
 
 @app.command()
 def show(
-    address: str = typer.Option(..., "--address", help="Address to display"),
+    identifier: Optional[str] = typer.Argument(
+        None,
+        help="Address (bech32), label, or public key hex to display",
+    ),
+    address: Optional[str] = typer.Option(
+        None,
+        "--address",
+        help="(Deprecated) Address to display. Use positional argument instead.",
+    ),
     rpc_url: Optional[str] = typer.Option(
         None, "--rpc-url", help="Animica JSON-RPC endpoint", envvar=_RPC_ENV
     ),
 ) -> None:
-    """Show wallet metadata and current balance."""
+    """Show wallet metadata and current balance.
+    
+    Lookup a wallet by address (full bech32), label, or public key hex.
+    The wallet store defaults to ~/.animica/wallets.json unless overridden
+    via --wallet-file or ANIMICA_WALLETS_FILE.
+    
+    Examples:
+        animica wallet show anim1zqp8gjpns...  # by address
+        animica wallet show premine            # by label
+        animica wallet show a1b2c3d4...        # by public key hex
+    """
+    # Support both positional and --address for backwards compatibility
+    lookup_id = identifier or address
+    if not lookup_id:
+        typer.echo("Error: Missing wallet identifier", err=True)
+        typer.echo("Usage: animica wallet show <address|label|pubkey_hex>", err=True)
+        raise typer.Exit(code=1)
+    
     ctx_wallet_file = _current_wallet_file()
     path = _wallet_file_path(ctx_wallet_file)
     store = _load_store(path)
-    entry = _find_wallet(store, address=address)
+    entry = _find_wallet(store, identifier=lookup_id)
 
-    balance = _fetch_balance(address, _resolve_rpc_url(rpc_url))
+    balance = _fetch_balance(entry.address, _resolve_rpc_url(rpc_url))
     output = entry.to_dict()
     output["balance"] = balance
     typer.echo(json.dumps(output, indent=2))
@@ -318,14 +378,32 @@ def show(
 
 @app.command()
 def export(
-    address: str = typer.Option(..., "--address", help="Address to export"),
+    identifier: Optional[str] = typer.Argument(
+        None,
+        help="Address (bech32), label, or public key hex to export",
+    ),
+    address: Optional[str] = typer.Option(
+        None,
+        "--address",
+        help="(Deprecated) Address to export. Use positional argument instead.",
+    ),
     out: Path = typer.Option(..., "--out", help="Destination JSON file"),
 ) -> None:
-    """Export a wallet entry (including secret key) to a JSON file."""
+    """Export a wallet entry (including secret key) to a JSON file.
+    
+    Lookup a wallet by address (full bech32), label, or public key hex.
+    """
+    # Support both positional and --address for backwards compatibility
+    lookup_id = identifier or address
+    if not lookup_id:
+        typer.echo("Error: Missing wallet identifier", err=True)
+        typer.echo("Usage: animica wallet export <address|label|pubkey_hex> --out <file>", err=True)
+        raise typer.Exit(code=1)
+    
     ctx_wallet_file = _current_wallet_file()
     path = _wallet_file_path(ctx_wallet_file)
     store = _load_store(path)
-    entry = _find_wallet(store, address=address)
+    entry = _find_wallet(store, identifier=lookup_id)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(entry.to_dict(), indent=2), encoding="utf-8")
     _secure_path(out)
@@ -370,16 +448,34 @@ def import_(
 
 @app.command(name="set-default")
 def set_default(
-    address: str = typer.Option(..., "--address", help="Address to mark as default")
+    identifier: Optional[str] = typer.Argument(
+        None,
+        help="Address (bech32), label, or public key hex to mark as default",
+    ),
+    address: Optional[str] = typer.Option(
+        None,
+        "--address",
+        help="(Deprecated) Address to mark as default. Use positional argument instead.",
+    ),
 ) -> None:
-    """Mark a wallet as the default for other commands."""
+    """Mark a wallet as the default for other commands.
+    
+    Lookup a wallet by address (full bech32), label, or public key hex.
+    """
+    # Support both positional and --address for backwards compatibility
+    lookup_id = identifier or address
+    if not lookup_id:
+        typer.echo("Error: Missing wallet identifier", err=True)
+        typer.echo("Usage: animica wallet set-default <address|label|pubkey_hex>", err=True)
+        raise typer.Exit(code=1)
+    
     ctx_wallet_file = _current_wallet_file()
     path = _wallet_file_path(ctx_wallet_file)
     store = _load_store(path)
-    _find_wallet(store, address=address)
-    store["default_address"] = address
+    entry = _find_wallet(store, identifier=lookup_id)
+    store["default_address"] = entry.address
     _save_store(path, store)
-    typer.echo(f"Default wallet set to {address}")
+    typer.echo(f"Default wallet set to {entry.address}")
 
 
 @app.command()
