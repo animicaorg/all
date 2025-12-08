@@ -16,6 +16,10 @@ Options:
 USAGE
 }
 
+# ------------------------------
+# Profile / command parsing
+# ------------------------------
+
 PROFILE="devnet"
 COMMAND=""
 
@@ -54,15 +58,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PROFILE_PATH="${REPO_ROOT}/ops/profiles/${PROFILE}.env"
 
-# Ensure in-repo Python packages (e.g., animica) are importable without requiring
-# a global installation. This matches the layout used by `python/pyproject.toml`
-# and keeps `python -m animica.*` working when running from the repo root.
+# Make in-repo Python packages importable (python/ layout)
 export PYTHONPATH="${REPO_ROOT}/python${PYTHONPATH:+:${PYTHONPATH}}"
 
 if [[ ! -f "${PROFILE_PATH}" ]]; then
   echo "Missing profile file: ${PROFILE_PATH}" >&2
   exit 1
 fi
+
+# ------------------------------
+# Load profile env
+# ------------------------------
 
 set -a
 # shellcheck disable=SC1090
@@ -71,7 +77,13 @@ set +a
 
 # Normalize well-known environment variables so downstream CLIs see the same
 # values whether they came from the profile file or ad-hoc overrides.
-export ANIMICA_NETWORK="${ANIMICA_NETWORK:-${PROFILE}}"
+
+# If user has explicitly set ANIMICA_NETWORK, respect it.
+# Otherwise, follow the selected profile (devnet/testnet/mainnet).
+if [[ -z "${ANIMICA_NETWORK:-}" ]]; then
+  export ANIMICA_NETWORK="${PROFILE}"
+fi
+
 export ANIMICA_RPC_URL="${ANIMICA_RPC_URL:-http://127.0.0.1:8545/rpc}"
 export ANIMICA_RPC_DB_URI="${ANIMICA_RPC_DB_URI:-sqlite:///~/animica/${PROFILE}/chain.db}"
 export ANIMICA_MINING_POOL_DB_URL="${ANIMICA_MINING_POOL_DB_URL:-sqlite:///~/animica/${PROFILE}/pool.db}"
@@ -98,6 +110,10 @@ set_bind_env() {
 
 set_bind_env
 
+# ------------------------------
+# P2P seeds for the selected profile
+# ------------------------------
+
 load_p2p_seeds() {
   if [[ -n "${ANIMICA_P2P_SEEDS:-}" ]]; then
     echo "[animica] Using P2P seeds from environment"
@@ -114,10 +130,15 @@ load_p2p_seeds() {
   fi
 }
 
+# ------------------------------
+# RPC helpers
+# ------------------------------
+
 parse_rpc_from_url() {
   python - <<'PY'
 import os
 from urllib.parse import urlparse
+
 url = os.getenv("ANIMICA_RPC_URL", "http://127.0.0.1:8545/rpc")
 parsed = urlparse(url)
 print(parsed.hostname or "127.0.0.1")
@@ -125,6 +146,10 @@ print(parsed.port or 8545)
 print(parsed.path or "/rpc")
 PY
 }
+
+# ------------------------------
+# Pool profile detection
+# ------------------------------
 
 detect_pool_profile() {
   if [[ -n "${ANIMICA_POOL_PROFILE:-}" ]]; then
@@ -141,9 +166,19 @@ import sys
 import urllib.request
 
 rpc_url = sys.argv[1]
-payload = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "miner.get_sha256_job", "params": [{"address": ""}]}).encode()
+payload = json.dumps({
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "miner.get_sha256_job",
+    "params": [{"address": ""}],
+}).encode()
+
 try:
-    req = urllib.request.Request(rpc_url, data=payload, headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(
+        rpc_url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
     with urllib.request.urlopen(req, timeout=2) as resp:
         data = json.load(resp)
     if isinstance(data, dict) and "result" in data:
@@ -164,8 +199,12 @@ PY
   echo "[animica] Auto-selected pool profile: ${ANIMICA_POOL_PROFILE}"
 }
 
+# ------------------------------
+# Start commands
+# ------------------------------
+
 start_node() {
-  echo "[animica] Starting node (profile=${PROFILE})"
+  echo "[animica] Starting node (profile=${PROFILE}, network=${ANIMICA_NETWORK})"
   load_p2p_seeds
   read -r rpc_host rpc_port rpc_path < <(parse_rpc_from_url)
   export ANIMICA_RPC_HOST="${ANIMICA_RPC_HOST:-${rpc_host}}"
@@ -180,7 +219,7 @@ start_node() {
 }
 
 start_pool() {
-  echo "[animica] Starting Stratum pool (profile=${PROFILE})"
+  echo "[animica] Starting Stratum pool (profile=${PROFILE}, network=${ANIMICA_NETWORK})"
   cd "${REPO_ROOT}" || exit 1
   if [[ -d .venv ]]; then
     # shellcheck disable=SC1091
@@ -200,7 +239,7 @@ start_pool() {
 }
 
 start_dashboard() {
-  echo "[animica] Starting miner dashboard (profile=${PROFILE})"
+  echo "[animica] Starting miner dashboard (profile=${PROFILE}, network=${ANIMICA_NETWORK})"
   cd "${REPO_ROOT}" || exit 1
   if [[ ! -d node_modules ]]; then
     pnpm install
@@ -219,7 +258,7 @@ start_dashboard() {
 }
 
 start_all() {
-  echo "[animica] Launching node + pool in background for profile=${PROFILE}"
+  echo "[animica] Launching node + pool in background for profile=${PROFILE}, network=${ANIMICA_NETWORK}"
   start_node &
   NODE_PID=$!
   start_pool &
@@ -235,6 +274,10 @@ start_all() {
 
   wait "${NODE_PID}" "${POOL_PID}" || true
 }
+
+# ------------------------------
+# Dispatch
+# ------------------------------
 
 case "$COMMAND" in
   node)
