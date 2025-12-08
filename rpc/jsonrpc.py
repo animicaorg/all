@@ -163,7 +163,7 @@ class MethodRegistry:
     def get(self, name: str) -> CallableLike:
         fn = self._methods.get(name)
         if fn is None:
-            raise MethodNotFound()
+            raise MethodNotFound(name)
         return fn
 
     @property
