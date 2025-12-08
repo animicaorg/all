@@ -437,21 +437,15 @@ def load_and_init_genesis(
 
     # Persist genesis
     # BlockDB is expected to provide put_genesis(block) that returns (height, hash),
-    # otherwise we fall back to put_block(..., height=0) & set_head.
+    # otherwise we fall back to put_header + set_canonical + set_head.
     if hasattr(blocks, "put_genesis"):
         head_height, head_hash = blocks.put_genesis(block)  # type: ignore[attr-defined]
     else:
-        # Portable path: encode header canonically, hash, and write under height=0.
-        # Expect BlockDB.write_header(height, header_bytes) & set_canonical_head.
-        # We keep both branches for compatibility with earlier iterations.
-        header_bytes = cbor.encode(asdict(header))
-        header_hash = _sha3_256(header_bytes)
-        if hasattr(blocks, "write_header"):
-            blocks.write_header(0, header)  # type: ignore[attr-defined]
-        elif hasattr(blocks, "put_header"):
-            blocks.put_header(0, header)  # type: ignore[attr-defined]
-        if hasattr(blocks, "set_canonical_head"):
-            blocks.set_canonical_head(0, header_hash)  # type: ignore[attr-defined]
+        # Portable path: store header, set canonical index, and update head.
+        # BlockDB.put_header(header) returns the hash; then we set canonical + head.
+        header_hash = blocks.put_header(header)
+        blocks.set_canonical(0, header_hash)
+        blocks.set_head(0, header_hash)
         head_height, head_hash = 0, header_hash
 
     if log:
