@@ -201,7 +201,8 @@ def _open_kv(db_uri: str, log: bool = False) -> KV:
         path = db_uri[len("sqlite:///") :]
         abs_path = os.path.abspath(path)
         db_dir = os.path.dirname(abs_path)
-        if db_dir:
+        # Create parent directory if it's not empty and not just "."
+        if db_dir and db_dir != ".":
             os.makedirs(db_dir, exist_ok=True)
         if log:
             print(f"[genesis] Opening SQLite DB at: {abs_path}")
