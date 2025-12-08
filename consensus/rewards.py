@@ -35,28 +35,21 @@ from typing import Any, Dict, List, Mapping, Tuple
 
 MAINNET_PREMINE_TOTAL: int = 81_000_000_000_000_000  # 81M ANM in base units
 
-# Distribution per genesis.sample.mainnet.json.
-# The existing system buckets are:
-#   - foundation: 45,000,000 ANM
-#   - treasury:   20,000,000 ANM
-#   - aicf:        7,000,000 ANM
-#   - founder:     9,000,000 ANM
+# Distribution per core/genesis/genesis.json (mainnet canonical genesis).
+# The entire premine is allocated to a single bech32 address that will be
+# managed by the Animica Foundation. This address will handle distributions
+# to treasury, AICF, and other ecosystem participants as needed.
 #
-# TODO: User-provided address anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f
-# is mentioned in the requirements but not yet allocated in the distribution. To
-# incorporate it, adjust one or more system buckets (e.g., reduce founder by X ANM and
-# add a new entry for the user address with X ANM). The distribution must sum to
-# MAINNET_PREMINE_TOTAL. For now, it is documented here but not included in the
-# allocation pending design decision.
+# Premine address: anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f
+# Total: 81,000,000 ANM (81,000,000,000,000,000 base units)
 #
-# Current distribution matches genesis/genesis.sample.mainnet.json exactly:
+# Note: genesis.sample.mainnet.json uses a different distribution across
+# system addresses for reference/testing purposes. The canonical mainnet
+# genesis (core/genesis/genesis.json) uses this single-address allocation.
 
 MAINNET_PREMINE_DISTRIBUTION: List[Tuple[str, int]] = [
-    # System addresses (using 'system:' prefix as per genesis convention)
-    ("system:foundation", 45_000_000_000_000_000),  # 45M ANM
-    ("system:treasury",   20_000_000_000_000_000),  # 20M ANM
-    ("system:aicf",        7_000_000_000_000_000),  #  7M ANM
-    ("system:founder",     9_000_000_000_000_000),  #  9M ANM
+    # Single premine address containing the entire 81M ANM allocation
+    ("anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f", 81_000_000_000_000_000),
 ]
 
 # Sanity check: distribution must sum to total (excluding any zero entries if desired)

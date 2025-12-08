@@ -253,10 +253,6 @@ def load() -> RpcConfig:
         ),
     )
 
-    db_uri = _expand_sqlite_uri(
-        _env("ANIMICA_RPC_DB_URI", "sqlite:///~/animica/data/chain.db")
-    )
-
     explicit_chain_id = "ANIMICA_CHAIN_ID" in os.environ
     # Respect explicit chain id first, then fall back to ANIMICA_NETWORK.
     # Default to mainnet (chain_id=1) when no network is explicitly configured.
@@ -273,6 +269,12 @@ def load() -> RpcConfig:
         else:
             # Default to mainnet when no network is specified
             chain_id = 1
+    
+    # Use per-network DB path based on chain_id to ensure DB isolation
+    db_uri = _expand_sqlite_uri(
+        _env("ANIMICA_RPC_DB_URI", f"sqlite:///~/animica/chain-{chain_id}/animica.db")
+    )
+    
     log_level = (_env("ANIMICA_LOG_LEVEL", "INFO") or "INFO").upper()
 
     genesis_env = _env("ANIMICA_GENESIS_PATH")
@@ -284,7 +286,8 @@ def load() -> RpcConfig:
         elif network in {"test", "testnet"}:
             genesis_path = repo_root / "genesis" / "genesis.sample.testnet.json"
         else:
-            genesis_path = repo_root / "genesis" / "genesis.sample.mainnet.json"
+            # Default to mainnet: use the canonical genesis.json in core/genesis/
+            genesis_path = repo_root / "core" / "genesis" / "genesis.json"
 
     if not explicit_chain_id:
         genesis_chain_id = _chain_id_from_genesis(genesis_path)
