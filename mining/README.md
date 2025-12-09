@@ -198,6 +198,10 @@ mining/config.py accepts:
 
 Quick start (built-in CPU miner)
 
+# Prerequisites: Run setup.sh to install dependencies
+./setup.sh
+source .venv/bin/activate
+
 # 1) Start node RPC (from repo root; example)
 # Default RPC server port is 8545
 python -m rpc.server --config rpc/config.toml
