@@ -361,6 +361,191 @@ def up(
         raise typer.Exit(code=130)
 
 
+@app.command(name="up-all")
+def up_all(
+    detach: bool = typer.Option(
+        True,
+        "--detach/--no-detach",
+        help="Run in detached mode (background)"
+    ),
+    build: bool = typer.Option(
+        True,
+        "--build/--no-build",
+        help="Build images before starting"
+    ),
+    with_miner: bool = typer.Option(
+        False,
+        "--with-miner",
+        help="Also start miner service for applicable networks"
+    ),
+) -> None:
+    """
+    Start all Animica node networks at once.
+    
+    This command sequentially starts all supported networks:
+    - mainnet (chain ID 1, port 8545)
+    - testnet (chain ID 2, port 8546)
+    - devnet (chain ID 1337, port 8545)
+    - local-devnet (chain ID 1337, port 8545)
+    
+    Each network uses its own compose file and data directory to prevent
+    cross-network contamination. The command will attempt to start all
+    networks and report progress for each one.
+    
+    If a network's compose file is missing, it will be skipped with a warning.
+    If any network fails to start, the command will continue with remaining
+    networks but will exit with a non-zero code at the end.
+    
+    Note: This command ignores the currently set network and operates on all
+    supported networks. Networks with overlapping ports may conflict.
+    
+    Examples:
+      animica node up-all
+      animica node up-all --no-detach  # Run in foreground
+      animica node up-all --with-miner # Start all networks with miners
+    """
+    # List of all supported networks
+    all_networks = ["mainnet", "testnet", "devnet", "local-devnet"]
+    
+    typer.secho("Starting all Animica node networks...", fg=typer.colors.CYAN, bold=True)
+    typer.echo(f"Networks to start: {', '.join(all_networks)}\n")
+    
+    failed_networks = []
+    skipped_networks = []
+    successful_networks = []
+    
+    for network in all_networks:
+        typer.secho(f"\n{'='*60}", fg=typer.colors.CYAN)
+        typer.secho(f"Starting network: {network}", fg=typer.colors.CYAN, bold=True)
+        typer.secho(f"{'='*60}", fg=typer.colors.CYAN)
+        
+        # Get network-specific compose file
+        try:
+            defaults = get_network_defaults(network)
+            compose_file = defaults["compose_file"]
+            
+            if not compose_file.exists():
+                typer.secho(
+                    f"⚠ Warning: Compose file not found for {network}: {compose_file}",
+                    fg=typer.colors.YELLOW
+                )
+                typer.echo(f"Skipping {network}...\n")
+                skipped_networks.append(network)
+                continue
+        except Exception as e:
+            typer.secho(
+                f"⚠ Warning: Error getting compose file for {network}: {e}",
+                fg=typer.colors.YELLOW
+            )
+            typer.echo(f"Skipping {network}...\n")
+            skipped_networks.append(network)
+            continue
+        
+        typer.echo(f"Compose file: {compose_file}")
+        typer.echo(f"Chain ID: {defaults['chain_id']}")
+        typer.echo(f"RPC Port: {defaults['rpc_port']}")
+        typer.echo(f"Data directory: {defaults['data_dir']}")
+        
+        # Build docker-compose command
+        cmd = [
+            "docker", "compose",
+            "-f", str(compose_file),
+        ]
+        
+        # Add profiles based on network and options
+        if network in ["devnet", "local-devnet"]:
+            cmd.extend(["--profile", "dev"])
+        
+        if with_miner and network not in ["devnet", "local-devnet"]:
+            cmd.extend(["--profile", "miner"])
+        
+        if build:
+            cmd.extend(["up", "--build"])
+        else:
+            cmd.append("up")
+        
+        if detach:
+            cmd.append("-d")
+        
+        typer.echo(f"\nRunning: {' '.join(cmd)}")
+        
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=compose_file.parent,
+                check=False,
+                env={**os.environ, "ANIMICA_NETWORK": network},
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode == 0:
+                typer.secho(f"✓ {network} started successfully!", fg=typer.colors.GREEN, bold=True)
+                successful_networks.append(network)
+            else:
+                typer.secho(
+                    f"✗ {network} failed to start (exit code {result.returncode})",
+                    fg=typer.colors.RED,
+                    bold=True
+                )
+                if result.stderr:
+                    typer.echo(f"Error output:\n{result.stderr}", err=True)
+                failed_networks.append(network)
+                
+        except FileNotFoundError:
+            typer.secho(
+                f"✗ Error: 'docker' command not found.",
+                fg=typer.colors.RED
+            )
+            typer.echo("Please install Docker and Docker Compose.", err=True)
+            failed_networks.append(network)
+            break  # No point continuing if docker is not installed
+        except Exception as e:
+            typer.secho(
+                f"✗ {network} failed with unexpected error: {e}",
+                fg=typer.colors.RED
+            )
+            failed_networks.append(network)
+    
+    # Print summary
+    typer.secho(f"\n{'='*60}", fg=typer.colors.CYAN)
+    typer.secho("Summary", fg=typer.colors.CYAN, bold=True)
+    typer.secho(f"{'='*60}", fg=typer.colors.CYAN)
+    
+    if successful_networks:
+        typer.secho(
+            f"✓ Successfully started ({len(successful_networks)}): {', '.join(successful_networks)}",
+            fg=typer.colors.GREEN
+        )
+    
+    if skipped_networks:
+        typer.secho(
+            f"⚠ Skipped ({len(skipped_networks)}): {', '.join(skipped_networks)}",
+            fg=typer.colors.YELLOW
+        )
+    
+    if failed_networks:
+        typer.secho(
+            f"✗ Failed ({len(failed_networks)}): {', '.join(failed_networks)}",
+            fg=typer.colors.RED,
+            bold=True
+        )
+        typer.echo(
+            "\nSome networks failed to start. Check the error messages above for details.",
+            err=True
+        )
+        raise typer.Exit(code=1)
+    
+    if not successful_networks and not failed_networks:
+        typer.secho(
+            "⚠ No networks were started. All were skipped.",
+            fg=typer.colors.YELLOW
+        )
+        raise typer.Exit(code=1)
+    
+    typer.secho("\n✓ All requested networks started successfully!", fg=typer.colors.GREEN, bold=True)
+
+
 @app.command()
 def down(
     volumes: bool = typer.Option(
