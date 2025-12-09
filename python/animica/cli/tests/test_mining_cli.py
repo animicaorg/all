@@ -142,6 +142,10 @@ def test_mine_blocks_invalid_count_negative() -> None:
 
 def test_mine_blocks_success(monkeypatch: Any) -> None:
     """Test that mine-blocks calls RPC successfully."""
+    # Mock address validation to accept test address
+    test_address = "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f"
+    monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
+    
     class MockRpcClient:
         def __init__(self, *args, **kwargs):
             pass
@@ -152,8 +156,8 @@ def test_mine_blocks_success(monkeypatch: Any) -> None:
         def __exit__(self, *args):
             pass
         
-        def request(self, method: str, params: list):
-            return {"mined": 3, "height": 103}
+        def request(self, method: str, params: Any):
+            return {"mined": 1, "height": 103}
     
     mock_module = Mock()
     mock_module.RpcClient = MockRpcClient
@@ -166,7 +170,7 @@ def test_mine_blocks_success(monkeypatch: Any) -> None:
         mining.app,
         [
             "mine-blocks",
-            "--address", "anim1test123",
+            "--address", test_address,
             "--count", "3",
             "--rpc-url", "http://127.0.0.1:8545",
         ],
@@ -179,6 +183,10 @@ def test_mine_blocks_success(monkeypatch: Any) -> None:
 
 def test_mine_blocks_rpc_error(monkeypatch: Any) -> None:
     """Test that mine-blocks handles RPC errors gracefully."""
+    # Mock address validation to accept test address
+    test_address = "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f"
+    monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
+    
     class MockRpcClient:
         def __init__(self, *args, **kwargs):
             pass
@@ -189,7 +197,7 @@ def test_mine_blocks_rpc_error(monkeypatch: Any) -> None:
         def __exit__(self, *args):
             pass
         
-        def request(self, method: str, params: list):
+        def request(self, method: str, params: Any):
             raise ConnectionError("RPC connection failed")
     
     mock_module = Mock()
@@ -203,7 +211,7 @@ def test_mine_blocks_rpc_error(monkeypatch: Any) -> None:
         mining.app,
         [
             "mine-blocks",
-            "--address", "anim1test123",
+            "--address", test_address,
             "--count", "3",
             "--rpc-url", "http://127.0.0.1:8545",
         ],
@@ -211,3 +219,131 @@ def test_mine_blocks_rpc_error(monkeypatch: Any) -> None:
     
     assert result.exit_code == 5
     assert "Failed to connect to RPC" in result.output
+
+
+def test_mine_blocks_invalid_address_fails(monkeypatch: Any) -> None:
+    """Test that mine-blocks fails fast with an invalid address."""
+    monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: False)
+    monkeypatch.setattr(mining, "_resolve_wallet_label_to_address", lambda x, y=None: None)
+    
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", "invalid_address",
+            "--count", "1",
+            "--rpc-url", "http://127.0.0.1:8545",
+        ],
+    )
+    
+    assert result.exit_code == 2
+    assert "neither a valid Animica Bech32 address" in result.output or "not a valid" in result.output
+
+
+def test_mine_blocks_with_wallet_label(monkeypatch: Any, tmp_path: Path) -> None:
+    """Test that mine-blocks resolves wallet labels correctly."""
+    import json
+    
+    # Create a test wallet file
+    wallet_file = tmp_path / "wallets.json"
+    test_address = "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f"
+    wallet_data = {
+        "version": 1,
+        "wallets": [
+            {
+                "label": "test-miner",
+                "address": test_address,
+                "alg_id": 1,
+                "alg_name": "dilithium3",
+                "public_key_hex": "abcd1234",
+                "secret_key_hex": "secret",
+                "created_at": "2024-01-01T00:00:00Z",
+            }
+        ],
+    }
+    wallet_file.write_text(json.dumps(wallet_data))
+    
+    # Mock wallet file path resolution
+    monkeypatch.setattr(mining, "_resolve_wallet_label_to_address", lambda label, wf=None: test_address if label == "test-miner" else None)
+    
+    class MockRpcClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        
+        def __enter__(self):
+            return self
+        
+        def __exit__(self, *args):
+            pass
+        
+        def request(self, method: str, params: Any):
+            # Verify the resolved address is used
+            if isinstance(params, dict):
+                assert params.get("address") == test_address
+            return {"mined": 1, "height": 1}
+    
+    mock_module = Mock()
+    mock_module.RpcClient = MockRpcClient
+    
+    monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
+    monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
+    
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", "test-miner",
+            "--count", "1",
+            "--rpc-url", "http://127.0.0.1:8545",
+        ],
+    )
+    
+    assert result.exit_code == 0
+    assert "Successfully mined" in result.output
+
+
+def test_mine_blocks_enforces_2s_delay(monkeypatch: Any) -> None:
+    """Test that mine-blocks adds 2s delay between blocks when count > 1."""
+    import time
+    
+    sleep_calls = []
+    
+    def mock_sleep(seconds):
+        sleep_calls.append(seconds)
+    
+    monkeypatch.setattr(time, "sleep", mock_sleep)
+    
+    class MockRpcClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        
+        def __enter__(self):
+            return self
+        
+        def __exit__(self, *args):
+            pass
+        
+        def request(self, method: str, params: Any):
+            return {"mined": 1, "height": 1}
+    
+    mock_module = Mock()
+    mock_module.RpcClient = MockRpcClient
+    
+    monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
+    monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
+    
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f",
+            "--count", "3",
+            "--rpc-url", "http://127.0.0.1:8545",
+        ],
+    )
+    
+    assert result.exit_code == 0
+    # Should have 2 sleep calls for 3 blocks (no sleep after last block)
+    assert len(sleep_calls) == 2
+    # Each sleep should be 2 seconds
+    assert all(s == 2.0 for s in sleep_calls)
