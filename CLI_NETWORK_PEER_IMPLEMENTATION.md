@@ -84,7 +84,7 @@ The peer command provides tools to manage P2P network connections, allowing user
 
 #### Subcommands:
 
-**`animica peer list [--verbose]`**
+**`animica peer list [--verbose] [--store PATH]`**
 - Lists all currently connected peers
 - Shows peer ID, address, and connection status
 - Returns "No peers connected" when the peer list is empty (graceful handling)
@@ -95,7 +95,13 @@ The peer command provides tools to manage P2P network connections, allowing user
   - `p2p.peers`
   - `admin_peers` (legacy compatibility)
   - `net_peers` (legacy compatibility)
-- **Status**: Fully implemented and working. All RPC methods registered and tested.
+- **Fallback behavior**: When RPC peer listing is unavailable, automatically falls back to reading from local peer store
+  - Default store: `~/.animica/p2p/peers.json`
+  - Override with `--store` flag or `ANIMICA_PEER_STORE` environment variable
+  - Supports both SQLite (peers.db) and JSON (peers.json) formats
+  - Clear indication in output when fallback is used
+  - RPC always takes precedence over store when available
+- **Status**: Fully implemented and tested with 16 comprehensive tests including fallback scenarios.
 
 **`animica peer add <address>`**
 - Adds a new peer connection by address
