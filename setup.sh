@@ -7,7 +7,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIBOQS_DIR="$ROOT_DIR/.liboqs"
-LIBOQS_VERSION="0.10.1"
+LIBOQS_VERSION="0.14.0"
 LIBOQS_REPO="https://github.com/open-quantum-safe/liboqs.git"
 
 BLUE='\033[34m'; GREEN='\033[32m'; YELLOW='\033[33m'; RED='\033[31m'; RESET='\033[0m'
@@ -197,14 +197,14 @@ setup_python() {
   log "Installing additional dependencies (requests for CLI, trio for RPC tests)"
   python -m pip install requests trio
 
-  # Install python-oqs for production-ready PQ signing (SPHINCS+, Dilithium3)
-  log "Installing python-oqs for post-quantum cryptographic signing"
+  # Install liboqs-python for production-ready PQ signing (SPHINCS+, Dilithium3)
+  log "Installing liboqs-python for post-quantum cryptographic signing"
   
-  # Fast path: try to install python-oqs directly
-  if python -m pip install python-oqs >/dev/null 2>&1; then
-    log "python-oqs installed successfully"
+  # Fast path: try to install liboqs-python directly
+  if python -m pip install liboqs-python >/dev/null 2>&1; then
+    log "liboqs-python installed successfully"
   else
-    warn "python-oqs installation failed (liboqs may not be available on this system)"
+    warn "liboqs-python installation failed (liboqs may not be available on this system)"
     log "Attempting to build liboqs from source..."
     
     # Check if git is available for cloning
@@ -215,19 +215,19 @@ setup_python() {
     # Build liboqs from source
     build_liboqs_from_source
     
-    # Retry python-oqs installation with liboqs now available
-    log "Retrying python-oqs installation with liboqs built from source..."
-    if python -m pip install python-oqs 2>&1 | tee /tmp/oqs_install_retry.log; then
-      log "python-oqs installed successfully after building liboqs"
+    # Retry liboqs-python installation with liboqs now available
+    log "Retrying liboqs-python installation with liboqs built from source..."
+    if python -m pip install liboqs-python 2>&1 | tee /tmp/oqs_install_retry.log; then
+      log "liboqs-python installed successfully after building liboqs"
     else
-      warn "python-oqs installation still failed after building liboqs"
+      warn "liboqs-python installation still failed after building liboqs"
       warn "Transaction signing will require ANIMICA_UNSAFE_PQ_FAKE=1 (development only)"
       warn "Check /tmp/oqs_install_retry.log for details"
       warn ""
       warn "You may need to:"
       warn "  1. Ensure liboqs was built correctly at $LIBOQS_DIR/install"
       warn "  2. Set environment variables manually (see above log messages)"
-      warn "  3. Try: python -m pip install python-oqs --no-cache-dir"
+      warn "  3. Try: python -m pip install liboqs-python --no-cache-dir"
     fi
   fi
 }
