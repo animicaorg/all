@@ -375,7 +375,12 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
             )
             return 0
 
+    except (RuntimeError, ConnectionError, OSError, TimeoutError) as e:
+        # Network/connection/timeout errors
+        log.error("Failed to connect to RPC: %s", e)
+        return 5
     except Exception as e:
+        # Catch-all for unexpected errors (e.g., RpcError, KeyError)
         log.exception("Failed to mine blocks via RPC: %s", e)
         return 5
 
