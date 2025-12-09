@@ -149,12 +149,14 @@ def new(
             # Secure the keys directory with 0o700 (owner-only access)
             try:
                 output_path.parent.chmod(0o700)
-            except Exception:
+            except OSError:
+                # Ignore permission errors (e.g., on Windows or restricted filesystems)
                 pass
             output_path.write_text(json.dumps(key_data, indent=2))
             try:
                 output_path.chmod(0o600)
-            except Exception:
+            except OSError:
+                # Ignore permission errors (e.g., on Windows or restricted filesystems)
                 pass
             typer.echo(f"✓ Key saved to {output_path}")
             if key_data.get("address"):
