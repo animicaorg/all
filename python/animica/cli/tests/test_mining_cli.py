@@ -137,7 +137,6 @@ def test_mine_blocks_invalid_count_negative() -> None:
 
 def test_mine_blocks_success(monkeypatch: Any) -> None:
     """Test that mine-blocks calls RPC successfully."""
-    import sys
     from unittest.mock import Mock
     
     class MockRpcClient:
@@ -156,32 +155,27 @@ def test_mine_blocks_success(monkeypatch: Any) -> None:
     mock_module = Mock()
     mock_module.RpcClient = MockRpcClient
     
-    # Mock the import
-    sys.modules["omni_sdk.rpc.http"] = mock_module
-    sys.modules["sdk.python.omni_sdk.rpc.http"] = mock_module
+    # Use monkeypatch to mock the module imports
+    monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
+    monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
     
-    try:
-        result = runner.invoke(
-            mining.app,
-            [
-                "mine-blocks",
-                "--address", "anim1test123",
-                "--count", "3",
-                "--rpc-url", "http://127.0.0.1:8545",
-            ],
-        )
-        
-        assert result.exit_code == 0
-        assert "Successfully mined" in result.output
-        assert "3 block(s)" in result.output
-    finally:
-        sys.modules.pop("omni_sdk.rpc.http", None)
-        sys.modules.pop("sdk.python.omni_sdk.rpc.http", None)
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", "anim1test123",
+            "--count", "3",
+            "--rpc-url", "http://127.0.0.1:8545",
+        ],
+    )
+    
+    assert result.exit_code == 0
+    assert "Successfully mined" in result.output
+    assert "3 block(s)" in result.output
 
 
 def test_mine_blocks_rpc_error(monkeypatch: Any) -> None:
     """Test that mine-blocks handles RPC errors gracefully."""
-    import sys
     from unittest.mock import Mock
     
     class MockRpcClient:
@@ -200,22 +194,19 @@ def test_mine_blocks_rpc_error(monkeypatch: Any) -> None:
     mock_module = Mock()
     mock_module.RpcClient = MockRpcClient
     
-    sys.modules["omni_sdk.rpc.http"] = mock_module
-    sys.modules["sdk.python.omni_sdk.rpc.http"] = mock_module
+    # Use monkeypatch to mock the module imports
+    monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
+    monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
     
-    try:
-        result = runner.invoke(
-            mining.app,
-            [
-                "mine-blocks",
-                "--address", "anim1test123",
-                "--count", "3",
-                "--rpc-url", "http://127.0.0.1:8545",
-            ],
-        )
-        
-        assert result.exit_code == 5
-        assert "Failed to connect to RPC" in result.output
-    finally:
-        sys.modules.pop("omni_sdk.rpc.http", None)
-        sys.modules.pop("sdk.python.omni_sdk.rpc.http", None)
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", "anim1test123",
+            "--count", "3",
+            "--rpc-url", "http://127.0.0.1:8545",
+        ],
+    )
+    
+    assert result.exit_code == 5
+    assert "Failed to connect to RPC" in result.output
