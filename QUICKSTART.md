@@ -339,12 +339,15 @@ docker compose -f tests/devnet/docker-compose.yml -p animica-devnet logs -f mine
 ```bash
 source .venv/bin/activate
 
-# Mine blocks using the CLI (requires running node)
+# Mine blocks to a specific address (block rewards credited to this address)
 animica miner mine-blocks --address <your-address> --count 10
 
-# Start CPU miner
-python -m mining.cli.miner \
-  --rpc http://localhost:8545 \
+# Alternative: Use the mining.cli.miner module directly
+python -m mining.cli.miner mine-blocks --address <your-address> --count 10 --rpc-url http://localhost:8545
+
+# Start continuous CPU miner (uses default miner address for rewards)
+python -m mining.cli.miner start \
+  --rpc-url http://localhost:8545 \
   --threads 2 \
   --device cpu
 
