@@ -19,6 +19,7 @@ animica/cli/mining.py
 animica/cli/network.py
 animica/cli/node.py
 animica/cli/peer.py
+animica/cli/pq_utils.py
 animica/cli/rpc.py
 animica/cli/state.py
 animica/cli/studio.py
