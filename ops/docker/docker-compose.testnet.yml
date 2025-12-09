@@ -65,9 +65,9 @@ services:
       timeout: 5s
       retries: 20
     ports:
-      - "0.0.0.0:${HOST_RPC_PORT:-8546}:8546"
-      - "${HOST_P2P_PORT:-30334}:30334"
-      - "0.0.0.0:9000:9000"
+      - "0.0.0.0:${HOST_RPC_PORT:-18546}:8546"
+      - "${HOST_P2P_PORT:-31334}:30334"
+      - "0.0.0.0:${HOST_METRICS_PORT:-19000}:9000"
     networks: [testnet]
     restart: unless-stopped
 
