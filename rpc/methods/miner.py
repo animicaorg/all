@@ -412,28 +412,34 @@ def _mine_once(payout_address: bytes | None = None) -> bool:
     
     # Mining loop: iterate through nonces until we find one that meets the target
     # Cap iterations to avoid infinite loops in tests or misconfigured environments
-    max_nonce = int(os.getenv("ANIMICA_MINER_MAX_NONCE", "100000"))
+    DEFAULT_MAX_NONCE = 100_000
+    max_nonce = int(os.getenv("ANIMICA_MINER_MAX_NONCE", str(DEFAULT_MAX_NONCE)))
     
     for nonce_val in range(max_nonce):
-        # Update header with new nonce
-        header = Header(
-            v=header_template.v,
-            chainId=header_template.chainId,
-            height=header_template.height,
-            parentHash=header_template.parentHash,
-            timestamp=header_template.timestamp,
-            stateRoot=header_template.stateRoot,
-            txsRoot=header_template.txsRoot,
-            receiptsRoot=header_template.receiptsRoot,
-            proofsRoot=header_template.proofsRoot,
-            daRoot=header_template.daRoot,
-            mixSeed=header_template.mixSeed,
-            poiesPolicyRoot=header_template.poiesPolicyRoot,
-            pqAlgPolicyRoot=header_template.pqAlgPolicyRoot,
-            thetaMicro=header_template.thetaMicro,
-            nonce=nonce_val,
-            extra=header_template.extra,
-        )
+        # Update header with new nonce using dataclasses.replace for efficiency
+        try:
+            from dataclasses import replace
+            header = replace(header_template, nonce=nonce_val)
+        except Exception:
+            # Fallback if replace not available or Header is not a dataclass
+            header = Header(
+                v=header_template.v,
+                chainId=header_template.chainId,
+                height=header_template.height,
+                parentHash=header_template.parentHash,
+                timestamp=header_template.timestamp,
+                stateRoot=header_template.stateRoot,
+                txsRoot=header_template.txsRoot,
+                receiptsRoot=header_template.receiptsRoot,
+                proofsRoot=header_template.proofsRoot,
+                daRoot=header_template.daRoot,
+                mixSeed=header_template.mixSeed,
+                poiesPolicyRoot=header_template.poiesPolicyRoot,
+                pqAlgPolicyRoot=header_template.pqAlgPolicyRoot,
+                thetaMicro=header_template.thetaMicro,
+                nonce=nonce_val,
+                extra=header_template.extra,
+            )
         
         # Compute block hash
         block_hash_bytes = header.hash()

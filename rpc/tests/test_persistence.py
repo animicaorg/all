@@ -111,7 +111,7 @@ def test_rpc_config_default_db_path_uses_chain_id():
 
 def test_wallet_store_creates_parent_directory():
     """Test that wallet store creates parent directory before writing."""
-    from python.animica.cli.wallet import _save_store
+    from animica.cli.wallet import _save_store
     
     with tempfile.TemporaryDirectory() as tmpdir:
         # Test with a wallet file in a non-existent directory

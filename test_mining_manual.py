@@ -30,8 +30,9 @@ def test_persistence_directory_creation():
         fake_home = Path(tmpdir) / "fake_home"
         fake_home.mkdir()
         
-        # Test URI expansion with ~ path
-        test_uri = f"sqlite:///{fake_home}/.animica/chain-1/test.db"
+        # Test URI expansion with ~ path (use variable for chain ID)
+        test_chain_id = 1
+        test_uri = f"sqlite:///{fake_home}/.animica/chain-{test_chain_id}/test.db"
         expanded = _expand_sqlite_uri(test_uri)
         
         # Extract path from URI
