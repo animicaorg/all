@@ -250,13 +250,15 @@ def up(
     The compose file and configuration are automatically selected based on
     the active network (set via 'animica network set <network>').
     
-    Network-specific behavior:
-      - mainnet: Uses ops/docker/docker-compose.mainnet.yml, chain ID 1, port 8545
-      - testnet: Uses ops/docker/docker-compose.testnet.yml, chain ID 2, port 8546
-      - devnet/local-devnet: Uses tests/devnet/docker-compose.yml, chain ID 1337, port 8545
+    Network-specific default host ports:
+      - mainnet: RPC 8545, P2P 30333, Metrics 9000
+      - testnet: RPC 18546, P2P 31334, Metrics 19000
+      - devnet: RPC 28545, P2P 31335, Metrics 29000
+      - local-devnet: RPC 38545, P2P 31336, Metrics 39000
     
     Each network uses isolated data directories and volumes to prevent cross-network
-    contamination of blockchain data.
+    contamination of blockchain data. Ports can be customized via environment variables:
+      HOST_RPC_PORT, HOST_P2P_PORT, HOST_METRICS_PORT
     
     Note: Studio Services (deploy/verify API) are NOT started by default.
     To start Studio Services, use 'animica studio up' after the node is running.
@@ -274,6 +276,9 @@ def up(
       animica network set devnet
       animica node up --with-miner  # Start node with miner
       
+      # Override default ports
+      HOST_RPC_PORT=9545 animica node up
+      
     To also start Studio Services (optional):
       animica node up
       animica studio up  # Start studio services separately
@@ -289,7 +294,9 @@ def up(
     typer.secho(f"Starting node for network: {network}", fg=typer.colors.CYAN, bold=True)
     typer.echo(f"Using compose file: {compose_file}")
     typer.echo(f"Chain ID: {defaults['chain_id']}")
-    typer.echo(f"RPC Port: {defaults['rpc_port']}")
+    typer.echo(f"Host RPC Port: {os.environ.get('HOST_RPC_PORT', defaults['rpc_port'])}")
+    typer.echo(f"Host P2P Port: {os.environ.get('HOST_P2P_PORT', defaults['p2p_port'])}")
+    typer.echo(f"Host Metrics Port: {os.environ.get('HOST_METRICS_PORT', defaults['metrics_port'])}")
     typer.echo(f"Data directory: {defaults['data_dir']}")
     
     # Build docker-compose command
@@ -385,11 +392,12 @@ def up_all(
     """
     Start all Animica node networks at once.
     
-    This command sequentially starts all supported networks:
-    - mainnet (chain ID 1, port 8545)
-    - testnet (chain ID 2, port 8546)
-    - devnet (chain ID 1337, port 8545)
-    - local-devnet (chain ID 1337, port 8545)
+    This command sequentially starts all supported networks with non-conflicting
+    default host ports:
+    - mainnet (chain ID 1): RPC 8545, P2P 30333, Metrics 9000
+    - testnet (chain ID 2): RPC 18546, P2P 31334, Metrics 19000
+    - devnet (chain ID 1337): RPC 28545, P2P 31335, Metrics 29000
+    - local-devnet (chain ID 1337): RPC 38545, P2P 31336, Metrics 39000
     
     Each network uses its own compose file and data directory to prevent
     cross-network contamination. The command will attempt to start all
@@ -399,8 +407,8 @@ def up_all(
     If any network fails to start, the command will continue with remaining
     networks but will exit with a non-zero code at the end.
     
-    Note: This command ignores the currently set network and operates on all
-    supported networks. Networks with overlapping ports may conflict.
+    Port customization: Set environment variables before running:
+      HOST_RPC_PORT, HOST_P2P_PORT, HOST_METRICS_PORT (apply globally to all networks)
     
     Examples:
       animica node up-all
@@ -446,7 +454,9 @@ def up_all(
         
         typer.echo(f"Compose file: {compose_file}")
         typer.echo(f"Chain ID: {defaults['chain_id']}")
-        typer.echo(f"RPC Port: {defaults['rpc_port']}")
+        typer.echo(f"Host RPC Port: {os.environ.get('HOST_RPC_PORT', defaults['rpc_port'])}")
+        typer.echo(f"Host P2P Port: {os.environ.get('HOST_P2P_PORT', defaults['p2p_port'])}")
+        typer.echo(f"Host Metrics Port: {os.environ.get('HOST_METRICS_PORT', defaults['metrics_port'])}")
         typer.echo(f"Data directory: {defaults['data_dir']}")
         
         # Build docker-compose command

@@ -29,10 +29,19 @@ def create_mock_compose_files(tmpdir: Path, networks: list[str]) -> dict[str, Pa
 def create_mock_get_network_defaults(compose_files: dict[str, Path]):
     """Create a mock get_network_defaults function."""
     def mock_get_network_defaults(network: str) -> dict:
+        port_map = {
+            "mainnet": (8545, 30333, 9000),
+            "testnet": (18546, 31334, 19000),
+            "devnet": (28545, 31335, 29000),
+            "local-devnet": (38545, 31336, 39000),
+        }
+        rpc_port, p2p_port, metrics_port = port_map.get(network, (8545, 30333, 9000))
         return {
             "compose_file": compose_files[network],
             "chain_id": 1 if network == "mainnet" else (2 if network == "testnet" else 1337),
-            "rpc_port": 8545 if network != "testnet" else 8546,
+            "rpc_port": rpc_port,
+            "p2p_port": p2p_port,
+            "metrics_port": metrics_port,
             "data_dir": f"~/.animica/{network}",
         }
     return mock_get_network_defaults
@@ -636,10 +645,19 @@ def test_up_all_missing_compose_file(monkeypatch: Any) -> None:
         
         # Mock get_network_defaults to return non-existent files for testnet and local-devnet
         def mock_get_network_defaults(network: str) -> dict:
+            port_map = {
+                "mainnet": (8545, 30333, 9000),
+                "testnet": (18546, 31334, 19000),
+                "devnet": (28545, 31335, 29000),
+                "local-devnet": (38545, 31336, 39000),
+            }
+            rpc_port, p2p_port, metrics_port = port_map.get(network, (8545, 30333, 9000))
             return {
                 "compose_file": compose_files.get(network, Path(tmpdir) / f"missing-{network}.yml"),
                 "chain_id": 1 if network == "mainnet" else (2 if network == "testnet" else 1337),
-                "rpc_port": 8545 if network != "testnet" else 8546,
+                "rpc_port": rpc_port,
+                "p2p_port": p2p_port,
+                "metrics_port": metrics_port,
                 "data_dir": f"~/.animica/{network}",
             }
         
@@ -689,6 +707,8 @@ def test_up_all_all_skipped(monkeypatch: Any) -> None:
                 "compose_file": Path(tmpdir) / f"missing-{network}.yml",
                 "chain_id": 1,
                 "rpc_port": 8545,
+                "p2p_port": 30333,
+                "metrics_port": 9000,
                 "data_dir": f"~/.animica/{network}",
             }
         
