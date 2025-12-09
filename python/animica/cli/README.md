@@ -276,6 +276,11 @@ Peer Management
   # Supports multiple RPC method aliases for compatibility
   animica peer list
   animica peer list --verbose
+  
+  # Fallback to local peer store when RPC is unavailable
+  # Default store location: ~/.animica/p2p/peers.json
+  animica peer list --store ~/.animica/p2p/peers.json
+  export ANIMICA_PEER_STORE=~/.animica/p2p/peers.json
 
   # Add a peer
   animica peer add /ip4/1.2.3.4/tcp/30303/p2p/QmPeerId...
@@ -294,6 +299,11 @@ Peer Management
   #   - admin_peers (legacy)
   #   - net_peers (legacy)
   # All methods are implemented and return consistent JSON responses.
+  #
+  # If RPC peer listing is unavailable, the command automatically falls back
+  # to reading from the local peer store. The store supports both SQLite
+  # (peers.db) and JSON (peers.json) formats. This allows you to see known
+  # peers even when the node's RPC doesn't expose peer listing methods.
 
 Node Lifecycle Commands (up/down)
 ----------------------------------
