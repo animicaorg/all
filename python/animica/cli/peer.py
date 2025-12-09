@@ -59,6 +59,32 @@ def _pretty(obj: Any) -> str:
     return json.dumps(obj, indent=2)
 
 
+def _resolve_store_paths(store_path: Path) -> tuple[Path, Path]:
+    """
+    Resolve both JSON and SQLite store paths.
+    
+    Args:
+        store_path: User-provided path (can be .json, .db, or directory)
+        
+    Returns:
+        Tuple of (json_path, db_path)
+    """
+    # If path is a directory, look for standard files inside
+    if store_path.is_dir():
+        return (store_path / "peers.json", store_path / "peers.db")
+    
+    # If path ends with .json, look for peers.db in same directory
+    if store_path.suffix == ".json":
+        return (store_path, store_path.parent / "peers.db")
+    
+    # If path ends with .db or has no extension, use as-is for db
+    if store_path.suffix in [".db", ""]:
+        return (store_path.parent / "peers.json", store_path)
+    
+    # Default: treat as JSON path
+    return (store_path, store_path.with_suffix(".db"))
+
+
 def _read_peer_store(store_path: Path) -> List[Dict[str, Any]]:
     """
     Read peers from local store, supporting both JSON and SQLite formats.
@@ -70,10 +96,10 @@ def _read_peer_store(store_path: Path) -> List[Dict[str, Any]]:
         List of peer dictionaries in standardized format
     """
     peers = []
+    json_path, db_path = _resolve_store_paths(store_path)
     
     # Try reading as SQLite database first (peers.db)
-    db_path = store_path.parent / "peers.db" if store_path.name == "peers.json" else store_path
-    if db_path.exists() and db_path.suffix in [".db", ""]:
+    if db_path.exists():
         try:
             with sqlite3.connect(str(db_path)) as conn:
                 conn.row_factory = sqlite3.Row
@@ -105,9 +131,9 @@ def _read_peer_store(store_path: Path) -> List[Dict[str, Any]]:
             pass
     
     # Try reading as JSON (peers.json)
-    if store_path.exists():
+    if json_path.exists():
         try:
-            with store_path.open("r") as f:
+            with json_path.open("r") as f:
                 data = json.load(f)
             json_peers = data.get("peers", [])
             
@@ -190,8 +216,8 @@ def list_peers(
         store_path = Path(store) if store else DEFAULT_STORE_PATH
         
         # Check if store file exists (either .json or .db)
-        db_path = store_path.parent / "peers.db" if store_path.name == "peers.json" else store_path
-        store_exists = store_path.exists() or (db_path.exists() and db_path.suffix in [".db", ""])
+        json_path, db_path = _resolve_store_paths(store_path)
+        store_exists = json_path.exists() or db_path.exists()
         
         if not store_exists:
             typer.echo(
