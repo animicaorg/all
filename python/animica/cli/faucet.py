@@ -28,8 +28,14 @@ app = typer.Typer(
 
 
 def _get_rpc_url() -> str:
-    """Get RPC URL from environment or use default."""
-    return os.getenv("ANIMICA_RPC_URL", "http://127.0.0.1:8545/rpc")
+    """Get RPC URL from environment or use default.
+    
+    Empty strings are treated as unset and fall back to the default.
+    """
+    url = os.getenv("ANIMICA_RPC_URL")
+    if url and url.strip():
+        return url.strip()
+    return "http://127.0.0.1:8545/rpc"
 
 
 def _rpc_call(method: str, params: dict | list | None = None) -> dict:

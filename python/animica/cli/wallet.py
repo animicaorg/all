@@ -235,9 +235,21 @@ def _fetch_balance(address: str, rpc_url: str) -> Optional[int]:
 
 
 def _resolve_rpc_url(rpc_url: Optional[str]) -> str:
-    if rpc_url:
-        return rpc_url
-    return os.environ.get(_RPC_ENV, load_network_config().rpc_url)
+    """Resolve RPC URL from option, env, or config.
+    
+    Empty strings are treated as unset and fall back to network config defaults.
+    """
+    # Check argument first
+    if rpc_url and rpc_url.strip():
+        return rpc_url.strip()
+    
+    # Check environment variable
+    env_url = os.environ.get(_RPC_ENV)
+    if env_url and env_url.strip():
+        return env_url.strip()
+    
+    # Fall back to network config
+    return load_network_config().rpc_url
 
 
 # ---------------------------------------------------------------------------

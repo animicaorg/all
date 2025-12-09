@@ -28,9 +28,12 @@ app = typer.Typer(help="Raw JSON-RPC calls")
 
 
 def _resolve_rpc_url(rpc_url: Optional[str]) -> str:
-    """Resolve RPC URL from option, env, or config."""
-    if rpc_url:
-        return rpc_url
+    """Resolve RPC URL from option, env, or config.
+    
+    Empty strings are treated as unset and fall back to network config defaults.
+    """
+    if rpc_url and rpc_url.strip():
+        return rpc_url.strip()
     cfg = load_network_config()
     return cfg.rpc_url
 
