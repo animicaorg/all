@@ -445,6 +445,7 @@ class RpcContext:
     block_db: t.Any
     tx_index: t.Any
     head: _HeadAccessor
+    p2p_service: t.Any = None  # Optional P2P service for peer management
 
     def get_head(self) -> dict[str, t.Any]:
         return self.head.get()
