@@ -338,3 +338,90 @@ def test_mine_blocks_no_delay_for_single_block(monkeypatch: Any):
     
     # Should have no sleep calls for single block
     assert len(sleep_calls) == 0, f"Expected no sleep calls for single block, got {len(sleep_calls)}"
+
+
+def test_mine_blocks_cli_output_shows_reward_details(monkeypatch: Any):
+    """Test that CLI output shows per-block and total rewards in both ANM and nANM."""
+    test_address = TEST_BECH32_ADDRESS
+    
+    # Mock RPC to return realistic reward data (5 ANM miner share = 4 ANM = 4,000,000,000 nANM)
+    class MockRpcClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        
+        def __enter__(self):
+            return self
+        
+        def __exit__(self, *args):
+            pass
+        
+        def request(self, method: str, params: Any):
+            # Simulate mining 2 blocks with 5 ANM base reward (80% miner share = 4 ANM each)
+            if params.get("count") == 1:
+                # First block
+                return {
+                    "mined": 1,
+                    "height": 1,
+                    "totalReward": 4000000000,  # 4 ANM in nANM
+                    "rewards": [
+                        {"height": 1, "reward": 4000000000}
+                    ]
+                }
+            else:
+                # Second block
+                return {
+                    "mined": 1,
+                    "height": 2,
+                    "totalReward": 4000000000,  # 4 ANM in nANM
+                    "rewards": [
+                        {"height": 2, "reward": 4000000000}
+                    ]
+                }
+    
+    mock_module = Mock()
+    mock_module.RpcClient = MockRpcClient
+    
+    monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
+    monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
+    
+    # Mock time.sleep to speed up test
+    monkeypatch.setattr("time.sleep", lambda x: None)
+    
+    # Mine 2 blocks
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", test_address,
+            "--count", "2",
+            "--rpc-url", "http://127.0.0.1:8545",
+        ],
+    )
+    
+    assert result.exit_code == 0, f"Command failed: {result.output}"
+    
+    # Verify output contains per-block reward details (both ANM and nANM)
+    output = result.output
+    
+    # Check for per-block output (Block X/Y mined with reward in ANM and nANM)
+    assert "Block 1/2 mined" in output, "Output should show Block 1/2"
+    assert "Block 2/2 mined" in output, "Output should show Block 2/2"
+    
+    # Check for rewards in ANM format (e.g., "4.000000000 ANM")
+    assert "ANM" in output, "Output should show ANM unit"
+    assert "nANM" in output, "Output should show nANM unit"
+    
+    # Check for reward values (4 ANM = 4000000000 nANM)
+    assert "4000000000" in output, "Output should show reward in nANM (4000000000)"
+    
+    # Check for total reward summary
+    assert "Total reward:" in output or "total reward:" in output, "Output should show total reward"
+    assert "8.000000000 ANM" in output or "8000000000 nANM" in output, \
+        "Output should show total of 8 ANM (2 blocks × 4 ANM)"
+    
+    # Check for success message
+    assert "Successfully mined" in output or "mined" in output.lower(), \
+        "Output should indicate successful mining"
+    
+    # Verify chain height is shown
+    assert "height" in output.lower(), "Output should show chain height"
