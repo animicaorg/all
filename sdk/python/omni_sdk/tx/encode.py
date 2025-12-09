@@ -119,7 +119,9 @@ def canonical_body_dict(tx: TxLike) -> Dict[str, Any]:
       - data     : bytes
     """
     body = {
-        "chainId": int(_get(tx, "chainId")),
+        "chainId": int(
+            _get(tx, "chain_id") if hasattr(tx, "chain_id") else _get(tx, "chainId")
+        ),
         "from": str(_get(tx, "from")),
         "to": _get(tx, "to"),
         "nonce": int(_get(tx, "nonce")),
