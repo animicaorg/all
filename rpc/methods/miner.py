@@ -238,19 +238,20 @@ def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = No
             # Apply block rewards to state (miner, aicf, treasury)
             # For the first reward (miner), use the provided payout address
             for idx, (reward_addr, amount) in enumerate(rewards):
-                # Convert bech32 address to bytes if needed
-                if isinstance(reward_addr, str):
-                    try:
-                        reward_addr_bytes = _decode_bech32_address(reward_addr)
-                    except Exception:
-                        log.warning(f"Could not decode reward address {reward_addr}; skipping")
-                        continue
-                else:
-                    reward_addr_bytes = reward_addr[:32].ljust(32, b"\x00")
-                
                 # Override first reward (miner) with payout address if provided
+                # Do this BEFORE trying to decode, since the first address may be a placeholder
                 if idx == 0 and payout_address is not None:
                     reward_addr_bytes = payout_address
+                else:
+                    # Convert bech32 address to bytes if needed
+                    if isinstance(reward_addr, str):
+                        try:
+                            reward_addr_bytes = _decode_bech32_address(reward_addr)
+                        except Exception:
+                            log.warning(f"Could not decode reward address {reward_addr}; skipping")
+                            continue
+                    else:
+                        reward_addr_bytes = reward_addr[:32].ljust(32, b"\x00")
                 
                 if amount > 0:
                     new_balance = credit(state_db, reward_addr_bytes, amount)
