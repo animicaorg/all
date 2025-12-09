@@ -60,14 +60,8 @@ from .. import device as miner_device
 from .. import errors as miner_errors
 from .. import orchestrator as miner_orchestrator
 
-# RPC client for mine-blocks command
-try:
-    from sdk.python.omni_sdk.rpc.http import RpcClient
-except Exception:
-    try:
-        from omni_sdk.rpc.http import RpcClient  # type: ignore
-    except Exception:  # pragma: no cover
-        RpcClient = None  # type: ignore
+# RPC client - imported lazily in _run_mine_blocks to avoid import errors during collection
+RpcClient = None
 
 
 def _env_default(name: str, fallback: Optional[str] = None) -> Optional[str]:
@@ -324,8 +318,20 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
         log.error("address is required")
         return 2
 
+    # Lazy import RpcClient to avoid import errors during test collection
+    rpc_client = None
+    try:
+        from sdk.python.omni_sdk.rpc.http import RpcClient as RPCClient
+        rpc_client = RPCClient
+    except (ImportError, ModuleNotFoundError, RuntimeError):
+        try:
+            from omni_sdk.rpc.http import RpcClient as RPCClient  # type: ignore
+            rpc_client = RPCClient
+        except (ImportError, ModuleNotFoundError, RuntimeError):  # pragma: no cover
+            pass
+
     # Check if RpcClient is available
-    if RpcClient is None:
+    if rpc_client is None:
         log.error(
             "RpcClient not available. Please install omni_sdk: pip install -e sdk/python"
         )
@@ -344,7 +350,7 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
     )
 
     try:
-        with RpcClient(args.rpc_url, timeout=30.0) as client:
+        with rpc_client(args.rpc_url, timeout=30.0) as client:
             # Call miner.mine RPC method
             # Note: Current implementation doesn't support address parameter
             result = client.request("miner.mine", [args.count])
