@@ -75,30 +75,31 @@ def _read_peer_store(store_path: Path) -> List[Dict[str, Any]]:
     db_path = store_path.parent / "peers.db" if store_path.name == "peers.json" else store_path
     if db_path.exists() and db_path.suffix in [".db", ""]:
         try:
-            conn = sqlite3.connect(str(db_path))
-            conn.row_factory = sqlite3.Row
-            cursor = conn.execute("SELECT * FROM peers ORDER BY last_seen DESC")
-            for row in cursor.fetchall():
-                # Get addresses for this peer
-                addr_cursor = conn.execute(
-                    "SELECT address FROM peer_addresses WHERE peer_id=? ORDER BY last_seen DESC",
-                    (row["peer_id"],)
-                )
-                addrs = [addr_row["address"] for addr_row in addr_cursor.fetchall()]
-                
-                peer = {
-                    "id": row["peer_id"],
-                    "peer_id": row["peer_id"],
-                    "addr": row["address"],
-                    "address": row["address"],
-                    "addrs": addrs,
-                    "status": row["status"],
-                    "last_seen": row["last_seen"],
-                    "score": row["score"],
-                }
-                peers.append(peer)
-            conn.close()
-            return peers
+            with sqlite3.connect(str(db_path)) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute("SELECT * FROM peers ORDER BY last_seen DESC")
+                for row in cursor.fetchall():
+                    # Get addresses for this peer
+                    addr_cursor = conn.execute(
+                        "SELECT address FROM peer_addresses WHERE peer_id=? ORDER BY last_seen DESC",
+                        (row["peer_id"],)
+                    )
+                    addrs = [addr_row["address"] for addr_row in addr_cursor.fetchall()]
+                    
+                    # Note: Duplicate fields (id/peer_id, addr/address) are intentional
+                    # to maintain compatibility with different RPC response formats
+                    peer = {
+                        "id": row["peer_id"],
+                        "peer_id": row["peer_id"],
+                        "addr": row["address"],
+                        "address": row["address"],
+                        "addrs": addrs,
+                        "status": row["status"],
+                        "last_seen": row["last_seen"],
+                        "score": row["score"],
+                    }
+                    peers.append(peer)
+                return peers
         except (sqlite3.Error, KeyError):
             # Fall through to JSON
             pass
@@ -116,6 +117,8 @@ def _read_peer_store(store_path: Path) -> List[Dict[str, Any]]:
                 addrs = jp.get("addrs", [])
                 primary_addr = addrs[0] if addrs else "unknown"
                 
+                # Note: Duplicate fields (id/peer_id, addr/address) are intentional
+                # to maintain compatibility with different RPC response formats
                 peer = {
                     "id": peer_id,
                     "peer_id": peer_id,
