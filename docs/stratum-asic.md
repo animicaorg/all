@@ -5,6 +5,8 @@ HashShare pool. Use the `asic_sha256` profile to expose a classic
 `mining.subscribe` / `mining.authorize` / `mining.notify` interface that works
 with Antminer/Whatsminer style devices.
 
+**Note:** After running `./setup.sh` from the repository root, all Stratum pool dependencies are installed automatically. The `animica miner run-pool` command works immediately without manual installation steps.
+
 ## Configuration
 
 Environment variables (or CLI flags via `python -m animica.stratum_pool.cli`):
@@ -19,6 +21,10 @@ Environment variables (or CLI flags via `python -m animica.stratum_pool.cli`):
 Run the pool:
 
 ```bash
+# Using the animica CLI (recommended after setup.sh)
+animica miner run-pool --rpc-url http://localhost:8545 --stratum-bind 0.0.0.0:3333
+
+# Or run directly
 python -m animica.stratum_pool.cli --profile asic_sha256
 ```
 

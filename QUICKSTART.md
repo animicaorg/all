@@ -120,6 +120,7 @@ git clone https://github.com/animicaorg/all.git
 cd all
 
 # Run setup script (installs Python venv, pnpm, and dependencies)
+# This includes stratum pool support (FastAPI, Uvicorn) by default
 ./setup.sh
 
 # Activate Python virtual environment
@@ -128,6 +129,7 @@ source .venv/bin/activate
 # Verify installation
 python --version  # Should be 3.11+
 pytest --version  # Should show pytest
+animica miner --help  # Should show mining pool commands
 ```
 
 ## Running Tests
@@ -339,6 +341,24 @@ python -m mining.cli.miner \
 
 # Check mining stats
 python -m mining.cli.stats --rpc http://localhost:8545
+```
+
+### Stratum Mining Pool
+```bash
+source .venv/bin/activate
+
+# Note: Stratum support is installed automatically by setup.sh
+# Run the Stratum mining pool
+animica miner run-pool \
+  --rpc-url http://localhost:8545 \
+  --db-url sqlite:///mining_pool.db \
+  --stratum-bind 0.0.0.0:3333
+
+# Show pool configuration
+animica miner show-config
+
+# Generate a payout address
+animica miner generate-payout-address --label pool-payout
 ```
 
 ## Development Workflow

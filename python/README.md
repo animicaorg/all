@@ -13,11 +13,13 @@ From the repository root you can install the package in editable mode:
 python -m pip install -e python
 ```
 
+**Note:** If you run `./setup.sh` from the repository root, it automatically installs the package with both `dev` and `stratum` extras, so the Stratum pool functionality (including `animica miner run-pool`) is available immediately without additional steps.
+
 ### Optional extras
 
 - `stratum`: pull in the FastAPI + Uvicorn dependencies required for the
-  `animica.stratum_pool` service.
-- `dev`: install pytest for running the bundled test suite.
+  `animica.stratum_pool` service. **Installed by default via setup.sh.**
+- `dev`: install pytest for running the bundled test suite. **Installed by default via setup.sh.**
 
 Example with extras:
 

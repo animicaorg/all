@@ -10,8 +10,7 @@ import typer
 from animica.config import load_network_config
 
 try:
-    from animica.cli.wallet import (WalletEntry, _wallet_file_path,
-                                    create_wallet)
+    from animica.cli.wallet import WalletEntry, _wallet_file_path
     from animica.stratum_pool import cli as pool_cli
     from animica.stratum_pool.config import PoolConfig, load_config_from_env
 

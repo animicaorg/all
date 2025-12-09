@@ -25,6 +25,11 @@ Installation & Usage
 
 1. Install from repo root:
 
+    # Using setup.sh (recommended - includes stratum and dev extras)
+    ./setup.sh
+    source .venv/bin/activate
+
+    # Or install manually
     pip install -e python/
 
 2. Run the CLI:
@@ -236,6 +241,9 @@ Data Availability
 
 Mining Pool
 -----------
+  # Note: Stratum pool support is installed automatically by setup.sh
+  # The 'animica miner run-pool' command works out of the box after setup.
+  
   # Show pool config
   animica miner show-config
 
@@ -408,8 +416,8 @@ Core:
   - pq                   PQ cryptography
 
 Optional (for full features):
-  - fastapi, uvicorn     Mining pool
-  - pytest               Testing
+  - fastapi, uvicorn     Mining pool (installed automatically via setup.sh)
+  - pytest               Testing (installed automatically via setup.sh)
 
 Testing
 =======

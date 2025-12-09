@@ -49,8 +49,8 @@ setup_python() {
     warn "requirements.txt not found; skipping shared Python dependencies"
   fi
 
-  log "Installing Animica Python package in editable mode with dev extras"
-  python -m pip install -e "$ROOT_DIR/python[dev]"
+  log "Installing Animica Python package in editable mode with dev and stratum extras"
+  python -m pip install -e "$ROOT_DIR/python[dev,stratum]"
 
   log "Installing SDK Python package in editable mode"
   python -m pip install -e "$ROOT_DIR/sdk/python"
