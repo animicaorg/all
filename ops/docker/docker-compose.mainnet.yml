@@ -57,16 +57,16 @@ services:
       P2P_ENABLE: "${P2P_ENABLE:-true}"
       P2P_LISTEN: "${P2P_LISTEN:-0.0.0.0:30333}"
       P2P_SEEDS: "${P2P_SEEDS:-}"
-    command: ["/bin/bash", "-c", "python -m rpc.main"]
+    command: ["/bin/bash", "-c", "python -m rpc"]
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8545/healthz || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 20
     ports:
-      - "${HOST_RPC_PORT:-8545}:8545"
+      - "0.0.0.0:${HOST_RPC_PORT:-8545}:8545"
       - "${HOST_P2P_PORT:-30333}:30333"
-      - "${HOST_P2P_PORT_ALT:-9000}:9000"
+      - "0.0.0.0:9000:9000"
     networks: [mainnet]
     restart: unless-stopped
 
