@@ -106,3 +106,65 @@ def test_peer_to_dict_conversion():
     assert result["status"] == "connected"
     assert result["direction"] == "outbound"
     assert result["latencyMs"] == 50.0
+
+
+@pytest.mark.asyncio
+async def test_list_peers_with_mock_service(monkeypatch):
+    """Test that list_peers returns peers when P2P service is available."""
+    from dataclasses import dataclass
+    from rpc.methods import p2p as p2p_module
+    
+    @dataclass
+    class MockPeer:
+        peer_id: str = "12D3KooWPeer123"
+        address: str = "/ip4/192.168.1.100/tcp/30303"
+        status: str = "connected"
+        direction: str = "outbound"
+        last_rtt_ms: float = 45.2
+        last_seen: float = 1234567890.0
+    
+    class MockConnectionManager:
+        def list_peers(self):
+            return [
+                MockPeer(
+                    peer_id="12D3KooWPeer1",
+                    address="/ip4/10.0.0.1/tcp/30303",
+                    direction="outbound",
+                    last_rtt_ms=25.5,
+                ),
+                MockPeer(
+                    peer_id="12D3KooWPeer2",
+                    address="/ip4/10.0.0.2/tcp/30303",
+                    direction="inbound",
+                    last_rtt_ms=102.3,
+                ),
+            ]
+    
+    # Mock the connection manager
+    mock_cm = MockConnectionManager()
+    
+    def mock_get_cm():
+        return mock_cm
+    
+    monkeypatch.setattr(p2p_module, "_get_connection_manager", mock_get_cm)
+    
+    # Reset cached value
+    p2p_module._connection_manager = None
+    
+    from rpc.methods.p2p import list_peers
+    result = await list_peers()
+    
+    assert isinstance(result, list)
+    assert len(result) == 2
+    
+    # Check first peer
+    assert result[0]["id"] == "12D3KooWPeer1"
+    assert result[0]["addr"] == "/ip4/10.0.0.1/tcp/30303"
+    assert result[0]["direction"] == "outbound"
+    assert result[0]["latencyMs"] == 25.5
+    
+    # Check second peer
+    assert result[1]["id"] == "12D3KooWPeer2"
+    assert result[1]["addr"] == "/ip4/10.0.0.2/tcp/30303"
+    assert result[1]["direction"] == "inbound"
+    assert result[1]["latencyMs"] == 102.3
