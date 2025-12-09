@@ -64,8 +64,8 @@ export default function App() {
 // ────────────────────────────────────────────────────────────────────────────────
 function TopBar() {
   const [theme, setTheme] = useTheme();
-  const chainId = import.meta.env.VITE_CHAIN_ID ?? "unknown";
-  const rpcUrl = inferRpcUrl(import.meta.env);
+  const chainId = (import.meta.env as any).VITE_CHAIN_ID ?? "unknown";
+  const rpcUrl = inferRpcUrl((import.meta.env as any));
 
   const toggle = useCallback(() => setTheme(theme === "dark" ? "light" : "dark"), [theme, setTheme]);
 
