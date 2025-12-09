@@ -42,6 +42,36 @@ When you switch networks using `animica network set`, the system automatically:
 
 This ensures that switching between networks doesn't contaminate state or lose data. Your mainnet state remains intact when testing on devnet.
 
+### RPC URL Configuration
+
+The CLI automatically uses network-specific RPC URLs when `ANIMICA_RPC_URL` is not set:
+
+- **Mainnet**: `http://127.0.0.1:8545/rpc` (default)
+- **Testnet**: `http://127.0.0.1:8546/rpc`
+- **Devnet**: `http://127.0.0.1:8545/rpc`
+
+**No manual configuration needed!** Commands like `animica node status`, `animica rpc call`, and `animica wallet show` will work without setting `ANIMICA_RPC_URL`.
+
+To override the default:
+```bash
+export ANIMICA_RPC_URL=http://custom-host:8888/rpc
+# or per-command:
+animica --rpc-url http://custom-host:8888/rpc node status
+```
+
+**Note**: Empty strings (`ANIMICA_RPC_URL=""`) are treated as unset and will use the network default.
+
+### Port Configuration
+
+All networks expose:
+- **RPC port** on `0.0.0.0` (accessible externally)
+  - Mainnet: 8545
+  - Testnet: 8546
+  - Devnet: 8545
+- **P2P ports** for peer connectivity:
+  - Primary: 30333 (mainnet/devnet), 30334 (testnet)
+  - Alternate: 9000 (all networks)
+
 ### Checking Premine Balances (Mainnet)
 
 To check premine wallet balances on mainnet:

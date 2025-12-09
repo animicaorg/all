@@ -250,3 +250,50 @@ def test_load_network_config_no_chain_id_env(clean_env_vars: Any) -> None:
     
     assert config.name == "mainnet"
     assert config.chain_id == 1  # mainnet default
+
+
+def test_load_network_config_empty_rpc_url(clean_env_vars: Any) -> None:
+    """Test that empty ANIMICA_RPC_URL is treated as unset."""
+    os.environ["ANIMICA_NETWORK"] = "mainnet"
+    os.environ["ANIMICA_RPC_URL"] = ""
+    
+    # Should not crash and fall back to mainnet default
+    config = load_network_config()
+    
+    assert config.name == "mainnet"
+    assert config.rpc_url == "http://127.0.0.1:8545/rpc"  # mainnet default
+
+
+def test_load_network_config_whitespace_rpc_url(clean_env_vars: Any) -> None:
+    """Test that whitespace-only ANIMICA_RPC_URL is treated as unset."""
+    os.environ["ANIMICA_NETWORK"] = "testnet"
+    os.environ["ANIMICA_RPC_URL"] = "   "
+    
+    # Should not crash and fall back to testnet default
+    config = load_network_config()
+    
+    assert config.name == "testnet"
+    assert config.rpc_url == "http://127.0.0.1:8546/rpc"  # testnet default
+
+
+def test_load_network_config_valid_rpc_url_override(clean_env_vars: Any) -> None:
+    """Test that valid ANIMICA_RPC_URL overrides the default."""
+    os.environ["ANIMICA_NETWORK"] = "mainnet"
+    os.environ["ANIMICA_RPC_URL"] = "http://custom-rpc:8888/rpc"
+    
+    config = load_network_config()
+    
+    assert config.name == "mainnet"
+    assert config.rpc_url == "http://custom-rpc:8888/rpc"  # overridden value
+
+
+def test_load_network_config_no_rpc_url_env(clean_env_vars: Any) -> None:
+    """Test that missing ANIMICA_RPC_URL uses network default."""
+    os.environ["ANIMICA_NETWORK"] = "devnet"
+    # Ensure ANIMICA_RPC_URL is not set
+    os.environ.pop("ANIMICA_RPC_URL", None)
+    
+    config = load_network_config()
+    
+    assert config.name == "devnet"
+    assert config.rpc_url == "http://127.0.0.1:8545/rpc"  # devnet default

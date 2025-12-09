@@ -143,6 +143,8 @@ def load_network_config(network: Optional[str] = None) -> NetworkConfig:
     - ANIMICA_CHAIN_ID: Must be a valid integer. Empty string or whitespace
       is treated as unset and falls back to network defaults. Invalid values
       log a warning and fall back to defaults.
+    - ANIMICA_RPC_URL: Empty string or whitespace is treated as unset and
+      falls back to network defaults.
     
     Args:
         network: Optional network name override
@@ -154,7 +156,12 @@ def load_network_config(network: Optional[str] = None) -> NetworkConfig:
     defaults = get_network_defaults(network_name)
     
     # Allow environment overrides
-    rpc_url = os.getenv("ANIMICA_RPC_URL", defaults["rpc_url"])
+    # Treat empty string as unset for RPC URL
+    rpc_url = os.getenv("ANIMICA_RPC_URL")
+    if rpc_url is not None:
+        rpc_url = rpc_url.strip()
+    if not rpc_url:
+        rpc_url = defaults["rpc_url"]
     chain_id = _safe_int_from_env("ANIMICA_CHAIN_ID", defaults["chain_id"])
     
     return NetworkConfig(

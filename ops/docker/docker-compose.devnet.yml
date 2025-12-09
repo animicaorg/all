@@ -18,67 +18,67 @@ x-health-script: &healthchecks_mount
   - ./healthchecks:/healthchecks:ro
 
 x-common-env: &common_env
-  ANIMICA_LOG_FORMAT=json
-  ANIMICA_LOG_LEVEL=info
+  ANIMICA_LOG_FORMAT: json
+  ANIMICA_LOG_LEVEL: info
 
 x-node-env: &node_env
   <<: *common_env
   # RPC / WS
-  RPC_HOST=0.0.0.0
-  RPC_PORT=8545
-  RPC_CORS=*
-  RPC_ALLOW_ORIGINS=*
-  RPC_RATE_LIMITS=default
+  RPC_HOST: 0.0.0.0
+  RPC_PORT: 8545
+  RPC_CORS: "*"
+  RPC_ALLOW_ORIGINS: "*"
+  RPC_RATE_LIMITS: default
   # Chain / DB
-  CHAIN_ID=${CHAIN_ID:-1337}
-  DB_BACKEND=sqlite
-  DB_PATH=/data/node/animica.db
+  CHAIN_ID: ${CHAIN_ID:-1337}
+  DB_BACKEND: sqlite
+  DB_PATH: /data/node/animica.db
   # P2P (public devnet defaults)
-  P2P_ENABLE=true
-  P2P_LISTEN=0.0.0.0:30333
-  P2P_SEEDS=${P2P_SEEDS:-}
+  P2P_ENABLE: true
+  P2P_LISTEN: 0.0.0.0:30333
+  P2P_SEEDS: ${P2P_SEEDS:-}
   # Metrics
-  METRICS_ENABLE=true
+  METRICS_ENABLE: true
 
 x-services-env: &services_env
   <<: *common_env
-  RPC_URL=http://node:8545
-  WS_URL=ws://node:8545/ws
-  CHAIN_ID=${CHAIN_ID:-1337}
-  SERVICES_HOST=0.0.0.0
-  SERVICES_PORT=8081
-  SERVICES_CORS=*
-  SERVICES_LOG_LEVEL=info
-  SERVICES_DB_BACKEND=sqlite
-  SERVICES_SQLITE_FILE=studio_services.db
-  SERVICES_STORAGE_DIR=/data/services
-  START_WORKER=true
-  RUN_MIGRATIONS=true
-  METRICS_ENABLE=true
+  RPC_URL: http://node:8545
+  WS_URL: ws://node:8545/ws
+  CHAIN_ID: ${CHAIN_ID:-1337}
+  SERVICES_HOST: 0.0.0.0
+  SERVICES_PORT: 8081
+  SERVICES_CORS: "*"
+  SERVICES_LOG_LEVEL: info
+  SERVICES_DB_BACKEND: sqlite
+  SERVICES_SQLITE_FILE: studio_services.db
+  SERVICES_STORAGE_DIR: /data/services
+  START_WORKER: true
+  RUN_MIGRATIONS: true
+  METRICS_ENABLE: true
   # Faucet (devnet only; leave FAUCET_KEY empty to disable sending funds)
-  FAUCET_ENABLE=${FAUCET_ENABLE:-false}
-  FAUCET_KEY=${FAUCET_KEY:-}
-  FAUCET_DRIP_AMOUNT=100000000000000000
+  FAUCET_ENABLE: ${FAUCET_ENABLE:-false}
+  FAUCET_KEY: ${FAUCET_KEY:-}
+  FAUCET_DRIP_AMOUNT: 100000000000000000
 
 x-miner-env: &miner_env
   <<: *common_env
-  RPC_URL=http://node:8545
-  WS_URL=ws://node:8545/ws
-  CHAIN_ID=${CHAIN_ID:-1337}
-  MINER_DEVICE=cpu
-  MINER_THREADS=${MINER_THREADS:-2}
+  RPC_URL: http://node:8545
+  WS_URL: ws://node:8545/ws
+  CHAIN_ID: ${CHAIN_ID:-1337}
+  MINER_DEVICE: cpu
+  MINER_THREADS: ${MINER_THREADS:-2}
   # Easy blocks in devnet
-  SHARE_TARGET_EASING=high
-  METRICS_HOST=0.0.0.0
-  METRICS_PORT=9103
+  SHARE_TARGET_EASING: high
+  METRICS_HOST: 0.0.0.0
+  METRICS_PORT: 9103
 
 x-explorer-env: &explorer_env
   <<: *common_env
-  RPC_URL=http://node:8545
-  CHAIN_ID=${CHAIN_ID:-1337}
-  EXPLORER_HOST=0.0.0.0
-  EXPLORER_PORT=8082
-  METRICS_ENABLE=true
+  RPC_URL: http://node:8545
+  CHAIN_ID: ${CHAIN_ID:-1337}
+  EXPLORER_HOST: 0.0.0.0
+  EXPLORER_PORT: 8082
+  METRICS_ENABLE: true
 
 networks:
   animica:
@@ -108,6 +108,7 @@ services:
     ports:
       - "8545:8545"   # RPC/WS (WS served at /ws)
       - "30333:30333" # P2P
+      - "9000:9000"   # P2P (alternate port)
     healthcheck:
       test: ["CMD-SHELL", "/healthchecks/http_health.sh --url http://localhost:8545/healthz --timeout 10 --retries 12 --backoff 500"]
       interval: 5s

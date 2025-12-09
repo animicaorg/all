@@ -66,6 +66,7 @@ services:
     ports:
       - "${HOST_RPC_PORT:-8545}:8545"
       - "${HOST_P2P_PORT:-30333}:30333"
+      - "${HOST_P2P_PORT_ALT:-9000}:9000"
     networks: [mainnet]
     restart: unless-stopped
 
