@@ -29,12 +29,11 @@ def test_mainnet_premine_distribution_sums_to_total():
 
 
 def test_mainnet_premine_distribution_includes_system_addresses():
-    """Mainnet premine distribution includes foundation, treasury, aicf, founder."""
+    """Mainnet premine distribution uses single foundation address."""
     addresses = [addr for addr, _ in MAINNET_PREMINE_DISTRIBUTION]
-    assert "system:foundation" in addresses
-    assert "system:treasury" in addresses
-    assert "system:aicf" in addresses
-    assert "system:founder" in addresses
+    # Current design: single foundation address manages entire premine
+    assert len(addresses) == 1
+    assert addresses[0].startswith("anim1")
 
 
 def test_mainnet_premine_distribution_documented():
@@ -42,7 +41,7 @@ def test_mainnet_premine_distribution_documented():
     # The user-provided address is documented in the code comments in rewards.py
     # This test verifies that the distribution structure is correct
     # (The actual address allocation can be adjusted per design requirements)
-    assert len(MAINNET_PREMINE_DISTRIBUTION) == 4  # Four system addresses currently
+    assert len(MAINNET_PREMINE_DISTRIBUTION) == 1  # Single foundation address currently
 
 
 def test_compute_block_reward_mainnet_height_0_returns_premine():
@@ -373,3 +372,144 @@ def test_compute_block_reward_returns_empty_for_invalid_params():
     
     # Should return empty due to invalid params
     assert rewards == []
+
+
+def test_compute_block_reward_5_anm_base():
+    """Test that base block reward is 5 ANM (5,000,000,000 nANM) at height 1."""
+    params = {
+        "monetary": {
+            "issuance": {
+                "subsidy": {
+                    "start_nANM_per_block": 5000000000,  # 5 ANM
+                    "epoch_length_blocks": 90000000,     # 90M blocks
+                    "decay_pct_per_epoch": 50.0,         # 50% decay (true halving)
+                    "tail_nANM_per_block": 100000,
+                    "max_halvings": 64,
+                },
+                "subsidy_split_pct": {
+                    "miner": 80,
+                    "aicf": 15,
+                    "treasury": 5,
+                },
+            }
+        },
+        "system_addresses": {
+            "coinbase_default": "anim1coinbasexxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "aicf_treasury": "anim1aicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "treasury": "anim1treasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        },
+    }
+    
+    # Test at height 1 (first post-genesis block)
+    rewards = compute_block_reward(chain_id=1337, height=1, params=params)
+    
+    # Should return 3 rewards (miner, aicf, treasury)
+    assert len(rewards) == 3
+    
+    # Verify total reward is 5 ANM (5,000,000,000 nANM)
+    base_reward = 5000000000  # 5 ANM in nANM
+    total = sum(amt for _, amt in rewards)
+    assert total == base_reward, f"Expected 5 ANM ({base_reward} nANM), got {total}"
+    
+    # Verify split percentages (80% miner, 15% aicf, 5% treasury)
+    miner_amt = next(amt for addr, amt in rewards if "coinbase" in addr)
+    aicf_amt = next(amt for addr, amt in rewards if "aicf" in addr)
+    treasury_amt = next(amt for addr, amt in rewards if "treasury" in addr)
+    
+    assert miner_amt == base_reward * 80 // 100  # 80% of 5 ANM
+    assert aicf_amt == base_reward * 15 // 100    # 15% of 5 ANM
+    assert treasury_amt == base_reward * 5 // 100  # 5% of 5 ANM
+
+
+def test_compute_block_reward_halving_at_90m():
+    """Test that block reward halves at 90M blocks (epoch 1)."""
+    params = {
+        "monetary": {
+            "issuance": {
+                "subsidy": {
+                    "start_nANM_per_block": 5000000000,  # 5 ANM
+                    "epoch_length_blocks": 90000000,     # 90M blocks
+                    "decay_pct_per_epoch": 50.0,         # 50% decay (true halving)
+                    "tail_nANM_per_block": 100000,
+                    "max_halvings": 64,
+                },
+                "subsidy_split_pct": {
+                    "miner": 80,
+                    "aicf": 15,
+                    "treasury": 5,
+                },
+            }
+        },
+        "system_addresses": {
+            "coinbase_default": "anim1coinbasexxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "aicf_treasury": "anim1aicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "treasury": "anim1treasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        },
+    }
+    
+    # Test at height 90000001 (first block of epoch 1, after first halving)
+    rewards = compute_block_reward(chain_id=1337, height=90000001, params=params)
+    
+    # Should return 3 rewards (miner, aicf, treasury)
+    assert len(rewards) == 3
+    
+    # Verify total reward is 2.5 ANM (half of 5 ANM)
+    halved_reward = 2500000000  # 2.5 ANM after first halving
+    total = sum(amt for _, amt in rewards)
+    assert total == halved_reward, f"Expected 2.5 ANM ({halved_reward} nANM) after first halving, got {total}"
+    
+    # Verify split percentages (80% miner, 15% aicf, 5% treasury)
+    miner_amt = next(amt for addr, amt in rewards if "coinbase" in addr)
+    aicf_amt = next(amt for addr, amt in rewards if "aicf" in addr)
+    treasury_amt = next(amt for addr, amt in rewards if "treasury" in addr)
+    
+    assert miner_amt == halved_reward * 80 // 100  # 80% of 2.5 ANM
+    assert aicf_amt == halved_reward * 15 // 100    # 15% of 2.5 ANM
+    assert treasury_amt == halved_reward * 5 // 100  # 5% of 2.5 ANM
+
+
+def test_compute_block_reward_second_halving_at_180m():
+    """Test that block reward halves again at 180M blocks (epoch 2)."""
+    params = {
+        "monetary": {
+            "issuance": {
+                "subsidy": {
+                    "start_nANM_per_block": 5000000000,  # 5 ANM
+                    "epoch_length_blocks": 90000000,     # 90M blocks
+                    "decay_pct_per_epoch": 50.0,         # 50% decay (true halving)
+                    "tail_nANM_per_block": 100000,
+                    "max_halvings": 64,
+                },
+                "subsidy_split_pct": {
+                    "miner": 80,
+                    "aicf": 15,
+                    "treasury": 5,
+                },
+            }
+        },
+        "system_addresses": {
+            "coinbase_default": "anim1coinbasexxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "aicf_treasury": "anim1aicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "treasury": "anim1treasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        },
+    }
+    
+    # Test at height 180000001 (first block of epoch 2, after second halving)
+    rewards = compute_block_reward(chain_id=1337, height=180000001, params=params)
+    
+    # Should return 3 rewards (miner, aicf, treasury)
+    assert len(rewards) == 3
+    
+    # Verify total reward is 1.25 ANM (quarter of 5 ANM)
+    double_halved_reward = 1250000000  # 1.25 ANM after second halving
+    total = sum(amt for _, amt in rewards)
+    assert total == double_halved_reward, f"Expected 1.25 ANM ({double_halved_reward} nANM) after second halving, got {total}"
+    
+    # Verify split percentages (80% miner, 15% aicf, 5% treasury)
+    miner_amt = next(amt for addr, amt in rewards if "coinbase" in addr)
+    aicf_amt = next(amt for addr, amt in rewards if "aicf" in addr)
+    treasury_amt = next(amt for addr, amt in rewards if "treasury" in addr)
+    
+    assert miner_amt == double_halved_reward * 80 // 100  # 80% of 1.25 ANM
+    assert aicf_amt == double_halved_reward * 15 // 100    # 15% of 1.25 ANM
+    assert treasury_amt == double_halved_reward * 5 // 100  # 5% of 1.25 ANM
