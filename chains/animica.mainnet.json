@@ -70,5 +70,5 @@
 
   "features": ["poies", "pq", "da", "vm_py", "ai", "quantum"],
 
-  "checksum": "0000000000000000000000000000000000000000000000000000000000000000"
+  "checksum": "<sha256-to-be-generated>"
 }
