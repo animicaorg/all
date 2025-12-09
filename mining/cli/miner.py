@@ -345,6 +345,14 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
     )
 
     try:
+        # Import RpcError for proper exception handling
+        try:
+            from omni_sdk.errors import RpcError, JsonRpcCode
+        except ImportError:
+            # Fallback if SDK not available or older version
+            RpcError = None  # type: ignore
+            JsonRpcCode = None  # type: ignore
+        
         with rpc_client(args.rpc_url, timeout=30.0) as client:
             # Call miner.mine RPC method with address parameter
             # For backward compatibility, try with address first, fall back if not supported
@@ -352,7 +360,16 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
                 result = client.request("miner.mine", {"count": args.count, "address": args.address})
             except Exception as e:
                 # If the RPC rejects the address parameter (older node), try without it
-                if "address" in str(e).lower() or "unexpected" in str(e).lower():
+                # Check for INVALID_PARAMS error code or presence of "address" in error message
+                is_param_error = False
+                if RpcError is not None and isinstance(e, RpcError):
+                    is_param_error = (
+                        e.code == JsonRpcCode.INVALID_PARAMS if JsonRpcCode else e.code == -32602
+                    )
+                elif "address" in str(e).lower() or "unexpected" in str(e).lower():
+                    is_param_error = True
+                
+                if is_param_error:
                     log.warning(
                         "Node does not support payout address selection (older version). "
                         "Mining to node's default miner address."

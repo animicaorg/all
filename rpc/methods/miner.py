@@ -658,10 +658,15 @@ def miner_mine(count: int | None = None, address: str | None = None) -> dict[str
             payout_address_bytes = _decode_bech32_address(address)
             log.info(f"Using custom payout address: {address}")
         except Exception as bech32_err:
-            # Try hex fallback
+            # Try hex fallback (validate length before conversion)
             try:
                 addr_str = address[2:] if address.startswith("0x") else address
-                payout_address_bytes = bytes.fromhex(addr_str)[:32].ljust(32, b"\x00")
+                # Validate hex string is exactly 64 characters (32 bytes)
+                if len(addr_str) != 64:
+                    raise ValueError(f"Hex address must be exactly 64 hex characters (32 bytes), got {len(addr_str)}")
+                payout_address_bytes = bytes.fromhex(addr_str)
+                if len(payout_address_bytes) != 32:
+                    raise ValueError(f"Decoded address must be exactly 32 bytes, got {len(payout_address_bytes)}")
                 log.info(f"Using custom payout address (hex): {address}")
             except Exception as hex_err:
                 log.warning(
