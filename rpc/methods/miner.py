@@ -210,7 +210,7 @@ def _get_miner_address() -> bytes:
     return ZERO32
 
 
-def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = None) -> None:
+def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = None) -> int:
     """
     Apply block reward to the miner's address in state.
     
@@ -218,6 +218,9 @@ def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = No
         ctx: RPC context with state_db access
         height: Block height for reward calculation
         payout_address: Optional 32-byte payout address. If None, uses default miner address.
+        
+    Returns:
+        int: Total miner reward amount (in nANM) credited to payout address, or 0 if none
     """
     try:
         # Get miner address (use custom payout address if provided)
@@ -229,6 +232,17 @@ def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = No
         chain_id = ctx.cfg.chain_id
         params = getattr(ctx, "params", None) or {}
         rewards = compute_block_reward(chain_id=chain_id, height=height, params=params)
+        
+        # Log warning if rewards are empty when they shouldn't be (height >= 1)
+        if not rewards and height >= 1:
+            log.warning(
+                f"Block reward at height {height} is empty. "
+                f"This may indicate missing/invalid consensus params. "
+                f"Check that spec/params.yaml defines proper emission schedule for chain_id={chain_id}."
+            )
+        
+        # Track miner reward amount for return
+        miner_reward_amount = 0
         
         # If rewards are specified, apply them
         if rewards:
@@ -260,9 +274,16 @@ def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = No
                         f"address={reward_addr_bytes.hex()[:16]}..., "
                         f"amount={amount}, new_balance={new_balance}"
                     )
+                    
+                    # Track miner reward (first reward entry)
+                    if idx == 0:
+                        miner_reward_amount = amount
+        
+        return miner_reward_amount
     except Exception as e:
         # Don't fail mining if reward application has issues
         log.error(f"Failed to apply block reward at height {height}: {e}", exc_info=True)
+        return 0
 
 
 def _bits_to_target(bits_hex: str) -> int:
@@ -351,7 +372,7 @@ def _build_child_header(
     )
 
 
-def _mine_once(payout_address: bytes | None = None) -> bool:
+def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
     """
     Mine a single block with proof-of-work.
     
@@ -363,7 +384,9 @@ def _mine_once(payout_address: bytes | None = None) -> bool:
         payout_address: Optional 32-byte payout address. If None, uses default miner address.
         
     Returns:
-        bool: True if block was mined and accepted, False otherwise.
+        tuple[bool, int]: (success, reward_amount) where:
+            - success: True if block was mined and accepted, False otherwise
+            - reward_amount: Miner reward in nANM (0 if mining failed or no reward)
     """
     ctx = _ctx()
     adapter = _adapter()
@@ -461,19 +484,20 @@ def _mine_once(payout_address: bytes | None = None) -> bool:
             if accepted:
                 _record_local_block(header.height, "0x" + block_hash_bytes.hex(), header)
                 # Apply block reward to specified payout address (or default miner address)
-                _apply_block_reward(ctx, header.height, payout_address)
+                reward_amount = _apply_block_reward(ctx, header.height, payout_address)
                 log.debug(
                     f"Mined block at height {header.height} with nonce {nonce_val} "
-                    f"(hash {block_hash_int} <= target {target})"
+                    f"(hash {block_hash_int} <= target {target}), reward={reward_amount} nANM"
                 )
-            return accepted
+                return (True, reward_amount)
+            return (False, 0)
     
     # Failed to mine a valid block within max_nonce iterations
     log.warning(
         f"Failed to mine block at height {parent_height + 1} after {max_nonce} attempts "
         f"(target: {target}, theta: {theta_micro})"
     )
-    return False
+    return (False, 0)
 
 
 async def _auto_mine_loop(interval: float = 1.0) -> None:
@@ -699,7 +723,7 @@ def miner_submit_work(*args: Any, **payload: Any) -> Dict[str, Any]:
 
 
 @method("miner.mine", desc="Mine up to N blocks locally")
-def miner_mine(count: int | None = None, address: str | None = None) -> dict[str, int]:
+def miner_mine(count: int | None = None, address: str | None = None) -> dict[str, int | list[dict[str, int]]]:
     """
     Mine N blocks locally.
     
@@ -708,7 +732,15 @@ def miner_mine(count: int | None = None, address: str | None = None) -> dict[str
         address: Optional payout address (bech32 or hex). If omitted, uses default miner address.
         
     Returns:
-        dict: {"mined": int, "height": int}
+        dict: {
+            "mined": int,           # Number of blocks successfully mined
+            "height": int,          # Final chain height after mining
+            "totalReward": int,     # Total miner reward in nANM across all blocks
+            "rewards": [            # Per-block reward details
+                {"height": int, "reward": int},
+                ...
+            ]
+        }
     """
     ctx = _ctx()
     try:
@@ -754,11 +786,21 @@ def miner_mine(count: int | None = None, address: str | None = None) -> dict[str
     )
     target = max(1, int(count or 1))
     mined = 0
+    total_reward = 0
+    rewards_list: list[dict[str, int]] = []
+    
     for _ in range(target):
-        if _mine_once(payout_address=payout_address_bytes):
+        success, reward_amount = _mine_once(payout_address=payout_address_bytes)
+        if success:
             mined += 1
+            total_reward += reward_amount
+            # Get current head to record the height of this block
+            head_current = ctx.get_head()
+            current_height = int(head_current.get("height") or 0) if isinstance(head_current, dict) else 0
+            rewards_list.append({"height": current_height, "reward": reward_amount})
         else:
             break
+    
     head = ctx.get_head()
     height = int(head.get("height") or 0) if isinstance(head, dict) else 0
     log.info(
@@ -766,10 +808,16 @@ def miner_mine(count: int | None = None, address: str | None = None) -> dict[str
         extra={
             "mined": mined,
             "height": height,
+            "total_reward": total_reward,
             "head_hash": head.get("hash") if isinstance(head, dict) else None,
         },
     )
-    return {"mined": mined, "height": height}
+    return {
+        "mined": mined,
+        "height": height,
+        "totalReward": total_reward,
+        "rewards": rewards_list,
+    }
 
 
 @method(

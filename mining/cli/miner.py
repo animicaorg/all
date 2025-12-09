@@ -383,6 +383,8 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
 
             mined = result.get("mined", 0)
             height = result.get("height", 0)
+            total_reward = result.get("totalReward", 0)
+            rewards_list = result.get("rewards", [])
 
             if mined == 0:
                 log.warning("No blocks were mined (may have failed)")
@@ -394,10 +396,30 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
                     args.count,
                 )
 
+            # Display per-block rewards
+            if rewards_list:
+                for i, reward_info in enumerate(rewards_list, 1):
+                    block_height = reward_info.get("height", "?")
+                    block_reward = reward_info.get("reward", 0)
+                    # Convert nANM to ANM for display (1 ANM = 10^9 nANM)
+                    reward_anm = block_reward / 1_000_000_000
+                    log.info(
+                        "Block %d/%d mined (height %s, reward %.9f ANM = %d nANM)",
+                        i,
+                        mined,
+                        block_height,
+                        reward_anm,
+                        block_reward,
+                    )
+            
+            # Display total reward summary
+            total_reward_anm = total_reward / 1_000_000_000
             log.info(
-                "Successfully mined %d block(s). New chain height: %d",
+                "Successfully mined %d block(s). New chain height: %d. Total reward: %.9f ANM (%d nANM)",
                 mined,
                 height,
+                total_reward_anm,
+                total_reward,
             )
             return 0
 
