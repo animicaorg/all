@@ -99,13 +99,12 @@ def test_aicf_db_path_creates_directory_with_permissions(tmp_path: Path, monkeyp
 
 def test_p2p_peer_store_creates_directory(tmp_path: Path) -> None:
     """Test that P2P peer store creates directory with appropriate permissions."""
-    # Import the JSONPeerStore class
+    # Import the JSONPeerStore class - skip if p2p module not in path
     try:
-        import sys
-        sys.path.insert(0, str(Path(__file__).parents[4] / "p2p"))
-        from cli.peer import JSONPeerStore
+        # Try importing from p2p module if it's available in PYTHONPATH
+        from p2p.cli.peer import JSONPeerStore
     except (ImportError, ModuleNotFoundError):
-        pytest.skip("P2P peer store not available")
+        pytest.skip("P2P peer store not available in PYTHONPATH")
     
     store_path = tmp_path / "p2p" / "peers.json"
     
