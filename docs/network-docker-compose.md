@@ -8,12 +8,12 @@ Animica provides first-class Docker Compose configurations for mainnet, testnet,
 
 ### Network Configurations
 
-| Network | Chain ID | RPC Port | Compose File | Data Directory |
-|---------|----------|----------|--------------|----------------|
+| Network | Chain ID | RPC Port (Host) | Compose File | Data Directory |
+|---------|----------|-----------------|--------------|----------------|
 | **mainnet** | 1 | 8545 | `ops/docker/docker-compose.mainnet.yml` | `~/.animica/chain-1/` |
-| **testnet** | 2 | 8546 | `ops/docker/docker-compose.testnet.yml` | `~/.animica/chain-2/` |
-| **devnet** | 1337 | 8545 | `tests/devnet/docker-compose.yml` | `~/.animica/chain-1337/` |
-| **local-devnet** | 1337 | 8545 | `tests/devnet/docker-compose.yml` | `~/.animica/chain-1337/` |
+| **testnet** | 2 | 18546 | `ops/docker/docker-compose.testnet.yml` | `~/.animica/chain-2/` |
+| **devnet** | 1337 | 28545 | `ops/docker/docker-compose.devnet.yml` | `~/.animica/chain-1337/` |
+| **local-devnet** | 1337 | 38545 | `tests/devnet/docker-compose.yml` | `~/.animica/chain-1337/` |
 
 ### Volume Isolation
 
@@ -218,6 +218,7 @@ genesis_path: core/genesis/genesis.mainnet.json
 data_dir: ~/.animica/chain-1
 db_name: mainnet.db
 p2p_port: 30333
+metrics_port: 9000
 ```
 
 **Features:**
@@ -230,12 +231,13 @@ p2p_port: 30333
 
 ```yaml
 chain_id: 2
-rpc_url: http://127.0.0.1:8546/rpc
-rpc_port: 8546
+rpc_url: http://127.0.0.1:18546/rpc
+rpc_port: 18546
 genesis_path: core/genesis/genesis.testnet.json
 data_dir: ~/.animica/chain-2
 db_name: testnet.db
-p2p_port: 30334
+p2p_port: 31334
+metrics_port: 19000
 ```
 
 **Features:**
@@ -248,20 +250,42 @@ p2p_port: 30334
 
 ```yaml
 chain_id: 1337
-rpc_url: http://127.0.0.1:8545/rpc
-rpc_port: 8545
+rpc_url: http://127.0.0.1:28545/rpc
+rpc_port: 28545
 genesis_path: core/genesis/genesis.json
 data_dir: ~/.animica/chain-1337
 db_name: devnet.db
+p2p_port: 31335
+metrics_port: 29000
 ```
 
 **Features:**
-- Local development environment
-- 2 nodes + miner by default
+- Full-stack local development environment with monitoring
+- Node + miner + studio-services + explorer + metrics stack
 - Open CORS policy
 - Fast block times
 - Premine accounts available
 - Faucet enabled (if FAUCET_KEY set)
+
+#### Local-Devnet
+
+```yaml
+chain_id: 1337
+rpc_url: http://127.0.0.1:38545/rpc
+rpc_port: 38545
+genesis_path: core/genesis/genesis.json
+data_dir: ~/.animica/chain-1337
+db_name: devnet.db
+p2p_port: 31336
+metrics_port: 39000
+```
+
+**Features:**
+- Minimal multi-node setup for testing
+- 2 nodes + miner
+- Uses 'dev' profile
+- Suitable for integration testing
+- Non-conflicting ports allow running alongside other networks
 
 ## Docker Compose Profiles
 
@@ -358,10 +382,17 @@ animica network set mainnet  # or testnet, devnet
 # Check what's using the port
 lsof -i :8545
 
-# Stop the conflicting service or use a different network
-# (testnet uses port 8546, so no conflict)
-animica network set testnet
-animica node up
+# Each network uses different default ports to avoid conflicts:
+# - mainnet: 8545
+# - testnet: 18546
+# - devnet: 28545
+# - local-devnet: 38545
+
+# You can run all networks simultaneously with up-all
+animica node up-all
+
+# Or override the port for a specific network
+HOST_RPC_PORT=9545 animica node up
 ```
 
 ### Compose File Not Found
@@ -394,17 +425,34 @@ animica node up
 
 ### Running Multiple Networks
 
-You can run multiple networks simultaneously on different ports:
+You can run multiple networks simultaneously thanks to non-conflicting default ports:
 
 ```bash
-# Terminal 1: Start mainnet (port 8545)
+# Terminal 1: Start mainnet (RPC port 8545)
 animica network set mainnet
 animica node up
 
-# Terminal 2: Start testnet (port 8546)
+# Terminal 2: Start testnet (RPC port 18546)
 animica network set testnet
 animica node up
+
+# Terminal 3: Start devnet (RPC port 28545)
+animica network set devnet
+animica node up
+
+# Terminal 4: Start local-devnet (RPC port 38545)
+animica network set local-devnet
+animica node up
+
+# Or start all networks at once:
+animica node up-all
 ```
+
+Each network uses distinct host ports:
+- **Mainnet**: RPC 8545, P2P 30333, Metrics 9000
+- **Testnet**: RPC 18546, P2P 31334, Metrics 19000
+- **Devnet**: RPC 28545, P2P 31335, Metrics 29000
+- **Local-devnet**: RPC 38545, P2P 31336, Metrics 39000
 
 ### Custom Genesis Files
 
