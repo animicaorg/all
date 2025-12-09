@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """
 AICF Development Node Stub
 ===========================
@@ -24,6 +22,8 @@ Limitations:
 For production use, connect to a real Animica node running the full
 consensus, execution, and persistence layers.
 """
+
+from __future__ import annotations
 
 import argparse
 import hashlib
