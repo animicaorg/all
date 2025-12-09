@@ -80,10 +80,16 @@ def get_network_defaults(network: str) -> dict[str, any]:
     - chain_id: Network chain ID
     - rpc_url: Default RPC endpoint URL
     - rpc_port: Default RPC port
+    - p2p_port: Default P2P port
+    - metrics_port: Default metrics port
     - compose_file: Path to network-specific Docker Compose file
     - genesis_path: Path to genesis file
     - data_dir: Network-specific data directory
     - db_name: Database file name
+    
+    Note: devnet and local-devnet are distinct networks:
+    - devnet: Uses ops/docker/docker-compose.devnet.yml (full stack with monitoring)
+    - local-devnet: Uses tests/devnet/docker-compose.yml (minimal multi-node setup)
     """
     # Get repository root (3 levels up from this file)
     repo_root = Path(__file__).resolve().parents[2]

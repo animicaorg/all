@@ -198,7 +198,7 @@ docker compose -f tests/devnet/docker-compose.yml -p animica-devnet logs -f node
 
 # Access services:
 # - Node 1 RPC: http://localhost:38545  (default for local-devnet)
-# - Node 2 RPC: http://localhost:9545
+# - Node 2 RPC: http://localhost:39545  (default for local-devnet)
 # - Explorer: http://localhost:5173
 # - Studio Services: http://localhost:8787
 
