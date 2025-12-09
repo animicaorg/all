@@ -61,9 +61,9 @@ networks:
           max_halvings: 64
         # Split of block subsidy (fees configured below)
         subsidy_split_pct:
-          miner: 80
-          aicf: 15
-          treasury: 5
+          miner: 100
+          aicf: 0
+          treasury: 0
       fees:
         base_fee:
           burn_pct: 50                         # % of base fee burned
