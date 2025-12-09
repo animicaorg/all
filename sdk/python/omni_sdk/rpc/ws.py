@@ -34,8 +34,13 @@ try:
     from websockets.client import connect as ws_connect  # type: ignore
     from websockets.exceptions import ConnectionClosedError  # type: ignore
     from websockets.exceptions import ConnectionClosedOK
-except Exception as e:  # pragma: no cover
-    raise RuntimeError("The 'websockets' package is required for WsClient") from e
+    _HAVE_WEBSOCKETS = True
+except Exception:  # pragma: no cover
+    _HAVE_WEBSOCKETS = False
+    websockets = None  # type: ignore
+    ws_connect = None  # type: ignore
+    ConnectionClosedError = Exception  # type: ignore
+    ConnectionClosedOK = Exception  # type: ignore
 
 from ..errors import RpcError  # type: ignore
 from ..version import __version__ as SDK_VERSION  # type: ignore
@@ -88,6 +93,8 @@ class WsClient:
 
     async def connect(self) -> None:
         """Establish a WebSocket connection and start reader loop."""
+        if not _HAVE_WEBSOCKETS:
+            raise RuntimeError("The 'websockets' package is required for WsClient")
         self._closing = False
         ua = f"omni-sdk-python/{SDK_VERSION}"
         hdrs = {"User-Agent": ua}

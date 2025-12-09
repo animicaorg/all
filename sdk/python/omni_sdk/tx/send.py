@@ -71,7 +71,7 @@ class _RpcClient(Protocol):
     Minimal interface expected from omni_sdk.rpc.http client.
     """
 
-    def call(self, method: str, params: Optional[dict | list] = None) -> Any: ...
+    def request(self, method: str, params: Optional[dict | list] = None) -> Any: ...
 
 
 class _WsSubscription(Protocol):
@@ -108,9 +108,19 @@ def submit_raw(rpc: _RpcClient, raw_tx: bytes) -> str:
     try:
         # Per spec/openrpc: method name is tx.sendRawTransaction, param is hex or bytes.
         # Our HTTP client is expected to base64/hex wrap as needed; we pass raw bytes.
-        result = rpc.call("tx.sendRawTransaction", [bytes(raw_tx)])
+        result = rpc.request("tx.sendRawTransaction", [bytes(raw_tx)])
     except Exception as e:  # Map transport/errors to a stable type
-        raise RpcError(f"tx.sendRawTransaction failed: {e}") from e
+        # Try using the SDK's RpcError if available, otherwise fallback
+        try:
+            raise RpcError(
+                method="tx.sendRawTransaction",
+                code=-32098,
+                message=f"tx.sendRawTransaction failed: {e}",
+                data=str(e),
+            ) from e
+        except TypeError:
+            # Fallback RpcError is just RuntimeError
+            raise RpcError(f"tx.sendRawTransaction failed: {e}") from e
 
     if not isinstance(result, (str, bytes)):
         raise TxError(f"unexpected RPC result for sendRawTransaction: {type(result)!r}")
@@ -131,9 +141,17 @@ def get_transaction_receipt(rpc: _RpcClient, tx_hash: str) -> Optional[Dict[str,
         dict receipt if available, or None if the tx is pending/not found yet.
     """
     try:
-        res = rpc.call("tx.getTransactionReceipt", [tx_hash])
+        res = rpc.request("tx.getTransactionReceipt", [tx_hash])
     except Exception as e:
-        raise RpcError(f"tx.getTransactionReceipt failed: {e}") from e
+        try:
+            raise RpcError(
+                method="tx.getTransactionReceipt",
+                code=-32098,
+                message=f"tx.getTransactionReceipt failed: {e}",
+                data=str(e),
+            ) from e
+        except TypeError:
+            raise RpcError(f"tx.getTransactionReceipt failed: {e}") from e
 
     if res in (None, False, ""):
         return None
