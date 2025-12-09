@@ -67,6 +67,20 @@ setup_python() {
   # Install additional required dependencies
   log "Installing additional dependencies (requests for CLI, trio for RPC tests)"
   python -m pip install requests trio
+
+  # Install python-oqs for production-ready PQ signing (SPHINCS+, Dilithium3)
+  log "Installing python-oqs for post-quantum cryptographic signing"
+  if python -m pip install python-oqs 2>&1 | tee /tmp/oqs_install.log; then
+    log "python-oqs installed successfully"
+  else
+    warn "python-oqs installation failed (liboqs may not be available on this system)"
+    warn "Transaction signing will require ANIMICA_UNSAFE_PQ_FAKE=1 (development only)"
+    warn "For production use, install liboqs first:"
+    warn "  Ubuntu/Debian: sudo apt-get install liboqs-dev"
+    warn "  macOS: brew install liboqs"
+    warn "  Or build from source: https://github.com/open-quantum-safe/liboqs"
+    warn "Then run: python -m pip install python-oqs"
+  fi
 }
 
 log "Bootstrapping dependencies in $ROOT_DIR"

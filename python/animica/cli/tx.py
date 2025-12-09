@@ -321,6 +321,17 @@ def send(
       animica tx send --from alice --to anim1... --value 1.0 --dry-run
     """
     try:
+        # Step 0: Check PQ signing availability
+        from animica.cli.pq_utils import check_pq_signing_available
+        
+        available, error_msg = check_pq_signing_available()
+        if not available:
+            from animica.cli.pq_utils import get_pq_missing_error_message
+            typer.echo(get_pq_missing_error_message(), err=True)
+            if error_msg:
+                typer.echo(f"\nAdditional info: {error_msg}", err=True)
+            raise typer.Exit(1)
+        
         # Step 1: Resolve sender address and load wallet
         sender_address, wallet_entry = _resolve_sender(from_addr, wallet_file)
         
