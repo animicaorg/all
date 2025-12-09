@@ -21,14 +21,21 @@ cd animica
 
 ## 1) Install mining and RPC dependencies
 
-Use a virtualenv if you prefer, then install the local packages needed for mining and the RPC server:
+Use the setup script to install all required dependencies including stratum pool modules and the Omni SDK:
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -e core -e rpc -e mining
+./setup.sh
+source .venv/bin/activate
 ```
 
-> If you plan to compile/execute contracts while mining, also install `-e vm_py` and `-e sdk/python`.
+The setup script installs:
+- Python virtual environment with all dependencies
+- Core, RPC, and mining packages in editable mode
+- Stratum pool modules (fastapi, uvicorn)
+- Omni SDK with RPC client support
+- Additional tools (requests, trio for async RPC tests)
+
+> The SDK is required for `mine-blocks` command and RPC interactions.
 
 ⸻
 
