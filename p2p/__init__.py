@@ -45,3 +45,40 @@ def __getattr__(name: str):
 def get_version() -> str:
     """Return the semantic version string."""
     return __version__
+
+
+# ---- Global service registry for RPC access ----
+
+_global_service: "P2PService | None" = None  # type: ignore
+
+
+def register_service(service: "P2PService") -> None:  # type: ignore
+    """
+    Register a global P2P service instance for access by RPC and other subsystems.
+    
+    This is called by the node startup code to make the P2P service accessible
+    to the RPC layer for peer management endpoints.
+    """
+    global _global_service
+    _global_service = service
+
+
+def get_service() -> "P2PService | None":  # type: ignore
+    """
+    Get the globally registered P2P service instance, if any.
+    
+    Returns None if no service has been registered (e.g., P2P not started).
+    """
+    return _global_service
+
+
+def get_connection_manager():
+    """
+    Get the ConnectionManager from the global P2P service, if available.
+    
+    Returns None if P2P service is not running.
+    """
+    svc = get_service()
+    if svc is not None and hasattr(svc, "connmgr"):
+        return svc.connmgr
+    return None

@@ -17,6 +17,8 @@ Backed by `core/` (DB, types, genesis), `pq/` (post-quantum sigs), `mempool/`, `
 - Blocks & receipts: `chain.getBlockByNumber`, `chain.getBlockByHash`, `tx.getTransactionReceipt`
 - Transactions: `tx.sendRawTransaction`, `tx.getTransactionByHash`
 - State reads: `state.getBalance`, `state.getNonce`
+- P2P peer management: `p2p.listPeers`, `p2p.addPeer`, `p2p.removePeer`, `p2p.getPeerInfo`
+  - Aliases: `p2p.getPeers`, `p2p.peers`, `admin_peers`, `net_peers`
 - Mempool stream: WS subscription `pendingTxs`
 - Head stream: WS subscription `newHeads`
 - DA helpers mounted by `da/adapters/rpc_mount.py` (if `da/` is enabled)
@@ -138,6 +140,49 @@ curl -s http://localhost:8547/rpc -H 'content-type: application/json' -d "{
   \"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"state.getNonce\",
   \"params\":[\"$ADDR\", {\"block\":\"latest\"}]
 }" | jq .
+
+7) P2P peer management
+
+# List connected peers (also accepts: p2p.getPeers, p2p.peers, admin_peers, net_peers)
+curl -s http://localhost:8547/rpc -H 'content-type: application/json' -d '{
+  "jsonrpc":"2.0","id":9,"method":"p2p.listPeers","params":[]
+}' | jq .
+
+Response (example):
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 9,
+  "result": [
+    {
+      "id": "12D3KooWPeer1...",
+      "addr": "/ip4/192.168.1.100/tcp/30303",
+      "status": "connected",
+      "direction": "outbound",
+      "latencyMs": 45.2,
+      "lastSeen": 1234567890.0
+    }
+  ]
+}
+```
+
+# Add a peer
+curl -s http://localhost:8547/rpc -H 'content-type: application/json' -d '{
+  "jsonrpc":"2.0","id":10,"method":"p2p.addPeer",
+  "params":["/ip4/203.0.113.10/tcp/30303"]
+}' | jq .
+
+# Remove a peer
+curl -s http://localhost:8547/rpc -H 'content-type: application/json' -d '{
+  "jsonrpc":"2.0","id":11,"method":"p2p.removePeer",
+  "params":["12D3KooWPeer1..."]
+}' | jq .
+
+# Get peer info
+curl -s http://localhost:8547/rpc -H 'content-type: application/json' -d '{
+  "jsonrpc":"2.0","id":12,"method":"p2p.getPeerInfo",
+  "params":["12D3KooWPeer1..."]
+}' | jq .
 
 WebSocket subscriptions
 

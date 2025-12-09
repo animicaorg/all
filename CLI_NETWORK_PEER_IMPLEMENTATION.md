@@ -210,6 +210,46 @@ Peer Information: QmPeer1...
 - **Async Operations**: Proper async/await for RPC calls
 - **Data Formatting**: Pretty-printed JSON for verbose output
 
+### RPC Server Peer Listing Implementation (December 2024)
+
+The RPC server now has full peer listing support:
+
+**New RPC Methods** (`rpc/methods/p2p.py`):
+- `p2p.listPeers` - Primary method for listing connected peers
+- `p2p.getPeers` - Alias for compatibility
+- `p2p.peers` - Alias for compatibility
+- `admin_peers` - Alias for Ethereum node compatibility
+- `net_peers` - Alias for alternative naming conventions
+- `p2p.addPeer` - Add a peer by address
+- `p2p.removePeer` - Remove a peer by ID
+- `p2p.getPeerInfo` - Get detailed info about a specific peer
+
+**Return Format** (for `p2p.listPeers`):
+```json
+[
+  {
+    "id": "12D3KooWPeer...",
+    "addr": "/ip4/192.168.1.100/tcp/30303",
+    "status": "connected",
+    "direction": "outbound",
+    "latencyMs": 45.2,
+    "lastSeen": 1234567890.0,
+    "streams": 2
+  }
+]
+```
+
+**Graceful Degradation**:
+- Methods return empty arrays `[]` when P2P service is not running
+- No errors thrown, allowing RPC to work without P2P enabled
+- CLI displays "No peers connected" instead of error message
+
+**P2P Service Integration**:
+- Global service registry added to `p2p/__init__.py`
+- `register_service()` - Called by node startup to register P2P service
+- `get_connection_manager()` - Retrieves ConnectionManager for RPC access
+- RPC context extended with optional `p2p_service` field
+
 ### Testing Strategy
 - **Unit Tests**: Individual function testing with mocked dependencies
 - **Integration Tests**: End-to-end command execution via CLI runner
