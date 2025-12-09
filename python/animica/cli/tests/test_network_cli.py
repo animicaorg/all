@@ -108,3 +108,42 @@ def test_network_persistence_across_commands(monkeypatch: Any) -> None:
         result4 = runner.invoke(network.app, ["get"])
         assert result4.exit_code == 0
         assert "devnet" in result4.output
+
+
+def test_set_network_with_empty_chain_id_env(monkeypatch: Any) -> None:
+    """Test that network set works when ANIMICA_CHAIN_ID is empty."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_file = Path(tmpdir) / "state.json"
+        monkeypatch.setattr("animica.cli.network.get_cli_state", lambda: CLIState(state_file))
+        monkeypatch.setenv("ANIMICA_CHAIN_ID", "")
+
+        # Should not crash
+        result = runner.invoke(network.app, ["set", "mainnet"])
+        assert result.exit_code == 0
+        assert "Active network set to: mainnet" in result.output
+
+
+def test_set_network_with_invalid_chain_id_env(monkeypatch: Any) -> None:
+    """Test that network set works when ANIMICA_CHAIN_ID is invalid."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_file = Path(tmpdir) / "state.json"
+        monkeypatch.setattr("animica.cli.network.get_cli_state", lambda: CLIState(state_file))
+        monkeypatch.setenv("ANIMICA_CHAIN_ID", "not-a-number")
+
+        # Should not crash
+        result = runner.invoke(network.app, ["set", "testnet"])
+        assert result.exit_code == 0
+        assert "Active network set to: testnet" in result.output
+
+
+def test_set_network_with_whitespace_chain_id_env(monkeypatch: Any) -> None:
+    """Test that network set works when ANIMICA_CHAIN_ID is whitespace."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_file = Path(tmpdir) / "state.json"
+        monkeypatch.setattr("animica.cli.network.get_cli_state", lambda: CLIState(state_file))
+        monkeypatch.setenv("ANIMICA_CHAIN_ID", "   ")
+
+        # Should not crash
+        result = runner.invoke(network.app, ["set", "devnet"])
+        assert result.exit_code == 0
+        assert "Active network set to: devnet" in result.output
