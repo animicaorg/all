@@ -3,9 +3,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 
 // State: network/head/latency come from the explorer store
-// (See src/state/network.ts). We keep the types loose here to
-// avoid tight coupling with store internals.
-import { useNetworkStore } from "../state/network";
+import { useExplorerStore } from "../state/store";
 
 // Utils for formatting (optional, safe if not present)
 import { shortHash } from "../utils/format";
@@ -60,14 +58,19 @@ export default function TopBar() {
   const { t } = useTranslation();
   const navigate = useNavigate();
 
-  // Network store bindings (kept tolerant to store changes)
-  const presets = useNetworkStore((s: any) => s.presets ?? []);
-  const current = useNetworkStore((s: any) => s.current ?? null);
-  const switchNetwork = useNetworkStore((s: any) => s.switchNetwork ?? (() => {}));
-  const rpcLatency = useNetworkStore((s: any) => s.latencyRpc as number | undefined);
-  const wsStatus = useNetworkStore((s: any) => s.wsStatus as "connected" | "connecting" | "disconnected" | undefined);
-  const head = useNetworkStore((s: any) => s.head as number | undefined);
-  const finalized = useNetworkStore((s: any) => s.finalized as number | undefined);
+  // Network store bindings
+  const chainId = useExplorerStore((s) => s.network?.chainId ?? "");
+  const connected = useExplorerStore((s) => s.network?.connected ?? false);
+  const head = useExplorerStore((s) => s.head?.height ?? 0);
+  const rpcUrl = useExplorerStore((s) => s.network?.rpcUrl ?? "");
+  
+  // For now, set placeholders for missing features
+  const presets: any[] = [];
+  const current = null;
+  const switchNetwork = () => {};
+  const rpcLatency: number | undefined = undefined;
+  const wsStatus: "connected" | "connecting" | "disconnected" | undefined = connected ? "connected" : "disconnected";
+  const finalized: number | undefined = undefined;
 
   const [query, setQuery] = useState("");
 

@@ -8,6 +8,9 @@ import "./styles/theme.css";
 import "./styles/app.css";
 import "./styles/responsive.css";
 
+// Initialize i18n
+import "./i18n/config";
+
 /**
  * Apply initial theme before React mounts to avoid FOUC.
  * Reads explicit user preference from localStorage, otherwise falls back to prefers-color-scheme.
