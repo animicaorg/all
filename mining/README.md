@@ -202,7 +202,19 @@ Quick start (built-in CPU miner)
 python -m rpc.server --config rpc/config.toml
 
 # 2) Start miner (CPU)
-python -m mining.cli.miner --threads 4 --device cpu --rpc http://127.0.0.1:8545 --ws ws://127.0.0.1:8546
+python -m mining.cli.miner start --threads 4 --device cpu --rpc-url http://127.0.0.1:8545 --ws-url ws://127.0.0.1:8546
+
+# 3) Mine a specific number of blocks (useful for testing)
+python -m mining.cli.miner mine-blocks --address anim1test123 --count 5 --rpc-url http://127.0.0.1:8547
+
+The `mine-blocks` command mines N blocks via the node's RPC interface. This is useful for:
+- Testing and development environments
+- Advancing the chain to a specific height
+- Generating blocks on demand
+
+Note: The current `miner.mine` RPC method does not yet support payout address selection.
+Blocks are mined to the node's default miner address. The `--address` parameter is accepted
+for forward compatibility and will be used once the RPC supports it.
 
 Stratum proxy (optional)
 

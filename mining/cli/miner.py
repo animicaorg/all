@@ -13,11 +13,28 @@ Usage:
                                    [--metrics :PORT] [--log-level LEVEL]
                                    [--dry-run]
 
-This CLI is a thin wrapper around the mining.orchestrator. It builds a config,
-initializes the device backend, and runs the orchestrator until interrupted.
+  python -m mining.cli.miner mine-blocks --address ADDR --count N [--rpc-url URL]
+                                          [--log-level LEVEL]
+
+Commands:
+  start       - Start the continuous miner (orchestrator)
+  mine-blocks - Mine a specified number of blocks to a given address
+
+The 'start' command is a thin wrapper around the mining.orchestrator. It builds
+a config, initializes the device backend, and runs the orchestrator until interrupted.
+
+The 'mine-blocks' command mines N blocks via the node's RPC interface. This is
+useful for testing and development.
+
+Examples:
+  # Start the miner
+  python -m mining.cli.miner start --threads 4
+
+  # Mine 5 blocks for testing
+  python -m mining.cli.miner mine-blocks --address anim1test123 --count 5
 
 Signals:
-  - SIGINT/SIGTERM: graceful shutdown.
+  - SIGINT/SIGTERM: graceful shutdown (start command).
 
 Exit codes:
   0 on success/shutdown, non-zero on configuration or runtime errors.
@@ -42,6 +59,15 @@ from .. import config as miner_config
 from .. import device as miner_device
 from .. import errors as miner_errors
 from .. import orchestrator as miner_orchestrator
+
+# RPC client for mine-blocks command
+try:
+    from sdk.python.omni_sdk.rpc.http import RpcClient
+except Exception:
+    try:
+        from omni_sdk.rpc.http import RpcClient  # type: ignore
+    except Exception:  # pragma: no cover
+        RpcClient = None  # type: ignore
 
 
 def _env_default(name: str, fallback: Optional[str] = None) -> Optional[str]:
@@ -165,6 +191,36 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     start.add_argument("--dry-run", action="store_true", help="print config then exit")
 
+    # mine-blocks subcommand
+    mine_blocks = sub.add_parser(
+        "mine-blocks",
+        help="mine a specified number of blocks to a given address"
+    )
+    mine_blocks.add_argument(
+        "--address",
+        type=str,
+        required=True,
+        help="payout address for mined blocks (e.g., anim1...)",
+    )
+    mine_blocks.add_argument(
+        "--count",
+        type=int,
+        required=True,
+        help="number of blocks to mine (must be > 0)",
+    )
+    mine_blocks.add_argument(
+        "--rpc-url",
+        type=str,
+        default=_env_default("ANIMICA_RPC_URL", "http://127.0.0.1:8547"),
+        help="node JSON-RPC base URL",
+    )
+    mine_blocks.add_argument(
+        "--log-level",
+        type=str,
+        default=_env_default("ANIMICA_LOG_LEVEL", "info"),
+        help="logging level (debug, info, warning, error)",
+    )
+
     return p
 
 
@@ -256,10 +312,76 @@ async def _run_orchestrator(cfg: Dict[str, Any]) -> None:
         raise RuntimeError("mining.orchestrator module missing Orchestrator class")
 
 
+async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int:
+    """Execute the mine-blocks command."""
+    # Validate count
+    if args.count <= 0:
+        log.error("count must be greater than 0, got %d", args.count)
+        return 2
+
+    # Validate address (basic check)
+    if not args.address or not args.address.strip():
+        log.error("address is required")
+        return 2
+
+    # Check if RpcClient is available
+    if RpcClient is None:
+        log.error(
+            "RpcClient not available. Please install omni_sdk: pip install -e sdk/python"
+        )
+        return 3
+
+    log.info(
+        "Mining %d block(s) with payout to address %s via RPC %s",
+        args.count,
+        args.address,
+        args.rpc_url,
+    )
+    log.warning(
+        "Note: The current miner.mine RPC method does not support payout address selection. "
+        "Blocks will be mined to the node's default miner address. "
+        "The --address parameter is accepted for future compatibility."
+    )
+
+    try:
+        with RpcClient(args.rpc_url, timeout=30.0) as client:
+            # Call miner.mine RPC method
+            # Note: Current implementation doesn't support address parameter
+            result = client.request("miner.mine", [args.count])
+
+            mined = result.get("mined", 0)
+            height = result.get("height", 0)
+
+            if mined == 0:
+                log.warning("No blocks were mined (may have failed)")
+                return 4
+            elif mined < args.count:
+                log.warning(
+                    "Only %d of %d requested blocks were mined",
+                    mined,
+                    args.count,
+                )
+
+            log.info(
+                "Successfully mined %d block(s). New chain height: %d",
+                mined,
+                height,
+            )
+            return 0
+
+    except Exception as e:
+        log.exception("Failed to mine blocks via RPC: %s", e)
+        return 5
+
+
 async def _amain(argv: list[str]) -> int:
     args = _build_arg_parser().parse_args(argv)
     _setup_logging(args.log_level)
     log = logging.getLogger("miner.cli")
+
+    # Handle mine-blocks command
+    if args.cmd == "mine-blocks":
+        return await _run_mine_blocks(args, log)
 
     if args.cmd != "start":
         raise RuntimeError(f"unknown cmd {args.cmd}")  # pragma: no cover
