@@ -331,6 +331,9 @@ docker compose -f tests/devnet/docker-compose.yml -p animica-devnet logs -f mine
 ```bash
 source .venv/bin/activate
 
+# Mine blocks using the CLI (requires running node)
+animica miner mine-blocks --address <your-address> --count 10
+
 # Start CPU miner
 python -m mining.cli.miner \
   --rpc http://localhost:8545 \
@@ -340,6 +343,22 @@ python -m mining.cli.miner \
 # Check mining stats
 python -m mining.cli.stats --rpc http://localhost:8545
 ```
+
+### Stratum Mining Pool
+```bash
+source .venv/bin/activate
+
+# Run a Stratum mining pool
+animica miner run-pool \
+  --rpc-url http://localhost:8545 \
+  --db-url sqlite:///pool.db \
+  --stratum-bind 0.0.0.0:3333
+
+# Show pool configuration
+animica miner show-config
+```
+
+**Note:** The setup script (`./setup.sh`) automatically installs all required dependencies for mining, including stratum pool modules and the Omni SDK.
 
 ## Development Workflow
 
