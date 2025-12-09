@@ -151,6 +151,15 @@ Node Management & Network Selection
   animica node up --with-miner    # Include miner service
   animica node up --no-build      # Skip image rebuild
 
+  # Start ALL networks at once (ignores active network setting)
+  animica node up-all             # Start mainnet, testnet, devnet, local-devnet
+  animica node up-all --with-miner    # Start all networks with miners
+  animica node up-all --no-detach     # Run all in foreground (not recommended)
+  
+  # Note: up-all starts networks sequentially and reports progress for each.
+  # If any network fails, it continues with remaining networks and exits non-zero.
+  # Networks with missing compose files are skipped with a warning.
+
   # Stop a node
   animica node down
   animica node down --volumes     # Also delete blockchain data (DESTRUCTIVE)
