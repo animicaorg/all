@@ -74,13 +74,34 @@ def _params_from_spec(chain_id: int | None = None) -> t.Dict[str, t.Any]:
     Load canonical params from spec/params.yaml and return a dict view that is
     stable for RPC responses. We do not force a specific dataclass here to keep
     RPC loosely coupled to core/types. Handlers can shape/validate further.
+    
+    The params.yaml file uses a network-specific structure under a 'networks' key:
+    networks:
+      "animica:1": {...}    # mainnet
+      "animica:2": {...}    # testnet
+      "animica:1337": {...} # devnet
     """
     p = _repo_root() / "spec" / "params.yaml"
     if not p.exists():
         return {}
     raw = _load_yaml(p)
 
-    # Normalize a few fields commonly referenced by RPC:
+    # If chain_id is provided, try to load network-specific config
+    network_key = None
+    if chain_id is not None:
+        network_key = f"animica:{chain_id}"
+    
+    # Check if params.yaml uses new network structure
+    networks = raw.get("networks", {})
+    if networks and network_key and network_key in networks:
+        # Use network-specific config
+        network_config = networks[network_key]
+        out: dict[str, t.Any] = dict(network_config)
+        # Ensure chain_id is set
+        out.setdefault("chain_id", chain_id)
+        return out
+    
+    # Fallback: try old structure or return minimal config
     out: dict[str, t.Any] = {}
 
     # Chain identity/name fallbacks
@@ -89,6 +110,7 @@ def _params_from_spec(chain_id: int | None = None) -> t.Dict[str, t.Any]:
         cid = chain_id
     if cid is not None:
         out["chainId"] = cid
+        out["chain_id"] = cid
 
     name = raw.get("name") or raw.get("chainName")
     if name is not None:
@@ -118,6 +140,7 @@ def _params_from_spec(chain_id: int | None = None) -> t.Dict[str, t.Any]:
 
     # Ensure required keys exist even if params.yaml is skeletal
     out.setdefault("chainId", chain_id)
+    out.setdefault("chain_id", chain_id)
     out.setdefault("name", "Animica")
     out.setdefault("gas", {})
     out.setdefault("block", {})
