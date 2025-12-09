@@ -49,15 +49,25 @@ setup_python() {
     warn "requirements.txt not found; skipping shared Python dependencies"
   fi
 
-  log "Installing Animica Python package in editable mode with dev extras"
-  python -m pip install -e "$ROOT_DIR/python[dev]"
+  log "Installing Animica Python package in editable mode with dev and stratum extras"
+  python -m pip install -e "$ROOT_DIR/python[dev,stratum]"
 
   log "Installing SDK Python package in editable mode"
   python -m pip install -e "$ROOT_DIR/sdk/python"
 
-  # Ensure trio is installed for trio-based RPC tests
-  log "Ensuring trio is installed for trio-based RPC tests"
-  python -m pip install trio
+  # Install pq module for bech32 support (required by omni_sdk)
+  log "Installing pq module for post-quantum crypto support"
+  if [[ ! -f "$ROOT_DIR/.venv/lib/python3.12/site-packages/animica-pq.pth" ]] && \
+     [[ ! -f "$ROOT_DIR/.venv/lib/python3.11/site-packages/animica-pq.pth" ]] && \
+     [[ ! -f "$ROOT_DIR/.venv/lib/python3.10/site-packages/animica-pq.pth" ]]; then
+    # Add repository root to Python path so pq module can be imported
+    SITE_PACKAGES=$(python -c "import site; print(site.getsitepackages()[0])")
+    echo "$ROOT_DIR" > "$SITE_PACKAGES/animica-pq.pth"
+  fi
+
+  # Install additional required dependencies
+  log "Installing additional dependencies (requests for CLI, trio for RPC tests)"
+  python -m pip install requests trio
 }
 
 log "Bootstrapping dependencies in $ROOT_DIR"
