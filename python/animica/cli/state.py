@@ -12,6 +12,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from animica.cli.paths import ensure_file_dir
+
 DEFAULT_STATE_DIR = Path.home() / ".config" / "animica"
 DEFAULT_STATE_FILE = DEFAULT_STATE_DIR / "state.json"
 
@@ -39,7 +41,8 @@ class CLIState:
 
     def _save(self) -> None:
         """Save state to disk."""
-        self.state_file.parent.mkdir(parents=True, exist_ok=True)
+        # Ensure directory exists (non-sensitive state)
+        ensure_file_dir(self.state_file, sensitive=False)
         with open(self.state_file, "w") as f:
             json.dump(self._data, f, indent=2)
 
