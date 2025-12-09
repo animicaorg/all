@@ -87,7 +87,7 @@ def test_hash_scanner_does_not_use_trivial_thresholds():
         t_share_micro=theta_micro,
         nonce_start=0,
         nonce_count=1000,
-        theta_micro=theta_micro  # Some implementations need this
+        theta_micro=theta_micro  # Block threshold for d_ratio calculation in FoundShare
     )
     
     # At Θ=3.0, we expect roughly 1000 * e^{-3} ≈ 49 shares
