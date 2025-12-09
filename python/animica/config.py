@@ -80,10 +80,16 @@ def get_network_defaults(network: str) -> dict[str, any]:
     - chain_id: Network chain ID
     - rpc_url: Default RPC endpoint URL
     - rpc_port: Default RPC port
+    - p2p_port: Default P2P port
+    - metrics_port: Default metrics port
     - compose_file: Path to network-specific Docker Compose file
     - genesis_path: Path to genesis file
     - data_dir: Network-specific data directory
     - db_name: Database file name
+    
+    Note: devnet and local-devnet are distinct networks:
+    - devnet: Uses ops/docker/docker-compose.devnet.yml (full stack with monitoring)
+    - local-devnet: Uses tests/devnet/docker-compose.yml (minimal multi-node setup)
     """
     # Get repository root (3 levels up from this file)
     repo_root = Path(__file__).resolve().parents[2]
@@ -93,6 +99,8 @@ def get_network_defaults(network: str) -> dict[str, any]:
             "chain_id": 1,
             "rpc_url": "http://127.0.0.1:8545/rpc",
             "rpc_port": 8545,
+            "p2p_port": 30333,
+            "metrics_port": 9000,
             "compose_file": repo_root / "ops" / "docker" / "docker-compose.mainnet.yml",
             "genesis_path": "core/genesis/genesis.mainnet.json",
             "data_dir": "~/.animica/chain-1",
@@ -100,8 +108,10 @@ def get_network_defaults(network: str) -> dict[str, any]:
         },
         "testnet": {
             "chain_id": 2,
-            "rpc_url": "http://127.0.0.1:8546/rpc",
-            "rpc_port": 8546,
+            "rpc_url": "http://127.0.0.1:18546/rpc",
+            "rpc_port": 18546,
+            "p2p_port": 31334,
+            "metrics_port": 19000,
             "compose_file": repo_root / "ops" / "docker" / "docker-compose.testnet.yml",
             "genesis_path": "core/genesis/genesis.testnet.json",
             "data_dir": "~/.animica/chain-2",
@@ -109,17 +119,21 @@ def get_network_defaults(network: str) -> dict[str, any]:
         },
         "devnet": {
             "chain_id": 1337,
-            "rpc_url": "http://127.0.0.1:8545/rpc",
-            "rpc_port": 8545,
-            "compose_file": repo_root / "tests" / "devnet" / "docker-compose.yml",
+            "rpc_url": "http://127.0.0.1:28545/rpc",
+            "rpc_port": 28545,
+            "p2p_port": 31335,
+            "metrics_port": 29000,
+            "compose_file": repo_root / "ops" / "docker" / "docker-compose.devnet.yml",
             "genesis_path": "core/genesis/genesis.json",
             "data_dir": "~/.animica/chain-1337",
             "db_name": "devnet.db",
         },
         "local-devnet": {
             "chain_id": 1337,
-            "rpc_url": "http://127.0.0.1:8545/rpc",
-            "rpc_port": 8545,
+            "rpc_url": "http://127.0.0.1:38545/rpc",
+            "rpc_port": 38545,
+            "p2p_port": 31336,
+            "metrics_port": 39000,
             "compose_file": repo_root / "tests" / "devnet" / "docker-compose.yml",
             "genesis_path": "core/genesis/genesis.json",
             "data_dir": "~/.animica/chain-1337",

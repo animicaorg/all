@@ -47,8 +47,9 @@ This ensures that switching between networks doesn't contaminate state or lose d
 The CLI automatically uses network-specific RPC URLs when `ANIMICA_RPC_URL` is not set:
 
 - **Mainnet**: `http://127.0.0.1:8545/rpc` (default)
-- **Testnet**: `http://127.0.0.1:8546/rpc`
-- **Devnet**: `http://127.0.0.1:8545/rpc`
+- **Testnet**: `http://127.0.0.1:18546/rpc`
+- **Devnet**: `http://127.0.0.1:28545/rpc`
+- **Local-devnet**: `http://127.0.0.1:38545/rpc`
 
 **No manual configuration needed!** Commands like `animica node status`, `animica rpc call`, and `animica wallet show` will work without setting `ANIMICA_RPC_URL`.
 
@@ -63,14 +64,21 @@ animica --rpc-url http://custom-host:8888/rpc node status
 
 ### Port Configuration
 
-All networks expose:
-- **RPC port** on `0.0.0.0` (accessible externally)
-  - Mainnet: 8545
-  - Testnet: 8546
-  - Devnet: 8545
-- **P2P ports** for peer connectivity:
-  - Primary: 30333 (mainnet/devnet), 30334 (testnet)
-  - Alternate: 9000 (all networks)
+Each network uses non-conflicting default ports to allow running multiple networks simultaneously:
+
+**Mainnet:**
+- RPC: 8545, P2P: 30333, Metrics: 9000
+
+**Testnet:**
+- RPC: 18546, P2P: 31334, Metrics: 19000
+
+**Devnet:**
+- RPC: 28545, P2P: 31335, Metrics: 29000
+
+**Local-devnet:**
+- RPC: 38545, P2P: 31336, Metrics: 39000
+
+Ports can be customized via environment variables: `HOST_RPC_PORT`, `HOST_P2P_PORT`, `HOST_METRICS_PORT`
 
 ### Checking Premine Balances (Mainnet)
 
@@ -189,8 +197,8 @@ docker compose -f tests/devnet/docker-compose.yml -p animica-devnet ps
 docker compose -f tests/devnet/docker-compose.yml -p animica-devnet logs -f node1
 
 # Access services:
-# - Node 1 RPC: http://localhost:8545
-# - Node 2 RPC: http://localhost:9545
+# - Node 1 RPC: http://localhost:38545  (default for local-devnet)
+# - Node 2 RPC: http://localhost:39545  (default for local-devnet)
 # - Explorer: http://localhost:5173
 # - Studio Services: http://localhost:8787
 
@@ -415,13 +423,16 @@ source .venv/bin/activate
 pip install pytest
 ```
 
-### "Port 8545 already in use"
+### "Port already in use"
 ```bash
-# Find and kill process using port
+# Each network uses different default ports to avoid conflicts
+# Mainnet: 8545, Testnet: 18546, Devnet: 28545, Local-devnet: 38545
+
+# If still conflicting, find and kill process using port
 lsof -ti:8545 | xargs kill -9
 
-# Or use different port
-python -m rpc.server --port 8546
+# Or override port with environment variable
+HOST_RPC_PORT=9545 animica node up
 ```
 
 ### "Genesis file not found"
