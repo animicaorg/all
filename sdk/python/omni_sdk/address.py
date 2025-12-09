@@ -214,6 +214,19 @@ def _get_bech32_impl():
                 return hrp, bytes(data5 or ())
 
             return enc, dec
+        # PQ variant without Encoding class (uses string spec)
+        # data5 is 5-bit data (list or bytes of values 0-31), already converted from 8-bit by caller
+        if hasattr(b32, "bech32_encode") and hasattr(b32, "bech32_decode"):
+            def enc(hrp: str, data5: bytes) -> str:
+                return b32.bech32_encode(hrp, data5, "bech32m")  # type: ignore[attr-defined]
+
+            def dec(addr: str) -> Tuple[str, bytes]:
+                hrp, data5, spec = b32.bech32_decode(addr)  # type: ignore[attr-defined]
+                if spec != "bech32m":
+                    raise AddressError("address is not Bech32m")
+                return hrp, bytes(data5 or ())
+
+            return enc, dec
         if hasattr(b32, "encode_bech32m") and hasattr(b32, "decode_bech32m"):
             return b32.encode_bech32m, b32.decode_bech32m  # type: ignore[attr-defined]
     except Exception:
@@ -225,6 +238,10 @@ def _get_bech32_impl():
 
 
 _B32_ENCODE, _B32_DECODE = _get_bech32_impl()
+
+# Export bech32 encoding/decoding functions for compatibility
+bech32_encode = _B32_ENCODE
+bech32_decode = _B32_DECODE
 
 
 # ---- Core API ----------------------------------------------------------------

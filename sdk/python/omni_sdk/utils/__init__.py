@@ -9,7 +9,7 @@ Re-exports:
 - retry: simple retry utilities
 """
 
-from .bech32 import bech32_decode, bech32_encode
+from .bech32 import decode as bech32_decode, encode as bech32_encode
 from .bytes import (ensure_bytes, from_hex, to_hex, uvarint_decode,
                     uvarint_encode)
 from .cbor import cbor_dumps, cbor_loads
