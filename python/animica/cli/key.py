@@ -100,7 +100,9 @@ def new(
     alg_obj = default_signature_alg()
     try:
         if HAVE_PQ:
-            pk_bytes, sk_bytes = keygen_sig(alg_obj)
+            kp = keygen_sig(alg_obj.alg_id)
+            pk_bytes = kp.public_key
+            sk_bytes = kp.secret_key
             addr = None
             if HAVE_SDK:
                 try:
@@ -144,6 +146,11 @@ def new(
         if output:
             output_path = Path(output)
             output_path.parent.mkdir(parents=True, exist_ok=True)
+            # Secure the keys directory with 0o700 (owner-only access)
+            try:
+                output_path.parent.chmod(0o700)
+            except Exception:
+                pass
             output_path.write_text(json.dumps(key_data, indent=2))
             try:
                 output_path.chmod(0o600)
