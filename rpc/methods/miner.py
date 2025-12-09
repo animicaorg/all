@@ -665,8 +665,7 @@ def miner_mine(count: int | None = None, address: str | None = None) -> dict[str
                 if len(addr_str) != 64:
                     raise ValueError(f"Hex address must be exactly 64 hex characters (32 bytes), got {len(addr_str)}")
                 payout_address_bytes = bytes.fromhex(addr_str)
-                if len(payout_address_bytes) != 32:
-                    raise ValueError(f"Decoded address must be exactly 32 bytes, got {len(payout_address_bytes)}")
+                # No need for second validation: 64 hex chars always => exactly 32 bytes
                 log.info(f"Using custom payout address (hex): {address}")
             except Exception as hex_err:
                 log.warning(
