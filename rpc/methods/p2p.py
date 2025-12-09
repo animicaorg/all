@@ -13,6 +13,8 @@ is not running, methods return empty results or appropriate errors.
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 import typing as t
 
@@ -23,6 +25,27 @@ log = logging.getLogger("animica.rpc.p2p")
 # Optional P2P service imports with graceful fallbacks
 _p2p_service: t.Any = None
 _connection_manager: t.Any = None
+
+
+async def _safe_call_method(
+    obj: t.Any, method_name: str, *args: t.Any, **kwargs: t.Any
+) -> t.Any:
+    """
+    Safely call a method on an object, handling both sync and async methods.
+    
+    Returns None if the method doesn't exist or is not callable.
+    """
+    method = getattr(obj, method_name, None)
+    if not callable(method):
+        return None
+    
+    result = method(*args, **kwargs)
+    
+    # Handle async methods
+    if inspect.iscoroutine(result) or asyncio.isfuture(result):
+        return await result
+    
+    return result
 
 
 def _get_connection_manager() -> t.Any | None:
@@ -166,7 +189,9 @@ async def list_peers() -> list[dict[str, t.Any]]:
     
     try:
         # ConnectionManager.list_peers() returns List[Peer]
-        peers = cm.list_peers() if callable(getattr(cm, "list_peers", None)) else []
+        peers = await _safe_call_method(cm, "list_peers")
+        if peers is None:
+            peers = []
         
         # Convert to JSON-serializable format
         result = [_peer_to_dict(peer) for peer in peers]
@@ -206,13 +231,7 @@ async def add_peer(address: str) -> dict[str, t.Any]:
     
     try:
         # ConnectionManager.connect(address) returns Optional[Peer]
-        if not callable(getattr(cm, "connect", None)):
-            return {
-                "success": False,
-                "error": "P2P ConnectionManager does not support adding peers",
-            }
-        
-        peer = await cm.connect(address)
+        peer = await _safe_call_method(cm, "connect", address)
         
         if peer is None:
             return {
@@ -256,13 +275,7 @@ async def remove_peer(peer_id: str) -> dict[str, t.Any]:
         }
     
     try:
-        if not callable(getattr(cm, "disconnect", None)):
-            return {
-                "success": False,
-                "error": "P2P ConnectionManager does not support removing peers",
-            }
-        
-        success = await cm.disconnect(peer_id)
+        success = await _safe_call_method(cm, "disconnect", peer_id)
         
         return {
             "success": bool(success),
@@ -297,7 +310,9 @@ async def get_peer_info(peer_id: str) -> dict[str, t.Any] | None:
     
     try:
         # Get all peers and find the matching one
-        peers = cm.list_peers() if callable(getattr(cm, "list_peers", None)) else []
+        peers = await _safe_call_method(cm, "list_peers")
+        if peers is None:
+            return None
         
         for peer in peers:
             peer_dict = _peer_to_dict(peer)
