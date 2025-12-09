@@ -57,12 +57,11 @@ setup_python() {
 
   # Install pq module for bech32 support (required by omni_sdk)
   log "Installing pq module for post-quantum crypto support"
-  if [[ ! -f "$ROOT_DIR/.venv/lib/python3.12/site-packages/animica-pq.pth" ]] && \
-     [[ ! -f "$ROOT_DIR/.venv/lib/python3.11/site-packages/animica-pq.pth" ]] && \
-     [[ ! -f "$ROOT_DIR/.venv/lib/python3.10/site-packages/animica-pq.pth" ]]; then
+  SITE_PACKAGES=$(python -c "import site; print(site.getsitepackages()[0])")
+  PTH_FILE="$SITE_PACKAGES/animica-pq.pth"
+  if [[ ! -f "$PTH_FILE" ]]; then
     # Add repository root to Python path so pq module can be imported
-    SITE_PACKAGES=$(python -c "import site; print(site.getsitepackages()[0])")
-    echo "$ROOT_DIR" > "$SITE_PACKAGES/animica-pq.pth"
+    echo "$ROOT_DIR" > "$PTH_FILE"
   fi
 
   # Install additional required dependencies
