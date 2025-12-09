@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 import typer
 
@@ -72,6 +72,100 @@ def _request_rpc(method: str, params: Optional[list], rpc_url: Optional[str]):
 
 def _pretty(obj: Any) -> str:
     return json.dumps(obj, indent=2, ensure_ascii=False)
+
+
+def _get_wallet_path(wallet_file: Optional[Path]) -> Path:
+    """Get wallet file path from option, env, or default."""
+    if wallet_file is not None:
+        return Path(wallet_file)
+    import os
+    env_path = os.environ.get("ANIMICA_WALLETS_FILE")
+    if env_path:
+        return Path(env_path)
+    return Path.home() / ".animica" / "wallets.json"
+
+
+def _resolve_sender(identifier: str, wallet_file: Optional[Path]) -> Tuple[str, Any]:
+    """
+    Resolve sender identifier to (address, wallet_entry).
+    
+    Identifier can be:
+    - A wallet label (e.g., "alice")
+    - A Bech32 address (e.g., "anim1...")
+    
+    Returns the resolved address and the wallet entry (for signing).
+    """
+    from animica.cli.wallet import _load_store, _find_wallet, _entry_from_dict
+    
+    wallet_path = _get_wallet_path(wallet_file)
+    
+    if not wallet_path.exists():
+        typer.echo(
+            f"Error: Wallet store not found at {wallet_path}",
+            err=True,
+        )
+        typer.echo("Create a wallet with: animica wallet create --label <name>", err=True)
+        raise typer.Exit(1)
+    
+    store = _load_store(wallet_path)
+    
+    # Try to find by label or address
+    try:
+        wallet_entry = _find_wallet(store, identifier=identifier)
+        return wallet_entry.address, wallet_entry
+    except typer.Exit:
+        # Not found in wallet - check if it's a valid address
+        if identifier.startswith("anim1"):
+            # It's a Bech32 address but not in wallet
+            typer.echo(
+                f"Error: Address {identifier} not found in wallet",
+                err=True,
+            )
+            typer.echo(
+                f"Available wallets: {', '.join(e.get('label', e.get('address')) for e in store.get('wallets', []))}",
+                err=True,
+            )
+        else:
+            typer.echo(
+                f"Error: Wallet label '{identifier}' not found",
+                err=True,
+            )
+            typer.echo(
+                f"Available labels: {', '.join(e.get('label', '') for e in store.get('wallets', []) if e.get('label'))}",
+                err=True,
+            )
+        raise typer.Exit(1)
+
+
+def _resolve_destination(addr: str) -> str:
+    """
+    Validate and resolve destination address.
+    
+    Accepts Bech32 addresses (anim1...).
+    """
+    if not addr or not isinstance(addr, str):
+        typer.echo("Error: destination address is required", err=True)
+        raise typer.Exit(1)
+    
+    # Basic validation - should start with anim1
+    if not addr.startswith("anim1"):
+        typer.echo(
+            f"Error: invalid destination address '{addr}' (must start with 'anim1')",
+            err=True,
+        )
+        raise typer.Exit(1)
+    
+    # Optional: validate with pq.py.address if available
+    try:
+        from pq.py.address import validate_address
+        validate_address(addr, expect_hrp="anim")
+    except ImportError:
+        pass  # PQ not available, basic validation is enough
+    except Exception as e:
+        typer.echo(f"Error: invalid destination address: {e}", err=True)
+        raise typer.Exit(1)
+    
+    return addr
 
 
 @app.command()
@@ -180,12 +274,27 @@ def sign(
 
 @app.command()
 def send(
-    from_addr: str = typer.Option(..., "--from", help="Sender address or key index"),
+    from_addr: str = typer.Option(..., "--from", help="Sender address or wallet label"),
     to_addr: str = typer.Option(..., "--to", help="Recipient address"),
-    value: float = typer.Option(0, "--value", help="Amount to transfer (in ANM)"),
-    gas: int = typer.Option(200000, "--gas", help="Gas limit"),
-    key_file: Optional[Path] = typer.Option(
-        None, "--key-file", help="Path to key file (for signing)"
+    value: float = typer.Option(..., "--value", help="Amount to transfer (in ANM)"),
+    gas: Optional[int] = typer.Option(None, "--gas", help="Gas limit (auto if omitted)"),
+    gas_price: Optional[float] = typer.Option(
+        None, "--gas-price", help="Gas price in gwei (auto if omitted)"
+    ),
+    nonce: Optional[int] = typer.Option(
+        None, "--nonce", help="Transaction nonce (auto-fetched if omitted)"
+    ),
+    chain_id: Optional[int] = typer.Option(
+        None, "--chain-id", help="Chain ID (auto-fetched if omitted)"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Build and sign but do not broadcast"
+    ),
+    wallet_file: Optional[Path] = typer.Option(
+        None,
+        "--wallet-file",
+        help="Override wallet store location",
+        envvar="ANIMICA_WALLETS_FILE",
     ),
     rpc_url: Optional[str] = typer.Option(
         None,
@@ -195,19 +304,157 @@ def send(
     ),
 ) -> None:
     """
-    Build, sign, and broadcast a transaction in one step.
+    Build, sign, and broadcast a native value transfer transaction.
+
+    Resolves sender and destination addresses from wallet labels or Bech32 addresses.
+    Uses chain params (chainId, decimals) and state RPCs to populate nonce and suggested fee/gas.
+    Supports explicit overrides for fee/gas/nonce.
 
     Examples:
-      animica tx send --from anim1... --to anim1... --value 1.5 --key-file key.json
+      # Send from wallet label to address
+      animica tx send --from alice --to anim1... --value 1.5
+
+      # Send with explicit gas and nonce
+      animica tx send --from anim1... --to anim1... --value 2.0 --gas 50000 --nonce 10
+
+      # Dry-run (build and sign without broadcast)
+      animica tx send --from alice --to anim1... --value 1.0 --dry-run
     """
-    # Sending requires a signer and a node; not implemented fully yet.
-
     try:
-        # TODO: Implement full send workflow
-        typer.echo("Transaction send not yet fully implemented", err=True)
-        typer.echo("TODO: integrate with wallet and signing", err=True)
-        raise typer.Exit(1)
-
+        # Step 1: Resolve sender address and load wallet
+        sender_address, wallet_entry = _resolve_sender(from_addr, wallet_file)
+        
+        # Step 2: Validate destination address
+        dest_address = _resolve_destination(to_addr)
+        
+        # Step 3: Resolve RPC URL
+        url = _resolve_rpc_url(rpc_url)
+        
+        # Step 4: Fetch chain parameters
+        if chain_id is None:
+            try:
+                chain_id_result = _request_rpc("chain.getChainId", [], url)
+                chain_id = int(chain_id_result) if chain_id_result else 31337
+            except Exception:
+                chain_id = 31337  # Default to local devnet
+        
+        # Step 5: Fetch nonce if not provided
+        if nonce is None:
+            try:
+                nonce_result = _request_rpc(
+                    "state.getTransactionCount", [sender_address], url
+                )
+                nonce = int(nonce_result) if nonce_result else 0
+            except Exception:
+                nonce = 0
+        
+        # Step 6: Determine gas parameters
+        if gas is None:
+            # Use SDK to suggest gas limit for transfer
+            try:
+                from omni_sdk.tx.build import suggest_gas_limit
+                gas = suggest_gas_limit("transfer")
+            except Exception:
+                gas = 21000  # Basic transfer intrinsic gas
+        
+        if gas_price is None:
+            # Fetch suggested gas price from node
+            try:
+                gas_price_result = _request_rpc("state.suggestGasPrice", [], url)
+                # Result in wei, convert to gwei for consistency
+                gas_price = int(gas_price_result) / 1e9 if gas_price_result else 1.0
+            except Exception:
+                gas_price = 1.0  # 1 gwei default
+        
+        # Convert values to proper units
+        value_wei = int(value * 1e18)  # ANM to wei
+        max_fee = int(gas_price * 1e9)  # gwei to wei
+        
+        # Step 7: Build transaction using SDK
+        try:
+            from omni_sdk.tx.build import transfer
+            from omni_sdk.tx.encode import sign_bytes, pack_signed
+            from omni_sdk.wallet.signer import PQSigner
+            
+            tx = transfer(
+                from_addr=sender_address,
+                to_addr=dest_address,
+                amount=value_wei,
+                nonce=nonce,
+                gas_limit=gas,
+                max_fee=max_fee,
+                chain_id=chain_id,
+            )
+        except ImportError:
+            typer.echo(
+                "Error: omni_sdk required. Ensure SDK is installed.",
+                err=True,
+            )
+            raise typer.Exit(1)
+        
+        # Step 8: Sign transaction
+        try:
+            # Create signer from wallet entry
+            signer = PQSigner.from_keypair(
+                alg_name=wallet_entry.alg_name,
+                secret_key=bytes.fromhex(wallet_entry.secret_key_hex),
+                public_key=bytes.fromhex(wallet_entry.public_key_hex),
+            )
+            
+            # Sign the transaction
+            sign_bytes_data = sign_bytes(tx)
+            signature = signer.sign(sign_bytes_data)
+            
+            # Pack into signed CBOR envelope
+            raw_tx = pack_signed(
+                tx,
+                signature=signature,
+                alg_id=signer.alg_id,
+                public_key=signer.public_key,
+            )
+        except Exception as e:
+            typer.echo(f"Error signing transaction: {e}", err=True)
+            raise typer.Exit(1)
+        
+        # Step 9: Dry-run or broadcast
+        if dry_run:
+            # Dry-run: show summary and raw tx
+            from omni_sdk.tx.encode import tx_hash_hex
+            tx_hash = tx_hash_hex(raw_tx)
+            
+            typer.echo("=== Dry-Run Mode ===")
+            typer.echo(f"From:       {sender_address}")
+            typer.echo(f"To:         {dest_address}")
+            typer.echo(f"Value:      {value} ANM ({value_wei} wei)")
+            typer.echo(f"Gas Limit:  {gas}")
+            typer.echo(f"Max Fee:    {gas_price} gwei ({max_fee} wei)")
+            typer.echo(f"Nonce:      {nonce}")
+            typer.echo(f"Chain ID:   {chain_id}")
+            typer.echo(f"Tx Hash:    {tx_hash}")
+            typer.echo(f"Raw Size:   {len(raw_tx)} bytes")
+            typer.echo(f"Raw Hex:    {raw_tx.hex()[:100]}...")
+            typer.echo("\n✓ Transaction built and signed (not broadcast)")
+        else:
+            # Broadcast transaction
+            try:
+                from omni_sdk.tx.send import submit_raw
+                from omni_sdk.rpc.http import RpcClient
+                
+                rpc = RpcClient(url, timeout=30.0)
+                tx_hash = submit_raw(rpc, raw_tx)
+                
+                typer.echo("=== Transaction Submitted ===")
+                typer.echo(f"Tx Hash: {tx_hash}")
+                typer.echo(f"From:    {sender_address}")
+                typer.echo(f"To:      {dest_address}")
+                typer.echo(f"Value:   {value} ANM")
+                typer.echo("\n✓ Transaction broadcast successfully")
+            except Exception as e:
+                typer.echo(f"Error broadcasting transaction: {e}", err=True)
+                raise typer.Exit(1)
+    
+    except typer.Exit:
+        raise
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)

@@ -118,19 +118,21 @@ def _normalize_alg_name(name: str) -> AlgName:
 def _lookup_alg_id(alg_name: AlgName) -> int:
     pq_registry, _, _, _ = _import_pq()
     # Prefer a stable registry interface; try common shapes with graceful fallback.
-    # 1) registry.id_for_name(name: str) -> int
+    # 1) registry.ALG_ID: Dict[str, int]
+    alg_id_map = getattr(pq_registry, "ALG_ID", None)
+    if isinstance(alg_id_map, dict) and alg_name in alg_id_map:
+        return int(alg_id_map[alg_name])
+    # 2) registry.id_of(name: str) -> int
+    if hasattr(pq_registry, "id_of"):
+        return int(pq_registry.id_of(alg_name))  # type: ignore[attr-defined]
+    # 3) registry.id_for_name(name: str) -> int
     if hasattr(pq_registry, "id_for_name"):
         return int(pq_registry.id_for_name(alg_name))  # type: ignore[attr-defined]
-    # 2) registry.name_to_id: Dict[str, int]
+    # 4) registry.name_to_id: Dict[str, int]
     mapping = getattr(pq_registry, "name_to_id", None)
     if isinstance(mapping, dict) and alg_name in mapping:
         return int(mapping[alg_name])
-    # 3) registry.get(name=...) -> { 'id': int, ... }
-    if hasattr(pq_registry, "get"):
-        rec = pq_registry.get(name=alg_name)  # type: ignore[attr-defined]
-        if isinstance(rec, dict) and "id" in rec:
-            return int(rec["id"])
-    raise RuntimeError("Unable to resolve algorithm id from pq registry.")
+    raise RuntimeError(f"Unable to resolve algorithm id for '{alg_name}' from pq registry.")
 
 
 def _derive_address(alg_id: int, public_key: bytes, hrp: str = "anim") -> Optional[str]:
@@ -176,37 +178,48 @@ def _call_uniform_sign(
     pq_sign: Any, *, alg_name: str, sk: bytes, msg: bytes, domain: Optional[bytes]
 ) -> bytes:
     """
-    Call pq.py.sign.sign with a variety of tolerated signatures for resilience across
+    Call pq.py.sign signing with a variety of tolerated signatures for resilience across
     minor library changes.
     """
-    # Preferred keyword form
-    try:
-        return pq_sign.sign(alg=alg_name, sk=sk, msg=msg, domain=domain)  # type: ignore[attr-defined]
-    except TypeError:
-        pass
-    # Alternate keywords
-    for kwargs in (
-        dict(algorithm=alg_name, sk=sk, msg=msg, domain=domain),
-        dict(alg_name=alg_name, sk=sk, msg=msg, domain=domain),
-        dict(alg=alg_name, sk=sk, message=msg, domain=domain),
-    ):
+    # Try sign_detached first (preferred)
+    if hasattr(pq_sign, "sign_detached"):
         try:
-            return pq_sign.sign(**kwargs)  # type: ignore[misc]
-        except TypeError:
-            continue
-    # Positional fallbacks: (sk, msg, alg_name, domain?) or (alg_name, sk, msg, domain?)
-    for args in (
-        (sk, msg, alg_name, domain),
-        (alg_name, sk, msg, domain),
-        (sk, msg, alg_name),
-        (alg_name, sk, msg),
-    ):
+            # sign_detached(msg, alg, sk, domain=..., ...)
+            result = pq_sign.sign_detached(
+                msg,
+                alg_name,
+                sk,
+                domain=domain or b"generic"
+            )
+            # Result is a Signature object or just bytes
+            if isinstance(result, bytes):
+                return result
+            if hasattr(result, "sig"):
+                return bytes(result.sig)
+            if hasattr(result, "signature"):
+                return bytes(result.signature)
+            return bytes(result)
+        except TypeError as e:
+            # Try with positional domain
+            try:
+                result = pq_sign.sign_detached(msg, alg_name, sk)
+                if isinstance(result, bytes):
+                    return result
+                if hasattr(result, "sig"):
+                    return bytes(result.sig)
+                return bytes(result)
+            except TypeError:
+                pass
+    
+    # Fallback to sign if available
+    if hasattr(pq_sign, "sign"):
         try:
-            return pq_sign.sign(*args)  # type: ignore[misc]
-        except TypeError:
-            continue
+            return pq_sign.sign(alg=alg_name, sk=sk, msg=msg, domain=domain)  # type: ignore[attr-defined]
+        except (TypeError, AttributeError):
+            pass
+    
     raise RuntimeError(
-        "pq.sign.sign API not recognized; please update the SDK or pq module."
+        "pq.sign API not recognized; please update the SDK or pq module."
     )
 
 
