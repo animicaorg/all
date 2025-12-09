@@ -43,13 +43,13 @@ Typical rotation:
 1) Discover & score candidates from live telemetry
 
 python ops/scripts/gen_bootstrap_list.py --rpc https://rpc.devnet.animica.org 
-–min-score 0.7 –max 16 > ops/seeds/bootstrap_nodes.json
+--min-score 0.7 --max 16 > ops/seeds/bootstrap_nodes.json
 
 2) Optionally refine (pin, drop, shuffle) with policy rules
 
 python ops/scripts/rotate_seeds.py ops/seeds/bootstrap_nodes.json 
-–min-uptime 0.98 –geo-diversity –max-per-asn 2 
-–write ops/seeds/bootstrap_nodes.json
+--min-uptime 0.98 --geo-diversity --max-per-asn 2 
+--write ops/seeds/bootstrap_nodes.json
 
 Commit the updated `bootstrap_nodes.json` and bump the chart/compose values that reference it if you pin hashes.
 
