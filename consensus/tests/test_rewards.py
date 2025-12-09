@@ -310,3 +310,66 @@ def test_compute_subsidy_split_no_rounding_loss():
     assert miner == 800000  # 80% of 1000001 = 800000.8 → 800000
     assert aicf == 150000  # 15% of 1000001 = 150000.15 → 150000
     assert treasury == 50001  # Remainder to preserve total
+
+
+def test_compute_block_reward_with_params():
+    """Test compute_block_reward with valid params returns rewards."""
+    params = {
+        "monetary": {
+            "issuance": {
+                "subsidy": {
+                    "start_nANM_per_block": 10000000,  # 0.01 ANM
+                    "epoch_length_blocks": 216000,
+                    "decay_pct_per_epoch": 25.0,
+                    "tail_nANM_per_block": 500000,
+                    "max_halvings": 64,
+                },
+                "subsidy_split_pct": {
+                    "miner": 60,
+                    "aicf": 30,
+                    "treasury": 10,
+                },
+            }
+        },
+        "system_addresses": {
+            "coinbase_default": "anim1coinbasexxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "aicf_treasury": "anim1aicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "treasury": "anim1treasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        },
+    }
+    
+    # Test at height 1 (first post-genesis block)
+    rewards = compute_block_reward(chain_id=1337, height=1, params=params)
+    
+    # Should return 3 rewards (miner, aicf, treasury)
+    assert len(rewards) == 3
+    
+    # Verify addresses
+    addresses = [addr for addr, _ in rewards]
+    assert "anim1coinbasexxxxxxxxxxxxxxxxxxxxxxxxxxxxx" in addresses
+    assert "anim1aicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" in addresses
+    assert "anim1treasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" in addresses
+    
+    # Verify amounts sum to start amount
+    total = sum(amt for _, amt in rewards)
+    assert total == 10000000
+    
+    # Verify split percentages
+    miner_amt = next(amt for addr, amt in rewards if "coinbase" in addr)
+    aicf_amt = next(amt for addr, amt in rewards if "aicf" in addr)
+    treasury_amt = next(amt for addr, amt in rewards if "treasury" in addr)
+    
+    assert miner_amt == 6000000  # 60%
+    assert aicf_amt == 3000000  # 30%
+    assert treasury_amt == 1000000  # 10%
+
+
+def test_compute_block_reward_returns_empty_for_invalid_params():
+    """Test compute_block_reward returns empty for invalid params."""
+    # Missing required fields
+    invalid_params = {"monetary": {}}
+    
+    rewards = compute_block_reward(chain_id=1337, height=1, params=invalid_params)
+    
+    # Should return empty due to invalid params
+    assert rewards == []
