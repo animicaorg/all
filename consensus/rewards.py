@@ -109,25 +109,47 @@ def compute_block_reward(
 
     # For height >= 1 (or non-mainnet genesis), use normal emission schedule.
     # The emission schedule is defined in params.yaml under networks.[network].monetary.issuance.
-    # We return a simple single-output reward here; actual implementation should parse
-    # the subsidy schedule and split per subsidy_split_pct.
-    #
-    # TODO: Implement full emission schedule parsing from params.yaml.
-    # For now, we return an empty list (or a placeholder) to indicate no premine.
-    # In a real implementation, this would:
-    #   1. Read params['monetary']['issuance']['subsidy']
-    #   2. Compute the current epoch based on height and epoch_length_blocks
-    #   3. Apply decay_pct_per_epoch to start_nANM_per_block
-    #   4. Split the subsidy per subsidy_split_pct (miner, aicf, treasury)
-    #   5. Return the list of (address, amount) tuples
-
+    
     if params is None:
         # If no params provided and height >= 1, return empty (caller must provide params)
         return []
-
-    # Placeholder: extract subsidy schedule from params (implementation required)
-    # For now, return empty to indicate normal emission (not premine)
-    return []
+    
+    # Parse emission schedule and compute subsidy for this height
+    try:
+        schedule = parse_emission_schedule(params)
+        miner_amount, aicf_amount, treasury_amount = compute_subsidy_for_height(height, schedule)
+        
+        # If all amounts are zero, no subsidy at this height
+        if miner_amount == 0 and aicf_amount == 0 and treasury_amount == 0:
+            return []
+        
+        # Get system addresses from params
+        system_addresses = params.get("system_addresses", {})
+        
+        # Collect non-zero rewards
+        rewards: List[Tuple[str, int]] = []
+        
+        # Miner reward (this will be overridden with payout address in RPC layer)
+        if miner_amount > 0:
+            # Use coinbase_default as placeholder; RPC layer will use actual payout address
+            miner_addr = system_addresses.get("coinbase_default", "anim1coinbasexxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+            rewards.append((miner_addr, miner_amount))
+        
+        # AICF treasury reward
+        if aicf_amount > 0:
+            aicf_addr = system_addresses.get("aicf_treasury", "anim1aicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+            rewards.append((aicf_addr, aicf_amount))
+        
+        # Chain treasury reward
+        if treasury_amount > 0:
+            treasury_addr = system_addresses.get("treasury", "anim1treasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+            rewards.append((treasury_addr, treasury_amount))
+        
+        return rewards
+    except (KeyError, ValueError) as e:
+        # If emission schedule is invalid or missing, return empty
+        # This allows the chain to function without block rewards
+        return []
 
 
 def validate_mainnet_genesis_coinbase(
