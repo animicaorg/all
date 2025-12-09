@@ -134,13 +134,24 @@ or via env (e.g. RPC_CORS_ORIGINS=https://studio.example,https://app.example).
 Ports (defaults)
 
 Service	Container	Host (devnet)	Notes
-JSON-RPC (HTTP)	8545	8545	/rpc JSON-RPC 2.0
+JSON-RPC (HTTP)	8545	8545	/rpc JSON-RPC 2.0 (bound to 0.0.0.0)
 WebSocket (WS)	8546	8546	/ws subscriptions
+P2P	9000	9000	Peer-to-peer networking (bound to 0.0.0.0)
 DA API	8081	8081	post/get/proof
 AICF API	8080	8082	may share with services
 Studio Services	8080	8080	deploy/verify/faucet
 Explorer Web	80	3000	static SPA
 Metrics	9090	9090	Prometheus (optional)
+
+Network-specific RPC defaults:
+- **Mainnet**: RPC on 0.0.0.0:8545, P2P on 9000, chain ID 1
+- **Testnet**: RPC on 0.0.0.0:8546, P2P on 9000, chain ID 2
+- **Devnet**: RPC on 0.0.0.0:8545, P2P on 9000, chain ID 1337
+
+When ANIMICA_RPC_URL is not set, CLI commands default to:
+- Mainnet: http://127.0.0.1:8545/rpc
+- Testnet: http://127.0.0.1:8546/rpc
+- Devnet: http://127.0.0.1:8545/rpc
 
 Override via .env or compose overrides.
 
