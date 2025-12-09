@@ -139,7 +139,7 @@ class TestMineBlocksCommand:
             def __exit__(self, *args):
                 pass
             def request(self, *args, **kwargs):
-                raise Exception("RPC connection failed")
+                raise ConnectionError("RPC connection failed")
         
         mock_module = Mock()
         mock_module.RpcClient = ErrorRpcClient
