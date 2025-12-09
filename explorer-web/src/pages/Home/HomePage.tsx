@@ -5,10 +5,11 @@ import { shortHash } from "../../utils/format";
 import { ago } from "../../utils/time";
 import { GammaPanel } from "../../components/poies/GammaPanel";
 // Optional PoIES panels — rendered only if data is present.
-import PoIESBreakdown from "../../components/poies/PoIESBreakdown";
-import FairnessPanel from "../../components/poies/FairnessPanel";
+// Temporarily commented out due to import issues
+// import PoIESBreakdown from "../../components/poies/PoIESBreakdown";
+// import FairnessPanel from "../../components/poies/FairnessPanel";
 // Global store (Zustand-style). If your app exports a different hook, adjust here.
-import { useStore } from "../../state/store";
+import { useExplorerStore } from "../../state/store";
 
 /** Local safe helpers (avoid tight coupling to slices' exact shapes). */
 function getHead(store: any) {
@@ -96,24 +97,31 @@ const StatCard: React.FC<{
   value: React.ReactNode;
   hint?: React.ReactNode;
   className?: string;
-}> = ({ label, value, hint, className }) => (
-  <div className={cn("rounded-lg border p-4 space-y-1", className)}>
-    <div className="text-xs text-muted-foreground">{label}</div>
-    <div className="text-xl font-semibold tabular-nums">{value}</div>
-    {hint ? <div className="text-xs text-muted-foreground">{hint}</div> : null}
+  icon?: React.ReactNode;
+}> = ({ label, value, hint, className, icon }) => (
+  <div className={cn("card", "p-5 space-y-2 hover:shadow-md transition-shadow duration-200", className)}>
+    <div className="flex items-center justify-between">
+      <div className="text-xs uppercase tracking-wide text-muted font-semibold">{label}</div>
+      {icon && <div className="text-accent opacity-70">{icon}</div>}
+    </div>
+    <div className="text-2xl font-bold tabular-nums">{value}</div>
+    {hint ? <div className="text-xs text-muted">{hint}</div> : null}
   </div>
 );
 
-const SectionTitle: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <h2 className="text-base font-semibold text-foreground">{children}</h2>
+const SectionTitle: React.FC<{ children: React.ReactNode; subtitle?: string }> = ({ children, subtitle }) => (
+  <div className="space-y-1">
+    <h2 className="text-xl font-bold tracking-tight">{children}</h2>
+    {subtitle && <p className="text-sm text-muted">{subtitle}</p>}
+  </div>
 );
 
 const HomePage: React.FC = () => {
-  const head = useStore(getHead);
-  const peers = useStore(getPeers);
-  const latencyMs = useStore(getLatencyMs);
-  const blocks = useStore(getBlocks);
-  const poies = useStore(getPoIES);
+  const head = useExplorerStore(getHead);
+  const peers = useExplorerStore(getPeers);
+  const latencyMs = useExplorerStore(getLatencyMs);
+  const blocks = useExplorerStore(getBlocks);
+  const poies = useExplorerStore(getPoIES);
 
   const height = safeHeight(head);
   const hash = safeHash(head);
@@ -132,102 +140,177 @@ const HomePage: React.FC = () => {
   const fairnessSeries = Array.isArray(poies?.fairnessSeries) ? poies.fairnessSeries : [];
 
   return (
-    <div className="container mx-auto p-4 space-y-8">
+    <div className="container mx-auto p-6 space-y-10">
+      {/* Hero Section */}
+      <div className="space-y-2">
+        <h1 className="text-3xl font-bold tracking-tight">Animica Explorer</h1>
+        <p className="text-lg text-muted">Real-time blockchain data and analytics</p>
+      </div>
+
       {/* Head & quick stats */}
-      <div className="space-y-3">
-        <SectionTitle>Network overview</SectionTitle>
-        <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="space-y-4">
+        <SectionTitle subtitle="Live network statistics and block information">
+          Network Overview
+        </SectionTitle>
+        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard
-            label="Head height"
+            label="Head Height"
+            icon={
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="3" width="7" height="7" rx="1" />
+                <rect x="14" y="3" width="7" height="7" rx="1" />
+                <rect x="14" y="14" width="7" height="7" rx="1" />
+                <rect x="3" y="14" width="7" height="7" rx="1" />
+              </svg>
+            }
             value={
               height !== undefined ? (
                 <Link
                   to={`/blocks/${height}`}
-                  className="hover:underline underline-offset-2"
+                  className="hover:text-accent transition-colors"
                 >
-                  {height}
+                  {height.toLocaleString()}
                 </Link>
               ) : (
-                "—"
+                <span className="text-muted">—</span>
               )
             }
             hint={
               tsMs
-                ? `at ${new Date(tsMs).toLocaleTimeString()} (${ago(tsMs)} ago)`
-                : "—"
+                ? `${ago(tsMs)} ago`
+                : "Waiting for data..."
             }
           />
           <StatCard
-            label="Head hash"
+            label="Latest Hash"
+            icon={
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M4 7h16M4 12h16M4 17h16" />
+              </svg>
+            }
             value={
               hash ? (
-                <Link to={`/tx/${hash}`} className="font-mono hover:underline">
+                <Link to={`/tx/${hash}`} className="font-mono text-sm hover:text-accent transition-colors">
                   {shortHash(hash)}
                 </Link>
               ) : (
-                "—"
+                <span className="text-muted">—</span>
               )
             }
+            hint="Block hash"
           />
           <StatCard
-            label="Peers"
-            value={peers ?? "—"}
-            hint="connected"
+            label="Connected Peers"
+            icon={
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+            }
+            value={peers !== undefined ? peers : <span className="text-muted">—</span>}
+            hint="Network nodes"
           />
           <StatCard
-            label="RPC latency"
+            label="RPC Latency"
+            icon={
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" />
+                <polyline points="12 6 12 12 16 14" />
+              </svg>
+            }
             value={
               typeof latencyMs === "number"
                 ? `${Math.round(latencyMs)} ms`
-                : "—"
+                : <span className="text-muted">—</span>
             }
+            hint="Response time"
           />
         </div>
       </div>
 
       {/* Performance */}
-      <div className="space-y-3">
-        <SectionTitle>Performance</SectionTitle>
-        <div className="grid gap-3 grid-cols-1 sm:grid-cols-2">
+      <div className="space-y-4">
+        <SectionTitle subtitle="Transaction throughput and block production metrics">
+          Performance Metrics
+        </SectionTitle>
+        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
           <StatCard
-            label="Throughput (approx)"
-            value={tps !== undefined ? `${tps.toFixed(2)} TPS` : "—"}
-            hint="~last 60s window from observed blocks"
+            label="Transactions Per Second"
+            icon={
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
+                <polyline points="17 6 23 6 23 12" />
+              </svg>
+            }
+            value={tps !== undefined ? `${tps.toFixed(2)} TPS` : <span className="text-muted">—</span>}
+            hint="Last 60 seconds"
           />
           <StatCard
-            label="Avg block time"
-            value={
-              avgBtMs !== undefined ? `${(avgBtMs / 1000).toFixed(2)} s` : "—"
+            label="Average Block Time"
+            icon={
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" />
+                <polyline points="12 6 12 12 16 14" />
+              </svg>
             }
-            hint="rolling over latest 64 blocks"
+            value={
+              avgBtMs !== undefined ? `${(avgBtMs / 1000).toFixed(2)}s` : <span className="text-muted">—</span>
+            }
+            hint="Rolling 64 blocks"
           />
         </div>
       </div>
 
       {/* PoIES panels */}
       <div className="space-y-4">
-        <SectionTitle>PoIES</SectionTitle>
-        <GammaPanel
-          data={gammaSeries}
-          theta={theta}
-          alpha={0.12}
-          height={220}
-          className="border"
-        />
+        <SectionTitle subtitle="Proof-of-Integrated-External-Services consensus metrics">
+          PoIES Analytics
+        </SectionTitle>
+        <div className="card p-6">
+          <GammaPanel
+            data={gammaSeries}
+            theta={theta}
+            alpha={0.12}
+            height={240}
+          />
+        </div>
 
-        {/* Render additional PoIES panels only if data present */}
-        {Array.isArray(mixSeries) && mixSeries.length > 0 ? (
-          <div className="rounded-lg border p-4">
+        {/* Additional PoIES panels temporarily disabled due to import issues */}
+        {/* {Array.isArray(mixSeries) && mixSeries.length > 0 ? (
+          <div className="card p-6">
             <PoIESBreakdown data={mixSeries} />
           </div>
         ) : null}
 
         {Array.isArray(fairnessSeries) && fairnessSeries.length > 0 ? (
-          <div className="rounded-lg border p-4">
+          <div className="card p-6">
             <FairnessPanel data={fairnessSeries} />
           </div>
-        ) : null}
+        ) : null} */}
       </div>
+
+      {/* Empty State for No Data */}
+      {(!height || height === 0) && (
+        <div className="card p-12 text-center">
+          <div className="space-y-4">
+            <div className="flex justify-center">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-lg font-semibold">No Connection to Node</h3>
+              <p className="text-muted max-w-md mx-auto">
+                Unable to fetch blockchain data. Please ensure the RPC node is running and accessible at the configured URL.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

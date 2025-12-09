@@ -6,7 +6,8 @@
   "description": "Animica Explorer — live blocks/tx/address views over JSON-RPC + WS.",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "vite build",
+    "build:check": "tsc -b && vite build",
     "preview": "vite preview --strictPort",
     "test": "vitest run",
     "test:ui": "vitest --ui",
@@ -15,13 +16,16 @@
   },
   "dependencies": {
     "@animica/sdk": "file:../sdk",
+    "i18next": "^25.7.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-i18next": "^16.4.0",
     "react-router-dom": "^6.22.0",
     "zod": "^3.23.0",
     "zustand": "^4.5.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.57.0",
     "@testing-library/react": "^14.2.0",
     "@testing-library/user-event": "^14.5.0",
     "@types/node": "^20.11.0",

@@ -66,9 +66,37 @@ pnpm dev
 
 Vite will print a local URL. Open it in your browser; you should see live blocks if WS is reachable.
 
-⸻
+---
 
-Usage Tips
+## UI Features
+
+### Modern, Responsive Design
+- **Clean Layout**: Card-based design with improved spacing and visual hierarchy
+- **Dark/Light Theme**: Automatically detects system preference, can be toggled manually
+- **Responsive**: Optimized for desktop, tablet, and mobile devices
+- **Loading States**: Animated loaders and skeleton screens while fetching data
+- **Empty States**: Clear messaging when no data is available or node is disconnected
+
+### Navigation & Pages
+- **Home**: Network overview with live statistics, performance metrics, and PoIES analytics
+- **Blocks**: Paginated list with filters (height range, producer, empty blocks)
+- **Transactions**: Search and browse transactions with detailed views
+- **Addresses**: Account information, balances, and transaction history
+- **Contracts**: Deployed contracts with verification status
+- **AICF**: AI/Quantum compute job dashboard
+- **Data Availability**: DA proofs and blob information
+- **Randomness**: Beacon rounds and VDF verification
+- **Network**: Peer connections and network health
+
+### Connection Status
+The explorer displays real-time connection status:
+- **Green dot**: Connected to node, receiving live updates
+- **Red dot**: Disconnected, will attempt to reconnect
+- Chain ID and RPC latency visible in the top navigation bar
+
+---
+
+## Usage Tips
 	•	Search bar accepts:
 	•	Block height (e.g., 12345)
 	•	Transaction hash (0x…)
