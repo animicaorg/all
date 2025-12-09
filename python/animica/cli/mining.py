@@ -1,4 +1,11 @@
-"""Stratum pool helper CLI for Animica developers."""
+"""Mining operations CLI for Animica.
+
+Provides commands for:
+  - Mining blocks via RPC (mine-blocks)
+  - Running the Stratum pool server (run-pool)
+  - Inspecting pool configuration (show-config)
+  - Generating payout addresses (generate-payout-address)
+"""
 
 from __future__ import annotations
 
@@ -19,7 +26,7 @@ try:
 except Exception:
     HAVE_STRATUM = False
 
-app = typer.Typer(help="Run and inspect the Animica Stratum pool.")
+app = typer.Typer(help="Mining operations and Stratum pool management.")
 
 RPC_ENV = "ANIMICA_RPC_URL"
 DB_ENV = "ANIMICA_MINING_POOL_DB_URL"
@@ -127,6 +134,147 @@ def generate_payout_address(
     except Exception as e:
         typer.echo(f"Error generating payout address: {e}", err=True)
         raise typer.Exit(1)
+
+
+@app.command("mine-blocks")
+def mine_blocks(
+    address: str = typer.Option(
+        ...,
+        "--address",
+        help="Payout address for mined blocks (e.g., anim1...)",
+    ),
+    count: int = typer.Option(
+        ...,
+        "--count",
+        help="Number of blocks to mine (must be > 0)",
+    ),
+    rpc_url: Optional[str] = typer.Option(
+        None,
+        "--rpc-url",
+        help="Node JSON-RPC endpoint URL",
+        envvar="ANIMICA_RPC_URL",
+    ),
+) -> None:
+    """
+    Mine a specified number of blocks to a given address.
+    
+    This command uses the node's mining RPC to mine blocks for testing
+    and development purposes.
+    
+    Examples:
+        animica miner mine-blocks --address anim1test123 --count 5
+        animica miner mine-blocks --address anim1test123 --count 10 --rpc-url http://localhost:8545
+    
+    Note: The current miner.mine RPC method does not support payout address selection.
+    Blocks will be mined to the node's default miner address. The --address parameter
+    is accepted for future compatibility.
+    """
+    # Note: This repository uses a custom stub implementation of Typer
+    # (see python/typer/__init__.py) that doesn't automatically parse type annotations.
+    # The stub Typer passes string values for integer options, so we need to convert manually.
+    # This is intentional to keep the stub lightweight and avoid external dependencies.
+    # When using the real Typer library, this conversion would be automatic.
+    if isinstance(count, str):
+        try:
+            count = int(count)
+        except ValueError:
+            typer.secho(
+                f"Error: count must be a valid integer, got {count}",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(2)
+    
+    # Validate count
+    if count <= 0:
+        typer.secho(
+            f"Error: count must be greater than 0, got {count}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(2)
+    
+    # Validate address
+    if not address or not address.strip():
+        typer.secho(
+            "Error: address is required",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(2)
+    
+    # Resolve RPC URL
+    url = rpc_url or os.environ.get("ANIMICA_RPC_URL") or load_network_config().rpc_url
+    
+    # Try to import RPC client
+    rpc_client = None
+    try:
+        from sdk.python.omni_sdk.rpc.http import RpcClient
+        rpc_client = RpcClient
+    except (ImportError, ModuleNotFoundError, RuntimeError):
+        try:
+            from omni_sdk.rpc.http import RpcClient  # type: ignore
+            rpc_client = RpcClient
+        except (ImportError, ModuleNotFoundError, RuntimeError):
+            pass
+    
+    if rpc_client is None:
+        typer.secho(
+            "Error: RpcClient not available. Please install omni_sdk: pip install -e sdk/python",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(3)
+    
+    typer.echo(
+        f"Mining {count} block(s) with payout to address {address} via RPC {url}"
+    )
+    typer.secho(
+        "Note: The current miner.mine RPC method does not support payout address selection. "
+        "Blocks will be mined to the node's default miner address. "
+        "The --address parameter is accepted for future compatibility.",
+        fg=typer.colors.YELLOW,
+    )
+    
+    try:
+        with rpc_client(url, timeout=30.0) as client:
+            result = client.request("miner.mine", [count])
+            
+            mined = result.get("mined", 0)
+            height = result.get("height", 0)
+            
+            if mined == 0:
+                typer.secho(
+                    "Warning: No blocks were mined (may have failed)",
+                    fg=typer.colors.YELLOW,
+                )
+                raise typer.Exit(4)
+            elif mined < count:
+                typer.secho(
+                    f"Warning: Only {mined} of {count} requested blocks were mined",
+                    fg=typer.colors.YELLOW,
+                )
+            
+            typer.secho(
+                f"✓ Successfully mined {mined} block(s). New chain height: {height}",
+                fg=typer.colors.GREEN,
+                bold=True,
+            )
+    
+    except (RuntimeError, ConnectionError, OSError, TimeoutError) as e:
+        typer.secho(
+            f"Error: Failed to connect to RPC: {e}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(5)
+    except Exception as e:
+        typer.secho(
+            f"Error: Failed to mine blocks via RPC: {e}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(5)
 
 
 if __name__ == "__main__":  # pragma: no cover

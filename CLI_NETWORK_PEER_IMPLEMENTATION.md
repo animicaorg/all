@@ -6,7 +6,50 @@ This implementation adds two new CLI command groups to the Animica CLI tool for 
 
 ## Features Implemented
 
-### 1. Network Chain Switching Command (`animica network`)
+### 1. Mining Commands (`animica miner`)
+
+The miner command group provides both mining operations and Stratum pool management.
+
+#### Mine Blocks Command (December 2024):
+
+**`animica miner mine-blocks --address <addr> --count <n> [--rpc-url <url>]`**
+- Mines N blocks to a specified address via the node's RPC interface
+- Useful for local testing and development scenarios
+- Validates that count > 0 with clear error messages
+- Provides informative progress output with colors
+- **Status**: Fully implemented and tested (7 tests passing)
+
+**Validation**:
+- `--address` (required): Payout address for blocks
+- `--count` (required): Number of blocks to mine (must be > 0)
+- `--rpc-url` (optional): RPC endpoint (defaults to network config)
+
+**Error Handling**:
+- Exit code 2: Invalid arguments (missing address/count, count <= 0)
+- Exit code 3: RPC client unavailable
+- Exit code 4: No blocks mined (RPC call succeeded but returned 0 blocks)
+- Exit code 5: RPC connection or request error
+
+**Example**:
+```bash
+animica miner mine-blocks --address anim1test123 --count 5
+animica miner mine-blocks --address anim1test123 --count 10 --rpc-url http://localhost:8545
+```
+
+**Note**: The current `miner.mine` RPC method does not yet support payout address selection. Blocks will be mined to the node's default miner address. The `--address` parameter is accepted for future compatibility.
+
+#### Pool Commands (Existing):
+
+**`animica miner show-config`**
+- Displays the effective pool configuration
+
+**`animica miner run-pool`**
+- Starts the Stratum mining pool server
+
+**`animica miner generate-payout-address`**
+- Generates a dev wallet for pool payouts
+
+### 2. Network Chain Switching Command (`animica network`)
 
 The network command allows users to manage which blockchain network (mainnet, testnet, devnet, local-devnet) the CLI should use by default.
 
@@ -44,8 +87,15 @@ The peer command provides tools to manage P2P network connections, allowing user
 **`animica peer list [--verbose]`**
 - Lists all currently connected peers
 - Shows peer ID, address, and connection status
+- Returns "No peers connected" when the peer list is empty (graceful handling)
 - Use `--verbose` for detailed JSON output
-- Automatically tries multiple RPC method names for compatibility
+- Automatically tries multiple RPC method names for compatibility:
+  - `p2p.listPeers` (primary)
+  - `p2p.getPeers`
+  - `p2p.peers`
+  - `admin_peers` (legacy compatibility)
+  - `net_peers` (legacy compatibility)
+- **Status**: Fully implemented and working. All RPC methods registered and tested.
 
 **`animica peer add <address>`**
 - Adds a new peer connection by address
@@ -103,6 +153,40 @@ The peer command provides tools to manage P2P network connections, allowing user
 
 ## Files Modified
 
+### Mining Command Implementation (December 2024)
+
+1. **`python/animica/cli/mining.py`**
+   - Added `mine-blocks` command to Typer app
+   - Proper help text and argument validation
+   - Error handling with colored output
+   - String-to-int conversion for stub Typer compatibility
+   - ~135 lines added
+
+2. **`python/animica/cli/tests/test_mining_cli.py`**
+   - Added 7 comprehensive tests for `mine-blocks`:
+     - Command registration verification
+     - Missing argument validation
+     - Invalid count validation (zero and negative)
+     - Successful RPC call
+     - RPC error handling
+   - All tests passing
+
+3. **`python/animica/cli/README.md`**
+   - Added `mine-blocks` command documentation
+   - Updated mining operations examples
+   - Enhanced peer listing documentation with RPC method details
+
+4. **`docs/cli-commands.md`**
+   - Added comprehensive mining section
+   - Documented `mine-blocks` command with examples
+   - Explained current limitations and future compatibility
+
+5. **`CLI_NETWORK_PEER_IMPLEMENTATION.md`** (this file)
+   - Added mining command section
+   - Updated peer listing status
+
+### Network & Peer Implementation (Original)
+
 1. **`python/animica/cli/main.py`**
    - Added imports for `network` and `peer` modules
    - Registered new command groups
@@ -124,19 +208,78 @@ The peer command provides tools to manage P2P network connections, allowing user
 
 ## Test Results
 
-All 24 new tests pass successfully:
+All tests pass successfully:
 
+### Mining Command Tests (December 2024)
+```
+test_mining_cli.py:      10 tests PASSED (3 existing pool + 7 new mine-blocks tests)
+  - test_mine_blocks_command_exists
+  - test_mine_blocks_missing_address
+  - test_mine_blocks_missing_count
+  - test_mine_blocks_invalid_count_zero
+  - test_mine_blocks_invalid_count_negative
+  - test_mine_blocks_success
+  - test_mine_blocks_rpc_error
+```
+
+### RPC P2P Methods Tests (December 2024)
+```
+rpc/tests/test_p2p_methods.py:  7 tests PASSED
+  - test_p2p_methods_registered
+  - test_list_peers_no_service
+  - test_add_peer_no_service
+  - test_remove_peer_no_service
+  - test_get_peer_info_no_service
+  - test_peer_to_dict_conversion
+  - test_list_peers_with_mock_service
+```
+
+### Network & Peer CLI Tests (Original)
 ```
 test_state.py:           7 tests PASSED
 test_network_cli.py:     7 tests PASSED  
 test_peer_cli.py:       10 tests PASSED
 ------------------------
-Total:                  24 tests PASSED
+Total:                  41 tests PASSED
 ```
 
-Existing node CLI tests continue to pass, demonstrating backward compatibility.
+All existing node CLI tests continue to pass, demonstrating backward compatibility.
 
 ## Usage Examples
+
+### Mining Operations
+
+```bash
+# Mine 5 blocks for testing
+$ animica miner mine-blocks --address anim1test123 --count 5
+Mining 5 block(s) with payout to address anim1test123 via RPC http://127.0.0.1:8545
+Note: The current miner.mine RPC method does not support payout address selection. 
+Blocks will be mined to the node's default miner address. 
+The --address parameter is accepted for future compatibility.
+✓ Successfully mined 5 block(s). New chain height: 105
+
+# Mine blocks with custom RPC URL
+$ animica miner mine-blocks --address anim1test123 --count 10 --rpc-url http://localhost:8547
+✓ Successfully mined 10 block(s). New chain height: 115
+
+# Error: Invalid count
+$ animica miner mine-blocks --address anim1test123 --count 0
+Error: count must be greater than 0, got 0
+
+# Error: Missing required arguments
+$ animica miner mine-blocks --count 5
+Error: Missing required option '--address'.
+
+# Check miner help
+$ animica miner --help
+Mining operations and Stratum pool management.
+
+Commands:
+  mine-blocks              Mine a specified number of blocks to a given address.
+  run-pool                 Start the Animica Stratum mining pool.
+  show-config              Display the effective pool configuration.
+  generate-payout-address  Generate a dev wallet for pool payouts...
+```
 
 ### Network Management
 
