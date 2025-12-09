@@ -1,10 +1,36 @@
 from __future__ import annotations
 
+"""
+AICF Development Node Stub
+===========================
+
+**WARNING: This is a test-only stub RPC server for development and testing.**
+
+This module provides a minimal RPC server that simulates basic blockchain
+operations with synthetic blocks. It is NOT production code and should NEVER
+be used in production environments.
+
+Purpose:
+- Enable local development without running a full node
+- Support integration tests for AICF components
+- Provide a simple target for CLI testing
+
+Limitations:
+- Blocks use trivial difficulty (0x1) and are not mined
+- No real consensus, state transitions, or transaction execution
+- No persistence beyond a simple JSON state file
+- Hashes are computed from block numbers, not actual content
+
+For production use, connect to a real Animica node running the full
+consensus, execution, and persistence layers.
+"""
+
 import argparse
 import hashlib
 import json
 import os
 import signal
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -41,6 +67,24 @@ def save_state() -> None:
 
 
 def make_block(n: int) -> dict:
+    """
+    Generate a synthetic block for testing.
+    
+    **TEST-ONLY**: This function creates fake blocks with synthetic hashes
+    and trivial difficulty. It is used only for development and testing.
+    
+    Real block construction should use:
+    - consensus/difficulty.py for real difficulty calculation
+    - mining/hash_search.py for proper nonce finding
+    - core/types/block.py for canonical block structure
+    - core/db/block_db.py for persistence
+    
+    Args:
+        n: Block height (number)
+        
+    Returns:
+        dict: Synthetic block with fake hashes and trivial difficulty
+    """
     parent = (
         "0x" + "0" * 64
         if n <= 0
@@ -52,9 +96,9 @@ def make_block(n: int) -> dict:
         "hash": hsh,
         "parentHash": parent,
         "timestamp": hex(int(time.time())),
-        "difficulty": "0x1",
-        "nonce": "0x0",
-        "miner": "0x" + "0" * 40,
+        "difficulty": "0x1",  # TEST-ONLY: trivial difficulty, not real consensus
+        "nonce": "0x0",  # TEST-ONLY: no real mining/nonce search
+        "miner": "0x" + "0" * 40,  # TEST-ONLY: placeholder address
         "transactions": [],
     }
 
@@ -213,7 +257,7 @@ class Handler(BaseHTTPRequestHandler):
                     ok(make_block(max(0, n))["hash"])
                     return
                 if method == "web3_clientVersion":
-                    ok("animica-dev/0.0.0 (stub)")
+                    ok("animica-dev/0.0.0 (test-stub, not for production)")
                     return
         except Exception as exc:
             self._send(
@@ -256,7 +300,27 @@ def parse_args():
 
 
 def main():
+    """
+    Start the stub RPC server.
+    
+    **TEST-ONLY**: This is a development/testing server with synthetic blocks.
+    DO NOT use in production. For production, use the real node implementation
+    with full consensus, execution, and persistence layers.
+    """
     args = parse_args()
+    
+    # Warning for production detection
+    if os.getenv("ANIMICA_NETWORK") == "mainnet" or os.getenv("ANIMICA_ENV") == "production":
+        print(
+            "ERROR: AICF stub node cannot be used with mainnet or production settings.",
+            file=sys.stderr if 'sys' in dir() else None
+        )
+        print(
+            "This is a test-only stub. Use the real node implementation for production.",
+            file=sys.stderr if 'sys' in dir() else None
+        )
+        os._exit(1)
+    
     with lock:
         state["chain_id"] = args.chain_id
         state["auto_mine"] = bool(args.auto_mine)
@@ -267,7 +331,10 @@ def main():
     for s in (signal.SIGINT, signal.SIGTERM):
         signal.signal(s, lambda *_: os._exit(0))
     print(
-        f"[shim] RPC http://{args.rpc_addr}:{args.rpc_port} chainId={state['chain_id']} height={state['height']}"
+        f"[stub-node] TEST-ONLY RPC server at http://{args.rpc_addr}:{args.rpc_port}"
+    )
+    print(
+        f"[stub-node] chainId={state['chain_id']} height={state['height']} (synthetic blocks)"
     )
     httpd.serve_forever()
 

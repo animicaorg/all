@@ -267,7 +267,11 @@ class ScannerAdapter:
             return
 
         # Fallback: naive CPU scan with very low throughput (dev-only)
-        log.warning("Falling back to naive CPU scanner (dev-only)")
+        log.warning(
+            "Falling back to naive CPU scanner (DEV-ONLY, not for production). "
+            "This uses trivial difficulty and is extremely slow. "
+            "Install the real hash_search module for production mining."
+        )
         await _naive_cpu_scanner(template_iter, out_queue, stop_evt)
 
 
@@ -515,10 +519,27 @@ async def _naive_cpu_scanner(
     stop_evt: asyncio.Event,
 ) -> None:
     """
-    Extremely slow reference scanner that:
-      - takes a template {header: hex, targetBits: int, jobId: str}
-      - increments nonce and checks a trivial threshold on sha3(header||nonce)
-    This is *not* the production HashShare search; it's a developer fallback.
+    Extremely slow reference scanner for development/testing only.
+    
+    **DEV-ONLY FALLBACK**: This is NOT production mining code. It uses:
+      - Trivial difficulty (targetBits defaults to 12 = very easy)
+      - Simple leading-zero-bits check instead of proper target validation
+      - sha3_256 instead of the full HashShare consensus algorithm
+    
+    This fallback is only used when the real mining.hash_search module
+    is unavailable or cannot be imported. Production miners should always
+    use the proper HashScanner from mining/hash_search.py which:
+      - Uses correct µ-nats threshold → 256-bit target conversion
+      - Validates against consensus difficulty from consensus/difficulty.py
+      - Follows the PoIES acceptance predicate
+    
+    Template format:
+      {header: hex, targetBits: int, jobId: str}
+    
+    The scanner increments nonce and checks if the hash has enough
+    leading zero bits. This is deterministic but extremely inefficient
+    and is meant only for keeping tests running when the real scanner
+    is not available.
     """
     import hashlib
     import secrets
