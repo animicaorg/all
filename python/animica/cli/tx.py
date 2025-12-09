@@ -422,10 +422,18 @@ def send(
             from omni_sdk.tx.encode import tx_hash_hex
             tx_hash = tx_hash_hex(raw_tx)
             
+            # Format value to avoid scientific notation and fix precision issues
+            # Round to remove floating point artifacts, then format
+            from decimal import Decimal, getcontext
+            getcontext().prec = 28  # High precision for decimal arithmetic
+            value_decimal = Decimal(str(value))
+            # Format without scientific notation
+            value_str = format(value_decimal, 'f')
+            
             typer.echo("=== Dry-Run Mode ===")
             typer.echo(f"From:       {sender_address}")
             typer.echo(f"To:         {dest_address}")
-            typer.echo(f"Value:      {value} ANM ({value_wei} wei)")
+            typer.echo(f"Value:      {value_str} ANM ({value_wei} wei)")
             typer.echo(f"Gas Limit:  {gas}")
             typer.echo(f"Max Fee:    {gas_price} gwei ({max_fee} wei)")
             typer.echo(f"Nonce:      {nonce}")
