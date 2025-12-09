@@ -322,3 +322,45 @@ def test_miner_mine_returns_reward_details():
         
         print(f"✓ Reward details validated: {result['mined']} blocks, {result['totalReward']} nANM total")
         print(f"✓ Per-block rewards: {result['rewards']}")
+
+
+def test_miner_reward_response_structure():
+    """Test that miner.mine RPC response has correct structure for rewards."""
+    client, cfg, _ = new_test_client()
+    
+    # Get a test address
+    test_addr_hex = _get_premine_address_hex()
+    
+    # Mine 2 blocks
+    result = rpc_call(client, "miner.mine", {"count": 2, "address": test_addr_hex})["result"]
+    
+    # Verify response structure
+    assert "mined" in result, "Response should include 'mined'"
+    assert "height" in result, "Response should include 'height'"
+    assert "totalReward" in result, "Response should include 'totalReward'"
+    assert "rewards" in result, "Response should include 'rewards' array"
+    
+    # Verify rewards array structure
+    rewards_list = result["rewards"]
+    assert isinstance(rewards_list, list), "rewards should be a list"
+    
+    if result["mined"] > 0:
+        # Verify each reward entry has required fields
+        assert len(rewards_list) == result["mined"], \
+            f"rewards list length ({len(rewards_list)}) should match mined count ({result['mined']})"
+        
+        for i, reward_info in enumerate(rewards_list):
+            assert isinstance(reward_info, dict), f"Reward entry {i} should be a dict"
+            assert "height" in reward_info, f"Reward entry {i} should have 'height'"
+            assert "reward" in reward_info, f"Reward entry {i} should have 'reward'"
+            assert isinstance(reward_info["height"], int), f"Reward entry {i} height should be int"
+            assert isinstance(reward_info["reward"], int), f"Reward entry {i} reward should be int"
+            assert reward_info["reward"] >= 0, f"Reward entry {i} reward should be non-negative"
+        
+        # Verify totalReward is sum of individual rewards
+        sum_rewards = sum(r["reward"] for r in rewards_list)
+        assert result["totalReward"] == sum_rewards, \
+            f"totalReward ({result['totalReward']}) should equal sum of rewards ({sum_rewards})"
+        
+        print(f"✓ Response structure validated: {result['mined']} blocks, {result['totalReward']} nANM total")
+        print(f"✓ Per-block rewards: {rewards_list}")
