@@ -40,8 +40,21 @@ async def rpc_call(
 
 
 def _resolve_rpc_url(rpc_url: Optional[str]) -> str:
-    """Resolve RPC URL from CLI arg, env var, or network config (defaults to mainnet)."""
-    return rpc_url or os.environ.get(RPC_ENV) or load_network_config().rpc_url
+    """Resolve RPC URL from CLI arg, env var, or network config (defaults to mainnet).
+    
+    Empty strings are treated as unset and fall back to the next priority level.
+    """
+    # Check CLI argument first
+    if rpc_url and rpc_url.strip():
+        return rpc_url.strip()
+    
+    # Check environment variable
+    env_url = os.environ.get(RPC_ENV)
+    if env_url and env_url.strip():
+        return env_url.strip()
+    
+    # Fall back to network config
+    return load_network_config().rpc_url
 
 
 def _pretty(obj: Any) -> str:
