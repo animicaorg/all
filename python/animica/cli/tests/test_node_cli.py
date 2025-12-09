@@ -15,6 +15,57 @@ from typer.testing import CliRunner
 runner = CliRunner()
 
 
+# Test helper functions for up_all tests
+def create_mock_compose_files(tmpdir: Path, networks: list[str]) -> dict[str, Path]:
+    """Create mock compose files for testing."""
+    compose_files = {}
+    for network in networks:
+        compose_file = Path(tmpdir) / f"docker-compose.{network}.yml"
+        compose_file.write_text("version: '3'\nservices:\n  node:\n    image: test\n")
+        compose_files[network] = compose_file
+    return compose_files
+
+
+def create_mock_get_network_defaults(compose_files: dict[str, Path]):
+    """Create a mock get_network_defaults function."""
+    def mock_get_network_defaults(network: str) -> dict:
+        return {
+            "compose_file": compose_files[network],
+            "chain_id": 1 if network == "mainnet" else (2 if network == "testnet" else 1337),
+            "rpc_port": 8545 if network != "testnet" else 8546,
+            "data_dir": f"~/.animica/{network}",
+        }
+    return mock_get_network_defaults
+
+
+def create_mock_subprocess_success():
+    """Create a mock subprocess that always succeeds."""
+    def mock_subprocess_run(*args, **kwargs):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stderr = ""
+        mock_result.stdout = ""
+        return mock_result
+    return mock_subprocess_run
+
+
+def create_mock_subprocess_with_failures(failed_networks: set[str]):
+    """Create a mock subprocess that fails for specific networks."""
+    def mock_subprocess_run(*args, **kwargs):
+        mock_result = MagicMock()
+        env = kwargs.get("env", {})
+        network = env.get("ANIMICA_NETWORK")
+        if network in failed_networks:
+            mock_result.returncode = 1
+            mock_result.stderr = f"{network} startup failed"
+        else:
+            mock_result.returncode = 0
+            mock_result.stderr = ""
+        mock_result.stdout = ""
+        return mock_result
+    return mock_subprocess_run
+
+
 @respx.mock
 def test_status_and_head(monkeypatch: Any) -> None:
     rpc_url = "http://localhost:9999/rpc"
@@ -518,36 +569,20 @@ def test_network_switching_affects_compose_file(monkeypatch: Any) -> None:
 def test_up_all_success(monkeypatch: Any) -> None:
     """Test 'node up-all' successfully starts all networks."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Create mock compose files for all networks
         networks = ["mainnet", "testnet", "devnet", "local-devnet"]
-        compose_files = {}
+        compose_files = create_mock_compose_files(tmpdir, networks)
         
-        for network in networks:
-            compose_file = Path(tmpdir) / f"docker-compose.{network}.yml"
-            compose_file.write_text("version: '3'\nservices:\n  node:\n    image: test\n")
-            compose_files[network] = compose_file
-        
-        # Mock get_network_defaults to return our test compose files
-        def mock_get_network_defaults(network: str) -> dict:
-            return {
-                "compose_file": compose_files[network],
-                "chain_id": 1 if network == "mainnet" else (2 if network == "testnet" else 1337),
-                "rpc_port": 8545 if network != "testnet" else 8546,
-                "data_dir": f"~/.animica/{network}",
-            }
-        
-        monkeypatch.setattr("animica.cli.node.get_network_defaults", mock_get_network_defaults)
+        monkeypatch.setattr(
+            "animica.cli.node.get_network_defaults",
+            create_mock_get_network_defaults(compose_files)
+        )
         
         # Track subprocess calls
         subprocess_calls = []
         
         def mock_subprocess_run(*args, **kwargs):
             subprocess_calls.append((args, kwargs))
-            mock_result = MagicMock()
-            mock_result.returncode = 0
-            mock_result.stderr = ""
-            mock_result.stdout = ""
-            return mock_result
+            return create_mock_subprocess_success()(*args, **kwargs)
         
         with patch("animica.cli.node.subprocess.run", side_effect=mock_subprocess_run):
             result = runner.invoke(node.app, ["up-all"])
@@ -568,41 +603,18 @@ def test_up_all_success(monkeypatch: Any) -> None:
 def test_up_all_partial_failure(monkeypatch: Any) -> None:
     """Test 'node up-all' handles partial failures correctly."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Create mock compose files for all networks
         networks = ["mainnet", "testnet", "devnet", "local-devnet"]
-        compose_files = {}
+        compose_files = create_mock_compose_files(tmpdir, networks)
         
-        for network in networks:
-            compose_file = Path(tmpdir) / f"docker-compose.{network}.yml"
-            compose_file.write_text("version: '3'\nservices:\n  node:\n    image: test\n")
-            compose_files[network] = compose_file
+        monkeypatch.setattr(
+            "animica.cli.node.get_network_defaults",
+            create_mock_get_network_defaults(compose_files)
+        )
         
-        # Mock get_network_defaults
-        def mock_get_network_defaults(network: str) -> dict:
-            return {
-                "compose_file": compose_files[network],
-                "chain_id": 1 if network == "mainnet" else (2 if network == "testnet" else 1337),
-                "rpc_port": 8545 if network != "testnet" else 8546,
-                "data_dir": f"~/.animica/{network}",
-            }
-        
-        monkeypatch.setattr("animica.cli.node.get_network_defaults", mock_get_network_defaults)
-        
-        # Mock subprocess to fail for testnet
-        def mock_subprocess_run(*args, **kwargs):
-            mock_result = MagicMock()
-            # Check if this is testnet (look at environment)
-            env = kwargs.get("env", {})
-            if env.get("ANIMICA_NETWORK") == "testnet":
-                mock_result.returncode = 1
-                mock_result.stderr = "Testnet startup failed"
-            else:
-                mock_result.returncode = 0
-                mock_result.stderr = ""
-            mock_result.stdout = ""
-            return mock_result
-        
-        with patch("animica.cli.node.subprocess.run", side_effect=mock_subprocess_run):
+        with patch(
+            "animica.cli.node.subprocess.run",
+            side_effect=create_mock_subprocess_with_failures({"testnet"})
+        ):
             result = runner.invoke(node.app, ["up-all"])
             
             assert result.exit_code == 1  # Should exit with error
@@ -620,12 +632,7 @@ def test_up_all_missing_compose_file(monkeypatch: Any) -> None:
     """Test 'node up-all' skips networks with missing compose files."""
     with tempfile.TemporaryDirectory() as tmpdir:
         # Create mock compose files only for mainnet and devnet
-        compose_files = {}
-        
-        for network in ["mainnet", "devnet"]:
-            compose_file = Path(tmpdir) / f"docker-compose.{network}.yml"
-            compose_file.write_text("version: '3'\nservices:\n  node:\n    image: test\n")
-            compose_files[network] = compose_file
+        compose_files = create_mock_compose_files(tmpdir, ["mainnet", "devnet"])
         
         # Mock get_network_defaults to return non-existent files for testnet and local-devnet
         def mock_get_network_defaults(network: str) -> dict:
@@ -638,15 +645,7 @@ def test_up_all_missing_compose_file(monkeypatch: Any) -> None:
         
         monkeypatch.setattr("animica.cli.node.get_network_defaults", mock_get_network_defaults)
         
-        # Mock subprocess
-        def mock_subprocess_run(*args, **kwargs):
-            mock_result = MagicMock()
-            mock_result.returncode = 0
-            mock_result.stderr = ""
-            mock_result.stdout = ""
-            return mock_result
-        
-        with patch("animica.cli.node.subprocess.run", side_effect=mock_subprocess_run):
+        with patch("animica.cli.node.subprocess.run", side_effect=create_mock_subprocess_success()):
             result = runner.invoke(node.app, ["up-all"])
             
             assert result.exit_code == 0  # Should succeed since some networks started
@@ -664,25 +663,13 @@ def test_up_all_missing_compose_file(monkeypatch: Any) -> None:
 def test_up_all_docker_not_found(monkeypatch: Any) -> None:
     """Test 'node up-all' handles docker not being installed."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Create mock compose files
         networks = ["mainnet", "testnet", "devnet", "local-devnet"]
-        compose_files = {}
+        compose_files = create_mock_compose_files(tmpdir, networks)
         
-        for network in networks:
-            compose_file = Path(tmpdir) / f"docker-compose.{network}.yml"
-            compose_file.write_text("version: '3'\nservices:\n  node:\n    image: test\n")
-            compose_files[network] = compose_file
-        
-        # Mock get_network_defaults
-        def mock_get_network_defaults(network: str) -> dict:
-            return {
-                "compose_file": compose_files[network],
-                "chain_id": 1,
-                "rpc_port": 8545,
-                "data_dir": f"~/.animica/{network}",
-            }
-        
-        monkeypatch.setattr("animica.cli.node.get_network_defaults", mock_get_network_defaults)
+        monkeypatch.setattr(
+            "animica.cli.node.get_network_defaults",
+            create_mock_get_network_defaults(compose_files)
+        )
         
         # Mock subprocess.run to raise FileNotFoundError
         with patch("animica.cli.node.subprocess.run", side_effect=FileNotFoundError()):
@@ -716,36 +703,20 @@ def test_up_all_all_skipped(monkeypatch: Any) -> None:
 def test_up_all_with_miner_flag(monkeypatch: Any) -> None:
     """Test 'node up-all --with-miner' includes miner profile for mainnet/testnet."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Create mock compose files
         networks = ["mainnet", "testnet", "devnet", "local-devnet"]
-        compose_files = {}
+        compose_files = create_mock_compose_files(tmpdir, networks)
         
-        for network in networks:
-            compose_file = Path(tmpdir) / f"docker-compose.{network}.yml"
-            compose_file.write_text("version: '3'\nservices:\n  node:\n    image: test\n")
-            compose_files[network] = compose_file
-        
-        # Mock get_network_defaults
-        def mock_get_network_defaults(network: str) -> dict:
-            return {
-                "compose_file": compose_files[network],
-                "chain_id": 1 if network == "mainnet" else (2 if network == "testnet" else 1337),
-                "rpc_port": 8545 if network != "testnet" else 8546,
-                "data_dir": f"~/.animica/{network}",
-            }
-        
-        monkeypatch.setattr("animica.cli.node.get_network_defaults", mock_get_network_defaults)
+        monkeypatch.setattr(
+            "animica.cli.node.get_network_defaults",
+            create_mock_get_network_defaults(compose_files)
+        )
         
         # Track subprocess calls to verify miner profile
         subprocess_calls = []
         
         def mock_subprocess_run(*args, **kwargs):
             subprocess_calls.append((args, kwargs))
-            mock_result = MagicMock()
-            mock_result.returncode = 0
-            mock_result.stderr = ""
-            mock_result.stdout = ""
-            return mock_result
+            return create_mock_subprocess_success()(*args, **kwargs)
         
         with patch("animica.cli.node.subprocess.run", side_effect=mock_subprocess_run):
             result = runner.invoke(node.app, ["up-all", "--with-miner"])

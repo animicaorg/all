@@ -19,6 +19,9 @@ DEFAULT_RPC_URL = load_network_config().rpc_url
 RPC_ENV = "ANIMICA_RPC_URL"
 STATE_KEY_NETWORK = "active_network"
 
+# Networks that use the 'dev' profile in docker-compose
+DEV_NETWORKS = {"devnet", "local-devnet"}
+
 app = typer.Typer(help="Manage and query Animica nodes.")
 
 
@@ -297,11 +300,11 @@ def up(
     ]
     
     # Add profiles based on network and options
-    if network in ["devnet", "local-devnet"]:
+    if network in DEV_NETWORKS:
         # Devnet uses profiles: 'dev' for node+miner by default
         cmd.extend(["--profile", "dev"])
     
-    if with_miner and network not in ["devnet", "local-devnet"]:
+    if with_miner and network not in DEV_NETWORKS:
         # For mainnet/testnet, miner is in separate profile
         cmd.extend(["--profile", "miner"])
     
@@ -453,10 +456,10 @@ def up_all(
         ]
         
         # Add profiles based on network and options
-        if network in ["devnet", "local-devnet"]:
+        if network in DEV_NETWORKS:
             cmd.extend(["--profile", "dev"])
         
-        if with_miner and network not in ["devnet", "local-devnet"]:
+        if with_miner and network not in DEV_NETWORKS:
             cmd.extend(["--profile", "miner"])
         
         if build:
@@ -597,7 +600,7 @@ def down(
     ]
     
     # Add profiles for devnet
-    if network in ["devnet", "local-devnet"]:
+    if network in DEV_NETWORKS:
         cmd.extend(["--profile", "dev"])
     
     cmd.append("down")
