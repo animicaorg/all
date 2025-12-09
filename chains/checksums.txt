@@ -1,4 +1,4 @@
-<sha256-of-chains/animica.localnet.json>  chains/animica.localnet.json
-<sha256-of-chains/animica.mainnet.json>   chains/animica.mainnet.json
-<sha256-of-chains/animica.testnet.json>   chains/animica.testnet.json
-<sha256-of-chains/registry.json>          chains/registry.json
+0b2dd563e1dc93b34285a8926a512818dfc9bbfd837ed384efe25b123e7615c1  chains/animica.localnet.json
+66f989527cdc8f063cda9c4814582aa2e83ad44cf289bb89e19c3e3fb0f26bd6  chains/animica.mainnet.json
+b6a7fee93ea099e5a8e065b6e655657a07fcdd2caeb316b5f3481b846f249dc3  chains/animica.testnet.json
+a6ceba8d473f9eb6c24bb0c656e6f34cc14590d1d576ef687ef93dc7504769ac  chains/registry.json

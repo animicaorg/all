@@ -2,10 +2,10 @@
 # One host per line. These should resolve to healthy, up-to-date testnet nodes.
 # Keep them geo-distributed and monitored; prune unhealthy backends automatically.
 
-seed1.testnet.animica.dev
-seed2.testnet.animica.dev
+seed1.testnet.animica.org
+seed2.testnet.animica.org
 # Optional community-operated seeds (commented examples):
-# community-seed.us.testnet.animica.dev
-# community-seed.eu.testnet.animica.dev
-# community-seed.ap.testnet.animica.dev
+# community-seed.us.testnet.animica.org
+# community-seed.eu.testnet.animica.org
+# community-seed.ap.testnet.animica.org
 144.126.133.21

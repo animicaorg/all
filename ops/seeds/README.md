@@ -10,11 +10,13 @@ This directory documents how we **select**, **rotate**, and **check liveness** f
 
 A seed is an endpoint reachable on at least one supported P2P transport that can answer **HELLO/IDENTIFY** and return a small list of peers. For Animica, transports may include:
 
-- **QUIC** (preferred): `quic://seedX.animica.net:443`
+- **QUIC** (preferred): `quic://seedX.animica.net:443` (UDP/443 for nginx reverse proxy)
 - **TCP** (fallback): `tcp://seedX.animica.net:30333`
 - **WS** (ops/debug only): `ws://seedX.animica.net:30334`
 
 Seeds are typically long-lived, well-monitored nodes with open firewall to inbound connections and **no mining** enabled.
+
+**Note on nginx configuration:** For public seeds behind nginx, configure QUIC on UDP port 443 and TCP on port 30333. This allows standard HTTPS/QUIC coexistence while maintaining a dedicated TCP fallback port.
 
 ---
 
@@ -40,14 +42,14 @@ Typical rotation:
 
 1) Discover & score candidates from live telemetry
 
-python ops/scripts/gen_bootstrap_list.py –rpc https://rpc.devnet.animica.org 
-–min-score 0.7 –max 16 > ops/seeds/bootstrap_nodes.json
+python ops/scripts/gen_bootstrap_list.py --rpc https://rpc.devnet.animica.org 
+--min-score 0.7 --max 16 > ops/seeds/bootstrap_nodes.json
 
 2) Optionally refine (pin, drop, shuffle) with policy rules
 
 python ops/scripts/rotate_seeds.py ops/seeds/bootstrap_nodes.json 
-–min-uptime 0.98 –geo-diversity –max-per-asn 2 
-–write ops/seeds/bootstrap_nodes.json
+--min-uptime 0.98 --geo-diversity --max-per-asn 2 
+--write ops/seeds/bootstrap_nodes.json
 
 Commit the updated `bootstrap_nodes.json` and bump the chart/compose values that reference it if you pin hashes.
 
@@ -97,7 +99,7 @@ Example (ops/seeds/bootstrap_nodes.json):
       "peer_id": "12D3KooWb2…4a",
       "multiaddrs": [
         "/ip4/203.0.113.10/udp/443/quic-v1",
-        "/dns/seed-eu-1.animica.dev/udp/443/quic-v1",
+        "/dns/seed-eu-1.testnet.animica.org/udp/443/quic-v1",
         "/ip4/203.0.113.10/tcp/30333"
       ],
       "region": "eu-west",
@@ -108,7 +110,7 @@ Example (ops/seeds/bootstrap_nodes.json):
     {
       "peer_id": "12D3KooWc9…fz",
       "multiaddrs": [
-        "/dns/seed-us-1.animica.dev/udp/443/quic-v1",
+        "/dns/seed-us-1.testnet.animica.org/udp/443/quic-v1",
         "/ip4/198.51.100.23/tcp/30333"
       ],
       "region": "us-east",
@@ -162,7 +164,7 @@ Use these to validate before promoting a seed and in CI/CD:
 # For CI, we rely on the node's /metrics + handshake check below.
 
 # TCP fallback port open?
-bash ops/docker/healthchecks/http_health.sh tcp seed-us-1.animica.dev:30333 --timeout 5
+bash ops/docker/healthchecks/http_health.sh tcp seed-us-1.testnet.animica.org:30333 --timeout 5
 
 2) Handshake + IDENTIFY + head freshness
 
@@ -181,7 +183,7 @@ Scrape basic health to compute score:
 
 Example manual scrape (if accessible):
 
-curl -fsSL "http://seed-us-1.animica.dev:9090/metrics" | head
+curl -fsSL "http://seed-us-1.testnet.animica.org:9090/metrics" | head
 
 4) CI entrypoint
 
