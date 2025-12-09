@@ -15,11 +15,11 @@ seed-eu-1.animica.net
 seed-ap-1.animica.net
 
 # --- testnet (animica:2) ---
-seed-us-1.testnet.animica.dev
-seed-eu-1.testnet.animica.dev
-seed-ap-1.testnet.animica.dev
+seed-us-1.testnet.animica.org
+seed-eu-1.testnet.animica.org
+seed-ap-1.testnet.animica.org
 
 # --- devnet (animica:1337) ---
-seed-us-1.devnet.animica.dev
-seed-eu-1.devnet.animica.dev
-seed-ap-1.devnet.animica.dev
+seed-us-1.devnet.animica.org
+seed-eu-1.devnet.animica.org
+seed-ap-1.devnet.animica.org

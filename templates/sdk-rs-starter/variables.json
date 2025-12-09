@@ -51,7 +51,7 @@
     "prompt": "Default Animica RPC URL",
     "default": "http://localhost:8545",
     "pattern": "^https?://.+",
-    "example": "https://rpc.devnet.animica.dev",
+    "example": "https://rpc.devnet.animica.org",
     "required": true
   },
 
