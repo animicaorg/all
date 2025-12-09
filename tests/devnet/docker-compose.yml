@@ -64,7 +64,7 @@ services:
       timeout: 3s
       retries: 20
     ports:
-      - "${HOST_NODE1_RPC:-8545}:8545"
+      - "${HOST_NODE1_RPC:-38545}:8545"
     networks: [devnet]
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -102,7 +102,7 @@ services:
       timeout: 3s
       retries: 20
     ports:
-      - "${HOST_NODE2_RPC:-9545}:9545"
+      - "${HOST_NODE2_RPC:-39545}:9545"
     networks: [devnet]
     extra_hosts:
       - "host.docker.internal:host-gateway"
