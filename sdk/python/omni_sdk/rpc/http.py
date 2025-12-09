@@ -125,7 +125,7 @@ class RpcClient:
         """Perform a single JSON-RPC request and return `result` or raise RpcError."""
         payload = self._make_payload(method, params, id)
         resp = self._send_with_retries(payload)
-        return self._handle_response(resp)
+        return resp
 
     def batch(self, calls: Sequence[Tuple[str, Params]]) -> List[JSON]:
         """Perform a JSON-RPC batch; returns list of results in the same order as `calls`."""
