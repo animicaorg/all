@@ -130,9 +130,14 @@ def test_rpc_methods_have_proper_imports():
         "Miner RPC should import from core.types for real types"
     )
     
-    # Should not import from test mocks
-    assert "from test" not in source.lower() or "# test" in source.lower(), (
-        "Production RPC should not import from test modules"
+    # Should not import from test modules (look for actual imports, not comments)
+    # Extract import lines only to avoid false positives from comments
+    import_lines = [line for line in source.split('\n') 
+                    if line.strip().startswith(('import ', 'from '))]
+    test_imports = [line for line in import_lines if 'test' in line.lower()]
+    
+    assert len(test_imports) == 0, (
+        f"Production RPC should not import from test modules. Found: {test_imports}"
     )
 
 
