@@ -141,7 +141,7 @@ def mine_blocks(
     address: str = typer.Option(
         ...,
         "--address",
-        help="Payout address for mined blocks (e.g., anim1...)",
+        help="Payout address for mined blocks (bech32 or hex format, e.g., anim1... or 0x...)",
     ),
     count: int = typer.Option(
         ...,
@@ -156,14 +156,41 @@ def mine_blocks(
     ),
 ) -> None:
     """
-    Mine a specified number of blocks to a given address.
+    Mine blocks with proof-of-work to a specified payout address.
     
-    This command uses the node's mining RPC to mine blocks for testing
-    and development purposes. Block rewards will be credited to the specified address.
+    This command performs actual mining by iterating through nonces until finding
+    block hashes that meet the current difficulty target (derived from the network's
+    theta parameter). Block rewards are credited to the specified payout address.
+    
+    The mining process:
+    1. Retrieves current chain head and difficulty (theta) from the node
+    2. Iterates through nonces to find a valid block hash
+    3. Submits the mined block when a hash meets the target
+    4. Credits the block reward to the payout address
+    
+    Persistence:
+      - Chain state is stored under ~/.animica/chain-{chain_id}/ by default
+      - Use ANIMICA_RPC_DB_URI to specify a custom database location
+    
+    Difficulty:
+      - Target is calculated from the network's theta (acceptance threshold)
+      - Set ANIMICA_MINER_MAX_NONCE to limit nonce iterations (default: 100000)
+      - Higher theta means harder mining (lower target)
     
     Examples:
+        # Mine 5 blocks to a bech32 address
         animica miner mine-blocks --address anim1test123 --count 5
+        
+        # Mine to a hex address
+        animica miner mine-blocks --address 0xabcd...1234 --count 10
+        
+        # Mine with custom RPC endpoint
         animica miner mine-blocks --address anim1test123 --count 10 --rpc-url http://localhost:8545
+    
+    Environment variables:
+        ANIMICA_RPC_URL          - Node RPC endpoint (default: http://127.0.0.1:8545/rpc)
+        ANIMICA_MINER_ADDRESS    - Default payout address if --address not specified
+        ANIMICA_MINER_MAX_NONCE  - Max nonce iterations per block (default: 100000)
     
     Note: For backward compatibility with older nodes, if the node doesn't support
     payout address selection, blocks will be mined to the node's default miner address.
