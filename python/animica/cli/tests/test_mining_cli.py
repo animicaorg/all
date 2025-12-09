@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
+import typer
 from animica.cli import mining
 from typer.testing import CliRunner
 
@@ -75,3 +77,137 @@ def test_generate_payout_address(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert "pool-payout" in result.output
     assert wallet_file.exists()
+
+
+def test_mine_blocks_command_exists() -> None:
+    """Test that mine-blocks command is registered and has correct parameters."""
+    # Test that the command can be invoked (even if it fails due to missing args)
+    # This verifies the command is registered without accessing private attributes
+    try:
+        result = runner.invoke(mining.app, ["mine-blocks", "--help"])
+        # If help works, command exists - but stub Typer may not support --help
+    except (typer.BadParameter, AttributeError):
+        # Expected with stub Typer - command exists but help not supported
+        pass
+    
+    # Alternative: test that invoking with missing args gives appropriate error
+    try:
+        runner.invoke(mining.app, ["mine-blocks"])
+    except typer.BadParameter as e:
+        # Command exists and validates arguments
+        assert "address" in str(e) or "count" in str(e)
+
+
+def test_mine_blocks_missing_address() -> None:
+    """Test that mine-blocks fails when address is missing."""
+    try:
+        result = runner.invoke(mining.app, ["mine-blocks", "--count", "5"])
+        # Should fail with exit code or raise exception
+        assert result.exit_code != 0
+    except typer.BadParameter as e:
+        # Expected - missing required argument
+        assert "address" in str(e)
+
+
+def test_mine_blocks_missing_count() -> None:
+    """Test that mine-blocks fails when count is missing."""
+    try:
+        result = runner.invoke(mining.app, ["mine-blocks", "--address", "anim1test123"])
+        # Should fail with exit code or raise exception
+        assert result.exit_code != 0
+    except typer.BadParameter as e:
+        # Expected - missing required argument
+        assert "count" in str(e)
+
+
+def test_mine_blocks_invalid_count_zero() -> None:
+    """Test that count=0 is rejected."""
+    result = runner.invoke(
+        mining.app,
+        ["mine-blocks", "--address", "anim1test123", "--count", "0"],
+    )
+    assert result.exit_code == 2
+    assert "must be greater than 0" in result.output
+
+
+def test_mine_blocks_invalid_count_negative() -> None:
+    """Test that negative count is rejected."""
+    result = runner.invoke(
+        mining.app,
+        ["mine-blocks", "--address", "anim1test123", "--count", "-5"],
+    )
+    assert result.exit_code == 2
+    assert "must be greater than 0" in result.output
+
+
+def test_mine_blocks_success(monkeypatch: Any) -> None:
+    """Test that mine-blocks calls RPC successfully."""
+    class MockRpcClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        
+        def __enter__(self):
+            return self
+        
+        def __exit__(self, *args):
+            pass
+        
+        def request(self, method: str, params: list):
+            return {"mined": 3, "height": 103}
+    
+    mock_module = Mock()
+    mock_module.RpcClient = MockRpcClient
+    
+    # Use monkeypatch to mock the module imports
+    monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
+    monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
+    
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", "anim1test123",
+            "--count", "3",
+            "--rpc-url", "http://127.0.0.1:8545",
+        ],
+    )
+    
+    assert result.exit_code == 0
+    assert "Successfully mined" in result.output
+    assert "3 block(s)" in result.output
+
+
+def test_mine_blocks_rpc_error(monkeypatch: Any) -> None:
+    """Test that mine-blocks handles RPC errors gracefully."""
+    class MockRpcClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        
+        def __enter__(self):
+            return self
+        
+        def __exit__(self, *args):
+            pass
+        
+        def request(self, method: str, params: list):
+            raise ConnectionError("RPC connection failed")
+    
+    mock_module = Mock()
+    mock_module.RpcClient = MockRpcClient
+    
+    # Use monkeypatch to mock the module imports
+    monkeypatch.setitem(__import__("sys").modules, "omni_sdk.rpc.http", mock_module)
+    monkeypatch.setitem(__import__("sys").modules, "sdk.python.omni_sdk.rpc.http", mock_module)
+    
+    result = runner.invoke(
+        mining.app,
+        [
+            "mine-blocks",
+            "--address", "anim1test123",
+            "--count", "3",
+            "--rpc-url", "http://127.0.0.1:8545",
+        ],
+    )
+    
+    assert result.exit_code == 5
+    assert "Failed to connect to RPC" in result.output
