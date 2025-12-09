@@ -84,10 +84,10 @@ function TopBar() {
 
       <div className="grow" />
 
-      <div className="net-pill" title={rpcUrl}>
-        <span className="dot" />
+      <div className="net-pill" title={`RPC: ${rpcUrl}`}>
+        <span className="dot status-connected" />
         <span className="label">Chain</span>
-        <span className="value">{chainId}</span>
+        <span className="value">{chainId || "Unknown"}</span>
       </div>
 
       <button className="btn ghost" onClick={toggle} aria-label="Toggle theme">
@@ -190,7 +190,7 @@ function GlobalLoaderOverlay() {
       const detail = (e as CustomEvent).detail as { on?: boolean; label?: string };
       if (detail?.on) {
         pendingCount.current += 1;
-        setLabel(detail.label ?? "Working…");
+        setLabel(detail.label ?? "Loading…");
         setVisible(true);
       } else {
         pendingCount.current = Math.max(0, pendingCount.current - 1);
@@ -210,8 +210,8 @@ function GlobalLoaderOverlay() {
       <div className="loader-card">
         <div className="spinner" aria-hidden />
         <div className="loader-text">
-          <strong>{label ?? "Loading"}</strong>
-          <span className="muted">Please wait…</span>
+          <strong>{label ?? "Loading…"}</strong>
+          <span className="muted">Please wait...</span>
         </div>
       </div>
     </div>
@@ -372,10 +372,14 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.4 ui-sans-serif
 .grow{flex:1}
 .btn.ghost{background:transparent;border:1px solid var(--border);color:var(--text);padding:.35rem .6rem;border-radius:.4rem;cursor:pointer}
 .btn.ghost:hover{border-color:var(--accent)}
-.net-pill{display:flex;align-items:center;gap:.4rem;border:1px solid var(--border);padding:.2rem .5rem;border-radius:999px;background:transparent}
-.net-pill .dot{width:8px;height:8px;border-radius:999px;background:var(--ok)}
-.net-pill .label{opacity:.8}
-.net-pill .value{font-weight:600}
+.net-pill{display:flex;align-items:center;gap:.4rem;border:1px solid var(--border);padding:.3rem .6rem;border-radius:999px;background:var(--panel);transition:all .2s ease}
+.net-pill:hover{border-color:var(--accent);box-shadow:0 0 0 3px rgba(64,169,255,.1)}
+.net-pill .dot{width:8px;height:8px;border-radius:999px;background:var(--ok);animation:pulse 2s ease-in-out infinite}
+.net-pill .dot.status-connected{background:var(--ok);box-shadow:0 0 0 2px rgba(60,207,145,.2)}
+.net-pill .dot.status-disconnected{background:var(--err);box-shadow:0 0 0 2px rgba(255,107,107,.2)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
+.net-pill .label{opacity:.8;font-size:.85rem}
+.net-pill .value{font-weight:600;font-size:.9rem}
 
 .app-container{display:grid;grid-template-columns: 220px 1fr; height: calc(100% - 52px)}
 .sidenav{border-right:1px solid var(--border);padding:.6rem;background:linear-gradient(180deg,var(--panel),transparent)}
@@ -391,11 +395,14 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.4 ui-sans-serif
 .top-progress.active{transform:scaleX(1);animation:tp 1.1s ease-in-out infinite}
 @keyframes tp{0%{opacity:.4}50%{opacity:1}100%{opacity:.4}}
 
-.loader-overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:70;backdrop-filter:saturate(120%) blur(2px)}
-.loader-card{display:flex;gap:.8rem;align-items:center;background:var(--panel);border:1px solid var(--border);padding:.9rem 1.1rem;border-radius:.6rem;box-shadow:0 10px 30px rgba(0,0,0,.25)}
-.spinner{width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:sp 1s linear infinite}
+.loader-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:70;backdrop-filter:saturate(120%) blur(8px);animation:fadeIn .2s ease}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.loader-card{display:flex;gap:1rem;align-items:center;background:var(--panel);border:1px solid var(--border);padding:1.5rem 2rem;border-radius:.8rem;box-shadow:0 20px 60px rgba(0,0,0,.35);animation:slideUp .3s ease}
+@keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
+.spinner{width:24px;height:24px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:sp .8s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
-.loader-text{display:flex;flex-direction:column}
+.loader-text{display:flex;flex-direction:column;gap:.2rem}
+.loader-text strong{font-size:1rem;font-weight:600}
 
 .toast-host{position:fixed;inset:auto 12px 12px auto;display:flex;flex-direction:column;gap:.5rem;z-index:80}
 .toast{position:relative;max-width:380px;background:var(--panel);border:1px solid var(--border);padding:.7rem .9rem;border-radius:.6rem;box-shadow:0 10px 30px rgba(0,0,0,.25)}
