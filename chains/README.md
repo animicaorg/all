@@ -151,13 +151,13 @@ Copy code
   "status": "active",
   "testnet": true,
   "nativeCurrency": { "name": "Animica", "symbol": "ANM", "decimals": 18 },
-  "rpc": { "http": ["https://rpc.testnet.animica.dev"], "ws": ["wss://ws.testnet.animica.dev"] },
-  "explorers": [{ "name": "Animica Explorer", "url": "https://explorer.testnet.animica.dev" }],
-  "faucets": [{ "name": "Faucet", "url": "https://faucet.testnet.animica.dev" }],
+  "rpc": { "http": ["https://rpc.testnet.animica.org"], "ws": ["wss://ws.testnet.animica.org"] },
+  "explorers": [{ "name": "Animica Explorer", "url": "https://explorer.testnet.animica.org" }],
+  "faucets": [{ "name": "Faucet", "url": "https://faucet.testnet.animica.org" }],
   "p2p": {
     "protocols": ["animica/1"],
     "port": 30303,
-    "seeds": ["seed1.testnet.animica.dev", "seed2.testnet.animica.dev"],
+    "seeds": ["seed1.testnet.animica.org", "seed2.testnet.animica.org"],
     "bootnodes": []
   },
   "addresses": { "format": "bech32m", "hrp": "am", "pubkeyTypes": ["ed25519","secp256k1","dilithium3"] },

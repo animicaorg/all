@@ -9,16 +9,16 @@
   "nativeCurrency": { "name": "Animica", "symbol": "ANM", "decimals": 18 },
 
   "rpc": {
-    "http": ["http://144.126.133.21:8545", "https://rpc.testnet.animica.dev"],
-    "ws":   ["wss://ws.testnet.animica.dev"]
+    "http": ["http://144.126.133.21:8545", "https://rpc.testnet.animica.org"],
+    "ws":   ["wss://ws.testnet.animica.org"]
   },
 
   "explorers": [
-    { "name": "Animica Explorer", "url": "https://explorer.testnet.animica.dev" }
+    { "name": "Animica Explorer", "url": "https://explorer.testnet.animica.org" }
   ],
 
   "faucets": [
-    { "name": "Faucet", "url": "https://faucet.testnet.animica.dev" }
+    { "name": "Faucet", "url": "https://faucet.testnet.animica.org" }
   ],
 
   "p2p": {
@@ -26,8 +26,8 @@
     "port": 30303,
     "seeds": [
       "144.126.133.21",
-      "seed1.testnet.animica.dev",
-      "seed2.testnet.animica.dev"
+      "seed1.testnet.animica.org",
+      "seed2.testnet.animica.org"
     ],
     "bootnodes": []
   },
