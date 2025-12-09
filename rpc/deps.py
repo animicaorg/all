@@ -87,9 +87,7 @@ def _params_from_spec(chain_id: int | None = None) -> t.Dict[str, t.Any]:
     raw = _load_yaml(p)
 
     # If chain_id is provided, try to load network-specific config
-    network_key = None
-    if chain_id is not None:
-        network_key = f"animica:{chain_id}"
+    network_key = f"animica:{chain_id}" if chain_id is not None else None
     
     # Check if params.yaml uses new network structure
     networks = raw.get("networks", {})
@@ -97,8 +95,9 @@ def _params_from_spec(chain_id: int | None = None) -> t.Dict[str, t.Any]:
         # Use network-specific config
         network_config = networks[network_key]
         out: dict[str, t.Any] = dict(network_config)
-        # Ensure chain_id is set
-        out.setdefault("chain_id", chain_id)
+        # Ensure chain_id fields are set consistently
+        out["chain_id"] = chain_id
+        out["chainId"] = chain_id
         return out
     
     # Fallback: try old structure or return minimal config
@@ -139,8 +138,12 @@ def _params_from_spec(chain_id: int | None = None) -> t.Dict[str, t.Any]:
         out["consensus"] = raw.get("consensus", {})
 
     # Ensure required keys exist even if params.yaml is skeletal
-    out.setdefault("chainId", chain_id)
-    out.setdefault("chain_id", chain_id)
+    # Set chain_id fields consistently
+    if chain_id is not None:
+        out["chainId"] = chain_id
+        out["chain_id"] = chain_id
+    out.setdefault("chainId", None)
+    out.setdefault("chain_id", None)
     out.setdefault("name", "Animica")
     out.setdefault("gas", {})
     out.setdefault("block", {})
