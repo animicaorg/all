@@ -54,9 +54,9 @@ networks:
         target_block_interval_ms: 2000
         # Block subsidy schedule: exponential decay toward a tail emission
         subsidy:
-          start_nANM_per_block: 1000000       # 0.001 ANM per block initially
-          epoch_length_blocks: 4320000         # ~100 days at 2s blocks
-          decay_pct_per_epoch: 12.5            # multiplicative decay each epoch
+          start_nANM_per_block: 5000000000    # 5 ANM per block base reward
+          epoch_length_blocks: 90000000        # 90M blocks per halving epoch
+          decay_pct_per_epoch: 50.0            # 50% decay per epoch (true halving)
           tail_nANM_per_block: 100000          # 0.0001 ANM tail (never below this)
           max_halvings: 64
         # Split of block subsidy (fees configured below)
@@ -161,10 +161,10 @@ networks:
       issuance:
         target_block_interval_ms: 2000
         subsidy:
-          start_nANM_per_block: 4000000       # more generous for testing
-          epoch_length_blocks: 864000          # ~20 days
-          decay_pct_per_epoch: 20.0
-          tail_nANM_per_block: 200000
+          start_nANM_per_block: 5000000000    # 5 ANM per block base reward
+          epoch_length_blocks: 90000000        # 90M blocks per halving epoch
+          decay_pct_per_epoch: 50.0            # 50% decay per epoch (true halving)
+          tail_nANM_per_block: 100000          # 0.0001 ANM tail (never below this)
           max_halvings: 64
         subsidy_split_pct: { miner: 70, aicf: 20, treasury: 10 }
       fees:
@@ -233,10 +233,10 @@ networks:
       issuance:
         target_block_interval_ms: 2000
         subsidy:
-          start_nANM_per_block: 10000000      # 0.01 ANM for fast local boot
-          epoch_length_blocks: 216000         # ~5 days
-          decay_pct_per_epoch: 25.0
-          tail_nANM_per_block: 500000
+          start_nANM_per_block: 5000000000    # 5 ANM per block base reward
+          epoch_length_blocks: 90000000        # 90M blocks per halving epoch
+          decay_pct_per_epoch: 50.0            # 50% decay per epoch (true halving)
+          tail_nANM_per_block: 100000          # 0.0001 ANM tail (never below this)
           max_halvings: 64
         subsidy_split_pct: { miner: 60, aicf: 30, treasury: 10 }
       fees:
