@@ -139,6 +139,26 @@ def _beacon() -> bytes:
         return b""
 
 
+def _decode_bech32_address(address: str) -> bytes:
+    """
+    Decode a bech32 address to 32-byte raw address.
+    
+    Args:
+        address: Bech32 address string (e.g., "anim1...")
+        
+    Returns:
+        bytes: 32-byte address (digest padded to 32 bytes)
+        
+    Raises:
+        Exception: If address cannot be decoded
+    """
+    from pq.py.address import decode_address  # type: ignore[import-not-found]
+    
+    addr_record = decode_address(address)
+    digest = bytes(addr_record.digest) if isinstance(addr_record.digest, list) else addr_record.digest
+    return digest[:32].ljust(32, b"\x00")
+
+
 def _get_miner_address() -> bytes:
     """
     Determine the default miner address for block rewards.
@@ -156,10 +176,7 @@ def _get_miner_address() -> bytes:
     if env_addr:
         try:
             # Try to decode bech32 address to raw bytes
-            from pq.py.address import decode_address  # type: ignore[import-not-found]
-            addr_record = decode_address(env_addr)
-            digest = bytes(addr_record.digest) if isinstance(addr_record.digest, list) else addr_record.digest
-            return digest[:32].ljust(32, b"\x00")
+            return _decode_bech32_address(env_addr)
         except Exception:
             # If bech32 decode fails, try hex
             try:
@@ -181,10 +198,7 @@ def _get_miner_address() -> bytes:
         if chain_id in (1, 1337) and MAINNET_PREMINE_DISTRIBUTION:
             premine_addr = MAINNET_PREMINE_DISTRIBUTION[0][0]  # First address in distribution
             try:
-                from pq.py.address import decode_address  # type: ignore[import-not-found]
-                addr_record = decode_address(premine_addr)
-                digest = bytes(addr_record.digest) if isinstance(addr_record.digest, list) else addr_record.digest
-                return digest[:32].ljust(32, b"\x00")
+                return _decode_bech32_address(premine_addr)
             except Exception:
                 pass
     except Exception:
@@ -224,10 +238,7 @@ def _apply_block_reward(ctx: Any, height: int) -> None:
                 # Convert bech32 address to bytes if needed
                 if isinstance(reward_addr, str):
                     try:
-                        from pq.py.address import decode_address  # type: ignore[import-not-found]
-                        addr_record = decode_address(reward_addr)
-                        digest = bytes(addr_record.digest) if isinstance(addr_record.digest, list) else addr_record.digest
-                        reward_addr_bytes = digest[:32].ljust(32, b"\x00")
+                        reward_addr_bytes = _decode_bech32_address(reward_addr)
                     except Exception:
                         log.warning(f"Could not decode reward address {reward_addr}; skipping")
                         continue

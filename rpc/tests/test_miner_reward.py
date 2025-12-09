@@ -12,11 +12,13 @@ import pytest
 from rpc.tests import new_test_client, rpc_call
 
 
-def test_miner_mine_applies_reward_to_premine_address():
-    """Test that mining a block credits reward to the premine address."""
-    client, cfg, _ = new_test_client()
+def _get_premine_address_hex() -> str:
+    """
+    Helper to get the premine address as hex string.
     
-    # Get the premine address from consensus.rewards
+    Returns:
+        str: Hex-encoded premine address (0x-prefixed)
+    """
     from consensus.rewards import MAINNET_PREMINE_DISTRIBUTION
     from pq.py.address import decode_address
     
@@ -24,7 +26,15 @@ def test_miner_mine_applies_reward_to_premine_address():
     addr_record = decode_address(premine_addr_bech32)
     digest = bytes(addr_record.digest) if isinstance(addr_record.digest, list) else addr_record.digest
     premine_addr_bytes = digest[:32].ljust(32, b"\x00")
-    premine_addr_hex = "0x" + premine_addr_bytes.hex()
+    return "0x" + premine_addr_bytes.hex()
+
+
+def test_miner_mine_applies_reward_to_premine_address():
+    """Test that mining a block credits reward to the premine address."""
+    client, cfg, _ = new_test_client()
+    
+    # Get the premine address
+    premine_addr_hex = _get_premine_address_hex()
     
     # Get initial balance
     initial_balance_result = rpc_call(client, "state.getBalance", [premine_addr_hex])
@@ -97,14 +107,7 @@ def test_mine_multiple_blocks_accumulates_rewards():
     client, cfg, _ = new_test_client()
     
     # Get the premine address
-    from consensus.rewards import MAINNET_PREMINE_DISTRIBUTION
-    from pq.py.address import decode_address
-    
-    premine_addr_bech32 = MAINNET_PREMINE_DISTRIBUTION[0][0]
-    addr_record = decode_address(premine_addr_bech32)
-    digest = bytes(addr_record.digest) if isinstance(addr_record.digest, list) else addr_record.digest
-    premine_addr_bytes = digest[:32].ljust(32, b"\x00")
-    premine_addr_hex = "0x" + premine_addr_bytes.hex()
+    premine_addr_hex = _get_premine_address_hex()
     
     # Get initial balance
     initial_balance_result = rpc_call(client, "state.getBalance", [premine_addr_hex])
