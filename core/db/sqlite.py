@@ -167,7 +167,8 @@ def _open_connection(
         raise FileNotFoundError(f"SQLite KV not found at {path_str}")
     
     # Ensure parent directory exists for new databases (with appropriate permissions)
-    if create and not readonly and path_str and not path_str.startswith("file:"):
+    # Skip directory creation for URI-mode paths (they're handled by SQLite)
+    if create and not readonly and path_str and not uri_mode:
         parent_dir = os.path.dirname(path_str)
         if parent_dir:
             os.makedirs(parent_dir, exist_ok=True)
