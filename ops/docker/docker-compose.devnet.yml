@@ -106,9 +106,9 @@ services:
       - ./entrypoints:/entrypoints:ro
       - *healthchecks_mount
     ports:
-      - "8545:8545"   # RPC/WS (WS served at /ws)
+      - "0.0.0.0:8545:8545"   # RPC/WS (WS served at /ws)
       - "30333:30333" # P2P
-      - "9000:9000"   # P2P (alternate port)
+      - "0.0.0.0:9000:9000"   # P2P (alternate port)
     healthcheck:
       test: ["CMD-SHELL", "/healthchecks/http_health.sh --url http://localhost:8545/healthz --timeout 10 --retries 12 --backoff 500"]
       interval: 5s

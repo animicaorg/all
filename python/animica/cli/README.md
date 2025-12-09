@@ -52,8 +52,9 @@ Global Options
                             Env: ANIMICA_NETWORK
 
 --rpc-url TEXT             Override RPC endpoint URL
-                            Default: http://127.0.0.1:8545/rpc
+                            Default: Network-dependent (see below)
                             Env: ANIMICA_RPC_URL
+                            Note: Empty/whitespace values fall back to defaults
 
 --chain-id INTEGER         Override chain ID
                             Env: ANIMICA_CHAIN_ID
@@ -74,7 +75,17 @@ Settings are resolved in this priority order (highest to lowest):
 1. Command-line flags (--rpc-url, --chain-id, etc.)
 2. Environment variables (ANIMICA_RPC_URL, ANIMICA_CHAIN_ID, etc.)
 3. Config file (~/.config/animica/config.toml)
-4. Built-in defaults (mainnet on http://127.0.0.1:8545/rpc)
+4. Built-in network defaults
+
+Network defaults:
+- Mainnet: http://127.0.0.1:8545/rpc (chain ID 1)
+- Testnet: http://127.0.0.1:8546/rpc (chain ID 2)
+- Devnet: http://127.0.0.1:8545/rpc (chain ID 1337)
+
+Important: Empty strings or whitespace-only values for ANIMICA_RPC_URL 
+are treated as unset and will fall back to the network defaults. This 
+ensures `animica node status` and `animica rpc call` work without 
+explicitly setting ANIMICA_RPC_URL.
 
 Example Usage Patterns
 ======================
