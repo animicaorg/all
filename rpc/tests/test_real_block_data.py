@@ -238,12 +238,9 @@ def test_rpc_server_does_not_use_stub_node():
         "Production RPC server should not use aicf.node stub"
     )
     
-    # Should import from core and consensus for real implementations
-    has_core_import = "from core" in source or "import core" in source
-    has_consensus_import = "from consensus" in source or "import consensus" in source
-    
-    # At least one of these should be true (server may delegate to methods)
-    # This is a loose check since the server may use dependency injection
+    # Test passes if aicf.node is not imported
+    # The server may delegate to methods or use dependency injection,
+    # so we don't require specific core/consensus imports here
 
 
 if __name__ == "__main__":
