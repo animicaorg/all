@@ -77,5 +77,5 @@
 
   "features": ["poies", "pq", "da", "vm_py"],
 
-  "checksum": "<sha256-to-be-generated>"
+  "checksum": "0000000000000000000000000000000000000000000000000000000000000000"
 }
