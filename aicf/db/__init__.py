@@ -76,6 +76,12 @@ def db_path(
     p = base / name
     if create:
         p.parent.mkdir(parents=True, exist_ok=True)
+        # Set non-sensitive permissions (0o755) for AICF data directories
+        try:
+            p.parent.chmod(0o755)
+        except (OSError, PermissionError):
+            # Ignore permission errors on Windows or restricted filesystems
+            pass
     return p
 
 

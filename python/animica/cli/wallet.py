@@ -11,6 +11,7 @@ import click as _click
 import httpx
 import typer
 from animica.config import load_network_config
+from animica.cli.paths import ensure_file_dir, secure_file
 
 try:
     from pq.py.address import address_from_pubkey, validate_address
@@ -85,29 +86,13 @@ def _wallet_file_path(wallet_file: Optional[Path]) -> Path:
     return _get_default_wallet_path()
 
 
-def _secure_path(path: Path) -> None:
-    """Set secure permissions on a file (0o600)."""
-    try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
-
-
-def _secure_dir(path: Path) -> None:
-    """Set secure permissions on a directory (0o700) for owner-only access."""
-    try:
-        os.chmod(path, 0o700)
-    except OSError:
-        pass
-
-
 def _load_store(wallet_file: Path) -> Dict[str, Any]:
     if not wallet_file.exists():
-        wallet_file.parent.mkdir(parents=True, exist_ok=True)
-        _secure_dir(wallet_file.parent)  # Secure the .animica directory
+        # Ensure parent directory exists with secure permissions
+        ensure_file_dir(wallet_file, sensitive=True)
         store = {"version": 1, "wallets": []}
         wallet_file.write_text(json.dumps(store, indent=2), encoding="utf-8")
-        _secure_path(wallet_file)
+        secure_file(wallet_file)
         return store
     data = json.loads(wallet_file.read_text(encoding="utf-8"))
     if "wallets" not in data:
@@ -116,10 +101,10 @@ def _load_store(wallet_file: Path) -> Dict[str, Any]:
 
 
 def _save_store(wallet_file: Path, store: Dict[str, Any]) -> None:
-    wallet_file.parent.mkdir(parents=True, exist_ok=True)
-    _secure_dir(wallet_file.parent)  # Secure the .animica directory
+    # Ensure parent directory exists with secure permissions
+    ensure_file_dir(wallet_file, sensitive=True)
     wallet_file.write_text(json.dumps(store, indent=2), encoding="utf-8")
-    _secure_path(wallet_file)
+    secure_file(wallet_file)
 
 
 def _entry_from_dict(entry: Dict[str, Any]) -> WalletEntry:
@@ -454,9 +439,10 @@ def export(
     path = _wallet_file_path(ctx_wallet_file)
     store = _load_store(path)
     entry = _find_wallet(store, identifier=lookup_id)
-    out.parent.mkdir(parents=True, exist_ok=True)
+    # Ensure output directory exists (sensitive export file)
+    ensure_file_dir(out, sensitive=True)
     out.write_text(json.dumps(entry.to_dict(), indent=2), encoding="utf-8")
-    _secure_path(out)
+    secure_file(out)
     typer.echo(f"Exported to {out}")
 
 
