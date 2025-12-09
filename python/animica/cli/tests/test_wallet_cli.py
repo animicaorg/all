@@ -281,3 +281,54 @@ def test_wallet_show_missing_identifier_error() -> None:
     output = run_cli(["show"], wallet_file=None, expect_success=False)
     assert "Missing wallet identifier" in output
     assert "Usage:" in output
+
+
+# ============================================================================
+# PQ Dependency Tests
+# ============================================================================
+
+def test_wallet_create_missing_pq_deps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that wallet create fails with helpful message when PQ deps are missing."""
+    wallet_file = tmp_path / "wallets.json"
+    
+    # Remove the ANIMICA_UNSAFE_PQ_FAKE env var to simulate missing deps
+    # Note: ANIMICA_ALLOW_PQ_PURE_FALLBACK is not checked by check_pq_signing_available()
+    monkeypatch.delenv("ANIMICA_UNSAFE_PQ_FAKE", raising=False)
+    
+    result = runner.invoke(wallet.app, [
+        "--wallet-file", str(wallet_file),
+        "create",
+        "--label", "production-wallet"
+        # Note: NOT using --allow-insecure-fallback
+    ])
+    
+    # Should exit with error
+    assert result.exit_code == 1
+    # Should contain helpful error message
+    assert "Post-quantum signing dependencies not available" in result.output
+    assert "python-oqs" in result.output
+    assert "liboqs" in result.output
+    # Should mention the --allow-insecure-fallback option for dev/test
+    assert "allow-insecure-fallback" in result.output
+
+
+def test_wallet_create_with_insecure_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that wallet create works with --allow-insecure-fallback even when PQ deps are missing."""
+    wallet_file = tmp_path / "wallets.json"
+    
+    # Remove ANIMICA_UNSAFE_PQ_FAKE to simulate missing deps, but use --allow-insecure-fallback flag
+    monkeypatch.delenv("ANIMICA_UNSAFE_PQ_FAKE", raising=False)
+    
+    output = run_cli(
+        ["create", "--label", "dev-wallet", "--allow-insecure-fallback"],
+        wallet_file
+    )
+    
+    # Should succeed
+    assert "Wallet created" in output
+    assert "dev-wallet" in output
+    
+    # Verify wallet was created
+    store = json.loads(wallet_file.read_text())
+    assert len(store["wallets"]) == 1
+    assert store["wallets"][0]["label"] == "dev-wallet"

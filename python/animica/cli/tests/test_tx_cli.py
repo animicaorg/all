@@ -421,3 +421,49 @@ def test_send_small_value(wallet_store: Path) -> None:
     
     assert "Dry-Run Mode" in output
     assert "0.000000001 ANM" in output
+
+
+# ============================================================================
+# PQ Dependency Tests
+# ============================================================================
+
+def test_send_missing_pq_deps(wallet_store: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that tx send fails with helpful message when PQ deps are missing."""
+    # Remove the ANIMICA_UNSAFE_PQ_FAKE env var to simulate missing deps
+    monkeypatch.delenv("ANIMICA_UNSAFE_PQ_FAKE", raising=False)
+    
+    result = runner.invoke(tx.app, [
+        "send",
+        "--wallet-file", str(wallet_store),
+        "--from", "alice",
+        "--to", "anim1zqp2u7fz3msky532tz4d3076wm99datq9rdxqjxvznq7zqn7xj0869ctuj4km",
+        "--value", "1.0",
+        "--dry-run"
+    ])
+    
+    # Should exit with error
+    assert result.exit_code == 1
+    # Should contain helpful error message
+    assert "Post-quantum signing dependencies not available" in result.output
+    assert "python-oqs" in result.output
+    assert "liboqs" in result.output
+    # Should NOT contain unsafe PQ fake recommendation for production use
+    assert "NOT secure" in result.output or "development/testing only" in result.output
+
+
+def test_send_with_pq_fake_mode_enabled(wallet_store: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that tx send works when ANIMICA_UNSAFE_PQ_FAKE=1 is set."""
+    # Ensure fake mode is enabled (already set by allow_fallback fixture)
+    monkeypatch.setenv("ANIMICA_UNSAFE_PQ_FAKE", "1")
+    
+    _, output = run_tx_cli([
+        "send",
+        "--from", "alice",
+        "--to", "anim1zqp2u7fz3msky532tz4d3076wm99datq9rdxqjxvznq7zqn7xj0869ctuj4km",
+        "--value", "1.0",
+        "--dry-run"
+    ], wallet_store)
+    
+    # Should succeed
+    assert "Dry-Run Mode" in output
+    assert "Transaction built and signed (not broadcast)" in output
