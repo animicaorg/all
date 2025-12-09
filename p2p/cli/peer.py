@@ -62,7 +62,13 @@ except Exception:  # pragma: no cover
 
 
 def _ensure_dirs(path: Path) -> None:
+    """Ensure parent directory exists with appropriate permissions (0o755 for p2p data)."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.parent.chmod(0o755)
+    except (OSError, PermissionError):
+        # Ignore permission errors on Windows or restricted filesystems
+        pass
 
 
 def _now() -> float:

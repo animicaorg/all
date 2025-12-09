@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import typer
+from animica.cli.paths import ensure_file_dir, secure_file
 
 try:
     from pq.py.keygen import keygen_sig
@@ -145,19 +146,10 @@ def new(
 
         if output:
             output_path = Path(output)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            # Secure the keys directory with 0o700 (owner-only access)
-            try:
-                output_path.parent.chmod(0o700)
-            except OSError:
-                # Ignore permission errors (e.g., on Windows or restricted filesystems)
-                pass
+            # Ensure output directory exists with secure permissions
+            ensure_file_dir(output_path, sensitive=True)
             output_path.write_text(json.dumps(key_data, indent=2))
-            try:
-                output_path.chmod(0o600)
-            except OSError:
-                # Ignore permission errors (e.g., on Windows or restricted filesystems)
-                pass
+            secure_file(output_path)
             typer.echo(f"✓ Key saved to {output_path}")
             if key_data.get("address"):
                 typer.echo(f"  Address: {key_data['address']}")
