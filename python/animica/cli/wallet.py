@@ -314,6 +314,24 @@ def create(
     ),
 ) -> None:
     """Generate a new wallet and persist it to the wallet store."""
+    # Check PQ availability if not using insecure fallback
+    # Only check when HAVE_PQ is True (pq module available), as without it
+    # we can't perform the check and will fall back to cryptography anyway
+    if not allow_insecure_fallback:
+        from animica.cli.pq_utils import check_pq_signing_available
+        
+        available, error_msg = check_pq_signing_available()
+        if not available:
+            from animica.cli.pq_utils import get_pq_missing_error_message
+            typer.echo(get_pq_missing_error_message(), err=True)
+            if error_msg:
+                typer.echo(f"\nAdditional info: {error_msg}", err=True)
+            typer.echo(
+                "\nTo create a wallet for development/testing only, use --allow-insecure-fallback",
+                err=True
+            )
+            raise typer.Exit(1)
+    
     ctx_wallet_file = _current_wallet_file()
     path = _wallet_file_path(ctx_wallet_file)
     store = _load_store(path)
