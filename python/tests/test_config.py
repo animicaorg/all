@@ -4,9 +4,29 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any, Generator
 
 import pytest
 from animica.config import get_network_defaults, load_network_config
+
+
+@pytest.fixture
+def clean_env_vars() -> Generator[None, None, None]:
+    """Fixture to save and restore environment variables for clean test isolation."""
+    saved_vars = {
+        "ANIMICA_NETWORK": os.environ.get("ANIMICA_NETWORK"),
+        "ANIMICA_RPC_URL": os.environ.get("ANIMICA_RPC_URL"),
+        "ANIMICA_CHAIN_ID": os.environ.get("ANIMICA_CHAIN_ID"),
+    }
+    
+    yield
+    
+    # Restore original environment
+    for key, value in saved_vars.items():
+        if value is not None:
+            os.environ[key] = value
+        else:
+            os.environ.pop(key, None)
 
 
 def test_get_network_defaults_mainnet() -> None:
@@ -171,3 +191,62 @@ def test_compose_file_paths_exist() -> None:
     assert mainnet_defaults["compose_file"].name == "docker-compose.mainnet.yml"
     assert testnet_defaults["compose_file"].name == "docker-compose.testnet.yml"
     assert devnet_defaults["compose_file"].name == "docker-compose.yml"
+
+
+def test_load_network_config_empty_chain_id(clean_env_vars: Any) -> None:
+    """Test that empty ANIMICA_CHAIN_ID is treated as unset."""
+    os.environ["ANIMICA_NETWORK"] = "mainnet"
+    os.environ["ANIMICA_CHAIN_ID"] = ""
+    
+    # Should not crash and fall back to mainnet default
+    config = load_network_config()
+    
+    assert config.name == "mainnet"
+    assert config.chain_id == 1  # mainnet default
+
+
+def test_load_network_config_whitespace_chain_id(clean_env_vars: Any) -> None:
+    """Test that whitespace-only ANIMICA_CHAIN_ID is treated as unset."""
+    os.environ["ANIMICA_NETWORK"] = "testnet"
+    os.environ["ANIMICA_CHAIN_ID"] = "   "
+    
+    # Should not crash and fall back to testnet default
+    config = load_network_config()
+    
+    assert config.name == "testnet"
+    assert config.chain_id == 2  # testnet default
+
+
+def test_load_network_config_invalid_chain_id(clean_env_vars: Any) -> None:
+    """Test that invalid ANIMICA_CHAIN_ID falls back to default with warning."""
+    os.environ["ANIMICA_NETWORK"] = "devnet"
+    os.environ["ANIMICA_CHAIN_ID"] = "not-a-number"
+    
+    # Should not crash and fall back to devnet default
+    config = load_network_config()
+    
+    assert config.name == "devnet"
+    assert config.chain_id == 1337  # devnet default
+
+
+def test_load_network_config_valid_chain_id_override(clean_env_vars: Any) -> None:
+    """Test that valid ANIMICA_CHAIN_ID overrides the default."""
+    os.environ["ANIMICA_NETWORK"] = "mainnet"
+    os.environ["ANIMICA_CHAIN_ID"] = "999"
+    
+    config = load_network_config()
+    
+    assert config.name == "mainnet"
+    assert config.chain_id == 999  # overridden value
+
+
+def test_load_network_config_no_chain_id_env(clean_env_vars: Any) -> None:
+    """Test that missing ANIMICA_CHAIN_ID uses network default."""
+    os.environ["ANIMICA_NETWORK"] = "mainnet"
+    # Ensure ANIMICA_CHAIN_ID is not set
+    os.environ.pop("ANIMICA_CHAIN_ID", None)
+    
+    config = load_network_config()
+    
+    assert config.name == "mainnet"
+    assert config.chain_id == 1  # mainnet default

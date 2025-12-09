@@ -416,7 +416,7 @@ pytest --collect-only -q | grep SKIPPED
 - `ANIMICA_RPC_HOST` - Host to bind (default: 0.0.0.0)
 - `ANIMICA_RPC_PORT` - Port to bind (default: 8545)
 - `ANIMICA_RPC_DB_URI` - Database URI (default: sqlite:///animica.db)
-- `ANIMICA_CHAIN_ID` - Chain ID (default: 1337)
+- `ANIMICA_CHAIN_ID` - Chain ID (default: 1337). Empty or invalid values are treated as unset and fall back to network defaults.
 - `ANIMICA_LOG_LEVEL` - Log level (default: INFO)
 - `ANIMICA_RPC_CORS_ORIGINS` - CORS origins (default: [*])
 

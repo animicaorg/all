@@ -57,6 +57,8 @@ Global Options
 
 --chain-id INTEGER         Override chain ID
                             Env: ANIMICA_CHAIN_ID
+                            Note: Empty string or invalid values are treated as unset
+                            and fall back to network defaults
 
 --config PATH              Path to config file (~/.config/animica/config.toml)
                             Env: ANIMICA_CONFIG
