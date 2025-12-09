@@ -23,8 +23,8 @@ Commands:
 The 'start' command is a thin wrapper around the mining.orchestrator. It builds
 a config, initializes the device backend, and runs the orchestrator until interrupted.
 
-The 'mine-blocks' command mines N blocks via the node's RPC interface. This is
-useful for testing and development.
+The 'mine-blocks' command mines N blocks via the node's RPC interface, with block
+rewards credited to the specified address. This is useful for testing and development.
 
 Examples:
   # Start the miner
@@ -343,17 +343,43 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
         args.address,
         args.rpc_url,
     )
-    log.warning(
-        "Note: The current miner.mine RPC method does not support payout address selection. "
-        "Blocks will be mined to the node's default miner address. "
-        "The --address parameter is accepted for future compatibility."
-    )
 
+    # JSON-RPC error code constant for invalid params (JSON-RPC 2.0 spec)
+    JSONRPC_INVALID_PARAMS = -32602
+    
     try:
+        # Import RpcError for proper exception handling
+        try:
+            from omni_sdk.errors import RpcError, JsonRpcCode
+        except ImportError:
+            # Fallback if SDK not available or older version
+            RpcError = None  # type: ignore
+            JsonRpcCode = None  # type: ignore
+        
         with rpc_client(args.rpc_url, timeout=30.0) as client:
-            # Call miner.mine RPC method
-            # Note: Current implementation doesn't support address parameter
-            result = client.request("miner.mine", [args.count])
+            # Call miner.mine RPC method with address parameter
+            # For backward compatibility, try with address first, fall back if not supported
+            try:
+                result = client.request("miner.mine", {"count": args.count, "address": args.address})
+            except Exception as e:
+                # If the RPC rejects the address parameter (older node), try without it
+                # Check for INVALID_PARAMS error code or presence of "address" in error message
+                is_param_error = False
+                if RpcError is not None and isinstance(e, RpcError):
+                    is_param_error = (
+                        e.code == JsonRpcCode.INVALID_PARAMS if JsonRpcCode else e.code == JSONRPC_INVALID_PARAMS
+                    )
+                elif "address" in str(e).lower() or "unexpected" in str(e).lower():
+                    is_param_error = True
+                
+                if is_param_error:
+                    log.warning(
+                        "Node does not support payout address selection (older version). "
+                        "Mining to node's default miner address."
+                    )
+                    result = client.request("miner.mine", [args.count])
+                else:
+                    raise
 
             mined = result.get("mined", 0)
             height = result.get("height", 0)

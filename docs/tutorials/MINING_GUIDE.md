@@ -61,15 +61,33 @@ Leave this terminal running so the node advances and serves work templates.
 
 ## 3) Run the built-in miner (CPU or GPU)
 
-Start the miner in another terminal. The defaults bind to the local RPC/WS endpoints; set `--device` to choose your backend:
+### Quick Mining for Testing
+
+For quick testing and development, you can mine a specific number of blocks to a target address:
+
+```bash
+source .venv/bin/activate
+
+# Mine 10 blocks to your address (block rewards credited to this address)
+animica miner mine-blocks --address anim1... --count 10 --rpc-url http://127.0.0.1:8545
+
+# Or use the mining module directly
+python -m mining.cli.miner mine-blocks --address anim1... --count 10 --rpc-url http://127.0.0.1:8545
+```
+
+The `--address` parameter specifies where block rewards are credited. Accepts both bech32 (anim1...) and hex (0x...) format addresses.
+
+### Continuous Mining
+
+Start the continuous miner in another terminal. The defaults bind to the local RPC/WS endpoints; set `--device` to choose your backend:
 
 ```bash
 source .venv/bin/activate  # if you created one
-python -m mining.cli.miner \
+python -m mining.cli.miner start \
   --threads 4 \
   --device cpu \
-  --rpc http://127.0.0.1:8545 \
-  --ws ws://127.0.0.1:8546
+  --rpc-url http://127.0.0.1:8545 \
+  --ws-url ws://127.0.0.1:8546
 ```
 
 Expected output (truncated):
