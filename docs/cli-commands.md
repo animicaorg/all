@@ -42,11 +42,22 @@ animica-node status --rpc-url $ANIMICA_RPC_URL
 animica-node block --height 1 --rpc-url $ANIMICA_RPC_URL
 ```
 
-## Pool CLI
+## Mining & Pool CLI
 
-Stratum pool helper (same Typer app behind `animica-mining`/`animica-pool`).
-Commands:
+The mining CLI (`animica miner` or `animica-mining`/`animica-pool`) provides both development mining utilities and Stratum pool management. Commands:
 
+### Mining for Development
+- `mine-blocks --address <addr> --count <n> [--rpc-url <url>]` mines N blocks to a given address via RPC. This is useful for local testing and development. Validates that count > 0 and provides clear error messages.
+
+Example:
+```sh
+animica miner mine-blocks --address anim1test123 --count 5
+animica miner mine-blocks --address anim1test123 --count 10 --rpc-url http://localhost:8545
+```
+
+Note: The current `miner.mine` RPC method does not support payout address selection yet. Blocks will be mined to the node's default miner address. The `--address` parameter is accepted for future compatibility.
+
+### Stratum Pool Operations
 - `run-pool` starts the Stratum + metrics API using `ANIMICA_RPC_URL`,
   `ANIMICA_STRATUM_BIND`, `ANIMICA_POOL_API_BIND`, and `ANIMICA_MINING_POOL_DB_URL`
   (CLI flags override env vars).
