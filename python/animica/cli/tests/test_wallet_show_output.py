@@ -14,6 +14,10 @@ from typer.testing import CliRunner
 
 runner = CliRunner()
 
+# Test address used across tests for consistency
+# This is the canonical premine address from consensus/rewards.py
+TEST_BECH32_ADDRESS = "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f"
+
 
 @pytest.fixture
 def wallet_with_entry(tmp_path: Path) -> tuple[Path, str]:
@@ -21,11 +25,13 @@ def wallet_with_entry(tmp_path: Path) -> tuple[Path, str]:
     Create a test wallet file with an entry.
     
     Returns:
-        tuple: (wallet_file_path, label)
+        tuple: (Path, str) = (wallet_file_path, label)
+            - wallet_file_path: Path to the temporary wallet JSON file
+            - label: Wallet label ("test-wallet")
     """
     wallet_file = tmp_path / "test_wallets.json"
     test_label = "test-wallet"
-    test_address = "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f"
+    test_address = TEST_BECH32_ADDRESS
     
     wallet_data = {
         "version": 1,
