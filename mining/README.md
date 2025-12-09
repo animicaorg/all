@@ -177,6 +177,7 @@ mining/config.py accepts:
 	•	MINER_DEVICE = cpu|cuda|rocm|opencl|metal (only cpu enabled by default)
 	•	MINER_TARGET_SHARES_PER_SEC (adaptive micro-target tuning)
 	•	RPC_URL, WS_URL, CHAIN_ID
+	•	ANIMICA_MINER_ADDRESS (bech32 address for block reward payouts; defaults to premine address)
 	•	Stratum: STRATUM_LISTEN=0.0.0.0:11333
 	•	Selection policy overlays (local caps tighter than network)
 	•	AICF endpoints for AI/Quantum job queues (devnet-ready)
@@ -219,9 +220,25 @@ The `mine-blocks` command mines N blocks via the node's RPC interface. This is u
 - Advancing the chain to a specific height
 - Generating blocks on demand
 
-Note: The current `miner.mine` RPC method does not yet support payout address selection.
-Blocks are mined to the node's default miner address. The `--address` parameter is accepted
-for forward compatibility and will be used once the RPC supports it.
+**Miner Address Configuration:**
+
+Block rewards are automatically credited to the miner's address. The miner address is determined by:
+
+1. **ANIMICA_MINER_ADDRESS** environment variable (highest priority)
+   ```bash
+   export ANIMICA_MINER_ADDRESS=anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f
+   python -m mining.cli.miner mine-blocks --count 5
+   ```
+
+2. **Genesis premine address** for the chain (mainnet or devnet)
+   - Automatically uses the first premine address if no env variable is set
+   - For devnet (chain_id=1337), defaults to the premine address in genesis
+
+3. **Zero address** (fallback if neither of the above is configured)
+
+Note: The `--address` parameter in `mine-blocks` is accepted for forward compatibility
+but is currently ignored. Use the `ANIMICA_MINER_ADDRESS` environment variable to 
+specify the payout address.
 
 Stratum proxy (optional)
 
