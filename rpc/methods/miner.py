@@ -347,13 +347,17 @@ def _build_child_header(
 
 def _mine_once(payout_address: bytes | None = None) -> bool:
     """
-    Mine a single block.
+    Mine a single block with proof-of-work.
+    
+    This function performs actual mining by iterating through nonces until a valid
+    block hash is found that meets the difficulty target. The target is derived from
+    the current theta (acceptance threshold) parameter.
     
     Args:
         payout_address: Optional 32-byte payout address. If None, uses default miner address.
         
     Returns:
-        bool: True if block was accepted, False otherwise.
+        bool: True if block was mined and accepted, False otherwise.
     """
     ctx = _ctx()
     adapter = _adapter()
@@ -379,6 +383,7 @@ def _mine_once(payout_address: bytes | None = None) -> bool:
     parent_hash_bytes = _bytes32(parent_hash_val or ZERO32)
     if parent_header is None:
         # Build a minimal synthetic parent header so hashes/roots have sane defaults
+        pq_root, poies_root = _policy_roots()
         parent_header = Header(
             v=1,
             chainId=_ctx().cfg.chain_id,
@@ -391,23 +396,72 @@ def _mine_once(payout_address: bytes | None = None) -> bool:
             proofsRoot=ZERO32,
             daRoot=ZERO32,
             mixSeed=ZERO32,
-            poiesPolicyRoot=ZERO32,
-            pqAlgPolicyRoot=ZERO32,
+            poiesPolicyRoot=poies_root,
+            pqAlgPolicyRoot=pq_root,
             thetaMicro=_resolve_theta(),
             nonce=0,
             extra=b"",
         )
 
-    header = _build_child_header(parent_height, parent_hash_bytes, parent_header)
-    block = Block.from_components(
-        header=header, txs=(), proofs=(), receipts=None, verify=True
+    # Build child header template (nonce will be updated in mining loop)
+    header_template = _build_child_header(parent_height, parent_hash_bytes, parent_header)
+    
+    # Compute target from theta
+    theta_micro = header_template.thetaMicro
+    target = _theta_to_target(theta_micro)
+    
+    # Mining loop: iterate through nonces until we find one that meets the target
+    # Cap iterations to avoid infinite loops in tests or misconfigured environments
+    max_nonce = int(os.getenv("ANIMICA_MINER_MAX_NONCE", "100000"))
+    
+    for nonce_val in range(max_nonce):
+        # Update header with new nonce
+        header = Header(
+            v=header_template.v,
+            chainId=header_template.chainId,
+            height=header_template.height,
+            parentHash=header_template.parentHash,
+            timestamp=header_template.timestamp,
+            stateRoot=header_template.stateRoot,
+            txsRoot=header_template.txsRoot,
+            receiptsRoot=header_template.receiptsRoot,
+            proofsRoot=header_template.proofsRoot,
+            daRoot=header_template.daRoot,
+            mixSeed=header_template.mixSeed,
+            poiesPolicyRoot=header_template.poiesPolicyRoot,
+            pqAlgPolicyRoot=header_template.pqAlgPolicyRoot,
+            thetaMicro=header_template.thetaMicro,
+            nonce=nonce_val,
+            extra=header_template.extra,
+        )
+        
+        # Compute block hash
+        block_hash_bytes = header.hash()
+        block_hash_int = int.from_bytes(block_hash_bytes, "big")
+        
+        # Check if hash meets target
+        if block_hash_int <= target:
+            # Found a valid block!
+            block = Block.from_components(
+                header=header, txs=(), proofs=(), receipts=None, verify=True
+            )
+            accepted = adapter.submit_block(block)
+            if accepted:
+                _record_local_block(header.height, "0x" + block_hash_bytes.hex(), header)
+                # Apply block reward to specified payout address (or default miner address)
+                _apply_block_reward(ctx, header.height, payout_address)
+                log.debug(
+                    f"Mined block at height {header.height} with nonce {nonce_val} "
+                    f"(hash {block_hash_int} <= target {target})"
+                )
+            return accepted
+    
+    # Failed to mine a valid block within max_nonce iterations
+    log.warning(
+        f"Failed to mine block at height {parent_height + 1} after {max_nonce} attempts "
+        f"(target: {target}, theta: {theta_micro})"
     )
-    accepted = adapter.submit_block(block)
-    if accepted:
-        _record_local_block(header.height, "0x" + header.hash().hex(), header)
-        # Apply block reward to specified payout address (or default miner address)
-        _apply_block_reward(ctx, header.height, payout_address)
-    return accepted
+    return False
 
 
 async def _auto_mine_loop(interval: float = 1.0) -> None:

@@ -48,15 +48,32 @@ def _expand_sqlite_uri(uri: str) -> str:
       - sqlite:///home/user/animica/data/chain.db
       - rocksdb:///var/lib/animica
     Returns unchanged if scheme is not sqlite or rocksdb or if no ~ present.
+    
+    Also ensures parent directories exist for file-based databases.
     """
     expanded = os.path.expandvars(uri)
     if ":///" not in expanded:
         # Allow bare file path; convert to sqlite URI.
-        return "sqlite:///" + str(Path(expanded).expanduser())
+        path = Path(expanded).expanduser()
+        # Create parent directory if it doesn't exist
+        if path.suffix in (".db", "") and str(path) != ":memory:":
+            path.parent.mkdir(parents=True, exist_ok=True)
+        return "sqlite:///" + str(path)
     scheme, rest = expanded.split(":///", 1)
     if scheme in ("sqlite", "rocksdb") and rest.startswith("~"):
         rest_expanded = str(Path(rest).expanduser())
+        # Create parent directory for file-based databases
+        if rest_expanded != ":memory:":
+            path = Path(rest_expanded)
+            path.parent.mkdir(parents=True, exist_ok=True)
         return f"{scheme}:///{rest_expanded}"
+    elif scheme in ("sqlite", "rocksdb") and rest and rest != ":memory:":
+        # Also handle non-~ paths that need directory creation
+        path = Path(rest)
+        if not path.is_absolute():
+            # Relative paths are relative to cwd
+            path = Path.cwd() / path
+        path.parent.mkdir(parents=True, exist_ok=True)
     return expanded
 
 
