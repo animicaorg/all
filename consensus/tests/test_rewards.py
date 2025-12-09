@@ -407,17 +407,18 @@ def test_compute_block_reward_5_anm_base():
     assert len(rewards) == 3
     
     # Verify total reward is 5 ANM (5,000,000,000 nANM)
+    base_reward = 5000000000  # 5 ANM in nANM
     total = sum(amt for _, amt in rewards)
-    assert total == 5000000000, f"Expected 5 ANM (5,000,000,000 nANM), got {total}"
+    assert total == base_reward, f"Expected 5 ANM ({base_reward} nANM), got {total}"
     
-    # Verify split percentages
+    # Verify split percentages (80% miner, 15% aicf, 5% treasury)
     miner_amt = next(amt for addr, amt in rewards if "coinbase" in addr)
     aicf_amt = next(amt for addr, amt in rewards if "aicf" in addr)
     treasury_amt = next(amt for addr, amt in rewards if "treasury" in addr)
     
-    assert miner_amt == 4000000000  # 80% of 5 ANM
-    assert aicf_amt == 750000000    # 15% of 5 ANM
-    assert treasury_amt == 250000000  # 5% of 5 ANM
+    assert miner_amt == base_reward * 80 // 100  # 80% of 5 ANM
+    assert aicf_amt == base_reward * 15 // 100    # 15% of 5 ANM
+    assert treasury_amt == base_reward * 5 // 100  # 5% of 5 ANM
 
 
 def test_compute_block_reward_halving_at_90m():
@@ -453,17 +454,18 @@ def test_compute_block_reward_halving_at_90m():
     assert len(rewards) == 3
     
     # Verify total reward is 2.5 ANM (half of 5 ANM)
+    halved_reward = 2500000000  # 2.5 ANM after first halving
     total = sum(amt for _, amt in rewards)
-    assert total == 2500000000, f"Expected 2.5 ANM (2,500,000,000 nANM) after first halving, got {total}"
+    assert total == halved_reward, f"Expected 2.5 ANM ({halved_reward} nANM) after first halving, got {total}"
     
-    # Verify split percentages
+    # Verify split percentages (80% miner, 15% aicf, 5% treasury)
     miner_amt = next(amt for addr, amt in rewards if "coinbase" in addr)
     aicf_amt = next(amt for addr, amt in rewards if "aicf" in addr)
     treasury_amt = next(amt for addr, amt in rewards if "treasury" in addr)
     
-    assert miner_amt == 2000000000  # 80% of 2.5 ANM
-    assert aicf_amt == 375000000    # 15% of 2.5 ANM
-    assert treasury_amt == 125000000  # 5% of 2.5 ANM
+    assert miner_amt == halved_reward * 80 // 100  # 80% of 2.5 ANM
+    assert aicf_amt == halved_reward * 15 // 100    # 15% of 2.5 ANM
+    assert treasury_amt == halved_reward * 5 // 100  # 5% of 2.5 ANM
 
 
 def test_compute_block_reward_second_halving_at_180m():
@@ -499,14 +501,15 @@ def test_compute_block_reward_second_halving_at_180m():
     assert len(rewards) == 3
     
     # Verify total reward is 1.25 ANM (quarter of 5 ANM)
+    double_halved_reward = 1250000000  # 1.25 ANM after second halving
     total = sum(amt for _, amt in rewards)
-    assert total == 1250000000, f"Expected 1.25 ANM (1,250,000,000 nANM) after second halving, got {total}"
+    assert total == double_halved_reward, f"Expected 1.25 ANM ({double_halved_reward} nANM) after second halving, got {total}"
     
-    # Verify split percentages
+    # Verify split percentages (80% miner, 15% aicf, 5% treasury)
     miner_amt = next(amt for addr, amt in rewards if "coinbase" in addr)
     aicf_amt = next(amt for addr, amt in rewards if "aicf" in addr)
     treasury_amt = next(amt for addr, amt in rewards if "treasury" in addr)
     
-    assert miner_amt == 1000000000  # 80% of 1.25 ANM
-    assert aicf_amt == 187500000    # 15% of 1.25 ANM
-    assert treasury_amt == 62500000  # 5% of 1.25 ANM
+    assert miner_amt == double_halved_reward * 80 // 100  # 80% of 1.25 ANM
+    assert aicf_amt == double_halved_reward * 15 // 100    # 15% of 1.25 ANM
+    assert treasury_amt == double_halved_reward * 5 // 100  # 5% of 1.25 ANM
