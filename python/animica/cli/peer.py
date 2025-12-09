@@ -10,6 +10,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sqlite3
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -20,6 +22,8 @@ app = typer.Typer(help="Manage P2P network peers.")
 
 DEFAULT_RPC_URL = load_network_config().rpc_url
 RPC_ENV = "ANIMICA_RPC_URL"
+DEFAULT_STORE_PATH = Path.home() / ".animica" / "p2p" / "peers.json"
+STORE_ENV = "ANIMICA_PEER_STORE"
 
 
 async def rpc_call(
@@ -55,10 +59,117 @@ def _pretty(obj: Any) -> str:
     return json.dumps(obj, indent=2)
 
 
+def _resolve_store_paths(store_path: Path) -> tuple[Path, Path]:
+    """
+    Resolve both JSON and SQLite store paths.
+    
+    Args:
+        store_path: User-provided path (can be .json, .db, or directory)
+        
+    Returns:
+        Tuple of (json_path, db_path)
+    """
+    # If path is a directory, look for standard files inside
+    if store_path.is_dir():
+        return (store_path / "peers.json", store_path / "peers.db")
+    
+    # If path ends with .json, look for peers.db in same directory
+    if store_path.suffix == ".json":
+        return (store_path, store_path.parent / "peers.db")
+    
+    # If path ends with .db or has no extension, use as-is for db
+    if store_path.suffix in [".db", ""]:
+        return (store_path.parent / "peers.json", store_path)
+    
+    # Default: treat as JSON path
+    return (store_path, store_path.with_suffix(".db"))
+
+
+def _read_peer_store(store_path: Path) -> List[Dict[str, Any]]:
+    """
+    Read peers from local store, supporting both JSON and SQLite formats.
+    
+    Args:
+        store_path: Path to peer store file
+        
+    Returns:
+        List of peer dictionaries in standardized format
+    """
+    peers = []
+    json_path, db_path = _resolve_store_paths(store_path)
+    
+    # Try reading as SQLite database first (peers.db)
+    if db_path.exists():
+        try:
+            with sqlite3.connect(str(db_path)) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute("SELECT * FROM peers ORDER BY last_seen DESC")
+                for row in cursor.fetchall():
+                    # Get addresses for this peer
+                    addr_cursor = conn.execute(
+                        "SELECT address FROM peer_addresses WHERE peer_id=? ORDER BY last_seen DESC",
+                        (row["peer_id"],)
+                    )
+                    addrs = [addr_row["address"] for addr_row in addr_cursor.fetchall()]
+                    
+                    # Note: Duplicate fields (id/peer_id, addr/address) are intentional
+                    # to maintain compatibility with different RPC response formats
+                    peer = {
+                        "id": row["peer_id"],
+                        "peer_id": row["peer_id"],
+                        "addr": row["address"],
+                        "address": row["address"],
+                        "addrs": addrs,
+                        "status": row["status"],
+                        "last_seen": row["last_seen"],
+                        "score": row["score"],
+                    }
+                    peers.append(peer)
+                return peers
+        except (sqlite3.Error, KeyError):
+            # Fall through to JSON
+            pass
+    
+    # Try reading as JSON (peers.json)
+    if json_path.exists():
+        try:
+            with json_path.open("r") as f:
+                data = json.load(f)
+            json_peers = data.get("peers", [])
+            
+            for jp in json_peers:
+                # Convert JSON peer format to standardized format
+                peer_id = jp.get("peer_id", "")
+                addrs = jp.get("addrs", [])
+                primary_addr = addrs[0] if addrs else "unknown"
+                
+                # Note: Duplicate fields (id/peer_id, addr/address) are intentional
+                # to maintain compatibility with different RPC response formats
+                peer = {
+                    "id": peer_id,
+                    "peer_id": peer_id,
+                    "addr": primary_addr,
+                    "address": primary_addr,
+                    "addrs": addrs,
+                    "status": "connected" if jp.get("connected", False) else "disconnected",
+                    "last_seen": jp.get("last_seen"),
+                    "score": jp.get("score", 0.0),
+                }
+                peers.append(peer)
+            return peers
+        except (json.JSONDecodeError, IOError, KeyError):
+            pass
+    
+    return peers
+
+
 @app.command(name="list")
 def list_peers(
     rpc_url: Optional[str] = typer.Option(
         None, "--rpc-url", help="JSON-RPC endpoint", envvar=RPC_ENV
+    ),
+    store: Optional[str] = typer.Option(
+        None, "--store", help="Path to local peer store (fallback)", envvar=STORE_ENV
     ),
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Show detailed peer information"
@@ -69,11 +180,15 @@ def list_peers(
 
     Shows information about peers currently connected to the node,
     including their peer ID, address, status, and connection metrics.
+    
+    If RPC peer listing is unavailable, falls back to reading from
+    local peer store (~/.animica/p2p/peers.json by default).
 
     Examples:
         animica peer list
         animica peer list --verbose
         animica peer list --rpc-url http://localhost:8545
+        animica peer list --store ~/.animica/p2p/peers.json
     """
     url = _resolve_rpc_url(rpc_url)
 
@@ -87,6 +202,7 @@ def list_peers(
     ]
 
     peers = None
+    rpc_failed = False
     for method in methods_to_try:
         try:
             peers = asyncio.run(rpc_call(method, [], rpc_url=url))
@@ -95,23 +211,41 @@ def list_peers(
             continue
 
     if peers is None:
-        typer.echo(
-            "Error: Unable to retrieve peers. Node may not support peer listing RPC methods.",
-            err=True,
-        )
-        typer.echo(
-            "\nNote: Ensure the node is running and RPC endpoint is accessible.",
-            err=True,
-        )
-        raise typer.Exit(code=1)
+        rpc_failed = True
+        # Try fallback to local peer store
+        store_path = Path(store) if store else DEFAULT_STORE_PATH
+        
+        # Check if store file exists (either .json or .db)
+        json_path, db_path = _resolve_store_paths(store_path)
+        store_exists = json_path.exists() or db_path.exists()
+        
+        if not store_exists:
+            typer.echo(
+                "Error: Unable to retrieve peers. Node may not support peer listing RPC methods.",
+                err=True,
+            )
+            typer.echo(
+                f"\nNote: Ensure the node is running and RPC endpoint is accessible.",
+                err=True,
+            )
+            typer.echo(
+                f"      Or check local peer store at: {store_path}",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        
+        peers = _read_peer_store(store_path)
 
     # Handle empty peer list
     if not peers or len(peers) == 0:
         typer.secho("No peers connected.", fg=typer.colors.YELLOW)
+        if rpc_failed:
+            typer.echo("\n(Showing peers from local peer store)")
         return
 
     # Display peers
-    typer.secho(f"\nConnected Peers: {len(peers)}", fg=typer.colors.CYAN, bold=True)
+    source_msg = " (from local peer store)" if rpc_failed else ""
+    typer.secho(f"\nConnected Peers: {len(peers)}{source_msg}", fg=typer.colors.CYAN, bold=True)
     typer.echo()
 
     if verbose:
