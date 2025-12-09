@@ -210,17 +210,18 @@ def _get_miner_address() -> bytes:
     return ZERO32
 
 
-def _apply_block_reward(ctx: Any, height: int) -> None:
+def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = None) -> None:
     """
     Apply block reward to the miner's address in state.
     
     Args:
         ctx: RPC context with state_db access
         height: Block height for reward calculation
+        payout_address: Optional 32-byte payout address. If None, uses default miner address.
     """
     try:
-        # Get miner address
-        miner_address = _get_miner_address()
+        # Get miner address (use custom payout address if provided)
+        miner_address = payout_address if payout_address is not None else _get_miner_address()
         
         # Compute block reward (returns list of (address, amount) tuples)
         from consensus.rewards import compute_block_reward  # type: ignore[import-not-found]
@@ -344,7 +345,16 @@ def _build_child_header(
     )
 
 
-def _mine_once() -> bool:
+def _mine_once(payout_address: bytes | None = None) -> bool:
+    """
+    Mine a single block.
+    
+    Args:
+        payout_address: Optional 32-byte payout address. If None, uses default miner address.
+        
+    Returns:
+        bool: True if block was accepted, False otherwise.
+    """
     ctx = _ctx()
     adapter = _adapter()
     head = adapter.get_head()
@@ -395,8 +405,8 @@ def _mine_once() -> bool:
     accepted = adapter.submit_block(block)
     if accepted:
         _record_local_block(header.height, "0x" + header.hash().hex(), header)
-        # Apply block reward to miner address
-        _apply_block_reward(ctx, header.height)
+        # Apply block reward to specified payout address (or default miner address)
+        _apply_block_reward(ctx, header.height, payout_address)
     return accepted
 
 
@@ -623,12 +633,43 @@ def miner_submit_work(*args: Any, **payload: Any) -> Dict[str, Any]:
 
 
 @method("miner.mine", desc="Mine up to N blocks locally")
-def miner_mine(count: int | None = None) -> dict[str, int]:
+def miner_mine(count: int | None = None, address: str | None = None) -> dict[str, int]:
+    """
+    Mine N blocks locally.
+    
+    Args:
+        count: Number of blocks to mine (default: 1)
+        address: Optional payout address (bech32 or hex). If omitted, uses default miner address.
+        
+    Returns:
+        dict: {"mined": int, "height": int}
+    """
     ctx = _ctx()
     try:
         head_before = ctx.get_head()
     except Exception:
         head_before = {"height": None, "hash": None}
+    
+    # Parse payout address if provided
+    payout_address_bytes: bytes | None = None
+    if address:
+        try:
+            # Try to decode as bech32 first
+            payout_address_bytes = _decode_bech32_address(address)
+            log.info(f"Using custom payout address: {address}")
+        except Exception as bech32_err:
+            # Try hex fallback
+            try:
+                addr_str = address[2:] if address.startswith("0x") else address
+                payout_address_bytes = bytes.fromhex(addr_str)[:32].ljust(32, b"\x00")
+                log.info(f"Using custom payout address (hex): {address}")
+            except Exception as hex_err:
+                log.warning(
+                    f"Failed to decode payout address '{address}': bech32={bech32_err}, hex={hex_err}. "
+                    f"Using default miner address."
+                )
+                payout_address_bytes = None
+    
     log.info(
         "miner.mine request",
         extra={
@@ -636,6 +677,7 @@ def miner_mine(count: int | None = None) -> dict[str, int]:
             "chain_id": getattr(ctx, "cfg", None)
             and getattr(ctx.cfg, "chain_id", None),
             "count": count,
+            "address": address,
             "head_height": head_before.get("height"),
             "head_hash": head_before.get("hash"),
         },
@@ -643,7 +685,7 @@ def miner_mine(count: int | None = None) -> dict[str, int]:
     target = max(1, int(count or 1))
     mined = 0
     for _ in range(target):
-        if _mine_once():
+        if _mine_once(payout_address=payout_address_bytes):
             mined += 1
         else:
             break
