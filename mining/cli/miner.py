@@ -23,8 +23,8 @@ Commands:
 The 'start' command is a thin wrapper around the mining.orchestrator. It builds
 a config, initializes the device backend, and runs the orchestrator until interrupted.
 
-The 'mine-blocks' command mines N blocks via the node's RPC interface. This is
-useful for testing and development.
+The 'mine-blocks' command mines N blocks via the node's RPC interface, with block
+rewards credited to the specified address. This is useful for testing and development.
 
 Examples:
   # Start the miner
@@ -343,17 +343,23 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
         args.address,
         args.rpc_url,
     )
-    log.warning(
-        "Note: The current miner.mine RPC method does not support payout address selection. "
-        "Blocks will be mined to the node's default miner address. "
-        "The --address parameter is accepted for future compatibility."
-    )
 
     try:
         with rpc_client(args.rpc_url, timeout=30.0) as client:
-            # Call miner.mine RPC method
-            # Note: Current implementation doesn't support address parameter
-            result = client.request("miner.mine", [args.count])
+            # Call miner.mine RPC method with address parameter
+            # For backward compatibility, try with address first, fall back if not supported
+            try:
+                result = client.request("miner.mine", {"count": args.count, "address": args.address})
+            except Exception as e:
+                # If the RPC rejects the address parameter (older node), try without it
+                if "address" in str(e).lower() or "unexpected" in str(e).lower():
+                    log.warning(
+                        "Node does not support payout address selection (older version). "
+                        "Mining to node's default miner address."
+                    )
+                    result = client.request("miner.mine", [args.count])
+                else:
+                    raise
 
             mined = result.get("mined", 0)
             height = result.get("height", 0)
