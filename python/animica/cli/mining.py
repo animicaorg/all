@@ -51,6 +51,107 @@ def _ensure_stratum_available() -> None:
         raise typer.Exit(1)
 
 
+def _validate_bech32_address(address: str) -> bool:
+    """
+    Validate that a string is a valid Animica Bech32 address.
+    
+    Args:
+        address: Address string to validate
+        
+    Returns:
+        bool: True if valid Animica Bech32 address, False otherwise
+    """
+    try:
+        from pq.py.address import validate_address
+        
+        # Must start with 'anim1' prefix
+        if not address.startswith("anim1"):
+            return False
+        
+        # Use PQ library validation
+        validate_address(address, expect_hrp="anim")
+        return True
+    except (ValueError, ImportError, AttributeError):
+        # ValueError: invalid address format
+        # ImportError: PQ library not available
+        # AttributeError: validate_address function not found
+        return False
+
+
+def _resolve_wallet_label_to_address(label: str, wallet_file: Optional[Path] = None) -> Optional[str]:
+    """
+    Resolve a wallet label to its Bech32 address.
+    
+    Args:
+        label: Wallet label to look up
+        wallet_file: Optional wallet file path (uses default if None)
+        
+    Returns:
+        str: Bech32 address if found, None otherwise
+    """
+    try:
+        from animica.cli.wallet import _load_store, _wallet_file_path
+        
+        path = _wallet_file_path(wallet_file)
+        store = _load_store(path)
+        
+        # Search for wallet by label
+        for entry in store.get("wallets", []):
+            if entry.get("label") == label:
+                return entry.get("address")
+        
+        return None
+    except (ImportError, FileNotFoundError, KeyError, TypeError, ValueError):
+        # ImportError: wallet module not available
+        # FileNotFoundError: wallet file doesn't exist
+        # KeyError/TypeError: malformed wallet store
+        # ValueError: invalid JSON in wallet file
+        return None
+
+
+def _resolve_payout_address(address_or_label: str) -> str:
+    """
+    Resolve a payout address from either a wallet label or raw Bech32 address.
+    
+    Priority:
+    1. If it's a valid Bech32 address (starts with 'anim1' and passes validation), use it directly
+    2. Otherwise, try to resolve as a wallet label
+    3. If both fail, raise an error
+    
+    Args:
+        address_or_label: Either a Bech32 address or wallet label
+        
+    Returns:
+        str: Resolved Bech32 address
+        
+    Raises:
+        typer.Exit: If address cannot be resolved
+    """
+    # First check if it's a valid Bech32 address
+    if _validate_bech32_address(address_or_label):
+        return address_or_label
+    
+    # Try to resolve as a wallet label
+    resolved_address = _resolve_wallet_label_to_address(address_or_label)
+    if resolved_address:
+        return resolved_address
+    
+    # Could not resolve - fail fast with clear error
+    typer.secho(
+        f"Error: '{address_or_label}' is neither a valid Animica Bech32 address "
+        f"(must start with 'anim1') nor a known wallet label.",
+        fg=typer.colors.RED,
+        err=True,
+    )
+    typer.secho(
+        "Use 'animica wallet list' to see available wallet labels, "
+        "or provide a valid Bech32 address.",
+        fg=typer.colors.YELLOW,
+        err=True,
+    )
+    raise typer.Exit(2)
+
+
 @app.command("run-pool")
 def run_pool(
     rpc_url: Optional[str] = typer.Option(
@@ -141,7 +242,7 @@ def mine_blocks(
     address: str = typer.Option(
         ...,
         "--address",
-        help="Payout address for mined blocks (bech32 or hex format, e.g., anim1... or 0x...)",
+        help="Payout address: wallet label (e.g., 'premine') or Animica Bech32 address (e.g., 'anim1...')",
     ),
     count: int = typer.Option(
         ...,
@@ -162,6 +263,12 @@ def mine_blocks(
     block hashes that meet the current difficulty target (derived from the network's
     theta parameter). Block rewards are credited to the specified payout address.
     
+    Address Resolution:
+      The --address parameter accepts either:
+      1. A wallet label (e.g., 'premine') - resolved from ~/.animica/wallets.json
+      2. A raw Animica Bech32 address (e.g., 'anim1...') - used directly
+      If neither is valid, the command fails with exit code 2.
+    
     The mining process:
     1. Retrieves current chain head and difficulty (theta) from the node
     2. Iterates through nonces to find a valid block hash
@@ -178,14 +285,14 @@ def mine_blocks(
       - Higher theta means harder mining (lower target)
     
     Examples:
-        # Mine 5 blocks to a bech32 address
-        animica miner mine-blocks --address anim1test123 --count 5
+        # Mine 5 blocks to a wallet label
+        animica miner mine-blocks --address premine --count 5
         
-        # Mine to a hex address
-        animica miner mine-blocks --address 0xabcd...1234 --count 10
+        # Mine to a bech32 address
+        animica miner mine-blocks --address anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f --count 10
         
         # Mine with custom RPC endpoint
-        animica miner mine-blocks --address anim1test123 --count 10 --rpc-url http://localhost:8545
+        animica miner mine-blocks --address premine --count 10 --rpc-url http://localhost:8545
     
     Environment variables:
         ANIMICA_RPC_URL          - Node RPC endpoint (default: http://127.0.0.1:8545/rpc)
@@ -220,7 +327,7 @@ def mine_blocks(
         )
         raise typer.Exit(2)
     
-    # Validate address
+    # Validate and resolve address (label or raw Bech32)
     if not address or not address.strip():
         typer.secho(
             "Error: address is required",
@@ -228,6 +335,9 @@ def mine_blocks(
             err=True,
         )
         raise typer.Exit(2)
+    
+    # Resolve address from label or validate raw Bech32 address
+    resolved_address = _resolve_payout_address(address.strip())
     
     # Resolve RPC URL
     url = rpc_url or os.environ.get("ANIMICA_RPC_URL") or load_network_config().rpc_url
@@ -253,8 +363,18 @@ def mine_blocks(
         raise typer.Exit(3)
     
     typer.echo(
-        f"Mining {count} block(s) with payout to address {address} via RPC {url}"
+        f"Mining {count} block(s) with payout to address {resolved_address} via RPC {url}"
     )
+    
+    # Import time for sleep between blocks
+    import time
+    
+    # CLI-only throttling: minimum interval between blocks (not consensus-related)
+    # This ensures we don't overwhelm the node when mining multiple blocks.
+    # The value is based on target_block_interval_ms from params (2000ms = 2s).
+    # Note: This is a fixed delay for simplicity in the CLI. The actual consensus
+    # retargeting is handled by the node's PoIES implementation.
+    MIN_BLOCK_INTERVAL_SECONDS = 2.0
     
     # JSON-RPC error code constant for invalid params (JSON-RPC 2.0 spec)
     JSONRPC_INVALID_PARAMS = -32602
@@ -269,48 +389,67 @@ def mine_blocks(
             JsonRpcCode = None  # type: ignore
         
         with rpc_client(url, timeout=30.0) as client:
-            # Call miner.mine RPC method with address parameter
-            # For backward compatibility, try with address first, fall back if not supported
-            try:
-                result = client.request("miner.mine", {"count": count, "address": address})
-            except Exception as e:
-                # If the RPC rejects the address parameter (older node), try without it
-                # Check for INVALID_PARAMS error code or presence of "address" in error message
-                is_param_error = False
-                if RpcError is not None and isinstance(e, RpcError):
-                    is_param_error = (
-                        e.code == JsonRpcCode.INVALID_PARAMS if JsonRpcCode else e.code == JSONRPC_INVALID_PARAMS
-                    )
-                elif "address" in str(e).lower() or "unexpected" in str(e).lower():
-                    is_param_error = True
+            total_mined = 0
+            final_height = 0
+            
+            # Mine blocks one at a time with delay between them
+            for i in range(count):
+                # Call miner.mine RPC method with address parameter (mine 1 block at a time)
+                # For backward compatibility, try with address first, fall back if not supported
+                try:
+                    result = client.request("miner.mine", {"count": 1, "address": resolved_address})
+                except Exception as e:
+                    # If the RPC rejects the address parameter (older node), try without it
+                    # Check for INVALID_PARAMS error code or presence of "address" in error message
+                    is_param_error = False
+                    if RpcError is not None and isinstance(e, RpcError):
+                        is_param_error = (
+                            e.code == JsonRpcCode.INVALID_PARAMS if JsonRpcCode else e.code == JSONRPC_INVALID_PARAMS
+                        )
+                    elif "address" in str(e).lower() or "unexpected" in str(e).lower():
+                        is_param_error = True
+                    
+                    if is_param_error:
+                        typer.secho(
+                            "Warning: Node does not support payout address selection (older version). "
+                            "Mining to node's default miner address.",
+                            fg=typer.colors.YELLOW,
+                        )
+                        result = client.request("miner.mine", [1])
+                    else:
+                        raise
                 
-                if is_param_error:
+                mined = result.get("mined", 0)
+                final_height = result.get("height", 0)
+                
+                if mined > 0:
+                    total_mined += mined
+                    typer.echo(f"  Block {i + 1}/{count} mined (height: {final_height})")
+                else:
                     typer.secho(
-                        "Warning: Node does not support payout address selection (older version). "
-                        "Mining to node's default miner address.",
+                        f"Warning: Block {i + 1}/{count} failed to mine",
                         fg=typer.colors.YELLOW,
                     )
-                    result = client.request("miner.mine", [count])
-                else:
-                    raise
+                    break
+                
+                # Sleep between blocks (except after the last one)
+                if i < count - 1:
+                    time.sleep(MIN_BLOCK_INTERVAL_SECONDS)
             
-            mined = result.get("mined", 0)
-            height = result.get("height", 0)
-            
-            if mined == 0:
+            if total_mined == 0:
                 typer.secho(
                     "Warning: No blocks were mined (may have failed)",
                     fg=typer.colors.YELLOW,
                 )
                 raise typer.Exit(4)
-            elif mined < count:
+            elif total_mined < count:
                 typer.secho(
-                    f"Warning: Only {mined} of {count} requested blocks were mined",
+                    f"Warning: Only {total_mined} of {count} requested blocks were mined",
                     fg=typer.colors.YELLOW,
                 )
             
             typer.secho(
-                f"✓ Successfully mined {mined} block(s). New chain height: {height}",
+                f"✓ Successfully mined {total_mined} block(s). New chain height: {final_height}",
                 fg=typer.colors.GREEN,
                 bold=True,
             )

@@ -235,8 +235,9 @@ def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = No
             from execution.state.apply_balance import credit  # type: ignore[import-not-found]
             
             state_db = ctx.state_db
-            # Apply each reward (typically there's just one for the miner at height > 0)
-            for reward_addr, amount in rewards:
+            # Apply block rewards to state (miner, aicf, treasury)
+            # For the first reward (miner), use the provided payout address
+            for idx, (reward_addr, amount) in enumerate(rewards):
                 # Convert bech32 address to bytes if needed
                 if isinstance(reward_addr, str):
                     try:
@@ -246,6 +247,10 @@ def _apply_block_reward(ctx: Any, height: int, payout_address: bytes | None = No
                         continue
                 else:
                     reward_addr_bytes = reward_addr[:32].ljust(32, b"\x00")
+                
+                # Override first reward (miner) with payout address if provided
+                if idx == 0 and payout_address is not None:
+                    reward_addr_bytes = payout_address
                 
                 if amount > 0:
                     new_balance = credit(state_db, reward_addr_bytes, amount)
