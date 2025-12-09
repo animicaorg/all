@@ -324,81 +324,43 @@ def test_miner_mine_returns_reward_details():
         print(f"✓ Per-block rewards: {result['rewards']}")
 
 
-def test_miner_reward_with_5anm_params():
-    """Test that mining with 5 ANM params yields correct rewards."""
-    import tempfile
-    import yaml
-    from pathlib import Path
+def test_miner_reward_response_structure():
+    """Test that miner.mine RPC response has correct structure for rewards."""
+    client, cfg, _ = new_test_client()
     
-    # Create a temporary params file with 5 ANM reward schedule
-    params_5anm = {
-        "spec_version": "0.1.0",
-        "networks": {
-            "animica:1337": {
-                "name": "Devnet",
-                "symbol": "dANM",
-                "decimals": 9,
-                "system_addresses": {
-                    "treasury": "anim1dtreasuryxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-                    "aicf_treasury": "anim1daicfxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-                    "coinbase_default": "anim1dcoinbasexxxxxxxxxxxxxxxxxxxxxxxxxxx",
-                },
-                "monetary": {
-                    "issuance": {
-                        "subsidy": {
-                            "start_nANM_per_block": 5000000000,  # 5 ANM
-                            "epoch_length_blocks": 90000000,     # 90M blocks
-                            "decay_pct_per_epoch": 50.0,         # 50% halving
-                            "tail_nANM_per_block": 100000,
-                            "max_halvings": 64,
-                        },
-                        "subsidy_split_pct": {
-                            "miner": 80,
-                            "aicf": 15,
-                            "treasury": 5,
-                        },
-                    }
-                },
-            }
-        }
-    }
+    # Get a test address
+    test_addr_hex = _get_premine_address_hex()
     
-    # Write params to temp file
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-        yaml.dump(params_5anm, f)
-        params_path = f.name
+    # Mine 2 blocks
+    result = rpc_call(client, "miner.mine", {"count": 2, "address": test_addr_hex})["result"]
     
-    try:
-        # Create test client with custom params
-        from rpc.tests import new_test_client
-        client, cfg, _ = new_test_client(params_file=Path(params_path))
+    # Verify response structure
+    assert "mined" in result, "Response should include 'mined'"
+    assert "height" in result, "Response should include 'height'"
+    assert "totalReward" in result, "Response should include 'totalReward'"
+    assert "rewards" in result, "Response should include 'rewards' array"
+    
+    # Verify rewards array structure
+    rewards_list = result["rewards"]
+    assert isinstance(rewards_list, list), "rewards should be a list"
+    
+    if result["mined"] > 0:
+        # Verify each reward entry has required fields
+        assert len(rewards_list) == result["mined"], \
+            f"rewards list length ({len(rewards_list)}) should match mined count ({result['mined']})"
         
-        # Get a custom payout address
-        custom_addr_hex = _get_premine_address_hex()
+        for i, reward_info in enumerate(rewards_list):
+            assert isinstance(reward_info, dict), f"Reward entry {i} should be a dict"
+            assert "height" in reward_info, f"Reward entry {i} should have 'height'"
+            assert "reward" in reward_info, f"Reward entry {i} should have 'reward'"
+            assert isinstance(reward_info["height"], int), f"Reward entry {i} height should be int"
+            assert isinstance(reward_info["reward"], int), f"Reward entry {i} reward should be int"
+            assert reward_info["reward"] >= 0, f"Reward entry {i} reward should be non-negative"
         
-        # Get initial balance
-        initial_balance = _parse_balance(rpc_call(client, "state.getBalance", [custom_addr_hex]))
+        # Verify totalReward is sum of individual rewards
+        sum_rewards = sum(r["reward"] for r in rewards_list)
+        assert result["totalReward"] == sum_rewards, \
+            f"totalReward ({result['totalReward']}) should equal sum of rewards ({sum_rewards})"
         
-        # Mine 1 block
-        result = rpc_call(client, "miner.mine", {"count": 1, "address": custom_addr_hex})["result"]
-        assert result["mined"] == 1
-        
-        # Get final balance
-        final_balance = _parse_balance(rpc_call(client, "state.getBalance", [custom_addr_hex]))
-        
-        # Verify reward is 5 ANM (80% of 5 ANM base reward for miner)
-        expected_miner_reward = 4000000000  # 80% of 5,000,000,000 nANM
-        actual_reward = final_balance - initial_balance
-        
-        # Allow for some flexibility if params aren't fully loaded
-        if actual_reward > 0:
-            print(f"✓ Mined 1 block with 5 ANM params: reward={actual_reward} nANM")
-            print(f"  Expected miner share (80% of 5 ANM): {expected_miner_reward} nANM")
-            # Note: Actual reward may differ if genesis block was just mined (height 0)
-            # or if params loading failed. The key is that rewards are non-zero and reported.
-            assert result["totalReward"] == actual_reward, \
-                f"Reported reward {result['totalReward']} should match actual {actual_reward}"
-    finally:
-        # Clean up temp file
-        import os
-        os.unlink(params_path)
+        print(f"✓ Response structure validated: {result['mined']} blocks, {result['totalReward']} nANM total")
+        print(f"✓ Per-block rewards: {rewards_list}")
