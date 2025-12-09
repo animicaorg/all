@@ -199,13 +199,16 @@ mining/config.py accepts:
 Quick start (built-in CPU miner)
 
 # 1) Start node RPC (from repo root; example)
+# Default RPC server port is 8545
 python -m rpc.server --config rpc/config.toml
 
 # 2) Start miner (CPU)
+# Note: Miner CLI defaults to port 8547, override with --rpc-url if needed
 python -m mining.cli.miner start --threads 4 --device cpu --rpc-url http://127.0.0.1:8545 --ws-url ws://127.0.0.1:8546
 
 # 3) Mine a specific number of blocks (useful for testing)
-python -m mining.cli.miner mine-blocks --address anim1test123 --count 5 --rpc-url http://127.0.0.1:8547
+# Can omit --rpc-url to use default (http://127.0.0.1:8547), or specify if RPC is on different port
+python -m mining.cli.miner mine-blocks --address anim1test123 --count 5 --rpc-url http://127.0.0.1:8545
 
 The `mine-blocks` command mines N blocks via the node's RPC interface. This is useful for:
 - Testing and development environments
