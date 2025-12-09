@@ -71,7 +71,10 @@ def _validate_bech32_address(address: str) -> bool:
         # Use PQ library validation
         validate_address(address, expect_hrp="anim")
         return True
-    except Exception:
+    except (ValueError, ImportError, AttributeError):
+        # ValueError: invalid address format
+        # ImportError: PQ library not available
+        # AttributeError: validate_address function not found
         return False
 
 
@@ -98,7 +101,11 @@ def _resolve_wallet_label_to_address(label: str, wallet_file: Optional[Path] = N
                 return entry.get("address")
         
         return None
-    except Exception:
+    except (ImportError, FileNotFoundError, KeyError, TypeError, ValueError):
+        # ImportError: wallet module not available
+        # FileNotFoundError: wallet file doesn't exist
+        # KeyError/TypeError: malformed wallet store
+        # ValueError: invalid JSON in wallet file
         return None
 
 
@@ -362,8 +369,11 @@ def mine_blocks(
     # Import time for sleep between blocks
     import time
     
-    # Minimum block interval (2 seconds, CLI-only throttling, not consensus)
-    # This ensures we don't overwhelm the node when mining multiple blocks
+    # CLI-only throttling: minimum interval between blocks (not consensus-related)
+    # This ensures we don't overwhelm the node when mining multiple blocks.
+    # The value is based on target_block_interval_ms from params (2000ms = 2s).
+    # Note: This is a fixed delay for simplicity in the CLI. The actual consensus
+    # retargeting is handled by the node's PoIES implementation.
     MIN_BLOCK_INTERVAL_SECONDS = 2.0
     
     # JSON-RPC error code constant for invalid params (JSON-RPC 2.0 spec)

@@ -146,9 +146,15 @@ def compute_block_reward(
             rewards.append((treasury_addr, treasury_amount))
         
         return rewards
-    except (KeyError, ValueError) as e:
+    except (KeyError, ValueError, TypeError) as e:
         # If emission schedule is invalid or missing, return empty
         # This allows the chain to function without block rewards
+        # Log the error for debugging but don't fail the block
+        import logging
+        logging.getLogger("consensus.rewards").debug(
+            f"Failed to compute block reward at height {height}: {e}. "
+            f"Returning empty rewards list."
+        )
         return []
 
 
