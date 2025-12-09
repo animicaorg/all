@@ -165,6 +165,18 @@ def _open_connection(
         uri_mode = True
     elif not create and not os.path.exists(path_str):
         raise FileNotFoundError(f"SQLite KV not found at {path_str}")
+    
+    # Ensure parent directory exists for new databases (with appropriate permissions)
+    # Skip directory creation for URI-mode paths (they're handled by SQLite)
+    if create and not readonly and path_str and not uri_mode:
+        parent_dir = os.path.dirname(path_str)
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
+            try:
+                os.chmod(parent_dir, 0o755)
+            except (OSError, PermissionError):
+                # Ignore permission errors on Windows or restricted filesystems
+                pass
 
     conn = sqlite3.connect(
         path_str,

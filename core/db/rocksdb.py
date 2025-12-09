@@ -41,8 +41,14 @@ from .sqlite import open_sqlite_kv  # for graceful fallback
 
 
 def _ensure_dir(path: str) -> None:
+    """Ensure directory exists with appropriate permissions (0o755 for node data)."""
     d = os.path.abspath(path)
     os.makedirs(d, exist_ok=True)
+    try:
+        os.chmod(d, 0o755)
+    except (OSError, PermissionError):
+        # Ignore permission errors on Windows or restricted filesystems
+        pass
 
 
 def _err_help(path: str) -> RuntimeError:
