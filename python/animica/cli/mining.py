@@ -391,6 +391,7 @@ def mine_blocks(
         with rpc_client(url, timeout=30.0) as client:
             total_mined = 0
             final_height = 0
+            total_reward = 0
             
             # Mine blocks one at a time with delay between them
             for i in range(count):
@@ -421,10 +422,17 @@ def mine_blocks(
                 
                 mined = result.get("mined", 0)
                 final_height = result.get("height", 0)
+                block_reward = result.get("totalReward", 0)
                 
                 if mined > 0:
                     total_mined += mined
-                    typer.echo(f"  Block {i + 1}/{count} mined (height: {final_height})")
+                    total_reward += block_reward
+                    # Convert nANM to ANM for display (1 ANM = 10^9 nANM)
+                    reward_anm = block_reward / 1_000_000_000
+                    typer.echo(
+                        f"  Block {i + 1}/{count} mined (height: {final_height}, "
+                        f"reward: {reward_anm:.9f} ANM = {block_reward} nANM)"
+                    )
                 else:
                     typer.secho(
                         f"Warning: Block {i + 1}/{count} failed to mine",
@@ -448,8 +456,12 @@ def mine_blocks(
                     fg=typer.colors.YELLOW,
                 )
             
+            # Display total reward summary
+            total_reward_anm = total_reward / 1_000_000_000
             typer.secho(
-                f"✓ Successfully mined {total_mined} block(s). New chain height: {final_height}",
+                f"✓ Successfully mined {total_mined} block(s). "
+                f"New chain height: {final_height}. "
+                f"Total reward: {total_reward_anm:.9f} ANM ({total_reward} nANM)",
                 fg=typer.colors.GREEN,
                 bold=True,
             )
