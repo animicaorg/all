@@ -159,15 +159,14 @@ def mine_blocks(
     Mine a specified number of blocks to a given address.
     
     This command uses the node's mining RPC to mine blocks for testing
-    and development purposes.
+    and development purposes. Block rewards will be credited to the specified address.
     
     Examples:
         animica miner mine-blocks --address anim1test123 --count 5
         animica miner mine-blocks --address anim1test123 --count 10 --rpc-url http://localhost:8545
     
-    Note: The current miner.mine RPC method does not support payout address selection.
-    Blocks will be mined to the node's default miner address. The --address parameter
-    is accepted for future compatibility.
+    Note: For backward compatibility with older nodes, if the node doesn't support
+    payout address selection, blocks will be mined to the node's default miner address.
     """
     # Note: This repository uses a custom stub implementation of Typer
     # (see python/typer/__init__.py) that doesn't automatically parse type annotations.
@@ -229,16 +228,44 @@ def mine_blocks(
     typer.echo(
         f"Mining {count} block(s) with payout to address {address} via RPC {url}"
     )
-    typer.secho(
-        "Note: The current miner.mine RPC method does not support payout address selection. "
-        "Blocks will be mined to the node's default miner address. "
-        "The --address parameter is accepted for future compatibility.",
-        fg=typer.colors.YELLOW,
-    )
+    
+    # JSON-RPC error code constant for invalid params (JSON-RPC 2.0 spec)
+    JSONRPC_INVALID_PARAMS = -32602
     
     try:
+        # Import RpcError for proper exception handling
+        try:
+            from omni_sdk.errors import RpcError, JsonRpcCode
+        except ImportError:
+            # Fallback if SDK not available or older version
+            RpcError = None  # type: ignore
+            JsonRpcCode = None  # type: ignore
+        
         with rpc_client(url, timeout=30.0) as client:
-            result = client.request("miner.mine", [count])
+            # Call miner.mine RPC method with address parameter
+            # For backward compatibility, try with address first, fall back if not supported
+            try:
+                result = client.request("miner.mine", {"count": count, "address": address})
+            except Exception as e:
+                # If the RPC rejects the address parameter (older node), try without it
+                # Check for INVALID_PARAMS error code or presence of "address" in error message
+                is_param_error = False
+                if RpcError is not None and isinstance(e, RpcError):
+                    is_param_error = (
+                        e.code == JsonRpcCode.INVALID_PARAMS if JsonRpcCode else e.code == JSONRPC_INVALID_PARAMS
+                    )
+                elif "address" in str(e).lower() or "unexpected" in str(e).lower():
+                    is_param_error = True
+                
+                if is_param_error:
+                    typer.secho(
+                        "Warning: Node does not support payout address selection (older version). "
+                        "Mining to node's default miner address.",
+                        fg=typer.colors.YELLOW,
+                    )
+                    result = client.request("miner.mine", [count])
+                else:
+                    raise
             
             mined = result.get("mined", 0)
             height = result.get("height", 0)
