@@ -169,7 +169,11 @@ def mine_blocks(
     Blocks will be mined to the node's default miner address. The --address parameter
     is accepted for future compatibility.
     """
-    # Convert count to int if needed (stub Typer may pass as string)
+    # Note: This repository uses a custom stub implementation of Typer
+    # (see python/typer/__init__.py) that doesn't automatically parse type annotations.
+    # The stub Typer passes string values for integer options, so we need to convert manually.
+    # This is intentional to keep the stub lightweight and avoid external dependencies.
+    # When using the real Typer library, this conversion would be automatic.
     if isinstance(count, str):
         try:
             count = int(count)
