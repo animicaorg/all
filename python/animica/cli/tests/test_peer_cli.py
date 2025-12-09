@@ -333,6 +333,9 @@ def test_list_peers_fallback_empty_store(monkeypatch: Any, tmp_path: Any) -> Non
     peers_data = {"peers": []}
     store_path.write_text(json.dumps(peers_data))
     
+    # Note: Even though store is empty, we don't error if the file exists
+    # We only error if both RPC fails AND the store file doesn't exist
+    
     # Mock all RPC methods to fail
     respx.post(rpc_url).mock(
         return_value=httpx.Response(
@@ -482,7 +485,8 @@ def test_list_peers_fallback_to_sqlite_store(monkeypatch: Any, tmp_path: Any) ->
         )
     )
     
-    # Point to parent directory (will look for peers.db)
+    # Note: We pass peers.json path, but _resolve_store_paths() will also check for peers.db
+    # in the same directory, which is how it finds our SQLite database
     result = runner.invoke(peer.app, ["list", "--store", str(tmp_path / "peers.json")])
     assert result.exit_code == 0
     assert "Connected Peers: 1" in result.output
