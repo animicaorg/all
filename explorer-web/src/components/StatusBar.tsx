@@ -1,7 +1,7 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
 // These stores are provided by explorer-web/src/state/* in this repo.
-import { useNetworkStore } from "../state/network";
+import { useExplorerStore } from "../state/store";
 import { usePeersStore } from "../state/peers";
 
 type Props = {
@@ -24,14 +24,14 @@ function badgeColorForLatency(ms: number | null | undefined) {
 export default function StatusBar({ className }: Props) {
   const { t } = useTranslation();
 
-  // Network: head height & latency come from the network store
-  const headHeight = useNetworkStore((s) => s.head?.height ?? s.height ?? 0);
-  const chainId = useNetworkStore((s) => s.chainId);
-  const latencyMs = useNetworkStore((s) => s.latencyMs ?? s.pingMs ?? null);
-  const rpcUrl = useNetworkStore((s) => s.rpcUrl);
+  // Network: head height & latency come from the explorer store
+  const headHeight = useExplorerStore((s) => s.head?.height ?? 0);
+  const chainId = useExplorerStore((s) => s.network?.chainId ?? "");
+  const latencyMs = null; // TODO: Add latency to store if needed
+  const rpcUrl = useExplorerStore((s) => s.network?.rpcUrl ?? "");
 
   // Peers snapshot (count / health)
-  const peerCount = usePeersStore((s) => s.count ?? s.peers?.length ?? 0);
+  const peerCount = usePeersStore((s) => s.peers?.length ?? 0);
 
   const color = badgeColorForLatency(latencyMs);
 
