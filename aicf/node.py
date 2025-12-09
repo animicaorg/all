@@ -313,11 +313,11 @@ def main():
     if os.getenv("ANIMICA_NETWORK") == "mainnet" or os.getenv("ANIMICA_ENV") == "production":
         print(
             "ERROR: AICF stub node cannot be used with mainnet or production settings.",
-            file=sys.stderr if 'sys' in dir() else None
+            file=sys.stderr
         )
         print(
             "This is a test-only stub. Use the real node implementation for production.",
-            file=sys.stderr if 'sys' in dir() else None
+            file=sys.stderr
         )
         os._exit(1)
     
