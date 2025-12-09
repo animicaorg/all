@@ -12,7 +12,8 @@ Created three Docker Compose files with network-specific defaults:
 
 **ops/docker/docker-compose.mainnet.yml**
 - Chain ID: 1 (mainnet)
-- RPC Port: 8545
+- RPC Port: 8545 (exposed on 0.0.0.0)
+- P2P Ports: 30333, 9000 (exposed)
 - Volumes: `mainnet_node_data`, `mainnet_services_data`
 - Genesis: `core/genesis/genesis.mainnet.json`
 - Data directory: `~/.animica/chain-1/`
@@ -20,19 +21,21 @@ Created three Docker Compose files with network-specific defaults:
 
 **ops/docker/docker-compose.testnet.yml**
 - Chain ID: 2 (testnet)
-- RPC Port: 8546
+- RPC Port: 8546 (exposed on 0.0.0.0)
+- P2P Ports: 30334, 9000 (exposed)
 - Volumes: `testnet_node_data`, `testnet_services_data`
 - Genesis: `core/genesis/genesis.testnet.json`
 - Data directory: `~/.animica/chain-2/`
 - Features: Public test network, open CORS, faucet enabled
 
-**tests/devnet/docker-compose.yml** (updated)
+**ops/docker/docker-compose.devnet.yml** (updated)
 - Chain ID: 1337 (devnet)
-- RPC Port: 8545
-- Volumes: `devnet_node1_data`, `devnet_node2_data`, `devnet_services_data`
+- RPC Port: 8545 (exposed on 0.0.0.0)
+- P2P Ports: 30333, 9000 (exposed)
+- Volumes: `node-data`, `services-data`, `miner-data`, etc.
 - Genesis: `core/genesis/genesis.json`
 - Data directory: `~/.animica/chain-1337/`
-- Features: Local development, 2 nodes, open CORS, premine accounts
+- Features: Local development, open CORS, premine accounts, metrics/observability
 
 ### 2. CLI Updates
 
@@ -211,6 +214,40 @@ docker run --rm -v node1_data:/data -v $(pwd):/backup alpine tar czf /backup/bac
 # After setting network, start fresh or restore:
 animica node up
 ```
+
+## RPC URL Configuration
+
+### Default RPC URLs
+
+The CLI now provides sensible defaults when `ANIMICA_RPC_URL` is not set or is empty:
+
+- **Mainnet**: `http://127.0.0.1:8545/rpc`
+- **Testnet**: `http://127.0.0.1:8546/rpc`
+- **Devnet**: `http://127.0.0.1:8545/rpc`
+
+### RPC URL Resolution Priority
+
+The CLI resolves RPC URLs in the following order:
+
+1. Command-line argument: `--rpc-url <url>`
+2. Environment variable: `ANIMICA_RPC_URL=<url>`
+3. Network configuration default (based on `ANIMICA_NETWORK`)
+
+**Empty string handling**: Empty strings (`""`) or whitespace-only values in `ANIMICA_RPC_URL` are treated as unset and fall back to the network default. This prevents protocol-missing errors when the environment variable is set but empty.
+
+### Port Exposure
+
+All network compose files now expose:
+
+- **RPC port** on `0.0.0.0` (accessible from outside the container)
+  - Mainnet: 8545
+  - Testnet: 8546
+  - Devnet: 8545
+- **P2P ports** for peer connectivity:
+  - Primary port: 30333 (mainnet), 30334 (testnet), 30333 (devnet)
+  - Alternate port: 9000 (all networks)
+
+This allows external clients to connect to the node without additional configuration.
 
 ## Future Enhancements
 

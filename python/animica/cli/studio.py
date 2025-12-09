@@ -110,7 +110,17 @@ def _validate_config(
     config = {}
     
     # RPC_URL (required)
-    rpc_url = rpc_url or os.getenv("RPC_URL") or os.getenv("ANIMICA_RPC_URL")
+    # Handle empty strings by treating them as unset
+    if not (rpc_url and rpc_url.strip()):
+        rpc_url = None
+    if not rpc_url:
+        env_rpc = os.getenv("RPC_URL")
+        if env_rpc and env_rpc.strip():
+            rpc_url = env_rpc.strip()
+    if not rpc_url:
+        env_animica_rpc = os.getenv("ANIMICA_RPC_URL")
+        if env_animica_rpc and env_animica_rpc.strip():
+            rpc_url = env_animica_rpc.strip()
     if not rpc_url:
         errors.append("RPC_URL is required. Set via --rpc-url or RPC_URL environment variable.")
     else:
