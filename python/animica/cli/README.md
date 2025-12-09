@@ -78,9 +78,10 @@ Settings are resolved in this priority order (highest to lowest):
 4. Built-in network defaults
 
 Network defaults:
-- Mainnet: http://127.0.0.1:8545/rpc (chain ID 1)
-- Testnet: http://127.0.0.1:8546/rpc (chain ID 2)
-- Devnet: http://127.0.0.1:8545/rpc (chain ID 1337)
+- Mainnet: http://127.0.0.1:8545/rpc (chain ID 1, ports: RPC 8545, P2P 30333, Metrics 9000)
+- Testnet: http://127.0.0.1:18546/rpc (chain ID 2, ports: RPC 18546, P2P 31334, Metrics 19000)
+- Devnet: http://127.0.0.1:28545/rpc (chain ID 1337, ports: RPC 28545, P2P 31335, Metrics 29000)
+- Local-devnet: http://127.0.0.1:38545/rpc (chain ID 1337, ports: RPC 38545, P2P 31336, Metrics 39000)
 
 Important: Empty strings or whitespace-only values for ANIMICA_RPC_URL 
 are treated as unset and will fall back to the network defaults. This 
@@ -126,13 +127,15 @@ Wallet Operations
 
 Node Management & Network Selection
 ------------------------------------
-  Animica supports multiple networks with automatic Docker Compose configuration:
-  - mainnet (chain ID 1, port 8545)
-  - testnet (chain ID 2, port 8546)
-  - devnet (chain ID 1337, port 8545)
+  Animica supports multiple networks with automatic Docker Compose configuration
+  and non-conflicting default ports to allow running multiple networks simultaneously:
+  - mainnet (chain ID 1): RPC 8545, P2P 30333, Metrics 9000
+  - testnet (chain ID 2): RPC 18546, P2P 31334, Metrics 19000
+  - devnet (chain ID 1337): RPC 28545, P2P 31335, Metrics 29000
+  - local-devnet (chain ID 1337): RPC 38545, P2P 31336, Metrics 39000
   
   Each network uses isolated data directories and volumes.
-  See docs/network-docker-compose.md for complete documentation.
+  Ports can be customized via environment variables: HOST_RPC_PORT, HOST_P2P_PORT, HOST_METRICS_PORT
 
   # Set active network (required before node operations)
   animica network set mainnet     # Production network
@@ -152,9 +155,13 @@ Node Management & Network Selection
   animica node up --no-build      # Skip image rebuild
 
   # Start ALL networks at once (ignores active network setting)
+  # Each network uses its own non-conflicting ports by default
   animica node up-all             # Start mainnet, testnet, devnet, local-devnet
   animica node up-all --with-miner    # Start all networks with miners
   animica node up-all --no-detach     # Run all in foreground (not recommended)
+  
+  # Override ports globally for all networks (not recommended when using up-all)
+  HOST_RPC_PORT=9545 animica node up-all
   
   # Note: up-all starts networks sequentially and reports progress for each.
   # If any network fails, it continues with remaining networks and exits non-zero.
