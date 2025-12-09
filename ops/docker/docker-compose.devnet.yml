@@ -14,9 +14,6 @@ version: "3.9"
 
 name: animica-devnet
 
-x-health-script: &healthchecks_mount
-  - ./healthchecks:/healthchecks:ro
-
 x-common-env: &common_env
   ANIMICA_LOG_FORMAT: json
   ANIMICA_LOG_LEVEL: info
@@ -104,7 +101,7 @@ services:
     volumes:
       - node-data:/data
       - ./entrypoints:/entrypoints:ro
-      - *healthchecks_mount
+      - ./healthchecks:/healthchecks:ro
     ports:
       - "0.0.0.0:${HOST_RPC_PORT:-28545}:8545"   # RPC/WS (WS served at /ws)
       - "${HOST_P2P_PORT:-31335}:30333" # P2P
@@ -131,7 +128,7 @@ services:
     volumes:
       - miner-data:/data
       - ./entrypoints:/entrypoints:ro
-      - *healthchecks_mount
+      - ./healthchecks:/healthchecks:ro
     ports:
       - "3333:3333"   # Stratum (optional for external miners)
     healthcheck:
@@ -156,7 +153,7 @@ services:
     volumes:
       - services-data:/data
       - ./entrypoints:/entrypoints:ro
-      - *healthchecks_mount
+      - ./healthchecks:/healthchecks:ro
     ports:
       - "8081:8081"  # Studio Services API
     healthcheck:
@@ -181,7 +178,7 @@ services:
     volumes:
       - explorer-data:/data
       - ./entrypoints:/entrypoints:ro
-      - *healthchecks_mount
+      - ./healthchecks:/healthchecks:ro
     ports:
       - "8082:8082"  # Explorer API
     healthcheck:
@@ -240,7 +237,7 @@ services:
         exec /bin/prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/prometheus --web.enable-lifecycle
     volumes:
       - prom-data:/prometheus
-      - *healthchecks_mount
+      - ./healthchecks:/healthchecks:ro
     ports:
       - "9090:9090"
     healthcheck:
@@ -277,7 +274,7 @@ services:
         /run.sh
     volumes:
       - grafana-data:/var/lib/grafana
-      - *healthchecks_mount
+      - ./healthchecks:/healthchecks:ro
     ports:
       - "3000:3000"
     depends_on:
