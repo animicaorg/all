@@ -10,9 +10,13 @@ This directory documents how we **select**, **rotate**, and **check liveness** f
 
 A seed is an endpoint reachable on at least one supported P2P transport that can answer **HELLO/IDENTIFY** and return a small list of peers. For Animica, transports may include:
 
-- **QUIC** (preferred): `quic://seedX.animica.net:443`
-- **TCP** (fallback): `tcp://seedX.animica.net:30333`
+- **QUIC** (preferred): `quic://seedX.animica.net:443` (UDP port 443, nginx-proxied)
+- **TCP** (fallback): `tcp://seedX.animica.net:30333` (TCP port 30333, nginx-proxied)
 - **WS** (ops/debug only): `ws://seedX.animica.net:30334`
+
+**Nginx standard ports for P2P seeds:**
+- QUIC: UDP 443 (terminated/proxied by nginx)
+- TCP: 30333 (proxied by nginx stream module)
 
 Seeds are typically long-lived, well-monitored nodes with open firewall to inbound connections and **no mining** enabled.
 

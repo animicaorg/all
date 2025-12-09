@@ -26,8 +26,8 @@
     "port": 30303,
     "seeds": [
       "144.126.133.21",
-      "seed1.testnet.animica.dev",
-      "seed2.testnet.animica.dev"
+      "seed1.testnet.animica.org",
+      "seed2.testnet.animica.org"
     ],
     "bootnodes": []
   },

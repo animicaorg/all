@@ -157,7 +157,7 @@ Copy code
   "p2p": {
     "protocols": ["animica/1"],
     "port": 30303,
-    "seeds": ["seed1.testnet.animica.dev", "seed2.testnet.animica.dev"],
+    "seeds": ["seed1.testnet.animica.org", "seed2.testnet.animica.org"],
     "bootnodes": []
   },
   "addresses": { "format": "bech32m", "hrp": "am", "pubkeyTypes": ["ed25519","secp256k1","dilithium3"] },

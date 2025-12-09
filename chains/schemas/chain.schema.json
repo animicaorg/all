@@ -282,7 +282,7 @@
       "rpc": { "http": ["https://rpc.testnet.animica.dev"], "ws": ["wss://ws.testnet.animica.dev"] },
       "explorers": [{ "name": "Animica Explorer", "url": "https://explorer.testnet.animica.dev" }],
       "faucets": [{ "name": "Faucet", "url": "https://faucet.testnet.animica.dev" }],
-      "p2p": { "protocols": ["animica/1"], "port": 30303, "seeds": ["seed.testnet.animica.dev"], "bootnodes": [] },
+      "p2p": { "protocols": ["animica/1"], "port": 30303, "seeds": ["seed.testnet.animica.org"], "bootnodes": [] },
       "addresses": { "format": "bech32m", "hrp": "am", "pubkeyTypes": ["ed25519","secp256k1","dilithium3"] },
       "pq": { "sigDefault": "dilithium3", "kex": "kyber-768", "policyVersion": "2025-10" },
       "vm": { "lang": "python", "version": "0.5.0", "gasModel": "v1" },

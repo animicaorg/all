@@ -80,14 +80,16 @@ These defaults mirror `tests/devnet/env.devnet.example`. If you change them, upd
 | RPC HTTP          | 8545             | 443 via TLS      | HTTPS | `/rpc` (JSON-RPC 2.0 POST)           |
 | RPC WebSocket     | 8546             | 443 via TLS      | WSS   | `/ws` (subscriptions)                |
 | OpenRPC           | 8545             | 443 via TLS      | HTTPS | `/openrpc.json`                      |
-| P2P TCP           | 30303            | 30303            | TCP   | NAT opened if public                  |
-| P2P QUIC          | 30304            | 30304            | UDP   | Optional, advertised via seeds       |
+| P2P TCP           | 30303            | 30333 (nginx)    | TCP   | nginx streams to 30303; seeds use 30333 |
+| P2P QUIC          | 30304            | 443 (nginx)      | UDP   | nginx proxies to 30304; seeds use QUIC/443 |
 | DA API            | 8688             | 443 via TLS      | HTTPS | `/da/*`                              |
 | Studio Services   | 8787             | 443 via TLS      | HTTPS | `/api/*`                             |
 | Explorer Web      | 8081             | 443 via TLS      | HTTPS | `/explorer` or subdomain             |
 | Studio Web        | 8082             | 443 via TLS      | HTTPS | `/studio` or subdomain               |
 | Prometheus        | 9090             | 9090 (ops-only)  | HTTP  | Private admin network only           |
 | Grafana           | 3000             | 3000 (ops-only)  | HTTP  | Private admin network only           |
+
+> **Note on P2P seed ports:** For public seeds advertised via DNS (e.g., `seed-us-1.testnet.animica.org`), nginx terminates/proxies QUIC on UDP **443** and TCP on **30333**. These are the canonical ports used in multiaddrs for bootstrap discovery. Local/internal nodes may run P2P on different container ports (30303/30304), which nginx maps to the standard public ports.
 
 > For **local devnet**, the same ports are exposed on `localhost` without TLS. For **public devnet**, all user-facing HTTP/WS traffic is terminated at the reverse proxy on **443**.
 

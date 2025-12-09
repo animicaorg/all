@@ -16,10 +16,15 @@ This project adheres to:
 - (example) Added WS endpoint to `animica.testnet.json`.
 
 ### Changed
+- Migrated testnet seed hostnames from `*.testnet.animica.dev` to `testnet.animica.org` (canonical domain).
+- Migrated devnet seed hostnames from `*.devnet.animica.dev` to `devnet.animica.org` (canonical domain).
+- Updated `chains/bootstrap/seed_hosts_testnet.txt` and `bootnodes_testnet.json` with new testnet domains.
+- Updated `chains/animica.testnet.json` P2P seeds to use new domain.
 - (example) Bumped `pq.policyVersion` to `2025-11` in testnet/localnet.
 - (example) Updated `chains/icons/*` dark variants for better contrast.
 
 ### Deprecated
+- Legacy seed hostnames `*.testnet.animica.dev` and `*.devnet.animica.dev` (use `*.animica.org` instead).
 - (example) `rpc.http` entries using `http://` are marked for removal; prefer `https://`.
 
 ### Removed
