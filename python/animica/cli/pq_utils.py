@@ -1,7 +1,7 @@
 """
 Utility functions for checking post-quantum cryptography dependencies.
 
-This module provides runtime checks for PQ signing libraries (python-oqs/liboqs)
+This module provides runtime checks for PQ signing libraries (liboqs-python/liboqs)
 and displays helpful error messages when dependencies are missing.
 """
 
@@ -17,14 +17,14 @@ def check_pq_signing_available() -> Tuple[bool, Optional[str]]:
     
     Returns:
         (available, error_message)
-        - available: True if python-oqs is available, False otherwise
+        - available: True if liboqs-python is available, False otherwise
         - error_message: Helpful error message if not available, None if available
     """
     # Check if unsafe fake mode is enabled (should not be used in production)
     if os.environ.get("ANIMICA_UNSAFE_PQ_FAKE", "") == "1":
         return True, None  # Available but using unsafe mode
     
-    # Try to import python-oqs
+    # Try to import liboqs-python (provides 'oqs' module)
     try:
         import oqs  # type: ignore
         
@@ -43,7 +43,7 @@ def check_pq_signing_available() -> Tuple[bool, Optional[str]]:
             return True, None
         else:
             return False, (
-                "python-oqs is installed but SPHINCS+-SHAKE-128s is not enabled.\n"
+                "liboqs-python is installed but SPHINCS+-SHAKE-128s is not enabled.\n"
                 "This may indicate an incomplete liboqs installation."
             )
     except ImportError:
@@ -60,7 +60,7 @@ def get_pq_missing_error_message() -> str:
     return """
 Error: Post-quantum signing dependencies not available.
 
-Transaction signing requires python-oqs with liboqs support.
+Transaction signing requires liboqs-python (python-oqs) with liboqs support.
 
 To install:
 
@@ -69,8 +69,8 @@ To install:
    • macOS: brew install liboqs
    • Or build from source: https://github.com/open-quantum-safe/liboqs
 
-2. Install python-oqs:
-   python -m pip install python-oqs
+2. Install liboqs-python:
+   python -m pip install liboqs-python
 
 3. Verify installation:
    python -c "import oqs; mechs = oqs.get_enabled_sig_mechanisms(); print('Available SPHINCS+ variants:', [m for m in mechs if 'SPHINCS' in m])"
