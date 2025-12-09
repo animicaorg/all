@@ -22,7 +22,10 @@ Security:
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Mapping, Tuple
+
+log = logging.getLogger("consensus.rewards")
 
 # ==================================================================================
 # MAINNET PREMINE CONSTANTS
@@ -150,8 +153,7 @@ def compute_block_reward(
         # If emission schedule is invalid or missing, return empty
         # This allows the chain to function without block rewards
         # Log the error for debugging but don't fail the block
-        import logging
-        logging.getLogger("consensus.rewards").debug(
+        log.debug(
             f"Failed to compute block reward at height {height}: {e}. "
             f"Returning empty rewards list."
         )
