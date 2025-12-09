@@ -22,6 +22,10 @@ from typer.testing import CliRunner
 
 runner = CliRunner()
 
+# Test address used across multiple tests for consistency
+# This is the canonical premine address from consensus/rewards.py
+TEST_BECH32_ADDRESS = "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f"
+
 
 @pytest.fixture
 def wallet_with_premine(tmp_path: Path) -> tuple[Path, str, str]:
@@ -29,11 +33,14 @@ def wallet_with_premine(tmp_path: Path) -> tuple[Path, str, str]:
     Create a test wallet file with a 'premine' label.
     
     Returns:
-        tuple: (wallet_file_path, label, bech32_address)
+        tuple: (Path, str, str) = (wallet_file_path, label, bech32_address)
+            - wallet_file_path: Path to the temporary wallet JSON file
+            - label: Wallet label ("premine")
+            - bech32_address: Animica Bech32 address (TEST_BECH32_ADDRESS)
     """
     wallet_file = tmp_path / "test_wallets.json"
     test_label = "premine"
-    test_address = "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f"
+    test_address = TEST_BECH32_ADDRESS
     
     wallet_data = {
         "version": 1,
@@ -68,7 +75,7 @@ def test_resolve_wallet_label_to_address(wallet_with_premine):
 
 def test_validate_bech32_address():
     """Test Bech32 address validation."""
-    valid_address = "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f"
+    valid_address = TEST_BECH32_ADDRESS
     invalid_addresses = [
         "invalid",
         "btc1qxyz...",  # Wrong prefix
@@ -178,7 +185,7 @@ def test_mine_blocks_with_label_uses_resolved_address(monkeypatch: Any, wallet_w
 
 def test_mine_blocks_with_raw_bech32_address(monkeypatch: Any):
     """Test that mine-blocks accepts raw Bech32 address and passes it to RPC."""
-    test_address = "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f"
+    test_address = TEST_BECH32_ADDRESS
     
     # Track RPC calls
     rpc_calls = []
@@ -272,7 +279,7 @@ def test_mine_blocks_enforces_minimum_2s_delay_between_blocks(monkeypatch: Any):
         mining.app,
         [
             "mine-blocks",
-            "--address", "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f",
+            "--address", TEST_BECH32_ADDRESS,
             "--count", "5",
             "--rpc-url", "http://127.0.0.1:8545",
         ],
@@ -322,7 +329,7 @@ def test_mine_blocks_no_delay_for_single_block(monkeypatch: Any):
         mining.app,
         [
             "mine-blocks",
-            "--address", "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f",
+            "--address", TEST_BECH32_ADDRESS,
             "--count", "1",
             "--rpc-url", "http://127.0.0.1:8545",
         ],
