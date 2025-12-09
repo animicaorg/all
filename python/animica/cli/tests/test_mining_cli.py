@@ -223,10 +223,6 @@ def test_mine_blocks_rpc_error(monkeypatch: Any) -> None:
 
 def test_mine_blocks_invalid_address_fails(monkeypatch: Any) -> None:
     """Test that mine-blocks fails fast with an invalid address."""
-    # Mock validate_address to return False
-    def mock_validate(addr, expect_hrp=None):
-        raise ValueError("Invalid address")
-    
     monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: False)
     monkeypatch.setattr(mining, "_resolve_wallet_label_to_address", lambda x, y=None: None)
     
