@@ -86,8 +86,17 @@ def _wallet_file_path(wallet_file: Optional[Path]) -> Path:
 
 
 def _secure_path(path: Path) -> None:
+    """Set secure permissions on a file (0o600)."""
     try:
         os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def _secure_dir(path: Path) -> None:
+    """Set secure permissions on a directory (0o700) for owner-only access."""
+    try:
+        os.chmod(path, 0o700)
     except OSError:
         pass
 
@@ -95,6 +104,7 @@ def _secure_path(path: Path) -> None:
 def _load_store(wallet_file: Path) -> Dict[str, Any]:
     if not wallet_file.exists():
         wallet_file.parent.mkdir(parents=True, exist_ok=True)
+        _secure_dir(wallet_file.parent)  # Secure the .animica directory
         store = {"version": 1, "wallets": []}
         wallet_file.write_text(json.dumps(store, indent=2), encoding="utf-8")
         _secure_path(wallet_file)
@@ -107,6 +117,7 @@ def _load_store(wallet_file: Path) -> Dict[str, Any]:
 
 def _save_store(wallet_file: Path, store: Dict[str, Any]) -> None:
     wallet_file.parent.mkdir(parents=True, exist_ok=True)
+    _secure_dir(wallet_file.parent)  # Secure the .animica directory
     wallet_file.write_text(json.dumps(store, indent=2), encoding="utf-8")
     _secure_path(wallet_file)
 
