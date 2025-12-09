@@ -344,6 +344,9 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
         args.rpc_url,
     )
 
+    # JSON-RPC error code constant for invalid params (JSON-RPC 2.0 spec)
+    JSONRPC_INVALID_PARAMS = -32602
+    
     try:
         # Import RpcError for proper exception handling
         try:
@@ -364,7 +367,7 @@ async def _run_mine_blocks(args: argparse.Namespace, log: logging.Logger) -> int
                 is_param_error = False
                 if RpcError is not None and isinstance(e, RpcError):
                     is_param_error = (
-                        e.code == JsonRpcCode.INVALID_PARAMS if JsonRpcCode else e.code == -32602
+                        e.code == JsonRpcCode.INVALID_PARAMS if JsonRpcCode else e.code == JSONRPC_INVALID_PARAMS
                     )
                 elif "address" in str(e).lower() or "unexpected" in str(e).lower():
                     is_param_error = True
