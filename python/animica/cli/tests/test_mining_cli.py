@@ -142,6 +142,10 @@ def test_mine_blocks_invalid_count_negative() -> None:
 
 def test_mine_blocks_success(monkeypatch: Any) -> None:
     """Test that mine-blocks calls RPC successfully."""
+    # Mock address validation to accept test address
+    test_address = "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f"
+    monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
+    
     class MockRpcClient:
         def __init__(self, *args, **kwargs):
             pass
@@ -152,8 +156,8 @@ def test_mine_blocks_success(monkeypatch: Any) -> None:
         def __exit__(self, *args):
             pass
         
-        def request(self, method: str, params: list):
-            return {"mined": 3, "height": 103}
+        def request(self, method: str, params: Any):
+            return {"mined": 1, "height": 103}
     
     mock_module = Mock()
     mock_module.RpcClient = MockRpcClient
@@ -166,7 +170,7 @@ def test_mine_blocks_success(monkeypatch: Any) -> None:
         mining.app,
         [
             "mine-blocks",
-            "--address", "anim1test123",
+            "--address", test_address,
             "--count", "3",
             "--rpc-url", "http://127.0.0.1:8545",
         ],
@@ -179,6 +183,10 @@ def test_mine_blocks_success(monkeypatch: Any) -> None:
 
 def test_mine_blocks_rpc_error(monkeypatch: Any) -> None:
     """Test that mine-blocks handles RPC errors gracefully."""
+    # Mock address validation to accept test address
+    test_address = "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f"
+    monkeypatch.setattr(mining, "_validate_bech32_address", lambda x: True if x == test_address else False)
+    
     class MockRpcClient:
         def __init__(self, *args, **kwargs):
             pass
@@ -189,7 +197,7 @@ def test_mine_blocks_rpc_error(monkeypatch: Any) -> None:
         def __exit__(self, *args):
             pass
         
-        def request(self, method: str, params: list):
+        def request(self, method: str, params: Any):
             raise ConnectionError("RPC connection failed")
     
     mock_module = Mock()
@@ -203,7 +211,7 @@ def test_mine_blocks_rpc_error(monkeypatch: Any) -> None:
         mining.app,
         [
             "mine-blocks",
-            "--address", "anim1test123",
+            "--address", test_address,
             "--count", "3",
             "--rpc-url", "http://127.0.0.1:8545",
         ],
