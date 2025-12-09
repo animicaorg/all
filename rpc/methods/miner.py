@@ -139,6 +139,113 @@ def _beacon() -> bytes:
         return b""
 
 
+def _get_miner_address() -> bytes:
+    """
+    Determine the default miner address for block rewards.
+    
+    Priority:
+    1. Environment variable ANIMICA_MINER_ADDRESS (bech32 address)
+    2. Genesis premine address for the chain (if available)
+    3. Zero address (fallback)
+    
+    Returns:
+        bytes: 32-byte miner address
+    """
+    # Try environment variable first
+    env_addr = os.getenv("ANIMICA_MINER_ADDRESS", "").strip()
+    if env_addr:
+        try:
+            # Try to decode bech32 address to raw bytes
+            from pq.py.address import decode_address  # type: ignore[import-not-found]
+            addr_record = decode_address(env_addr)
+            digest = bytes(addr_record.digest) if isinstance(addr_record.digest, list) else addr_record.digest
+            return digest[:32].ljust(32, b"\x00")
+        except Exception:
+            # If bech32 decode fails, try hex
+            try:
+                if env_addr.startswith("0x"):
+                    env_addr = env_addr[2:]
+                addr_bytes = bytes.fromhex(env_addr)
+                return addr_bytes[:32].ljust(32, b"\x00")
+            except Exception:
+                pass
+    
+    # Try to get premine address from consensus.rewards
+    try:
+        from consensus.rewards import MAINNET_PREMINE_DISTRIBUTION  # type: ignore[import-not-found]
+        
+        ctx = _ctx()
+        chain_id = ctx.cfg.chain_id
+        
+        # For mainnet (chain_id=1) or devnet (chain_id=1337), use first premine address
+        if chain_id in (1, 1337) and MAINNET_PREMINE_DISTRIBUTION:
+            premine_addr = MAINNET_PREMINE_DISTRIBUTION[0][0]  # First address in distribution
+            try:
+                from pq.py.address import decode_address  # type: ignore[import-not-found]
+                addr_record = decode_address(premine_addr)
+                digest = bytes(addr_record.digest) if isinstance(addr_record.digest, list) else addr_record.digest
+                return digest[:32].ljust(32, b"\x00")
+            except Exception:
+                pass
+    except Exception:
+        pass
+    
+    # Fallback to zero address
+    log.warning("No miner address configured; using zero address for block rewards")
+    return ZERO32
+
+
+def _apply_block_reward(ctx: Any, height: int) -> None:
+    """
+    Apply block reward to the miner's address in state.
+    
+    Args:
+        ctx: RPC context with state_db access
+        height: Block height for reward calculation
+    """
+    try:
+        # Get miner address
+        miner_address = _get_miner_address()
+        
+        # Compute block reward (returns list of (address, amount) tuples)
+        from consensus.rewards import compute_block_reward  # type: ignore[import-not-found]
+        
+        chain_id = ctx.cfg.chain_id
+        params = getattr(ctx, "params", None) or {}
+        rewards = compute_block_reward(chain_id=chain_id, height=height, params=params)
+        
+        # If rewards are specified, apply them
+        if rewards:
+            from execution.state.apply_balance import credit  # type: ignore[import-not-found]
+            
+            state_db = ctx.state_db
+            # Apply each reward (typically there's just one for the miner at height > 0)
+            for reward_addr, amount in rewards:
+                # Convert bech32 address to bytes if needed
+                if isinstance(reward_addr, str):
+                    try:
+                        from pq.py.address import decode_address  # type: ignore[import-not-found]
+                        addr_record = decode_address(reward_addr)
+                        digest = bytes(addr_record.digest) if isinstance(addr_record.digest, list) else addr_record.digest
+                        reward_addr_bytes = digest[:32].ljust(32, b"\x00")
+                    except Exception:
+                        log.warning(f"Could not decode reward address {reward_addr}; skipping")
+                        continue
+                else:
+                    reward_addr_bytes = reward_addr[:32].ljust(32, b"\x00")
+                
+                if amount > 0:
+                    new_balance = credit(state_db, reward_addr_bytes, amount)
+                    log.info(
+                        f"Applied block reward: height={height}, "
+                        f"address={reward_addr_bytes.hex()[:16]}..., "
+                        f"amount={amount}, new_balance={new_balance}"
+                    )
+    except Exception as e:
+        # Don't fail mining if reward application has issues
+        log.error(f"Failed to apply block reward at height {height}: {e}", exc_info=True)
+
+
 def _bits_to_target(bits_hex: str) -> int:
     bits = int(bits_hex, 16)
     exponent = bits >> 24
@@ -276,6 +383,8 @@ def _mine_once() -> bool:
     accepted = adapter.submit_block(block)
     if accepted:
         _record_local_block(header.height, "0x" + header.hash().hex(), header)
+        # Apply block reward to miner address
+        _apply_block_reward(ctx, header.height)
     return accepted
 
 
