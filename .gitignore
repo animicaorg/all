@@ -12,3 +12,4 @@ native/target/
 *.pyo
 .DS_Store
 *.tsbuildinfo
+.liboqs/
