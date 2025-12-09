@@ -177,15 +177,16 @@ def _get_miner_address() -> bytes:
         try:
             # Try to decode bech32 address to raw bytes
             return _decode_bech32_address(env_addr)
-        except Exception:
+        except Exception as e:
+            log.debug(f"Failed to decode ANIMICA_MINER_ADDRESS as bech32: {e}")
             # If bech32 decode fails, try hex
             try:
                 if env_addr.startswith("0x"):
                     env_addr = env_addr[2:]
                 addr_bytes = bytes.fromhex(env_addr)
                 return addr_bytes[:32].ljust(32, b"\x00")
-            except Exception:
-                pass
+            except Exception as hex_err:
+                log.warning(f"Failed to decode ANIMICA_MINER_ADDRESS as hex: {hex_err}")
     
     # Try to get premine address from consensus.rewards
     try:
@@ -199,10 +200,10 @@ def _get_miner_address() -> bytes:
             premine_addr = MAINNET_PREMINE_DISTRIBUTION[0][0]  # First address in distribution
             try:
                 return _decode_bech32_address(premine_addr)
-            except Exception:
-                pass
-    except Exception:
-        pass
+            except Exception as e:
+                log.warning(f"Failed to decode premine address: {e}")
+    except Exception as e:
+        log.debug(f"Could not load premine address: {e}")
     
     # Fallback to zero address
     log.warning("No miner address configured; using zero address for block rewards")

@@ -29,6 +29,22 @@ def _get_premine_address_hex() -> str:
     return "0x" + premine_addr_bytes.hex()
 
 
+def _parse_balance(result: dict) -> int:
+    """
+    Helper to parse balance from RPC result.
+    
+    Args:
+        result: RPC call result dict
+        
+    Returns:
+        int: Balance as integer
+    """
+    balance = result.get("result", 0)
+    if isinstance(balance, str):
+        return int(balance, 16) if balance.startswith("0x") else int(balance)
+    return int(balance)
+
+
 def test_miner_mine_applies_reward_to_premine_address():
     """Test that mining a block credits reward to the premine address."""
     client, cfg, _ = new_test_client()
@@ -37,20 +53,14 @@ def test_miner_mine_applies_reward_to_premine_address():
     premine_addr_hex = _get_premine_address_hex()
     
     # Get initial balance
-    initial_balance_result = rpc_call(client, "state.getBalance", [premine_addr_hex])
-    initial_balance = initial_balance_result.get("result", 0)
-    if isinstance(initial_balance, str):
-        initial_balance = int(initial_balance, 16) if initial_balance.startswith("0x") else int(initial_balance)
+    initial_balance = _parse_balance(rpc_call(client, "state.getBalance", [premine_addr_hex]))
     
     # Mine one block
     mined = rpc_call(client, "miner.mine", [1])["result"]
     assert mined["mined"] == 1
     
     # Get balance after mining
-    final_balance_result = rpc_call(client, "state.getBalance", [premine_addr_hex])
-    final_balance = final_balance_result.get("result", 0)
-    if isinstance(final_balance, str):
-        final_balance = int(final_balance, 16) if final_balance.startswith("0x") else int(final_balance)
+    final_balance = _parse_balance(rpc_call(client, "state.getBalance", [premine_addr_hex]))
     
     # Balance should have increased (at height 0, gets premine; at height 1+, should get subsidy if params configured)
     # For now, we just verify it's not less than initial
@@ -110,20 +120,14 @@ def test_mine_multiple_blocks_accumulates_rewards():
     premine_addr_hex = _get_premine_address_hex()
     
     # Get initial balance
-    initial_balance_result = rpc_call(client, "state.getBalance", [premine_addr_hex])
-    initial_balance = initial_balance_result.get("result", 0)
-    if isinstance(initial_balance, str):
-        initial_balance = int(initial_balance, 16) if initial_balance.startswith("0x") else int(initial_balance)
+    initial_balance = _parse_balance(rpc_call(client, "state.getBalance", [premine_addr_hex]))
     
     # Mine 3 blocks
     mined = rpc_call(client, "miner.mine", [3])["result"]
     assert mined["mined"] == 3
     
     # Get balance after mining
-    final_balance_result = rpc_call(client, "state.getBalance", [premine_addr_hex])
-    final_balance = final_balance_result.get("result", 0)
-    if isinstance(final_balance, str):
-        final_balance = int(final_balance, 16) if final_balance.startswith("0x") else int(final_balance)
+    final_balance = _parse_balance(rpc_call(client, "state.getBalance", [premine_addr_hex]))
     
     # Balance should have increased or stayed same
     assert final_balance >= initial_balance, f"Balance decreased: {initial_balance} -> {final_balance}"
