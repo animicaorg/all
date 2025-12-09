@@ -214,6 +214,34 @@ def _get_bech32_impl():
                 return hrp, bytes(data5 or ())
 
             return enc, dec
+        # PQ variant without Encoding class (uses string spec)
+        if hasattr(b32, "bech32_encode") and hasattr(b32, "bech32_decode"):
+            # Check if bytes_to_5bit and fivebit_to_bytes are available for conversion
+            if hasattr(b32, "bytes_to_5bit") and hasattr(b32, "fivebit_to_bytes"):
+                def enc(hrp: str, data5: bytes) -> str:
+                    data5_list = b32.bytes_to_5bit(data5)  # type: ignore[attr-defined]
+                    return b32.bech32_encode(hrp, data5_list, "bech32m")  # type: ignore[attr-defined]
+
+                def dec(addr: str) -> Tuple[str, bytes]:
+                    hrp, data5_list, spec = b32.bech32_decode(addr)  # type: ignore[attr-defined]
+                    if spec != "bech32m":
+                        raise AddressError("address is not Bech32m")
+                    data_bytes = b32.fivebit_to_bytes(data5_list)  # type: ignore[attr-defined]
+                    return hrp, bytes(data_bytes)
+
+                return enc, dec
+            else:
+                # Assume data5 is already the right format
+                def enc(hrp: str, data5: bytes) -> str:
+                    return b32.bech32_encode(hrp, data5, "bech32m")  # type: ignore[attr-defined]
+
+                def dec(addr: str) -> Tuple[str, bytes]:
+                    hrp, data5, spec = b32.bech32_decode(addr)  # type: ignore[attr-defined]
+                    if spec != "bech32m":
+                        raise AddressError("address is not Bech32m")
+                    return hrp, bytes(data5 or ())
+
+                return enc, dec
         if hasattr(b32, "encode_bech32m") and hasattr(b32, "decode_bech32m"):
             return b32.encode_bech32m, b32.decode_bech32m  # type: ignore[attr-defined]
     except Exception:
@@ -225,6 +253,10 @@ def _get_bech32_impl():
 
 
 _B32_ENCODE, _B32_DECODE = _get_bech32_impl()
+
+# Export bech32 encoding/decoding functions for compatibility
+bech32_encode = _B32_ENCODE
+bech32_decode = _B32_DECODE
 
 
 # ---- Core API ----------------------------------------------------------------
