@@ -504,6 +504,37 @@ After completing this quickstart:
 - **Issues**: See `HARDENING_SUMMARY.md` for known issues
 - **Debugging**: Enable debug logging with `--log-level DEBUG`
 
+## Troubleshooting
+
+### Mining Issues
+
+**Problem**: `animica miner run-pool` fails with "Stratum pool modules required"
+- **Solution**: Run `./setup.sh` to install all dependencies including stratum extras
+
+**Problem**: `animica miner mine-blocks` fails with "RpcClient not available"
+- **Solution**: Ensure SDK is installed: `pip install -e sdk/python` (or re-run `./setup.sh`)
+
+**Problem**: Mining fails with "'RpcClient' object has no attribute '_handle_response'"
+- **Solution**: Reinstall SDK from the repository: `pip install -e sdk/python --force-reinstall`
+- This ensures you have the latest SDK with bug fixes
+
+**Problem**: Miner can't connect to RPC
+- **Solution**: Check that the node is running and RPC port is correct (default: 8545)
+- Use `--rpc-url` flag to specify the correct endpoint
+
+### Setup Issues
+
+**Problem**: `setup.sh` fails during pnpm install
+- **Solution**: Install Node.js 20+ and ensure npm/pnpm is available
+
+**Problem**: Python package install fails
+- **Solution**: Ensure Python 3.10+ is installed and venv module is available
+- Try: `python3 -m pip install --upgrade pip setuptools wheel`
+
+**Problem**: Tests fail with import errors
+- **Solution**: Activate venv first: `source .venv/bin/activate`
+- Ensure all packages installed: Re-run `./setup.sh`
+
 ## CI/CD Integration
 
 ### GitHub Actions Example
