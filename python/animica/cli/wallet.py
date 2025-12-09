@@ -315,7 +315,9 @@ def create(
 ) -> None:
     """Generate a new wallet and persist it to the wallet store."""
     # Check PQ availability if not using insecure fallback
-    if not allow_insecure_fallback and HAVE_PQ:
+    # Only check when HAVE_PQ is True (pq module available), as without it
+    # we can't perform the check and will fall back to cryptography anyway
+    if not allow_insecure_fallback:
         from animica.cli.pq_utils import check_pq_signing_available
         
         available, error_msg = check_pq_signing_available()

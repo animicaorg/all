@@ -29,6 +29,8 @@ def check_pq_signing_available() -> Tuple[bool, Optional[str]]:
         import oqs  # type: ignore
         
         # Check if SPHINCS+ is enabled
+        # Note: fallback lambda returns empty list if method doesn't exist,
+        # resulting in an empty set and no SPHINCS+ variants found
         enabled = set(getattr(oqs, "get_enabled_sig_mechanisms", lambda: [])())
         sphincs_variants = [
             "SPHINCS+-SHAKE-128s",
@@ -71,7 +73,7 @@ To install:
    python -m pip install python-oqs
 
 3. Verify installation:
-   python -c "import oqs; print('Available:', 'SPHINCS+-SHAKE-128s' in oqs.get_enabled_sig_mechanisms())"
+   python -c "import oqs; mechs = oqs.get_enabled_sig_mechanisms(); print('Available SPHINCS+ variants:', [m for m in mechs if 'SPHINCS' in m])"
 
 Note: For development/testing only, you can set ANIMICA_UNSAFE_PQ_FAKE=1,
 but this is NOT secure and should NEVER be used in production.

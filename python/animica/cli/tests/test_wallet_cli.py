@@ -292,8 +292,8 @@ def test_wallet_create_missing_pq_deps(tmp_path: Path, monkeypatch: pytest.Monke
     wallet_file = tmp_path / "wallets.json"
     
     # Remove the ANIMICA_UNSAFE_PQ_FAKE env var to simulate missing deps
+    # Note: ANIMICA_ALLOW_PQ_PURE_FALLBACK is not checked by check_pq_signing_available()
     monkeypatch.delenv("ANIMICA_UNSAFE_PQ_FAKE", raising=False)
-    monkeypatch.delenv("ANIMICA_ALLOW_PQ_PURE_FALLBACK", raising=False)
     
     result = runner.invoke(wallet.app, [
         "--wallet-file", str(wallet_file),
@@ -316,9 +316,8 @@ def test_wallet_create_with_insecure_fallback(tmp_path: Path, monkeypatch: pytes
     """Test that wallet create works with --allow-insecure-fallback even when PQ deps are missing."""
     wallet_file = tmp_path / "wallets.json"
     
-    # Remove PQ env vars but allow insecure fallback via flag
+    # Remove ANIMICA_UNSAFE_PQ_FAKE to simulate missing deps, but use --allow-insecure-fallback flag
     monkeypatch.delenv("ANIMICA_UNSAFE_PQ_FAKE", raising=False)
-    monkeypatch.delenv("ANIMICA_ALLOW_PQ_PURE_FALLBACK", raising=False)
     
     output = run_cli(
         ["create", "--label", "dev-wallet", "--allow-insecure-fallback"],
