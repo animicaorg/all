@@ -21,9 +21,7 @@ const DAPage = lazy(() => import("./pages/DA/DAPage"));
 const BeaconPage = lazy(() => import("./pages/Beacon/BeaconPage"));
 const NetworkPage = lazy(() => import("./pages/Network/NetworkPage"));
 const MarketplacePage = lazy(() => import("./pages/Marketplace/MarketplacePage"));
-// Home is optional; we redirect to /blocks by default to keep UX smooth.
-// If you later add HomePage, switch the "/" route below.
-const HomePage = null;
+const HomePage = lazy(() => import("./pages/Home/HomePage"));
 
 // ────────────────────────────────────────────────────────────────────────────────
 // Public API
@@ -33,18 +31,8 @@ export default function AppRouter() {
     <>
       <RouteChangeEffects />
       <Routes>
-        {/* Home: redirect to /blocks by default if no HomePage yet */}
-        <Route
-          path="/"
-          element={
-            HomePage ? (
-              // @ts-expect-error: HomePage is declared null by default
-              <HomePage />
-            ) : (
-              <Navigate to="/blocks" replace />
-            )
-          }
-        />
+        {/* Home */}
+        <Route path="/" element={<HomePage />} />
 
         {/* Blocks */}
         <Route path="/blocks" element={<BlocksPage />} />

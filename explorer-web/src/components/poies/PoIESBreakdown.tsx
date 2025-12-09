@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import { DonutChart } from "../charts/DonutChart";
+import DonutChart from "../charts/DonutChart";
 import {
   resolveTheme,
   seriesColor,
