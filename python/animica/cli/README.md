@@ -234,8 +234,13 @@ Data Availability
   # Verify a file matches commitment
   animica da verify 0x... --file blob.bin
 
-Mining Pool
------------
+Mining Operations
+-----------------
+  # Mine blocks for testing/development
+  animica miner mine-blocks --address anim1test123 --count 5
+  animica miner mine-blocks --address anim1test123 --count 10 \
+    --rpc-url http://localhost:8545
+
   # Show pool config
   animica miner show-config
 
@@ -259,6 +264,8 @@ Network Management
 Peer Management
 ---------------
   # List all connected peers
+  # Returns empty list or "No peers connected" if node has no peers
+  # Supports multiple RPC method aliases for compatibility
   animica peer list
   animica peer list --verbose
 
@@ -271,6 +278,14 @@ Peer Management
 
   # Get detailed peer information
   animica peer info QmPeerId...
+
+  # Note: The peer listing uses the following RPC methods with automatic fallback:
+  #   - p2p.listPeers (primary)
+  #   - p2p.getPeers
+  #   - p2p.peers
+  #   - admin_peers (legacy)
+  #   - net_peers (legacy)
+  # All methods are implemented and return consistent JSON responses.
 
 Node Lifecycle Commands (up/down)
 ----------------------------------
