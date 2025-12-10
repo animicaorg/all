@@ -224,9 +224,13 @@ class RecordingRpc:
     def call(self, method: str, params=None):
         self.calls.append((method, params))
         if method in self._error_methods:
-            raise RpcError(method=method, code=-32000, message="boom")
+            raise RpcError(code=-32000, message="boom", method=method)
         response = self._responses.get(method)
         return response(params) if callable(response) else response
+
+    # tx.send module expects request method
+    def request(self, method: str, params=None):
+        return self.call(method, params)
 
     # RandomnessClient expects call_fn when wrapping rpc objects
     call_fn = call
