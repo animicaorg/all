@@ -28,12 +28,16 @@ Safety notes
 """
 
 import ctypes
+import logging
 import os
+import sys
 from ctypes import (POINTER, byref, c_char_p, c_int, c_size_t, c_uint8,
                     c_void_p, create_string_buffer)
 from ctypes.util import find_library
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------------------------------
 # Attempt to load liboqs
@@ -41,27 +45,69 @@ from typing import Dict, List, Optional, Tuple
 
 
 def _load_liboqs() -> Optional[ctypes.CDLL]:
+    """
+    Attempt to load liboqs shared library.
+    
+    Searches in order:
+    1. LIBOQS_PATH environment variable (explicit path to .so/.dylib/.dll)
+    2. System library search path via find_library()
+    3. Common library names in standard locations
+    4. Custom paths from LD_LIBRARY_PATH/DYLD_LIBRARY_PATH
+    
+    Returns:
+        ctypes.CDLL instance if loaded, None if not found
+    """
     # Allow manual override (useful in CI or non-standard paths)
     override = os.environ.get("LIBOQS_PATH")
-    if override and os.path.exists(override):
-        try:
-            return ctypes.CDLL(override)
-        except OSError:
-            return None
+    if override:
+        if os.path.exists(override):
+            logger.info(f"Loading liboqs from LIBOQS_PATH: {override}")
+            try:
+                lib = ctypes.CDLL(override)
+                logger.info(f"Successfully loaded liboqs from {override}")
+                return lib
+            except OSError as e:
+                logger.warning(f"Failed to load liboqs from LIBOQS_PATH {override}: {e}")
+        else:
+            logger.warning(f"LIBOQS_PATH={override} does not exist")
 
     # Try typical names as well as generic lookup
     candidates: List[str] = []
     probe = find_library("oqs")
     if probe:
+        logger.debug(f"find_library('oqs') returned: {probe}")
         candidates.append(probe)
-    # Common SONAMEs on Linux/macOS
+    
+    # Common SONAMEs on Linux/macOS/Windows
     candidates += ["liboqs.so", "liboqs.dylib", "oqs.dll"]
+    
+    # Also try versioned library names
+    candidates += ["liboqs.so.5", "liboqs.so.4", "liboqs.so.3"]
+
+    # Check if LD_LIBRARY_PATH or DYLD_LIBRARY_PATH is set and log it
+    if sys.platform == "darwin":
+        dyld_path = os.environ.get("DYLD_LIBRARY_PATH")
+        if dyld_path:
+            logger.debug(f"DYLD_LIBRARY_PATH is set: {dyld_path}")
+    else:
+        ld_path = os.environ.get("LD_LIBRARY_PATH")
+        if ld_path:
+            logger.debug(f"LD_LIBRARY_PATH is set: {ld_path}")
 
     for name in candidates:
         try:
-            return ctypes.CDLL(name)
+            lib = ctypes.CDLL(name)
+            logger.info(f"Successfully loaded liboqs: {name}")
+            return lib
         except OSError:
+            logger.debug(f"Failed to load liboqs candidate: {name}")
             continue
+    
+    logger.warning(
+        "liboqs shared library not found. "
+        "Install liboqs-dev (apt/brew) or build from source and set LD_LIBRARY_PATH/DYLD_LIBRARY_PATH. "
+        "See: https://github.com/open-quantum-safe/liboqs/releases/tag/0.15.0"
+    )
     return None
 
 
@@ -74,6 +120,30 @@ OQS_SUCCESS = 0
 def is_available() -> bool:
     """Return True if liboqs was successfully loaded."""
     return _HAVE
+
+
+def get_version_info() -> Optional[str]:
+    """
+    Get liboqs version information if available.
+    
+    Returns:
+        Version string if liboqs is loaded, None otherwise
+    """
+    if not _HAVE or _LIB is None:
+        return None
+    
+    try:
+        # Try to get version string from liboqs
+        # OQS_version_str is available in liboqs >= 0.8.0
+        if hasattr(_LIB, "OQS_version"):
+            _LIB.OQS_version.restype = c_char_p
+            version_bytes = _LIB.OQS_version()
+            if version_bytes:
+                return version_bytes.decode("utf-8")
+    except Exception as e:
+        logger.debug(f"Could not retrieve liboqs version: {e}")
+    
+    return "unknown"
 
 
 # --------------------------------------------------------------------------------------------------
@@ -207,9 +277,43 @@ class OQSBackend:
 
     def __init__(self):
         if not _HAVE:
-            raise RuntimeError(
-                "liboqs not found: install liboqs or set up python-oqs for higher-level wrappers."
+            # Provide detailed error message with troubleshooting steps
+            error_msg = (
+                "liboqs shared library not found.\n\n"
+                "To fix this issue:\n\n"
+                "1. Install liboqs (recommended version: v0.15.0 or later):\n"
+                "   • Ubuntu/Debian: sudo apt-get install liboqs-dev\n"
+                "   • macOS: brew install liboqs\n"
+                "   • From source: https://github.com/open-quantum-safe/liboqs/releases/tag/0.15.0\n\n"
+                "2. If built from source, ensure library paths are set:\n"
             )
+            
+            if sys.platform == "darwin":
+                dyld_path = os.environ.get("DYLD_LIBRARY_PATH", "")
+                error_msg += f"   • export DYLD_LIBRARY_PATH=/path/to/liboqs/lib:$DYLD_LIBRARY_PATH\n"
+                if dyld_path:
+                    error_msg += f"   Current DYLD_LIBRARY_PATH: {dyld_path}\n"
+            else:
+                ld_path = os.environ.get("LD_LIBRARY_PATH", "")
+                error_msg += f"   • export LD_LIBRARY_PATH=/path/to/liboqs/lib:$LD_LIBRARY_PATH\n"
+                if ld_path:
+                    error_msg += f"   Current LD_LIBRARY_PATH: {ld_path}\n"
+            
+            error_msg += (
+                "\n3. Alternatively, install python-oqs:\n"
+                "   python -m pip install liboqs-python\n\n"
+                "4. Or set LIBOQS_PATH to the full path of the shared library:\n"
+                "   export LIBOQS_PATH=/path/to/liboqs.so  # (or .dylib on macOS)\n"
+            )
+            
+            raise RuntimeError(error_msg)
+        
+        # Log successful initialization with version info
+        version = get_version_info()
+        if version:
+            logger.info(f"OQSBackend initialized with liboqs version: {version}")
+        else:
+            logger.info("OQSBackend initialized (liboqs version unknown)")
 
     # ------------- internals -------------
     def _sig_new(self, name: bytes) -> Tuple[POINTER(_OQS_SIG), SigSizes]:
