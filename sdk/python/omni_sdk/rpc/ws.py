@@ -122,7 +122,10 @@ class WsClient:
             except Exception as e:
                 if attempt > self.max_retries:
                     raise RpcError(
-                        code=-32098, message="WS connect failed", data=str(e)
+                        code=-32098,
+                        message="WS connect failed",
+                        method=None,
+                        data=str(e),
                     )
                 await asyncio.sleep(
                     _jitter_backoff(
@@ -149,7 +152,9 @@ class WsClient:
         # Fail all pending requests
         for fut in list(self._pending.values()):
             if not fut.done():
-                fut.set_exception(RpcError(code=-32098, message="WS closed", data=None))
+                fut.set_exception(
+                    RpcError(code=-32098, message="WS closed", method=None, data=None)
+                )
         self._pending.clear()
 
     # ------------- RPC primitives --------------
@@ -185,7 +190,9 @@ class WsClient:
             )
         except Exception as e:
             self._pending.pop(id, None)
-            raise RpcError(code=-32098, message="WS send failed", data=str(e))
+            raise RpcError(
+                code=-32098, message="WS send failed", method=method, data=str(e)
+            )
 
         try:
             return await asyncio.wait_for(fut, timeout=self.request_timeout)
@@ -243,6 +250,7 @@ class WsClient:
         raise RpcError(
             code=-32601,
             message="No supported newHeads subscription method",
+            method="subscribe_new_heads",
             data=str(last_err),
         )
 
@@ -257,6 +265,7 @@ class WsClient:
         raise RpcError(
             code=-32601,
             message="No supported pendingTxs subscription method",
+            method="subscribe_pending_txs",
             data=str(last_err),
         )
 
@@ -316,6 +325,7 @@ class WsClient:
                             RpcError(
                                 code=err.get("code", -32603),
                                 message=err.get("message", "Unknown error"),
+                                method=None,
                                 data=err.get("data"),
                             )
                         )
@@ -357,7 +367,9 @@ class WsClient:
         for fut in list(self._pending.values()):
             if not fut.done():
                 fut.set_exception(
-                    RpcError(code=-32098, message="WS disconnected", data=None)
+                    RpcError(
+                        code=-32098, message="WS disconnected", method=None, data=None
+                    )
                 )
         self._pending.clear()
 

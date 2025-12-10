@@ -139,14 +139,20 @@ class RpcClient:
         # Response is an array of objects with id/result or id/error (order not guaranteed)
         if not isinstance(resp, list):
             raise RpcError(
-                code=-32603, message="Invalid batch response (not a list)", data=resp
+                code=-32603,
+                message="Invalid batch response (not a list)",
+                method="batch",
+                data=resp,
             )
 
         by_id: Dict[int, JSON] = {}
         for item in resp:
             if not isinstance(item, dict) or "id" not in item:
                 raise RpcError(
-                    code=-32603, message="Malformed item in batch response", data=item
+                    code=-32603,
+                    message="Malformed item in batch response",
+                    method="batch",
+                    data=item,
                 )
             rid = item["id"]
             if "error" in item:
@@ -154,6 +160,7 @@ class RpcClient:
                 raise RpcError(
                     code=err.get("code", -32603),
                     message=err.get("message", "Unknown error"),
+                    method="batch",
                     data=err.get("data"),
                 )
             by_id[int(rid)] = item.get("result")
@@ -162,7 +169,10 @@ class RpcClient:
         for rid in id_list:
             if rid not in by_id:
                 raise RpcError(
-                    code=-32603, message=f"Missing result for id {rid}", data=resp
+                    code=-32603,
+                    message=f"Missing result for id {rid}",
+                    method="batch",
+                    data=resp,
                 )
             ordered.append(by_id[rid])
         return ordered
@@ -191,6 +201,10 @@ class RpcClient:
         self, payload: Union[Dict[str, Any], List[Dict[str, Any]]]
     ) -> JSON:
         last_exc: Optional[Exception] = None
+        # Extract method name for error reporting
+        method: Optional[str] = None
+        if isinstance(payload, dict):
+            method = payload.get("method")
         for attempt in range(1, self.max_retries + 2):  # N retries -> N+1 attempts
             try:
                 return self._send_once(payload)
@@ -207,16 +221,28 @@ class RpcClient:
                 )
                 time.sleep(delay)
         # If we fall through, raise a generic RpcError wrapping last_exc
-        raise RpcError(code=-32098, message="RPC transport failed", data=str(last_exc))
+        raise RpcError(
+            code=-32098,
+            message="RPC transport failed",
+            method=method,
+            data=str(last_exc),
+        )
 
     def _send_once(self, payload: Union[Dict[str, Any], List[Dict[str, Any]]]) -> JSON:
         body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+        # Extract method name for error reporting
+        method: Optional[str] = None
+        if isinstance(payload, dict):
+            method = payload.get("method")
+        
         if self._use_httpx:
             assert _HAVE_HTTPX
             try:
                 r = self._client.post(self.url, content=body)
             except (httpx.TimeoutException, httpx.NetworkError) as e:  # type: ignore[attr-defined]
-                raise RpcError(code=-32098, message="Network error", data=str(e))
+                raise RpcError(
+                    code=-32098, message="Network error", method=method, data=str(e)
+                )
             if _is_retriable_http(r.status_code):
                 raise RuntimeError(f"HTTP {r.status_code}")
             # Avoid httpx.raise_for_status() to keep error body visible below
@@ -226,6 +252,7 @@ class RpcClient:
                 raise RpcError(
                     code=-32603,
                     message="Non-JSON response from RPC",
+                    method=method,
                     data=f"HTTP {r.status_code}: {r.text[:256]}",
                 ) from e
         else:
@@ -233,7 +260,9 @@ class RpcClient:
             try:
                 r = self._client.post(self.url, data=body, timeout=self.timeout)
             except requests.exceptions.RequestException as e:  # type: ignore[attr-defined]
-                raise RpcError(code=-32098, message="Network error", data=str(e))
+                raise RpcError(
+                    code=-32098, message="Network error", method=method, data=str(e)
+                )
             if _is_retriable_http(r.status_code):
                 raise RuntimeError(f"HTTP {r.status_code}")
             try:
@@ -242,6 +271,7 @@ class RpcClient:
                 raise RpcError(
                     code=-32603,
                     message="Non-JSON response from RPC",
+                    method=method,
                     data=f"HTTP {r.status_code}: {r.text[:256]}",
                 ) from e
 
@@ -252,11 +282,15 @@ class RpcClient:
                 raise RpcError(
                     code=err.get("code", -32603),
                     message=err.get("message", "Unknown error"),
+                    method=method,
                     data=err.get("data"),
                 )
             if "result" not in resp:
                 raise RpcError(
-                    code=-32603, message="Malformed JSON-RPC response", data=resp
+                    code=-32603,
+                    message="Malformed JSON-RPC response",
+                    method=method,
+                    data=resp,
                 )
             return resp["result"]
         elif isinstance(resp, list):
@@ -266,6 +300,7 @@ class RpcClient:
             raise RpcError(
                 code=-32603,
                 message="Invalid JSON-RPC response type",
+                method=method,
                 data=type(resp).__name__,
             )
 
