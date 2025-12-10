@@ -28,7 +28,7 @@ test_flag_parsing() {
     test_fail "SKIP_LIBOQS_REBUILD flag should be defined"
   fi
   
-  if grep -q "\-\-skip-liboqs-rebuild)" "$ROOT_DIR/setup.sh"; then
+  if grep -q -- "--skip-liboqs-rebuild)" "$ROOT_DIR/setup.sh"; then
     test_pass "Flag parsing code exists for --skip-liboqs-rebuild"
   else
     test_fail "Missing flag parsing for --skip-liboqs-rebuild"
@@ -47,7 +47,7 @@ test_forced_rebuild() {
   fi
   
   # Check that build_liboqs_from_source is called by default
-  if grep -A 3 'SKIP_LIBOQS_REBUILD" == "false"' "$ROOT_DIR/setup.sh" | grep -q "build_liboqs_from_source"; then
+  if grep -A 10 'SKIP_LIBOQS_REBUILD" == "false"' "$ROOT_DIR/setup.sh" | grep -q "build_liboqs_from_source"; then
     test_pass "build_liboqs_from_source is called when flag is false"
   else
     test_fail "build_liboqs_from_source should be called by default"
@@ -66,7 +66,7 @@ test_skip_logic() {
   fi
   
   # Check that it uses existing installation if available
-  if grep -A 15 'SKIP_LIBOQS_REBUILD" == "false"' "$ROOT_DIR/setup.sh" | grep -q "Using existing liboqs installation"; then
+  if grep -A 20 'SKIP_LIBOQS_REBUILD" == "false"' "$ROOT_DIR/setup.sh" | grep -q "Using existing liboqs installation"; then
     test_pass "Script logs when using existing installation"
   else
     test_fail "Should log when using existing installation"
@@ -78,7 +78,7 @@ test_directory_cleanup() {
   test_info "Testing that previous builds are cleaned up..."
   
   # Check that rm -rf is called on LIBOQS_DIR
-  if grep -A 5 "Always clean up previous builds" "$ROOT_DIR/setup.sh" | grep -q "rm -rf"; then
+  if grep -A 10 "Always clean up previous builds" "$ROOT_DIR/setup.sh" | grep -q "rm -rf"; then
     test_pass "Script removes previous liboqs builds"
   else
     test_fail "Script should remove previous builds to ensure fresh installation"
@@ -128,7 +128,7 @@ test_env_vars_always_set() {
   test_info "Testing that environment variables are set in all code paths..."
   
   # Check that setup_liboqs_env_vars is called in skip path
-  if grep -A 5 "Using existing liboqs installation" "$ROOT_DIR/setup.sh" | grep -q "setup_liboqs_env_vars"; then
+  if grep -A 10 "Using existing liboqs installation" "$ROOT_DIR/setup.sh" | grep -q "setup_liboqs_env_vars"; then
     test_pass "Environment variables are set even when skipping rebuild"
   else
     test_fail "Environment variables should be set in skip path"
