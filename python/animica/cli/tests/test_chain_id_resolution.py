@@ -496,3 +496,91 @@ def test_resolve_chain_id_node_error_raises() -> None:
         
         with pytest.raises(typer.Exit):
             resolve_chain_id(rpc_url, None)
+
+
+# ============================================================================
+# Network Config Precedence Tests
+# ============================================================================
+
+@respx.mock
+def test_resolve_chain_id_uses_config_when_no_cli_value() -> None:
+    """Test that resolve_chain_id uses config chain_id when no CLI value provided."""
+    import httpx
+    from animica.cli.tx import resolve_chain_id
+    
+    rpc_url = "http://localhost:9999/rpc"
+    
+    # Mock node returning chain ID 42
+    respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "result": 42})
+    
+    # Pass config_chain_id=42, no CLI chain_id
+    result = resolve_chain_id(rpc_url, cli_chain_id=None, config_chain_id=42)
+    assert result == 42
+
+
+@respx.mock
+def test_resolve_chain_id_cli_overrides_config() -> None:
+    """Test that CLI chain_id takes precedence over config chain_id."""
+    import httpx
+    from animica.cli.tx import resolve_chain_id
+    
+    rpc_url = "http://localhost:9999/rpc"
+    
+    # Mock node returning chain ID 99
+    respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "result": 99})
+    
+    # Pass both CLI and config, CLI should take precedence
+    result = resolve_chain_id(rpc_url, cli_chain_id=99, config_chain_id=42)
+    assert result == 99
+
+
+@respx.mock
+def test_resolve_chain_id_config_mismatch_fails() -> None:
+    """Test that config chain_id mismatch with node produces helpful error."""
+    import httpx
+    from animica.cli.tx import resolve_chain_id
+    
+    rpc_url = "http://localhost:9999/rpc"
+    
+    # Mock node returning chain ID 1
+    respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "result": 1})
+    
+    # Pass config_chain_id=42 which doesn't match node
+    with pytest.raises(typer.Exit):
+        resolve_chain_id(rpc_url, cli_chain_id=None, config_chain_id=42)
+
+
+@respx.mock
+def test_build_uses_network_config_chain_id(tmp_path: Path, wallet_store: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that build command uses network config chain ID."""
+    import httpx
+    rpc_url = "http://localhost:9999/rpc"
+    output_file = tmp_path / "tx.json"
+    
+    # Set network to devnet (chain ID 1337) via env var
+    monkeypatch.setenv("ANIMICA_NETWORK", "devnet")
+    monkeypatch.setenv("ANIMICA_CHAIN_ID", "1337")
+    
+    # Mock node returning chain ID 1337 (matches config)
+    respx.post(rpc_url).mock(side_effect=[
+        # Response for chain.getChainId
+        httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": 1337}),
+        # Response for state.getTransactionCount
+        httpx.Response(200, json={"jsonrpc": "2.0", "id": 2, "result": 0}),
+    ])
+    
+    result = runner.invoke(tx.app, [
+        "build",
+        "--from", "anim1test",
+        "--to", "anim1dest",
+        "--value", "1.0",
+        "--output", str(output_file),
+        "--rpc-url", rpc_url
+    ])
+    
+    assert result.exit_code == 0, f"Command failed: {result.output}"
+    assert output_file.exists()
+    
+    tx_data = json.loads(output_file.read_text())
+    # Should use network config chain ID (1337)
+    assert tx_data["chainId"] == 1337
