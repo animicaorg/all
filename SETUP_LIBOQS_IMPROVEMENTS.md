@@ -33,7 +33,7 @@ When the fast path fails:
    - Provides platform-specific installation instructions if missing
 
 2. **Source Build**
-   - Clones pinned liboqs version (0.14.0) from official repository
+   - Clones pinned liboqs version (0.15.0) from official repository
    - Builds with secure options:
      - `BUILD_SHARED_LIBS=ON` - Creates shared libraries
      - `OQS_USE_OPENSSL=OFF` - Reduces dependencies
