@@ -187,6 +187,18 @@ def _get_bech32_impl():
         # Some libs expose encode_bech32m/decode_bech32m
         if hasattr(b32, "encode_bech32m") and hasattr(b32, "decode_bech32m"):
             return b32.encode_bech32m, b32.decode_bech32m  # type: ignore[attr-defined]
+        # SDK's own bech32 module uses encode_bytes/decode_bytes (operates on 8-bit data directly)
+        if hasattr(b32, "encode_bytes") and hasattr(b32, "decode_bytes"):
+            def enc(hrp: str, data: bytes) -> str:
+                return b32.encode_bytes(hrp, data, spec="bech32m")  # type: ignore[attr-defined]
+            
+            def dec(addr: str) -> Tuple[str, bytes]:
+                hrp, payload, spec = b32.decode_bytes(addr)  # type: ignore[attr-defined]
+                if spec != "bech32m":
+                    raise AddressError("address is not Bech32m")
+                return hrp, payload
+            
+            return enc, dec
     except Exception:
         pass
 
