@@ -28,8 +28,11 @@ _OQS_MECH = None  # type: Optional[str]
 _sizes: Dict[str, int] = {"pk": 0, "sk": 0, "sig": 0}
 
 # A few possible mechanism names used across oqs/liboqs versions
+# Note: liboqs 0.15.0+ uses "-simple" suffix for the simple parameter set
 _POSSIBLE_MECH_NAMES = [
-    "SPHINCS+-SHAKE-128s",
+    "SPHINCS+-SHAKE-128s-simple",  # liboqs 0.15.0+ primary variant
+    "SPHINCS+-shake-128s-simple",  # lowercase variant
+    "SPHINCS+-SHAKE-128s",  # older versions without suffix
     "SPHINCS+-SHAKE-128s-robust",
     "SPHINCS+-shake-128s",
     "SPHINCS+-shake-128s-robust",

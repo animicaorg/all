@@ -305,8 +305,11 @@ To install git:
   # Capture the output in a temporary file for diagnostics
   local install_log
   install_log=$(mktemp /tmp/oqs_install.XXXXXX.log)
-  if python -m pip install liboqs-python --no-cache-dir >"$install_log" 2>&1; then
-    log "✓ liboqs-python installed successfully"
+  # Build from source to ensure compatibility with our liboqs 0.15.0
+  # Using --no-binary forces pip to build from source instead of using wheels
+  # that may have older bundled liboqs versions (0.14.x)
+  if python -m pip install liboqs-python --no-binary liboqs-python --no-cache-dir >"$install_log" 2>&1; then
+    log "✓ liboqs-python installed successfully (built from source)"
     log "  Built liboqs is at: $LIBOQS_DIR/install"
     rm -f "$install_log"
   else
@@ -323,7 +326,7 @@ Possible issues:
 To debug:
   • Check the installation log: cat $install_log
   • Verify liboqs library exists: ls -la $LIBOQS_DIR/install/lib/liboqs.*
-  • Try manual installation: python -m pip install liboqs-python --no-cache-dir
+  • Try manual installation: python -m pip install liboqs-python --no-binary liboqs-python --no-cache-dir
 
 Note: Post-quantum signing is currently unavailable. As a workaround for development
 only, you can set ANIMICA_UNSAFE_PQ_FAKE=1, but this is NOT secure and should

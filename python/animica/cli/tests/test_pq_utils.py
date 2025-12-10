@@ -94,6 +94,29 @@ class TestCheckPQSigningAvailable:
                     assert any("0.10.0" in call for call in info_calls)
                     assert any("SPHINCS+" in call for call in info_calls)
 
+    def test_liboqs_python_installed_sphincs_simple_variant(self, mock_oqs_import):
+        """Test successful detection with liboqs 0.15.0+ simple variant."""
+        # Remove ANIMICA_UNSAFE_PQ_FAKE if set
+        with patch.dict(os.environ, {}, clear=True):
+            # Create a mock oqs module with SPHINCS+-simple enabled (liboqs 0.15.0+)
+            mock_oqs = MagicMock()
+            mock_oqs.__version__ = "0.15.0"
+            mock_oqs.get_enabled_sig_mechanisms.return_value = [
+                "Dilithium3",
+                "SPHINCS+-SHAKE-128s-simple",  # New naming in liboqs 0.15.0+
+                "Falcon-512",
+            ]
+            
+            with mock_oqs_import(mock_oqs):
+                with patch("animica.cli.pq_utils.logger") as mock_logger:
+                    available, error = check_pq_signing_available()
+                    assert available is True
+                    assert error is None
+                    # Verify logging - check if info was called with version message
+                    info_calls = [str(call) for call in mock_logger.info.call_args_list]
+                    assert any("0.15.0" in call for call in info_calls)
+                    assert any("SPHINCS+" in call for call in info_calls)
+
     def test_liboqs_python_installed_sphincs_disabled(self, mock_oqs_import):
         """Test detection when liboqs-python is installed but SPHINCS+ is missing."""
         # Remove ANIMICA_UNSAFE_PQ_FAKE if set
@@ -273,6 +296,27 @@ class TestGetPQDiagnostics:
                 assert "python-oqs" in diag
                 assert "0.10.0" in diag
                 assert "SPHINCS+" in diag
+
+    def test_diagnostics_with_oqs_simple_variant(self, mock_oqs_import):
+        """Test diagnostic output with liboqs 0.15.0+ simple variant."""
+        from animica.cli.pq_utils import get_pq_diagnostics
+        
+        mock_oqs = MagicMock()
+        mock_oqs.__version__ = "0.15.0"
+        mock_oqs.get_enabled_sig_mechanisms.return_value = [
+            "Dilithium3",
+            "SPHINCS+-SHAKE-128s-simple"
+        ]
+        
+        with patch.dict(os.environ, {}, clear=True):
+            with mock_oqs_import(mock_oqs):
+                diag = get_pq_diagnostics()
+                
+                # Should show oqs is available with simple variant
+                assert "python-oqs" in diag
+                assert "0.15.0" in diag
+                assert "SPHINCS+" in diag
+                assert "simple" in diag
 
 
 class TestCheckPQSigningWithBackend:
