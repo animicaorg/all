@@ -74,6 +74,76 @@ def _pretty(obj: Any) -> str:
     return json.dumps(obj, indent=2, ensure_ascii=False)
 
 
+def resolve_chain_id(rpc_url: Optional[str], cli_chain_id: Optional[int]) -> int:
+    """
+    Resolve chain ID with validation.
+    
+    Args:
+        rpc_url: RPC endpoint URL (will be resolved if None)
+        cli_chain_id: Chain ID from CLI flag or env var (None = auto-detect)
+    
+    Returns:
+        Validated chain ID to use for transaction signing
+    
+    Raises:
+        typer.Exit: If CLI chain ID doesn't match node's chain ID
+    
+    Logic:
+        1. Query node's chain ID via chain.getChainId RPC
+        2. If cli_chain_id is None: return node's chain ID
+        3. If cli_chain_id is set:
+           - If matches node: return it
+           - If differs: fail with clear error message
+    """
+    # Fetch node's chain ID
+    try:
+        node_chain_id_result = _request_rpc("chain.getChainId", [], rpc_url)
+        node_chain_id = int(node_chain_id_result) if node_chain_id_result else None
+    except Exception as e:
+        # If we can't reach the node, fail gracefully
+        typer.echo(
+            f"Error: Could not query node's chain ID: {e}",
+            err=True,
+        )
+        typer.echo(
+            "Ensure the node is running and accessible via RPC.",
+            err=True,
+        )
+        raise typer.Exit(1)
+    
+    if node_chain_id is None:
+        typer.echo(
+            "Error: Node returned invalid chain ID (null/empty)",
+            err=True,
+        )
+        raise typer.Exit(1)
+    
+    # Case 1: No CLI chain ID specified -> use node's chain ID
+    if cli_chain_id is None:
+        return node_chain_id
+    
+    # Case 2: CLI chain ID specified -> validate it matches node
+    if cli_chain_id == node_chain_id:
+        return cli_chain_id
+    
+    # Case 3: Mismatch -> fail with clear error
+    typer.echo("=" * 60, err=True)
+    typer.echo("Error: Chain ID mismatch between CLI and node", err=True)
+    typer.echo("=" * 60, err=True)
+    typer.echo(f"CLI chain ID:  {cli_chain_id}", err=True)
+    typer.echo(f"Node chain ID: {node_chain_id}", err=True)
+    typer.echo("", err=True)
+    typer.echo("The transaction would be rejected by the node.", err=True)
+    typer.echo("", err=True)
+    typer.echo("Solutions:", err=True)
+    typer.echo(f"  1. Remove --chain-id flag (auto-detect from node: {node_chain_id})", err=True)
+    typer.echo(f"  2. Set --chain-id {node_chain_id} to match the node", err=True)
+    typer.echo(f"  3. Unset ANIMICA_CHAIN_ID env var if set", err=True)
+    typer.echo("  4. Connect to a different node with --rpc-url", err=True)
+    typer.echo("=" * 60, err=True)
+    raise typer.Exit(1)
+
+
 def _get_wallet_path(wallet_file: Optional[Path]) -> Path:
     """Get wallet file path from option, env, or default."""
     if wallet_file is not None:
@@ -285,7 +355,10 @@ def send(
         None, "--nonce", help="Transaction nonce (auto-fetched if omitted)"
     ),
     chain_id: Optional[int] = typer.Option(
-        None, "--chain-id", help="Chain ID (auto-fetched if omitted)"
+        None,
+        "--chain-id",
+        help="Chain ID (auto-fetched if omitted)",
+        envvar="ANIMICA_CHAIN_ID",
     ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Build and sign but do not broadcast"
@@ -341,13 +414,8 @@ def send(
         # Step 3: Resolve RPC URL
         url = _resolve_rpc_url(rpc_url)
         
-        # Step 4: Fetch chain parameters
-        if chain_id is None:
-            try:
-                chain_id_result = _request_rpc("chain.getChainId", [], url)
-                chain_id = int(chain_id_result) if chain_id_result else 31337
-            except Exception:
-                chain_id = 31337  # Default to local devnet
+        # Step 4: Resolve and validate chain ID
+        chain_id = resolve_chain_id(url, chain_id)
         
         # Step 5: Fetch nonce if not provided
         if nonce is None:
