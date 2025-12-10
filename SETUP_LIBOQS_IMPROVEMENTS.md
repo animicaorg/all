@@ -4,6 +4,8 @@
 
 This document describes the improvements made to `setup.sh` to provide a reliable fallback mechanism for installing `liboqs-python` when prebuilt wheels or system liboqs packages are not available.
 
+**Note:** As of liboqs 0.15.0, Dilithium has been replaced by the NIST-standardized ML-DSA algorithm. The Animica PQ integration now supports both ML-DSA (0.15.0+) and legacy Dilithium (< 0.15.0) with automatic detection and fallback.
+
 ## Problem Statement
 
 Previously, if `liboqs-python` installation failed during setup, the script would:
@@ -164,6 +166,67 @@ Prerequisites: `sudo dnf install git cmake gcc make`
    - `src/` - Cloned liboqs source
    - `build/` - CMake build directory
    - `env.sh` - Convenience script for environment variables
+
+## PQ Algorithm Support
+
+### liboqs 0.15.0+ (NIST Standard Names)
+
+liboqs 0.15.0 and later use NIST-standardized algorithm names:
+
+- **ML-DSA** (Module-Lattice Digital Signature Algorithm) - replaces Dilithium
+  - ML-DSA-44 (Security Level 2, equivalent to Dilithium2)
+  - ML-DSA-65 (Security Level 3, equivalent to Dilithium3) **← Default**
+  - ML-DSA-87 (Security Level 5, equivalent to Dilithium5)
+- **ML-KEM** (Module-Lattice Key Encapsulation Mechanism) - replaces Kyber
+  - ML-KEM-768 (equivalent to Kyber768)
+- **SPHINCS+** with "-simple" suffix for parameter sets
+  - SPHINCS+-SHAKE-128s-simple (default stateless hash-based signature)
+
+### Legacy liboqs < 0.15.0
+
+Older versions use pre-standardization names:
+- Dilithium2, Dilithium3, Dilithium5
+- Kyber768
+- SPHINCS+-SHAKE-128s (without "-simple" suffix)
+
+### Automatic Detection and Fallback
+
+Animica's PQ integration automatically detects available mechanisms and provides transparent fallback:
+
+1. **Capability Detection** - On first PQ use, the system probes for available mechanisms
+2. **Caching** - Detection results are cached to avoid repeated checks
+3. **Smart Mapping** - "dilithium3" requests automatically map to ML-DSA-65 on 0.15.0+ or Dilithium3 on older versions
+4. **Graceful Fallback** - If PQ unavailable, logs once and uses ed25519 for non-PQ operations
+
+### Configuration
+
+Set the default PQ mechanism via environment variable:
+
+```bash
+# Use ML-DSA-65 (liboqs 0.15.0+)
+export ANIMICA_PQ_MECHANISM=ML-DSA-65
+
+# Or use SPHINCS+ for hash-based signatures
+export ANIMICA_PQ_MECHANISM=SPHINCS+-SHAKE-128s-simple
+
+# Check detected capabilities
+python -m pq.py.capability
+```
+
+### Diagnostics
+
+Check PQ capability and available mechanisms:
+
+```python
+from pq.py.capability import get_diagnostics
+print(get_diagnostics())
+```
+
+Or via CLI:
+
+```bash
+python -c "from pq.py.capability import get_diagnostics; print(get_diagnostics())"
+```
 
 ## Future Improvements
 

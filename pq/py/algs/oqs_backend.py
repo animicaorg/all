@@ -187,8 +187,9 @@ def _load_liboqs() -> Optional[ctypes.CDLL]:
             logger.debug(f"Failed to load liboqs candidate '{name}': {e}")
             continue
     
-    # Step 5: Provide detailed failure message
-    logger.warning(
+    # Step 5: Provide detailed failure message at DEBUG level
+    # (Higher-level modules like capability.py provide user-facing messages)
+    logger.debug(
         "liboqs shared library not found after searching:\n"
         f"  - LIBOQS_PATH environment variable: {override or '(not set)'}\n"
         f"  - python-oqs wheel bundled paths: {len(bundled_paths)} checked\n"
@@ -241,6 +242,57 @@ def get_version_info() -> Optional[str]:
         logger.debug(f"Could not retrieve liboqs version: {e}")
     
     return "unknown"
+
+
+def has_sig(mechanism: str) -> bool:
+    """
+    Check if a specific signature mechanism is available.
+    
+    Args:
+        mechanism: Mechanism name (e.g., "ML-DSA-65", "dilithium3", "sphincs_shake_128s")
+    
+    Returns:
+        True if mechanism is available, False otherwise
+    """
+    if not _HAVE or _LIB is None:
+        return False
+    
+    # Try to instantiate the mechanism
+    try:
+        backend = OQSBackend()
+        normalized = backend._normalize_sig_alg(mechanism)
+        sig = _LIB.OQS_SIG_new(normalized)
+        if sig:
+            _LIB.OQS_SIG_free(sig)
+            return True
+        return False
+    except Exception:
+        return False
+
+
+def has_kem(mechanism: str) -> bool:
+    """
+    Check if a specific KEM mechanism is available.
+    
+    Args:
+        mechanism: Mechanism name (e.g., "ML-KEM-768", "kyber768")
+    
+    Returns:
+        True if mechanism is available, False otherwise
+    """
+    if not _HAVE or _LIB is None:
+        return False
+    
+    try:
+        backend = OQSBackend()
+        normalized = backend._normalize_kem_alg(mechanism)
+        kem = _LIB.OQS_KEM_new(normalized)
+        if kem:
+            _LIB.OQS_KEM_free(kem)
+            return True
+        return False
+    except Exception:
+        return False
 
 
 # --------------------------------------------------------------------------------------------------
@@ -342,14 +394,27 @@ if _HAVE:
 
 
 # Canonical algorithm names as liboqs expects them.
-# (These work for current liboqs; if you build with different variants, adjust here.)
+# liboqs 0.15.x uses NIST standard names (ML-DSA, ML-KEM)
+# We maintain backward compatibility with older names
+
+# Signature algorithms
+# ML-DSA (liboqs 0.15.0+, NIST standard names)
+ALG_ML_DSA_44 = b"ML-DSA-44"
+ALG_ML_DSA_65 = b"ML-DSA-65"
+ALG_ML_DSA_87 = b"ML-DSA-87"
+
+# Dilithium (legacy, liboqs < 0.15.0)
+ALG_DILITHIUM2 = b"Dilithium2"
 ALG_DILITHIUM3 = b"Dilithium3"
+ALG_DILITHIUM5 = b"Dilithium5"
+
+# SPHINCS+ (both simple and robust variants)
 ALG_SPHINCS_SHAKE_128S = b"SPHINCS+-SHAKE-128s-simple"
-# Some liboqs builds use '-robust'; we try both at runtime.
 ALG_SPHINCS_SHAKE_128S_ROBUST = b"SPHINCS+-SHAKE-128s-robust"
 
-ALG_KYBER768 = b"Kyber768"  # Older builds
-ALG_ML_KEM_768 = b"ML-KEM-768"  # Newer NIST alias
+# KEM algorithms
+ALG_KYBER768 = b"Kyber768"  # Legacy, liboqs < 0.15.0
+ALG_ML_KEM_768 = b"ML-KEM-768"  # NIST standard, liboqs 0.15.0+
 
 
 @dataclass(frozen=True)
@@ -436,17 +501,71 @@ class OQSBackend:
         )
         return kem, sizes
 
+    # ------------- helpers: probing -------------
+    @staticmethod
+    def _probe_sig_mechanism(mechanism: bytes) -> bool:
+        """
+        Probe if a signature mechanism is available.
+        
+        Args:
+            mechanism: Mechanism name (bytes)
+        
+        Returns:
+            True if mechanism can be instantiated, False otherwise
+        """
+        try:
+            sig = _LIB.OQS_SIG_new(mechanism)
+            if sig:
+                _LIB.OQS_SIG_free(sig)
+                return True
+            return False
+        except Exception:
+            return False
+    
+    @staticmethod
+    def _probe_kem_mechanism(mechanism: bytes) -> bool:
+        """
+        Probe if a KEM mechanism is available.
+        
+        Args:
+            mechanism: Mechanism name (bytes)
+        
+        Returns:
+            True if mechanism can be instantiated, False otherwise
+        """
+        try:
+            kem = _LIB.OQS_KEM_new(mechanism)
+            if kem:
+                _LIB.OQS_KEM_free(kem)
+                return True
+            return False
+        except Exception:
+            return False
+
     # ------------- public: signatures -------------
     def sig_available_names(self) -> List[str]:
-        names: List[bytes] = [ALG_DILITHIUM3, ALG_SPHINCS_SHAKE_128S]
-        # Probe robust variant for SPHINCS+
-        try:
-            kem = _LIB.OQS_SIG_new(ALG_SPHINCS_SHAKE_128S_ROBUST)
-            if kem:
-                _LIB.OQS_SIG_free(kem)
-                names.append(ALG_SPHINCS_SHAKE_128S_ROBUST)
-        except Exception:
-            pass
+        """
+        Probe and return available signature mechanism names.
+        
+        Tries both modern (ML-DSA) and legacy (Dilithium) names.
+        """
+        names: List[bytes] = []
+        
+        # Probe ML-DSA variants (liboqs 0.15.0+)
+        for candidate in [ALG_ML_DSA_65, ALG_ML_DSA_87, ALG_ML_DSA_44]:
+            if self._probe_sig_mechanism(candidate):
+                names.append(candidate)
+        
+        # Probe legacy Dilithium variants (liboqs < 0.15.0)
+        for candidate in [ALG_DILITHIUM3, ALG_DILITHIUM2, ALG_DILITHIUM5]:
+            if self._probe_sig_mechanism(candidate):
+                names.append(candidate)
+        
+        # Probe SPHINCS+ variants
+        for candidate in [ALG_SPHINCS_SHAKE_128S, ALG_SPHINCS_SHAKE_128S_ROBUST]:
+            if self._probe_sig_mechanism(candidate):
+                names.append(candidate)
+        
         return [n.decode("ascii") for n in names]
 
     def sig_keypair(self, alg: str) -> Tuple[bytes, bytes]:
@@ -502,15 +621,15 @@ class OQSBackend:
 
     # ------------- public: KEM -------------
     def kem_available_names(self) -> List[str]:
+        """
+        Probe and return available KEM mechanism names.
+        
+        Tries both modern (ML-KEM) and legacy (Kyber) names.
+        """
         names: List[bytes] = []
-        for cand in (ALG_ML_KEM_768, ALG_KYBER768):
-            try:
-                kem = _LIB.OQS_KEM_new(cand)
-                if kem:
-                    names.append(cand)
-                    _LIB.OQS_KEM_free(kem)
-            except Exception:
-                continue
+        for candidate in (ALG_ML_KEM_768, ALG_KYBER768):
+            if self._probe_kem_mechanism(candidate):
+                names.append(candidate)
         return [n.decode("ascii") for n in names]
 
     def kem_keypair(self, alg: str) -> Tuple[bytes, bytes]:
@@ -555,21 +674,54 @@ class OQSBackend:
             _LIB.OQS_KEM_free(kem)
 
     # ------------- helpers -------------
-    @staticmethod
-    def _normalize_sig_alg(alg: str) -> bytes:
+    def _try_sig_mechanism(self, primary: bytes, fallback: bytes) -> bytes:
+        """
+        Try primary mechanism, fall back to secondary if unavailable.
+        
+        Args:
+            primary: Primary mechanism to try
+            fallback: Fallback mechanism if primary unavailable
+        
+        Returns:
+            Primary if available, otherwise fallback
+        """
+        if self._probe_sig_mechanism(primary):
+            return primary
+        return fallback
+    
+    def _normalize_sig_alg(self, alg: str) -> bytes:
+        """
+        Normalize algorithm name to liboqs mechanism name.
+        
+        Handles both modern (ML-DSA) and legacy (Dilithium) names,
+        with automatic fallback between versions.
+        """
         a = alg.lower().replace("_", "-")
+        
+        # ML-DSA variants (liboqs 0.15.0+) with Dilithium fallback
+        if "ml-dsa-65" in a or "mldsa65" in a:
+            return self._try_sig_mechanism(ALG_ML_DSA_65, ALG_DILITHIUM3)
+        
+        if "ml-dsa-87" in a or "mldsa87" in a:
+            return self._try_sig_mechanism(ALG_ML_DSA_87, ALG_DILITHIUM5)
+        
+        if "ml-dsa-44" in a or "mldsa44" in a:
+            return self._try_sig_mechanism(ALG_ML_DSA_44, ALG_DILITHIUM2)
+        
+        # Legacy Dilithium names - try to map to ML-DSA first for 0.15.0+
         if "dilithium3" in a:
-            return ALG_DILITHIUM3
+            return self._try_sig_mechanism(ALG_ML_DSA_65, ALG_DILITHIUM3)
+        
+        if "dilithium2" in a:
+            return self._try_sig_mechanism(ALG_ML_DSA_44, ALG_DILITHIUM2)
+        
+        if "dilithium5" in a:
+            return self._try_sig_mechanism(ALG_ML_DSA_87, ALG_DILITHIUM5)
+        
+        # SPHINCS+ variants - prefer simple profile
         if "sphincs" in a:
-            # Prefer 'simple' profile if available; robust will be probed at construction time
-            # but both OQS_SIG_new calls will succeed if the build supports them.
-            try:
-                # Quick probe to prefer 'simple' when both exist
-                if _LIB.OQS_SIG_new(ALG_SPHINCS_SHAKE_128S):
-                    return ALG_SPHINCS_SHAKE_128S
-            except Exception:
-                pass
-            return ALG_SPHINCS_SHAKE_128S_ROBUST
+            return self._try_sig_mechanism(ALG_SPHINCS_SHAKE_128S, ALG_SPHINCS_SHAKE_128S_ROBUST)
+        
         raise ValueError(f"Unknown/unsupported signature alg: {alg}")
 
     @staticmethod

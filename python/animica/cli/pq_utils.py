@@ -22,76 +22,98 @@ def check_pq_signing_available() -> Tuple[bool, Optional[str]]:
     """
     Check if PQ signing is available (production mode).
     
+    Uses centralized capability detection from pq.py.capability module.
+    This function performs detection once and caches the result.
+    
     Returns:
         (available, error_message)
         - available: True if liboqs-python is available, False otherwise
         - error_message: Helpful error message if not available, None if available
     """
-    # Check if unsafe fake mode is enabled (should not be used in production)
-    if os.environ.get("ANIMICA_UNSAFE_PQ_FAKE", "") == "1":
-        logger.warning("Using ANIMICA_UNSAFE_PQ_FAKE=1 mode (NOT SECURE - development only)")
-        return True, None  # Available but using unsafe mode
-    
-    # Try to import liboqs-python (provides 'oqs' module)
+    # Use centralized capability detection
     try:
-        import oqs  # type: ignore
+        from pq.py.capability import get_capability
         
-        # Log the version if available
-        version = getattr(oqs, "__version__", "unknown")
-        logger.info(f"✓ liboqs-python detected: version {version}")
+        cap = get_capability()
         
-        # Check if SPHINCS+ is enabled
-        # Note: fallback lambda returns empty list if method doesn't exist,
-        # resulting in an empty set and no SPHINCS+ variants found
-        enabled = set(getattr(oqs, "get_enabled_sig_mechanisms", lambda: [])())
-        sphincs_variants = [
-            "SPHINCS+-SHAKE-128s",
-            "SPHINCS+-SHAKE-128s-robust",
-            "SPHINCS+-shake-128s",
-            "SPHINCS+-shake-128s-robust",
-            # liboqs 0.15.0+ uses "-simple" suffix for the simple parameter set
-            "SPHINCS+-SHAKE-128s-simple",
-            "SPHINCS+-shake-128s-simple",
-        ]
-        
-        # Log all available signature mechanisms for debugging
-        logger.debug(f"Available signature mechanisms: {sorted(enabled)}")
-        
-        if any(variant in enabled for variant in sphincs_variants):
-            logger.info("✓ SPHINCS+ signature support confirmed")
+        if cap.available:
+            # PQ is available - no error
             return True, None
         else:
-            logger.error("✗ liboqs-python is installed but SPHINCS+ is not enabled")
-            return False, (
-                "liboqs-python is installed but SPHINCS+-SHAKE-128s is not enabled.\n"
-                "This may indicate an incomplete liboqs installation or liboqs was built without SPHINCS+."
-            )
-    except ImportError as e:
-        logger.debug(f"liboqs-python (oqs module) not available: {e}")
+            # PQ not available - return False with no specific error
+            # (the capability module already logged details)
+            return False, None
+            
+    except ImportError:
+        # Fallback if capability module not available
+        # This is for backward compatibility during transition
+        logger.debug("pq.py.capability module not available, using legacy detection")
         
-        # Also check if oqs_backend can load liboqs directly via ctypes
+        # Check if unsafe fake mode is enabled (should not be used in production)
+        if os.environ.get("ANIMICA_UNSAFE_PQ_FAKE", "") == "1":
+            logger.warning("Using ANIMICA_UNSAFE_PQ_FAKE=1 mode (NOT SECURE - development only)")
+            return True, None  # Available but using unsafe mode
+        
+        # Try to import liboqs-python (provides 'oqs' module)
         try:
-            from pq.py.algs import oqs_backend
-            if oqs_backend.is_available():
-                version = oqs_backend.get_version_info()
-                logger.info(f"✓ liboqs loaded via ctypes backend: version {version or 'unknown'}")
-                logger.info("Note: Using ctypes backend. For best compatibility, install python-oqs.")
+            import oqs  # type: ignore
+            
+            # Log the version if available
+            version = getattr(oqs, "__version__", "unknown")
+            logger.info(f"✓ liboqs-python detected: version {version}")
+            
+            # Check if any mechanisms are enabled
+            enabled = set(getattr(oqs, "get_enabled_sig_mechanisms", lambda: [])())
+            
+            # Log all available signature mechanisms for debugging
+            logger.debug(f"Available signature mechanisms: {sorted(enabled)}")
+            
+            if enabled:
+                logger.info("✓ PQ signature support confirmed")
                 return True, None
             else:
-                logger.debug("oqs_backend reported liboqs not available")
-        except Exception as backend_err:
-            logger.debug(f"Could not check oqs_backend: {backend_err}")
-        
-        return False, None
+                logger.error("✗ liboqs-python is installed but no signature mechanisms enabled")
+                return False, (
+                    "liboqs-python is installed but no signature mechanisms are enabled.\n"
+                    "This may indicate an incomplete liboqs installation."
+                )
+        except ImportError as e:
+            logger.debug(f"liboqs-python (oqs module) not available: {e}")
+            
+            # Also check if oqs_backend can load liboqs directly via ctypes
+            try:
+                from pq.py.algs import oqs_backend
+                if oqs_backend.is_available():
+                    version = oqs_backend.get_version_info()
+                    logger.info(f"✓ liboqs loaded via ctypes backend: version {version or 'unknown'}")
+                    logger.info("Note: Using ctypes backend. For best compatibility, install python-oqs.")
+                    return True, None
+                else:
+                    logger.debug("oqs_backend reported liboqs not available")
+            except Exception as backend_err:
+                logger.debug(f"Could not check oqs_backend: {backend_err}")
+            
+            return False, None
 
 
 def get_pq_diagnostics() -> str:
     """
     Get detailed diagnostic information about PQ library availability.
     
+    Uses centralized capability detection when available.
+    
     Returns:
         Formatted diagnostic information
     """
+    # Try to use centralized capability diagnostics
+    try:
+        from pq.py.capability import get_diagnostics
+        return get_diagnostics()
+    except ImportError:
+        # Fallback to legacy diagnostics
+        pass
+    
+    # Legacy diagnostics (for backward compatibility)
     diagnostics = ["PQ Library Diagnostics", "=" * 50]
     
     # Check python-oqs (oqs module)
@@ -134,6 +156,7 @@ def get_pq_diagnostics() -> str:
     # Environment variables
     diagnostics.append("\nEnvironment Variables:")
     env_vars = {
+        "ANIMICA_PQ_MECHANISM": os.environ.get("ANIMICA_PQ_MECHANISM"),
         "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH"),
         "DYLD_LIBRARY_PATH": os.environ.get("DYLD_LIBRARY_PATH"),
         "LIBRARY_PATH": os.environ.get("LIBRARY_PATH"),
