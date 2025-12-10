@@ -364,6 +364,42 @@ def test_send_rpc_error_response(wallet_store: Path) -> None:
     assert "error" in output.lower() or "failed" in output.lower()
 
 
+def test_rpc_error_constructor_fix():
+    """
+    Unit test to verify RpcError constructor signature fix.
+    
+    This test validates that RpcError can be constructed with code/message
+    and optional method parameter, addressing the original issue where
+    'RpcError.__init__() missing 1 required positional argument: method'
+    was raised.
+    """
+    from omni_sdk.errors import RpcError
+    
+    # Test 1: Construct with code and message only (backward compatibility)
+    err1 = RpcError(code=-32603, message="Internal error")
+    assert err1.code == -32603
+    assert err1.message == "Internal error"
+    assert err1.method is None
+    
+    # Test 2: Construct with method parameter
+    err2 = RpcError(code=-32098, message="Request failed", method="tx.sendRawTransaction")
+    assert err2.code == -32098
+    assert err2.message == "Request failed"
+    assert err2.method == "tx.sendRawTransaction"
+    assert "tx.sendRawTransaction" in str(err2)
+    
+    # Test 3: Construct with all fields
+    err3 = RpcError(
+        code=-32010,
+        message="Invalid transaction",
+        method="tx.sendRawTransaction",
+        data={"reason": "nonce too low"}
+    )
+    assert err3.code == -32010
+    assert err3.method == "tx.sendRawTransaction"
+    assert err3.data == {"reason": "nonce too low"}
+
+
 # ============================================================================
 # Integration-style Tests
 # ============================================================================

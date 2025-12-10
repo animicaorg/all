@@ -50,9 +50,9 @@ class JsonRpcCode(IntEnum):
 class RpcError(OmniSdkError):
     """Raised when a JSON-RPC call returns an error object."""
 
-    method: Optional[str]
     code: int
     message: str
+    method: Optional[str] = None
     data: Optional[Any] = None
     request_id: Optional[Any] = None
     http_status: Optional[int] = None
@@ -164,9 +164,9 @@ def from_jsonrpc_error(
     message = str(err_obj.get("message", "Unknown JSON-RPC error"))
     data = err_obj.get("data")
     return RpcError(
-        method=method,
         code=code,
         message=message,
+        method=method,
         data=data,
         request_id=request_id,
         http_status=http_status,
