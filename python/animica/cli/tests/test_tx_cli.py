@@ -802,3 +802,142 @@ def test_chain_id_dry_run_validates(wallet_store: Path) -> None:
     assert exit_code != 0
     assert "Chain ID mismatch" in output
     assert "Dry-Run Mode" not in output  # Should fail before dry-run
+
+
+# ============================================================================
+# Verbose Mode Tests
+# ============================================================================
+
+@respx.mock
+def test_send_verbose_shows_chain_context(wallet_store: Path) -> None:
+    """Test that --verbose flag shows chain context debug information."""
+    import httpx
+    rpc_url = "http://localhost:9999/rpc"
+    
+    # Mock chain.getChainId
+    respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "result": 1337})
+    
+    _, output = run_tx_cli([
+        "send",
+        "--from", "alice",
+        "--to", "anim1zqp2u7fz3msky532tz4d3076wm99datq9rdxqjxvznq7zqn7xj0869ctuj4km",
+        "--value", "1.0",
+        "--verbose",
+        "--dry-run",
+        "--rpc-url", rpc_url
+    ], wallet_store)
+    
+    # Check for debug output
+    assert "CHAIN CONTEXT DEBUG" in output
+    assert "network:" in output
+    assert "rpc_url:" in output
+    assert "chain_id:" in output
+    assert "chain_id_source:" in output
+    # Should still have dry-run output
+    assert "Dry-Run Mode" in output
+
+
+@respx.mock
+def test_send_verbose_short_flag(wallet_store: Path) -> None:
+    """Test that -v (short flag) works for verbose mode."""
+    import httpx
+    rpc_url = "http://localhost:9999/rpc"
+    
+    # Mock chain.getChainId
+    respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "result": 1337})
+    
+    _, output = run_tx_cli([
+        "send",
+        "--from", "alice",
+        "--to", "anim1zqp2u7fz3msky532tz4d3076wm99datq9rdxqjxvznq7zqn7xj0869ctuj4km",
+        "--value", "1.0",
+        "-v",
+        "--dry-run",
+        "--rpc-url", rpc_url
+    ], wallet_store)
+    
+    # Check for debug output
+    assert "CHAIN CONTEXT DEBUG" in output
+    assert "network:" in output
+
+
+@respx.mock
+def test_send_without_verbose_no_debug_output(wallet_store: Path) -> None:
+    """Test that debug output is not shown without --verbose flag."""
+    import httpx
+    rpc_url = "http://localhost:9999/rpc"
+    
+    # Mock chain.getChainId
+    respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "result": 1337})
+    
+    _, output = run_tx_cli([
+        "send",
+        "--from", "alice",
+        "--to", "anim1zqp2u7fz3msky532tz4d3076wm99datq9rdxqjxvznq7zqn7xj0869ctuj4km",
+        "--value", "1.0",
+        "--dry-run",
+        "--rpc-url", rpc_url
+    ], wallet_store)
+    
+    # Should NOT have debug output
+    assert "CHAIN CONTEXT DEBUG" not in output
+    # But should still have dry-run output
+    assert "Dry-Run Mode" in output
+
+
+@respx.mock
+def test_send_verbose_shows_chain_id_source_auto_detect(wallet_store: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that verbose output shows 'node auto-detect' when chain ID is not specified."""
+    import httpx
+    rpc_url = "http://localhost:9999/rpc"
+    
+    # Clear any chain ID env var to test auto-detect
+    monkeypatch.delenv("ANIMICA_CHAIN_ID", raising=False)
+    # Clear network to avoid network config chain ID
+    monkeypatch.delenv("ANIMICA_NETWORK", raising=False)
+    
+    # Mock chain.getChainId to return mainnet's chain ID (1) to match config default
+    respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "result": 1})
+    
+    _, output = run_tx_cli([
+        "send",
+        "--from", "alice",
+        "--to", "anim1zqp2u7fz3msky532tz4d3076wm99datq9rdxqjxvznq7zqn7xj0869ctuj4km",
+        "--value", "1.0",
+        "--verbose",
+        "--dry-run",
+        "--rpc-url", rpc_url
+    ], wallet_store)
+    
+    # Check for debug output - since config has chain ID 1 for mainnet, 
+    # it will use "network config" as source
+    assert "CHAIN CONTEXT DEBUG" in output
+    assert "chain_id: 1" in output
+    # With no CLI flag and mainnet config, source will be "network config"
+    assert "chain_id_source:" in output
+
+
+@respx.mock
+def test_send_verbose_shows_chain_id_source_cli_flag(wallet_store: Path) -> None:
+    """Test that verbose output shows 'CLI/env' when chain ID is explicitly set."""
+    import httpx
+    rpc_url = "http://localhost:9999/rpc"
+    
+    # Mock chain.getChainId to return the same value as CLI flag
+    respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "result": 99})
+    
+    _, output = run_tx_cli([
+        "send",
+        "--from", "alice",
+        "--to", "anim1zqp2u7fz3msky532tz4d3076wm99datq9rdxqjxvznq7zqn7xj0869ctuj4km",
+        "--value", "1.0",
+        "--chain-id", "99",
+        "--verbose",
+        "--dry-run",
+        "--rpc-url", rpc_url
+    ], wallet_store)
+    
+    # Check for debug output with CLI/env source
+    assert "CHAIN CONTEXT DEBUG" in output
+    assert "chain_id: 99" in output
+    assert "chain_id_source: CLI/env" in output
