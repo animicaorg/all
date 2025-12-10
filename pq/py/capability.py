@@ -151,11 +151,14 @@ def _detect_fake_fallback() -> Optional[PQCapability]:
         sig_mechs = {"dilithium3", "sphincs_shake_128s"}
         kem_mechs = {"kyber768"}
         
+        # Select default based on available mechanisms
+        default_sig = _select_default_sig_mechanism(sig_mechs)
+        
         return PQCapability(
             available=True,
             sig_mechanisms=sig_mechs,
             kem_mechanisms=kem_mechs,
-            default_sig_mechanism="dilithium3",
+            default_sig_mechanism=default_sig,
             provider="fake",
             version="fake",
         )
