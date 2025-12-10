@@ -20,6 +20,27 @@ DEFAULT_RPC_URL = "http://127.0.0.1:8545/rpc"
 logger = logging.getLogger(__name__)
 
 
+def _get_cli_state_network() -> Optional[str]:
+    """
+    Get the active network from CLI state if available.
+    
+    Returns None if CLI state is not available or no network is set.
+    This allows config.py to remain independent of the CLI module.
+    """
+    try:
+        # Import here to avoid circular dependency
+        from animica.cli.state import get_cli_state
+        
+        state = get_cli_state()
+        return state.get("active_network")
+    except ImportError:
+        # CLI module not available (e.g., when used as a library)
+        return None
+    except Exception as e:
+        logger.debug(f"Could not read CLI state: {e}")
+        return None
+
+
 @dataclass(frozen=True)
 class NetworkConfig:
     name: str
@@ -151,7 +172,8 @@ def load_network_config(network: Optional[str] = None) -> NetworkConfig:
     Priority:
     1. Explicit network parameter
     2. ANIMICA_NETWORK environment variable
-    3. DEFAULT_NETWORK constant
+    3. Persisted setting from 'animica network set' (CLI state)
+    4. DEFAULT_NETWORK constant
     
     Environment variable handling:
     - ANIMICA_CHAIN_ID: Must be a valid integer. Empty string or whitespace
@@ -166,7 +188,25 @@ def load_network_config(network: Optional[str] = None) -> NetworkConfig:
     Returns:
         NetworkConfig with all network-specific settings
     """
-    network_name = network or os.getenv("ANIMICA_NETWORK", DEFAULT_NETWORK)
+    # Resolve network name with proper priority
+    if network:
+        # Explicit parameter has highest priority
+        network_name = network
+    else:
+        # Check environment variable
+        env_network = os.getenv("ANIMICA_NETWORK")
+        if env_network:
+            network_name = env_network
+        else:
+            # Check CLI state (from 'animica network set')
+            state_network = _get_cli_state_network()
+            if state_network:
+                network_name = state_network
+                logger.debug(f"Network resolved from CLI state: {network_name}")
+            else:
+                # Fall back to default
+                network_name = DEFAULT_NETWORK
+    
     defaults = get_network_defaults(network_name)
     
     # Allow environment overrides
