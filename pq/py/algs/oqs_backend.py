@@ -39,6 +39,13 @@ from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+# Recommended liboqs version
+RECOMMENDED_LIBOQS_VERSION = "0.15.0"
+
+# Common library SONAME versions to try (newest to oldest)
+# These may need updating as new liboqs versions are released
+LIBOQS_SONAME_VERSIONS = ["liboqs.so.5", "liboqs.so.4", "liboqs.so.3"]
+
 # --------------------------------------------------------------------------------------------------
 # Attempt to load liboqs
 # --------------------------------------------------------------------------------------------------
@@ -81,8 +88,8 @@ def _load_liboqs() -> Optional[ctypes.CDLL]:
     # Common SONAMEs on Linux/macOS/Windows
     candidates += ["liboqs.so", "liboqs.dylib", "oqs.dll"]
     
-    # Also try versioned library names
-    candidates += ["liboqs.so.5", "liboqs.so.4", "liboqs.so.3"]
+    # Also try versioned library names (Linux only)
+    candidates += LIBOQS_SONAME_VERSIONS
 
     # Check if LD_LIBRARY_PATH or DYLD_LIBRARY_PATH is set and log it
     if sys.platform == "darwin":
@@ -106,7 +113,7 @@ def _load_liboqs() -> Optional[ctypes.CDLL]:
     logger.warning(
         "liboqs shared library not found. "
         "Install liboqs-dev (apt/brew) or build from source and set LD_LIBRARY_PATH/DYLD_LIBRARY_PATH. "
-        "See: https://github.com/open-quantum-safe/liboqs/releases/tag/0.15.0"
+        f"See: https://github.com/open-quantum-safe/liboqs/releases/tag/{RECOMMENDED_LIBOQS_VERSION}"
     )
     return None
 
@@ -281,10 +288,10 @@ class OQSBackend:
             error_msg = (
                 "liboqs shared library not found.\n\n"
                 "To fix this issue:\n\n"
-                "1. Install liboqs (recommended version: v0.15.0 or later):\n"
+                f"1. Install liboqs (recommended version: v{RECOMMENDED_LIBOQS_VERSION} or later):\n"
                 "   • Ubuntu/Debian: sudo apt-get install liboqs-dev\n"
                 "   • macOS: brew install liboqs\n"
-                "   • From source: https://github.com/open-quantum-safe/liboqs/releases/tag/0.15.0\n\n"
+                f"   • From source: https://github.com/open-quantum-safe/liboqs/releases/tag/{RECOMMENDED_LIBOQS_VERSION}\n\n"
                 "2. If built from source, ensure library paths are set:\n"
             )
             

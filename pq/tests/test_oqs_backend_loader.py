@@ -202,8 +202,8 @@ class TestGetVersionInfo:
         from pq.py.algs import oqs_backend
         
         mock_lib = MagicMock()
-        # Simulate library without OQS_version function
-        del mock_lib.OQS_version
+        # Simulate library without OQS_version function by raising AttributeError
+        mock_lib.OQS_version = MagicMock(side_effect=AttributeError("No OQS_version"))
         
         with patch.object(oqs_backend, "_HAVE", True):
             with patch.object(oqs_backend, "_LIB", mock_lib):
