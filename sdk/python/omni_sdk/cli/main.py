@@ -26,7 +26,7 @@ Examples
 Configuration
 -------------
 - RPC URL      : `--rpc` or env `OMNI_SDK_RPC_URL` (default: http://127.0.0.1:8545)
-- Chain ID     : `--chain-id` or env `OMNI_CHAIN_ID` (default: 1)
+- Chain ID     : `--chain-id` or env `OMNI_CHAIN_ID` (auto-detected from node, fallback: testnet chain ID 2)
 - HTTP Timeout : `--timeout` or env `OMNI_SDK_HTTP_TIMEOUT` seconds (default: 10.0)
 
 """
@@ -85,6 +85,22 @@ def _print_json(obj: Any) -> None:
     typer.echo(json.dumps(obj, indent=2, ensure_ascii=False))
 
 
+def _auto_detect_chain_id(rpc_url: str, timeout: float) -> Optional[int]:
+    """
+    Attempt to auto-detect chain ID from the RPC node.
+    
+    Returns None if detection fails (node unreachable or invalid response).
+    """
+    try:
+        client = RpcClient(rpc_url, timeout=timeout)
+        result = client.call("chain.getChainId", [])
+        if result is not None:
+            return int(result)
+    except Exception:
+        pass  # Silently fail, caller will handle fallback
+    return None
+
+
 @app.callback()
 def _root(
     ctx: typer.Context,
@@ -112,14 +128,46 @@ def _root(
     lazily-imported subcommands share the same settings).
     """
     effective_rpc = rpc or _env_default("OMNI_SDK_RPC_URL", "http://127.0.0.1:8545")
-    effective_chain = int(
-        chain_id if chain_id is not None else int(_env_default("OMNI_CHAIN_ID", "1"))
-    )
     effective_timeout = float(
         timeout
         if timeout is not None
         else float(_env_default("OMNI_SDK_HTTP_TIMEOUT", "10.0"))
     )
+    
+    # Chain ID resolution with auto-detection and testnet fallback
+    if chain_id is not None:
+        # Explicit chain ID provided via flag
+        effective_chain = int(chain_id)
+    else:
+        # Try environment variable first
+        env_chain = os.environ.get("OMNI_CHAIN_ID")
+        if env_chain:
+            effective_chain = int(env_chain)
+        else:
+            # Attempt auto-detection from node
+            detected_chain = _auto_detect_chain_id(effective_rpc, effective_timeout)
+            if detected_chain is not None:
+                effective_chain = detected_chain
+                # Warn user about auto-detection for transparency
+                typer.echo(
+                    f"ℹ️  Auto-detected chain ID {effective_chain} from node",
+                    err=True,
+                )
+            else:
+                # Fallback to testnet (chain ID 2) per requirements
+                effective_chain = 2
+                typer.echo(
+                    "⚠️  WARNING: Could not auto-detect chain ID from node",
+                    err=True,
+                )
+                typer.echo(
+                    f"   Falling back to testnet (chain ID {effective_chain})",
+                    err=True,
+                )
+                typer.echo(
+                    "   Specify --chain-id explicitly or set OMNI_CHAIN_ID env var",
+                    err=True,
+                )
 
     # Persist to env for submodules that consult env vars
     os.environ["OMNI_SDK_RPC_URL"] = effective_rpc
