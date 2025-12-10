@@ -162,15 +162,9 @@ class TestLiboqsLoadingIntegration:
             "Falcon-512",
         ]
         
-        # Mock the import to return our mock oqs module
-        original_import = __import__
-        def mock_import(name, *args, **kwargs):
-            if name == "oqs":
-                return mock_oqs
-            return original_import(name, *args, **kwargs)
-        
         with patch.dict(os.environ, {}, clear=True):
-            with patch("builtins.__import__", side_effect=mock_import):
+            # Use sys.modules to mock the oqs import
+            with patch.dict('sys.modules', {'oqs': mock_oqs}):
                 available, error = check_pq_signing_available()
                 
                 # Should detect SPHINCS+ with simple variant
