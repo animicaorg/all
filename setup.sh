@@ -94,11 +94,15 @@ build_liboqs_from_source() {
 
 Possible causes:
   1. The tag '$LIBOQS_VERSION' does not exist in the repository
+     (Note: liboqs uses version tags like '0.15.0', not 'v0.15.0')
   2. Network connectivity issues
   3. Repository URL has changed
 
 Please verify the tag exists at: https://github.com/open-quantum-safe/liboqs/tags
-or check your network connection."
+Current tag being used: $LIBOQS_VERSION
+
+If the tag doesn't exist, check the liboqs releases page for available versions:
+https://github.com/open-quantum-safe/liboqs/releases"
   fi
   
   mkdir -p "$build_dir"
