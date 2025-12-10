@@ -182,9 +182,29 @@ class Tx:
 
     @staticmethod
     def from_rpc_dict(d: TxDict) -> "Tx":
-        # Get chain ID, but note that 0 is not a valid chain ID
-        # Callers should validate this before using the transaction
-        chain_id_value = d.get("chainId", 0)
+        # Get chain ID - it's required and must be > 0
+        # Raise clear error if missing or invalid
+        chain_id_value = d.get("chainId")
+        
+        if chain_id_value is None:
+            raise ValueError(
+                "Transaction missing required field 'chainId'. "
+                "All transactions must specify a valid chain ID > 0."
+            )
+        
+        try:
+            chain_id_int = int(chain_id_value)
+        except (ValueError, TypeError) as e:
+            raise ValueError(
+                f"Transaction has invalid chainId: {chain_id_value!r}. "
+                f"chainId must be a positive integer."
+            ) from e
+        
+        if chain_id_int <= 0:
+            raise ValueError(
+                f"Transaction has invalid chainId: {chain_id_int}. "
+                f"chainId must be a positive integer (> 0)."
+            )
         
         return Tx(
             from_addr=d.get("from_", d.get("from")),  # tolerate wire shape
@@ -194,7 +214,7 @@ class Tx:
             data=_hex_to_bytes(d.get("data", "0x")),
             gas_limit=int(d.get("gasLimit", 0)),
             max_fee=int(d.get("maxFee", 0)),
-            chain_id=int(chain_id_value),
+            chain_id=chain_id_int,
             hash=d.get("hash"),
             signature=_hex_to_bytes(d["signature"]) if "signature" in d else None,
             pubkey=_hex_to_bytes(d["pubkey"]) if "pubkey" in d else None,
