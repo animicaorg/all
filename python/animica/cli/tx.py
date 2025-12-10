@@ -97,13 +97,18 @@ def _warn_if_unsafe_pq_mode() -> None:
         typer.echo("", err=True)
 
 
-def resolve_chain_id(rpc_url: Optional[str], cli_chain_id: Optional[int]) -> int:
+def resolve_chain_id(
+    rpc_url: Optional[str],
+    cli_chain_id: Optional[int],
+    config_chain_id: Optional[int] = None,
+) -> int:
     """
-    Resolve chain ID with validation.
+    Resolve chain ID with validation using proper precedence.
     
     Args:
         rpc_url: RPC endpoint URL (will be resolved if None)
         cli_chain_id: Chain ID from CLI flag or env var (None = auto-detect)
+        config_chain_id: Chain ID from active network config (None = not set)
     
     Returns:
         Validated chain ID to use for transaction signing
@@ -111,14 +116,28 @@ def resolve_chain_id(rpc_url: Optional[str], cli_chain_id: Optional[int]) -> int
     Raises:
         typer.Exit: If CLI chain ID doesn't match node's chain ID
     
-    Logic:
-        1. Query node's chain ID via chain.getChainId RPC
-        2. If cli_chain_id is None: return node's chain ID
-        3. If cli_chain_id is set:
-           - If matches node: return it
-           - If differs: fail with clear error message
+    Precedence Logic:
+        1. If cli_chain_id is provided (CLI flag or env var): use it and validate
+        2. If config_chain_id is provided (from active network): use it and validate
+        3. Otherwise: query node via chain.getChainId RPC
+        
+    Validation:
+        - When a chain ID is provided (CLI or config), it's validated against the node
+        - Mismatches result in a clear error message with resolution steps
     """
-    # Fetch node's chain ID
+    # Determine which chain ID to use based on precedence
+    # Priority: CLI flag/env > network config > RPC query
+    chain_id_to_use = None
+    chain_id_source = None
+    
+    if cli_chain_id is not None:
+        chain_id_to_use = cli_chain_id
+        chain_id_source = "CLI/env"
+    elif config_chain_id is not None:
+        chain_id_to_use = config_chain_id
+        chain_id_source = "network config"
+    
+    # Fetch node's chain ID for validation
     try:
         node_chain_id_result = _request_rpc("chain.getChainId", [], rpc_url)
         node_chain_id = int(node_chain_id_result) if node_chain_id_result else None
@@ -141,27 +160,32 @@ def resolve_chain_id(rpc_url: Optional[str], cli_chain_id: Optional[int]) -> int
         )
         raise typer.Exit(1)
     
-    # Case 1: No CLI chain ID specified -> use node's chain ID
-    if cli_chain_id is None:
+    # Case 1: No chain ID from CLI or config -> use node's chain ID
+    if chain_id_to_use is None:
         return node_chain_id
     
-    # Case 2: CLI chain ID specified -> validate it matches node
-    if cli_chain_id == node_chain_id:
-        return cli_chain_id
+    # Case 2: Chain ID specified (from CLI or config) -> validate it matches node
+    if chain_id_to_use == node_chain_id:
+        return chain_id_to_use
     
     # Case 3: Mismatch -> fail with clear error
     typer.echo("=" * 60, err=True)
-    typer.echo("Error: Chain ID mismatch between CLI and node", err=True)
+    typer.echo("Error: Chain ID mismatch", err=True)
     typer.echo("=" * 60, err=True)
-    typer.echo(f"CLI chain ID:  {cli_chain_id}", err=True)
+    typer.echo(f"Source:        {chain_id_source}", err=True)
+    typer.echo(f"Specified ID:  {chain_id_to_use}", err=True)
     typer.echo(f"Node chain ID: {node_chain_id}", err=True)
     typer.echo("", err=True)
     typer.echo("The transaction would be rejected by the node.", err=True)
     typer.echo("", err=True)
     typer.echo("Solutions:", err=True)
-    typer.echo(f"  1. Remove --chain-id flag (auto-detect from node: {node_chain_id})", err=True)
-    typer.echo(f"  2. Set --chain-id {node_chain_id} to match the node", err=True)
-    typer.echo(f"  3. Unset ANIMICA_CHAIN_ID env var if set", err=True)
+    typer.echo(f"  1. Remove --chain-id flag to auto-detect (node: {node_chain_id})", err=True)
+    if chain_id_source == "network config":
+        typer.echo(f"  2. Use 'animica network set <network>' to switch networks", err=True)
+        typer.echo(f"  3. Set --chain-id {node_chain_id} to override config", err=True)
+    else:
+        typer.echo(f"  2. Set --chain-id {node_chain_id} to match the node", err=True)
+        typer.echo(f"  3. Unset ANIMICA_CHAIN_ID env var if set", err=True)
     typer.echo("  4. Connect to a different node with --rpc-url", err=True)
     typer.echo("=" * 60, err=True)
     raise typer.Exit(1)
@@ -305,8 +329,11 @@ def build(
         # Resolve RPC URL
         url = _resolve_rpc_url(rpc_url)
         
-        # Resolve and validate chain ID
-        resolved_chain_id = resolve_chain_id(url, chain_id)
+        # Load network config to get default chain ID
+        cfg = load_network_config()
+        
+        # Resolve and validate chain ID with proper precedence
+        resolved_chain_id = resolve_chain_id(url, chain_id, cfg.chain_id)
         
         # Fetch nonce if not provided
         if nonce is None:
@@ -397,8 +424,12 @@ def sign(
                     raise typer.Exit(1)
                 
                 url = _resolve_rpc_url(rpc_url)
+                
+                # Load network config for default chain ID
+                cfg = load_network_config()
+                
                 # This will validate the chain ID or exit with clear error
-                resolved_chain_id = resolve_chain_id(url, chain_id_int)
+                resolved_chain_id = resolve_chain_id(url, chain_id_int, cfg.chain_id)
                 typer.echo(f"✓ Chain ID validated: {resolved_chain_id}")
             except typer.Exit:
                 raise
@@ -501,8 +532,11 @@ def send(
         # Step 3: Resolve RPC URL
         url = _resolve_rpc_url(rpc_url)
         
-        # Step 4: Resolve and validate chain ID
-        chain_id = resolve_chain_id(url, chain_id)
+        # Step 3.5: Load network config for default chain ID
+        cfg = load_network_config()
+        
+        # Step 4: Resolve and validate chain ID with proper precedence
+        chain_id = resolve_chain_id(url, chain_id, cfg.chain_id)
         
         # Step 5: Fetch nonce if not provided
         if nonce is None:

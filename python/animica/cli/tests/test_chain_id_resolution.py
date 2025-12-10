@@ -51,10 +51,14 @@ def wallet_store(tmp_path: Path) -> Path:
 # ============================================================================
 
 @respx.mock
-def test_build_auto_detects_chain_id(wallet_store: Path) -> None:
+def test_build_auto_detects_chain_id(wallet_store: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that build command auto-detects chain ID from node."""
     import httpx
     rpc_url = "http://localhost:9999/rpc"
+    
+    # Override network config chain ID to match mock node (1337)
+    # This simulates being on devnet
+    monkeypatch.setenv("ANIMICA_CHAIN_ID", "1337")
     
     # Mock node returning chain ID 1337
     respx.post(rpc_url).mock(side_effect=[
@@ -103,10 +107,13 @@ def test_build_explicit_chain_id_matches_node(wallet_store: Path) -> None:
 
 
 @respx.mock
-def test_build_explicit_chain_id_mismatch_fails(wallet_store: Path) -> None:
+def test_build_explicit_chain_id_mismatch_fails(wallet_store: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that build fails clearly when explicit chain ID doesn't match node."""
     import httpx
     rpc_url = "http://localhost:9999/rpc"
+    
+    # Clear env vars to ensure only explicit --chain-id is used
+    monkeypatch.delenv("ANIMICA_CHAIN_ID", raising=False)
     
     # Mock node returning chain ID 1
     respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "result": 1})
@@ -122,7 +129,7 @@ def test_build_explicit_chain_id_mismatch_fails(wallet_store: Path) -> None:
     
     assert result.exit_code != 0
     assert "Chain ID mismatch" in result.output
-    assert "CLI chain ID:  99" in result.output
+    assert "Specified ID:  99" in result.output
     assert "Node chain ID: 1" in result.output
 
 
@@ -169,11 +176,14 @@ def test_build_node_returns_null_chain_id(wallet_store: Path) -> None:
 
 
 @respx.mock
-def test_build_saves_correct_chain_id_to_file(tmp_path: Path, wallet_store: Path) -> None:
+def test_build_saves_correct_chain_id_to_file(tmp_path: Path, wallet_store: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that build saves the correct chain ID to output file."""
     import httpx
     rpc_url = "http://localhost:9999/rpc"
     output_file = tmp_path / "tx.json"
+    
+    # Set chain ID to match mock node
+    monkeypatch.setenv("ANIMICA_CHAIN_ID", "1337")
     
     # Mock node returning chain ID 1337
     respx.post(rpc_url).mock(side_effect=[
@@ -249,7 +259,7 @@ def test_build_env_var_chain_id_mismatch_fails(wallet_store: Path, monkeypatch: 
     
     assert result.exit_code != 0
     assert "Chain ID mismatch" in result.output
-    assert "CLI chain ID:  88" in result.output
+    assert "Specified ID:  88" in result.output
     assert "Node chain ID: 1" in result.output
 
 
