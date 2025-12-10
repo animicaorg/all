@@ -12,9 +12,9 @@ Re-exports:
 from .bech32 import decode as bech32_decode, encode as bech32_encode
 from .bytes import (ensure_bytes, from_hex, to_hex, uvarint_decode,
                     uvarint_encode)
-from .cbor import cbor_dumps, cbor_loads
-from .hash import keccak_256, sha3_256
-from .retry import retry, retry_async
+from .cbor import dumps as cbor_dumps, loads as cbor_loads
+from .hash import keccak256 as keccak_256, sha3_256
+from .retry import retry_call as retry, aretry_call as retry_async
 
 __all__ = [
     # bytes
