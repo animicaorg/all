@@ -21,6 +21,36 @@ from animica.cli.pq_utils import (
 )
 
 
+@pytest.fixture
+def mock_oqs_import():
+    """
+    Helper fixture to mock the oqs module import.
+    
+    Returns a context manager that can be used to mock the import behavior.
+    """
+    def _mock_import(mock_oqs_module=None):
+        """
+        Context manager to mock oqs import.
+        
+        Args:
+            mock_oqs_module: If provided, return this when oqs is imported.
+                           If None, raise ImportError.
+        """
+        import importlib
+        original_import = importlib.__import__
+        
+        def mock_import_func(name, *args, **kwargs):
+            if name == "oqs":
+                if mock_oqs_module is None:
+                    raise ImportError("No module named 'oqs'")
+                return mock_oqs_module
+            return original_import(name, *args, **kwargs)
+        
+        return patch("builtins.__import__", side_effect=mock_import_func)
+    
+    return _mock_import
+
+
 class TestCheckPQSigningAvailable:
     """Tests for check_pq_signing_available function."""
 
@@ -31,26 +61,17 @@ class TestCheckPQSigningAvailable:
             assert available is True
             assert error is None
 
-    def test_liboqs_python_not_installed(self):
+    def test_liboqs_python_not_installed(self, mock_oqs_import):
         """Test behavior when liboqs-python is not installed."""
         # Remove ANIMICA_UNSAFE_PQ_FAKE if set
         with patch.dict(os.environ, {}, clear=True):
-            # Mock the import to raise ImportError
-            import importlib
-            original_import = importlib.__import__
-            
-            def mock_import(name, *args, **kwargs):
-                if name == "oqs":
-                    raise ImportError("No module named 'oqs'")
-                return original_import(name, *args, **kwargs)
-            
-            with patch("builtins.__import__", side_effect=mock_import):
+            with mock_oqs_import(None):
                 with patch("animica.cli.pq_utils.logger") as mock_logger:
                     available, error = check_pq_signing_available()
                     assert available is False
                     assert error is None
 
-    def test_liboqs_python_installed_sphincs_enabled(self):
+    def test_liboqs_python_installed_sphincs_enabled(self, mock_oqs_import):
         """Test successful detection when liboqs-python is properly installed."""
         # Remove ANIMICA_UNSAFE_PQ_FAKE if set
         with patch.dict(os.environ, {}, clear=True):
@@ -63,16 +84,7 @@ class TestCheckPQSigningAvailable:
                 "Falcon-512",
             ]
             
-            # We need to ensure the import statement in the function uses our mock
-            import importlib
-            original_import = importlib.__import__
-            
-            def mock_import(name, *args, **kwargs):
-                if name == "oqs":
-                    return mock_oqs
-                return original_import(name, *args, **kwargs)
-            
-            with patch("builtins.__import__", side_effect=mock_import):
+            with mock_oqs_import(mock_oqs):
                 with patch("animica.cli.pq_utils.logger") as mock_logger:
                     available, error = check_pq_signing_available()
                     assert available is True
@@ -82,7 +94,7 @@ class TestCheckPQSigningAvailable:
                     assert any("0.10.0" in call for call in info_calls)
                     assert any("SPHINCS+" in call for call in info_calls)
 
-    def test_liboqs_python_installed_sphincs_disabled(self):
+    def test_liboqs_python_installed_sphincs_disabled(self, mock_oqs_import):
         """Test detection when liboqs-python is installed but SPHINCS+ is missing."""
         # Remove ANIMICA_UNSAFE_PQ_FAKE if set
         with patch.dict(os.environ, {}, clear=True):
@@ -94,15 +106,7 @@ class TestCheckPQSigningAvailable:
                 "Falcon-512",
             ]
             
-            import importlib
-            original_import = importlib.__import__
-            
-            def mock_import(name, *args, **kwargs):
-                if name == "oqs":
-                    return mock_oqs
-                return original_import(name, *args, **kwargs)
-            
-            with patch("builtins.__import__", side_effect=mock_import):
+            with mock_oqs_import(mock_oqs):
                 with patch("animica.cli.pq_utils.logger") as mock_logger:
                     available, error = check_pq_signing_available()
                     assert available is False
@@ -111,7 +115,7 @@ class TestCheckPQSigningAvailable:
                     # Verify error logging
                     mock_logger.error.assert_called_once()
 
-    def test_liboqs_python_installed_no_version(self):
+    def test_liboqs_python_installed_no_version(self, mock_oqs_import):
         """Test when liboqs-python doesn't expose version info."""
         # Remove ANIMICA_UNSAFE_PQ_FAKE if set
         with patch.dict(os.environ, {}, clear=True):
@@ -122,15 +126,7 @@ class TestCheckPQSigningAvailable:
                 "SPHINCS+-SHAKE-128s",
             ]
             
-            import importlib
-            original_import = importlib.__import__
-            
-            def mock_import(name, *args, **kwargs):
-                if name == "oqs":
-                    return mock_oqs
-                return original_import(name, *args, **kwargs)
-            
-            with patch("builtins.__import__", side_effect=mock_import):
+            with mock_oqs_import(mock_oqs):
                 with patch("animica.cli.pq_utils.logger") as mock_logger:
                     available, error = check_pq_signing_available()
                     assert available is True

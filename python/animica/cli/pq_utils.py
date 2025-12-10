@@ -13,6 +13,9 @@ from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+# Recommended liboqs version for installation
+RECOMMENDED_LIBOQS_VERSION = "0.15.0"
+
 
 def check_pq_signing_available() -> Tuple[bool, Optional[str]]:
     """
@@ -96,10 +99,10 @@ Transaction signing requires liboqs-python (python-oqs) with liboqs support.
 
 To install:
 
-1. Install liboqs (recommended version: v0.15.0 or later):
+1. Install liboqs (recommended version: v{RECOMMENDED_LIBOQS_VERSION} or later):
    • Ubuntu/Debian: sudo apt-get install liboqs-dev
    • macOS: brew install liboqs
-   • From source: https://github.com/open-quantum-safe/liboqs/releases/tag/0.15.0
+   • From source: https://github.com/open-quantum-safe/liboqs/releases/tag/{RECOMMENDED_LIBOQS_VERSION}
 
 2. Install liboqs-python:
    python -m pip install liboqs-python
