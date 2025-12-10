@@ -30,9 +30,19 @@ _sizes: Dict[str, int] = {"pk": 0, "sk": 0, "sig": 0}
 try:
     import oqs  # type: ignore
 
-    if "Dilithium3" in getattr(oqs, "get_enabled_sig_mechanisms", lambda: [])():
+    # Try ML-DSA-65 first (NIST standard, liboqs 0.15.0+)
+    # Fall back to Dilithium3 (legacy, liboqs < 0.15.0)
+    enabled_mechs = getattr(oqs, "get_enabled_sig_mechanisms", lambda: [])()
+    _mechanism_name = None
+    
+    if "ML-DSA-65" in enabled_mechs:
+        _mechanism_name = "ML-DSA-65"
+    elif "Dilithium3" in enabled_mechs:
+        _mechanism_name = "Dilithium3"
+    
+    if _mechanism_name:
         # Probe sizes once; reuse instances per call to ensure fresh context
-        with oqs.Signature("Dilithium3") as _probe:
+        with oqs.Signature(_mechanism_name) as _probe:
             _sizes = {
                 "pk": _probe.length_public_key,  # type: ignore[attr-defined]
                 "sk": _probe.length_secret_key,  # type: ignore[attr-defined]
@@ -41,6 +51,7 @@ try:
         _OQS_OK = True
 except Exception:
     _OQS_OK = False
+    _mechanism_name = None
 
 
 # --------------------------------------------------------------------------------------
@@ -89,14 +100,15 @@ def is_available() -> bool:
 
 def keypair(seed: Optional[bytes] = None) -> Tuple[bytes, bytes]:
     """
-    Generate a Dilithium3 keypair.
+    Generate a Dilithium3/ML-DSA-65 keypair.
 
     Notes:
       • With python-oqs, the RNG is internal; the optional seed is ignored.
       • In DEV-ONLY fallback, we derive (sk, pk) deterministically from seed or OS RNG.
+      • Uses ML-DSA-65 (NIST standard) if available, falls back to Dilithium3 (legacy).
     """
-    if _OQS_OK:
-        with oqs.Signature("Dilithium3") as signer:  # type: ignore[name-defined]
+    if _OQS_OK and _mechanism_name:
+        with oqs.Signature(_mechanism_name) as signer:  # type: ignore[name-defined]
             pk = signer.generate_keypair()
             sk = signer.export_secret_key()
             return (sk, pk)
@@ -130,9 +142,10 @@ def sign(sk: bytes, msg: bytes) -> bytes:
     Security:
       • Real signatures when python-oqs is present.
       • DEV-ONLY fallback returns sha3_512(sk || msg) and is NOT secure.
+      • Uses ML-DSA-65 (NIST standard) if available, falls back to Dilithium3 (legacy).
     """
-    if _OQS_OK:
-        with oqs.Signature("Dilithium3", secret_key=sk) as signer:  # type: ignore[name-defined]
+    if _OQS_OK and _mechanism_name:
+        with oqs.Signature(_mechanism_name, secret_key=sk) as signer:  # type: ignore[name-defined]
             return signer.sign(msg)
 
     if _DEV_FAKE_OK:
@@ -150,9 +163,10 @@ def verify(pk: bytes, msg: bytes, sig: bytes) -> bool:
 
     Returns:
       True if valid, False otherwise.
+      Uses ML-DSA-65 (NIST standard) if available, falls back to Dilithium3 (legacy).
     """
-    if _OQS_OK:
-        with oqs.Signature("Dilithium3", public_key=pk) as verifier:  # type: ignore[name-defined]
+    if _OQS_OK and _mechanism_name:
+        with oqs.Signature(_mechanism_name, public_key=pk) as verifier:  # type: ignore[name-defined]
             try:
                 return bool(verifier.verify(msg, sig))
             except Exception:
