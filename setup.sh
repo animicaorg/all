@@ -125,8 +125,11 @@ build_liboqs_from_source() {
   # Set up environment variables
   setup_liboqs_env_vars "$install_prefix"
   
-  log "liboqs successfully built and installed to $install_prefix"
-  log "Note: To reuse this liboqs build in future sessions, set these environment variables:"
+  log "✓ liboqs successfully built and installed to $install_prefix"
+  log ""
+  log "═══════════════════════════════════════════════════════════════════════"
+  log "To reuse this liboqs build in future shell sessions, add to your shell profile:"
+  log ""
   log "  export LIBRARY_PATH=\"$install_prefix/lib:\$LIBRARY_PATH\""
   log "  export PKG_CONFIG_PATH=\"$install_prefix/lib/pkgconfig:\$PKG_CONFIG_PATH\""
   log "  export C_INCLUDE_PATH=\"$install_prefix/include:\$C_INCLUDE_PATH\""
@@ -138,6 +141,37 @@ build_liboqs_from_source() {
   else
     log "  export LD_LIBRARY_PATH=\"$install_prefix/lib:\$LD_LIBRARY_PATH\""
   fi
+  
+  log ""
+  log "Or source this convenience script: source $ROOT_DIR/.liboqs/env.sh"
+  log "═══════════════════════════════════════════════════════════════════════"
+  log ""
+  
+  # Create a convenience script to source the environment variables
+  cat > "$LIBOQS_DIR/env.sh" << 'ENVSCRIPT'
+#!/usr/bin/env bash
+# Source this file to set up liboqs environment variables
+# Usage: source .liboqs/env.sh
+
+LIBOQS_PREFIX="$(cd "$(dirname "${BASH_SOURCE[0]}")/install" && pwd)"
+
+export LIBRARY_PATH="${LIBOQS_PREFIX}/lib:${LIBRARY_PATH:-}"
+export PKG_CONFIG_PATH="${LIBOQS_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+export C_INCLUDE_PATH="${LIBOQS_PREFIX}/include:${C_INCLUDE_PATH:-}"
+export CPLUS_INCLUDE_PATH="${LIBOQS_PREFIX}/include:${CPLUS_INCLUDE_PATH:-}"
+
+case "$(uname -s)" in
+  Darwin)
+    export DYLD_LIBRARY_PATH="${LIBOQS_PREFIX}/lib:${DYLD_LIBRARY_PATH:-}"
+    ;;
+  *)
+    export LD_LIBRARY_PATH="${LIBOQS_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
+    ;;
+esac
+
+echo "[liboqs env] Environment variables set for liboqs at $LIBOQS_PREFIX"
+ENVSCRIPT
+  chmod +x "$LIBOQS_DIR/env.sh"
 }
 
 ensure_pnpm() {
@@ -202,32 +236,52 @@ setup_python() {
   
   # Fast path: try to install liboqs-python directly
   if python -m pip install liboqs-python >/dev/null 2>&1; then
-    log "liboqs-python installed successfully"
+    log "liboqs-python installed successfully (prebuilt wheel or system liboqs detected)"
   else
-    warn "liboqs-python installation failed (liboqs may not be available on this system)"
-    log "Attempting to build liboqs from source..."
+    warn "liboqs-python installation failed - no prebuilt wheel or system liboqs available"
+    log "Attempting to build liboqs from source as fallback..."
     
     # Check if git is available for cloning
     if ! command -v git >/dev/null 2>&1; then
-      fail "git is required to build liboqs from source but is not installed"
+      fail "git is required to build liboqs from source but is not installed.
+To install git:
+  • Ubuntu/Debian: sudo apt-get install git
+  • macOS: brew install git or install Xcode Command Line Tools
+  • Fedora/RHEL: sudo dnf install git"
     fi
     
-    # Build liboqs from source
+    # Build liboqs from source (this will check for cmake, make, gcc/clang and fail if missing)
     build_liboqs_from_source
     
     # Retry liboqs-python installation with liboqs now available
-    log "Retrying liboqs-python installation with liboqs built from source..."
-    if python -m pip install liboqs-python 2>&1 | tee /tmp/oqs_install_retry.log; then
-      log "liboqs-python installed successfully after building liboqs"
+    log "Retrying liboqs-python installation with locally-built liboqs..."
+    
+    # Capture the output in a temporary file for diagnostics
+    local retry_log
+    retry_log=$(mktemp /tmp/oqs_install_retry.XXXXXX.log)
+    if python -m pip install liboqs-python --no-cache-dir >"$retry_log" 2>&1; then
+      log "✓ liboqs-python installed successfully after building liboqs from source"
+      log "  Built liboqs is at: $LIBOQS_DIR/install"
+      rm -f "$retry_log"
     else
-      warn "liboqs-python installation still failed after building liboqs"
-      warn "Transaction signing will require ANIMICA_UNSAFE_PQ_FAKE=1 (development only)"
-      warn "Check /tmp/oqs_install_retry.log for details"
-      warn ""
-      warn "You may need to:"
-      warn "  1. Ensure liboqs was built correctly at $LIBOQS_DIR/install"
-      warn "  2. Set environment variables manually (see above log messages)"
-      warn "  3. Try: python -m pip install liboqs-python --no-cache-dir"
+      fail "Failed to install liboqs-python even after building liboqs from source.
+
+Build location: $LIBOQS_DIR/install
+Installation log: $retry_log
+
+Possible issues:
+  1. The liboqs build may have succeeded but pip cannot find the shared library
+  2. Missing Python development headers (python3-dev or python3-devel package)
+  3. Environment variables not properly set in the current shell
+
+To debug:
+  • Check the installation log: cat $retry_log
+  • Verify liboqs library exists: ls -la $LIBOQS_DIR/install/lib/liboqs.*
+  • Try manual installation: python -m pip install liboqs-python --no-cache-dir
+
+Note: Post-quantum signing is currently unavailable. As a workaround for development
+only, you can set ANIMICA_UNSAFE_PQ_FAKE=1, but this is NOT secure and should
+NEVER be used in production."
     fi
   fi
 }
