@@ -8,6 +8,7 @@ Tests cover:
 - Logging behavior
 """
 
+import importlib
 import os
 import sys
 from unittest.mock import MagicMock, patch
@@ -36,7 +37,6 @@ def mock_oqs_import():
             mock_oqs_module: If provided, return this when oqs is imported.
                            If None, raise ImportError.
         """
-        import importlib
         original_import = importlib.__import__
         
         def mock_import_func(name, *args, **kwargs):

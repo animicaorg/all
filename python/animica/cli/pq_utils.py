@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -126,8 +127,6 @@ def ensure_pq_signing_or_exit() -> None:
     
     This is a convenience function for CLI commands that require PQ signing.
     """
-    import sys
-    
     available, specific_error = check_pq_signing_available()
     if not available:
         print(get_pq_missing_error_message(), file=sys.stderr)
