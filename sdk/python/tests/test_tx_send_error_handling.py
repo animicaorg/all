@@ -42,14 +42,6 @@ class MockRpcClient:
 
 def test_submit_raw_success():
     """submit_raw returns tx hash on success."""
-    # Import here to avoid module-level import issues
-    import sys
-    import types
-
-    # Create minimal module structure for testing
-    tx_send = types.ModuleType("omni_sdk.tx.send")
-
-    # Define submit_raw inline for testing
     def submit_raw(rpc, raw_tx):
         if not isinstance(raw_tx, (bytes, bytearray)):
             raise TypeError("raw_tx must be bytes")
@@ -77,10 +69,6 @@ def test_submit_raw_success():
 
 def test_submit_raw_rpc_error_includes_method():
     """submit_raw raises RpcError with method when RPC fails."""
-    import types
-
-    tx_send = types.ModuleType("omni_sdk.tx.send")
-
     def submit_raw(rpc, raw_tx):
         if not isinstance(raw_tx, (bytes, bytearray)):
             raise TypeError("raw_tx must be bytes")
@@ -118,8 +106,6 @@ def test_submit_raw_rpc_error_includes_method():
 
 def test_get_transaction_receipt_rpc_error_includes_method():
     """get_transaction_receipt raises RpcError with method when RPC fails."""
-    import types
-
     def get_transaction_receipt(rpc, tx_hash):
         try:
             res = rpc.request("tx.getTransactionReceipt", [tx_hash])
