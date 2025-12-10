@@ -11,6 +11,7 @@ Implements:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Optional, Tuple
 
@@ -72,6 +73,28 @@ def _request_rpc(method: str, params: Optional[list], rpc_url: Optional[str]):
 
 def _pretty(obj: Any) -> str:
     return json.dumps(obj, indent=2, ensure_ascii=False)
+
+
+def _warn_if_unsafe_pq_mode() -> None:
+    """
+    Warn user if they're using unsafe PQ fallback mode.
+    
+    This mode should only be used for development/testing, never in production.
+    """
+    if os.environ.get("ANIMICA_UNSAFE_PQ_FAKE") == "1":
+        typer.echo(
+            "⚠️  WARNING: Using ANIMICA_UNSAFE_PQ_FAKE=1 mode",
+            err=True,
+        )
+        typer.echo(
+            "   This is NOT SECURE and should only be used for development/testing.",
+            err=True,
+        )
+        typer.echo(
+            "   Install liboqs-python for production use.",
+            err=True,
+        )
+        typer.echo("", err=True)
 
 
 def resolve_chain_id(rpc_url: Optional[str], cli_chain_id: Optional[int]) -> int:
@@ -253,6 +276,12 @@ def build(
     nonce: Optional[int] = typer.Option(
         None, "--nonce", help="Transaction nonce (auto-fetched if omitted)"
     ),
+    chain_id: Optional[int] = typer.Option(
+        None,
+        "--chain-id",
+        help="Chain ID (auto-fetched if omitted)",
+        envvar="ANIMICA_CHAIN_ID",
+    ),
     output: Optional[Path] = typer.Option(
         None, "--output", "-o", help="Save transaction JSON to file"
     ),
@@ -269,14 +298,21 @@ def build(
     Examples:
       animica tx build --from anim1... --to anim1... --value 1.5 --gas 200000
       animica tx build --from 0 --to anim1... --value 1 --output tx.json
+      animica tx build --from anim1... --to anim1... --value 1 --chain-id 1 --output tx.json
     """
     # Resolve nonce via RPC (uses fallback helper)
     try:
+        # Resolve RPC URL
+        url = _resolve_rpc_url(rpc_url)
+        
+        # Resolve and validate chain ID
+        resolved_chain_id = resolve_chain_id(url, chain_id)
+        
         # Fetch nonce if not provided
         if nonce is None:
             try:
                 nonce_result = _request_rpc(
-                    "chain_getTransactionCount", [from_addr], rpc_url
+                    "state.getTransactionCount", [from_addr], url
                 )
                 nonce = int(nonce_result) if nonce_result else 0
             except Exception:
@@ -291,7 +327,7 @@ def build(
             "gas": gas,
             "gasPrice": int(gas_price * 1e9) if gas_price else 1000000000,
             "nonce": nonce,
-            "chainId": 31337,  # Default to local devnet
+            "chainId": resolved_chain_id,
         }
 
         if output:
@@ -301,6 +337,8 @@ def build(
             typer.echo("Transaction (unsigned):")
             typer.echo(_pretty(tx_data))
 
+    except typer.Exit:
+        raise
     except Exception as e:
         typer.echo(f"Error building transaction: {e}", err=True)
         raise typer.Exit(1)
@@ -310,9 +348,17 @@ def build(
 def sign(
     tx_file: Path = typer.Option(..., "--file", "-f", help="Transaction JSON file"),
     key_id: Optional[str] = typer.Option(None, "--key", help="Key ID or wallet index"),
+    rpc_url: Optional[str] = typer.Option(
+        None,
+        "--rpc-url",
+        help="Override RPC URL (for chain ID validation)",
+        envvar="ANIMICA_RPC_URL",
+    ),
 ) -> None:
     """
     Sign a transaction with a key from the wallet.
+    
+    Validates that the transaction's chain ID matches the node's chain ID before signing.
 
     Examples:
       animica tx sign --file tx.json --key 0
@@ -331,12 +377,50 @@ def sign(
         if not key_id:
             typer.echo("Error: --key is required", err=True)
             raise typer.Exit(1)
+        
+        # Validate chain ID in transaction against node
+        tx_chain_id = tx_data.get("chainId") or tx_data.get("chain_id")
+        if tx_chain_id is not None:
+            try:
+                # Convert to int, handling invalid values
+                try:
+                    chain_id_int = int(tx_chain_id)
+                except (ValueError, TypeError):
+                    typer.echo(
+                        f"Error: Invalid chain ID in transaction file: {tx_chain_id!r}",
+                        err=True,
+                    )
+                    typer.echo(
+                        "Chain ID must be a valid integer.",
+                        err=True,
+                    )
+                    raise typer.Exit(1)
+                
+                url = _resolve_rpc_url(rpc_url)
+                # This will validate the chain ID or exit with clear error
+                resolved_chain_id = resolve_chain_id(url, chain_id_int)
+                typer.echo(f"✓ Chain ID validated: {resolved_chain_id}")
+            except typer.Exit:
+                raise
+            except Exception as e:
+                typer.echo(
+                    f"Warning: Could not validate chain ID: {e}",
+                    err=True,
+                )
+        else:
+            typer.echo(
+                "Warning: Transaction has no chain ID field. "
+                "This transaction may be rejected by the node.",
+                err=True,
+            )
 
         # TODO: Implement actual signing with wallet integration
         typer.echo("Transaction signing not yet fully implemented", err=True)
         typer.echo("TODO: integrate with wallet keystore", err=True)
         raise typer.Exit(1)
 
+    except typer.Exit:
+        raise
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
@@ -394,7 +478,7 @@ def send(
       animica tx send --from alice --to anim1... --value 1.0 --dry-run
     """
     try:
-        # Step 0: Check PQ signing availability
+        # Step 0: Check PQ signing availability and warn about unsafe mode
         from animica.cli.pq_utils import check_pq_signing_available
         
         available, error_msg = check_pq_signing_available()
@@ -404,6 +488,9 @@ def send(
             if error_msg:
                 typer.echo(f"\nAdditional info: {error_msg}", err=True)
             raise typer.Exit(1)
+        
+        # Warn if using unsafe PQ mode
+        _warn_if_unsafe_pq_mode()
         
         # Step 1: Resolve sender address and load wallet
         sender_address, wallet_entry = _resolve_sender(from_addr, wallet_file)
