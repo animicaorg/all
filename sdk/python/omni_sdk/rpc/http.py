@@ -60,6 +60,35 @@ def _jitter_backoff(base: float, factor: float, attempt: int, jitter: float) -> 
     return base * (factor ** max(attempt - 1, 0)) + random.random() * jitter
 
 
+def to_jsonable(obj: Any) -> Any:
+    """
+    Recursively convert Python objects to JSON-serializable forms.
+    
+    Handles:
+    - bytes/bytearray/memoryview -> "0x" + hex string
+    - dict -> recursively process values
+    - list/tuple -> recursively process items (preserves list)
+    - other types -> pass through (int, str, float, bool, None, etc.)
+    
+    This ensures no raw bytes objects reach json.dumps(), preventing
+    "Object of type bytes is not JSON serializable" errors.
+    
+    Note: The node RPC expects raw transaction data as 0x-prefixed hex strings.
+    """
+    if isinstance(obj, (bytes, bytearray, memoryview)):
+        # Convert bytes to 0x-prefixed hex string
+        return "0x" + bytes(obj).hex()
+    elif isinstance(obj, dict):
+        # Recursively process dictionary values
+        return {k: to_jsonable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        # Recursively process sequences (return list for both)
+        return [to_jsonable(item) for item in obj]
+    else:
+        # Pass through JSON-native types: str, int, float, bool, None
+        return obj
+
+
 @dataclass
 class RpcClient:
     """Synchronous JSON-RPC 2.0 client over HTTP."""
@@ -234,7 +263,10 @@ class RpcClient:
         )
 
     def _send_once(self, payload: Union[Dict[str, Any], List[Dict[str, Any]]]) -> JSON:
-        body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+        # Normalize payload to ensure all values are JSON-serializable
+        # (converts bytes to hex strings, recursively processes nested structures)
+        jsonable_payload = to_jsonable(payload)
+        body = json.dumps(jsonable_payload, separators=(",", ":"), ensure_ascii=False)
         method = self._extract_method(payload)
         
         if self._use_httpx:
@@ -307,4 +339,4 @@ class RpcClient:
             )
 
 
-__all__ = ["RpcClient"]
+__all__ = ["RpcClient", "to_jsonable"]
