@@ -13,12 +13,18 @@ Note: Faucet is ONLY available on non-mainnet networks (devnet, testnet).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from typing import Optional
 
 import requests
 import typer
+
+from animica.config import load_network_config
+from .state import get_cli_state
+
+logger = logging.getLogger(__name__)
 
 app = typer.Typer(
     name="faucet",
@@ -27,20 +33,92 @@ app = typer.Typer(
 )
 
 
-def _get_rpc_url() -> str:
-    """Get RPC URL from environment or use default.
-    
-    Empty strings are treated as unset and fall back to the default.
+def _resolve_network() -> str:
     """
-    url = os.getenv("ANIMICA_RPC_URL")
-    if url and url.strip():
-        return url.strip()
-    return "http://127.0.0.1:8545/rpc"
+    Resolve the active network name.
+    
+    Priority:
+    1. ANIMICA_NETWORK environment variable
+    2. Persisted setting from 'animica network set'
+    3. Default (mainnet)
+    
+    Returns:
+        Active network name
+    """
+    # Check environment variable first (highest priority)
+    network = os.environ.get("ANIMICA_NETWORK")
+    if network and network.strip():
+        logger.debug(f"Network resolved from ANIMICA_NETWORK env var: {network}")
+        return network.strip()
+    
+    # Check persisted state
+    state = get_cli_state()
+    network = state.get("active_network")
+    if network:
+        logger.debug(f"Network resolved from CLI state: {network}")
+        return network
+    
+    # Fall back to default
+    logger.debug("Network resolved to default: mainnet")
+    return "mainnet"
 
 
-def _rpc_call(method: str, params: dict | list | None = None) -> dict:
-    """Make a JSON-RPC call to the node."""
-    url = _get_rpc_url()
+def _resolve_rpc_url(rpc_url: Optional[str], network: Optional[str] = None) -> str:
+    """
+    Resolve RPC URL from option, env, persisted network, or config.
+    
+    Priority:
+    1. Explicit rpc_url parameter (CLI flag)
+    2. ANIMICA_RPC_URL environment variable
+    3. Network config based on active network
+    
+    Empty strings are treated as unset and fall back to the next priority level.
+    
+    Args:
+        rpc_url: Optional RPC URL from CLI flag
+        network: Optional network name to override resolution
+        
+    Returns:
+        Resolved RPC URL
+    """
+    # Check CLI argument first
+    if rpc_url and rpc_url.strip():
+        logger.debug(f"RPC URL resolved from CLI flag: {rpc_url}")
+        return rpc_url.strip()
+    
+    # Check environment variable
+    env_url = os.environ.get("ANIMICA_RPC_URL")
+    if env_url and env_url.strip():
+        logger.debug(f"RPC URL resolved from ANIMICA_RPC_URL env var: {env_url}")
+        return env_url.strip()
+    
+    # Fall back to network config
+    # If network is explicitly provided, use it; otherwise resolve it
+    if network:
+        active_network = network
+    else:
+        active_network = _resolve_network()
+    cfg = load_network_config(active_network)
+    logger.debug(f"RPC URL resolved from network config ({active_network}): {cfg.rpc_url}")
+    return cfg.rpc_url
+
+
+def _rpc_call(method: str, params: dict | list | None = None, rpc_url: Optional[str] = None, network: Optional[str] = None) -> dict:
+    """
+    Make a JSON-RPC call to the node.
+    
+    Args:
+        method: RPC method name
+        params: RPC method parameters
+        rpc_url: Optional RPC URL (resolved if None)
+        network: Optional network name for RPC URL resolution
+        
+    Returns:
+        RPC response data
+    """
+    url = _resolve_rpc_url(rpc_url, network)
+    logger.debug(f"Making RPC call to {url}: {method}")
+    
     payload = {
         "jsonrpc": "2.0",
         "method": method,
@@ -92,6 +170,24 @@ def request_funds(
         "--json",
         help="Output JSON instead of human-readable text"
     ),
+    rpc_url: Optional[str] = typer.Option(
+        None,
+        "--rpc-url",
+        help="Override RPC URL",
+        envvar="ANIMICA_RPC_URL",
+    ),
+    network: Optional[str] = typer.Option(
+        None,
+        "--network",
+        help="Override network (mainnet, testnet, devnet, local-devnet)",
+        envvar="ANIMICA_NETWORK",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Enable verbose logging",
+    ),
 ) -> None:
     """
     Request test funds from the faucet.
@@ -101,20 +197,42 @@ def request_funds(
     
     Default amount: 500,000,000 ANM (500000000000000000 base units)
     
+    The active network is resolved in this order:
+      1. --network flag (highest priority)
+      2. ANIMICA_NETWORK environment variable
+      3. Persisted setting from 'animica network set'
+      4. Default (mainnet)
+    
     Examples:
-      # Request default amount (500M ANM)
+      # Request default amount (500M ANM) using active network
       animica faucet request anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f
+      
+      # Request with explicit network override
+      animica faucet request anim1... --network testnet
       
       # Request custom amount (1M ANM = 1,000,000,000,000,000 base units)
       animica faucet request anim1... --amount 1000000000000000
     """
+    # Configure logging
+    if verbose:
+        logging.basicConfig(level=logging.DEBUG, format='%(levelname)s: %(message)s')
+    
+    # Resolve network - use the explicit network parameter if provided
+    if network:
+        active_network = network
+    else:
+        active_network = _resolve_network()
+    
+    if verbose or True:  # Always show network for transparency
+        typer.echo(f"Using network: {active_network}", err=True)
+    
     # Build params
     params = {"address": address}
     if amount is not None:
         params["amount"] = amount
     
-    # Call RPC
-    result = _rpc_call("faucet.request", params)
+    # Call RPC (pass both rpc_url and network for proper resolution)
+    result = _rpc_call("faucet.request", params, rpc_url, active_network)
     
     if json_output:
         typer.echo(json.dumps(result.get("result", {}), indent=2))
@@ -153,18 +271,24 @@ The faucet provides unlimited test funds on non-mainnet networks (devnet, testne
 IMPORTANT: The faucet is NOT available on mainnet (chainId=1).
 
 Usage:
-  animica faucet request ADDRESS [--amount AMOUNT] [--json]
+  animica faucet request ADDRESS [OPTIONS]
 
 Arguments:
   ADDRESS           Recipient address (bech32m anim1... or hex 0x...)
 
 Options:
   --amount, -a      Amount in base units (default: 500,000,000 ANM)
+  --network         Override network (mainnet, testnet, devnet, local-devnet)
+  --rpc-url         Override RPC endpoint URL
   --json            Output JSON format
+  --verbose, -v     Enable verbose logging
 
 Examples:
-  # Request default amount (500 million ANM)
+  # Request default amount (500 million ANM) using active network
   animica faucet request anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f
+  
+  # Request with explicit network override
+  animica faucet request anim1... --network testnet
   
   # Request 1 million ANM (1,000,000,000,000,000 base units)
   animica faucet request anim1... --amount 1000000000000000
@@ -173,15 +297,25 @@ Examples:
   animica faucet request anim1... --json
 
 Network Configuration:
-  Set ANIMICA_RPC_URL to point to your target network:
-    export ANIMICA_RPC_URL=http://127.0.0.1:8545/rpc  # devnet (default)
-    export ANIMICA_RPC_URL=https://testnet-rpc.animica.org/rpc  # testnet
+  The active network is resolved in this order:
+    1. --network flag (highest priority)
+    2. ANIMICA_NETWORK environment variable
+    3. Persisted setting from 'animica network set'
+    4. Default (mainnet)
+  
+  Set persistent network with:
+    animica network set testnet
+  
+  Or use environment variable:
+    export ANIMICA_NETWORK=testnet
+    animica faucet request anim1...
 
 Notes:
   - ANM has 9 decimals: 1 ANM = 1,000,000,000 base units
   - No rate limits on testnet/devnet
   - Funds are credited directly (no block production required)
   - Mainnet requests will fail with an error
+  - Use --verbose flag to see which network and RPC URL is being used
 """
     typer.echo(help_text)
 
