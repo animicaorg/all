@@ -7,7 +7,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIBOQS_DIR="$ROOT_DIR/.liboqs"
-LIBOQS_VERSION="0.14.0"
+LIBOQS_VERSION="0.15.0"
 LIBOQS_REPO="https://github.com/open-quantum-safe/liboqs.git"
 
 BLUE='\033[34m'; GREEN='\033[32m'; YELLOW='\033[33m'; RED='\033[31m'; RESET='\033[0m'
@@ -70,6 +70,7 @@ setup_liboqs_env_vars() {
 
 build_liboqs_from_source() {
   log "Building liboqs from source (this may take a few minutes)..."
+  log "Using liboqs version: $LIBOQS_VERSION"
   
   # Check prerequisites first
   check_build_prerequisites
@@ -89,7 +90,15 @@ build_liboqs_from_source() {
   # Clone liboqs repository
   log "Cloning liboqs v${LIBOQS_VERSION} from ${LIBOQS_REPO}..."
   if ! git clone --branch "$LIBOQS_VERSION" --depth 1 "$LIBOQS_REPO" "$src_dir" 2>&1 | grep -v "^Cloning"; then
-    fail "Failed to clone liboqs repository"
+    fail "Failed to clone liboqs repository at tag/branch '$LIBOQS_VERSION'.
+
+Possible causes:
+  1. The tag '$LIBOQS_VERSION' does not exist in the repository
+  2. Network connectivity issues
+  3. Repository URL has changed
+
+Please verify the tag exists at: https://github.com/open-quantum-safe/liboqs/tags
+or check your network connection."
   fi
   
   mkdir -p "$build_dir"
@@ -125,7 +134,8 @@ build_liboqs_from_source() {
   # Set up environment variables
   setup_liboqs_env_vars "$install_prefix"
   
-  log "✓ liboqs successfully built and installed to $install_prefix"
+  log "✓ liboqs v${LIBOQS_VERSION} successfully built and installed"
+  log "  Install location: $install_prefix"
   log ""
   log "═══════════════════════════════════════════════════════════════════════"
   log "To reuse this liboqs build in future shell sessions, add to your shell profile:"
