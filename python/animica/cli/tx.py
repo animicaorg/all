@@ -458,6 +458,7 @@ def send(
             try:
                 from omni_sdk.tx.send import submit_raw
                 from omni_sdk.rpc.http import RpcClient
+                from omni_sdk.errors import RpcError
                 
                 rpc = RpcClient(url, timeout=30.0)
                 tx_hash = submit_raw(rpc, raw_tx)
@@ -468,6 +469,16 @@ def send(
                 typer.echo(f"To:      {dest_address}")
                 typer.echo(f"Value:   {value} ANM")
                 typer.echo("\n✓ Transaction broadcast successfully")
+            except RpcError as e:
+                # Display RPC error in a user-friendly format
+                typer.echo("=== Transaction Failed ===", err=True)
+                if e.method:
+                    typer.echo(f"Method:  {e.method}", err=True)
+                typer.echo(f"Code:    {e.code}", err=True)
+                typer.echo(f"Message: {e.message}", err=True)
+                if e.data:
+                    typer.echo(f"Data:    {e.data}", err=True)
+                raise typer.Exit(1)
             except Exception as e:
                 typer.echo(f"Error broadcasting transaction: {e}", err=True)
                 raise typer.Exit(1)
