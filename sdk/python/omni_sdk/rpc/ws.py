@@ -45,6 +45,23 @@ except Exception:  # pragma: no cover
 from ..errors import RpcError  # type: ignore
 from ..version import __version__ as SDK_VERSION  # type: ignore
 
+# Import the bytes normalizer from http module for consistent JSON serialization
+try:
+    from .http import to_jsonable
+except ImportError:
+    # Fallback if http module isn't available (defensive - shouldn't happen in practice)
+    # Note: Code duplication is intentional here to maintain independence of ws module.
+    # In normal operation, the import succeeds and this fallback is never used.
+    def to_jsonable(obj):  # type: ignore
+        """Minimal fallback for bytes normalization. Mirrors http.to_jsonable()."""
+        if isinstance(obj, (bytes, bytearray, memoryview)):
+            return "0x" + bytes(obj).hex()
+        elif isinstance(obj, dict):
+            return {k: to_jsonable(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [to_jsonable(item) for item in obj]
+        return obj
+
 JSON = Union[dict, list, str, int, float, bool, None]
 Params = Union[list, dict, None]
 OnEvent = Callable[[JSON], None]
@@ -184,8 +201,11 @@ class WsClient:
         self._pending[id] = fut
 
         try:
+            # Normalize payload to ensure all values are JSON-serializable
+            # (converts bytes to hex strings, recursively processes nested structures)
+            jsonable_payload = to_jsonable(payload)
             await asyncio.wait_for(
-                self._ws.send(json.dumps(payload, separators=(",", ":"))),
+                self._ws.send(json.dumps(jsonable_payload, separators=(",", ":"))),
                 timeout=self.request_timeout,
             )
         except Exception as e:
