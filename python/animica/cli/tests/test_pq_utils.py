@@ -229,3 +229,99 @@ class TestEnsurePQSigningOrExit:
         with patch("animica.cli.pq_utils.check_pq_signing_available", return_value=(True, None)):
             # Should not raise SystemExit
             ensure_pq_signing_or_exit()
+
+
+class TestGetPQDiagnostics:
+    """Tests for get_pq_diagnostics function."""
+
+    def test_diagnostics_when_oqs_not_available(self):
+        """Test diagnostic output when python-oqs is not installed."""
+        from animica.cli.pq_utils import get_pq_diagnostics
+        
+        with patch.dict(os.environ, {}, clear=True):
+            diag = get_pq_diagnostics()
+            
+            # Should contain diagnostic header
+            assert "PQ Library Diagnostics" in diag
+            assert "Environment Variables:" in diag
+            
+    def test_diagnostics_shows_env_variables(self):
+        """Test that diagnostics shows environment variables."""
+        from animica.cli.pq_utils import get_pq_diagnostics
+        
+        with patch.dict(os.environ, {"LD_LIBRARY_PATH": "/test/lib", "LIBOQS_PATH": "/test/liboqs.so"}):
+            diag = get_pq_diagnostics()
+            
+            assert "LD_LIBRARY_PATH" in diag
+            assert "/test/lib" in diag
+            assert "LIBOQS_PATH" in diag
+            assert "/test/liboqs.so" in diag
+
+    def test_diagnostics_with_oqs_available(self, mock_oqs_import):
+        """Test diagnostic output when python-oqs is available."""
+        from animica.cli.pq_utils import get_pq_diagnostics
+        
+        mock_oqs = MagicMock()
+        mock_oqs.__version__ = "0.10.0"
+        mock_oqs.get_enabled_sig_mechanisms.return_value = ["SPHINCS+-SHAKE-128s"]
+        
+        with patch.dict(os.environ, {}, clear=True):
+            with mock_oqs_import(mock_oqs):
+                diag = get_pq_diagnostics()
+                
+                # Should show oqs is available
+                assert "python-oqs" in diag
+                assert "0.10.0" in diag
+                assert "SPHINCS+" in diag
+
+
+class TestCheckPQSigningWithBackend:
+    """Tests for check_pq_signing_available with oqs_backend fallback."""
+
+    def test_falls_back_to_oqs_backend_when_oqs_module_missing(self):
+        """Test that check falls back to oqs_backend when oqs module not available."""
+        from animica.cli.pq_utils import check_pq_signing_available
+        
+        # Mock oqs module as not available
+        with patch.dict(os.environ, {}, clear=True):
+            with patch("animica.cli.pq_utils.logger"):
+                # Mock oqs_backend as available
+                mock_backend = MagicMock()
+                mock_backend.is_available.return_value = True
+                mock_backend.get_version_info.return_value = "0.15.0"
+                
+                with patch("animica.cli.pq_utils.oqs_backend", mock_backend):
+                    # Force ImportError for oqs module
+                    def mock_import(name, *args, **kwargs):
+                        if name == "oqs":
+                            raise ImportError("No module named 'oqs'")
+                        return __import__(name, *args, **kwargs)
+                    
+                    with patch("builtins.__import__", side_effect=mock_import):
+                        available, error = check_pq_signing_available()
+                        
+                        # Should be available via backend
+                        assert available is True
+                        assert error is None
+
+    def test_reports_unavailable_when_both_missing(self):
+        """Test that unavailable is reported when both oqs and backend missing."""
+        from animica.cli.pq_utils import check_pq_signing_available
+        
+        with patch.dict(os.environ, {}, clear=True):
+            with patch("animica.cli.pq_utils.logger"):
+                # Mock both as unavailable
+                mock_backend = MagicMock()
+                mock_backend.is_available.return_value = False
+                
+                with patch("animica.cli.pq_utils.oqs_backend", mock_backend):
+                    def mock_import(name, *args, **kwargs):
+                        if name == "oqs":
+                            raise ImportError("No module named 'oqs'")
+                        return __import__(name, *args, **kwargs)
+                    
+                    with patch("builtins.__import__", side_effect=mock_import):
+                        available, error = check_pq_signing_available()
+                        
+                        # Should be unavailable
+                        assert available is False
