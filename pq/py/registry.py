@@ -386,8 +386,13 @@ def default_signature_alg() -> SigAlgInfo:
     Choose the chain's *default* signature algorithm for new wallets/addresses.
 
     Policy (subject to pq_policy.yaml at higher layers):
-    - Prefer Dilithium3 when liboqs is available (fast, widely supported).
-    - Otherwise fall back to SPHINCS+ SHAKE-128s (hash-based, slower, robust).
+    - Use mechanism from ANIMICA_PQ_MECHANISM if set and available
+    - Prefer Dilithium3/ML-DSA-65 when liboqs is available (fast, widely supported)
+    - Otherwise fall back to SPHINCS+ SHAKE-128s (hash-based, slower, robust)
+    
+    Note: This returns metadata for dilithium3 or sphincs_shake_128s regardless of
+    whether the underlying implementation uses ML-DSA-65 or Dilithium3. The actual
+    mechanism mapping happens in the algorithm backend layer.
     """
     if FEATURES["liboqs"]:
         return require_sig("dilithium3")

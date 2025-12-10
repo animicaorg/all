@@ -243,6 +243,57 @@ def get_version_info() -> Optional[str]:
     return "unknown"
 
 
+def has_sig(mechanism: str) -> bool:
+    """
+    Check if a specific signature mechanism is available.
+    
+    Args:
+        mechanism: Mechanism name (e.g., "ML-DSA-65", "dilithium3", "sphincs_shake_128s")
+    
+    Returns:
+        True if mechanism is available, False otherwise
+    """
+    if not _HAVE or _LIB is None:
+        return False
+    
+    # Try to instantiate the mechanism
+    try:
+        backend = OQSBackend()
+        normalized = backend._normalize_sig_alg(mechanism)
+        sig = _LIB.OQS_SIG_new(normalized)
+        if sig:
+            _LIB.OQS_SIG_free(sig)
+            return True
+        return False
+    except Exception:
+        return False
+
+
+def has_kem(mechanism: str) -> bool:
+    """
+    Check if a specific KEM mechanism is available.
+    
+    Args:
+        mechanism: Mechanism name (e.g., "ML-KEM-768", "kyber768")
+    
+    Returns:
+        True if mechanism is available, False otherwise
+    """
+    if not _HAVE or _LIB is None:
+        return False
+    
+    try:
+        backend = OQSBackend()
+        normalized = backend._normalize_kem_alg(mechanism)
+        kem = _LIB.OQS_KEM_new(normalized)
+        if kem:
+            _LIB.OQS_KEM_free(kem)
+            return True
+        return False
+    except Exception:
+        return False
+
+
 # --------------------------------------------------------------------------------------------------
 # Minimal struct views (prefix-only) to read size fields from opaque liboqs objects.
 # We purposefully model only the fields we read. The remaining function pointers and
@@ -342,14 +393,27 @@ if _HAVE:
 
 
 # Canonical algorithm names as liboqs expects them.
-# (These work for current liboqs; if you build with different variants, adjust here.)
+# liboqs 0.15.x uses NIST standard names (ML-DSA, ML-KEM)
+# We maintain backward compatibility with older names
+
+# Signature algorithms
+# ML-DSA (liboqs 0.15.0+, NIST standard names)
+ALG_ML_DSA_44 = b"ML-DSA-44"
+ALG_ML_DSA_65 = b"ML-DSA-65"
+ALG_ML_DSA_87 = b"ML-DSA-87"
+
+# Dilithium (legacy, liboqs < 0.15.0)
+ALG_DILITHIUM2 = b"Dilithium2"
 ALG_DILITHIUM3 = b"Dilithium3"
+ALG_DILITHIUM5 = b"Dilithium5"
+
+# SPHINCS+ (both simple and robust variants)
 ALG_SPHINCS_SHAKE_128S = b"SPHINCS+-SHAKE-128s-simple"
-# Some liboqs builds use '-robust'; we try both at runtime.
 ALG_SPHINCS_SHAKE_128S_ROBUST = b"SPHINCS+-SHAKE-128s-robust"
 
-ALG_KYBER768 = b"Kyber768"  # Older builds
-ALG_ML_KEM_768 = b"ML-KEM-768"  # Newer NIST alias
+# KEM algorithms
+ALG_KYBER768 = b"Kyber768"  # Legacy, liboqs < 0.15.0
+ALG_ML_KEM_768 = b"ML-KEM-768"  # NIST standard, liboqs 0.15.0+
 
 
 @dataclass(frozen=True)
@@ -438,15 +502,43 @@ class OQSBackend:
 
     # ------------- public: signatures -------------
     def sig_available_names(self) -> List[str]:
-        names: List[bytes] = [ALG_DILITHIUM3, ALG_SPHINCS_SHAKE_128S]
-        # Probe robust variant for SPHINCS+
-        try:
-            kem = _LIB.OQS_SIG_new(ALG_SPHINCS_SHAKE_128S_ROBUST)
-            if kem:
-                _LIB.OQS_SIG_free(kem)
-                names.append(ALG_SPHINCS_SHAKE_128S_ROBUST)
-        except Exception:
-            pass
+        """
+        Probe and return available signature mechanism names.
+        
+        Tries both modern (ML-DSA) and legacy (Dilithium) names.
+        """
+        names: List[bytes] = []
+        
+        # Probe ML-DSA variants (liboqs 0.15.0+)
+        for candidate in [ALG_ML_DSA_65, ALG_ML_DSA_87, ALG_ML_DSA_44]:
+            try:
+                sig = _LIB.OQS_SIG_new(candidate)
+                if sig:
+                    _LIB.OQS_SIG_free(sig)
+                    names.append(candidate)
+            except Exception:
+                pass
+        
+        # Probe legacy Dilithium variants (liboqs < 0.15.0)
+        for candidate in [ALG_DILITHIUM3, ALG_DILITHIUM2, ALG_DILITHIUM5]:
+            try:
+                sig = _LIB.OQS_SIG_new(candidate)
+                if sig:
+                    _LIB.OQS_SIG_free(sig)
+                    names.append(candidate)
+            except Exception:
+                pass
+        
+        # Probe SPHINCS+ variants
+        for candidate in [ALG_SPHINCS_SHAKE_128S, ALG_SPHINCS_SHAKE_128S_ROBUST]:
+            try:
+                sig = _LIB.OQS_SIG_new(candidate)
+                if sig:
+                    _LIB.OQS_SIG_free(sig)
+                    names.append(candidate)
+            except Exception:
+                pass
+        
         return [n.decode("ascii") for n in names]
 
     def sig_keypair(self, alg: str) -> Tuple[bytes, bytes]:
@@ -557,19 +649,93 @@ class OQSBackend:
     # ------------- helpers -------------
     @staticmethod
     def _normalize_sig_alg(alg: str) -> bytes:
+        """
+        Normalize algorithm name to liboqs mechanism name.
+        
+        Handles both modern (ML-DSA) and legacy (Dilithium) names,
+        with automatic fallback between versions.
+        """
         a = alg.lower().replace("_", "-")
-        if "dilithium3" in a:
-            return ALG_DILITHIUM3
-        if "sphincs" in a:
-            # Prefer 'simple' profile if available; robust will be probed at construction time
-            # but both OQS_SIG_new calls will succeed if the build supports them.
+        
+        # ML-DSA variants (liboqs 0.15.0+)
+        if "ml-dsa-65" in a or "mldsa65" in a:
+            # Try ML-DSA first, fall back to Dilithium3
             try:
-                # Quick probe to prefer 'simple' when both exist
-                if _LIB.OQS_SIG_new(ALG_SPHINCS_SHAKE_128S):
+                sig = _LIB.OQS_SIG_new(ALG_ML_DSA_65)
+                if sig:
+                    _LIB.OQS_SIG_free(sig)
+                    return ALG_ML_DSA_65
+            except Exception:
+                pass
+            # Fall back to Dilithium3 for older liboqs
+            return ALG_DILITHIUM3
+        
+        if "ml-dsa-87" in a or "mldsa87" in a:
+            try:
+                sig = _LIB.OQS_SIG_new(ALG_ML_DSA_87)
+                if sig:
+                    _LIB.OQS_SIG_free(sig)
+                    return ALG_ML_DSA_87
+            except Exception:
+                pass
+            return ALG_DILITHIUM5
+        
+        if "ml-dsa-44" in a or "mldsa44" in a:
+            try:
+                sig = _LIB.OQS_SIG_new(ALG_ML_DSA_44)
+                if sig:
+                    _LIB.OQS_SIG_free(sig)
+                    return ALG_ML_DSA_44
+            except Exception:
+                pass
+            return ALG_DILITHIUM2
+        
+        # Legacy Dilithium names - try to map to ML-DSA first for 0.15.0+
+        if "dilithium3" in a:
+            # Try ML-DSA-65 first (NIST standard equivalent)
+            try:
+                sig = _LIB.OQS_SIG_new(ALG_ML_DSA_65)
+                if sig:
+                    _LIB.OQS_SIG_free(sig)
+                    return ALG_ML_DSA_65
+            except Exception:
+                pass
+            # Fall back to Dilithium3 for older versions
+            return ALG_DILITHIUM3
+        
+        if "dilithium2" in a:
+            try:
+                sig = _LIB.OQS_SIG_new(ALG_ML_DSA_44)
+                if sig:
+                    _LIB.OQS_SIG_free(sig)
+                    return ALG_ML_DSA_44
+            except Exception:
+                pass
+            return ALG_DILITHIUM2
+        
+        if "dilithium5" in a:
+            try:
+                sig = _LIB.OQS_SIG_new(ALG_ML_DSA_87)
+                if sig:
+                    _LIB.OQS_SIG_free(sig)
+                    return ALG_ML_DSA_87
+            except Exception:
+                pass
+            return ALG_DILITHIUM5
+        
+        # SPHINCS+ variants
+        if "sphincs" in a:
+            # Prefer 'simple' profile if available
+            try:
+                sig = _LIB.OQS_SIG_new(ALG_SPHINCS_SHAKE_128S)
+                if sig:
+                    _LIB.OQS_SIG_free(sig)
                     return ALG_SPHINCS_SHAKE_128S
             except Exception:
                 pass
+            # Fall back to robust variant
             return ALG_SPHINCS_SHAKE_128S_ROBUST
+        
         raise ValueError(f"Unknown/unsupported signature alg: {alg}")
 
     @staticmethod
