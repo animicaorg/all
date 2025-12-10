@@ -133,6 +133,61 @@ class TestLiboqsLoader:
                             debug_calls = [str(call) for call in mock_logger.debug.call_args_list]
                             assert any("DYLD_LIBRARY_PATH" in call for call in debug_calls)
 
+    def test_load_from_python_oqs_bundled_path(self):
+        """Test loading from python-oqs wheel bundled library."""
+        from pq.py.algs import oqs_backend
+        
+        mock_lib = MagicMock()
+        
+        # Mock the oqs module location
+        mock_spec = MagicMock()
+        mock_spec.origin = "/usr/local/lib/python3.12/site-packages/oqs/__init__.py"
+        
+        with patch.dict(os.environ, {}, clear=True):
+            with patch("importlib.util.find_spec", return_value=mock_spec):
+                with patch("glob.glob", return_value=["/usr/local/lib/python3.12/site-packages/oqs/liboqs.so.5"]):
+                    with patch("ctypes.CDLL", return_value=mock_lib) as mock_cdll:
+                        with patch.object(oqs_backend, "logger") as mock_logger:
+                            lib = oqs_backend._load_liboqs()
+                            
+                            # Should load from bundled path
+                            assert lib is mock_lib
+                            # Verify it loaded from the python-oqs path
+                            assert any(
+                                "site-packages/oqs" in str(call)
+                                for call in mock_cdll.call_args_list
+                            )
+                            # Check logging mentions python-oqs wheel
+                            info_calls = [str(call) for call in mock_logger.info.call_args_list]
+                            assert any("python-oqs" in call.lower() for call in info_calls)
+
+    def test_get_python_oqs_bundled_lib_paths(self):
+        """Test that _get_python_oqs_bundled_lib_paths finds bundled libs."""
+        from pq.py.algs import oqs_backend
+        
+        mock_spec = MagicMock()
+        mock_spec.origin = "/usr/lib/python3/site-packages/oqs/__init__.py"
+        
+        with patch("importlib.util.find_spec", return_value=mock_spec):
+            with patch("glob.glob", return_value=["/usr/lib/python3/site-packages/oqs/liboqs.so.5"]):
+                with patch("os.path.exists", return_value=True):
+                    with patch.object(oqs_backend, "logger"):
+                        paths = oqs_backend._get_python_oqs_bundled_lib_paths()
+                        
+                        assert len(paths) > 0
+                        assert any("site-packages/oqs" in p for p in paths)
+
+    def test_get_python_oqs_bundled_lib_paths_module_not_found(self):
+        """Test _get_python_oqs_bundled_lib_paths when oqs module not installed."""
+        from pq.py.algs import oqs_backend
+        
+        with patch("importlib.util.find_spec", return_value=None):
+            with patch.object(oqs_backend, "logger"):
+                paths = oqs_backend._get_python_oqs_bundled_lib_paths()
+                
+                # Should return empty list, not raise exception
+                assert paths == []
+
 
 class TestOQSBackendInit:
     """Tests for OQSBackend initialization."""

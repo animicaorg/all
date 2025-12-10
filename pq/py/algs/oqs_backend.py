@@ -28,6 +28,7 @@ Safety notes
 """
 
 import ctypes
+import glob
 import logging
 import os
 import sys
@@ -51,68 +52,157 @@ LIBOQS_SONAME_VERSIONS = ["liboqs.so.5", "liboqs.so.4", "liboqs.so.3"]
 # --------------------------------------------------------------------------------------------------
 
 
+def _get_python_oqs_bundled_lib_paths() -> List[str]:
+    """
+    Get paths where python-oqs might have bundled liboqs.
+    
+    When python-oqs (liboqs-python) is installed via wheel, it may bundle
+    the liboqs shared library in its package directory. This function
+    finds those locations.
+    
+    Returns:
+        List of potential paths to liboqs shared library from python-oqs
+    """
+    paths: List[str] = []
+    
+    try:
+        # Try to import oqs module to find its location
+        import importlib.util
+        spec = importlib.util.find_spec("oqs")
+        if spec and spec.origin:
+            # oqs module found, check for bundled libs nearby
+            oqs_dir = os.path.dirname(spec.origin)
+            logger.debug(f"Found oqs module at: {oqs_dir}")
+            
+            # Common locations where wheels bundle native libs
+            lib_patterns = [
+                os.path.join(oqs_dir, "liboqs.so*"),
+                os.path.join(oqs_dir, "liboqs.dylib"),
+                os.path.join(oqs_dir, ".libs", "liboqs.so*"),
+                os.path.join(oqs_dir, ".dylibs", "liboqs.dylib"),
+                os.path.join(oqs_dir, "lib", "liboqs.so*"),
+                os.path.join(oqs_dir, "lib", "liboqs.dylib"),
+            ]
+            
+            for pattern in lib_patterns:
+                matches = glob.glob(pattern)
+                paths.extend(matches)
+                
+            # Also check versioned SONAMEs
+            for soname in LIBOQS_SONAME_VERSIONS:
+                candidate = os.path.join(oqs_dir, soname)
+                if os.path.exists(candidate):
+                    paths.append(candidate)
+                # Check .libs subdirectory
+                candidate = os.path.join(oqs_dir, ".libs", soname)
+                if os.path.exists(candidate):
+                    paths.append(candidate)
+    except Exception as e:
+        logger.debug(f"Could not locate python-oqs bundled libs: {e}")
+    
+    return paths
+
+
 def _load_liboqs() -> Optional[ctypes.CDLL]:
     """
     Attempt to load liboqs shared library.
     
     Searches in order:
     1. LIBOQS_PATH environment variable (explicit path to .so/.dylib/.dll)
-    2. System library search path via find_library()
-    3. Common library names in standard locations
-    4. Custom paths from LD_LIBRARY_PATH/DYLD_LIBRARY_PATH
+    2. Python-oqs wheel bundled library paths
+    3. System library search path via find_library()
+    4. Common library names in standard locations
+    5. Custom paths from LD_LIBRARY_PATH/DYLD_LIBRARY_PATH
     
     Returns:
         ctypes.CDLL instance if loaded, None if not found
     """
-    # Allow manual override (useful in CI or non-standard paths)
+    logger.debug("Starting liboqs library search...")
+    
+    # Step 1: Allow manual override (useful in CI or non-standard paths)
     override = os.environ.get("LIBOQS_PATH")
     if override:
         if os.path.exists(override):
             logger.info(f"Loading liboqs from LIBOQS_PATH: {override}")
             try:
                 lib = ctypes.CDLL(override)
-                logger.info(f"Successfully loaded liboqs from {override}")
+                logger.info(f"✓ Successfully loaded liboqs from LIBOQS_PATH: {override}")
                 return lib
             except OSError as e:
                 logger.warning(f"Failed to load liboqs from LIBOQS_PATH {override}: {e}")
         else:
             logger.warning(f"LIBOQS_PATH={override} does not exist")
 
-    # Try typical names as well as generic lookup
+    # Step 2: Check python-oqs bundled libraries first
+    bundled_paths = _get_python_oqs_bundled_lib_paths()
+    if bundled_paths:
+        logger.debug(f"Found {len(bundled_paths)} python-oqs bundled lib candidate(s)")
+        for path in bundled_paths:
+            logger.debug(f"Trying python-oqs bundled lib: {path}")
+            try:
+                lib = ctypes.CDLL(path)
+                logger.info(f"✓ Successfully loaded liboqs from python-oqs wheel: {path}")
+                return lib
+            except OSError as e:
+                logger.debug(f"Failed to load {path}: {e}")
+    else:
+        logger.debug("No python-oqs bundled libraries found")
+
+    # Step 3: Try system library search via find_library
     candidates: List[str] = []
     probe = find_library("oqs")
     if probe:
         logger.debug(f"find_library('oqs') returned: {probe}")
         candidates.append(probe)
+    else:
+        logger.debug("find_library('oqs') returned None")
     
-    # Common SONAMEs on Linux/macOS/Windows
+    # Step 4: Common SONAMEs on Linux/macOS/Windows
     candidates += ["liboqs.so", "liboqs.dylib", "oqs.dll"]
     
     # Also try versioned library names (Linux only)
     candidates += LIBOQS_SONAME_VERSIONS
 
-    # Check if LD_LIBRARY_PATH or DYLD_LIBRARY_PATH is set and log it
+    # Log environment variables for diagnostic purposes
     if sys.platform == "darwin":
         dyld_path = os.environ.get("DYLD_LIBRARY_PATH")
         if dyld_path:
             logger.debug(f"DYLD_LIBRARY_PATH is set: {dyld_path}")
+        else:
+            logger.debug("DYLD_LIBRARY_PATH is not set")
     else:
         ld_path = os.environ.get("LD_LIBRARY_PATH")
         if ld_path:
             logger.debug(f"LD_LIBRARY_PATH is set: {ld_path}")
+        else:
+            logger.debug("LD_LIBRARY_PATH is not set")
 
+    logger.debug(f"Trying {len(candidates)} system library candidates")
     for name in candidates:
         try:
             lib = ctypes.CDLL(name)
-            logger.info(f"Successfully loaded liboqs: {name}")
+            logger.info(f"✓ Successfully loaded liboqs from system: {name}")
             return lib
-        except OSError:
-            logger.debug(f"Failed to load liboqs candidate: {name}")
+        except OSError as e:
+            logger.debug(f"Failed to load liboqs candidate '{name}': {e}")
             continue
     
+    # Step 5: Provide detailed failure message
     logger.warning(
-        "liboqs shared library not found. "
-        "Install liboqs-dev (apt/brew) or build from source and set LD_LIBRARY_PATH/DYLD_LIBRARY_PATH. "
+        "liboqs shared library not found after searching:\n"
+        f"  - LIBOQS_PATH environment variable: {override or '(not set)'}\n"
+        f"  - python-oqs wheel bundled paths: {len(bundled_paths)} checked\n"
+        f"  - System library search: {len(candidates)} candidates\n"
+        f"  - Environment: LD_LIBRARY_PATH/DYLD_LIBRARY_PATH {'set' if os.environ.get('LD_LIBRARY_PATH') or os.environ.get('DYLD_LIBRARY_PATH') else 'not set'}\n"
+        f"\n"
+        f"To fix:\n"
+        f"  1. Install liboqs-dev (apt/brew) or build from source\n"
+        f"  2. Install python-oqs: pip install liboqs-python\n"
+        f"  3. Set library path if needed:\n"
+        f"     - Linux: export LD_LIBRARY_PATH=/path/to/liboqs/lib:$LD_LIBRARY_PATH\n"
+        f"     - macOS: export DYLD_LIBRARY_PATH=/path/to/liboqs/lib:$DYLD_LIBRARY_PATH\n"
+        f"  4. Or set LIBOQS_PATH=/path/to/liboqs.so directly\n"
+        f"\n"
         f"See: https://github.com/open-quantum-safe/liboqs/releases/tag/{RECOMMENDED_LIBOQS_VERSION}"
     )
     return None
