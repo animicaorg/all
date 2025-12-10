@@ -197,14 +197,19 @@ class RpcClient:
             params = [params]  # type: ignore[list-item]
         return {"jsonrpc": "2.0", "id": id, "method": method, "params": params}
 
+    def _extract_method(
+        self, payload: Union[Dict[str, Any], List[Dict[str, Any]]]
+    ) -> Optional[str]:
+        """Extract method name from payload for error reporting."""
+        if isinstance(payload, dict):
+            return payload.get("method")
+        return None
+
     def _send_with_retries(
         self, payload: Union[Dict[str, Any], List[Dict[str, Any]]]
     ) -> JSON:
         last_exc: Optional[Exception] = None
-        # Extract method name for error reporting
-        method: Optional[str] = None
-        if isinstance(payload, dict):
-            method = payload.get("method")
+        method = self._extract_method(payload)
         for attempt in range(1, self.max_retries + 2):  # N retries -> N+1 attempts
             try:
                 return self._send_once(payload)
@@ -230,10 +235,7 @@ class RpcClient:
 
     def _send_once(self, payload: Union[Dict[str, Any], List[Dict[str, Any]]]) -> JSON:
         body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
-        # Extract method name for error reporting
-        method: Optional[str] = None
-        if isinstance(payload, dict):
-            method = payload.get("method")
+        method = self._extract_method(payload)
         
         if self._use_httpx:
             assert _HAVE_HTTPX
