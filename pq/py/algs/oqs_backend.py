@@ -84,7 +84,6 @@ def _get_python_oqs_bundled_lib_paths() -> List[str]:
                 os.path.join(oqs_dir, "lib", "liboqs.dylib"),
             ]
             
-            import glob
             for pattern in lib_patterns:
                 matches = glob.glob(pattern)
                 paths.extend(matches)
