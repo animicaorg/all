@@ -78,7 +78,7 @@ test_exit_codes() {
   # Check for critical failure points that should use 'fail'
   local critical_checks=(
     "git is required to build liboqs"
-    "Failed to install liboqs-python even after building liboqs"
+    "Failed to install liboqs-python"
     "Missing required build tools"
   )
   
