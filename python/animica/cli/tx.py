@@ -11,6 +11,7 @@ Implements:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Optional, Tuple
 
@@ -80,7 +81,6 @@ def _warn_if_unsafe_pq_mode() -> None:
     
     This mode should only be used for development/testing, never in production.
     """
-    import os
     if os.environ.get("ANIMICA_UNSAFE_PQ_FAKE") == "1":
         typer.echo(
             "⚠️  WARNING: Using ANIMICA_UNSAFE_PQ_FAKE=1 mode",
@@ -382,9 +382,23 @@ def sign(
         tx_chain_id = tx_data.get("chainId") or tx_data.get("chain_id")
         if tx_chain_id is not None:
             try:
+                # Convert to int, handling invalid values
+                try:
+                    chain_id_int = int(tx_chain_id)
+                except (ValueError, TypeError) as e:
+                    typer.echo(
+                        f"Error: Invalid chain ID in transaction file: {tx_chain_id!r}",
+                        err=True,
+                    )
+                    typer.echo(
+                        "Chain ID must be a valid integer.",
+                        err=True,
+                    )
+                    raise typer.Exit(1)
+                
                 url = _resolve_rpc_url(rpc_url)
                 # This will validate the chain ID or exit with clear error
-                resolved_chain_id = resolve_chain_id(url, int(tx_chain_id))
+                resolved_chain_id = resolve_chain_id(url, chain_id_int)
                 typer.echo(f"✓ Chain ID validated: {resolved_chain_id}")
             except typer.Exit:
                 raise
