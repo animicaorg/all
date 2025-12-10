@@ -137,6 +137,11 @@ def _detect_oqs_backend() -> Optional[PQCapability]:
         return None
 
 
+# Fake mode mechanism sets (for ANIMICA_UNSAFE_PQ_FAKE=1)
+FAKE_SIG_MECHANISMS = {"dilithium3", "sphincs_shake_128s"}
+FAKE_KEM_MECHANISMS = {"kyber768"}
+
+
 def _detect_fake_fallback() -> Optional[PQCapability]:
     """
     Check if unsafe fake mode is enabled.
@@ -147,22 +152,33 @@ def _detect_fake_fallback() -> Optional[PQCapability]:
     if os.environ.get("ANIMICA_UNSAFE_PQ_FAKE", "") == "1":
         logger.warning("Using ANIMICA_UNSAFE_PQ_FAKE=1 mode (NOT SECURE - development only)")
         
-        # Fake mode supports basic mechanisms
-        sig_mechs = {"dilithium3", "sphincs_shake_128s"}
-        kem_mechs = {"kyber768"}
-        
         # Select default based on available mechanisms
-        default_sig = _select_default_sig_mechanism(sig_mechs)
+        default_sig = _select_default_sig_mechanism(FAKE_SIG_MECHANISMS)
         
         return PQCapability(
             available=True,
-            sig_mechanisms=sig_mechs,
-            kem_mechanisms=kem_mechs,
+            sig_mechanisms=FAKE_SIG_MECHANISMS,
+            kem_mechanisms=FAKE_KEM_MECHANISMS,
             default_sig_mechanism=default_sig,
             provider="fake",
             version="fake",
         )
     return None
+
+
+def _normalize_mechanism_name(name: str) -> str:
+    """
+    Normalize a mechanism name for comparison.
+    
+    Removes case, hyphens, and underscores for flexible matching.
+    
+    Args:
+        name: Mechanism name to normalize
+    
+    Returns:
+        Normalized name (uppercase, no hyphens/underscores)
+    """
+    return name.strip().upper().replace("-", "").replace("_", "")
 
 
 def _select_default_sig_mechanism(available_mechs: Set[str]) -> Optional[str]:
@@ -191,11 +207,9 @@ def _select_default_sig_mechanism(available_mechs: Set[str]) -> Optional[str]:
     # Check for environment variable override
     env_mechanism = os.environ.get("ANIMICA_PQ_MECHANISM")
     if env_mechanism:
-        # Normalize mechanism name (case-insensitive, flexible matching)
-        env_norm = env_mechanism.strip().upper()
+        env_norm = _normalize_mechanism_name(env_mechanism)
         for mech in available_mechs:
-            mech_norm = mech.upper()
-            if mech_norm == env_norm or mech_norm.replace("-", "").replace("_", "") == env_norm.replace("-", "").replace("_", ""):
+            if _normalize_mechanism_name(mech) == env_norm:
                 logger.info(f"Using mechanism from ANIMICA_PQ_MECHANISM: {mech}")
                 return mech
         logger.warning(f"ANIMICA_PQ_MECHANISM={env_mechanism} not found in available mechanisms: {sorted(available_mechs)}")
