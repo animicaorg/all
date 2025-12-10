@@ -356,6 +356,36 @@ def test_sign_warns_missing_chain_id(tmp_path: Path, wallet_store: Path) -> None
     assert "has no chain ID" in result.output or "may be rejected" in result.output
 
 
+def test_sign_invalid_chain_id_format(tmp_path: Path, wallet_store: Path) -> None:
+    """Test that sign command handles invalid chain ID format gracefully."""
+    rpc_url = "http://localhost:9999/rpc"
+    
+    # Create a transaction file with invalid chain ID (string instead of int)
+    tx_file = tmp_path / "tx.json"
+    tx_data = {
+        "from": "anim1test",
+        "to": "anim1dest",
+        "value": 1000000000000000000,
+        "data": "0x",
+        "gas": 21000,
+        "gasPrice": 1000000000,
+        "nonce": 0,
+        "chainId": "invalid"
+    }
+    tx_file.write_text(json.dumps(tx_data))
+    
+    result = runner.invoke(tx.app, [
+        "sign",
+        "--file", str(tx_file),
+        "--key", "0",
+        "--rpc-url", rpc_url
+    ])
+    
+    # Should fail with clear error about invalid format
+    assert result.exit_code != 0
+    assert "Invalid chain ID" in result.output or "valid integer" in result.output
+
+
 # ============================================================================
 # PQ Unsafe Mode Detection
 # ============================================================================
