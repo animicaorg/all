@@ -182,6 +182,10 @@ class Tx:
 
     @staticmethod
     def from_rpc_dict(d: TxDict) -> "Tx":
+        # Get chain ID, but note that 0 is not a valid chain ID
+        # Callers should validate this before using the transaction
+        chain_id_value = d.get("chainId", 0)
+        
         return Tx(
             from_addr=d.get("from_", d.get("from")),  # tolerate wire shape
             to=d.get("to"),
@@ -190,7 +194,7 @@ class Tx:
             data=_hex_to_bytes(d.get("data", "0x")),
             gas_limit=int(d.get("gasLimit", 0)),
             max_fee=int(d.get("maxFee", 0)),
-            chain_id=int(d.get("chainId", 0)),
+            chain_id=int(chain_id_value),
             hash=d.get("hash"),
             signature=_hex_to_bytes(d["signature"]) if "signature" in d else None,
             pubkey=_hex_to_bytes(d["pubkey"]) if "pubkey" in d else None,
