@@ -203,7 +203,7 @@ class Tx:
         if chain_id_int <= 0:
             raise ValueError(
                 f"Transaction has invalid chainId: {chain_id_int}. "
-                f"chainId must be a positive integer (> 0)."
+                f"chainId must be a positive integer."
             )
         
         return Tx(
