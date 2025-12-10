@@ -149,6 +149,34 @@ class TestLiboqsLoadingIntegration:
             # Should show version
             assert "0.15.0" in msg
 
+    def test_check_pq_accepts_simple_variants(self):
+        """Test that PQ checking accepts liboqs 0.15.0+ simple variants."""
+        from animica.cli.pq_utils import check_pq_signing_available
+        
+        # Mock oqs module with 0.15.0+ simple variants
+        mock_oqs = MagicMock()
+        mock_oqs.__version__ = "0.15.0"
+        mock_oqs.get_enabled_sig_mechanisms.return_value = [
+            "Dilithium3",
+            "SPHINCS+-SHAKE-128s-simple",  # liboqs 0.15.0+ naming
+            "Falcon-512",
+        ]
+        
+        # Mock the import to return our mock oqs module
+        original_import = __import__
+        def mock_import(name, *args, **kwargs):
+            if name == "oqs":
+                return mock_oqs
+            return original_import(name, *args, **kwargs)
+        
+        with patch.dict(os.environ, {}, clear=True):
+            with patch("builtins.__import__", side_effect=mock_import):
+                available, error = check_pq_signing_available()
+                
+                # Should detect SPHINCS+ with simple variant
+                assert available is True
+                assert error is None
+
 
 class TestLiboqsLoadingSequence:
     """Test the complete loading sequence."""
