@@ -49,6 +49,9 @@ def check_pq_signing_available() -> Tuple[bool, Optional[str]]:
             "SPHINCS+-SHAKE-128s-robust",
             "SPHINCS+-shake-128s",
             "SPHINCS+-shake-128s-robust",
+            # liboqs 0.15.0+ uses "-simple" suffix for the simple parameter set
+            "SPHINCS+-SHAKE-128s-simple",
+            "SPHINCS+-shake-128s-simple",
         ]
         
         # Log all available signature mechanisms for debugging
