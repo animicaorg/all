@@ -176,7 +176,9 @@ def get_pq_missing_error_message() -> str:
     try:
         diag = get_pq_diagnostics()
         diagnostic_section = f"\n{diag}\n"
-    except Exception:
+    except Exception as e:
+        # Log but don't fail if diagnostics can't be generated
+        logger.debug(f"Could not generate diagnostics: {e}")
         diagnostic_section = ""
     
     return f"""
