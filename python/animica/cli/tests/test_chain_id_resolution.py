@@ -6,7 +6,6 @@ resolution to prevent the 'got: 0, expected: 1' error.
 """
 import json
 from pathlib import Path
-from typing import Optional
 
 import pytest
 import respx
