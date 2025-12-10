@@ -75,14 +75,23 @@ test_error_messages() {
 test_exit_codes() {
   test_info "Testing that failures use 'fail' function (which exits non-zero)..."
   
-  # Count the number of 'fail' calls after liboqs-python install attempts
-  local fail_count
-  fail_count=$(grep -c 'fail "' "$ROOT_DIR/setup.sh" || echo 0)
+  # Check for critical failure points that should use 'fail'
+  local critical_checks=(
+    "git is required to build liboqs"
+    "Failed to install liboqs-python even after building liboqs"
+    "Missing required build tools"
+  )
   
-  if [[ $fail_count -ge 3 ]]; then
-    test_pass "Script uses 'fail' function for error exits ($fail_count occurrences)"
-  else
-    test_fail "Script should use 'fail' function more consistently"
+  local all_found=true
+  for check in "${critical_checks[@]}"; do
+    if ! grep -q "$check" "$ROOT_DIR/setup.sh"; then
+      test_fail "Missing critical error check: $check"
+      all_found=false
+    fi
+  done
+  
+  if $all_found; then
+    test_pass "Script has proper error checks for critical failure points"
   fi
 }
 
@@ -166,8 +175,13 @@ test_version_pinning() {
   
   if grep -q "LIBOQS_VERSION=" "$ROOT_DIR/setup.sh"; then
     local version
-    version=$(grep "LIBOQS_VERSION=" "$ROOT_DIR/setup.sh" | head -1 | cut -d'"' -f2)
-    test_pass "liboqs version is pinned to: $version"
+    # More robust extraction that handles different quote styles
+    version=$(grep "LIBOQS_VERSION=" "$ROOT_DIR/setup.sh" | head -1 | sed 's/.*LIBOQS_VERSION=\s*["'\'']*\([^"'\'']*\).*/\1/')
+    if [[ -n "$version" ]]; then
+      test_pass "liboqs version is pinned to: $version"
+    else
+      test_fail "Could not extract liboqs version"
+    fi
   else
     test_fail "liboqs version should be pinned"
   fi

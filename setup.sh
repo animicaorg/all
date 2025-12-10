@@ -257,7 +257,8 @@ To install git:
     log "Retrying liboqs-python installation with locally-built liboqs..."
     
     # Capture the output in a temporary file for diagnostics
-    local retry_log="/tmp/oqs_install_retry_$$.log"
+    local retry_log
+    retry_log=$(mktemp /tmp/oqs_install_retry.XXXXXX.log)
     if python -m pip install liboqs-python --no-cache-dir >"$retry_log" 2>&1; then
       log "✓ liboqs-python installed successfully after building liboqs from source"
       log "  Built liboqs is at: $LIBOQS_DIR/install"
