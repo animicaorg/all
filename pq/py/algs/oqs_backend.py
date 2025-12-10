@@ -187,8 +187,9 @@ def _load_liboqs() -> Optional[ctypes.CDLL]:
             logger.debug(f"Failed to load liboqs candidate '{name}': {e}")
             continue
     
-    # Step 5: Provide detailed failure message
-    logger.warning(
+    # Step 5: Provide detailed failure message at DEBUG level
+    # (Higher-level modules like capability.py provide user-facing messages)
+    logger.debug(
         "liboqs shared library not found after searching:\n"
         f"  - LIBOQS_PATH environment variable: {override or '(not set)'}\n"
         f"  - python-oqs wheel bundled paths: {len(bundled_paths)} checked\n"
