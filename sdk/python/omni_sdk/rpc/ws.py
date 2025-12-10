@@ -49,9 +49,11 @@ from ..version import __version__ as SDK_VERSION  # type: ignore
 try:
     from .http import to_jsonable
 except ImportError:
-    # Fallback if http module isn't available (shouldn't happen in practice)
+    # Fallback if http module isn't available (defensive - shouldn't happen in practice)
+    # Note: Code duplication is intentional here to maintain independence of ws module.
+    # In normal operation, the import succeeds and this fallback is never used.
     def to_jsonable(obj):  # type: ignore
-        """Minimal fallback for bytes normalization."""
+        """Minimal fallback for bytes normalization. Mirrors http.to_jsonable()."""
         if isinstance(obj, (bytes, bytearray, memoryview)):
             return "0x" + bytes(obj).hex()
         elif isinstance(obj, dict):
