@@ -101,7 +101,7 @@ def resolve_chain_id(
     rpc_url: Optional[str],
     cli_chain_id: Optional[int],
     config_chain_id: Optional[int] = None,
-) -> int:
+) -> Tuple[int, str]:
     """
     Resolve chain ID with validation using proper precedence.
     
@@ -111,7 +111,9 @@ def resolve_chain_id(
         config_chain_id: Chain ID from active network config (None = not set)
     
     Returns:
-        Validated chain ID to use for transaction signing
+        Tuple of (validated chain ID, source string)
+        - chain ID: Validated chain ID to use for transaction signing
+        - source: How the chain ID was determined (e.g., "CLI flag", "node auto-detect")
     
     Raises:
         typer.Exit: If CLI chain ID doesn't match node's chain ID
@@ -162,11 +164,11 @@ def resolve_chain_id(
     
     # Case 1: No chain ID from CLI or config -> use node's chain ID
     if chain_id_to_use is None:
-        return node_chain_id
+        return node_chain_id, "node auto-detect"
     
     # Case 2: Chain ID specified (from CLI or config) -> validate it matches node
     if chain_id_to_use == node_chain_id:
-        return chain_id_to_use
+        return chain_id_to_use, chain_id_source
     
     # Case 3: Mismatch -> fail with clear error
     typer.echo("=" * 60, err=True)
@@ -333,7 +335,7 @@ def build(
         cfg = load_network_config()
         
         # Resolve and validate chain ID with proper precedence
-        resolved_chain_id = resolve_chain_id(url, chain_id, cfg.chain_id)
+        resolved_chain_id, _ = resolve_chain_id(url, chain_id, cfg.chain_id)
         
         # Fetch nonce if not provided
         if nonce is None:
@@ -429,7 +431,7 @@ def sign(
                 cfg = load_network_config()
                 
                 # This will validate the chain ID or exit with clear error
-                resolved_chain_id = resolve_chain_id(url, chain_id_int, cfg.chain_id)
+                resolved_chain_id, _ = resolve_chain_id(url, chain_id_int, cfg.chain_id)
                 typer.echo(f"✓ Chain ID validated: {resolved_chain_id}")
             except typer.Exit:
                 raise
@@ -455,6 +457,30 @@ def sign(
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
+
+
+def debug_chain_context(
+    network_name: str,
+    rpc_url: str,
+    chain_id: int,
+    chain_id_source: str,
+) -> None:
+    """
+    Print chain context debug information to stderr.
+    
+    Args:
+        network_name: Active network name (e.g., "mainnet", "devnet")
+        rpc_url: RPC endpoint URL
+        chain_id: Resolved chain ID
+        chain_id_source: How chain ID was determined (e.g., "CLI flag", "node auto-detect")
+    """
+    typer.echo("", err=True)
+    typer.echo("CHAIN CONTEXT DEBUG", err=True)
+    typer.echo(f"  network: {network_name}", err=True)
+    typer.echo(f"  rpc_url: {rpc_url}", err=True)
+    typer.echo(f"  chain_id: {chain_id}", err=True)
+    typer.echo(f"  chain_id_source: {chain_id_source}", err=True)
+    typer.echo("", err=True)
 
 
 @app.command()
@@ -489,6 +515,12 @@ def send(
         "--rpc-url",
         help="Override RPC URL",
         envvar="ANIMICA_RPC_URL",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Enable verbose chain context debugging",
     ),
 ) -> None:
     """
@@ -536,7 +568,16 @@ def send(
         cfg = load_network_config()
         
         # Step 4: Resolve and validate chain ID with proper precedence
-        chain_id = resolve_chain_id(url, chain_id, cfg.chain_id)
+        resolved_chain_id, chain_id_source = resolve_chain_id(url, chain_id, cfg.chain_id)
+        
+        # Step 4.5: Print debug info if verbose
+        if verbose:
+            debug_chain_context(
+                network_name=cfg.name,
+                rpc_url=url,
+                chain_id=resolved_chain_id,
+                chain_id_source=chain_id_source,
+            )
         
         # Step 5: Fetch nonce if not provided
         if nonce is None:
@@ -583,7 +624,7 @@ def send(
                 nonce=nonce,
                 gas_limit=gas,
                 max_fee=max_fee,
-                chain_id=chain_id,
+                chain_id=resolved_chain_id,
             )
         except ImportError:
             typer.echo(
@@ -637,7 +678,7 @@ def send(
             typer.echo(f"Gas Limit:  {gas}")
             typer.echo(f"Max Fee:    {gas_price} gwei ({max_fee} wei)")
             typer.echo(f"Nonce:      {nonce}")
-            typer.echo(f"Chain ID:   {chain_id}")
+            typer.echo(f"Chain ID:   {resolved_chain_id}")
             typer.echo(f"Tx Hash:    {tx_hash}")
             typer.echo(f"Raw Size:   {len(raw_tx)} bytes")
             typer.echo(f"Raw Hex:    {raw_tx.hex()[:100]}...")
