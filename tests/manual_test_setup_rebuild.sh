@@ -26,7 +26,7 @@ check_liboqs_status() {
       echo -e "${GREEN}✓${RESET} liboqs installation found"
       # Show the timestamp of the install directory
       local timestamp
-      timestamp=$(stat -c '%y' "$LIBOQS_DIR/install" 2>/dev/null || stat -f '%Sm' "$LIBOQS_DIR/install" 2>/dev/null || echo "unknown")
+      timestamp=$(stat -c '%y' "$LIBOQS_DIR/install" 2>/dev/null || stat -f '%Sm' "$LIBOQS_DIR/install" 2>/dev/null || echo "timestamp unavailable")
       echo -e "${BLUE}  Last modified: $timestamp${RESET}"
     else
       echo -e "${YELLOW}⚠${RESET} liboqs directory exists but no installation found"
