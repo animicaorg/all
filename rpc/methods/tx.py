@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import dataclasses as _dc
+import logging
 import typing as t
 
 from rpc import deps
 from rpc import errors as rpc_errors
 from rpc.methods import method
+
+log = logging.getLogger(__name__)
 
 # ——— Optional deps (be tolerant during early bring-up) ———
 
@@ -264,21 +267,44 @@ def _validate_chain_id(obj: dict) -> None:
     want = _chain_id_required()
     
     # Handle both flat and nested tx structures
-    # Try flat structure first
+    # Try flat structure first (signed envelope with body field)
     cid = obj.get("chainId") or obj.get("chain_id")
     
-    # If not found, try nested structure (obj.tx.chainId)
+    # If not found, try nested structure (obj.tx.chainId or obj.body.chainId)
     if cid is None and "tx" in obj and isinstance(obj["tx"], dict):
         tx_obj = obj["tx"]
         cid = tx_obj.get("chainId") or tx_obj.get("chain_id")
     
+    # Try body field (signed envelope structure)
+    if cid is None and "body" in obj and isinstance(obj["body"], dict):
+        body_obj = obj["body"]
+        cid = body_obj.get("chainId") or body_obj.get("chain_id")
+    
+    # Debug logging to diagnose chainId extraction
+    log.debug(
+        "ChainId validation: extracted=%s, expected=%s, envelope_keys=%s",
+        cid,
+        want,
+        list(obj.keys()) if isinstance(obj, dict) else "not-dict",
+    )
+    
     if cid is None:
-        # Some txs rely on external chainId; enforce explicit for now.
+        # ChainId is required in all transactions
+        log.warning(
+            "ChainId missing in transaction envelope: keys=%s, nested_keys=%s",
+            list(obj.keys()),
+            list(obj.get("tx", {}).keys()) if isinstance(obj.get("tx"), dict) else None,
+        )
         raise rpc_errors.ChainIdMismatch(
             got=0,  # Use 0 to indicate missing chain ID
             expected=want
         )
     if int(cid) != int(want):
+        log.warning(
+            "ChainId mismatch: got=%s, expected=%s",
+            int(cid),
+            int(want),
+        )
         raise rpc_errors.ChainIdMismatch(got=int(cid), expected=int(want))
 
 
@@ -569,7 +595,15 @@ def tx_send_raw_transaction(rawTx: str) -> str:
         raise rpc_errors.InvalidParams("base64 not supported yet; send hex (0x…)")
     
     raw = _b(rawTx)
+    log.debug("tx.sendRawTransaction: decoding %d CBOR bytes", len(raw))
     tx_like, obj = _decode_tx(raw)
+    
+    # Log the decoded structure for debugging
+    log.debug(
+        "tx.sendRawTransaction: decoded envelope type=%s, keys=%s",
+        type(tx_like).__name__ if hasattr(type(tx_like), "__name__") else type(tx_like),
+        list(obj.keys()) if isinstance(obj, dict) else "not-dict",
+    )
     
     # Basic chainId check
     _validate_chain_id(obj)
