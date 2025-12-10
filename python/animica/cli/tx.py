@@ -385,7 +385,7 @@ def sign(
                 # Convert to int, handling invalid values
                 try:
                     chain_id_int = int(tx_chain_id)
-                except (ValueError, TypeError) as e:
+                except (ValueError, TypeError):
                     typer.echo(
                         f"Error: Invalid chain ID in transaction file: {tx_chain_id!r}",
                         err=True,
