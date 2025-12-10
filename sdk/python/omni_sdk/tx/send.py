@@ -109,13 +109,16 @@ def submit_raw(rpc: _RpcClient, raw_tx: bytes) -> str:
         # Per spec/openrpc: method name is tx.sendRawTransaction, param is hex or bytes.
         # Our HTTP client is expected to base64/hex wrap as needed; we pass raw bytes.
         result = rpc.request("tx.sendRawTransaction", [bytes(raw_tx)])
+    except RpcError:
+        # Already an RpcError with proper method/code/message/data, re-raise
+        raise
     except Exception as e:  # Map transport/errors to a stable type
         # Try using the SDK's RpcError if available, otherwise fallback
         try:
             raise RpcError(
-                method="tx.sendRawTransaction",
                 code=-32098,
                 message=f"tx.sendRawTransaction failed: {e}",
+                method="tx.sendRawTransaction",
                 data=str(e),
             ) from e
         except TypeError:
@@ -142,12 +145,15 @@ def get_transaction_receipt(rpc: _RpcClient, tx_hash: str) -> Optional[Dict[str,
     """
     try:
         res = rpc.request("tx.getTransactionReceipt", [tx_hash])
+    except RpcError:
+        # Already an RpcError with proper method/code/message/data, re-raise
+        raise
     except Exception as e:
         try:
             raise RpcError(
-                method="tx.getTransactionReceipt",
                 code=-32098,
                 message=f"tx.getTransactionReceipt failed: {e}",
+                method="tx.getTransactionReceipt",
                 data=str(e),
             ) from e
         except TypeError:
