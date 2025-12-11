@@ -47,6 +47,9 @@ RECOMMENDED_LIBOQS_VERSION = "0.15.0"
 # These may need updating as new liboqs versions are released
 LIBOQS_SONAME_VERSIONS = ["liboqs.so.5", "liboqs.so.4", "liboqs.so.3"]
 
+# SPHINCS+ parameter set preference (matches sphincs_shake_128s thin wrapper)
+_SPHINCS_VARIANT_ENV = "ANIMICA_SPHINCS_VARIANT"
+
 # --------------------------------------------------------------------------------------------------
 # Attempt to load liboqs
 # --------------------------------------------------------------------------------------------------
@@ -688,6 +691,35 @@ class OQSBackend:
         if self._probe_sig_mechanism(primary):
             return primary
         return fallback
+
+    def _select_sphincs_mechanism(self) -> bytes:
+        """
+        Choose a deterministic SPHINCS+ mechanism based on availability.
+
+        Preference order mirrors pq.py.algs.sphincs_shake_128s:
+          • Default: prefer the "robust" parameter set for compatibility with
+            older liboqs builds used by existing nodes.
+          • ANIMICA_SPHINCS_VARIANT=simple flips the preference to "simple".
+        """
+
+        preferred = os.environ.get(_SPHINCS_VARIANT_ENV, "robust").strip().lower()
+        variant_order = ["robust", "simple"]
+        if preferred == "simple":
+            variant_order = ["simple", "robust"]
+
+        candidates = {
+            "simple": [ALG_SPHINCS_SHAKE_128S, ALG_SPHINCS_SHAKE_128S_ROBUST],
+            "robust": [ALG_SPHINCS_SHAKE_128S_ROBUST, ALG_SPHINCS_SHAKE_128S],
+        }
+
+        for variant in variant_order:
+            for mech in candidates[variant]:
+                if self._probe_sig_mechanism(mech):
+                    return mech
+
+        # If nothing probed successfully, fall back to the first option in the
+        # preferred order to ensure deterministic selection.
+        return candidates[variant_order[0]][0]
     
     def _normalize_sig_alg(self, alg: str) -> bytes:
         """
@@ -717,11 +749,11 @@ class OQSBackend:
         
         if "dilithium5" in a:
             return self._try_sig_mechanism(ALG_ML_DSA_87, ALG_DILITHIUM5)
-        
+
         # SPHINCS+ variants - prefer simple profile
         if "sphincs" in a:
-            return self._try_sig_mechanism(ALG_SPHINCS_SHAKE_128S, ALG_SPHINCS_SHAKE_128S_ROBUST)
-        
+            return self._select_sphincs_mechanism()
+
         raise ValueError(f"Unknown/unsupported signature alg: {alg}")
 
     @staticmethod

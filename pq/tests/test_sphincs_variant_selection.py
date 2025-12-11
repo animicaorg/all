@@ -82,3 +82,40 @@ def test_env_can_force_simple_variant(monkeypatch):
 
     assert mod._OQS_MECH == "SPHINCS+-SHAKE-128s-simple"
     assert mod.sizes["sig"] == 7856
+
+
+def _oqs_backend_with(monkeypatch, enabled_names: list[str]):
+    """Build an OQSBackend instance with a patched mechanism probe set."""
+
+    from pq.py.algs import oqs_backend
+
+    backend = oqs_backend.OQSBackend.__new__(oqs_backend.OQSBackend)
+
+    def fake_probe(mech: bytes) -> bool:
+        return mech.decode("ascii") in enabled_names
+
+    monkeypatch.setattr(oqs_backend.OQSBackend, "_probe_sig_mechanism", staticmethod(fake_probe))
+    return oqs_backend, backend
+
+
+def test_oqs_backend_prefers_robust_when_both_available(monkeypatch):
+    oqs_backend, backend = _oqs_backend_with(
+        monkeypatch,
+        ["SPHINCS+-SHAKE-128s-simple", "SPHINCS+-SHAKE-128s-robust"],
+    )
+    monkeypatch.delenv("ANIMICA_SPHINCS_VARIANT", raising=False)
+
+    assert (
+        backend._select_sphincs_mechanism()
+        == oqs_backend.ALG_SPHINCS_SHAKE_128S_ROBUST
+    )
+
+
+def test_oqs_backend_env_forces_simple(monkeypatch):
+    oqs_backend, backend = _oqs_backend_with(
+        monkeypatch,
+        ["SPHINCS+-SHAKE-128s-robust", "SPHINCS+-SHAKE-128s-simple"],
+    )
+    monkeypatch.setenv("ANIMICA_SPHINCS_VARIANT", "simple")
+
+    assert backend._select_sphincs_mechanism() == oqs_backend.ALG_SPHINCS_SHAKE_128S
