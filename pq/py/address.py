@@ -91,6 +91,11 @@ def address_from_pubkey(pubkey: bytes, alg_id: int, *, hrp: str = HRP_DEFAULT) -
     return addr
 
 
+# Backwards-compatible alias expected by older SDK helpers
+def from_pubkey(pubkey: bytes, alg_id: int, hrp: str = HRP_DEFAULT) -> str:
+    return address_from_pubkey(pubkey, alg_id, hrp=hrp)
+
+
 # ---------------------------------------------------------------------------
 # Decoding / Validation
 # ---------------------------------------------------------------------------
