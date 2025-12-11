@@ -5,6 +5,8 @@ This test ensures that the node correctly verifies PQ signatures
 sent via tx.sendRawTransaction RPC method.
 """
 
+import types
+
 import pytest
 
 
@@ -15,7 +17,15 @@ ALG_SPHINCS_SHAKE_128S = "sphincs_shake_128s"
 ALG_SPHINCS_ID = 4098
 
 
-def _create_signed_tx():
+@pytest.fixture(autouse=True)
+def _allow_fake_pq(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensure tests can run without liboqs by enabling the fake backend."""
+
+    monkeypatch.setenv("ANIMICA_UNSAFE_PQ_FAKE", "1")
+    monkeypatch.setenv("ANIMICA_ALLOW_PQ_PURE_FALLBACK", "1")
+
+
+def _create_signed_tx(chain_id: int = 1, alg: str = "dilithium3"):
     """Create a properly signed transaction envelope for testing."""
     try:
         from omni_sdk.wallet.signer import PQSigner
@@ -26,10 +36,9 @@ def _create_signed_tx():
     
     # Create a deterministic signer
     seed = bytes(range(32))
-    signer = PQSigner.from_seed("dilithium3", seed=seed)
-    
+    signer = PQSigner.from_seed(alg, seed=seed)
+
     # Build transaction
-    chain_id = 1
     tx = transfer(
         from_addr=signer.address or "anim1test",
         to_addr="anim1dest",
@@ -55,10 +64,11 @@ def _create_signed_tx():
     return raw_tx, signer
 
 
-async def test_sendRawTransaction_accepts_valid_pq_signature(monkeypatch):
+@pytest.mark.parametrize("chain_id", (1, 2))
+async def test_sendRawTransaction_accepts_valid_pq_signature(monkeypatch, chain_id):
     """Test that tx.sendRawTransaction accepts validly signed transactions."""
     # Create signed tx
-    raw_tx, signer = _create_signed_tx()
+    raw_tx, signer = _create_signed_tx(chain_id=chain_id)
     
     # Mock the pending pool and chain_id
     from rpc.methods import tx as tx_methods
@@ -66,9 +76,7 @@ async def test_sendRawTransaction_accepts_valid_pq_signature(monkeypatch):
     # Mock dependencies
     class MockDeps:
         def get_chain_params(self):
-            class ChainParams:
-                chain_id = 1
-            return ChainParams()
+            return types.SimpleNamespace(chain_id=chain_id)
     
     monkeypatch.setattr(tx_methods, "deps", MockDeps())
     
@@ -241,7 +249,7 @@ def test_verify_uses_envelope_body_for_sign_bytes(monkeypatch):
     monkeypatch.setattr(rpc_tx, "deps", MockDeps())
 
     # Verification should succeed even when tx_like is a dataclass with extras
-    rpc_tx._verify_pq_signature(tx, envelope)
+    rpc_tx._verify_pq_signature(tx, envelope, chain_id=2)
 
 async def test_sendRawTransaction_requires_sig_field(monkeypatch):
     """Test that tx.sendRawTransaction requires sig field in envelope."""
@@ -290,7 +298,7 @@ async def test_sendRawTransaction_requires_sig_field(monkeypatch):
         tx_send_raw_transaction(raw_hex)
 
 
-def _create_signed_tx_sphincs():
+def _create_signed_tx_sphincs(chain_id: int = 1):
     """Create a properly signed transaction envelope using SPHINCS+ for testing."""
     try:
         from omni_sdk.wallet.signer import PQSigner
@@ -304,7 +312,6 @@ def _create_signed_tx_sphincs():
     signer = PQSigner.from_seed(ALG_SPHINCS_SHAKE_128S, seed=seed)
     
     # Build transaction
-    chain_id = 1
     tx = transfer(
         from_addr=signer.address or "anim1test",
         to_addr="anim1dest",
@@ -330,10 +337,11 @@ def _create_signed_tx_sphincs():
     return raw_tx, signer
 
 
-async def test_sendRawTransaction_accepts_valid_sphincs_signature(monkeypatch):
+@pytest.mark.parametrize("chain_id", (1, 2))
+async def test_sendRawTransaction_accepts_valid_sphincs_signature(monkeypatch, chain_id):
     """Test that tx.sendRawTransaction accepts validly signed SPHINCS+ transactions."""
     # Create signed tx with SPHINCS+
-    raw_tx, signer = _create_signed_tx_sphincs()
+    raw_tx, signer = _create_signed_tx_sphincs(chain_id=chain_id)
     
     # Verify signer is using SPHINCS+
     assert signer.alg_name == ALG_SPHINCS_SHAKE_128S
@@ -345,9 +353,7 @@ async def test_sendRawTransaction_accepts_valid_sphincs_signature(monkeypatch):
     # Mock dependencies
     class MockDeps:
         def get_chain_params(self):
-            class ChainParams:
-                chain_id = 1
-            return ChainParams()
+            return types.SimpleNamespace(chain_id=chain_id)
     
     monkeypatch.setattr(tx_methods, "deps", MockDeps())
     

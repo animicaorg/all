@@ -351,9 +351,11 @@ def _extract_chain_id(tx_like: t.Any, obj: dict) -> int:
     return int(cid)
 
 
-def _validate_chain_id(obj: dict) -> None:
+def _validate_chain_id(obj: dict) -> int:
+    """Validate chainId against node expectation and return the value used."""
+
     want = _chain_id_required()
-    
+
     # Use shared extraction logic
     try:
         cid = _extract_chain_id(obj, obj)
@@ -387,18 +389,14 @@ def _validate_chain_id(obj: dict) -> None:
         )
         raise rpc_errors.ChainIdMismatch(got=int(cid), expected=int(want))
 
+    return int(cid)
 
-def _verify_pq_signature(tx_like: t.Any, obj: dict) -> None:
+
+def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
     if _pq_verify is None:
         raise rpc_errors.InternalError("PQ verification unavailable")
     alg_id, pub, sig = _extract_sig(obj)
-    
-    # Extract chain_id using shared helper
-    try:
-        chain_id = _extract_chain_id(tx_like, obj)
-    except rpc_errors.InvalidParams as e:
-        raise rpc_errors.InvalidParams(f"Transaction missing chain_id for signature verification: {e}")
-    
+
     # Get the raw message (CBOR body) to verify
     # Always derive the sign-bytes from the decoded envelope object rather than
     # any dataclass representation. Some dataclass constructors add default
@@ -774,11 +772,11 @@ def tx_send_raw_transaction(rawTx: str) -> str:
         list(obj.keys()) if isinstance(obj, dict) else "not-dict",
     )
     
-    # Basic chainId check
-    _validate_chain_id(obj)
-    
+    # Basic chainId check and reuse the validated value for signature verification
+    chain_id = _validate_chain_id(obj)
+
     # PQ signature verify
-    _verify_pq_signature(tx_like, obj)
+    _verify_pq_signature(tx_like, obj, chain_id=chain_id)
     
     # Compute hash from the original CBOR bytes to ensure consistency
     # Per spec: TxID = sha3_256(CBOR(SignedTxMap))
