@@ -291,14 +291,35 @@ def _extract_sig(obj: dict) -> tuple[int, bytes, bytes]:
     )
 
 
-def _validate_chain_id(obj: dict) -> None:
-    want = _chain_id_required()
+def _extract_chain_id(tx_like: t.Any, obj: dict) -> int:
+    """
+    Extract chain_id from transaction object.
     
-    # Handle both flat and nested tx structures
-    # Try flat structure first (signed envelope with body field)
+    Handles various structure formats:
+    - Flat: obj.chainId or obj.chain_id
+    - Nested: obj.tx.chainId or obj.body.chainId
+    - Dataclass: tx_like.chain_id or tx_like.chainId
+    
+    Returns
+    -------
+    int
+        The extracted chain_id
+    
+    Raises
+    ------
+    rpc_errors.InvalidParams
+        If chain_id cannot be found
+    """
+    # Try dataclass attributes first
+    if hasattr(tx_like, "chain_id"):
+        return int(tx_like.chain_id)
+    if hasattr(tx_like, "chainId"):
+        return int(tx_like.chainId)
+    
+    # Try flat structure
     cid = obj.get("chainId") or obj.get("chain_id")
     
-    # If not found, try nested structure (obj.tx.chainId or obj.body.chainId)
+    # If not found, try nested structures
     if cid is None and "tx" in obj and isinstance(obj["tx"], dict):
         tx_obj = obj["tx"]
         cid = tx_obj.get("chainId") or tx_obj.get("chain_id")
@@ -307,6 +328,21 @@ def _validate_chain_id(obj: dict) -> None:
     if cid is None and "body" in obj and isinstance(obj["body"], dict):
         body_obj = obj["body"]
         cid = body_obj.get("chainId") or body_obj.get("chain_id")
+    
+    if cid is None:
+        raise rpc_errors.InvalidParams("Transaction missing chain_id")
+    
+    return int(cid)
+
+
+def _validate_chain_id(obj: dict) -> None:
+    want = _chain_id_required()
+    
+    # Use shared extraction logic
+    try:
+        cid = _extract_chain_id(obj, obj)
+    except rpc_errors.InvalidParams:
+        cid = None
     
     # Debug logging to diagnose chainId extraction
     log.debug(
@@ -341,21 +377,11 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict) -> None:
         raise rpc_errors.InternalError("PQ verification unavailable")
     alg_id, pub, sig = _extract_sig(obj)
     
-    # Extract chain_id for verification
-    chain_id = None
-    if hasattr(tx_like, "chain_id"):
-        chain_id = int(tx_like.chain_id)
-    elif hasattr(tx_like, "chainId"):
-        chain_id = int(tx_like.chainId)
-    elif isinstance(obj, dict):
-        # Try to extract from obj (body or nested)
-        body = obj.get("body", obj)
-        chain_id = body.get("chainId") or body.get("chain_id")
-        if chain_id is not None:
-            chain_id = int(chain_id)
-    
-    if chain_id is None:
-        raise rpc_errors.InvalidParams("Transaction missing chain_id for signature verification")
+    # Extract chain_id using shared helper
+    try:
+        chain_id = _extract_chain_id(tx_like, obj)
+    except rpc_errors.InvalidParams as e:
+        raise rpc_errors.InvalidParams(f"Transaction missing chain_id for signature verification: {e}")
     
     # Get the raw message (CBOR body) to verify
     # This should be the same format that was signed (CBOR of canonical body dict)
