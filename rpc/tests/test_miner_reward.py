@@ -94,7 +94,7 @@ def test_miner_address_from_env_variable():
     from rpc.methods import miner as miner_mod
     
     # Set a test miner address
-    test_addr = "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f"
+    test_addr = "anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm"
     os.environ["ANIMICA_MINER_ADDRESS"] = test_addr
     
     try:
@@ -174,7 +174,7 @@ def test_miner_mine_with_custom_address_credits_that_address():
     client, cfg, _ = new_test_client()
     
     # Use the premine address as our custom payout address
-    custom_addr_bech32 = "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f"
+    custom_addr_bech32 = "anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm"
     custom_addr_hex = _get_premine_address_hex()
     
     # Get initial balance

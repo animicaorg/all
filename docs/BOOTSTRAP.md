@@ -103,7 +103,7 @@ The mainnet genesis includes a one-time premine of **81,000,000 ANM** (81,000,00
 | Founder            | 9,000,000      | 9,000,000,000,000,000    |
 | **Total**          | **81,000,000** | **81,000,000,000,000,000** |
 
-The user-provided address `anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f` is included in the distribution (currently allocated 0 ANM as a placeholder; adjust per design requirements).
+The user-provided address `anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm` is included in the distribution (currently allocated 0 ANM as a placeholder; adjust per design requirements).
 
 ### Premine Enforcement
 

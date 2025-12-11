@@ -39,7 +39,7 @@ Any attempt to use the faucet on mainnet will result in an error:
 The following address is pre-funded with 500,000,000 ANM in devnet and testnet genesis files:
 
 ```
-anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f
+anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm
 ```
 
 This provides immediate test funds without requiring the faucet for this specific address.
@@ -76,7 +76,7 @@ Default amount (500M ANM):
   "jsonrpc": "2.0",
   "method": "faucet.request",
   "params": {
-    "address": "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f"
+    "address": "anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm"
   },
   "id": 1
 }
@@ -88,7 +88,7 @@ Custom amount (1M ANM = 1,000,000,000,000,000 base units):
   "jsonrpc": "2.0",
   "method": "faucet.request",
   "params": {
-    "address": "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f",
+    "address": "anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm",
     "amount": 1000000000000000
   },
   "id": 1
@@ -101,10 +101,10 @@ Custom amount (1M ANM = 1,000,000,000,000,000 base units):
 {
   "jsonrpc": "2.0",
   "result": {
-    "address": "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f",
+    "address": "anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm",
     "amount": "0x6f05b59d3b20000",
     "balance": "0xde0b6b3a7640000",
-    "message": "Credited 500000000000000000 base units to anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f"
+    "message": "Credited 500000000000000000 base units to anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm"
   },
   "id": 1
 }
@@ -135,25 +135,25 @@ animica faucet request ADDRESS [OPTIONS]
 
 Request default amount (500M ANM):
 ```bash
-animica faucet request anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f
+animica faucet request anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm
 ```
 
 Output:
 ```
 ✓ Faucet request successful!
-  Address:      anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f
+  Address:      anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm
   Credited:     500,000,000.0 ANM (500,000,000,000,000,000 base units)
   New balance:  1,000,000,000.0 ANM (1,000,000,000,000,000,000 base units)
 ```
 
 Request custom amount (1M ANM):
 ```bash
-animica faucet request anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f --amount 1000000000000000
+animica faucet request anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm --amount 1000000000000000
 ```
 
 Get JSON output:
 ```bash
-animica faucet request anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f --json
+animica faucet request anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm --json
 ```
 
 ### Network Configuration
