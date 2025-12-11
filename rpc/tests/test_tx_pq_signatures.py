@@ -236,3 +236,90 @@ async def test_sendRawTransaction_requires_sig_field(monkeypatch):
     
     with pytest.raises(InvalidParams, match="Missing 'sig'"):
         tx_send_raw_transaction(raw_hex)
+
+
+def _create_signed_tx_sphincs():
+    """Create a properly signed transaction envelope using SPHINCS+ for testing."""
+    try:
+        from omni_sdk.wallet.signer import PQSigner
+        from omni_sdk.tx.build import transfer
+        from omni_sdk.tx.encode import sign_bytes, pack_signed
+    except ImportError:
+        pytest.skip("SDK not available")
+    
+    # Create a deterministic signer with SPHINCS+ (sphincs_shake_128s)
+    seed = bytes(range(32))
+    signer = PQSigner.from_seed("sphincs_shake_128s", seed=seed)
+    
+    # Build transaction
+    chain_id = 1
+    tx = transfer(
+        from_addr=signer.address or "anim1test",
+        to_addr="anim1dest",
+        amount=1000,
+        nonce=5,
+        gas_limit=21000,
+        max_fee=1000000000,
+        chain_id=chain_id,
+    )
+    
+    # Sign
+    msg = sign_bytes(tx)
+    sig_bytes = signer.sign_tx(msg, chain_id)
+    
+    # Pack into signed envelope
+    raw_tx = pack_signed(
+        tx,
+        signature=sig_bytes,
+        alg_id=signer.alg_id,
+        public_key=signer.public_key,
+    )
+    
+    return raw_tx, signer
+
+
+async def test_sendRawTransaction_accepts_valid_sphincs_signature(monkeypatch):
+    """Test that tx.sendRawTransaction accepts validly signed SPHINCS+ transactions."""
+    # Create signed tx with SPHINCS+
+    raw_tx, signer = _create_signed_tx_sphincs()
+    
+    # Verify signer is using SPHINCS+
+    assert signer.alg_name == "sphincs_shake_128s"
+    assert signer.alg_id == 4098  # Expected SPHINCS+ algorithm ID
+    
+    # Mock the pending pool and chain_id
+    from rpc.methods import tx as tx_methods
+    
+    # Mock dependencies
+    class MockDeps:
+        def get_chain_params(self):
+            class ChainParams:
+                chain_id = 1
+            return ChainParams()
+    
+    monkeypatch.setattr(tx_methods, "deps", MockDeps())
+    
+    # Mock pending pool
+    pending_store = {}
+    
+    def mock_pending_put(tx_hash_hex, raw):
+        pending_store[tx_hash_hex] = raw
+    
+    monkeypatch.setattr(tx_methods, "_pending_put", mock_pending_put)
+    
+    # Mock lookup
+    def mock_lookup(tx_hash_hex):
+        return None, None, None, None
+    
+    monkeypatch.setattr(tx_methods, "_lookup_persisted_tx", mock_lookup)
+    
+    # Call sendRawTransaction
+    from rpc.methods.tx import tx_send_raw_transaction
+    
+    raw_hex = "0x" + raw_tx.hex()
+    tx_hash = tx_send_raw_transaction(raw_hex)
+    
+    # Should return a valid tx hash
+    assert isinstance(tx_hash, str)
+    assert tx_hash.startswith("0x")
+    assert len(tx_hash) == 66  # 0x + 64 hex chars

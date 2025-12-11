@@ -387,13 +387,28 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict) -> None:
     # This should be the same format that was signed (CBOR of canonical body dict)
     msg = _sign_bytes(tx_like)
     
-    # Debug logging
+    # Map alg_id to alg_name for logging
+    alg_name_for_log = f"alg_0x{alg_id:02x}" if isinstance(alg_id, int) else str(alg_id)
+    if _ALG_NAME is not None and isinstance(alg_id, int):
+        alg_name_for_log = _ALG_NAME.get(alg_id, alg_name_for_log)
+    
+    # Debug logging (matches CLI format)
     log.debug(
         "PQ signature verification: alg_id=%s, pubkey_len=%d, sig_len=%d, msg_len=%d, chain_id=%d",
         alg_id,
         len(pub),
         len(sig),
         len(msg),
+        chain_id,
+    )
+    log.debug(
+        "PQ SIGNATURE VERIFY DEBUG: algorithm=%s (id=%s), pubkey_len=%d, sig_len=%d, message_len=%d, message_prefix=%s, chain_id=%d",
+        alg_name_for_log,
+        alg_id,
+        len(pub),
+        len(sig),
+        len(msg),
+        msg[:16].hex() if len(msg) >= 16 else msg.hex(),
         chain_id,
     )
     
@@ -443,6 +458,19 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict) -> None:
         raise rpc_errors.InternalError(f"PQ signature verification setup failed: {e}")
     
     if not ok:
+        # Enhanced error logging for debugging
+        log.error(
+            "PQ signature verification FAILED: algorithm=%s (id=%s), pubkey_len=%d bytes, sig_len=%d bytes, message_len=%d bytes, message_prefix=%s, chain_id=%d, domain=%s, prehash=%s",
+            alg_name_for_log,
+            alg_id,
+            len(pub),
+            len(sig),
+            len(msg),
+            msg[:16].hex() if len(msg) >= 16 else msg.hex(),
+            chain_id,
+            sig_env.domain,
+            sig_env.prehash,
+        )
         raise rpc_errors.BadSignature("Invalid post-quantum signature: verification failed")
 
 
