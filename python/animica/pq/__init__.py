@@ -33,16 +33,23 @@ class _FakeBackend:
     def keygen(self) -> Tuple[bytes, bytes]:
         seed = b"animica-pq-fake"
         sk = hashlib.sha256(seed + b"sk").digest()
-        pk = hashlib.sha256(seed + b"pk").digest()
+        pk = hashlib.sha256(b"animica-pq-fake-pk|" + sk).digest()
         return pk, sk
 
     def sign(self, secret_key: bytes, message: bytes) -> bytes:
-        h = hashlib.sha512(secret_key + message).digest()
-        return h + h  # deterministic oversized blob
+        # Derive the public key the same way as keygen so verification can be
+        # performed using only the public key (matching real PQ schemes).
+        pk = hashlib.sha256(b"animica-pq-fake-pk|" + secret_key).digest()
+
+        # Deterministic, obviously insecure signature used only for local dev.
+        sig = hashlib.sha512(b"animica-pq-fake-sig|" + pk + b"|" + message).digest()
+        return sig + sig  # keep length large to resemble real PQ signatures
 
     def verify(self, public_key: bytes, message: bytes, signature: bytes) -> bool:
-        # Match the fake sign convention
-        return signature == self.sign(public_key, message)
+        expected = hashlib.sha512(
+            b"animica-pq-fake-sig|" + public_key + b"|" + message
+        ).digest()
+        return signature == expected + expected
 
 
 class _OQSBackend:
