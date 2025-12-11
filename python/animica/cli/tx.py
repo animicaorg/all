@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+from decimal import Decimal, getcontext
 from pathlib import Path
 from typing import Any, Optional, Tuple
 
@@ -24,9 +25,13 @@ try:
 except Exception:
     HAVE_RPC = False
 
+from animica.coin import COIN_SYMBOL, UNIT_LABEL, to_base_units
 from animica.config import load_network_config
 
 app = typer.Typer(help="Transaction operations (build, sign, send, simulate)")
+
+# High precision for Decimal operations used in formatting and unit conversion
+getcontext().prec = 28
 
 
 def _resolve_rpc_url(rpc_url: Optional[str]) -> str:
@@ -296,7 +301,7 @@ def build(
     ),
     gas: int = typer.Option(200000, "--gas", help="Gas limit"),
     gas_price: Optional[float] = typer.Option(
-        None, "--gas-price", help="Gas price (wei/gas)"
+        None, "--gas-price", help="Gas price (gwei; 1 gwei = 1 base unit)"
     ),
     nonce: Optional[int] = typer.Option(
         None, "--nonce", help="Transaction nonce (auto-fetched if omitted)"
@@ -350,10 +355,10 @@ def build(
         tx_data = {
             "from": from_addr,
             "to": to_addr,
-            "value": int(value * 1e18) if value else 0,  # Convert ANM to wei
+            "value": to_base_units(value) if value else 0,  # Convert ANM to base units
             "data": data or "0x",
             "gas": gas,
-            "gasPrice": int(gas_price * 1e9) if gas_price else 1000000000,
+            "gasPrice": int(Decimal(str(gas_price))) if gas_price is not None else 1,
             "nonce": nonce,
             "chainId": resolved_chain_id,
         }
@@ -489,7 +494,9 @@ def send(
     value: float = typer.Option(..., "--value", help="Amount to transfer (in ANM)"),
     gas: Optional[int] = typer.Option(None, "--gas", help="Gas limit (auto if omitted)"),
     gas_price: Optional[float] = typer.Option(
-        None, "--gas-price", help="Gas price in gwei (auto if omitted)"
+        None,
+        "--gas-price",
+        help="Gas price in gwei (1 gwei = 1 base unit; auto if omitted)",
     ),
     nonce: Optional[int] = typer.Option(
         None, "--nonce", help="Transaction nonce (auto-fetched if omitted)"
@@ -610,14 +617,14 @@ def send(
             # Fetch suggested gas price from node
             try:
                 gas_price_result = _request_rpc("state.suggestGasPrice", [], url)
-                # Result in wei, convert to gwei for consistency
-                gas_price = int(gas_price_result) / 1e9 if gas_price_result else 1.0
+                # Result is already in base units (gwei-sized)
+                gas_price = float(gas_price_result) if gas_price_result else 1.0
             except Exception:
-                gas_price = 1.0  # 1 gwei default
-        
+                gas_price = 1.0  # 1 base unit default
+
         # Convert values to proper units
-        value_wei = int(value * 1e18)  # ANM to wei
-        max_fee = int(gas_price * 1e9)  # gwei to wei
+        value_units = to_base_units(value)  # ANM to base units
+        max_fee = int(Decimal(str(gas_price)))  # gwei to base units (1:1)
         
         # Step 7: Build transaction using SDK
         try:
@@ -628,7 +635,7 @@ def send(
             tx = transfer(
                 from_addr=sender_address,
                 to_addr=dest_address,
-                amount=value_wei,
+                amount=value_units,
                 nonce=nonce,
                 gas_limit=gas,
                 max_fee=max_fee,
@@ -720,9 +727,6 @@ def send(
             raw_tx_prefixed = f"0x{raw_tx_hex}"
 
             # Format value to avoid scientific notation and fix precision issues
-            # Round to remove floating point artifacts, then format
-            from decimal import Decimal, getcontext
-            getcontext().prec = 28  # High precision for decimal arithmetic
             value_decimal = Decimal(str(value))
             # Format without scientific notation
             value_str = format(value_decimal, 'f')
@@ -730,9 +734,9 @@ def send(
             typer.echo("=== Dry-Run Mode ===")
             typer.echo(f"From:       {sender_address}")
             typer.echo(f"To:         {dest_address}")
-            typer.echo(f"Value:      {value_str} ANM ({value_wei} wei)")
+            typer.echo(f"Value:      {value_str} {COIN_SYMBOL} ({value_units} {UNIT_LABEL})")
             typer.echo(f"Gas Limit:  {gas}")
-            typer.echo(f"Max Fee:    {gas_price} gwei ({max_fee} wei)")
+            typer.echo(f"Max Fee:    {gas_price} gwei ({max_fee} {UNIT_LABEL})")
             typer.echo(f"Nonce:      {nonce}")
             typer.echo(f"Chain ID:   {resolved_chain_id}")
             typer.echo(f"Tx Hash:    {tx_hash}")
