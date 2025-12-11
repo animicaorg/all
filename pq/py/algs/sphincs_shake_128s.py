@@ -155,11 +155,18 @@ def verify(pk: bytes, msg: bytes, sig: bytes) -> bool:
     Verify a signature. Returns True if valid, False otherwise.
     """
     if _OQS_OK and _OQS_MECH:
-        with oqs.Signature(_OQS_MECH, public_key=pk) as verifier:  # type: ignore[arg-type]
-            try:
-                return bool(verifier.verify(msg, sig))
-            except Exception:
-                return False
+        try:
+            with oqs.Signature(_OQS_MECH, public_key=pk) as verifier:  # type: ignore[arg-type]
+                try:
+                    return bool(verifier.verify(msg, sig))
+                except Exception:
+                    return False
+        except TypeError:
+            with oqs.Signature(_OQS_MECH) as verifier:  # type: ignore[arg-type]
+                try:
+                    return bool(verifier.verify(msg, sig, pk))
+                except Exception:
+                    return False
 
     if _DEV_FAKE_OK:
         # In fake mode we don't have the real sk; accept signature tied to pk directly
