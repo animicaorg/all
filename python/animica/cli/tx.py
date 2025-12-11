@@ -642,9 +642,21 @@ def send(
                 public_key=bytes.fromhex(wallet_entry.public_key_hex),
             )
             
-            # Sign the transaction
+            # Sign the transaction with proper domain and chain_id
             sign_bytes_data = sign_bytes(tx)
-            signature = signer.sign(sign_bytes_data)
+            signature = signer.sign_tx(sign_bytes_data, resolved_chain_id)
+            
+            # Verbose debug output
+            if verbose:
+                typer.echo("", err=True)
+                typer.echo("PQ SIGNATURE DEBUG", err=True)
+                typer.echo(f"  algorithm: {signer.alg_name} (id={signer.alg_id})", err=True)
+                typer.echo(f"  pubkey_len: {len(signer.public_key)} bytes", err=True)
+                typer.echo(f"  sig_len: {len(signature)} bytes", err=True)
+                typer.echo(f"  message_len: {len(sign_bytes_data)} bytes", err=True)
+                typer.echo(f"  message_prefix: {sign_bytes_data[:16].hex()}", err=True)
+                typer.echo(f"  chain_id: {resolved_chain_id}", err=True)
+                typer.echo("", err=True)
             
             # Pack into signed CBOR envelope
             raw_tx = pack_signed(

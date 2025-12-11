@@ -189,17 +189,35 @@ def _compute_tx_hash(tx_like: t.Any) -> str:
 
 
 def _sign_bytes(tx_like: t.Any) -> bytes:
-    if _tx_sign_bytes is not None:
-        return _tx_sign_bytes(tx_like)
+    """
+    Extract the canonical body dict and encode as CBOR.
+    
+    This returns the raw message that should be passed to pq.sign/verify,
+    which will then apply domain separation with domain="tx" and chain_id.
+    
+    We do NOT use tx_sign_bytes (canonical) here because that adds another
+    layer of domain separation, which would cause double-domaining when
+    passed to pq.verify.verify_detached.
+    """
     if _cbor_dumps is None:
         raise rpc_errors.InternalError("No canonical encoder for SignBytes")
+    
+    # Extract body from signed envelope or use the object directly
     if _dc.is_dataclass(tx_like):
         obj = _dcd(tx_like)
     else:
         obj = dict(tx_like)
-    for k in ("sig", "signature"):
-        obj.pop(k, None)
-    return _cbor_dumps(obj)
+    
+    # If obj has a 'body' field (signed envelope), use that
+    if "body" in obj:
+        body = obj["body"]
+    else:
+        # Otherwise, obj is the body itself - remove signature fields
+        body = dict(obj)
+        for k in ("sig", "signature", "sigs"):
+            body.pop(k, None)
+    
+    return _cbor_dumps(body)
 
 
 def _chain_id_required() -> int:
@@ -273,14 +291,35 @@ def _extract_sig(obj: dict) -> tuple[int, bytes, bytes]:
     )
 
 
-def _validate_chain_id(obj: dict) -> None:
-    want = _chain_id_required()
+def _extract_chain_id(tx_like: t.Any, obj: dict) -> int:
+    """
+    Extract chain_id from transaction object.
     
-    # Handle both flat and nested tx structures
-    # Try flat structure first (signed envelope with body field)
+    Handles various structure formats:
+    - Flat: obj.chainId or obj.chain_id
+    - Nested: obj.tx.chainId or obj.body.chainId
+    - Dataclass: tx_like.chain_id or tx_like.chainId
+    
+    Returns
+    -------
+    int
+        The extracted chain_id
+    
+    Raises
+    ------
+    rpc_errors.InvalidParams
+        If chain_id cannot be found
+    """
+    # Try dataclass attributes first
+    if hasattr(tx_like, "chain_id"):
+        return int(tx_like.chain_id)
+    if hasattr(tx_like, "chainId"):
+        return int(tx_like.chainId)
+    
+    # Try flat structure
     cid = obj.get("chainId") or obj.get("chain_id")
     
-    # If not found, try nested structure (obj.tx.chainId or obj.body.chainId)
+    # If not found, try nested structures
     if cid is None and "tx" in obj and isinstance(obj["tx"], dict):
         tx_obj = obj["tx"]
         cid = tx_obj.get("chainId") or tx_obj.get("chain_id")
@@ -289,6 +328,21 @@ def _validate_chain_id(obj: dict) -> None:
     if cid is None and "body" in obj and isinstance(obj["body"], dict):
         body_obj = obj["body"]
         cid = body_obj.get("chainId") or body_obj.get("chain_id")
+    
+    if cid is None:
+        raise rpc_errors.InvalidParams("Transaction missing chain_id")
+    
+    return int(cid)
+
+
+def _validate_chain_id(obj: dict) -> None:
+    want = _chain_id_required()
+    
+    # Use shared extraction logic
+    try:
+        cid = _extract_chain_id(obj, obj)
+    except rpc_errors.InvalidParams:
+        cid = None
     
     # Debug logging to diagnose chainId extraction
     log.debug(
@@ -322,7 +376,26 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict) -> None:
     if _pq_verify is None:
         raise rpc_errors.InternalError("PQ verification unavailable")
     alg_id, pub, sig = _extract_sig(obj)
+    
+    # Extract chain_id using shared helper
+    try:
+        chain_id = _extract_chain_id(tx_like, obj)
+    except rpc_errors.InvalidParams as e:
+        raise rpc_errors.InvalidParams(f"Transaction missing chain_id for signature verification: {e}")
+    
+    # Get the raw message (CBOR body) to verify
+    # This should be the same format that was signed (CBOR of canonical body dict)
     msg = _sign_bytes(tx_like)
+    
+    # Debug logging
+    log.debug(
+        "PQ signature verification: alg_id=%s, pubkey_len=%d, sig_len=%d, msg_len=%d, chain_id=%d",
+        alg_id,
+        len(pub),
+        len(sig),
+        len(msg),
+        chain_id,
+    )
     
     # Construct a Signature envelope for verify_detached
     # The pq.py.verify API expects a Signature dataclass with alg_id, alg_name, domain, prehash, sig
@@ -345,19 +418,28 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict) -> None:
         
         # Construct signature envelope with standard tx signing domain
         # Note: Signature dataclass fields are: alg_id, alg_name, domain, prehash, sig
+        # Domain "tx" matches what SDK uses in sign_tx method
         sig_env = Signature(
             alg_id=alg_id,
             alg_name=alg_name,
-            domain="tx/sign",  # Standard domain for transaction signatures
+            domain="tx",  # Standard domain for transaction signatures (matches SDK)
             prehash="sha3-512",  # Standard prehash for tx signatures
             sig=sig
         )
         
-        # Call verify_detached with the signature envelope
-        # verify_detached signature: (msg: bytes, sig: Signature, pk: bytes, **kwargs) -> bool
-        ok = _pq_verify.verify_detached(msg, sig_env, pub)  # type: ignore[attr-defined]
+        # Call verify_detached with the signature envelope and chain_id
+        # verify_detached signature: (msg: bytes, sig: Signature, pk: bytes, chain_id: int, **kwargs) -> bool
+        ok = _pq_verify.verify_detached(msg, sig_env, pub, chain_id=chain_id)  # type: ignore[attr-defined]
+        
+        log.debug(
+            "PQ signature verification result: %s (domain=%s, alg=%s)",
+            "PASS" if ok else "FAIL",
+            sig_env.domain,
+            alg_name,
+        )
     except Exception as e:
         # Fallback error for unexpected issues
+        log.error("PQ signature verification setup failed: %s", e, exc_info=True)
         raise rpc_errors.InternalError(f"PQ signature verification setup failed: {e}")
     
     if not ok:
