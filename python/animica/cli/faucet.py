@@ -21,6 +21,7 @@ from typing import Optional
 import requests
 import typer
 
+from animica.coin import COIN_UNIT
 from animica.config import load_network_config
 from .state import get_cli_state
 
@@ -248,8 +249,8 @@ def request_funds(
         balance_dec = int(balance_hex, 16) if balance_hex.startswith("0x") else int(balance_hex)
         
         # Convert to ANM (9 decimals)
-        amount_anm = amount_dec / 1_000_000_000
-        balance_anm = balance_dec / 1_000_000_000
+        amount_anm = amount_dec / COIN_UNIT
+        balance_anm = balance_dec / COIN_UNIT
         
         typer.secho("✓ Faucet request successful!", fg=typer.colors.GREEN, bold=True)
         typer.echo(f"  Address:      {addr}")
