@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 import typer
+from animica.coin import COIN_UNIT
 from animica.config import load_network_config
 
 try:
@@ -428,7 +429,7 @@ def mine_blocks(
                     total_mined += mined
                     total_reward += block_reward
                     # Convert nANM to ANM for display (1 ANM = 10^9 nANM)
-                    reward_anm = block_reward / 1_000_000_000
+                    reward_anm = block_reward / COIN_UNIT
                     typer.echo(
                         f"  Block {i + 1}/{count} mined (height: {final_height}, "
                         f"reward: {reward_anm:.9f} ANM = {block_reward} nANM)"
@@ -457,7 +458,7 @@ def mine_blocks(
                 )
             
             # Display total reward summary
-            total_reward_anm = total_reward / 1_000_000_000
+            total_reward_anm = total_reward / COIN_UNIT
             typer.secho(
                 f"✓ Successfully mined {total_mined} block(s). "
                 f"New chain height: {final_height}. "
