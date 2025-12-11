@@ -29,23 +29,43 @@ _sizes: Dict[str, int] = {"pk": 0, "sk": 0, "sig": 0}
 
 # A few possible mechanism names used across oqs/liboqs versions
 # Note: liboqs 0.15.0+ uses "-simple" suffix for the simple parameter set
-_POSSIBLE_MECH_NAMES = [
-    "SPHINCS+-SHAKE-128s-simple",  # liboqs 0.15.0+ primary variant
-    "SPHINCS+-shake-128s-simple",  # lowercase variant
-    "SPHINCS+-SHAKE-128s",  # older versions without suffix
-    "SPHINCS+-SHAKE-128s-robust",
-    "SPHINCS+-shake-128s",
-    "SPHINCS+-shake-128s-robust",
-]
+_POSSIBLE_MECH_NAMES = {
+    # Prefer "robust" for cross-version compatibility with existing nodes.
+    "robust": [
+        "SPHINCS+-SHAKE-128s-robust",
+        "SPHINCS+-shake-128s-robust",
+        "SPHINCS+-SHAKE-128s",  # older versions without suffix default to robust
+        "SPHINCS+-shake-128s",
+    ],
+    # Fallback to "simple" (liboqs 0.15+ default) when robust isn't available.
+    "simple": [
+        "SPHINCS+-SHAKE-128s-simple",
+        "SPHINCS+-shake-128s-simple",
+    ],
+}
+
+
+def _select_spx_mechanism(enabled: set[str]) -> Optional[str]:
+    """Choose a deterministic SPHINCS+ mechanism from the enabled set."""
+
+    preferred_variant = os.environ.get("ANIMICA_SPHINCS_VARIANT", "robust").strip().lower()
+    # Default preference keeps compatibility with nodes built against older liboqs
+    # releases that only ship the "robust" parameter set.
+    variant_order = ["robust", "simple"]
+    if preferred_variant == "simple":
+        variant_order = ["simple", "robust"]
+
+    for variant in variant_order:
+        for name in _POSSIBLE_MECH_NAMES.get(variant, []):
+            if name in enabled:
+                return name
+    return None
 
 try:
     import oqs  # type: ignore
 
     enabled = set(getattr(oqs, "get_enabled_sig_mechanisms", lambda: [])())
-    for nm in _POSSIBLE_MECH_NAMES:
-        if nm in enabled:
-            _OQS_MECH = nm
-            break
+    _OQS_MECH = _select_spx_mechanism(enabled)
     if _OQS_MECH:
         with oqs.Signature(_OQS_MECH) as _probe:  # type: ignore[arg-type]
             _sizes = {
