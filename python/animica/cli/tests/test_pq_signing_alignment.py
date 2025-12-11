@@ -72,7 +72,9 @@ def test_cli_sign_bytes_match_sdk_helper():
 
 @pytest.mark.skipif(not _pq_available(), reason="PQ signing not available")
 @respx.mock
-def test_cli_send_signature_verifies_with_pq(tmp_path: Path) -> None:
+def test_cli_send_signature_verifies_with_pq(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Broadcast path should produce signatures the PQ verifier accepts."""
 
     from pq.py import registry as pq_registry
@@ -80,6 +82,8 @@ def test_cli_send_signature_verifies_with_pq(tmp_path: Path) -> None:
     from pq.py.verify import verify_detached
     from omni_sdk.wallet.signer import PQSigner
     from omni_sdk.utils.cbor import dumps as cbor_dumps
+
+    monkeypatch.setenv("ANIMICA_UNSAFE_PQ_FAKE", "1")
 
     try:
         signer = PQSigner.from_seed("sphincs_shake_128s", seed=bytes(range(32)))
@@ -120,12 +124,16 @@ def test_cli_send_signature_verifies_with_pq(tmp_path: Path) -> None:
             sig_env = envelope["sig"]
             alg_name = signer.alg_name
             try:
-                alg_name = getattr(getattr(pq_registry, "id_to_name", {}), "get", lambda *_: alg_name)(sig_env["algId"])
+                mapped = getattr(getattr(pq_registry, "id_to_name", {}), "get", lambda *_: None)(sig_env["algId"])
+                if mapped:
+                    alg_name = mapped
             except Exception:
                 pass
             if alg_name == signer.alg_name:
                 try:
-                    alg_name = getattr(pq_registry, "name_of", lambda *_: alg_name)(sig_env["algId"])
+                    mapped = getattr(pq_registry, "name_of", lambda *_: None)(sig_env["algId"])
+                    if mapped:
+                        alg_name = mapped
                 except Exception:
                     pass
 
