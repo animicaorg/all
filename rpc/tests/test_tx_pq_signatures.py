@@ -195,6 +195,54 @@ async def test_sendRawTransaction_rejects_wrong_chain_id(monkeypatch):
         tx_send_raw_transaction(raw_hex)
 
 
+def test_verify_uses_envelope_body_for_sign_bytes(monkeypatch):
+    """Ensure verification canonicalizes the same body the CLI signed."""
+
+    monkeypatch.setenv("ANIMICA_UNSAFE_PQ_FAKE", "1")
+
+    try:
+        from omni_sdk.wallet.signer import PQSigner
+        from omni_sdk.tx.build import transfer
+        from omni_sdk.tx.encode import pack_signed, sign_bytes, unpack_signed
+        from rpc.methods import tx as rpc_tx
+    except ImportError:
+        pytest.skip("SDK not available")
+
+    # Build and sign a transfer using the SDK (canonical body only)
+    signer = PQSigner.from_seed("sphincs_shake_128s", seed=bytes(range(32)))
+    tx = transfer(
+        from_addr=signer.address or "anim1from",
+        to_addr="anim1dest",
+        amount=1,
+        nonce=0,
+        gas_limit=21000,
+        max_fee=1_000_000_000,
+        chain_id=2,
+    )
+
+    msg_cli = sign_bytes(tx)
+    sig = signer.sign_tx(msg_cli, chain_id=2)
+    raw = pack_signed(tx, signature=sig, alg_id=signer.alg_id, public_key=signer.public_key)
+
+    # The dataclass representation includes defaults the signed body omitted
+    assert rpc_tx._sign_bytes(tx) != msg_cli
+
+    # Decoded envelope preserves the exact body the CLI signed
+    envelope = unpack_signed(raw)
+    assert rpc_tx._sign_bytes(envelope) == msg_cli
+
+    class MockDeps:
+        def get_chain_params(self):
+            class CP:
+                chain_id = 2
+
+            return CP()
+
+    monkeypatch.setattr(rpc_tx, "deps", MockDeps())
+
+    # Verification should succeed even when tx_like is a dataclass with extras
+    rpc_tx._verify_pq_signature(tx, envelope)
+
 async def test_sendRawTransaction_requires_sig_field(monkeypatch):
     """Test that tx.sendRawTransaction requires sig field in envelope."""
     from omni_sdk.tx.build import transfer
