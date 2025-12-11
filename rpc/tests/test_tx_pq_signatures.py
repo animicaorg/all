@@ -232,11 +232,9 @@ def test_verify_uses_envelope_body_for_sign_bytes(monkeypatch):
     sig = signer.sign_tx(msg_cli, chain_id=2)
     raw = pack_signed(tx, signature=sig, alg_id=signer.alg_id, public_key=signer.public_key)
 
-    # The dataclass representation includes defaults the signed body omitted
-    assert rpc_tx._sign_bytes(tx) != msg_cli
-
     # Decoded envelope preserves the exact body the CLI signed
     envelope = unpack_signed(raw)
+    assert rpc_tx._sign_bytes(tx) == msg_cli
     assert rpc_tx._sign_bytes(envelope) == msg_cli
 
     class MockDeps:

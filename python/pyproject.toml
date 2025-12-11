@@ -42,7 +42,7 @@ quantum = [
 ]
 
 [tool.setuptools]
-packages = ["animica", "animica.cli", "animica.stratum_pool"]
+packages = ["animica", "animica.cli", "animica.tx", "animica.stratum_pool"]
 
 [tool.setuptools.package-data]
 animica = ["py.typed"]
