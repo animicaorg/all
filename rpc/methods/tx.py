@@ -400,8 +400,13 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict) -> None:
         raise rpc_errors.InvalidParams(f"Transaction missing chain_id for signature verification: {e}")
     
     # Get the raw message (CBOR body) to verify
-    # This should be the same format that was signed (CBOR of canonical body dict)
-    msg = _sign_bytes(tx_like)
+    # Always derive the sign-bytes from the decoded envelope object rather than
+    # any dataclass representation. Some dataclass constructors add default
+    # fields (e.g., gasPrice/accessList) that were not present in the signed
+    # body, which would change the CBOR encoding and cause verification to
+    # fail even with a valid signature. The decoded `obj` retains the exact
+    # body that was signed by the CLI/SDK, so we canonicalize that here.
+    msg = _sign_bytes(obj)
     
     # Map alg_id to alg_name for logging
     alg_name_for_log = f"alg_0x{alg_id:02x}" if isinstance(alg_id, int) else str(alg_id)
