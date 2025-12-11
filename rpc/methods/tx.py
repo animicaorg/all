@@ -29,6 +29,13 @@ try:
 except Exception:  # pragma: no cover
     _tx_sign_bytes = None  # type: ignore
 
+# Shared Animica helper for deterministic tx sign-bytes
+try:
+    from animica.tx.signing import \
+        build_signable_tx_bytes as _build_signable_tx_bytes
+except Exception:  # pragma: no cover
+    _build_signable_tx_bytes = None  # type: ignore
+
 # Tx dataclass (optional; we can operate on dicts too)
 try:
     from core.types.tx import Tx as _Tx  # type: ignore
@@ -192,24 +199,30 @@ def _compute_tx_hash(tx_like: t.Any) -> str:
 
 def _sign_bytes(tx_like: t.Any) -> bytes:
     """
-    Extract the canonical body dict and encode as CBOR.
-    
+    Extract the canonical body dict and encode as CBOR using the shared helper.
+
     This returns the raw message that should be passed to pq.sign/verify,
     which will then apply domain separation with domain="tx" and chain_id.
-    
-    We do NOT use tx_sign_bytes (canonical) here because that adds another
-    layer of domain separation, which would cause double-domaining when
-    passed to pq.verify.verify_detached.
+
+    By delegating to animica.tx.signing.build_signable_tx_bytes we guarantee
+    that CLI-generated signatures and node-side verification operate on the
+    *exact* same bytes (field order, encoding, and normalization). If that
+    helper is unavailable, we fall back to local canonical CBOR encoding.
     """
+    if _build_signable_tx_bytes is not None:
+        # Preserve mapping objects as-is so we respect the body that was
+        # originally signed by the client (already canonicalized via the SDK).
+        return _build_signable_tx_bytes(tx_like)
+
     if _cbor_dumps is None:
         raise rpc_errors.InternalError("No canonical encoder for SignBytes")
-    
+
     # Extract body from signed envelope or use the object directly
     if _dc.is_dataclass(tx_like):
         obj = _dcd(tx_like)
     else:
         obj = dict(tx_like)
-    
+
     # If obj has a 'body' field (signed envelope), use that
     if "body" in obj:
         body = obj["body"]
@@ -218,7 +231,7 @@ def _sign_bytes(tx_like: t.Any) -> bytes:
         body = dict(obj)
         for k in ("sig", "signature", "sigs"):
             body.pop(k, None)
-    
+
     return _cbor_dumps(body)
 
 
@@ -331,20 +344,22 @@ def _extract_chain_id(tx_like: t.Any, obj: dict) -> int:
         return int(tx_like.chain_id)
     if hasattr(tx_like, "chainId"):
         return int(tx_like.chainId)
-    
+
+    # Prefer the signed body if present (authoritative)
+    if "body" in obj and isinstance(obj["body"], dict):
+        body_obj = obj["body"]
+        cid = body_obj.get("chainId") or body_obj.get("chain_id")
+        if cid is not None:
+            return int(cid)
+
     # Try flat structure
     cid = obj.get("chainId") or obj.get("chain_id")
-    
+
     # If not found, try nested structures
     if cid is None and "tx" in obj and isinstance(obj["tx"], dict):
         tx_obj = obj["tx"]
         cid = tx_obj.get("chainId") or tx_obj.get("chain_id")
-    
-    # Try body field (signed envelope structure)
-    if cid is None and "body" in obj and isinstance(obj["body"], dict):
-        body_obj = obj["body"]
-        cid = body_obj.get("chainId") or body_obj.get("chain_id")
-    
+
     if cid is None:
         raise rpc_errors.InvalidParams("Transaction missing chain_id")
     

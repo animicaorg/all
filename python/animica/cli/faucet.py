@@ -20,7 +20,7 @@ from typing import Optional
 
 import typer
 
-from animica.coin import COIN_UNIT
+from animica.coin import COIN_UNIT, format_amount
 from animica.config import load_network_config
 from .state import get_cli_state
 
@@ -29,7 +29,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_FAUCET_ANM = 500_000_000
 DEFAULT_FAUCET_UNITS = DEFAULT_FAUCET_ANM * COIN_UNIT
 DEFAULT_FAUCET_HELP = (
-    f"Amount in base units (default: {DEFAULT_FAUCET_ANM:,} ANM = {DEFAULT_FAUCET_UNITS:,} base units)"
+    "Amount in base units (1 ANM = "
+    f"{COIN_UNIT:,} base units; default: {DEFAULT_FAUCET_ANM:,} ANM = {DEFAULT_FAUCET_UNITS:,} base units)"
 )
 
 app = typer.Typer(
@@ -263,14 +264,10 @@ def request_funds(
         amount_dec = int(amount_hex, 16) if amount_hex.startswith("0x") else int(amount_hex)
         balance_dec = int(balance_hex, 16) if balance_hex.startswith("0x") else int(balance_hex)
         
-        # Convert to ANM (9 decimals)
-        amount_anm = amount_dec / COIN_UNIT
-        balance_anm = balance_dec / COIN_UNIT
-        
         typer.secho("✓ Faucet request successful!", fg=typer.colors.GREEN, bold=True)
         typer.echo(f"  Address:      {addr}")
-        typer.echo(f"  Credited:     {amount_anm:,.1f} ANM ({amount_dec:,} base units)")
-        typer.echo(f"  New balance:  {balance_anm:,.1f} ANM ({balance_dec:,} base units)")
+        typer.echo(f"  Credited:     {format_amount(amount_dec)}")
+        typer.echo(f"  New balance:  {format_amount(balance_dec)}")
         if message:
             typer.echo(f"  Message:      {message}")
 
