@@ -144,17 +144,51 @@ def canonical_body_dict(tx: TxLike) -> Dict[str, Any]:
     return body
 
 
+def build_signable_tx_bytes(tx: TxLike) -> bytes:
+    """
+    Return the deterministic CBOR-encoded SignBytes for the given Tx body.
+
+    This helper centralizes the exact bytes that PQ signers/verifiers use on
+    both the CLI and RPC sides. It accepts either:
+
+    * A transaction object (dataclass or mapping) containing the standard
+      fields used by :func:`canonical_body_dict`, or
+    * A decoded signed envelope mapping that already includes a ``body`` map
+      (as produced by :func:`pack_signed`). In this case we respect the body
+      verbatim to avoid mutating or reordering fields that were already
+      signed by the client.
+
+    The resulting CBOR encodes the canonical transaction body with the
+    following layout (string keys):
+
+        chainId  : int (CAIP-2 numeric id)
+        from     : str (bech32m address)
+        to       : str | None
+        nonce    : int
+        value    : int (base units; 1 ANM = 10^9 units)
+        gasLimit : int
+        maxFee   : int
+        data     : bytes
+
+    Domain separation (``domain="tx"``) and chain-id binding are applied by
+    the PQ signing layer itself; this function only produces the canonical
+    message to be signed.
+    """
+
+    if isinstance(tx, Mapping) and "body" in tx:
+        body = tx["body"]
+    else:
+        body = canonical_body_dict(tx)
+
+    return cbor_dumps(body)
+
+
 def sign_bytes(tx: TxLike) -> bytes:
     """
-    Return the deterministic CBOR-encoded SignBytes for the given Tx.
-
-    This returns the canonical body dict as CBOR, which should then be
-    passed to pq.sign.sign_detached with appropriate domain separation.
-    
-    The PQ layer will add domain separation using the domain parameter,
-    so this function returns the raw message (body) to be signed.
+    Backwards-compatible alias for :func:`build_signable_tx_bytes`.
     """
-    return cbor_dumps(canonical_body_dict(tx))
+
+    return build_signable_tx_bytes(tx)
 
 
 # -----------------------------------------------------------------------------

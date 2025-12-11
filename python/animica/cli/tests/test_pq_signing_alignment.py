@@ -20,21 +20,13 @@ if str(SDK_ROOT) not in sys.path:
 sys.modules.setdefault("requests", types.SimpleNamespace())
 
 from animica.cli import tx
+from animica.tx.signing import build_signable_tx_bytes
 from omni_sdk.tx.build import transfer
-from omni_sdk.tx.encode import sign_bytes, unpack_signed
+from omni_sdk.tx.encode import unpack_signed
 from omni_sdk.tx.signing import sign_transaction
 
 
 runner = CliRunner()
-
-
-def _pq_available() -> bool:
-    try:
-        import pq.py.sign  # noqa: F401
-
-        return True
-    except Exception:
-        return False
 
 
 def test_cli_sign_bytes_match_sdk_helper():
@@ -63,32 +55,34 @@ def test_cli_sign_bytes_match_sdk_helper():
     )
 
     signed = sign_transaction(tx_obj, signer, chain_id=1)
-    expected = sign_bytes(tx_obj)
+    expected = build_signable_tx_bytes(tx_obj)
+    # Golden value for regression coverage (domain separation applied by PQ layer)
+    assert expected.hex() == (
+        "a862746f69616e696d31646573746464617461406466726f6d6b616e696d31736f"
+        "75726365656e6f6e6365016576616c75651904d2666d61784665651a3b9aca0067"
+        "636861696e496401686761734c696d6974195208"
+    )
 
     assert signer.calls and signer.calls[0][0] == expected
     assert signed.sign_bytes == expected
     assert signed.signature.startswith(b"sig")
 
-
-@pytest.mark.skipif(not _pq_available(), reason="PQ signing not available")
 @respx.mock
 def test_cli_send_signature_verifies_with_pq(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Broadcast path should produce signatures the PQ verifier accepts."""
 
-    from pq.py import registry as pq_registry
     from pq.py.sign import Signature
     from pq.py.verify import verify_detached
     from omni_sdk.wallet.signer import PQSigner
-    from omni_sdk.utils.cbor import dumps as cbor_dumps
+    from rpc.methods import tx as rpc_tx
 
     monkeypatch.setenv("ANIMICA_UNSAFE_PQ_FAKE", "1")
+    monkeypatch.setenv("ANIMICA_ALLOW_PQ_PURE_FALLBACK", "1")
+    monkeypatch.setenv("ANIMICA_PQ_VERIFY_DEBUG", "1")
 
-    try:
-        signer = PQSigner.from_seed("sphincs_shake_128s", seed=bytes(range(32)))
-    except RuntimeError as exc:
-        pytest.skip(f"PQ keygen not available: {exc}")
+    signer = PQSigner.from_seed("sphincs_shake_128s", seed=bytes(range(32)))
     wallet_file = tmp_path / "wallets.json"
     wallet_entry = {
         "label": "alice",
@@ -103,6 +97,9 @@ def test_cli_send_signature_verifies_with_pq(
     wallet_file.write_text(json.dumps({"version": 1, "wallets": [wallet_entry]}, indent=2))
 
     rpc_url = "http://localhost:9999/rpc"
+
+    # Ensure the RPC layer expects the same chain ID the CLI will sign with
+    monkeypatch.setattr(rpc_tx.deps, "get_chain_id", lambda: 1)
 
     def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
@@ -120,34 +117,22 @@ def test_cli_send_signature_verifies_with_pq(
             raw_bytes = bytes.fromhex(raw_hex)
             envelope = unpack_signed(raw_bytes)
 
-            body = envelope["body"]
-            sig_env = envelope["sig"]
-            alg_name = signer.alg_name
-            try:
-                mapped = getattr(getattr(pq_registry, "id_to_name", {}), "get", lambda *_: None)(sig_env["algId"])
-                if mapped:
-                    alg_name = mapped
-            except Exception:
-                pass
-            if alg_name == signer.alg_name:
-                try:
-                    mapped = getattr(pq_registry, "name_of", lambda *_: None)(sig_env["algId"])
-                    if mapped:
-                        alg_name = mapped
-                except Exception:
-                    pass
-
-            message = cbor_dumps(body)
+            # The RPC verifier must accept the CLI's signature bytes
+            message = build_signable_tx_bytes(envelope)
             signature_obj = Signature(
-                alg_id=sig_env["algId"],
-                alg_name=alg_name,
+                alg_id=envelope["sig"]["algId"],
+                alg_name=signer.alg_name,
                 domain="tx",
                 prehash="sha3-512",
-                sig=sig_env["sig"],
+                sig=envelope["sig"]["sig"],
             )
 
-            ok = verify_detached(message, signature_obj, sig_env["pubkey"], chain_id=1)
-            assert ok is True, "PQ verifier should accept CLI signature"
+            assert verify_detached(
+                message, signature_obj, envelope["sig"]["pubkey"], chain_id=1
+            )
+
+            # RPC helper should also pass (no exception)
+            rpc_tx._verify_pq_signature(envelope, envelope, chain_id=1)
 
             return httpx.Response(
                 200,

@@ -8,6 +8,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIBOQS_DIR="$ROOT_DIR/.liboqs"
 LIBOQS_VERSION="0.15.0"
+LIBOQS_PY_VERSION="$LIBOQS_VERSION"
 LIBOQS_REPO="https://github.com/open-quantum-safe/liboqs.git"
 
 # Parse command-line flags
@@ -308,7 +309,7 @@ To install git:
   # Build from source to ensure compatibility with our liboqs 0.15.0
   # Using --no-binary forces pip to build from source instead of using wheels
   # that may have older bundled liboqs versions (0.14.x)
-  if python -m pip install liboqs-python --no-binary liboqs-python --no-cache-dir >"$install_log" 2>&1; then
+  if python -m pip install "liboqs-python==${LIBOQS_PY_VERSION}" --no-binary liboqs-python --no-cache-dir >"$install_log" 2>&1; then
     log "✓ liboqs-python installed successfully (built from source)"
     log "  Built liboqs is at: $LIBOQS_DIR/install"
     rm -f "$install_log"

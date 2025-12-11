@@ -33,12 +33,18 @@ def to_base_units(amount: float | str | Decimal) -> int:
     return int(dec_amount * COIN_UNIT)
 
 
+def from_base_units(raw: int | str) -> Decimal:
+    """Convert raw base units back to a Decimal ANM amount."""
+
+    return Decimal(int(raw)) / COIN_UNIT
+
+
 def format_amount(raw: int) -> str:
-    """Format a raw integer amount as `<ANM> ANM (<raw> units)`.
+    """Format a raw integer amount as a human string with explicit base-unit note."""
 
-    Always renders 9 decimal places to match :data:`COIN_DECIMALS`.
-    """
-
-    whole = Decimal(raw) / COIN_UNIT
-    return f"{whole:.9f} {COIN_SYMBOL} ({raw} {UNIT_LABEL})"
+    whole = from_base_units(raw)
+    return (
+        f"{whole:.9f} {COIN_SYMBOL} ({int(raw):,} base units; "
+        f"1 {COIN_SYMBOL} = {COIN_UNIT:,} base units)"
+    )
 
