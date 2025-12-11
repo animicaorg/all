@@ -41,7 +41,7 @@ def premine_wallet_store(tmp_path: Path) -> Path:
         "wallets": [
             {
                 "label": "premine",
-                "address": "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f",
+                "address": "anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm",
                 "alg_id": 4098,
                 "alg_name": "sphincs_shake_128s",
                 "public_key_hex": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
@@ -146,7 +146,7 @@ def test_wallet_show_by_address_positional(premine_wallet_store: Path) -> None:
     rpc_url = "http://localhost:9999/rpc"
     respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "result": "0x0a"})
     
-    address = "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f"
+    address = "anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm"
     output = run_cli(["show", address, "--rpc-url", rpc_url], premine_wallet_store)
     data = json.loads(output)
     assert data["address"] == address
@@ -163,7 +163,7 @@ def test_wallet_show_by_label(premine_wallet_store: Path) -> None:
     output = run_cli(["show", "premine", "--rpc-url", rpc_url], premine_wallet_store)
     data = json.loads(output)
     assert data["label"] == "premine"
-    assert data["address"] == "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f"
+    assert data["address"] == "anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm"
 
 
 @respx.mock

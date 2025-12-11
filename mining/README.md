@@ -226,7 +226,7 @@ Block rewards are automatically credited to the miner's address. The miner addre
 
 1. **ANIMICA_MINER_ADDRESS** environment variable (highest priority)
    ```bash
-   export ANIMICA_MINER_ADDRESS=anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f
+   export ANIMICA_MINER_ADDRESS=anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm
    python -m mining.cli.miner mine-blocks --count 5
    ```
 
