@@ -186,13 +186,27 @@ def pack_signed(
     -------
     bytes
         Canonical CBOR encoding of the envelope.
+        
+        The envelope structure matches the node's expected format:
+        {
+          "body": {...},
+          "sig": {
+            "algId": int,
+            "pubkey": bytes,
+            "sig": bytes
+          }
+        }
     """
     body = canonical_body_dict(tx)
+    # Create signature envelope as a dict (node expects sig to be a dict, not raw bytes)
+    sig_envelope: Dict[str, Any] = {
+        "algId": int(alg_id),
+        "pubkey": bytes(public_key),
+        "sig": bytes(signature),
+    }
     env: Dict[str, Any] = {
         "body": body,
-        "algId": int(alg_id),
-        "pubKey": bytes(public_key),
-        "sig": bytes(signature),
+        "sig": sig_envelope,
     }
     if extra_fields:
         # Copy only simple JSON/CBOR-friendly values; callers must ensure validity.
@@ -204,7 +218,8 @@ def unpack_signed(raw: bytes) -> Dict[str, Any]:
     """
     Parse a raw signed CBOR transaction into a Python dictionary.
 
-    Returns a dict with (at least) keys: body, algId, pubKey, sig.
+    Returns a dict with (at least) keys: body, sig.
+    The sig field is a dict containing: algId, pubkey, sig.
     """
     if not isinstance(raw, (bytes, bytearray)):
         raise TypeError("raw must be bytes")
@@ -212,9 +227,17 @@ def unpack_signed(raw: bytes) -> Dict[str, Any]:
     if not isinstance(obj, dict):
         raise ValueError("signed tx must decode to a CBOR map")
     # Minimal shape validation
-    for k in ("body", "algId", "pubKey", "sig"):
-        if k not in obj:
-            raise ValueError(f"signed tx missing field '{k}'")
+    if "body" not in obj:
+        raise ValueError("signed tx missing field 'body'")
+    if "sig" not in obj:
+        raise ValueError("signed tx missing field 'sig'")
+    if not isinstance(obj["sig"], dict):
+        raise ValueError("signed tx 'sig' field must be a dict")
+    # Validate sig envelope has required fields
+    sig_env = obj["sig"]
+    for k in ("algId", "pubkey", "sig"):
+        if k not in sig_env:
+            raise ValueError(f"signed tx sig envelope missing field '{k}'")
     return obj
 
 
