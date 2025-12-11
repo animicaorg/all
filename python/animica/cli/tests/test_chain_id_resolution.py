@@ -447,8 +447,9 @@ def test_resolve_chain_id_none_auto_detects() -> None:
     # Mock node returning chain ID 1337
     respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "result": 1337})
     
-    result = resolve_chain_id(rpc_url, None)
-    assert result == 1337
+    chain_id, source = resolve_chain_id(rpc_url, None)
+    assert chain_id == 1337
+    assert source == "node auto-detect"
 
 
 @respx.mock
@@ -462,8 +463,9 @@ def test_resolve_chain_id_matches() -> None:
     # Mock node returning chain ID 42
     respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "result": 42})
     
-    result = resolve_chain_id(rpc_url, 42)
-    assert result == 42
+    chain_id, source = resolve_chain_id(rpc_url, 42)
+    assert chain_id == 42
+    assert source == "CLI/env"
 
 
 def test_resolve_chain_id_mismatch_raises() -> None:
@@ -514,8 +516,9 @@ def test_resolve_chain_id_uses_config_when_no_cli_value() -> None:
     respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "result": 42})
     
     # Pass config_chain_id=42, no CLI chain_id
-    result = resolve_chain_id(rpc_url, cli_chain_id=None, config_chain_id=42)
-    assert result == 42
+    chain_id, source = resolve_chain_id(rpc_url, cli_chain_id=None, config_chain_id=42)
+    assert chain_id == 42
+    assert source == "network config"
 
 
 @respx.mock
@@ -530,8 +533,9 @@ def test_resolve_chain_id_cli_overrides_config() -> None:
     respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "result": 99})
     
     # Pass both CLI and config, CLI should take precedence
-    result = resolve_chain_id(rpc_url, cli_chain_id=99, config_chain_id=42)
-    assert result == 99
+    chain_id, source = resolve_chain_id(rpc_url, cli_chain_id=99, config_chain_id=42)
+    assert chain_id == 99
+    assert source == "CLI/env"
 
 
 @respx.mock

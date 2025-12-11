@@ -184,6 +184,13 @@ def _chain_id_from(obj: Any, mapping: Mapping[str, Any]) -> int:
         return int(mapping["chain_id"])
     if "chainId" in mapping:
         return int(mapping["chainId"])
+    # Check for nested body structure (signed envelope: {"body": {...}, "sig": {...}})
+    if "body" in mapping and isinstance(mapping["body"], Mapping):
+        body = mapping["body"]
+        if "chain_id" in body:
+            return int(body["chain_id"])
+        if "chainId" in body:
+            return int(body["chainId"])
     raise ValueError("header/tx missing chain id for signing")
 
 
