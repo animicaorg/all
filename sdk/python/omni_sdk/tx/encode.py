@@ -148,7 +148,11 @@ def sign_bytes(tx: TxLike) -> bytes:
     """
     Return the deterministic CBOR-encoded SignBytes for the given Tx.
 
-    This is the exact byte string that should be signed by the PQ signer.
+    This returns the canonical body dict as CBOR, which should then be
+    passed to pq.sign.sign_detached with appropriate domain separation.
+    
+    The PQ layer will add domain separation using the domain parameter,
+    so this function returns the raw message (body) to be signed.
     """
     return cbor_dumps(canonical_body_dict(tx))
 
