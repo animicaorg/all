@@ -24,13 +24,6 @@ try:
 except Exception:
     HAVE_RPC = False
 
-try:
-    from pq.py.signing import sign_message
-
-    HAVE_SIGN = True
-except Exception:
-    HAVE_SIGN = False
-
 from animica.config import load_network_config
 
 app = typer.Typer(help="Transaction operations (build, sign, send, simulate)")
@@ -614,7 +607,7 @@ def send(
         # Step 7: Build transaction using SDK
         try:
             from omni_sdk.tx.build import transfer
-            from omni_sdk.tx.encode import sign_bytes, pack_signed
+            from omni_sdk.tx.signing import sign_transaction
             from omni_sdk.wallet.signer import PQSigner
             
             tx = transfer(
@@ -642,19 +635,18 @@ def send(
                 public_key=bytes.fromhex(wallet_entry.public_key_hex),
             )
             
-            # Sign the transaction with proper domain and chain_id
-            sign_bytes_data = sign_bytes(tx)
-            signature = signer.sign_tx(sign_bytes_data, resolved_chain_id)
-            
+            # Sign the transaction with proper domain and chain_id using shared helper
+            signed_tx = sign_transaction(tx, signer, resolved_chain_id)
+
             # Verbose debug output
             if verbose:
                 typer.echo("", err=True)
                 typer.echo("PQ SIGNATURE DEBUG", err=True)
                 typer.echo(f"  algorithm: {signer.alg_name} (id={signer.alg_id})", err=True)
                 typer.echo(f"  pubkey_len: {len(signer.public_key)} bytes", err=True)
-                typer.echo(f"  sig_len: {len(signature)} bytes", err=True)
-                typer.echo(f"  message_len: {len(sign_bytes_data)} bytes", err=True)
-                typer.echo(f"  message_prefix: {sign_bytes_data[:16].hex()}", err=True)
+                typer.echo(f"  sig_len: {len(signed_tx.signature)} bytes", err=True)
+                typer.echo(f"  message_len: {len(signed_tx.sign_bytes)} bytes", err=True)
+                typer.echo(f"  message_prefix: {signed_tx.sign_bytes[:16].hex()}", err=True)
                 typer.echo(f"  chain_id: {resolved_chain_id}", err=True)
                 typer.echo("", err=True)
 
@@ -668,11 +660,11 @@ def send(
                     alg_name=signer.alg_name,
                     domain="tx",
                     prehash="sha3-512",
-                    sig=signature,
+                    sig=signed_tx.signature,
                 )
 
                 verify_ok = pq_verify.verify_detached(
-                    sign_bytes_data,
+                    signed_tx.sign_bytes,
                     sig_env,
                     signer.public_key,
                     chain_id=resolved_chain_id,
@@ -698,12 +690,7 @@ def send(
                 raise typer.Exit(1)
 
             # Pack into signed CBOR envelope
-            raw_tx = pack_signed(
-                tx,
-                signature=signature,
-                alg_id=signer.alg_id,
-                public_key=signer.public_key,
-            )
+            raw_tx = signed_tx.raw_tx
         except Exception as e:
             typer.echo(f"Error signing transaction: {e}", err=True)
             raise typer.Exit(1)
