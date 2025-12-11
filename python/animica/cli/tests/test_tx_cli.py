@@ -8,6 +8,7 @@ from typing import Optional
 import httpx
 import pytest
 import respx
+import importlib
 from typer.testing import CliRunner
 
 from animica.cli import tx
@@ -266,6 +267,42 @@ def test_send_dry_run_with_defaults(wallet_store: Path) -> None:
     # Should have auto-populated gas and nonce
     assert "Gas Limit:" in output
     assert "Nonce:" in output
+
+
+@respx.mock
+def test_send_aborts_when_local_pq_verification_fails(
+    wallet_store: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ensure the CLI stops before broadcast if PQ verification fails locally."""
+
+    rpc_url = "http://localhost:9999/rpc"
+
+    # All RPC calls return simple integers for nonce/gas/chainId.
+    respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "result": 1})
+
+    # Force local PQ verification failure
+    pq_verify = importlib.import_module("pq.py.verify")
+    monkeypatch.setattr(pq_verify, "verify_detached", lambda *a, **k: False)
+
+    exit_code, output = run_tx_cli(
+        [
+            "send",
+            "--from",
+            "alice",
+            "--to",
+            "anim1zqp2u7fz3msky532tz4d3076wm99datq9rdxqjxvznq7zqn7xj0869ctuj4km",
+            "--value",
+            "1.0",
+            "--dry-run",
+            "--rpc-url",
+            rpc_url,
+        ],
+        wallet_store,
+        expect_success=False,
+    )
+
+    assert exit_code != 0
+    assert "local pq signature verification failed" in output.lower()
 
 
 # ============================================================================
