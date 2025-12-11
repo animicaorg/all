@@ -15,7 +15,7 @@ runner = CliRunner()
 
 # Test address used across tests for consistency
 # This is the canonical premine address from consensus/rewards.py
-TEST_BECH32_ADDRESS = "anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm"
+TEST_BECH32_ADDRESS = "anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9"
 
 
 @pytest.fixture
