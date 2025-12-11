@@ -288,10 +288,13 @@ def test_packed_signed_envelope_has_required_fields():
     from omni_sdk.wallet.signer import PQSigner
     from omni_sdk.tx.build import transfer
     from omni_sdk.tx.encode import sign_bytes, pack_signed, unpack_signed
-    
+
     # Create signer
-    signer = PQSigner.from_seed("dilithium3", seed=_seed())
-    
+    try:
+        signer = PQSigner.from_seed("dilithium3", seed=_seed())
+    except RuntimeError as exc:
+        pytest.skip(f"PQ keygen not available: {exc}")
+
     # Build transaction
     chain_id = 1
     tx = transfer(
