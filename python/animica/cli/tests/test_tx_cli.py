@@ -966,8 +966,9 @@ def test_send_includes_sig_object_in_cbor(wallet_store: Path) -> None:
     
     # Custom responder that captures the request body
     def capture_and_respond(request):
-        captured_requests.append(json.loads(request.content.decode()))
-        method = json.loads(request.content.decode()).get("method")
+        request_data = json.loads(request.content.decode())
+        captured_requests.append(request_data)
+        method = request_data.get("method")
         
         if method == "chain.getChainId":
             return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": 1337})
@@ -1090,8 +1091,9 @@ def test_send_sphincs_signature_structure(wallet_store: Path) -> None:
     
     # Custom responder that captures the request body
     def capture_and_respond(request):
-        captured_requests.append(json.loads(request.content.decode()))
-        method = json.loads(request.content.decode()).get("method")
+        request_data = json.loads(request.content.decode())
+        captured_requests.append(request_data)
+        method = request_data.get("method")
         
         if method == "chain.getChainId":
             return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": 1})
