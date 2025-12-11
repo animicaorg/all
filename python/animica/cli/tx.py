@@ -657,7 +657,46 @@ def send(
                 typer.echo(f"  message_prefix: {sign_bytes_data[:16].hex()}", err=True)
                 typer.echo(f"  chain_id: {resolved_chain_id}", err=True)
                 typer.echo("", err=True)
-            
+
+            # Pre-flight verify the signature locally to catch any signing issues
+            try:
+                from pq.py import verify as pq_verify
+                from pq.py.sign import Signature
+
+                sig_env = Signature(
+                    alg_id=signer.alg_id,
+                    alg_name=signer.alg_name,
+                    domain="tx",
+                    prehash="sha3-512",
+                    sig=signature,
+                )
+
+                verify_ok = pq_verify.verify_detached(
+                    sign_bytes_data,
+                    sig_env,
+                    signer.public_key,
+                    chain_id=resolved_chain_id,
+                )
+            except Exception as e:
+                typer.echo(
+                    f"Error performing local PQ verification: {e}",
+                    err=True,
+                )
+                raise typer.Exit(1)
+
+            if not verify_ok:
+                typer.echo("=== Transaction Failed ===", err=True)
+                typer.echo("Method:  tx.sendRawTransaction (pre-flight)", err=True)
+                typer.echo(
+                    "Message: Local PQ signature verification failed; transaction not broadcast",
+                    err=True,
+                )
+                typer.echo(
+                    "Hint: Recreate or rotate the wallet key, or rerun with --verbose for details.",
+                    err=True,
+                )
+                raise typer.Exit(1)
+
             # Pack into signed CBOR envelope
             raw_tx = pack_signed(
                 tx,
