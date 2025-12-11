@@ -20,7 +20,10 @@ def test_pq_signer_sign_tx_with_chain_id():
     from omni_sdk.tx.encode import sign_bytes
     
     # Create a deterministic signer
-    signer = PQSigner.from_seed("dilithium3", seed=_seed())
+    try:
+        signer = PQSigner.from_seed("dilithium3", seed=_seed())
+    except RuntimeError as exc:
+        pytest.skip(f"PQ keygen not available: {exc}")
     
     # Build a real transaction
     chain_id = 1
@@ -46,6 +49,63 @@ def test_pq_signer_sign_tx_with_chain_id():
     
     # Dilithium3 signatures should be around 2420 bytes
     assert len(signature) > 2000
+
+
+def test_sign_tx_handles_legacy_sign_detached(monkeypatch):
+    """Ensure sign_tx preserves domain separation if pq.sign lacks chain_id support."""
+
+    from omni_sdk.wallet.signer import PQSigner
+    from omni_sdk.tx.build import transfer
+    from omni_sdk.tx.encode import sign_bytes
+
+    try:
+        import pq.py.sign as pq_sign
+    except ImportError:
+        pytest.skip("PQ signing not available")
+
+    try:
+        signer = PQSigner.from_seed("dilithium3", seed=_seed())
+    except RuntimeError as exc:
+        pytest.skip(f"PQ keygen not available: {exc}")
+    chain_id = 1
+
+    tx = transfer(
+        from_addr=signer.address or "anim1test",
+        to_addr="anim1dest",
+        amount=1000,
+        nonce=5,
+        gas_limit=21000,
+        max_fee=1000000000,
+        chain_id=chain_id,
+    )
+
+    msg = sign_bytes(tx)
+
+    # Simulate a legacy pq.sign implementation that does not accept chain_id
+    def legacy_sign_detached(msg_arg, alg_name, sk, domain=None):  # type: ignore[no-untyped-def]
+        raise TypeError("legacy sign_detached without chain_id")
+
+    captured = {}
+
+    def capturing_backend_sign(alg_name, sk, prehash):  # type: ignore[no-untyped-def]
+        captured["prehash"] = prehash
+        return original_backend_sign(alg_name, sk, prehash)
+
+    original_backend_sign = pq_sign._backend_sign
+    monkeypatch.setattr(pq_sign, "sign_detached", legacy_sign_detached)
+    monkeypatch.setattr(pq_sign, "_backend_sign", capturing_backend_sign)
+
+    signature = signer.sign_tx(msg, chain_id)
+
+    assert isinstance(signature, bytes) and len(signature) > 0
+
+    expected_prehash = pq_sign.build_sign_bytes(
+        msg,
+        domain="tx",
+        chain_id=chain_id,
+        alg_id=signer.alg_id,
+    )
+    assert captured.get("prehash") == expected_prehash
 
 
 def test_sdk_sign_bytes_returns_cbor_body():

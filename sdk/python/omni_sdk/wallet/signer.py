@@ -30,6 +30,7 @@ Notes
 from __future__ import annotations
 
 import hmac
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Literal, Optional, Tuple
 
@@ -461,25 +462,39 @@ class PQSigner:
                 return bytes(result.signature)
             return bytes(result)
         except TypeError as e:
-            # Fallback: PQ backend doesn't support domain/chain_id kwargs
-            # Log warning and attempt basic signing
-            import logging
             logging.warning(
-                "PQ backend does not support domain/chain_id parameters. "
-                "Falling back to basic signing without domain separation. "
-                "This may cause signature verification failures. Error: %s", e
+                "PQ backend does not support domain/chain_id parameters; "
+                "using manual SignBytes construction with chain_id=%s (%s)",
+                chain_id,
+                e,
             )
+
+            # Build canonical SignBytes ourselves to preserve domain separation
             try:
-                result = pq_sign.sign_detached(message, self._alg_name, self._sk)
-                if isinstance(result, bytes):
-                    return result
-                if hasattr(result, "sig"):
-                    return bytes(result.sig)
-                return bytes(result)
-            except Exception as fallback_err:
+                prehash = pq_sign.build_sign_bytes(
+                    message,
+                    domain="tx",
+                    chain_id=chain_id,
+                    alg_id=self._alg_id,
+                )
+            except Exception as build_err:
                 raise RuntimeError(
-                    f"PQ signing failed even with fallback: {fallback_err}"
-                ) from fallback_err
+                    "PQ signing failed: could not build SignBytes for legacy backend"
+                ) from build_err
+
+            backend_sign = getattr(pq_sign, "_backend_sign", None)
+            if backend_sign is None:
+                raise RuntimeError(
+                    "PQ signing failed: legacy backend missing _backend_sign helper"
+                )
+
+            try:
+                sig_bytes = backend_sign(self._alg_name, self._sk, prehash)
+                return bytes(sig_bytes)
+            except Exception as backend_err:
+                raise RuntimeError(
+                    "PQ signing failed using legacy backend signer"
+                ) from backend_err
 
     def verify(
         self, message: bytes, signature: bytes, *, domain: Optional[bytes] = None
