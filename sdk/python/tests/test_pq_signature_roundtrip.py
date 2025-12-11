@@ -16,13 +16,26 @@ def _seed(n: int = 32) -> bytes:
 def test_pq_signer_sign_tx_with_chain_id():
     """Test that PQSigner.sign_tx properly signs with domain and chain_id."""
     from omni_sdk.wallet.signer import PQSigner
+    from omni_sdk.tx.build import transfer
+    from omni_sdk.tx.encode import sign_bytes
     
     # Create a deterministic signer
     signer = PQSigner.from_seed("dilithium3", seed=_seed())
     
-    # Sample transaction body (CBOR-encoded)
-    msg = b"\xa8\x67chainId\x01\x64from\x74anim1test\x62to\x74anim1dest"
+    # Build a real transaction
     chain_id = 1
+    tx = transfer(
+        from_addr=signer.address or "anim1test",
+        to_addr="anim1dest",
+        amount=1000,
+        nonce=5,
+        gas_limit=21000,
+        max_fee=1000000000,
+        chain_id=chain_id,
+    )
+    
+    # Get message to sign (CBOR-encoded body)
+    msg = sign_bytes(tx)
     
     # Sign with sign_tx method
     signature = signer.sign_tx(msg, chain_id)
@@ -142,9 +155,11 @@ def test_node_verification_rejects_flipped_signature():
     msg = sign_bytes(tx)
     sig_bytes = signer.sign_tx(msg, chain_id)
     
-    # Tamper with signature (flip a byte)
+    # Tamper with signature (flip a byte in the middle)
     tampered_sig = bytearray(sig_bytes)
-    tampered_sig[100] ^= 0xFF
+    # Use middle of signature to avoid issues with short signatures
+    tamper_index = len(tampered_sig) // 2
+    tampered_sig[tamper_index] ^= 0xFF
     tampered_sig = bytes(tampered_sig)
     
     # Create signature envelope with tampered sig

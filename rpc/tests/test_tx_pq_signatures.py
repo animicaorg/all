@@ -99,15 +99,16 @@ async def test_sendRawTransaction_rejects_tampered_signature(monkeypatch):
     # Create signed tx
     raw_tx, signer = _create_signed_tx()
     
-    # Tamper with the signature in the envelope
+    # Tamper with the signature in the envelope (flip byte in the middle)
     from omni_sdk.utils.cbor import loads as cbor_loads, dumps as cbor_dumps
     
     envelope = cbor_loads(raw_tx)
     
-    # Flip a byte in the signature
+    # Flip a byte in the middle of the signature
     sig_bytes = envelope["sig"]["sig"]
     tampered_sig = bytearray(sig_bytes)
-    tampered_sig[100] ^= 0xFF
+    tamper_index = len(tampered_sig) // 2
+    tampered_sig[tamper_index] ^= 0xFF
     envelope["sig"]["sig"] = bytes(tampered_sig)
     
     tampered_raw = cbor_dumps(envelope)
