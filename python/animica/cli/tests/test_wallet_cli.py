@@ -95,6 +95,7 @@ def test_wallet_show_with_balance(tmp_path: Path) -> None:
     data = json.loads(show_output)
     assert data["address"] == address
     assert data["balance"] == 5
+    assert data["balance_formatted"] == "0.000000005 ANM (5 units)"
 
 
 def test_wallet_export_and_import(tmp_path: Path) -> None:

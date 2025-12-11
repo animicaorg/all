@@ -12,6 +12,7 @@ import httpx
 import typer
 from animica.config import load_network_config
 from animica.cli.paths import ensure_file_dir, secure_file
+from animica.coin import format_amount
 
 try:
     from pq.py.address import address_from_pubkey, validate_address
@@ -408,6 +409,8 @@ def show(
     balance = _fetch_balance(entry.address, _resolve_rpc_url(rpc_url))
     output = entry.to_dict()
     output["balance"] = balance
+    if balance is not None:
+        output["balance_formatted"] = format_amount(balance)
     typer.echo(json.dumps(output, indent=2))
 
 

@@ -13,6 +13,7 @@ import typer
 from typer.testing import CliRunner
 
 from animica.cli import tx
+from animica.coin import COIN_UNIT
 
 runner = CliRunner()
 
@@ -278,7 +279,7 @@ def test_sign_validates_chain_id(tmp_path: Path, wallet_store: Path) -> None:
     tx_data = {
         "from": "anim1test",
         "to": "anim1dest",
-        "value": 1000000000000000000,
+        "value": COIN_UNIT,
         "data": "0x",
         "gas": 21000,
         "gasPrice": 1000000000,
@@ -312,7 +313,7 @@ def test_sign_detects_chain_id_mismatch(tmp_path: Path, wallet_store: Path) -> N
     tx_data = {
         "from": "anim1test",
         "to": "anim1dest",
-        "value": 1000000000000000000,
+        "value": COIN_UNIT,
         "data": "0x",
         "gas": 21000,
         "gasPrice": 1000000000,
@@ -346,7 +347,7 @@ def test_sign_warns_missing_chain_id(tmp_path: Path, wallet_store: Path) -> None
     tx_data = {
         "from": "anim1test",
         "to": "anim1dest",
-        "value": 1000000000000000000,
+        "value": COIN_UNIT,
         "data": "0x",
         "gas": 21000,
         "gasPrice": 1000000000,
@@ -374,7 +375,7 @@ def test_sign_invalid_chain_id_format(tmp_path: Path, wallet_store: Path) -> Non
     tx_data = {
         "from": "anim1test",
         "to": "anim1dest",
-        "value": 1000000000000000000,
+        "value": COIN_UNIT,
         "data": "0x",
         "gas": 21000,
         "gasPrice": 1000000000,

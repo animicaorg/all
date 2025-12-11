@@ -18,7 +18,6 @@ import os
 import sys
 from typing import Optional
 
-import requests
 import typer
 
 from animica.coin import COIN_UNIT
@@ -26,6 +25,12 @@ from animica.config import load_network_config
 from .state import get_cli_state
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_FAUCET_ANM = 500_000_000
+DEFAULT_FAUCET_UNITS = DEFAULT_FAUCET_ANM * COIN_UNIT
+DEFAULT_FAUCET_HELP = (
+    f"Amount in base units (default: {DEFAULT_FAUCET_ANM:,} ANM = {DEFAULT_FAUCET_UNITS:,} base units)"
+)
 
 app = typer.Typer(
     name="faucet",
@@ -117,6 +122,16 @@ def _rpc_call(method: str, params: dict | list | None = None, rpc_url: Optional[
     Returns:
         RPC response data
     """
+    try:
+        import requests
+    except ImportError as exc:  # pragma: no cover - exercised in CLI runtime
+        typer.secho(
+            "The 'requests' package is required for faucet RPC calls. Install it with `pip install requests`.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1) from exc
+
     url = _resolve_rpc_url(rpc_url, network)
     logger.debug(f"Making RPC call to {url}: {method}")
     
@@ -164,7 +179,7 @@ def request_funds(
         None,
         "--amount",
         "-a",
-        help="Amount in base units (default: 500,000,000 ANM = 500000000000000000 base units)"
+        help=DEFAULT_FAUCET_HELP,
     ),
     json_output: bool = typer.Option(
         False,
@@ -190,29 +205,29 @@ def request_funds(
         help="Enable verbose logging",
     ),
 ) -> None:
-    """
+    f"""
     Request test funds from the faucet.
-    
+
     The faucet is ONLY available on non-mainnet networks (devnet, testnet).
     On mainnet, this command will fail with an error.
-    
-    Default amount: 500,000,000 ANM (500000000000000000 base units)
-    
+
+    Default amount: {DEFAULT_FAUCET_ANM:,} ANM ({DEFAULT_FAUCET_UNITS:,} base units)
+
     The active network is resolved in this order:
       1. --network flag (highest priority)
       2. ANIMICA_NETWORK environment variable
       3. Persisted setting from 'animica network set'
       4. Default (mainnet)
-    
+
     Examples:
-      # Request default amount (500M ANM) using active network
+      # Request default amount ({DEFAULT_FAUCET_ANM:,} ANM) using active network
       animica faucet request anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9
-      
+
       # Request with explicit network override
       animica faucet request anim1... --network testnet
-      
-      # Request custom amount (1M ANM = 1,000,000,000,000,000 base units)
-      animica faucet request anim1... --amount 1000000000000000
+
+      # Request custom amount (1M ANM = {1_000_000 * COIN_UNIT:,} base units)
+      animica faucet request anim1... --amount {1_000_000 * COIN_UNIT}
     """
     # Configure logging
     if verbose:
@@ -263,7 +278,7 @@ def request_funds(
 @app.command("help")
 def show_help() -> None:
     """Show detailed help for the faucet commands."""
-    help_text = """
+    help_text = f"""
 Animica Faucet - Testnet/Devnet Fund Request
 =============================================
 
@@ -278,22 +293,22 @@ Arguments:
   ADDRESS           Recipient address (bech32m anim1... or hex 0x...)
 
 Options:
-  --amount, -a      Amount in base units (default: 500,000,000 ANM)
+  --amount, -a      Amount in base units (default: {DEFAULT_FAUCET_ANM:,} ANM = {DEFAULT_FAUCET_UNITS:,} units)
   --network         Override network (mainnet, testnet, devnet, local-devnet)
   --rpc-url         Override RPC endpoint URL
   --json            Output JSON format
   --verbose, -v     Enable verbose logging
 
 Examples:
-  # Request default amount (500 million ANM) using active network
+  # Request default amount ({DEFAULT_FAUCET_ANM:,} ANM) using active network
   animica faucet request anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9
-  
+
   # Request with explicit network override
   animica faucet request anim1... --network testnet
-  
-  # Request 1 million ANM (1,000,000,000,000,000 base units)
-  animica faucet request anim1... --amount 1000000000000000
-  
+
+  # Request 1 million ANM ({1_000_000 * COIN_UNIT:,} base units)
+  animica faucet request anim1... --amount {1_000_000 * COIN_UNIT}
+
   # Get JSON output
   animica faucet request anim1... --json
 
@@ -303,10 +318,10 @@ Network Configuration:
     2. ANIMICA_NETWORK environment variable
     3. Persisted setting from 'animica network set'
     4. Default (mainnet)
-  
+
   Set persistent network with:
     animica network set testnet
-  
+
   Or use environment variable:
     export ANIMICA_NETWORK=testnet
     animica faucet request anim1...
