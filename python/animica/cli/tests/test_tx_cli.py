@@ -2,6 +2,8 @@
 Tests for animica tx send CLI command.
 """
 import json
+import sys
+import types
 from pathlib import Path
 from typing import Optional
 
@@ -10,6 +12,19 @@ import pytest
 import respx
 import importlib
 from typer.testing import CliRunner
+
+# Provide a minimal requests stub for environments without the dependency.
+if "requests" not in sys.modules:
+    requests_stub = types.ModuleType("requests")
+
+    def _missing(*args, **kwargs):  # pragma: no cover - only used if called unexpectedly
+        raise ImportError("The 'requests' package is not installed in this test environment.")
+
+    requests_stub.get = _missing
+    requests_stub.post = _missing
+    requests_stub.put = _missing
+    requests_stub.delete = _missing
+    sys.modules["requests"] = requests_stub
 
 from animica.cli import tx
 from omni_sdk.utils.cbor import loads as cbor_loads
@@ -242,6 +257,53 @@ def test_send_dry_run_shows_details(wallet_store: Path) -> None:
     assert "Tx Hash:" in output
     assert "Raw Size:" in output
     assert "Transaction built and signed (not broadcast)" in output
+
+
+@respx.mock
+def test_send_dry_run_outputs_full_raw_tx(
+    wallet_store: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ensure dry-run prints full raw tx and writes it when requested."""
+    import httpx
+    pq_verify = importlib.import_module("pq.py.verify")
+
+    # Ensure PQ verification passes in fake mode
+    monkeypatch.setattr(pq_verify, "verify_detached", lambda *a, **k: True)
+
+    rpc_url = "http://localhost:9999/rpc"
+    respx.post(rpc_url).respond(json={"jsonrpc": "2.0", "id": 1, "result": 1337})
+
+    raw_out_file = tmp_path / "raw_tx.txt"
+
+    _, output = run_tx_cli(
+        [
+            "send",
+            "--from",
+            "alice",
+            "--to",
+            "anim1zqp2u7fz3msky532tz4d3076wm99datq9rdxqjxvznq7zqn7xj0869ctuj4km",
+            "--value",
+            "1.0",
+            "--dry-run",
+            "--rpc-url",
+            rpc_url,
+            "--raw-out",
+            str(raw_out_file),
+        ],
+        wallet_store,
+    )
+
+    raw_tx_lines = [line for line in output.splitlines() if line.startswith("RAW_TX=")]
+    assert raw_tx_lines, "Expected RAW_TX line in output"
+
+    raw_tx_value = raw_tx_lines[0].split("=", 1)[1].strip()
+    assert raw_tx_value.startswith("0x")
+    assert len(raw_tx_value) > 2
+    assert (len(raw_tx_value) - 2) % 2 == 0
+    int(raw_tx_value[2:], 16)  # Should be valid hex
+
+    assert raw_out_file.exists()
+    assert raw_out_file.read_text() == raw_tx_value
 
 
 @respx.mock

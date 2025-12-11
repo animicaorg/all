@@ -494,6 +494,11 @@ def send(
         help="Chain ID (auto-fetched if omitted)",
         envvar="ANIMICA_CHAIN_ID",
     ),
+    raw_out: Optional[Path] = typer.Option(
+        None,
+        "--raw-out",
+        help="Write full raw transaction hex to the given file (dry-run only)",
+    ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Build and sign but do not broadcast"
     ),
@@ -534,6 +539,10 @@ def send(
       animica tx send --from alice --to anim1... --value 1.0 --dry-run
     """
     try:
+        if raw_out and not dry_run:
+            typer.echo("Error: --raw-out is only available with --dry-run", err=True)
+            raise typer.Exit(1)
+
         # Step 0: Check PQ signing availability and warn about unsafe mode
         from animica.cli.pq_utils import check_pq_signing_available
         
@@ -700,7 +709,10 @@ def send(
             # Dry-run: show summary and raw tx
             from omni_sdk.tx.encode import tx_hash_hex
             tx_hash = tx_hash_hex(raw_tx)
-            
+
+            raw_tx_hex = raw_tx.hex()
+            raw_tx_prefixed = f"0x{raw_tx_hex}"
+
             # Format value to avoid scientific notation and fix precision issues
             # Round to remove floating point artifacts, then format
             from decimal import Decimal, getcontext
@@ -719,8 +731,16 @@ def send(
             typer.echo(f"Chain ID:   {resolved_chain_id}")
             typer.echo(f"Tx Hash:    {tx_hash}")
             typer.echo(f"Raw Size:   {len(raw_tx)} bytes")
-            typer.echo(f"Raw Hex:    {raw_tx.hex()[:100]}...")
+            typer.echo(f"Raw Hex:    {raw_tx_hex[:100]}...")
+            typer.echo(f"RAW_TX={raw_tx_prefixed}")
             typer.echo("\n✓ Transaction built and signed (not broadcast)")
+
+            if raw_out:
+                try:
+                    raw_out.write_text(raw_tx_prefixed)
+                except Exception as e:
+                    typer.echo(f"Error writing raw transaction to {raw_out}: {e}", err=True)
+                    raise typer.Exit(1)
         else:
             # Broadcast transaction
             try:
