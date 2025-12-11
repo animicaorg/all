@@ -5,11 +5,13 @@ import json
 from pathlib import Path
 from typing import Optional
 
+import httpx
 import pytest
 import respx
 from typer.testing import CliRunner
 
 from animica.cli import tx
+from omni_sdk.utils.cbor import loads as cbor_loads
 
 runner = CliRunner()
 
@@ -941,3 +943,92 @@ def test_send_verbose_shows_chain_id_source_cli_flag(wallet_store: Path) -> None
     assert "CHAIN CONTEXT DEBUG" in output
     assert "chain_id: 99" in output
     assert "chain_id_source: CLI/env" in output
+
+
+# ============================================================================
+# Signature Structure Tests (PR requirement)
+# ============================================================================
+
+@respx.mock
+def test_send_includes_sig_object_in_cbor(wallet_store: Path) -> None:
+    """
+    Test that tx.sendRawTransaction receives params with a non-null sig object.
+    
+    This validates the fix for the issue where the node expects a signed tx
+    envelope with a sig dict, not raw bytes without structure.
+    
+    Per requirements:
+    - CLI test should mock RPC and assert tx.sendRawTransaction receives params 
+      with a non-null sig object.
+    """
+    rpc_url = "http://localhost:9999/rpc"
+    captured_requests = []
+    
+    # Custom responder that captures the request body
+    def capture_and_respond(request):
+        captured_requests.append(json.loads(request.content.decode()))
+        method = json.loads(request.content.decode()).get("method")
+        
+        if method == "chain.getChainId":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": 1337})
+        elif method == "state.getTransactionCount":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": 2, "result": 0})
+        elif method == "state.suggestGasPrice":
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": 3, "result": "1000000000"})
+        elif method == "tx.sendRawTransaction":
+            return httpx.Response(200, json={
+                "jsonrpc": "2.0",
+                "id": 4,
+                "result": "0xabc123"
+            })
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": None})
+    
+    # Mock all requests to capture them
+    respx.post(rpc_url).mock(side_effect=capture_and_respond)
+    
+    # Execute send command
+    _, output = run_tx_cli([
+        "send",
+        "--from", "alice",
+        "--to", "anim1zqp2u7fz3msky532tz4d3076wm99datq9rdxqjxvznq7zqn7xj0869ctuj4km",
+        "--value", "1.0",
+        "--rpc-url", rpc_url
+    ], wallet_store)
+    
+    # Find the tx.sendRawTransaction request
+    send_tx_requests = [r for r in captured_requests if r.get("method") == "tx.sendRawTransaction"]
+    assert len(send_tx_requests) == 1, "Expected exactly one tx.sendRawTransaction call"
+    
+    send_tx_req = send_tx_requests[0]
+    params = send_tx_req.get("params", [])
+    assert len(params) == 1, "Expected one parameter (rawTx hex string)"
+    
+    raw_tx_hex = params[0]
+    assert isinstance(raw_tx_hex, str), "rawTx param should be a hex string"
+    assert raw_tx_hex.startswith("0x"), "rawTx should be 0x-prefixed hex"
+    
+    # Decode the CBOR to verify structure
+    raw_tx_bytes = bytes.fromhex(raw_tx_hex[2:])
+    envelope = cbor_loads(raw_tx_bytes)
+    
+    # Verify envelope structure
+    assert isinstance(envelope, dict), "Envelope should be a dict"
+    assert "body" in envelope, "Envelope must have 'body' field"
+    assert "sig" in envelope, "Envelope must have 'sig' field"
+    
+    # Verify sig is a dict (not raw bytes) - this is the key requirement
+    sig = envelope["sig"]
+    assert isinstance(sig, dict), "sig field must be a dict, not raw bytes"
+    
+    # Verify sig dict has required fields
+    assert "algId" in sig, "sig dict must have 'algId' field"
+    assert "pubkey" in sig, "sig dict must have 'pubkey' field"
+    assert "sig" in sig, "sig dict must have 'sig' field (signature bytes)"
+    
+    # Verify the fields have the right types
+    assert isinstance(sig["algId"], int), "algId should be an integer"
+    assert isinstance(sig["pubkey"], bytes), "pubkey should be bytes"
+    assert isinstance(sig["sig"], bytes), "sig (signature) should be bytes"
+    
+    # Success message should still be present
+    assert "Transaction Submitted" in output or "Transaction broadcast successfully" in output

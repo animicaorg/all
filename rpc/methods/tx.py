@@ -222,6 +222,16 @@ def _extract_sig(obj: dict) -> tuple[int, bytes, bytes]:
     Extract (alg_id, pubkey, signature) from obj["sig"], obj["signature"], or obj["sigs"][0].
     Supports hex strings or raw bytes.
     Handles both flat and nested tx structures.
+    
+    Expected envelope structures:
+    1. Flat with sig dict:
+       { "body": {...}, "sig": {"algId": int, "pubkey": bytes, "sig": bytes} }
+    2. Flat with signature dict:
+       { "body": {...}, "signature": {"algId": int, "pubkey": bytes, "sig": bytes} }
+    3. Array with sigs:
+       { "body": {...}, "sigs": [{"algId": int, "pubkey": bytes, "sig": bytes}] }
+    
+    The sig/signature/sigs[0] value MUST be a dict, not raw bytes.
     """
     # Try flat structure first (obj.sig or obj.signature)
     sig = obj.get("sig") or obj.get("signature")
@@ -584,7 +594,23 @@ def _lookup_persisted_tx(
 
 @method(
     "tx.sendRawTransaction",
-    desc="Submit a signed CBOR-encoded transaction. Param: rawTx (hex string '0x…' or base64 '0b:…'). Returns tx hash.",
+    desc=(
+        "Submit a signed CBOR-encoded transaction. "
+        "Param: rawTx (hex string '0x…' or base64 '0b:…'). "
+        "Returns tx hash. "
+        "\n\n"
+        "The rawTx parameter must be a CBOR-encoded envelope with structure:\n"
+        "  {\n"
+        "    \"body\": { ...transaction fields... },\n"
+        "    \"sig\": {\n"
+        "      \"algId\": <int>,     # PQ algorithm ID\n"
+        "      \"pubkey\": <bytes>,  # Public key bytes\n"
+        "      \"sig\": <bytes>      # Signature bytes\n"
+        "    }\n"
+        "  }\n"
+        "Alternative envelope with sigs array is also supported:\n"
+        "  { \"body\": {...}, \"sigs\": [{\"algId\": ..., \"pubkey\": ..., \"sig\": ...}] }\n"
+    ),
     aliases=("tx_sendRawTransaction",),
 )
 def tx_send_raw_transaction(rawTx: str) -> str:
