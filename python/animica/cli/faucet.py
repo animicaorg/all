@@ -205,7 +205,7 @@ def request_funds(
     
     Examples:
       # Request default amount (500M ANM) using active network
-      animica faucet request anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f
+      animica faucet request anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm
       
       # Request with explicit network override
       animica faucet request anim1... --network testnet
@@ -285,7 +285,7 @@ Options:
 
 Examples:
   # Request default amount (500 million ANM) using active network
-  animica faucet request anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f
+  animica faucet request anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm
   
   # Request with explicit network override
   animica faucet request anim1... --network testnet
