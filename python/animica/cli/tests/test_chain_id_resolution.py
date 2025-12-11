@@ -33,7 +33,7 @@ def wallet_store(tmp_path: Path) -> Path:
         "wallets": [
             {
                 "label": "test_wallet",
-                "address": "anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm",
+                "address": "anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9",
                 "alg_id": 4098,
                 "alg_name": "sphincs_shake_128s",
                 "public_key_hex": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
