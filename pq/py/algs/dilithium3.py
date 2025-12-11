@@ -166,11 +166,20 @@ def verify(pk: bytes, msg: bytes, sig: bytes) -> bool:
       Uses ML-DSA-65 (NIST standard) if available, falls back to Dilithium3 (legacy).
     """
     if _OQS_OK and _mechanism_name:
-        with oqs.Signature(_mechanism_name, public_key=pk) as verifier:  # type: ignore[name-defined]
-            try:
-                return bool(verifier.verify(msg, sig))
-            except Exception:
-                return False
+        try:
+            # Newer oqs builds accept public_key in the constructor
+            with oqs.Signature(_mechanism_name, public_key=pk) as verifier:  # type: ignore[name-defined]
+                try:
+                    return bool(verifier.verify(msg, sig))
+                except Exception:
+                    return False
+        except TypeError:
+            # Older oqs builds expect the public key to be passed to verify()
+            with oqs.Signature(_mechanism_name) as verifier:  # type: ignore[name-defined]
+                try:
+                    return bool(verifier.verify(msg, sig, pk))
+                except Exception:
+                    return False
 
     if _DEV_FAKE_OK:
         expect = _sha3_512(
