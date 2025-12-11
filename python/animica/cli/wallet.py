@@ -388,7 +388,7 @@ def show(
     To check balances on a different network, use --rpc-url or set ANIMICA_NETWORK.
     
     Examples:
-        animica wallet show anim1zqp8gjpns...  # by address (on mainnet)
+        animica wallet show anim1zqp8t5gdk...  # by address (on mainnet)
         animica wallet show premine            # by label (checks premine balance)
         animica wallet show a1b2c3d4...        # by public key hex
         animica --network devnet wallet show premine  # check on devnet

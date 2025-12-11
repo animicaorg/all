@@ -37,7 +37,7 @@ class TestAddressToBytes:
 
     def test_bech32_address(self):
         """Bech32 addresses are decoded to payload bytes."""
-        addr = "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f"
+        addr = "anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm"
         result = address_to_bytes(addr)
         # Payload is alg_id (2 bytes) + digest (32 bytes) = 34 bytes
         assert len(result) == 34
@@ -45,7 +45,7 @@ class TestAddressToBytes:
 
     def test_bech32_address_case_insensitive(self):
         """Bech32 decoding is case-insensitive."""
-        addr_lower = "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f"
+        addr_lower = "anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm"
         addr_upper = "ANIM1ZQXP8GJPNS43WCY2P8RJ3W3UVN2DWKXX99NKWG020U4QL6GU3YFQZGZGLW560F"
         # Bech32 has checksums so exact uppercase may not be valid,
         # but the lowercased version should work
@@ -84,7 +84,7 @@ class TestAddressToBytes:
         """Address encoding is deterministic."""
         addresses = [
             "system:treasury",
-            "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f",
+            "anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm",
             "0x1234567890abcdef",
         ]
         for addr in addresses:
@@ -131,7 +131,7 @@ class TestAddressEncodingConsistency:
 
     def test_bech32_addresses_different(self):
         """Different bech32 addresses have different encodings."""
-        addr1 = "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f"
+        addr1 = "anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm"
         # Generate a second valid address by changing only the payload (keeping valid checksum)
         # For simplicity, we'll use the same address format but with different algorithm ID
         # This is a valid test address from the codebase
@@ -147,7 +147,7 @@ class TestAddressEncodingConsistency:
         """Different address types produce different byte representations."""
         system = address_to_bytes("system:treasury")
         bech32 = address_to_bytes(
-            "anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f"
+            "anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm"
         )
         hex_addr = address_to_bytes("0x1234567890abcdef")
 

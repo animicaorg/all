@@ -214,7 +214,7 @@ animica miner mine-blocks --address premine --count 10
 ### Mine with raw Bech32:
 ```bash
 animica miner mine-blocks \
-  --address anim1zqp8gjpns43wcy2p8rj3w3uvn2dwkxx99nkwg020u4ql6gu3yfqzgzglw560f \
+  --address anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm \
   --count 10
 ```
 
