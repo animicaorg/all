@@ -189,17 +189,35 @@ def _compute_tx_hash(tx_like: t.Any) -> str:
 
 
 def _sign_bytes(tx_like: t.Any) -> bytes:
-    if _tx_sign_bytes is not None:
-        return _tx_sign_bytes(tx_like)
+    """
+    Extract the canonical body dict and encode as CBOR.
+    
+    This returns the raw message that should be passed to pq.sign/verify,
+    which will then apply domain separation with domain="tx" and chain_id.
+    
+    We do NOT use tx_sign_bytes (canonical) here because that adds another
+    layer of domain separation, which would cause double-domaining when
+    passed to pq.verify.verify_detached.
+    """
     if _cbor_dumps is None:
         raise rpc_errors.InternalError("No canonical encoder for SignBytes")
+    
+    # Extract body from signed envelope or use the object directly
     if _dc.is_dataclass(tx_like):
         obj = _dcd(tx_like)
     else:
         obj = dict(tx_like)
-    for k in ("sig", "signature"):
-        obj.pop(k, None)
-    return _cbor_dumps(obj)
+    
+    # If obj has a 'body' field (signed envelope), use that
+    if "body" in obj:
+        body = obj["body"]
+    else:
+        # Otherwise, obj is the body itself - remove signature fields
+        body = dict(obj)
+        for k in ("sig", "signature", "sigs"):
+            body.pop(k, None)
+    
+    return _cbor_dumps(body)
 
 
 def _chain_id_required() -> int:
@@ -322,7 +340,36 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict) -> None:
     if _pq_verify is None:
         raise rpc_errors.InternalError("PQ verification unavailable")
     alg_id, pub, sig = _extract_sig(obj)
+    
+    # Extract chain_id for verification
+    chain_id = None
+    if hasattr(tx_like, "chain_id"):
+        chain_id = int(tx_like.chain_id)
+    elif hasattr(tx_like, "chainId"):
+        chain_id = int(tx_like.chainId)
+    elif isinstance(obj, dict):
+        # Try to extract from obj (body or nested)
+        body = obj.get("body", obj)
+        chain_id = body.get("chainId") or body.get("chain_id")
+        if chain_id is not None:
+            chain_id = int(chain_id)
+    
+    if chain_id is None:
+        raise rpc_errors.InvalidParams("Transaction missing chain_id for signature verification")
+    
+    # Get the raw message (CBOR body) to verify
+    # This should be the same format that was signed (CBOR of canonical body dict)
     msg = _sign_bytes(tx_like)
+    
+    # Debug logging
+    log.debug(
+        "PQ signature verification: alg_id=%s, pubkey_len=%d, sig_len=%d, msg_len=%d, chain_id=%d",
+        alg_id,
+        len(pub),
+        len(sig),
+        len(msg),
+        chain_id,
+    )
     
     # Construct a Signature envelope for verify_detached
     # The pq.py.verify API expects a Signature dataclass with alg_id, alg_name, domain, prehash, sig
@@ -345,19 +392,28 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict) -> None:
         
         # Construct signature envelope with standard tx signing domain
         # Note: Signature dataclass fields are: alg_id, alg_name, domain, prehash, sig
+        # Domain "tx" matches what SDK uses in sign_tx method
         sig_env = Signature(
             alg_id=alg_id,
             alg_name=alg_name,
-            domain="tx/sign",  # Standard domain for transaction signatures
+            domain="tx",  # Standard domain for transaction signatures (matches SDK)
             prehash="sha3-512",  # Standard prehash for tx signatures
             sig=sig
         )
         
-        # Call verify_detached with the signature envelope
-        # verify_detached signature: (msg: bytes, sig: Signature, pk: bytes, **kwargs) -> bool
-        ok = _pq_verify.verify_detached(msg, sig_env, pub)  # type: ignore[attr-defined]
+        # Call verify_detached with the signature envelope and chain_id
+        # verify_detached signature: (msg: bytes, sig: Signature, pk: bytes, chain_id: int, **kwargs) -> bool
+        ok = _pq_verify.verify_detached(msg, sig_env, pub, chain_id=chain_id)  # type: ignore[attr-defined]
+        
+        log.debug(
+            "PQ signature verification result: %s (domain=%s, alg=%s)",
+            "PASS" if ok else "FAIL",
+            sig_env.domain,
+            alg_name,
+        )
     except Exception as e:
         # Fallback error for unexpected issues
+        log.error("PQ signature verification setup failed: %s", e, exc_info=True)
         raise rpc_errors.InternalError(f"PQ signature verification setup failed: {e}")
     
     if not ok:

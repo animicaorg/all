@@ -423,6 +423,52 @@ class PQSigner:
             pq_sign, alg_name=self._alg_name, sk=self._sk, msg=message, domain=domain
         )
 
+    def sign_tx(self, message: bytes, chain_id: int) -> bytes:
+        """
+        Sign a transaction message with proper domain separation for Animica transactions.
+        
+        This method uses the standard "tx" domain and includes chain_id in the
+        signature construction, matching the node's verification expectations.
+        
+        Parameters
+        ----------
+        message : bytes
+            The transaction body (CBOR-encoded canonical body dict from omni_sdk.tx.encode.sign_bytes)
+        chain_id : int
+            Chain ID for domain separation
+        
+        Returns
+        -------
+        bytes
+            Raw signature bytes
+        """
+        _, _, pq_sign, _ = _import_pq()
+        # Call sign_detached with domain="tx" and chain_id to match node verification
+        try:
+            result = pq_sign.sign_detached(
+                message,
+                self._alg_name,
+                self._sk,
+                domain="tx",
+                chain_id=chain_id
+            )
+            # Extract raw signature bytes from result
+            if isinstance(result, bytes):
+                return result
+            if hasattr(result, "sig"):
+                return bytes(result.sig)
+            if hasattr(result, "signature"):
+                return bytes(result.signature)
+            return bytes(result)
+        except TypeError:
+            # Fallback: try without keyword args
+            result = pq_sign.sign_detached(message, self._alg_name, self._sk)
+            if isinstance(result, bytes):
+                return result
+            if hasattr(result, "sig"):
+                return bytes(result.sig)
+            return bytes(result)
+
     def verify(
         self, message: bytes, signature: bytes, *, domain: Optional[bytes] = None
     ) -> bool:
