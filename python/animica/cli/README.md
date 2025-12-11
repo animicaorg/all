@@ -258,7 +258,7 @@ Mining Operations
   animica miner mine-blocks --count 10 --rpc-url http://localhost:8545
 
   # Configure miner payout address via environment variable
-  export ANIMICA_MINER_ADDRESS=anim1zqp8t5gdk4ya9ch960lcwmalgc2ckldn4uk9es2fnkdwf8nt69wqtdccl4pzm
+  export ANIMICA_MINER_ADDRESS=anim1zqp2nx50902d7jgrzk0ep798r2vhpgt3rhtmn89gadzdgyhf9hmln7g9e4xt9
   animica miner mine-blocks --count 5
   
   # If ANIMICA_MINER_ADDRESS is not set, rewards go to:
