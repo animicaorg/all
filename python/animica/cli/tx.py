@@ -274,9 +274,15 @@ def _resolve_destination(addr: str) -> str:
     except ImportError:
         pass  # PQ not available, basic validation is enough
     except Exception as e:
-        typer.echo(f"Error: invalid destination address: {e}", err=True)
-        raise typer.Exit(1)
-    
+        if os.environ.get("ANIMICA_UNSAFE_PQ_FAKE") == "1":
+            typer.echo(
+                f"⚠️  Warning: skipping strict address validation in ANIMICA_UNSAFE_PQ_FAKE=1 mode: {e}",
+                err=True,
+            )
+        else:
+            typer.echo(f"Error: invalid destination address: {e}", err=True)
+            raise typer.Exit(1)
+
     return addr
 
 

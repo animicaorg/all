@@ -134,6 +134,13 @@ def _normalize_alg(alg: Union[int, str]) -> tuple[int, str, AlgKind]:
     raise TypeError("alg must be int (alg_id) or str (name)")
 
 
+def _alg_id_bytes(alg_id: int) -> bytes:
+    """Encode alg_id into the minimal big-endian byte width (>=1 byte)."""
+
+    width = max(1, (alg_id.bit_length() + 7) // 8)
+    return alg_id.to_bytes(width, "big")
+
+
 def _ensure_bytes_seed(
     seed: Optional[Union[bytes, str]], *, min_len: int = 0
 ) -> Optional[bytes]:
@@ -202,7 +209,7 @@ def keygen_sig(
     # we domain-separate it to reduce cross-alg collisions.
     seed_bytes = _ensure_bytes_seed(seed)
     if seed_bytes is not None:
-        seed_bytes = sha3_256(b"animica:keygen:sig|" + bytes([alg_id]) + seed_bytes)
+        seed_bytes = sha3_256(b"animica:keygen:sig|" + _alg_id_bytes(alg_id) + seed_bytes)
 
     # Dispatch to backend
     try:
@@ -231,7 +238,7 @@ def keygen_kem(alg: Union[int, str], *, seed: bytes | str | None = None) -> KemK
 
     seed_bytes = _ensure_bytes_seed(seed)
     if seed_bytes is not None:
-        seed_bytes = sha3_256(b"animica:keygen:kem|" + bytes([alg_id]) + seed_bytes)
+        seed_bytes = sha3_256(b"animica:keygen:kem|" + _alg_id_bytes(alg_id) + seed_bytes)
 
     try:
         if alg_name == "kyber768":
@@ -245,6 +252,56 @@ def keygen_kem(alg: Union[int, str], *, seed: bytes | str | None = None) -> KemK
 
     pk, sk = _call_backend_keypair(backend, seed_bytes)
     return KemKeypair(alg_id=alg_id, alg_name=alg_name, public_key=pk, secret_key=sk)
+
+
+# ------------------------------------------------------------------------------
+# SDK compatibility helpers (tuple-returning keypair APIs)
+# ------------------------------------------------------------------------------
+
+
+def keypair_sig(
+    alg: Union[int, str], *, seed: bytes | str | None = None, hrp: str = "anim"
+) -> tuple[bytes, bytes]:
+    """SDK-style signature keypair API returning (secret_key, public_key)."""
+
+    kp = keygen_sig(alg, seed=seed, hrp=hrp)
+    return kp.secret_key, kp.public_key
+
+
+def keypair_kem(alg: Union[int, str], *, seed: bytes | str | None = None) -> tuple[bytes, bytes]:
+    """SDK-style KEM keypair API returning (secret_key, public_key)."""
+
+    kp = keygen_kem(alg, seed=seed)
+    return kp.secret_key, kp.public_key
+
+
+def keypair(
+    alg: Union[int, str],
+    seed: bytes | str | None = None,
+    *,
+    kind: Optional[str] = None,
+    hrp: str = "anim",
+) -> tuple[bytes, bytes]:
+    """
+    Unified keypair helper compatible with legacy pq.keygen APIs.
+
+    - If ``kind`` is omitted, infer from the algorithm id/name.
+    - If ``kind`` is provided, ensure it matches the algorithm classification.
+    """
+
+    alg_id, alg_name, inferred_kind = _normalize_alg(alg)
+    selected_kind = inferred_kind if kind is None else kind.lower()
+
+    if selected_kind not in ("sig", "kem"):
+        raise ValueError("kind must be 'sig' or 'kem'")
+    if selected_kind != inferred_kind:
+        raise ValueError(
+            f"Algorithm {alg_name} is {inferred_kind}; requested kind={selected_kind}"
+        )
+
+    if selected_kind == "sig":
+        return keypair_sig(alg_id, seed=seed, hrp=hrp)
+    return keypair_kem(alg_id, seed=seed)
 
 
 # ------------------------------------------------------------------------------
