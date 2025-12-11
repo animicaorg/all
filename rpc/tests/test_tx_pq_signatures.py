@@ -10,6 +10,10 @@ import pytest
 
 pytestmark = pytest.mark.anyio
 
+# Constants for PQ algorithms
+ALG_SPHINCS_SHAKE_128S = "sphincs_shake_128s"
+ALG_SPHINCS_ID = 4098
+
 
 def _create_signed_tx():
     """Create a properly signed transaction envelope for testing."""
@@ -249,7 +253,7 @@ def _create_signed_tx_sphincs():
     
     # Create a deterministic signer with SPHINCS+ (sphincs_shake_128s)
     seed = bytes(range(32))
-    signer = PQSigner.from_seed("sphincs_shake_128s", seed=seed)
+    signer = PQSigner.from_seed(ALG_SPHINCS_SHAKE_128S, seed=seed)
     
     # Build transaction
     chain_id = 1
@@ -284,8 +288,8 @@ async def test_sendRawTransaction_accepts_valid_sphincs_signature(monkeypatch):
     raw_tx, signer = _create_signed_tx_sphincs()
     
     # Verify signer is using SPHINCS+
-    assert signer.alg_name == "sphincs_shake_128s"
-    assert signer.alg_id == 4098  # Expected SPHINCS+ algorithm ID
+    assert signer.alg_name == ALG_SPHINCS_SHAKE_128S
+    assert signer.alg_id == ALG_SPHINCS_ID  # Expected SPHINCS+ algorithm ID
     
     # Mock the pending pool and chain_id
     from rpc.methods import tx as tx_methods

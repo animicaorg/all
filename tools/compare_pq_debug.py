@@ -53,20 +53,23 @@ def parse_cli_output(text):
     return result
 
 
+# Compile regex patterns at module level for performance
+_NODE_LOG_PATTERN = re.compile(
+    r'algorithm=(\w+)\s*\(id=(\d+)\),\s*'
+    r'pubkey_len=(\d+),?\s*'
+    r'sig_len=(\d+),?\s*'
+    r'message_len=(\d+),?\s*'
+    r'message_prefix=([0-9a-fA-F]+),?\s*'
+    r'chain_id=(\d+)'
+)
+
+
 def parse_node_output(text):
     """Parse node debug output."""
     result = {}
     
     # Look for the log line
-    m = re.search(
-        r'algorithm=(\w+)\s*\(id=(\d+)\),\s*'
-        r'pubkey_len=(\d+),?\s*'
-        r'sig_len=(\d+),?\s*'
-        r'message_len=(\d+),?\s*'
-        r'message_prefix=([0-9a-fA-F]+),?\s*'
-        r'chain_id=(\d+)',
-        text
-    )
+    m = _NODE_LOG_PATTERN.search(text)
     
     if m:
         result['algorithm'] = m.group(1)
@@ -125,16 +128,20 @@ def compare_params(cli, node):
         print("✗ Parameters differ!")
         print()
         print("The mismatch indicates:")
-        if cli.get('message_prefix') != node.get('message_prefix'):
-            print("  • Different transaction body or encoding")
-        if cli.get('chain_id') != node.get('chain_id'):
-            print("  • Chain ID mismatch between CLI and node")
-        if cli.get('alg_id') != node.get('alg_id'):
-            print("  • Algorithm ID mismatch")
-        if cli.get('pubkey_len') != node.get('pubkey_len'):
-            print("  • Public key length mismatch")
-        if cli.get('sig_len') != node.get('sig_len'):
-            print("  • Signature length mismatch")
+        
+        # Map mismatches to diagnostic messages
+        mismatch_diagnostics = {
+            'message_prefix': "  • Different transaction body or encoding",
+            'chain_id': "  • Chain ID mismatch between CLI and node",
+            'alg_id': "  • Algorithm ID mismatch",
+            'pubkey_len': "  • Public key length mismatch",
+            'sig_len': "  • Signature length mismatch",
+        }
+        
+        for field, diagnostic in mismatch_diagnostics.items():
+            if cli.get(field) != node.get(field):
+                print(diagnostic)
+        
         return False
 
 
