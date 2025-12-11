@@ -223,16 +223,30 @@ def _sign_bytes(tx_like: t.Any) -> bytes:
 
 
 def _chain_id_required() -> int:
-    # Prefer deps.get_chain_params(), else deps.chain_id, else config
+    """Return the configured chain ID for this node."""
+
+    # First, rely on the public deps helper which is backed by the live RPC
+    # context. This reflects ANIMICA_CHAIN_ID/ANIMICA_NETWORK and keeps testnet
+    # nodes from silently defaulting to mainnet (chain_id=1).
+    if hasattr(deps, "get_chain_id"):
+        try:
+            return int(deps.get_chain_id())  # type: ignore[arg-type]
+        except Exception:
+            # Fall through to legacy paths if deps.get_chain_id is unavailable
+            # or misconfigured during early boot.
+            pass
+
+    # Legacy fallbacks for older contexts/tests
     if hasattr(deps, "get_chain_params"):
-        cp = deps.get_chain_params()  # type: ignore
+        cp = deps.get_chain_params()  # type: ignore[attr-defined]
         cid = getattr(cp, "chain_id", getattr(cp, "chainId", None))
         if cid is not None:
             return int(cid)
     if hasattr(deps, "chain_id"):
-        return int(getattr(deps, "chain_id"))  # type: ignore
+        return int(getattr(deps, "chain_id"))  # type: ignore[attr-defined]
     if hasattr(deps, "config") and hasattr(deps.config, "chain_id"):
-        return int(deps.config.chain_id)  # type: ignore
+        return int(deps.config.chain_id)  # type: ignore[attr-defined]
+
     # Fallback mainnet id
     return 1
 
