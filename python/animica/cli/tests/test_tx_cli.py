@@ -5,11 +5,13 @@ import json
 from pathlib import Path
 from typing import Optional
 
+import httpx
 import pytest
 import respx
 from typer.testing import CliRunner
 
 from animica.cli import tx
+from omni_sdk.utils.cbor import loads as cbor_loads
 
 runner = CliRunner()
 
@@ -959,10 +961,6 @@ def test_send_includes_sig_object_in_cbor(wallet_store: Path) -> None:
     - CLI test should mock RPC and assert tx.sendRawTransaction receives params 
       with a non-null sig object.
     """
-    import httpx
-    import json
-    from unittest.mock import Mock
-    
     rpc_url = "http://localhost:9999/rpc"
     captured_requests = []
     
@@ -1010,7 +1008,6 @@ def test_send_includes_sig_object_in_cbor(wallet_store: Path) -> None:
     assert raw_tx_hex.startswith("0x"), "rawTx should be 0x-prefixed hex"
     
     # Decode the CBOR to verify structure
-    from omni_sdk.utils.cbor import loads as cbor_loads
     raw_tx_bytes = bytes.fromhex(raw_tx_hex[2:])
     envelope = cbor_loads(raw_tx_bytes)
     

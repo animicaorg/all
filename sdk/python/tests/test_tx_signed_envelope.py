@@ -6,6 +6,8 @@ expected by the node (sig as dict, not raw bytes).
 """
 
 import pytest
+from omni_sdk.tx.encode import pack_signed, unpack_signed
+from omni_sdk.utils.cbor import dumps as cbor_dumps, loads as cbor_loads
 
 
 def test_pack_signed_produces_correct_envelope_structure():
@@ -16,8 +18,6 @@ def test_pack_signed_produces_correct_envelope_structure():
     - SDK test should ensure serialized JSON sent to node includes sig 
       and matches server schema.
     """
-    from omni_sdk.tx.encode import pack_signed, unpack_signed
-    
     # Create a minimal transaction
     tx = {
         "chainId": 1,
@@ -115,9 +115,6 @@ def test_pack_signed_with_extra_fields():
 
 def test_unpack_signed_validates_structure():
     """Test that unpack_signed validates the envelope structure."""
-    from omni_sdk.tx.encode import unpack_signed
-    from omni_sdk.utils.cbor import dumps as cbor_dumps
-    
     # Test 1: Missing 'body' field
     bad_envelope_1 = cbor_dumps({"sig": {"algId": 1, "pubkey": b"pk", "sig": b"sig"}})
     with pytest.raises(ValueError, match="missing field 'body'"):
@@ -149,8 +146,6 @@ def test_submit_raw_sends_cbor_with_proper_sig():
     This validates the end-to-end flow: pack_signed → submit_raw → node RPC.
     """
     from omni_sdk.tx.send import submit_raw
-    from omni_sdk.tx.encode import pack_signed
-    from omni_sdk.utils.cbor import loads as cbor_loads
     
     # Mock RPC client that captures the raw tx param
     captured_params = []
