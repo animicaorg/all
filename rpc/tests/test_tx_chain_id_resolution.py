@@ -29,5 +29,5 @@ def test_validate_chain_id_matches_deps_chain(monkeypatch: pytest.MonkeyPatch) -
 
     tx_obj = {"body": {"chainId": 7}, "sig": {"algId": 0, "pubkey": b"", "sig": b""}}
 
-    # Should not raise ChainIdMismatch
-    tx._validate_chain_id(tx_obj)
+    # Should not raise ChainIdMismatch and should return the validated id
+    assert tx._validate_chain_id(tx_obj) == 7
