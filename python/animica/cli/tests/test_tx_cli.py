@@ -1188,3 +1188,28 @@ def test_send_sphincs_signature_structure(wallet_store: Path) -> None:
     
     # Success
     assert "Transaction Submitted" in output or "Transaction broadcast successfully" in output
+
+
+def test_cli_and_node_sign_bytes_align() -> None:
+    """Ensure the CLI's sign-bytes match what the node verifies for PQ txs."""
+    from omni_sdk.tx.build import transfer
+    from omni_sdk.tx.encode import pack_signed, sign_bytes as sdk_sign_bytes
+    from rpc.methods.tx import _decode_tx, _sign_bytes
+
+    tx_obj = transfer(
+        from_addr="anim1fromexampleaddress000000000000000000000000000000000",
+        to_addr="anim1toexampleaddress00000000000000000000000000000000000",
+        amount=123,
+        nonce=0,
+        gas_limit=21000,
+        max_fee=1_000_000_000,
+        chain_id=1,
+    )
+
+    cli_msg = sdk_sign_bytes(tx_obj)
+    raw = pack_signed(tx_obj, signature=b"\x01", alg_id=4098, public_key=b"\x02")
+    node_tx, _ = _decode_tx(raw)
+    node_msg = _sign_bytes(node_tx)
+
+    assert cli_msg == node_msg
+    assert cli_msg[:16] == node_msg[:16]
