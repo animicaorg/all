@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses as _dc
 import logging
+import os
 import typing as t
 
 from rpc import deps
@@ -9,6 +10,7 @@ from rpc import errors as rpc_errors
 from rpc.methods import method
 
 log = logging.getLogger(__name__)
+_PQ_VERIFY_DEBUG = os.environ.get("ANIMICA_PQ_VERIFY_DEBUG") == "1"
 
 # ——— Optional deps (be tolerant during early bring-up) ———
 
@@ -441,6 +443,18 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict) -> None:
             prehash="sha3-512",  # Standard prehash for tx signatures
             sig=sig
         )
+
+        if _PQ_VERIFY_DEBUG:
+            log.info(
+                "PQ VERIFY DEBUG: algorithm=%s (id=%s), pubkey_len=%d bytes, sig_len=%d bytes, message_len=%d bytes, message_prefix=%s, chain_id=%d",
+                alg_name,
+                alg_id,
+                len(pub),
+                len(sig),
+                len(msg),
+                msg[:16].hex() if len(msg) >= 16 else msg.hex(),
+                chain_id,
+            )
         
         # Call verify_detached with the signature envelope and chain_id
         # verify_detached signature: (msg: bytes, sig: Signature, pk: bytes, chain_id: int, **kwargs) -> bool

@@ -44,8 +44,9 @@ from __future__ import annotations
 from . import build as build
 from . import encode as encode
 from . import send as send
+from . import signing as signing
 
-__all__ = ["build", "encode", "send"]
+__all__ = ["build", "encode", "send", "signing"]
 
 
 class TxAPI:
@@ -69,6 +70,10 @@ class TxAPI:
     @property
     def send(self):
         return send
+
+    @property
+    def signing(self):
+        return signing
 
 
 # Singleton namespace for convenience
