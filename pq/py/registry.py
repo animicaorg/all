@@ -130,9 +130,11 @@ def _load_alg_ids_yaml() -> Dict[str, int]:
     if yaml is None or not alg_ids_path.exists():
         # Sensible hard-coded fallback that will be overridden when the YAML is present.
         return {
-            "dilithium3": 0x0103,
-            "sphincs_shake_128s": 0x0201,
-            "kyber768": 0x0300,
+            # Keep these values in sync with pq/alg_ids.yaml so environments
+            # without PyYAML still agree on canonical algorithm ids.
+            "dilithium3": 0x1001,
+            "sphincs_shake_128s": 0x1002,
+            "kyber768": 0x2001,
         }
     data = yaml.safe_load(alg_ids_path.read_text(encoding="utf-8"))
     out: Dict[str, int] = {}
