@@ -121,6 +121,18 @@ def test_alg_ids_unique_and_names_unique():
         assert bname[a.name].alg_id == a.alg_id
 
 
+def test_canonical_alg_id_constants_match_spec():
+    """Ensure well-known algorithm ids stay in sync with pq/alg_ids.yaml."""
+    assert R.ALG_ID.get("dilithium3") == 0x1001
+    assert R.ALG_ID.get("sphincs_shake_128s") == 0x1002
+    assert R.ALG_ID.get("kyber768") == 0x2001
+
+    # Reverse mapping should also work even if PyYAML is unavailable
+    assert R.ALG_NAME.get(0x1001) == "dilithium3"
+    assert R.ALG_NAME.get(0x1002) == "sphincs_shake_128s"
+    assert R.ALG_NAME.get(0x2001) == "kyber768"
+
+
 def test_known_signature_alg_sizes():
     # Expected sizes (bytes) for the selected NIST finalists/standards
     # Dilithium3
