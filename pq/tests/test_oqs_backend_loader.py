@@ -52,6 +52,53 @@ class TestLiboqsLoader:
                     # Will return None if no other candidates found
                     assert lib is None
 
+    def test_load_from_liboqs_prefix_env(self):
+        """Test loading liboqs from LIBOQS_PREFIX when env.sh wasn't sourced."""
+        from pq.py.algs import oqs_backend
+
+        mock_lib = MagicMock()
+
+        with patch.dict(os.environ, {"LIBOQS_PREFIX": "/custom/prefix"}, clear=True):
+            with patch("os.path.isdir", return_value=True):
+                with patch("os.path.exists", return_value=True):
+                    with patch("ctypes.CDLL", return_value=mock_lib) as mock_cdll:
+                        lib = oqs_backend._load_liboqs()
+
+                        mock_cdll.assert_called()
+                        assert lib is mock_lib
+
+    def test_load_from_default_prefixes_when_env_missing(self):
+        """Test loading from known local prefixes (e.g., ~/.liboqs/install, ~/_oqs)."""
+        from pq.py.algs import oqs_backend
+
+        mock_lib = MagicMock()
+
+        def fake_expanduser(path: str) -> str:
+            if path == "~/.liboqs/install":
+                return "/home/dev/.liboqs/install"
+            if path == "~/_oqs":
+                return "/home/dev/_oqs"
+            return path
+
+        def fake_isdir(path: str) -> bool:
+            return path in {
+                "/home/dev/.liboqs/install/lib",
+                "/home/dev/_oqs/lib",
+            }
+
+        def fake_exists(path: str) -> bool:
+            return path.endswith("liboqs.so")
+
+        with patch.dict(os.environ, {}, clear=True):
+            with patch("os.path.expanduser", side_effect=fake_expanduser):
+                with patch("os.path.isdir", side_effect=fake_isdir):
+                    with patch("os.path.exists", side_effect=fake_exists):
+                        with patch("ctypes.CDLL", return_value=mock_lib) as mock_cdll:
+                            lib = oqs_backend._load_liboqs()
+
+                            assert lib is mock_lib
+                            assert any("liboqs.so" in str(call) for call in mock_cdll.call_args_list)
+
     def test_load_from_find_library(self):
         """Test loading via find_library() when LIBOQS_PATH not set."""
         from pq.py.algs import oqs_backend
