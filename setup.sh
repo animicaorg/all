@@ -403,11 +403,11 @@ write_liboqs_env() {
   cat > "$LIBOQS_DIR/env.sh" <<ENVVARS
 #!/usr/bin/env bash
 LIBOQS_PREFIX="${prefix}"
-export LD_LIBRARY_PATH="${LIBOQS_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
-export LIBRARY_PATH="${LIBOQS_PREFIX}/lib:${LIBRARY_PATH:-}"
-export PKG_CONFIG_PATH="${LIBOQS_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-export C_INCLUDE_PATH="${LIBOQS_PREFIX}/include:${C_INCLUDE_PATH:-}"
-export CPLUS_INCLUDE_PATH="${LIBOQS_PREFIX}/include:${CPLUS_INCLUDE_PATH:-}"
+export LD_LIBRARY_PATH="${LIBOQS_PREFIX}/lib:\${LD_LIBRARY_PATH:-}"
+export LIBRARY_PATH="${LIBOQS_PREFIX}/lib:\${LIBRARY_PATH:-}"
+export PKG_CONFIG_PATH="${LIBOQS_PREFIX}/lib/pkgconfig:\${PKG_CONFIG_PATH:-}"
+export C_INCLUDE_PATH="${LIBOQS_PREFIX}/include:\${C_INCLUDE_PATH:-}"
+export CPLUS_INCLUDE_PATH="${LIBOQS_PREFIX}/include:\${CPLUS_INCLUDE_PATH:-}"
 ENVVARS
   chmod +x "$LIBOQS_DIR/env.sh"
 }
