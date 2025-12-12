@@ -497,7 +497,75 @@ install_liboqs_python() {
     warn "liboqs env file missing; assuming system liboqs is available"
   fi
   local python="$VENV_DIR/bin/python"
-  "$python" -m pip install --no-binary=:all: --force-reinstall "liboqs-python==${LIBOQS_PY_VERSION}"
+
+  local declared_versions=()
+  if [[ -n "${LIBOQS_PY_VERSION:-}" ]]; then
+    declared_versions+=("${LIBOQS_PY_VERSION}")
+  fi
+
+  local discovered_versions=()
+  local index_output=""
+  if index_output=$("$python" -m pip index versions liboqs-python 2>/dev/null | sed -n 's/^Available versions: //p' | tr ',' ' '); then
+    if [[ -n "$index_output" ]]; then
+      # shellcheck disable=SC2206
+      discovered_versions=($index_output)
+    fi
+  else
+    warn "pip index lookup for liboqs-python versions failed; using fallback list"
+  fi
+
+  local fallback_versions=("0.11.1" "0.11.0" "0.10.1" "0.10.0" "0.9.2" "0.9.1" "0.9.0")
+  local candidate_versions=()
+  for ver in "${declared_versions[@]}" "${discovered_versions[@]}" "${fallback_versions[@]}"; do
+    if [[ -n "$ver" ]]; then
+      local seen=false
+      for existing in "${candidate_versions[@]}"; do
+        if [[ "$existing" == "$ver" ]]; then
+          seen=true
+          break
+        fi
+      done
+      if [[ "$seen" == false ]]; then
+        candidate_versions+=("$ver")
+      fi
+    fi
+  done
+
+  local installed_version=""
+  for ver in "${candidate_versions[@]}"; do
+    if [[ -z "$ver" ]]; then
+      continue
+    fi
+    section "Attempting liboqs-python ${ver}"
+    if "$python" -m pip install --no-binary=:all: --force-reinstall "liboqs-python==${ver}"; then
+      installed_version="$ver"
+      break
+    fi
+    warn "pip install liboqs-python==${ver} failed; trying next candidate"
+  done
+
+  if [[ -z "$installed_version" ]]; then
+    warn "All versioned liboqs-python installs failed; attempting source install from GitHub"
+    local git_refs=("${LIBOQS_PY_VERSION}" "v${LIBOQS_PY_VERSION}" "main" "master")
+    for ref in "${git_refs[@]}"; do
+      if [[ -z "$ref" ]]; then
+        continue
+      fi
+      section "Building liboqs-python from source (${ref})"
+      if "$python" -m pip install --no-binary=:all: --force-reinstall "git+https://github.com/open-quantum-safe/liboqs-python.git@${ref}"; then
+        installed_version="$ref (git)"
+        break
+      fi
+      warn "Source install for liboqs-python ref ${ref} failed"
+    done
+  fi
+
+  if [[ -z "$installed_version" ]]; then
+    warn "Unable to install liboqs-python from any candidate version or source"
+    return 1
+  fi
+
+  log "liboqs-python installed (${installed_version})"
 
   local verify_script='import oqs, sys; print("liboqs version", oqs.oqs_version());
 from oqs import Signature; sig=Signature("SPHINCS+-SHAKE-128s-simple"); print("sig alg", sig.details); print("Loaded from", oqs.LIB)'
