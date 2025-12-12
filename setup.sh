@@ -157,7 +157,7 @@ apt_install() {
   local missing=()
   for pkg in "${packages[@]}"; do
     local candidate
-    candidate=$(apt-cache policy "$pkg" 2>/dev/null | awk '/Candidate:/ {print $2; exit}')
+    candidate=$(apt-cache policy "$pkg" 2>/dev/null | awk '/Candidate:/ {print $2; exit}' || true)
     if [[ -n "$candidate" && "$candidate" != "(none)" ]]; then
       installable+=("$pkg")
     else
@@ -419,11 +419,11 @@ install_liboqs_system() {
   fi
 
   local candidate
-  candidate=$(apt-cache policy liboqs-dev 2>/dev/null | awk '/Candidate:/ {print $2; exit}')
+  candidate=$(apt-cache policy liboqs-dev 2>/dev/null | awk '/Candidate:/ {print $2; exit}' || true)
   if [[ -z "$candidate" || "$candidate" == "(none)" ]]; then
     log "liboqs-dev not in current apt cache; attempting to add Open Quantum Safe repository"
     ensure_oqs_repository || return 1
-    candidate=$(apt-cache policy liboqs-dev 2>/dev/null | awk '/Candidate:/ {print $2; exit}')
+    candidate=$(apt-cache policy liboqs-dev 2>/dev/null | awk '/Candidate:/ {print $2; exit}' || true)
   fi
 
   if [[ -z "$candidate" || "$candidate" == "(none)" ]]; then
