@@ -7,10 +7,12 @@ rely on the legacy omni-sdk helpers to avoid accidental drift between CLI and
 node implementations.
 
 Encoding rules (v1):
-* Domain separation prefix: ``b"animica:tx:v1"``
-* Chain ID: 4-byte big-endian unsigned integer (required)
-* Canonical CBOR representation of the transaction *body* with deterministic
-  key ordering (RFC 7049 Canonical CBOR)
+* **Message:** Canonical CBOR representation of the transaction *body* with
+  deterministic key ordering (RFC 7049 Canonical CBOR)
+* **Chain ID binding:** The chain ID is *validated* (ensuring it exists and
+  matches any explicit override) but **not embedded** in the message bytes.
+  Chain separation is provided by the PQ signing layer via the ``chain_id``
+  parameter passed to ``pq.sign.sign_detached`` / ``pq.verify.verify_detached``.
 
 The transaction input may be:
 * A mapping that already represents the body
@@ -26,8 +28,6 @@ from typing import Any, Mapping
 
 import cbor2
 
-PREFIX = b"animica:tx:v1"
-
 __all__ = ["build_signable_tx_bytes", "extract_chain_id"]
 
 
@@ -41,6 +41,59 @@ def _as_dict(obj: Any) -> dict:
     if isinstance(obj, (list, tuple)):
         return [_as_dict(x) for x in obj]
     return obj
+
+
+def _canonical_body(tx: Any) -> dict:
+    """Build the canonical tx body map without signature metadata.
+
+    Mirrors the SDK's canonical encoding to keep CLI/SDK/node sign-bytes aligned
+    even when ``tx`` is a dataclass with extra helper fields.
+    """
+
+    def _get(key: str) -> Any:
+        if hasattr(tx, key):
+            return getattr(tx, key)
+        if isinstance(tx, Mapping) and key in tx:
+            return tx[key]
+        if key == "from":
+            if hasattr(tx, "from_addr"):
+                return getattr(tx, "from_addr")
+            if isinstance(tx, Mapping) and "from_addr" in tx:
+                return tx["from_addr"]
+        if key == "gasLimit":
+            if hasattr(tx, "gas_limit"):
+                return getattr(tx, "gas_limit")
+            if isinstance(tx, Mapping) and "gas_limit" in tx:
+                return tx["gas_limit"]
+        if key == "maxFee":
+            if hasattr(tx, "max_fee"):
+                return getattr(tx, "max_fee")
+            if isinstance(tx, Mapping) and "max_fee" in tx:
+                return tx["max_fee"]
+        if key == "chainId":
+            if hasattr(tx, "chain_id"):
+                return getattr(tx, "chain_id")
+            if isinstance(tx, Mapping) and "chain_id" in tx:
+                return tx["chain_id"]
+        raise KeyError(key)
+
+    body = {
+        "chainId": int(_get("chainId")),
+        "from": str(_get("from")),
+        "to": _get("to"),
+        "nonce": int(_get("nonce")),
+        "value": int(_get("value")),
+        "gasLimit": int(_get("gasLimit")),
+        "maxFee": int(_get("maxFee")),
+        "data": bytes(_get("data") or b""),
+    }
+
+    if body["to"] in ("", None):
+        body["to"] = None
+    else:
+        body["to"] = str(body["to"])
+
+    return body
 
 
 def extract_chain_id(tx: Any) -> int:
@@ -68,10 +121,16 @@ def extract_chain_id(tx: Any) -> int:
 
 def _extract_body(tx: Any) -> dict:
     obj = _as_dict(tx)
+
+    # Respect pre-built envelopes when present
     if "body" in obj and isinstance(obj["body"], Mapping):
         body = dict(obj["body"])
     else:
-        body = dict(obj)
+        # Fall back to canonical body extraction to drop helper/meta fields
+        try:
+            body = _canonical_body(obj)
+        except Exception:
+            body = dict(obj)
 
     # Remove signature metadata to avoid signing it
     for k in ("sig", "signature", "sigs"):
@@ -85,12 +144,20 @@ def build_signable_tx_bytes(tx: Any, chain_id: int | None = None) -> bytes:
     Args:
         tx: Transaction body or envelope (dict/dataclass).
         chain_id: Optional explicit chain ID; when omitted the value is
-            extracted from the transaction body/envelope.
+            extracted from the transaction body/envelope. If provided, it must
+            match the value found in the transaction or a ``ValueError`` is
+            raised. The chain ID is validated only; it is **not** embedded in
+            the resulting message bytes because domain separation is handled by
+            the PQ signing/verification layer.
     """
 
-    cid = int(chain_id if chain_id is not None else extract_chain_id(tx))
+    cid = extract_chain_id(tx)
+    if chain_id is not None and int(chain_id) != cid:
+        raise ValueError(
+            f"Transaction chain_id mismatch: tx={cid}, override={int(chain_id)}"
+        )
     body = _extract_body(tx)
 
     cbor_payload = cbor2.dumps(body, canonical=True)
-    return PREFIX + cid.to_bytes(4, "big") + cbor_payload
+    return cbor_payload
 
