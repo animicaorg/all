@@ -321,6 +321,7 @@ ensure_python() {
   local python="$VENV_DIR/bin/python"
   "$python" -m pip install --upgrade pip setuptools wheel
   "$python" -m pip install -r "$ROOT_DIR/requirements.txt"
+  "$python" -m pip install -e "$ROOT_DIR/pq"
   "$python" -m pip install -e "$ROOT_DIR/python[dev,stratum]"
   "$python" -m pip install -e "$ROOT_DIR/sdk/python"
 }
