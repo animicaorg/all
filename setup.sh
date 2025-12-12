@@ -110,8 +110,10 @@ wait_for_apt() {
 
 apt_update() {
   wait_for_apt
-  DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
-  DEBIAN_FRONTEND=noninteractive apt-get update -y
+  DEBIAN_FRONTEND=noninteractive dpkg --configure -a || warn "dpkg configure reported issues"
+  if ! retry_cmd 3 5 DEBIAN_FRONTEND=noninteractive apt-get update -y; then
+    warn "apt-get update failed after retries; package installation may fail"
+  fi
 }
 
 apt_install() {
@@ -120,8 +122,33 @@ apt_install() {
     return
   fi
   wait_for_apt
-  DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
-  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
+  DEBIAN_FRONTEND=noninteractive dpkg --configure -a || warn "dpkg configure reported issues"
+
+  local installable=()
+  local missing=()
+  for pkg in "${packages[@]}"; do
+    local candidate
+    candidate=$(apt-cache policy "$pkg" 2>/dev/null | awk '/Candidate:/ {print $2; exit}')
+    if [[ -n "$candidate" && "$candidate" != "(none)" ]]; then
+      installable+=("$pkg")
+    else
+      missing+=("$pkg")
+    fi
+  done
+
+  if [[ ${#installable[@]} -eq 0 ]]; then
+    warn "No installable packages found for request: ${packages[*]}"
+    return 1
+  fi
+
+  if ! retry_cmd 3 5 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${installable[@]}"; then
+    warn "apt-get install failed for: ${installable[*]}"
+    return 1
+  fi
+
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    warn "Skipped unavailable packages: ${missing[*]}"
+  fi
 }
 
 retry_cmd() {
@@ -157,7 +184,8 @@ clean_state() {
 ensure_base_packages() {
   section "Ensuring base system packages"
   apt_update
-  apt_install ca-certificates curl git gnupg lsb-release software-properties-common build-essential pkg-config lsof
+  apt_install ca-certificates curl git gnupg lsb-release software-properties-common build-essential pkg-config lsof || \
+    warn "Base package installation encountered issues; continuing"
 }
 
 ensure_docker() {
@@ -171,8 +199,17 @@ ensure_docker() {
     log "Docker already installed ($(docker --version | head -n1))"
   else
     apt_update
-    apt_install apt-transport-https ca-certificates curl gnupg
-    apt_install docker.io docker-compose-plugin
+    apt_install apt-transport-https ca-certificates curl gnupg || warn "Failed to install Docker prerequisites"
+    if ! apt_install docker.io docker-compose-plugin; then
+      warn "Docker Engine installation encountered issues; attempting fallback installs"
+      apt_install docker.io || warn "docker.io not installable from apt"
+      apt_install docker-compose || warn "docker-compose fallback package not installable"
+    fi
+  fi
+
+  if ! command -v docker >/dev/null 2>&1; then
+    warn "Docker CLI not available after installation attempts; skipping compose validation"
+    return
   fi
 
   if systemctl list-unit-files | grep -q '^docker.service'; then
@@ -180,7 +217,11 @@ ensure_docker() {
   fi
 
   if ! docker compose version >/dev/null 2>&1; then
-    warn "Docker Compose plugin not available; please install manually."
+    if command -v docker-compose >/dev/null 2>&1; then
+      log "Using legacy docker-compose ($(docker-compose --version | head -n1))"
+    else
+      warn "Docker Compose plugin not available; please install manually or provide docker-compose"
+    fi
   fi
 
   if [[ ${SUDO_USER:-root} != "root" ]]; then
@@ -197,7 +238,9 @@ ensure_python() {
   fi
 
   section "Setting up Python 3.12 virtual environment"
-  apt_install python3.12 python3.12-venv python3.12-dev
+  if ! apt_install python3.12 python3.12-venv python3.12-dev; then
+    warn "Python 3.12 packages not fully available; attempting to proceed with existing interpreter"
+  fi
 
   if [[ ! -x "$VENV_DIR/bin/python" ]]; then
     python3.12 -m venv "$VENV_DIR"
@@ -234,10 +277,18 @@ ensure_node() {
     log "Node.js not found; installing v20.x from NodeSource"
   fi
 
-  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+  if ! curl -fsSL https://deb.nodesource.com/setup_20.x | bash -; then
+    warn "Failed to add NodeSource repository; attempting to use default apt repositories"
+  fi
   apt_update
-  apt_install nodejs
-  log "Installed Node.js $(node -v)"
+  if ! apt_install nodejs; then
+    warn "Node.js installation via apt failed; please install Node.js v20+ manually"
+  fi
+  if command -v node >/dev/null 2>&1; then
+    log "Installed Node.js $(node -v)"
+  else
+    warn "Node.js is still not available on PATH after installation attempts"
+  fi
 }
 
 ensure_pnpm() {
