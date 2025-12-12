@@ -16,6 +16,7 @@ SKIP_NODE=false
 SKIP_PYTHON=false
 SKIP_PNPM=false
 CLEAN=false
+WITH_DOCKER=true
 
 log() {
   echo "[setup] $(date -u +"%Y-%m-%dT%H:%M:%SZ") $*"
@@ -38,6 +39,7 @@ Usage: setup.sh [options]
   --clean            Remove .venv and .liboqs before installing
   --with-playwright  Also install Playwright browsers and dependencies
   --with-pq          Build and install liboqs/liboqs-python (post-quantum)
+  --without-docker   Skip Docker Engine / Docker Compose installation
   --skip-node        Skip Node.js installation check
   --skip-python      Skip Python environment setup
   --skip-pnpm        Skip pnpm workspace install
@@ -49,6 +51,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --with-playwright) WITH_PLAYWRIGHT=true ;;
     --with-pq) WITH_PQ=true ;;
+    --without-docker) WITH_DOCKER=false ;;
     --skip-node) SKIP_NODE=true ;;
     --skip-python) SKIP_PYTHON=true ;;
     --skip-pnpm) SKIP_PNPM=true ;;
@@ -121,6 +124,24 @@ apt_install() {
   DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
 }
 
+retry_cmd() {
+  local attempts=${1:-3}
+  local delay=${2:-3}
+  shift 2
+  local cmd=("$@")
+
+  for ((i=1; i<=attempts; i++)); do
+    if "${cmd[@]}"; then
+      return 0
+    fi
+    warn "Command failed (attempt $i/$attempts): ${cmd[*]}"
+    if (( i < attempts )); then
+      sleep "$delay"
+    fi
+  done
+  return 1
+}
+
 clean_state() {
   section "Cleaning previous state"
   if [[ -d "$VENV_DIR" ]]; then
@@ -137,6 +158,36 @@ ensure_base_packages() {
   section "Ensuring base system packages"
   apt_update
   apt_install ca-certificates curl git gnupg lsb-release software-properties-common build-essential pkg-config lsof
+}
+
+ensure_docker() {
+  if [[ "$WITH_DOCKER" != true ]]; then
+    section "Skipping Docker setup (--without-docker)"
+    return
+  fi
+
+  section "Ensuring Docker Engine and Compose"
+  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    log "Docker already installed ($(docker --version | head -n1))"
+  else
+    apt_update
+    apt_install apt-transport-https ca-certificates curl gnupg
+    apt_install docker.io docker-compose-plugin
+  fi
+
+  if systemctl list-unit-files | grep -q '^docker.service'; then
+    systemctl enable --now docker || warn "Failed to enable/start docker service"
+  fi
+
+  if ! docker compose version >/dev/null 2>&1; then
+    warn "Docker Compose plugin not available; please install manually."
+  fi
+
+  if [[ ${SUDO_USER:-root} != "root" ]]; then
+    local user=${SUDO_USER:-$USER}
+    usermod -aG docker "$user" || warn "Failed to add $user to docker group"
+    log "Added $user to docker group (you may need to log out/in)."
+  fi
 }
 
 ensure_python() {
@@ -205,7 +256,10 @@ ensure_pnpm() {
 install_playwright() {
   if [[ "$WITH_PLAYWRIGHT" == true ]]; then
     section "Installing Playwright browsers"
-    pnpm exec playwright install --with-deps
+    wait_for_apt
+    if ! retry_cmd 3 5 pnpm exec playwright install --with-deps; then
+      warn "Playwright installation failed after retries; browser tests may not work."
+    fi
   else
     log "Playwright install skipped (enable with --with-playwright)"
   fi
@@ -292,7 +346,10 @@ husky_notice() {
     return
   fi
   if [[ "$SKIP_PNPM" == false ]]; then
-    pnpm exec husky install || warn "Husky install skipped (command failed)"
+    if ! pnpm exec husky install; then
+      warn "Husky install via pnpm exec failed; retrying with pnpm dlx"
+      pnpm dlx husky install || warn "Husky install skipped (command failed)"
+    fi
   else
     log "Skipped husky setup because pnpm install was skipped"
   fi
@@ -321,6 +378,7 @@ main() {
   ensure_base_packages
   ensure_python
   ensure_node
+  ensure_docker
   ensure_pnpm
   install_playwright
   build_liboqs
