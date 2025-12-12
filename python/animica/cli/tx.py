@@ -2,22 +2,27 @@
 animica.cli.tx — Transaction subcommands.
 
 Key fix (PQ tx send):
-- Build tx with omni_sdk as before (so the raw CBOR envelope shape stays compatible)
-- Compute canonical sign-bytes using animica.tx.signing.build_signable_tx_bytes
-- Produce PQ signature using pq.py.sign.sign_detached (Animica canonical signing API)
-- Patch the decoded CBOR envelope's signature bytes + metadata, then re-encode and broadcast
+- Build a tx with omni_sdk (to preserve the node-compatible envelope shape).
+- Decode the envelope to a Python map.
+- Compute canonical sign-bytes using animica.tx.signing.build_signable_tx_bytes(envelope).
+- Produce a PQ signature using pq.py.sign.sign_detached (Animica domain-tag signing).
+- Patch the *existing* signature slot inside the envelope, re-encode CBOR, and broadcast.
 
-This resolves the common “Invalid post-quantum signature: verification failed” error that happens when
-omni_sdk sign-bytes drift from the node’s canonical sign-bytes.
+This fixes common failures:
+- "No module named 'cbor2'" (now surfaced with a clear install hint)
+- "a bytes-like object is required, not 'str'" (raw_tx may be hex string; we coerce)
+- "Invalid post-quantum signature: verification failed" (sign bytes are canonical + chain-bound)
 """
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
+import string
 from decimal import Decimal, getcontext
 from pathlib import Path
-from typing import Any, Optional, Tuple
+from typing import Any, Mapping, Optional, Tuple
 
 import typer
 
@@ -27,11 +32,12 @@ from animica.config import load_network_config
 app = typer.Typer(help="Transaction operations (build, sign, send, simulate)")
 getcontext().prec = 28
 
+_HEXCHARS = set(string.hexdigits)
+
 
 # -----------------------------------------------------------------------------
 # RPC helpers
 # -----------------------------------------------------------------------------
-
 try:
     from omni_sdk.rpc.http import RpcClient  # type: ignore
 
@@ -52,8 +58,9 @@ def _request_rpc(method: str, params: Optional[list], rpc_url: Optional[str]) ->
     if HAVE_RPC:
         client = RpcClient(url, timeout=10.0)  # type: ignore[name-defined]
         return client.request(method, params or [])
+
     # fallback
-    import httpx
+    import httpx  # lazy import
 
     payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or []}
     resp = httpx.post(url, json=payload, timeout=10.0)
@@ -71,7 +78,6 @@ def _pretty(obj: Any) -> str:
 # -----------------------------------------------------------------------------
 # Safety / PQ availability
 # -----------------------------------------------------------------------------
-
 def _warn_if_unsafe_pq_mode() -> None:
     if os.environ.get("ANIMICA_UNSAFE_PQ_FAKE") == "1":
         typer.echo("⚠️ WARNING: Using ANIMICA_UNSAFE_PQ_FAKE=1 mode", err=True)
@@ -83,7 +89,6 @@ def _warn_if_unsafe_pq_mode() -> None:
 # -----------------------------------------------------------------------------
 # Chain ID resolution
 # -----------------------------------------------------------------------------
-
 def resolve_chain_id(
     rpc_url: Optional[str],
     cli_chain_id: Optional[int],
@@ -101,7 +106,7 @@ def resolve_chain_id(
 
     try:
         node_chain_id_result = _request_rpc("chain.getChainId", [], rpc_url)
-        node_chain_id = int(node_chain_id_result) if node_chain_id_result else None
+        node_chain_id = int(node_chain_id_result) if node_chain_id_result is not None else None
     except Exception as e:
         typer.echo(f"Error: Could not query node's chain ID: {e}", err=True)
         typer.echo("Ensure the node is running and accessible via RPC.", err=True)
@@ -125,10 +130,10 @@ def resolve_chain_id(
     typer.echo(f"Node chain ID: {node_chain_id}", err=True)
     typer.echo("", err=True)
     typer.echo("Solutions:", err=True)
-    typer.echo(f"  1) Remove --chain-id to auto-detect (node: {node_chain_id})", err=True)
-    typer.echo(f"  2) Set --chain-id {node_chain_id} to match the node", err=True)
-    typer.echo(f"  3) Unset ANIMICA_CHAIN_ID if set", err=True)
-    typer.echo(f"  4) Point at a different node with --rpc-url", err=True)
+    typer.echo(f" 1) Remove --chain-id to auto-detect (node: {node_chain_id})", err=True)
+    typer.echo(f" 2) Set --chain-id {node_chain_id} to match the node", err=True)
+    typer.echo(" 3) Unset ANIMICA_CHAIN_ID if set", err=True)
+    typer.echo(" 4) Point at a different node with --rpc-url", err=True)
     typer.echo("=" * 60, err=True)
     raise typer.Exit(1)
 
@@ -137,7 +142,7 @@ def debug_chain_context(network_name: str, rpc_url: str, chain_id: int, chain_id
     typer.echo("", err=True)
     typer.echo("CHAIN CONTEXT DEBUG", err=True)
     typer.echo(f"  network: {network_name}", err=True)
-    typer.echo(f"  rpc_url: {rpc_url}", err=True)
+    typer.echo(f"  rpc_url:  {rpc_url}", err=True)
     typer.echo(f"  chain_id: {chain_id}", err=True)
     typer.echo(f"  chain_id_source: {chain_id_source}", err=True)
     typer.echo("", err=True)
@@ -146,7 +151,6 @@ def debug_chain_context(network_name: str, rpc_url: str, chain_id: int, chain_id
 # -----------------------------------------------------------------------------
 # Wallet helpers
 # -----------------------------------------------------------------------------
-
 def _get_wallet_path(wallet_file: Optional[Path]) -> Path:
     if wallet_file is not None:
         return Path(wallet_file)
@@ -157,7 +161,8 @@ def _get_wallet_path(wallet_file: Optional[Path]) -> Path:
 
 
 def _resolve_sender(identifier: str, wallet_file: Optional[Path]) -> Tuple[str, Any]:
-    from animica.cli.wallet import _find_wallet, _load_store  # local CLI helpers
+    # local CLI helpers
+    from animica.cli.wallet import _find_wallet, _load_store  # type: ignore
 
     wallet_path = _get_wallet_path(wallet_file)
     if not wallet_path.exists():
@@ -166,7 +171,6 @@ def _resolve_sender(identifier: str, wallet_file: Optional[Path]) -> Tuple[str, 
         raise typer.Exit(1)
 
     store = _load_store(wallet_path)
-
     try:
         wallet_entry = _find_wallet(store, identifier=identifier)
         return wallet_entry.address, wallet_entry
@@ -182,7 +186,6 @@ def _resolve_destination(addr: str) -> str:
     if not addr or not isinstance(addr, str):
         typer.echo("Error: destination address is required", err=True)
         raise typer.Exit(1)
-
     if not addr.startswith("anim1"):
         typer.echo(f"Error: invalid destination address '{addr}' (must start with 'anim1')", err=True)
         raise typer.Exit(1)
@@ -204,69 +207,154 @@ def _resolve_destination(addr: str) -> str:
     return addr
 
 
-# -----------------------------------------------------------------------------
-# CBOR envelope patching (robust to a few shapes)
-# -----------------------------------------------------------------------------
+def _hex_to_bytes(s: str) -> bytes:
+    h = s.strip()
+    if h.startswith(("0x", "0X")):
+        h = h[2:]
+    if not h:
+        return b""
+    if any(c not in _HEXCHARS for c in h):
+        raise ValueError("string is not hex")
+    if len(h) % 2 == 1:
+        h = "0" + h
+    return bytes.fromhex(h)
 
+
+def _coerce_cbor_input(raw: Any) -> bytes:
+    if isinstance(raw, (bytes, bytearray, memoryview)):
+        return bytes(raw)
+    if isinstance(raw, str):
+        s = raw.strip()
+        # most common: "0x..." hex
+        try:
+            return _hex_to_bytes(s)
+        except Exception:
+            pass
+        # last resort: treat as utf-8 bytes
+        return s.encode("utf-8")
+    raise TypeError(f"raw tx must be bytes-like or hex string; got {type(raw).__name__}")
+
+
+def _coerce_mapping(obj: Any) -> Any:
+    if dataclasses.is_dataclass(obj):
+        return dataclasses.asdict(obj)
+    return obj
+
+
+# -----------------------------------------------------------------------------
+# CBOR envelope patching (robust to a few shapes / str or bytes keys)
+# -----------------------------------------------------------------------------
 def _patch_sig_in_envelope(env: Any, *, sig_bytes: bytes, alg_id: int, domain: str, prehash: str) -> None:
     """
     Try to patch common envelope layouts:
-    - {"body": {...}, "sig": {...}} or {"sig": b"..."}
-    - {"signature": {...}} / {"signature": b"..."}
-    - {"sigs": [ {...}, ... ]}
+      - {"sig": {...}} or {"sig": b"..."}
+      - {"signature": {...}} / {"signature": b"..."}
+      - {"sigs": [ {...}, ... ]}
 
-    We do NOT assume exact key names; we update the most likely fields if present.
+    Keys may be text or bytes (CBOR).
     """
     if not isinstance(env, dict):
         raise TypeError("raw tx envelope must decode to a CBOR map/dict")
 
+    def _k(s: str) -> Tuple[str, bytes]:
+        return s, s.encode("utf-8")
+
+    def _get_key(m: dict, name: str) -> Optional[Any]:
+        ks, kb = _k(name)
+        if ks in m:
+            return ks
+        if kb in m:
+            return kb
+        return None
+
     def patch_sig_obj(sig_obj: Any) -> Any:
         if isinstance(sig_obj, (bytes, bytearray)):
             return bytes(sig_bytes)
+
         if isinstance(sig_obj, dict):
             # signature bytes field
-            if "sig" in sig_obj:
-                sig_obj["sig"] = sig_bytes
-            elif "signature" in sig_obj:
-                sig_obj["signature"] = sig_bytes
-            elif "bytes" in sig_obj:
-                sig_obj["bytes"] = sig_bytes
+            for cand in ("sig", "signature", "bytes"):
+                key = _get_key(sig_obj, cand)
+                if key is not None:
+                    sig_obj[key] = sig_bytes
+                    break
             else:
-                sig_obj["sig"] = sig_bytes
+                # default
+                ks, _ = _k("sig")
+                sig_obj[ks] = sig_bytes
 
-            # metadata (only overwrite if key already exists OR if we add it safely)
-            for k in ("alg_id", "algId", "alg"):
-                if k in sig_obj:
-                    sig_obj[k] = alg_id
-            if "domain" in sig_obj:
-                sig_obj["domain"] = domain
-            if "prehash" in sig_obj:
-                sig_obj["prehash"] = prehash
+            # metadata (only overwrite if present)
+            for cand in ("alg_id", "algId", "alg"):
+                key = _get_key(sig_obj, cand)
+                if key is not None:
+                    sig_obj[key] = alg_id
+            key = _get_key(sig_obj, "domain")
+            if key is not None:
+                sig_obj[key] = domain
+            key = _get_key(sig_obj, "prehash")
+            if key is not None:
+                sig_obj[key] = prehash
             return sig_obj
 
         # unknown type -> replace
         return {"alg_id": alg_id, "domain": domain, "prehash": prehash, "sig": sig_bytes}
 
-    if "sig" in env:
-        env["sig"] = patch_sig_obj(env["sig"])
-        return
+    for top in ("sig", "signature"):
+        key = _get_key(env, top)
+        if key is not None:
+            env[key] = patch_sig_obj(env[key])
+            return
 
-    if "signature" in env:
-        env["signature"] = patch_sig_obj(env["signature"])
-        return
-
-    if "sigs" in env and isinstance(env["sigs"], list) and env["sigs"]:
-        env["sigs"][0] = patch_sig_obj(env["sigs"][0])
+    key = _get_key(env, "sigs")
+    if key is not None and isinstance(env[key], list) and env[key]:
+        env[key][0] = patch_sig_obj(env[key][0])
         return
 
     # If we can't find a signature slot, create a conservative one
     env["sig"] = {"alg_id": alg_id, "domain": domain, "prehash": prehash, "sig": sig_bytes}
 
 
+def _decode_envelope(raw_tx_template: Any) -> dict:
+    """
+    Accepts:
+      - dict / dataclass envelope
+      - CBOR bytes
+      - hex string of CBOR bytes
+    Returns a mutable dict.
+    """
+    obj = _coerce_mapping(raw_tx_template)
+    if isinstance(obj, dict):
+        return obj
+
+    try:
+        import cbor2  # type: ignore
+    except Exception as e:
+        raise RuntimeError(
+            "CBOR support missing. Install dependency: pip install cbor2\n"
+            f"Details: {e}"
+        ) from e
+
+    raw_bytes = _coerce_cbor_input(obj)
+    decoded = cbor2.loads(raw_bytes)
+    if not isinstance(decoded, dict):
+        raise TypeError("decoded tx envelope must be a CBOR map/dict")
+    return decoded
+
+
+def _encode_envelope(env: dict) -> bytes:
+    try:
+        import cbor2  # type: ignore
+    except Exception as e:
+        raise RuntimeError(
+            "CBOR support missing. Install dependency: pip install cbor2\n"
+            f"Details: {e}"
+        ) from e
+    return cbor2.dumps(env)
+
+
 # -----------------------------------------------------------------------------
 # Commands
 # -----------------------------------------------------------------------------
-
 @app.command()
 def build(
     from_addr: str = typer.Option(..., "--from", help="Sender address"),
@@ -347,7 +435,7 @@ def send(
             raise typer.Exit(1)
 
         # PQ availability check
-        from animica.cli.pq_utils import check_pq_signing_available, get_pq_missing_error_message
+        from animica.cli.pq_utils import check_pq_signing_available, get_pq_missing_error_message  # type: ignore
 
         available, error_msg = check_pq_signing_available()
         if not available:
@@ -396,7 +484,7 @@ def send(
         value_units = to_base_units(value)
         max_fee = int(Decimal(str(gas_price)))
 
-        # Build tx via omni_sdk so we keep the node-compatible envelope structure
+        # Build tx via omni_sdk (preserve envelope shape)
         try:
             from omni_sdk.tx.build import transfer  # type: ignore
             from omni_sdk.tx.signing import sign_transaction  # type: ignore
@@ -415,36 +503,40 @@ def send(
             chain_id=int(resolved_chain_id),
         )
 
-        # Create signer from wallet entry (still used to build the initial envelope)
+        # signer from wallet entry (used to build an envelope template)
         signer = PQSigner.from_keypair(
             alg_name=wallet_entry.alg_name,
-            secret_key=bytes.fromhex(wallet_entry.secret_key_hex),
-            public_key=bytes.fromhex(wallet_entry.public_key_hex),
+            secret_key=bytes.fromhex(wallet_entry.secret_key_hex.removeprefix("0x")),
+            public_key=bytes.fromhex(wallet_entry.public_key_hex.removeprefix("0x")),
         )
 
-        # Build initial signed tx to obtain a raw CBOR envelope template (we will patch signature)
         signed_tx = sign_transaction(tx, signer, resolved_chain_id)
 
-        # Canonical sign-bytes (node expects this)
-        from animica.tx.signing import build_signable_tx_bytes
+        # Decode the envelope template into a dict (works if it's bytes, hex string, dict, dataclass)
+        env = _decode_envelope(getattr(signed_tx, "raw_tx", signed_tx))
 
-        canonical_msg = build_signable_tx_bytes(signed_tx.raw_tx, chain_id=resolved_chain_id)
+        # Canonical sign-bytes (node expects canonical CBOR(body))
+        from animica.tx.signing import build_signable_tx_bytes  # type: ignore
+
+        canonical_msg = build_signable_tx_bytes(env, chain_id=resolved_chain_id)
 
         # Create canonical PQ signature (Animica spec)
-        from pq.py.sign import sign_detached
-        from pq.py.verify import verify_detached
+        from pq.py.sign import sign_detached  # type: ignore
+        from pq.py.verify import verify_detached  # type: ignore
+
+        sk = bytes.fromhex(wallet_entry.secret_key_hex.removeprefix("0x"))
+        pk = bytes.fromhex(wallet_entry.public_key_hex.removeprefix("0x"))
 
         sig_env = sign_detached(
             canonical_msg,
             wallet_entry.alg_name,
-            bytes.fromhex(wallet_entry.secret_key_hex),
+            sk,
             domain="tx",
             chain_id=resolved_chain_id,
             prehash="sha3-512",
         )
 
         # Pre-flight verify locally
-        pk = bytes.fromhex(wallet_entry.public_key_hex)
         ok = verify_detached(
             canonical_msg,
             sig_env,
@@ -457,14 +549,17 @@ def send(
             typer.echo("Message: Local PQ signature verification failed; not broadcasting", err=True)
             raise typer.Exit(1)
 
-        # Patch CBOR envelope signature bytes/metadata
-        import cbor2  # type: ignore
+        # Patch envelope signature bytes/metadata (in-place)
+        _patch_sig_in_envelope(
+            env,
+            sig_bytes=sig_env.sig,
+            alg_id=sig_env.alg_id,
+            domain=sig_env.domain,
+            prehash=sig_env.prehash,
+        )
 
-        env = cbor2.loads(signed_tx.raw_tx)
-        _patch_sig_in_envelope(env, sig_bytes=sig_env.sig, alg_id=sig_env.alg_id, domain=sig_env.domain, prehash=sig_env.prehash)
-
-        # Re-encode. (Do NOT force canonical here; preserve decoded order as much as possible.)
-        raw_tx = cbor2.dumps(env)
+        # Re-encode CBOR
+        raw_tx = _encode_envelope(env)
 
         if verbose:
             typer.echo("", err=True)
@@ -475,19 +570,28 @@ def send(
             typer.echo(f"  message_len: {len(canonical_msg)} bytes", err=True)
             typer.echo(f"  message_prefix: {canonical_msg[:16].hex()}", err=True)
             typer.echo(f"  chain_id: {resolved_chain_id}", err=True)
-            # Compare against omni_sdk sign-bytes (useful to confirm drift)
+
+            # Compare against omni_sdk sign-bytes (if provided)
             try:
                 osb = getattr(signed_tx, "sign_bytes", None)
-                if isinstance(osb, (bytes, bytearray)):
-                    typer.echo("", err=True)
-                    typer.echo("SIGN-BYTES COMPARISON", err=True)
-                    typer.echo(f"  omni_sdk_len: {len(osb)}", err=True)
-                    typer.echo(f"  canonical_len: {len(canonical_msg)}", err=True)
-                    typer.echo(f"  omni_sdk_prefix: bytes(osb)[:16].hex() = {bytes(osb)[:16].hex()}", err=True)
-                    typer.echo(f"  canonical_prefix: {canonical_msg[:16].hex()}", err=True)
-                    typer.echo(f"  equal: {bytes(osb) == canonical_msg}", err=True)
+                if osb is not None:
+                    osb_b = _coerce_cbor_input(osb) if not isinstance(osb, dict) else None
+                    if isinstance(osb, (bytes, bytearray, memoryview)):
+                        osb_b = bytes(osb)
+                    elif isinstance(osb, str):
+                        osb_b = _hex_to_bytes(osb) if osb.strip().startswith(("0x", "0X")) else osb.encode("utf-8")
+
+                    if isinstance(osb_b, (bytes, bytearray)):
+                        typer.echo("", err=True)
+                        typer.echo("SIGN-BYTES COMPARISON", err=True)
+                        typer.echo(f"  omni_sdk_len: {len(osb_b)}", err=True)
+                        typer.echo(f"  canonical_len: {len(canonical_msg)}", err=True)
+                        typer.echo(f"  omni_sdk_prefix: {bytes(osb_b)[:16].hex()}", err=True)
+                        typer.echo(f"  canonical_prefix: {canonical_msg[:16].hex()}", err=True)
+                        typer.echo(f"  equal: {bytes(osb_b) == canonical_msg}", err=True)
             except Exception:
                 pass
+
             typer.echo("", err=True)
 
         # Dry-run or broadcast
@@ -499,23 +603,26 @@ def send(
 
             raw_tx_hex = raw_tx.hex()
             raw_tx_prefixed = f"0x{raw_tx_hex}"
+
             value_decimal = Decimal(str(value))
             value_str = format(value_decimal, "f")
 
             typer.echo("=== Dry-Run Mode ===")
             typer.echo(f"From: {sender_address}")
-            typer.echo(f"To: {dest_address}")
+            typer.echo(f"To:   {dest_address}")
             typer.echo(f"Value: {value_str} {COIN_SYMBOL} ({value_units} {UNIT_LABEL})")
             typer.echo(f"Gas Limit: {gas}")
-            typer.echo(f"Max Fee: {gas_price} gwei ({max_fee} {UNIT_LABEL})")
-            typer.echo(f"Nonce: {nonce}")
-            typer.echo(f"Chain ID: {resolved_chain_id}")
+            typer.echo(f"Max Fee:   {gas_price} gwei ({max_fee} {UNIT_LABEL})")
+            typer.echo(f"Nonce:     {nonce}")
+            typer.echo(f"Chain ID:  {resolved_chain_id}")
+
             if tx_hash_hex:
                 try:
-                    typer.echo(f"Tx Hash: {tx_hash_hex(raw_tx)}")
+                    typer.echo(f"Tx Hash:   {tx_hash_hex(raw_tx)}")
                 except Exception:
                     pass
-            typer.echo(f"Raw Size: {len(raw_tx)} bytes")
+
+            typer.echo(f"Raw Size:  {len(raw_tx)} bytes")
             typer.echo(f"RAW_TX={raw_tx_prefixed}")
             typer.echo("\n✓ Transaction built and signed (not broadcast)")
 
@@ -550,12 +657,14 @@ def send(
 
             rpc = RpcClient(url, timeout=30.0)
             tx_hash = submit_raw(rpc, raw_tx)
+
             typer.echo("=== Transaction Submitted ===")
             typer.echo(f"Tx Hash: {tx_hash}")
-            typer.echo(f"From: {sender_address}")
-            typer.echo(f"To: {dest_address}")
-            typer.echo(f"Value: {value} ANM")
+            typer.echo(f"From:    {sender_address}")
+            typer.echo(f"To:      {dest_address}")
+            typer.echo(f"Value:   {value} ANM")
             typer.echo("\n✓ Transaction broadcast successfully")
+
         except Exception as e:
             if e.__class__.__name__ == "RpcError":
                 try:
@@ -577,6 +686,7 @@ def send(
                     raise
                 except Exception:
                     pass
+
             typer.echo(f"Error broadcasting transaction: {e}", err=True)
             raise typer.Exit(1)
 
