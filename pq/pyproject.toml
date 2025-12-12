@@ -16,6 +16,7 @@ classifiers = [
 ]
 
 [tool.setuptools]
+package-dir = {"pq" = "."}
 packages = [
   "pq.py",
   "pq.py.algs",
@@ -23,8 +24,8 @@ packages = [
 ]
 
 [tool.setuptools.package-data]
-"pq.py" = [
+"pq" = [
   "py.typed",
-  "../alg_ids.yaml",
-  "../alg_policy/*.yaml",
+  "alg_ids.yaml",
+  "alg_policy/*.yaml",
 ]
