@@ -454,6 +454,28 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
     # body that was signed by the CLI/SDK, so we canonicalize that here.
     candidates = _collect_sign_bytes(obj)
     msg_label, msg = candidates[0]
+
+    log.debug(
+        "PQ sign-bytes source=%s len=%d hex_prefix=%s",
+        msg_label,
+        len(msg),
+        msg[:64].hex() if len(msg) >= 64 else msg.hex(),
+    )
+
+    tx_view = obj.get("tx", obj) if isinstance(obj, dict) else {}
+    try:
+        debug_fields = {
+            "from": tx_view.get("from"),
+            "to": tx_view.get("to"),
+            "value": tx_view.get("value"),
+            "nonce": tx_view.get("nonce"),
+            "gasLimit": tx_view.get("gasLimit"),
+            "maxFee": tx_view.get("maxFee"),
+            "chainId": tx_view.get("chainId"),
+        }
+        log.debug("PQ tx fields for verification: %s", debug_fields)
+    except Exception:  # pragma: no cover - best effort logging
+        pass
     
     # Map alg_id to alg_name for logging
     alg_name_for_log = f"alg_0x{alg_id:02x}" if isinstance(alg_id, int) else str(alg_id)

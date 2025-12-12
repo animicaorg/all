@@ -510,7 +510,7 @@ def send(
     raw_out: Optional[Path] = typer.Option(
         None,
         "--raw-out",
-        help="Write full raw transaction hex to the given file (dry-run only)",
+        help="Write signing debug bundle (JSON) to the given file (dry-run only)",
     ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Build and sign but do not broadcast"
@@ -721,6 +721,8 @@ def send(
         if dry_run:
             # Dry-run: show summary and raw tx
             from omni_sdk.tx.encode import tx_hash_hex
+            from animica.tx.signing import build_signable_tx_bytes
+
             tx_hash = tx_hash_hex(raw_tx)
 
             raw_tx_hex = raw_tx.hex()
@@ -729,8 +731,8 @@ def send(
             # Format value to avoid scientific notation and fix precision issues
             value_decimal = Decimal(str(value))
             # Format without scientific notation
-            value_str = format(value_decimal, 'f')
-            
+            value_str = format(value_decimal, "f")
+
             typer.echo("=== Dry-Run Mode ===")
             typer.echo(f"From:       {sender_address}")
             typer.echo(f"To:         {dest_address}")
@@ -747,7 +749,34 @@ def send(
 
             if raw_out:
                 try:
-                    raw_out.write_text(raw_tx_prefixed)
+                    tx_fields = {
+                        "from": sender_address,
+                        "to": dest_address,
+                        "value": value_units,
+                        "nonce": nonce,
+                        "gasLimit": gas,
+                        "maxFee": max_fee,
+                        "chainId": resolved_chain_id,
+                    }
+
+                    signable_bytes = build_signable_tx_bytes(tx_fields)
+                    artifact = {
+                        "tx": tx_fields,
+                        "raw_tx_hex": raw_tx_prefixed,
+                        "signing": {
+                            "algorithm": {
+                                "id": signer.alg_id,
+                                "name": signer.alg_name,
+                            },
+                            "domain": "tx",
+                            "prehash": "sha3-512",
+                            "public_key_hex": signer.public_key.hex(),
+                            "signature_hex": signed_tx.signature.hex(),
+                            "preimage_hex": signed_tx.sign_bytes.hex(),
+                            "canonical_sign_bytes_hex": signable_bytes.hex(),
+                        },
+                    }
+                    raw_out.write_text(json.dumps(artifact, indent=2))
                 except Exception as e:
                     typer.echo(f"Error writing raw transaction to {raw_out}: {e}", err=True)
                     raise typer.Exit(1)
