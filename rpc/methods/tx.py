@@ -36,6 +36,12 @@ try:
 except Exception:  # pragma: no cover
     _build_signable_tx_bytes = None  # type: ignore
 
+# SDK SignBytes helper (fallback for defensive verification)
+try:
+    from omni_sdk.tx.encode import sign_bytes as _sdk_sign_bytes  # type: ignore
+except Exception:  # pragma: no cover
+    _sdk_sign_bytes = None  # type: ignore
+
 # Tx dataclass (optional; we can operate on dicts too)
 try:
     from core.types.tx import Tx as _Tx  # type: ignore
@@ -197,42 +203,69 @@ def _compute_tx_hash(tx_like: t.Any) -> str:
         raise rpc_errors.InternalError(f"tx hash failed: {e}")
 
 
-def _sign_bytes(tx_like: t.Any) -> bytes:
-    """
-    Extract the canonical body dict and encode as CBOR using the shared helper.
+def _collect_sign_bytes(tx_like: t.Any) -> list[tuple[str, bytes]]:
+    """Return a list of candidate SignBytes encodings for defensive verify.
 
-    This returns the raw message that should be passed to pq.sign/verify,
-    which will then apply domain separation with domain="tx" and chain_id.
-
-    By delegating to animica.tx.signing.build_signable_tx_bytes we guarantee
-    that CLI-generated signatures and node-side verification operate on the
-    *exact* same bytes (field order, encoding, and normalization). If that
-    helper is unavailable, we fall back to local canonical CBOR encoding.
+    The order of candidates is intentional: we try the most canonical helpers
+    first (shared tx signing helpers), then fall back to SDK helpers, and
+    finally to a minimal CBOR encoding. Duplicates are removed while preserving
+    order so verification can short-circuit on the first success.
     """
+
+    candidates: list[tuple[str, bytes]] = []
+    errors: list[str] = []
+
+    def _add(label: str, fn: t.Callable[[], bytes]) -> None:
+        try:
+            data = fn()
+            if not isinstance(data, (bytes, bytearray)):
+                return
+            b = bytes(data)
+            if all(existing != b for _, existing in candidates):
+                candidates.append((label, b))
+        except Exception as exc:  # pragma: no cover - defensive path
+            errors.append(f"{label}: {exc}")
+
+    # Primary: shared Animica helper (aligns CLI/SDK/node)
     if _build_signable_tx_bytes is not None:
-        # Preserve mapping objects as-is so we respect the body that was
-        # originally signed by the client (already canonicalized via the SDK).
-        return _build_signable_tx_bytes(tx_like)
+        _add("animica.tx.signing", lambda: _build_signable_tx_bytes(tx_like))
 
-    if _cbor_dumps is None:
-        raise rpc_errors.InternalError("No canonical encoder for SignBytes")
+    # Core canonical helper (legacy compatibility)
+    if _tx_sign_bytes is not None:
+        _add("core.encoding.canonical", lambda: _tx_sign_bytes(tx_like))
 
-    # Extract body from signed envelope or use the object directly
-    if _dc.is_dataclass(tx_like):
-        obj = _dcd(tx_like)
-    else:
-        obj = dict(tx_like)
+    # SDK helper (used by CLI/SDK signing)
+    if _sdk_sign_bytes is not None:
+        _add("omni_sdk.tx.encode", lambda: _sdk_sign_bytes(tx_like))
 
-    # If obj has a 'body' field (signed envelope), use that
-    if "body" in obj:
-        body = obj["body"]
-    else:
-        # Otherwise, obj is the body itself - remove signature fields
-        body = dict(obj)
-        for k in ("sig", "signature", "sigs"):
-            body.pop(k, None)
+    # Minimal fallback using local CBOR encoder
+    if _cbor_dumps is not None:
+        def _fallback_body() -> bytes:
+            # Extract body from signed envelope or use the object directly
+            if _dc.is_dataclass(tx_like):
+                obj = _dcd(tx_like)
+            else:
+                obj = dict(tx_like)
 
-    return _cbor_dumps(body)
+            if "body" in obj:
+                body = obj["body"]
+            else:
+                body = dict(obj)
+                for k in ("sig", "signature", "sigs"):
+                    body.pop(k, None)
+            return _cbor_dumps(body)
+
+        _add("local.cbor_fallback", _fallback_body)
+
+    if not candidates:
+        raise rpc_errors.InternalError(
+            "No canonical encoder for SignBytes (all helpers unavailable)"
+        )
+
+    if errors:
+        log.debug("SignBytes helper errors (ignored): %s", "; ".join(errors))
+
+    return candidates
 
 
 def _chain_id_required() -> int:
@@ -419,7 +452,8 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
     # body, which would change the CBOR encoding and cause verification to
     # fail even with a valid signature. The decoded `obj` retains the exact
     # body that was signed by the CLI/SDK, so we canonicalize that here.
-    msg = _sign_bytes(obj)
+    candidates = _collect_sign_bytes(obj)
+    msg_label, msg = candidates[0]
     
     # Map alg_id to alg_name for logging
     alg_name_for_log = f"alg_0x{alg_id:02x}" if isinstance(alg_id, int) else str(alg_id)
@@ -428,12 +462,13 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
     
     # Debug logging (matches CLI format)
     log.debug(
-        "PQ signature verification: alg_id=%s, pubkey_len=%d, sig_len=%d, msg_len=%d, chain_id=%d",
+        "PQ signature verification: alg_id=%s, pubkey_len=%d, sig_len=%d, msg_len=%d, chain_id=%d (msg_source=%s)",
         alg_id,
         len(pub),
         len(sig),
         len(msg),
         chain_id,
+        msg_label,
     )
     log.debug(
         "PQ SIGNATURE VERIFY DEBUG: algorithm=%s (id=%s), pubkey_len=%d, sig_len=%d, message_len=%d, message_prefix=%s, chain_id=%d",
@@ -490,14 +525,40 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
         
         # Call verify_detached with the signature envelope and chain_id
         # verify_detached signature: (msg: bytes, sig: Signature, pk: bytes, chain_id: int, **kwargs) -> bool
-        ok = _pq_verify.verify_detached(msg, sig_env, pub, chain_id=chain_id)  # type: ignore[attr-defined]
-        
+        ok = False
+        verify_errors: list[str] = []
+
+        # Try verification across all candidate SignBytes, short-circuit on success
+        for label, candidate in candidates:
+            try:
+                attempt_ok = _pq_verify.verify_detached(  # type: ignore[attr-defined]
+                    candidate, sig_env, pub, chain_id=chain_id
+                )
+            except Exception as verify_exc:  # pragma: no cover - defensive
+                verify_errors.append(f"{label}: {verify_exc}")
+                continue
+
+            if attempt_ok:
+                ok = True
+                if label != msg_label:
+                    log.warning(
+                        "PQ signature verified using alternate SignBytes source (primary=%s, used=%s, primary_len=%d, alt_len=%d)",
+                        msg_label,
+                        label,
+                        len(msg),
+                        len(candidate),
+                    )
+                break
+
         log.debug(
             "PQ signature verification result: %s (domain=%s, alg=%s)",
             "PASS" if ok else "FAIL",
             sig_env.domain,
             alg_name,
         )
+
+        if verify_errors:
+            log.debug("PQ verify helper errors: %s", "; ".join(verify_errors))
     except Exception as e:
         # Fallback error for unexpected issues
         log.error("PQ signature verification setup failed: %s", e, exc_info=True)
