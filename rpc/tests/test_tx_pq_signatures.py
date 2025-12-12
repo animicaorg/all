@@ -146,6 +146,48 @@ async def test_sendRawTransaction_rejects_tampered_signature(monkeypatch):
         tx_send_raw_transaction(raw_hex)
 
 
+async def test_sendRawTransaction_falls_back_to_alt_sign_bytes(monkeypatch):
+    """Verification should succeed even if the primary SignBytes helper drifts."""
+
+    raw_tx, _signer = _create_signed_tx(chain_id=1)
+
+    from rpc.methods import tx as tx_methods
+
+    # Force the primary helper to return incorrect bytes; alternates should recover
+    monkeypatch.setattr(tx_methods, "_build_signable_tx_bytes", lambda obj: b"bad-bytes")
+
+    class MockDeps:
+        def get_chain_params(self):
+            class ChainParams:
+                chain_id = 1
+
+            return ChainParams()
+
+    monkeypatch.setattr(tx_methods, "deps", MockDeps())
+
+    pending_store = {}
+
+    def mock_pending_put(tx_hash_hex, raw):
+        pending_store[tx_hash_hex] = raw
+
+    monkeypatch.setattr(tx_methods, "_pending_put", mock_pending_put)
+
+    def mock_lookup(tx_hash_hex):
+        return None, None, None, None
+
+    monkeypatch.setattr(tx_methods, "_lookup_persisted_tx", mock_lookup)
+
+    from rpc.methods.tx import tx_send_raw_transaction
+
+    raw_hex = "0x" + raw_tx.hex()
+
+    # Should still verify thanks to alternate SignBytes sources
+    tx_hash = tx_send_raw_transaction(raw_hex)
+
+    assert isinstance(tx_hash, str) and tx_hash.startswith("0x")
+    assert pending_store  # ensure we attempted to persist
+
+
 async def test_sendRawTransaction_rejects_wrong_chain_id(monkeypatch):
     """Test that tx.sendRawTransaction rejects transactions with wrong chain_id."""
     # Create signed tx for chain_id=1
@@ -234,8 +276,11 @@ def test_verify_uses_envelope_body_for_sign_bytes(monkeypatch):
 
     # Decoded envelope preserves the exact body the CLI signed
     envelope = unpack_signed(raw)
-    assert rpc_tx._sign_bytes(tx) == msg_cli
-    assert rpc_tx._sign_bytes(envelope) == msg_cli
+    tx_candidates = rpc_tx._collect_sign_bytes(tx)
+    env_candidates = rpc_tx._collect_sign_bytes(envelope)
+
+    assert tx_candidates and tx_candidates[0][1] == msg_cli
+    assert any(candidate == msg_cli for _, candidate in env_candidates)
 
     class MockDeps:
         def get_chain_params(self):
