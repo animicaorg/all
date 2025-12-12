@@ -1,456 +1,430 @@
-"""
-animica.cli.tx — Transaction subcommands.
-
-Goal: make `animica tx send` work end-to-end without relying on pip-installed
-`omni-sdk` being present *first*, and without tripping over str/bytes mistakes.
-
-This implementation:
-- Resolves network/rpc_url/chain_id via animica.config.load_network_config
-- Builds deterministic sign-bytes using animica.tx.signing.build_signable_tx_bytes (CBOR canonical)
-- Signs with pq.py when available (with flexible call signatures), otherwise errors
-- Encodes a raw transaction envelope as canonical CBOR:
-    {"body": <tx_body>, "sig": {"algId":..., "domain":"tx","prehash":"sha3-512","sig":<bytes>}}
-- Broadcasts via JSON-RPC tx.sendRawTransaction with {"raw_tx": "0x..."} payload
-
-If your node expects a different raw envelope, the RPC will tell you exactly what
-it didn't like (and we can adjust the envelope to match).
-"""
 from __future__ import annotations
 
 import json
 import os
-import sys
 from dataclasses import dataclass
+from decimal import Decimal, ROUND_DOWN
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, Optional, Tuple
 
+import httpx
 import typer
 
-from animica.coin import COIN_SYMBOL, format_amount, to_base_units
 from animica.config import load_network_config
 
-# Deterministic CBOR sign-bytes (matches canonical body ordering)
-from animica.tx.signing import build_signable_tx_bytes
+app = typer.Typer(help="Build, sign, and broadcast Animica transactions.")
 
-app = typer.Typer(help="Transaction building/signing/broadcasting", no_args_is_help=True)
+# ----------------------------
+# Constants / helpers
+# ----------------------------
 
+BASE_UNITS_PER_ANM = 1_000_000_000  # 1 ANM = 1e9 base units (matches faucet output)
 
-# -----------------------------
-# Wallet store (minimal reader)
-# -----------------------------
-DEFAULT_WALLET_STORE = Path.home() / ".animica" / "wallets.json"
-
-
-@dataclass(frozen=True)
-class WalletEntry:
-  label: str
-  address: str
-  alg_id: int
-  alg_name: str
-  public_key: bytes
-  secret_key: bytes
+_RPC_ENV = "ANIMICA_RPC_URL"
+_WALLET_FILE_ENV = "ANIMICA_WALLETS_FILE"
 
 
-def _hex_to_bytes(v: str) -> bytes:
-  v = v.strip()
-  if v.startswith("0x"):
-    v = v[2:]
-  return bytes.fromhex(v)
+class RpcError(RuntimeError):
+    def __init__(self, code: int, message: str, data: Any = None):
+        super().__init__(f"RPC error {code}: {message}")
+        self.code = code
+        self.message = message
+        self.data = data
 
 
-def _load_wallet_entries(store_path: Path) -> list[WalletEntry]:
-  if not store_path.exists():
-    raise FileNotFoundError(f"Wallet store not found: {store_path}")
+def _pretty(obj: Any) -> str:
+    return json.dumps(obj, indent=2, sort_keys=True, default=str)
 
-  raw = json.loads(store_path.read_text())
-  if isinstance(raw, list):
-    items = raw
-  elif isinstance(raw, dict):
-    # support a few shapes
-    items = (
-      raw.get("wallets")
-      or raw.get("entries")
-      or raw.get("accounts")
-      or raw.get("items")
-      or []
+
+def to_base_units(amount_anm: float) -> int:
+    # Use Decimal to avoid float rounding surprises.
+    d = (Decimal(str(amount_anm)) * Decimal(BASE_UNITS_PER_ANM)).quantize(
+        Decimal("1"), rounding=ROUND_DOWN
     )
-    if not isinstance(items, list):
-      items = []
-  else:
-    items = []
+    return int(d)
 
-  out: list[WalletEntry] = []
-  for i, it in enumerate(items):
-    if not isinstance(it, dict):
-      continue
 
-    addr = (it.get("address") or it.get("addr") or "").strip()
-    if not addr:
-      continue
+def _resolve_rpc_url(rpc_url: Optional[str]) -> str:
+    if rpc_url and rpc_url.strip():
+        return rpc_url.strip()
+    env_url = os.environ.get(_RPC_ENV)
+    if env_url and env_url.strip():
+        return env_url.strip()
+    return load_network_config().rpc_url
 
-    label = (it.get("label") or it.get("name") or f"wallet-{i}").strip()
 
-    # algorithm id/name fields vary a lot across builds
-    alg_id = it.get("alg_id") or it.get("algorithm") or it.get("alg") or 0xFFFF
+def _request_rpc(method: str, params: list[Any], rpc_url: str) -> Any:
+    payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
     try:
-      alg_id = int(alg_id)
-    except Exception:
-      alg_id = 0xFFFF
-
-    alg_name = (
-      it.get("alg_name")
-      or it.get("algorithm_name")
-      or it.get("algorithmName")
-      or str(it.get("alg") or "")
-      or "unknown"
-    )
-
-    pk_hex = it.get("public_key_hex") or it.get("publicKeyHex") or it.get("public_key") or it.get("publicKey")
-    sk_hex = it.get("secret_key_hex") or it.get("secretKeyHex") or it.get("secret_key") or it.get("secretKey")
-    if not pk_hex or not sk_hex:
-      # some stores nest keys
-      keys = it.get("keys") or {}
-      if isinstance(keys, dict):
-        pk_hex = pk_hex or keys.get("public_key_hex") or keys.get("publicKeyHex")
-        sk_hex = sk_hex or keys.get("secret_key_hex") or keys.get("secretKeyHex")
-
-    if not pk_hex or not sk_hex:
-      # can't sign from this entry
-      continue
-
-    try:
-      pk = _hex_to_bytes(str(pk_hex))
-      sk = _hex_to_bytes(str(sk_hex))
-    except Exception:
-      continue
-
-    out.append(
-      WalletEntry(
-        label=label,
-        address=addr,
-        alg_id=alg_id,
-        alg_name=str(alg_name),
-        public_key=pk,
-        secret_key=sk,
-      )
-    )
-
-  return out
-
-
-def _select_sender(entries: list[WalletEntry], sender: str) -> WalletEntry:
-  s = sender.strip()
-
-  # Allow numeric index (0-based) like: --from 0
-  if s.isdigit():
-    idx = int(s)
-    if 0 <= idx < len(entries):
-      return entries[idx]
-
-  # Match by address
-  for e in entries:
-    if e.address == s:
-      return e
-
-  # Match by label
-  for e in entries:
-    if e.label == s:
-      return e
-
-  raise ValueError(f"Sender not found in wallet store: {sender}")
-
-
-# -----------------------------
-# JSON-RPC
-# -----------------------------
-def _rpc_request(rpc_url: str, method: str, params: Any) -> Any:
-  try:
-    import httpx
-  except Exception as exc:
-    raise RuntimeError("httpx is required for RPC calls. Install it with `pip install httpx`.") from exc
-
-  payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
-  try:
-    resp = httpx.post(rpc_url, json=payload, timeout=20.0)
-    resp.raise_for_status()
-    data = resp.json()
-  except Exception as exc:
-    raise RuntimeError(f"RPC request failed to {rpc_url}: {exc}") from exc
-
-  if "error" in data and data["error"]:
-    err = data["error"]
-    code = err.get("code", -32000)
-    msg = err.get("message", "Unknown error")
-    edata = err.get("data")
-    raise RuntimeError(f"RPC error {code}: {msg}" + (f" | data={edata}" if edata is not None else ""))
-
-  return data.get("result")
-
-
-def _hex_int(x: Any) -> int:
-  if x is None:
-    return 0
-  if isinstance(x, int):
-    return x
-  if isinstance(x, str):
-    s = x.strip()
-    if s.startswith("0x"):
-      return int(s, 16)
-    return int(s)
-  return int(x)
-
-
-# -----------------------------
-# PQ signing (flexible)
-# -----------------------------
-def _pq_sign_detached(
-  *,
-  message: bytes,
-  secret_key: bytes,
-  public_key: bytes,
-  alg_id: int,
-  alg_name: str,
-  chain_id: int,
-  domain: str = "tx",
-  prehash: str = "sha3-512",
-  verbose: bool = False,
-) -> bytes:
-  """
-  Try hard to sign using pq.py with unknown exact call signature.
-
-  Returns raw signature bytes.
-  """
-  try:
-    # Common exports in this repo
-    from pq.py.sign import Signature  # type: ignore
-    import pq.py.sign as sign_mod  # type: ignore
-    from pq.py.verify import verify_detached  # type: ignore
-  except Exception as exc:
-    raise RuntimeError("PQ signing unavailable (pq.py not installed/working).") from exc
-
-  fn = getattr(sign_mod, "sign_detached", None) or getattr(sign_mod, "sign", None)
-  if fn is None:
-    raise RuntimeError("pq.py.sign has no sign_detached/sign function")
-
-  # Try a few call styles (kw + positional)
-  attempts: list[tuple[tuple[Any, ...], dict[str, Any]]] = [
-    ((), dict(message=message, secret_key=secret_key, alg_id=alg_id, domain=domain, prehash=prehash, chain_id=chain_id)),
-    ((), dict(msg=message, sk=secret_key, alg_id=alg_id, domain=domain, prehash=prehash, chain_id=chain_id)),
-    ((message, secret_key, alg_id, domain, prehash, chain_id), {}),
-    ((secret_key, message, alg_id, domain, prehash, chain_id), {}),
-    ((message, secret_key, alg_id), dict(domain=domain, prehash=prehash, chain_id=chain_id)),
-    ((secret_key, message, alg_id), dict(domain=domain, prehash=prehash, chain_id=chain_id)),
-  ]
-
-  sig_bytes: Optional[bytes] = None
-  last_err: Optional[Exception] = None
-
-  for args, kwargs in attempts:
-    try:
-      out = fn(*args, **kwargs)
-      if isinstance(out, bytes):
-        sig_bytes = out
-      elif isinstance(out, str):
-        # accept hex output
-        sig_bytes = _hex_to_bytes(out)
-      elif hasattr(out, "sig"):
-        sig_bytes = getattr(out, "sig")
-      else:
-        # best-effort: bytes(out) if possible
-        sig_bytes = bytes(out)
-      break
+        resp = httpx.post(rpc_url, json=payload, timeout=10.0)
+        resp.raise_for_status()
+        data = resp.json()
     except Exception as e:
-      last_err = e
-      continue
+        raise RuntimeError(f"RPC transport error calling {method}: {e}") from e
 
-  if sig_bytes is None:
-    raise RuntimeError(f"Unable to sign with pq.py ({last_err})")
+    if isinstance(data, dict) and "error" in data and data["error"] is not None:
+        err = data["error"]
+        raise RpcError(
+            int(err.get("code", -32000)),
+            str(err.get("message", "Unknown error")),
+            err.get("data"),
+        )
 
-  # Preflight verify using the same Signature envelope tx verification uses
-  try:
-    sig_obj = Signature(
-      alg_id=alg_id,
-      alg_name=alg_name,
-      domain=domain,
-      prehash=prehash,
-      sig=sig_bytes,
-      chain_id=chain_id,
-    )
-    ok = verify_detached(sig_obj, message, public_key, chain_id=chain_id)
-    if not ok:
-      raise RuntimeError("Local PQ signature verification failed (sign/verify mismatch).")
-  except Exception as exc:
-    raise RuntimeError(f"Local PQ verify failed: {exc}") from exc
-
-  if verbose:
-    typer.echo("")
-    typer.echo("PQ SIGNATURE DEBUG")
-    typer.echo(f"  algorithm: {alg_name} (id={alg_id})")
-    typer.echo(f"  pubkey_len: {len(public_key)} bytes")
-    typer.echo(f"  sig_len: {len(sig_bytes)} bytes")
-    typer.echo(f"  message_len: {len(message)} bytes")
-    typer.echo(f"  message_prefix: {message[:16].hex()}")
-    typer.echo(f"  chain_id: {chain_id}")
-
-  return sig_bytes
+    return data.get("result")
 
 
-def _encode_raw_tx_envelope(body: dict[str, Any], sig_meta: dict[str, Any]) -> bytes:
-  try:
-    import cbor2
-  except Exception as exc:
-    raise RuntimeError("cbor2 is required (pip install cbor2).") from exc
+def _rpc_chain_id(rpc_url: str) -> Optional[int]:
+    # Node appears to support chain.getChainId (seen in debug output).
+    for m in ("chain.getChainId", "net_version", "eth_chainId"):
+        try:
+            r = _request_rpc(m, [], rpc_url)
+            if r is None:
+                continue
+            if isinstance(r, str):
+                return int(r, 16) if r.startswith("0x") else int(r)
+            return int(r)
+        except Exception:
+            continue
+    return None
 
-  envelope = {
-    "body": body,
-    "sig": sig_meta,
-  }
-  # Canonical CBOR so the node can reproduce bytes deterministically
-  return cbor2.dumps(envelope, canonical=True)
+
+def resolve_chain_id(
+    rpc_url: str, cli_chain_id: Optional[int], cfg_chain_id: Optional[int]
+) -> Tuple[int, str]:
+    if cli_chain_id is not None:
+        return int(cli_chain_id), "CLI flag / env"
+    detected = _rpc_chain_id(rpc_url)
+    if detected is not None:
+        return detected, "node auto-detect"
+    if cfg_chain_id is not None:
+        return int(cfg_chain_id), "network config"
+    return 1, "default"
 
 
-# -----------------------------
-# CLI: tx send
-# -----------------------------
-@app.command("send")
-def send(
-  sender: str = typer.Option(..., "--from", help="Sender address or wallet index/label"),
-  to: str = typer.Option(..., "--to", help="Recipient address"),
-  value: float = typer.Option(..., "--value", help=f"Amount in {COIN_SYMBOL} (human units)"),
-  wallet_store: Path = typer.Option(DEFAULT_WALLET_STORE, "--wallet-store", help="Path to wallets.json"),
-  nonce: Optional[int] = typer.Option(None, "--nonce", help="Override account nonce"),
-  gas_limit: Optional[int] = typer.Option(None, "--gas", help="Override gas limit"),
-  max_fee: Optional[int] = typer.Option(None, "--max-fee", help="Override max fee (base units)"),
-  data_hex: Optional[str] = typer.Option(None, "--data-hex", help="Hex calldata/data (0x.. or plain hex)"),
-  rpc_url: Optional[str] = typer.Option(None, "--rpc-url", help="Override RPC URL", envvar="ANIMICA_RPC_URL"),
-  chain_id: Optional[int] = typer.Option(None, "--chain-id", help="Override chain ID", envvar="ANIMICA_CHAIN_ID"),
-  network: Optional[str] = typer.Option(None, "--network", help="Override network", envvar="ANIMICA_NETWORK"),
-  verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose debug output"),
-  dry_run: bool = typer.Option(False, "--dry-run", help="Build/sign but do not broadcast"),
-) -> None:
-  cfg = load_network_config(network)
-  effective_rpc = (rpc_url.strip() if rpc_url and rpc_url.strip() else cfg.rpc_url)
-  effective_chain_id = int(chain_id) if chain_id is not None else int(cfg.chain_id)
+def _warn_if_unsafe_pq_mode() -> None:
+    if os.environ.get("ANIMICA_UNSAFE_PQ_FAKE") == "1":
+        typer.echo(
+            "⚠️  ANIMICA_UNSAFE_PQ_FAKE=1 is set. This is for dev/testing only.",
+            err=True,
+        )
 
-  if verbose:
-    typer.echo("")
-    typer.echo("CHAIN CONTEXT DEBUG")
-    typer.echo(f"  network: {cfg.name}")
-    typer.echo(f"  rpc_url: {effective_rpc}")
-    typer.echo(f"  chain_id: {effective_chain_id}")
-    typer.echo(f"  chain_id_source: {'cli/env override' if chain_id is not None else 'network config'}")
-    typer.echo("")
 
-  # Wallet lookup
-  try:
-    entries = _load_wallet_entries(wallet_store)
-    entry = _select_sender(entries, sender)
-  except Exception as exc:
-    typer.secho(f"Error loading sender wallet: {exc}", fg=typer.colors.RED, err=True)
-    raise typer.Exit(1)
+def _get_default_wallet_path() -> Path:
+    return Path.home() / ".animica" / "wallets.json"
 
-  # Resolve nonce/gas/fee suggestions
-  try:
-    if nonce is None:
-      nonce_res = _rpc_request(effective_rpc, "state.getTransactionCount", [entry.address])
-      nonce = _hex_int(nonce_res)
-    if gas_limit is None:
-      # Conservative default if node doesn't support estimation
-      gas_limit = 21_000
-    if max_fee is None:
-      gp = _rpc_request(effective_rpc, "state.suggestGasPrice", [])
-      max_fee = _hex_int(gp) if gp is not None else 0
-  except Exception as exc:
-    typer.secho(f"Error fetching account/fee data: {exc}", fg=typer.colors.RED, err=True)
-    raise typer.Exit(1)
 
-  # Encode data
-  data_bytes = b""
-  if data_hex:
+def _wallet_file_path(wallet_file: Optional[Path]) -> Path:
+    if wallet_file is not None:
+        return Path(wallet_file)
+    env_path = os.environ.get(_WALLET_FILE_ENV)
+    if env_path:
+        return Path(env_path)
+    return _get_default_wallet_path()
+
+
+@dataclass
+class WalletEntry:
+    label: str
+    address: str
+    alg_id: int
+    alg_name: str
+    public_key_hex: str
+    secret_key_hex: str
+
+
+def _load_wallet_store(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        raise RuntimeError(
+            f"Wallet store not found at {path}. Create one with: animica wallet create --label <name>"
+        )
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _find_wallet_entry(store: Dict[str, Any], identifier: str) -> WalletEntry:
+    for e in store.get("wallets", []):
+        if e.get("address") == identifier or e.get("label") == identifier:
+            return WalletEntry(
+                label=str(e.get("label") or ""),
+                address=str(e["address"]),
+                alg_id=int(e.get("alg_id", 0xFFFF)),
+                alg_name=str(e.get("alg_name") or ""),
+                public_key_hex=str(e["public_key_hex"]),
+                secret_key_hex=str(e["secret_key_hex"]),
+            )
+    raise RuntimeError(f"Wallet not found for: {identifier!r} (by address or label)")
+
+
+def _resolve_sender(from_arg: str, wallet_file: Optional[Path]) -> Tuple[str, WalletEntry]:
+    store_path = _wallet_file_path(wallet_file)
+    store = _load_wallet_store(store_path)
+    entry = _find_wallet_entry(store, from_arg)
+    return entry.address, entry
+
+
+def _resolve_destination(to_arg: str) -> str:
+    addr = (to_arg or "").strip()
+    if not addr.startswith("anim1"):
+        raise RuntimeError(f"Invalid destination address: {addr!r}")
+    # If pq.py validation exists, use it (but don’t hard-require it).
     try:
-      data_bytes = _hex_to_bytes(data_hex)
-    except Exception as exc:
-      typer.secho(f"Invalid --data-hex: {exc}", fg=typer.colors.RED, err=True)
-      raise typer.Exit(1)
+        from pq.py.address import validate_address  # type: ignore
 
-  # Build tx body (matches animica.tx.signing canonical fields)
-  body: dict[str, Any] = {
-    "chainId": effective_chain_id,
-    "from": entry.address,
-    "to": to.strip(),
-    "nonce": int(nonce),
-    "value": int(to_base_units(value)),
-    "gasLimit": int(gas_limit),
-    "maxFee": int(max_fee),
-    "data": data_bytes,  # MUST be bytes for CBOR
-  }
-
-  # Build signable bytes deterministically
-  try:
-    sign_bytes = build_signable_tx_bytes(body)
-  except Exception as exc:
-    typer.secho(f"Error building sign-bytes: {exc}", fg=typer.colors.RED, err=True)
-    raise typer.Exit(1)
-
-  # Sign
-  try:
-    sig_bytes = _pq_sign_detached(
-      message=sign_bytes,
-      secret_key=entry.secret_key,
-      public_key=entry.public_key,
-      alg_id=entry.alg_id,
-      alg_name=entry.alg_name,
-      chain_id=effective_chain_id,
-      verbose=verbose,
-    )
-  except Exception as exc:
-    typer.secho(f"Error signing transaction: {exc}", fg=typer.colors.RED, err=True)
-    raise typer.Exit(1)
-
-  sig_meta = {
-    "algId": int(entry.alg_id),
-    "domain": "tx",
-    "prehash": "sha3-512",
-    "sig": sig_bytes,
-  }
-
-  # Encode raw tx
-  try:
-    raw_tx = _encode_raw_tx_envelope(body, sig_meta)
-  except Exception as exc:
-    typer.secho(f"Error encoding raw tx: {exc}", fg=typer.colors.RED, err=True)
-    raise typer.Exit(1)
-
-  if dry_run:
-    typer.secho("✓ Built and signed tx (dry-run; not broadcast)", fg=typer.colors.GREEN, bold=True)
-    typer.echo(f"  from: {entry.address}")
-    typer.echo(f"  to:   {body['to']}")
-    typer.echo(f"  value: {format_amount(body['value'])}")
-    typer.echo(f"  nonce: {body['nonce']}")
-    typer.echo(f"  gasLimit: {body['gasLimit']}")
-    typer.echo(f"  maxFee: {body['maxFee']}")
-    typer.echo(f"  sign_bytes_len: {len(sign_bytes)}")
-    typer.echo(f"  raw_tx_len: {len(raw_tx)}")
-    typer.echo(f"  raw_tx_prefix: {raw_tx[:16].hex()}")
-    raise typer.Exit(0)
-
-  # Broadcast
-  try:
-    tx_hash = _rpc_request(
-      effective_rpc,
-      "tx.sendRawTransaction",
-      {"raw_tx": "0x" + raw_tx.hex()},
-    )
-    typer.secho("✓ Transaction sent!", fg=typer.colors.GREEN, bold=True)
-    typer.echo(f"  tx_hash: {tx_hash}")
-    typer.echo(f"  from:    {entry.address}")
-    typer.echo(f"  to:      {body['to']}")
-    typer.echo(f"  value:   {format_amount(body['value'])}")
-  except Exception as exc:
-    typer.secho("=== Transaction Failed ===", fg=typer.colors.RED, bold=True)
-    typer.secho(f"{exc}", fg=typer.colors.RED, err=True)
-    raise typer.Exit(1)
+        validate_address(addr, expect_hrp="anim")
+    except ImportError:
+        pass
+    return addr
 
 
-if __name__ == "__main__":
-  app()
+def debug_chain_context(network_name: str, rpc_url: str, chain_id: int, chain_id_source: str) -> None:
+    typer.echo("", err=True)
+    typer.echo("CHAIN CONTEXT DEBUG", err=True)
+    typer.echo(f"  network: {network_name}", err=True)
+    typer.echo(f"  rpc_url: {rpc_url}", err=True)
+    typer.echo(f"  chain_id: {chain_id}", err=True)
+    typer.echo(f"  chain_id_source: {chain_id_source}", err=True)
+    typer.echo("", err=True)
+
+
+def _get_nonce(rpc_url: str, address: str) -> int:
+    # Your node does NOT have state.getTransactionCount; try sensible fallbacks.
+    candidates = [
+        ("state.getNonce", [address]),
+        ("state.getAccountNonce", [address]),
+        ("state.getTransactionCount", [address]),  # legacy
+        ("eth_getTransactionCount", [address, "latest"]),
+        ("state.getAccount", [address]),
+        ("state.getAccountInfo", [address]),
+    ]
+    last_err: Optional[Exception] = None
+
+    for method, params in candidates:
+        try:
+            r = _request_rpc(method, params, rpc_url)
+            if r is None:
+                continue
+            if isinstance(r, dict):
+                for k in ("nonce", "transactionCount", "txCount"):
+                    if k in r and r[k] is not None:
+                        return int(r[k], 16) if isinstance(r[k], str) and str(r[k]).startswith("0x") else int(r[k])
+                continue
+            if isinstance(r, str):
+                return int(r, 16) if r.startswith("0x") else int(r)
+            return int(r)
+        except Exception as e:
+            last_err = e
+            continue
+
+    if last_err:
+        raise RuntimeError(f"Unable to fetch nonce for {address}: {last_err}")
+    return 0
+
+
+def _get_gas_price(rpc_url: str) -> int:
+    # Base-unit gas price (your CLI treats 1 gwei == 1 base unit).
+    candidates = [
+        ("state.suggestGasPrice", []),
+        ("tx.gasPrice", []),
+        ("tx.suggestGasPrice", []),
+        ("eth_gasPrice", []),
+    ]
+    for method, params in candidates:
+        try:
+            r = _request_rpc(method, params, rpc_url)
+            if r is None:
+                continue
+            if isinstance(r, str):
+                return int(r, 16) if r.startswith("0x") else int(r)
+            return int(r)
+        except Exception:
+            continue
+    return 1
+
+
+def _canonical_cbor_dumps(obj: Any) -> bytes:
+    try:
+        import cbor2  # type: ignore
+    except Exception as e:
+        raise RuntimeError(
+            "Missing dependency 'cbor2'. Install it (pip install cbor2) or run ./setup.sh after updating it."
+        ) from e
+
+    return cbor2.dumps(obj, canonical=True)
+
+
+def _pq_sign(alg_name: str, secret_key: bytes, message: bytes) -> bytes:
+    # Prefer pq.py if present (keeps behavior consistent with the rest of the repo).
+    try:
+        from pq.py.signing import sign_detached  # type: ignore
+
+        return sign_detached(secret_key, message, alg_name=alg_name)
+    except Exception:
+        pass
+
+    # Fallback: oqs/liboqs-python
+    try:
+        import oqs  # type: ignore
+    except Exception as e:
+        raise RuntimeError(
+            "PQ signing requires 'oqs' (liboqs-python). Re-run setup with --with-pq or install oqs."
+        ) from e
+
+    oqs_name = alg_name
+    # Common normalization: "dilithium3" -> "Dilithium3"
+    if oqs_name.lower().startswith("dilithium"):
+        oqs_name = oqs_name[:1].upper() + oqs_name[1:]
+    with oqs.Signature(oqs_name) as s:
+        return s.sign(message, secret_key)
+
+
+def _debug_pq_signature(alg_name: str, alg_id: int, pub: bytes, sig: bytes, msg: bytes, chain_id: int) -> None:
+    typer.echo("", err=True)
+    typer.echo("PQ SIGNATURE DEBUG", err=True)
+    typer.echo(f"  algorithm: {alg_name} (id={alg_id})", err=True)
+    typer.echo(f"  pubkey_len: {len(pub)} bytes", err=True)
+    typer.echo(f"  sig_len: {len(sig)} bytes", err=True)
+    typer.echo(f"  message_len: {len(msg)} bytes", err=True)
+    typer.echo(f"  message_prefix: {msg[:16].hex()}", err=True)
+    typer.echo(f"  chain_id: {chain_id}", err=True)
+    typer.echo("", err=True)
+
+
+# ----------------------------
+# Commands
+# ----------------------------
+
+@app.command()
+def send(
+    from_addr: str = typer.Option(..., "--from", help="Sender address or wallet label"),
+    to_addr: str = typer.Option(..., "--to", help="Recipient address"),
+    value: float = typer.Option(..., "--value", help="Amount to transfer (in ANM)"),
+    gas: Optional[int] = typer.Option(None, "--gas", help="Gas limit (default 21000)"),
+    gas_price: Optional[float] = typer.Option(
+        None, "--gas-price", help="Gas price in gwei (1 gwei = 1 base unit; auto if omitted)"
+    ),
+    nonce: Optional[int] = typer.Option(None, "--nonce", help="Transaction nonce (auto-fetched if omitted)"),
+    chain_id: Optional[int] = typer.Option(
+        None, "--chain-id", help="Chain ID (auto / config if omitted)", envvar="ANIMICA_CHAIN_ID"
+    ),
+    raw_out: Optional[Path] = typer.Option(
+        None, "--raw-out", help="Write a signing debug bundle (JSON) to this file (use with --dry-run)"
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Build/sign but do not broadcast"),
+    wallet_file: Optional[Path] = typer.Option(None, "--wallet-file", help="Override wallet store location"),
+    rpc_url: Optional[str] = typer.Option(None, "--rpc-url", help="Override RPC URL", envvar="ANIMICA_RPC_URL"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose debugging"),
+) -> None:
+    """
+    Build, sign, and broadcast a native value transfer transaction (no omni_sdk required).
+
+    Wire format sent to tx.sendRawTransaction is canonical CBOR of:
+      { "alg": <int>, "pub": <bytes>, "sig": <bytes>, "tx": <bytes> }
+
+    Where "tx" is canonical CBOR of the transaction body.
+    """
+    if raw_out and not dry_run:
+        raise typer.Exit("--raw-out only works with --dry-run")
+
+    # PQ preflight (keep existing UX)
+    try:
+        from animica.cli.pq_utils import check_pq_signing_available, get_pq_missing_error_message  # type: ignore
+
+        ok, err = check_pq_signing_available()
+        if not ok:
+            typer.echo(get_pq_missing_error_message(), err=True)
+            if err:
+                typer.echo(f"\nAdditional info: {err}", err=True)
+            raise typer.Exit(1)
+    except Exception:
+        # If pq_utils ever goes missing, don’t brick tx send; rely on runtime errors below.
+        pass
+
+    _warn_if_unsafe_pq_mode()
+
+    # Resolve addresses / wallet
+    sender_address, wallet = _resolve_sender(from_addr, wallet_file)
+    dest_address = _resolve_destination(to_addr)
+
+    # Resolve chain context
+    url = _resolve_rpc_url(rpc_url)
+    cfg = load_network_config()
+    resolved_chain_id, chain_id_source = resolve_chain_id(url, chain_id, getattr(cfg, "chain_id", None))
+
+    if verbose:
+        debug_chain_context(cfg.name, url, resolved_chain_id, chain_id_source)
+
+    # Nonce / fees
+    if nonce is None:
+        nonce = _get_nonce(url, sender_address)
+    if gas is None:
+        gas = 21000
+    if gas_price is None:
+        gas_price = float(_get_gas_price(url))
+
+    value_units = to_base_units(value)
+    max_fee = int(Decimal(str(gas_price)))  # 1 gwei == 1 base unit in this CLI
+
+    # Build tx body (keep keys consistent with existing debug output style)
+    tx_body: Dict[str, Any] = {
+        "to": dest_address,
+        "from": sender_address,
+        "value": value_units,
+        "data": "0x",
+        "gas": int(gas),
+        "gasPrice": int(max_fee),
+        "nonce": int(nonce),
+        "chainId": int(resolved_chain_id),
+    }
+
+    tx_body_bytes = _canonical_cbor_dumps(tx_body)
+
+    # Sign
+    pub = bytes.fromhex(wallet.public_key_hex)
+    sk = bytes.fromhex(wallet.secret_key_hex)
+
+    alg_name = wallet.alg_name or "dilithium3"
+    sig = _pq_sign(alg_name, sk, tx_body_bytes)
+
+    if verbose:
+        _debug_pq_signature(alg_name, wallet.alg_id, pub, sig, tx_body_bytes, resolved_chain_id)
+
+    # Build signed envelope (CBOR bytes inside CBOR)
+    envelope = {"alg": int(wallet.alg_id), "pub": pub, "sig": sig, "tx": tx_body_bytes}
+    raw_bytes = _canonical_cbor_dumps(envelope)
+    raw_hex = "0x" + raw_bytes.hex()
+
+    if dry_run:
+        bundle = {
+            "rpc_url": url,
+            "chain_id": resolved_chain_id,
+            "tx_body": tx_body,
+            "tx_body_cbor_hex": "0x" + tx_body_bytes.hex(),
+            "envelope_cbor_hex": raw_hex,
+            "pubkey_hex": "0x" + pub.hex(),
+            "sig_hex": "0x" + sig.hex(),
+            "alg_id": int(wallet.alg_id),
+            "alg_name": alg_name,
+        }
+        if raw_out:
+            raw_out.write_text(json.dumps(bundle, indent=2), encoding="utf-8")
+            typer.echo(f"✓ Wrote dry-run bundle to {raw_out}")
+        else:
+            typer.echo(_pretty(bundle))
+        return
+
+    # Broadcast
+    try:
+        result = _request_rpc("tx.sendRawTransaction", [raw_hex], url)
+        typer.echo("✓ Transaction submitted!")
+        typer.echo(f"Result: {result}")
+    except RpcError as e:
+        # Surface useful method-not-found details etc.
+        typer.echo("=== Transaction Failed ===", err=True)
+        typer.echo("Method:  tx.sendRawTransaction", err=True)
+        typer.echo(f"Code:    {e.code}", err=True)
+        typer.echo(f"Message: {e.message}", err=True)
+        if e.data is not None:
+            typer.echo(f"Data:    {e.data}", err=True)
+        raise typer.Exit(1)
+    except Exception as e:
+        typer.echo(f"Error broadcasting tx: {e}", err=True)
+        raise typer.Exit(1)
