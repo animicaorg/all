@@ -303,7 +303,12 @@ def test_send_dry_run_outputs_full_raw_tx(
     int(raw_tx_value[2:], 16)  # Should be valid hex
 
     assert raw_out_file.exists()
-    assert raw_out_file.read_text() == raw_tx_value
+    artifact = json.loads(raw_out_file.read_text())
+    assert artifact["raw_tx_hex"] == raw_tx_value
+    signing = artifact["signing"]
+    assert signing["algorithm"]["name"] == "Dilithium3"
+    assert len(signing["public_key_hex"]) > 0
+    assert set(artifact["tx"].keys()) >= {"from", "to", "value", "nonce", "gasLimit", "maxFee", "chainId"}
 
 
 @respx.mock
