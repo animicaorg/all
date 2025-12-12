@@ -1,208 +1,252 @@
 #!/usr/bin/env bash
 set -euo pipefail
-set -o errtrace
-IFS=$'\n\t'
-
-trap 'echo "[setup] $(date -u +"%Y-%m-%dT%H:%M:%SZ") ERROR line ${LINENO}: ${BASH_COMMAND:-unknown}" >&2' ERR
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_DIR="$ROOT_DIR/.venv"
+VENV_DIR="${VENV_DIR:-$ROOT_DIR/.venv}"
+DEPS_DIR="${DEPS_DIR:-$ROOT_DIR/.deps}"
+LOG_DIR="${LOG_DIR:-$ROOT_DIR/logs}"
+LIBOQS_VERSION="${LIBOQS_VERSION:-0.15.0}"
+EXTRAS="${EXTRAS:-dev,stratum}"
 
-WITH_PQ=false
-SKIP_NODE=false
-SKIP_PNPM=false
-SKIP_PYTHON=false
-CLEAN=false
+mkdir -p "$DEPS_DIR" "$LOG_DIR"
+LOG_FILE="$LOG_DIR/setup_$(date -u +%Y%m%d_%H%M%S).log"
+exec > >(tee -a "$LOG_FILE") 2>&1
 
-log()  { echo "[setup] $(date -u +"%Y-%m-%dT%H:%M:%SZ") $*"; }
-warn() { echo "[setup] $(date -u +"%Y-%m-%dT%H:%M:%SZ") WARN: $*" >&2; }
+ts() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
+log() { echo "[setup] $(ts) $*"; }
+die() { log "ERROR: $*"; exit 1; }
 
-usage() {
-  cat <<'USAGE'
-Usage: ./setup.sh [options]
+need_cmd() { command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"; }
 
-Options:
-  --clean         Remove .venv before installing
-  --with-pq       Install PQ deps (oqs/liboqs-python) needed for Dilithium signing
-  --skip-python   Skip python venv + pip installs
-  --skip-node     Skip Node.js install/check
-  --skip-pnpm     Skip pnpm install/check
-  -h, --help      Show help
-USAGE
-}
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --clean) CLEAN=true ;;
-    --with-pq) WITH_PQ=true ;;
-    --skip-python) SKIP_PYTHON=true ;;
-    --skip-node) SKIP_NODE=true ;;
-    --skip-pnpm) SKIP_PNPM=true ;;
-    -h|--help) usage; exit 0 ;;
-    *) echo "Unknown argument: $1" >&2; usage; exit 1 ;;
-  esac
-  shift
-done
-
-require_root() {
-  if [[ $EUID -ne 0 ]]; then
-    echo "[setup] This script must be run as root (try: sudo ./setup.sh)." >&2
-    exit 1
-  fi
-}
-
-require_ubuntu() {
-  if [[ ! -f /etc/os-release ]]; then
-    echo "[setup] Missing /etc/os-release; cannot detect OS." >&2
-    exit 1
-  fi
-  # shellcheck disable=SC1091
-  . /etc/os-release
-  if [[ "${ID:-}" != "ubuntu" ]]; then
-    echo "[setup] Detected OS: ${PRETTY_NAME:-unknown}. This script expects Ubuntu." >&2
-    exit 1
-  fi
-  log "Detected ${PRETTY_NAME:-Ubuntu}"
-}
-
-apt_update() {
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get update -y
-}
-
+APT_UPDATED=0
 apt_install() {
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get install -y --no-install-recommends "$@"
+  if [[ "$APT_UPDATED" == "0" ]]; then
+    log "apt-get update"
+    apt-get update -y
+    APT_UPDATED=1
+  fi
+  log "apt-get install: $*"
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@"
 }
 
-clean_state() {
-  if [[ "$CLEAN" == "true" ]]; then
-    log "Cleaning previous state"
-    rm -rf "$VENV_DIR"
-  fi
+ensure_build_deps() {
+  apt_install ca-certificates curl git build-essential pkg-config \
+    cmake ninja-build \
+    libssl-dev \
+    python3 python3-venv python3-dev python3-pip \
+    jq
 }
 
-ensure_base_packages() {
-  log "Installing base packages"
-  apt_update
-  apt_install ca-certificates curl git build-essential pkg-config lsof jq
-}
-
-ensure_python() {
-  log "Installing Python packages"
-  apt_install python3 python3-venv python3-pip python3-dev
-}
-
-ensure_node() {
-  if [[ "$SKIP_NODE" == "true" ]]; then
-    log "Skipping Node.js"
-    return
+ensure_venv() {
+  local pybin="${PYTHON_BIN:-python3}"
+  need_cmd "$pybin"
+  if [[ ! -d "$VENV_DIR" ]]; then
+    log "Create venv: $VENV_DIR"
+    "$pybin" -m venv "$VENV_DIR"
   fi
-  if command -v node >/dev/null 2>&1; then
-    log "Node already installed: $(node -v)"
-    return
-  fi
-  log "Installing Node.js (Ubuntu repo version)"
-  apt_install nodejs npm
-  log "Node installed: $(node -v)"
-}
-
-ensure_pnpm() {
-  if [[ "$SKIP_PNPM" == "true" ]]; then
-    log "Skipping pnpm"
-    return
-  fi
-  if command -v pnpm >/dev/null 2>&1; then
-    log "pnpm already installed: $(pnpm -v)"
-    return
-  fi
-  if command -v corepack >/dev/null 2>&1; then
-    log "Enabling pnpm via corepack"
-    corepack enable || true
-    corepack prepare pnpm@latest --activate || true
-  fi
-  if ! command -v pnpm >/dev/null 2>&1; then
-    log "Installing pnpm via npm"
-    npm install -g pnpm
-  fi
-  log "pnpm installed: $(pnpm -v)"
-}
-
-create_venv() {
-  log "Creating venv at $VENV_DIR"
-  python3 -m venv "$VENV_DIR"
-  # shellcheck disable=SC1091
+  # shellcheck disable=SC1090
   source "$VENV_DIR/bin/activate"
+  log "Activate venv: source $VENV_DIR/bin/activate"
   python -m pip install -U pip setuptools wheel
 }
 
-install_python_deps() {
-  if [[ "$SKIP_PYTHON" == "true" ]]; then
-    log "Skipping Python environment"
-    return
-  fi
-
-  create_venv
-
-  if [[ "$WITH_PQ" == "true" ]]; then
-    log "Installing PQ deps (oqs/liboqs-python)"
-    # The module is imported as "oqs"
-    python -m pip install -U oqs || python -m pip install -U liboqs-python || true
-  fi
-
-  # If the repo contains a local omni-sdk, install it (prevents 'omni-sdk not found' if any legacy deps still reference it).
-  if [[ -d "$ROOT_DIR/omni-sdk" ]]; then
-    log "Installing local omni-sdk from $ROOT_DIR/omni-sdk"
-    python -m pip install -e "$ROOT_DIR/omni-sdk" || true
-  fi
-  if [[ -d "$ROOT_DIR/sdk/omni-sdk" ]]; then
-    log "Installing local omni-sdk from $ROOT_DIR/sdk/omni-sdk"
-    python -m pip install -e "$ROOT_DIR/sdk/omni-sdk" || true
-  fi
-
-  log "Installing Animica python package (editable)"
-  set +e
-  python -m pip install -e "$ROOT_DIR/python[dev,stratum]"
-  status=$?
-  set -e
-
-  if [[ $status -ne 0 ]]; then
-    warn "Editable install failed. Retrying without dependency resolution (workaround for missing omni-sdk on PyPI)."
-    python -m pip install -e "$ROOT_DIR/python[dev,stratum]" --no-deps
-    python -m pip install -U \
-      typer httpx respx cryptography fastapi uvicorn pytest \
-      cbor2 requests
+install_repo_packages() {
+  # Install local PQ wrapper if present (fixes: No module named 'pq')
+  if [[ -f "$ROOT_DIR/pq/pyproject.toml" || -f "$ROOT_DIR/pq/setup.py" ]]; then
+    log "Install local pq package (editable)"
+    python -m pip install -e "$ROOT_DIR/pq" --no-deps
+  elif [[ -f "$ROOT_DIR/python/pq/pyproject.toml" || -f "$ROOT_DIR/python/pq/setup.py" ]]; then
+    log "Install local pq package (editable) from python/pq"
+    python -m pip install -e "$ROOT_DIR/python/pq" --no-deps
   else
-    log "Ensuring required runtime deps are present (cbor2, requests)"
-    python -m pip install -U cbor2 requests
+    log "No local pq package found (this may be OK if pq is elsewhere)"
   fi
 
-  log "Python setup complete"
+  # Install animica (editable) without deps (we install deps ourselves to avoid omni-sdk failures)
+  if [[ -f "$ROOT_DIR/python/pyproject.toml" || -f "$ROOT_DIR/python/setup.py" ]]; then
+    log "Install animica (editable, no-deps) from ./python"
+    python -m pip install -e "$ROOT_DIR/python" --no-deps
+  else
+    die "Expected ./python package not found (missing python/pyproject.toml or python/setup.py)"
+  fi
 }
 
-install_pnpm_workspace() {
-  if [[ "$SKIP_PNPM" == "true" ]]; then
-    return
+install_python_deps_from_pyproject() {
+  local pyproject="$ROOT_DIR/python/pyproject.toml"
+  [[ -f "$pyproject" ]] || die "Missing $pyproject"
+
+  log "Resolve Python deps from python/pyproject.toml (excluding omni-sdk) extras=$EXTRAS"
+  mapfile -t REQS < <(
+    python - <<'PY'
+import os, re, sys
+import tomllib
+
+root = os.environ.get("ROOT_DIR", ".")
+pyproject = os.path.join(root, "python", "pyproject.toml")
+extras = [x.strip() for x in os.environ.get("EXTRAS", "dev,stratum").split(",") if x.strip()]
+with open(pyproject, "rb") as f:
+    data = tomllib.load(f)
+
+proj = data.get("project", {})
+deps = list(proj.get("dependencies", []) or [])
+opt = proj.get("optional-dependencies", {}) or {}
+
+for ex in extras:
+    deps.extend(opt.get(ex, []) or [])
+
+# Drop omni-sdk (non-PyPI) and any empty entries
+out = []
+for d in deps:
+    if not isinstance(d, str):
+        continue
+    s = d.strip()
+    if not s:
+        continue
+    name = re.split(r"[<=>!~ \[]", s, 1)[0].strip().lower()
+    if name in {"omni-sdk", "omni_sdk"}:
+        continue
+    out.append(s)
+
+# Add must-haves explicitly (covers the errors you hit)
+must = [
+    "cbor2>=5.6.0",
+    "requests>=2.31.0",
+]
+for m in must:
+    nm = re.split(r"[<=>!~ \[]", m, 1)[0].strip().lower()
+    if all(re.split(r"[<=>!~ \[]", x, 1)[0].strip().lower() != nm for x in out):
+        out.append(m)
+
+for x in out:
+    print(x)
+PY
+  )
+
+  if [[ "${#REQS[@]}" -gt 0 ]]; then
+    log "pip install ${#REQS[@]} requirements"
+    python -m pip install -U "${REQS[@]}"
+  else
+    log "No requirements found in pyproject (unexpected); installing minimum deps"
+    python -m pip install -U cbor2 requests typer rich pydantic httpx PyYAML python-dotenv
   fi
-  if [[ -f "$ROOT_DIR/pnpm-workspace.yaml" ]]; then
-    log "Installing pnpm workspace deps"
-    (cd "$ROOT_DIR" && pnpm install)
+}
+
+build_and_install_liboqs() {
+  log "Install/upgrade liboqs (shared) v$LIBOQS_VERSION"
+  local dir="$DEPS_DIR/liboqs"
+  if [[ ! -d "$dir/.git" ]]; then
+    git clone --depth=1 --branch "$LIBOQS_VERSION" https://github.com/open-quantum-safe/liboqs "$dir"
+  else
+    (cd "$dir" && git fetch --tags --prune && git checkout -f "$LIBOQS_VERSION")
   fi
+
+  # Build shared library as recommended by OQS docs
+  cmake -S "$dir" -B "$dir/build" \
+    -DBUILD_SHARED_LIBS=ON \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DOQS_USE_OPENSSL=ON
+
+  cmake --build "$dir/build" --parallel "$(nproc)"
+  cmake --build "$dir/build" --target install
+
+  # Ensure dynamic loader can find /usr/local/lib
+  if [[ ! -f /etc/ld.so.conf.d/usr-local-lib.conf ]]; then
+    echo "/usr/local/lib" >/etc/ld.so.conf.d/usr-local-lib.conf
+  fi
+  ldconfig
+
+  export LD_LIBRARY_PATH="/usr/local/lib:${LD_LIBRARY_PATH:-}"
+  export OQS_INSTALL_PATH="/usr/local"
+  export LIBOQS_PATH="/usr/local"
+}
+
+install_liboqs_python() {
+  log "Install liboqs-python (oqs module) + verify mechanisms"
+
+  # Clean out conflicting installs
+  python -m pip uninstall -y oqs liboqs-python python-oqs pyoqs pyoqs-sdk >/dev/null 2>&1 || true
+
+  # First try: PyPI
+  python -m pip install --no-cache-dir -U liboqs-python || true
+
+  # Verify: must expose at least one signature mechanism (Dilithium preferred)
+  if python - <<'PY'
+import sys
+try:
+    import oqs
+    mechs = oqs.get_enabled_sig_mechanisms()
+    ok = bool(mechs)
+    want = any("DILITHIUM" in m.upper() for m in mechs) if ok else False
+    print("enabled_sig_mechanisms_count=", len(mechs))
+    print("has_dilithium=", want)
+    sys.exit(0 if ok else 1)
+except Exception as e:
+    print("oqs_import_or_query_failed:", e)
+    sys.exit(2)
+PY
+  then
+    log "liboqs-python OK (sign mechanisms present)"
+    return 0
+  fi
+
+  # Fallback: install from GitHub (often fixes wheels that can’t locate liboqs)
+  log "PyPI liboqs-python did not expose mechanisms; installing from GitHub source"
+  local dir="$DEPS_DIR/liboqs-python"
+  if [[ ! -d "$dir/.git" ]]; then
+    git clone --depth=1 https://github.com/open-quantum-safe/liboqs-python "$dir"
+  else
+    (cd "$dir" && git pull --ff-only)
+  fi
+
+  (cd "$dir" && python -m pip install --no-cache-dir -U .)
+
+  # Re-verify
+  python - <<'PY'
+import oqs
+mechs = oqs.get_enabled_sig_mechanisms()
+print("enabled_sig_mechanisms_count=", len(mechs))
+print("sample=", mechs[:10])
+if not mechs:
+    raise SystemExit("ERROR: oqs installed but no signature mechanisms enabled (liboqs not detected at runtime)")
+PY
+  log "liboqs-python OK after GitHub install"
+}
+
+verify_animica_pq() {
+  log "Verify Animica PQ diagnostics (wallet create should work)"
+  python - <<'PY'
+import os
+print("LD_LIBRARY_PATH=", os.environ.get("LD_LIBRARY_PATH",""))
+print("OQS_INSTALL_PATH=", os.environ.get("OQS_INSTALL_PATH",""))
+print("LIBOQS_PATH=", os.environ.get("LIBOQS_PATH",""))
+try:
+    import oqs
+    mechs = oqs.get_enabled_sig_mechanisms()
+    print("oqs enabled sig mechs:", len(mechs))
+    print("contains Dilithium:", any("DILITHIUM" in m.upper() for m in mechs))
+except Exception as e:
+    raise SystemExit(f"oqs check failed: {e}")
+PY
 }
 
 main() {
-  require_root
-  require_ubuntu
-  clean_state
-  ensure_base_packages
-  ensure_python
-  ensure_node
-  ensure_pnpm
-  install_python_deps
-  install_pnpm_workspace
+  log "Bootstrapping dependencies"
+  ensure_build_deps
+  ensure_venv
+
+  # Install liboqs + liboqs-python so PQ wallets/signing work
+  build_and_install_liboqs
+  install_liboqs_python
+
+  # Install repo + python deps (avoid omni-sdk resolution failures)
+  install_repo_packages
+  install_python_deps_from_pyproject
+
+  verify_animica_pq
 
   log "Done."
   log "Activate venv: source $VENV_DIR/bin/activate"
+  log "Try: animica wallet create --label test1"
 }
 
-main "$@"
+ROOT_DIR="$ROOT_DIR" EXTRAS="$EXTRAS" main "$@"
