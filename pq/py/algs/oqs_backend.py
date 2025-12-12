@@ -121,7 +121,7 @@ def _load_liboqs() -> Optional[ctypes.CDLL]:
         ctypes.CDLL instance if loaded, None if not found
     """
     logger.debug("Starting liboqs library search...")
-    
+
     # Step 1: Allow manual override (useful in CI or non-standard paths)
     override = os.environ.get("LIBOQS_PATH")
     if override:
@@ -135,6 +135,37 @@ def _load_liboqs() -> Optional[ctypes.CDLL]:
                 logger.warning(f"Failed to load liboqs from LIBOQS_PATH {override}: {e}")
         else:
             logger.warning(f"LIBOQS_PATH={override} does not exist")
+
+    # Step 1b: Check explicit install prefix (used by setup.sh env file)
+    prefix = os.environ.get("LIBOQS_PREFIX")
+    prefix_candidates: List[str] = []
+    if prefix:
+        prefix_lib = os.path.join(prefix, "lib")
+        prefix_candidates.append(prefix_lib)
+
+    # Step 1c: Common local install prefixes (helps when env.sh wasn't sourced)
+    default_prefixes = [
+        os.path.expanduser("~/.liboqs/install"),
+        os.path.expanduser("~/_oqs"),
+    ]
+    for candidate in default_prefixes:
+        prefix_candidates.append(os.path.join(candidate, "lib"))
+
+    for candidate_dir in prefix_candidates:
+        if not os.path.isdir(candidate_dir):
+            continue
+
+        logger.debug(f"Checking liboqs in prefix: {candidate_dir}")
+        for name in ["liboqs.so", "liboqs.dylib", "oqs.dll", *LIBOQS_SONAME_VERSIONS]:
+            candidate_path = os.path.join(candidate_dir, name)
+            if not os.path.exists(candidate_path):
+                continue
+            try:
+                lib = ctypes.CDLL(candidate_path)
+                logger.info(f"✓ Successfully loaded liboqs from prefix: {candidate_path}")
+                return lib
+            except OSError as e:
+                logger.debug(f"Failed to load {candidate_path}: {e}")
 
     # Step 2: Check python-oqs bundled libraries first
     bundled_paths = _get_python_oqs_bundled_lib_paths()
