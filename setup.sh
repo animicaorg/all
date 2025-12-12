@@ -455,7 +455,9 @@ build_liboqs() {
     return
   fi
 
-  apt_install cmake ninja-build gcc g++ make pkg-config git
+  # OpenSSL headers are required even when using the Open Quantum Safe build
+  # options; make sure they are present before configuring the project.
+  apt_install cmake ninja-build gcc g++ make pkg-config git openssl libssl-dev
 
   local build_root="$LIBOQS_DIR/build"
   local src_dir="$LIBOQS_DIR/src"
