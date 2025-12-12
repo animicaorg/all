@@ -523,22 +523,44 @@ husky_notice() {
     log "Skipped husky setup because pnpm install was skipped"
     return
   fi
-  if [[ -d "$ROOT_DIR/website" ]] && pnpm -C "$ROOT_DIR/website" exec husky --version >/dev/null 2>&1; then
-    pnpm -C "$ROOT_DIR/website" exec husky install || warn "Husky install skipped (command failed)"
+
+  local husky_package_dir="$ROOT_DIR/website"
+  if [[ ! -d "$husky_package_dir" ]]; then
+    log "Skipped husky setup: website package missing"
+    return
+  fi
+
+  if [[ ! -d "$husky_package_dir/.husky" ]]; then
+    log "Skipped husky setup: no .husky directory present in website package"
+    return
+  fi
+
+  if pnpm -C "$husky_package_dir" exec husky --version >/dev/null 2>&1; then
+    pnpm -C "$husky_package_dir" exec husky install || warn "Husky install skipped (command failed)"
   else
-    warn "Husky not available in website package; skipping hook setup"
+    warn "Husky dependency unavailable in website package; skipping hook setup"
   fi
 }
 
 smoke_tests() {
   section "Running CLI smoke checks"
-  if [[ -x "$VENV_DIR/bin/python" ]]; then
-    local python="$VENV_DIR/bin/python"
-    "$python" -m animica --help >/dev/null || warn "animica --help failed"
-    "$python" -m animica wallet create --label setup_smoke >/dev/null 2>&1 || warn "wallet already exists or command failed"
-  else
+  local python="$VENV_DIR/bin/python"
+  local animica_cli="$VENV_DIR/bin/animica"
+
+  if [[ ! -x "$python" ]]; then
     warn "animica CLI not found in virtualenv; skipping smoke tests"
+    return
   fi
+
+  if [[ -x "$animica_cli" ]]; then
+    "$animica_cli" --help >/dev/null || warn "animica --help failed"
+    local wallet_label="setup_$(date -u +%Y%m%d%H%M%S)"
+    "$animica_cli" wallet create --label "$wallet_label" >/dev/null 2>&1 || \
+      warn "animica wallet creation failed (wallet may already exist)"
+  else
+    warn "animica entrypoint missing; ensure installation succeeded"
+  fi
+
   log "Activate environment with: source $VENV_DIR/bin/activate"
   if [[ "$DOCKER_AVAILABLE" == true ]]; then
     log "Start a node with: $VENV_DIR/bin/python -m animica node up"
