@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=65"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "animica-pq"
+version = "0.1.0"
+description = "Animica post-quantum cryptography primitives"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Animica contributors" }]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: Other/Proprietary License",
+  "Operating System :: OS Independent",
+]
+
+[tool.setuptools]
+packages = [
+  "pq.py",
+  "pq.py.algs",
+  "pq.py.utils",
+]
+
+[tool.setuptools.package-data]
+"pq.py" = [
+  "py.typed",
+  "../alg_ids.yaml",
+  "../alg_policy/*.yaml",
+]
