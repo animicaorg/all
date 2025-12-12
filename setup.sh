@@ -17,6 +17,7 @@ SKIP_PYTHON=false
 SKIP_PNPM=false
 CLEAN=false
 WITH_DOCKER=true
+DOCKER_AVAILABLE=false
 
 log() {
   echo "[setup] $(date -u +"%Y-%m-%dT%H:%M:%SZ") $*"
@@ -89,7 +90,7 @@ require_ubuntu() {
   fi
 }
 
-wait_for_apt() {
+apt_wait_for_locks() {
   local attempts=30
   local delay=2
   if ! command -v lsof >/dev/null 2>&1; then
@@ -109,9 +110,9 @@ wait_for_apt() {
 }
 
 apt_update() {
-  wait_for_apt
-  DEBIAN_FRONTEND=noninteractive dpkg --configure -a || warn "dpkg configure reported issues"
-  if ! retry_cmd 3 5 DEBIAN_FRONTEND=noninteractive apt-get update -y; then
+  apt_wait_for_locks
+  env DEBIAN_FRONTEND=noninteractive dpkg --configure -a || warn "dpkg configure reported issues"
+  if ! retry_cmd 3 5 env DEBIAN_FRONTEND=noninteractive apt-get update -y; then
     warn "apt-get update failed after retries; package installation may fail"
   fi
 }
@@ -121,8 +122,8 @@ apt_install() {
   if [[ ${#packages[@]} -eq 0 ]]; then
     return
   fi
-  wait_for_apt
-  DEBIAN_FRONTEND=noninteractive dpkg --configure -a || warn "dpkg configure reported issues"
+  apt_wait_for_locks
+  env DEBIAN_FRONTEND=noninteractive dpkg --configure -a || warn "dpkg configure reported issues"
 
   local installable=()
   local missing=()
@@ -141,7 +142,7 @@ apt_install() {
     return 1
   fi
 
-  if ! retry_cmd 3 5 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${installable[@]}"; then
+  if ! retry_cmd 3 5 env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${installable[@]}"; then
     warn "apt-get install failed for: ${installable[*]}"
     return 1
   fi
@@ -188,6 +189,40 @@ ensure_base_packages() {
     warn "Base package installation encountered issues; continuing"
 }
 
+add_docker_repository() {
+  apt_wait_for_locks
+  apt_install ca-certificates curl gnupg apt-transport-https || warn "Failed to install Docker prerequisites"
+
+  mkdir -p /etc/apt/keyrings
+  if [[ ! -f /etc/apt/keyrings/docker.gpg ]]; then
+    if ! curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg; then
+      warn "Unable to download Docker GPG key"
+      return 1
+    fi
+  fi
+  chmod a+r /etc/apt/keyrings/docker.gpg || true
+
+  if [[ -f /etc/os-release ]]; then
+    . /etc/os-release
+    local codename=${VERSION_CODENAME:-$(lsb_release -cs 2>/dev/null || true)}
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${codename} stable" \
+      > /etc/apt/sources.list.d/docker.list
+  else
+    warn "Unable to detect OS release for Docker repo"
+    return 1
+  fi
+
+  apt_update
+}
+
+install_docker_stack() {
+  if ! apt_install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
+    warn "Docker Engine installation failed"
+    return 1
+  fi
+  return 0
+}
+
 ensure_docker() {
   if [[ "$WITH_DOCKER" != true ]]; then
     section "Skipping Docker setup (--without-docker)"
@@ -195,33 +230,39 @@ ensure_docker() {
   fi
 
   section "Ensuring Docker Engine and Compose"
-  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-    log "Docker already installed ($(docker --version | head -n1))"
+
+  if command -v docker >/dev/null 2>&1; then
+    log "Docker CLI detected ($(docker --version | head -n1))"
+    if ! docker compose version >/dev/null 2>&1; then
+      log "Docker Compose plugin missing; attempting installation from Docker repository"
+      add_docker_repository
+      apt_install docker-buildx-plugin docker-compose-plugin || warn "Docker Compose plugin install encountered issues"
+    fi
   else
-    apt_update
-    apt_install apt-transport-https ca-certificates curl gnupg || warn "Failed to install Docker prerequisites"
-    if ! apt_install docker.io docker-compose-plugin; then
-      warn "Docker Engine installation encountered issues; attempting fallback installs"
-      apt_install docker.io || warn "docker.io not installable from apt"
-      apt_install docker-compose || warn "docker-compose fallback package not installable"
-    fi
+    log "Docker not found; installing from Docker's official repository"
+    add_docker_repository || warn "Failed to prepare Docker repository"
+    install_docker_stack || true
   fi
 
-  if ! command -v docker >/dev/null 2>&1; then
-    warn "Docker CLI not available after installation attempts; skipping compose validation"
-    return
-  fi
-
-  if systemctl list-unit-files | grep -q '^docker.service'; then
-    systemctl enable --now docker || warn "Failed to enable/start docker service"
-  fi
-
-  if ! docker compose version >/dev/null 2>&1; then
-    if command -v docker-compose >/dev/null 2>&1; then
+  local compose_ok=false
+  if command -v docker >/dev/null 2>&1; then
+    if docker compose version >/dev/null 2>&1; then
+      compose_ok=true
+    elif command -v docker-compose >/dev/null 2>&1; then
       log "Using legacy docker-compose ($(docker-compose --version | head -n1))"
-    else
-      warn "Docker Compose plugin not available; please install manually or provide docker-compose"
+      compose_ok=true
     fi
+  fi
+
+  if command -v docker >/dev/null 2>&1 && [[ "$compose_ok" == true ]]; then
+    DOCKER_AVAILABLE=true
+  else
+    warn "Docker and/or Compose are unavailable after installation attempts"
+    exit 1
+  fi
+
+  if systemctl list-unit-files | grep -q '^docker.service' && command -v systemctl >/dev/null 2>&1; then
+    systemctl enable --now docker || warn "Failed to enable/start docker service"
   fi
 
   if [[ ${SUDO_USER:-root} != "root" ]]; then
@@ -301,15 +342,27 @@ ensure_pnpm() {
   corepack enable
   corepack prepare pnpm@latest --activate
   pnpm config set store-dir "$ROOT_DIR/.pnpm-store"
-  pnpm -r install
+  local pnpm_cmd=(pnpm -r install)
+  if [[ "$WITH_PLAYWRIGHT" != true ]]; then
+    pnpm_cmd+=(--ignore-scripts)
+  else
+    apt_wait_for_locks
+  fi
+  "${pnpm_cmd[@]}"
 }
 
 install_playwright() {
   if [[ "$WITH_PLAYWRIGHT" == true ]]; then
     section "Installing Playwright browsers"
-    wait_for_apt
-    if ! retry_cmd 3 5 pnpm exec playwright install --with-deps; then
-      warn "Playwright installation failed after retries; browser tests may not work."
+    apt_wait_for_locks
+    if ! retry_cmd 3 5 pnpm -C "$ROOT_DIR/website" exec playwright install --with-deps; then
+      warn "Playwright installation failed for website; browser tests may not work."
+    fi
+    if [[ -d "$ROOT_DIR/studio-web" ]]; then
+      apt_wait_for_locks
+      if ! retry_cmd 3 5 pnpm -C "$ROOT_DIR/studio-web" exec playwright install --with-deps; then
+        warn "Playwright installation failed for studio-web; browser tests may not work."
+      fi
     fi
   else
     log "Playwright install skipped (enable with --with-playwright)"
@@ -396,26 +449,32 @@ husky_notice() {
     log "Skipped husky setup: not a git checkout"
     return
   fi
-  if [[ "$SKIP_PNPM" == false ]]; then
-    if ! pnpm exec husky install; then
-      warn "Husky install via pnpm exec failed; retrying with pnpm dlx"
-      pnpm dlx husky install || warn "Husky install skipped (command failed)"
-    fi
-  else
+  if [[ "$SKIP_PNPM" == true ]]; then
     log "Skipped husky setup because pnpm install was skipped"
+    return
+  fi
+  if [[ -d "$ROOT_DIR/website" ]] && pnpm -C "$ROOT_DIR/website" exec husky --version >/dev/null 2>&1; then
+    pnpm -C "$ROOT_DIR/website" exec husky install || warn "Husky install skipped (command failed)"
+  else
+    warn "Husky not available in website package; skipping hook setup"
   fi
 }
 
 smoke_tests() {
   section "Running CLI smoke checks"
-  if [[ -x "$VENV_DIR/bin/animica" ]]; then
-    "$VENV_DIR/bin/animica" --help >/dev/null || warn "animica --help failed"
-    "$VENV_DIR/bin/animica" wallet create --label setup_smoke >/dev/null 2>&1 || warn "wallet already exists or command failed"
+  if [[ -x "$VENV_DIR/bin/python" ]]; then
+    local python="$VENV_DIR/bin/python"
+    "$python" -m animica --help >/dev/null || warn "animica --help failed"
+    "$python" -m animica wallet create --label setup_smoke >/dev/null 2>&1 || warn "wallet already exists or command failed"
   else
     warn "animica CLI not found in virtualenv; skipping smoke tests"
   fi
   log "Activate environment with: source $VENV_DIR/bin/activate"
-  log "Start a node with: animica node up"
+  if [[ "$DOCKER_AVAILABLE" == true ]]; then
+    log "Start a node with: $VENV_DIR/bin/python -m animica node up"
+  else
+    warn "Docker is not available; animica node up requires Docker."
+  fi
 }
 
 main() {
