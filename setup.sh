@@ -117,6 +117,34 @@ apt_update() {
   fi
 }
 
+ensure_oqs_repository() {
+  local list_file="/etc/apt/sources.list.d/openquantumsafe.list"
+  local keyring="/etc/apt/keyrings/openquantumsafe-archive-keyring.gpg"
+
+  if [[ -f "$list_file" && -f "$keyring" ]]; then
+    return 0
+  fi
+
+  apt_install ca-certificates curl gnupg lsb-release apt-transport-https || warn "Failed to install OQS apt prerequisites"
+  mkdir -p /etc/apt/keyrings
+
+  if ! curl -fsSL https://packages.openquantumsafe.org/repo/apt/key.gpg | gpg --dearmor -o "$keyring"; then
+    warn "Unable to download Open Quantum Safe apt signing key"
+    return 1
+  fi
+  chmod a+r "$keyring" || true
+
+  local codename
+  codename=$(lsb_release -cs 2>/dev/null || true)
+  if [[ -z "$codename" ]]; then
+    warn "Unable to determine Ubuntu codename; defaulting to noble for Open Quantum Safe repo"
+    codename="noble"
+  fi
+
+  echo "deb [signed-by=${keyring}] https://packages.openquantumsafe.org/repo/apt/ubuntu ${codename} main" > "$list_file"
+  apt_update
+}
+
 apt_install() {
   local packages=("$@")
   if [[ ${#packages[@]} -eq 0 ]]; then
@@ -370,9 +398,11 @@ install_playwright() {
 }
 
 write_liboqs_env() {
-  cat > "$LIBOQS_DIR/env.sh" <<'ENVVARS'
+  local prefix="$1"
+  mkdir -p "$LIBOQS_DIR"
+  cat > "$LIBOQS_DIR/env.sh" <<ENVVARS
 #!/usr/bin/env bash
-LIBOQS_PREFIX="$(cd "$(dirname "${BASH_SOURCE[0]}")/install" && pwd)"
+LIBOQS_PREFIX="${prefix}"
 export LD_LIBRARY_PATH="${LIBOQS_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
 export LIBRARY_PATH="${LIBOQS_PREFIX}/lib:${LIBRARY_PATH:-}"
 export PKG_CONFIG_PATH="${LIBOQS_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
@@ -382,6 +412,33 @@ ENVVARS
   chmod +x "$LIBOQS_DIR/env.sh"
 }
 
+install_liboqs_system() {
+  if pkg-config --exists oqs 2>/dev/null; then
+    log "liboqs already present via pkg-config"
+    return 0
+  fi
+
+  local candidate
+  candidate=$(apt-cache policy liboqs-dev 2>/dev/null | awk '/Candidate:/ {print $2; exit}')
+  if [[ -z "$candidate" || "$candidate" == "(none)" ]]; then
+    log "liboqs-dev not in current apt cache; attempting to add Open Quantum Safe repository"
+    ensure_oqs_repository || return 1
+    candidate=$(apt-cache policy liboqs-dev 2>/dev/null | awk '/Candidate:/ {print $2; exit}')
+  fi
+
+  if [[ -z "$candidate" || "$candidate" == "(none)" ]]; then
+    warn "liboqs-dev package still unavailable after adding repository"
+    return 1
+  fi
+
+  if apt_install liboqs-dev; then
+    return 0
+  fi
+
+  warn "liboqs-dev installation via apt failed"
+  return 1
+}
+
 build_liboqs() {
   if [[ "$WITH_PQ" != true ]]; then
     log "PQ setup skipped (enable with --with-pq)"
@@ -389,6 +446,15 @@ build_liboqs() {
   fi
 
   section "Building liboqs ${LIBOQS_VERSION}"
+  local liboqs_prefix="$LIBOQS_DIR/install"
+
+  if install_liboqs_system; then
+    liboqs_prefix="/usr"
+    write_liboqs_env "$liboqs_prefix"
+    log "Using system liboqs from $liboqs_prefix"
+    return
+  fi
+
   apt_install cmake ninja-build gcc g++ make pkg-config git
 
   local build_root="$LIBOQS_DIR/build"
@@ -405,7 +471,7 @@ build_liboqs() {
   ninja install
   popd >/dev/null
 
-  write_liboqs_env
+  write_liboqs_env "$install_dir"
   log "liboqs installed to $install_dir"
 }
 
@@ -424,8 +490,12 @@ install_liboqs_python() {
     return
   fi
 
-  # shellcheck source=/dev/null
-  source "$LIBOQS_DIR/env.sh"
+  if [[ -f "$LIBOQS_DIR/env.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "$LIBOQS_DIR/env.sh"
+  else
+    warn "liboqs env file missing; assuming system liboqs is available"
+  fi
   local python="$VENV_DIR/bin/python"
   "$python" -m pip install --no-binary=:all: --force-reinstall "liboqs-python==${LIBOQS_PY_VERSION}"
 
