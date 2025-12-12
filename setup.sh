@@ -568,7 +568,7 @@ install_liboqs_python() {
   log "liboqs-python installed (${installed_version})"
 
   local verify_script='import oqs, sys; print("liboqs version", oqs.oqs_version());
-from oqs import Signature; sig=Signature("SPHINCS+-SHAKE-128s-simple"); print("sig alg", sig.details); print("Loaded from", oqs.LIB)'
+from oqs import Signature; sig=Signature("SPHINCS+-SHAKE-128s-simple"); lib_source = getattr(oqs, "LIB", getattr(oqs, "__file__", "unknown")); print("sig alg", sig.details); print("Loaded from", lib_source)'
   if "$python" - <<PY
 ${verify_script}
 PY
