@@ -22,6 +22,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential cmake pkg-config libssl-dev libgmp-dev
 
+      - name: Build vendored liboqs 0.14.x
+        run: |
+          export REPO_ROOT="$PWD"
+          source ops/liboqs.sh
+          liboqs_build
+          liboqs_export_env
+          echo "LIBOQS_VERSION=${LIBOQS_VERSION}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+          echo "LIBOQS_PATH=${LIBOQS_PATH}" >> "$GITHUB_ENV"
+          echo "OQS_INSTALL_PATH=${OQS_INSTALL_PATH}" >> "$GITHUB_ENV"
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain-action@stable
 

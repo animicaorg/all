@@ -25,15 +25,26 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-pip-${{ hashFiles('**/requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
-      - name: Install liboqs system package
+      - name: Install build prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install -y liboqs-dev liboqs0 pkg-config build-essential
+          sudo apt-get install -y build-essential cmake pkg-config libssl-dev libgmp-dev ninja-build git
+
+      - name: Build vendored liboqs 0.14.x
+        run: |
+          export REPO_ROOT="$PWD"
+          source ops/liboqs.sh
+          liboqs_build
+          liboqs_export_env
+          echo "LIBOQS_VERSION=${LIBOQS_VERSION}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+          echo "LIBOQS_PATH=${LIBOQS_PATH}" >> "$GITHUB_ENV"
+          echo "OQS_INSTALL_PATH=${OQS_INSTALL_PATH}" >> "$GITHUB_ENV"
       - name: Install python deps
         run: |
           python -m pip install -U pip
           pip install -r requirements.txt || true
-          pip install oqs pytest
+          pip install "oqs>=${LIBOQS_VERSION},<0.15.0" pytest
       - name: Build native precompile (optional)
         run: |
           cd native/pq_precompile
