@@ -92,8 +92,15 @@ class TestBackendSignNormalization:
             received_sk_len = len(sk)
             return b"signature"
         
-        fake_backend = types.SimpleNamespace(sign=fake_sign)
-        monkeypatch.setitem(sys.modules, "pq.py.algs.dilithium3", fake_backend)
+        fake_backend = types.SimpleNamespace(sign=fake_sign, __name__="fake_dilithium3")
+        
+        # Monkeypatch the resolve backend function to return our fake backend
+        def mock_resolve(alg_name):
+            if alg_name == "dilithium3":
+                return fake_backend
+            raise NotImplementedError(f"No backend for {alg_name}")
+        
+        monkeypatch.setattr(sign, "_resolve_backend", mock_resolve)
         
         # Create legacy 4032-byte key
         sk_legacy = b"x" * 4032
@@ -114,8 +121,14 @@ class TestBackendSignNormalization:
             received_sk = sk
             return b"signature"
         
-        fake_backend = types.SimpleNamespace(sign=fake_sign)
-        monkeypatch.setitem(sys.modules, "pq.py.algs.dilithium3", fake_backend)
+        fake_backend = types.SimpleNamespace(sign=fake_sign, __name__="fake_dilithium3")
+        
+        def mock_resolve(alg_name):
+            if alg_name == "dilithium3":
+                return fake_backend
+            raise NotImplementedError(f"No backend for {alg_name}")
+        
+        monkeypatch.setattr(sign, "_resolve_backend", mock_resolve)
         
         # Create canonical 4000-byte key
         sk_canonical = b"y" * 4000
@@ -130,8 +143,14 @@ class TestBackendSignNormalization:
     
     def test_backend_sign_raises_on_invalid_dilithium3_key(self, monkeypatch):
         """_backend_sign should raise ValueError for invalid Dilithium3 key lengths."""
-        fake_backend = types.SimpleNamespace(sign=lambda sk, msg: b"sig")
-        monkeypatch.setitem(sys.modules, "pq.py.algs.dilithium3", fake_backend)
+        fake_backend = types.SimpleNamespace(sign=lambda sk, msg: b"sig", __name__="fake_dilithium3")
+        
+        def mock_resolve(alg_name):
+            if alg_name == "dilithium3":
+                return fake_backend
+            raise NotImplementedError(f"No backend for {alg_name}")
+        
+        monkeypatch.setattr(sign, "_resolve_backend", mock_resolve)
         
         sk_invalid = b"x" * 3999
         msg = b"test message"
@@ -151,8 +170,14 @@ class TestBackendSignNormalization:
             received_sk_len = len(sk)
             return b"signature"
         
-        fake_backend = types.SimpleNamespace(sign=fake_sign)
-        monkeypatch.setitem(sys.modules, "pq.py.algs.sphincs_shake_128s", fake_backend)
+        fake_backend = types.SimpleNamespace(sign=fake_sign, __name__="fake_sphincs")
+        
+        def mock_resolve(alg_name):
+            if alg_name == "sphincs_shake_128s":
+                return fake_backend
+            raise NotImplementedError(f"No backend for {alg_name}")
+        
+        monkeypatch.setattr(sign, "_resolve_backend", mock_resolve)
         
         # SPHINCS+ has different key size - should pass through unchanged
         sk = b"x" * 64  # SPHINCS+ sk is 64 bytes
@@ -175,8 +200,14 @@ class TestSignDetachedWithNormalization:
             assert len(sk) == 4000
             return b"signature_bytes"
         
-        fake_backend = types.SimpleNamespace(sign=fake_sign)
-        monkeypatch.setitem(sys.modules, "pq.py.algs.dilithium3", fake_backend)
+        fake_backend = types.SimpleNamespace(sign=fake_sign, __name__="fake_dilithium3")
+        
+        def mock_resolve(alg_name):
+            if alg_name == "dilithium3":
+                return fake_backend
+            raise NotImplementedError(f"No backend for {alg_name}")
+        
+        monkeypatch.setattr(sign, "_resolve_backend", mock_resolve)
         
         # Legacy 4032-byte key (simulates liboqs output)
         sk_legacy = b"x" * 4032
@@ -194,8 +225,14 @@ class TestSignDetachedWithNormalization:
             assert len(sk) == 4000
             return b"signature_bytes"
         
-        fake_backend = types.SimpleNamespace(sign=fake_sign)
-        monkeypatch.setitem(sys.modules, "pq.py.algs.dilithium3", fake_backend)
+        fake_backend = types.SimpleNamespace(sign=fake_sign, __name__="fake_dilithium3")
+        
+        def mock_resolve(alg_name):
+            if alg_name == "dilithium3":
+                return fake_backend
+            raise NotImplementedError(f"No backend for {alg_name}")
+        
+        monkeypatch.setattr(sign, "_resolve_backend", mock_resolve)
         
         # Canonical 4000-byte key
         sk_canonical = b"y" * 4000
