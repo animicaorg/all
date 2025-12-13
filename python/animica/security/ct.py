@@ -76,8 +76,11 @@ def ct_eq_bytes(a: Optional[bytes], b: Optional[bytes]) -> bool:
     Constant-time comparison of two byte strings.
     
     Uses hmac.compare_digest() which is implemented in C and designed to
-    mitigate timing attacks. Returns False if either input is None or if
-    the lengths differ (length is not secret in our threat model).
+    mitigate timing attacks. Returns False if either input is None.
+    
+    Note: Length comparison is NOT constant-time (length is not considered
+    secret in our threat model). hmac.compare_digest() handles different
+    lengths safely by returning False immediately.
     
     Args:
         a: First byte string (may be None)

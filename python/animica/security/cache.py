@@ -61,7 +61,8 @@ class LRUCache:
             value: Value to cache (bytes)
         """
         if key in self.cache:
-            # Update and move to end
+            # Update value and move to end
+            self.cache[key] = value
             self.cache.move_to_end(key)
         else:
             # Add new entry
