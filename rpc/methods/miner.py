@@ -694,6 +694,7 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                 header=header, txs=txs, proofs=(), receipts=receipts, verify=True
             )
             accepted = adapter.submit_block(block)
+            print(f"DEBUG: Block submission result: accepted={accepted}, height={header.height}, hash={block_hash_bytes.hex()[:16]}...")
             if accepted:
                 _record_local_block(header.height, "0x" + block_hash_bytes.hex(), header)
                 # Apply block reward to specified payout address (or default miner address)
