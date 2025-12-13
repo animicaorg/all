@@ -37,7 +37,7 @@ _DEFAULT_SHA256_BITS = os.getenv("ANIMICA_SHA256_NBITS", "1d00ffff")
 log = logging.getLogger("animica.rpc.miner")
 
 # Constants for address and gas calculations
-EVM_ADDRESS_LEN = 20  # EVM-compatible address length (bytes)
+ADDRESS_LEN = 32  # Animica address length (32-byte digest, matches core/types/tx.py)
 RECEIPT_ADDRESS_LEN = 32  # Receipt log address length (bytes)
 TOPIC_LEN = 32  # Receipt log topic length (bytes)
 INTRINSIC_GAS_TRANSFER = 21_000  # Intrinsic gas cost for simple transfers
@@ -459,11 +459,11 @@ def _execute_transactions(
             else:
                 sender_bytes = bytes(sender) if isinstance(sender, (bytes, bytearray)) else sender
             
-            # Pad/truncate to EVM address length (execution layer expects 20-byte addresses)
-            if len(sender_bytes) > EVM_ADDRESS_LEN:
-                sender_bytes = sender_bytes[:EVM_ADDRESS_LEN]
-            elif len(sender_bytes) < EVM_ADDRESS_LEN:
-                sender_bytes = sender_bytes.rjust(EVM_ADDRESS_LEN, b"\x00")
+            # Pad/truncate to Animica address length (32 bytes, matches core/types/tx.py ADDRESS_LEN)
+            if len(sender_bytes) > ADDRESS_LEN:
+                sender_bytes = sender_bytes[:ADDRESS_LEN]
+            elif len(sender_bytes) < ADDRESS_LEN:
+                sender_bytes = sender_bytes.rjust(ADDRESS_LEN, b"\x00")
             
             # Build tx environment
             gas_price = getattr(tx, "gas_price", getattr(tx, "tip", 1))
