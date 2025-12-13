@@ -14,17 +14,5 @@ if command -v animica >/dev/null 2>&1; then
   exec animica "$@"
 fi
 
-# Fallback: run the module directly with repo on PYTHONPATH.
-PYTHON_BIN="${PYTHON:-${PYTHON3:-}}"
-if [[ -z "$PYTHON_BIN" ]]; then
-  PYTHON_BIN="$(command -v python3 || true)"
-fi
-if [[ -z "$PYTHON_BIN" ]]; then
-  PYTHON_BIN="$(command -v python || true)"
-fi
-if [[ -z "$PYTHON_BIN" ]]; then
-  echo "animica: could not locate python interpreter" >&2
-  exit 127
-fi
-export PYTHONPATH="$ROOT_DIR/python:$ROOT_DIR:${PYTHONPATH:-}"
-exec "$PYTHON_BIN" -m animica.cli.main "$@"
+echo "animica: CLI entrypoint not found. Run ./setup.sh --with-pq to install .venv/bin/animica." >&2
+exit 127

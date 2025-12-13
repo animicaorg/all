@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.scripts]
-animica = "animica.cli.main:app"
+animica = "animica.cli.main:main"
 
 [project.optional-dependencies]
 dev = [

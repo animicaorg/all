@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses as _dc
 import logging
 import os
+import traceback
 import typing as t
 
 from rpc import deps
@@ -11,6 +12,7 @@ from rpc.methods import method
 
 log = logging.getLogger(__name__)
 _PQ_VERIFY_DEBUG = os.environ.get("ANIMICA_PQ_VERIFY_DEBUG") == "1"
+_RPC_DEBUG = os.environ.get("ANIMICA_RPC_DEBUG") == "1"
 
 # ——— Optional deps (be tolerant during early bring-up) ———
 
@@ -116,6 +118,30 @@ def _b(x: str | bytes | bytearray) -> bytes:
     if s.startswith("0x"):
         s = s[2:]
     return bytes.fromhex(s)
+
+
+def _jsonify(obj: t.Any) -> t.Any:
+    if isinstance(obj, (bytes, bytearray)):
+        return _hex(obj)
+    if _dc.is_dataclass(obj):
+        return _jsonify(_dcd(obj))
+    if isinstance(obj, dict):
+        return {k: _jsonify(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_jsonify(x) for x in obj]
+    return obj
+
+
+def _error_data(kind: str, exc: BaseException, where: str, hint: str) -> dict:
+    data: dict[str, t.Any] = {
+        "kind": kind,
+        "detail": str(exc),
+        "where": where,
+        "hint": hint,
+    }
+    if _RPC_DEBUG:
+        data["stack"] = "".join(traceback.format_exception(exc)).strip()
+    return data
 
 
 def _extract_sender_address(obj: dict) -> str | None:
@@ -268,7 +294,7 @@ def _collect_sign_bytes(tx_like: t.Any) -> list[tuple[str, bytes]]:
     return candidates
 
 
-def _build_sig_env(alg_id: t.Any, sig: bytes):
+def _build_sig_env(alg_id: t.Any, sig: bytes, *, domain: str = "tx", prehash: str = "sha3-512"):
     from pq.py.sign import Signature  # type: ignore
 
     if _ALG_NAME is not None and isinstance(alg_id, int):
@@ -279,8 +305,8 @@ def _build_sig_env(alg_id: t.Any, sig: bytes):
     sig_env = Signature(
         alg_id=alg_id,
         alg_name=alg_name,
-        domain="tx",  # Standard domain for transaction signatures (matches CLI/SDK)
-        prehash="sha3-512",  # Standard prehash for tx signatures
+        domain=domain or "tx",
+        prehash=prehash or "sha3-512",
         sig=sig,
     )
     return sig_env, alg_name
@@ -339,7 +365,7 @@ def _chain_id_required() -> int:
     return 1
 
 
-def _extract_sig(obj: dict) -> tuple[int, bytes, bytes]:
+def _extract_sig(obj: dict) -> tuple[int, bytes, bytes, str, str]:
     """
     Extract (alg_id, pubkey, signature) from obj["sig"], obj["signature"], or obj["sigs"][0].
     Supports hex strings or raw bytes.
@@ -388,10 +414,39 @@ def _extract_sig(obj: dict) -> tuple[int, bytes, bytes]:
     s = sig.get("sig") or sig.get("signature")
     if pub is None or s is None:
         raise rpc_errors.InvalidParams("Missing 'sig.pubkey' or 'sig.sig'")
+
+    prehash = sig.get("prehash") or sig.get("preHash") or "sha3-512"
+    if isinstance(prehash, (bytes, bytearray)):
+        try:
+            prehash = prehash.decode()
+        except Exception:
+            prehash = "sha3-512"
+    if isinstance(prehash, str):
+        prehash = prehash.lower()
+    if prehash not in ("sha3-512", "sha3-256"):
+        raise rpc_errors.BadSignature(
+            "Unsupported prehash",
+            **_error_data(
+                "pq_verify",
+                ValueError(f"Unsupported prehash: {prehash}"),
+                "_extract_sig",
+                "Use sha3-512 or sha3-256 prehash",
+            ),
+        )
+
+    domain = sig.get("domain") or "tx"
+    if isinstance(domain, (bytes, bytearray)):
+        try:
+            domain = domain.decode()
+        except Exception:
+            domain = "tx"
+
     return (
         alg_id,
         _b(pub) if isinstance(pub, str) else bytes(pub),
         _b(s) if isinstance(s, str) else bytes(s),
+        str(domain),
+        str(prehash),
     )
 
 
@@ -485,7 +540,7 @@ def _validate_chain_id(obj: dict) -> int:
 def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
     if _pq_verify is None:
         raise rpc_errors.InternalError("PQ verification unavailable")
-    alg_id, pub, sig = _extract_sig(obj)
+    alg_id, pub, sig, domain, prehash = _extract_sig(obj)
 
     # Get the raw message (CBOR body) to verify
     # Always derive the sign-bytes from the decoded envelope object rather than
@@ -528,13 +583,14 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
     
     # Debug logging (matches CLI format)
     log.debug(
-        "PQ signature verification: alg_id=%s, pubkey_len=%d, sig_len=%d, msg_len=%d, chain_id=%d (msg_source=%s)",
+        "PQ signature verification: alg_id=%s, pubkey_len=%d, sig_len=%d, msg_len=%d, chain_id=%d (msg_source=%s, prehash=%s)",
         alg_id,
         len(pub),
         len(sig),
         len(msg),
         chain_id,
         msg_label,
+        prehash,
     )
     log.debug(
         "PQ SIGNATURE VERIFY DEBUG: algorithm=%s (id=%s), pubkey_len=%d, sig_len=%d, message_len=%d, message_prefix=%s, chain_id=%d",
@@ -550,7 +606,7 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
     # Construct a Signature envelope for verify_detached
     # The pq.py.verify API expects a Signature dataclass with alg_id, alg_name, domain, prehash, sig
     try:
-        sig_env, alg_name = _build_sig_env(alg_id, sig)
+        sig_env, alg_name = _build_sig_env(alg_id, sig, domain=domain, prehash=prehash)
 
         if _PQ_VERIFY_DEBUG:
             log.info(
@@ -607,7 +663,15 @@ def _verify_pq_signature(tx_like: t.Any, obj: dict, *, chain_id: int) -> None:
             sig_env.domain,
             sig_env.prehash,
         )
-        raise rpc_errors.BadSignature("Invalid post-quantum signature: verification failed")
+        raise rpc_errors.BadSignature(
+            "Invalid post-quantum signature: verification failed",
+            **_error_data(
+                "pq_verify",
+                ValueError("verification failed"),
+                "_verify_pq_signature",
+                "Ensure signature, prehash, and pubkey match the tx body",
+            ),
+        )
 
 
 def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
@@ -628,7 +692,15 @@ def _decode_tx(raw: bytes) -> tuple[t.Any, dict]:
             # Fall back to dict shape
             pass
     if not isinstance(obj, dict):
-        raise rpc_errors.InvalidParams("CBOR did not decode to a Tx object")
+        raise rpc_errors.InvalidTx(
+            "CBOR did not decode to a Tx object",
+            **_error_data(
+                "decode",
+                TypeError(f"Decoded type={type(obj).__name__}"),
+                "_decode_tx",
+                "Ensure rawTx is a CBOR map with body/sig keys",
+            ),
+        )
     return obj, obj
 
 
@@ -860,6 +932,23 @@ def _lookup_persisted_tx(
     aliases=("tx_sendRawTransaction",),
 )
 def tx_send_raw_transaction(rawTx: str) -> str:
+    try:
+        return _tx_send_raw_transaction(rawTx)
+    except rpc_errors.RpcError:
+        raise
+    except Exception as e:  # pragma: no cover - top-level guard
+        raise rpc_errors.InvalidTx(
+            "tx.sendRawTransaction failed",
+            **_error_data(
+                "unknown",
+                e,
+                "tx.sendRawTransaction",
+                "Enable ANIMICA_RPC_DEBUG=1 for stack trace",
+            ),
+        ) from e
+
+
+def _tx_send_raw_transaction(rawTx: str) -> str:
     # Accept hex only for now
     if not isinstance(rawTx, str):
         raise rpc_errors.InvalidParams("rawTx must be a hex string")
@@ -869,7 +958,15 @@ def tx_send_raw_transaction(rawTx: str) -> str:
     try:
         raw = _b(rawTx)
     except Exception as e:
-        raise rpc_errors.InvalidParams(f"rawTx decode failed: {e}") from e
+        raise rpc_errors.InvalidTx(
+            "rawTx decode failed",
+            **_error_data(
+                "decode",
+                e,
+                "tx.sendRawTransaction._b",
+                "Ensure rawTx is 0x-prefixed hex",
+            ),
+        ) from e
 
     log.debug("tx.sendRawTransaction: decoding %d CBOR bytes", len(raw))
 
@@ -879,7 +976,15 @@ def tx_send_raw_transaction(rawTx: str) -> str:
         raise
     except Exception as e:
         log.exception("tx.sendRawTransaction: decode failed")
-        raise rpc_errors.InvalidTx(f"Transaction decode failed: {e}") from e
+        raise rpc_errors.InvalidTx(
+            "Transaction decode failed",
+            **_error_data(
+                "decode",
+                e,
+                "_decode_tx",
+                "Ensure rawTx is CBOR {body, sig}",
+            ),
+        ) from e
 
     # Log the decoded structure for debugging
     log.debug(
@@ -919,13 +1024,75 @@ def tx_send_raw_transaction(rawTx: str) -> str:
         return tx_hash_hex
     except rpc_errors.BadSignature as e:
         # Normalize PQ failures to a consistent error code/message
-        raise rpc_errors.BadSignature(f"Invalid post-quantum signature: {e}") from e
+        data = dict(e.data or {})
+        data.setdefault("kind", "pq_verify")
+        data.setdefault("where", "tx.sendRawTransaction")
+        data.setdefault("hint", "Invalid PQ signature or unsupported prehash")
+        if _RPC_DEBUG and "stack" not in data:
+            data["stack"] = "".join(traceback.format_exception(e)).strip()
+        raise rpc_errors.BadSignature(str(e), **data) from e
     except rpc_errors.RpcError:
         raise
     except Exception as e:
         log.exception("tx.sendRawTransaction: unexpected failure")
-        raise rpc_errors.InvalidTx(f"tx.sendRawTransaction failed: {e}") from e
+        raise rpc_errors.InvalidTx(
+            "tx.sendRawTransaction failed",
+            **_error_data(
+                "unknown",
+                e,
+                "tx.sendRawTransaction",
+                "Enable ANIMICA_RPC_DEBUG=1 for stack trace",
+            ),
+        ) from e
 
+
+@method(
+    "tx.decodeRawTransaction",
+    desc="Decode a raw CBOR-encoded transaction without signature verification.",
+    aliases=("tx_decodeRawTransaction",),
+)
+def tx_decode_raw_transaction(rawTx: str) -> dict:
+    if not isinstance(rawTx, str):
+        raise rpc_errors.InvalidParams("rawTx must be a hex string")
+    if rawTx.startswith("0b:"):
+        raise rpc_errors.InvalidParams("base64 not supported yet; send hex (0x…)")
+
+    try:
+        raw = _b(rawTx)
+    except Exception as e:
+        raise rpc_errors.InvalidTx(
+            "rawTx decode failed",
+            **_error_data(
+                "decode",
+                e,
+                "tx.decodeRawTransaction._b",
+                "Ensure rawTx is 0x-prefixed hex",
+            ),
+        ) from e
+
+    log.debug("tx.decodeRawTransaction: decoding %d CBOR bytes", len(raw))
+
+    try:
+        tx_like, obj = _decode_tx(raw)
+    except rpc_errors.RpcError:
+        raise
+    except Exception as e:
+        raise rpc_errors.InvalidTx(
+            "Transaction decode failed",
+            **_error_data(
+                "decode",
+                e,
+                "_decode_tx",
+                "Ensure rawTx is CBOR {body, sig}",
+            ),
+        ) from e
+
+    decoded_obj = obj if isinstance(obj, dict) else _dcd(obj)
+    return {
+        "len": len(raw),
+        "type": type(tx_like).__name__ if hasattr(type(tx_like), "__name__") else str(type(tx_like)),
+        "tx": _jsonify(decoded_obj),
+    }
 
 @method(
     "tx.debugVerifyRawTransaction",
@@ -948,10 +1115,10 @@ def tx_debug_verify_raw_transaction(rawTx: str) -> dict:
     tx_like, obj = _decode_tx(raw)
     chain_id = _validate_chain_id(obj)
 
-    alg_id, pub, sig = _extract_sig(obj)
+    alg_id, pub, sig, domain, prehash = _extract_sig(obj)
     candidates = _collect_sign_bytes(obj)
 
-    sig_env, alg_name = _build_sig_env(alg_id, sig)
+    sig_env, alg_name = _build_sig_env(alg_id, sig, domain=domain, prehash=prehash)
 
     ok, used_label, verify_errors = _verify_pq_candidates(
         candidates, sig_env, pub, chain_id=chain_id
