@@ -1,146 +1,218 @@
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
-from typing import Any, Dict, Optional, Tuple, Union
+import os
+from dataclasses import dataclass
+from typing import Any, Dict, Literal, Optional, Tuple
 
-import oqs  # type: ignore
+PrehashKind = Literal["none", "sha3-256"]
 
+# Animica algorithm IDs (keep stable; these are baked into addresses/tx envelopes)
 DILITHIUM3_ID = 0x1001
 
+# The *actual* liboqs mechanism name we want for Dilithium3.
+# NOTE: liboqs 0.15+ removed Dilithium; for Animica "dilithium3" you must use liboqs 0.14.x.
+OQS_MECH_FOR_DILITHIUM3 = "Dilithium3"
 
-def _normalize_alg(alg: Union[int, str, Any]) -> Tuple[int, str]:
+
+def _debug(msg: str) -> None:
+    if os.environ.get("ANIMICA_PQ_DEBUG", ""):
+        print(msg)
+
+
+def _find_shared_lib_in_dir(d: str) -> Optional[str]:
+    # Search common library filenames and locations
+    cands = [
+        os.path.join(d, "liboqs.so"),
+        os.path.join(d, "liboqs.dylib"),
+        os.path.join(d, "liboqs.dll"),
+        os.path.join(d, "lib", "liboqs.so"),
+        os.path.join(d, "lib", "liboqs.dylib"),
+        os.path.join(d, "lib64", "liboqs.so"),
+        os.path.join(d, "bin", "liboqs.dll"),
+    ]
+    # also accept version-suffixed .so.*
+    for sub in ("", "lib", "lib64"):
+        p = os.path.join(d, sub)
+        if os.path.isdir(p):
+            try:
+                for name in os.listdir(p):
+                    if name.startswith("liboqs.so."):
+                        cands.append(os.path.join(p, name))
+            except Exception:
+                pass
+
+    for p in cands:
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def _ensure_liboqs_loaded() -> None:
+    """
+    Best-effort preload of liboqs into the process.
+
+    Accepts:
+      - LIBOQS_PATH as a FILE (liboqs.so) OR as a DIRECTORY (we'll search inside)
+      - OQS_INSTALL_PATH similarly (dir)
+    """
+    path = os.environ.get("LIBOQS_PATH") or ""
+    if not path:
+        path = os.environ.get("OQS_INSTALL_PATH") or ""
+
+    if not path:
+        return
+
+    try:
+        if os.path.isdir(path):
+            lib = _find_shared_lib_in_dir(path)
+            if not lib:
+                raise FileNotFoundError(f"No liboqs shared library found inside dir: {path}")
+            path = lib
+
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"LIBOQS_PATH does not exist as a file: {path}")
+
+        _debug(f"[pq] Preloading liboqs: {path}")
+        ctypes.CDLL(path, mode=ctypes.RTLD_GLOBAL)
+    except Exception as e:
+        # Non-fatal, but extremely helpful to print once
+        print(f"Failed to load liboqs from LIBOQS_PATH {os.environ.get('LIBOQS_PATH','')}: {e}")
+
+
+@dataclass(frozen=True)
+class Signature:
+    alg_id: int
+    alg_name: str
+    domain: str
+    prehash: PrehashKind
+    chain_id: int
+    pk: bytes
+    sig: bytes
+
+
+def _normalize_alg(alg: str | int) -> Tuple[int, str]:
     if isinstance(alg, int):
         if alg == DILITHIUM3_ID:
-            return DILITHIUM3_ID, "dilithium3"
-        raise NotImplementedError(f"Unknown alg id: 0x{alg:04x}")
-    if isinstance(alg, str):
-        n = alg.lower().strip()
-        if n in ("dilithium3", "ml-dsa-65", "mldsa65"):
-            return DILITHIUM3_ID, "dilithium3"
-        raise NotImplementedError(f"Unknown alg name: {alg}")
-    if hasattr(alg, "alg_id"):
-        return _normalize_alg(int(getattr(alg, "alg_id")))
-    if hasattr(alg, "name"):
-        return _normalize_alg(str(getattr(alg, "name")))
-    raise NotImplementedError(f"Unsupported alg descriptor: {type(alg)}")
+            return (DILITHIUM3_ID, "dilithium3")
+        raise ValueError(f"Unknown alg id: {alg}")
+
+    a = alg.strip().lower().replace("_", "-")
+    if a in ("dilithium3", "dilithium-3"):
+        return (DILITHIUM3_ID, "dilithium3")
+    raise ValueError(f"Unknown alg name: {alg}")
 
 
-def _enabled_mechs() -> list[str]:
-    for fn in ("get_enabled_sig_mechanisms", "get_enabled_mechanisms"):
-        if hasattr(oqs, fn):
-            try:
-                return list(getattr(oqs, fn)())
-            except Exception:
-                continue
-    return []
-
-
-def _pick_sig_mech(alg_name: str) -> str:
-    mechs = _enabled_mechs()
-    if alg_name == "dilithium3":
-        if "ML-DSA-65" in mechs:
-            return "ML-DSA-65"
-        if "Dilithium3" in mechs:
-            return "Dilithium3"
-        return "ML-DSA-65"
-    raise NotImplementedError(f"Unsupported signature alg: {alg_name}")
-
-
-def _normalize_domain_path(domain: str, *, alg_name: str) -> str:
-    d = (domain or "").strip()
-    if not d:
-        return f"sig|{alg_name}|tx"
-    # If already fully-qualified, keep it:
-    if d.startswith("sig|"):
-        return d
-    # Shorthand: "tx" -> "sig|dilithium3|tx"
-    return f"sig|{alg_name}|{d}"
-
-
-def build_domain_tag(
-    *,
-    chain_id: int,
-    domain: str,
-    alg_name: str,
-) -> bytes:
+def build_domain_tag(*, chain_id: int, domain: str) -> bytes:
     """
-    Domain tag string is ASCII and included in the signed bytes.
-    Keep this stable: node must generate identical tag to verify.
+    Domain separation + chain binding.
+
+    Keep this format stable once shipped; node verification must match.
     """
-    domain_path = _normalize_domain_path(domain, alg_name=alg_name)
-    # animica:<chainId>|<domainPath>
-    return f"animica:{chain_id}|{domain_path}".encode("utf-8")
+    if not isinstance(chain_id, int):
+        raise TypeError("chain_id must be int")
+    if not domain or not isinstance(domain, str):
+        raise TypeError("domain must be non-empty str")
+
+    # "animica" + NUL + u32be(chain_id) + NUL + domain(utf-8) + NUL
+    cid = int(chain_id) & 0xFFFFFFFF
+    return b"animica\x00" + cid.to_bytes(4, "big") + b"\x00" + domain.encode("utf-8") + b"\x00"
 
 
 def build_sign_bytes(
-    message: bytes,
+    msg: bytes,
     *,
-    chain_id: int,
     domain: str,
-    alg_name: str,
+    chain_id: Optional[int],
+    prehash: PrehashKind = "none",
     context: bytes = b"",
 ) -> bytes:
-    """
-    Sign-bytes format (v1):
-      b"ANM|" + domain_tag + b"|" + context + b"|" + message
-    """
-    if not isinstance(message, (bytes, bytearray)):
-        raise TypeError("message must be bytes")
-    if not isinstance(context, (bytes, bytearray)):
-        raise TypeError("context must be bytes")
-    tag = build_domain_tag(chain_id=chain_id, domain=domain, alg_name=alg_name)
-    return b"ANM|" + tag + b"|" + bytes(context) + b"|" + bytes(message)
+    if not isinstance(msg, (bytes, bytearray, memoryview)):
+        raise TypeError("msg must be bytes-like")
 
+    if chain_id is None:
+        raise ValueError("chain_id is required for Animica domain-tag signing")
 
-def _apply_prehash(sign_bytes: bytes, prehash: Optional[str]) -> bytes:
-    if prehash is None or prehash == "" or prehash == "none":
-        return sign_bytes
+    if context and not isinstance(context, (bytes, bytearray, memoryview)):
+        raise TypeError("context must be bytes-like")
+
+    domain_tag = build_domain_tag(chain_id=int(chain_id), domain=domain)
+
+    payload = bytes(msg)
     if prehash == "sha3-256":
-        return hashlib.sha3_256(sign_bytes).digest()
-    raise NotImplementedError(f"Unsupported prehash: {prehash}")
+        payload = hashlib.sha3_256(payload).digest()
+    elif prehash != "none":
+        raise ValueError(f"Unknown prehash: {prehash}")
+
+    # domain_tag || context_len(u16be) || context || payload
+    ctx = bytes(context)
+    if len(ctx) > 65535:
+        raise ValueError("context too large")
+    return domain_tag + len(ctx).to_bytes(2, "big") + ctx + payload
+
+
+def _oqs_mech_for_alg(alg_id: int) -> str:
+    # For now we only support Dilithium3 under the dilithium3 alg_id.
+    if alg_id == DILITHIUM3_ID:
+        return OQS_MECH_FOR_DILITHIUM3
+    raise ValueError(f"No oqs mechanism mapping for alg_id={alg_id}")
 
 
 def pq_sign_detached(
-    message: bytes,
-    alg: Union[int, str, Any],
-    secret_key: bytes,
+    msg: bytes,
+    alg: str | int,
+    sk: bytes,
     *,
-    domain: str = "tx",
+    pk: bytes,
+    domain: str,
     chain_id: int,
+    prehash: PrehashKind = "none",
     context: bytes = b"",
-    prehash: Optional[str] = "sha3-256",
 ) -> Dict[str, Any]:
     """
-    Returns a CBOR/JSON-friendly signature envelope dict.
+    Returns a tx signature envelope (CBOR-friendly map).
+    Keys match what the CLI tx sender expects and what the node should verify.
     """
+    _ensure_liboqs_loaded()
+
     alg_id, alg_name = _normalize_alg(alg)
-    mech = _pick_sig_mech(alg_name)
+
+    # Late import so our preload has a chance to work
+    import oqs  # type: ignore
+
+    mech = _oqs_mech_for_alg(alg_id)
+
+    enabled = oqs.get_enabled_sig_mechanisms()
+    if mech not in enabled:
+        raise RuntimeError(
+            f"Requested mechanism '{mech}' not enabled in liboqs runtime. "
+            f"Enabled sample={tuple(enabled[:12])}. "
+            f"Fix by installing liboqs v0.14.x and setting LIBOQS_PATH/LD_LIBRARY_PATH."
+        )
 
     sign_bytes = build_sign_bytes(
-        message,
-        chain_id=chain_id,
+        bytes(msg),
         domain=domain,
-        alg_name=alg_name,
+        chain_id=int(chain_id),
+        prehash=prehash,
         context=context,
     )
-    to_sign = _apply_prehash(sign_bytes, prehash)
 
-    # Different liboqs-python versions accept secret_key in different ways.
-    sig_obj = None
-    try:
-        sig_obj = oqs.Signature(mech, secret_key=secret_key)
-    except TypeError:
-        sig_obj = oqs.Signature(mech)
-        if hasattr(sig_obj, "import_secret_key"):
-            sig_obj.import_secret_key(secret_key)  # type: ignore
-
-    signature = sig_obj.sign(to_sign)
+    with oqs.Signature(mech) as s:
+        sig = s.sign(sign_bytes, bytes(sk))
 
     return {
-        "alg": alg_id,
-        "sig": bytes(signature),
-        "domain": domain,
-        "prehash": prehash or "none",
-        "chain_id": int(chain_id),
+        "alg": int(alg_id),
+        "pk": bytes(pk),
+        "sig": bytes(sig),
+        "domain": str(domain),
+        "prehash": str(prehash),
     }
+
+
+# Back-compat exports (some callers import one or the other)
+def sign_detached(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+    return pq_sign_detached(*args, **kwargs)
+
