@@ -106,6 +106,10 @@ WORKDIR /app
 # If you build only subpackages, adjust to COPY the relevant dirs.
 COPY . /app
 
+# Install repo packages (animica + animica-pq) so pure-Python PQ backends are
+# available inside the container.
+RUN python -m pip install --no-cache-dir -e /app/python -e /app/pq
+
 # Run as non-root from here on.
 USER ${USER}
 
