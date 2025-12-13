@@ -78,13 +78,16 @@ def generate_keypair(seed: Optional[bytes] = None) -> Tuple[bytes, bytes]:
     return (pk, sk)
 
 
-def sign(sk: bytes, msg: bytes) -> bytes:
+def sign(sk: bytes, msg: bytes, pk: bytes | None = None) -> bytes:
     """
     Sign a message using pure-Python ML-DSA-65 (Dilithium3).
 
     Args:
         sk: Secret key (4000 bytes)
         msg: Message to sign
+        pk: Optional public key to preserve compatibility with keys generated
+            by other implementations (e.g., liboqs). When provided, it is used
+            for the commitment hash inside the reference signer.
 
     Returns:
         Signature bytes (3293 bytes)
@@ -94,7 +97,7 @@ def sign(sk: bytes, msg: bytes) -> bytes:
             "Dilithium3 pure-Python implementation unavailable."
         )
     
-    return _Dilithium3Impl.sign(sk, msg)
+    return _Dilithium3Impl.sign(sk, msg, pk=pk)
 
 
 def verify(pk: bytes, msg: bytes, sig: bytes) -> bool:

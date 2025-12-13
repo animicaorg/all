@@ -269,6 +269,7 @@ def send(
         body_bytes,
         alg=alg_id,
         sk=sk,
+        pk=pk,
         domain=domain,
         chain_id=cid,
         prehash=prehash,  # type: ignore[arg-type]
