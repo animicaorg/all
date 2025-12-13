@@ -118,11 +118,8 @@ install_local_dependencies() {
       die "Failed to install omni-sdk from local path. Check $ROOT/sdk/python/pyproject.toml"
     fi
   else
-    warn "omni-sdk package not found at $ROOT/sdk/python"
-    warn "If animica[dev] requires omni-sdk, installation may fail."
-    warn "To use a custom pip index for omni-sdk, set PIP_EXTRA_INDEX_URL:"
-    warn "  export PIP_EXTRA_INDEX_URL=https://your-index.example.com/simple"
-    warn "  ./setup.sh"
+    warn "omni-sdk package not found at $ROOT/sdk/python - installation may fail"
+    warn "To use a custom pip index, set: PIP_EXTRA_INDEX_URL=https://your-index/simple"
   fi
 }
 
@@ -131,7 +128,7 @@ install_animica() {
 
   if [ -d "$ROOT/python" ] && [ -f "$ROOT/python/pyproject.toml" ]; then
     if ! python -m pip install -e "$ROOT/python[dev]"; then
-      die "Failed to install animica[dev]. If omni-sdk is required but not found, ensure PIP_EXTRA_INDEX_URL is set or omni-sdk exists at $ROOT/sdk/python"
+      die "Failed to install animica[dev]. Ensure omni-sdk is available via local path or PIP_EXTRA_INDEX_URL"
     fi
   elif [ -f "$ROOT/pyproject.toml" ]; then
     if ! python -m pip install -e "$ROOT[dev]"; then
