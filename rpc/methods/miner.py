@@ -904,7 +904,7 @@ def _mine_once(payout_address: bytes | None = None) -> tuple[bool, int]:
                     f"(hash {block_hash_int} <= target {target}), reward={reward_amount} nANM, "
                     f"txs={len(txs)}, receipts={len(receipts) if receipts else 0}, "
                     f"included_tx_hashes={included_hashes[:MAX_DISPLAYED_TX_HASHES]}"
-                    f"{'...' if len(included_hashes) > MAX_DISPLAYED_TX_HASHES else ''}"
+                    f"{' ...' if len(included_hashes) > MAX_DISPLAYED_TX_HASHES else ''}"
                 )
                 return (True, reward_amount)
             return (False, 0)
