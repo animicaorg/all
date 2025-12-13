@@ -269,5 +269,56 @@ class TestDilithium3TxSigningWithNormalization:
             chain_id=2,
             prehash="sha3-512",
         )
-        
+
         assert valid, "Local verification failed for legacy 4032-byte key"
+
+    def test_signing_can_use_provided_public_key_for_commitment(self):
+        """Explicitly passing pk keeps signatures compatible with external keygens."""
+        from animica._vendor.dilithium_py.dilithium3 import Dilithium3
+        from pq.py.sign import sign_detached, verify_detached
+
+        seed = b"f" * 32
+        sk, pk = Dilithium3.keygen(seed)
+
+        # Simulate a public key that doesn't match the reference derivation (e.g., liboqs)
+        pk_external = bytes([pk[0] ^ 0x01]) + pk[1:]
+
+        tx_body = _make_test_tx_body(from_addr="anim1alt")
+        body_bytes = cbor2.dumps(tx_body, canonical=True)
+
+        # Without providing the external pk, verification with that pk should fail
+        sig_default = sign_detached(
+            body_bytes,
+            alg="dilithium3",
+            sk=sk,
+            domain="tx",
+            chain_id=2,
+            prehash="sha3-512",
+        )
+        assert not verify_detached(
+            body_bytes,
+            sig_default,
+            pk_external,
+            domain="tx",
+            chain_id=2,
+            prehash="sha3-512",
+        )
+
+        # Supplying the external pk to signing aligns the commitment with verification
+        sig_with_pk = sign_detached(
+            body_bytes,
+            alg="dilithium3",
+            sk=sk,
+            pk=pk_external,
+            domain="tx",
+            chain_id=2,
+            prehash="sha3-512",
+        )
+        assert verify_detached(
+            body_bytes,
+            sig_with_pk,
+            pk_external,
+            domain="tx",
+            chain_id=2,
+            prehash="sha3-512",
+        )
