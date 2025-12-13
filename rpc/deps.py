@@ -699,6 +699,38 @@ def get_head() -> dict[str, t.Any]:
     return ensure_started().get_head()
 
 
+def get_block_by_height(height: int) -> t.Any | None:
+    """
+    Retrieve a block by canonical height.
+    
+    Args:
+        height: Block height (0-based)
+        
+    Returns:
+        Block object if found, None otherwise
+    """
+    ctx = ensure_started()
+    if hasattr(ctx.block_db, "get_block_by_height"):
+        return ctx.block_db.get_block_by_height(height)  # type: ignore[attr-defined]
+    return None
+
+
+def get_block_by_hash(block_hash: bytes) -> t.Any | None:
+    """
+    Retrieve a block by hash.
+    
+    Args:
+        block_hash: Block hash (32 bytes)
+        
+    Returns:
+        Block object if found, None otherwise
+    """
+    ctx = ensure_started()
+    if hasattr(ctx.block_db, "get_block_by_hash"):
+        return ctx.block_db.get_block_by_hash(block_hash)  # type: ignore[attr-defined]
+    return None
+
+
 def cbor_dumps(obj: t.Any) -> bytes:
     """Expose core.encoding.cbor.dumps for handlers (with a safe fallback)."""
     try:
@@ -727,6 +759,8 @@ __all__ = [
     "get_chain_id",
     "get_head",
     "get_params",
+    "get_block_by_height",
+    "get_block_by_hash",
     "ready",
     "shutdown",
     "startup",
