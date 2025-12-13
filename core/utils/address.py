@@ -68,9 +68,17 @@ def address_to_bytes(addr: str, *, allow_system: bool = True) -> bytes:
             from pq.py.address import decode_address
 
             rec = decode_address(addr)
-            # Return the full payload: alg_id (2 bytes) || digest (32 bytes)
+            # CRITICAL: StateDB stores accounts by 32-byte digest only, NOT alg_id + digest
+            # This must match how block rewards are credited (see rpc/methods/miner.py:_decode_bech32_address)
+            # The full Bech32 payload is: alg_id (2 bytes) || digest (32 bytes)
+            # But StateDB keys are the 32-byte digest alone for consistency with reward application
             digest_bytes = bytes(rec.digest) if not isinstance(rec.digest, bytes) else rec.digest
-            return rec.alg_id.to_bytes(2, "big") + digest_bytes
+            # Validate digest is exactly 32 bytes
+            if len(digest_bytes) != 32:
+                raise AddressError(
+                    f"Invalid digest length in Bech32 address: expected 32 bytes, got {len(digest_bytes)} bytes"
+                )
+            return digest_bytes
         except Exception as e:
             raise AddressError(f"failed to decode bech32m address: {e}") from e
 
