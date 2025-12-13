@@ -63,6 +63,13 @@ bash tests/devnet/up.sh
 docker compose -f tests/devnet/docker-compose.yml -p animica-devnet ps
 ```
 
+If the `animica` command is not on your `PATH`, you can still run the CLI via
+the repo wrapper:
+
+```bash
+./animica --help
+```
+
 Node logs are available via `docker compose ... logs -f node1`, and RPC defaults to `http://localhost:38545` for the local profile.
 
 ## Testing
