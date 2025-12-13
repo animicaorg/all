@@ -1,263 +1,146 @@
+
 from __future__ import annotations
 
-"""
-sign.py — Domain-tag signing API aligned with spec/domains.yaml.
+import hashlib
+from typing import Any, Dict, Optional, Tuple, Union
 
-Spec summary:
-- DomainTag = b"ANM|" + chainId_ascii + b"|" + path_ascii + b"|v{version}"
-- SignBytes = DomainTag || CanonicalEncode(payload)
+import oqs  # type: ignore
 
-For transactions, payload is canonical CBOR(body) produced by python/animica/tx/signing.py.
-"""
-
-from dataclasses import dataclass
-from typing import Literal, Optional, Tuple, Union
-
-from pq.py.registry import ALG_ID, ALG_NAME, is_known_alg_id, is_sig_alg_id
-from pq.py.utils.hash import sha3_256, sha3_512
-
-PrehashKind = Literal["none", "sha3-512", "sha3-256"]
-
-_PREFIX = b"ANM|"
+DILITHIUM3_ID = 0x1001
 
 
-def _normalize_alg(alg: Union[int, str]) -> Tuple[int, str]:
+def _normalize_alg(alg: Union[int, str, Any]) -> Tuple[int, str]:
     if isinstance(alg, int):
-        if not is_known_alg_id(alg) or not is_sig_alg_id(alg):
-            raise ValueError(f"Unknown or non-signature alg_id: 0x{alg:02x}")
-        return alg, ALG_NAME[alg]
-
+        if alg == DILITHIUM3_ID:
+            return DILITHIUM3_ID, "dilithium3"
+        raise NotImplementedError(f"Unknown alg id: 0x{alg:04x}")
     if isinstance(alg, str):
-        name = alg.strip().lower()
-        if name not in ALG_ID:
-            raise ValueError(f"Unknown algorithm name: {alg!r}")
-        alg_id = ALG_ID[name]
-        if not is_sig_alg_id(alg_id):
-            raise ValueError(f"Algorithm {name!r} is not a signature algorithm")
-        return alg_id, name
+        n = alg.lower().strip()
+        if n in ("dilithium3", "ml-dsa-65", "mldsa65"):
+            return DILITHIUM3_ID, "dilithium3"
+        raise NotImplementedError(f"Unknown alg name: {alg}")
+    if hasattr(alg, "alg_id"):
+        return _normalize_alg(int(getattr(alg, "alg_id")))
+    if hasattr(alg, "name"):
+        return _normalize_alg(str(getattr(alg, "name")))
+    raise NotImplementedError(f"Unsupported alg descriptor: {type(alg)}")
 
-    raise TypeError("alg must be int (alg_id) or str (name)")
+
+def _enabled_mechs() -> list[str]:
+    for fn in ("get_enabled_sig_mechanisms", "get_enabled_mechanisms"):
+        if hasattr(oqs, fn):
+            try:
+                return list(getattr(oqs, fn)())
+            except Exception:
+                continue
+    return []
 
 
-def _alg_family_for_domain(alg_name: str) -> str:
-    # spec/domains.yaml uses "sphincs" (not the full variant name)
+def _pick_sig_mech(alg_name: str) -> str:
+    mechs = _enabled_mechs()
     if alg_name == "dilithium3":
-        return "dilithium3"
-    if alg_name.startswith("sphincs"):
-        return "sphincs"
-    # fallback: keep whatever the registry says (better than guessing wrong)
-    return alg_name
+        if "ML-DSA-65" in mechs:
+            return "ML-DSA-65"
+        if "Dilithium3" in mechs:
+            return "Dilithium3"
+        return "ML-DSA-65"
+    raise NotImplementedError(f"Unsupported signature alg: {alg_name}")
 
 
-def family_from_algname(alg_name: str) -> str:
-    """Public helper to map an algorithm name to its domain family.
-
-    The CLI expects this to exist (see python/animica/cli/tx.py) to keep
-    domain-path construction aligned with the spec and to avoid duplicating
-    normalization logic.
-    """
-    if not isinstance(alg_name, str):
-        raise TypeError("alg_name must be a string")
-
-    return _alg_family_for_domain(alg_name.strip().lower())
-
-
-def _normalize_domain_path(domain: Union[str, bytes], *, alg_name: str) -> bytes:
-    """
-    Accept either:
-      - full path like "sig|dilithium3|tx"
-      - shorthand like "tx" or "header" (expanded per algorithm family)
-    """
-    if isinstance(domain, (bytes, bytearray)):
-        d = bytes(domain).strip()
-    elif isinstance(domain, str):
-        d = domain.strip().encode("ascii", "strict")
-    else:
-        raise TypeError("domain must be str|bytes")
-
+def _normalize_domain_path(domain: str, *, alg_name: str) -> str:
+    d = (domain or "").strip()
     if not d:
-        raise ValueError("domain must be non-empty")
-
-    # already a full tag?
-    if d.startswith(_PREFIX):
-        # caller provided a full DomainTag already
+        return f"sig|{alg_name}|tx"
+    # If already fully-qualified, keep it:
+    if d.startswith("sig|"):
         return d
-
-    # already a path with pipes?
-    if b"|" in d:
-        return d
-
-    # shorthand expansions
-    fam = _alg_family_for_domain(alg_name)
-    if d == b"tx":
-        return f"sig|{fam}|tx".encode("ascii")
-    if d == b"header":
-        return f"sig|{fam}|header".encode("ascii")
-
-    # default: treat as a path segment
-    return d
+    # Shorthand: "tx" -> "sig|dilithium3|tx"
+    return f"sig|{alg_name}|{d}"
 
 
 def build_domain_tag(
     *,
     chain_id: int,
-    domain: Union[str, bytes],
+    domain: str,
     alg_name: str,
-    version: int = 1,
 ) -> bytes:
     """
-    Build DomainTag per spec/domains.yaml:
-      b"ANM|" + b"animica:{chain_id}" + b"|" + domain_path + b"|v{version}"
+    Domain tag string is ASCII and included in the signed bytes.
+    Keep this stable: node must generate identical tag to verify.
     """
-    path = _normalize_domain_path(domain, alg_name=alg_name)
-
-    # If caller passed a full DomainTag, return as-is
-    if path.startswith(_PREFIX):
-        return path
-
-    chain_ascii = f"animica:{int(chain_id)}".encode("ascii")
-    ver_ascii = f"v{int(version)}".encode("ascii")
-
-    return _PREFIX + chain_ascii + b"|" + path + b"|" + ver_ascii
+    domain_path = _normalize_domain_path(domain, alg_name=alg_name)
+    # animica:<chainId>|<domainPath>
+    return f"animica:{chain_id}|{domain_path}".encode("utf-8")
 
 
 def build_sign_bytes(
-    msg: bytes,
+    message: bytes,
     *,
-    domain: Union[str, bytes],
-    chain_id: Optional[int],
-    alg_id: int,
+    chain_id: int,
+    domain: str,
+    alg_name: str,
     context: bytes = b"",
-    prehash: PrehashKind = "none",
 ) -> bytes:
     """
-    Construct canonical SignBytes = DomainTag || context? || msg.
-
-    - DomainTag is chain-bound (replay-safe) and versioned.
-    - `context` (if non-empty) is appended as: u32be(len(context))||context.
-      (Not currently used by tx signing, but kept deterministic.)
+    Sign-bytes format (v1):
+      b"ANM|" + domain_tag + b"|" + context + b"|" + message
     """
-    if not isinstance(msg, (bytes, bytearray, memoryview)):
-        raise TypeError("msg must be bytes-like")
+    if not isinstance(message, (bytes, bytearray)):
+        raise TypeError("message must be bytes")
+    if not isinstance(context, (bytes, bytearray)):
+        raise TypeError("context must be bytes")
+    tag = build_domain_tag(chain_id=chain_id, domain=domain, alg_name=alg_name)
+    return b"ANM|" + tag + b"|" + bytes(context) + b"|" + bytes(message)
 
-    if chain_id is None:
-        raise ValueError("chain_id is required for Animica domain-tag signing")
 
-    alg_name = ALG_NAME[alg_id]
-    domain_tag = build_domain_tag(chain_id=int(chain_id), domain=domain, alg_name=alg_name, version=1)
-
-    payload = domain_tag
-    if context:
-        if not isinstance(context, (bytes, bytearray, memoryview)):
-            raise TypeError("context must be bytes-like")
-        n = len(context)
-        payload += n.to_bytes(4, "big") + bytes(context)
-
-    payload += bytes(msg)
-
-    if prehash == "none":
-        return payload
-    if prehash == "sha3-512":
-        return sha3_512(payload)
+def _apply_prehash(sign_bytes: bytes, prehash: Optional[str]) -> bytes:
+    if prehash is None or prehash == "" or prehash == "none":
+        return sign_bytes
     if prehash == "sha3-256":
-        return sha3_256(payload)
-
-    raise ValueError(f"Unsupported prehash: {prehash}")
-
-
-@dataclass(frozen=True)
-class Signature:
-    alg_id: int
-    alg_name: str
-    domain: str
-    prehash: PrehashKind
-    sig: bytes
-
-    def __repr__(self) -> str:
-        return (
-            f"Signature(alg={self.alg_name}/0x{self.alg_id:02x}, "
-            f"domain={self.domain!r}, prehash={self.prehash}, sig[:8]={self.sig[:8].hex()}…)"
-        )
+        return hashlib.sha3_256(sign_bytes).digest()
+    raise NotImplementedError(f"Unsupported prehash: {prehash}")
 
 
-@dataclass(frozen=True)
-class SignedMessage:
-    message: bytes
-    signature: Signature
-
-
-def _backend_sign(alg_name: str, sk: bytes, msg: bytes) -> bytes:
-    try:
-        if alg_name == "dilithium3":
-            from pq.py.algs import dilithium3 as backend
-        elif alg_name.startswith("sphincs"):
-            from pq.py.algs import sphincs_shake_128s as backend
-        else:
-            raise NotImplementedError(f"Signature backend not wired for {alg_name}")
-    except Exception as e:
-        raise NotImplementedError(
-            f"Signature backend for {alg_name} not available. ({e})"
-        ) from e
-
-    if not hasattr(backend, "sign"):
-        raise NotImplementedError(f"Backend {backend.__name__} lacks .sign(secret_key, message)")
-
-    return backend.sign(sk, msg)  # type: ignore[arg-type]
-
-
-def sign_detached(
-    msg: bytes,
-    alg: Union[int, str],
-    sk: bytes,
+def pq_sign_detached(
+    message: bytes,
+    alg: Union[int, str, Any],
+    secret_key: bytes,
     *,
-    domain: Union[str, bytes] = b"tx",
-    chain_id: Optional[int] = None,
+    domain: str = "tx",
+    chain_id: int,
     context: bytes = b"",
-    prehash: PrehashKind = "none",
-) -> Signature:
+    prehash: Optional[str] = "sha3-256",
+) -> Dict[str, Any]:
+    """
+    Returns a CBOR/JSON-friendly signature envelope dict.
+    """
     alg_id, alg_name = _normalize_alg(alg)
+    mech = _pick_sig_mech(alg_name)
+
     sign_bytes = build_sign_bytes(
-        bytes(msg),
-        domain=domain,
+        message,
         chain_id=chain_id,
-        alg_id=alg_id,
-        context=context,
-        prehash=prehash,
-    )
-    sig_bytes = _backend_sign(alg_name, sk, sign_bytes)
-
-    # store the *normalized path* string for verification
-    dom_norm = _normalize_domain_path(domain, alg_name=alg_name)
-    dom_str = dom_norm.decode("ascii", "replace")
-
-    return Signature(
-        alg_id=alg_id,
+        domain=domain,
         alg_name=alg_name,
-        domain=dom_str,
-        prehash=prehash,
-        sig=sig_bytes,
+        context=context,
     )
+    to_sign = _apply_prehash(sign_bytes, prehash)
 
+    # Different liboqs-python versions accept secret_key in different ways.
+    sig_obj = None
+    try:
+        sig_obj = oqs.Signature(mech, secret_key=secret_key)
+    except TypeError:
+        sig_obj = oqs.Signature(mech)
+        if hasattr(sig_obj, "import_secret_key"):
+            sig_obj.import_secret_key(secret_key)  # type: ignore
 
-def sign_attached(
-    msg: bytes,
-    alg: Union[int, str],
-    sk: bytes,
-    *,
-    domain: Union[str, bytes] = b"tx",
-    chain_id: Optional[int] = None,
-    context: bytes = b"",
-    prehash: PrehashKind = "none",
-) -> SignedMessage:
-    return SignedMessage(
-        message=bytes(msg),
-        signature=sign_detached(
-            bytes(msg),
-            alg,
-            sk,
-            domain=domain,
-            chain_id=chain_id,
-            context=context,
-            prehash=prehash,
-        ),
-    )
+    signature = sig_obj.sign(to_sign)
+
+    return {
+        "alg": alg_id,
+        "sig": bytes(signature),
+        "domain": domain,
+        "prehash": prehash or "none",
+        "chain_id": int(chain_id),
+    }
