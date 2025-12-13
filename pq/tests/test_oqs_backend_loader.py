@@ -251,8 +251,8 @@ class TestOQSBackendInit:
             error_msg = str(exc_info.value)
             # Check for key troubleshooting information
             assert "liboqs shared library not found" in error_msg
-            assert "v0.15.0" in error_msg
-            assert "apt-get install liboqs-dev" in error_msg or "brew install liboqs" in error_msg
+            assert "0.14.0" in error_msg
+            assert "setup.sh" in error_msg
             assert "LD_LIBRARY_PATH" in error_msg or "DYLD_LIBRARY_PATH" in error_msg
             assert "LIBOQS_PATH" in error_msg
 
@@ -262,17 +262,17 @@ class TestOQSBackendInit:
         
         # Mock successful library load
         mock_lib = MagicMock()
-        mock_lib.OQS_version.return_value = b"0.15.0"
+        mock_lib.OQS_version.return_value = b"0.14.0"
         
         with patch.object(oqs_backend, "_HAVE", True):
             with patch.object(oqs_backend, "_LIB", mock_lib):
-                with patch.object(oqs_backend, "get_version_info", return_value="0.15.0"):
+                with patch.object(oqs_backend, "get_version_info", return_value="0.14.0"):
                     with patch.object(oqs_backend, "logger") as mock_logger:
                         backend = oqs_backend.OQSBackend()
                         
                         # Should log version
                         mock_logger.info.assert_called_once()
-                        assert "0.15.0" in str(mock_logger.info.call_args)
+                        assert "0.14.0" in str(mock_logger.info.call_args)
 
 
 class TestGetVersionInfo:
@@ -291,13 +291,13 @@ class TestGetVersionInfo:
         from pq.py.algs import oqs_backend
         
         mock_lib = MagicMock()
-        mock_lib.OQS_version.return_value = b"0.15.0"
+        mock_lib.OQS_version.return_value = b"0.14.0"
         
         with patch.object(oqs_backend, "_HAVE", True):
             with patch.object(oqs_backend, "_LIB", mock_lib):
                 with patch.object(oqs_backend, "logger"):
                     version = oqs_backend.get_version_info()
-                    assert version == "0.15.0"
+                    assert version == "0.14.0"
 
     def test_returns_unknown_on_error(self):
         """Test that get_version_info returns 'unknown' if version call fails."""

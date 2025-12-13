@@ -13,3 +13,4 @@ native/target/
 .DS_Store
 *.tsbuildinfo
 .liboqs/
+.deps/

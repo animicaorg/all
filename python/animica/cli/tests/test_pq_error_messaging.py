@@ -41,7 +41,7 @@ class TestPQErrorMessaging:
             
             # Should contain helpful error message
             assert "Post-quantum signing dependencies not available" in result.stderr
-            assert "v0.15.0" in result.stderr or "0.15.0" in result.stderr
+            assert "0.14." in result.stderr
             assert "liboqs-python" in result.stderr
             assert "pip install liboqs-python" in result.stderr
 
