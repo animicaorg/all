@@ -1,270 +1,240 @@
 #!/usr/bin/env bash
 set -euo pipefail
+IFS=$'\n\t'
 
-log() { printf "[setup] %s %s\n" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$*"; }
-warn() { printf "[setup][WARN] %s\n" "$*" >&2; }
-die() { printf "[setup][ERROR] %s\n" "$*" >&2; exit 1; }
+# =========================
+# Config
+# =========================
+OQS_VERSION="${OQS_VERSION:-0.14.0}"
 
-have() { command -v "$1" >/dev/null 2>&1; }
+# =========================
+# Helpers
+# =========================
+log()  { echo "[setup] $(date -u +"%Y-%m-%dT%H:%M:%SZ") $*"; }
+warn() { echo "[setup][WARN] $*" >&2; }
+err()  { echo "[setup][ERROR] $*" >&2; }
+die()  { err "$*"; exit 1; }
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$ROOT_DIR"
+have_cmd() { command -v "$1" >/dev/null 2>&1; }
 
-# Pin liboqs to 0.14.0 (as requested)
-LIBOQS_VERSION="${LIBOQS_VERSION:-0.14.0}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEPS_DIR="${REPO_ROOT}/.deps"
+OQS_PREFIX="${DEPS_DIR}/oqs-${OQS_VERSION}"
+OQS_SRC="${DEPS_DIR}/src/liboqs-${OQS_VERSION}"
+LIBOQSPY_SRC="${DEPS_DIR}/src/liboqs-python"
+VENV_DIR="${REPO_ROOT}/.venv"
 
-DEPS_DIR="$ROOT_DIR/.deps"
-SRC_DIR="$DEPS_DIR/src"
-PREFIX="$DEPS_DIR/oqs-$LIBOQS_VERSION"
+mkdir -p "${DEPS_DIR}/src"
 
-LIBOQS_GIT_URL="${LIBOQS_GIT_URL:-https://github.com/open-quantum-safe/liboqs.git}"
-LIBOQS_PY_GIT_URL="${LIBOQS_PY_GIT_URL:-https://github.com/open-quantum-safe/liboqs-python}"
+# =========================
+# OS deps (Ubuntu/Debian)
+# =========================
+if have_cmd apt-get; then
+  log "Installing system build deps via apt-get (idempotent)"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -y >/dev/null
+  apt-get install -y --no-install-recommends \
+    ca-certificates curl git build-essential pkg-config \
+    cmake ninja-build \
+    python3 python3-venv python3-dev \
+    patchelf \
+    >/dev/null
+else
+  warn "apt-get not found; skipping system deps install (ensure: git, cmake, ninja, patchelf, python3-venv, build tools)"
+fi
 
-mkdir -p "$DEPS_DIR" "$SRC_DIR"
-
-install_apt_deps() {
-  if ! have apt-get; then
-    warn "apt-get not found; skipping system dependency install."
-    return 0
-  fi
-
-  local pkgs=(
-    git
-    ca-certificates
-    build-essential
-    pkg-config
-    cmake
-    ninja-build
-    libssl-dev
-    python3-venv
-    python3-pip
-    python3-dev
-  )
-
-  if [ "$(id -u)" -ne 0 ]; then
-    if have sudo; then
-      log "Installing system deps with sudo apt-get..."
-      sudo apt-get update -y
-      sudo apt-get install -y "${pkgs[@]}" || true
-    else
-      warn "Not root and sudo not found; cannot install apt dependencies automatically."
-    fi
+# =========================
+# Python venv
+# =========================
+if [ ! -d "${VENV_DIR}" ]; then
+  log "Creating venv at ${VENV_DIR}"
+  if have_cmd python3.12; then
+    python3.12 -m venv "${VENV_DIR}"
   else
-    log "Installing system deps with apt-get..."
-    apt-get update -y
-    apt-get install -y "${pkgs[@]}" || true
+    python3 -m venv "${VENV_DIR}"
   fi
-}
+else
+  log "Venv already exists at ${VENV_DIR}"
+fi
 
-build_liboqs() {
-  local needed=0
-  if [ ! -f "$PREFIX/lib/liboqs.so" ] && [ ! -f "$PREFIX/lib64/liboqs.so" ]; then
-    needed=1
+# shellcheck disable=SC1091
+source "${VENV_DIR}/bin/activate"
+
+log "Upgrading pip/setuptools/wheel"
+python -m pip install -U pip setuptools wheel
+
+# =========================
+# Build/install liboqs (vendored)
+# =========================
+if [ -f "${OQS_PREFIX}/lib/liboqs.so" ] || [ -f "${OQS_PREFIX}/lib64/liboqs.so" ]; then
+  log "liboqs already installed at ${OQS_PREFIX}"
+else
+  log "Building liboqs ${OQS_VERSION} into ${OQS_PREFIX}"
+
+  rm -rf "${OQS_SRC}"
+  mkdir -p "${OQS_SRC}"
+
+  # Fetch release tarball (most reliable)
+  TARBALL_URL="https://github.com/open-quantum-safe/liboqs/archive/refs/tags/${OQS_VERSION}.tar.gz"
+  log "Downloading ${TARBALL_URL}"
+  curl -fsSL "${TARBALL_URL}" | tar -xz -C "${DEPS_DIR}/src"
+  # Tar expands to liboqs-${OQS_VERSION}
+  if [ ! -d "${DEPS_DIR}/src/liboqs-${OQS_VERSION}" ]; then
+    die "Expected source dir not found: ${DEPS_DIR}/src/liboqs-${OQS_VERSION}"
   fi
-  if [ ! -d "$PREFIX/include/oqs" ]; then
-    needed=1
-  fi
 
-  if [ "$needed" -eq 0 ]; then
-    log "liboqs $LIBOQS_VERSION already present at $PREFIX; skipping build."
-    return 0
-  fi
+  BUILD_DIR="${DEPS_DIR}/src/liboqs-${OQS_VERSION}/build"
+  rm -rf "${BUILD_DIR}"
+  mkdir -p "${BUILD_DIR}"
 
-  local src="$SRC_DIR/liboqs-$LIBOQS_VERSION"
-  log "Building liboqs $LIBOQS_VERSION into $PREFIX"
-  rm -rf "$src"
-  git clone --depth 1 --branch "$LIBOQS_VERSION" "$LIBOQS_GIT_URL" "$src"
-
-  local gen="Unix Makefiles"
-  if have ninja; then gen="Ninja"; fi
-
-  cmake -S "$src" -B "$src/build" -G "$gen" \
+  cmake -S "${DEPS_DIR}/src/liboqs-${OQS_VERSION}" -B "${BUILD_DIR}" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
-    -DBUILD_SHARED_LIBS=ON \
-    -DOQS_USE_OPENSSL=ON \
-    -DCMAKE_INSTALL_PREFIX="$PREFIX"
+    -DCMAKE_INSTALL_PREFIX="${OQS_PREFIX}" \
+    -DBUILD_SHARED_LIBS=ON
 
-  cmake --build "$src/build" -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
-  cmake --install "$src/build"
+  ninja -C "${BUILD_DIR}"
+  ninja -C "${BUILD_DIR}" install
 
-  local so=""
-  if [ -f "$PREFIX/lib/liboqs.so" ]; then so="$PREFIX/lib/liboqs.so"; fi
-  if [ -z "$so" ] && [ -f "$PREFIX/lib64/liboqs.so" ]; then so="$PREFIX/lib64/liboqs.so"; fi
-  [ -n "$so" ] || die "liboqs build finished but liboqs.so not found under $PREFIX/lib or $PREFIX/lib64"
-  log "liboqs installed OK: $so"
-}
-
-ensure_venv() {
-  local py="${PYTHON:-}"
-  if [ -z "$py" ]; then
-    if have python3.12; then py="python3.12"
-    elif have python3; then py="python3"
-    else die "Python not found (need python3)."
-    fi
-  fi
-
-  if [ ! -d "$ROOT_DIR/.venv" ]; then
-    log "Creating venv at $ROOT_DIR/.venv using $py"
-    "$py" -m venv "$ROOT_DIR/.venv"
+  if [ -f "${OQS_PREFIX}/lib/liboqs.so" ] || [ -f "${OQS_PREFIX}/lib64/liboqs.so" ]; then
+    log "liboqs installed OK under ${OQS_PREFIX}"
   else
-    log "Venv already exists at $ROOT_DIR/.venv"
+    die "liboqs install failed; liboqs.so not found under ${OQS_PREFIX}"
   fi
+fi
 
-  # shellcheck disable=SC1091
-  source "$ROOT_DIR/.venv/bin/activate"
-
-  log "Upgrading pip/setuptools/wheel"
-  python -m pip install --upgrade pip setuptools wheel
-}
-
-rewrite_activate_block() {
-  local act="$ROOT_DIR/.venv/bin/activate"
-  [ -f "$act" ] || die "Venv activate not found at $act"
-
-  local start="# >>> ANIMICA OQS ENV >>>"
-  local end="# <<< ANIMICA OQS ENV <<<"
-
-  local tmp
-  tmp="$(mktemp)"
-
-  awk -v start="$start" -v end="$end" '
-    $0==start {inblock=1; next}
-    $0==end {inblock=0; next}
-    inblock!=1 {print}
-  ' "$act" > "$tmp"
-
+# Make the vendored liboqs visible to the dynamic loader (best-effort).
+# This helps even when you run without LD_LIBRARY_PATH.
+if [ "$(id -u)" -eq 0 ] && [ -d /etc/ld.so.conf.d ]; then
+  CONF_FILE="/etc/ld.so.conf.d/animica-liboqs.conf"
+  log "Registering vendored liboqs with ldconfig: ${CONF_FILE}"
   {
-    echo ""
-    echo "$start"
-    echo "export OQS_INSTALL_PATH=\"$PREFIX\""
-    echo 'export LD_LIBRARY_PATH="$OQS_INSTALL_PATH/lib:$OQS_INSTALL_PATH/lib64:${LD_LIBRARY_PATH:-}"'
-    echo "$end"
-    echo ""
-  } >> "$tmp"
+    echo "${OQS_PREFIX}/lib"
+    echo "${OQS_PREFIX}/lib64"
+  } > "${CONF_FILE}"
+  ldconfig
+else
+  warn "Not root or no /etc/ld.so.conf.d; skipping ldconfig registration (LD_LIBRARY_PATH/RPATH will still be used)"
+fi
 
-  mv "$tmp" "$act"
-  chmod +x "$act"
-}
+# Export build+runtime env so the liboqs-python build finds the right headers/libs
+export OQS_ROOT="${OQS_PREFIX}"
+export CMAKE_PREFIX_PATH="${OQS_PREFIX}:${CMAKE_PREFIX_PATH:-}"
+export PKG_CONFIG_PATH="${OQS_PREFIX}/lib/pkgconfig:${OQS_PREFIX}/lib64/pkgconfig:${PKG_CONFIG_PATH:-}"
+export LD_LIBRARY_PATH="${OQS_PREFIX}/lib:${OQS_PREFIX}/lib64:${LD_LIBRARY_PATH:-}"
+export LIBRARY_PATH="${OQS_PREFIX}/lib:${OQS_PREFIX}/lib64:${LIBRARY_PATH:-}"
+export CPATH="${OQS_PREFIX}/include:${CPATH:-}"
+export CFLAGS="-I${OQS_PREFIX}/include ${CFLAGS:-}"
+export LDFLAGS="-L${OQS_PREFIX}/lib -L${OQS_PREFIX}/lib64 ${LDFLAGS:-}"
+# Some build systems respect these:
+export CMAKE_ARGS="${CMAKE_ARGS:-} -DCMAKE_PREFIX_PATH=${OQS_PREFIX}"
+export SKBUILD_CONFIGURE_OPTIONS="${SKBUILD_CONFIGURE_OPTIONS:-} -DCMAKE_PREFIX_PATH=${OQS_PREFIX}"
 
-export_oqs_env_for_this_shell() {
-  export OQS_INSTALL_PATH="$PREFIX"
-  export LD_LIBRARY_PATH="$OQS_INSTALL_PATH/lib:$OQS_INSTALL_PATH/lib64:${LD_LIBRARY_PATH:-}"
-  export CMAKE_PREFIX_PATH="$OQS_INSTALL_PATH:${CMAKE_PREFIX_PATH:-}"
-  export LIBRARY_PATH="$OQS_INSTALL_PATH/lib:$OQS_INSTALL_PATH/lib64:${LIBRARY_PATH:-}"
-  export CPATH="$OQS_INSTALL_PATH/include:${CPATH:-}"
-}
+# =========================
+# Install liboqs-python from git clone
+# =========================
+log "Installing liboqs-python from a fresh git clone (linked to vendored liboqs ${OQS_VERSION})"
 
-oqs_is_present_and_compatible() {
-  # Fail if the mismatch warning appears
-  python -W error::UserWarning -c "import oqs" >/dev/null 2>&1
-}
+rm -rf "${LIBOQSPY_SRC}"
+git clone --depth=1 https://github.com/open-quantum-safe/liboqs-python "${LIBOQSPY_SRC}"
 
-install_liboqs_python_from_git_clone() {
-  export_oqs_env_for_this_shell
+# Remove any existing bindings to avoid confusion
+python -m pip uninstall -y liboqs-python oqs >/dev/null 2>&1 || true
 
-  log "Installing liboqs-python from git clone (depth=1) + pip install"
-  local dst="$SRC_DIR/liboqs-python"
-  rm -rf "$dst"
-  git clone --depth=1 "$LIBOQS_PY_GIT_URL" "$dst"
+# Build from source, without isolation, so our env is used
+python -m pip install --no-build-isolation --no-binary :all: "${LIBOQSPY_SRC}"
 
-  # Exactly what you asked (but using venv pip via python -m pip)
-  ( cd "$dst" && python -m pip install . )
+# =========================
+# Patch the installed extension to force the correct liboqs at runtime
+# =========================
+log "Patching installed oqs extension RPATH to prefer vendored liboqs"
+OQS_EXT_PATH="$(
+python - <<'PY'
+import importlib, sys
+try:
+    import oqs  # noqa
+except Exception as e:
+    print("", end="")
+    raise
+# Find the compiled extension (oqs*.so) next to the package
+import pathlib, oqs as pkg
+pkg_dir = pathlib.Path(pkg.__file__).resolve().parent
+cands = list(pkg_dir.glob("*.so"))
+if not cands:
+    # sometimes nested
+    cands = list(pkg_dir.glob("**/*.so"))
+print(str(cands[0]) if cands else "", end="")
+PY
+)" || die "Failed importing oqs after install"
 
-  if ! oqs_is_present_and_compatible; then
-    die "Installed oqs, but it is still warning about a liboqs version mismatch. This usually means the installed python binding expects a different liboqs major/minor than $LIBOQS_VERSION."
+if [ -z "${OQS_EXT_PATH}" ] || [ ! -f "${OQS_EXT_PATH}" ]; then
+  die "Could not locate installed oqs extension .so for RPATH patch"
+fi
+
+if ! have_cmd patchelf; then
+  die "patchelf not available; install it (apt-get install patchelf) and rerun"
+fi
+
+# Set RUNPATH to our vendored lib directories (highest priority for this extension)
+patchelf --set-rpath "${OQS_PREFIX}/lib:${OQS_PREFIX}/lib64" "${OQS_EXT_PATH}" || true
+
+log "ldd of oqs extension (liboqs should resolve to ${OQS_PREFIX})"
+ldd "${OQS_EXT_PATH}" | grep -E "liboqs\.so|not found" || true
+
+# =========================
+# Install animica + ensure `animica` works without ./animica
+# =========================
+log "Installing Animica into the venv (editable)"
+
+if [ -f "${REPO_ROOT}/python/pyproject.toml" ] || [ -f "${REPO_ROOT}/python/setup.py" ]; then
+  python -m pip install -e "${REPO_ROOT}/python"
+elif [ -f "${REPO_ROOT}/pyproject.toml" ] || [ -f "${REPO_ROOT}/setup.py" ]; then
+  python -m pip install -e "${REPO_ROOT}"
+else
+  warn "Could not find python package metadata in ./python or repo root; skipping animica install"
+fi
+
+# Wrap the venv animica entrypoint so it always exports the right LD_LIBRARY_PATH
+ANIMICA_BIN="${VENV_DIR}/bin/animica"
+if [ -x "${ANIMICA_BIN}" ]; then
+  if [ ! -f "${VENV_DIR}/bin/animica.real" ]; then
+    log "Wrapping venv animica entrypoint to force vendored liboqs at runtime"
+    mv "${ANIMICA_BIN}" "${VENV_DIR}/bin/animica.real"
   fi
 
-  log "liboqs-python installed and compatible with pinned liboqs."
-}
+  cat > "${ANIMICA_BIN}" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+export LD_LIBRARY_PATH="${OQS_PREFIX}/lib:${OQS_PREFIX}/lib64:\${LD_LIBRARY_PATH:-}"
+exec "${VENV_DIR}/bin/animica.real" "\$@"
+EOF
+  chmod +x "${ANIMICA_BIN}"
+else
+  warn "No venv animica entrypoint found at ${ANIMICA_BIN} (install may have failed or package layout differs)"
+fi
 
-install_animica() {
-  local target="."
-  if [ -f "$ROOT_DIR/python/pyproject.toml" ] || [ -f "$ROOT_DIR/python/setup.py" ]; then
-    target="./python"
-  fi
-
-  log "Installing Animica editable from $target"
-  python -m pip install -e "$target"
-
-  if [ ! -x "$ROOT_DIR/.venv/bin/animica" ]; then
-    die "Animica CLI entrypoint not found at .venv/bin/animica after install."
-  fi
-}
-
-link_animica_on_path() {
-  local src="$ROOT_DIR/.venv/bin/animica"
-  [ -x "$src" ] || die "Expected animica at $src"
-
-  if [ "$(id -u)" -eq 0 ]; then
-    local dst="/usr/local/bin/animica"
-    log "Linking animica into PATH: $dst -> $src"
-    mkdir -p /usr/local/bin
-    ln -sf "$src" "$dst"
+# Optional: system shim so `animica` works without activating venv
+if [ "$(id -u)" -eq 0 ] && [ -d /usr/local/bin ] && [ -x "${ANIMICA_BIN}" ]; then
+  if [ -e /usr/local/bin/animica ] && [ ! -L /usr/local/bin/animica ]; then
+    warn "/usr/local/bin/animica exists and is not a symlink; not overwriting."
   else
-    local dst="$HOME/.local/bin/animica"
-    log "Linking animica into PATH: $dst -> $src"
-    mkdir -p "$HOME/.local/bin"
-    ln -sf "$src" "$dst"
-    case ":$PATH:" in
-      *":$HOME/.local/bin:"*) : ;;
-      *) warn "Add to PATH: export PATH=\"$HOME/.local/bin:\$PATH\"" ;;
-    esac
+    log "Creating /usr/local/bin/animica shim -> ${ANIMICA_BIN}"
+    ln -sf "${ANIMICA_BIN}" /usr/local/bin/animica
   fi
-}
+fi
 
-verify() {
-  export_oqs_env_for_this_shell
-
-  log "Verifying oqs import has no mismatch warning..."
-  python -W error::UserWarning -c "import oqs; print('oqs import OK (no mismatch warning)')"
-
-  log "Verifying liboqs reports 0.14.x..."
-  python - <<'PY'
-import os, ctypes
-p = os.environ.get("OQS_INSTALL_PATH")
-assert p, "OQS_INSTALL_PATH missing"
-candidates = [os.path.join(p,"lib","liboqs.so"), os.path.join(p,"lib64","liboqs.so")]
-so = next((c for c in candidates if os.path.exists(c)), None)
-assert so, f"liboqs.so not found under {p}/lib or {p}/lib64"
-lib = ctypes.CDLL(so)
-lib.OQS_version.restype = ctypes.c_char_p
-ver = lib.OQS_version().decode("utf-8", "replace")
-print("Loaded liboqs:", so)
-print("OQS_version():", ver)
-if not ver.startswith("0.14."):
-    raise SystemExit(f"Expected liboqs 0.14.x, got: {ver}")
+# =========================
+# Verify versions
+# =========================
+log "Verifying oqs + liboqs versions (should NOT warn and liboqs should be ${OQS_VERSION})"
+python - <<PY
+import oqs
+print("oqs_python_version:", getattr(oqs, "oqs_python_version", lambda: "unknown")())
+print("oqs_version:", getattr(oqs, "oqs_version", lambda: "unknown")())
 PY
 
-  animica --help >/dev/null
-  log "Verification OK. You can run: animica --help"
-}
-
-main() {
-  log "Repo: $ROOT_DIR"
-  install_apt_deps
-  build_liboqs
-  ensure_venv
-  rewrite_activate_block
-
-  # Re-activate to load the newly written activate block for future shells;
-  # and export env for THIS shell right now.
-  # shellcheck disable=SC1091
-  source "$ROOT_DIR/.venv/bin/activate"
-  export_oqs_env_for_this_shell
-
-  if oqs_is_present_and_compatible; then
-    log "oqs already installed and compatible; skipping liboqs-python install."
-  else
-    log "oqs missing or mismatched; installing liboqs-python via git clone + pip install."
-    install_liboqs_python_from_git_clone
-  fi
-
-  install_animica
-  link_animica_on_path
-  verify
-
-  log "Done."
-  log "Tip: open a new shell (or run: source .venv/bin/activate) so OQS env vars are always applied."
-}
-
-main "$@"
+log "Done."
+log "Usage:"
+log "  source .venv/bin/activate && animica --help"
+if [ -x /usr/local/bin/animica ]; then
+  log "  (or just) animica --help"
+fi
