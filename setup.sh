@@ -28,8 +28,20 @@ install_system_deps() {
   
   if [ "${#NEEDED_PKGS[@]}" -gt 0 ]; then
     log "Installing packages: ${NEEDED_PKGS[*]}"
-    sudo apt-get update -y
-    sudo apt-get install -y --no-install-recommends "${NEEDED_PKGS[@]}"
+    
+    # Check if sudo is available and needed
+    if [ "$(id -u)" -ne 0 ]; then
+      if ! have sudo; then
+        warn "sudo not available and not running as root. Cannot install system packages."
+        warn "Please install these packages manually: ${NEEDED_PKGS[*]}"
+        return
+      fi
+      sudo apt-get update -y
+      sudo apt-get install -y --no-install-recommends "${NEEDED_PKGS[@]}"
+    else
+      apt-get update -y
+      apt-get install -y --no-install-recommends "${NEEDED_PKGS[@]}"
+    fi
   else
     log "All required system packages already installed"
   fi
