@@ -170,6 +170,43 @@ def _fetch_balance(address: str, rpc_url: str) -> Optional[int]:
         return None
 
 
+def _is_dilithium3_alg(alg_name: str) -> bool:
+    """Check if algorithm name refers to Dilithium3/ML-DSA-65."""
+    name_lower = alg_name.lower().replace("_", "-").replace(" ", "")
+    return name_lower in ("dilithium3", "ml-dsa-65", "mldsa65")
+
+
+def _normalize_dilithium3_secret_key(secret: bytes, alg_name: str) -> bytes:
+    """
+    Normalize Dilithium3 secret key to canonical 4000-byte format.
+    
+    Ensures new wallets store canonical keys while maintaining backward
+    compatibility with legacy 4032-byte keys from liboqs.
+    
+    Args:
+        secret: Secret key bytes
+        alg_name: Algorithm name (e.g., "dilithium3")
+    
+    Returns:
+        Canonical secret key (4000 bytes for dilithium3, unchanged otherwise)
+    """
+    if not _is_dilithium3_alg(alg_name):
+        return secret
+    
+    sk_len = len(secret)
+    
+    # Already canonical
+    if sk_len == 4000:
+        return secret
+    
+    # Legacy liboqs format - normalize to canonical
+    if sk_len == 4032:
+        return secret[:4000]
+    
+    # Unexpected length - return as-is and let signing code handle it
+    return secret
+
+
 def _generate_entry(label: str, *, allow_fallback: bool) -> WalletEntry:
     if allow_fallback:
         os.environ.setdefault("ANIMICA_ALLOW_PQ_PURE_FALLBACK", "1")
@@ -194,6 +231,9 @@ def _generate_entry(label: str, *, allow_fallback: bool) -> WalletEntry:
 
             address = kp.address
             alg_name = kp.alg_name
+            
+            # Normalize Dilithium3 keys to canonical format for storage
+            secret = _normalize_dilithium3_secret_key(secret, alg_name)
 
         except NotImplementedError as e:
             if not allow_fallback:

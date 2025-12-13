@@ -206,6 +206,47 @@ class SignedMessage:
 # Backend dispatcher
 # --------------------------------------------------------------------------------------
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def _normalize_dilithium3_sk(sk: bytes) -> bytes:
+    """
+    Normalize Dilithium3 secret key to canonical 4000-byte format.
+    
+    Handles backward compatibility between:
+    - Canonical FIPS 204 format: 4000 bytes (pure-Python, standard)
+    - Legacy liboqs format: 4032 bytes (liboqs adds 32 bytes metadata at end)
+    
+    Args:
+        sk: Secret key bytes (4000 or 4032 bytes expected)
+    
+    Returns:
+        Normalized 4000-byte secret key
+    
+    Raises:
+        ValueError: If key length is not 4000 or 4032 bytes
+    
+    See: python/animica/security/KEY_FORMATS.md for format documentation
+    """
+    sk_len = len(sk)
+    
+    # Canonical FIPS 204 format - use as-is
+    if sk_len == 4000:
+        return sk
+    
+    # Legacy liboqs format - strip last 32 bytes
+    if sk_len == 4032:
+        logger.debug("Normalizing legacy Dilithium3 secret key: 4032 → 4000 bytes")
+        return sk[:4000]
+    
+    # Invalid length - provide helpful error message
+    raise ValueError(
+        f"Invalid dilithium3 secret key length {sk_len}; expected 4000 or legacy 4032. "
+        f"Wallet may be corrupted. Run: animica wallet doctor"
+    )
+
 
 def _resolve_backend(alg_name: str):
     try:
@@ -223,11 +264,24 @@ def _resolve_backend(alg_name: str):
     return backend
 
 
+def _is_dilithium3_alg(alg_name: str) -> bool:
+    """Check if algorithm name refers to Dilithium3/ML-DSA-65."""
+    name_lower = alg_name.lower().replace("_", "-").replace(" ", "")
+    return name_lower in ("dilithium3", "ml-dsa-65", "mldsa65")
+
+
 def _backend_sign(alg_name: str, sk: bytes, msg: bytes) -> bytes:
     """
     Call the algorithm-specific signer. `msg` is already canonical SignBytes
     (a fixed-length digest), so backends should treat it as an opaque byte string.
+    
+    For Dilithium3, automatically normalizes secret keys from legacy 4032-byte format
+    to canonical 4000-byte format before signing.
     """
+    # Normalize Dilithium3 secret keys to handle legacy liboqs format
+    if _is_dilithium3_alg(alg_name):
+        sk = _normalize_dilithium3_sk(sk)
+    
     backend = _resolve_backend(alg_name)
     sign_fn = getattr(backend, "sign", None)
     if not callable(sign_fn):

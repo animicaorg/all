@@ -20,13 +20,20 @@ def test_backend_sign_calls_with_positional_args(monkeypatch):
         called["args"] = (sk, msg)
         return b"ok"
 
-    fake_backend = types.SimpleNamespace(sign=fake_sign)
-    monkeypatch.setitem(sys.modules, "pq.py.algs.dilithium3", fake_backend)
-    import pq.py.algs as algs  # noqa: WPS433 -- imported inside test for monkeypatch
+    fake_backend = types.SimpleNamespace(sign=fake_sign, __name__="fake_dilithium3")
+    
+    # Mock _resolve_backend to return our fake backend
+    def mock_resolve(alg_name):
+        if alg_name == "dilithium3":
+            return fake_backend
+        raise NotImplementedError(f"No backend for {alg_name}")
+    
+    monkeypatch.setattr(sign, "_resolve_backend", mock_resolve)
 
-    monkeypatch.setattr(algs, "dilithium3", fake_backend)
-
-    sig = sign._backend_sign("dilithium3", b"secret", b"message")
+    # Use a canonical 4000-byte key (dilithium3 normalization expects this)
+    sk_canonical = b"s" * 4000
+    sig = sign._backend_sign("dilithium3", sk_canonical, b"message")
 
     assert sig == b"ok"
-    assert called["args"] == (b"secret", b"message")
+    # Backend should receive the normalized key and message
+    assert called["args"] == (sk_canonical, b"message")
